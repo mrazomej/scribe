@@ -34,6 +34,7 @@ from scribe.models.presets.registry import (
 )
 from scribe.models.presets.factory import (
     _get_parameterization_key,
+    _hierarchicalize_mu,
     _hierarchicalize_p,
 )
 from scribe.models.config import ModelConfig, ModelConfigBuilder
@@ -59,6 +60,15 @@ def _build_full_param_specs(model_config):
 
     if model_config.hierarchical_p:
         specs = _hierarchicalize_p(
+            param_specs=specs,
+            param_key=param_key,
+            guide_families=guide_families,
+            n_components=model_config.n_components,
+            mixture_params=model_config.mixture_params,
+        )
+
+    if model_config.hierarchical_mu:
+        specs = _hierarchicalize_mu(
             param_specs=specs,
             param_key=param_key,
             guide_families=guide_families,
@@ -1659,3 +1669,365 @@ class TestHierarchicalFlags:
 
         config_neither = ModelConfig(base_model="nbdm")
         assert config_neither.is_hierarchical is False
+
+    def test_hierarchical_mu_sets_is_hierarchical(self):
+        """is_hierarchical is True when hierarchical_mu is set."""
+        config = ModelConfig(
+            base_model="nbdm",
+            unconstrained=True,
+            hierarchical_mu=True,
+            n_components=3,
+        )
+        assert config.is_hierarchical is True
+
+
+# ==========================================================================
+# Tests: Hierarchical Mu (across-component shrinkage)
+# ==========================================================================
+
+
+class TestHierarchicalMuConfig:
+    """Config validation tests for hierarchical_mu flag."""
+
+    def test_hierarchical_mu_requires_unconstrained(self):
+        """hierarchical_mu=True without unconstrained should raise."""
+        with pytest.raises(ValueError, match="hierarchical_mu.*unconstrained"):
+            ModelConfig(
+                base_model="nbdm",
+                hierarchical_mu=True,
+                unconstrained=False,
+                n_components=3,
+            )
+
+    def test_hierarchical_mu_requires_mixture(self):
+        """hierarchical_mu=True without n_components should raise."""
+        with pytest.raises(ValueError, match="hierarchical_mu.*mixture"):
+            ModelConfig(
+                base_model="nbdm",
+                hierarchical_mu=True,
+                unconstrained=True,
+            )
+
+    def test_hierarchical_mu_excludes_dataset_mu(self):
+        """hierarchical_mu and hierarchical_dataset_mu are mutually exclusive."""
+        with pytest.raises(
+            ValueError, match="hierarchical_mu.*hierarchical_dataset_mu"
+        ):
+            ModelConfig(
+                base_model="nbdm",
+                hierarchical_mu=True,
+                hierarchical_dataset_mu=True,
+                unconstrained=True,
+                n_components=3,
+                n_datasets=2,
+            )
+
+    def test_hierarchical_mu_valid_config(self):
+        """Valid hierarchical_mu config should pass validation."""
+        config = ModelConfig(
+            base_model="nbdm",
+            hierarchical_mu=True,
+            unconstrained=True,
+            n_components=3,
+        )
+        assert config.hierarchical_mu is True
+        assert config.is_hierarchical is True
+
+    def test_builder_with_hierarchical_mu(self):
+        """Builder .with_hierarchical_mu() sets flag and unconstrained."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("mean_prob")
+            .as_mixture(3)
+            .with_hierarchical_mu()
+            .build()
+        )
+        assert config.hierarchical_mu is True
+        assert config.unconstrained is True
+        assert config.is_hierarchical is True
+        assert config.n_components == 3
+
+
+class TestHierarchicalMuFactory:
+    """Test that _hierarchicalize_mu produces the right parameter specs."""
+
+    def test_mean_prob_triplet(self):
+        """mean_prob: produces log_mu_loc, log_mu_scale, mu specs."""
+        from scribe.models.presets.factory import create_model
+
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("mean_prob")
+            .as_mixture(3)
+            .with_hierarchical_mu()
+            .build()
+        )
+        _, _, specs = create_model(config, validate=False)
+        spec_names = [s.name for s in specs]
+
+        assert "log_mu_loc" in spec_names
+        assert "log_mu_scale" in spec_names
+        assert "mu" in spec_names
+
+        # Verify the mu spec is the hierarchical type
+        mu_spec = next(s for s in specs if s.name == "mu")
+        assert isinstance(mu_spec, HierarchicalExpNormalSpec)
+        assert mu_spec.is_mixture is True
+        assert mu_spec.is_gene_specific is True
+        assert mu_spec.hyper_loc_name == "log_mu_loc"
+        assert mu_spec.hyper_scale_name == "log_mu_scale"
+
+    def test_mean_odds_triplet(self):
+        """mean_odds: produces log_mu_loc, log_mu_scale, mu specs."""
+        from scribe.models.presets.factory import create_model
+
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("mean_odds")
+            .as_mixture(2)
+            .with_hierarchical_mu()
+            .build()
+        )
+        _, _, specs = create_model(config, validate=False)
+        spec_names = [s.name for s in specs]
+
+        assert "log_mu_loc" in spec_names
+        assert "log_mu_scale" in spec_names
+        assert "mu" in spec_names
+
+    def test_canonical_triplet(self):
+        """canonical: produces log_r_loc, log_r_scale, r specs."""
+        from scribe.models.presets.factory import create_model
+
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("canonical")
+            .as_mixture(3)
+            .with_hierarchical_mu()
+            .build()
+        )
+        _, _, specs = create_model(config, validate=False)
+        spec_names = [s.name for s in specs]
+
+        assert "log_r_loc" in spec_names
+        assert "log_r_scale" in spec_names
+        assert "r" in spec_names
+
+        r_spec = next(s for s in specs if s.name == "r")
+        assert isinstance(r_spec, HierarchicalExpNormalSpec)
+        assert r_spec.hyper_loc_name == "log_r_loc"
+        assert r_spec.hyper_scale_name == "log_r_scale"
+
+    def test_hyper_loc_is_gene_specific(self):
+        """The population loc should be per-gene (not scalar)."""
+        from scribe.models.presets.factory import create_model
+
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("mean_prob")
+            .as_mixture(3)
+            .with_hierarchical_mu()
+            .build()
+        )
+        _, _, specs = create_model(config, validate=False)
+
+        loc_spec = next(s for s in specs if s.name == "log_mu_loc")
+        assert loc_spec.is_gene_specific is True
+        assert loc_spec.shape_dims == ("n_genes",)
+
+
+class TestHierarchicalMuModelTracing:
+    """Test that hierarchical_mu models trace correctly."""
+
+    @pytest.fixture
+    def small_dims(self):
+        return {"n_cells": 20, "n_genes": 10, "n_components": 3}
+
+    def test_mean_prob_traces(self, small_dims):
+        """hierarchical_mu with mean_prob produces correct trace sites."""
+        from scribe.models.presets.factory import create_model
+
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("mean_prob")
+            .as_mixture(3)
+            .with_hierarchical_mu()
+            .build()
+        )
+        model_fn, _, _ = create_model(config, validate=False)
+
+        with numpyro.handlers.seed(rng_seed=0):
+            trace = numpyro.handlers.trace(model_fn).get_trace(
+                n_cells=small_dims["n_cells"],
+                n_genes=small_dims["n_genes"],
+                model_config=config,
+                counts=None,
+            )
+
+        assert "log_mu_loc" in trace
+        assert "log_mu_scale" in trace
+        assert "mu" in trace
+        assert "p" in trace
+        assert "r" in trace
+
+        # Population loc is per-gene
+        assert trace["log_mu_loc"]["value"].shape == (
+            small_dims["n_genes"],
+        )
+        # Scale is scalar
+        assert trace["log_mu_scale"]["value"].shape == ()
+        # mu is (n_components, n_genes)
+        assert trace["mu"]["value"].shape == (
+            small_dims["n_components"],
+            small_dims["n_genes"],
+        )
+        # mu must be positive (exp transform)
+        assert jnp.all(trace["mu"]["value"] > 0)
+
+    def test_mean_odds_traces(self, small_dims):
+        """hierarchical_mu with mean_odds produces correct trace sites."""
+        from scribe.models.presets.factory import create_model
+
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("mean_odds")
+            .as_mixture(2)
+            .with_hierarchical_mu()
+            .build()
+        )
+        model_fn, _, _ = create_model(config, validate=False)
+
+        with numpyro.handlers.seed(rng_seed=1):
+            trace = numpyro.handlers.trace(model_fn).get_trace(
+                n_cells=small_dims["n_cells"],
+                n_genes=small_dims["n_genes"],
+                model_config=config,
+                counts=None,
+            )
+
+        assert "log_mu_loc" in trace
+        assert "log_mu_scale" in trace
+        assert "mu" in trace
+        assert trace["mu"]["value"].shape == (2, small_dims["n_genes"])
+
+    def test_canonical_traces(self, small_dims):
+        """hierarchical_mu with canonical uses log_r_loc/log_r_scale."""
+        from scribe.models.presets.factory import create_model
+
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("canonical")
+            .as_mixture(3)
+            .with_hierarchical_mu()
+            .build()
+        )
+        model_fn, _, _ = create_model(config, validate=False)
+
+        with numpyro.handlers.seed(rng_seed=2):
+            trace = numpyro.handlers.trace(model_fn).get_trace(
+                n_cells=small_dims["n_cells"],
+                n_genes=small_dims["n_genes"],
+                model_config=config,
+                counts=None,
+            )
+
+        assert "log_r_loc" in trace
+        assert "log_r_scale" in trace
+        assert "r" in trace
+        assert trace["r"]["value"].shape == (
+            small_dims["n_components"],
+            small_dims["n_genes"],
+        )
+
+    def test_combined_with_hierarchical_p(self, small_dims):
+        """hierarchical_mu + hierarchical_p on the same model."""
+        from scribe.models.presets.factory import create_model
+
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("mean_prob")
+            .as_mixture(3)
+            .with_hierarchical_mu()
+            .with_hierarchical_p()
+            .build()
+        )
+        model_fn, _, _ = create_model(config, validate=False)
+
+        with numpyro.handlers.seed(rng_seed=3):
+            trace = numpyro.handlers.trace(model_fn).get_trace(
+                n_cells=small_dims["n_cells"],
+                n_genes=small_dims["n_genes"],
+                model_config=config,
+                counts=None,
+            )
+
+        # Both sets of hyperparameters should be present
+        assert "log_mu_loc" in trace
+        assert "log_mu_scale" in trace
+        assert "logit_p_loc" in trace
+        assert "logit_p_scale" in trace
+        assert "mu" in trace
+        assert "p" in trace
+
+    def test_zinb_with_hierarchical_mu(self, small_dims):
+        """hierarchical_mu works with zero-inflated models."""
+        from scribe.models.presets.factory import create_model
+
+        config = (
+            ModelConfigBuilder()
+            .for_model("zinb")
+            .with_parameterization("mean_prob")
+            .as_mixture(2)
+            .with_hierarchical_mu()
+            .build()
+        )
+        model_fn, _, _ = create_model(config, validate=False)
+
+        with numpyro.handlers.seed(rng_seed=4):
+            trace = numpyro.handlers.trace(model_fn).get_trace(
+                n_cells=small_dims["n_cells"],
+                n_genes=small_dims["n_genes"],
+                model_config=config,
+                counts=None,
+            )
+
+        assert "log_mu_loc" in trace
+        assert "mu" in trace
+        assert "gate" in trace
+
+    def test_zinbvcp_with_hierarchical_mu_and_gate(self, small_dims):
+        """hierarchical_mu + hierarchical_gate on ZINBVCP."""
+        from scribe.models.presets.factory import create_model
+
+        config = (
+            ModelConfigBuilder()
+            .for_model("zinbvcp")
+            .with_parameterization("mean_odds")
+            .as_mixture(2)
+            .with_hierarchical_mu()
+            .with_hierarchical_gate()
+            .build()
+        )
+        model_fn, _, _ = create_model(config, validate=False)
+
+        with numpyro.handlers.seed(rng_seed=5):
+            trace = numpyro.handlers.trace(model_fn).get_trace(
+                n_cells=small_dims["n_cells"],
+                n_genes=small_dims["n_genes"],
+                model_config=config,
+                counts=None,
+            )
+
+        assert "log_mu_loc" in trace
+        assert "logit_gate_loc" in trace
+        assert "mu" in trace
+        assert "gate" in trace

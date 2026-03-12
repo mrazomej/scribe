@@ -237,6 +237,7 @@ def get_active_parameters(
     is_mixture: bool = False,
     is_zero_inflated: bool = False,
     uses_variable_capture: bool = False,
+    hierarchical_mu: bool = False,
     hierarchical_p: bool = False,
     hierarchical_gate: bool = False,
 ) -> Set[str]:
@@ -255,6 +256,8 @@ def get_active_parameters(
         Whether this is a zero-inflated model
     uses_variable_capture : bool
         Whether this model uses variable capture
+    hierarchical_mu : bool
+        Whether hierarchical mu/r prior across components is enabled
     hierarchical_p : bool
         Whether hierarchical p/phi prior is enabled
     hierarchical_gate : bool
@@ -268,6 +271,18 @@ def get_active_parameters(
     # Start with parameterization-specific parameters
     mapping = get_parameterization_mapping(parameterization)
     active_params = mapping.get_all_parameters().copy()
+
+    # Add hierarchical mu hyperparameters when flag is set
+    if hierarchical_mu:
+        if parameterization in (
+            Parameterization.MEAN_ODDS,
+            Parameterization.ODDS_RATIO,
+            Parameterization.MEAN_PROB,
+            Parameterization.LINKED,
+        ):
+            active_params.update({"log_mu_loc", "log_mu_scale"})
+        else:
+            active_params.update({"log_r_loc", "log_r_scale"})
 
     # Add hierarchical hyperparameters when flags are set
     if hierarchical_p:

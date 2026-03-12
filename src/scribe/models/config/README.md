@@ -48,12 +48,18 @@ The primary interface for creating configurations. Provides fluent methods:
 - `.with_parameterization(param)`: Set parameterization type
 - `.with_inference(method)`: Set inference method
 - `.unconstrained()`: Use unconstrained parameterization
-- `.with_hierarchical_p()`: Enable gene-specific p/phi hierarchical prior (requires unconstrained)
-- `.with_hierarchical_gate()`: Enable gene-specific gate hierarchical prior (ZI models only, requires unconstrained)
-- `.with_capture_priors(organism, eta_capture, mu_eta, shared_capture_scaling)`: Configure biology-informed capture prior (VCP models)
+- `.with_hierarchical_mu()`: Enable hierarchical mu (or r) across mixture
+  components for shrinkage (requires unconstrained, mixture model)
+- `.with_hierarchical_p()`: Enable gene-specific p/phi hierarchical prior
+  (requires unconstrained)
+- `.with_hierarchical_gate()`: Enable gene-specific gate hierarchical prior (ZI
+  models only, requires unconstrained)
+- `.with_capture_priors(organism, eta_capture, mu_eta, shared_capture_scaling)`:
+  Configure biology-informed capture prior (VCP models)
 - `.as_mixture(n_components, mixture_params)`: Configure as mixture
 - `.with_guide_families(guide_families)`: Set per-parameter guide families
-- `.with_joint_params(joint_params)`: Specify parameters to model jointly via JointLowRankGuide
+- `.with_joint_params(joint_params)`: Specify parameters to model jointly via
+  JointLowRankGuide
 - `.with_priors(**priors)`: Set prior parameters
 - `.with_guides(**guides)`: Set guide parameters
 - `.with_vae(**vae_params)`: Configure VAE parameters
@@ -113,9 +119,9 @@ factorization:
 #### Biology-Informed Capture Prior
 
 For VCP models (`nbvcp`, `zinbvcp`), the capture probability can be anchored to
-biological knowledge about total cellular mRNA content. The biology-informed path
-activates automatically when any of `priors.organism`, `priors.eta_capture`, or
-`priors.mu_eta` is set.
+biological knowledge about total cellular mRNA content. The biology-informed
+path activates automatically when any of `priors.organism`,
+`priors.eta_capture`, or `priors.mu_eta` is set.
 
 | `priors.eta_capture` | `shared_capture_scaling` | Behavior |
 |----------------------|--------------------------|----------|
@@ -360,6 +366,15 @@ config = (ModelConfigBuilder()
     .unconstrained()
     .with_hierarchical_p()
     .with_hierarchical_gate()
+    .build())
+
+# Hierarchical mu across mixture components — shrinks per-component means
+# toward a shared gene-level baseline (requires mixture model)
+config = (ModelConfigBuilder()
+    .for_model("nbdm")
+    .with_parameterization("mean_prob")
+    .as_mixture(3)
+    .with_hierarchical_mu()
     .build())
 ```
 

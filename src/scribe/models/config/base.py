@@ -102,6 +102,7 @@ class ModelConfig(BaseModel):
         d.setdefault("hierarchical_dataset_mu", False)
         d.setdefault("hierarchical_dataset_p", "none")
         d.setdefault("hierarchical_dataset_gate", False)
+        d.setdefault("hierarchical_mu", False)
         d.setdefault("shared_capture_scaling", False)
         d.setdefault("joint_params", None)
 
@@ -124,9 +125,7 @@ class ModelConfig(BaseModel):
         extra = getattr(priors_obj, "__pydantic_extra__", None) or {}
         if old_capture == "biology_informed" or old_mrna_mean is not None:
             if "eta_capture" not in extra:
-                log_M0 = (
-                    math.log(old_mrna_mean) if old_mrna_mean else 12.2
-                )
+                log_M0 = math.log(old_mrna_mean) if old_mrna_mean else 12.2
                 sigma_M = old_mrna_sigma if old_mrna_sigma else 0.5
                 extra["eta_capture"] = (log_M0, sigma_M)
         if old_organism is not None and "organism" not in extra:
@@ -164,6 +163,16 @@ class ModelConfig(BaseModel):
         description=(
             "Gene-specific gate with hierarchical prior. "
             "Only valid for zero-inflated models. Requires unconstrained=True."
+        ),
+    )
+    hierarchical_mu: bool = Field(
+        False,
+        description=(
+            "Hierarchical prior on mu (or r) across mixture components. "
+            "Provides shrinkage so that component-level means are drawn "
+            "from a shared gene-level population distribution. "
+            "Requires unconstrained=True and a mixture model "
+            "(n_components >= 2)."
         ),
     )
 
@@ -373,12 +382,28 @@ class ModelConfig(BaseModel):
                 f"{self.base_model!r}."
             )
         if self.hierarchical_p and not self.unconstrained:
-            raise ValueError(
-                "hierarchical_p=True requires unconstrained=True."
-            )
+            raise ValueError("hierarchical_p=True requires unconstrained=True.")
         if self.hierarchical_gate and not self.unconstrained:
             raise ValueError(
                 "hierarchical_gate=True requires unconstrained=True."
+            )
+        # Hierarchical mu validation
+        if self.hierarchical_mu and not self.unconstrained:
+            raise ValueError(
+                "hierarchical_mu=True requires unconstrained=True."
+            )
+        if self.hierarchical_mu and not self.is_mixture:
+            raise ValueError(
+                "hierarchical_mu=True requires a mixture model "
+                "(n_components >= 2). The hierarchical prior on mu "
+                "provides shrinkage across mixture components."
+            )
+        if self.hierarchical_mu and self.hierarchical_dataset_mu:
+            raise ValueError(
+                "hierarchical_mu=True and hierarchical_dataset_mu=True "
+                "cannot be set simultaneously. hierarchical_mu provides "
+                "shrinkage across mixture components; "
+                "hierarchical_dataset_mu across datasets."
             )
         # Dataset hierarchy validation
         valid_dataset_p = {"none", "scalar", "gene_specific", "two_level"}
@@ -400,10 +425,7 @@ class ModelConfig(BaseModel):
             raise ValueError(
                 "hierarchical_dataset_mu=True requires unconstrained=True."
             )
-        if (
-            self.hierarchical_dataset_p != "none"
-            and not self.unconstrained
-        ):
+        if self.hierarchical_dataset_p != "none" and not self.unconstrained:
             raise ValueError(
                 "hierarchical_dataset_p != 'none' requires "
                 "unconstrained=True."
@@ -447,18 +469,14 @@ class ModelConfig(BaseModel):
                 "horseshoe_p already implies a hierarchical prior."
             )
         if self.horseshoe_p and not self.unconstrained:
-            raise ValueError(
-                "horseshoe_p=True requires unconstrained=True."
-            )
+            raise ValueError("horseshoe_p=True requires unconstrained=True.")
         if self.horseshoe_gate and self.hierarchical_gate:
             raise ValueError(
                 "horseshoe_gate and hierarchical_gate are mutually exclusive. "
                 "horseshoe_gate already implies a hierarchical prior."
             )
         if self.horseshoe_gate and not self.unconstrained:
-            raise ValueError(
-                "horseshoe_gate=True requires unconstrained=True."
-            )
+            raise ValueError("horseshoe_gate=True requires unconstrained=True.")
         if self.horseshoe_gate and not self.is_zero_inflated:
             raise ValueError(
                 "horseshoe_gate=True requires a zero-inflated model "
@@ -479,10 +497,7 @@ class ModelConfig(BaseModel):
                 raise ValueError(
                     "horseshoe_dataset_mu=True requires unconstrained=True."
                 )
-        if (
-            self.horseshoe_dataset_p
-            and self.hierarchical_dataset_p != "none"
-        ):
+        if self.horseshoe_dataset_p and self.hierarchical_dataset_p != "none":
             raise ValueError(
                 "horseshoe_dataset_p and hierarchical_dataset_p are "
                 "mutually exclusive. horseshoe_dataset_p already implies "
@@ -644,6 +659,7 @@ class ModelConfig(BaseModel):
             is_mixture,
             is_zero_inflated,
             uses_variable_capture,
+            hierarchical_mu=self.hierarchical_mu,
             hierarchical_p=self.hierarchical_p,
             hierarchical_gate=self.hierarchical_gate,
         )
@@ -695,9 +711,7 @@ class ModelConfig(BaseModel):
         priors.mu_eta is set, signalling that the model should use
         the eta_c parameterization instead of a flat prior.
         """
-        extra = (
-            getattr(self.priors, "__pydantic_extra__", None) or {}
-        )
+        extra = getattr(self.priors, "__pydantic_extra__", None) or {}
         return any(
             extra.get(k) is not None
             for k in ("organism", "eta_capture", "mu_eta")
@@ -708,8 +722,14 @@ class ModelConfig(BaseModel):
     @computed_field
     @property
     def is_hierarchical(self) -> bool:
-        """Check if this model uses any hierarchical prior (p/phi or gate)."""
-        return self.hierarchical_p or self.hierarchical_gate
+        """
+        Check if this model uses any hierarchical prior (mu, p/phi, or gate).
+        """
+        return (
+            self.hierarchical_mu
+            or self.hierarchical_p
+            or self.hierarchical_gate
+        )
 
     # --------------------------------------------------------------------------
 
@@ -731,6 +751,7 @@ class ModelConfig(BaseModel):
             is_mixture=self.is_mixture,
             is_zero_inflated=self.is_zero_inflated,
             uses_variable_capture=self.uses_variable_capture,
+            hierarchical_mu=self.hierarchical_mu,
             hierarchical_p=self.hierarchical_p,
             hierarchical_gate=self.hierarchical_gate,
         )
@@ -815,9 +836,7 @@ class ModelConfig(BaseModel):
         # Use priors field (populated by builder)
         current = self.get_prior_overrides()
         updated = {**current, **priors}
-        return self.model_copy(
-            update={"priors": PriorOverrides(**updated)}
-        )
+        return self.model_copy(update={"priors": PriorOverrides(**updated)})
 
     # --------------------------------------------------------------------------
 

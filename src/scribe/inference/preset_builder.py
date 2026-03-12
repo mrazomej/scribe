@@ -53,6 +53,7 @@ def build_config_from_preset(
     parameterization: str = "canonical",
     inference_method: str = "svi",
     unconstrained: bool = False,
+    hierarchical_mu: bool = False,
     hierarchical_p: bool = False,
     hierarchical_gate: bool = False,
     n_datasets: Optional[int] = None,
@@ -322,6 +323,9 @@ def build_config_from_preset(
 
     if unconstrained:
         builder.unconstrained()
+
+    if hierarchical_mu:
+        builder.with_hierarchical_mu()
 
     if hierarchical_p:
         builder.with_hierarchical_p()

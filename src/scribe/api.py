@@ -205,6 +205,7 @@ def fit(
     # Model options
     parameterization: str = "canonical",
     unconstrained: bool = False,
+    hierarchical_mu: bool = False,
     hierarchical_p: bool = False,
     hierarchical_gate: bool = False,
     # Multi-dataset hierarchy options
@@ -314,6 +315,13 @@ def fit(
     unconstrained : bool, default=False
         If True, use Normal+transform instead of constrained distributions.
         This can help with optimization in some cases.
+
+    hierarchical_mu : bool, default=False
+        Hierarchical prior on mu (or r) across mixture components.
+        Per-component means are drawn from a shared gene-level population
+        distribution, providing adaptive shrinkage: most genes share
+        similar expression across cell types, with only some deviating.
+        Requires ``unconstrained=True`` and ``n_components >= 2``.
 
     n_components : int, optional
         Number of mixture components for cell type discovery.
@@ -829,6 +837,7 @@ def fit(
             parameterization=parameterization.lower(),
             inference_method=inference_method.lower(),
             unconstrained=unconstrained,
+            hierarchical_mu=hierarchical_mu,
             hierarchical_p=hierarchical_p,
             hierarchical_gate=hierarchical_gate,
             n_datasets=n_datasets,
