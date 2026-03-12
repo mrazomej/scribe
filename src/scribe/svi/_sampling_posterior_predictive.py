@@ -10,45 +10,80 @@ from jax import random
 from ..sampling import generate_predictive_samples, sample_variational_posterior
 
 
+def _build_cell_specific_sample_keys(param_specs: list) -> set:
+    """Collect constrained names of cell-specific parameters.
+
+    Parameters
+    ----------
+    param_specs : list
+        Parameter specifications from ``model_config.param_specs``.
+
+    Returns
+    -------
+    set
+        Constrained parameter names (matching posterior sample keys)
+        that are cell-specific.
+    """
+    if not param_specs:
+        return set()
+    return {
+        spec.name
+        for spec in param_specs
+        if getattr(spec, "is_cell_specific", False)
+    }
+
+
 def _merge_per_dataset_posterior_samples(
     per_dataset_samples: List[Dict[str, jnp.ndarray]],
-    promoted_keys: set,
+    cell_specific_keys: set,
 ) -> Dict[str, jnp.ndarray]:
     """Re-stack per-dataset posterior samples into a single dict.
 
-    For keys that were promoted during ``concat`` (i.e. they carry a
-    dataset axis), stack the per-dataset arrays along axis 1 (after the
-    sample axis).  For shared keys (not promoted), take the value from
-    dataset 0.
+    For concatenated independent fits, every non-cell-specific
+    parameter is per-dataset (independently estimated).  Three
+    categories:
+
+    1. **Cell-specific** (from ``ParamSpec.is_cell_specific``):
+       concatenated at axis 1 to reassemble the full cell population.
+    2. **Shape-compatible** (same shape across datasets): stacked at
+       axis 1 to create the dataset dimension.
+    3. **Shape-incompatible** (different shapes, e.g. deterministic
+       sites that depend on cell count): concatenated at axis 1.
 
     Parameters
     ----------
     per_dataset_samples : list of dict
         One posterior-sample dict per dataset, each with arrays of shape
         ``(n_samples, ...)``.
-    promoted_keys : set
-        Parameter names that were stacked along a dataset axis during
-        ``concat``.  These get re-stacked at axis 1.
+    cell_specific_keys : set
+        Constrained parameter names that are cell-specific (e.g.
+        ``p_capture``).
 
     Returns
     -------
     Dict[str, jnp.ndarray]
-        Merged posterior samples.  Promoted keys have shape
-        ``(n_samples, n_datasets, ...)``.
+        Merged posterior samples.  Per-dataset keys with matching shapes
+        have ``(n_samples, n_datasets, ...)``.
     """
     reference = per_dataset_samples[0]
     merged: Dict[str, jnp.ndarray] = {}
 
     for key in reference:
-        if key in promoted_keys:
-            # Stack along axis=1 (after the n_samples axis)
-            merged[key] = jnp.stack(
-                [ds_samples[key] for ds_samples in per_dataset_samples],
-                axis=1,
-            )
+        arrays = [ds_samples[key] for ds_samples in per_dataset_samples]
+
+        if key in cell_specific_keys:
+            # Known cell-specific — concatenate along cell axis
+            merged[key] = jnp.concatenate(arrays, axis=1)
         else:
-            # Shared parameter — identical across datasets, take from first
-            merged[key] = reference[key]
+            # Check if shapes match (they differ when n_cells varies
+            # across datasets, e.g. for deterministic sites).
+            shapes_match = all(a.shape == arrays[0].shape for a in arrays)
+            if shapes_match:
+                merged[key] = jnp.stack(arrays, axis=1)
+            else:
+                # Shape mismatch implies a cell-dependent quantity —
+                # concatenate along axis 1 (cell axis after sample axis)
+                merged[key] = jnp.concatenate(arrays, axis=1)
 
     return merged
 
@@ -207,11 +242,14 @@ class PosteriorPredictiveSamplingMixin:
 
         Iterates over ``get_dataset(d)`` to produce single-dataset
         views where ``Predictive`` works, then re-stacks promoted
-        keys along the dataset axis.
+        keys along the dataset axis and concatenates cell-specific
+        keys along the cell axis.
         """
         n_datasets = self.model_config.n_datasets
         ds_indices = getattr(self, "_dataset_indices", None)
-        promoted = getattr(self, "_promoted_dataset_keys", None) or set()
+        cell_keys = _build_cell_specific_sample_keys(
+            self.model_config.param_specs or []
+        )
 
         per_dataset_samples: List[Dict[str, jnp.ndarray]] = []
 
@@ -236,7 +274,7 @@ class PosteriorPredictiveSamplingMixin:
             per_dataset_samples.append(ds_samples)
 
         return _merge_per_dataset_posterior_samples(
-            per_dataset_samples, promoted
+            per_dataset_samples, cell_keys
         )
 
     def get_predictive_samples(

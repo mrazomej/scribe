@@ -383,6 +383,16 @@ cross-gene correlation) and subsequent datasets use posterior draws.  See
 `paper/_denoising.qmd` §"Cross-gene correlations in denoised counts" for the
 mathematical derivation.
 
+**Multi-dataset / concatenated results:** When results from independent fits
+are combined via `ScribeSVIResults.concat`, `get_posterior_samples` (and by
+extension `preserve_correlations=True`) automatically decomposes the sampling
+into per-dataset calls via `get_dataset(i)`, draws posterior samples from each
+single-dataset guide independently, and re-stacks the results.  This is
+transparent — no extra arguments are needed.  For jointly hierarchical models
+(fit with `hierarchical_dataset_*` or `horseshoe_dataset` flags), the standard
+`Predictive` path is used directly since the guide was built for the
+multi-dataset structure.
+
 **Amortized Capture Probability and PPC:**
 
 When using amortized capture probability (enabled via
