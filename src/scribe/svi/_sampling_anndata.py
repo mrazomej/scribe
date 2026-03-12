@@ -32,6 +32,7 @@ class DenoisedAnnDataMixin:
         use_mean: bool = True,
         n_posterior_samples: Optional[int] = None,
         include_original_counts: bool = True,
+        preserve_correlations: bool = True,
         path: Optional[str] = None,
         verbose: bool = True,
     ) -> Union["AnnData", List["AnnData"]]:
@@ -40,9 +41,20 @@ class DenoisedAnnDataMixin:
         Runs Bayesian denoising on the observed counts and packages the
         result into an :class:`~anndata.AnnData` object with the original
         cell/gene metadata.  Supports generating multiple denoised
-        realisations: the first dataset uses MAP parameter estimates and
-        subsequent datasets each use a different draw from the variational
-        posterior.
+        realisations.
+
+        When ``preserve_correlations=True`` (the default), **all**
+        datasets — including the first — are generated from posterior
+        parameter draws.  This preserves cross-gene correlations that
+        are encoded in the joint parameter posterior (see
+        ``paper/_denoising.qmd``, @sec-denoising-correlations).  For
+        SVI models fitted with a joint low-rank guide, these draws
+        capture both within- and across-parameter correlations via the
+        chain-rule sampling of @sec-joint-low-rank-guide.
+
+        When ``preserve_correlations=False``, the first dataset uses MAP
+        parameter estimates (a single point, no cross-gene correlation)
+        and subsequent datasets use posterior draws.
 
         Parameters
         ----------
@@ -62,9 +74,7 @@ class DenoisedAnnDataMixin:
             ``("mean", "sample")`` - posterior mean for non-zero
             positions, stochastic sample at ZINB zeros.
         n_datasets : int, optional
-            Number of denoised datasets to generate.  Dataset 1 uses MAP
-            estimates; datasets 2..N each use a different posterior sample.
-            Default: 1.
+            Number of denoised datasets to generate.  Default: 1.
         rng_key : random.PRNGKey or None, optional
             JAX PRNG key.  Defaults to ``random.PRNGKey(42)`` when
             ``None``.
@@ -72,13 +82,22 @@ class DenoisedAnnDataMixin:
             Process cells in batches of this size to limit memory.
         use_mean : bool, optional
             If ``True``, replace undefined MAP values (NaN) with posterior
-            means.  Default: ``True``.
+            means.  Only used when ``preserve_correlations=False``
+            (MAP-based first dataset).  Default: ``True``.
         n_posterior_samples : int or None, optional
-            Number of posterior samples to draw from the guide when
-            generating datasets 2..N.  Defaults to ``n_datasets - 1``.
+            Number of posterior samples to draw from the guide.  Defaults
+            to ``n_datasets`` when ``preserve_correlations=True`` or
+            ``n_datasets - 1`` when ``False``.
         include_original_counts : bool, optional
             If ``True``, store the input counts in
             ``.layers["original_counts"]``.  Default: ``True``.
+        preserve_correlations : bool, optional
+            If ``True``, all datasets use posterior draws so that
+            cross-gene correlations from the joint parameter posterior
+            are propagated into the denoised counts.  If ``False``, the
+            first dataset uses MAP estimates (no cross-gene correlation)
+            and subsequent datasets use posterior draws.  Default:
+            ``True``.
         path : str or None, optional
             If provided, write the AnnData to this h5ad path.  For
             multiple datasets, files are named
@@ -120,50 +139,63 @@ class DenoisedAnnDataMixin:
         n_ds = getattr(self.model_config, "n_datasets", None)
         ds_idx = getattr(self, "_dataset_indices", None)
 
-        # --- Dataset 1: MAP-based denoising ---
-        if verbose:
-            print(f"Generating denoised dataset 1/{n_datasets} (MAP)...")
-        rng_key, map_key = random.split(rng_key)
-        denoised_map = self.denoise_counts_map(
-            counts=counts,
-            method=method,
-            rng_key=map_key,
-            cell_batch_size=cell_batch_size,
-            use_mean=use_mean,
-            store_result=False,
-            verbose=verbose,
-        )
+        # Determine how many posterior-sample-based datasets to produce
+        # and whether dataset 1 uses MAP or a posterior draw.
+        if preserve_correlations:
+            n_posterior_datasets = n_datasets
+            map_first = False
+        else:
+            n_posterior_datasets = n_datasets - 1
+            map_first = True
 
-        results.append(
-            self._build_denoised_adata(
-                denoised=denoised_map,
+        # --- Dataset 1 from MAP (only when preserve_correlations=False) ---
+        if map_first:
+            if verbose:
+                print(
+                    f"Generating denoised dataset 1/{n_datasets} (MAP)..."
+                )
+            rng_key, map_key = random.split(rng_key)
+            denoised_map = self.denoise_counts_map(
                 counts=counts,
-                obs=obs,
-                var=var,
-                uns=uns,
                 method=method,
-                dataset_index=0,
-                parameter_source="map",
-                include_original_counts=include_original_counts,
+                rng_key=map_key,
+                cell_batch_size=cell_batch_size,
+                use_mean=use_mean,
+                store_result=False,
+                verbose=verbose,
             )
-        )
 
-        # --- Datasets 2..N: posterior-sample-based denoising ---
-        if n_datasets > 1:
+            results.append(
+                self._build_denoised_adata(
+                    denoised=denoised_map,
+                    counts=counts,
+                    obs=obs,
+                    var=var,
+                    uns=uns,
+                    method=method,
+                    dataset_index=0,
+                    parameter_source="map",
+                    include_original_counts=include_original_counts,
+                )
+            )
+
+        # --- Posterior-sample-based datasets ---
+        if n_posterior_datasets > 0:
             n_post = (
                 n_posterior_samples
                 if n_posterior_samples is not None
-                else n_datasets - 1
+                else n_posterior_datasets
             )
 
-            # Draw posterior samples if not already available
-            if self.posterior_samples is None:
+            # Draw posterior samples if not already available or if we
+            # need more than what is cached.
+            if (
+                self.posterior_samples is None
+                or self.posterior_samples["r"].shape[0] < n_post
+            ):
                 rng_key, post_key = random.split(rng_key)
                 if verbose:
-                    print(
-                        f"Drawing {n_post} posterior samples for "
-                        f"datasets 2..{n_datasets}..."
-                    )
+                    print(f"Drawing {n_post} posterior samples...")
                 self.get_posterior_samples(
                     rng_key=post_key,
                     n_samples=n_post,
@@ -185,12 +217,18 @@ class DenoisedAnnDataMixin:
             )
 
             n_available = r_post.shape[0]
-            for i in range(n_datasets - 1):
+
+            # Offset for dataset numbering: when MAP is first, posterior
+            # datasets start at index 1; otherwise they start at 0.
+            offset = 1 if map_first else 0
+
+            for i in range(n_posterior_datasets):
                 idx = i % n_available
+                ds_num = i + offset
                 if verbose:
                     print(
                         f"Generating denoised dataset "
-                        f"{i + 2}/{n_datasets} "
+                        f"{ds_num + 1}/{n_datasets} "
                         f"(posterior sample {idx})..."
                     )
 
@@ -259,7 +297,7 @@ class DenoisedAnnDataMixin:
                         var=var,
                         uns=uns,
                         method=method,
-                        dataset_index=i + 1,
+                        dataset_index=ds_num,
                         parameter_source=f"posterior_sample_{idx}",
                         include_original_counts=include_original_counts,
                     )
