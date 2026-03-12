@@ -1,7 +1,7 @@
 # SCRIBE: Single-Cell RNA-seq Inference with Bayesian Estimation
 
 SCRIBE is a comprehensive Python package for Bayesian analysis of single-cell
-RNA sequencing (scRNA-seq) data. Built on JAX and NumPyro, SCRIBE provides a
+RNA sequencing (scRNA-seq) data. Built on `JAX` and `NumPyro`, SCRIBE provides a
 unified framework for probabilistic modeling, variational inference, uncertainty
 quantification, differential expression, and model comparison in single-cell
 genomics.
@@ -13,14 +13,14 @@ genomics.
 </p>
 
 SCRIBE is grounded in a biophysical generative model of scRNA-seq count data.
-Transcription (rate *b*) and degradation (rate *gamma*) set the steady-state
+Transcription (rate $b$) and degradation (rate $\gamma$) set the steady-state
 mRNA content per gene, giving rise to a Negative Binomial distribution over
-true molecular counts *m_g* with parameters *r_g* and *p_g*. During library
+true molecular counts $m_g$ with parameters $r_g$ and $p_g$. During library
 preparation each molecule is independently captured with cell-specific
-probability *nu^(c)*, so the observed UMI count *u_g* follows a Binomial
-sub-sampling of *m_g*. Marginalizing over the latent counts yields a Negative
+probability $\nu^{(c)}$, so the observed UMI count $u_g$ follows a Binomial
+sub-sampling of $m_g$. Marginalizing over the latent counts yields a Negative
 Binomial likelihood for the observations with an effective success probability
-*p_hat_g^(c)* that absorbs the capture efficiency.
+$\hat{p}_g^{(c)}$ that absorbs the capture efficiency.
 
 ## Why SCRIBE?
 
