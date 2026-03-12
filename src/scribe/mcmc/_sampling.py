@@ -329,7 +329,7 @@ class SamplingMixin:
         rng_key: Optional[random.PRNGKey] = None,
         cell_batch_size: Optional[int] = None,
         include_original_counts: bool = True,
-        preserve_correlations: bool = True,
+        preserve_correlations: bool = False,
         path: Optional[str] = None,
         verbose: bool = True,
     ) -> Union["AnnData", List["AnnData"]]:
@@ -340,16 +340,15 @@ class SamplingMixin:
         cell/gene metadata.  Supports generating multiple denoised
         realisations.
 
-        When ``preserve_correlations=True`` (the default), **all**
-        datasets — including the first — use individual MCMC draws.
-        Since each MCMC draw is a full joint sample from the posterior,
-        cross-gene correlations are automatically preserved in the
-        denoised counts (see ``paper/_denoising.qmd``,
-        @sec-denoising-correlations).
+        When ``preserve_correlations=False`` (the default), the first
+        dataset uses the posterior mean of MCMC parameters and subsequent
+        datasets use individual MCMC draws.
 
-        When ``preserve_correlations=False``, the first dataset uses the
-        posterior mean of MCMC parameters (averaging destroys cross-gene
-        correlations) and subsequent datasets use individual MCMC draws.
+        When ``preserve_correlations=True``, **all** datasets —
+        including the first — use individual MCMC draws.  Since each
+        MCMC draw is a full joint sample from the posterior, cross-gene
+        correlations are automatically preserved in the denoised counts
+        (see ``paper/_denoising.qmd``, @sec-denoising-correlations).
 
         Parameters
         ----------
@@ -383,7 +382,7 @@ class SamplingMixin:
             propagated into the denoised counts.  If ``False``, the
             first dataset uses the posterior mean of parameters (no
             cross-gene correlation) and subsequent datasets use
-            individual draws.  Default: ``True``.
+            individual draws.  Default: ``False``.
         path : str or None, optional
             If provided, write the AnnData to this h5ad path.  For
             multiple datasets, files are named
