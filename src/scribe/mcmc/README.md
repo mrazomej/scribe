@@ -236,13 +236,13 @@ samples from the biological prior, genuine NB zeros are kept at zero.
 **Exporting Denoised Counts as AnnData / h5ad:**
 
 ```python
-# Single denoised dataset (default: individual MCMC draw, preserving correlations)
+# Single denoised dataset (default: posterior mean)
 adata_denoised = results.get_denoised_anndata(
     counts=observed_counts,
     rng_key=rng_key,
 )
 
-# Multiple datasets — all use individual MCMC draws (cross-gene correlations preserved)
+# Multiple datasets — first uses posterior mean, rest use MCMC draws
 adatas = results.get_denoised_anndata(
     counts=observed_counts,
     rng_key=rng_key,
@@ -250,24 +250,24 @@ adatas = results.get_denoised_anndata(
     path="denoised.h5ad",  # writes denoised_0.h5ad .. denoised_4.h5ad
 )
 
-# Opt out: first dataset uses posterior mean (no cross-gene correlations), rest draws
+# Opt in: all datasets use individual MCMC draws (preserves cross-gene correlations)
 adatas = results.get_denoised_anndata(
     counts=observed_counts,
     rng_key=rng_key,
     n_datasets=5,
-    preserve_correlations=False,
+    preserve_correlations=True,
 )
 ```
 
 **Preserving Cross-Gene Correlations (`preserve_correlations`):**
 
-By default, `preserve_correlations=True` ensures that **all** denoised
-datasets use individual MCMC draws.  Since each MCMC draw is a full joint
-sample from the posterior, cross-gene correlations are automatically preserved
-in the denoised counts.  When `preserve_correlations=False`, the first dataset
-uses the posterior mean of parameters (averaging destroys correlations) and
-subsequent datasets use individual draws.  See `paper/_denoising.qmd`
-§"Cross-gene correlations in denoised counts" for the mathematical derivation.
+By default, `preserve_correlations=False`: the first denoised dataset uses the
+posterior mean of parameters and subsequent datasets use individual MCMC draws.
+Setting `preserve_correlations=True` makes **all** denoised datasets use
+individual MCMC draws.  Since each MCMC draw is a full joint sample from the
+posterior, cross-gene correlations are automatically preserved in the denoised
+counts.  See `paper/_denoising.qmd` §"Cross-gene correlations in denoised
+counts" for the mathematical derivation.
 
 **Mixture Model Analysis:**
 ```python
