@@ -291,6 +291,12 @@ for i in range(5):
     print(f"Component {i} MAP estimates:", component.get_map())
 ```
 
+When using annotation-guided mixtures via `annotation_key` with inferred
+`n_components`, SCRIBE now auto-downgrades to non-mixture mode when
+`annotation_min_cells` filtering leaves zero or one surviving annotation class.
+This avoids invalid single-component mixture construction. If `n_components` is
+set explicitly, strict mixture behavior is preserved.
+
 ### Model Comparison Workflow
 
 ```python

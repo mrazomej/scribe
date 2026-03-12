@@ -909,6 +909,63 @@ class TestSVISmoke:
         )
         assert result_filtered.n_components == 2
 
+    def test_fit_api_annotation_min_cells_single_survivor_auto_downgrades(self):
+        """Inferred annotation mixtures auto-downgrade when <=1 label survives."""
+        import anndata
+        import scribe
+
+        n_genes = 5
+        rng = np.random.default_rng(42)
+        # Build a dataset where min_cells keeps only one annotation label.
+        labels = ["A"] * 10 + ["B"] * 1
+        X = rng.poisson(5, (11, n_genes)).astype(np.float32)
+        adata = anndata.AnnData(X=X, obs=pd.DataFrame({"ct": labels}))
+
+        # The API should warn and downgrade to canonical non-mixture mode.
+        with pytest.warns(
+            UserWarning,
+            match=r"Auto-downgrading to non-mixture mode",
+        ):
+            result = scribe.fit(
+                adata,
+                model="nbdm",
+                n_steps=3,
+                batch_size=11,
+                annotation_key="ct",
+                annotation_confidence=3.0,
+                annotation_min_cells=5,
+                mixture_params=["r"],
+                seed=42,
+            )
+
+        assert result.n_components is None
+
+    def test_fit_api_annotation_min_cells_single_survivor_explicit_strict(self):
+        """Explicit n_components keeps strict mixture validation behavior."""
+        import anndata
+        import scribe
+
+        n_genes = 5
+        rng = np.random.default_rng(42)
+        # Keep the same one-survivor label setup used in the downgrade test.
+        labels = ["A"] * 10 + ["B"] * 1
+        X = rng.poisson(5, (11, n_genes)).astype(np.float32)
+        adata = anndata.AnnData(X=X, obs=pd.DataFrame({"ct": labels}))
+
+        # With explicit n_components, the API should not auto-downgrade.
+        result = scribe.fit(
+            adata,
+            model="nbdm",
+            n_components=3,
+            n_steps=3,
+            batch_size=11,
+            annotation_key="ct",
+            annotation_confidence=3.0,
+            annotation_min_cells=5,
+            seed=42,
+        )
+        assert result.n_components == 3
+
     def test_svi_zinb_mixture_with_annotation(self):
         """Run SVI on ZINB mixture with annotation priors."""
         from scribe.inference import run_scribe
