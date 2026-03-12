@@ -759,3 +759,501 @@ In practice, one can summarize this distribution by its mean (averaging
 intervals. For downstream analyses that require a single denoised count matrix,
 the posterior mean provides a natural point estimate with well-understood
 shrinkage properties.
+
+## Cross-gene correlations in denoised counts {#sec-denoising-correlations}
+
+The denoising formulas derived above treat each gene independently: the
+posterior distribution of $m_g$ given $u_g$ depends only on the parameters
+$(r_g, p, \nu_c, g)$ associated with gene $g$. When these parameters are fixed
+at their maximum a posteriori (MAP) estimates, the denoised counts for
+different genes are statistically independent. However, in a fully Bayesian
+treatment, the model parameters are themselves random variables with a joint
+posterior distribution. A natural question arises: **does the posterior
+uncertainty in the model parameters induce correlations between the denoised
+counts of different genes?** We will show that the answer is yes, and that the
+structure of these correlations is both analytically tractable and
+computationally efficient to exploit.
+
+### Conditional independence of genes given parameters
+
+We first establish that genes are conditionally independent in the generative
+model, given the model parameters. Recall from @sec-denoising that in the
+Poisson-Gamma representation, the latent rate for gene $g$ is drawn
+independently from a gamma distribution:
+
+$$
+\lambda_g \sim \text{Gamma}(r_g, \theta),
+\quad g = 1, 2, \ldots, G,
+$${#eq-denoising-corr-gamma-prior}
+
+where $\theta = p / (1 - p)$ (or $\theta_g = p_g / (1 - p_g)$ in the
+hierarchical model of @sec-hierarchical-p). Conditioned on $\lambda_g$, the
+captured and uncaptured transcript counts are independent Poisson random
+variables (@eq-denoising-poisson-captured and @eq-denoising-poisson-dropped).
+Since the $\lambda_g$ are drawn independently across genes, the full set of
+latent rates $\underline{\lambda} = (\lambda_1, \lambda_2, \ldots, \lambda_G)$
+is a collection of independent random variables given the parameters:
+
+$$
+\lambda_g \perp \lambda_{g'} \mid r_g, r_{g'}, p, \nu_c,
+\quad \text{for all } g \neq g'.
+$${#eq-denoising-corr-lambda-indep}
+
+It follows that the uncaptured transcript counts $d_g$ are also independent
+across genes given the parameters, since each $d_g$ depends only on its own
+latent rate $\lambda_g$ through the Poisson distribution
+(@eq-denoising-poisson-dropped). Therefore, the denoised counts
+$m_g = u_g + d_g$ are conditionally independent:
+
+$$
+m_g \perp m_{g'} \mid \underline{u}, \underline{r}, p, \nu_c,
+\quad \text{for all } g \neq g'.
+$${#eq-denoising-corr-conditional-indep}
+
+This conditional independence is a structural property of the generative model:
+genes do not interact directly in the likelihood. All coupling between genes is
+mediated by the shared (or hierarchically linked) parameters.
+
+### The law of total covariance
+
+We now derive the covariance between the denoised counts of two different genes
+$g$ and $g'$, marginalizing over the parameter posterior. Let $\underline{\Theta}$
+denote the full set of model parameters (including $\underline{r}$, $p$ or
+$\underline{p}$, $\nu_c$, and $g$ if applicable). The law of total covariance
+states that
+
+$$
+\text{Cov}(m_g, m_{g'} \mid \underline{u}) =
+\underbrace{
+\text{Cov}_{\underline{\Theta}}\!\left[
+    \langle m_g \mid u_g, \underline{\Theta} \rangle, \;
+    \langle m_{g'} \mid u_{g'}, \underline{\Theta} \rangle
+\right]
+}_{\text{covariance of conditional means}}
++
+\underbrace{
+\left\langle
+    \text{Cov}(m_g, m_{g'} \mid \underline{u}, \underline{\Theta})
+\right\rangle_{\underline{\Theta}}
+}_{\text{expected conditional covariance}}.
+$${#eq-denoising-corr-total-cov}
+
+Consider the second term. By the conditional independence established in
+@eq-denoising-corr-conditional-indep, for $g \neq g'$ the conditional
+covariance vanishes for every realization of $\underline{\Theta}$:
+
+$$
+\text{Cov}(m_g, m_{g'} \mid \underline{u}, \underline{\Theta}) = 0,
+\quad g \neq g'.
+$${#eq-denoising-corr-cond-cov-zero}
+
+Taking the expectation of zero over $\underline{\Theta}$ gives zero.
+Therefore, the law of total covariance simplifies to
+
+$$
+\boxed{
+\text{Cov}(m_g, m_{g'} \mid \underline{u}) =
+\text{Cov}_{\underline{\Theta}}\!\left[
+    \langle m_g \mid u_g, \underline{\Theta} \rangle, \;
+    \langle m_{g'} \mid u_{g'}, \underline{\Theta} \rangle
+\right],
+\quad g \neq g'.
+}
+$${#eq-denoising-corr-cross-gene-cov}
+
+This is a fundamental result: **all cross-gene correlation in the denoised
+counts arises from parameter uncertainty**. When the parameters are fixed (as
+in MAP-based denoising), the covariance between any two genes is exactly zero.
+Cross-gene correlations appear only when we account for the joint posterior
+distribution of the parameters.
+
+### The denoised mean as a function of the parameters
+
+To make @eq-denoising-corr-cross-gene-cov explicit, we need the conditional
+mean $\langle m_g \mid u_g, \underline{\Theta} \rangle$ as a function of the
+parameters. From @eq-denoising-posterior-mean, the posterior mean of the
+denoised count for gene $g$ in cell $c$ is
+
+$$
+f_g(\underline{\Theta}) \equiv
+\langle m_g \mid u_g, \underline{\Theta} \rangle =
+\frac{u_g + r_g (1 - \nu_c)(1 - p)}{\nu_c + p(1 - \nu_c)}.
+$${#eq-denoising-corr-fg-def}
+
+For the hierarchical model with gene-specific $p_g$
+(@sec-hierarchical-p), each gene has its own success probability, so this
+becomes
+
+$$
+f_g(\underline{\Theta}) =
+\frac{u_g + r_g (1 - \nu_c)(1 - p_g)}{\nu_c + p_g(1 - \nu_c)}.
+$${#eq-denoising-corr-fg-hierarchical}
+
+In either case, the cross-gene covariance from
+@eq-denoising-corr-cross-gene-cov is
+
+$$
+\text{Cov}(m_g, m_{g'} \mid \underline{u}) =
+\text{Cov}_{\underline{\Theta}}\!\left[
+    f_g(\underline{\Theta}), \;
+    f_{g'}(\underline{\Theta})
+\right].
+$${#eq-denoising-corr-cov-of-fg}
+
+This covariance arises because $f_g$ and $f_{g'}$ both depend on parameters
+that are correlated in the posterior. For the shared-$p$ model, $f_g$ depends
+on $(r_g, p, \nu_c)$ and $f_{g'}$ depends on $(r_{g'}, p, \nu_c)$; the shared
+dependence on $p$ and $\nu_c$ creates correlation even when $r_g$ and $r_{g'}$
+are independent. For the hierarchical model, the coupling is richer: $p_g$ and
+$p_{g'}$ are linked through the hierarchical hyperparameters
+$(\mu_p, \sigma_p)$, and the joint low-rank guide
+(@sec-joint-low-rank-guide) directly models the cross-parameter correlations
+between all gene-specific parameters.
+
+### Delta method approximation {#sec-denoising-delta-method}
+
+We now derive a closed-form approximation to the cross-gene covariance using
+the delta method. This is possible because the variational posterior from
+@sec-joint-low-rank-guide is Gaussian in the unconstrained parameter space.
+
+Let $\underline{\Theta}^*$ denote the full vector of unconstrained (log- or
+logit-transformed) model parameters, and let $\hat{\underline{\Theta}}^*$
+denote its posterior mode (the MAP estimate in the unconstrained space). The
+variational posterior from the joint low-rank guide is
+
+$$
+q(\underline{\Theta}^*) = \mathcal{N}\!\left(
+    \hat{\underline{\Theta}}^*, \;
+    \underline{\underline{\Sigma}}
+\right),
+$${#eq-denoising-corr-variational-posterior}
+
+where $\underline{\underline{\Sigma}} =
+\underline{\underline{W}} \underline{\underline{W}}^\top +
+\underline{\underline{D}}$ is the low-rank-plus-diagonal covariance from
+@eq-jlr-joint-cov.
+
+The denoised mean for gene $g$ is a nonlinear function
+$f_g(\underline{\Theta}^*)$ of the unconstrained parameters (the constrained
+parameters are obtained by applying the appropriate transforms---$\exp$ for
+$r_g$ and $\mu_g$, sigmoid for $p_g$---before substituting into
+@eq-denoising-corr-fg-def or @eq-denoising-corr-fg-hierarchical). We
+linearize $f_g$ around the MAP:
+
+$$
+f_g(\underline{\Theta}^*) \approx
+f_g(\hat{\underline{\Theta}}^*) +
+\left(\nabla_{\underline{\Theta}^*} f_g\right)^\top
+\!\left(\underline{\Theta}^* - \hat{\underline{\Theta}}^*\right),
+$${#eq-denoising-corr-taylor}
+
+where $\nabla_{\underline{\Theta}^*} f_g$ is the gradient of the denoised
+mean with respect to the unconstrained parameters, evaluated at the MAP. Under
+this linear approximation, $f_g(\underline{\Theta}^*)$ is a linear function
+of the Gaussian random variable $\underline{\Theta}^*$, and therefore the
+covariance can be computed in closed form.
+
+Applying the covariance formula for linear functions of a random vector, we
+obtain
+
+$$
+\text{Cov}(f_g, f_{g'}) \approx
+\left(\nabla_{\underline{\Theta}^*} f_g\right)^\top
+\underline{\underline{\Sigma}} \;
+\left(\nabla_{\underline{\Theta}^*} f_{g'}\right).
+$${#eq-denoising-corr-delta-method}
+
+This is the delta method approximation. The gradients
+$\nabla_{\underline{\Theta}^*} f_g$ can be computed efficiently using
+automatic differentiation, since $f_g$ is a composition of smooth,
+differentiable functions (the parameter transforms and the closed-form
+posterior mean from @eq-denoising-corr-fg-def).
+
+### Low-rank structure of the denoised covariance {#sec-denoising-low-rank-cov}
+
+The delta method result @eq-denoising-corr-delta-method reveals a powerful
+structural property when combined with the low-rank covariance from the joint
+guide. Substituting $\underline{\underline{\Sigma}} =
+\underline{\underline{W}} \underline{\underline{W}}^\top +
+\underline{\underline{D}}$ into @eq-denoising-corr-delta-method:
+
+$$
+\text{Cov}(f_g, f_{g'}) \approx
+\left(\nabla f_g\right)^\top
+\left(
+    \underline{\underline{W}} \underline{\underline{W}}^\top +
+    \underline{\underline{D}}
+\right)
+\left(\nabla f_{g'}\right).
+$${#eq-denoising-corr-expand-cov}
+
+Expanding the two terms:
+
+$$
+\text{Cov}(f_g, f_{g'}) \approx
+\underbrace{
+\left(\underline{\underline{W}}^\top \nabla f_g\right)^\top
+\left(\underline{\underline{W}}^\top \nabla f_{g'}\right)
+}_{\text{low-rank contribution}}
++
+\underbrace{
+\left(\nabla f_g\right)^\top
+\underline{\underline{D}} \;
+\left(\nabla f_{g'}\right)
+}_{\text{diagonal contribution}}.
+$${#eq-denoising-corr-two-terms}
+
+The first term is an inner product of $k$-dimensional vectors
+$\underline{\underline{W}}^\top \nabla f_g \in \mathbb{R}^k$ and
+$\underline{\underline{W}}^\top \nabla f_{g'} \in \mathbb{R}^k$, where $k$
+is the rank of the low-rank factor. Since $\underline{\underline{D}}$ is
+diagonal, the second term is a weighted inner product that depends only on the
+entries of $\nabla f_g$ and $\nabla f_{g'}$ that correspond to the same
+parameter.
+
+To express the full covariance structure across all $G$ genes simultaneously,
+we assemble the gradients into a Jacobian matrix. Define
+
+$$
+\underline{\underline{J}} \in \mathbb{R}^{G \times \dim(\underline{\Theta}^*)},
+\quad
+J_{g,:} = \left(\nabla_{\underline{\Theta}^*} f_g\right)^\top,
+$${#eq-denoising-corr-jacobian-def}
+
+where the $g$-th row of $\underline{\underline{J}}$ is the transpose of the
+gradient for gene $g$. Then the $G \times G$ covariance matrix of the
+denoised means across all genes is
+
+$$
+\boxed{
+\underline{\underline{\Sigma}}_m =
+\underline{\underline{J}} \;
+\underline{\underline{\Sigma}} \;
+\underline{\underline{J}}^\top =
+\underline{\underline{J}} \;
+\left(
+    \underline{\underline{W}} \underline{\underline{W}}^\top +
+    \underline{\underline{D}}
+\right)
+\underline{\underline{J}}^\top.
+}
+$${#eq-denoising-corr-full-cov}
+
+The matrix $\underline{\underline{\Sigma}}_m$ inherits the low-rank-plus-diagonal
+structure of the parameter covariance, transformed through the Jacobian. To see
+this explicitly, define the transformed low-rank factor
+
+$$
+\underline{\underline{W}}_m \equiv
+\underline{\underline{J}} \underline{\underline{W}}
+\in \mathbb{R}^{G \times k},
+$${#eq-denoising-corr-Wm-def}
+
+and note that the diagonal contribution can be written as
+
+$$
+\underline{\underline{J}} \underline{\underline{D}}
+\underline{\underline{J}}^\top,
+$${#eq-denoising-corr-diag-contrib}
+
+which is generally **not** diagonal (because different genes may share
+parameters such as $p$ or $\nu_c$, causing their gradients to overlap in the
+parameter space). However, for models where each gene's denoised mean depends
+only on its own gene-specific parameters (as in the hierarchical model with
+gene-specific $p_g$ and no shared $p$), the Jacobian
+$\underline{\underline{J}}$ has a block-sparse structure and the diagonal
+contribution simplifies. In either case, the covariance matrix admits the
+decomposition
+
+$$
+\underline{\underline{\Sigma}}_m =
+\underline{\underline{W}}_m \underline{\underline{W}}_m^\top +
+\underline{\underline{J}} \underline{\underline{D}}
+\underline{\underline{J}}^\top,
+$${#eq-denoising-corr-decomposition}
+
+where the first term has rank at most $k$ and captures the dominant cross-gene
+correlations mediated by the low-rank structure of the parameter posterior.
+
+### Full variance decomposition {#sec-denoising-variance-decomposition}
+
+The law of total variance provides the complete variance of the denoised count
+$m_g$, combining both sources of uncertainty. For a single gene $g$:
+
+$$
+\text{Var}(m_g \mid u_g) =
+\underbrace{
+\text{Var}_{\underline{\Theta}}\!\left[
+    \langle m_g \mid u_g, \underline{\Theta} \rangle
+\right]
+}_{\text{parameter uncertainty}}
++
+\underbrace{
+\left\langle
+    \text{Var}(m_g \mid u_g, \underline{\Theta})
+\right\rangle_{\underline{\Theta}}
+}_{\text{denoising noise}}.
+$${#eq-denoising-corr-total-var}
+
+The first term is the variance of the conditional mean $f_g$ across the
+parameter posterior. From the delta method (@eq-denoising-corr-delta-method
+with $g' = g$), this is the diagonal entry
+
+$$
+\text{Var}_{\underline{\Theta}}\!\left[
+    \langle m_g \mid u_g, \underline{\Theta} \rangle
+\right]
+\approx
+\left(\nabla f_g\right)^\top
+\underline{\underline{\Sigma}} \;
+\left(\nabla f_g\right) =
+\left[\underline{\underline{\Sigma}}_m\right]_{gg}.
+$${#eq-denoising-corr-param-var}
+
+The second term is the expected posterior variance of $m_g$, averaging over
+parameter uncertainty. From @eq-denoising-variance-true, the conditional
+variance for fixed parameters is
+
+$$
+\text{Var}(m_g \mid u_g, \underline{\Theta}) =
+(r_g + u_g) \cdot
+\frac{(1 - \nu_c)(1 - p)}{[\nu_c + p(1 - \nu_c)]^2}.
+$${#eq-denoising-corr-cond-var-recall}
+
+The expectation of this over $\underline{\Theta}$ can be approximated by
+evaluating at the MAP:
+
+$$
+\left\langle
+    \text{Var}(m_g \mid u_g, \underline{\Theta})
+\right\rangle_{\underline{\Theta}}
+\approx
+(\hat{r}_g + u_g) \cdot
+\frac{(1 - \hat{\nu}_c)(1 - \hat{p})}{[\hat{\nu}_c + \hat{p}(1 - \hat{\nu}_c)]^2},
+$${#eq-denoising-corr-expected-cond-var}
+
+where $\hat{r}_g$, $\hat{p}$, and $\hat{\nu}_c$ are the MAP estimates. This
+is simply the posterior variance formula from @eq-denoising-variance-true
+evaluated at the MAP. Combining both contributions:
+
+$$
+\boxed{
+\text{Var}(m_g \mid u_g) \approx
+\left[\underline{\underline{\Sigma}}_m\right]_{gg}
++
+(\hat{r}_g + u_g) \cdot
+\frac{(1 - \hat{\nu}_c)(1 - \hat{p})}{[\hat{\nu}_c + \hat{p}(1 - \hat{\nu}_c)]^2}.
+}
+$${#eq-denoising-corr-total-var-final}
+
+The first term quantifies how much the denoised mean fluctuates due to
+parameter uncertainty; the second term quantifies the intrinsic stochasticity
+of the denoising posterior even when the parameters are known exactly. For
+well-determined parameters (tight posterior), the first term is small and the
+total variance is dominated by the denoising noise. For poorly determined
+parameters (wide posterior), the first term can dominate, reflecting our
+uncertainty about the model itself.
+
+### Correlated denoising via posterior sampling {#sec-denoising-correlated-sampling}
+
+The analytical results above characterize the covariance structure, but for
+producing actual denoised count matrices, a sampling-based approach is both
+simpler and exact (up to the variational approximation). We now describe the
+practical algorithm.
+
+**Correlated denoising algorithm.** Given observed counts
+$\underline{\underline{U}}$ (with $u_{gc}$ the count for gene $g$ in cell
+$c$), the model parameters' joint posterior $q(\underline{\Theta})$, and a
+denoising method (mean, mode, or sample), generate a denoised count matrix
+$\underline{\underline{M}}$ as follows:
+
+1. **Draw one joint parameter sample** from the posterior:
+   $\underline{\Theta}^{(s)} \sim q(\underline{\Theta})$.
+
+2. **For each cell $c$ and each gene $g$ independently**, compute the denoised
+   count using the per-gene formulas from @sec-denoising with the drawn
+   parameters $\underline{\Theta}^{(s)}$:
+
+   - If the method is **mean**: set
+     $m_{gc} = \langle m_g \mid u_{gc}, \underline{\Theta}^{(s)} \rangle$
+     using @eq-denoising-posterior-mean.
+
+   - If the method is **mode**: set
+     $m_{gc} = u_{gc} + d_g^*$ using @eq-denoising-mode-dropped.
+
+   - If the method is **sample**: draw
+     $d_{gc} \sim \text{NB}(r_g^{(s)} + u_{gc}, \; p'^{(s)})$
+     and set $m_{gc} = u_{gc} + d_{gc}$.
+
+3. **Assemble** the denoised matrix
+   $\underline{\underline{M}}^{(s)}$ with entries $m_{gc}$.
+
+The per-gene computation in step 2 is independent across genes, but the
+denoised counts inherit cross-gene correlations through the shared parameter
+draw in step 1. To generate $N$ denoised realizations, repeat the procedure
+with $N$ independent draws from $q(\underline{\Theta})$.
+
+**Inference method determines correlation structure.** The source of the
+parameter posterior $q(\underline{\Theta})$ determines the quality of the
+cross-gene correlations:
+
+- **MCMC**: Each posterior draw is a full joint sample from the true posterior
+  (up to MCMC convergence). Cross-gene correlations in the denoised counts are
+  exact and come for free.
+
+- **SVI with the joint low-rank guide** (@sec-joint-low-rank-guide): The
+  chain-rule sampling procedure produces correlated draws across all gene
+  parameters. Cross-gene correlations are captured to the extent that the
+  low-rank variational family can represent them.
+
+- **SVI with factorized guide** (no joint low-rank): Each gene's parameters
+  are sampled independently. The only cross-gene correlation arises from shared
+  global parameters (e.g., $p$ in the shared-$p$ model, or $\nu_c$).
+
+- **MAP point estimates**: The parameter posterior is collapsed to a single
+  point. All cross-gene correlations are lost, and the denoised counts for
+  different genes are independent.
+
+### Summary of cross-gene denoising results
+
+We collect the main results of this section.
+
+**Cross-gene covariance** (for $g \neq g'$):
+
+$$
+\text{Cov}(m_g, m_{g'} \mid \underline{u}) =
+\text{Cov}_{\underline{\Theta}}\!\left[
+    \langle m_g \mid u_g, \underline{\Theta} \rangle, \;
+    \langle m_{g'} \mid u_{g'}, \underline{\Theta} \rangle
+\right].
+$${#eq-denoising-corr-summary-cov}
+
+**Delta method approximation** (with joint low-rank guide):
+
+$$
+\underline{\underline{\Sigma}}_m =
+\underline{\underline{J}} \;
+\left(
+    \underline{\underline{W}} \underline{\underline{W}}^\top +
+    \underline{\underline{D}}
+\right)
+\underline{\underline{J}}^\top,
+\quad
+\underline{\underline{J}} \in \mathbb{R}^{G \times \dim(\underline{\Theta}^*)},
+\quad
+J_{g,:} = \left(\nabla_{\underline{\Theta}^*} f_g\right)^\top.
+$${#eq-denoising-corr-summary-delta}
+
+**Total variance** (parameter uncertainty + denoising noise):
+
+$$
+\text{Var}(m_g \mid u_g) \approx
+\left[\underline{\underline{\Sigma}}_m\right]_{gg}
++
+(\hat{r}_g + u_g) \cdot
+\frac{(1 - \hat{\nu}_c)(1 - \hat{p})}{[\hat{\nu}_c + \hat{p}(1 - \hat{\nu}_c)]^2}.
+$${#eq-denoising-corr-summary-var}
+
+**Practical algorithm**: Draw parameters jointly from the posterior, then
+denoise each gene independently using the per-gene formulas. Cross-gene
+correlations are propagated automatically through the shared parameter draw.
