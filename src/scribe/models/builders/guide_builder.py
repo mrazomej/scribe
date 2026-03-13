@@ -1886,6 +1886,87 @@ def _build_distribution_for_spec(
     return dist.TransformedDistribution(base, spec.transform)
 
 
+def _build_base_distribution_for_joint_spec(
+    loc: jnp.ndarray,
+    cov_factor: jnp.ndarray,
+    cov_diag: jnp.ndarray,
+    is_scalar_in_joint: bool,
+    n_batch_dims: int,
+) -> dist.Distribution:
+    """Build the unconstrained base distribution for a joint-guide spec.
+
+    This helper mirrors the shape handling of ``_build_distribution_for_spec``
+    but intentionally does **not** apply any transform. It is used by the
+    horseshoe-aware joint path to sample ``*_raw`` latent sites directly in
+    unconstrained space.
+
+    Parameters
+    ----------
+    loc : jnp.ndarray
+        Location parameter (expanded shape for scalar-in-joint specs).
+    cov_factor : jnp.ndarray
+        Low-rank covariance factor with trailing rank dimension.
+    cov_diag : jnp.ndarray
+        Diagonal covariance term.
+    is_scalar_in_joint : bool
+        Whether this spec is represented as a scalar expanded with trailing 1.
+    n_batch_dims : int
+        Number of batch dimensions in the expanded shape.
+
+    Returns
+    -------
+    dist.Distribution
+        A ``Normal`` (scalar-in-joint) or ``LowRankMultivariateNormal``
+        (gene-specific) in unconstrained space with event dims aligned to model.
+    """
+    # Scalar parameters are represented as expanded (..., 1) vectors in the
+    # Woodbury chain. Collapse to a scalar Normal for sampling to preserve the
+    # model's event shape semantics.
+    if is_scalar_in_joint:
+        scalar_var = jnp.sum(cov_factor[..., 0, :] ** 2, axis=-1) + cov_diag[..., 0]
+        scalar_loc = loc[..., 0]
+        base = dist.Normal(scalar_loc, jnp.sqrt(scalar_var))
+        if n_batch_dims > 0:
+            base = base.to_event(n_batch_dims)
+        return base
+
+    # Gene-specific parameters keep the LowRankMVN event over the last axis.
+    base = dist.LowRankMultivariateNormal(
+        loc=loc,
+        cov_factor=cov_factor,
+        cov_diag=cov_diag,
+    )
+    if n_batch_dims > 0:
+        base = base.to_event(n_batch_dims)
+    return base
+
+
+def _is_joint_horseshoe_spec(spec: "NormalWithTransformSpec") -> bool:
+    """Return whether a joint-guide spec uses horseshoe NCP raw latents.
+
+    Parameters
+    ----------
+    spec : NormalWithTransformSpec
+        Parameter specification in a joint low-rank group.
+
+    Returns
+    -------
+    bool
+        True when the specification is one of the horseshoe parameter classes
+        that define a ``raw_name`` latent site and deterministic constrained
+        transform in the model.
+    """
+    return isinstance(
+        spec,
+        (
+            HorseshoeHierarchicalSigmoidNormalSpec,
+            HorseshoeHierarchicalExpNormalSpec,
+            HorseshoeDatasetSigmoidNormalSpec,
+            HorseshoeDatasetExpNormalSpec,
+        ),
+    )
+
+
 def setup_joint_guide(
     specs: List["NormalWithTransformSpec"],
     guide: JointLowRankGuide,
@@ -2010,20 +2091,35 @@ def setup_joint_guide(
 
         if i == 0:
             # First parameter: sample from its marginal distribution
-            transformed = _build_distribution_for_spec(
-                current_locs[0],
-                current_Ws[0],
-                Ds[0],
-                spec,
-                is_scalar,
-                n_batch_dims_i,
-            )
-            constrained = numpyro.sample(spec.constrained_name, transformed)
+            # Horseshoe specs are parameterized with an explicit NCP raw latent
+            # site in the model (e.g., gate_raw). The joint block must sample
+            # that raw site directly to keep model/guide sample-site alignment.
+            if _is_joint_horseshoe_spec(spec):
+                base = _build_base_distribution_for_joint_spec(
+                    current_locs[0],
+                    current_Ws[0],
+                    Ds[0],
+                    is_scalar,
+                    n_batch_dims_i,
+                )
+                unconstrained = numpyro.sample(spec.raw_name, base)
+                constrained = spec.transform(unconstrained)
+                numpyro.deterministic(spec.constrained_name, constrained)
+            else:
+                transformed = _build_distribution_for_spec(
+                    current_locs[0],
+                    current_Ws[0],
+                    Ds[0],
+                    spec,
+                    is_scalar,
+                    n_batch_dims_i,
+                )
+                constrained = numpyro.sample(spec.constrained_name, transformed)
+                unconstrained = spec.transform.inv(constrained)
             constrained_samples.append(constrained)
 
-            # Recover unconstrained sample via inverse transform.
-            # Re-expand scalars for subsequent Woodbury conditioning.
-            unconstrained = spec.transform.inv(constrained)
+            # The Woodbury chain always works in expanded unconstrained space.
+            # Re-expand scalar samples so later conditioning has shape (..., 1).
             if is_scalar:
                 unconstrained = unconstrained[..., None]
             unconstrained_samples.append(unconstrained)
@@ -2047,18 +2143,32 @@ def setup_joint_guide(
                     theta1_sample=unconstrained_samples[j],
                 )
 
-            transformed = _build_distribution_for_spec(
-                cond_loc,
-                cond_W,
-                cond_D,
-                spec,
-                is_scalar,
-                n_batch_dims_i,
-            )
-            constrained = numpyro.sample(spec.constrained_name, transformed)
+            # As above: horseshoe specs in joint groups must sample raw NCP
+            # latents so guide/model sample sites match exactly.
+            if _is_joint_horseshoe_spec(spec):
+                base = _build_base_distribution_for_joint_spec(
+                    cond_loc,
+                    cond_W,
+                    cond_D,
+                    is_scalar,
+                    n_batch_dims_i,
+                )
+                unconstrained = numpyro.sample(spec.raw_name, base)
+                constrained = spec.transform(unconstrained)
+                numpyro.deterministic(spec.constrained_name, constrained)
+            else:
+                transformed = _build_distribution_for_spec(
+                    cond_loc,
+                    cond_W,
+                    cond_D,
+                    spec,
+                    is_scalar,
+                    n_batch_dims_i,
+                )
+                constrained = numpyro.sample(spec.constrained_name, transformed)
+                unconstrained = spec.transform.inv(constrained)
             constrained_samples.append(constrained)
 
-            unconstrained = spec.transform.inv(constrained)
             if is_scalar:
                 unconstrained = unconstrained[..., None]
             unconstrained_samples.append(unconstrained)

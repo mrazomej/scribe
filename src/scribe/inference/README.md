@@ -158,6 +158,10 @@ Build ModelConfig from preset parameters.
   listed parameters share a single JointLowRankGuide that captures
   cross-parameter correlations via a shared low-rank covariance. Requires
   `guide_rank` to be set. Example: `["mu", "phi"]`
+  - For horseshoe-enabled parameters (for example `gate` with
+    `horseshoe_gate=True`), joint modeling is applied to the corresponding
+    NCP raw latent (for example `gate_raw`) so model/guide sample sites remain
+    consistent.
 - `n_components`: Number of mixture components
 - `priors`: Dictionary of prior parameters
 - `capture_amortization`: Optional `AmortizationConfig` or dict. When provided,
@@ -168,9 +172,12 @@ Build ModelConfig from preset parameters.
 - `capture_hidden_dims`: MLP hidden layer dimensions for amortizer (used when
   `capture_amortization` is `None`).
 - `capture_activation`: Activation function for amortizer MLP
-- `capture_output_transform`: Transform for constrained outputs (`softplus` or `exp`)
-- `capture_clamp_min`: Min clamp for amortizer alpha/beta (constrained mode; `None` to disable)
-- `capture_clamp_max`: Max clamp for amortizer alpha/beta (constrained mode; `None` to disable)
+- `capture_output_transform`: Transform for constrained outputs (`softplus` or
+  `exp`)
+- `capture_clamp_min`: Min clamp for amortizer alpha/beta (constrained mode;
+  `None` to disable)
+- `capture_clamp_max`: Max clamp for amortizer alpha/beta (constrained mode;
+  `None` to disable)
 
 **Returns:**
 

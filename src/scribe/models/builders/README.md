@@ -239,6 +239,22 @@ This extends naturally to three or more parameters (e.g., ZINB with `gate`).
 Parameters not in a joint group are processed independently as usual. See
 `paper/_joint_low_rank_guide.qmd` for the full derivation.
 
+#### Horseshoe Compatibility in Joint Groups
+
+When a parameter in a joint group uses a horseshoe NCP spec (for example
+`HorseshoeHierarchicalSigmoidNormalSpec` for `gate`), the joint block models
+the **raw latent** site (for example `gate_raw`) in the shared low-rank
+Gaussian. The constrained parameter (`gate`) remains a deterministic transform
+of that latent.
+
+This keeps model/guide sample-site names aligned while preserving the intended
+horseshoe structure:
+
+- joint covariance is learned in unconstrained Gaussian latent space;
+- horseshoe scale latents (`tau`, `lambda`, `c_sq`) remain in their existing
+  independent positive-support guides;
+- downstream MAP/posterior logic still uses constrained parameter names.
+
 ## Posterior Extraction
 
 The **`posterior`** module extracts posterior distributions from optimized
