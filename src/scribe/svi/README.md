@@ -634,6 +634,11 @@ ScribeSVIResults
      - `_subset_params_by_component()`: Subset params by component index
      - `_subset_posterior_samples_by_component()`: Subset samples by component
      - `_create_component_subset()`: Create component-specific instance
+   - Notes:
+     - Component extraction supports both standard per-parameter variational
+       keys (for example, `phi_loc`) and joint low-rank guide keys (for
+       example, `joint_joint_phi_loc`), so mixture-specific parameters are
+       correctly reduced to a single component before posterior sampling.
    - Dependencies: Uses `GeneSubsettingMixin` for subsetting logic
 
 6. **SamplingMixin** (`_sampling.py`)

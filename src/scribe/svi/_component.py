@@ -59,10 +59,20 @@ def _build_mixture_keys(
             continue
         for spec in sorted_specs:
             name = spec.name
-            if (
+            # Match both classic per-parameter guide keys
+            # (e.g. ``phi_loc``, ``log_phi_loc``) and joint-guide keys
+            # (e.g. ``joint_joint_phi_loc``).  The sorted longest-name
+            # policy avoids substring ambiguity such as ``phi`` vs
+            # ``phi_capture``.
+            matches_spec = (
                 key == name
                 or key.startswith(name + "_")
                 or key.startswith("log_" + name + "_")
+                or f"_{name}_" in key
+                or key.endswith("_" + name)
+            )
+            if (
+                matches_spec
             ):
                 if spec.is_mixture:
                     mixture_keys.add(key)
