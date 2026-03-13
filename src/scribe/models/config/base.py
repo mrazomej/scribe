@@ -299,11 +299,14 @@ class ModelConfig(BaseModel):
     joint_params: Optional[List[str]] = Field(
         None,
         description=(
-            "List of gene-specific parameter names to model jointly via "
-            "JointLowRankGuide (e.g. ['mu', 'phi']). Requires guide_rank "
-            "to be set via guide_families. All listed parameters share a "
-            "single low-rank covariance structure capturing cross-parameter "
-            "correlations."
+            "List of parameter names to model jointly via "
+            "JointLowRankGuide (e.g. ['mu', 'phi', 'gate']). Requires "
+            "guide_rank to be set via guide_families. All listed "
+            "parameters share a single low-rank covariance structure "
+            "capturing cross-parameter correlations. Supports "
+            "heterogeneous dimensions: scalar parameters (e.g. phi "
+            "when hierarchical_p=False) can be mixed with gene-specific "
+            "parameters (e.g. mu, gate)."
         ),
     )
 

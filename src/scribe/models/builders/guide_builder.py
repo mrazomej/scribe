@@ -1638,9 +1638,7 @@ def setup_cell_specific_guide(
     # GuideBuilder.build() method)
     # Initialize loc near the prior mean: log_M0 (will be offset by
     # -log_lib in the likelihood, but the guide learns the full eta)
-    eta_loc = numpyro.param(
-        "eta_capture_loc", jnp.full(n_cells, spec.log_M0)
-    )
+    eta_loc = numpyro.param("eta_capture_loc", jnp.full(n_cells, spec.log_M0))
     eta_scale = numpyro.param(
         "eta_capture_scale",
         jnp.full(n_cells, spec.sigma_M),
@@ -1759,30 +1757,34 @@ def _woodbury_conditional_params(
         cov_diag   = D2          (unchanged)
         loc        = loc2 + W2 @ M @ W1^T @ D1^{-1} @ (theta1 - loc1)
 
+    **Heterogeneous dimensions**: G1 and G2 may differ.  The
+    intermediate matrices H, M, L_M are all k x k regardless of G1 or
+    G2, so the Woodbury formulas apply without modification.
+
     Parameters
     ----------
-    W1 : jnp.ndarray, shape (..., G, k)
+    W1 : jnp.ndarray, shape (..., G1, k)
         Low-rank factor for parameter group 1.
-    D1 : jnp.ndarray, shape (..., G)
+    D1 : jnp.ndarray, shape (..., G1)
         Diagonal covariance for parameter group 1.
-    W2 : jnp.ndarray, shape (..., G, k)
+    W2 : jnp.ndarray, shape (..., G2, k)
         Low-rank factor for parameter group 2.
-    D2 : jnp.ndarray, shape (..., G)
+    D2 : jnp.ndarray, shape (..., G2)
         Diagonal covariance for parameter group 2.
-    loc1 : jnp.ndarray, shape (..., G)
+    loc1 : jnp.ndarray, shape (..., G1)
         Location for parameter group 1.
-    loc2 : jnp.ndarray, shape (..., G)
+    loc2 : jnp.ndarray, shape (..., G2)
         Location for parameter group 2.
-    theta1_sample : jnp.ndarray, shape (..., G)
+    theta1_sample : jnp.ndarray, shape (..., G1)
         Sampled value of theta_1 (in unconstrained space).
 
     Returns
     -------
-    cond_loc : jnp.ndarray, shape (..., G)
+    cond_loc : jnp.ndarray, shape (..., G2)
         Conditional mean for theta_2 | theta_1.
-    cond_W : jnp.ndarray, shape (..., G, k)
+    cond_W : jnp.ndarray, shape (..., G2, k)
         Conditional covariance factor for theta_2 | theta_1.
-    cond_D : jnp.ndarray, shape (..., G)
+    cond_D : jnp.ndarray, shape (..., G2)
         Conditional diagonal covariance (same as D2).
     """
     # H = W1^T @ diag(1/D1) @ W1, shape (..., k, k)
@@ -1819,23 +1821,97 @@ def _woodbury_conditional_params(
     return cond_loc, cond_W, cond_D
 
 
+def _build_distribution_for_spec(
+    loc: jnp.ndarray,
+    cov_factor: jnp.ndarray,
+    cov_diag: jnp.ndarray,
+    spec: "NormalWithTransformSpec",
+    is_scalar_in_joint: bool,
+    n_batch_dims: int,
+) -> dist.Distribution:
+    """Build the sampling distribution for a single spec in a joint group.
+
+    For gene-specific specs (is_scalar_in_joint=False), constructs a
+    ``LowRankMultivariateNormal`` over the gene dimension, optionally
+    wrapped with ``to_event`` for batch dimensions.
+
+    For scalar specs (is_scalar_in_joint=True), the variational params
+    have been expanded with a trailing dimension of 1. Here we collapse
+    that 1-dim LowRankMVN into a scalar ``Normal`` so the event shape
+    matches the model's prior. The variance is
+    ``sum(W[..., 0, :]**2) + D[..., 0]``.
+
+    Parameters
+    ----------
+    loc : jnp.ndarray
+        Location parameter (expanded shape for scalars).
+    cov_factor : jnp.ndarray
+        Low-rank factor W (expanded shape for scalars).
+    cov_diag : jnp.ndarray
+        Diagonal covariance D (expanded shape for scalars).
+    spec : NormalWithTransformSpec
+        Parameter specification.
+    is_scalar_in_joint : bool
+        Whether this spec is a scalar parameter expanded for joint modeling.
+    n_batch_dims : int
+        Number of batch dimensions in the expanded shape.
+
+    Returns
+    -------
+    dist.Distribution
+        Transformed distribution ready for ``numpyro.sample``.
+    """
+    if is_scalar_in_joint:
+        # Collapse from 1-dim LowRankMVN to scalar Normal.
+        # var = sum(W[..., 0, :]^2, axis=-1) + D[..., 0]
+        scalar_var = (
+            jnp.sum(cov_factor[..., 0, :] ** 2, axis=-1) + cov_diag[..., 0]
+        )
+        scalar_loc = loc[..., 0]
+        base = dist.Normal(scalar_loc, jnp.sqrt(scalar_var))
+        # After collapsing the trailing 1, the Normal has the
+        # original resolved shape.  Wrap all those dims as event
+        # dims so the event_dim matches the model (which applies
+        # .to_event(len(shape)) for non-scalar shapes).
+        # n_batch_dims = len(expanded_shape) - 1 = len(resolved_shape)
+        if n_batch_dims > 0:
+            base = base.to_event(n_batch_dims)
+    else:
+        base = dist.LowRankMultivariateNormal(
+            loc=loc, cov_factor=cov_factor, cov_diag=cov_diag
+        )
+        if n_batch_dims > 0:
+            base = base.to_event(n_batch_dims)
+
+    return dist.TransformedDistribution(base, spec.transform)
+
+
 def setup_joint_guide(
     specs: List["NormalWithTransformSpec"],
     guide: JointLowRankGuide,
     dims: Dict[str, int],
     model_config: "ModelConfig",
 ) -> List[jnp.ndarray]:
-    """Setup a joint low-rank guide over multiple gene-specific parameters.
+    """Setup a joint low-rank guide over multiple parameters.
 
-    Clean implementation of the chain rule decomposition. Samples each
-    parameter in unconstrained space from the marginal/conditional LowRankMVN,
-    then applies the transform via TransformedDistribution. The unconstrained
-    samples are used for subsequent conditioning steps.
+    Supports **heterogeneous dimensions**: specs may mix gene-specific
+    vectors (shape ``(G,)`` or ``(C, G)``) with scalar parameters (shape
+    ``()`` or ``(C,)``).  Scalar specs are internally expanded by
+    appending a trailing dimension of 1, so the Woodbury chain operates
+    uniformly on ``(..., G_i, k)`` tensors.  At sampling time, scalar
+    specs are collapsed back to a ``Normal`` distribution matching the
+    model's event shape.
+
+    The chain rule decomposition samples each parameter in unconstrained
+    space from the marginal/conditional LowRankMVN, then applies the
+    transform via ``TransformedDistribution``.  Unconstrained samples are
+    used for subsequent conditioning steps.
 
     Parameters
     ----------
     specs : List[NormalWithTransformSpec]
         Ordered list of parameter specifications to model jointly.
+        May include both gene-specific and scalar specs.
     guide : JointLowRankGuide
         Joint low-rank guide marker.
     dims : Dict[str, int]
@@ -1850,58 +1926,66 @@ def setup_joint_guide(
     """
     k = guide.rank
 
-    resolved_shape = resolve_shape(
-        specs[0].shape_dims,
-        dims,
-        is_mixture=specs[0].is_mixture,
-        is_dataset=specs[0].is_dataset,
-    )
+    # ------------------------------------------------------------------
+    # Per-spec shape resolution and scalar expansion
+    # ------------------------------------------------------------------
+    resolved_shapes: List[tuple] = []
+    expanded_shapes: List[tuple] = []
+    is_scalar_flags: List[bool] = []
 
-    # All specs in a joint group must resolve to the same shape so that
-    # the shared low-rank factor W (rank k) and Woodbury conditioning
-    # operate on identically-sized gene vectors.
-    for spec in specs[1:]:
-        other_shape = resolve_shape(
+    for spec in specs:
+        rs = resolve_shape(
             spec.shape_dims,
             dims,
             is_mixture=spec.is_mixture,
             is_dataset=spec.is_dataset,
         )
-        if other_shape != resolved_shape:
+        resolved_shapes.append(rs)
+
+        if not spec.is_gene_specific:
+            # Scalar parameter: append a trailing dim of 1 so that the
+            # Woodbury chain can treat it as a 1-dim gene vector.
+            expanded = (*rs, 1) if rs else (1,)
+            is_scalar_flags.append(True)
+        else:
+            expanded = rs
+            is_scalar_flags.append(False)
+        expanded_shapes.append(expanded)
+
+    # Validate that batch shapes (all dims except the trailing gene dim)
+    # are consistent across all specs in the group.
+    batch_shapes = [es[:-1] for es in expanded_shapes]
+    ref_batch = batch_shapes[0]
+    for i, bs in enumerate(batch_shapes[1:], start=1):
+        if bs != ref_batch:
             raise ValueError(
-                f"Joint group '{guide.group}': spec '{spec.name}' resolves "
-                f"to shape {other_shape}, but '{specs[0].name}' resolves "
-                f"to {resolved_shape}. All specs in a joint group must "
-                f"share the same resolved shape."
+                f"Joint group '{guide.group}': spec '{specs[i].name}' has "
+                f"batch shape {bs}, but '{specs[0].name}' has batch shape "
+                f"{ref_batch}. All specs in a joint group must share the "
+                f"same batch dimensions (only the trailing gene dimension "
+                f"may differ)."
             )
 
-    n_batch_dims = len(resolved_shape) - 1
-
-    # Register per-parameter variational params for the joint
-    G = resolved_shape[-1] if resolved_shape else 1
+    # ------------------------------------------------------------------
+    # Register per-parameter variational params using expanded shapes
+    # ------------------------------------------------------------------
     locs = []
     Ws = []
     Ds = []
-    for spec in specs:
+    for idx, spec in enumerate(specs):
+        exp_shape = expanded_shapes[idx]
+
         loc_i = numpyro.param(
             f"joint_{guide.group}_{spec.name}_loc",
-            jnp.zeros(resolved_shape) if resolved_shape else jnp.zeros(G),
+            jnp.zeros(exp_shape),
         )
         W_i = numpyro.param(
             f"joint_{guide.group}_{spec.name}_W",
-            (
-                0.01 * jnp.ones((*resolved_shape, k))
-                if resolved_shape
-                else 0.01 * jnp.ones((G, k))
-            ),
+            0.01 * jnp.ones((*exp_shape, k)),
         )
         raw_diag_i = numpyro.param(
             f"joint_{guide.group}_{spec.name}_raw_diag",
-            (
-                -3.0 * jnp.ones(resolved_shape)
-                if resolved_shape
-                else -3.0 * jnp.ones(G)
-            ),
+            -3.0 * jnp.ones(exp_shape),
         )
         D_i = jax.nn.softplus(raw_diag_i) + 1e-4
 
@@ -1909,43 +1993,45 @@ def setup_joint_guide(
         Ws.append(W_i)
         Ds.append(D_i)
 
-    # Track unconstrained samples and the current conditional W/loc for each
-    # parameter (needed for iterated conditioning with n > 2 params)
+    # ------------------------------------------------------------------
+    # Chain-rule sampling loop
+    # ------------------------------------------------------------------
     unconstrained_samples = []
     constrained_samples = []
 
-    # The current conditional factor and loc for each parameter, updated as
-    # we condition on earlier parameters in the chain
+    # Current conditional factor and loc for each parameter, updated as
+    # we condition on earlier parameters in the chain.
     current_Ws = list(Ws)
     current_locs = list(locs)
 
     for i, spec in enumerate(specs):
+        n_batch_dims_i = len(expanded_shapes[i]) - 1
+        is_scalar = is_scalar_flags[i]
+
         if i == 0:
-            # First parameter: sample from marginal LowRankMVN + transform
-            base = dist.LowRankMultivariateNormal(
-                loc=current_locs[0],
-                cov_factor=current_Ws[0],
-                cov_diag=Ds[0],
+            # First parameter: sample from its marginal distribution
+            transformed = _build_distribution_for_spec(
+                current_locs[0],
+                current_Ws[0],
+                Ds[0],
+                spec,
+                is_scalar,
+                n_batch_dims_i,
             )
-            transformed = dist.TransformedDistribution(base, spec.transform)
-
-            if n_batch_dims > 0:
-                transformed = transformed.to_event(n_batch_dims)
-
             constrained = numpyro.sample(spec.constrained_name, transformed)
             constrained_samples.append(constrained)
 
-            # Recover unconstrained sample via inverse transform
+            # Recover unconstrained sample via inverse transform.
+            # Re-expand scalars for subsequent Woodbury conditioning.
             unconstrained = spec.transform.inv(constrained)
+            if is_scalar:
+                unconstrained = unconstrained[..., None]
             unconstrained_samples.append(unconstrained)
 
         else:
-            # Condition on all previously sampled parameters, iteratively.
-            # Start from the original (or already-conditioned) W_i and loc_i
-            # for this parameter, then apply Woodbury conditioning for each
-            # theta_j, j < i.
-            #
-            # For the common case n=2, this is a single conditioning step.
+            # Condition on all previously sampled parameters via
+            # iterated Woodbury updates.  For the common case n=2 this
+            # is a single conditioning step.
             cond_loc = current_locs[i]
             cond_W = current_Ws[i]
             cond_D = Ds[i]
@@ -1961,18 +2047,20 @@ def setup_joint_guide(
                     theta1_sample=unconstrained_samples[j],
                 )
 
-            base = dist.LowRankMultivariateNormal(
-                loc=cond_loc, cov_factor=cond_W, cov_diag=cond_D,
+            transformed = _build_distribution_for_spec(
+                cond_loc,
+                cond_W,
+                cond_D,
+                spec,
+                is_scalar,
+                n_batch_dims_i,
             )
-            transformed = dist.TransformedDistribution(base, spec.transform)
-
-            if n_batch_dims > 0:
-                transformed = transformed.to_event(n_batch_dims)
-
             constrained = numpyro.sample(spec.constrained_name, transformed)
             constrained_samples.append(constrained)
 
             unconstrained = spec.transform.inv(constrained)
+            if is_scalar:
+                unconstrained = unconstrained[..., None]
             unconstrained_samples.append(unconstrained)
 
             # Update this parameter's conditional W and loc for use by
@@ -2158,7 +2246,10 @@ class GuideBuilder:
                 setup_guide(mixing_spec, guide_family, dims, model_config)
 
             # ================================================================
-            # 1. Setup guides for GLOBAL parameters
+            # 1. Collect JointLowRankGuide groups across ALL spec types
+            #    (global, gene-specific).  Joint groups are processed
+            #    first so that scalar and gene-specific params sharing a
+            #    JointLowRankGuide are handled together.
             # ================================================================
             global_specs = [
                 s
@@ -2167,21 +2258,12 @@ class GuideBuilder:
                 and not s.is_cell_specific
                 and s.name != "mixing_weights"  # Already handled above
             ]
-            for spec in global_specs:
-                guide_family = spec.guide_family or MeanFieldGuide()
-                setup_guide(spec, guide_family, dims, model_config)
-
-            # ================================================================
-            # 2. Setup guides for GENE-SPECIFIC parameters
-            #    JointLowRankGuide specs are grouped and handled together;
-            #    all other specs are handled individually as before.
-            # ================================================================
             gene_specs = [s for s in specs if s.is_gene_specific]
 
-            # Collect JointLowRankGuide groups (preserving spec order)
+            # Scan both global and gene-specific specs for joint groups
             joint_groups: Dict[str, List] = {}
             joint_handled = set()
-            for spec in gene_specs:
+            for spec in (*global_specs, *gene_specs):
                 gf = spec.guide_family
                 if isinstance(gf, JointLowRankGuide):
                     grp = gf.group
@@ -2190,12 +2272,24 @@ class GuideBuilder:
                     joint_groups[grp].append(spec)
                     joint_handled.add(spec.name)
 
-            # Process joint groups first
+            # Process joint groups first (may contain a mix of scalar
+            # and gene-specific specs with heterogeneous shapes)
             for grp_name, grp_specs in joint_groups.items():
                 guide_family = grp_specs[0].guide_family
                 setup_joint_guide(grp_specs, guide_family, dims, model_config)
 
-            # Process remaining (non-joint) gene-specific specs individually
+            # ================================================================
+            # 2. Setup guides for remaining GLOBAL parameters
+            # ================================================================
+            for spec in global_specs:
+                if spec.name in joint_handled:
+                    continue
+                guide_family = spec.guide_family or MeanFieldGuide()
+                setup_guide(spec, guide_family, dims, model_config)
+
+            # ================================================================
+            # 3. Setup guides for remaining GENE-SPECIFIC parameters
+            # ================================================================
             for spec in gene_specs:
                 if spec.name in joint_handled:
                     continue

@@ -82,8 +82,13 @@ def _build_joint_low_rank_posterior(
 
     Uses the stored ``{prefix}_loc``, ``{prefix}_W``,
     ``{prefix}_raw_diag`` to reconstruct the per-parameter marginal
-    ``LowRankMVN`` + transform, identical in structure to the output
+    distribution + transform, identical in structure to the output
     of ``_build_low_rank_exp_normal_posterior``.
+
+    For gene-specific parameters (G > 1), returns a
+    ``LowRankMultivariateNormal``.  For scalar parameters that were
+    expanded to G=1 during joint guide setup, collapses back to a
+    ``Normal`` with variance ``sum(W[..., 0, :]**2) + D[..., 0]``.
 
     Parameters
     ----------
@@ -99,7 +104,7 @@ def _build_joint_low_rank_posterior(
     Returns
     -------
     dict
-        ``{"base": LowRankMVN, "transform": transform}``
+        ``{"base": distribution, "transform": transform}``
     """
     import jax
 
@@ -108,7 +113,13 @@ def _build_joint_low_rank_posterior(
     raw_diag = params[f"{prefix}_raw_diag"]
 
     D = jax.nn.softplus(raw_diag) + 1e-4
-    base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
+
+    # Scalar params expanded to G=1: collapse to Normal for correct shape
+    if loc.shape[-1] == 1:
+        scalar_var = jnp.sum(W[..., 0, :] ** 2, axis=-1) + D[..., 0]
+        base = dist.Normal(loc[..., 0], jnp.sqrt(scalar_var))
+    else:
+        base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
 
     if name in ("p", "gate", "p_capture"):
         transform = dist.transforms.SigmoidTransform()
@@ -126,7 +137,10 @@ def _build_joint_full_distribution(
     """Build the full joint ``LowRankMVN`` by stacking per-param blocks.
 
     Concatenates ``loc``, ``W``, ``D`` from each parameter in the group
-    into a single ``2G``-dimensional (or ``nG``-dim) distribution.
+    into a single distribution.  Supports heterogeneous per-parameter
+    dimensions (e.g., a scalar parameter with G=1 alongside gene-specific
+    parameters with G=n_genes).  The ``param_sizes`` list records each
+    block's trailing dimension so consumers can split the stacked vector.
 
     Parameters
     ----------
