@@ -1154,3 +1154,87 @@ empirical pathway test requires $O(ND)$. The ratio $N/k$ (typically $\approx
 as with gene-level empirical DE, this cost is negligible on GPU hardware for
 typical problem sizes.
 
+
+### Expression masking and the CLR reference composition {#sec-diffexp-expression-mask}
+
+An expression mask filters low-expression genes before differential analysis,
+pooling them into a single "other" pseudo-gene to maintain compositional
+closure. Because the centered log-ratio (CLR) transform uses the geometric
+mean of all retained genes as its reference, the choice of mask directly
+defines the yardstick against which effects are measured. This section
+formalises the consequences.
+
+**Setup.** Let $\boldsymbol\rho^{(s)}$ denote a simplex sample of dimension
+$D$, partitioned into kept genes $\mathcal{K}$ ($|\mathcal{K}| = D_k$) and
+filtered genes $\mathcal{F}$. Write $\rho_{\mathrm{other}}^{(s)} =
+\sum_{g \in \mathcal{F}} \rho_g^{(s)}$ for the aggregated "other"
+proportion. The masked simplex has $D_k + 1$ components.
+
+**CLR under the mask.** The masked CLR for a kept gene $g \in \mathcal{K}$ is:
+
+$$
+\mathrm{CLR}_g^{\mathrm{mask},(s)} = \log \rho_g^{(s)} - \frac{1}{D_k + 1}
+\left(\sum_{j \in \mathcal{K}} \log \rho_j^{(s)} +
+\log \rho_{\mathrm{other}}^{(s)}\right),
+$$
+
+whereas the full-gene CLR would use all $D$ individual log-proportions in the
+geometric mean. For each posterior sample, the difference between the
+full-gene CLR and the masked CLR for a kept gene is a _per-sample constant_:
+
+$$
+c^{(s)} = \mathrm{CLR}_g^{\mathrm{full},(s)} -
+\mathrm{CLR}_g^{\mathrm{mask},(s)} =
+\log \bar{g}_{\mathrm{mask}}^{(s)} -
+\log \bar{g}_{\mathrm{full}}^{(s)},
+$$
+
+where $\bar{g}_{\mathrm{mask}}^{(s)}$ and $\bar{g}_{\mathrm{full}}^{(s)}$
+are the geometric means of the masked and full compositions, respectively.
+This shift $c^{(s)}$ is the same for every gene $g \in \mathcal{K}$ in a
+given sample.
+
+**Why the shift matters.** Although $\mathrm{Var}[c^{(s)}]$ is typically
+$O(1/D)$ (the shift is tight across samples), its expectation
+$\mathbb{E}[c^{(s)}]$ can be large. In log-space, low-expression genes
+dominate the geometric mean because their $\log \rho_g$ values are large
+negative numbers. When many genes are low-expression (common in
+transcriptomics), the full-gene geometric mean is pulled strongly downward
+relative to the masked geometric mean that only includes expressed genes.
+This produces a substantial constant offset in $c^{(s)}$ that shifts all
+$\Delta_g^{(s)}$ uniformly.
+
+Although the shift is constant across genes within each sample, the
+magnitude and sign of the shift vary across posterior samples, so it does
+not cancel when averaging. The resulting bias completely scrambles the local
+false sign rate (lfsr): genes that should have lfsr $\approx 0$ acquire
+spurious probability mass on the wrong sign, and vice versa. **Therefore,
+the expression mask must be applied before the CLR transform, not as a
+post-hoc filter on the CLR differences.**
+
+**Dirichlet aggregation property.** Fortunately, the Dirichlet distribution
+has a closure property under aggregation: if $\boldsymbol\rho \sim
+\mathrm{Dir}(\boldsymbol\alpha)$, then the composition formed by summing
+any subset of components into a single entry is itself Dirichlet with the
+summed concentration. Formally, if we aggregate $\mathcal{F}$ into "other":
+
+$$
+(\rho_{\mathcal{K}_1}, \ldots, \rho_{\mathcal{K}_{D_k}},
+\rho_{\mathrm{other}}) \sim
+\mathrm{Dir}(\alpha_{\mathcal{K}_1}, \ldots, \alpha_{\mathcal{K}_{D_k}},
+\alpha_{\mathrm{other}}),
+\quad
+\alpha_{\mathrm{other}} = \sum_{g \in \mathcal{F}} \alpha_g.
+$$
+
+This means we can store the full $D$-dimensional simplex samples from the
+initial Dirichlet draw and re-aggregate post-hoc for any gene mask—the result
+is _mathematically identical_ to having pre-aggregated the concentration
+parameters and sampled the lower-dimensional Dirichlet. This enables
+interactive mask exploration on a single results object without re-running
+the expensive Dirichlet/Gamma sampling stage.
+
+<!-- TODO: Add diagnostic figure (full-gene vs masked CLR scatter for delta_mean,
+     delta_sd, lfsr, and histogram of the constant shift) using a public dataset.
+     See altos/exploratory/panfibrosis/panfibrosis_de_eda.py for the template. -->
+
