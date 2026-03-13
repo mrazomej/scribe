@@ -346,7 +346,12 @@ class ScribeDEResults:
 
     # ------------------------------------------------------------------
 
-    def to_dataframe(self, tau: float = 0.0) -> "pandas.DataFrame":
+    def to_dataframe(
+        self,
+        tau: float = 0.0,
+        target_pefp: Optional[float] = None,
+        use_lfsr_tau: bool = True,
+    ) -> "pandas.DataFrame":
         """Export gene-level DE statistics to a pandas DataFrame.
 
         Consolidates the common pattern of calling ``gene_level(tau)``
@@ -358,6 +363,18 @@ class ScribeDEResults:
         tau : float, default=0.0
             Practical significance threshold (log-scale) used for
             ``lfsr_tau`` and ``prob_effect``.
+        target_pefp : float, optional
+            If provided, adds an ``is_de`` boolean column indicating
+            genes called differentially expressed at this PEFP level.
+            The lfsr threshold is found via :meth:`find_threshold` and
+            genes with lfsr (or ``lfsr_tau`` when ``use_lfsr_tau=True``)
+            below that threshold are called DE.  Must be in ``(0, 1)``.
+        use_lfsr_tau : bool, default=True
+            Which lfsr variant to use for the PEFP-controlled DE call.
+            When ``True``, the threshold and the ``is_de`` column are
+            based on ``lfsr_tau`` (which already incorporates ``tau``).
+            When ``False``, the standard ``lfsr`` is used.  Ignored
+            when ``target_pefp`` is ``None``.
 
         Returns
         -------
@@ -385,6 +402,14 @@ class ScribeDEResults:
               indicate confident upregulation in A; near 0 indicate
               confident downregulation.
 
+            When ``target_pefp`` is provided:
+
+            - **is_de** : Boolean — ``True`` if the gene is called DE
+              at the PEFP-controlled threshold.  The threshold ``t*``
+              is the largest value such that the average lfsr (or
+              ``lfsr_tau``) among genes with lfsr < ``t*`` is at most
+              ``target_pefp``.
+
             ``ScribeEmpiricalDEResults`` additionally includes:
 
             - **mean_expression_A** : MAP mean expression (count space)
@@ -397,7 +422,7 @@ class ScribeDEResults:
 
         self._ensure_gene_results(tau=tau)
         gs = self._gene_results
-        return pd.DataFrame(
+        df = pd.DataFrame(
             {
                 "gene": gs["gene_names"],
                 "delta_mean": np.asarray(gs["delta_mean"]),
@@ -408,6 +433,19 @@ class ScribeDEResults:
                 "prob_positive": np.asarray(gs["prob_positive"]),
             }
         )
+
+        # Optionally add PEFP-controlled DE calls.
+        # find_threshold returns t* such that the average lfsr (or lfsr_tau)
+        # among genes with lfsr < t* is ≤ target_pefp.  Thresholding at t*
+        # therefore controls the posterior expected false discovery proportion.
+        if target_pefp is not None:
+            threshold = self.find_threshold(
+                target_pefp=target_pefp, tau=tau, use_lfsr_tau=use_lfsr_tau
+            )
+            lfsr_col = "lfsr_tau" if use_lfsr_tau else "lfsr"
+            df["is_de"] = df[lfsr_col].to_numpy() < threshold
+
+        return df
 
 
 # --------------------------------------------------------------------------
@@ -1254,7 +1292,12 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
     # DataFrame export (extends base to include mean expression)
     # ------------------------------------------------------------------
 
-    def to_dataframe(self, tau: float = 0.0) -> "pandas.DataFrame":
+    def to_dataframe(
+        self,
+        tau: float = 0.0,
+        target_pefp: Optional[float] = None,
+        use_lfsr_tau: bool = True,
+    ) -> "pandas.DataFrame":
         """Export gene-level DE statistics to a pandas DataFrame.
 
         Extends the base-class ``to_dataframe`` to include
@@ -1265,6 +1308,10 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
         ----------
         tau : float, default=0.0
             Practical significance threshold (log-scale).
+        target_pefp : float, optional
+            If provided, adds an ``is_de`` column (see base class).
+        use_lfsr_tau : bool, default=True
+            Which lfsr variant to use for PEFP control (see base class).
 
         Returns
         -------
@@ -1283,7 +1330,9 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
         """
         import numpy as np
 
-        df = super().to_dataframe(tau=tau)
+        df = super().to_dataframe(
+            tau=tau, target_pefp=target_pefp, use_lfsr_tau=use_lfsr_tau
+        )
 
         # Append MAP mean expression columns when available, aligned to
         # the current gene mask.

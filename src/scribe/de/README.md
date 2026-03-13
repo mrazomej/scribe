@@ -101,7 +101,7 @@ When results objects are passed, `compare()`:
 | `de.compute_pefp(threshold, tau, use_lfsr_tau)` | Posterior expected FDP |
 | `de.find_threshold(target_pefp, tau, use_lfsr_tau)` | Find lfsr threshold for PEFP control |
 | `de.summary(tau, sort_by, top_n)` | Formatted results table |
-| `de.to_dataframe(tau)` | Export gene-level results to a pandas DataFrame |
+| `de.to_dataframe(tau, target_pefp, use_lfsr_tau)` | Export gene-level results to a pandas DataFrame |
 
 **Empirical/Shrinkage-only methods:**
 
@@ -411,6 +411,25 @@ df = de.to_dataframe(tau=0.5)
 
 For empirical results with stored MAP mean expression, the DataFrame also
 includes `mean_expression_A` and `mean_expression_B` columns.
+
+#### PEFP-controlled DE calls
+
+Pass `target_pefp` to automatically add a boolean `is_de` column that
+controls the posterior expected false discovery proportion (PEFP) at the
+specified level:
+
+```python
+# Call DE genes at PEFP ≤ 5%, using lfsr_tau (the default)
+df = de.to_dataframe(tau=0.5, target_pefp=0.05)
+de_genes = df[df["is_de"]]
+```
+
+The `is_de` column is computed by finding the largest lfsr (or `lfsr_tau`)
+threshold `t*` such that the average lfsr among genes with lfsr < `t*` does
+not exceed `target_pefp`, then flagging all genes below that threshold.
+By default `use_lfsr_tau=True`, so the practical-significance variant is
+used (recommended when `tau > 0`).  Set `use_lfsr_tau=False` to threshold
+on the standard `lfsr` instead.
 
 ## Empirical (Non-Parametric) DE
 
