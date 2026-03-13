@@ -102,6 +102,8 @@ from ._gaussianity import gaussianity_diagnostics
 
 # Empirical (non-parametric) DE
 from ._empirical import (
+    sample_compositions,
+    compute_delta_from_simplex,
     compute_clr_differences,
     empirical_differential_expression,
     compute_expression_mask,
@@ -152,6 +154,8 @@ __all__ = [
     # Diagnostics
     "gaussianity_diagnostics",
     # Empirical (non-parametric) DE
+    "sample_compositions",
+    "compute_delta_from_simplex",
     "compute_clr_differences",
     "empirical_differential_expression",
     "compute_expression_mask",

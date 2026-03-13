@@ -268,11 +268,11 @@ def _extract_mu(map_estimates: dict) -> jnp.ndarray:
 
 
 # --------------------------------------------------------------------------
-# CLR difference computation
+# Composition sampling (Stage 1 of CLR pipeline)
 # --------------------------------------------------------------------------
 
 
-def compute_clr_differences(
+def sample_compositions(
     r_samples_A: jnp.ndarray,
     r_samples_B: jnp.ndarray,
     component_A: Optional[int] = None,
@@ -281,24 +281,18 @@ def compute_clr_differences(
     n_samples_dirichlet: int = 1,
     rng_key=None,
     batch_size: int = 2048,
-    gene_mask: Optional[jnp.ndarray] = None,
     p_samples_A: Optional[jnp.ndarray] = None,
     p_samples_B: Optional[jnp.ndarray] = None,
-) -> jnp.ndarray:
-    """
-    Compute CLR-space posterior differences from Dirichlet concentration samples.
+) -> tuple:
+    """Draw full-dimensional simplex samples from posterior parameters.
 
-    Takes posterior samples of Dirichlet concentration parameters ``r``
-    for two conditions, draws compositions (either from ``Dirichlet(r)``
-    or from the generalized Gamma-based sampling when gene-specific ``p``
-    is provided), transforms to centered log-ratio (CLR) coordinates,
-    and returns the paired differences.
+    This is Stage 1 of the empirical DE pipeline: go from Dirichlet
+    concentration parameters ``r`` (and optionally gene-specific ``p``)
+    to paired simplex compositions of shape ``(N_total, D)`` each.
 
-    When ``p_samples_A`` / ``p_samples_B`` are provided (from a
-    hierarchical model with gene-specific p), compositions are generated
-    via scaled Gamma variates instead of Dirichlet sampling.  This
-    correctly accounts for gene-specific success probabilities in the
-    Negative Binomial → composition mapping.
+    No gene aggregation or CLR transformation is performed here.  The
+    returned simplices can be stored and reused with different gene masks
+    via :func:`compute_delta_from_simplex`.
 
     Parameters
     ----------
@@ -317,41 +311,24 @@ def compute_clr_differences(
     paired : bool, default=False
         If ``True``, use the **same** RNG sub-key per sample index for
         both conditions (required for within-mixture comparisons).
-        If ``False``, use independent RNG keys (valid for independent
-        posterior comparisons).
     n_samples_dirichlet : int, default=1
-        Number of Dirichlet draws per posterior sample.  When > 1, each
-        posterior sample yields multiple simplex draws; the total number
-        of CLR difference samples is ``N * n_samples_dirichlet``.
+        Number of Dirichlet draws per posterior sample.
     rng_key : jax.random.PRNGKey, optional
         JAX PRNG key.  If ``None``, uses ``jax.random.PRNGKey(0)``.
     batch_size : int, default=2048
-        Number of posterior samples per batched Dirichlet sampling call.
-    gene_mask : jnp.ndarray, shape ``(D,)``, optional
-        Boolean mask selecting genes to keep.  Genes marked ``False``
-        are aggregated into a single "other" pseudo-gene whose proportion
-        is dropped from the returned differences.  When ``p_samples``
-        are absent (Dirichlet path), aggregation happens in the ``r``
-        parameter space before sampling via :func:`_aggregate_genes`.
-        When gene-specific ``p_samples`` are present (Gamma path),
-        aggregation is deferred to the simplex space after sampling via
-        :func:`_aggregate_simplex`, so that each gene's own ``p`` value
-        is used during composition sampling.  In both cases the output
-        has ``D_kept = gene_mask.sum()`` columns.
-        If ``None`` (default), all genes are kept.
+        Number of posterior samples per batched sampling call.
     p_samples_A : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``, optional
-        Posterior samples of gene-specific success probabilities for
-        condition A.  When provided, Gamma-based composition sampling
-        is used instead of Dirichlet.  Shape must match ``r_samples_A``.
+        Gene-specific success probabilities for condition A.  When
+        provided, Gamma-based composition sampling is used.
     p_samples_B : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``, optional
-        Posterior samples of gene-specific success probabilities for
-        condition B.  Shape must match ``r_samples_B``.
+        Gene-specific success probabilities for condition B.
 
     Returns
     -------
-    jnp.ndarray, shape ``(N_total, D)`` or ``(N_total, D_kept)``
-        CLR-space differences.  ``N_total = N * n_samples_dirichlet``.
-        When ``gene_mask`` is provided, ``D_kept = gene_mask.sum()``.
+    simplex_A : jnp.ndarray, shape ``(N_total, D)``
+        Full-dimensional simplex samples for condition A.
+    simplex_B : jnp.ndarray, shape ``(N_total, D)``
+        Full-dimensional simplex samples for condition B.
 
     Raises
     ------
@@ -361,9 +338,11 @@ def compute_clr_differences(
 
     Notes
     -----
-    When all ``p_g`` are equal across genes (shared p), the Gamma-based
-    sampling reduces exactly to Dirichlet sampling, because the constant
-    ``p / (1 - p)`` factor cancels in the normalization.
+    By the Dirichlet aggregation property, sampling the full D-dimensional
+    Dirichlet and aggregating afterwards is equivalent to aggregating the
+    concentration parameters and sampling the lower-dimensional Dirichlet.
+    Storing the full simplex therefore allows exact re-aggregation with any
+    gene mask without re-sampling.
     """
     if rng_key is None:
         rng_key = random.PRNGKey(0)
@@ -411,18 +390,8 @@ def compute_clr_differences(
     if p_B is not None:
         p_B = p_B[:N]
 
-    # --- Gene aggregation (Dirichlet path: aggregate r before sampling) ---
-    # When p is gene-specific (use_gamma), aggregation is deferred to the
-    # simplex space after sampling so each gene retains its own p during
-    # composition sampling.
-    if gene_mask is not None and not use_gamma:
-        r_A, r_B = _aggregate_genes(r_A, r_B, gene_mask)
-
-    # --- Composition sampling ---
+    # --- Composition sampling (always full-dimensional, no aggregation) ---
     if use_gamma:
-        # Gamma-based composition sampling for gene-specific p.
-        # The full gene space (D columns) is sampled here; the gene_mask
-        # aggregation is applied in simplex space immediately after.
         key_A, key_B = random.split(rng_key)
         simplex_A = _batched_gamma_normalize(
             r_A, p_A, n_samples_dirichlet, key_A, batch_size
@@ -430,11 +399,6 @@ def compute_clr_differences(
         simplex_B = _batched_gamma_normalize(
             r_B, p_B, n_samples_dirichlet, key_B, batch_size
         )
-        # Aggregate filtered genes into "other" column after sampling so
-        # that the CLR normalization only includes expressed genes.
-        if gene_mask is not None:
-            simplex_A = _aggregate_simplex(simplex_A, gene_mask)
-            simplex_B = _aggregate_simplex(simplex_B, gene_mask)
     elif paired:
         simplex_A, simplex_B = _paired_dirichlet_sample(
             r_A, r_B, n_samples_dirichlet, rng_key, batch_size
@@ -448,18 +412,150 @@ def compute_clr_differences(
             r_B, n_samples_dirichlet, key_B, batch_size
         )
 
-    # --- CLR transform ---
-    clr_A = _clr_transform(simplex_A)
-    clr_B = _clr_transform(simplex_B)
+    return simplex_A, simplex_B
 
-    # --- Paired differences ---
+
+# --------------------------------------------------------------------------
+# CLR aggregation + differencing (Stage 2 of CLR pipeline)
+# --------------------------------------------------------------------------
+
+
+def compute_delta_from_simplex(
+    simplex_A: jnp.ndarray,
+    simplex_B: jnp.ndarray,
+    gene_mask: Optional[jnp.ndarray] = None,
+) -> jnp.ndarray:
+    """Aggregate, CLR-transform, and difference paired simplex samples.
+
+    This is Stage 2 of the empirical DE pipeline.  Given full-dimensional
+    simplex samples from :func:`sample_compositions`, it optionally
+    aggregates filtered genes into an "other" pseudo-gene, applies the
+    CLR transform, computes paired differences, and drops the "other"
+    column.
+
+    Because the CLR geometric mean defines the reference against which
+    effects are measured, the gene mask **must** be applied before the
+    CLR transform—not as a post-hoc filter on the differences.
+    See :ref:`sec-diffexp-expression-mask` in the paper for details.
+
+    Parameters
+    ----------
+    simplex_A : jnp.ndarray, shape ``(N, D)``
+        Full-dimensional simplex samples for condition A.
+    simplex_B : jnp.ndarray, shape ``(N, D)``
+        Full-dimensional simplex samples for condition B.
+    gene_mask : jnp.ndarray, shape ``(D,)``, optional
+        Boolean mask selecting genes to keep.  Genes marked ``False``
+        are aggregated into a single "other" pseudo-gene via
+        :func:`_aggregate_simplex` before CLR.  The "other" column is
+        dropped from the returned differences.
+        If ``None`` (default), all genes are kept and no aggregation
+        is performed.
+
+    Returns
+    -------
+    jnp.ndarray, shape ``(N, D)`` or ``(N, D_kept)``
+        CLR-space differences ``CLR(rho_A) - CLR(rho_B)``.
+        When ``gene_mask`` is provided, ``D_kept = gene_mask.sum()``.
+    """
+    s_A, s_B = simplex_A, simplex_B
+
+    # Aggregate filtered genes into "other" column before CLR so the
+    # geometric mean reference reflects only the expressed genes.
+    if gene_mask is not None:
+        s_A = _aggregate_simplex(s_A, gene_mask)
+        s_B = _aggregate_simplex(s_B, gene_mask)
+
+    clr_A = _clr_transform(s_A)
+    clr_B = _clr_transform(s_B)
     delta = clr_A - clr_B
 
-    # --- Drop the "other" pseudo-gene column ---
+    # Drop the "other" pseudo-gene column
     if gene_mask is not None:
         delta = delta[:, :-1]
 
     return delta
+
+
+# --------------------------------------------------------------------------
+# Legacy convenience wrapper
+# --------------------------------------------------------------------------
+
+
+def compute_clr_differences(
+    r_samples_A: jnp.ndarray,
+    r_samples_B: jnp.ndarray,
+    component_A: Optional[int] = None,
+    component_B: Optional[int] = None,
+    paired: bool = False,
+    n_samples_dirichlet: int = 1,
+    rng_key=None,
+    batch_size: int = 2048,
+    gene_mask: Optional[jnp.ndarray] = None,
+    p_samples_A: Optional[jnp.ndarray] = None,
+    p_samples_B: Optional[jnp.ndarray] = None,
+) -> jnp.ndarray:
+    """Compute CLR-space posterior differences from Dirichlet concentration samples.
+
+    Convenience wrapper that calls :func:`sample_compositions` followed
+    by :func:`compute_delta_from_simplex`.  Use the two-stage API
+    directly when you need to store the intermediate simplex samples for
+    interactive mask exploration.
+
+    Parameters
+    ----------
+    r_samples_A : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``
+        Posterior samples of Dirichlet concentration parameters for
+        condition A.  If 3D, ``K`` is the number of mixture components
+        and ``component_A`` must be specified.
+    r_samples_B : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``
+        Posterior samples for condition B.
+    component_A : int, optional
+        Mixture component index to extract from ``r_samples_A``.
+    component_B : int, optional
+        Mixture component index to extract from ``r_samples_B``.
+    paired : bool, default=False
+        If ``True``, use the **same** RNG sub-key per sample index for
+        both conditions (required for within-mixture comparisons).
+    n_samples_dirichlet : int, default=1
+        Number of Dirichlet draws per posterior sample.
+    rng_key : jax.random.PRNGKey, optional
+        JAX PRNG key.  If ``None``, uses ``jax.random.PRNGKey(0)``.
+    batch_size : int, default=2048
+        Number of posterior samples per batched Dirichlet sampling call.
+    gene_mask : jnp.ndarray, shape ``(D,)``, optional
+        Boolean mask selecting genes to keep.  Genes marked ``False``
+        are aggregated into an "other" pseudo-gene before CLR.
+    p_samples_A : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``, optional
+        Gene-specific success probabilities for condition A.
+    p_samples_B : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``, optional
+        Gene-specific success probabilities for condition B.
+
+    Returns
+    -------
+    jnp.ndarray, shape ``(N_total, D)`` or ``(N_total, D_kept)``
+        CLR-space differences.  ``N_total = N * n_samples_dirichlet``.
+        When ``gene_mask`` is provided, ``D_kept = gene_mask.sum()``.
+
+    Raises
+    ------
+    ValueError
+        If 3D input is given without the corresponding ``component_*``
+        argument, or if ``paired=True`` and sample counts differ.
+    """
+    simplex_A, simplex_B = sample_compositions(
+        r_samples_A=r_samples_A,
+        r_samples_B=r_samples_B,
+        component_A=component_A,
+        component_B=component_B,
+        paired=paired,
+        n_samples_dirichlet=n_samples_dirichlet,
+        rng_key=rng_key,
+        batch_size=batch_size,
+        p_samples_A=p_samples_A,
+        p_samples_B=p_samples_B,
+    )
+    return compute_delta_from_simplex(simplex_A, simplex_B, gene_mask)
 
 
 # --------------------------------------------------------------------------

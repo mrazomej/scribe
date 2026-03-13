@@ -19,9 +19,12 @@ differencing internally.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import Optional, List, TYPE_CHECKING
 
 import jax.numpy as jnp
+
+if TYPE_CHECKING:
+    import pandas
 
 from ._extract import extract_alr_params
 from ._gene_level import differential_expression, call_de_genes
@@ -341,6 +344,45 @@ class ScribeDEResults:
         self._ensure_gene_results(tau=tau)
         return format_de_table(self._gene_results, sort_by=sort_by, top_n=top_n)
 
+    # ------------------------------------------------------------------
+
+    def to_dataframe(self, tau: float = 0.0) -> "pandas.DataFrame":
+        """Export gene-level DE statistics to a pandas DataFrame.
+
+        Consolidates the common pattern of calling ``gene_level(tau)``
+        and manually constructing a DataFrame.  Subclasses may extend
+        this to include additional columns (e.g., mean expression).
+
+        Parameters
+        ----------
+        tau : float, default=0.0
+            Practical significance threshold (log-scale) used for
+            ``lfsr_tau`` and ``prob_effect``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per gene with columns ``gene``, ``delta_mean``,
+            ``delta_sd``, ``lfsr``, ``lfsr_tau``, ``prob_effect``,
+            ``prob_positive``.
+        """
+        import numpy as np
+        import pandas as pd
+
+        self._ensure_gene_results(tau=tau)
+        gs = self._gene_results
+        return pd.DataFrame(
+            {
+                "gene": gs["gene_names"],
+                "delta_mean": np.asarray(gs["delta_mean"]),
+                "delta_sd": np.asarray(gs["delta_sd"]),
+                "lfsr": np.asarray(gs["lfsr"]),
+                "lfsr_tau": np.asarray(gs["lfsr_tau"]),
+                "prob_effect": np.asarray(gs["prob_effect"]),
+                "prob_positive": np.asarray(gs["prob_positive"]),
+            }
+        )
+
 
 # --------------------------------------------------------------------------
 # Parametric (Gaussian) subclass
@@ -639,6 +681,25 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
     phi_samples_A: Optional[jnp.ndarray] = field(default=None, repr=False)
     phi_samples_B: Optional[jnp.ndarray] = field(default=None, repr=False)
 
+    # --- Full simplex samples for interactive mask exploration ---
+    # Stored by compare() so that the user can change the expression
+    # mask without re-running the expensive Dirichlet/Gamma sampling.
+    simplex_A: Optional[jnp.ndarray] = field(default=None, repr=False)
+    simplex_B: Optional[jnp.ndarray] = field(default=None, repr=False)
+
+    # --- MAP mean expression per gene (full D, before masking) ---
+    # Used by set_expression_threshold() to build a mask from mu.
+    mu_map_A: Optional[jnp.ndarray] = field(default=None, repr=False)
+    mu_map_B: Optional[jnp.ndarray] = field(default=None, repr=False)
+
+    # --- Mask bookkeeping (non-init, managed internally) ---
+    _gene_mask: Optional[jnp.ndarray] = field(
+        default=None, repr=False, init=False
+    )
+    _all_gene_names: Optional[List[str]] = field(
+        default=None, repr=False, init=False
+    )
+
     # --- Informational ---
     n_samples: int = field(default=0, repr=True)
 
@@ -838,10 +899,47 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
     # Set-level analysis (empirical, sample-based)
     # ------------------------------------------------------------------
 
+    def _resolve_delta_for_gene_set(self, respect_mask: bool) -> jnp.ndarray:
+        """Return the delta_samples matrix to use for gene-set tests.
+
+        When ``respect_mask=True`` (default), the current masked
+        ``delta_samples`` is returned.  When ``respect_mask=False`` and
+        simplex samples are available, CLR differences are recomputed
+        over the full composition so that gene indices refer to the
+        unmasked gene space.
+
+        Parameters
+        ----------
+        respect_mask : bool
+            If ``True``, use the currently masked delta_samples.
+            If ``False``, use the full-gene delta_samples.
+
+        Returns
+        -------
+        jnp.ndarray
+            CLR difference matrix of shape ``(N, D_masked)`` or
+            ``(N, D_full)``.
+        """
+        if respect_mask or self._gene_mask is None:
+            return self.delta_samples
+
+        if not self.has_simplex:
+            raise ValueError(
+                "respect_mask=False requires stored simplex samples, but "
+                "they are not available."
+            )
+
+        from ._empirical import compute_delta_from_simplex
+
+        return compute_delta_from_simplex(
+            self.simplex_A, self.simplex_B, gene_mask=None
+        )
+
     def test_gene_set(
         self,
         gene_set_indices: jnp.ndarray,
         tau: float = 0.0,
+        respect_mask: bool = True,
     ) -> dict:
         """Test pathway enrichment via ILR balance and posterior samples.
 
@@ -855,6 +953,10 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
             Integer indices of genes in the pathway.
         tau : float, default=0.0
             Practical significance threshold (log-scale).
+        respect_mask : bool, default=True
+            If ``True``, gene indices are interpreted in the current
+            masked gene space.  If ``False``, indices refer to the full
+            (unmasked) gene space and CLR is recomputed without a mask.
 
         Returns
         -------
@@ -868,15 +970,15 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
         >>> pathway = jnp.array([0, 5, 12])
         >>> result = de_empirical.test_gene_set(pathway, tau=0.1)
         """
-        return empirical_test_gene_set(
-            self.delta_samples, gene_set_indices, tau=tau
-        )
+        delta = self._resolve_delta_for_gene_set(respect_mask)
+        return empirical_test_gene_set(delta, gene_set_indices, tau=tau)
 
     def test_pathway_perturbation(
         self,
         gene_set_indices: jnp.ndarray,
         n_permutations: int = 999,
         key=None,
+        respect_mask: bool = True,
     ) -> dict:
         """Test within-pathway compositional perturbation.
 
@@ -892,6 +994,10 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
             Number of permutations for null calibration.
         key : jax.random.PRNGKey, optional
             PRNG key for reproducibility.
+        respect_mask : bool, default=True
+            If ``True``, gene indices are interpreted in the current
+            masked gene space.  If ``False``, indices refer to the full
+            (unmasked) gene space.
 
         Returns
         -------
@@ -904,8 +1010,9 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
         >>> pathway = jnp.array([0, 5, 12, 18])
         >>> result = de_empirical.test_pathway_perturbation(pathway)
         """
+        delta = self._resolve_delta_for_gene_set(respect_mask)
         return empirical_test_pathway_perturbation(
-            self.delta_samples,
+            delta,
             gene_set_indices,
             n_permutations=n_permutations,
             key=key,
@@ -916,6 +1023,7 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
         gene_sets,
         tau: float = 0.0,
         target_pefp: float = 0.05,
+        respect_mask: bool = True,
     ) -> dict:
         """Batch pathway enrichment test with PEFP control.
 
@@ -931,6 +1039,10 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
             Practical significance threshold (log-scale).
         target_pefp : float, default=0.05
             Target PEFP level for multiple testing correction.
+        respect_mask : bool, default=True
+            If ``True``, gene indices are interpreted in the current
+            masked gene space.  If ``False``, indices refer to the full
+            (unmasked) gene space.
 
         Returns
         -------
@@ -944,9 +1056,190 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
         >>> gene_sets = [jnp.array([0, 1]), jnp.array([3, 4, 5])]
         >>> result = de_empirical.test_multiple_gene_sets(gene_sets)
         """
+        delta = self._resolve_delta_for_gene_set(respect_mask)
         return empirical_test_multiple_gene_sets(
-            self.delta_samples, gene_sets, tau=tau, target_pefp=target_pefp
+            delta, gene_sets, tau=tau, target_pefp=target_pefp
         )
+
+    # ------------------------------------------------------------------
+    # Interactive mask management
+    # ------------------------------------------------------------------
+
+    @property
+    def has_simplex(self) -> bool:
+        """Whether full simplex samples are available for re-masking."""
+        return self.simplex_A is not None and self.simplex_B is not None
+
+    def set_gene_mask(self, mask: jnp.ndarray) -> None:
+        """Apply a new gene mask and recompute CLR differences.
+
+        Aggregates filtered genes into an "other" pseudo-gene using the
+        stored simplex samples, then recomputes the CLR transform and
+        paired differences.  This is exact and much cheaper than
+        re-running the full Dirichlet/Gamma sampling pipeline.
+
+        Parameters
+        ----------
+        mask : jnp.ndarray, shape ``(D_full,)``
+            Boolean mask over the full gene space.  ``True`` = keep.
+
+        Raises
+        ------
+        ValueError
+            If simplex samples were not stored, or if ``mask`` has the
+            wrong length.
+        """
+        import numpy as np
+        from ._empirical import compute_delta_from_simplex
+
+        if not self.has_simplex:
+            raise ValueError(
+                "Cannot change gene mask: simplex samples were not stored. "
+                "Re-run compare() — simplex storage is the default."
+            )
+
+        mask_arr = np.asarray(mask, dtype=bool).ravel()
+        D_full = self.simplex_A.shape[1]
+
+        if mask_arr.shape[0] != D_full:
+            raise ValueError(
+                f"mask length ({mask_arr.shape[0]}) does not match the full "
+                f"gene dimension ({D_full})."
+            )
+
+        # Recompute delta_samples from stored simplex + new mask
+        self.delta_samples = compute_delta_from_simplex(
+            self.simplex_A, self.simplex_B, gene_mask=jnp.asarray(mask_arr)
+        )
+        self.n_samples = self.delta_samples.shape[0]
+
+        # Update gene names to match the new mask
+        if self._all_gene_names is not None:
+            self.gene_names = [
+                n for n, m in zip(self._all_gene_names, mask_arr) if m
+            ]
+        else:
+            D_kept = int(mask_arr.sum())
+            self.gene_names = [f"gene_{i}" for i in range(D_kept)]
+
+        self._gene_mask = jnp.asarray(mask_arr)
+
+        # Invalidate all caches
+        self._gene_results = None
+        self._cached_tau = None
+        self._biological_results = None
+        self._cached_bio_taus = None
+
+    def set_expression_threshold(self, min_expression: float) -> None:
+        """Build and apply an expression mask from stored MAP mu.
+
+        A gene passes if its MAP mean expression is at least
+        ``min_expression`` in **either** condition.
+
+        Parameters
+        ----------
+        min_expression : float
+            Minimum MAP mean expression (count space) for a gene to
+            be individually analysed.  Genes below this in both
+            conditions are aggregated into "other".
+
+        Raises
+        ------
+        ValueError
+            If MAP mean expression was not stored, or if simplex
+            samples are unavailable.
+        """
+        import numpy as np
+
+        if self.mu_map_A is None or self.mu_map_B is None:
+            raise ValueError(
+                "Cannot set expression threshold: MAP mean expression "
+                "(mu_map_A / mu_map_B) was not stored in the results object."
+            )
+
+        mu_A = np.asarray(self.mu_map_A)
+        mu_B = np.asarray(self.mu_map_B)
+        mask = (mu_A >= min_expression) | (mu_B >= min_expression)
+        self.set_gene_mask(mask)
+
+    def clear_mask(self) -> None:
+        """Remove the active gene mask and restore all genes.
+
+        Recomputes CLR differences over the full composition (no
+        aggregation).
+
+        Raises
+        ------
+        ValueError
+            If simplex samples are not available.
+        """
+        from ._empirical import compute_delta_from_simplex
+
+        if not self.has_simplex:
+            raise ValueError(
+                "Cannot clear mask: simplex samples were not stored."
+            )
+
+        # Recompute without any mask
+        self.delta_samples = compute_delta_from_simplex(
+            self.simplex_A, self.simplex_B, gene_mask=None
+        )
+        self.n_samples = self.delta_samples.shape[0]
+
+        if self._all_gene_names is not None:
+            self.gene_names = list(self._all_gene_names)
+        else:
+            D = self.delta_samples.shape[1]
+            self.gene_names = [f"gene_{i}" for i in range(D)]
+
+        self._gene_mask = None
+
+        # Invalidate caches
+        self._gene_results = None
+        self._cached_tau = None
+        self._biological_results = None
+        self._cached_bio_taus = None
+
+    # ------------------------------------------------------------------
+    # DataFrame export (extends base to include mean expression)
+    # ------------------------------------------------------------------
+
+    def to_dataframe(self, tau: float = 0.0) -> "pandas.DataFrame":
+        """Export gene-level DE statistics to a pandas DataFrame.
+
+        Extends the base-class ``to_dataframe`` to include
+        ``mean_expression_A`` and ``mean_expression_B`` columns when
+        MAP mean expression estimates are stored.
+
+        Parameters
+        ----------
+        tau : float, default=0.0
+            Practical significance threshold (log-scale).
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per gene.  Includes the standard columns plus
+            ``mean_expression_A`` and ``mean_expression_B`` when
+            available.
+        """
+        import numpy as np
+
+        df = super().to_dataframe(tau=tau)
+
+        # Append MAP mean expression columns when available, aligned to
+        # the current gene mask.
+        if self.mu_map_A is not None and self.mu_map_B is not None:
+            mu_A = np.asarray(self.mu_map_A)
+            mu_B = np.asarray(self.mu_map_B)
+            if self._gene_mask is not None:
+                mask = np.asarray(self._gene_mask, dtype=bool)
+                mu_A = mu_A[mask]
+                mu_B = mu_B[mask]
+            df["mean_expression_A"] = mu_A
+            df["mean_expression_B"] = mu_B
+
+        return df
 
     # ------------------------------------------------------------------
 
@@ -1384,7 +1677,6 @@ def compare(
         _phi_samples_A = phi_A
         _phi_samples_B = phi_B
 
-
         # Replace model_A/model_B with raw r_samples for downstream
         model_A = r_A
         model_B = r_B
@@ -1628,11 +1920,15 @@ def _compare_empirical(
     -------
     ScribeEmpiricalDEResults
     """
-    from ._empirical import compute_clr_differences, _slice_component
+    import numpy as _np
+    from ._empirical import (
+        sample_compositions,
+        compute_delta_from_simplex,
+        _slice_component,
+    )
 
     # Capture sliced r/p samples for biological-level DE before
-    # compute_clr_differences consumes them through Dirichlet/Gamma
-    # sampling.  This mirrors the slicing logic inside that function.
+    # sampling consumes them through Dirichlet/Gamma draws.
     r_bio_A = _slice_component(r_samples_A, component_A, "A")
     r_bio_B = _slice_component(r_samples_B, component_B, "B")
     p_bio_A = (
@@ -1684,7 +1980,9 @@ def _compare_empirical(
     if phi_bio_B is not None:
         phi_bio_B = phi_bio_B[:N_bio]
 
-    delta_samples = compute_clr_differences(
+    # Stage 1: draw full-dimensional simplex samples (no aggregation).
+    # These are stored for interactive mask re-computation later.
+    simplex_A, simplex_B = sample_compositions(
         r_samples_A=r_samples_A,
         r_samples_B=r_samples_B,
         component_A=component_A,
@@ -1693,31 +1991,55 @@ def _compare_empirical(
         n_samples_dirichlet=n_samples_dirichlet,
         rng_key=rng_key,
         batch_size=batch_size,
-        gene_mask=gene_mask,
         p_samples_A=p_samples_A,
         p_samples_B=p_samples_B,
     )
 
-    # Filter gene_names to match kept genes when gene_mask is provided
+    # Stage 2: aggregate (if mask) → CLR → paired differences.
+    delta_samples = compute_delta_from_simplex(
+        simplex_A, simplex_B, gene_mask=gene_mask
+    )
+
+    # --- Extract MAP mean expression for threshold-based masking ---
+    # Compute MAP mu from the posterior mean of mu_samples when
+    # available; otherwise derive from mean of r and p samples.
+    mu_map_A_vec = None
+    mu_map_B_vec = None
+    if mu_bio_A is not None:
+        mu_map_A_vec = _np.asarray(jnp.mean(mu_bio_A, axis=0))
+    elif r_bio_A is not None and p_bio_A is not None:
+        _r_mean = jnp.mean(r_bio_A, axis=0)
+        _p_mean = jnp.mean(p_bio_A, axis=0)
+        _p_mean = jnp.clip(_p_mean, 1e-7, 1.0 - 1e-7)
+        mu_map_A_vec = _np.asarray(_r_mean * _p_mean / (1.0 - _p_mean))
+    if mu_bio_B is not None:
+        mu_map_B_vec = _np.asarray(jnp.mean(mu_bio_B, axis=0))
+    elif r_bio_B is not None and p_bio_B is not None:
+        _r_mean = jnp.mean(r_bio_B, axis=0)
+        _p_mean = jnp.mean(p_bio_B, axis=0)
+        _p_mean = jnp.clip(_p_mean, 1e-7, 1.0 - 1e-7)
+        mu_map_B_vec = _np.asarray(_r_mean * _p_mean / (1.0 - _p_mean))
+
+    # --- Resolve gene names ---
+    # Keep the full list for mask bookkeeping; filter for the result.
+    all_gene_names = gene_names
+    kept_gene_names = gene_names
     if gene_mask is not None and gene_names is not None:
-        import numpy as _np
-
         gene_mask_arr = _np.asarray(gene_mask, dtype=bool)
-        gene_names = [n for n, m in zip(gene_names, gene_mask_arr) if m]
+        kept_gene_names = [n for n, m in zip(gene_names, gene_mask_arr) if m]
 
-    # Number of genes is the last dimension (D_kept when mask is used)
     D = delta_samples.shape[1]
-    if gene_names is None:
-        gene_names = [f"gene_{i}" for i in range(D)]
-    elif len(gene_names) != D:
+    if kept_gene_names is None:
+        kept_gene_names = [f"gene_{i}" for i in range(D)]
+    elif len(kept_gene_names) != D:
         raise ValueError(
-            f"gene_names has length {len(gene_names)} but samples have "
+            f"gene_names has length {len(kept_gene_names)} but samples have "
             f"D={D} genes."
         )
 
-    return ScribeEmpiricalDEResults(
+    result = ScribeEmpiricalDEResults(
         delta_samples=delta_samples,
-        gene_names=gene_names,
+        gene_names=kept_gene_names,
         label_A=label_A,
         label_B=label_B,
         r_samples_A=r_bio_A if compute_biological else None,
@@ -1728,7 +2050,20 @@ def _compare_empirical(
         mu_samples_B=mu_bio_B if compute_biological else None,
         phi_samples_A=phi_bio_A if compute_biological else None,
         phi_samples_B=phi_bio_B if compute_biological else None,
+        simplex_A=simplex_A,
+        simplex_B=simplex_B,
+        mu_map_A=mu_map_A_vec,
+        mu_map_B=mu_map_B_vec,
     )
+
+    # Store mask bookkeeping on the result (non-init fields)
+    if gene_mask is not None:
+        result._gene_mask = jnp.asarray(_np.asarray(gene_mask, dtype=bool))
+    result._all_gene_names = (
+        list(all_gene_names) if all_gene_names is not None else None
+    )
+
+    return result
 
 
 # --------------------------------------------------------------------------
