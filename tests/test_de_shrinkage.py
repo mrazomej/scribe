@@ -726,3 +726,20 @@ class TestShrinkageMaskManagement:
         df = de_s.set_gene_mask(new_mask).to_dataframe(tau=0.1, target_pefp=0.10)
         assert "is_de" in df.columns
         assert len(df) == 3
+
+
+# --------------------------------------------------------------------------
+# Tests: shrinkage mixin composition
+# --------------------------------------------------------------------------
+
+
+def test_shrinkage_methods_come_from_shrinkage_mixin():
+    """Shrinkage overrides should originate from the shrinkage mixin."""
+    assert (
+        ScribeShrinkageDEResults.gene_level.__module__
+        == "scribe.de._results_shrinkage_mixin"
+    )
+    assert (
+        ScribeShrinkageDEResults.clear_mask.__module__
+        == "scribe.de._results_shrinkage_mixin"
+    )

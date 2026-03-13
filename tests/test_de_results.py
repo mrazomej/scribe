@@ -8,7 +8,11 @@ import pytest
 import jax.numpy as jnp
 from jax import random
 
-from scribe.de import compare, ScribeDEResults
+from scribe.de import (
+    ScribeDEResults,
+    ScribeParametricDEResults,
+    compare,
+)
 
 
 # --------------------------------------------------------------------------
@@ -702,3 +706,37 @@ class TestRespectMask:
             indices, n_permutations=99, respect_mask=True
         )
         assert "p_value" in result
+
+
+# --------------------------------------------------------------------------
+# Tests: mixin composition and factory split
+# --------------------------------------------------------------------------
+
+
+def test_base_methods_come_from_base_mixin():
+    """Shared methods should be provided by the base mixin module."""
+    assert (
+        ScribeDEResults.call_genes.__module__
+        == "scribe.de._results_base_mixin"
+    )
+    assert (
+        ScribeDEResults.compute_pefp.__module__
+        == "scribe.de._results_base_mixin"
+    )
+
+
+def test_parametric_methods_come_from_parametric_mixin():
+    """Parametric behavior should be sourced from the parametric mixin."""
+    assert (
+        ScribeParametricDEResults.gene_level.__module__
+        == "scribe.de._results_parametric_mixin"
+    )
+    assert (
+        ScribeParametricDEResults.test_gene_set.__module__
+        == "scribe.de._results_parametric_mixin"
+    )
+
+
+def test_compare_comes_from_factory_module():
+    """Public compare() should be re-exported from the factory module."""
+    assert compare.__module__ == "scribe.de._results_factory"
