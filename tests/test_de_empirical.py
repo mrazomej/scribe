@@ -1348,3 +1348,20 @@ class TestComputeDeltaFromSimplex:
         sd_legacy = np.array(jnp.std(delta_legacy, axis=0))
         sd_twostage = np.array(jnp.std(delta_twostage, axis=0))
         np.testing.assert_allclose(sd_legacy, sd_twostage, atol=0.1)
+
+
+# --------------------------------------------------------------------------
+# Tests: empirical mixin composition
+# --------------------------------------------------------------------------
+
+
+def test_empirical_methods_come_from_empirical_mixin():
+    """Empirical result methods should originate from the empirical mixin."""
+    assert (
+        ScribeEmpiricalDEResults.gene_level.__module__
+        == "scribe.de._results_empirical_mixin"
+    )
+    assert (
+        ScribeEmpiricalDEResults.set_gene_mask.__module__
+        == "scribe.de._results_empirical_mixin"
+    )

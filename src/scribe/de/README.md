@@ -751,18 +751,23 @@ Enrichment via ILR Balances") for the full derivation, including:
 
 ```
 de/
-├── __init__.py          # Public API
-├── results.py           # Class hierarchy + compare() factory
-├── _extract.py          # Dimension-aware parameter extraction
-├── _transforms.py       # ALR ↔ CLR ↔ ILR transformations
-├── _gene_level.py       # Per-gene DE (analytic Gaussian)
-├── _empirical.py        # Per-gene DE (empirical Monte Carlo)
-├── _biological.py       # Per-gene DE (biological-level: LFC, LVR, Gamma KL)
-├── _shrinkage.py        # Empirical Bayes shrinkage (scale mixture of normals)
-├── _set_level.py        # Gene-set/pathway analysis
-├── _error_control.py    # Bayesian error control, formatting
-├── _gaussianity.py      # Gaussianity diagnostics
-└── README.md            # This file
+├── __init__.py                   # Public API
+├── results.py                    # Thin class declarations + public factories
+├── _results_base_mixin.py        # Shared cache/error-control/export helpers
+├── _results_parametric_mixin.py  # Parametric DE behavior
+├── _results_empirical_mixin.py   # Empirical DE + masking behavior
+├── _results_shrinkage_mixin.py   # Shrinkage-specific behavior
+├── _results_factory.py           # compare()/compare_datasets() internals
+├── _extract.py                   # Dimension-aware parameter extraction
+├── _transforms.py                # ALR ↔ CLR ↔ ILR transformations
+├── _gene_level.py                # Per-gene DE (analytic Gaussian)
+├── _empirical.py                 # Per-gene DE (empirical Monte Carlo)
+├── _biological.py                # Per-gene DE (biological-level: LFC, LVR, Gamma KL)
+├── _shrinkage.py                 # Empirical Bayes shrinkage (scale mixture of normals)
+├── _set_level.py                 # Gene-set/pathway analysis
+├── _error_control.py             # Bayesian error control, formatting
+├── _gaussianity.py               # Gaussianity diagnostics
+└── README.md                     # This file
 ```
 
 ## Practical Significance
