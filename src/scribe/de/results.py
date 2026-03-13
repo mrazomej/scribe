@@ -1384,7 +1384,7 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
         >>> de_shrink = de_emp.shrink()
         >>> de_shrink.gene_level(tau=jnp.log(1.1))
         """
-        return ScribeShrinkageDEResults(
+        obj = ScribeShrinkageDEResults(
             delta_samples=self.delta_samples,
             gene_names=self.gene_names,
             label_A=self.label_A,
@@ -1397,10 +1397,20 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
             mu_samples_B=self.mu_samples_B,
             phi_samples_A=self.phi_samples_A,
             phi_samples_B=self.phi_samples_B,
+            simplex_A=self.simplex_A,
+            simplex_B=self.simplex_B,
+            mu_map_A=self.mu_map_A,
+            mu_map_B=self.mu_map_B,
             sigma_grid=sigma_grid,
             shrinkage_max_iter=shrinkage_max_iter,
             shrinkage_tol=shrinkage_tol,
         )
+
+        # Transfer non-init mask bookkeeping fields
+        obj._gene_mask = self._gene_mask
+        obj._all_gene_names = self._all_gene_names
+
+        return obj
 
     # ------------------------------------------------------------------
 
@@ -1438,8 +1448,15 @@ class ScribeShrinkageDEResults(ScribeEmpiricalDEResults):
 
     Parameters
     ----------
+    empirical : ScribeEmpiricalDEResults, optional
+        When provided, all data fields (``delta_samples``, simplex,
+        mu_map, labels, mask bookkeeping, etc.) are copied from this
+        object.  Individual field parameters are ignored.  This is the
+        recommended shortcut when upgrading an empirical result to
+        shrinkage.
     delta_samples : jnp.ndarray, shape ``(N, D)``
         CLR-space posterior differences (inherited from parent).
+        Ignored when ``empirical`` is provided.
     gene_names : list of str, optional
         Gene names for output.
     label_A : str
@@ -1474,7 +1491,17 @@ class ScribeShrinkageDEResults(ScribeEmpiricalDEResults):
     ... )
     >>> results = de.gene_level(tau=jnp.log(1.1))
     >>> print(f"Null proportion: {de.null_proportion:.2%}")
+
+    Alternatively, build from an existing empirical result:
+
+    >>> de_emp = compare(results_A, results_B, method="empirical", ...)
+    >>> de_shrink = ScribeShrinkageDEResults(empirical=de_emp)
     """
+
+    # --- Optional shortcut: populate from an existing empirical object ---
+    empirical: Optional["ScribeEmpiricalDEResults"] = field(
+        default=None, repr=False
+    )
 
     # --- Shrinkage configuration ---
     sigma_grid: Optional[jnp.ndarray] = field(default=None, repr=False)
@@ -1490,9 +1517,40 @@ class ScribeShrinkageDEResults(ScribeEmpiricalDEResults):
     )
 
     def __post_init__(self):
-        """Set method identifier."""
+        """Populate from empirical source if provided, then set method."""
+        # When constructed via the empirical= shortcut, copy all relevant
+        # fields from the source object so the shrinkage layer has full
+        # access to simplex, mu_map, and mask bookkeeping.
+        emp = self.empirical
+        if emp is not None:
+            self.delta_samples = emp.delta_samples
+            self.gene_names = emp.gene_names
+            self.label_A = emp.label_A
+            self.label_B = emp.label_B
+            self.r_samples_A = emp.r_samples_A
+            self.r_samples_B = emp.r_samples_B
+            self.p_samples_A = emp.p_samples_A
+            self.p_samples_B = emp.p_samples_B
+            self.mu_samples_A = emp.mu_samples_A
+            self.mu_samples_B = emp.mu_samples_B
+            self.phi_samples_A = emp.phi_samples_A
+            self.phi_samples_B = emp.phi_samples_B
+            self.simplex_A = emp.simplex_A
+            self.simplex_B = emp.simplex_B
+            self.mu_map_A = emp.mu_map_A
+            self.mu_map_B = emp.mu_map_B
+            # Drop the reference to avoid keeping a redundant copy alive
+            self.empirical = None
+
         super().__post_init__()
         self.method = "shrinkage"
+
+        # Transfer non-init mask bookkeeping from the source empirical
+        # object.  Must happen after super().__post_init__ which
+        # initialises these to None.
+        if emp is not None:
+            self._gene_mask = emp._gene_mask
+            self._all_gene_names = emp._all_gene_names
 
     # ------------------------------------------------------------------
     # Gene-level analysis (shrinkage)
@@ -1547,6 +1605,56 @@ class ScribeShrinkageDEResults(ScribeEmpiricalDEResults):
         self.prior_weights = self._gene_results.get("prior_weights")
 
         return self._gene_results
+
+    # ------------------------------------------------------------------
+    # Mask management (extends parent to also invalidate shrinkage EM)
+    # ------------------------------------------------------------------
+
+    def set_gene_mask(
+        self, mask: jnp.ndarray
+    ) -> "ScribeShrinkageDEResults":
+        """Apply a new gene mask, recompute CLR, and invalidate shrinkage EM.
+
+        Delegates to the parent ``set_gene_mask`` for simplex
+        aggregation and CLR recomputation, then additionally clears the
+        fitted shrinkage parameters so the EM re-runs lazily on the
+        next ``gene_level()`` call.
+
+        Parameters
+        ----------
+        mask : jnp.ndarray, shape ``(D_full,)``
+            Boolean mask over the full gene space.  ``True`` = keep.
+
+        Returns
+        -------
+        ScribeShrinkageDEResults
+            Returns ``self`` for method chaining.
+        """
+        super().set_gene_mask(mask)
+        self.null_proportion = None
+        self.prior_weights = None
+        return self
+
+    def clear_mask(self) -> "ScribeShrinkageDEResults":
+        """Remove the active gene mask and invalidate shrinkage EM.
+
+        Delegates to the parent ``clear_mask`` for restoring all genes,
+        then additionally clears the fitted shrinkage parameters.
+
+        Returns
+        -------
+        ScribeShrinkageDEResults
+            Returns ``self`` for method chaining.
+
+        Raises
+        ------
+        ValueError
+            If simplex samples are not available.
+        """
+        super().clear_mask()
+        self.null_proportion = None
+        self.prior_weights = None
+        return self
 
     # ------------------------------------------------------------------
 
