@@ -409,6 +409,55 @@ def test_to_dataframe_gene_names(de_results):
     assert list(df["gene"]) == de_results.gene_names
 
 
+def test_to_dataframe_no_pefp_no_is_de(de_results):
+    """Without target_pefp the is_de column should not be present."""
+    df = de_results.to_dataframe(tau=0.0)
+    assert "is_de" not in df.columns
+
+
+def test_to_dataframe_with_pefp_adds_is_de(de_results):
+    """Passing target_pefp adds a boolean is_de column."""
+    df = de_results.to_dataframe(tau=0.0, target_pefp=0.05)
+    assert "is_de" in df.columns
+    assert df["is_de"].dtype == bool
+    assert len(df) == de_results.D
+
+
+def test_to_dataframe_pefp_controls_fdr(de_results):
+    """Average lfsr among called genes must not exceed target_pefp.
+
+    This is the defining property of the PEFP procedure.
+    """
+    import numpy as np
+
+    target = 0.10
+    df = de_results.to_dataframe(tau=0.0, target_pefp=target)
+    called = df[df["is_de"]]
+    if len(called) > 0:
+        avg_lfsr = np.mean(called["lfsr"].to_numpy())
+        assert avg_lfsr <= target + 1e-8
+
+
+def test_to_dataframe_pefp_with_lfsr_tau(de_results):
+    """use_lfsr_tau=True should threshold on lfsr_tau, not lfsr."""
+    import numpy as np
+
+    tau = 0.1
+    target = 0.10
+    df = de_results.to_dataframe(tau=tau, target_pefp=target, use_lfsr_tau=True)
+    called = df[df["is_de"]]
+    if len(called) > 0:
+        avg_lfsr_tau = np.mean(called["lfsr_tau"].to_numpy())
+        assert avg_lfsr_tau <= target + 1e-8
+
+
+def test_to_dataframe_pefp_stringent_fewer_calls(de_results):
+    """A more stringent target_pefp should call no more genes than a lenient one."""
+    df_lenient = de_results.to_dataframe(tau=0.0, target_pefp=0.20)
+    df_stringent = de_results.to_dataframe(tau=0.0, target_pefp=0.01)
+    assert df_stringent["is_de"].sum() <= df_lenient["is_de"].sum()
+
+
 # --------------------------------------------------------------------------
 # Tests: to_dataframe() on empirical results
 # --------------------------------------------------------------------------
