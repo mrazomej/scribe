@@ -944,6 +944,210 @@ At each step, the conditional is a LowRankMVN of rank $k$, and only $k \times
 k$ matrix operations are needed. The total computational cost is $O(nGk^2 +
 nk^3)$ for $n$ parameter groups — linear in the number of groups.
 
+## Heterogeneous parameter dimensions {#sec-jlr-heterogeneous}
+
+The preceding sections assumed that every parameter group has the same
+dimensionality $G$.  In practice, this assumption can be overly restrictive.
+A key example arises when the hierarchical $p_g$ extension from
+@sec-hierarchical-p is **disabled**: the odds ratio $\phi$ reverts to a
+scalar parameter (shared across genes), while the mean expression
+$\underline{\mu}$ and zero-inflation gate $\underline{g}$ remain
+$G$-dimensional.  Even though $\phi$ is scalar, the posterior couples it to
+every gene's $\mu_g$ through the dispersion relation $r_g = \mu_g \phi$ and
+the variance $\mathrm{Var}(u_g) = \mu_g (1 + 1/\phi)$.  A factorized guide
+$q(\phi)\, q(\underline{\mu}^*)$ misses this coupling, leading to
+artificially noisy posterior predictive samples that combine incompatible
+$\phi$ and $\underline{\mu}$ configurations.
+
+In this section we show that the joint low-rank framework extends
+directly to **heterogeneous dimensions**, and work through the concrete
+case of a scalar $\phi$ alongside a gene-specific $\underline{\mu}$.
+
+### General formulation {#sec-jlr-hetero-general}
+
+Let $\underline{\theta}_1^* \in \mathbb{R}^{G_1}$ and
+$\underline{\theta}_2^* \in \mathbb{R}^{G_2}$ with $G_1 \neq G_2$.
+The stacked vector is
+
+$$
+\underline{\theta}^* =
+\begin{pmatrix}
+\underline{\theta}_1^* \\ \underline{\theta}_2^*
+\end{pmatrix}
+\in \mathbb{R}^{G_1 + G_2},
+$${#eq-jlr-hetero-stacked}
+
+with low-rank-plus-diagonal covariance
+
+$$
+\underline{\underline{\Sigma}} =
+\underline{\underline{W}} \underline{\underline{W}}^\top + \underline{\underline{D}},
+\quad
+\underline{\underline{W}} =
+\begin{pmatrix}
+\underline{\underline{W}}_1 \\ \underline{\underline{W}}_2
+\end{pmatrix},
+\quad
+\underline{\underline{D}} =
+\begin{pmatrix}
+\underline{\underline{D}}_1 & 0 \\ 0 & \underline{\underline{D}}_2
+\end{pmatrix},
+$${#eq-jlr-hetero-cov}
+
+where $\underline{\underline{W}}_1 \in \mathbb{R}^{G_1 \times k}$,
+$\underline{\underline{W}}_2 \in \mathbb{R}^{G_2 \times k}$,
+$\underline{\underline{D}}_1 \in \mathbb{R}^{G_1 \times G_1}$, and
+$\underline{\underline{D}}_2 \in \mathbb{R}^{G_2 \times G_2}$ (both
+diagonal).
+
+The Woodbury auxiliary matrices from @eq-jlr-H-def and @eq-jlr-M-def
+depend **only on group 1** and on $k$:
+
+$$
+\underline{\underline{H}} =
+\underline{\underline{W}}_1^\top \underline{\underline{D}}_1^{-1}
+\underline{\underline{W}}_1
+\in \mathbb{R}^{k \times k},
+\qquad
+\underline{\underline{M}} =
+(\underline{\underline{I}}_k + \underline{\underline{H}})^{-1}
+\in \mathbb{R}^{k \times k}.
+$${#eq-jlr-hetero-HM}
+
+Critically, $\underline{\underline{H}}$ and $\underline{\underline{M}}$
+are $k \times k$ **regardless of $G_1$**.  The conditional formulas from
+@eq-jlr-cond-mean-final and @eq-jlr-cond-cov-final carry through
+verbatim:
+
+$$
+\underline{\mu}_{2 \mid 1} =
+\text{loc}_2 +
+\underline{\underline{W}}_2 \,
+\underline{\underline{M}} \,
+\underline{\underline{W}}_1^\top \underline{\underline{D}}_1^{-1}
+(\underline{\theta}_1^* - \text{loc}_1)
+\in \mathbb{R}^{G_2},
+$${#eq-jlr-hetero-cond-mean}
+
+$$
+\underline{\underline{\Sigma}}_{2 \mid 1} =
+\underline{\underline{W}}_2 \, \underline{\underline{M}} \,
+\underline{\underline{W}}_2^\top + \underline{\underline{D}}_2
+\in \mathbb{R}^{G_2 \times G_2}.
+$${#eq-jlr-hetero-cond-cov}
+
+The chain rule, ELBO equivalence, and multi-parameter extension all hold
+without modification.  The only requirement is that the batch dimensions
+(e.g., the mixture component axis) are consistent across all groups;
+the trailing "gene" dimension may vary freely.
+
+### Worked example: scalar $\phi$ with gene-specific $\underline{\mu}$ {#sec-jlr-hetero-example}
+
+Consider the mean-odds parameterization with a scalar odds ratio $\phi$
+(i.e., `hierarchical_p=False`) and gene-specific mean expression
+$\underline{\mu}$.  In unconstrained space:
+
+$$
+\theta_1^* = \log \phi \in \mathbb{R}^1, \qquad
+\underline{\theta}_2^* = \log \underline{\mu} \in \mathbb{R}^G.
+$${#eq-jlr-hetero-example-params}
+
+The joint guide is a $(1 + G)$-dimensional LowRankMVN with
+
+$$
+\underline{\underline{W}} =
+\begin{pmatrix}
+\underline{w}_\phi^\top \\ \underline{\underline{W}}_\mu
+\end{pmatrix}
+\in \mathbb{R}^{(1+G) \times k},
+$${#eq-jlr-hetero-example-W}
+
+where $\underline{w}_\phi \in \mathbb{R}^k$ is a single row (the
+$1 \times k$ factor for $\phi$) and
+$\underline{\underline{W}}_\mu \in \mathbb{R}^{G \times k}$ is the
+standard gene-specific factor.
+
+**Marginal for $\phi$.**  The marginal is a 1-dimensional LowRankMVN,
+which reduces to a univariate normal:
+
+$$
+q(\theta_1^*) = \mathcal{N}\!\left(
+    \text{loc}_\phi, \;
+    \|\underline{w}_\phi\|^2 + d_\phi
+\right),
+$${#eq-jlr-hetero-example-marginal}
+
+where $d_\phi$ is the single diagonal entry.
+
+**Auxiliary matrices.**
+
+$$
+\underline{\underline{H}} =
+\underline{w}_\phi \, d_\phi^{-1} \, \underline{w}_\phi^\top
+= \frac{\underline{w}_\phi \underline{w}_\phi^\top}{d_\phi}
+\in \mathbb{R}^{k \times k},
+\qquad
+\underline{\underline{M}} =
+\left(
+\underline{\underline{I}}_k +
+\frac{\underline{w}_\phi \underline{w}_\phi^\top}{d_\phi}
+\right)^{-1}.
+$${#eq-jlr-hetero-example-HM}
+
+This is a rank-1 update of the identity, so $\underline{\underline{M}}$
+can be computed via the Sherman–Morrison formula in $O(k^2)$.
+
+**Conditional for $\underline{\mu}$.**  The conditional mean shifts
+every gene's location by a term proportional to how far $\phi$ deviated
+from its variational mean:
+
+$$
+\underline{\mu}_{2 \mid 1} =
+\text{loc}_\mu +
+\underline{\underline{W}}_\mu \,
+\underline{\underline{M}} \,
+\frac{\underline{w}_\phi}{d_\phi}
+\left(\theta_1^* - \text{loc}_\phi\right).
+$${#eq-jlr-hetero-example-cond-mean}
+
+The vector
+$\underline{\underline{W}}_\mu \, \underline{\underline{M}} \,
+\underline{w}_\phi / d_\phi \in \mathbb{R}^G$
+is the **sensitivity** of each gene's conditional mean to $\phi$.
+The conditional covariance factor is
+$\underline{\underline{\widetilde{W}}}_\mu =
+\underline{\underline{W}}_\mu \underline{\underline{L}}_M$ as before.
+
+**Interpretation.**  Through optimization, $\underline{w}_\phi$ learns
+which directions in the $k$-dimensional latent space $\phi$ aligns with.
+The rows of $\underline{\underline{W}}_\mu$ that share weight on these
+same directions become conditionally coupled to $\phi$.  In biological
+terms, if $\phi$ is drawn higher (tighter dispersion), the joint guide
+can systematically adjust the $\mu_g$ to remain consistent with the
+observed count variance — a coupling that the factorized guide
+$q(\phi) q(\underline{\mu}^*)$ structurally cannot represent.
+
+### Extension to three or more heterogeneous groups
+
+Adding a gene-specific gate $\underline{g}^*$ gives a
+$(1 + G + G)$-dimensional joint with
+
+$$
+\underline{\theta}^* =
+\begin{pmatrix}
+\theta_\phi^* \\ \underline{\theta}_\mu^* \\ \underline{\theta}_g^*
+\end{pmatrix}
+\in \mathbb{R}^{1 + 2G}.
+$${#eq-jlr-hetero-3param}
+
+The chain rule factors as
+$q(\theta_\phi^*)\, q(\underline{\theta}_\mu^* \mid \theta_\phi^*)\,
+q(\underline{\theta}_g^* \mid \theta_\phi^*, \underline{\theta}_\mu^*)$.
+Each conditioning step involves only $k \times k$ operations regardless
+of the conditioning parameter's dimension (1 for $\phi$ or $G$ for
+$\underline{\mu}$), so the total cost remains
+$O(nG_{\max}k^2 + nk^3)$ where $G_{\max} = G$.
+
 ## Applicability across parameterizations {#sec-jlr-parameterizations}
 
 The joint low-rank guide applies to all parameterizations of the negative
@@ -999,3 +1203,8 @@ all per-gene parameters. The key results are:
 
 6. **The pattern extends** to $n$ parameter groups (e.g., ZINB with gate) via
    iterated Schur complements, with each conditional maintaining rank $k$.
+
+7. **Heterogeneous dimensions** are supported: scalar and gene-specific
+   parameters can coexist in the same joint group.  The Woodbury matrices
+   $\underline{\underline{H}}$ and $\underline{\underline{M}}$ are always
+   $k \times k$ regardless of each group's dimension $G_i$.
