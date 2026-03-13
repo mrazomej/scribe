@@ -362,9 +362,35 @@ class ScribeDEResults:
         Returns
         -------
         pandas.DataFrame
-            One row per gene with columns ``gene``, ``delta_mean``,
-            ``delta_sd``, ``lfsr``, ``lfsr_tau``, ``prob_effect``,
-            ``prob_positive``.
+            One row per gene with the following columns:
+
+            - **gene** : Gene name (string).
+            - **delta_mean** : Posterior mean of the CLR difference
+              ``CLR(rho_A)_g - CLR(rho_B)_g``.  Positive values
+              indicate higher relative abundance in condition A.
+            - **delta_sd** : Posterior standard deviation of the CLR
+              difference.  Reflects uncertainty in the effect estimate.
+            - **lfsr** : Local false sign rate — the posterior
+              probability of having the wrong sign,
+              ``min(P(Delta_g > 0), P(Delta_g < 0))``.  Ranges from
+              0 (certain sign) to 0.5 (no directional evidence).
+            - **lfsr_tau** : Practical-significance lfsr incorporating
+              the threshold ``tau``:
+              ``1 - max(P(Delta_g > tau), P(Delta_g < -tau))``.
+              Reduces to standard ``lfsr`` when ``tau = 0``.
+            - **prob_effect** : Posterior probability of a practical
+              effect, ``P(|Delta_g| > tau)``.  Equals 1 when ``tau=0``
+              (any nonzero effect counts).
+            - **prob_positive** : ``P(Delta_g > 0)``.  Values near 1
+              indicate confident upregulation in A; near 0 indicate
+              confident downregulation.
+
+            ``ScribeEmpiricalDEResults`` additionally includes:
+
+            - **mean_expression_A** : MAP mean expression (count space)
+              for condition A.  Only present when ``mu_map_A`` is stored.
+            - **mean_expression_B** : MAP mean expression (count space)
+              for condition B.  Only present when ``mu_map_B`` is stored.
         """
         import numpy as np
         import pandas as pd
@@ -1219,9 +1245,17 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
         Returns
         -------
         pandas.DataFrame
-            One row per gene.  Includes the standard columns plus
-            ``mean_expression_A`` and ``mean_expression_B`` when
-            available.
+            One row per gene.  Includes the standard columns from the
+            base class (see :meth:`ScribeDEResults.to_dataframe`) plus:
+
+            - **mean_expression_A** : MAP mean expression in count
+              space for condition A (``mu = r * p / (1 - p)``).
+              Filtered to the currently active gene mask.
+            - **mean_expression_B** : MAP mean expression in count
+              space for condition B.
+
+            These two columns are only present when ``mu_map_A`` and
+            ``mu_map_B`` were stored during ``compare()``.
         """
         import numpy as np
 
