@@ -317,11 +317,14 @@ def sample_compositions(
         JAX PRNG key.  If ``None``, uses ``jax.random.PRNGKey(0)``.
     batch_size : int, default=2048
         Number of posterior samples per batched sampling call.
-    p_samples_A : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``, optional
-        Gene-specific success probabilities for condition A.  When
-        provided, Gamma-based composition sampling is used.
-    p_samples_B : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``, optional
-        Gene-specific success probabilities for condition B.
+    p_samples_A : jnp.ndarray, optional
+        Success probabilities for condition A.  When gene-specific
+        (shape ``(N, D)`` or ``(N, K, D)``), Gamma-based composition
+        sampling is used.  Scalar ``p`` (shape ``(N,)`` or ``(N, K)``)
+        is dropped because the constant scaling factor cancels in
+        the normalization, making Gamma equivalent to Dirichlet.
+    p_samples_B : jnp.ndarray, optional
+        Same as above for condition B.
 
     Returns
     -------
@@ -351,7 +354,9 @@ def sample_compositions(
     r_A = _slice_component(r_samples_A, component_A, "A")
     r_B = _slice_component(r_samples_B, component_B, "B")
 
-    # Slice p samples if provided
+    # Slice p samples if provided.  Scalar p (no gene dimension) produces
+    # a constant scaling factor that cancels in the normalization, so
+    # Gamma-based sampling is equivalent to Dirichlet -- skip it.
     p_A = (
         _slice_component(p_samples_A, component_A, "A")
         if p_samples_A is not None
@@ -362,8 +367,12 @@ def sample_compositions(
         if p_samples_B is not None
         else None
     )
+    if p_A is not None and p_A.ndim < 2:
+        p_A = None
+    if p_B is not None and p_B.ndim < 2:
+        p_B = None
 
-    # Determine whether to use Gamma-based sampling
+    # Gamma-based sampling only when p is gene-specific (2D)
     use_gamma = p_A is not None or p_B is not None
 
     # --- Validate sample counts ---
@@ -659,21 +668,30 @@ def _slice_component(
     component: Optional[int],
     label: str,
 ) -> jnp.ndarray:
-    """Slice a mixture component from 3D r samples, or validate 2D input.
+    """Slice a mixture component from posterior samples.
+
+    Handles gene-specific parameters (with a trailing gene dimension)
+    and scalar parameters (no gene dimension, e.g. ``p`` or ``phi``
+    when ``hierarchical_p=False``).
 
     Parameters
     ----------
-    r_samples : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``
-        Posterior concentration samples.
+    r_samples : jnp.ndarray
+        Posterior samples with one of these shapes:
+
+        - ``(N, D)`` -- non-mixture gene-specific
+        - ``(N, K, D)`` -- mixture gene-specific
+        - ``(N,)`` -- non-mixture scalar (or scalar already sliced)
+        - ``(N, K)`` -- mixture scalar
     component : int or None
-        Component index to extract if 3D.
+        Component index to extract from mixture models.
     label : str
         Label for error messages (``"A"`` or ``"B"``).
 
     Returns
     -------
-    jnp.ndarray, shape ``(N, D)``
-        2D concentration samples for a single component.
+    jnp.ndarray
+        Sliced samples: ``(N, D)`` for gene-specific, ``(N,)`` for scalar.
     """
     if r_samples.ndim == 3:
         if component is None:
@@ -685,10 +703,13 @@ def _slice_component(
         return r_samples[:, component, :]
     elif r_samples.ndim == 2:
         return r_samples
+    elif r_samples.ndim == 1:
+        # Scalar parameter (e.g. p or phi when hierarchical_p=False),
+        # shape (N,): no gene or component dimension to slice.
+        return r_samples
     else:
         raise ValueError(
-            f"r_samples_{label} must be 2D (N, D) or 3D (N, K, D), "
-            f"got {r_samples.ndim}D."
+            f"r_samples_{label} must be 1-3D, got {r_samples.ndim}D."
         )
 
 
@@ -840,7 +861,7 @@ def _batched_gamma_normalize(
     for start in range(0, N, batch_size):
         end = min(start + batch_size, N)
         r_batch = r_samples[start:end]  # (B, D)
-        p_batch = p_samples[start:end]  # (B, D)
+        p_batch = p_samples[start:end]  # (B, D) or (B, 1)
 
         key_batch = random.fold_in(rng_key, start)
 
