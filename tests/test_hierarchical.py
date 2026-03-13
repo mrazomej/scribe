@@ -1373,6 +1373,91 @@ class TestMetadataDrivenComponentSubsetting:
                     f"scalar hyper '{key}' wrongly in mixture_keys"
                 )
 
+    def test_build_mixture_keys_includes_joint_guide_keys(self):
+        """Joint low-rank variational keys for mixture params must be detected."""
+        from types import SimpleNamespace
+
+        from scribe.svi._component import _build_mixture_keys
+
+        # Use a minimal metadata stub so the test focuses on key matching.
+        # ``phi_capture`` is intentionally non-mixture to guard against false
+        # positives from the shorter ``phi`` name.
+        param_specs = [
+            SimpleNamespace(name="phi_capture", is_mixture=False),
+            SimpleNamespace(name="phi", is_mixture=True),
+            SimpleNamespace(name="mu", is_mixture=True),
+            SimpleNamespace(name="gate", is_mixture=True),
+        ]
+        params = {
+            "joint_joint_phi_loc": jnp.ones((3, 10)),
+            "joint_joint_phi_W": jnp.ones((3, 10, 2)),
+            "joint_joint_mu_loc": jnp.ones((3, 10)),
+            "joint_joint_gate_loc": jnp.ones((3, 10)),
+            "joint_joint_phi_capture_loc": jnp.ones((12,)),
+        }
+
+        mixture_keys = _build_mixture_keys(param_specs, params)
+        assert "joint_joint_phi_loc" in mixture_keys
+        assert "joint_joint_phi_W" in mixture_keys
+        assert "joint_joint_mu_loc" in mixture_keys
+        assert "joint_joint_gate_loc" in mixture_keys
+        assert "joint_joint_phi_capture_loc" not in mixture_keys
+
+    def test_get_component_subsets_joint_guide_variational_params(self):
+        """get_component must reduce component axis on joint-guide params."""
+        from scribe.models.components import JointLowRankGuide
+        from scribe.svi.results import ScribeSVIResults
+
+        n_cells, n_genes, n_components = 12, 10, 3
+        guide_families = GuideFamilyConfig(
+            mu=JointLowRankGuide(rank=2, group="joint"),
+            phi=JointLowRankGuide(rank=2, group="joint"),
+            gate=JointLowRankGuide(rank=2, group="joint"),
+        )
+        model_config = ModelConfig(
+            base_model="zinbvcp",
+            parameterization="mean_odds",
+            unconstrained=True,
+            n_components=n_components,
+            mixture_params=["phi", "mu", "gate"],
+            guide_families=guide_families,
+        )
+        model_config = model_config.model_copy(
+            update={"param_specs": _build_full_param_specs(model_config)}
+        )
+
+        # Mimic a fitted joint guide: these are the keys actually consumed by
+        # the guide during posterior sampling, so component extraction must
+        # reduce the leading K axis for each mixture parameter tensor.
+        params = {
+            "joint_joint_phi_loc": jnp.ones((n_components, n_genes)),
+            "joint_joint_phi_W": jnp.ones((n_components, n_genes, 2)),
+            "joint_joint_phi_raw_diag": jnp.ones((n_components, n_genes)),
+            "joint_joint_mu_loc": jnp.ones((n_components, n_genes)) * 2.0,
+            "joint_joint_mu_W": jnp.ones((n_components, n_genes, 2)),
+            "joint_joint_mu_raw_diag": jnp.ones((n_components, n_genes)),
+            "joint_joint_gate_loc": jnp.ones((n_components, n_genes)) * -1.0,
+            "joint_joint_gate_W": jnp.ones((n_components, n_genes, 2)),
+            "joint_joint_gate_raw_diag": jnp.ones((n_components, n_genes)),
+            "mixing_concentrations": jnp.ones(n_components),
+        }
+        results = ScribeSVIResults(
+            params=params,
+            loss_history=jnp.array([1.0]),
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_type="zinbvcp_mix",
+            model_config=model_config,
+            prior_params={},
+            n_components=n_components,
+        )
+
+        comp = results.get_component(1)
+        assert comp.params["joint_joint_phi_loc"].shape == (n_genes,)
+        assert comp.params["joint_joint_phi_W"].shape == (n_genes, 2)
+        assert comp.params["joint_joint_mu_loc"].shape == (n_genes,)
+        assert comp.params["joint_joint_gate_loc"].shape == (n_genes,)
+
     def test_build_mixture_keys_empty_specs(self):
         """Empty param_specs must produce an empty set."""
         from scribe.svi._component import _build_mixture_keys
