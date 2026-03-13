@@ -113,6 +113,7 @@ When results objects are passed, `compare()`:
 | `de.set_gene_mask(mask)` | Change expression mask and recompute CLR (from stored simplex) |
 | `de.set_expression_threshold(min_expression)` | Build mask from MAP mu and apply |
 | `de.clear_mask()` | Remove mask, restore all genes |
+| `de.shrink(sigma_grid, ...)` | Wrap empirical results with shrinkage layer (zero-copy) |
 
 > **Note on `tau`-aware caching**: All methods that depend on gene-level results
 > accept a `tau` parameter. Results are cached and automatically recomputed when
@@ -654,6 +655,36 @@ print(de.summary(sort_by="lfsr", top_n=20))
 The shrunk lfsr values are fully compatible with the existing PEFP
 error-control machinery.  All methods (`call_genes`, `compute_pefp`,
 `find_threshold`, `summary`) work identically.
+
+### Shrinkage from an existing empirical result
+
+The `shrink()` method on `ScribeEmpiricalDEResults` transfers all state
+(simplex samples, mu_map, mask bookkeeping) so the resulting
+`ScribeShrinkageDEResults` supports the same interactive mask exploration:
+
+```python
+de_emp = compare(results_A, results_B, method="empirical", ...)
+
+# Upgrade to shrinkage — shares underlying arrays (zero-copy)
+de_shrink = de_emp.shrink()
+
+# Dynamic mask exploration works identically
+de_shrink.set_expression_threshold(min_expression=2.0)
+df = de_shrink.to_dataframe(tau=0.5, target_pefp=0.05)
+print(f"Null proportion: {de_shrink.null_proportion:.2%}")
+
+# Re-mask triggers automatic EM re-fit on next gene_level() call
+de_shrink.clear_mask()
+df_all = de_shrink.to_dataframe(tau=0.5, target_pefp=0.05)
+```
+
+Alternatively, construct directly from an empirical object:
+
+```python
+from scribe.de import ScribeShrinkageDEResults
+
+de_shrink = ScribeShrinkageDEResults(empirical=de_emp)
+```
 
 ### Mathematical details
 

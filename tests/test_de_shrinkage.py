@@ -588,3 +588,141 @@ class TestEdgeCases:
         assert result["lfsr"].shape == (3,)
         # Should not contain NaN
         assert not jnp.any(jnp.isnan(result["lfsr"]))
+
+
+# --------------------------------------------------------------------------
+# Tests: Shrinkage mask management and constructor shortcuts
+# --------------------------------------------------------------------------
+
+
+class TestShrinkageMaskManagement:
+    """Tests for mask management inherited from ScribeEmpiricalDEResults
+    and the ``empirical=`` constructor shortcut."""
+
+    @pytest.fixture
+    def empirical_de(self):
+        """Create an empirical DE with simplex, mu_map, and an initial mask."""
+        rng = random.PRNGKey(0)
+        D = 8
+        r_A = jnp.abs(random.normal(rng, (200, D))) + 1.0
+        r_B = jnp.abs(random.normal(random.PRNGKey(1), (200, D))) + 2.0
+        # Provide p_samples so that mu_map is derived
+        p_A = 0.3 * jnp.ones((200, D))
+        p_B = 0.4 * jnp.ones((200, D))
+        mask = jnp.array([True] * 5 + [False] * 3)
+        return compare(
+            r_A, r_B,
+            method="empirical",
+            gene_names=[f"g{i}" for i in range(D)],
+            rng_key=rng,
+            gene_mask=mask,
+            p_samples_A=p_A,
+            p_samples_B=p_B,
+        )
+
+    def test_shrink_transfers_simplex(self, empirical_de):
+        """shrink() must copy simplex, mu_map, mask, and _all_gene_names."""
+        de_s = empirical_de.shrink()
+        assert de_s.simplex_A is not None
+        assert de_s.simplex_B is not None
+        assert de_s.mu_map_A is not None
+        assert de_s.mu_map_B is not None
+        assert de_s._gene_mask is not None
+        assert de_s._all_gene_names is not None
+        assert de_s.has_simplex
+
+    def test_shrinkage_set_gene_mask(self, empirical_de):
+        """Re-masking on a shrinkage object changes D and clears EM caches."""
+        de_s = empirical_de.shrink()
+        # Trigger EM so that null_proportion is populated
+        de_s.gene_level(tau=0.0)
+        assert de_s.null_proportion is not None
+
+        # Apply a narrower mask (keep only first 3 of 8 full genes)
+        new_mask = jnp.array([True, True, True] + [False] * 5)
+        de_s.set_gene_mask(new_mask)
+
+        assert de_s.D == 3
+        assert de_s.gene_names == ["g0", "g1", "g2"]
+        # Shrinkage caches must be invalidated
+        assert de_s.null_proportion is None
+        assert de_s.prior_weights is None
+
+        # EM should re-run on next gene_level() call
+        de_s.gene_level(tau=0.0)
+        assert de_s.null_proportion is not None
+
+    def test_shrinkage_clear_mask(self, empirical_de):
+        """clear_mask restores all genes and invalidates shrinkage EM."""
+        de_s = empirical_de.shrink()
+        de_s.gene_level(tau=0.0)
+        assert de_s.null_proportion is not None
+
+        de_s.clear_mask()
+
+        # All 8 genes should be restored
+        assert de_s.D == 8
+        assert len(de_s.gene_names) == 8
+        # Shrinkage caches must be invalidated
+        assert de_s.null_proportion is None
+        assert de_s.prior_weights is None
+
+    def test_shrinkage_set_expression_threshold(self, empirical_de):
+        """set_expression_threshold works on a shrinkage object."""
+        de_s = empirical_de.shrink()
+        assert de_s.mu_map_A is not None
+
+        # A very low threshold should keep most genes
+        de_s.set_expression_threshold(min_expression=0.01)
+        assert de_s.D >= 1
+
+    def test_shrinkage_from_empirical_constructor(self, empirical_de):
+        """ScribeShrinkageDEResults(empirical=...) copies all fields."""
+        de_s = ScribeShrinkageDEResults(empirical=empirical_de)
+        assert isinstance(de_s, ScribeShrinkageDEResults)
+        assert de_s.method == "shrinkage"
+        assert de_s.D == empirical_de.D
+        assert de_s.gene_names == empirical_de.gene_names
+        assert de_s.simplex_A is not None
+        assert de_s.mu_map_A is not None
+        assert de_s._gene_mask is not None
+        assert de_s._all_gene_names is not None
+        # The empirical reference should be dropped after init
+        assert de_s.empirical is None
+
+    def test_shrinkage_from_empirical_mask_management(self, empirical_de):
+        """Shrinkage built via empirical= supports full mask management."""
+        de_s = ScribeShrinkageDEResults(empirical=empirical_de)
+        # Should be able to clear mask and get all 8 genes back
+        de_s.clear_mask()
+        assert de_s.D == 8
+        # Re-mask
+        mask = jnp.array([True, False, True, False, True, False, True, False])
+        de_s.set_gene_mask(mask)
+        assert de_s.D == 4
+
+    def test_shrinkage_to_dataframe_with_pefp(self, empirical_de):
+        """to_dataframe(target_pefp=...) works on shrinkage results."""
+        de_s = empirical_de.shrink()
+        df = de_s.to_dataframe(tau=0.1, target_pefp=0.10)
+        assert "is_de" in df.columns
+        assert df["is_de"].dtype == bool
+        assert len(df) == de_s.D
+
+    def test_shrinkage_method_chaining(self, empirical_de):
+        """Mask management methods return self for chaining on shrinkage."""
+        de_s = empirical_de.shrink()
+        new_mask = jnp.array([True, True, True] + [False] * 5)
+
+        # set_gene_mask returns self
+        result = de_s.set_gene_mask(new_mask)
+        assert result is de_s
+
+        # clear_mask returns self
+        result = de_s.clear_mask()
+        assert result is de_s
+
+        # Full chain
+        df = de_s.set_gene_mask(new_mask).to_dataframe(tau=0.1, target_pefp=0.10)
+        assert "is_de" in df.columns
+        assert len(df) == 3
