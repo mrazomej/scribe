@@ -1096,7 +1096,7 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
         """Whether full simplex samples are available for re-masking."""
         return self.simplex_A is not None and self.simplex_B is not None
 
-    def set_gene_mask(self, mask: jnp.ndarray) -> None:
+    def set_gene_mask(self, mask: jnp.ndarray) -> "ScribeEmpiricalDEResults":
         """Apply a new gene mask and recompute CLR differences.
 
         Aggregates filtered genes into an "other" pseudo-gene using the
@@ -1108,6 +1108,12 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
         ----------
         mask : jnp.ndarray, shape ``(D_full,)``
             Boolean mask over the full gene space.  ``True`` = keep.
+
+        Returns
+        -------
+        ScribeEmpiricalDEResults
+            Returns ``self`` so calls can be chained, e.g.
+            ``de.set_gene_mask(m).to_dataframe()``.
 
         Raises
         ------
@@ -1156,7 +1162,11 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
         self._biological_results = None
         self._cached_bio_taus = None
 
-    def set_expression_threshold(self, min_expression: float) -> None:
+        return self
+
+    def set_expression_threshold(
+        self, min_expression: float
+    ) -> "ScribeEmpiricalDEResults":
         """Build and apply an expression mask from stored MAP mu.
 
         A gene passes if its MAP mean expression is at least
@@ -1168,6 +1178,12 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
             Minimum MAP mean expression (count space) for a gene to
             be individually analysed.  Genes below this in both
             conditions are aggregated into "other".
+
+        Returns
+        -------
+        ScribeEmpiricalDEResults
+            Returns ``self`` so calls can be chained, e.g.
+            ``de.set_expression_threshold(1.0).to_dataframe()``.
 
         Raises
         ------
@@ -1187,12 +1203,18 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
         mu_B = np.asarray(self.mu_map_B)
         mask = (mu_A >= min_expression) | (mu_B >= min_expression)
         self.set_gene_mask(mask)
+        return self
 
-    def clear_mask(self) -> None:
+    def clear_mask(self) -> "ScribeEmpiricalDEResults":
         """Remove the active gene mask and restore all genes.
 
         Recomputes CLR differences over the full composition (no
         aggregation).
+
+        Returns
+        -------
+        ScribeEmpiricalDEResults
+            Returns ``self`` so calls can be chained.
 
         Raises
         ------
@@ -1225,6 +1247,8 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
         self._cached_tau = None
         self._biological_results = None
         self._cached_bio_taus = None
+
+        return self
 
     # ------------------------------------------------------------------
     # DataFrame export (extends base to include mean expression)
