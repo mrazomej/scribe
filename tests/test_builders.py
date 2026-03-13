@@ -2064,6 +2064,101 @@ class TestJointLowRankIntegration:
         assert jnp.all(gate > 0.0)
         assert jnp.all(gate < 1.0)
 
+    def test_horseshoe_joint_guide_uses_raw_gate_site(self):
+        """Horseshoe+joint must sample ``gate_raw`` and keep ``gate`` deterministic.
+
+        This guards against model/guide site mismatch when gate uses the
+        horseshoe NCP parameterization.
+        """
+        n_cells, n_genes = 40, 8
+        key = random.PRNGKey(31)
+        counts = random.poisson(key, lam=4.0, shape=(n_cells, n_genes))
+
+        config = build_config_from_preset(
+            model="zinbvcp",
+            parameterization="mean_odds",
+            unconstrained=True,
+            hierarchical_p=True,
+            horseshoe_gate=True,
+            guide_rank=3,
+            joint_params=["mu", "phi", "gate"],
+            priors={"eta_capture": (11.51, 0.01)},
+        )
+        model_fn, guide_fn, config = get_model_and_guide(config)
+        model_kwargs = dict(
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
+        )
+
+        # Trace model and guide to compare latent sample-site names directly.
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as model_tr:
+                model_fn(**model_kwargs)
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as guide_tr:
+                guide_fn(**model_kwargs)
+
+        model_sample_sites = {
+            name
+            for name, site in model_tr.items()
+            if site["type"] == "sample" and not site.get("is_observed", False)
+        }
+        guide_sample_sites = {
+            name for name, site in guide_tr.items() if site["type"] == "sample"
+        }
+
+        assert "gate_raw" in model_sample_sites
+        assert "gate_raw" in guide_sample_sites
+        assert "gate" not in guide_sample_sites
+        assert "gate" in guide_tr
+        assert guide_tr["gate"]["type"] == "deterministic"
+        assert "gate_raw" not in (model_sample_sites - guide_sample_sites)
+
+    def test_svi_horseshoe_joint_gate_smoke(self):
+        """SVI stays finite for horseshoe gate jointly modeled with mu/phi.
+
+        This mirrors the reported failure mode:
+        - mean_odds parameterization
+        - hierarchical mu in a mixture model
+        - horseshoe gate prior
+        - joint low-rank guide over ``phi``, ``mu``, and ``gate``
+        """
+        n_cells, n_genes = 60, 10
+        key = random.PRNGKey(41)
+        counts = random.poisson(key, lam=5.0, shape=(n_cells, n_genes))
+
+        config = build_config_from_preset(
+            model="zinbvcp",
+            parameterization="mean_odds",
+            unconstrained=True,
+            hierarchical_p=True,
+            hierarchical_mu=True,
+            horseshoe_gate=True,
+            guide_rank=3,
+            n_components=3,
+            mixture_params=["phi", "mu", "gate"],
+            joint_params=["phi", "mu", "gate"],
+            priors={"eta_capture": (11.51, 0.01)},
+        )
+        model_fn, guide_fn, config = get_model_and_guide(config)
+        model_kwargs = dict(
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
+        )
+
+        optimizer = Adam(1e-3)
+        svi = SVI(model_fn, guide_fn, optimizer, loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(42), **model_kwargs)
+
+        # Run a few updates and require finite losses; this is the regression.
+        for _ in range(3):
+            svi_state, loss = svi.update(svi_state, **model_kwargs)
+            assert jnp.isfinite(loss), f"SVI loss is non-finite: {loss}"
+
     def test_mean_prob_parameterization_joint(self):
         """Joint guide works for mean_prob parameterization (mu + p)."""
         n_cells, n_genes = 50, 10
