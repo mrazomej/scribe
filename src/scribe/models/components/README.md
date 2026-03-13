@@ -71,22 +71,26 @@ LogNormalSpec("r", ("n_genes",), (0.0, 1.0), guide_family=LowRankGuide(rank=10))
 ### JointLowRankGuide
 
 `JointLowRankGuide` captures cross-parameter correlations (e.g., between `mu`
-and `phi` across all genes) via a single low-rank MVN over the stacked
-unconstrained parameter vector. Parameters sharing the same `group` string are
-modeled jointly using a chain rule decomposition with Woodbury-efficient
-conditional distributions. See `paper/_joint_low_rank_guide.qmd` for the full
-derivation.
+and `phi`) via a single low-rank MVN over the stacked unconstrained parameter
+vector. Parameters sharing the same `group` string are modeled jointly using a
+chain rule decomposition with Woodbury-efficient conditional distributions. See
+`paper/_joint_low_rank_guide.qmd` for the full derivation.
+
+**Heterogeneous dimensions** are supported: scalar and gene-specific parameters
+can coexist in the same joint group.  Only batch dimensions must match; the
+trailing "gene" dimension may differ (e.g., G=1 for a scalar, G=n_genes for
+gene-specific).
 
 ```python
 from scribe.models.components import JointLowRankGuide
 from scribe.models.builders import ExpNormalSpec
 
-# Assign the same group to parameters that should be jointly modeled
+# Scalar phi + gene-specific mu in the same joint group
 joint = JointLowRankGuide(rank=10, group="nb_params")
+ExpNormalSpec("phi", (), (0.0, 1.0),
+             is_gene_specific=False, guide_family=joint, constrained_name="phi")
 ExpNormalSpec("mu", ("n_genes",), (0.0, 1.0),
              is_gene_specific=True, guide_family=joint, constrained_name="mu")
-ExpNormalSpec("phi", ("n_genes",), (0.0, 1.0),
-             is_gene_specific=True, guide_family=joint, constrained_name="phi")
 ```
 
 ## Covariate embedding

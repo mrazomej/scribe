@@ -172,8 +172,16 @@ class JointLowRankGuide(GuideFamily):
     Instead of fitting separate LowRankMVN distributions per parameter, this
     guide defines a single joint LowRankMVN over the stacked unconstrained
     vector of all grouped parameters. The joint covariance captures
-    cross-parameter correlations (e.g., between mu_g and phi_g) that are
+    cross-parameter correlations (e.g., between mu_g and phi) that are
     structurally absent from factorized guides.
+
+    **Heterogeneous dimensions**: parameters in a joint group may have
+    different trailing dimensions (e.g., scalar phi with G=1 alongside
+    gene-specific mu with G=n_genes).  Scalar parameters are internally
+    expanded with a trailing dimension of 1 so the Woodbury chain operates
+    uniformly, then collapsed back to a scalar ``Normal`` at sampling time
+    to match the model's event shape.  Only batch dimensions (all dims
+    except the trailing one) must be consistent.
 
     Implementation uses the chain rule decomposition:
 
@@ -186,7 +194,7 @@ class JointLowRankGuide(GuideFamily):
     Parameters
     ----------
     rank : int
-        Rank of the joint low-rank factor matrix W in R^{nG x rank}.
+        Rank of the joint low-rank factor matrix W.
         At rank k, the guide trades within-block for cross-block expressivity.
         At rank 2k, it strictly generalizes two separate rank-k LowRankGuides.
         Typical values: 10-20.
@@ -198,24 +206,24 @@ class JointLowRankGuide(GuideFamily):
 
     Advantages
     ----------
-    - Captures cross-parameter gene-gene correlations (Sigma_rp block)
+    - Captures cross-parameter correlations (e.g., scalar phi and gene mu)
     - Each conditional in the chain is itself a LowRankMVN (same rank)
-    - Computational overhead is O(Gk^2 + k^3) per conditioning step
+    - Computational overhead is O(G_i * k^2 + k^3) per conditioning step
     - Natural extension to 3+ parameters (e.g., ZINB with gate)
+    - Supports heterogeneous dimensions (scalar + gene-specific in one group)
 
     Disadvantages
     -------------
     - At rank k, within-block expressivity is reduced vs separate rank-k guides
     - More complex optimization landscape
-    - Requires all grouped parameters to be gene-specific with the same shape
 
     Examples
     --------
-    >>> # Joint guide for mu and phi in mean-odds parameterization
+    >>> # Joint guide for gene-specific mu and scalar phi
     >>> joint = JointLowRankGuide(rank=10, group="nb_params")
+    >>> ExpNormalSpec("phi", (), (0.0, 1.0),
+    ...     is_gene_specific=False, guide_family=joint)
     >>> ExpNormalSpec("mu", ("n_genes",), (0.0, 1.0),
-    ...     is_gene_specific=True, guide_family=joint)
-    >>> ExpNormalSpec("phi", ("n_genes",), (0.0, 1.0),
     ...     is_gene_specific=True, guide_family=joint)
 
     See Also

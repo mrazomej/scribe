@@ -205,23 +205,32 @@ specs = [
 
 ### Joint Low-Rank Guide (Cross-Parameter Correlations)
 
-When gene-specific parameters are expected to be correlated (e.g., mean
-expression `mu` and dispersion `phi`), assign a `JointLowRankGuide` with the
-same `group` string to all parameters that should be jointly modeled. The guide
-builder uses a chain rule decomposition with Woodbury-efficient conditioning to
-sample from the joint distribution while maintaining separate NumPyro sample
-sites.
+When parameters are expected to be correlated (e.g., mean expression `mu` and
+dispersion `phi`), assign a `JointLowRankGuide` with the same `group` string to
+all parameters that should be jointly modeled. The guide builder uses a chain
+rule decomposition with Woodbury-efficient conditioning to sample from the joint
+distribution while maintaining separate NumPyro sample sites.
+
+**Heterogeneous dimensions** are supported: scalar parameters (e.g., `phi` when
+`hierarchical_p=False`) can be mixed with gene-specific parameters in the same
+joint group. Scalar specs are internally expanded with a trailing dimension of 1
+and collapsed back to a `Normal` at sampling time.
 
 ```python
 from scribe.models.components import JointLowRankGuide
-from scribe.models.builders import ExpNormalSpec, GuideBuilder
+from scribe.models.builders import ExpNormalSpec, SigmoidNormalSpec, GuideBuilder
 
 joint = JointLowRankGuide(rank=10, group="nb_params")
 specs = [
+    # Scalar phi (not gene-specific)
+    ExpNormalSpec("phi", (), (0.0, 1.0),
+                  is_gene_specific=False, guide_family=joint, constrained_name="phi"),
+    # Gene-specific mu
     ExpNormalSpec("mu", ("n_genes",), (0.0, 1.0),
                   is_gene_specific=True, guide_family=joint, constrained_name="mu"),
-    ExpNormalSpec("phi", ("n_genes",), (0.0, 1.0),
-                  is_gene_specific=True, guide_family=joint, constrained_name="phi"),
+    # Gene-specific gate
+    SigmoidNormalSpec("gate", ("n_genes",), (0.0, 1.0),
+                  is_gene_specific=True, guide_family=joint, constrained_name="gate"),
 ]
 guide = GuideBuilder().from_specs(specs).build()
 ```
@@ -244,11 +253,13 @@ parameterizations and guide families, including **joint-aware** extraction for
   `joint_joint_mu_raw_diag`).
 - **`get_posterior_distributions`** returns:
   - **Per-parameter marginals** keyed by parameter name (e.g., `"mu"`, `"phi"`):
-    each is a `LowRankMultivariateNormal` + transform, identical in structure
-    to standard low-rank posteriors.
+    each is a `LowRankMultivariateNormal` + transform for gene-specific
+    parameters, or a `Normal` + transform for scalar parameters that were
+    expanded to G=1 in the joint group.
   - **Full joint distribution** keyed as `"joint:{group}"` (e.g., `"joint:joint"`):
     a stacked `LowRankMultivariateNormal` over the concatenated parameter
-    space, with `param_names` and `param_sizes` for indexing.
+    space, with `param_names` and `param_sizes` for indexing.  Supports
+    heterogeneous sizes (e.g., `param_sizes=[1, n_genes]`).
 
 **Helper functions:**
 

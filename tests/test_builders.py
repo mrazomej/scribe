@@ -715,7 +715,7 @@ class TestSVIIntegration:
         # The module name should be "p_capture_amortizer" based on our implementation
         # NumPyro's flax_module stores parameters as "module_name$params"
         amortizer_param_key = "p_capture_amortizer$params"
-        
+
         assert (
             amortizer_param_key in params
         ), f"Amortizer parameters should be registered with NumPyro. Found params: {list(params.keys())[:10]}"
@@ -723,17 +723,23 @@ class TestSVIIntegration:
         # Verify the parameters have the expected structure
         # The amortizer has Linear layers, so the params should be a nested structure
         amortizer_params = params[amortizer_param_key]
-        
+
         # The params should be a dict/pytree containing the amortizer's parameters
         # We can check that it's not empty and has some structure
         import jax.tree_util as jtu
+
         param_leaves = jtu.tree_leaves(amortizer_params)
-        assert len(param_leaves) > 0, "Amortizer params should contain parameter arrays"
+        assert (
+            len(param_leaves) > 0
+        ), "Amortizer params should contain parameter arrays"
 
         # Run a few optimization steps
         # Store initial amortizer params for comparison
         import jax.tree_util as jtu
-        initial_amortizer_params = jtu.tree_map(lambda x: x.copy(), amortizer_params)
+
+        initial_amortizer_params = jtu.tree_map(
+            lambda x: x.copy(), amortizer_params
+        )
 
         for _ in range(5):
             svi_state, loss = svi.update(
@@ -752,10 +758,12 @@ class TestSVIIntegration:
         # Compare the pytrees
         def params_differ(x, y):
             return not jnp.allclose(x, y)
-        
-        differences = jtu.tree_map(params_differ, initial_amortizer_params, updated_amortizer_params)
+
+        differences = jtu.tree_map(
+            params_differ, initial_amortizer_params, updated_amortizer_params
+        )
         params_changed = any(jtu.tree_leaves(differences))
-        
+
         assert (
             params_changed
         ), "Amortizer parameters should change during optimization"
@@ -1242,6 +1250,7 @@ class TestAmortizer:
             assert amortizer.activation == activation
             # In Linen, activation_fn is computed in __call__, so we test it works
             from scribe.models.components.amortizers import _get_activation_fn
+
             assert callable(_get_activation_fn(activation))
 
             # Test forward pass works (Linen modules need initialization)
@@ -1267,6 +1276,7 @@ class TestAmortizer:
         assert amortizer.activation == "relu"
         # In Linen, activation_fn is computed in __call__, so we test it works
         from scribe.models.components.amortizers import _get_activation_fn
+
         assert _get_activation_fn(amortizer.activation) == jax.nn.relu
 
     def test_amortizer_output_order(self):
@@ -1335,8 +1345,12 @@ class TestAmortizer:
         assert isinstance(out, AmortizedOutput)
         assert out.parameterization == "constrained"
         assert list(out.params.keys()) == ["alpha", "beta"]
-        assert jnp.all(out.params["alpha"] > 0), "alpha must be positive (constrained)"
-        assert jnp.all(out.params["beta"] > 0), "beta must be positive (constrained)"
+        assert jnp.all(
+            out.params["alpha"] > 0
+        ), "alpha must be positive (constrained)"
+        assert jnp.all(
+            out.params["beta"] > 0
+        ), "beta must be positive (constrained)"
 
         # Unconstrained: loc unconstrained, log_scale in log-space; exp(log_scale) > 0
         amortizer_unconstrained = create_capture_amortizer(
@@ -1506,7 +1520,9 @@ class TestJointLowRankGuide:
         assert jnp.all(tr["gate"]["value"] > 0)
         assert jnp.all(tr["gate"]["value"] < 1)
 
-    def test_joint_guide_mixed_with_independent(self, model_config, small_counts):
+    def test_joint_guide_mixed_with_independent(
+        self, model_config, small_counts
+    ):
         """Test that joint specs and independent specs coexist correctly."""
         from scribe.models.components import JointLowRankGuide
 
@@ -1602,9 +1618,9 @@ class TestJointLowRankGuide:
             "joint_mygroup_phi_W",
             "joint_mygroup_phi_raw_diag",
         }
-        assert expected_params.issubset(param_sites), (
-            f"Missing expected params: {expected_params - param_sites}"
-        )
+        assert expected_params.issubset(
+            param_sites
+        ), f"Missing expected params: {expected_params - param_sites}"
 
     def test_joint_guide_validation(self):
         """Test JointLowRankGuide validation."""
@@ -1618,7 +1634,9 @@ class TestJointLowRankGuide:
             JointLowRankGuide(rank=-1, group="test")
 
         # group must be non-empty
-        with pytest.raises(ValueError, match="group must be a non-empty string"):
+        with pytest.raises(
+            ValueError, match="group must be a non-empty string"
+        ):
             JointLowRankGuide(rank=5, group="")
 
     def test_woodbury_conditional_params(self):
@@ -1743,7 +1761,9 @@ class TestJointLowRankIntegration:
 
     def test_preset_builder_requires_guide_rank(self):
         """joint_params without guide_rank raises ValueError."""
-        with pytest.raises(ValueError, match="joint_params requires guide_rank"):
+        with pytest.raises(
+            ValueError, match="joint_params requires guide_rank"
+        ):
             build_config_from_preset(
                 model="nbdm",
                 parameterization="mean_odds",
@@ -1789,9 +1809,9 @@ class TestJointLowRankIntegration:
 
         # Variational params should include joint_ prefixed keys
         joint_keys = [k for k in params if k.startswith("joint_")]
-        assert len(joint_keys) > 0, (
-            f"Expected joint_ prefixed params, got: {sorted(params.keys())}"
-        )
+        assert (
+            len(joint_keys) > 0
+        ), f"Expected joint_ prefixed params, got: {sorted(params.keys())}"
         # Specifically, we expect joint_joint_mu_loc, joint_joint_phi_loc, etc.
         assert "joint_joint_mu_loc" in params
         assert "joint_joint_phi_loc" in params
@@ -1814,8 +1834,10 @@ class TestJointLowRankIntegration:
         )
         model_fn, guide_fn, config = get_model_and_guide(config)
         model_kwargs = dict(
-            n_cells=n_cells, n_genes=n_genes,
-            model_config=config, counts=counts,
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
         )
 
         optimizer = Adam(1e-3)
@@ -1857,8 +1879,10 @@ class TestJointLowRankIntegration:
         )
         model_fn, guide_fn, config = get_model_and_guide(config)
         model_kwargs = dict(
-            n_cells=n_cells, n_genes=n_genes,
-            model_config=config, counts=counts,
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
         )
 
         optimizer = Adam(1e-3)
@@ -1901,8 +1925,10 @@ class TestJointLowRankIntegration:
         )
         model_fn, guide_fn, config = get_model_and_guide(config)
         model_kwargs = dict(
-            n_cells=n_cells, n_genes=n_genes,
-            model_config=config, counts=counts,
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
         )
 
         optimizer = Adam(1e-3)
@@ -1918,7 +1944,11 @@ class TestJointLowRankIntegration:
         for param, dist_obj in distributions.items():
             if param.startswith("joint:"):
                 continue
-            if isinstance(dist_obj, dict) and "base" in dist_obj and "transform" in dist_obj:
+            if (
+                isinstance(dist_obj, dict)
+                and "base" in dist_obj
+                and "transform" in dist_obj
+            ):
                 base_dist = dist_obj["base"]
                 transform = dist_obj["transform"]
                 if hasattr(base_dist, "loc"):
@@ -2050,8 +2080,10 @@ class TestJointLowRankIntegration:
         )
         model_fn, guide_fn, config = get_model_and_guide(config)
         model_kwargs = dict(
-            n_cells=n_cells, n_genes=n_genes,
-            model_config=config, counts=counts,
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
         )
 
         optimizer = Adam(1e-3)
@@ -2085,8 +2117,10 @@ class TestJointLowRankIntegration:
         )
         model_fn, guide_fn, config = get_model_and_guide(config)
         model_kwargs = dict(
-            n_cells=n_cells, n_genes=n_genes,
-            model_config=config, counts=counts,
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
         )
 
         optimizer = Adam(1e-3)
@@ -2129,9 +2163,7 @@ class TestJointLowRankIntegration:
                     and "base" in dist_obj
                     and "transform" in dist_obj
                 ):
-                    mean_value = dist_obj["transform"](
-                        dist_obj["base"].mean
-                    )
+                    mean_value = dist_obj["transform"](dist_obj["base"].mean)
                 else:
                     mean_value = dist_obj.mean
                 map_estimates[param] = jnp.where(
@@ -2163,8 +2195,10 @@ class TestJointLowRankIntegration:
         )
         model_fn, guide_fn, config = get_model_and_guide(config)
         model_kwargs = dict(
-            n_cells=n_cells, n_genes=n_genes,
-            model_config=config, counts=counts,
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
         )
 
         optimizer = Adam(1e-3)
@@ -2192,30 +2226,261 @@ class TestJointLowRankIntegration:
             assert jnp.isfinite(map_val).all()
             assert jnp.all(map_val > 0)
 
-    def test_joint_shape_mismatch_raises(self):
-        """Joint group with mismatched shapes raises ValueError."""
+    def test_joint_heterogeneous_scalar_and_gene(
+        self, model_config, small_counts
+    ):
+        """Scalar phi + gene-specific mu in same joint group (heterogeneous)."""
+        from scribe.models.components import JointLowRankGuide
+
+        joint = JointLowRankGuide(rank=3, group="test")
+        # Scalar phi (is_gene_specific=False) + gene-specific mu
+        specs = [
+            ExpNormalSpec(
+                name="phi",
+                shape_dims=(),
+                default_params=(0.0, 1.0),
+                is_gene_specific=False,
+                guide_family=joint,
+                constrained_name="phi",
+            ),
+            ExpNormalSpec(
+                name="mu",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="mu",
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=model_config,
+                    counts=small_counts,
+                )
+
+        # phi should be scalar, mu should be gene-specific
+        assert "phi" in tr
+        assert "mu" in tr
+        assert tr["phi"]["value"].shape == ()
+        assert tr["mu"]["value"].shape == (20,)
+        assert jnp.all(tr["phi"]["value"] > 0)
+        assert jnp.all(tr["mu"]["value"] > 0)
+
+    def test_joint_heterogeneous_mixture(self):
+        """Mixture scalar phi (C,) + mixture gene-specific mu (C, G)."""
+        n_cells, n_genes = 50, 10
+        n_components = 3
+        key = random.PRNGKey(0)
+        counts = random.poisson(key, lam=5.0, shape=(n_cells, n_genes))
+
+        # hierarchical_p=False makes phi scalar; mixture_params includes phi
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            hierarchical_p=False,
+            guide_rank=3,
+            joint_params=["phi", "mu"],
+            n_components=n_components,
+            mixture_params=["mu", "phi"],
+        )
+        model_fn, guide_fn, config = get_model_and_guide(config)
+        model_kwargs = dict(
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
+        )
+
+        # Run a few SVI steps to verify it works end-to-end
+        optimizer = Adam(1e-3)
+        svi = SVI(model_fn, guide_fn, optimizer, loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(1), **model_kwargs)
+        for _ in range(3):
+            svi_state, loss = svi.update(svi_state, **model_kwargs)
+            assert jnp.isfinite(loss), f"SVI loss not finite: {loss}"
+
+        # Verify phi shape is (n_components,) and mu is (n_components, n_genes)
+        params = svi.get_params(svi_state)
+        phi_loc = params["joint_joint_phi_loc"]
+        mu_loc = params["joint_joint_mu_loc"]
+        # phi expanded to (n_components, 1) internally
+        assert phi_loc.shape == (n_components, 1)
+        # mu is (n_components, n_genes)
+        assert mu_loc.shape == (n_components, n_genes)
+
+    def test_joint_heterogeneous_three_params(self, model_config, small_counts):
+        """Scalar phi + gene-specific mu + gene-specific gate."""
+        from scribe.models.components import JointLowRankGuide
+        from scribe.models.builders import SigmoidNormalSpec
+
+        joint = JointLowRankGuide(rank=4, group="zinb")
+        specs = [
+            ExpNormalSpec(
+                name="phi",
+                shape_dims=(),
+                default_params=(0.0, 1.0),
+                is_gene_specific=False,
+                guide_family=joint,
+                constrained_name="phi",
+            ),
+            ExpNormalSpec(
+                name="mu",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="mu",
+            ),
+            SigmoidNormalSpec(
+                name="gate",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="gate",
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=model_config,
+                    counts=small_counts,
+                )
+
+        assert tr["phi"]["value"].shape == ()
+        assert tr["mu"]["value"].shape == (20,)
+        assert tr["gate"]["value"].shape == (20,)
+        assert jnp.all(tr["phi"]["value"] > 0)
+        assert jnp.all(tr["mu"]["value"] > 0)
+        assert jnp.all(tr["gate"]["value"] > 0)
+        assert jnp.all(tr["gate"]["value"] < 1)
+
+    def test_joint_heterogeneous_batch_mismatch_raises(self):
+        """Mismatched batch dims in heterogeneous joint group raises."""
         from scribe.models.builders.guide_builder import setup_joint_guide
         from scribe.models.builders.parameter_specs import ExpNormalSpec
         from scribe.models.components import JointLowRankGuide
 
-        # One gene-specific, one scalar — should fail
-        spec_gene = ExpNormalSpec(
-            name="mu",
-            shape_dims=("n_genes",),
-            default_params=(0.0, 1.0),
-            is_gene_specific=True,
-        )
-        spec_scalar = ExpNormalSpec(
+        # phi is_mixture=True (batch=n_components), mu is_mixture=False (no batch)
+        spec_phi = ExpNormalSpec(
             name="phi",
             shape_dims=(),
             default_params=(0.0, 1.0),
             is_gene_specific=False,
+            is_mixture=True,
+        )
+        spec_mu = ExpNormalSpec(
+            name="mu",
+            shape_dims=("n_genes",),
+            default_params=(0.0, 1.0),
+            is_gene_specific=True,
+            is_mixture=False,
         )
         guide = JointLowRankGuide(rank=3, group="test")
-        dims = {"n_genes": 10, "n_cells": 50}
+        dims = {"n_genes": 10, "n_cells": 50, "n_components": 3}
 
-        import pytest
-        with pytest.raises(ValueError, match="All specs in a joint group"):
+        with pytest.raises(ValueError, match="batch shape"):
             setup_joint_guide(
-                [spec_gene, spec_scalar], guide, dims, model_config=None
+                [spec_phi, spec_mu], guide, dims, model_config=None
             )
+
+    def test_svi_with_heterogeneous_joint_guide(self):
+        """Run SVI steps with scalar phi + gene-specific mu joint guide."""
+        from scribe.models.components import JointLowRankGuide
+
+        n_cells, n_genes = 50, 10
+        key = random.PRNGKey(42)
+        counts = random.poisson(key, lam=10.0, shape=(n_cells, n_genes)).astype(
+            jnp.float32
+        )
+
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("mean_odds")
+            .unconstrained()
+            .with_joint_params(["phi", "mu"])
+            .with_guide_families(
+                GuideFamilyConfig(
+                    phi=JointLowRankGuide(rank=3, group="joint"),
+                    mu=JointLowRankGuide(rank=3, group="joint"),
+                )
+            )
+            .build()
+        )
+        from scribe.models.presets.factory import create_model
+
+        model, guide, _ = create_model(config, validate=False)
+        model_kwargs = {
+            "n_cells": n_cells,
+            "n_genes": n_genes,
+            "model_config": config,
+            "counts": counts,
+        }
+
+        optimizer = numpyro.optim.Adam(1e-2)
+        svi = SVI(model, guide, optimizer, Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(1), **model_kwargs)
+
+        # Run a few steps and verify loss is finite
+        for _ in range(5):
+            svi_state, loss = svi.update(svi_state, **model_kwargs)
+            assert jnp.isfinite(loss), f"SVI loss is not finite: {loss}"
+
+    def test_posterior_extraction_heterogeneous_joint(self):
+        """MAP and distributions work for heterogeneous joint groups."""
+        from scribe.models.builders.posterior import get_posterior_distributions
+        import numpyro.distributions as dist
+
+        n_genes = 10
+        k = 3
+
+        # Simulate variational params for scalar phi (G=1) and gene mu (G=n_genes)
+        params = {
+            "joint_joint_phi_loc": jnp.zeros((1,)),
+            "joint_joint_phi_W": 0.01 * jnp.ones((1, k)),
+            "joint_joint_phi_raw_diag": -3.0 * jnp.ones((1,)),
+            "joint_joint_mu_loc": jnp.zeros((n_genes,)),
+            "joint_joint_mu_W": 0.01 * jnp.ones((n_genes, k)),
+            "joint_joint_mu_raw_diag": -3.0 * jnp.ones((n_genes,)),
+        }
+
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("mean_odds")
+            .unconstrained()
+            .with_joint_params(["phi", "mu"])
+            .build()
+        )
+
+        distributions = get_posterior_distributions(params, config)
+
+        # Per-param marginals: phi should be Normal (scalar), mu LowRankMVN
+        assert "phi" in distributions
+        assert "mu" in distributions
+
+        phi_dist = distributions["phi"]
+        assert isinstance(phi_dist["base"], dist.Normal)
+
+        mu_dist = distributions["mu"]
+        assert isinstance(mu_dist["base"], dist.LowRankMultivariateNormal)
+
+        # Full joint distribution should exist
+        assert "joint:joint" in distributions
+        joint_dist = distributions["joint:joint"]
+        assert joint_dist["param_sizes"] == [1, n_genes]
+        assert isinstance(joint_dist["base"], dist.LowRankMultivariateNormal)
+        assert joint_dist["base"].loc.shape == (1 + n_genes,)

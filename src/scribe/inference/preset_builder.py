@@ -235,7 +235,8 @@ def build_config_from_preset(
             "the rank of the joint low-rank covariance)"
         )
 
-    # Handle low-rank guide for gene-specific parameter
+    # Handle low-rank guide for parameters.  joint_params may include
+    # both gene-specific and scalar parameters (heterogeneous dims).
     if guide_rank is not None:
         from ..models.components import JointLowRankGuide, LowRankGuide
 
@@ -243,7 +244,8 @@ def build_config_from_preset(
         gene_param_name = param_strategy.gene_param_name  # "r" or "mu"
 
         if joint_params is not None:
-            # Joint low-rank: all listed params share a single covariance
+            # Joint low-rank: all listed params share a single covariance.
+            # Supports heterogeneous dimensions (scalar + gene-specific).
             joint_guide = JointLowRankGuide(rank=guide_rank, group="joint")
             for pname in joint_params:
                 guide_family_kwargs[pname] = joint_guide
