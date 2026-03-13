@@ -377,3 +377,278 @@ def test_find_threshold_use_lfsr_tau(de_results):
 
     # At tau=0 they should be identical (lfsr_tau == lfsr when tau=0)
     assert abs(t_std - t_tau) < 1e-6
+
+
+# --------------------------------------------------------------------------
+# Tests: to_dataframe() (base class)
+# --------------------------------------------------------------------------
+
+
+def test_to_dataframe_columns(de_results):
+    """to_dataframe() should return a DataFrame with expected columns."""
+    import pandas as pd
+
+    df = de_results.to_dataframe(tau=0.0)
+    assert isinstance(df, pd.DataFrame)
+    expected_cols = {
+        "gene", "delta_mean", "delta_sd", "lfsr",
+        "lfsr_tau", "prob_effect", "prob_positive",
+    }
+    assert set(df.columns) == expected_cols
+
+
+def test_to_dataframe_shape(de_results):
+    """to_dataframe() should have one row per gene."""
+    df = de_results.to_dataframe(tau=0.0)
+    assert len(df) == de_results.D
+
+
+def test_to_dataframe_gene_names(de_results):
+    """Gene column matches the stored gene_names."""
+    df = de_results.to_dataframe()
+    assert list(df["gene"]) == de_results.gene_names
+
+
+# --------------------------------------------------------------------------
+# Tests: to_dataframe() on empirical results
+# --------------------------------------------------------------------------
+
+
+class TestEmpiricalToDataframe:
+    """Tests for ``ScribeEmpiricalDEResults.to_dataframe()``."""
+
+    @pytest.fixture
+    def emp_de(self):
+        """Create an empirical DE results with mu_map."""
+        rng = random.PRNGKey(0)
+        D = 6
+        r_A = jnp.abs(random.normal(rng, (200, D))) + 1.0
+        r_B = jnp.abs(random.normal(random.PRNGKey(1), (200, D))) + 2.0
+        return compare(
+            r_A, r_B,
+            method="empirical",
+            gene_names=[f"g{i}" for i in range(D)],
+            rng_key=rng,
+        )
+
+    def test_includes_mean_expression(self, emp_de):
+        """Empirical to_dataframe has mean_expression columns when mu_map stored."""
+        # mu_map is derived from r/p during compare() when possible
+        if emp_de.mu_map_A is not None:
+            df = emp_de.to_dataframe()
+            assert "mean_expression_A" in df.columns
+            assert "mean_expression_B" in df.columns
+            assert len(df) == emp_de.D
+
+    def test_shape_correct(self, emp_de):
+        """Correct number of rows."""
+        df = emp_de.to_dataframe(tau=0.1)
+        assert len(df) == emp_de.D
+
+
+# --------------------------------------------------------------------------
+# Tests: mask management on ScribeEmpiricalDEResults
+# --------------------------------------------------------------------------
+
+
+class TestMaskManagement:
+    """Tests for set_gene_mask, set_expression_threshold, clear_mask."""
+
+    @pytest.fixture
+    def masked_de(self):
+        """Create an empirical DE with initial mask, simplex, and mu_map stored.
+
+        Uses p_samples so that mu_map is derived from r and p.
+        """
+        import jax
+        rng = random.PRNGKey(0)
+        D = 8
+        r_A = jnp.abs(random.normal(rng, (200, D))) + 1.0
+        r_B = jnp.abs(random.normal(random.PRNGKey(1), (200, D))) + 2.0
+        # Gene-specific p so that mu_map can be derived
+        p_A = jax.nn.sigmoid(random.normal(random.PRNGKey(2), (200, D)))
+        p_B = jax.nn.sigmoid(random.normal(random.PRNGKey(3), (200, D)))
+        names = [f"g{i}" for i in range(D)]
+        mask = jnp.array([True, True, True, False, False, True, True, False])
+        return compare(
+            r_A, r_B,
+            method="empirical",
+            gene_names=names,
+            rng_key=rng,
+            gene_mask=mask,
+            p_samples_A=p_A,
+            p_samples_B=p_B,
+        )
+
+    def test_simplex_stored(self, masked_de):
+        """compare() stores simplex_A and simplex_B."""
+        assert masked_de.has_simplex
+        assert masked_de.simplex_A is not None
+        assert masked_de.simplex_B is not None
+        # Full-dimensional
+        assert masked_de.simplex_A.shape[1] == 8
+        assert masked_de.simplex_B.shape[1] == 8
+
+    def test_initial_mask_d(self, masked_de):
+        """Initial mask gives D_kept genes."""
+        assert masked_de.D == 5  # 5 True values
+
+    def test_set_gene_mask_changes_d(self, masked_de):
+        """set_gene_mask changes D and gene_names."""
+        new_mask = jnp.array(
+            [True, False, True, True, True, True, False, True]
+        )
+        masked_de.set_gene_mask(new_mask)
+        assert masked_de.D == 6  # 6 True values
+        # Gene names should be filtered from the full list
+        expected = ["g0", "g2", "g3", "g4", "g5", "g7"]
+        assert masked_de.gene_names == expected
+
+    def test_set_gene_mask_invalidates_cache(self, masked_de):
+        """set_gene_mask invalidates cached gene results."""
+        # Prime the cache
+        masked_de.gene_level(tau=0.0)
+        assert masked_de._gene_results is not None
+
+        # Change mask
+        new_mask = jnp.ones(8, dtype=bool)
+        masked_de.set_gene_mask(new_mask)
+        assert masked_de._gene_results is None
+        assert masked_de._cached_tau is None
+
+    def test_set_gene_mask_raises_without_simplex(self):
+        """set_gene_mask raises ValueError when simplex not stored."""
+        from scribe.de import ScribeEmpiricalDEResults
+
+        de = ScribeEmpiricalDEResults(
+            delta_samples=jnp.ones((10, 5)),
+            gene_names=[f"g{i}" for i in range(5)],
+        )
+        with pytest.raises(ValueError, match="simplex"):
+            de.set_gene_mask(jnp.ones(5, dtype=bool))
+
+    def test_set_gene_mask_wrong_length_raises(self, masked_de):
+        """set_gene_mask with wrong length raises ValueError."""
+        with pytest.raises(ValueError, match="mask length"):
+            masked_de.set_gene_mask(jnp.ones(3, dtype=bool))
+
+    def test_clear_mask_restores_all_genes(self, masked_de):
+        """clear_mask restores all D genes."""
+        assert masked_de.D == 5  # initially masked
+        masked_de.clear_mask()
+        assert masked_de.D == 8  # full gene set
+        assert masked_de._gene_mask is None
+        # All gene names restored
+        assert masked_de.gene_names == [f"g{i}" for i in range(8)]
+
+    def test_clear_mask_raises_without_simplex(self):
+        """clear_mask raises ValueError when simplex not stored."""
+        from scribe.de import ScribeEmpiricalDEResults
+
+        de = ScribeEmpiricalDEResults(
+            delta_samples=jnp.ones((10, 5)),
+        )
+        with pytest.raises(ValueError, match="simplex"):
+            de.clear_mask()
+
+    def test_set_expression_threshold(self, masked_de):
+        """set_expression_threshold builds and applies a mask from mu_map."""
+        assert masked_de.mu_map_A is not None, "mu_map should be stored"
+        # With a very low threshold, all genes pass
+        masked_de.set_expression_threshold(min_expression=0.0)
+        assert masked_de.D == 8
+
+    def test_set_expression_threshold_raises_without_mu_map(self):
+        """set_expression_threshold raises when mu_map not stored."""
+        from scribe.de import ScribeEmpiricalDEResults
+
+        de = ScribeEmpiricalDEResults(
+            delta_samples=jnp.ones((10, 5)),
+            simplex_A=jnp.ones((10, 5)) / 5,
+            simplex_B=jnp.ones((10, 5)) / 5,
+        )
+        with pytest.raises(ValueError, match="mu_map"):
+            de.set_expression_threshold(1.0)
+
+    def test_gene_level_after_remask(self, masked_de):
+        """gene_level works correctly after changing the mask."""
+        masked_de.clear_mask()
+        result = masked_de.gene_level(tau=0.0)
+        assert result["delta_mean"].shape == (8,)
+        assert result["lfsr"].shape == (8,)
+        assert len(result["gene_names"]) == 8
+
+    def test_to_dataframe_after_remask(self, masked_de):
+        """to_dataframe reflects the current mask."""
+        # Initial mask: D=5
+        df1 = masked_de.to_dataframe(tau=0.0)
+        assert len(df1) == 5
+
+        # Clear mask: D=8
+        masked_de.clear_mask()
+        df2 = masked_de.to_dataframe(tau=0.0)
+        assert len(df2) == 8
+
+
+# --------------------------------------------------------------------------
+# Tests: respect_mask on gene-set methods
+# --------------------------------------------------------------------------
+
+
+class TestRespectMask:
+    """Tests for the respect_mask parameter on gene-set methods."""
+
+    @pytest.fixture
+    def masked_de(self):
+        """Empirical DE with mask and simplex stored."""
+        import jax
+        rng = random.PRNGKey(0)
+        D = 8
+        r_A = jnp.abs(random.normal(rng, (200, D))) + 1.0
+        r_B = jnp.abs(random.normal(random.PRNGKey(1), (200, D))) + 2.0
+        p_A = jax.nn.sigmoid(random.normal(random.PRNGKey(2), (200, D)))
+        p_B = jax.nn.sigmoid(random.normal(random.PRNGKey(3), (200, D)))
+        names = [f"g{i}" for i in range(D)]
+        mask = jnp.array([True, True, True, False, False, True, True, False])
+        return compare(
+            r_A, r_B,
+            method="empirical",
+            gene_names=names,
+            rng_key=rng,
+            gene_mask=mask,
+            p_samples_A=p_A,
+            p_samples_B=p_B,
+        )
+
+    def test_test_gene_set_respect_mask_true(self, masked_de):
+        """respect_mask=True uses masked delta (default)."""
+        # Indices in masked space (D=5)
+        indices = jnp.array([0, 1, 2])
+        result = masked_de.test_gene_set(indices, tau=0.0, respect_mask=True)
+        assert "lfsr" in result
+
+    def test_test_gene_set_respect_mask_false(self, masked_de):
+        """respect_mask=False uses full-gene delta."""
+        # Indices in full space (D=8)
+        indices = jnp.array([0, 3, 7])
+        result = masked_de.test_gene_set(
+            indices, tau=0.0, respect_mask=False
+        )
+        assert "lfsr" in result
+
+    def test_test_multiple_gene_sets_respect_mask(self, masked_de):
+        """respect_mask on test_multiple_gene_sets runs without error."""
+        gene_sets = [jnp.array([0, 1]), jnp.array([2, 3])]
+        # In masked space
+        result_masked = masked_de.test_multiple_gene_sets(
+            gene_sets, tau=0.0, respect_mask=True
+        )
+        assert "lfsr" in result_masked
+
+    def test_test_pathway_perturbation_respect_mask(self, masked_de):
+        """respect_mask on test_pathway_perturbation runs without error."""
+        indices = jnp.array([0, 1, 2])
+        result = masked_de.test_pathway_perturbation(
+            indices, n_permutations=99, respect_mask=True
+        )
+        assert "p_value" in result

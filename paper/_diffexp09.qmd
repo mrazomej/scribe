@@ -1194,9 +1194,9 @@ are the geometric means of the masked and full compositions, respectively.
 This shift $c^{(s)}$ is the same for every gene $g \in \mathcal{K}$ in a
 given sample.
 
-**Why the shift matters.** Although $\mathrm{Var}[c^{(s)}]$ is typically
+**Why the shift matters.** Although $\text{Var}[c^{(s)}]$ is typically
 $O(1/D)$ (the shift is tight across samples), its expectation
-$\mathbb{E}[c^{(s)}]$ can be large. In log-space, low-expression genes
+$\langle c^{(s)} \rangle$ can be large. In log-space, low-expression genes
 dominate the geometric mean because their $\log \rho_g$ values are large
 negative numbers. When many genes are low-expression (common in
 transcriptomics), the full-gene geometric mean is pulled strongly downward

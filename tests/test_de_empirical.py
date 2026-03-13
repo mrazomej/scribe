@@ -22,6 +22,8 @@ from scribe.de import (
     ScribeEmpiricalDEResults,
     compare,
     compute_clr_differences,
+    sample_compositions,
+    compute_delta_from_simplex,
     empirical_differential_expression,
 )
 from scribe.de._empirical import _aggregate_genes, _aggregate_simplex
@@ -1193,3 +1195,156 @@ class TestGammaNormalizeSafety:
         result = _batched_gamma_normalize(r, p, 3, rng, 2048)
         assert result.shape == (60, D)  # 20 * 3
         assert np.all(np.isfinite(np.array(result)))
+
+
+# --------------------------------------------------------------------------
+# Tests: sample_compositions (Stage 1)
+# --------------------------------------------------------------------------
+
+
+class TestSampleCompositions:
+    """Tests for ``sample_compositions`` (Stage 1 of CLR pipeline)."""
+
+    @pytest.fixture
+    def rng(self):
+        return random.PRNGKey(42)
+
+    def test_output_shapes(self, rng):
+        """Returns two (N, D) arrays with rows on the simplex."""
+        D = 6
+        r_A = jnp.abs(random.normal(rng, (100, D))) + 1.0
+        r_B = jnp.abs(random.normal(random.PRNGKey(1), (100, D))) + 1.0
+        s_A, s_B = sample_compositions(r_A, r_B, rng_key=rng)
+        assert s_A.shape == (100, D)
+        assert s_B.shape == (100, D)
+
+    def test_rows_sum_to_one(self, rng):
+        """Simplex samples must sum to 1 along the gene axis."""
+        D = 5
+        r_A = jnp.abs(random.normal(rng, (50, D))) + 1.0
+        r_B = jnp.abs(random.normal(random.PRNGKey(1), (50, D))) + 1.0
+        s_A, s_B = sample_compositions(r_A, r_B, rng_key=rng)
+        np.testing.assert_allclose(np.array(s_A.sum(axis=1)), 1.0, atol=1e-5)
+        np.testing.assert_allclose(np.array(s_B.sum(axis=1)), 1.0, atol=1e-5)
+
+    def test_n_samples_dirichlet_multiplies(self, rng):
+        """n_samples_dirichlet > 1 multiplies the row count."""
+        D = 4
+        N = 30
+        r = jnp.abs(random.normal(rng, (N, D))) + 1.0
+        s_A, s_B = sample_compositions(
+            r, r, n_samples_dirichlet=3, rng_key=rng
+        )
+        assert s_A.shape == (N * 3, D)
+        assert s_B.shape == (N * 3, D)
+
+    def test_mixture_slicing(self, rng):
+        """3D (mixture) inputs are correctly sliced to (N, D)."""
+        D, K = 5, 3
+        r_mix = jnp.abs(random.normal(rng, (60, K, D))) + 1.0
+        s_A, s_B = sample_compositions(
+            r_mix, r_mix, component_A=0, component_B=1, rng_key=rng
+        )
+        assert s_A.shape == (60, D)
+        assert s_B.shape == (60, D)
+
+    def test_gamma_path_with_p(self, rng):
+        """Gamma-based sampling produces valid simplex with gene-specific p."""
+        D = 5
+        r = jnp.abs(random.normal(rng, (50, D))) + 1.0
+        p = jax.nn.sigmoid(random.normal(random.PRNGKey(1), (50, D)))
+        s_A, s_B = sample_compositions(
+            r, r, p_samples_A=p, p_samples_B=p, rng_key=rng
+        )
+        assert s_A.shape == (50, D)
+        np.testing.assert_allclose(np.array(s_A.sum(axis=1)), 1.0, atol=1e-5)
+
+
+# --------------------------------------------------------------------------
+# Tests: compute_delta_from_simplex (Stage 2)
+# --------------------------------------------------------------------------
+
+
+class TestComputeDeltaFromSimplex:
+    """Tests for ``compute_delta_from_simplex`` (Stage 2 of CLR pipeline)."""
+
+    @pytest.fixture
+    def rng(self):
+        return random.PRNGKey(42)
+
+    @pytest.fixture
+    def simplex_pair(self, rng):
+        """Two valid simplex matrices."""
+        D = 6
+        s_A = jax.nn.softmax(random.normal(rng, (100, D)), axis=-1)
+        s_B = jax.nn.softmax(
+            random.normal(random.PRNGKey(1), (100, D)), axis=-1
+        )
+        return s_A, s_B
+
+    def test_no_mask_full_d(self, simplex_pair):
+        """Without mask, output has D columns."""
+        s_A, s_B = simplex_pair
+        delta = compute_delta_from_simplex(s_A, s_B)
+        assert delta.shape == (100, 6)
+
+    def test_rows_sum_to_zero_no_mask(self, simplex_pair):
+        """CLR differences sum to 0 along gene axis when no mask."""
+        s_A, s_B = simplex_pair
+        delta = compute_delta_from_simplex(s_A, s_B)
+        np.testing.assert_allclose(
+            np.array(delta.sum(axis=1)), 0.0, atol=1e-5
+        )
+
+    def test_with_mask_d_kept(self, simplex_pair):
+        """With mask, output has D_kept columns."""
+        s_A, s_B = simplex_pair
+        mask = jnp.array([True, True, False, True, False, True])
+        delta = compute_delta_from_simplex(s_A, s_B, gene_mask=mask)
+        assert delta.shape == (100, 4)
+
+    def test_with_mask_finite(self, simplex_pair):
+        """All delta values should be finite with mask."""
+        s_A, s_B = simplex_pair
+        mask = jnp.array([True, True, True, False, False, True])
+        delta = compute_delta_from_simplex(s_A, s_B, gene_mask=mask)
+        assert jnp.all(jnp.isfinite(delta))
+
+    def test_dirichlet_aggregation_equivalence(self, rng):
+        """Aggregation after full-D Dirichlet matches aggregation before sampling.
+
+        The Dirichlet aggregation property guarantees that storing the
+        full simplex and aggregating post-hoc is equivalent to aggregating
+        the concentration parameters before sampling.  We verify that both
+        approaches produce statistically indistinguishable delta_mean and
+        delta_sd distributions.
+        """
+        D = 8
+        N = 5000
+        r_A = jnp.abs(random.normal(rng, (N, D))) + 1.0
+        r_B = jnp.abs(random.normal(random.PRNGKey(1), (N, D))) + 1.0
+        mask = jnp.array([True, True, True, False, False, True, True, False])
+
+        # Path 1: legacy (aggregate r → sample lower-D Dirichlet → CLR)
+        delta_legacy = compute_clr_differences(
+            r_A, r_B, rng_key=random.PRNGKey(99), gene_mask=mask
+        )
+
+        # Path 2: new two-stage (sample full D → aggregate simplex → CLR)
+        s_A, s_B = sample_compositions(
+            r_A, r_B, rng_key=random.PRNGKey(99)
+        )
+        delta_twostage = compute_delta_from_simplex(s_A, s_B, gene_mask=mask)
+
+        # Same column count
+        assert delta_legacy.shape[1] == delta_twostage.shape[1]
+
+        # Distributional match: means must be close (Monte Carlo error)
+        mean_legacy = np.array(jnp.mean(delta_legacy, axis=0))
+        mean_twostage = np.array(jnp.mean(delta_twostage, axis=0))
+        np.testing.assert_allclose(mean_legacy, mean_twostage, atol=0.15)
+
+        # Standard deviations must be close
+        sd_legacy = np.array(jnp.std(delta_legacy, axis=0))
+        sd_twostage = np.array(jnp.std(delta_twostage, axis=0))
+        np.testing.assert_allclose(sd_legacy, sd_twostage, atol=0.1)

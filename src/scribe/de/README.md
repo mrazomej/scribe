@@ -101,6 +101,7 @@ When results objects are passed, `compare()`:
 | `de.compute_pefp(threshold, tau, use_lfsr_tau)` | Posterior expected FDP |
 | `de.find_threshold(target_pefp, tau, use_lfsr_tau)` | Find lfsr threshold for PEFP control |
 | `de.summary(tau, sort_by, top_n)` | Formatted results table |
+| `de.to_dataframe(tau)` | Export gene-level results to a pandas DataFrame |
 
 **Empirical/Shrinkage-only methods:**
 
@@ -109,6 +110,9 @@ When results objects are passed, `compare()`:
 | `de.biological_level(tau_lfc, tau_var, tau_kl)` | Biological-level DE (LFC, variance ratio, Gamma KL) |
 | `de.test_pathway_perturbation(indices, n_permutations)` | Within-pathway compositional perturbation test |
 | `de.test_multiple_gene_sets(gene_sets, tau, target_pefp)` | Batch pathway testing with PEFP control |
+| `de.set_gene_mask(mask)` | Change expression mask and recompute CLR (from stored simplex) |
+| `de.set_expression_threshold(min_expression)` | Build mask from MAP mu and apply |
+| `de.clear_mask()` | Remove mask, restore all genes |
 
 > **Note on `tau`-aware caching**: All methods that depend on gene-level results
 > accept a `tau` parameter. Results are cached and automatically recomputed when
@@ -170,6 +174,10 @@ from scribe.de import (
     # Gene-level
     differential_expression,
     call_de_genes,
+    # Empirical composition pipeline (two-stage)
+    sample_compositions,
+    compute_delta_from_simplex,
+    compute_clr_differences,         # convenience wrapper
     # Set-level (parametric)
     test_gene_set,
     test_contrast,
@@ -347,6 +355,63 @@ Builds a mask from MAP mean expression (`mu`):
 - Alternatively, users can pass any boolean mask (e.g. based on raw count
   quantiles) directly to `compare()`.
 
+### Interactive mask exploration
+
+After calling `compare()`, the results object stores the full-dimensional
+simplex samples alongside the initial `delta_samples`.  This lets you
+change the expression mask without re-running the expensive Dirichlet/Gamma
+sampling—only the cheap CLR aggregation + transform is recomputed.
+
+```python
+from scribe.de import compare
+
+# 1. Initial comparison with an expression mask
+de = compare(
+    results_A, results_B,
+    method="empirical",
+    component_A=0, component_B=0,
+    gene_mask=initial_mask,
+)
+df1 = de.to_dataframe(tau=0.5)
+
+# 2. Explore a different threshold interactively
+de.set_expression_threshold(min_expression=3.0)
+df2 = de.to_dataframe(tau=0.5)
+
+# 3. Apply a custom boolean mask
+de.set_gene_mask(my_custom_mask)
+df3 = de.to_dataframe(tau=0.5)
+
+# 4. Restore all genes (no mask)
+de.clear_mask()
+df_all = de.to_dataframe(tau=0.5)
+```
+
+**Why re-masking is exact:** The Dirichlet aggregation property guarantees
+that storing full simplex samples and re-aggregating afterwards is
+mathematically identical to aggregating the concentration parameters and
+sampling the lower-dimensional Dirichlet.
+
+| Method | Description |
+|--------|-------------|
+| `de.set_gene_mask(mask)` | Apply a boolean mask and recompute CLR differences |
+| `de.set_expression_threshold(min_expression)` | Build a mask from stored MAP mu and apply it |
+| `de.clear_mask()` | Remove the mask and restore all genes |
+| `de.has_simplex` | Whether simplex samples are available for re-masking |
+
+### `to_dataframe()` — exporting results
+
+All DE results objects provide a `to_dataframe(tau)` method that returns a
+pandas DataFrame with one row per gene:
+
+```python
+df = de.to_dataframe(tau=0.5)
+# Columns: gene, delta_mean, delta_sd, lfsr, lfsr_tau, prob_effect, prob_positive
+```
+
+For empirical results with stored MAP mean expression, the DataFrame also
+includes `mean_expression_A` and `mean_expression_B` columns.
+
 ## Empirical (Non-Parametric) DE
 
 When the Gaussian assumption fails (as indicated by Gaussianity diagnostics),
@@ -393,12 +458,15 @@ de = compare(
 
 ### How it works
 
-1. **Composition sampling**: Draw `rho ~ Dirichlet(r)` from the concentration
-   parameters in batches (GPU-friendly). When gene-specific `p_samples` are
-   provided, uses Gamma-based sampling instead (see above).
-2. **CLR transform**: `CLR(rho) = log(rho) - mean(log(rho))`.
-3. **Pair and difference**: `Delta = CLR(rho_A) - CLR(rho_B)`.
-4. **Count**: Estimate all statistics by vectorized counting:
+The pipeline is split into two stages for reusability:
+
+1. **Stage 1 — Composition sampling** (`sample_compositions()`): Draw
+   `rho ~ Dirichlet(r)` in the full D-dimensional simplex (GPU-batched).
+   When gene-specific `p_samples` are provided, uses Gamma-based sampling.
+   The full simplex samples are stored for later mask changes.
+2. **Stage 2 — CLR differencing** (`compute_delta_from_simplex()`): Aggregate
+   filtered genes into "other", apply CLR, and compute paired differences.
+3. **Count**: Estimate all statistics by vectorized counting:
    - `lfsr_g = min(P(Delta_g > 0), P(Delta_g < 0))`
    - `prob_effect_g = P(|Delta_g| > tau)`
    - etc.
