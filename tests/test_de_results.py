@@ -424,9 +424,10 @@ def test_to_dataframe_with_pefp_adds_is_de(de_results):
 
 
 def test_to_dataframe_pefp_controls_fdr(de_results):
-    """Average lfsr among called genes must not exceed target_pefp.
+    """Average lfsr_tau among called genes must not exceed target_pefp.
 
-    This is the defining property of the PEFP procedure.
+    This is the defining property of the PEFP procedure.  The default
+    uses lfsr_tau; with tau=0 this equals standard lfsr.
     """
     import numpy as np
 
@@ -434,8 +435,8 @@ def test_to_dataframe_pefp_controls_fdr(de_results):
     df = de_results.to_dataframe(tau=0.0, target_pefp=target)
     called = df[df["is_de"]]
     if len(called) > 0:
-        avg_lfsr = np.mean(called["lfsr"].to_numpy())
-        assert avg_lfsr <= target + 1e-8
+        avg_lfsr_tau = np.mean(called["lfsr_tau"].to_numpy())
+        assert avg_lfsr_tau <= target + 1e-8
 
 
 def test_to_dataframe_pefp_with_lfsr_tau(de_results):
