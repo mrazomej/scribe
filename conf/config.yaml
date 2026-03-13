@@ -42,6 +42,7 @@ unconstrained: false
 # rather than a fixed prior, providing adaptive shrinkage across genes.
 hierarchical_p: false     # Gene-specific p/phi with hyperprior (requires unconstrained=true)
 hierarchical_gate: false  # Gene-specific gate with hyperprior (ZI models only, requires unconstrained=true)
+hierarchical_mu: false  # Hierarchical mu with hyperprior (requires unconstrained=true)
 
 # --- Multi-Dataset Configuration ---
 # Joint modeling of multiple datasets with hierarchical priors across datasets.
