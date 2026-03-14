@@ -411,7 +411,15 @@ def get_posterior_distributions(
                     params, hyper_loc, hyper_scale
                 )
             )
-            if low_rank:
+            # When mu/r is part of a joint guide group, the individual
+            # {target}_loc / {target}_scale params don't exist — they
+            # live inside the joint block.  Check for joint prefix first.
+            jp = _find_joint_prefix(params, target)
+            if jp:
+                distributions[target] = _build_joint_low_rank_posterior(
+                    params, target, jp, split
+                )
+            elif low_rank:
                 distributions[target] = _build_low_rank_exp_normal_posterior(
                     params, target, is_mixture, split
                 )
@@ -457,7 +465,13 @@ def get_posterior_distributions(
                     params, hyper_loc, hyper_scale
                 )
             )
-            if target == "phi":
+            # Joint guide group check — params may live in a joint block
+            jp = _find_joint_prefix(params, target)
+            if jp:
+                distributions[target] = _build_joint_low_rank_posterior(
+                    params, target, jp, split
+                )
+            elif target == "phi":
                 distributions[target] = _build_exp_normal_posterior(
                     params, target, is_mixture, split, is_scalar=False
                 )
@@ -500,9 +514,16 @@ def get_posterior_distributions(
                     "logit_gate_dataset_scale",
                 )
             )
-            distributions["gate"] = _build_sigmoid_normal_posterior(
-                params, "gate", is_scalar=False, split=split
-            )
+            # Joint guide group check — gate may be in a joint block
+            jp = _find_joint_prefix(params, "gate")
+            if jp:
+                distributions["gate"] = _build_joint_low_rank_posterior(
+                    params, "gate", jp, split
+                )
+            else:
+                distributions["gate"] = _build_sigmoid_normal_posterior(
+                    params, "gate", is_scalar=False, split=split
+                )
 
     # -------------------------------------------------------------------------
     # Add zero-inflation gate if applicable
