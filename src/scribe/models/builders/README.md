@@ -58,6 +58,28 @@ shape. The model builder calls **`sample_hierarchical()`** on these specs, which
 draws per-dataset parameters from the population-level loc/scale hyperparameters
 already in `param_values`.
 
+**`DatasetHierarchicalNormalWithTransformSpec`** has an optional
+**`shared_component_indices`** field (tuple of ints) identifying which mixture
+components are shared across 2+ datasets. When set together with
+`is_mixture=True` and `is_dataset=True`, it enables scale masking for
+hierarchical mixture models where some components exist only in one dataset.
+
+**Broadcasting when mixture + dataset:** When both `is_mixture` and
+`is_dataset` are True, the hyperprior loc/scale may have shape `(K, G)` (per
+component, per gene) while the parameter shape is `(K, D, G)`. The
+`sample_hierarchical()` method inserts a singleton dataset dimension at axis 1
+so that `(K, G)` broadcasts correctly to `(K, D, G)`.
+
+**Scale masking:** When `shared_component_indices` is set, non-shared components
+get their hierarchical scale clamped to 1e-6, suppressing inter-dataset
+variation for components that only exist in one dataset. This avoids learning
+meaningless dataset-level variation for components that are dataset-specific.
+
+**Note (Approach B, future refactoring):** Non-shared components could
+alternatively be given shape `(G,)` instead of `(D, G)` to eliminate wasted
+parameters, at the cost of mixed-shape tensors and more complex splitting/
+concatenation in the likelihood and guide.
+
 #### Horseshoe Prior Specs
 
 Regularized horseshoe shrinkage uses **`HalfCauchySpec`** (τ, λ scales) and

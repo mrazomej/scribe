@@ -278,6 +278,34 @@ class ModelConfig(BaseModel):
         description="Scale for horseshoe slab Inverse-Gamma.",
     )
 
+    # Component matching for multi-dataset mixtures.
+    # When annotation_key and dataset_key are both provided, labels in 2+
+    # datasets are automatically treated as "shared" and get dataset-level
+    # hierarchy.  This field lets the user override that automatic detection.
+    shared_components: Optional[List[str]] = Field(
+        None,
+        description=(
+            "Manual list of component labels that are shared across "
+            "datasets. Only used when annotation_key and dataset_key are "
+            "both provided. Overrides automatic detection (which considers "
+            "labels appearing in 2+ datasets as shared). Labels not in "
+            "this list are treated as dataset-specific: their dataset "
+            "hierarchy scale is clamped, suppressing inter-dataset "
+            "variation for those components."
+        ),
+    )
+
+    # Runtime-populated: integer indices of shared components, derived
+    # from ComponentMapping in fit().  The factory reads this to build
+    # per-component scale masking in dataset hierarchical specs.
+    shared_component_indices: Optional[Tuple[int, ...]] = Field(
+        None,
+        description=(
+            "Runtime field: component indices shared across 2+ datasets. "
+            "Populated by fit() from the ComponentMapping; not set by users."
+        ),
+    )
+
     # Biology-informed capture prior configuration.
     # The capture prior is configured via the priors section:
     #   priors.organism    — shortcut to set defaults (e.g. "human")
@@ -560,6 +588,13 @@ class ModelConfig(BaseModel):
                 "exclusive. The dataset-level horseshoe subsumes "
                 "gene-level."
             )
+
+        # shared_components validation: requires multi-dataset mixture setup
+        if self.shared_components is not None:
+            if self.n_datasets is None:
+                raise ValueError(
+                    "shared_components requires n_datasets >= 2."
+                )
         return self
 
     # --------------------------------------------------------------------------

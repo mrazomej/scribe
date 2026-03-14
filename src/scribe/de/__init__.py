@@ -118,6 +118,9 @@ from ._shrinkage import (
 # Biological-level DE (mean LFC, variance ratio, Gamma KL)
 from ._biological import biological_differential_expression
 
+# Component matching utilities
+from ._component_matching import match_components_by_label, get_shared_labels
+
 __all__ = [
     # Results hierarchy
     "ScribeDEResults",
@@ -164,4 +167,7 @@ __all__ = [
     "shrinkage_differential_expression",
     # Biological-level DE
     "biological_differential_expression",
+    # Component matching
+    "match_components_by_label",
+    "get_shared_labels",
 ]

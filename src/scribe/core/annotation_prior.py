@@ -25,10 +25,18 @@ build_annotation_prior_logits
     Build a ``(n_cells, n_components)`` logit-offset matrix from annotations.
 validate_annotation_prior_logits
     Validate shape and finiteness of a logit-offset matrix.
+build_component_mapping
+    Identify shared vs dataset-specific components across multiple datasets.
+
+Classes
+-------
+ComponentMapping
+    Dataclass recording which components are shared across datasets.
 """
 
 import logging
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 
 import jax.numpy as jnp
 import numpy as np
@@ -369,3 +377,216 @@ def validate_annotation_prior_logits(
         raise ValueError(
             "annotation_prior_logits contains non-finite values (NaN or Inf)"
         )
+
+
+# ==============================================================================
+# Component mapping for multi-dataset mixtures
+# ==============================================================================
+
+
+@dataclass
+class ComponentMapping:
+    """Records which mixture components are shared across datasets.
+
+    When fitting a mixture model jointly across multiple datasets, some
+    components (cell types) may be present in all datasets while others
+    are exclusive to a subset.  This dataclass stores the result of
+    comparing annotation labels across datasets so that downstream code
+    can apply per-component dataset-level hierarchy only to shared
+    components.
+
+    Attributes
+    ----------
+    component_order : list of str
+        Ordered list of all labels (union across datasets).  The *i*-th
+        element maps to component index *i*.
+    label_map : dict of str to int
+        Mapping from annotation label to component index.
+    per_dataset_labels : dict of str to set of str
+        For each dataset name, the set of annotation labels present
+        (after ``min_cells`` filtering).
+    shared_indices : tuple of int
+        Component indices that appear in 2 or more datasets.
+    exclusive_indices : tuple of int
+        Component indices that appear in exactly 1 dataset.
+    shared_mask : tuple of bool
+        Boolean mask of length ``n_components``; ``True`` for shared
+        components.
+
+    Notes
+    -----
+    **Future (Approach B):** Non-shared components currently still get a
+    ``(D, G)`` tensor with clamped scale.  A future refactoring could give
+    them shape ``(G,)`` directly, eliminating wasted parameters at the cost
+    of mixed-shape tensors in the likelihood.  See the plan for details.
+    """
+
+    component_order: List[str]
+    label_map: Dict[str, int]
+    per_dataset_labels: Dict[str, Set[str]]
+    shared_indices: Tuple[int, ...]
+    exclusive_indices: Tuple[int, ...]
+    shared_mask: Tuple[bool, ...]
+
+    @property
+    def n_components(self) -> int:
+        """Total number of components (union of all labels)."""
+        return len(self.component_order)
+
+    @property
+    def n_shared(self) -> int:
+        """Number of components shared across 2+ datasets."""
+        return len(self.shared_indices)
+
+    @property
+    def n_datasets(self) -> int:
+        """Number of datasets."""
+        return len(self.per_dataset_labels)
+
+
+def build_component_mapping(
+    adata: "AnnData",
+    annotation_key: Union[str, List[str]],
+    dataset_key: str,
+    min_cells: int = 0,
+    shared_components: Optional[List[str]] = None,
+) -> ComponentMapping:
+    """Identify shared vs dataset-specific mixture components.
+
+    Groups cells by ``dataset_key``, collects unique annotation labels
+    per dataset (applying ``min_cells`` filtering within each dataset),
+    and builds a :class:`ComponentMapping` recording which labels appear
+    in multiple datasets ("shared") and which are exclusive to one.
+
+    Parameters
+    ----------
+    adata : AnnData
+        Annotated data matrix containing all datasets concatenated.
+    annotation_key : str or list of str
+        Column(s) in ``adata.obs`` used for annotation labels.  When a
+        list, composite labels are formed with ``"__"`` separator (same
+        as :func:`build_annotation_prior_logits`).
+    dataset_key : str
+        Column in ``adata.obs`` identifying datasets.
+    min_cells : int, optional
+        Minimum number of cells for a label to be retained *within each
+        dataset*.  Labels below the threshold in a given dataset are
+        excluded from that dataset's label set but may survive in other
+        datasets.  Default ``0``.
+    shared_components : list of str, optional
+        Manual override for which labels are considered shared.  When
+        provided, only these labels are marked as shared; all others are
+        treated as dataset-specific regardless of how many datasets they
+        appear in.
+
+    Returns
+    -------
+    ComponentMapping
+        The mapping between component indices and datasets.
+
+    Raises
+    ------
+    ValueError
+        If ``dataset_key`` or ``annotation_key`` is not in ``adata.obs``,
+        or if ``shared_components`` contains labels not in the union.
+    """
+    # Normalise annotation_key to a list
+    if isinstance(annotation_key, str):
+        obs_keys = [annotation_key]
+    else:
+        obs_keys = list(annotation_key)
+
+    # Validate columns exist
+    for key in obs_keys:
+        if key not in adata.obs.columns:
+            raise ValueError(
+                f"Annotation key '{key}' not found in adata.obs. "
+                f"Available columns: {list(adata.obs.columns)}"
+            )
+    if dataset_key not in adata.obs.columns:
+        raise ValueError(
+            f"dataset_key '{dataset_key}' not found in adata.obs. "
+            f"Available columns: {list(adata.obs.columns)}"
+        )
+
+    # Build annotation series (single or composite)
+    if len(obs_keys) == 1:
+        annotations = adata.obs[obs_keys[0]]
+        if hasattr(annotations, "cat"):
+            annotations = annotations.astype(object)
+    else:
+        annotations = _resolve_composite_annotations(adata, obs_keys)
+
+    ds_col = adata.obs[dataset_key]
+    datasets = sorted(str(d) for d in ds_col.unique())
+
+    # Collect labels per dataset with min_cells filtering
+    per_dataset_labels: Dict[str, Set[str]] = {}
+    for ds_name in datasets:
+        ds_mask = ds_col.astype(str) == ds_name
+        ds_annotations = annotations[ds_mask]
+        ds_labeled = ds_annotations[~pd.isna(ds_annotations)]
+
+        if min_cells > 0 and len(ds_labeled) > 0:
+            counts = ds_labeled.value_counts()
+            surviving = set(counts[counts >= min_cells].index)
+        elif len(ds_labeled) > 0:
+            surviving = set(ds_labeled.unique())
+        else:
+            surviving = set()
+
+        per_dataset_labels[ds_name] = {str(l) for l in surviving}
+
+    # Build global union and sort alphabetically for deterministic ordering
+    all_labels = set()
+    for ds_labels in per_dataset_labels.values():
+        all_labels |= ds_labels
+    component_order = sorted(all_labels)
+    label_map = {label: idx for idx, label in enumerate(component_order)}
+
+    # Determine shared vs exclusive indices
+    if shared_components is not None:
+        # Manual override: validate all specified labels exist in the union
+        unknown = set(shared_components) - all_labels
+        if unknown:
+            raise ValueError(
+                f"shared_components contains labels not found in any "
+                f"dataset: {unknown}. Available labels: {sorted(all_labels)}"
+            )
+        shared_label_set = set(shared_components)
+    else:
+        # Automatic: labels in 2+ datasets are shared
+        shared_label_set = set()
+        for label in all_labels:
+            n_present = sum(
+                label in ds_labels
+                for ds_labels in per_dataset_labels.values()
+            )
+            if n_present >= 2:
+                shared_label_set.add(label)
+
+    shared_indices = tuple(
+        label_map[l] for l in component_order if l in shared_label_set
+    )
+    exclusive_indices = tuple(
+        label_map[l] for l in component_order if l not in shared_label_set
+    )
+    shared_mask = tuple(l in shared_label_set for l in component_order)
+
+    logger.info(
+        "Component mapping: %d total, %d shared, %d exclusive. "
+        "Shared: %s",
+        len(component_order),
+        len(shared_indices),
+        len(exclusive_indices),
+        [component_order[i] for i in shared_indices],
+    )
+
+    return ComponentMapping(
+        component_order=component_order,
+        label_map=label_map,
+        per_dataset_labels=per_dataset_labels,
+        shared_indices=shared_indices,
+        exclusive_indices=exclusive_indices,
+        shared_mask=shared_mask,
+    )

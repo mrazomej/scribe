@@ -662,6 +662,85 @@ from scribe.core import validate_annotation_prior_logits
 validate_annotation_prior_logits(logits, n_cells=1000, n_components=3)
 ```
 
+### `ComponentMapping` and `build_component_mapping`
+
+For multi-dataset mixture models, some mixture components (cell types) may
+appear in multiple datasets ("shared") while others are exclusive to a single
+dataset.  The :class:`ComponentMapping` dataclass and
+:func:`build_component_mapping` function identify and record this structure.
+
+#### `ComponentMapping` dataclass
+
+```python
+from scribe.core.annotation_prior import ComponentMapping, build_component_mapping
+```
+
+:class:`ComponentMapping` is a dataclass that records which mixture components
+are shared across datasets.  It stores:
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| ``component_order`` | ``list[str]`` | Ordered list of all labels (union across datasets).  The *i*-th element maps to component index *i*. |
+| ``label_map`` | ``dict[str, int]`` | Mapping from annotation label to component index. |
+| ``per_dataset_labels`` | ``dict[str, set[str]]`` | For each dataset name, the set of annotation labels present (after ``min_cells`` filtering). |
+| ``shared_indices`` | ``tuple[int, ...]`` | Component indices that appear in 2 or more datasets. |
+| ``exclusive_indices`` | ``tuple[int, ...]`` | Component indices that appear in exactly 1 dataset. |
+| ``shared_mask`` | ``tuple[bool, ...]`` | Boolean mask of length ``n_components``; ``True`` for shared components. |
+
+Properties:
+
+- ``n_components`` — total number of components (union of all labels)
+- ``n_shared`` — number of components shared across 2+ datasets
+- ``n_datasets`` — number of datasets
+
+#### `build_component_mapping`
+
+```python
+mapping = build_component_mapping(
+    adata,                      # AnnData with adata.obs[annotation_key], adata.obs[dataset_key]
+    annotation_key="cell_type", # or list of columns for composite labels
+    dataset_key="dataset",      # column identifying datasets
+    min_cells=0,                # minimum cells per label within each dataset
+    shared_components=None,     # optional: manual override for shared labels
+)
+# mapping: ComponentMapping
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| ``adata`` | ``AnnData`` | Annotated data matrix containing all datasets concatenated. |
+| ``annotation_key`` | ``str`` or ``list[str]`` | Column(s) in ``adata.obs`` for annotation labels.  When a list, composite labels are formed with ``"__"`` (same as :func:`build_annotation_prior_logits`). |
+| ``dataset_key`` | ``str`` | Column in ``adata.obs`` identifying datasets. |
+| ``min_cells`` | ``int`` | Minimum number of cells for a label to be retained *within each dataset*.  Labels below the threshold in a given dataset are excluded from that dataset's label set but may survive in other datasets.  Default ``0``. |
+| ``shared_components`` | ``list[str]``, optional | Manual override for which labels are considered shared.  When provided, only these labels are marked as shared; all others are treated as dataset-specific regardless of how many datasets they appear in. |
+
+**Shared vs exclusive logic:**
+
+- By default, a label is **shared** if it appears in 2 or more datasets (after
+  ``min_cells`` filtering within each dataset).
+- A label is **exclusive** if it appears in exactly 1 dataset.
+- When ``shared_components`` is provided, only the specified labels are marked
+  as shared; all others are exclusive.
+
+**Example:**
+
+```python
+# adata.obs has "cell_type" and "dataset" columns
+mapping = build_component_mapping(
+    adata,
+    annotation_key="cell_type",
+    dataset_key="dataset",
+    min_cells=50,
+)
+
+print(mapping.component_order)   # e.g. ["B", "Mono", "T"]
+print(mapping.shared_indices)   # e.g. (0, 2) — B and T appear in multiple datasets
+print(mapping.exclusive_indices) # e.g. (1,) — Mono only in one dataset
+print(mapping.per_dataset_labels) # {"ds1": {"B", "T"}, "ds2": {"B", "Mono", "T"}}
+```
+
 ### Usage via `scribe.fit()`
 
 The simplest way to use annotation priors is via the high-level API:

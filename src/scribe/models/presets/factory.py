@@ -571,6 +571,9 @@ def create_model(
     # ==========================================================================
     if model_config.n_datasets is not None:
         n_ds = model_config.n_datasets
+        # shared_component_indices is populated at runtime by fit()
+        # when annotation_key + dataset_key are both provided.
+        _sci = getattr(model_config, "shared_component_indices", None)
 
         # Hierarchical mu/r across datasets
         if model_config.hierarchical_dataset_mu or getattr(
@@ -581,6 +584,7 @@ def create_model(
                 param_key=param_key,
                 guide_families=guide_families,
                 n_datasets=n_ds,
+                shared_component_indices=_sci,
             )
 
         # Dataset-level p/phi
@@ -596,6 +600,7 @@ def create_model(
                 guide_families=guide_families,
                 n_datasets=n_ds,
                 mode=dataset_p_mode,
+                shared_component_indices=_sci,
             )
 
     # ==========================================================================
@@ -1029,12 +1034,20 @@ def _datasetify_mu(
     param_key: str,
     guide_families,
     n_datasets: int,
+    shared_component_indices: Optional[Tuple[int, ...]] = None,
 ) -> List:
     """Replace mu (or r) with a dataset-hierarchical triplet.
 
     Adds population-level hyperparameters (loc, scale) and replaces the
     flat mu/r spec with a ``DatasetHierarchicalExpNormalSpec`` that produces
     per-dataset gene-specific values.
+
+    When the original parameter is mixture-aware (``is_mixture=True``),
+    the population hyperprior ``hyper_loc`` is also made per-component so
+    that each cell type gets its own population expression profile.  The
+    ``shared_component_indices`` mask tells ``sample_hierarchical()``
+    which components should use the learned cross-dataset scale vs a
+    clamped near-zero scale.
 
     Parameters
     ----------
@@ -1046,6 +1059,9 @@ def _datasetify_mu(
         Per-parameter guide family configuration.
     n_datasets : int
         Number of datasets.
+    shared_component_indices : tuple of int, optional
+        Component indices shared across 2+ datasets.  Passed through to
+        the hierarchical spec for scale masking.
 
     Returns
     -------
@@ -1065,25 +1081,29 @@ def _datasetify_mu(
 
     target_family = guide_families.get(target_name)
 
-    # Population-level hyperparameters
-    hyper_loc = NormalWithTransformSpec(
-        name=hyper_loc_name,
-        shape_dims=("n_genes",),
-        default_params=(0.0, 1.0),
-        is_gene_specific=True,
-    )
-    hyper_scale = SoftplusNormalSpec(
-        name=hyper_scale_name,
-        shape_dims=(),
-        default_params=(-2.0, 0.5),
-    )
-
     new_specs = []
     for spec in param_specs:
         if spec.name == target_name:
             # Preserve is_mixture from the original spec so the dataset-
             # hierarchical parameter keeps its component dimension.
             orig_is_mixture = getattr(spec, "is_mixture", False)
+
+            # Per-component hyperprior: when the parameter is mixture-
+            # aware, each component gets its own population profile.
+            hyper_loc = NormalWithTransformSpec(
+                name=hyper_loc_name,
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                is_mixture=orig_is_mixture,
+            )
+            # Shared scalar shrinkage across all components
+            hyper_scale = SoftplusNormalSpec(
+                name=hyper_scale_name,
+                shape_dims=(),
+                default_params=(-2.0, 0.5),
+            )
+
             hier_spec = DatasetHierarchicalExpNormalSpec(
                 name=target_name,
                 shape_dims=("n_genes",),
@@ -1094,6 +1114,7 @@ def _datasetify_mu(
                 is_dataset=True,
                 is_mixture=orig_is_mixture,
                 guide_family=target_family,
+                shared_component_indices=shared_component_indices,
             )
             new_specs.extend([hyper_loc, hyper_scale, hier_spec])
         else:
@@ -1110,6 +1131,7 @@ def _datasetify_p(
     guide_families,
     n_datasets: int,
     mode: str = "scalar",
+    shared_component_indices: Optional[Tuple[int, ...]] = None,
 ) -> List:
     """Replace p/phi with a dataset-specific version.
 
@@ -1118,6 +1140,9 @@ def _datasetify_p(
 
     For mode="gene_specific": single-level hierarchy where each (dataset,
     gene) pair draws from a shared population distribution.
+
+    When the original parameter is mixture-aware, per-component
+    hyperpriors are created (see ``_datasetify_mu`` for rationale).
 
     Parameters
     ----------
@@ -1131,6 +1156,8 @@ def _datasetify_p(
         Number of datasets.
     mode : str
         "scalar" or "gene_specific".
+    shared_component_indices : tuple of int, optional
+        Component indices shared across 2+ datasets.
 
     Returns
     -------
@@ -1150,24 +1177,36 @@ def _datasetify_p(
 
     target_family = guide_families.get(target_name)
 
-    # Population-level hyperparameters
-    hyper_loc = NormalWithTransformSpec(
-        name=hyper_loc_name,
-        shape_dims=(),
-        default_params=(0.0, 1.0),
-    )
-    hyper_scale = SoftplusNormalSpec(
-        name=hyper_scale_name,
-        shape_dims=(),
-        default_params=(0.0, 0.5),
-    )
-
     new_specs = []
     for spec in param_specs:
         if spec.name == target_name:
             # Preserve is_mixture from the original spec so the dataset-
             # hierarchical parameter keeps its component dimension.
             orig_is_mixture = getattr(spec, "is_mixture", False)
+
+            # Per-component hyperprior when mixture-aware: each component
+            # gets its own population-level loc.  For scalar mode the
+            # hyper_loc shape_dims stays () (per-component but not per-gene);
+            # for gene_specific mode it becomes ("n_genes",).
+            hyper_loc_dims: Tuple[str, ...] = ()
+            hyper_loc_gene_specific = False
+            if mode == "gene_specific":
+                hyper_loc_dims = ("n_genes",)
+                hyper_loc_gene_specific = True
+
+            hyper_loc = NormalWithTransformSpec(
+                name=hyper_loc_name,
+                shape_dims=hyper_loc_dims,
+                default_params=(0.0, 1.0),
+                is_gene_specific=hyper_loc_gene_specific,
+                is_mixture=orig_is_mixture,
+            )
+            hyper_scale = SoftplusNormalSpec(
+                name=hyper_scale_name,
+                shape_dims=(),
+                default_params=(0.0, 0.5),
+            )
+
             if mode == "scalar":
                 hier_spec = HierSpec(
                     name=target_name,
@@ -1179,6 +1218,7 @@ def _datasetify_p(
                     is_dataset=True,
                     is_mixture=orig_is_mixture,
                     guide_family=target_family,
+                    shared_component_indices=shared_component_indices,
                 )
             else:
                 hier_spec = HierSpec(
@@ -1191,6 +1231,7 @@ def _datasetify_p(
                     is_dataset=True,
                     is_mixture=orig_is_mixture,
                     guide_family=target_family,
+                    shared_component_indices=shared_component_indices,
                 )
             new_specs.extend([hyper_loc, hyper_scale, hier_spec])
         else:
