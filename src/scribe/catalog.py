@@ -247,6 +247,7 @@ class ExperimentCatalog:
 
         Handles formats like:
         - 'data=jurkat_cells,inference.batch_size=512,variable_capture=true'
+        - 'hierarchical_dataset_mu,model=zinbvcp'
         - 'parameterization=odds_ratio'
 
         Parameters
@@ -280,6 +281,10 @@ class ExperimentCatalog:
                 current_pair = part
             elif current_pair:
                 current_pair = f"{current_pair},{part}"
+            else:
+                # Support compact run names where explicit boolean true values
+                # are emitted as key-only entries (e.g., "hierarchical_mu").
+                pairs.append(part)
 
         if current_pair:
             pairs.append(current_pair)
@@ -318,6 +323,18 @@ class ExperimentCatalog:
                     current[parts[-1]] = value
                 else:
                     metadata[key] = value
+            else:
+                # Interpret key-only entries as explicit boolean true flags.
+                if "." in pair:
+                    parts = pair.split(".")
+                    current = metadata
+                    for part in parts[:-1]:
+                        if part not in current:
+                            current[part] = {}
+                        current = current[part]
+                    current[parts[-1]] = True
+                else:
+                    metadata[pair] = True
 
         return metadata
 

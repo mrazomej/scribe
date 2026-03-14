@@ -1,0 +1,66 @@
+"""Tests for compact Hydra override dirname formatting in ``infer.py``."""
+
+from infer import _compact_override_dirname
+
+
+def test_compact_override_dirname_emits_bare_true_and_omits_false():
+    """Encode explicit true as bare key and skip explicit false.
+
+    Returns
+    -------
+    None
+        Asserts the compact formatter emits explicit boolean ``true`` values
+        as key-only tokens, omits explicit boolean ``false`` entries, and keeps
+        non-boolean key-value entries.
+    """
+    compact = _compact_override_dirname(
+        "hierarchical_dataset_mu=true,hierarchical_dataset_gate=false,"
+        "parameterization=mean_odds"
+    )
+
+    assert (
+        compact
+        == "hierarchical_dataset_mu,parameterization=mean_odds"
+    )
+
+
+def test_compact_override_dirname_shortens_dot_keys_and_handles_collisions():
+    """Shorten dotted keys unless suffix collisions require full key names.
+
+    Returns
+    -------
+    None
+        Asserts unique dotted keys are shortened to their suffix, while
+        colliding suffixes are preserved as full dotted keys to avoid
+        ambiguity in run directory names.
+    """
+    compact = _compact_override_dirname(
+        "priors.eta_capture=[11.51, 1e-2],foo.eta_capture=7,"
+        "inference.batch_size=4096"
+    )
+
+    assert (
+        compact
+        == "priors.eta_capture=11.51,1e-2,foo.eta_capture=7,batch_size=4096"
+    )
+
+
+def test_compact_override_dirname_normalizes_bracket_lists_and_ordering():
+    """Normalize bracket lists and move bare true keys first.
+
+    Returns
+    -------
+    None
+        Asserts bracket wrappers and list spacing are removed from values, and
+        bare-key boolean tokens are emitted before key-value segments to keep
+        parser compatibility with comma-delimited value entries.
+    """
+    compact = _compact_override_dirname(
+        "guide_rank=256,hierarchical_dataset_mu=true,"
+        "mixture_params=[phi, mu, gate]"
+    )
+
+    assert (
+        compact
+        == "hierarchical_dataset_mu,guide_rank=256,mixture_params=phi,mu,gate"
+    )
