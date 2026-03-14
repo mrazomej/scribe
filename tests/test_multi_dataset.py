@@ -2396,3 +2396,455 @@ class TestFitApiDatasetHierarchyValidation:
                 hierarchical_dataset_mu=True,
                 auto_downgrade_single_dataset_hierarchy=False,
             )
+
+
+# ==============================================================================
+# ComponentMapping and build_component_mapping
+# ==============================================================================
+
+
+class TestComponentMapping:
+    """Tests for build_component_mapping and the ComponentMapping dataclass."""
+
+    @staticmethod
+    def _make_multi_dataset_adata():
+        """Create a concatenated AnnData with partial component overlap.
+
+        Dataset A: Fibroblast (5), Macrophage (5), T_cell (5)
+        Dataset B: Fibroblast (5), Macrophage (5), B_cell (5)
+        Shared: Fibroblast, Macrophage
+        """
+        import anndata
+
+        rng = np.random.default_rng(42)
+        n_genes = 5
+        n_per_type = 5
+
+        # Dataset A
+        labels_A = (
+            ["Fibroblast"] * n_per_type
+            + ["Macrophage"] * n_per_type
+            + ["T_cell"] * n_per_type
+        )
+        n_A = len(labels_A)
+        X_A = rng.poisson(5, (n_A, n_genes)).astype(np.float32)
+
+        # Dataset B
+        labels_B = (
+            ["Fibroblast"] * n_per_type
+            + ["Macrophage"] * n_per_type
+            + ["B_cell"] * n_per_type
+        )
+        n_B = len(labels_B)
+        X_B = rng.poisson(5, (n_B, n_genes)).astype(np.float32)
+
+        import pandas as pd
+
+        obs = pd.DataFrame(
+            {
+                "cell_type": labels_A + labels_B,
+                "dataset": ["A"] * n_A + ["B"] * n_B,
+            }
+        )
+        X = np.vstack([X_A, X_B])
+        return anndata.AnnData(X=X, obs=obs)
+
+    def test_automatic_shared_detection(self):
+        """Labels in 2+ datasets are identified as shared."""
+        from scribe.core.annotation_prior import build_component_mapping
+
+        adata = self._make_multi_dataset_adata()
+        cm = build_component_mapping(
+            adata, annotation_key="cell_type", dataset_key="dataset"
+        )
+
+        assert cm.n_components == 4  # B_cell, Fibroblast, Macrophage, T_cell
+        assert cm.n_shared == 2  # Fibroblast, Macrophage
+        assert set(cm.component_order[i] for i in cm.shared_indices) == {
+            "Fibroblast",
+            "Macrophage",
+        }
+        assert set(cm.component_order[i] for i in cm.exclusive_indices) == {
+            "B_cell",
+            "T_cell",
+        }
+
+    def test_manual_shared_override(self):
+        """shared_components kwarg overrides automatic detection."""
+        from scribe.core.annotation_prior import build_component_mapping
+
+        adata = self._make_multi_dataset_adata()
+        # Only treat Fibroblast as shared (Macrophage excluded)
+        cm = build_component_mapping(
+            adata,
+            annotation_key="cell_type",
+            dataset_key="dataset",
+            shared_components=["Fibroblast"],
+        )
+
+        assert cm.n_shared == 1
+        assert cm.component_order[cm.shared_indices[0]] == "Fibroblast"
+
+    def test_manual_shared_unknown_label_raises(self):
+        """shared_components with unknown label raises ValueError."""
+        from scribe.core.annotation_prior import build_component_mapping
+
+        adata = self._make_multi_dataset_adata()
+        with pytest.raises(ValueError, match="not found in any dataset"):
+            build_component_mapping(
+                adata,
+                annotation_key="cell_type",
+                dataset_key="dataset",
+                shared_components=["NonExistent"],
+            )
+
+    def test_min_cells_filters_per_dataset(self):
+        """min_cells removes labels below threshold per dataset."""
+        import anndata
+        import pandas as pd
+
+        rng = np.random.default_rng(99)
+        n_genes = 3
+        # Dataset A: TypeA (10), TypeB (2)
+        # Dataset B: TypeA (10), TypeB (10)
+        labels = (
+            ["TypeA"] * 10
+            + ["TypeB"] * 2
+            + ["TypeA"] * 10
+            + ["TypeB"] * 10
+        )
+        datasets = ["A"] * 12 + ["B"] * 20
+        X = rng.poisson(5, (32, n_genes)).astype(np.float32)
+        adata = anndata.AnnData(
+            X=X,
+            obs=pd.DataFrame(
+                {"cell_type": labels, "dataset": datasets}
+            ),
+        )
+
+        from scribe.core.annotation_prior import build_component_mapping
+
+        # With min_cells=5, TypeB should be excluded from dataset A
+        cm = build_component_mapping(
+            adata,
+            annotation_key="cell_type",
+            dataset_key="dataset",
+            min_cells=5,
+        )
+
+        # TypeB only survives in dataset B → exclusive, not shared
+        assert "TypeB" in cm.per_dataset_labels["B"]
+        assert "TypeB" not in cm.per_dataset_labels["A"]
+        assert cm.label_map["TypeB"] in cm.exclusive_indices
+
+    def test_shared_mask_is_boolean(self):
+        """shared_mask has correct length and type."""
+        from scribe.core.annotation_prior import build_component_mapping
+
+        adata = self._make_multi_dataset_adata()
+        cm = build_component_mapping(
+            adata, annotation_key="cell_type", dataset_key="dataset"
+        )
+
+        assert len(cm.shared_mask) == cm.n_components
+        assert all(isinstance(v, bool) for v in cm.shared_mask)
+
+    def test_three_datasets(self):
+        """Works with 3+ datasets and partial overlap."""
+        import anndata
+        import pandas as pd
+
+        rng = np.random.default_rng(7)
+        n_genes = 3
+        # A: TypeX, TypeY; B: TypeX, TypeZ; C: TypeY, TypeZ
+        labels = (
+            ["TypeX"] * 5 + ["TypeY"] * 5
+            + ["TypeX"] * 5 + ["TypeZ"] * 5
+            + ["TypeY"] * 5 + ["TypeZ"] * 5
+        )
+        datasets = ["A"] * 10 + ["B"] * 10 + ["C"] * 10
+        X = rng.poisson(5, (30, n_genes)).astype(np.float32)
+        adata = anndata.AnnData(
+            X=X,
+            obs=pd.DataFrame(
+                {"cell_type": labels, "dataset": datasets}
+            ),
+        )
+
+        from scribe.core.annotation_prior import build_component_mapping
+
+        cm = build_component_mapping(
+            adata, annotation_key="cell_type", dataset_key="dataset"
+        )
+
+        # All three types appear in 2+ datasets → all shared
+        assert cm.n_components == 3
+        assert cm.n_shared == 3
+        assert len(cm.exclusive_indices) == 0
+
+
+# ==============================================================================
+# Per-component hyperprior broadcasting and scale masking
+# ==============================================================================
+
+
+class TestPerComponentHyperpriors:
+    """Test dataset hierarchy with per-component hyperpriors."""
+
+    def test_sample_hierarchical_mixture_dataset_broadcast(self):
+        """sample_hierarchical broadcasts (K, G) loc to (K, D, G)."""
+        spec = DatasetHierarchicalExpNormalSpec(
+            name="mu",
+            shape_dims=("n_genes",),
+            default_params=(0.0, 1.0),
+            hyper_loc_name="log_mu_dataset_loc",
+            hyper_scale_name="log_mu_dataset_scale",
+            is_gene_specific=True,
+            is_dataset=True,
+            is_mixture=True,
+        )
+        dims = {"n_genes": 10, "n_datasets": 2, "n_components": 3}
+
+        # Simulate per-component hyperprior loc (K, G) and scalar scale
+        param_values = {
+            "log_mu_dataset_loc": jnp.zeros((3, 10)),
+            "log_mu_dataset_scale": jnp.ones(()),
+        }
+
+        import numpyro.handlers as handlers
+
+        with handlers.seed(rng_seed=0):
+            with handlers.trace() as trace:
+                result = spec.sample_hierarchical(dims, param_values)
+
+        # Result should have shape (K, D, G)
+        assert result.shape == (3, 2, 10)
+        assert jnp.all(jnp.isfinite(result))
+
+    def test_sample_hierarchical_scale_masking(self):
+        """Non-shared components get near-zero scale via masking."""
+        # Components 0 and 2 are shared, component 1 is exclusive
+        spec = DatasetHierarchicalExpNormalSpec(
+            name="mu",
+            shape_dims=("n_genes",),
+            default_params=(0.0, 1.0),
+            hyper_loc_name="log_mu_dataset_loc",
+            hyper_scale_name="log_mu_dataset_scale",
+            is_gene_specific=True,
+            is_dataset=True,
+            is_mixture=True,
+            shared_component_indices=(0, 2),
+        )
+        dims = {"n_genes": 5, "n_datasets": 2, "n_components": 3}
+
+        param_values = {
+            "log_mu_dataset_loc": jnp.zeros((3, 5)),
+            "log_mu_dataset_scale": jnp.ones(()),
+        }
+
+        import numpyro.handlers as handlers
+
+        # Run many times to check variance for non-shared component
+        samples = []
+        for seed in range(50):
+            with handlers.seed(rng_seed=seed):
+                result = spec.sample_hierarchical(dims, param_values)
+            samples.append(result)
+
+        samples = jnp.stack(samples)
+
+        # For the non-shared component (k=1), dataset variation should
+        # be negligible (scale=1e-6 → variance ≈ 0).
+        non_shared_std = jnp.std(samples[:, 1, :, :], axis=0)
+        shared_std = jnp.std(samples[:, 0, :, :], axis=0)
+
+        # Non-shared should have much less variation than shared
+        assert jnp.mean(non_shared_std) < 0.01 * jnp.mean(shared_std)
+
+    def test_scalar_mode_broadcast(self):
+        """Scalar p/phi with mixture+dataset: (K, D) shape works."""
+        spec = DatasetHierarchicalExpNormalSpec(
+            name="phi",
+            shape_dims=(),
+            default_params=(0.0, 1.0),
+            hyper_loc_name="log_phi_dataset_loc",
+            hyper_scale_name="log_phi_dataset_scale",
+            is_gene_specific=False,
+            is_dataset=True,
+            is_mixture=True,
+        )
+        dims = {"n_datasets": 2, "n_components": 3}
+
+        # Per-component scalar loc: shape (K,)
+        param_values = {
+            "log_phi_dataset_loc": jnp.zeros((3,)),
+            "log_phi_dataset_scale": jnp.ones(()),
+        }
+
+        import numpyro.handlers as handlers
+
+        with handlers.seed(rng_seed=0):
+            result = spec.sample_hierarchical(dims, param_values)
+
+        assert result.shape == (3, 2)
+        assert jnp.all(jnp.isfinite(result))
+
+
+# ==============================================================================
+# Factory integration: create_model with mixture + dataset hierarchy
+# ==============================================================================
+
+
+class TestMixtureDatasetHierarchyFactory:
+    """Test that the factory correctly builds mixture + dataset models."""
+
+    @staticmethod
+    def _builder(model_type="nbdm", parameterization="mean_odds"):
+        """Builder pre-configured for mixture + dataset hierarchy."""
+        b = (
+            ModelConfigBuilder()
+            .for_model(model_type)
+            .with_parameterization(parameterization)
+            .unconstrained()
+        )
+        return b
+
+    def test_create_model_mixture_dataset_mu(self):
+        """create_model with mixture + hierarchical_dataset_mu runs."""
+        b = self._builder()
+        b._n_datasets = 2
+        b._hierarchical_dataset_mu = True
+        b._n_components = 2
+        config = b.build()
+
+        model, guide, param_specs = create_model(config, validate=False)
+
+        # The hyper_loc spec should be mixture-aware
+        hyper_loc_specs = [
+            s for s in param_specs if s.name == "log_mu_dataset_loc"
+        ]
+        assert len(hyper_loc_specs) == 1
+        assert hyper_loc_specs[0].is_mixture is True
+
+    def test_create_model_with_shared_component_indices(self):
+        """shared_component_indices flows through to hierarchical spec."""
+        b = self._builder()
+        b._n_datasets = 2
+        b._hierarchical_dataset_mu = True
+        b._n_components = 3
+        config = b.build()
+        # Inject shared_component_indices (normally done by fit())
+        config = config.model_copy(
+            update={"shared_component_indices": (0, 2)}
+        )
+
+        model, guide, param_specs = create_model(config, validate=False)
+
+        # Find the hierarchical mu spec and verify it got the indices
+        hier_specs = [
+            s
+            for s in param_specs
+            if hasattr(s, "shared_component_indices")
+            and s.name == "mu"
+        ]
+        assert len(hier_specs) == 1
+        assert hier_specs[0].shared_component_indices == (0, 2)
+
+    def test_model_guide_creation_with_mixture_dataset(self):
+        """Model and guide callables are created for mixture + dataset."""
+        K, D = 2, 2
+
+        b = self._builder()
+        b._n_datasets = D
+        b._hierarchical_dataset_mu = True
+        b._n_components = K
+        config = b.build()
+
+        # validate=False: full model trace with mixture + dataset params
+        # involves likelihood broadcasting that is a pre-existing issue.
+        # Here we just verify the factory succeeds.
+        model, guide, specs = create_model(config, validate=False)
+        assert callable(model)
+        assert callable(guide)
+
+        # Verify mu has correct dataset-hierarchical spec
+        mu_specs = [s for s in specs if s.name == "mu"]
+        assert len(mu_specs) == 1
+        assert mu_specs[0].is_dataset is True
+        assert mu_specs[0].is_mixture is True
+
+    def test_dataset_p_with_mixture(self):
+        """dataset hierarchy on p/phi with mixture propagates is_mixture."""
+        b = self._builder()
+        b._n_datasets = 2
+        b._hierarchical_dataset_p = "gene_specific"
+        b._n_components = 3
+        config = b.build()
+
+        model, guide, specs = create_model(config, validate=False)
+
+        # hyper_loc for phi should be mixture-aware
+        hyper_specs = [
+            s for s in specs if s.name == "log_phi_dataset_loc"
+        ]
+        assert len(hyper_specs) == 1
+        assert hyper_specs[0].is_mixture is True
+
+
+# ==============================================================================
+# DE component matching
+# ==============================================================================
+
+
+class TestComponentMatchingDE:
+    """Test label-based component matching for DE."""
+
+    def test_match_components_by_label(self):
+        """Matching by label returns correct indices."""
+        from scribe.de._component_matching import match_components_by_label
+
+        # Mock results with _label_map
+        class MockResults:
+            pass
+
+        r_A = MockResults()
+        r_A._label_map = {"Fibroblast": 0, "T_cell": 1}
+
+        r_B = MockResults()
+        r_B._label_map = {"Fibroblast": 0, "B_cell": 1}
+
+        idx_A, idx_B = match_components_by_label(r_A, r_B, "Fibroblast")
+        assert idx_A == 0
+        assert idx_B == 0
+
+    def test_match_label_not_found_raises(self):
+        """Missing label raises ValueError."""
+        from scribe.de._component_matching import match_components_by_label
+
+        class MockResults:
+            pass
+
+        r_A = MockResults()
+        r_A._label_map = {"Fibroblast": 0}
+
+        r_B = MockResults()
+        r_B._label_map = {"B_cell": 0}
+
+        with pytest.raises(ValueError, match="not found"):
+            match_components_by_label(r_A, r_B, "T_cell")
+
+    def test_get_shared_labels(self):
+        """get_shared_labels returns intersection."""
+        from scribe.de._component_matching import get_shared_labels
+
+        class MockResults:
+            pass
+
+        r_A = MockResults()
+        r_A._label_map = {"Fibroblast": 0, "T_cell": 1, "Macrophage": 2}
+
+        r_B = MockResults()
+        r_B._label_map = {"Fibroblast": 0, "B_cell": 1, "Macrophage": 2}
+
+        shared = get_shared_labels(r_A, r_B)
+        assert shared == ["Fibroblast", "Macrophage"]

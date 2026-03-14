@@ -322,6 +322,19 @@ Gene-level: `_horseshoe_p`, `_horseshoe_gate`. Dataset-level:
 Helper `_make_horseshoe_hypers` creates HalfCauchy/InverseGamma specs;
 `_horseshoe_kwargs_from_config` extracts horseshoe config from ModelConfig.
 
+## Multi-Dataset Mixture Hierarchy
+
+When combining mixture models with dataset-level hierarchy (`hierarchical_dataset_mu`
+or `hierarchical_dataset_p`), `_datasetify_mu()` and `_datasetify_p()` propagate
+`is_mixture=True` to `hyper_loc` specs when the original parameter is
+mixture-aware. Each component then gets its own population expression profile
+(shape `(K, G)` instead of `(G,)`). Both functions accept a `shared_component_indices`
+parameter, passed through to hierarchical specs for scale masking (components
+shared across 2+ datasets use learned cross-dataset scale; others use clamped
+near-zero scale). The factory reads `model_config.shared_component_indices`,
+populated at runtime by `fit()` when `annotation_key` and `dataset_key` are both
+provided, and threads this through to the datasetify helpers.
+
 ## Adding New Models
 
 1. Add entry to `MODEL_EXTRA_PARAMS` in `registry.py`

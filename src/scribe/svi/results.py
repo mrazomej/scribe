@@ -2,8 +2,13 @@
 Results classes for SCRIBE inference.
 """
 
-from typing import Dict, Optional, Union, Callable, Tuple, Any, List
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Dict, Optional, Union, Callable, Tuple, Any, List
 from dataclasses import dataclass
+
+if TYPE_CHECKING:
+    from ..core.annotation_prior import ComponentMapping
 
 import jax.numpy as jnp
 import pandas as pd
@@ -142,6 +147,15 @@ class ScribeSVIResults(
     # to know which params/samples need dataset-axis slicing even though
     # they lack ``is_dataset`` in their ParamSpec.
     _promoted_dataset_keys: Optional[set] = None
+
+    # Annotation label → component index mapping.  Populated when
+    # annotation_key is provided to fit().  Enables label-based
+    # component lookup in downstream analysis (e.g. DE).
+    _label_map: Optional[Dict[str, int]] = None
+
+    # Full component mapping for multi-dataset mixtures.  Records which
+    # components are shared across datasets vs dataset-specific.
+    _component_mapping: Optional["ComponentMapping"] = None
 
     @classmethod
     def concat(

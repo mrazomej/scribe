@@ -166,6 +166,33 @@ de = compare_datasets(results, dataset_A=0, dataset_B=1)
 de = compare_datasets(results, 0, 1, component=0, method="shrinkage")
 ```
 
+### Component Matching Utilities
+
+When mixture models are fit with `annotation_key`, each result stores a
+`_label_map` mapping annotation labels (e.g. cell type names) to component
+indices. The `_component_matching` module provides utilities for label-based
+component lookup, simplifying multi-dataset DE workflows:
+
+| Function | Description |
+|----------|-------------|
+| `match_components_by_label(results_A, results_B, label)` | Returns `(idx_A, idx_B)` — component indices for the given label in both results. Both must have `_label_map` (populated when `annotation_key` was provided to `fit()`). |
+| `get_shared_labels(results_A, results_B)` | Returns a sorted list of labels present in both result label maps. |
+
+```python
+from scribe.de import compare, match_components_by_label, get_shared_labels
+
+# Label-based lookup (e.g. "Fibroblast") instead of manual index tracking
+idx_A, idx_B = match_components_by_label(results_bleo, results_ctrl, "Fibroblast")
+de = compare(
+    results_bleo, results_ctrl,
+    method="empirical",
+    component_A=idx_A, component_B=idx_B,
+)
+
+# Discover shared labels across results
+labels = get_shared_labels(results_A, results_B)
+```
+
 ### Standalone Functions
 
 For users who prefer functional style over the results class:
@@ -175,6 +202,9 @@ from scribe.de import (
     # Gene-level
     differential_expression,
     call_de_genes,
+    # Component matching (multi-dataset)
+    match_components_by_label,
+    get_shared_labels,
     # Empirical composition pipeline (two-stage)
     sample_compositions,
     compute_delta_from_simplex,
@@ -767,6 +797,7 @@ de/
 ├── _set_level.py                 # Gene-set/pathway analysis
 ├── _error_control.py             # Bayesian error control, formatting
 ├── _gaussianity.py               # Gaussianity diagnostics
+├── _component_matching.py        # Label-based component lookup (match_components_by_label, get_shared_labels)
 └── README.md                     # This file
 ```
 

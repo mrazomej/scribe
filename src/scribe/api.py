@@ -63,6 +63,7 @@ from .inference.preset_builder import build_config_from_preset
 from .inference.dispatcher import _run_inference
 from .core.annotation_prior import (
     build_annotation_prior_logits,
+    build_component_mapping,
     validate_annotation_prior_logits,
 )
 
@@ -762,6 +763,8 @@ def fit(
     # ==========================================================================
     annotation_prior_logits = None
     effective_mixture_params = mixture_params
+    _label_map = None
+    _component_mapping = None
     if annotation_key is not None:
         if adata is None:
             raise ValueError(
@@ -798,12 +801,46 @@ def fit(
             )
         else:
             n_components = _n_comp  # propagate so ModelConfig picks it up
+
+            # When both annotation_key and dataset_key are present, build
+            # a ComponentMapping that identifies shared vs exclusive
+            # components across datasets.  The mapping's component_order
+            # is passed to build_annotation_prior_logits for consistent
+            # label → index alignment.
+            _component_mapping = None
+            _effective_component_order = annotation_component_order
+            _shared_comp_override = None
+            if model_config is not None:
+                _shared_comp_override = getattr(
+                    model_config, "shared_components", None
+                )
+
+            if dataset_key is not None:
+                _component_mapping = build_component_mapping(
+                    adata=adata,
+                    annotation_key=annotation_key,
+                    dataset_key=dataset_key,
+                    min_cells=_min_cells,
+                    shared_components=_shared_comp_override,
+                )
+                # Use the mapping's ordering for the annotation prior so
+                # component indices are consistent.
+                if _effective_component_order is None:
+                    _effective_component_order = (
+                        _component_mapping.component_order
+                    )
+                # The union may differ from the original _n_comp count;
+                # update n_components if it was inferred.
+                if _n_comp_inferred:
+                    n_components = _component_mapping.n_components
+                    _n_comp = n_components
+
             annotation_prior_logits, _label_map = build_annotation_prior_logits(
                 adata=adata,
                 obs_key=annotation_key,
                 n_components=_n_comp,
                 confidence=annotation_confidence,
-                component_order=annotation_component_order,
+                component_order=_effective_component_order,
                 min_cells=_min_cells,
             )
             validate_annotation_prior_logits(
@@ -876,6 +913,19 @@ def fit(
             capture_clamp_min=capture_clamp_min,
             capture_clamp_max=capture_clamp_max,
             capture_amortization=effective_capture_amortization,
+        )
+
+    # ==========================================================================
+    # Step 3b: Inject shared_component_indices into model_config
+    # ==========================================================================
+    # When a ComponentMapping was built (annotation_key + dataset_key),
+    # attach the shared component indices so the factory can build
+    # per-component scale masking in the dataset hierarchical specs.
+    if _component_mapping is not None:
+        model_config = model_config.model_copy(
+            update={
+                "shared_component_indices": _component_mapping.shared_indices,
+            }
         )
 
     # ==========================================================================
@@ -1017,7 +1067,7 @@ def fit(
     # ==========================================================================
     # Step 6: Run inference
     # ==========================================================================
-    return _run_inference(
+    results = _run_inference(
         inference_config.method,
         model_config=model_config,
         count_data=count_data,
@@ -1031,3 +1081,14 @@ def fit(
         dataset_indices=dataset_indices,
         enable_x64=effective_x64,
     )
+
+    # Attach annotation metadata to the results for downstream use
+    # (e.g. label-based component matching in DE).
+    if _label_map is not None and hasattr(results, "_label_map"):
+        object.__setattr__(results, "_label_map", _label_map)
+    if _component_mapping is not None and hasattr(
+        results, "_component_mapping"
+    ):
+        object.__setattr__(results, "_component_mapping", _component_mapping)
+
+    return results

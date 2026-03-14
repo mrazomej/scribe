@@ -1686,6 +1686,23 @@ class DatasetHierarchicalNormalWithTransformSpec(NormalWithTransformSpec):
         description="Name of the population-level scale hyperparameter",
     )
 
+    # Component indices shared across 2+ datasets.  When set together
+    # with is_mixture=True and is_dataset=True, the hierarchical scale
+    # is clamped to near-zero for *non-shared* components so they have
+    # negligible dataset variation (Approach A masking).
+    #
+    # Future (Approach B): non-shared components could be given shape
+    # (G,) instead of (D, G), eliminating wasted parameters at the cost
+    # of splitting/concatenating tensors in the likelihood and guide.
+    shared_component_indices: Optional[Tuple[int, ...]] = Field(
+        None,
+        description=(
+            "Component indices shared across 2+ datasets. Non-shared "
+            "components get their hierarchical scale clamped to suppress "
+            "meaningless dataset variation."
+        ),
+    )
+
     # --------------------------------------------------------------------------
 
     def sample_hierarchical(
@@ -1699,6 +1716,17 @@ class DatasetHierarchicalNormalWithTransformSpec(NormalWithTransformSpec):
         where loc and scale come from already-sampled population-level
         hyperparameters.  The resulting sample has a leading ``n_datasets``
         dimension.
+
+        When the parameter is both mixture- and dataset-aware (shape
+        ``(K, D, *shape_dims)``), the hyperprior loc may have shape
+        ``(K, *shape_dims)`` (per-component but not per-dataset).  In
+        that case a singleton dataset dimension is inserted at axis 1 so
+        that broadcasting to ``(K, D, *shape_dims)`` works correctly.
+
+        If ``shared_component_indices`` is set, the hierarchical scale
+        is clamped to a near-zero value for non-shared components,
+        suppressing inter-dataset variation for components that only
+        exist in one dataset.
 
         Parameters
         ----------
@@ -1724,6 +1752,35 @@ class DatasetHierarchicalNormalWithTransformSpec(NormalWithTransformSpec):
             is_mixture=self.is_mixture,
             is_dataset=self.is_dataset,
         )
+
+        # When both is_mixture and is_dataset are True the full shape is
+        # (K, D, *shape_dims) but the hyperprior loc has (K, *shape_dims)
+        # — no D dimension.  Insert a singleton D at axis 1 so that
+        # Normal(loc, scale).expand(shape) broadcasts correctly.
+        if self.is_mixture and self.is_dataset:
+            if loc.ndim >= 1:
+                loc = jnp.expand_dims(loc, axis=1)
+            if scale.ndim >= 1:
+                scale = jnp.expand_dims(scale, axis=1)
+
+        # Scale masking: clamp the hierarchical scale to near-zero for
+        # non-shared components so they have negligible dataset variation.
+        if (
+            self.shared_component_indices is not None
+            and self.is_mixture
+            and self.is_dataset
+            and len(shape) > 0
+        ):
+            K = dims["n_components"]
+            mask = jnp.zeros(K, dtype=bool)
+            mask = mask.at[
+                jnp.array(self.shared_component_indices)
+            ].set(True)
+            # Reshape mask for broadcasting: (K,) → (K, 1, ..., 1)
+            n_trailing = len(shape) - 1
+            for _ in range(n_trailing):
+                mask = mask[..., None]
+            scale = jnp.where(mask, scale, 1e-6)
 
         if shape == ():
             base_dist = dist.Normal(loc, scale)
