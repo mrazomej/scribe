@@ -305,7 +305,52 @@ def _normalize_override_value(raw_value: str) -> str:
     return value.replace("/", "-")
 
 
-def _compact_override_dirname(override_dirname: str) -> str:
+def _normalize_alias_map(
+    aliases: dict[str, str] | DictConfig | None,
+) -> dict[str, str]:
+    """Normalize user-provided alias mappings into a string dictionary.
+
+    Parameters
+    ----------
+    aliases : dict[str, str] or DictConfig or None
+        Alias mapping configured in Hydra, typically
+        ``dirname_aliases.aliases``. Keys are original override keys and values
+        are the replacement tokens used in output directory names.
+
+    Returns
+    -------
+    dict[str, str]
+        Sanitized alias mapping with stripped string keys/values, excluding
+        null or empty alias entries.
+    """
+    if aliases is None:
+        return {}
+
+    # Resolver arguments may arrive as OmegaConf containers. Convert once, then
+    # sanitize into a strict ``dict[str, str]`` for deterministic behavior.
+    if OmegaConf.is_config(aliases):
+        aliases = OmegaConf.to_container(aliases, resolve=True)  # type: ignore[arg-type]
+
+    if not isinstance(aliases, dict):
+        return {}
+
+    normalized: dict[str, str] = {}
+    for key, value in aliases.items():
+        if key is None or value is None:
+            continue
+        key_str = str(key).strip()
+        value_str = str(value).strip()
+        if key_str == "" or value_str == "":
+            continue
+        normalized[key_str] = value_str
+
+    return normalized
+
+
+def _compact_override_dirname(
+    override_dirname: str,
+    aliases: dict[str, str] | DictConfig | None = None,
+) -> str:
     """Convert Hydra override dirname into a compact run-name token.
 
     Rules implemented:
@@ -320,6 +365,10 @@ def _compact_override_dirname(override_dirname: str) -> str:
     ----------
     override_dirname : str
         Raw value from ``hydra:job.override_dirname``.
+    aliases : dict[str, str] or DictConfig or None, optional
+        Optional key-alias mapping. Aliases are applied to keys only; values
+        are unchanged. If an alias collides with another alias-expanded key,
+        colliding entries fall back to the original key token.
 
     Returns
     -------
@@ -330,6 +379,7 @@ def _compact_override_dirname(override_dirname: str) -> str:
         return override_dirname
 
     segments = _split_override_segments(override_dirname)
+    alias_map = _normalize_alias_map(aliases)
 
     # Parse segments into structured entries so we can detect dotted-key
     # suffix collisions before rendering final tokens.
@@ -372,26 +422,55 @@ def _compact_override_dirname(override_dirname: str) -> str:
             }
         )
 
-    # Emit bare true flags first so downstream parsing can safely keep
-    # comma-delimited values in key=value segments.
-    bare_true_tokens: list[str] = []
-    key_value_tokens: list[str] = []
+    # Build key tokens first so alias-collision handling can be resolved in one
+    # pass before rendering either bare booleans or key=value pairs.
+    emission_entries: list[dict[str, str | bool]] = []
+    alias_counts: Counter[str] = Counter()
 
     for entry in parsed_entries:
         if bool(entry.get("is_false", False)):
             continue
 
-        key = str(entry["key"])
+        original_key = str(entry["key"])
+        key_token = original_key
         if bool(entry.get("is_dotted", False)):
             suffix = str(entry["suffix"])
-            key = (
-                key if dotted_suffix_counts[suffix] > 1 else suffix
+            key_token = (
+                original_key
+                if dotted_suffix_counts[suffix] > 1
+                else suffix
             )
 
-        if bool(entry.get("is_true", False)):
-            bare_true_tokens.append(key)
+        # Apply aliases to keys only. Prefer full-key aliases so users can
+        # target dotted keys explicitly; fall back to the emitted token alias.
+        aliased_key = alias_map.get(original_key, alias_map.get(key_token, key_token))
+        alias_counts[aliased_key] += 1
+        emission_entries.append(
+            {
+                "is_true": bool(entry.get("is_true", False)),
+                "value": str(entry["value"]),
+                "key_token": key_token,
+                "aliased_key": aliased_key,
+            }
+        )
+
+    # Emit bare true flags first so downstream parsing can safely keep
+    # comma-delimited values in key=value segments.
+    bare_true_tokens: list[str] = []
+    key_value_tokens: list[str] = []
+
+    for emission in emission_entries:
+        # If aliases collide, fall back to original emitted token for colliders.
+        final_key = (
+            str(emission["key_token"])
+            if alias_counts[str(emission["aliased_key"])] > 1
+            else str(emission["aliased_key"])
+        )
+
+        if bool(emission["is_true"]):
+            bare_true_tokens.append(final_key)
         else:
-            key_value_tokens.append(f"{key}={entry['value']}")
+            key_value_tokens.append(f"{final_key}={emission['value']}")
 
     return ",".join(bare_true_tokens + key_value_tokens)
 

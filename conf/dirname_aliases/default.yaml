@@ -1,0 +1,46 @@
+# @package _global_
+
+# Key aliases used by the sanitize_dirname resolver to shorten override keys
+# in output directory names.
+#
+# This starter map is based on commonly repeated override keys found in the
+# existing outputs directory tree. Adjust as needed.
+dirname_aliases:
+  aliases:
+    # Core model/run controls
+    parameterization: param
+    guide_rank: rank
+    model: model
+    data: data
+
+    # Mixture / annotation controls
+    mixture_params: mixpar
+    joint_params: jpar
+    annotation_key: annkey
+    annotation_confidence: annconf
+    annotation_min_cells: annmin
+
+    # Hierarchical and horseshoe flags
+    hierarchical_p: hp
+    hierarchical_mu: hmu
+    hierarchical_gate: hgate
+    hierarchical_dataset_p: hdp
+    hierarchical_dataset_mu: hdmu
+    hierarchical_dataset_gate: hdgate
+    horseshoe_p: hsp
+    horseshoe_gate: hsg
+    horseshoe_dataset_p: hsdp
+    horseshoe_dataset_mu: hsdmu
+    horseshoe_dataset_gate: hsdg
+
+    # Frequently seen prior overrides
+    priors.eta_capture: peta
+    priors.mixing: pmix
+    priors.gate: pgate
+
+    # Inference knobs (often long in paths)
+    inference.batch_size: bsize
+    inference.n_steps: nsteps
+    inference.n_samples: nsamples
+    inference.n_warmup: nwarmup
+    inference.method: method
