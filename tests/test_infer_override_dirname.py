@@ -64,3 +64,57 @@ def test_compact_override_dirname_normalizes_bracket_lists_and_ordering():
         compact
         == "hierarchical_dataset_mu,guide_rank=256,mixture_params=phi,mu,gate"
     )
+
+
+def test_compact_override_dirname_applies_key_aliases():
+    """Apply configured aliases to keys while preserving compact semantics.
+
+    Returns
+    -------
+    None
+        Asserts aliases are applied to keys only and integrated with the
+        existing compact formatting rules.
+    """
+    compact = _compact_override_dirname(
+        "mixture_params=[phi, mu, gate],hierarchical_dataset_mu=true",
+        aliases={
+            "mixture_params": "mixpar",
+            "hierarchical_dataset_mu": "hdmu",
+        },
+    )
+
+    assert compact == "hdmu,mixpar=phi,mu,gate"
+
+
+def test_compact_override_dirname_keeps_original_key_when_alias_missing():
+    """Leave keys unchanged when no alias mapping is provided for them.
+
+    Returns
+    -------
+    None
+        Asserts unknown keys keep their original compact token so alias
+        configuration remains optional and non-breaking.
+    """
+    compact = _compact_override_dirname(
+        "guide_rank=256,parameterization=mean_odds",
+        aliases={"mixture_params": "mixpar"},
+    )
+
+    assert compact == "guide_rank=256,parameterization=mean_odds"
+
+
+def test_compact_override_dirname_falls_back_on_alias_collisions():
+    """Fallback to original tokens when alias expansion collides.
+
+    Returns
+    -------
+    None
+        Asserts colliding alias outputs are replaced by original key tokens to
+        avoid ambiguous directory names.
+    """
+    compact = _compact_override_dirname(
+        "mixture_params=phi,mu,gate,joint_params=phi,mu",
+        aliases={"mixture_params": "param", "joint_params": "param"},
+    )
+
+    assert compact == "mixture_params=phi,mu,gate,joint_params=phi,mu"

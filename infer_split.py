@@ -559,7 +559,7 @@ def _build_joblib_multirun_command(
         str(SCRIPT_DIR / "infer.py"),
         "-m",
         f"data={data_list}",
-        "hydra.sweep.subdir='${data.output_prefix}/${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname}}'",
+        "hydra.sweep.subdir='${data.output_prefix}/${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname},${dirname_aliases.aliases}}'",
         "hydra/launcher=joblib",
         f"hydra.launcher.n_jobs={n_jobs}",
         # GPU assignment is handled inside infer.py via cfg.data.gpu_id
@@ -608,7 +608,7 @@ def _build_submitit_multirun_command(
         str(SCRIPT_DIR / "infer.py"),
         "-m",
         f"data={data_list}",
-        "hydra.sweep.subdir='${data.output_prefix}/${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname}}'",
+        "hydra.sweep.subdir='${data.output_prefix}/${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname},${dirname_aliases.aliases}}'",
         "hydra/launcher=submitit_slurm",
         "hydra.launcher.nodes=1",
         "hydra.launcher.tasks_per_node=1",

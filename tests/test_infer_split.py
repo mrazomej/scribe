@@ -66,6 +66,6 @@ def test_submitit_command_uses_nested_output_subdir_override():
         forwarded_args=[],
     )
     assert (
-        "hydra.sweep.subdir='${data.output_prefix}/${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname}}'"
+        "hydra.sweep.subdir='${data.output_prefix}/${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname},${dirname_aliases.aliases}}'"
         in cmd
     )
