@@ -504,38 +504,38 @@ class MeanOddsParameterization(Parameterization):
 def _broadcast_scalar_for_mixture(
     scalar_param: jnp.ndarray, gene_param: jnp.ndarray
 ) -> jnp.ndarray:
-    """
-    Expand a scalar mixture parameter for broadcasting with gene-specific
-    params.
+    """Expand a non-gene parameter for broadcasting with a gene-specific one.
 
-    When a parameter is mixture-specific but not gene-specific (shape:
-    n_components,) and needs to broadcast with a parameter that is both
-    mixture-specific and gene-specific (shape: n_components, n_genes), we need
-    to expand the scalar parameter to (n_components, 1) for proper broadcasting.
+    Handles both single-dataset and multi-dataset layouts:
+
+    - ``(K,)``    + ``(K, G)``    -> ``(K, 1)``
+    - ``(K, D)``  + ``(K, D, G)`` -> ``(K, D, 1)``
+    - ``(D,)``    + ``(D, G)``    -> ``(D, 1)``
+
+    The general rule: when ``scalar_param`` has exactly one fewer
+    dimension than ``gene_param`` and all leading dimensions agree,
+    append a trailing singleton for the gene axis.
 
     Parameters
     ----------
     scalar_param : jnp.ndarray
-        Parameter that may need expansion. Shape can be:
-        - () for scalar (non-mixture)
-        - (n_components,) for mixture-specific, non-gene-specific
+        Parameter that may need expansion.  Shape can be ``()``,
+        ``(K,)``, ``(K, D)``, etc.
     gene_param : jnp.ndarray
-        Gene-specific parameter. Shape can be:
-        - (n_genes,) for gene-specific (non-mixture)
-        - (n_components, n_genes) for mixture-specific and gene-specific
+        Gene-specific parameter with one extra trailing dimension
+        (the gene axis).
 
     Returns
     -------
     jnp.ndarray
-        The scalar_param, possibly expanded to (n_components, 1) for broadcasting.
+        ``scalar_param`` with a trailing singleton added when needed.
     """
     if (
-        scalar_param.ndim == 1
-        and gene_param.ndim == 2
-        and scalar_param.shape[0] == gene_param.shape[0]
+        scalar_param.ndim >= 1
+        and scalar_param.ndim == gene_param.ndim - 1
+        and scalar_param.shape == gene_param.shape[:-1]
     ):
-        # Expand from (n_components,) to (n_components, 1) for broadcasting
-        return scalar_param[:, None]
+        return scalar_param[..., None]
     return scalar_param
 
 
