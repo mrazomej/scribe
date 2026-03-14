@@ -682,13 +682,19 @@ class SVIInferenceEngine:
         # Create random key
         rng_key = random.PRNGKey(seed)
 
-        # Prepare model arguments
+        # Prepare model arguments.
+        # Use model_config_for_results (which has param_specs populated)
+        # so that index_dataset_params in the likelihood can reliably
+        # identify which parameters carry a dataset axis.  Without
+        # param_specs the function falls back to a shape[0]==n_datasets
+        # heuristic that fails for mixture+dataset params (K, D, G)
+        # when K != D.
         model_args = {
             "n_cells": n_cells,
             "n_genes": n_genes,
             "counts": count_data,
             "batch_size": batch_size,
-            "model_config": model_config,
+            "model_config": model_config_for_results,
             "annotation_prior_logits": annotation_prior_logits,
             "dataset_indices": dataset_indices,
         }

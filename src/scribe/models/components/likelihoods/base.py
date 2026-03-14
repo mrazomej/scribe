@@ -315,8 +315,20 @@ def index_dataset_params(
                 # Shape (D, ...) — dataset axis is 0
                 indexed[name] = val[dataset_indices]
         elif spec is None and val.ndim >= 1 and val.shape[0] == n_datasets:
-            # Legacy fallback for params without specs
+            # Legacy fallback for params without specs — dataset axis is 0
             indexed[name] = val[dataset_indices]
+        elif (
+            spec is None
+            and val.ndim >= 3
+            and val.shape[1] == n_datasets
+            and val.shape[0] != n_datasets
+        ):
+            # Legacy fallback for derived mixture+dataset params (e.g.
+            # r=mu*phi) that inherit (K, D, G) shape from their sampled
+            # dependencies but have no ParamSpec.  Dataset axis is 1.
+            result = jnp.take(val, dataset_indices, axis=1)  # (K, batch, ...)
+            result = jnp.moveaxis(result, 0, 1)  # (batch, K, ...)
+            indexed[name] = result
         else:
             indexed[name] = val
     return indexed

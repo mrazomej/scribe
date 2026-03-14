@@ -767,6 +767,68 @@ class TestMixtureDatasetComposition:
         )
         assert result["mu"].shape == (3, G)
 
+    def test_index_dataset_params_derived_mixture_dataset(self):
+        """Derived params with (K, D, G) shape and no spec get indexed via
+        the secondary legacy heuristic (shape[1] == n_datasets)."""
+        K, D, G = 4, 2, 5
+        batch = 3
+
+        # phi has a spec — it's a sampled param
+        phi_spec = _make_ds_exp_spec_mixture("phi")
+        param_values = {
+            "phi": jnp.arange(K * D * G, dtype=float).reshape(K, D, G),
+            # r and p are derived — no specs
+            "r": jnp.arange(K * D * G, dtype=float).reshape(K, D, G) + 100,
+            "p": jnp.arange(K * D * G, dtype=float).reshape(K, D, G) + 200,
+        }
+        dataset_indices = jnp.array([0, 1, 0])
+
+        result = index_dataset_params(
+            param_values,
+            dataset_indices,
+            D,
+            param_specs=[phi_spec],
+        )
+
+        # All three should be (batch, K, G) — batch-first layout
+        assert result["phi"].shape == (batch, K, G)
+        assert result["r"].shape == (batch, K, G)
+        assert result["p"].shape == (batch, K, G)
+
+        # Verify cell 0 (dataset 0) gets the correct slice for derived r
+        np.testing.assert_array_equal(
+            result["r"][0], param_values["r"][:, 0, :]
+        )
+        # Verify cell 1 (dataset 1) gets dataset 1
+        np.testing.assert_array_equal(
+            result["r"][1], param_values["r"][:, 1, :]
+        )
+
+    def test_index_dataset_params_derived_not_confused_by_2d(self):
+        """2D derived params without specs don't trigger the (K, D, G)
+        heuristic — only the existing shape[0]==n_datasets fallback."""
+        D, G = 2, 5
+        param_values = {
+            # Derived param with (D, G) shape — should use existing heuristic
+            "r": jnp.arange(D * G, dtype=float).reshape(D, G),
+            # Param with shape (G,) — should pass through unchanged
+            "phi": jnp.ones(G),
+        }
+        dataset_indices = jnp.array([1, 0, 0])
+
+        result = index_dataset_params(
+            param_values,
+            dataset_indices,
+            D,
+            param_specs=None,
+        )
+
+        # r: (D, G) with shape[0]==n_datasets → indexed to (batch, G)
+        assert result["r"].shape == (3, G)
+        np.testing.assert_array_equal(result["r"][0], param_values["r"][1])
+        # phi: (G,) unchanged
+        assert result["phi"].shape == (G,)
+
     # ------------------------------------------------------------------
     # broadcast_p_for_mixture with batch dim
     # ------------------------------------------------------------------
@@ -2789,6 +2851,57 @@ class TestMixtureDatasetHierarchyFactory:
         ]
         assert len(hyper_specs) == 1
         assert hyper_specs[0].is_mixture is True
+
+    def test_svi_init_vcp_mixture_dataset_mean_odds(self):
+        """SVI init succeeds for VCP + mixture + dataset hierarchy + mean_odds.
+
+        Regression test: model_args previously passed model_config without
+        param_specs, causing index_dataset_params to miss mixture+dataset
+        params.  Derived params (r, p) with shape (K, D, G) also need the
+        secondary legacy heuristic.
+
+        NOTE: K must differ from D here.  mixing_weights (shape (K,)) is
+        not in param_specs (created at runtime in the model function), so
+        if K == D the legacy shape[0]==n_datasets heuristic would
+        incorrectly index it.  That's a separate latent issue.
+        """
+        from numpyro.infer import SVI, Trace_ELBO
+        from numpyro.optim import Adam
+        from scribe.models.model_registry import get_model_and_guide
+
+        K, D, G, N = 3, 2, 10, 20
+
+        b = self._builder(model_type="zinbvcp", parameterization="mean_odds")
+        b._n_datasets = D
+        b._hierarchical_dataset_mu = True
+        b._hierarchical_dataset_p = "gene_specific"
+        b._n_components = K
+        config = b.build()
+
+        model, guide, model_config_for_results = get_model_and_guide(
+            config, n_genes=G
+        )
+
+        # model_config_for_results has param_specs; model_args must use it
+        # so index_dataset_params can identify mixture+dataset params.
+        counts = jnp.ones((N, G), dtype=jnp.float32)
+        dataset_indices = jnp.array([0] * (N // 2) + [1] * (N // 2))
+        model_args = {
+            "n_cells": N,
+            "n_genes": G,
+            "counts": counts,
+            "batch_size": N,
+            "model_config": model_config_for_results,
+            "annotation_prior_logits": None,
+            "dataset_indices": dataset_indices,
+        }
+
+        svi = SVI(model, guide, Adam(1e-3), loss=Trace_ELBO())
+        rng_key = random.PRNGKey(0)
+        # This must not raise — previous bug caused a shape mismatch
+        # TypeError in the likelihood.
+        svi_state = svi.init(rng_key, **model_args)
+        assert svi_state is not None
 
 
 # ==============================================================================
