@@ -437,6 +437,12 @@ they have no guide counterpart.
 |------|---------|
 | `parameter_specs.py` | ParamSpec, LatentSpec, GaussianLatentSpec, Hierarchical*Spec, BiologyInformedCaptureSpec; `sample_prior` dispatch |
 | `model_builder.py` | ModelBuilder class |
-| `guide_builder.py` | GuideBuilder and `setup_guide` dispatch |
+| `guide_builder.py` | Thin public orchestrator (`GuideBuilder`) and public guide symbols |
+| `_guide_meanfield_mixin.py` | Standard mean-field dispatch registrations |
+| `_guide_lowrank_mixin.py` | Standard low-rank dispatch registrations |
+| `_guide_horseshoe_mixin.py` | Horseshoe hyperparameter + NCP dispatch registrations |
+| `_guide_cell_specific_mixin.py` | Cell-specific dispatch registrations |
+| `_guide_amortized_mixin.py` | Amortized helpers and dispatch registration |
+| `_guide_joint_mixin.py` | Woodbury helpers and `setup_joint_guide` implementation |
 | `posterior.py` | `get_posterior_distributions`; joint-aware extraction from `JointLowRankGuide` params |
 | `__init__.py` | Public API exports |
