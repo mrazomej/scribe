@@ -28,6 +28,9 @@ def _key_matches_spec(key: str, spec) -> bool:
     ``spec.alias_names`` (e.g. ``"eta_capture"`` for the biology-informed
     capture spec whose canonical name is ``"phi_capture"``).
 
+    Also matches joint guide keys like ``"joint_joint_phi_loc"`` for a
+    spec with ``name="phi"``.
+
     Parameters
     ----------
     key : str
@@ -44,6 +47,10 @@ def _key_matches_spec(key: str, spec) -> bool:
     names_to_check = [spec.name] + list(
         getattr(spec, "alias_names", [])
     )
+    # Also include the NCP raw name if present (horseshoe specs)
+    raw_name = getattr(spec, "raw_name", None)
+    if raw_name:
+        names_to_check.append(raw_name)
     for name in names_to_check:
         if (
             key == name
@@ -51,6 +58,9 @@ def _key_matches_spec(key: str, spec) -> bool:
             or key.startswith("log_" + name + "_")
             or key.startswith("logit_" + name + "_")
         ):
+            return True
+        # Joint guide keys: "joint_{group}_{name}_loc", etc.
+        if key.startswith("joint_") and f"_{name}_" in key:
             return True
     return False
 
