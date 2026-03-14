@@ -395,16 +395,43 @@ def get_posterior_distributions(
             hs_prefix = "mu_dataset"
 
         if horseshoe_dataset_mu:
-            # Horseshoe: hyper_loc posterior + horseshoe trio + raw z
-            distributions.update(
-                _build_hyperparameter_posteriors(params, hyper_loc, hyper_loc)
+            # Horseshoe NCP: raw z may be in a joint group when
+            # joint_params includes the target parameter.
+            raw_name = f"{target}_raw"
+            jp = (
+                _find_joint_prefix(params, raw_name)
+                or _find_joint_prefix(params, target)
             )
-            distributions.update(
-                _build_horseshoe_hyperparameter_posteriors(params, hs_prefix)
-            )
-            distributions[f"{target}_raw"] = _build_normal_posterior(
-                params, f"{target}_raw", low_rank=low_rank
-            )
+            if jp:
+                if f"{hyper_loc}_loc" in params:
+                    distributions.update(
+                        _build_hyperparameter_posteriors(
+                            params, hyper_loc, hyper_loc
+                        )
+                    )
+                if f"tau_{hs_prefix}_loc" in params:
+                    distributions.update(
+                        _build_horseshoe_hyperparameter_posteriors(
+                            params, hs_prefix
+                        )
+                    )
+                distributions[target] = _build_joint_low_rank_posterior(
+                    params, target, jp, split
+                )
+            else:
+                distributions.update(
+                    _build_hyperparameter_posteriors(
+                        params, hyper_loc, hyper_loc
+                    )
+                )
+                distributions.update(
+                    _build_horseshoe_hyperparameter_posteriors(
+                        params, hs_prefix
+                    )
+                )
+                distributions[raw_name] = _build_normal_posterior(
+                    params, raw_name, low_rank=low_rank
+                )
         else:
             distributions.update(
                 _build_hyperparameter_posteriors(
@@ -450,15 +477,41 @@ def get_posterior_distributions(
             raw_name = "p_raw_dataset"
 
         if horseshoe_dataset_p:
-            distributions.update(
-                _build_hyperparameter_posteriors(params, hyper_loc, hyper_loc)
+            # Horseshoe NCP: raw z may be in a joint group
+            jp = (
+                _find_joint_prefix(params, raw_name)
+                or _find_joint_prefix(params, target)
             )
-            distributions.update(
-                _build_horseshoe_hyperparameter_posteriors(params, hs_prefix)
-            )
-            distributions[raw_name] = _build_normal_posterior(
-                params, raw_name, low_rank=low_rank
-            )
+            if jp:
+                if f"{hyper_loc}_loc" in params:
+                    distributions.update(
+                        _build_hyperparameter_posteriors(
+                            params, hyper_loc, hyper_loc
+                        )
+                    )
+                if f"tau_{hs_prefix}_loc" in params:
+                    distributions.update(
+                        _build_horseshoe_hyperparameter_posteriors(
+                            params, hs_prefix
+                        )
+                    )
+                distributions[target] = _build_joint_low_rank_posterior(
+                    params, target, jp, split
+                )
+            else:
+                distributions.update(
+                    _build_hyperparameter_posteriors(
+                        params, hyper_loc, hyper_loc
+                    )
+                )
+                distributions.update(
+                    _build_horseshoe_hyperparameter_posteriors(
+                        params, hs_prefix
+                    )
+                )
+                distributions[raw_name] = _build_normal_posterior(
+                    params, raw_name, low_rank=low_rank
+                )
         else:
             distributions.update(
                 _build_hyperparameter_posteriors(
@@ -491,21 +544,49 @@ def get_posterior_distributions(
     )
     if hierarchical_dataset_gate or horseshoe_dataset_gate:
         if horseshoe_dataset_gate:
-            distributions.update(
-                _build_hyperparameter_posteriors(
-                    params,
-                    "logit_gate_dataset_loc",
-                    "logit_gate_dataset_loc",
+            # Horseshoe NCP samples "gate_raw_dataset" (the z), but if
+            # joint_params includes "gate" the guide builder maps the
+            # spec (name="gate") into the joint block.  Check both the
+            # raw-name and the spec-name for a joint prefix.
+            jp = (
+                _find_joint_prefix(params, "gate_raw_dataset")
+                or _find_joint_prefix(params, "gate")
+            )
+            if jp:
+                # Hyper posteriors may still have individual params
+                if f"logit_gate_dataset_loc_loc" in params:
+                    distributions.update(
+                        _build_hyperparameter_posteriors(
+                            params,
+                            "logit_gate_dataset_loc",
+                            "logit_gate_dataset_loc",
+                        )
+                    )
+                if f"tau_gate_dataset_loc" in params:
+                    distributions.update(
+                        _build_horseshoe_hyperparameter_posteriors(
+                            params, "gate_dataset"
+                        )
+                    )
+                distributions["gate"] = _build_joint_low_rank_posterior(
+                    params, "gate", jp, split
                 )
-            )
-            distributions.update(
-                _build_horseshoe_hyperparameter_posteriors(
-                    params, "gate_dataset"
+            else:
+                distributions.update(
+                    _build_hyperparameter_posteriors(
+                        params,
+                        "logit_gate_dataset_loc",
+                        "logit_gate_dataset_loc",
+                    )
                 )
-            )
-            distributions["gate_raw_dataset"] = _build_normal_posterior(
-                params, "gate_raw_dataset", low_rank=low_rank
-            )
+                distributions.update(
+                    _build_horseshoe_hyperparameter_posteriors(
+                        params, "gate_dataset"
+                    )
+                )
+                distributions["gate_raw_dataset"] = _build_normal_posterior(
+                    params, "gate_raw_dataset", low_rank=low_rank
+                )
         else:
             distributions.update(
                 _build_hyperparameter_posteriors(

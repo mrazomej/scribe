@@ -210,12 +210,17 @@ class PosteriorPredictiveSamplingMixin:
                 f"Could not find a guide for model '{self.model_type}'."
             )
 
-        # Prepare base model arguments
+        # Include dataset_indices so that when the model is replayed to
+        # compute deterministic sites, index_dataset_params can convert
+        # (K, D, G) parameters to per-cell layout.
         model_args = {
             "n_cells": self.n_cells,
             "n_genes": self.n_genes,
             "model_config": self.model_config,
         }
+        ds_idx = getattr(self, "_dataset_indices", None)
+        if ds_idx is not None:
+            model_args["dataset_indices"] = ds_idx
 
         # Add batch_size to model_args if provided for memory-efficient sampling
         if batch_size is not None:
@@ -294,18 +299,24 @@ class PosteriorPredictiveSamplingMixin:
         # MeanField families — the guide is discarded anyway, and keeping the
         # original families (e.g. JointLowRankGuide) would be incompatible
         # with constrained specs that lack a .transform attribute.
-        model, _, _ = get_model_and_guide(
+        model, _, model_config_for_pred = get_model_and_guide(
             self.model_config,
             unconstrained=False,
             guide_families=GuideFamilyConfig(),
         )
 
-        # Prepare base model arguments
+        # Use model_config_for_pred (which has param_specs populated) so
+        # index_dataset_params in the likelihood can correctly identify
+        # mixture+dataset params.  Include dataset_indices so multi-dataset
+        # params are indexed to per-cell layout.
         model_args = {
             "n_cells": self.n_cells,
             "n_genes": self.n_genes,
-            "model_config": self.model_config,
+            "model_config": model_config_for_pred,
         }
+        ds_idx = getattr(self, "_dataset_indices", None)
+        if ds_idx is not None:
+            model_args["dataset_indices"] = ds_idx
 
         # Check if posterior samples exist
         if self.posterior_samples is None:
