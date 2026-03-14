@@ -103,6 +103,26 @@ def test_parse_override_dirname_parses_nested_and_typed_values():
     assert parsed["variable_capture"] is False
 
 
+def test_parse_override_dirname_supports_leading_bare_boolean_tokens():
+    """Parse compact dirname tokens that encode booleans as bare keys.
+
+    Returns
+    -------
+    None
+        Asserts that key-only boolean tokens are parsed as ``True`` while
+        comma-delimited values in subsequent key-value entries remain intact.
+    """
+    # Use __new__ to bypass filesystem scanning in ExperimentCatalog.__init__.
+    catalog = ExperimentCatalog.__new__(ExperimentCatalog)
+    parsed = catalog._parse_override_dirname(
+        "hierarchical_dataset_mu,guide_rank=256,mixture_params=phi,mu,gate"
+    )
+
+    assert parsed["hierarchical_dataset_mu"] is True
+    assert parsed["guide_rank"] == 256
+    assert parsed["mixture_params"] == "phi,mu,gate"
+
+
 def test_find_matches_singleton_comma_list_filter_to_metadata_list():
     """Match list metadata against singleton comma-delimited list filters.
 

@@ -83,6 +83,7 @@ import os
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
+from collections import Counter
 from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
@@ -231,18 +232,174 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="anndata")
 # Custom Hydra Resolvers
 # ==============================================================================
 
-# Register custom Hydra resolver to sanitize directory names
-# - Removes brackets [] which cause issues with Orbax checkpoint library
-# - Replaces forward slashes / with hyphens - so that nested data configs
-#   (e.g. data=bleo_splits/bleo_study01) stay as a single directory component
-#   instead of creating unwanted subdirectories
+def _split_override_segments(override_dirname: str) -> list[str]:
+    """Split Hydra override dirname into logical override segments.
+
+    Hydra joins override entries with commas. Values that are list-like
+    (for example ``mixture_params=phi,mu,gate``) therefore also contain
+    commas and must be reconstructed as one segment.
+
+    Parameters
+    ----------
+    override_dirname : str
+        Raw value from ``hydra:job.override_dirname``.
+
+    Returns
+    -------
+    list[str]
+        Logical override segments where each item is either ``key=value`` or
+        a key-only token.
+    """
+    # Reconstruct comma-delimited values by attaching comma-only tokens to the
+    # most recent key=value segment.
+    segments: list[str] = []
+    current_segment = ""
+
+    for part in override_dirname.split(","):
+        token = part.strip()
+        if not token:
+            continue
+
+        if "=" in token:
+            if current_segment:
+                segments.append(current_segment)
+            current_segment = token
+            continue
+
+        if current_segment:
+            current_segment = f"{current_segment},{token}"
+        else:
+            # Keep key-only tokens as standalone segments.
+            segments.append(token)
+
+    if current_segment:
+        segments.append(current_segment)
+
+    return segments
+
+
+def _normalize_override_value(raw_value: str) -> str:
+    """Normalize override values for compact, filesystem-safe dirnames.
+
+    Parameters
+    ----------
+    raw_value : str
+        Raw override value from a ``key=value`` segment.
+
+    Returns
+    -------
+    str
+        Normalized value with bracket wrappers removed for list-like values,
+        whitespace removed from list entries, and path separators replaced.
+    """
+    value = raw_value.strip()
+
+    # For list-like values such as "[11.51, 1e-2]", remove the wrapper and
+    # normalize spacing to "11.51,1e-2" for concise output.
+    if value.startswith("[") and value.endswith("]"):
+        inner = value[1:-1]
+        items = [item.strip() for item in inner.split(",") if item.strip()]
+        value = ",".join(items)
+
+    # Keep override output as one directory component.
+    return value.replace("/", "-")
+
+
+def _compact_override_dirname(override_dirname: str) -> str:
+    """Convert Hydra override dirname into a compact run-name token.
+
+    Rules implemented:
+
+    1. Explicit boolean ``true`` is emitted as a bare key token.
+    2. Explicit boolean ``false`` is omitted.
+    3. Dotted keys keep only their suffix by default.
+    4. Colliding suffixes fall back to full dotted keys.
+    5. Bracket/list values drop brackets and list-item spaces.
+
+    Parameters
+    ----------
+    override_dirname : str
+        Raw value from ``hydra:job.override_dirname``.
+
+    Returns
+    -------
+    str
+        Compact comma-delimited override representation.
+    """
+    if not isinstance(override_dirname, str) or override_dirname == "":
+        return override_dirname
+
+    segments = _split_override_segments(override_dirname)
+
+    # Parse segments into structured entries so we can detect dotted-key
+    # suffix collisions before rendering final tokens.
+    parsed_entries: list[dict[str, str | bool]] = []
+    dotted_suffix_counts: Counter[str] = Counter()
+
+    for segment in segments:
+        if "=" not in segment:
+            parsed_entries.append(
+                {
+                    "key": segment.replace("/", "-"),
+                    "value": "",
+                    "is_dotted": False,
+                    "is_true": True,
+                    "is_false": False,
+                }
+            )
+            continue
+
+        key, raw_value = segment.split("=", 1)
+        key = key.strip().replace("/", "-")
+        value = _normalize_override_value(raw_value)
+        lowered_value = value.lower()
+        is_true = lowered_value == "true"
+        is_false = lowered_value == "false"
+        is_dotted = "." in key
+        suffix = key.split(".")[-1] if is_dotted else key
+
+        if is_dotted and not is_false:
+            dotted_suffix_counts[suffix] += 1
+
+        parsed_entries.append(
+            {
+                "key": key,
+                "suffix": suffix,
+                "value": value,
+                "is_dotted": is_dotted,
+                "is_true": is_true,
+                "is_false": is_false,
+            }
+        )
+
+    # Emit bare true flags first so downstream parsing can safely keep
+    # comma-delimited values in key=value segments.
+    bare_true_tokens: list[str] = []
+    key_value_tokens: list[str] = []
+
+    for entry in parsed_entries:
+        if bool(entry.get("is_false", False)):
+            continue
+
+        key = str(entry["key"])
+        if bool(entry.get("is_dotted", False)):
+            suffix = str(entry["suffix"])
+            key = (
+                key if dotted_suffix_counts[suffix] > 1 else suffix
+            )
+
+        if bool(entry.get("is_true", False)):
+            bare_true_tokens.append(key)
+        else:
+            key_value_tokens.append(f"{key}={entry['value']}")
+
+    return ",".join(bare_true_tokens + key_value_tokens)
+
+
+# Register custom Hydra resolver for compact, filesystem-safe directory names.
 OmegaConf.register_new_resolver(
     "sanitize_dirname",
-    lambda x: (
-        x.replace("[", "").replace("]", "").replace("/", "-")
-        if isinstance(x, str)
-        else x
-    ),
+    _compact_override_dirname,
     replace=True,
 )
 
