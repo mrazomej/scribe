@@ -78,6 +78,12 @@ from .parameter_specs import (
     # Horseshoe hyperparameter specs
     HalfCauchySpec,
     InverseGammaSpec,
+    # NEG hyperparameter and hierarchical specs
+    GammaSpec,
+    NEGHierarchicalSigmoidNormalSpec,
+    NEGHierarchicalExpNormalSpec,
+    NEGDatasetExpNormalSpec,
+    NEGDatasetSigmoidNormalSpec,
     # Latent specs (VAE z)
     LatentSpec,
     GaussianLatentSpec,
@@ -124,6 +130,11 @@ __all__ = [
     "HorseshoeDatasetSigmoidNormalSpec",
     "HalfCauchySpec",
     "InverseGammaSpec",
+    "GammaSpec",
+    "NEGHierarchicalSigmoidNormalSpec",
+    "NEGHierarchicalExpNormalSpec",
+    "NEGDatasetExpNormalSpec",
+    "NEGDatasetSigmoidNormalSpec",
     "LatentSpec",
     "GaussianLatentSpec",
     # Spec functions

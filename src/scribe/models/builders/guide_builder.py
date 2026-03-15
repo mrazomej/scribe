@@ -24,6 +24,7 @@ from ..components.guide_families import (
 
 # Import dispatch modules eagerly so multipledispatch registrations are loaded.
 from . import _guide_horseshoe_mixin as _guide_horseshoe_mixin
+from . import _guide_neg_mixin as _guide_neg_mixin
 from . import _guide_lowrank_mixin as _guide_lowrank_mixin
 from . import _guide_meanfield_mixin as _guide_meanfield_mixin
 

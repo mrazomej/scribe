@@ -16,6 +16,10 @@ from .parameter_specs import (
     HorseshoeDatasetSigmoidNormalSpec,
     HorseshoeHierarchicalExpNormalSpec,
     HorseshoeHierarchicalSigmoidNormalSpec,
+    NEGDatasetExpNormalSpec,
+    NEGDatasetSigmoidNormalSpec,
+    NEGHierarchicalExpNormalSpec,
+    NEGHierarchicalSigmoidNormalSpec,
     NormalWithTransformSpec,
     resolve_shape,
 )
@@ -184,8 +188,8 @@ def _build_base_distribution_for_joint_spec(
 
     This helper mirrors the shape handling of ``_build_distribution_for_spec``
     but intentionally does **not** apply any transform. It is used by the
-    horseshoe-aware joint path to sample ``*_raw`` latent sites directly in
-    unconstrained space.
+    horseshoe/NEG NCP-aware joint path to sample ``*_raw`` latent sites
+    directly in unconstrained space.
 
     Parameters
     ----------
@@ -228,8 +232,8 @@ def _build_base_distribution_for_joint_spec(
     return base
 
 
-def _is_joint_horseshoe_spec(spec: "NormalWithTransformSpec") -> bool:
-    """Return whether a joint-guide spec uses horseshoe NCP raw latents.
+def _is_joint_ncp_spec(spec: "NormalWithTransformSpec") -> bool:
+    """Return whether a joint-guide spec uses NCP raw latents (horseshoe or NEG).
 
     Parameters
     ----------
@@ -239,9 +243,9 @@ def _is_joint_horseshoe_spec(spec: "NormalWithTransformSpec") -> bool:
     Returns
     -------
     bool
-        True when the specification is one of the horseshoe parameter classes
-        that define a ``raw_name`` latent site and deterministic constrained
-        transform in the model.
+        True when the specification is one of the horseshoe or NEG parameter
+        classes that define a ``raw_name`` latent site and deterministic
+        constrained transform in the model.
     """
     return isinstance(
         spec,
@@ -250,6 +254,10 @@ def _is_joint_horseshoe_spec(spec: "NormalWithTransformSpec") -> bool:
             HorseshoeHierarchicalExpNormalSpec,
             HorseshoeDatasetSigmoidNormalSpec,
             HorseshoeDatasetExpNormalSpec,
+            NEGHierarchicalSigmoidNormalSpec,
+            NEGHierarchicalExpNormalSpec,
+            NEGDatasetSigmoidNormalSpec,
+            NEGDatasetExpNormalSpec,
         ),
     )
 
@@ -377,10 +385,11 @@ def setup_joint_guide(
 
         if i == 0:
             # First parameter: sample from its marginal distribution
-            # Horseshoe specs are parameterized with an explicit NCP raw latent
-            # site in the model (e.g., gate_raw). The joint block must sample
-            # that raw site directly to keep model/guide sample-site alignment.
-            if _is_joint_horseshoe_spec(spec):
+            # Horseshoe/NEG specs are parameterized with an explicit NCP raw
+            # latent site in the model (e.g., gate_raw). The joint block must
+            # sample that raw site directly to keep model/guide sample-site
+            # alignment.
+            if _is_joint_ncp_spec(spec):
                 base = _build_base_distribution_for_joint_spec(
                     current_locs[0],
                     current_Ws[0],
@@ -429,9 +438,9 @@ def setup_joint_guide(
                     theta1_sample=unconstrained_samples[j],
                 )
 
-            # As above: horseshoe specs in joint groups must sample raw NCP
+            # As above: horseshoe/NEG specs in joint groups must sample raw NCP
             # latents so guide/model sample sites match exactly.
-            if _is_joint_horseshoe_spec(spec):
+            if _is_joint_ncp_spec(spec):
                 base = _build_base_distribution_for_joint_spec(
                     cond_loc,
                     cond_W,

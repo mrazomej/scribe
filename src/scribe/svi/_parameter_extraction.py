@@ -14,6 +14,7 @@ import numpyro.distributions as dist
 from jax import random
 
 from ..utils import numpyro_to_scipy
+from ..models.config.enums import HierarchicalPriorType
 
 
 # ==============================================================================
@@ -44,6 +45,26 @@ def _horseshoe_eff_scale(
     """
     c = jnp.sqrt(c_sq)
     return tau * c * lam / jnp.sqrt(c_sq + tau**2 * lam**2)
+
+
+def _neg_eff_scale(psi: jnp.ndarray) -> jnp.ndarray:
+    """Compute the NEG effective scale from psi.
+
+    For the NEG (Normal-Exponential-Gamma) prior, the effective scale is
+    simply sqrt(psi), where psi is the per-gene variance from the
+    Gamma-Gamma hierarchy. This is much simpler than the horseshoe formula.
+
+    Parameters
+    ----------
+    psi : jnp.ndarray
+        Per-gene variance from the NEG hierarchy (positive).
+
+    Returns
+    -------
+    jnp.ndarray
+        Effective scale ``sqrt(psi)``.
+    """
+    return jnp.sqrt(psi)
 
 
 def _reconstruct_horseshoe_maps(
@@ -153,6 +174,129 @@ def _reconstruct_horseshoe_maps(
 
         eff = _horseshoe_eff_scale(tau, lam, c_sq)
         unconstrained = loc + eff * z
+        map_estimates[target_name] = transform(unconstrained)
+
+    return map_estimates
+
+
+# ==============================================================================
+# NEG NCP MAP Reconstruction
+# ==============================================================================
+
+
+def _reconstruct_neg_maps(
+    map_estimates: Dict[str, jnp.ndarray],
+    model_config,
+) -> Dict[str, jnp.ndarray]:
+    """Reconstruct constrained MAP estimates from NCP NEG components.
+
+    When an NEG prior with NCP is used, the MAP contains entries for
+    ``{raw_name}`` (z) and ``psi_{prefix}`` instead of the constrained
+    parameter.  This function computes ``constrained = transform(loc +
+    eff_scale * z)`` where ``eff_scale = sqrt(psi)``, and injects it into
+    the MAP dict.
+
+    The NEG effective scale is simpler than the horseshoe: it is just
+    sqrt(psi), with no tau/lambda/c_sq combination.
+
+    Parameters
+    ----------
+    map_estimates : Dict[str, jnp.ndarray]
+        MAP estimates including raw z and NEG psi hyperparameters.
+        Note: psi values from LogNormal posteriors are stored in log-space
+        (the .loc of the LogNormal), so we apply exp(psi) before sqrt.
+    model_config
+        Model configuration with p_prior, gate_prior, mu_dataset_prior,
+        p_dataset_prior, gate_dataset_prior enum fields.
+
+    Returns
+    -------
+    Dict[str, jnp.ndarray]
+        Updated MAP with constrained parameters added.
+    """
+    configs = []
+
+    # Gene-level NEG p
+    if model_config.p_prior == HierarchicalPriorType.NEG:
+        parameterization = model_config.parameterization
+        if parameterization in ("mean_odds", "odds_ratio"):
+            configs.append(
+                ("phi_raw", "phi", "phi", "log_phi_loc", jnp.exp)
+            )
+        else:
+            configs.append(
+                ("p_raw", "p", "p", "logit_p_loc", sigmoid)
+            )
+
+    # Gene-level NEG gate
+    if model_config.gate_prior == HierarchicalPriorType.NEG:
+        configs.append(
+            ("gate_raw", "gate", "gate", "logit_gate_loc", sigmoid)
+        )
+
+    # Dataset-level NEG mu
+    if model_config.mu_dataset_prior == HierarchicalPriorType.NEG:
+        parameterization = model_config.parameterization
+        if parameterization in ("canonical", "standard"):
+            configs.append(
+                ("r_raw", "r", "r_dataset", "log_r_dataset_loc", jnp.exp)
+            )
+        else:
+            configs.append(
+                ("mu_raw", "mu", "mu_dataset", "log_mu_dataset_loc", jnp.exp)
+            )
+
+    # Dataset-level NEG p
+    if model_config.p_dataset_prior == HierarchicalPriorType.NEG:
+        parameterization = model_config.parameterization
+        if parameterization in ("mean_odds", "odds_ratio"):
+            configs.append(
+                (
+                    "phi_raw_dataset",
+                    "phi",
+                    "phi_dataset",
+                    "log_phi_dataset_loc",
+                    jnp.exp,
+                )
+            )
+        else:
+            configs.append(
+                (
+                    "p_raw_dataset",
+                    "p",
+                    "p_dataset",
+                    "logit_p_dataset_loc",
+                    sigmoid,
+                )
+            )
+
+    # Dataset-level NEG gate
+    if model_config.gate_dataset_prior == HierarchicalPriorType.NEG:
+        configs.append(
+            (
+                "gate_raw_dataset",
+                "gate",
+                "gate_dataset",
+                "logit_gate_dataset_loc",
+                sigmoid,
+            )
+        )
+
+    for raw_name, target_name, neg_prefix, loc_name, transform in configs:
+        if raw_name not in map_estimates:
+            continue
+
+        z = map_estimates[raw_name]
+        psi_loc = map_estimates.get(f"psi_{neg_prefix}")
+        loc = map_estimates.get(loc_name)
+
+        if psi_loc is None or loc is None:
+            continue
+
+        # psi from LogNormal posterior: map_estimates has log-space loc
+        psi = jnp.exp(psi_loc)
+        eff_scale = _neg_eff_scale(psi)
+        unconstrained = loc + eff_scale * z
         map_estimates[target_name] = transform(unconstrained)
 
     return map_estimates
@@ -585,6 +729,11 @@ class ParameterExtractionMixin:
 
         # Reconstruct constrained parameters from NCP horseshoe if applicable
         map_estimates = _reconstruct_horseshoe_maps(
+            map_estimates, self.model_config
+        )
+
+        # Reconstruct constrained parameters from NCP NEG if applicable
+        map_estimates = _reconstruct_neg_maps(
             map_estimates, self.model_config
         )
 
