@@ -38,6 +38,7 @@ from .parameter_specs import (
     DatasetHierarchicalNormalWithTransformSpec,
     DerivedParam,
     DirichletSpec,
+    GammaSpec,
     HierarchicalNormalWithTransformSpec,
     ParamSpec,
     sample_prior,
@@ -393,6 +394,14 @@ class ModelBuilder:
                     param_values[spec.name] = spec.sample_hierarchical(
                         dims, param_values
                     )
+                elif (
+                    isinstance(spec, GammaSpec)
+                    and spec.rate_name is not None
+                ):
+                    # Gamma with rate from another site (e.g. psi ~ Gamma(u, zeta))
+                    param_values[spec.name] = sample_prior(
+                        spec, dims, model_config, param_values
+                    )
                 else:
                     param_values[spec.name] = sample_prior(
                         spec, dims, model_config
@@ -424,6 +433,14 @@ class ModelBuilder:
                     # dataset-level hierarchy)
                     param_values[spec.name] = spec.sample_hierarchical(
                         dims, param_values
+                    )
+                elif (
+                    isinstance(spec, GammaSpec)
+                    and spec.rate_name is not None
+                ):
+                    # Gamma with rate from another site (e.g. psi ~ Gamma(u, zeta))
+                    param_values[spec.name] = sample_prior(
+                        spec, dims, model_config, param_values
                     )
                 else:
                     param_values[spec.name] = sample_prior(

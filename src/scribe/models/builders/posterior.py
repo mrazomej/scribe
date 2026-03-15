@@ -77,8 +77,9 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 import jax.numpy as jnp
 import numpyro.distributions as dist
 
-# Import Parameterization enum directly to avoid circular import
-from ..config.enums import Parameterization
+# Import Parameterization and HierarchicalPriorType enums directly to avoid
+# circular import
+from ..config.enums import HierarchicalPriorType, Parameterization
 from scribe.stats.distributions import BetaPrime
 
 if TYPE_CHECKING:
@@ -267,18 +268,18 @@ def _build_joint_full_distribution(
 def _build_base_skip_set(
     model_config: ModelConfig, parameterization: Parameterization
 ) -> set[str]:
-    """Determine which base params to skip because a horseshoe replaces them.
+    """Determine which base params to skip because NCP (horseshoe/NEG) replaces them.
 
-    When a horseshoe NCP prior is active for a parameter, the base guide
-    site (e.g. ``phi_loc/phi_scale``) does not exist — the horseshoe
-    creates ``phi_raw_loc/phi_raw_scale`` (the z variable) plus its own
-    hyperparameters instead.  The base builder must skip these names to
-    avoid ``KeyError``s on missing params.
+    When a horseshoe or NEG NCP prior is active for a parameter, the base guide
+    site (e.g. ``phi_loc/phi_scale``) does not exist — the NCP prior creates
+    ``phi_raw_loc/phi_raw_scale`` (the z variable) plus its own hyperparameters
+    instead.  The base builder must skip these names to avoid ``KeyError``s on
+    missing params.
 
     Parameters
     ----------
     model_config : ModelConfig
-        Model configuration carrying horseshoe flags.
+        Model configuration carrying horseshoe/NEG prior flags.
     parameterization : Parameterization
         Active parameterization enum.
 
@@ -291,8 +292,11 @@ def _build_base_skip_set(
     horseshoe_p = getattr(model_config, "horseshoe_p", False)
     horseshoe_dataset_p = getattr(model_config, "horseshoe_dataset_p", False)
     horseshoe_dataset_mu = getattr(model_config, "horseshoe_dataset_mu", False)
+    neg_p = model_config.p_prior == HierarchicalPriorType.NEG
+    neg_dataset_p = model_config.p_dataset_prior == HierarchicalPriorType.NEG
+    neg_dataset_mu = model_config.mu_dataset_prior == HierarchicalPriorType.NEG
 
-    if horseshoe_p or horseshoe_dataset_p:
+    if horseshoe_p or horseshoe_dataset_p or neg_p or neg_dataset_p:
         if parameterization in (
             Parameterization.MEAN_ODDS,
             Parameterization.ODDS_RATIO,
@@ -300,7 +304,7 @@ def _build_base_skip_set(
             skip.add("phi")
         else:
             skip.add("p")
-    if horseshoe_dataset_mu:
+    if horseshoe_dataset_mu or neg_dataset_mu:
         if parameterization in (
             Parameterization.CANONICAL,
             Parameterization.STANDARD,
@@ -371,17 +375,21 @@ def _apply_gene_level_hierarchy(
 ) -> None:
     """Pass 2: override p/phi with a gene-level hierarchical prior.
 
-    Active when ``hierarchical_p=True`` or ``horseshoe_p=True``.  Adds
-    hyperparameter posteriors (loc/scale of the population prior) and
-    *replaces* the base ``"p"`` or ``"phi"`` entry with the gene-level
-    distribution.
+    Active when ``hierarchical_p=True``, ``horseshoe_p=True``, or
+    ``p_prior==NEG``.  Adds hyperparameter posteriors (loc/scale of the
+    population prior) and *replaces* the base ``"p"`` or ``"phi"`` entry
+    with the gene-level distribution.
 
     Horseshoe variant: adds the horseshoe trio (tau, lambda, c_sq) and
     the NCP raw z variable instead of the constrained parameter.
+
+    NEG variant: adds psi and zeta LogNormal posteriors and the NCP raw z
+    variable instead of the constrained parameter.
     """
     hierarchical_p = model_config.hierarchical_p
     horseshoe_p = getattr(model_config, "horseshoe_p", False)
-    if not (hierarchical_p or horseshoe_p):
+    neg_p = model_config.p_prior == HierarchicalPriorType.NEG
+    if not (hierarchical_p or horseshoe_p or neg_p):
         return
 
     if parameterization in (
@@ -412,7 +420,21 @@ def _apply_gene_level_hierarchy(
         )
         return
 
-    # Non-horseshoe hierarchical: population hyper-priors + constrained param.
+    if neg_p:
+        # NEG NCP: hyper_loc + {psi, zeta} + raw z variable.
+        # The constrained param is reconstructed in _reconstruct_neg_maps.
+        distributions.update(
+            _build_hyperparameter_posteriors(params, loc_name, loc_name)
+        )
+        distributions.update(
+            _build_neg_hyperparameter_posteriors(params, prefix)
+        )
+        distributions[f"{target_name}_raw"] = _build_normal_posterior(
+            params, f"{target_name}_raw", low_rank=low_rank
+        )
+        return
+
+    # Non-horseshoe/NEG hierarchical: population hyper-priors + constrained param.
     distributions.update(
         _build_hyperparameter_posteriors(params, loc_name, scale_name)
     )
@@ -444,16 +466,18 @@ def _apply_dataset_hierarchy_mu(
 ) -> None:
     """Pass 3: override mu/r with a dataset-level hierarchical prior.
 
-    Active when ``hierarchical_dataset_mu=True`` or
-    ``horseshoe_dataset_mu=True``.  Adds dataset-level hyperparameter
-    posteriors and *replaces* the base ``"mu"`` (or ``"r"``) entry.
-    The resulting MAP has shape ``(K, D, G)`` instead of ``(K, G)``.
+    Active when ``hierarchical_dataset_mu=True``,
+    ``horseshoe_dataset_mu=True``, or ``mu_dataset_prior==NEG``.  Adds
+    dataset-level hyperparameter posteriors and *replaces* the base
+    ``"mu"`` (or ``"r"``) entry.  The resulting MAP has shape
+    ``(K, D, G)`` instead of ``(K, G)``.
     """
     hierarchical_dataset_mu = getattr(
         model_config, "hierarchical_dataset_mu", False
     )
     horseshoe_dataset_mu = getattr(model_config, "horseshoe_dataset_mu", False)
-    if not (hierarchical_dataset_mu or horseshoe_dataset_mu):
+    neg_dataset_mu = model_config.mu_dataset_prior == HierarchicalPriorType.NEG
+    if not (hierarchical_dataset_mu or horseshoe_dataset_mu or neg_dataset_mu):
         return
 
     if parameterization in (
@@ -508,6 +532,37 @@ def _apply_dataset_hierarchy_mu(
             )
         return
 
+    if neg_dataset_mu:
+        raw_name = f"{target}_raw"
+        jp = _find_joint_prefix(params, raw_name) or _find_joint_prefix(
+            params, target
+        )
+        if jp:
+            if f"{hyper_loc}_loc" in params:
+                distributions.update(
+                    _build_hyperparameter_posteriors(
+                        params, hyper_loc, hyper_loc
+                    )
+                )
+            if f"psi_{hs_prefix}_loc" in params:
+                distributions.update(
+                    _build_neg_hyperparameter_posteriors(params, hs_prefix)
+                )
+            distributions[target] = _build_joint_low_rank_posterior(
+                params, target, jp, split
+            )
+        else:
+            distributions.update(
+                _build_hyperparameter_posteriors(params, hyper_loc, hyper_loc)
+            )
+            distributions.update(
+                _build_neg_hyperparameter_posteriors(params, hs_prefix)
+            )
+            distributions[raw_name] = _build_normal_posterior(
+                params, raw_name, low_rank=low_rank
+            )
+        return
+
     distributions.update(
         _build_hyperparameter_posteriors(params, hyper_loc, hyper_scale)
     )
@@ -537,16 +592,20 @@ def _apply_dataset_hierarchy_p(
 ) -> None:
     """Pass 4: override p/phi with a dataset-level hierarchical prior.
 
-    Active when ``hierarchical_dataset_p != "none"`` or
-    ``horseshoe_dataset_p=True``.  Replaces the ``"phi"`` (or ``"p"``)
-    entry.  With ``hierarchical_dataset_p="gene_specific"`` the MAP gains
-    shape ``(K, D, G)``; with ``"scalar"`` it becomes ``(K, D)``.
+    Active when ``hierarchical_dataset_p != "none"``,
+    ``horseshoe_dataset_p=True``, or ``p_dataset_prior==NEG``.  Replaces
+    the ``"phi"`` (or ``"p"``) entry.  With
+    ``hierarchical_dataset_p="gene_specific"`` the MAP gains shape
+    ``(K, D, G)``; with ``"scalar"`` it becomes ``(K, D)``.
     """
     hierarchical_dataset_p = getattr(
         model_config, "hierarchical_dataset_p", "none"
     )
     horseshoe_dataset_p = getattr(model_config, "horseshoe_dataset_p", False)
-    if not (hierarchical_dataset_p != "none" or horseshoe_dataset_p):
+    neg_dataset_p = model_config.p_dataset_prior == HierarchicalPriorType.NEG
+    if not (
+        hierarchical_dataset_p != "none" or horseshoe_dataset_p or neg_dataset_p
+    ):
         return
 
     if parameterization in (
@@ -597,6 +656,36 @@ def _apply_dataset_hierarchy_p(
             )
         return
 
+    if neg_dataset_p:
+        jp = _find_joint_prefix(params, raw_name) or _find_joint_prefix(
+            params, target
+        )
+        if jp:
+            if f"{hyper_loc}_loc" in params:
+                distributions.update(
+                    _build_hyperparameter_posteriors(
+                        params, hyper_loc, hyper_loc
+                    )
+                )
+            if f"psi_{hs_prefix}_loc" in params:
+                distributions.update(
+                    _build_neg_hyperparameter_posteriors(params, hs_prefix)
+                )
+            distributions[target] = _build_joint_low_rank_posterior(
+                params, target, jp, split
+            )
+        else:
+            distributions.update(
+                _build_hyperparameter_posteriors(params, hyper_loc, hyper_loc)
+            )
+            distributions.update(
+                _build_neg_hyperparameter_posteriors(params, hs_prefix)
+            )
+            distributions[raw_name] = _build_normal_posterior(
+                params, raw_name, low_rank=low_rank
+            )
+        return
+
     distributions.update(
         _build_hyperparameter_posteriors(params, hyper_loc, hyper_scale)
     )
@@ -624,12 +713,13 @@ def _apply_dataset_hierarchy_gate(
 ) -> None:
     """Pass 5: override gate with a dataset-level hierarchical prior.
 
-    Active when ``hierarchical_dataset_gate=True`` or
-    ``horseshoe_dataset_gate=True``.  Replaces the ``"gate"`` entry (or
-    adds ``"gate_raw_dataset"`` for the horseshoe NCP z variable when the
-    parameter is *not* in a joint guide group).
+    Active when ``hierarchical_dataset_gate=True``,
+    ``horseshoe_dataset_gate=True``, or ``gate_dataset_prior==NEG``.
+    Replaces the ``"gate"`` entry (or adds ``"gate_raw_dataset"`` for the
+    horseshoe/NEG NCP z variable when the parameter is *not* in a joint
+    guide group).
 
-    When ``gate`` *is* in ``joint_params``, the horseshoe raw z lives
+    When ``gate`` *is* in ``joint_params``, the horseshoe/NEG raw z lives
     inside the joint block, so we check both ``"gate_raw_dataset"`` and
     ``"gate"`` for a joint prefix.
     """
@@ -639,13 +729,18 @@ def _apply_dataset_hierarchy_gate(
     horseshoe_dataset_gate = getattr(
         model_config, "horseshoe_dataset_gate", False
     )
-    if not (hierarchical_dataset_gate or horseshoe_dataset_gate):
+    neg_dataset_gate = (
+        model_config.gate_dataset_prior == HierarchicalPriorType.NEG
+    )
+    if not (
+        hierarchical_dataset_gate or horseshoe_dataset_gate or neg_dataset_gate
+    ):
         return
 
     if horseshoe_dataset_gate:
-        jp = _find_joint_prefix(params, "gate_raw_dataset") or _find_joint_prefix(
-            params, "gate"
-        )
+        jp = _find_joint_prefix(
+            params, "gate_raw_dataset"
+        ) or _find_joint_prefix(params, "gate")
         if jp:
             if "logit_gate_dataset_loc_loc" in params:
                 distributions.update(
@@ -676,6 +771,42 @@ def _apply_dataset_hierarchy_gate(
                 _build_horseshoe_hyperparameter_posteriors(
                     params, "gate_dataset"
                 )
+            )
+            distributions["gate_raw_dataset"] = _build_normal_posterior(
+                params, "gate_raw_dataset", low_rank=low_rank
+            )
+        return
+
+    if neg_dataset_gate:
+        jp = _find_joint_prefix(
+            params, "gate_raw_dataset"
+        ) or _find_joint_prefix(params, "gate")
+        if jp:
+            if "logit_gate_dataset_loc_loc" in params:
+                distributions.update(
+                    _build_hyperparameter_posteriors(
+                        params,
+                        "logit_gate_dataset_loc",
+                        "logit_gate_dataset_loc",
+                    )
+                )
+            if "psi_gate_dataset_loc" in params:
+                distributions.update(
+                    _build_neg_hyperparameter_posteriors(params, "gate_dataset")
+                )
+            distributions["gate"] = _build_joint_low_rank_posterior(
+                params, "gate", jp, split
+            )
+        else:
+            distributions.update(
+                _build_hyperparameter_posteriors(
+                    params,
+                    "logit_gate_dataset_loc",
+                    "logit_gate_dataset_loc",
+                )
+            )
+            distributions.update(
+                _build_neg_hyperparameter_posteriors(params, "gate_dataset")
             )
             distributions["gate_raw_dataset"] = _build_normal_posterior(
                 params, "gate_raw_dataset", low_rank=low_rank
@@ -713,9 +844,9 @@ def _apply_zero_inflation_gate(
 
     Active for zero-inflated models (ZINB, ZINBVCP) when the gate is
     *not* already handled by a dataset-level hierarchy pass (pass 5).
-    Handles three sub-cases: horseshoe gene-level gate, hierarchical
-    gene-level gate, or a plain gate.  Each sub-case also checks for
-    joint-prefix membership.
+    Handles four sub-cases: horseshoe gene-level gate, NEG gene-level
+    gate, hierarchical gene-level gate, or a plain gate.  Each sub-case
+    also checks for joint-prefix membership.
     """
     hierarchical_dataset_gate = getattr(
         model_config, "hierarchical_dataset_gate", False
@@ -723,13 +854,21 @@ def _apply_zero_inflation_gate(
     horseshoe_dataset_gate = getattr(
         model_config, "horseshoe_dataset_gate", False
     )
+    neg_dataset_gate = (
+        model_config.gate_dataset_prior == HierarchicalPriorType.NEG
+    )
     if not (
         model_config.is_zero_inflated
-        and not (hierarchical_dataset_gate or horseshoe_dataset_gate)
+        and not (
+            hierarchical_dataset_gate
+            or horseshoe_dataset_gate
+            or neg_dataset_gate
+        )
     ):
         return
 
     horseshoe_gate = getattr(model_config, "horseshoe_gate", False)
+    neg_gate = model_config.gate_prior == HierarchicalPriorType.NEG
     hierarchical_gate = model_config.hierarchical_gate
     joint_gate_prefix = _find_joint_prefix(params, "gate")
 
@@ -741,6 +880,20 @@ def _apply_zero_inflation_gate(
         )
         distributions.update(
             _build_horseshoe_hyperparameter_posteriors(params, "gate")
+        )
+        distributions["gate_raw"] = _build_normal_posterior(
+            params, "gate_raw", low_rank=low_rank
+        )
+        return
+
+    if neg_gate:
+        distributions.update(
+            _build_hyperparameter_posteriors(
+                params, "logit_gate_loc", "logit_gate_loc"
+            )
+        )
+        distributions.update(
+            _build_neg_hyperparameter_posteriors(params, "gate")
         )
         distributions["gate_raw"] = _build_normal_posterior(
             params, "gate_raw", low_rank=low_rank
@@ -791,9 +944,7 @@ def _apply_capture(
     if not model_config.uses_variable_capture:
         return
 
-    bio_capture = getattr(
-        model_config, "uses_biology_informed_capture", False
-    )
+    bio_capture = getattr(model_config, "uses_biology_informed_capture", False)
     shared_scaling = getattr(model_config, "shared_capture_scaling", False)
     if bio_capture or shared_scaling:
         distributions.update(
@@ -920,34 +1071,68 @@ def get_posterior_distributions(
 
     # --- Execute the pipeline (ordering matters — see docstring) ----------
 
-    _apply_base_parameterization(                                  # Pass 1
-        distributions, params, parameterization,
-        unconstrained, is_mixture, low_rank, split, skip,
+    _apply_base_parameterization(  # Pass 1
+        distributions,
+        params,
+        parameterization,
+        unconstrained,
+        is_mixture,
+        low_rank,
+        split,
+        skip,
     )
-    _apply_gene_level_hierarchy(                                   # Pass 2
-        distributions, params, model_config,
-        parameterization, is_mixture, low_rank, split,
+    _apply_gene_level_hierarchy(  # Pass 2
+        distributions,
+        params,
+        model_config,
+        parameterization,
+        is_mixture,
+        low_rank,
+        split,
     )
-    _apply_dataset_hierarchy_mu(                                   # Pass 3
-        distributions, params, model_config,
-        parameterization, is_mixture, low_rank, split,
+    _apply_dataset_hierarchy_mu(  # Pass 3
+        distributions,
+        params,
+        model_config,
+        parameterization,
+        is_mixture,
+        low_rank,
+        split,
     )
-    _apply_dataset_hierarchy_p(                                    # Pass 4
-        distributions, params, model_config,
-        parameterization, is_mixture, low_rank, split,
+    _apply_dataset_hierarchy_p(  # Pass 4
+        distributions,
+        params,
+        model_config,
+        parameterization,
+        is_mixture,
+        low_rank,
+        split,
     )
-    _apply_dataset_hierarchy_gate(                                 # Pass 5
-        distributions, params, model_config, low_rank, split,
+    _apply_dataset_hierarchy_gate(  # Pass 5
+        distributions,
+        params,
+        model_config,
+        low_rank,
+        split,
     )
-    _apply_zero_inflation_gate(                                    # Pass 6
-        distributions, params, model_config,
-        unconstrained, is_mixture, low_rank, split,
+    _apply_zero_inflation_gate(  # Pass 6
+        distributions,
+        params,
+        model_config,
+        unconstrained,
+        is_mixture,
+        low_rank,
+        split,
     )
-    _apply_capture(                                                # Pass 7
-        distributions, params, model_config,
-        parameterization, unconstrained, split,
+    _apply_capture(  # Pass 7
+        distributions,
+        params,
+        model_config,
+        parameterization,
+        unconstrained,
+        split,
     )
-    _apply_mixture_weights(distributions, params, is_mixture)      # Pass 8
+    _apply_mixture_weights(distributions, params, is_mixture)  # Pass 8
     _apply_joint_aggregation(distributions, params, model_config)  # Pass 9
 
     return distributions
@@ -1212,6 +1397,40 @@ def _build_horseshoe_hyperparameter_posteriors(
     return distributions
 
 
+def _build_neg_hyperparameter_posteriors(
+    params: Dict[str, jnp.ndarray],
+    prefix: str,
+) -> Dict[str, Any]:
+    """Build LogNormal posteriors for NEG hyperparameters.
+
+    The NEG prior uses psi (per-gene variance) and zeta (per-gene rate).
+    Both have LogNormal variational posteriors since they are positive-valued,
+    mirroring the GammaSpec guide implementation.
+
+    Parameters
+    ----------
+    params : Dict[str, jnp.ndarray]
+        Guide parameters.  Must contain ``psi_{prefix}_loc``,
+        ``psi_{prefix}_scale``, ``zeta_{prefix}_loc``, ``zeta_{prefix}_scale``.
+    prefix : str
+        Naming prefix (e.g. ``"p"``, ``"phi"``, ``"gate"``, ``"mu_dataset"``).
+
+    Returns
+    -------
+    Dict[str, Any]
+        Posterior distributions for psi and zeta.
+    """
+    distributions = {}
+
+    for role in ("psi", "zeta"):
+        name = f"{role}_{prefix}"
+        loc = params[f"{name}_loc"]
+        scale = params[f"{name}_scale"]
+        distributions[name] = dist.LogNormal(loc, scale)
+
+    return distributions
+
+
 def _build_normal_posterior(
     params: Dict[str, jnp.ndarray],
     name: str,
@@ -1246,9 +1465,7 @@ def _build_normal_posterior(
         W = params[f"{name}_W"]
         raw_diag = params[f"{name}_raw_diag"]
         D = jax.nn.softplus(raw_diag) + 1e-4
-        base = dist.LowRankMultivariateNormal(
-            loc=loc, cov_factor=W, cov_diag=D
-        )
+        base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
         return {"base": base, "transform": dist.transforms.IdentityTransform()}
 
     scale = params[f"{name}_scale"]

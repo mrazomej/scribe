@@ -31,6 +31,20 @@ ExpNormalSpec
     Normal + exp transform (support: (0, ∞)).
 SoftplusNormalSpec
     Normal + softplus transform (support: (0, ∞)).
+GammaSpec
+    Gamma-distributed parameter (support: (0, ∞)); NEG prior psi/zeta layers.
+HalfCauchySpec
+    Half-Cauchy distributed parameter; horseshoe shrinkage scales.
+InverseGammaSpec
+    Inverse-Gamma distributed parameter; horseshoe slab.
+NEGHierarchicalSigmoidNormalSpec
+    Gene-level NEG prior with Sigmoid transform (p, gate).
+NEGHierarchicalExpNormalSpec
+    Gene-level NEG prior with Exp transform (phi).
+NEGDatasetExpNormalSpec
+    Dataset-level NEG prior with Exp transform (mu).
+NEGDatasetSigmoidNormalSpec
+    Dataset-level NEG prior with Sigmoid transform (p, gate).
 LatentSpec
     Base class for latent variable specs (VAE z); params → guide distribution.
 GaussianLatentSpec
@@ -2170,6 +2184,341 @@ class InverseGammaSpec(ParamSpec):
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
 
 
+# ------------------------------------------------------------------------------
+# Gamma Distribution Parameter Specification (NEG prior hierarchy)
+# ------------------------------------------------------------------------------
+
+
+class GammaSpec(ParamSpec):
+    """Gamma-distributed parameter for NEG prior hierarchy layers.
+
+    Used for both the per-gene variance ``psi_g`` (inner layer) and the
+    per-gene rate ``zeta_g`` (outer layer) in the Normal-Exponential-Gamma
+    (NEG) prior.
+
+    The NEG hierarchy is:
+        zeta_g ~ Gamma(a, tau)        [per-gene rate]
+        psi_g  ~ Gamma(u, zeta_g)     [per-gene variance; u=1 => Exponential]
+        beta_g ~ Normal(0, sqrt(psi)) [coefficient]
+
+    Parameters
+    ----------
+    name : str
+        Parameter name (e.g. ``"psi_p"``, ``"zeta_p"``).
+    shape_dims : Tuple[str, ...]
+        Shape dimensions.  ``("n_genes",)`` for per-gene sites.
+    concentration : float
+        Shape parameter of the Gamma distribution (``u`` for psi, ``a`` for zeta).
+    rate_name : str or None
+        When set, the rate is read from ``param_values[rate_name]`` at
+        sample time (for psi, whose rate is zeta_g).  When ``None``, a
+        fixed ``rate`` is used (for zeta, whose rate is the global tau).
+    rate : float
+        Fixed rate parameter.  Only used when ``rate_name is None``.
+    default_params : Tuple[float, ...]
+        Defaults to ``(1.0, 1.0)``.
+    """
+
+    concentration: float = Field(
+        ..., description="Shape parameter of the Gamma"
+    )
+    rate_name: Optional[str] = Field(
+        None,
+        description=(
+            "Site name from which to read the rate at sample time.  "
+            "None means use the fixed 'rate' field."
+        ),
+    )
+    rate: float = Field(
+        1.0, description="Fixed rate (used when rate_name is None)"
+    )
+    default_params: Tuple[float, ...] = Field(
+        default=(1.0, 1.0),
+        description="Unused; concentration and rate set directly.",
+    )
+
+    def _get_distribution_type(self):
+        return dist.Gamma
+
+    @property
+    def constrained_name(self) -> str:
+        """Gamma is already positive; constrained name equals name."""
+        return self.name
+
+    @property
+    def support(self) -> constraints.Constraint:
+        """Return positive constraint for sampled values."""
+        return dist.Gamma.support
+
+    @property
+    def arg_constraints(self) -> Dict[str, constraints.Constraint]:
+        """Return constraints on concentration and rate (both positive)."""
+        return dist.Gamma.arg_constraints
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+
+
+# ==============================================================================
+# NEG Gene-Level Hierarchical Specifications
+# ==============================================================================
+
+
+class NEGHierarchicalSigmoidNormalSpec(HierarchicalNormalWithTransformSpec):
+    """Gene-level NEG prior with Sigmoid transform and NCP.
+
+    The Normal-Exponential-Gamma replaces the horseshoe's Half-Cauchy local
+    scales with a Gamma-Gamma hierarchy that is friendlier to SVI.
+
+    Generative model (NCP form)::
+
+        zeta_g  ~ Gamma(a, tau)          [per-gene rate]
+        psi_g   ~ Gamma(u, zeta_g)       [per-gene variance; u=1 => Exponential]
+        z_g     ~ Normal(0, 1)           [NCP raw]
+        p_g     = sigmoid(hyper_loc + sqrt(psi_g) * z_g)  [deterministic]
+
+    Parameters
+    ----------
+    name : str
+        Parameter name (e.g. ``"p"`` or ``"gate"``).
+    psi_name : str
+        Name of the per-gene variance site (``GammaSpec``).
+    zeta_name : str
+        Name of the per-gene rate site (``GammaSpec``).
+    raw_name : str
+        Sample-site name for the NCP ``z`` variable (e.g. ``"p_raw"``).
+    uses_ncp : bool
+        Always ``True`` for this spec.
+    """
+
+    psi_name: str = Field(
+        ..., description="Name of the per-gene variance Gamma site"
+    )
+    zeta_name: str = Field(
+        ..., description="Name of the per-gene rate Gamma site"
+    )
+    raw_name: str = Field(
+        ..., description="Sample-site name for the NCP z variable"
+    )
+    uses_ncp: bool = Field(
+        True, description="Flag indicating NCP parameterization"
+    )
+    transform: Transform = Field(
+        default_factory=lambda: dist.transforms.SigmoidTransform()
+    )
+
+    # ------------------------------------------------------------------
+
+    def sample_hierarchical(
+        self,
+        dims: Dict[str, int],
+        param_values: Dict[str, jnp.ndarray],
+    ) -> jnp.ndarray:
+        """Sample via NCP: z ~ N(0,1), then deterministic transform.
+
+        Parameters
+        ----------
+        dims : Dict[str, int]
+            Dimension sizes.
+        param_values : Dict[str, jnp.ndarray]
+            Must contain ``hyper_loc_name`` and ``psi_name``.
+
+        Returns
+        -------
+        jnp.ndarray
+            Constrained parameter in (0, 1).
+        """
+        loc = param_values[self.hyper_loc_name]
+        psi = param_values[self.psi_name]
+
+        shape = resolve_shape(
+            self.shape_dims,
+            dims,
+            is_mixture=self.is_mixture,
+            is_dataset=self.is_dataset,
+        )
+
+        # Effective scale from the NEG hierarchy
+        eff_scale = jnp.sqrt(psi)
+
+        # NCP: sample z ~ Normal(0, 1)
+        if shape == ():
+            z_dist = dist.Normal(0.0, 1.0)
+        else:
+            z_dist = dist.Normal(0.0, 1.0).expand(shape).to_event(len(shape))
+        z = numpyro.sample(self.raw_name, z_dist)
+
+        # Deterministic transform
+        unconstrained = loc + eff_scale * z
+        constrained = self.transform(unconstrained)
+        numpyro.deterministic(self.constrained_name, constrained)
+        return constrained
+
+
+class NEGHierarchicalExpNormalSpec(HierarchicalNormalWithTransformSpec):
+    """Gene-level NEG prior with Exp transform and NCP.
+
+    Identical to ``NEGHierarchicalSigmoidNormalSpec`` but applies an Exp
+    transform so the constrained parameter lives in ``(0, inf)``.  Used
+    for ``phi`` (odds ratio) under ``mean_odds`` parameterization.
+    """
+
+    psi_name: str = Field(
+        ..., description="Name of the per-gene variance Gamma site"
+    )
+    zeta_name: str = Field(
+        ..., description="Name of the per-gene rate Gamma site"
+    )
+    raw_name: str = Field(
+        ..., description="Sample-site name for the NCP z variable"
+    )
+    uses_ncp: bool = Field(
+        True, description="Flag indicating NCP parameterization"
+    )
+    transform: Transform = Field(
+        default_factory=lambda: dist.transforms.ExpTransform()
+    )
+
+    def sample_hierarchical(
+        self,
+        dims: Dict[str, int],
+        param_values: Dict[str, jnp.ndarray],
+    ) -> jnp.ndarray:
+        """Sample via NCP: z ~ N(0,1), then deterministic exp transform."""
+        loc = param_values[self.hyper_loc_name]
+        psi = param_values[self.psi_name]
+
+        shape = resolve_shape(
+            self.shape_dims,
+            dims,
+            is_mixture=self.is_mixture,
+            is_dataset=self.is_dataset,
+        )
+
+        eff_scale = jnp.sqrt(psi)
+
+        if shape == ():
+            z_dist = dist.Normal(0.0, 1.0)
+        else:
+            z_dist = dist.Normal(0.0, 1.0).expand(shape).to_event(len(shape))
+        z = numpyro.sample(self.raw_name, z_dist)
+
+        unconstrained = loc + eff_scale * z
+        constrained = self.transform(unconstrained)
+        numpyro.deterministic(self.constrained_name, constrained)
+        return constrained
+
+
+# ==============================================================================
+# NEG Dataset-Level Hierarchical Specifications
+# ==============================================================================
+
+
+class NEGDatasetExpNormalSpec(DatasetHierarchicalNormalWithTransformSpec):
+    """Dataset-level NEG prior with Exp transform (for mu/r datasets).
+
+    Replaces the horseshoe's Half-Cauchy scales with the NEG Gamma-Gamma
+    hierarchy at the dataset level.
+    """
+
+    psi_name: str = Field(
+        ..., description="Name of the per-gene variance Gamma site"
+    )
+    zeta_name: str = Field(
+        ..., description="Name of the per-gene rate Gamma site"
+    )
+    raw_name: str = Field(
+        ..., description="Sample-site name for the NCP z variable"
+    )
+    uses_ncp: bool = Field(
+        True, description="Flag indicating NCP parameterization"
+    )
+    transform: Transform = Field(
+        default_factory=lambda: dist.transforms.ExpTransform()
+    )
+
+    def sample_hierarchical(
+        self,
+        dims: Dict[str, int],
+        param_values: Dict[str, jnp.ndarray],
+    ) -> jnp.ndarray:
+        """Sample via NCP: z ~ N(0,1), then deterministic exp transform."""
+        loc = param_values[self.hyper_loc_name]
+        psi = param_values[self.psi_name]
+
+        shape = resolve_shape(
+            self.shape_dims,
+            dims,
+            is_mixture=self.is_mixture,
+            is_dataset=self.is_dataset,
+        )
+
+        eff_scale = jnp.sqrt(psi)
+
+        if shape == ():
+            z_dist = dist.Normal(0.0, 1.0)
+        else:
+            z_dist = dist.Normal(0.0, 1.0).expand(shape).to_event(len(shape))
+        z = numpyro.sample(self.raw_name, z_dist)
+
+        unconstrained = loc + eff_scale * z
+        constrained = self.transform(unconstrained)
+        numpyro.deterministic(self.constrained_name, constrained)
+        return constrained
+
+
+class NEGDatasetSigmoidNormalSpec(DatasetHierarchicalNormalWithTransformSpec):
+    """Dataset-level NEG prior with Sigmoid transform (for p/gate datasets).
+
+    Replaces the horseshoe's Half-Cauchy scales with the NEG Gamma-Gamma
+    hierarchy at the dataset level.
+    """
+
+    psi_name: str = Field(
+        ..., description="Name of the per-gene variance Gamma site"
+    )
+    zeta_name: str = Field(
+        ..., description="Name of the per-gene rate Gamma site"
+    )
+    raw_name: str = Field(
+        ..., description="Sample-site name for the NCP z variable"
+    )
+    uses_ncp: bool = Field(
+        True, description="Flag indicating NCP parameterization"
+    )
+    transform: Transform = Field(
+        default_factory=lambda: dist.transforms.SigmoidTransform()
+    )
+
+    def sample_hierarchical(
+        self,
+        dims: Dict[str, int],
+        param_values: Dict[str, jnp.ndarray],
+    ) -> jnp.ndarray:
+        """Sample via NCP: z ~ N(0,1), then deterministic sigmoid transform."""
+        loc = param_values[self.hyper_loc_name]
+        psi = param_values[self.psi_name]
+
+        shape = resolve_shape(
+            self.shape_dims,
+            dims,
+            is_mixture=self.is_mixture,
+            is_dataset=self.is_dataset,
+        )
+
+        eff_scale = jnp.sqrt(psi)
+
+        if shape == ():
+            z_dist = dist.Normal(0.0, 1.0)
+        else:
+            z_dist = dist.Normal(0.0, 1.0).expand(shape).to_event(len(shape))
+        z = numpyro.sample(self.raw_name, z_dist)
+
+        unconstrained = loc + eff_scale * z
+        constrained = self.transform(unconstrained)
+        numpyro.deterministic(self.constrained_name, constrained)
+        return constrained
+
+
 # ==============================================================================
 # LatentSpec — guide distribution for VAE latent z
 # ==============================================================================
@@ -2616,6 +2965,116 @@ def sample_prior(
         return numpyro.sample(
             spec.name,
             dist.InverseGamma(spec.concentration, spec.rate)
+            .expand(shape)
+            .to_event(len(shape)),
+        )
+
+
+# ------------------------------------------------------------------------------
+# Gamma Distribution Prior Sampling (NEG prior hierarchy)
+# ------------------------------------------------------------------------------
+
+
+@dispatch(GammaSpec, dict, object)
+def sample_prior(
+    spec: GammaSpec,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+) -> jnp.ndarray:
+    """Sample from Gamma prior (NEG psi/zeta layers).
+
+    When ``rate_name`` is set, the rate must be read from param_values;
+    use the 4-arg overload with param_values in that case.
+
+    Parameters
+    ----------
+    spec : GammaSpec
+        The parameter specification.
+    dims : Dict[str, int]
+        Dimension sizes.
+    model_config : ModelConfig
+        Model configuration.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled positive parameter value.
+    """
+    if spec.rate_name is not None:
+        raise ValueError(
+            f"GammaSpec '{spec.name}' has rate_name='{spec.rate_name}'; "
+            "use sample_prior(spec, dims, model_config, param_values) "
+            "to provide the rate from the dependent site."
+        )
+    shape = resolve_shape(
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
+    )
+
+    if shape == ():
+        return numpyro.sample(
+            spec.name,
+            dist.Gamma(spec.concentration, spec.rate),
+        )
+    else:
+        return numpyro.sample(
+            spec.name,
+            dist.Gamma(spec.concentration, spec.rate)
+            .expand(shape)
+            .to_event(len(shape)),
+        )
+
+
+@dispatch(GammaSpec, dict, object, dict)
+def sample_prior(
+    spec: GammaSpec,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    param_values: Dict[str, jnp.ndarray],
+) -> jnp.ndarray:
+    """Sample from Gamma prior when rate is read from another site.
+
+    Used for psi_g ~ Gamma(u, zeta_g) where zeta_g is already in param_values.
+
+    Parameters
+    ----------
+    spec : GammaSpec
+        The parameter specification.
+    dims : Dict[str, int]
+        Dimension sizes.
+    model_config : ModelConfig
+        Model configuration.
+    param_values : Dict[str, jnp.ndarray]
+        Must contain spec.rate_name when rate_name is set.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled positive parameter value.
+    """
+    rate = (
+        param_values[spec.rate_name]
+        if spec.rate_name is not None
+        else spec.rate
+    )
+    shape = resolve_shape(
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
+    )
+
+    if shape == ():
+        return numpyro.sample(
+            spec.name,
+            dist.Gamma(spec.concentration, rate),
+        )
+    else:
+        return numpyro.sample(
+            spec.name,
+            dist.Gamma(spec.concentration, rate)
             .expand(shape)
             .to_event(len(shape)),
         )
