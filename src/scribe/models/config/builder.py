@@ -84,18 +84,14 @@ class ModelConfigBuilder:
         self._inference_method: InferenceMethod = InferenceMethod.SVI
         self._unconstrained: bool = False
         self._hierarchical_mu: bool = False
-        self._hierarchical_p: bool = False
-        self._hierarchical_gate: bool = False
+        self._p_prior: str = "none"
+        self._gate_prior: str = "none"
         self._n_datasets: Optional[int] = None
         self._dataset_params: Optional[List[str]] = None
-        self._hierarchical_dataset_mu: bool = False
-        self._hierarchical_dataset_p: str = "none"
-        self._hierarchical_dataset_gate: bool = False
-        self._horseshoe_p: bool = False
-        self._horseshoe_gate: bool = False
-        self._horseshoe_dataset_mu: bool = False
-        self._horseshoe_dataset_p: bool = False
-        self._horseshoe_dataset_gate: bool = False
+        self._mu_dataset_prior: str = "none"
+        self._p_dataset_prior: str = "none"
+        self._p_dataset_mode: str = "gene_specific"
+        self._gate_dataset_prior: str = "none"
         self._horseshoe_tau0: float = 1.0
         self._horseshoe_slab_df: int = 4
         self._horseshoe_slab_scale: float = 2.0
@@ -176,25 +172,25 @@ class ModelConfigBuilder:
     # --------------------------------------------------------------------------
 
     def with_hierarchical_p(self) -> "ModelConfigBuilder":
-        """Enable gene-specific p/phi with hierarchical prior.
+        """Enable gene-specific p/phi with Gaussian hierarchical prior.
 
         Automatically enables unconstrained parameterization, which is
         required for hierarchical priors.
         """
-        self._hierarchical_p = True
+        self._p_prior = "gaussian"
         self._unconstrained = True
         return self
 
     # --------------------------------------------------------------------------
 
     def with_hierarchical_gate(self) -> "ModelConfigBuilder":
-        """Enable gene-specific gate with hierarchical prior.
+        """Enable gene-specific gate with Gaussian hierarchical prior.
 
         Automatically enables unconstrained parameterization, which is
         required for hierarchical priors. Only valid for zero-inflated
         models (zinb, zinbvcp).
         """
-        self._hierarchical_gate = True
+        self._gate_prior = "gaussian"
         self._unconstrained = True
         return self
 
@@ -632,18 +628,14 @@ class ModelConfigBuilder:
             inference_method=self._inference_method,
             unconstrained=self._unconstrained,
             hierarchical_mu=self._hierarchical_mu,
-            hierarchical_p=self._hierarchical_p,
-            hierarchical_gate=self._hierarchical_gate,
+            p_prior=self._p_prior,
+            gate_prior=self._gate_prior,
             n_datasets=self._n_datasets,
             dataset_params=self._dataset_params,
-            hierarchical_dataset_mu=self._hierarchical_dataset_mu,
-            hierarchical_dataset_p=self._hierarchical_dataset_p,
-            hierarchical_dataset_gate=self._hierarchical_dataset_gate,
-            horseshoe_p=self._horseshoe_p,
-            horseshoe_gate=self._horseshoe_gate,
-            horseshoe_dataset_mu=self._horseshoe_dataset_mu,
-            horseshoe_dataset_p=self._horseshoe_dataset_p,
-            horseshoe_dataset_gate=self._horseshoe_dataset_gate,
+            mu_dataset_prior=self._mu_dataset_prior,
+            p_dataset_prior=self._p_dataset_prior,
+            p_dataset_mode=self._p_dataset_mode,
+            gate_dataset_prior=self._gate_dataset_prior,
             horseshoe_tau0=self._horseshoe_tau0,
             horseshoe_slab_df=self._horseshoe_slab_df,
             horseshoe_slab_scale=self._horseshoe_slab_scale,

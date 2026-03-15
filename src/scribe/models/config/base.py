@@ -10,7 +10,14 @@ from pydantic import (
     computed_field,
     ConfigDict,
 )
-from .enums import ModelType, Parameterization, InferenceMethod
+import warnings
+
+from .enums import (
+    ModelType,
+    Parameterization,
+    InferenceMethod,
+    HierarchicalPriorType,
+)
 from .groups import (
     VAEConfig,
     GuideFamilyConfig,
@@ -87,28 +94,91 @@ class ModelConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     # ------------------------------------------------------------------
-    # Pickle backward compatibility: old results pickled before the
-    # hierarchical-flag refactor are missing the new boolean fields.
-    # Pydantic v2 __setstate__ does a raw dict update, so we backfill
-    # defaults for any fields absent in the pickle payload.
+    # Pickle backward compatibility: translate old boolean flags
+    # (hierarchical_p, horseshoe_p, etc.) into the new
+    # HierarchicalPriorType enum fields.  Also backfills any fields
+    # that may be absent in very old pickle payloads.
     # ------------------------------------------------------------------
 
     def __setstate__(self, state: dict) -> None:
         d = state.get("__dict__", {})
-        d.setdefault("hierarchical_p", False)
-        d.setdefault("hierarchical_gate", False)
+
+        # --- Migrate old boolean prior flags → enum fields ---------------
+        # Gene-level p/phi
+        if "hierarchical_p" in d or "horseshoe_p" in d:
+            hp = d.pop("hierarchical_p", False)
+            hs = d.pop("horseshoe_p", False)
+            if hs:
+                d.setdefault("p_prior", "horseshoe")
+            elif hp:
+                d.setdefault("p_prior", "gaussian")
+            else:
+                d.setdefault("p_prior", "none")
+
+        # Gene-level gate
+        if "hierarchical_gate" in d or "horseshoe_gate" in d:
+            hg = d.pop("hierarchical_gate", False)
+            hsg = d.pop("horseshoe_gate", False)
+            if hsg:
+                d.setdefault("gate_prior", "horseshoe")
+            elif hg:
+                d.setdefault("gate_prior", "gaussian")
+            else:
+                d.setdefault("gate_prior", "none")
+
+        # Dataset-level mu
+        if "hierarchical_dataset_mu" in d or "horseshoe_dataset_mu" in d:
+            hdm = d.pop("hierarchical_dataset_mu", False)
+            hsdm = d.pop("horseshoe_dataset_mu", False)
+            if hsdm:
+                d.setdefault("mu_dataset_prior", "horseshoe")
+            elif hdm:
+                d.setdefault("mu_dataset_prior", "gaussian")
+            else:
+                d.setdefault("mu_dataset_prior", "none")
+
+        # Dataset-level p/phi: old field was a string mode
+        # ("none"/"scalar"/"gene_specific"/"two_level") + boolean horseshoe
+        if "hierarchical_dataset_p" in d or "horseshoe_dataset_p" in d:
+            old_mode = d.pop("hierarchical_dataset_p", "none")
+            hsdp = d.pop("horseshoe_dataset_p", False)
+            if hsdp:
+                d.setdefault("p_dataset_prior", "horseshoe")
+                d.setdefault("p_dataset_mode", "gene_specific")
+            elif old_mode != "none":
+                d.setdefault("p_dataset_prior", "gaussian")
+                d.setdefault("p_dataset_mode", old_mode)
+            else:
+                d.setdefault("p_dataset_prior", "none")
+
+        # Dataset-level gate
+        if "hierarchical_dataset_gate" in d or "horseshoe_dataset_gate" in d:
+            hdg = d.pop("hierarchical_dataset_gate", False)
+            hsdg = d.pop("horseshoe_dataset_gate", False)
+            if hsdg:
+                d.setdefault("gate_dataset_prior", "horseshoe")
+            elif hdg:
+                d.setdefault("gate_dataset_prior", "gaussian")
+            else:
+                d.setdefault("gate_dataset_prior", "none")
+
+        # Remove the old hierarchical_datasets shortcut if present
+        d.pop("hierarchical_datasets", None)
+
+        # --- Backfill missing fields for very old pickles ----------------
         d.setdefault("n_datasets", None)
         d.setdefault("dataset_params", None)
-        d.setdefault("hierarchical_dataset_mu", False)
-        d.setdefault("hierarchical_dataset_p", "none")
-        d.setdefault("hierarchical_dataset_gate", False)
         d.setdefault("hierarchical_mu", False)
         d.setdefault("shared_capture_scaling", False)
         d.setdefault("joint_params", None)
+        d.setdefault("p_prior", "none")
+        d.setdefault("gate_prior", "none")
+        d.setdefault("mu_dataset_prior", "none")
+        d.setdefault("p_dataset_prior", "none")
+        d.setdefault("p_dataset_mode", "gene_specific")
+        d.setdefault("gate_dataset_prior", "none")
 
         # Migrate legacy top-level capture prior fields into priors dict.
-        # Old pickles may have capture_prior, organism, total_mrna_mean,
-        # total_mrna_log_sigma as top-level fields.
         old_capture = d.pop("capture_prior", "default")
         old_organism = d.pop("organism", None)
         old_mrna_mean = d.pop("total_mrna_mean", None)
@@ -120,8 +190,6 @@ class ModelConfig(BaseModel):
             priors_obj = PriorOverrides()
             d["priors"] = priors_obj
 
-        # Only migrate if the old fields were actually set and priors
-        # don't already have the new keys.
         extra = getattr(priors_obj, "__pydantic_extra__", None) or {}
         if old_capture == "biology_informed" or old_mrna_mean is not None:
             if "eta_capture" not in extra:
@@ -130,7 +198,6 @@ class ModelConfig(BaseModel):
                 extra["eta_capture"] = (log_M0, sigma_M)
         if old_organism is not None and "organism" not in extra:
             extra["organism"] = old_organism
-        # Rebuild PriorOverrides with merged extras
         if extra:
             d["priors"] = PriorOverrides(**extra)
 
@@ -150,19 +217,20 @@ class ModelConfig(BaseModel):
         False, description="Use unconstrained parameterization"
     )
 
-    # Hierarchical flags
-    hierarchical_p: bool = Field(
-        False,
+    # Hierarchical prior type for each parameter slot.
+    # Each field selects the prior family for one parameter at one level.
+    p_prior: HierarchicalPriorType = Field(
+        HierarchicalPriorType.NONE,
         description=(
-            "Gene-specific p/phi with hierarchical prior. "
-            "Requires unconstrained=True."
+            "Gene-level hierarchical prior for p/phi. "
+            "Requires unconstrained=True for non-NONE values."
         ),
     )
-    hierarchical_gate: bool = Field(
-        False,
+    gate_prior: HierarchicalPriorType = Field(
+        HierarchicalPriorType.NONE,
         description=(
-            "Gene-specific gate with hierarchical prior. "
-            "Only valid for zero-inflated models. Requires unconstrained=True."
+            "Gene-level hierarchical prior for gate. "
+            "Requires a zero-inflated model and unconstrained=True."
         ),
     )
     hierarchical_mu: bool = Field(
@@ -201,70 +269,42 @@ class ModelConfig(BaseModel):
             "Analogous to mixture_params but for the dataset axis."
         ),
     )
-    hierarchical_dataset_mu: bool = Field(
-        False,
+    # Dataset-level hierarchical prior types
+    mu_dataset_prior: HierarchicalPriorType = Field(
+        HierarchicalPriorType.NONE,
         description=(
-            "Hierarchical mu (or r) across datasets with learned "
-            "shrinkage parameter tau_mu. Requires n_datasets >= 2."
+            "Dataset-level hierarchical prior for mu (or r). "
+            "Requires n_datasets >= 2 and unconstrained=True."
         ),
     )
-    hierarchical_dataset_p: str = Field(
-        "none",
+    p_dataset_prior: HierarchicalPriorType = Field(
+        HierarchicalPriorType.NONE,
         description=(
-            "Dataset-level hierarchy for p/phi. Options: "
-            "'none' (shared p across datasets), "
+            "Dataset-level hierarchical prior for p/phi. "
+            "Requires n_datasets >= 2 and unconstrained=True."
+        ),
+    )
+    p_dataset_mode: str = Field(
+        "gene_specific",
+        description=(
+            "Structural mode for the dataset-level p/phi hierarchy. "
+            "Only used when p_dataset_prior is GAUSSIAN. Options: "
             "'scalar' (one p per dataset, shared across genes), "
-            "'gene_specific' (single-level: p_g per dataset-gene pair), "
-            "'two_level' (two-level hierarchy with dataset hyperparameters)."
+            "'gene_specific' (p_g per dataset-gene pair), "
+            "'two_level' (two-level hierarchy with dataset hyperparameters). "
+            "Horseshoe and NEG priors always use 'gene_specific'."
         ),
     )
-    hierarchical_dataset_gate: bool = Field(
-        False,
+    gate_dataset_prior: HierarchicalPriorType = Field(
+        HierarchicalPriorType.NONE,
         description=(
-            "Hierarchical gate across datasets with learned shrinkage. "
-            "Per-dataset, gene-specific gate values are drawn from a shared "
-            "population distribution. Requires n_datasets >= 2, "
-            "unconstrained=True, and a zero-inflated model."
+            "Dataset-level hierarchical prior for gate. "
+            "Requires n_datasets >= 2, unconstrained=True, "
+            "and a zero-inflated model."
         ),
     )
 
-    # Horseshoe prior configuration
-    horseshoe_p: bool = Field(
-        False,
-        description=(
-            "Regularized horseshoe prior for gene-level p. "
-            "Mutually exclusive with hierarchical_p."
-        ),
-    )
-    horseshoe_gate: bool = Field(
-        False,
-        description=(
-            "Regularized horseshoe prior for gene-level gate. "
-            "Mutually exclusive with hierarchical_gate."
-        ),
-    )
-    horseshoe_dataset_mu: bool = Field(
-        False,
-        description=(
-            "Regularized horseshoe prior for dataset-level mu. "
-            "Mutually exclusive with hierarchical_dataset_mu."
-        ),
-    )
-    horseshoe_dataset_p: bool = Field(
-        False,
-        description=(
-            "Regularized horseshoe prior for dataset-level p "
-            "(gene-specific). Mutually exclusive with "
-            "hierarchical_dataset_p."
-        ),
-    )
-    horseshoe_dataset_gate: bool = Field(
-        False,
-        description=(
-            "Regularized horseshoe prior for dataset-level gate. "
-            "Mutually exclusive with hierarchical_dataset_gate."
-        ),
-    )
+    # Horseshoe hyperparameters (shared by all horseshoe priors)
     horseshoe_tau0: float = Field(
         1.0,
         description="Global shrinkage scale for horseshoe Half-Cauchy prior.",
@@ -276,6 +316,32 @@ class ModelConfig(BaseModel):
     horseshoe_slab_scale: float = Field(
         2.0,
         description="Scale for horseshoe slab Inverse-Gamma.",
+    )
+
+    # NEG (Normal-Exponential-Gamma) hyperparameters.
+    # The NEG prior is a member of the TPBN family with a Gamma-Gamma
+    # hierarchy: psi_g | zeta_g ~ Gamma(u, zeta_g),
+    #            zeta_g ~ Gamma(a, tau).
+    # u=1 gives NEG (inner layer is Exponential), u=0.5 recovers horseshoe.
+    neg_u: float = Field(
+        1.0,
+        description=(
+            "TPBN shape parameter for the inner Gamma layer. "
+            "u=1 is NEG (Exponential mixing), u=0.5 is horseshoe-like."
+        ),
+    )
+    neg_a: float = Field(
+        1.0,
+        description=(
+            "TPBN tail parameter for the outer Gamma layer. "
+            "Controls polynomial tail weight."
+        ),
+    )
+    neg_tau: float = Field(
+        1.0,
+        description=(
+            "Global shrinkage rate for the outer Gamma (zeta ~ Gamma(a, tau))."
+        ),
     )
 
     # Component matching for multi-dataset mixtures.
@@ -333,7 +399,7 @@ class ModelConfig(BaseModel):
             "parameters share a single low-rank covariance structure "
             "capturing cross-parameter correlations. Supports "
             "heterogeneous dimensions: scalar parameters (e.g. phi "
-            "when hierarchical_p=False) can be mixed with gene-specific "
+            "when p_prior='none') can be mixed with gene-specific "
             "parameters (e.g. mu, gate)."
         ),
     )
@@ -400,25 +466,41 @@ class ModelConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_hierarchical_flags(self) -> "ModelConfig":
-        """Validate hierarchical flag consistency.
+        """Validate hierarchical prior configuration.
 
-        - hierarchical_gate requires a zero-inflated model.
-        - Both hierarchical flags require unconstrained=True.
-        - Dataset-level hierarchical flags require n_datasets >= 2.
+        With the enum-based config, mutual-exclusivity errors are
+        impossible by construction (each slot is a single enum value).
+        Validation focuses on structural constraints:
+
+        - Sparsity priors (HORSESHOE, NEG) require ``unconstrained=True``.
+        - Gate priors require a zero-inflated model.
+        - Dataset-level priors require ``n_datasets >= 2``.
+        - Gene-level and dataset-level p/gate priors are mutually exclusive.
         """
-        if self.hierarchical_gate and not self.is_zero_inflated:
+        _NONE = HierarchicalPriorType.NONE
+
+        # --- Gene-level p/phi ------------------------------------------------
+        if self.p_prior != _NONE and not self.unconstrained:
             raise ValueError(
-                "hierarchical_gate=True requires a zero-inflated model "
-                "(zinb or zinbvcp), but base_model="
-                f"{self.base_model!r}."
+                f"p_prior={self.p_prior.value!r} requires "
+                "unconstrained=True."
             )
-        if self.hierarchical_p and not self.unconstrained:
-            raise ValueError("hierarchical_p=True requires unconstrained=True.")
-        if self.hierarchical_gate and not self.unconstrained:
-            raise ValueError(
-                "hierarchical_gate=True requires unconstrained=True."
-            )
-        # Hierarchical mu validation
+
+        # --- Gene-level gate -------------------------------------------------
+        if self.gate_prior != _NONE:
+            if not self.is_zero_inflated:
+                raise ValueError(
+                    f"gate_prior={self.gate_prior.value!r} requires a "
+                    "zero-inflated model (zinb or zinbvcp), but "
+                    f"base_model={self.base_model!r}."
+                )
+            if not self.unconstrained:
+                raise ValueError(
+                    f"gate_prior={self.gate_prior.value!r} requires "
+                    "unconstrained=True."
+                )
+
+        # --- Hierarchical mu (mixture components) ----------------------------
         if self.hierarchical_mu and not self.unconstrained:
             raise ValueError(
                 "hierarchical_mu=True requires unconstrained=True."
@@ -429,164 +511,83 @@ class ModelConfig(BaseModel):
                 "(n_components >= 2). The hierarchical prior on mu "
                 "provides shrinkage across mixture components."
             )
-        if self.hierarchical_mu and self.hierarchical_dataset_mu:
+        if self.hierarchical_mu and self.mu_dataset_prior != _NONE:
             raise ValueError(
-                "hierarchical_mu=True and hierarchical_dataset_mu=True "
+                "hierarchical_mu=True and mu_dataset_prior != 'none' "
                 "cannot be set simultaneously. hierarchical_mu provides "
                 "shrinkage across mixture components; "
-                "hierarchical_dataset_mu across datasets."
-            )
-        # Dataset hierarchy validation
-        valid_dataset_p = {"none", "scalar", "gene_specific", "two_level"}
-        if self.hierarchical_dataset_p not in valid_dataset_p:
-            raise ValueError(
-                f"hierarchical_dataset_p must be one of {valid_dataset_p}, "
-                f"got {self.hierarchical_dataset_p!r}."
-            )
-        if self.hierarchical_dataset_mu and self.n_datasets is None:
-            raise ValueError(
-                "hierarchical_dataset_mu=True requires n_datasets >= 2."
-            )
-        if self.hierarchical_dataset_p != "none" and self.n_datasets is None:
-            raise ValueError(
-                f"hierarchical_dataset_p={self.hierarchical_dataset_p!r} "
-                "requires n_datasets >= 2."
-            )
-        if self.hierarchical_dataset_mu and not self.unconstrained:
-            raise ValueError(
-                "hierarchical_dataset_mu=True requires unconstrained=True."
-            )
-        if self.hierarchical_dataset_p != "none" and not self.unconstrained:
-            raise ValueError(
-                "hierarchical_dataset_p != 'none' requires "
-                "unconstrained=True."
-            )
-        # Prevent conflicting gene-level and dataset-level p hierarchies
-        if self.hierarchical_p and self.hierarchical_dataset_p != "none":
-            raise ValueError(
-                "hierarchical_p=True and hierarchical_dataset_p != 'none' "
-                "cannot be set simultaneously. The dataset-level hierarchy "
-                "subsumes gene-level hierarchical p."
-            )
-        # Dataset-level gate hierarchy validation
-        if self.hierarchical_dataset_gate:
-            if self.n_datasets is None:
-                raise ValueError(
-                    "hierarchical_dataset_gate=True requires n_datasets >= 2."
-                )
-            if not self.unconstrained:
-                raise ValueError(
-                    "hierarchical_dataset_gate=True requires "
-                    "unconstrained=True."
-                )
-            if not self.is_zero_inflated:
-                raise ValueError(
-                    "hierarchical_dataset_gate=True requires a zero-inflated "
-                    "model (zinb or zinbvcp), but base_model="
-                    f"{self.base_model!r}."
-                )
-        # Prevent conflicting gene-level and dataset-level gate hierarchies
-        if self.hierarchical_gate and self.hierarchical_dataset_gate:
-            raise ValueError(
-                "hierarchical_gate=True and hierarchical_dataset_gate=True "
-                "cannot be set simultaneously. The dataset-level hierarchy "
-                "subsumes gene-level hierarchical gate."
+                "mu_dataset_prior across datasets."
             )
 
-        # Horseshoe prior validation: mutually exclusive with normal hierarchy
-        if self.horseshoe_p and self.hierarchical_p:
+        # --- p_dataset_mode validation ---------------------------------------
+        valid_modes = {"scalar", "gene_specific", "two_level"}
+        if self.p_dataset_mode not in valid_modes:
             raise ValueError(
-                "horseshoe_p and hierarchical_p are mutually exclusive. "
-                "horseshoe_p already implies a hierarchical prior."
+                f"p_dataset_mode must be one of {valid_modes}, "
+                f"got {self.p_dataset_mode!r}."
             )
-        if self.horseshoe_p and not self.unconstrained:
-            raise ValueError("horseshoe_p=True requires unconstrained=True.")
-        if self.horseshoe_gate and self.hierarchical_gate:
-            raise ValueError(
-                "horseshoe_gate and hierarchical_gate are mutually exclusive. "
-                "horseshoe_gate already implies a hierarchical prior."
-            )
-        if self.horseshoe_gate and not self.unconstrained:
-            raise ValueError("horseshoe_gate=True requires unconstrained=True.")
-        if self.horseshoe_gate and not self.is_zero_inflated:
-            raise ValueError(
-                "horseshoe_gate=True requires a zero-inflated model "
-                f"(zinb or zinbvcp), but base_model={self.base_model!r}."
-            )
-        if self.horseshoe_dataset_mu and self.hierarchical_dataset_mu:
-            raise ValueError(
-                "horseshoe_dataset_mu and hierarchical_dataset_mu are "
-                "mutually exclusive. horseshoe_dataset_mu already implies "
-                "a hierarchical prior."
-            )
-        if self.horseshoe_dataset_mu:
+
+        # --- Dataset-level mu ------------------------------------------------
+        if self.mu_dataset_prior != _NONE:
             if self.n_datasets is None:
                 raise ValueError(
-                    "horseshoe_dataset_mu=True requires n_datasets >= 2."
+                    f"mu_dataset_prior={self.mu_dataset_prior.value!r} "
+                    "requires n_datasets >= 2."
                 )
             if not self.unconstrained:
                 raise ValueError(
-                    "horseshoe_dataset_mu=True requires unconstrained=True."
+                    f"mu_dataset_prior={self.mu_dataset_prior.value!r} "
+                    "requires unconstrained=True."
                 )
-        if self.horseshoe_dataset_p and self.hierarchical_dataset_p != "none":
-            raise ValueError(
-                "horseshoe_dataset_p and hierarchical_dataset_p are "
-                "mutually exclusive. horseshoe_dataset_p already implies "
-                "a gene-specific hierarchical prior."
-            )
-        if self.horseshoe_dataset_p:
+
+        # --- Dataset-level p/phi ---------------------------------------------
+        if self.p_dataset_prior != _NONE:
             if self.n_datasets is None:
                 raise ValueError(
-                    "horseshoe_dataset_p=True requires n_datasets >= 2."
+                    f"p_dataset_prior={self.p_dataset_prior.value!r} "
+                    "requires n_datasets >= 2."
                 )
             if not self.unconstrained:
                 raise ValueError(
-                    "horseshoe_dataset_p=True requires unconstrained=True."
+                    f"p_dataset_prior={self.p_dataset_prior.value!r} "
+                    "requires unconstrained=True."
                 )
-        if self.horseshoe_dataset_gate and self.hierarchical_dataset_gate:
-            raise ValueError(
-                "horseshoe_dataset_gate and hierarchical_dataset_gate are "
-                "mutually exclusive. horseshoe_dataset_gate already implies "
-                "a hierarchical prior."
-            )
-        if self.horseshoe_dataset_gate:
+
+        # --- Dataset-level gate ----------------------------------------------
+        if self.gate_dataset_prior != _NONE:
             if self.n_datasets is None:
                 raise ValueError(
-                    "horseshoe_dataset_gate=True requires n_datasets >= 2."
+                    f"gate_dataset_prior={self.gate_dataset_prior.value!r} "
+                    "requires n_datasets >= 2."
                 )
             if not self.unconstrained:
                 raise ValueError(
-                    "horseshoe_dataset_gate=True requires unconstrained=True."
+                    f"gate_dataset_prior={self.gate_dataset_prior.value!r} "
+                    "requires unconstrained=True."
                 )
             if not self.is_zero_inflated:
                 raise ValueError(
-                    "horseshoe_dataset_gate=True requires a zero-inflated "
-                    f"model (zinb or zinbvcp), but base_model="
-                    f"{self.base_model!r}."
+                    f"gate_dataset_prior={self.gate_dataset_prior.value!r} "
+                    "requires a zero-inflated model (zinb or zinbvcp), "
+                    f"but base_model={self.base_model!r}."
                 )
-        # Prevent conflicting gene-level p hierarchies with dataset-level
-        if self.horseshoe_p and self.hierarchical_dataset_p != "none":
+
+        # --- Cross-level conflicts -------------------------------------------
+        # Gene-level p + dataset-level p are mutually exclusive
+        if self.p_prior != _NONE and self.p_dataset_prior != _NONE:
             raise ValueError(
-                "horseshoe_p and hierarchical_dataset_p are mutually "
-                "exclusive. Use horseshoe_dataset_p for dataset-level."
+                f"p_prior={self.p_prior.value!r} and "
+                f"p_dataset_prior={self.p_dataset_prior.value!r} "
+                "cannot be set simultaneously. The dataset-level "
+                "hierarchy subsumes gene-level."
             )
-        if self.horseshoe_p and self.horseshoe_dataset_p:
+        # Gene-level gate + dataset-level gate are mutually exclusive
+        if self.gate_prior != _NONE and self.gate_dataset_prior != _NONE:
             raise ValueError(
-                "horseshoe_p and horseshoe_dataset_p are mutually "
-                "exclusive. The dataset-level horseshoe subsumes "
-                "gene-level."
-            )
-        # Prevent conflicting gene-level gate hierarchies with dataset-level
-        if self.horseshoe_gate and self.hierarchical_dataset_gate:
-            raise ValueError(
-                "horseshoe_gate and hierarchical_dataset_gate are mutually "
-                "exclusive."
-            )
-        if self.horseshoe_gate and self.horseshoe_dataset_gate:
-            raise ValueError(
-                "horseshoe_gate and horseshoe_dataset_gate are mutually "
-                "exclusive. The dataset-level horseshoe subsumes "
-                "gene-level."
+                f"gate_prior={self.gate_prior.value!r} and "
+                f"gate_dataset_prior={self.gate_dataset_prior.value!r} "
+                "cannot be set simultaneously. The dataset-level "
+                "hierarchy subsumes gene-level."
             )
 
         # shared_components validation: requires multi-dataset mixture setup
@@ -713,6 +714,133 @@ class ModelConfig(BaseModel):
         return self
 
     # --------------------------------------------------------------------------
+    # Deprecated backward-compat property accessors.
+    # These map old boolean flag names to the new enum fields so that
+    # existing call sites, tests, and documentation continue to work.
+    # New code should use p_prior, gate_prior, etc. directly.
+    # --------------------------------------------------------------------------
+
+    @property
+    def hierarchical_p(self) -> bool:
+        """Whether gene-level p/phi uses any hierarchical prior.
+
+        .. deprecated::
+            Use ``p_prior`` instead.
+        """
+        return self.p_prior != HierarchicalPriorType.NONE
+
+    @property
+    def horseshoe_p(self) -> bool:
+        """Whether gene-level p/phi uses the horseshoe prior.
+
+        .. deprecated::
+            Use ``p_prior`` instead.
+        """
+        return self.p_prior == HierarchicalPriorType.HORSESHOE
+
+    @property
+    def hierarchical_gate(self) -> bool:
+        """Whether gene-level gate uses any hierarchical prior.
+
+        .. deprecated::
+            Use ``gate_prior`` instead.
+        """
+        return self.gate_prior != HierarchicalPriorType.NONE
+
+    @property
+    def horseshoe_gate(self) -> bool:
+        """Whether gene-level gate uses the horseshoe prior.
+
+        .. deprecated::
+            Use ``gate_prior`` instead.
+        """
+        return self.gate_prior == HierarchicalPriorType.HORSESHOE
+
+    @property
+    def hierarchical_dataset_mu(self) -> bool:
+        """Whether dataset-level mu uses any hierarchical prior.
+
+        .. deprecated::
+            Use ``mu_dataset_prior`` instead.
+        """
+        return self.mu_dataset_prior != HierarchicalPriorType.NONE
+
+    @property
+    def horseshoe_dataset_mu(self) -> bool:
+        """Whether dataset-level mu uses the horseshoe prior.
+
+        .. deprecated::
+            Use ``mu_dataset_prior`` instead.
+        """
+        return self.mu_dataset_prior == HierarchicalPriorType.HORSESHOE
+
+    @property
+    def hierarchical_dataset_p(self) -> str:
+        """Dataset-level p/phi hierarchy mode string.
+
+        Returns ``"none"`` when ``p_dataset_prior`` is ``NONE``.
+        For horseshoe/NEG returns ``"gene_specific"``.
+        Otherwise returns ``p_dataset_mode``.
+
+        .. deprecated::
+            Use ``p_dataset_prior`` and ``p_dataset_mode`` instead.
+        """
+        if self.p_dataset_prior == HierarchicalPriorType.NONE:
+            return "none"
+        if self.p_dataset_prior in (
+            HierarchicalPriorType.HORSESHOE,
+            HierarchicalPriorType.NEG,
+        ):
+            return "gene_specific"
+        return self.p_dataset_mode
+
+    @property
+    def horseshoe_dataset_p(self) -> bool:
+        """Whether dataset-level p/phi uses the horseshoe prior.
+
+        .. deprecated::
+            Use ``p_dataset_prior`` instead.
+        """
+        return self.p_dataset_prior == HierarchicalPriorType.HORSESHOE
+
+    @property
+    def hierarchical_dataset_gate(self) -> bool:
+        """Whether dataset-level gate uses any hierarchical prior.
+
+        .. deprecated::
+            Use ``gate_dataset_prior`` instead.
+        """
+        return self.gate_dataset_prior != HierarchicalPriorType.NONE
+
+    @property
+    def horseshoe_dataset_gate(self) -> bool:
+        """Whether dataset-level gate uses the horseshoe prior.
+
+        .. deprecated::
+            Use ``gate_dataset_prior`` instead.
+        """
+        return self.gate_dataset_prior == HierarchicalPriorType.HORSESHOE
+
+    @property
+    def hierarchical_datasets(self) -> bool:
+        """Whether any dataset-level hierarchy is active.
+
+        .. deprecated::
+            Use ``mu_dataset_prior``, ``p_dataset_prior``, or
+            ``gate_dataset_prior`` instead.
+        """
+        _NONE = HierarchicalPriorType.NONE
+        return any(
+            getattr(self, f)
+            != _NONE
+            for f in (
+                "mu_dataset_prior",
+                "p_dataset_prior",
+                "gate_dataset_prior",
+            )
+        )
+
+    # --------------------------------------------------------------------------
     # Computed Fields
     # --------------------------------------------------------------------------
 
@@ -763,10 +891,11 @@ class ModelConfig(BaseModel):
         """
         Check if this model uses any hierarchical prior (mu, p/phi, or gate).
         """
+        _NONE = HierarchicalPriorType.NONE
         return (
             self.hierarchical_mu
-            or self.hierarchical_p
-            or self.hierarchical_gate
+            or self.p_prior != _NONE
+            or self.gate_prior != _NONE
         )
 
     # --------------------------------------------------------------------------
