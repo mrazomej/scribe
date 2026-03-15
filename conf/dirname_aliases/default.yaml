@@ -14,8 +14,8 @@ dirname_aliases:
     data: data
 
     # Mixture / annotation controls
-    mixture_params: mixpar
-    joint_params: jpar
+    mixture_params: mixparam
+    joint_params: jointparam
     annotation_key: annkey
     annotation_confidence: annconf
     annotation_min_cells: annmin
@@ -28,10 +28,10 @@ dirname_aliases:
     hierarchical_dataset_mu: hdmu
     hierarchical_dataset_gate: hdgate
     horseshoe_p: hsp
-    horseshoe_gate: hsg
+    horseshoe_gate: hsgate
     horseshoe_dataset_p: hsdp
     horseshoe_dataset_mu: hsdmu
-    horseshoe_dataset_gate: hsdg
+    horseshoe_dataset_gate: hsdgate
 
     # Frequently seen prior overrides
     priors.eta_capture: peta
