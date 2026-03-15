@@ -251,6 +251,28 @@ class LikelihoodMixin:
             Array of log likelihoods. Shape depends on model type, return_by and
             split_components parameters.
         """
+        # Multi-dataset models: MAP estimates carry a dataset dimension
+        # (e.g. r has shape (K, D, G)) that the per-cell likelihood
+        # functions cannot broadcast against.  Dispatch per-dataset,
+        # computing likelihoods on each dataset's cells separately via
+        # get_dataset(d), then reassemble in original cell order.
+        _n_ds = getattr(getattr(self, "model_config", None), "n_datasets", None)
+        _ds_idx = getattr(self, "_dataset_indices", None)
+        if _n_ds is not None and _ds_idx is not None:
+            return self._log_likelihood_map_per_dataset(
+                counts=counts,
+                batch_size=batch_size,
+                gene_batch_size=gene_batch_size,
+                return_by=return_by,
+                cells_axis=cells_axis,
+                split_components=split_components,
+                weights=weights,
+                weight_type=weight_type,
+                use_mean=use_mean,
+                verbose=verbose,
+                dtype=dtype,
+            )
+
         # Get the log likelihood function
         likelihood_fn = self._log_likelihood_fn()
 
@@ -365,3 +387,133 @@ class LikelihoodMixin:
                 )
 
             return log_liks
+
+    # ------------------------------------------------------------------
+    # Multi-dataset dispatch for log_likelihood_map
+    # ------------------------------------------------------------------
+
+    def _log_likelihood_map_per_dataset(
+        self,
+        counts: jnp.ndarray,
+        batch_size=None,
+        gene_batch_size=None,
+        return_by: str = "cell",
+        cells_axis: int = 0,
+        split_components: bool = False,
+        weights=None,
+        weight_type=None,
+        use_mean: bool = True,
+        verbose: bool = True,
+        dtype: jnp.dtype = jnp.float32,
+    ) -> jnp.ndarray:
+        """Compute MAP log-likelihoods by iterating over datasets.
+
+        For multi-dataset models the MAP estimates carry a dataset
+        dimension that the per-cell likelihood functions cannot
+        broadcast against.  This helper iterates over datasets using
+        ``get_dataset(d)`` (which strips the dataset dimension) and
+        reassembles the per-dataset results.
+
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            Full count matrix, shape ``(n_cells, n_genes)``.
+        batch_size, gene_batch_size, return_by, cells_axis,
+        split_components, weights, weight_type, use_mean, verbose, dtype
+            Forwarded verbatim to the single-dataset
+            ``log_likelihood_map`` call.
+
+        Returns
+        -------
+        jnp.ndarray
+            Same shape contract as ``log_likelihood_map``.
+        """
+        dataset_indices = np.asarray(self._dataset_indices).reshape(-1)
+        unique_ds = np.unique(dataset_indices)
+
+        if return_by == "cell":
+            # Collect per-dataset results and stitch back in cell order.
+            # Probe shape from the first dataset to pre-allocate.
+            first_mask = dataset_indices == unique_ds[0]
+            first_counts = (
+                counts[first_mask] if cells_axis == 0
+                else counts[:, first_mask]
+            )
+            ds0 = self.get_dataset(int(unique_ds[0]))
+            first_liks = ds0.log_likelihood_map(
+                first_counts,
+                batch_size=batch_size,
+                gene_batch_size=gene_batch_size,
+                return_by=return_by,
+                cells_axis=cells_axis,
+                split_components=split_components,
+                weights=weights,
+                weight_type=weight_type,
+                use_mean=use_mean,
+                verbose=verbose,
+                dtype=dtype,
+            )
+
+            n_cells = counts.shape[0] if cells_axis == 0 else counts.shape[1]
+            if first_liks.ndim == 1:
+                result = np.zeros(n_cells, dtype=dtype)
+            else:
+                result = np.zeros(
+                    (n_cells, first_liks.shape[-1]), dtype=dtype
+                )
+            result[first_mask] = np.asarray(first_liks)
+
+            for d in unique_ds[1:]:
+                mask = dataset_indices == d
+                ds_counts = (
+                    counts[mask] if cells_axis == 0
+                    else counts[:, mask]
+                )
+                ds_results = self.get_dataset(int(d))
+                ds_liks = ds_results.log_likelihood_map(
+                    ds_counts,
+                    batch_size=batch_size,
+                    gene_batch_size=gene_batch_size,
+                    return_by=return_by,
+                    cells_axis=cells_axis,
+                    split_components=split_components,
+                    weights=weights,
+                    weight_type=weight_type,
+                    use_mean=use_mean,
+                    verbose=verbose and d == unique_ds[1],
+                    dtype=dtype,
+                )
+                result[mask] = np.asarray(ds_liks)
+
+            return jnp.array(result)
+
+        else:
+            # return_by="gene": each dataset contributes a partial
+            # gene-level sum; add them together.
+            accumulated = None
+            for d in unique_ds:
+                mask = dataset_indices == d
+                ds_counts = (
+                    counts[mask] if cells_axis == 0
+                    else counts[:, mask]
+                )
+                ds_results = self.get_dataset(int(d))
+                ds_liks = ds_results.log_likelihood_map(
+                    ds_counts,
+                    batch_size=batch_size,
+                    gene_batch_size=gene_batch_size,
+                    return_by=return_by,
+                    cells_axis=cells_axis,
+                    split_components=split_components,
+                    weights=weights,
+                    weight_type=weight_type,
+                    use_mean=use_mean,
+                    verbose=verbose and d == unique_ds[0],
+                    dtype=dtype,
+                )
+                if accumulated is None:
+                    accumulated = ds_liks
+                else:
+                    accumulated = accumulated + ds_liks
+
+            return accumulated
