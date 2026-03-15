@@ -1185,6 +1185,73 @@ class TestMixtureDatasetComposition:
         assert r_specs[0].is_dataset is True
         assert r_specs[0].is_mixture is False
 
+    def test_datasetify_gate_preserves_is_mixture(self):
+        """_datasetify_gate propagates is_mixture to both hier spec and hyper_loc.
+
+        Regression test for a bug where the logit_gate_dataset_loc hyperprior
+        was created without is_mixture, giving it shape (G,) instead of (K, G)
+        when gate was a mixture parameter.  This caused a broadcast failure
+        in sample_hierarchical: Normal((G, 1)).expand((K, D, G)) → ValueError.
+        """
+        from scribe.models.presets.factory import _datasetify_gate
+
+        # Simulate a mixture-aware gate spec (as produced by Step 5)
+        original_gate = SigmoidNormalSpec(
+            name="gate",
+            shape_dims=("n_genes",),
+            default_params=(-5.0, 1.0),
+            is_gene_specific=True,
+            is_mixture=True,
+            unconstrained=True,
+        )
+        result_specs = _datasetify_gate(
+            param_specs=[original_gate],
+            guide_families={},
+            n_datasets=2,
+        )
+
+        # The dataset-hierarchical gate spec must preserve is_mixture
+        gate_specs = [s for s in result_specs if s.name == "gate"]
+        assert len(gate_specs) == 1
+        assert gate_specs[0].is_dataset is True
+        assert gate_specs[0].is_mixture is True
+
+        # The hyper_loc must also be mixture-aware so its shape is (K, G)
+        hyper_loc_specs = [
+            s for s in result_specs if s.name == "logit_gate_dataset_loc"
+        ]
+        assert len(hyper_loc_specs) == 1
+        assert getattr(hyper_loc_specs[0], "is_mixture", False) is True
+
+    def test_datasetify_gate_non_mixture_stays_non_mixture(self):
+        """_datasetify_gate does not add is_mixture when original lacks it."""
+        from scribe.models.presets.factory import _datasetify_gate
+
+        original_gate = SigmoidNormalSpec(
+            name="gate",
+            shape_dims=("n_genes",),
+            default_params=(-5.0, 1.0),
+            is_gene_specific=True,
+            is_mixture=False,
+            unconstrained=True,
+        )
+        result_specs = _datasetify_gate(
+            param_specs=[original_gate],
+            guide_families={},
+            n_datasets=2,
+        )
+
+        gate_specs = [s for s in result_specs if s.name == "gate"]
+        assert len(gate_specs) == 1
+        assert gate_specs[0].is_dataset is True
+        assert gate_specs[0].is_mixture is False
+
+        hyper_loc_specs = [
+            s for s in result_specs if s.name == "logit_gate_dataset_loc"
+        ]
+        assert len(hyper_loc_specs) == 1
+        assert getattr(hyper_loc_specs[0], "is_mixture", False) is False
+
 
 # ==============================================================================
 # Integration: create_model end-to-end with multi-dataset configs

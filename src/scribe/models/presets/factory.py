@@ -1254,6 +1254,11 @@ def _datasetify_gate(
     ``DatasetHierarchicalSigmoidNormalSpec`` that produces per-dataset,
     gene-specific gate values.
 
+    When the original gate is mixture-aware (``is_mixture=True``), the
+    population hyperprior ``hyper_loc`` is also made per-component so
+    that each cell type gets its own population logit-gate profile
+    (shape ``(K, G)`` instead of ``(G,)``).
+
     Unlike ``_datasetify_mu``/``_datasetify_p``, the gate is always on
     the logit scale regardless of parameterization, so no ``param_key``
     dispatch is needed.
@@ -1279,25 +1284,29 @@ def _datasetify_gate(
 
     gate_family = guide_families.get("gate")
 
-    # Population-level hyperparameters
-    hyper_loc = NormalWithTransformSpec(
-        name=hyper_loc_name,
-        shape_dims=("n_genes",),
-        default_params=(-5.0, 1.0),
-        is_gene_specific=True,
-    )
-    hyper_scale = SoftplusNormalSpec(
-        name=hyper_scale_name,
-        shape_dims=(),
-        default_params=(-2.0, 0.5),
-    )
-
     new_specs = []
     for spec in param_specs:
         if spec.name == "gate":
             # Preserve is_mixture from the original spec so the dataset-
             # hierarchical parameter keeps its component dimension.
             orig_is_mixture = getattr(spec, "is_mixture", False)
+
+            # Population-level hyperparameters — per-component when gate
+            # is mixture-aware so each cell type gets its own population
+            # logit-gate profile (shape (K, G) instead of (G,)).
+            hyper_loc = NormalWithTransformSpec(
+                name=hyper_loc_name,
+                shape_dims=("n_genes",),
+                default_params=(-5.0, 1.0),
+                is_gene_specific=True,
+                is_mixture=orig_is_mixture,
+            )
+            hyper_scale = SoftplusNormalSpec(
+                name=hyper_scale_name,
+                shape_dims=(),
+                default_params=(-2.0, 0.5),
+            )
+
             hier_spec = DatasetHierarchicalSigmoidNormalSpec(
                 name="gate",
                 shape_dims=("n_genes",),
