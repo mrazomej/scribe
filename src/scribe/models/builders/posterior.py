@@ -1,9 +1,56 @@
 """
 Posterior distribution extraction for the composable builder system.
 
-This module provides functions to extract posterior distributions from
-optimized variational parameters. It replaces the parameterization-specific
-`get_posterior_distributions` functions in the deprecated model files.
+Reconstructs numpyro posterior distributions from the optimized variational
+parameters produced by SVI inference.  The public entry point is
+:func:`get_posterior_distributions`.
+
+Architecture
+------------
+The module is organised into four layers, top-to-bottom:
+
+1. **Orchestrator** — ``get_posterior_distributions``
+   A short, linear pipeline that calls each ``_apply_*`` pass in a fixed
+   order.  Each pass may *add* or *override* keys in the shared
+   ``distributions`` dict.  The ordering matters: later passes (e.g.
+   dataset hierarchy) intentionally replace keys set by earlier ones (e.g.
+   base parameterization) when a hierarchical or horseshoe prior is active.
+
+2. **Pipeline passes** — ``_apply_base_parameterization``, …,
+   ``_apply_joint_aggregation``
+   One function per concern (base params, gene-level hierarchy, three
+   dataset-level hierarchies, zero-inflation gate, capture probability,
+   mixture weights, joint aggregation).  Each pass is a no-op when its
+   config flags are off, so the pipeline is safe for any ``ModelConfig``.
+
+3. **Parameterization builders** — ``_build_canonical_posteriors``,
+   ``_build_mean_prob_posteriors``, ``_build_mean_odds_posteriors``
+   Mid-level helpers that translate a parameterization family into the
+   correct set of distribution constructors.
+
+4. **Leaf builders** — ``_build_beta_posterior``, ``_build_lognormal_posterior``,
+   ``_build_low_rank_exp_normal_posterior``, etc.
+   Low-level functions that construct a single numpyro distribution object
+   from raw variational parameters (``_loc``, ``_scale``, ``_W``,
+   ``_raw_diag``, ``_alpha``, ``_beta``).
+
+Joint-prefix pattern
+~~~~~~~~~~~~~~~~~~~~
+When parameters are modelled jointly via ``JointLowRankGuide``, their
+variational params live under a ``joint_{group}_{name}_*`` key namespace
+instead of the usual ``{name}_loc`` / ``{name}_scale``.  Every pass that
+builds a distribution calls ``_find_joint_prefix(params, name)`` first; if
+a joint prefix is found, ``_build_joint_low_rank_posterior`` is used to
+reconstruct the marginal from the joint block.
+
+Output contract
+~~~~~~~~~~~~~~~
+The returned dict maps logical parameter names to either:
+
+- A numpyro ``Distribution`` (constrained guides, e.g. ``dist.Beta``).
+- A ``{"base": Distribution, "transform": Transform}`` dict (unconstrained
+  / low-rank guides — consumed by ``get_map`` and sampling code).
+- A ``"joint:{group}"`` key with the full stacked joint distribution.
 
 Functions
 ---------
@@ -15,13 +62,12 @@ Examples
 >>> from scribe.models.builders.posterior import get_posterior_distributions
 >>> from scribe.models.config import ModelConfig
 >>>
->>> # After SVI inference
 >>> posteriors = get_posterior_distributions(
 ...     params=svi_results.params,
 ...     model_config=model_config,
 ... )
->>> p_dist = posteriors["p"]  # Beta distribution
->>> r_dist = posteriors["r"]  # LogNormal distribution
+>>> p_dist = posteriors["p"]
+>>> r_dist = posteriors["r"]
 """
 
 from __future__ import annotations
@@ -40,7 +86,14 @@ if TYPE_CHECKING:
 
 
 # =============================================================================
-# Joint low-rank key resolution helpers
+# Joint low-rank helpers
+# =============================================================================
+#
+# When ``joint_params`` is configured, the JointLowRankGuide stores
+# variational parameters under ``joint_{group}_{name}_loc/W/raw_diag``
+# instead of the usual ``{name}_loc/scale``.  The three helpers below
+# resolve these keys and reconstruct either per-parameter marginals or the
+# full stacked joint distribution.
 # =============================================================================
 
 
@@ -191,81 +244,54 @@ def _build_joint_full_distribution(
     }
 
 
-def get_posterior_distributions(
-    params: Dict[str, jnp.ndarray],
-    model_config: ModelConfig,
-    split: bool = False,
-) -> Dict[str, Any]:
-    """
-    Extract posterior distributions from optimized variational guide parameters.
+# =============================================================================
+# Pipeline passes
+# =============================================================================
+#
+# Each ``_apply_*`` function implements one concern of the posterior
+# extraction pipeline.  They share a common pattern:
+#
+#   1. Check config flags — return immediately when the concern is inactive.
+#   2. Resolve param names for the active parameterization family.
+#   3. Check for a joint-prefix (``_find_joint_prefix``) before falling back
+#      to individual ``_loc/_scale`` params.
+#   4. Add or *override* entries in the shared ``distributions`` dict.
+#
+# Override semantics: later passes intentionally replace keys set by the
+# base pass.  For example, when ``hierarchical_dataset_p`` is active,
+# ``_apply_dataset_hierarchy_p`` replaces the ``"phi"`` entry originally
+# written by ``_apply_base_parameterization``.
+# =============================================================================
 
-    This function constructs numpyro distributions from the variational
-    parameters learned during SVI inference. It handles all parameterizations
-    (canonical/standard, mean_prob/linked, mean_odds/odds_ratio) and both
-    constrained and unconstrained variants.
+
+def _build_base_skip_set(
+    model_config: ModelConfig, parameterization: Parameterization
+) -> set[str]:
+    """Determine which base params to skip because a horseshoe replaces them.
+
+    When a horseshoe NCP prior is active for a parameter, the base guide
+    site (e.g. ``phi_loc/phi_scale``) does not exist — the horseshoe
+    creates ``phi_raw_loc/phi_raw_scale`` (the z variable) plus its own
+    hyperparameters instead.  The base builder must skip these names to
+    avoid ``KeyError``s on missing params.
 
     Parameters
     ----------
-    params : Dict[str, jnp.ndarray]
-        Dictionary of optimized variational parameters from SVI inference.
-        Expected keys depend on the parameterization:
-            - canonical/standard: p_alpha, p_beta, r_loc, r_scale
-            - mean_prob/linked: p_alpha, p_beta, mu_loc, mu_scale
-            - mean_odds/odds_ratio: phi_alpha, phi_beta, mu_loc, mu_scale
-        For unconstrained: uses _loc, _scale instead of _alpha, _beta
     model_config : ModelConfig
-        Model configuration specifying parameterization and model type.
-    split : bool, default=False
-        If True, return lists of univariate distributions for vector-valued
-        parameters (e.g., one distribution per gene). If False, return
-        batched distributions.
+        Model configuration carrying horseshoe flags.
+    parameterization : Parameterization
+        Active parameterization enum.
 
     Returns
     -------
-    Dict[str, Union[dist.Distribution, List[dist.Distribution]]]
-        Dictionary mapping parameter names to their posterior distributions.
-        For unconstrained parameterizations, returns TransformedDistribution
-        objects.
-
-    Examples
-    --------
-    >>> posteriors = get_posterior_distributions(params, model_config)
-    >>> p_posterior = posteriors["p"]
-    >>> r_posterior = posteriors["r"]
-    >>>
-    >>> # Get samples from posterior
-    >>> p_samples = p_posterior.sample(random.PRNGKey(0), (1000,))
+    set of str
+        Parameter names to skip in base extraction.
     """
-    distributions = {}
-    parameterization = model_config.parameterization
-    unconstrained = model_config.unconstrained
-    is_mixture = model_config.is_mixture
-    is_zero_inflated = model_config.is_zero_inflated
-    uses_vcp = model_config.uses_variable_capture
-
-    # Check if this is a low-rank guide by looking for low-rank parameters
-    # Constrained: log_r_W, log_r_raw_diag
-    # Unconstrained: r_W, r_raw_diag
-    low_rank = any(
-        key.endswith("_W") and f"{key.replace('_W', '_raw_diag')}" in params
-        for key in params.keys()
-    )
-
-    hierarchical_p = model_config.hierarchical_p
-    hierarchical_gate = model_config.hierarchical_gate
-
-    # -------------------------------------------------------------------------
-    # Build distributions based on base parameterization.
-    # Horseshoe NCP replaces guide params (e.g. phi_loc -> phi_raw_dataset_loc)
-    # so the base builders must skip those parameters to avoid KeyErrors.
-    # -------------------------------------------------------------------------
+    skip: set[str] = set()
     horseshoe_p = getattr(model_config, "horseshoe_p", False)
     horseshoe_dataset_p = getattr(model_config, "horseshoe_dataset_p", False)
-    horseshoe_dataset_mu = getattr(
-        model_config, "horseshoe_dataset_mu", False
-    )
+    horseshoe_dataset_mu = getattr(model_config, "horseshoe_dataset_mu", False)
 
-    skip = set()
     if horseshoe_p or horseshoe_dataset_p:
         if parameterization in (
             Parameterization.MEAN_ODDS,
@@ -282,7 +308,27 @@ def get_posterior_distributions(
             skip.add("r")
         else:
             skip.add("mu")
+    return skip
 
+
+def _apply_base_parameterization(
+    distributions: Dict[str, Any],
+    params: Dict[str, jnp.ndarray],
+    parameterization: Parameterization,
+    unconstrained: bool,
+    is_mixture: bool,
+    low_rank: bool,
+    split: bool,
+    skip: set[str],
+) -> None:
+    """Pass 1: build posteriors for the core model parameters.
+
+    Dispatches to the parameterization-specific builder (canonical,
+    mean_prob, or mean_odds) which populates ``distributions`` with the
+    primary model parameters (``r``/``p``, ``mu``/``p``, or ``mu``/``phi``).
+    Parameters in *skip* are omitted because a horseshoe pass will handle
+    them later.
+    """
     if parameterization in (
         Parameterization.CANONICAL,
         Parameterization.STANDARD,
@@ -313,265 +359,295 @@ def get_posterior_distributions(
     else:
         raise ValueError(f"Unknown parameterization: {parameterization}")
 
-    # -------------------------------------------------------------------------
-    # Override p/phi with hierarchical version (normal or horseshoe)
-    # -------------------------------------------------------------------------
+
+def _apply_gene_level_hierarchy(
+    distributions: Dict[str, Any],
+    params: Dict[str, jnp.ndarray],
+    model_config: ModelConfig,
+    parameterization: Parameterization,
+    is_mixture: bool,
+    low_rank: bool,
+    split: bool,
+) -> None:
+    """Pass 2: override p/phi with a gene-level hierarchical prior.
+
+    Active when ``hierarchical_p=True`` or ``horseshoe_p=True``.  Adds
+    hyperparameter posteriors (loc/scale of the population prior) and
+    *replaces* the base ``"p"`` or ``"phi"`` entry with the gene-level
+    distribution.
+
+    Horseshoe variant: adds the horseshoe trio (tau, lambda, c_sq) and
+    the NCP raw z variable instead of the constrained parameter.
+    """
+    hierarchical_p = model_config.hierarchical_p
     horseshoe_p = getattr(model_config, "horseshoe_p", False)
-    if hierarchical_p or horseshoe_p:
-        if parameterization in (
-            Parameterization.MEAN_ODDS,
-            Parameterization.ODDS_RATIO,
-        ):
-            target_name = "phi"
-            loc_name = "log_phi_loc"
-            scale_name = "log_phi_scale"
-            prefix = "phi"
-        else:
-            target_name = "p"
-            loc_name = "logit_p_loc"
-            scale_name = "logit_p_scale"
-            prefix = "p"
+    if not (hierarchical_p or horseshoe_p):
+        return
 
-        if horseshoe_p:
-            # Horseshoe: hyper_loc + horseshoe trio + raw z
-            distributions.update(
-                _build_hyperparameter_posteriors(
-                    params, loc_name, loc_name
-                )
-            )
-            distributions.update(
-                _build_horseshoe_hyperparameter_posteriors(params, prefix)
-            )
-            distributions[f"{target_name}_raw"] = _build_normal_posterior(
-                params, f"{target_name}_raw", low_rank=low_rank
-            )
-        else:
-            distributions.update(
-                _build_hyperparameter_posteriors(
-                    params, loc_name, scale_name
-                )
-            )
-            # Check if this param is part of a joint guide
-            jp = _find_joint_prefix(params, target_name)
-            if jp:
-                distributions[target_name] = _build_joint_low_rank_posterior(
-                    params, target_name, jp, split
-                )
-            elif target_name == "phi":
-                distributions[target_name] = _build_exp_normal_posterior(
-                    params, target_name, is_mixture, split, is_scalar=False
-                )
-            else:
-                distributions[target_name] = _build_sigmoid_normal_posterior(
-                    params, target_name, is_scalar=False, split=split
-                )
+    if parameterization in (
+        Parameterization.MEAN_ODDS,
+        Parameterization.ODDS_RATIO,
+    ):
+        target_name = "phi"
+        loc_name = "log_phi_loc"
+        scale_name = "log_phi_scale"
+        prefix = "phi"
+    else:
+        target_name = "p"
+        loc_name = "logit_p_loc"
+        scale_name = "logit_p_scale"
+        prefix = "p"
 
-    # -------------------------------------------------------------------------
-    # Dataset-level hierarchical mu/r: hyperparameters + per-dataset override
-    # -------------------------------------------------------------------------
+    if horseshoe_p:
+        # Horseshoe NCP: hyper_loc + {tau, lambda, c_sq} + raw z variable.
+        # The constrained param is reconstructed in _reconstruct_horseshoe_maps.
+        distributions.update(
+            _build_hyperparameter_posteriors(params, loc_name, loc_name)
+        )
+        distributions.update(
+            _build_horseshoe_hyperparameter_posteriors(params, prefix)
+        )
+        distributions[f"{target_name}_raw"] = _build_normal_posterior(
+            params, f"{target_name}_raw", low_rank=low_rank
+        )
+        return
+
+    # Non-horseshoe hierarchical: population hyper-priors + constrained param.
+    distributions.update(
+        _build_hyperparameter_posteriors(params, loc_name, scale_name)
+    )
+    # If this param lives inside a JointLowRankGuide, extract its marginal
+    # from the joint block instead of building from individual _loc/_scale.
+    jp = _find_joint_prefix(params, target_name)
+    if jp:
+        distributions[target_name] = _build_joint_low_rank_posterior(
+            params, target_name, jp, split
+        )
+    elif target_name == "phi":
+        distributions[target_name] = _build_exp_normal_posterior(
+            params, target_name, is_mixture, split, is_scalar=False
+        )
+    else:
+        distributions[target_name] = _build_sigmoid_normal_posterior(
+            params, target_name, is_scalar=False, split=split
+        )
+
+
+def _apply_dataset_hierarchy_mu(
+    distributions: Dict[str, Any],
+    params: Dict[str, jnp.ndarray],
+    model_config: ModelConfig,
+    parameterization: Parameterization,
+    is_mixture: bool,
+    low_rank: bool,
+    split: bool,
+) -> None:
+    """Pass 3: override mu/r with a dataset-level hierarchical prior.
+
+    Active when ``hierarchical_dataset_mu=True`` or
+    ``horseshoe_dataset_mu=True``.  Adds dataset-level hyperparameter
+    posteriors and *replaces* the base ``"mu"`` (or ``"r"``) entry.
+    The resulting MAP has shape ``(K, D, G)`` instead of ``(K, G)``.
+    """
     hierarchical_dataset_mu = getattr(
         model_config, "hierarchical_dataset_mu", False
     )
+    horseshoe_dataset_mu = getattr(model_config, "horseshoe_dataset_mu", False)
+    if not (hierarchical_dataset_mu or horseshoe_dataset_mu):
+        return
+
+    if parameterization in (
+        Parameterization.CANONICAL,
+        Parameterization.STANDARD,
+    ):
+        hyper_loc = "log_r_dataset_loc"
+        hyper_scale = "log_r_dataset_scale"
+        target = "r"
+        hs_prefix = "r_dataset"
+    else:
+        hyper_loc = "log_mu_dataset_loc"
+        hyper_scale = "log_mu_dataset_scale"
+        target = "mu"
+        hs_prefix = "mu_dataset"
+
+    if horseshoe_dataset_mu:
+        raw_name = f"{target}_raw"
+        # When joint_params includes the target, the horseshoe raw z lives
+        # inside the joint block under either "{target}_raw" or "{target}".
+        # Try both to find the joint prefix.
+        jp = _find_joint_prefix(params, raw_name) or _find_joint_prefix(
+            params, target
+        )
+        if jp:
+            # Joint path: hyper-priors may still have individual params
+            # (they are not folded into the joint guide).
+            if f"{hyper_loc}_loc" in params:
+                distributions.update(
+                    _build_hyperparameter_posteriors(
+                        params, hyper_loc, hyper_loc
+                    )
+                )
+            if f"tau_{hs_prefix}_loc" in params:
+                distributions.update(
+                    _build_horseshoe_hyperparameter_posteriors(
+                        params, hs_prefix
+                    )
+                )
+            distributions[target] = _build_joint_low_rank_posterior(
+                params, target, jp, split
+            )
+        else:
+            distributions.update(
+                _build_hyperparameter_posteriors(params, hyper_loc, hyper_loc)
+            )
+            distributions.update(
+                _build_horseshoe_hyperparameter_posteriors(params, hs_prefix)
+            )
+            distributions[raw_name] = _build_normal_posterior(
+                params, raw_name, low_rank=low_rank
+            )
+        return
+
+    distributions.update(
+        _build_hyperparameter_posteriors(params, hyper_loc, hyper_scale)
+    )
+    jp = _find_joint_prefix(params, target)
+    if jp:
+        distributions[target] = _build_joint_low_rank_posterior(
+            params, target, jp, split
+        )
+    elif low_rank:
+        distributions[target] = _build_low_rank_exp_normal_posterior(
+            params, target, is_mixture, split
+        )
+    else:
+        distributions[target] = _build_exp_normal_posterior(
+            params, target, is_mixture, split
+        )
+
+
+def _apply_dataset_hierarchy_p(
+    distributions: Dict[str, Any],
+    params: Dict[str, jnp.ndarray],
+    model_config: ModelConfig,
+    parameterization: Parameterization,
+    is_mixture: bool,
+    low_rank: bool,
+    split: bool,
+) -> None:
+    """Pass 4: override p/phi with a dataset-level hierarchical prior.
+
+    Active when ``hierarchical_dataset_p != "none"`` or
+    ``horseshoe_dataset_p=True``.  Replaces the ``"phi"`` (or ``"p"``)
+    entry.  With ``hierarchical_dataset_p="gene_specific"`` the MAP gains
+    shape ``(K, D, G)``; with ``"scalar"`` it becomes ``(K, D)``.
+    """
     hierarchical_dataset_p = getattr(
         model_config, "hierarchical_dataset_p", "none"
     )
-
-    horseshoe_dataset_mu = getattr(
-        model_config, "horseshoe_dataset_mu", False
-    )
-    if hierarchical_dataset_mu or horseshoe_dataset_mu:
-        if parameterization in (
-            Parameterization.CANONICAL,
-            Parameterization.STANDARD,
-        ):
-            hyper_loc = "log_r_dataset_loc"
-            hyper_scale = "log_r_dataset_scale"
-            target = "r"
-            hs_prefix = "r_dataset"
-        else:
-            hyper_loc = "log_mu_dataset_loc"
-            hyper_scale = "log_mu_dataset_scale"
-            target = "mu"
-            hs_prefix = "mu_dataset"
-
-        if horseshoe_dataset_mu:
-            # Horseshoe NCP: raw z may be in a joint group when
-            # joint_params includes the target parameter.
-            raw_name = f"{target}_raw"
-            jp = (
-                _find_joint_prefix(params, raw_name)
-                or _find_joint_prefix(params, target)
-            )
-            if jp:
-                if f"{hyper_loc}_loc" in params:
-                    distributions.update(
-                        _build_hyperparameter_posteriors(
-                            params, hyper_loc, hyper_loc
-                        )
-                    )
-                if f"tau_{hs_prefix}_loc" in params:
-                    distributions.update(
-                        _build_horseshoe_hyperparameter_posteriors(
-                            params, hs_prefix
-                        )
-                    )
-                distributions[target] = _build_joint_low_rank_posterior(
-                    params, target, jp, split
-                )
-            else:
-                distributions.update(
-                    _build_hyperparameter_posteriors(
-                        params, hyper_loc, hyper_loc
-                    )
-                )
-                distributions.update(
-                    _build_horseshoe_hyperparameter_posteriors(
-                        params, hs_prefix
-                    )
-                )
-                distributions[raw_name] = _build_normal_posterior(
-                    params, raw_name, low_rank=low_rank
-                )
-        else:
-            distributions.update(
-                _build_hyperparameter_posteriors(
-                    params, hyper_loc, hyper_scale
-                )
-            )
-            # When mu/r is part of a joint guide group, the individual
-            # {target}_loc / {target}_scale params don't exist — they
-            # live inside the joint block.  Check for joint prefix first.
-            jp = _find_joint_prefix(params, target)
-            if jp:
-                distributions[target] = _build_joint_low_rank_posterior(
-                    params, target, jp, split
-                )
-            elif low_rank:
-                distributions[target] = _build_low_rank_exp_normal_posterior(
-                    params, target, is_mixture, split
-                )
-            else:
-                distributions[target] = _build_exp_normal_posterior(
-                    params, target, is_mixture, split
-                )
-
-    # -------------------------------------------------------------------------
-    # Dataset-level hierarchical p/phi: hyperparameters + per-dataset override
-    # -------------------------------------------------------------------------
     horseshoe_dataset_p = getattr(model_config, "horseshoe_dataset_p", False)
-    if hierarchical_dataset_p != "none" or horseshoe_dataset_p:
-        if parameterization in (
-            Parameterization.MEAN_ODDS,
-            Parameterization.ODDS_RATIO,
-        ):
-            hyper_loc = "log_phi_dataset_loc"
-            hyper_scale = "log_phi_dataset_scale"
-            target = "phi"
-            hs_prefix = "phi_dataset"
-            raw_name = "phi_raw_dataset"
-        else:
-            hyper_loc = "logit_p_dataset_loc"
-            hyper_scale = "logit_p_dataset_scale"
-            target = "p"
-            hs_prefix = "p_dataset"
-            raw_name = "p_raw_dataset"
+    if not (hierarchical_dataset_p != "none" or horseshoe_dataset_p):
+        return
 
-        if horseshoe_dataset_p:
-            # Horseshoe NCP: raw z may be in a joint group
-            jp = (
-                _find_joint_prefix(params, raw_name)
-                or _find_joint_prefix(params, target)
-            )
-            if jp:
-                if f"{hyper_loc}_loc" in params:
-                    distributions.update(
-                        _build_hyperparameter_posteriors(
-                            params, hyper_loc, hyper_loc
-                        )
-                    )
-                if f"tau_{hs_prefix}_loc" in params:
-                    distributions.update(
-                        _build_horseshoe_hyperparameter_posteriors(
-                            params, hs_prefix
-                        )
-                    )
-                distributions[target] = _build_joint_low_rank_posterior(
-                    params, target, jp, split
-                )
-            else:
+    if parameterization in (
+        Parameterization.MEAN_ODDS,
+        Parameterization.ODDS_RATIO,
+    ):
+        hyper_loc = "log_phi_dataset_loc"
+        hyper_scale = "log_phi_dataset_scale"
+        target = "phi"
+        hs_prefix = "phi_dataset"
+        raw_name = "phi_raw_dataset"
+    else:
+        hyper_loc = "logit_p_dataset_loc"
+        hyper_scale = "logit_p_dataset_scale"
+        target = "p"
+        hs_prefix = "p_dataset"
+        raw_name = "p_raw_dataset"
+
+    if horseshoe_dataset_p:
+        jp = _find_joint_prefix(params, raw_name) or _find_joint_prefix(
+            params, target
+        )
+        if jp:
+            if f"{hyper_loc}_loc" in params:
                 distributions.update(
                     _build_hyperparameter_posteriors(
                         params, hyper_loc, hyper_loc
                     )
                 )
+            if f"tau_{hs_prefix}_loc" in params:
                 distributions.update(
                     _build_horseshoe_hyperparameter_posteriors(
                         params, hs_prefix
                     )
                 )
-                distributions[raw_name] = _build_normal_posterior(
-                    params, raw_name, low_rank=low_rank
-                )
+            distributions[target] = _build_joint_low_rank_posterior(
+                params, target, jp, split
+            )
         else:
             distributions.update(
-                _build_hyperparameter_posteriors(
-                    params, hyper_loc, hyper_scale
-                )
+                _build_hyperparameter_posteriors(params, hyper_loc, hyper_loc)
             )
-            # Joint guide group check — params may live in a joint block
-            jp = _find_joint_prefix(params, target)
-            if jp:
-                distributions[target] = _build_joint_low_rank_posterior(
-                    params, target, jp, split
-                )
-            elif target == "phi":
-                distributions[target] = _build_exp_normal_posterior(
-                    params, target, is_mixture, split, is_scalar=False
-                )
-            else:
-                distributions[target] = _build_sigmoid_normal_posterior(
-                    params, target, is_scalar=False, split=split
-                )
+            distributions.update(
+                _build_horseshoe_hyperparameter_posteriors(params, hs_prefix)
+            )
+            distributions[raw_name] = _build_normal_posterior(
+                params, raw_name, low_rank=low_rank
+            )
+        return
 
-    # -------------------------------------------------------------------------
-    # Dataset-level hierarchical gate
-    # -------------------------------------------------------------------------
+    distributions.update(
+        _build_hyperparameter_posteriors(params, hyper_loc, hyper_scale)
+    )
+    jp = _find_joint_prefix(params, target)
+    if jp:
+        distributions[target] = _build_joint_low_rank_posterior(
+            params, target, jp, split
+        )
+    elif target == "phi":
+        distributions[target] = _build_exp_normal_posterior(
+            params, target, is_mixture, split, is_scalar=False
+        )
+    else:
+        distributions[target] = _build_sigmoid_normal_posterior(
+            params, target, is_scalar=False, split=split
+        )
+
+
+def _apply_dataset_hierarchy_gate(
+    distributions: Dict[str, Any],
+    params: Dict[str, jnp.ndarray],
+    model_config: ModelConfig,
+    low_rank: bool,
+    split: bool,
+) -> None:
+    """Pass 5: override gate with a dataset-level hierarchical prior.
+
+    Active when ``hierarchical_dataset_gate=True`` or
+    ``horseshoe_dataset_gate=True``.  Replaces the ``"gate"`` entry (or
+    adds ``"gate_raw_dataset"`` for the horseshoe NCP z variable when the
+    parameter is *not* in a joint guide group).
+
+    When ``gate`` *is* in ``joint_params``, the horseshoe raw z lives
+    inside the joint block, so we check both ``"gate_raw_dataset"`` and
+    ``"gate"`` for a joint prefix.
+    """
     hierarchical_dataset_gate = getattr(
         model_config, "hierarchical_dataset_gate", False
     )
     horseshoe_dataset_gate = getattr(
         model_config, "horseshoe_dataset_gate", False
     )
-    if hierarchical_dataset_gate or horseshoe_dataset_gate:
-        if horseshoe_dataset_gate:
-            # Horseshoe NCP samples "gate_raw_dataset" (the z), but if
-            # joint_params includes "gate" the guide builder maps the
-            # spec (name="gate") into the joint block.  Check both the
-            # raw-name and the spec-name for a joint prefix.
-            jp = (
-                _find_joint_prefix(params, "gate_raw_dataset")
-                or _find_joint_prefix(params, "gate")
-            )
-            if jp:
-                # Hyper posteriors may still have individual params
-                if f"logit_gate_dataset_loc_loc" in params:
-                    distributions.update(
-                        _build_hyperparameter_posteriors(
-                            params,
-                            "logit_gate_dataset_loc",
-                            "logit_gate_dataset_loc",
-                        )
-                    )
-                if f"tau_gate_dataset_loc" in params:
-                    distributions.update(
-                        _build_horseshoe_hyperparameter_posteriors(
-                            params, "gate_dataset"
-                        )
-                    )
-                distributions["gate"] = _build_joint_low_rank_posterior(
-                    params, "gate", jp, split
-                )
-            else:
+    if not (hierarchical_dataset_gate or horseshoe_dataset_gate):
+        return
+
+    if horseshoe_dataset_gate:
+        jp = _find_joint_prefix(params, "gate_raw_dataset") or _find_joint_prefix(
+            params, "gate"
+        )
+        if jp:
+            if "logit_gate_dataset_loc_loc" in params:
                 distributions.update(
                     _build_hyperparameter_posteriors(
                         params,
@@ -579,145 +655,312 @@ def get_posterior_distributions(
                         "logit_gate_dataset_loc",
                     )
                 )
+            if "tau_gate_dataset_loc" in params:
                 distributions.update(
                     _build_horseshoe_hyperparameter_posteriors(
                         params, "gate_dataset"
                     )
                 )
-                distributions["gate_raw_dataset"] = _build_normal_posterior(
-                    params, "gate_raw_dataset", low_rank=low_rank
-                )
+            distributions["gate"] = _build_joint_low_rank_posterior(
+                params, "gate", jp, split
+            )
         else:
             distributions.update(
                 _build_hyperparameter_posteriors(
                     params,
                     "logit_gate_dataset_loc",
-                    "logit_gate_dataset_scale",
+                    "logit_gate_dataset_loc",
                 )
             )
-            # Joint guide group check — gate may be in a joint block
-            jp = _find_joint_prefix(params, "gate")
-            if jp:
-                distributions["gate"] = _build_joint_low_rank_posterior(
-                    params, "gate", jp, split
+            distributions.update(
+                _build_horseshoe_hyperparameter_posteriors(
+                    params, "gate_dataset"
                 )
-            else:
-                distributions["gate"] = _build_sigmoid_normal_posterior(
-                    params, "gate", is_scalar=False, split=split
-                )
+            )
+            distributions["gate_raw_dataset"] = _build_normal_posterior(
+                params, "gate_raw_dataset", low_rank=low_rank
+            )
+        return
 
-    # -------------------------------------------------------------------------
-    # Add zero-inflation gate if applicable
-    # -------------------------------------------------------------------------
-    horseshoe_gate = getattr(model_config, "horseshoe_gate", False)
-    if is_zero_inflated and not (
-        hierarchical_dataset_gate or horseshoe_dataset_gate
+    distributions.update(
+        _build_hyperparameter_posteriors(
+            params,
+            "logit_gate_dataset_loc",
+            "logit_gate_dataset_scale",
+        )
+    )
+    jp = _find_joint_prefix(params, "gate")
+    if jp:
+        distributions["gate"] = _build_joint_low_rank_posterior(
+            params, "gate", jp, split
+        )
+    else:
+        distributions["gate"] = _build_sigmoid_normal_posterior(
+            params, "gate", is_scalar=False, split=split
+        )
+
+
+def _apply_zero_inflation_gate(
+    distributions: Dict[str, Any],
+    params: Dict[str, jnp.ndarray],
+    model_config: ModelConfig,
+    unconstrained: bool,
+    is_mixture: bool,
+    low_rank: bool,
+    split: bool,
+) -> None:
+    """Pass 6: add the zero-inflation gate posterior.
+
+    Active for zero-inflated models (ZINB, ZINBVCP) when the gate is
+    *not* already handled by a dataset-level hierarchy pass (pass 5).
+    Handles three sub-cases: horseshoe gene-level gate, hierarchical
+    gene-level gate, or a plain gate.  Each sub-case also checks for
+    joint-prefix membership.
+    """
+    hierarchical_dataset_gate = getattr(
+        model_config, "hierarchical_dataset_gate", False
+    )
+    horseshoe_dataset_gate = getattr(
+        model_config, "horseshoe_dataset_gate", False
+    )
+    if not (
+        model_config.is_zero_inflated
+        and not (hierarchical_dataset_gate or horseshoe_dataset_gate)
     ):
-        # Joint low-rank guides can store gate parameters under
-        # `joint_{group}_gate_*` keys instead of `gate_loc/gate_scale`.
-        joint_gate_prefix = _find_joint_prefix(params, "gate")
-        if horseshoe_gate:
-            # Horseshoe gene-level gate: hyper_loc + horseshoe trio + raw z
-            distributions.update(
-                _build_hyperparameter_posteriors(
-                    params, "logit_gate_loc", "logit_gate_loc"
-                )
-            )
-            distributions.update(
-                _build_horseshoe_hyperparameter_posteriors(params, "gate")
-            )
-            distributions["gate_raw"] = _build_normal_posterior(
-                params, "gate_raw", low_rank=low_rank
-            )
-        elif hierarchical_gate:
-            distributions.update(
-                _build_hyperparameter_posteriors(
-                    params, "logit_gate_loc", "logit_gate_scale"
-                )
-            )
-            if joint_gate_prefix:
-                distributions["gate"] = _build_joint_low_rank_posterior(
-                    params, "gate", joint_gate_prefix, split
-                )
-            else:
-                distributions.update(
-                    _build_gate_posterior(
-                        params, unconstrained, is_mixture, split
-                    )
-                )
-        else:
-            if joint_gate_prefix:
-                distributions["gate"] = _build_joint_low_rank_posterior(
-                    params, "gate", joint_gate_prefix, split
-                )
-            else:
-                distributions.update(
-                    _build_gate_posterior(
-                        params, unconstrained, is_mixture, split
-                    )
-                )
+        return
 
-    # -------------------------------------------------------------------------
-    # Add capture probability if applicable
-    # -------------------------------------------------------------------------
+    horseshoe_gate = getattr(model_config, "horseshoe_gate", False)
+    hierarchical_gate = model_config.hierarchical_gate
+    joint_gate_prefix = _find_joint_prefix(params, "gate")
+
+    if horseshoe_gate:
+        distributions.update(
+            _build_hyperparameter_posteriors(
+                params, "logit_gate_loc", "logit_gate_loc"
+            )
+        )
+        distributions.update(
+            _build_horseshoe_hyperparameter_posteriors(params, "gate")
+        )
+        distributions["gate_raw"] = _build_normal_posterior(
+            params, "gate_raw", low_rank=low_rank
+        )
+        return
+
+    if hierarchical_gate:
+        distributions.update(
+            _build_hyperparameter_posteriors(
+                params, "logit_gate_loc", "logit_gate_scale"
+            )
+        )
+        if joint_gate_prefix:
+            distributions["gate"] = _build_joint_low_rank_posterior(
+                params, "gate", joint_gate_prefix, split
+            )
+        else:
+            distributions.update(
+                _build_gate_posterior(params, unconstrained, is_mixture, split)
+            )
+        return
+
+    if joint_gate_prefix:
+        distributions["gate"] = _build_joint_low_rank_posterior(
+            params, "gate", joint_gate_prefix, split
+        )
+    else:
+        distributions.update(
+            _build_gate_posterior(params, unconstrained, is_mixture, split)
+        )
+
+
+def _apply_capture(
+    distributions: Dict[str, Any],
+    params: Dict[str, jnp.ndarray],
+    model_config: ModelConfig,
+    parameterization: Parameterization,
+    unconstrained: bool,
+    split: bool,
+) -> None:
+    """Pass 7: add the per-cell capture probability posterior.
+
+    Active for VCP models.  Three variants:
+    - Biology-informed / shared-scaling: posterior on ``eta_capture``.
+    - Mean-odds parameterization: posterior on ``phi_capture``.
+    - Other parameterizations: posterior on ``p_capture``.
+    """
+    if not model_config.uses_variable_capture:
+        return
+
     bio_capture = getattr(
         model_config, "uses_biology_informed_capture", False
     )
     shared_scaling = getattr(model_config, "shared_capture_scaling", False)
-    if uses_vcp:
-        if bio_capture or shared_scaling:
-            # Biology-informed or data-driven shared scaling: posterior
-            # is on eta_capture (and optionally mu_eta).
-            distributions.update(
-                _build_biology_informed_capture_posterior(
-                    params, model_config, split
-                )
+    if bio_capture or shared_scaling:
+        distributions.update(
+            _build_biology_informed_capture_posterior(
+                params, model_config, split
             )
-        elif parameterization in (
-            Parameterization.MEAN_ODDS,
-            Parameterization.ODDS_RATIO,
-        ):
-            distributions.update(
-                _build_phi_capture_posterior(params, unconstrained, split)
-            )
-        else:
-            distributions.update(
-                _build_p_capture_posterior(params, unconstrained, split)
-            )
+        )
+        return
 
-    # -------------------------------------------------------------------------
-    # Add mixing weights if mixture model
-    # -------------------------------------------------------------------------
+    if parameterization in (
+        Parameterization.MEAN_ODDS,
+        Parameterization.ODDS_RATIO,
+    ):
+        distributions.update(
+            _build_phi_capture_posterior(params, unconstrained, split)
+        )
+    else:
+        distributions.update(
+            _build_p_capture_posterior(params, unconstrained, split)
+        )
+
+
+def _apply_mixture_weights(
+    distributions: Dict[str, Any],
+    params: Dict[str, jnp.ndarray],
+    is_mixture: bool,
+) -> None:
+    """Pass 8: add the Dirichlet posterior for mixture weights."""
     if is_mixture and "mixing_concentrations" in params:
         concentrations = params["mixing_concentrations"]
         distributions["mixing_weights"] = dist.Dirichlet(concentrations)
 
-    # -------------------------------------------------------------------------
-    # Build full joint distribution for jointly-modeled parameters.
-    # Keyed as "joint:{group}" alongside the per-parameter marginals above.
-    # -------------------------------------------------------------------------
-    config_joint = getattr(model_config, "joint_params", None)
-    if config_joint:
-        # Discover which groups are present by scanning param keys
-        groups_seen: Dict[str, List[str]] = {}
-        for pname in config_joint:
-            jp = _find_joint_prefix(params, pname)
-            if jp:
-                # Extract group name: key pattern is joint_{group}_{name}
-                parts = jp.split("_")
-                group = parts[1]
-                groups_seen.setdefault(group, []).append(pname)
 
-        for group, pnames in groups_seen.items():
-            joint_dist = _build_joint_full_distribution(params, pnames, group)
-            if joint_dist is not None:
-                distributions[f"joint:{group}"] = joint_dist
+def _apply_joint_aggregation(
+    distributions: Dict[str, Any],
+    params: Dict[str, jnp.ndarray],
+    model_config: ModelConfig,
+) -> None:
+    """Pass 9: build full joint posterior objects keyed ``joint:{group}``.
+
+    When ``joint_params`` is configured, the per-parameter marginals are
+    already in ``distributions`` (added by earlier passes via
+    ``_build_joint_low_rank_posterior``).  This pass additionally builds
+    the full stacked ``LowRankMVN`` that captures cross-parameter
+    correlations, keyed as ``"joint:{group}"``.
+    """
+    config_joint = getattr(model_config, "joint_params", None)
+    if not config_joint:
+        return
+
+    groups_seen: Dict[str, List[str]] = {}
+    for pname in config_joint:
+        jp = _find_joint_prefix(params, pname)
+        if jp:
+            parts = jp.split("_")
+            group = parts[1]
+            groups_seen.setdefault(group, []).append(pname)
+
+    for group, pnames in groups_seen.items():
+        joint_dist = _build_joint_full_distribution(params, pnames, group)
+        if joint_dist is not None:
+            distributions[f"joint:{group}"] = joint_dist
+
+
+# =============================================================================
+# Public orchestrator
+# =============================================================================
+
+
+def get_posterior_distributions(
+    params: Dict[str, jnp.ndarray],
+    model_config: ModelConfig,
+    split: bool = False,
+) -> Dict[str, Any]:
+    """Extract posterior distributions from optimized guide parameters.
+
+    Runs nine ordered passes over a shared ``distributions`` dict.  Each
+    pass is a no-op when its config flags are off, so the pipeline is safe
+    for any ``ModelConfig``.
+
+    Pass ordering (do not reorder):
+
+    1. Base parameterization  — core params (r/p, mu/p, mu/phi)
+    2. Gene-level hierarchy   — overrides p/phi with per-gene prior
+    3. Dataset hierarchy: mu  — overrides mu/r with per-dataset prior
+    4. Dataset hierarchy: p   — overrides p/phi with per-dataset prior
+    5. Dataset hierarchy: gate — overrides gate with per-dataset prior
+    6. Zero-inflation gate    — adds gate (if not handled by pass 5)
+    7. Capture probability    — adds per-cell p_capture / phi_capture
+    8. Mixture weights        — adds mixing_weights Dirichlet
+    9. Joint aggregation      — adds ``joint:{group}`` full distributions
+
+    Parameters
+    ----------
+    params : Dict[str, jnp.ndarray]
+        Optimized variational parameters from SVI inference.
+    model_config : ModelConfig
+        Model configuration specifying parameterization and model type.
+    split : bool, default=False
+        If True, return lists of univariate distributions for vector-valued
+        parameters.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Maps parameter names to posterior distributions.  Values are
+        either numpyro ``Distribution`` objects or ``{"base", "transform"}``
+        dicts for unconstrained / low-rank guides.
+    """
+    distributions: Dict[str, Any] = {}
+    parameterization = model_config.parameterization
+    unconstrained = model_config.unconstrained
+    is_mixture = model_config.is_mixture
+
+    # Detect low-rank guides by checking for the W + raw_diag param pairs
+    # that LowRankMVN guides always emit.
+    low_rank = any(
+        key.endswith("_W") and f"{key.replace('_W', '_raw_diag')}" in params
+        for key in params.keys()
+    )
+
+    # Horseshoe priors replace base guide sites; skip those in pass 1.
+    skip = _build_base_skip_set(model_config, parameterization)
+
+    # --- Execute the pipeline (ordering matters — see docstring) ----------
+
+    _apply_base_parameterization(                                  # Pass 1
+        distributions, params, parameterization,
+        unconstrained, is_mixture, low_rank, split, skip,
+    )
+    _apply_gene_level_hierarchy(                                   # Pass 2
+        distributions, params, model_config,
+        parameterization, is_mixture, low_rank, split,
+    )
+    _apply_dataset_hierarchy_mu(                                   # Pass 3
+        distributions, params, model_config,
+        parameterization, is_mixture, low_rank, split,
+    )
+    _apply_dataset_hierarchy_p(                                    # Pass 4
+        distributions, params, model_config,
+        parameterization, is_mixture, low_rank, split,
+    )
+    _apply_dataset_hierarchy_gate(                                 # Pass 5
+        distributions, params, model_config, low_rank, split,
+    )
+    _apply_zero_inflation_gate(                                    # Pass 6
+        distributions, params, model_config,
+        unconstrained, is_mixture, low_rank, split,
+    )
+    _apply_capture(                                                # Pass 7
+        distributions, params, model_config,
+        parameterization, unconstrained, split,
+    )
+    _apply_mixture_weights(distributions, params, is_mixture)      # Pass 8
+    _apply_joint_aggregation(distributions, params, model_config)  # Pass 9
 
     return distributions
 
 
 # =============================================================================
-# Helper functions for each parameterization
+# Parameterization-specific builders (layer 3)
+# =============================================================================
+#
+# Each function below populates a dict with the core model parameters for
+# one parameterization family.  They are called by _apply_base_param… and
+# handle both constrained (Beta/LogNormal/BetaPrime) and unconstrained
+# (TransformedNormal) guide families, as well as joint-prefix resolution.
 # =============================================================================
 
 
@@ -887,7 +1130,12 @@ def _build_mean_odds_posteriors(
 
 
 # =============================================================================
-# Hierarchical parameterization posteriors
+# Hierarchical & horseshoe posterior builders (layer 3)
+# =============================================================================
+#
+# Builders for the hyperparameters introduced by hierarchical and horseshoe
+# priors: population-level loc/scale, and the horseshoe trio (tau, lambda,
+# c_sq).  Also includes the NCP raw-z builder (_build_normal_posterior).
 # =============================================================================
 
 
@@ -1130,7 +1378,12 @@ def _build_biology_informed_capture_posterior(
 
 
 # =============================================================================
-# Distribution builders
+# Leaf distribution builders (layer 4)
+# =============================================================================
+#
+# Low-level constructors that map raw variational parameters (_loc, _scale,
+# _alpha, _beta, _W, _raw_diag) to a single numpyro distribution object.
+# Each handles both scalar and vector params, and optional splitting.
 # =============================================================================
 
 
@@ -1335,7 +1588,7 @@ def _build_exp_normal_posterior(
 
 
 # =============================================================================
-# Splitting utilities
+# Splitting utilities (used when split=True)
 # =============================================================================
 
 
