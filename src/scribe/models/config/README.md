@@ -80,29 +80,34 @@ structure:
 - `n_datasets: Optional[int]` — Number of datasets for joint multi-dataset
   modeling
 - `dataset_params: Optional[List[str]]` — Which parameters are per-dataset
-- `hierarchical_dataset_mu: bool` — Hierarchical mu/r across datasets (requires
-  `unconstrained`) - `hierarchical_dataset_p: str` — Mode for dataset-specific
-  p: `"none"`, `"scalar"`, `"gene_specific"`, or `"two_level"`
+- `mu_dataset_prior: str` — Prior for hierarchical mu/r across datasets:
+  `"none"`, `"gaussian"`, `"horseshoe"`, or `"neg"` (requires `unconstrained`)
+- `p_dataset_prior: str` — Prior for dataset-specific p: `"none"`,
+  `"gaussian"`, `"horseshoe"`, or `"neg"`
+- `p_dataset_mode: str` — Structural mode for dataset-level p:
+  `"none"`, `"scalar"`, `"gene_specific"`, or `"two_level"`
+- `gate_dataset_prior: str` — Prior for dataset-specific gate: `"none"`,
+  `"gaussian"`, `"horseshoe"`, or `"neg"`
 - `is_multi_dataset` (computed property) — `True` when `n_datasets >= 2`
 
-Dataset-level hierarchical flags (`hierarchical_dataset_mu`,
-`hierarchical_dataset_p`, `hierarchical_dataset_gate`) are only valid when
-cells can be mapped to datasets. In practice, that means passing
-`dataset_key` to `scribe.fit(...)` (so `n_datasets` is inferred from
-`adata.obs[dataset_key]`) or otherwise configuring explicit multi-dataset
-mode. Single-dataset fits should use `hierarchical_p` and/or
-`hierarchical_gate` instead.
+Dataset-level prior fields (`mu_dataset_prior`, `p_dataset_prior`,
+`gate_dataset_prior`) are only valid when cells can be mapped to datasets. In
+practice, that means passing `dataset_key` to `scribe.fit(...)` (so
+`n_datasets` is inferred from `adata.obs[dataset_key]`) or otherwise
+configuring explicit multi-dataset mode. Single-dataset fits should use
+`p_prior` and/or `gate_prior` instead.
 
 When using the public `scribe.fit(...)` API, single-dataset `dataset_key`
 columns can be auto-downgraded via
 `auto_downgrade_single_dataset_hierarchy=True` (default):
 
-- `hierarchical_dataset_mu=True` -> `False`
-- `hierarchical_dataset_p='scalar'` -> `'none'`
-- `hierarchical_dataset_p in {'gene_specific', 'two_level'}` ->
-  `hierarchical_p=True` and `hierarchical_dataset_p='none'`
-- `hierarchical_dataset_gate=True` -> `hierarchical_gate=True` and
-  `hierarchical_dataset_gate=False`
+- `mu_dataset_prior != "none"` -> `"none"`
+- `p_dataset_prior != "none"` with `p_dataset_mode='scalar'` ->
+  `p_dataset_prior='none'`
+- `p_dataset_prior != "none"` with `p_dataset_mode in {'gene_specific',
+  'two_level'}` -> `p_prior` set from `p_dataset_prior`, `p_dataset_prior='none'`
+- `gate_dataset_prior != "none"` -> `gate_prior` set from
+  `gate_dataset_prior`, `gate_dataset_prior='none'`
 
 `scribe.fit(...)` emits a `UserWarning` whenever one or more of these
 single-dataset downgrades are applied. Setting
@@ -152,14 +157,31 @@ config = (ModelConfigBuilder()
     .build())
 ```
 
-#### Horseshoe Prior Configuration
+#### Sparsity-Inducing Prior Configuration
 
-Five flags enable regularized horseshoe shrinkage, each **mutually exclusive**
-with its corresponding normal-hierarchy flag: `horseshoe_p`, `horseshoe_gate`,
-`horseshoe_dataset_mu`, `horseshoe_dataset_p`, `horseshoe_dataset_gate`.
-Setting a horseshoe flag implicitly creates the hierarchy — no need to also set
-the corresponding `hierarchical_*` flag. Shared hyperparameters:
-`horseshoe_tau0`, `horseshoe_slab_df`, `horseshoe_slab_scale`.
+Sparsity-inducing priors are configured via enum fields. Each parameter has a
+prior type: `"none"`, `"gaussian"`, `"horseshoe"`, or `"neg"`.
+
+**Enum fields:**
+- `p_prior`, `gate_prior` — Gene-level priors for p and gate (ZI models)
+- `mu_dataset_prior`, `p_dataset_prior`, `gate_dataset_prior` — Dataset-level
+  priors for multi-dataset hierarchical models
+- `p_dataset_mode` — Structural mode for dataset-level p:
+  `"none"`, `"scalar"`, `"gene_specific"`, or `"two_level"`
+
+**NEG prior** (Normal-Exponential-Gamma): A Gamma-Gamma hierarchy friendlier to
+SVI than the horseshoe. Hyperparameters (defaults all 1.0):
+- `neg_u` — Shape parameter (u=1 => NEG; u=0.5 => horseshoe-like)
+- `neg_a` — Outer Gamma shape
+- `neg_tau` — Global rate
+
+**Horseshoe prior**: Regularized horseshoe shrinkage. Hyperparameters:
+- `horseshoe_tau0` — Global scale
+- `horseshoe_slab_df` — Slab degrees of freedom
+- `horseshoe_slab_scale` — Slab scale
+
+Boolean flags like `horseshoe_p` are deprecated; use the enum-based fields
+instead.
 
 ### PriorConfig / UnconstrainedPriorConfig
 
@@ -307,6 +329,7 @@ errors = validate_parameter_consistency(
 - `VAEPriorType`: STANDARD, DECOUPLED
 - `VAEMaskType`: ALTERNATING, SEQUENTIAL
 - `VAEActivation`: RELU, GELU, TANH, SIGMOID
+- `HierarchicalPriorType`: NONE, GAUSSIAN, HORSESHOE, NEG
 
 ## Validation
 
@@ -376,6 +399,17 @@ config = (ModelConfigBuilder()
     .as_mixture(3)
     .with_hierarchical_mu()
     .build())
+
+# NEG prior for SVI-friendly sparsity (alternative to horseshoe)
+config = ModelConfig(
+    base_model="nbdm",
+    unconstrained=True,
+    p_prior="neg",
+    parameterization="mean_odds",
+    neg_u=1.0,  # shape param (u=1 => NEG; u=0.5 => horseshoe-like)
+    neg_a=1.0,  # outer Gamma shape
+    neg_tau=1.0,  # global rate
+)
 ```
 
 ### Using Enums

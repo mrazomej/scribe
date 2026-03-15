@@ -439,6 +439,96 @@ The **regularized (Finnish) horseshoe** replaces the Half-Cauchy with a
 Half-Student-$t$ and adds a slab component, improving numerical stability
 under variational inference.
 
+### The Three Parameter Beta Normal family and the NEG prior {#sec-hgate-tpbn}
+
+While the horseshoe is theoretically appealing, its standard Half-Cauchy
+representation poses serious challenges for variational inference. The
+horseshoe density has an **infinite spike** (a pole) at zero—corresponding
+to the TPBN hyperparameters $u = a = 1/2$—which creates a treacherous
+gradient landscape. Under SVI, this often leads to exploding gradients,
+numerical instability, or the variational distribution collapsing and failing
+to capture the heavy tails.
+
+A more principled perspective comes from the **Three Parameter Beta Normal
+(TPBN)** mixture family [@Bai2020; @Armagan2011], which encompasses the
+horseshoe, the Strawderman-Berger, and the Normal-Exponential-Gamma (NEG)
+priors as special cases. The TPBN family admits a **Gamma-Gamma hierarchical
+representation**:
+
+$$
+\zeta_g \sim \text{Gamma}(a,\; \tau), \qquad
+\psi_g \mid \zeta_g \sim \text{Gamma}(u,\; \zeta_g),
+$${#eq-hgate-tpbn-gamma-gamma}
+
+$$
+\text{logit}(\pi_g) \sim \mathcal{N}\!\bigl(\mu_\pi,\;
+\sqrt{\psi_g}\bigr),
+$${#eq-hgate-tpbn-gate}
+
+where $a$, $u$, and $\tau$ are scalar hyperparameters. The outer layer
+$\zeta_g$ serves as a per-gene rate for the inner Gamma, and $\psi_g$ acts
+as the per-gene variance for the Normal. Different choices of $u$ and $a$
+recover different priors:
+
+| Prior | $u$ | $a$ | Behavior |
+|-------|-----|-----|----------|
+| Horseshoe | $1/2$ | $1/2$ | Infinite spike at zero; heaviest tails |
+| Strawderman-Berger | $1/2$ | $1$ | Infinite spike; lighter tails |
+| **NEG** | $\mathbf{1}$ | $a > 0$ | **Finite** peak; heavy tails |
+
+: Sparsity-inducing priors as TPBN special cases. {#tbl-hgate-tpbn-cases}
+
+The **Normal-Exponential-Gamma (NEG)** prior sets $u = 1$, which makes the
+inner Gamma an **Exponential** distribution:
+
+$$
+\psi_g \mid \zeta_g \sim \text{Exp}(\zeta_g)
+\;=\; \text{Gamma}(1, \zeta_g).
+$${#eq-hgate-neg-exponential}
+
+This single change from $u = 1/2$ (horseshoe) to $u = 1$ (NEG) has a
+dramatic effect on the prior density: the infinite pole at zero is replaced
+by a **finite peak**. The density still concentrates aggressively near zero
+to shrink irrelevant genes, but the gradient landscape is smooth and
+well-behaved—exactly what a mean-field or low-rank variational family needs.
+
+**Why the NEG is SVI-friendly.** Modern probabilistic programming frameworks
+(NumPyro, Pyro, TFP) have well-optimized implicit reparameterization gradients
+for Gamma distributions, which stabilize training when sampling $\zeta_g$ and
+$\psi_g$. By contrast, the Half-Cauchy local scales in the horseshoe lack
+efficient reparameterization and often require auxiliary variable tricks
+that complicate the variational family. The Gamma-Gamma hierarchy of
+@eq-hgate-tpbn-gamma-gamma sidesteps this entirely: every latent variable is
+either Gamma-distributed (with reparameterizable gradients) or Normal
+(trivially reparameterizable under NCP).
+
+**Non-centered parameterization.** In practice we use a non-centered
+parameterization (NCP) analogous to the horseshoe NCP:
+
+$$
+z_g \sim \mathcal{N}(0, 1), \qquad
+\text{logit}(\pi_g) = \mu_\pi + \sqrt{\psi_g} \cdot z_g,
+$${#eq-hgate-neg-ncp}
+
+so that the variational guide samples the standard Normal $z_g$ and the
+Gamma-Gamma latents $(\zeta_g, \psi_g)$ independently, and the constrained
+gate $\pi_g$ is computed deterministically.
+
+**Default hyperparameters.** We set $u = 1$, $a = 1$, $\tau = 1$ as
+defaults. These produce a moderate shrinkage profile suitable for the
+typical sparse zero-inflation setting. Increasing $a$ strengthens the
+prior's concentration near zero (more aggressive shrinkage), while
+decreasing $\tau$ widens the global scale (less shrinkage overall).
+
+**Relationship to the horseshoe.** The NEG and horseshoe priors share the
+same polynomial tail behavior—both achieve the **super-harmonic** posterior
+contraction rate established in @Bai2020—so their asymptotic shrinkage
+properties are nearly identical. The practical difference is entirely in
+the behavior near zero: the horseshoe's infinite spike is theoretically
+optimal for point-mass mixtures but creates optimization pathologies under
+SVI, while the NEG's finite peak trades a negligible amount of
+zero-shrinkage for dramatically improved gradient stability.
+
 ### Where the hierarchical Normal sits
 
 The hierarchical Normal prior used in @eq-hgate-gene-specific is a **global
@@ -456,13 +546,18 @@ motivating example in this section), indicating that the signal is far
 stronger than any shrinkage penalty. For such cases, the hierarchical Normal
 and the horseshoe will produce nearly identical results.
 
-The horseshoe becomes advantageous when the boundary between genes that need
-and do not need zero inflation is blurry—for example, when many genes have
-moderate z-scores and the selection is uncertain. In this regime, the
-horseshoe's per-gene local scales provide finer-grained adaptation. If the
-hierarchical Normal proves insufficient for a particular dataset, upgrading
-to a horseshoe gate is a natural extension that requires only replacing the
-prior on $\text{logit}(\pi_g)$ while keeping the rest of the model unchanged.
+The horseshoe and NEG become advantageous when the boundary between genes
+that need and do not need zero inflation is blurry—for example, when many
+genes have moderate z-scores and the selection is uncertain. In this regime,
+per-gene local scales provide finer-grained adaptation. If the hierarchical
+Normal proves insufficient for a particular dataset, upgrading to a sparse
+gate prior is a natural extension that requires only replacing the prior on
+$\text{logit}(\pi_g)$ while keeping the rest of the model unchanged. We
+recommend the **NEG prior** (`gate_prior="neg"`) as the default sparse
+alternative, given its superior gradient behavior under SVI
+(@sec-hgate-tpbn). The horseshoe (`gate_prior="horseshoe"`) remains
+available for settings where MCMC sampling is used or where the stronger
+pole at zero is specifically desired.
 
 ## Mathematical summary {#sec-hgate-summary}
 

@@ -80,14 +80,22 @@ alternatively be given shape `(G,)` instead of `(D, G)` to eliminate wasted
 parameters, at the cost of mixed-shape tensors and more complex splitting/
 concatenation in the likelihood and guide.
 
-#### Horseshoe Prior Specs
+#### Sparsity-Inducing Prior Specs
 
-Regularized horseshoe shrinkage uses **`HalfCauchySpec`** (τ, λ scales) and
-**`InverseGammaSpec`** (slab c²). Gene-level:
+**Horseshoe:** Regularized horseshoe shrinkage uses **`HalfCauchySpec`** (τ, λ
+scales) and **`InverseGammaSpec`** (slab c²). Gene-level:
 **`HorseshoeHierarchicalSigmoidNormalSpec`** (p, gate; sigmoid). Dataset-level:
 **`HorseshoeDatasetExpNormalSpec`** (mu; exp),
 **`HorseshoeDatasetSigmoidNormalSpec`** (p, gate; sigmoid). All use NCP
 (non-centered parameterization) with z ~ Normal(0,1).
+
+**NEG (Normal-Exponential-Gamma):** Uses **`GammaSpec`** for psi and zeta sites
+in the Gamma-Gamma hierarchy. Gene-level: **`NEGHierarchicalSigmoidNormalSpec`**
+(p, gate; sigmoid) and **`NEGHierarchicalExpNormalSpec`** (mu, r, phi; exp).
+Dataset-level: **`NEGDatasetExpNormalSpec`** (mu; exp) and
+**`NEGDatasetSigmoidNormalSpec`** (p, gate; sigmoid). All NEG specs use NCP
+with `raw_name` for the z variable, `psi_name` and `zeta_name` referencing the
+Gamma hierarchy sites.
 
 #### Biology-Informed Capture Spec
 
@@ -261,20 +269,22 @@ This extends naturally to three or more parameters (e.g., ZINB with `gate`).
 Parameters not in a joint group are processed independently as usual. See
 `paper/_joint_low_rank_guide.qmd` for the full derivation.
 
-#### Horseshoe Compatibility in Joint Groups
+#### NCP Prior Compatibility in Joint Groups
 
-When a parameter in a joint group uses a horseshoe NCP spec (for example
-`HorseshoeHierarchicalSigmoidNormalSpec` for `gate`), the joint block models
-the **raw latent** site (for example `gate_raw`) in the shared low-rank
-Gaussian. The constrained parameter (`gate`) remains a deterministic transform
-of that latent.
+When a parameter in a joint group uses an NCP spec (horseshoe or NEG, for
+example `HorseshoeHierarchicalSigmoidNormalSpec` or
+`NEGHierarchicalSigmoidNormalSpec` for `gate`), the joint block models the
+**raw latent** site (for example `gate_raw`) in the shared low-rank Gaussian.
+The constrained parameter (`gate`) remains a deterministic transform of that
+latent.
 
-This keeps model/guide sample-site names aligned while preserving the intended
-horseshoe structure:
+The renamed function `_is_joint_ncp_spec()` detects both horseshoe and NEG
+NCP specs. This keeps model/guide sample-site names aligned while preserving
+the intended prior structure:
 
 - joint covariance is learned in unconstrained Gaussian latent space;
-- horseshoe scale latents (`tau`, `lambda`, `c_sq`) remain in their existing
-  independent positive-support guides;
+- prior-specific scale latents (horseshoe: `tau`, `lambda`, `c_sq`; NEG: `psi`,
+  `zeta`) remain in their existing independent positive-support guides;
 - downstream MAP/posterior logic still uses constrained parameter names.
 
 ## Posterior Extraction
@@ -473,6 +483,7 @@ they have no guide counterpart.
 | `_guide_meanfield_mixin.py` | Standard mean-field dispatch registrations |
 | `_guide_lowrank_mixin.py` | Standard low-rank dispatch registrations |
 | `_guide_horseshoe_mixin.py` | Horseshoe hyperparameter + NCP dispatch registrations |
+| `_guide_neg_mixin.py` | NEG hyperparameter + NCP dispatch registrations |
 | `_guide_cell_specific_mixin.py` | Cell-specific dispatch registrations |
 | `_guide_amortized_mixin.py` | Amortized helpers and dispatch registration |
 | `_guide_joint_mixin.py` | Woodbury helpers and `setup_joint_guide` implementation |

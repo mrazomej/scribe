@@ -315,12 +315,17 @@ LIKELIHOOD_REGISTRY = {
 }
 ```
 
-## Horseshoe Factory Functions
+## Sparsity-Inducing Prior Factory Functions
 
-Gene-level: `_horseshoe_p`, `_horseshoe_gate`. Dataset-level:
+**Horseshoe:** Gene-level: `_horseshoe_p`, `_horseshoe_gate`. Dataset-level:
 `_horseshoe_dataset_mu`, `_horseshoe_dataset_p`, `_horseshoe_dataset_gate`.
 Helper `_make_horseshoe_hypers` creates HalfCauchy/InverseGamma specs;
 `_horseshoe_kwargs_from_config` extracts horseshoe config from ModelConfig.
+
+**NEG:** Gene-level: `_neg_p`, `_neg_gate`. Dataset-level: `_neg_dataset_mu`,
+`_neg_dataset_p`, `_neg_dataset_gate`. Helper `_make_neg_hypers` creates
+GammaSpec pair (zeta, psi); `_neg_kwargs_from_config` extracts NEG config from
+ModelConfig.
 
 ## Multi-Dataset Mixture Hierarchy
 
