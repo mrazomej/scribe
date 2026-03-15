@@ -614,6 +614,9 @@ ScribeSVIResults
      - `_reconstruct_horseshoe_maps()`: Reconstruct constrained MAP from NCP
        z components for horseshoe priors
      - `_horseshoe_eff_scale()`: Compute regularized horseshoe effective scale
+     - `_reconstruct_neg_maps()`: Reconstruct constrained MAP from NCP z
+       components for NEG priors
+     - `_neg_eff_scale()`: Compute NEG effective scale as sqrt(psi)
    - Dependencies: Uses `ModelHelpersMixin` methods
 
 4. **GeneSubsettingMixin** (`_gene_subsetting.py`)
