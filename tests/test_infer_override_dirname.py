@@ -14,13 +14,13 @@ def test_compact_override_dirname_emits_bare_true_and_omits_false():
         non-boolean key-value entries.
     """
     compact = _compact_override_dirname(
-        "hierarchical_dataset_mu=true,hierarchical_dataset_gate=false,"
+        "mu_dataset_prior=gaussian,gate_dataset_prior=none,"
         "parameterization=mean_odds"
     )
 
     assert (
         compact
-        == "hierarchical_dataset_mu,parameterization=mean_odds"
+        == "mu_dataset_prior=gaussian,parameterization=mean_odds"
     )
 
 
@@ -56,13 +56,13 @@ def test_compact_override_dirname_normalizes_bracket_lists_and_ordering():
         parser compatibility with comma-delimited value entries.
     """
     compact = _compact_override_dirname(
-        "guide_rank=256,hierarchical_dataset_mu=true,"
+        "guide_rank=256,mu_dataset_prior=gaussian,"
         "mixture_params=[phi, mu, gate]"
     )
 
     assert (
         compact
-        == "hierarchical_dataset_mu,guide_rank=256,mixture_params=phi,mu,gate"
+        == "guide_rank=256,mu_dataset_prior=gaussian,mixture_params=phi,mu,gate"
     )
 
 
@@ -76,14 +76,14 @@ def test_compact_override_dirname_applies_key_aliases():
         existing compact formatting rules.
     """
     compact = _compact_override_dirname(
-        "mixture_params=[phi, mu, gate],hierarchical_dataset_mu=true",
+        "mixture_params=[phi, mu, gate],mu_dataset_prior=gaussian",
         aliases={
             "mixture_params": "mixpar",
-            "hierarchical_dataset_mu": "hdmu",
+            "mu_dataset_prior": "mdp",
         },
     )
 
-    assert compact == "hdmu,mixpar=phi,mu,gate"
+    assert compact == "mdp=gaussian,mixpar=phi,mu,gate"
 
 
 def test_compact_override_dirname_keeps_original_key_when_alias_missing():

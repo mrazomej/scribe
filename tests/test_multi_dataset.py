@@ -160,11 +160,11 @@ class TestModelConfigDataset:
     """Test dataset-related ModelConfig fields and validation."""
 
     def test_default_values(self):
-        """n_datasets defaults to None, hierarchical_dataset_* to defaults."""
+        """n_datasets defaults to None, dataset prior fields to defaults."""
         config = ModelConfig(base_model="nbdm")
         assert config.n_datasets is None
-        assert config.hierarchical_dataset_mu is False
-        assert config.hierarchical_dataset_p == "none"
+        assert config.mu_dataset_prior == "none"
+        assert config.p_dataset_prior == "none"
 
     def test_is_multi_dataset_property(self):
         """is_multi_dataset is True only when n_datasets >= 2."""
@@ -177,66 +177,66 @@ class TestModelConfigDataset:
         assert config2.is_multi_dataset is False
 
     def test_hierarchical_dataset_mu_requires_n_datasets(self):
-        """hierarchical_dataset_mu without n_datasets should raise."""
+        """mu_dataset_prior without n_datasets should raise."""
         with pytest.raises(Exception):
             ModelConfig(
                 base_model="nbdm",
-                hierarchical_dataset_mu=True,
+                mu_dataset_prior="gaussian",
                 unconstrained=True,
             )
 
     def test_hierarchical_dataset_mu_requires_unconstrained(self):
-        """hierarchical_dataset_mu without unconstrained should raise."""
+        """mu_dataset_prior without unconstrained should raise."""
         with pytest.raises(Exception):
             ModelConfig(
                 base_model="nbdm",
                 n_datasets=2,
-                hierarchical_dataset_mu=True,
+                mu_dataset_prior="gaussian",
                 unconstrained=False,
             )
 
     def test_hierarchical_dataset_gate_defaults_false(self):
-        """hierarchical_dataset_gate defaults to False."""
+        """gate_dataset_prior defaults to none."""
         config = ModelConfig(base_model="zinb")
-        assert config.hierarchical_dataset_gate is False
+        assert config.gate_dataset_prior == "none"
 
     def test_hierarchical_dataset_gate_requires_n_datasets(self):
-        """hierarchical_dataset_gate without n_datasets should raise."""
-        with pytest.raises(ValueError, match="n_datasets"):
+        """gate_dataset_prior without n_datasets should raise."""
+        with pytest.raises(ValueError, match="gate_dataset_prior.*n_datasets"):
             ModelConfig(
                 base_model="zinb",
-                hierarchical_dataset_gate=True,
+                gate_dataset_prior="gaussian",
                 unconstrained=True,
             )
 
     def test_hierarchical_dataset_gate_requires_unconstrained(self):
-        """hierarchical_dataset_gate without unconstrained should raise."""
+        """gate_dataset_prior without unconstrained should raise."""
         with pytest.raises(ValueError, match="unconstrained"):
             ModelConfig(
                 base_model="zinb",
                 n_datasets=2,
-                hierarchical_dataset_gate=True,
+                gate_dataset_prior="gaussian",
                 unconstrained=False,
             )
 
     def test_hierarchical_dataset_gate_requires_zero_inflated(self):
-        """hierarchical_dataset_gate on a non-ZI model should raise."""
-        with pytest.raises(ValueError, match="zero-inflated"):
+        """gate_dataset_prior on a non-ZI model should raise."""
+        with pytest.raises(ValueError, match="gate_dataset_prior.*zero-inflated"):
             ModelConfig(
                 base_model="nbdm",
                 n_datasets=2,
-                hierarchical_dataset_gate=True,
+                gate_dataset_prior="gaussian",
                 unconstrained=True,
             )
 
     def test_hierarchical_gate_and_dataset_gate_conflict(self):
-        """Cannot set both hierarchical_gate and hierarchical_dataset_gate."""
-        with pytest.raises(ValueError, match="cannot be set simultaneously"):
+        """Cannot set both gate_prior and gate_dataset_prior."""
+        with pytest.raises(ValueError, match="gate_prior.*gate_dataset_prior.*simultaneously"):
             ModelConfig(
                 base_model="zinb",
                 n_datasets=2,
-                hierarchical_gate=True,
-                hierarchical_dataset_gate=True,
+                gate_prior="gaussian",
+                gate_dataset_prior="gaussian",
                 unconstrained=True,
             )
 
@@ -359,7 +359,7 @@ class TestSVIDatasetMixin:
             base_model="nbdm",
             n_datasets=n_datasets,
             unconstrained=True,
-            hierarchical_dataset_mu=True,
+            mu_dataset_prior="gaussian",
             param_specs=[
                 _make_ds_exp_spec("r"),
             ],
@@ -495,8 +495,9 @@ class TestCanonicalParamsScalarDataset:
             n_datasets=n_datasets,
             parameterization=parameterization,
             unconstrained=True,
-            hierarchical_dataset_mu=True,
-            hierarchical_dataset_p="scalar",
+            mu_dataset_prior="gaussian",
+            p_dataset_prior="gaussian",
+            p_dataset_mode="scalar",
         )
         # Dummy variational params (not used directly by
         # _compute_canonical_parameters but needed to construct the object)
@@ -587,7 +588,7 @@ class TestMCMCDatasetMixin:
             base_model="nbdm",
             n_datasets=n_datasets,
             unconstrained=True,
-            hierarchical_dataset_mu=True,
+            mu_dataset_prior="gaussian",
             param_specs=[
                 _make_ds_exp_spec("r"),
             ],
@@ -878,38 +879,41 @@ class TestMixtureDatasetComposition:
         assert result.shape == (K, G)
 
     # ------------------------------------------------------------------
-    # ModelConfig: hierarchical_p + hierarchical_dataset_p conflict
+    # ModelConfig: p_prior + p_dataset_prior conflict
     # ------------------------------------------------------------------
 
-    def test_model_config_rejects_hierarchical_p_plus_dataset_p(self):
-        """Cannot set hierarchical_p=True and hierarchical_dataset_p != 'none'."""
-        with pytest.raises(ValueError, match="cannot be set simultaneously"):
+    def test_model_config_rejects_p_prior_plus_dataset_p(self):
+        """Cannot set p_prior and p_dataset_prior simultaneously."""
+        with pytest.raises(ValueError, match="p_prior.*p_dataset_prior.*simultaneously"):
             ModelConfig(
                 base_model="nbdm",
                 n_datasets=2,
                 unconstrained=True,
-                hierarchical_p=True,
-                hierarchical_dataset_p="gene_specific",
+                p_prior="gaussian",
+                p_dataset_prior="gaussian",
+                p_dataset_mode="gene_specific",
             )
 
-    def test_model_config_allows_hierarchical_p_alone(self):
-        """hierarchical_p=True alone is fine."""
+    def test_model_config_allows_p_prior_alone(self):
+        """p_prior != 'none' alone is fine."""
         config = ModelConfig(
             base_model="nbdm",
             unconstrained=True,
-            hierarchical_p=True,
+            p_prior="gaussian",
         )
-        assert config.hierarchical_p is True
+        assert config.p_prior != "none"
 
     def test_model_config_allows_dataset_p_alone(self):
-        """hierarchical_dataset_p != 'none' alone is fine."""
+        """p_dataset_prior != 'none' alone is fine."""
         config = ModelConfig(
             base_model="nbdm",
             n_datasets=2,
             unconstrained=True,
-            hierarchical_dataset_p="gene_specific",
+            p_dataset_prior="gaussian",
+            p_dataset_mode="gene_specific",
         )
-        assert config.hierarchical_dataset_p == "gene_specific"
+        assert config.p_dataset_prior == "gaussian"
+        assert config.p_dataset_mode == "gene_specific"
 
     # ------------------------------------------------------------------
     # SVI results: mixture + dataset subsetting
@@ -933,7 +937,7 @@ class TestMixtureDatasetComposition:
             n_datasets=D,
             n_components=K,
             unconstrained=True,
-            hierarchical_dataset_mu=True,
+            mu_dataset_prior="gaussian",
             param_specs=[r_spec, p_spec],
         )
 
@@ -1064,7 +1068,7 @@ class TestMixtureDatasetComposition:
             n_datasets=D,
             n_components=K,
             unconstrained=True,
-            hierarchical_dataset_mu=True,
+            mu_dataset_prior="gaussian",
             param_specs=[r_spec, p_spec],
         )
 
@@ -1281,16 +1285,17 @@ class TestCreateModelMultiDataset:
     def test_hierarchical_dataset_mu_only(self):
         """Model + guide created successfully with hierarchical_dataset_mu."""
         b = self._builder()
-        b._hierarchical_dataset_mu = True
+        b._mu_dataset_prior = "gaussian"
         config = b.build()
         model, guide, specs = create_model(config)
         assert callable(model)
         assert callable(guide)
 
     def test_hierarchical_dataset_p_gene_specific(self):
-        """Model + guide with gene-specific hierarchical dataset p."""
+        """Model + guide with gene-specific dataset p hierarchy."""
         b = self._builder()
-        b._hierarchical_dataset_p = "gene_specific"
+        b._p_dataset_prior = "gaussian"
+        b._p_dataset_mode = "gene_specific"
         config = b.build()
         model, guide, specs = create_model(config)
         assert callable(model)
@@ -1299,19 +1304,21 @@ class TestCreateModelMultiDataset:
     def test_hierarchical_dataset_mu_and_p(self):
         """Model + guide with both dataset hierarchical mu and p."""
         b = self._builder()
-        b._hierarchical_dataset_mu = True
-        b._hierarchical_dataset_p = "gene_specific"
+        b._mu_dataset_prior = "gaussian"
+        b._p_dataset_prior = "gaussian"
+        b._p_dataset_mode = "gene_specific"
         config = b.build()
         model, guide, specs = create_model(config)
         assert callable(model)
         assert callable(guide)
 
     def test_hierarchical_dataset_with_gate(self):
-        """Matches the user's real command: dataset mu + p + hierarchical gate."""
+        """Matches the user's real command: dataset mu + p + gene-level gate."""
         b = self._builder()
-        b._hierarchical_dataset_mu = True
-        b._hierarchical_dataset_p = "gene_specific"
-        b._hierarchical_gate = True
+        b._mu_dataset_prior = "gaussian"
+        b._p_dataset_prior = "gaussian"
+        b._p_dataset_mode = "gene_specific"
+        b._gate_prior = "gaussian"
         config = b.build()
         model, guide, specs = create_model(config)
         assert callable(model)
@@ -1319,9 +1326,9 @@ class TestCreateModelMultiDataset:
 
     @pytest.mark.parametrize("model_type", ["nbdm", "zinb", "nbvcp", "zinbvcp"])
     def test_dataset_mu_all_model_types(self, model_type):
-        """hierarchical_dataset_mu works across all model types."""
+        """mu_dataset_prior works across all model types."""
         b = self._builder(model_type=model_type)
-        b._hierarchical_dataset_mu = True
+        b._mu_dataset_prior = "gaussian"
         config = b.build()
         model, guide, specs = create_model(config)
         assert callable(model)
@@ -1331,9 +1338,9 @@ class TestCreateModelMultiDataset:
         "parameterization", ["canonical", "mean_prob", "mean_odds"]
     )
     def test_dataset_mu_all_parameterizations(self, parameterization):
-        """hierarchical_dataset_mu works across all parameterizations."""
+        """mu_dataset_prior works across all parameterizations."""
         b = self._builder(parameterization=parameterization)
-        b._hierarchical_dataset_mu = True
+        b._mu_dataset_prior = "gaussian"
         config = b.build()
         model, guide, specs = create_model(config)
         assert callable(model)
@@ -1342,8 +1349,9 @@ class TestCreateModelMultiDataset:
     def test_dataset_specs_have_is_dataset_flag(self):
         """Verify that the returned param_specs include dataset-flagged specs."""
         b = self._builder()
-        b._hierarchical_dataset_mu = True
-        b._hierarchical_dataset_p = "gene_specific"
+        b._mu_dataset_prior = "gaussian"
+        b._p_dataset_prior = "gaussian"
+        b._p_dataset_mode = "gene_specific"
         config = b.build()
         _, _, specs = create_model(config)
         dataset_specs = [s for s in specs if getattr(s, "is_dataset", False)]
@@ -1357,7 +1365,7 @@ class TestCreateModelMultiDataset:
     def test_hierarchical_dataset_gate_creates_model(self):
         """Dataset-level hierarchical gate produces a callable model/guide."""
         b = self._builder()
-        b._hierarchical_dataset_gate = True
+        b._gate_dataset_prior = "gaussian"
         config = b.build()
         model, guide, specs = create_model(config)
         assert callable(model)
@@ -1370,7 +1378,7 @@ class TestCreateModelMultiDataset:
     def test_hierarchical_dataset_gate_adds_hyperparameters(self):
         """Dataset-level gate hierarchy includes population hyperparameters."""
         b = self._builder()
-        b._hierarchical_dataset_gate = True
+        b._gate_dataset_prior = "gaussian"
         config = b.build()
         _, _, specs = create_model(config)
         spec_names = {s.name for s in specs}
@@ -1380,9 +1388,10 @@ class TestCreateModelMultiDataset:
     def test_hierarchical_dataset_gate_combined_with_mu_and_p(self):
         """All three dataset-level hierarchies together produce a valid model."""
         b = self._builder()
-        b._hierarchical_dataset_mu = True
-        b._hierarchical_dataset_p = "gene_specific"
-        b._hierarchical_dataset_gate = True
+        b._mu_dataset_prior = "gaussian"
+        b._p_dataset_prior = "gaussian"
+        b._p_dataset_mode = "gene_specific"
+        b._gate_dataset_prior = "gaussian"
         config = b.build()
         model, guide, specs = create_model(config)
         assert callable(model)
@@ -1394,9 +1403,9 @@ class TestCreateModelMultiDataset:
 
     @pytest.mark.parametrize("model_type", ["zinb", "zinbvcp"])
     def test_hierarchical_dataset_gate_zi_models(self, model_type):
-        """hierarchical_dataset_gate works across ZI model types."""
+        """gate_dataset_prior works across ZI model types."""
         b = self._builder(model_type=model_type)
-        b._hierarchical_dataset_gate = True
+        b._gate_dataset_prior = "gaussian"
         config = b.build()
         model, guide, specs = create_model(config)
         assert callable(model)
@@ -1423,7 +1432,7 @@ class TestNCellsPerDataset:
             base_model="nbdm",
             n_datasets=n_datasets,
             unconstrained=True,
-            hierarchical_dataset_mu=True,
+            mu_dataset_prior="gaussian",
             param_specs=[_make_ds_exp_spec("r")],
         )
         params = {
@@ -1458,7 +1467,7 @@ class TestNCellsPerDataset:
             base_model="nbdm",
             n_datasets=n_datasets,
             unconstrained=True,
-            hierarchical_dataset_mu=True,
+            mu_dataset_prior="gaussian",
             param_specs=[_make_ds_exp_spec("r")],
         )
         params = {
@@ -1494,7 +1503,7 @@ class TestNCellsPerDataset:
             base_model="nbdm",
             n_datasets=n_datasets,
             unconstrained=True,
-            hierarchical_dataset_mu=True,
+            mu_dataset_prior="gaussian",
             param_specs=[_make_ds_exp_spec("r")],
         )
         samples = {
@@ -1527,7 +1536,7 @@ class TestNCellsPerDataset:
             base_model="nbdm",
             n_datasets=n_datasets,
             unconstrained=True,
-            hierarchical_dataset_mu=True,
+            mu_dataset_prior="gaussian",
             param_specs=[_make_ds_exp_spec("r")],
         )
         samples = {
@@ -1558,7 +1567,7 @@ class TestNCellsPerDataset:
             base_model="nbdm",
             n_datasets=n_datasets,
             unconstrained=True,
-            hierarchical_dataset_mu=True,
+            mu_dataset_prior="gaussian",
             param_specs=[_make_ds_exp_spec("r")],
         )
         params = {
@@ -1618,7 +1627,7 @@ class TestCellSpecificSubsetting:
             base_model="nbvcp",
             n_datasets=n_datasets,
             unconstrained=True,
-            hierarchical_dataset_mu=True,
+            mu_dataset_prior="gaussian",
             param_specs=[ds_spec, cell_spec],
         )
 
@@ -1690,7 +1699,7 @@ class TestCellSpecificSubsetting:
             base_model="nbvcp",
             n_datasets=n_datasets,
             unconstrained=True,
-            hierarchical_dataset_mu=True,
+            mu_dataset_prior="gaussian",
             param_specs=[ds_spec, cell_spec],
         )
         params = {
@@ -1740,7 +1749,7 @@ class TestCellSpecificSubsetting:
             base_model="nbvcp",
             n_datasets=n_datasets,
             unconstrained=True,
-            hierarchical_dataset_mu=True,
+            mu_dataset_prior="gaussian",
             param_specs=[ds_spec, cell_spec],
         )
 
@@ -1793,7 +1802,7 @@ class TestCellSpecificSubsetting:
             base_model="nbdm",
             n_datasets=n_datasets,
             unconstrained=True,
-            hierarchical_dataset_mu=True,
+            mu_dataset_prior="gaussian",
             param_specs=[_make_ds_exp_spec("r")],
         )
         params = {
@@ -1849,7 +1858,7 @@ class TestResultsConcat:
             base_model="nbvcp",
             n_datasets=n_datasets,
             unconstrained=True,
-            hierarchical_dataset_mu=True,
+            mu_dataset_prior="gaussian",
             param_specs=[ds_spec, cell_spec],
         )
 
@@ -1929,7 +1938,7 @@ class TestResultsConcat:
             base_model="nbvcp",
             n_datasets=n_datasets,
             unconstrained=True,
-            hierarchical_dataset_mu=True,
+            mu_dataset_prior="gaussian",
             param_specs=[ds_spec, cell_spec],
         )
 
@@ -1989,116 +1998,58 @@ class TestResultsConcat:
 
 
 class TestHorseshoeConfigValidation:
-    """Validate horseshoe flags are mutually exclusive with normal hierarchy."""
+    """Validate horseshoe/prior enum configuration.
 
-    def test_horseshoe_p_excludes_hierarchical_p(self):
-        """Setting both horseshoe_p and hierarchical_p should fail."""
-        with pytest.raises(
-            ValueError, match="horseshoe_p.*hierarchical_p.*mutually exclusive"
-        ):
-            ModelConfig(
-                base_model="nbdm",
-                unconstrained=True,
-                horseshoe_p=True,
-                hierarchical_p=True,
-            )
-
-    def test_horseshoe_gate_excludes_hierarchical_gate(self):
-        with pytest.raises(
-            ValueError,
-            match="horseshoe_gate.*hierarchical_gate.*mutually exclusive",
-        ):
-            ModelConfig(
-                base_model="zinb",
-                unconstrained=True,
-                horseshoe_gate=True,
-                hierarchical_gate=True,
-            )
-
-    def test_horseshoe_dataset_mu_excludes_hierarchical(self):
-        with pytest.raises(
-            ValueError,
-            match="horseshoe_dataset_mu.*hierarchical_dataset_mu.*mutually exclusive",
-        ):
-            ModelConfig(
-                base_model="nbdm",
-                n_datasets=2,
-                unconstrained=True,
-                horseshoe_dataset_mu=True,
-                hierarchical_dataset_mu=True,
-            )
-
-    def test_horseshoe_dataset_p_excludes_hierarchical(self):
-        with pytest.raises(
-            ValueError,
-            match="horseshoe_dataset_p.*hierarchical_dataset_p.*mutually exclusive",
-        ):
-            ModelConfig(
-                base_model="nbdm",
-                n_datasets=2,
-                unconstrained=True,
-                horseshoe_dataset_p=True,
-                hierarchical_dataset_p="gene_specific",
-            )
-
-    def test_horseshoe_dataset_gate_excludes_hierarchical(self):
-        with pytest.raises(
-            ValueError,
-            match="horseshoe_dataset_gate.*hierarchical_dataset_gate.*mutually exclusive",
-        ):
-            ModelConfig(
-                base_model="zinb",
-                n_datasets=2,
-                unconstrained=True,
-                horseshoe_dataset_gate=True,
-                hierarchical_dataset_gate=True,
-            )
+    With enum-based config, mutual exclusivity (horseshoe_p vs hierarchical_p)
+    is impossible by construction. These tests verify standalone prior values
+    and structural constraints.
+    """
 
     def test_valid_horseshoe_p_standalone(self):
-        """horseshoe_p=True alone (no hierarchical_p) should succeed."""
+        """p_prior='horseshoe' alone should succeed."""
         cfg = ModelConfig(
             base_model="nbdm",
             unconstrained=True,
-            horseshoe_p=True,
+            p_prior="horseshoe",
         )
-        assert cfg.horseshoe_p is True
+        assert cfg.p_prior == "horseshoe"
 
     def test_valid_horseshoe_dataset_mu_standalone(self):
-        """horseshoe_dataset_mu=True alone (no hierarchical_dataset_mu)."""
+        """mu_dataset_prior='horseshoe' alone should succeed."""
         cfg = ModelConfig(
             base_model="nbdm",
             n_datasets=2,
             unconstrained=True,
-            horseshoe_dataset_mu=True,
+            mu_dataset_prior="horseshoe",
         )
-        assert cfg.horseshoe_dataset_mu is True
+        assert cfg.mu_dataset_prior == "horseshoe"
 
     def test_horseshoe_p_requires_unconstrained(self):
-        """horseshoe_p=True without unconstrained should fail."""
-        with pytest.raises(ValueError, match="horseshoe_p.*unconstrained"):
+        """p_prior='horseshoe' without unconstrained should fail."""
+        with pytest.raises(ValueError, match="p_prior.*unconstrained"):
             ModelConfig(
                 base_model="nbdm",
-                horseshoe_p=True,
+                p_prior="horseshoe",
             )
 
     def test_horseshoe_gate_requires_zero_inflated(self):
-        """horseshoe_gate=True on non-ZI model should fail."""
-        with pytest.raises(ValueError, match="horseshoe_gate.*zero-inflated"):
+        """gate_prior='horseshoe' on non-ZI model should fail."""
+        with pytest.raises(ValueError, match="gate_prior.*zero-inflated"):
             ModelConfig(
                 base_model="nbdm",
                 unconstrained=True,
-                horseshoe_gate=True,
+                gate_prior="horseshoe",
             )
 
     def test_horseshoe_dataset_mu_requires_n_datasets(self):
-        """horseshoe_dataset_mu=True without n_datasets should fail."""
+        """mu_dataset_prior='horseshoe' without n_datasets should fail."""
         with pytest.raises(
-            ValueError, match="horseshoe_dataset_mu.*n_datasets"
+            ValueError, match="mu_dataset_prior.*n_datasets"
         ):
             ModelConfig(
                 base_model="nbdm",
                 unconstrained=True,
-                horseshoe_dataset_mu=True,
+                mu_dataset_prior="horseshoe",
             )
 
 
@@ -2125,7 +2076,7 @@ class TestHorseshoeCreateModel:
         )
 
         b = self._builder()
-        b._horseshoe_dataset_mu = True
+        b._mu_dataset_prior = "horseshoe"
         config = b.build()
         model, guide, specs = create_model(config)
 
@@ -2161,7 +2112,7 @@ class TestHorseshoeCreateModel:
         )
 
         b = self._builder(parameterization="mean_prob")
-        b._horseshoe_dataset_p = True
+        b._p_dataset_prior = "horseshoe"
         config = b.build()
         model, guide, specs = create_model(config)
 
@@ -2184,7 +2135,7 @@ class TestHorseshoeCreateModel:
         )
 
         b = self._builder(model_type="zinbvcp")
-        b._horseshoe_dataset_gate = True
+        b._gate_dataset_prior = "horseshoe"
         config = b.build()
         model, guide, specs = create_model(config)
 
@@ -2207,7 +2158,7 @@ class TestHorseshoeCreateModel:
             .with_parameterization("mean_prob")
             .unconstrained()
         )
-        b._horseshoe_p = True
+        b._p_prior = "horseshoe"
         config = b.build()
         model, guide, specs = create_model(config)
 
@@ -2234,7 +2185,7 @@ class TestHorseshoeCreateModel:
             .with_parameterization("mean_odds")
             .unconstrained()
         )
-        b._horseshoe_p = True
+        b._p_prior = "horseshoe"
         config = b.build()
         model, guide, specs = create_model(config)
 
@@ -2261,7 +2212,7 @@ class TestHorseshoeCreateModel:
             .with_parameterization("mean_prob")
             .unconstrained()
         )
-        b._horseshoe_gate = True
+        b._gate_prior = "horseshoe"
         config = b.build()
         model, guide, specs = create_model(config)
 
@@ -2275,9 +2226,9 @@ class TestHorseshoeCreateModel:
     def test_combined_dataset_horseshoe_mu_p_gate(self):
         """Multiple horseshoe flags enabled simultaneously (standalone)."""
         b = self._builder(model_type="zinbvcp")
-        b._horseshoe_dataset_mu = True
-        b._horseshoe_dataset_p = True
-        b._horseshoe_dataset_gate = True
+        b._mu_dataset_prior = "horseshoe"
+        b._p_dataset_prior = "horseshoe"
+        b._gate_dataset_prior = "horseshoe"
         config = b.build()
         model, guide, specs = create_model(config)
 
@@ -2365,7 +2316,7 @@ class TestFitApiDatasetHierarchyValidation:
                 batch_size=3,
                 seed=0,
                 unconstrained=True,
-                hierarchical_dataset_mu=True,
+                mu_dataset_prior="gaussian",
             )
 
     def test_single_dataset_allows_gene_level_hierarchy(self):
@@ -2374,7 +2325,7 @@ class TestFitApiDatasetHierarchyValidation:
 
         adata = self._make_adata(include_dataset_column=False)
 
-        # hierarchical_p is a gene-level option and should still be valid.
+        # p_prior is a gene-level option and should still be valid.
         result = scribe.fit(
             adata,
             model="nbdm",
@@ -2382,7 +2333,7 @@ class TestFitApiDatasetHierarchyValidation:
             batch_size=3,
             seed=0,
             unconstrained=True,
-            hierarchical_p=True,
+            p_prior="gaussian",
         )
         assert result.n_cells == adata.n_obs
 
@@ -2402,7 +2353,7 @@ class TestFitApiDatasetHierarchyValidation:
             seed=0,
             unconstrained=True,
             dataset_key="dataset",
-            hierarchical_dataset_mu=True,
+            mu_dataset_prior="gaussian",
         )
         assert result.n_cells == adata.n_obs
 
@@ -2424,9 +2375,9 @@ class TestFitApiDatasetHierarchyValidation:
                 seed=0,
                 unconstrained=True,
                 dataset_key="dataset",
-                hierarchical_dataset_mu=True,
+                mu_dataset_prior="gaussian",
             )
-        assert result.model_config.hierarchical_dataset_mu is False
+        assert result.model_config.mu_dataset_prior == "none"
         assert result.model_config.n_datasets is None
 
     @pytest.mark.parametrize("dataset_p_mode", ["gene_specific", "two_level"])
@@ -2450,10 +2401,11 @@ class TestFitApiDatasetHierarchyValidation:
                 seed=0,
                 unconstrained=True,
                 dataset_key="dataset",
-                hierarchical_dataset_p=dataset_p_mode,
+                p_dataset_prior="gaussian",
+                p_dataset_mode=dataset_p_mode,
             )
-        assert result.model_config.hierarchical_p is True
-        assert result.model_config.hierarchical_dataset_p == "none"
+        assert result.model_config.p_prior != "none"
+        assert result.model_config.p_dataset_prior == "none"
         assert result.model_config.n_datasets is None
 
     def test_single_dataset_auto_downgrades_dataset_p_scalar_to_none(self):
@@ -2474,10 +2426,11 @@ class TestFitApiDatasetHierarchyValidation:
                 seed=0,
                 unconstrained=True,
                 dataset_key="dataset",
-                hierarchical_dataset_p="scalar",
+                p_dataset_prior="gaussian",
+                p_dataset_mode="scalar",
             )
-        assert result.model_config.hierarchical_p is False
-        assert result.model_config.hierarchical_dataset_p == "none"
+        assert result.model_config.p_prior == "none"
+        assert result.model_config.p_dataset_prior == "none"
         assert result.model_config.n_datasets is None
 
     def test_single_dataset_auto_downgrades_dataset_gate_to_gene_level(self):
@@ -2498,10 +2451,10 @@ class TestFitApiDatasetHierarchyValidation:
                 seed=0,
                 unconstrained=True,
                 dataset_key="dataset",
-                hierarchical_dataset_gate=True,
+                gate_dataset_prior="gaussian",
             )
-        assert result.model_config.hierarchical_gate is True
-        assert result.model_config.hierarchical_dataset_gate is False
+        assert result.model_config.gate_prior != "none"
+        assert result.model_config.gate_dataset_prior == "none"
         assert result.model_config.n_datasets is None
 
     def test_single_dataset_no_auto_downgrade_preserves_strict_error(self):
@@ -2522,7 +2475,7 @@ class TestFitApiDatasetHierarchyValidation:
                 seed=0,
                 unconstrained=True,
                 dataset_key="dataset",
-                hierarchical_dataset_mu=True,
+                mu_dataset_prior="gaussian",
                 auto_downgrade_single_dataset_hierarchy=False,
             )
 
@@ -2842,7 +2795,7 @@ class TestMixtureDatasetHierarchyFactory:
         """create_model with mixture + hierarchical_dataset_mu runs."""
         b = self._builder()
         b._n_datasets = 2
-        b._hierarchical_dataset_mu = True
+        b._mu_dataset_prior = "gaussian"
         b._n_components = 2
         config = b.build()
 
@@ -2859,7 +2812,7 @@ class TestMixtureDatasetHierarchyFactory:
         """shared_component_indices flows through to hierarchical spec."""
         b = self._builder()
         b._n_datasets = 2
-        b._hierarchical_dataset_mu = True
+        b._mu_dataset_prior = "gaussian"
         b._n_components = 3
         config = b.build()
         # Inject shared_component_indices (normally done by fit())
@@ -2885,7 +2838,7 @@ class TestMixtureDatasetHierarchyFactory:
 
         b = self._builder()
         b._n_datasets = D
-        b._hierarchical_dataset_mu = True
+        b._mu_dataset_prior = "gaussian"
         b._n_components = K
         config = b.build()
 
@@ -2906,7 +2859,8 @@ class TestMixtureDatasetHierarchyFactory:
         """dataset hierarchy on p/phi with mixture propagates is_mixture."""
         b = self._builder()
         b._n_datasets = 2
-        b._hierarchical_dataset_p = "gene_specific"
+        b._p_dataset_prior = "gaussian"
+        b._p_dataset_mode = "gene_specific"
         b._n_components = 3
         config = b.build()
 
@@ -2940,8 +2894,9 @@ class TestMixtureDatasetHierarchyFactory:
 
         b = self._builder(model_type="zinbvcp", parameterization="mean_odds")
         b._n_datasets = D
-        b._hierarchical_dataset_mu = True
-        b._hierarchical_dataset_p = "gene_specific"
+        b._mu_dataset_prior = "gaussian"
+        b._p_dataset_prior = "gaussian"
+        b._p_dataset_mode = "gene_specific"
         b._n_components = K
         config = b.build()
 

@@ -2,7 +2,8 @@
 
 Covers:
 - Hierarchical parameter spec creation and validation
-- Model building and tracing with hierarchical specs (flag-based)
+- Model building and tracing with hierarchical specs (enum-based p_prior,
+gate_prior)
 - Gamma-based composition sampling (reduces to Dirichlet when p shared)
 - Broadcasting of gene-specific p in mixture likelihoods
 - DE pipeline with gene-specific p samples
@@ -38,6 +39,7 @@ from scribe.models.presets.factory import (
     _hierarchicalize_p,
 )
 from scribe.models.config import ModelConfig, ModelConfigBuilder
+from scribe.models.config.enums import HierarchicalPriorType
 from scribe.models.config.groups import GuideFamilyConfig
 
 
@@ -58,7 +60,7 @@ def _build_full_param_specs(model_config):
         mixture_params=model_config.mixture_params,
     )
 
-    if model_config.hierarchical_p:
+    if model_config.p_prior != HierarchicalPriorType.NONE:
         specs = _hierarchicalize_p(
             param_specs=specs,
             param_key=param_key,
@@ -84,7 +86,7 @@ def _build_full_param_specs(model_config):
             param_strategy=strategy,
             n_components=model_config.n_components,
             mixture_params=model_config.mixture_params,
-            hierarchical_gate=model_config.hierarchical_gate,
+            hierarchical_gate=model_config.gate_prior != HierarchicalPriorType.NONE,
         )
         specs.extend(extra_specs)
     return specs
@@ -202,7 +204,7 @@ class TestHierarchicalModelBuilding:
     """Test that hierarchical models build and trace correctly."""
 
     def test_hierarchical_canonical_model_traces(self, rng, small_dims):
-        """Test that hierarchical_p with canonical parameterization traces."""
+        """Test that p_prior='gaussian' with canonical parameterization traces."""
         from scribe.models.presets.factory import create_model
 
         config = (
@@ -234,7 +236,7 @@ class TestHierarchicalModelBuilding:
         assert jnp.all(p_value < 1)
 
     def test_hierarchical_mean_prob_model_traces(self, rng, small_dims):
-        """Test that hierarchical_p with mean_prob parameterization traces."""
+        """Test that p_prior='gaussian' with mean_prob parameterization traces."""
         from scribe.models.presets.factory import create_model
 
         config = (
@@ -264,7 +266,7 @@ class TestHierarchicalModelBuilding:
         assert trace["mu"]["value"].shape == (small_dims["n_genes"],)
 
     def test_hierarchical_mean_odds_model_traces(self, rng, small_dims):
-        """Test that hierarchical_p with mean_odds parameterization traces."""
+        """Test that p_prior='gaussian' with mean_odds parameterization traces."""
         from scribe.models.presets.factory import create_model
 
         config = (
@@ -706,7 +708,7 @@ class TestHierarchicalMAPSampling:
 
     @pytest.fixture
     def hierarchical_mean_odds_results(self):
-        """Build a minimal ScribeSVIResults for mean_odds VCP with hierarchical_p.
+        """Build a minimal ScribeSVIResults for mean_odds VCP with p_prior='gaussian'.
 
         Returns
         -------
@@ -742,7 +744,7 @@ class TestHierarchicalMAPSampling:
             base_model="nbvcp",
             parameterization="mean_odds",
             unconstrained=True,
-            hierarchical_p=True,
+            p_prior="gaussian",
             n_components=n_components,
             mixture_params=["phi", "mu"],
         )
@@ -763,7 +765,7 @@ class TestHierarchicalMAPSampling:
 
     @pytest.fixture
     def hierarchical_mean_prob_results(self):
-        """Build a minimal ScribeSVIResults for mean_prob VCP with hierarchical_p.
+        """Build a minimal ScribeSVIResults for mean_prob VCP with p_prior='gaussian'.
 
         Returns
         -------
@@ -799,7 +801,7 @@ class TestHierarchicalMAPSampling:
             base_model="nbvcp",
             parameterization="mean_prob",
             unconstrained=True,
-            hierarchical_p=True,
+            p_prior="gaussian",
             n_components=n_components,
             mixture_params=["p", "mu"],
         )
@@ -1013,7 +1015,7 @@ class TestHierarchicalComponentSubsetting:
 
     @pytest.fixture
     def hierarchical_mixture_results(self):
-        """Build a ScribeSVIResults for mean_odds with hierarchical_p, 3 components.
+        """Build a ScribeSVIResults for mean_odds with p_prior='gaussian', 3 components.
 
         Returns
         -------
@@ -1044,7 +1046,7 @@ class TestHierarchicalComponentSubsetting:
             base_model="nbvcp",
             parameterization="mean_odds",
             unconstrained=True,
-            hierarchical_p=True,
+            p_prior="gaussian",
             n_components=n_components,
             mixture_params=["phi", "mu"],
         )
@@ -1244,7 +1246,7 @@ class TestMetadataDrivenComponentSubsetting:
     """
 
     @staticmethod
-    def _make_results(parameterization, mixture_params, extra_params=None, hierarchical_p=False):
+    def _make_results(parameterization, mixture_params, extra_params=None, p_prior="none"):
         """Build a minimal ``ScribeSVIResults`` for *parameterization*.
 
         Parameters
@@ -1255,8 +1257,8 @@ class TestMetadataDrivenComponentSubsetting:
             Which core params are mixture-specific.
         extra_params : dict, optional
             Additional entries to merge into the variational params dict.
-        hierarchical_p : bool, default=False
-            If True, use gene-specific p/phi with hierarchical prior.
+        p_prior : str, default="none"
+            Gene-level prior for p/phi: "none", "gaussian", or "horseshoe".
 
         Returns
         -------
@@ -1271,7 +1273,7 @@ class TestMetadataDrivenComponentSubsetting:
             base_model="nbvcp",
             parameterization=parameterization,
             unconstrained=True,
-            hierarchical_p=hierarchical_p,
+            p_prior=p_prior,
             n_components=n_components,
             mixture_params=mixture_params,
         )
@@ -1330,7 +1332,7 @@ class TestMetadataDrivenComponentSubsetting:
         from scribe.svi._component import _build_mixture_keys
 
         results = self._make_results(
-            "mean_odds", ["phi", "mu"], hierarchical_p=True
+            "mean_odds", ["phi", "mu"], p_prior="gaussian"
         )
         mixture_keys = _build_mixture_keys(
             results.model_config.param_specs, results.params
@@ -1345,7 +1347,7 @@ class TestMetadataDrivenComponentSubsetting:
         from scribe.svi._component import _build_mixture_keys
 
         results = self._make_results(
-            "mean_odds", ["phi", "mu"], hierarchical_p=True
+            "mean_odds", ["phi", "mu"], p_prior="gaussian"
         )
         mixture_keys = _build_mixture_keys(
             results.model_config.param_specs, results.params
@@ -1361,7 +1363,7 @@ class TestMetadataDrivenComponentSubsetting:
         from scribe.svi._component import _build_mixture_keys
 
         results = self._make_results(
-            "mean_odds", ["phi", "mu"], hierarchical_p=True
+            "mean_odds", ["phi", "mu"], p_prior="gaussian"
         )
         mixture_keys = _build_mixture_keys(
             results.model_config.param_specs, results.params
@@ -1514,7 +1516,7 @@ class TestMetadataDrivenComponentSubsetting:
     def test_hierarchical_canonical_component_subsetting(self):
         """Hierarchical canonical: p is hierarchical-gene, r is gene."""
         results = self._make_results(
-            "canonical", ["p", "r"], hierarchical_p=True
+            "canonical", ["p", "r"], p_prior="gaussian"
         )
         comp = results.get_component(0)
 
@@ -1528,7 +1530,7 @@ class TestMetadataDrivenComponentSubsetting:
     def test_hierarchical_mean_prob_component_subsetting(self):
         """Hierarchical mean-prob: p is hierarchical-gene, mu is gene."""
         results = self._make_results(
-            "mean_prob", ["p", "mu"], hierarchical_p=True
+            "mean_prob", ["p", "mu"], p_prior="gaussian"
         )
         comp = results.get_component(1)
 
@@ -1542,7 +1544,7 @@ class TestMetadataDrivenComponentSubsetting:
     def test_hierarchical_mean_odds_component_subsetting(self):
         """Hierarchical mean-odds: phi is hierarchical-gene, mu is gene."""
         results = self._make_results(
-            "mean_odds", ["phi", "mu"], hierarchical_p=True
+            "mean_odds", ["phi", "mu"], p_prior="gaussian"
         )
         comp = results.get_component(0)
 
@@ -1555,8 +1557,8 @@ class TestMetadataDrivenComponentSubsetting:
 
     def test_capture_preserved_across_parameterizations(self):
         """phi_capture must keep its (n_cells,) shape after get_component."""
-        for param, hier in [("mean_odds", True), ("mean_odds", False)]:
-            results = self._make_results(param, ["phi", "mu"], hierarchical_p=hier)
+        for param, p_prior in [("mean_odds", "gaussian"), ("mean_odds", "none")]:
+            results = self._make_results(param, ["phi", "mu"], p_prior=p_prior)
             comp = results.get_component(0)
 
             capture_key = [
@@ -1567,7 +1569,7 @@ class TestMetadataDrivenComponentSubsetting:
     def test_hyperparams_preserved(self):
         """Scalar hyper-parameters must pass through get_component unchanged."""
         results = self._make_results(
-            "mean_odds", ["phi", "mu"], hierarchical_p=True
+            "mean_odds", ["phi", "mu"], p_prior="gaussian"
         )
         comp = results.get_component(0)
 
@@ -1579,7 +1581,7 @@ class TestMetadataDrivenComponentSubsetting:
     def test_mixing_concentrations_preserved(self):
         """mixing_concentrations is shared and must be copied as-is."""
         results = self._make_results(
-            "mean_odds", ["phi", "mu"], hierarchical_p=True
+            "mean_odds", ["phi", "mu"], p_prior="gaussian"
         )
         comp = results.get_component(0)
 
@@ -1595,37 +1597,37 @@ class TestMetadataDrivenComponentSubsetting:
 
 
 class TestHierarchicalFlags:
-    """Tests for the boolean-flag-based hierarchical system."""
+    """Tests for the enum-based hierarchical prior system (p_prior, gate_prior)."""
 
     def test_hierarchical_gate_requires_zi_model(self):
-        """hierarchical_gate=True on a non-ZI model should raise."""
-        with pytest.raises(ValueError, match="hierarchical_gate.*zero-inflated"):
+        """gate_prior='gaussian' on a non-ZI model should raise."""
+        with pytest.raises(ValueError, match="gate_prior.*zero-inflated"):
             ModelConfig(
                 base_model="nbdm",
                 unconstrained=True,
-                hierarchical_gate=True,
+                gate_prior="gaussian",
             )
 
     def test_hierarchical_p_requires_unconstrained(self):
-        """hierarchical_p=True without unconstrained should raise."""
-        with pytest.raises(ValueError, match="hierarchical_p.*unconstrained"):
+        """p_prior='gaussian' without unconstrained should raise."""
+        with pytest.raises(ValueError, match="p_prior.*unconstrained"):
             ModelConfig(
                 base_model="nbdm",
-                hierarchical_p=True,
+                p_prior="gaussian",
                 unconstrained=False,
             )
 
     def test_hierarchical_gate_requires_unconstrained(self):
-        """hierarchical_gate=True without unconstrained should raise."""
-        with pytest.raises(ValueError, match="hierarchical_gate.*unconstrained"):
+        """gate_prior='gaussian' without unconstrained should raise."""
+        with pytest.raises(ValueError, match="gate_prior.*unconstrained"):
             ModelConfig(
                 base_model="zinb",
-                hierarchical_gate=True,
+                gate_prior="gaussian",
                 unconstrained=False,
             )
 
     def test_builder_with_hierarchical_p(self):
-        """Builder .with_hierarchical_p() sets flag and unconstrained."""
+        """Builder .with_hierarchical_p() sets p_prior and unconstrained."""
         config = (
             ModelConfigBuilder()
             .for_model("nbdm")
@@ -1633,12 +1635,12 @@ class TestHierarchicalFlags:
             .with_hierarchical_p()
             .build()
         )
-        assert config.hierarchical_p is True
+        assert config.p_prior == HierarchicalPriorType.GAUSSIAN
         assert config.unconstrained is True
         assert config.is_hierarchical is True
 
     def test_builder_with_hierarchical_gate(self):
-        """Builder .with_hierarchical_gate() sets flag and unconstrained."""
+        """Builder .with_hierarchical_gate() sets gate_prior and unconstrained."""
         config = (
             ModelConfigBuilder()
             .for_model("zinb")
@@ -1646,12 +1648,12 @@ class TestHierarchicalFlags:
             .with_hierarchical_gate()
             .build()
         )
-        assert config.hierarchical_gate is True
+        assert config.gate_prior == HierarchicalPriorType.GAUSSIAN
         assert config.unconstrained is True
         assert config.is_hierarchical is True
 
     def test_hierarchical_p_canonical_creates_model(self):
-        """hierarchical_p with canonical parameterization creates a valid model."""
+        """p_prior='gaussian' with canonical parameterization creates a valid model."""
         from scribe.models.presets.factory import create_model
 
         config = (
@@ -1668,7 +1670,7 @@ class TestHierarchicalFlags:
         assert "p" in spec_names
 
     def test_hierarchical_p_mean_odds_creates_model(self):
-        """hierarchical_p with mean_odds parameterization creates a valid model."""
+        """p_prior='gaussian' with mean_odds parameterization creates a valid model."""
         from scribe.models.presets.factory import create_model
 
         config = (
@@ -1685,7 +1687,7 @@ class TestHierarchicalFlags:
         assert "phi" in spec_names
 
     def test_hierarchical_gate_zinb_creates_model(self):
-        """hierarchical_gate with ZINB creates a valid model."""
+        """gate_prior='gaussian' with ZINB creates a valid model."""
         from scribe.models.presets.factory import create_model
 
         config = (
@@ -1703,7 +1705,7 @@ class TestHierarchicalFlags:
         assert "gate" in spec_names
 
     def test_both_flags_creates_model(self):
-        """Both hierarchical_p and hierarchical_gate creates a valid model."""
+        """Both p_prior='gaussian' and gate_prior='gaussian' creates a valid model."""
         from scribe.models.presets.factory import create_model
 
         config = (
@@ -1722,7 +1724,7 @@ class TestHierarchicalFlags:
         assert "logit_gate_scale" in spec_names
 
     def test_mean_odds_hierarchical_p_multi_dataset_gate_validates(self):
-        """Regression test for mean_odds hierarchical_p + dataset gate dry-run."""
+        """Regression test for mean_odds p_prior='gaussian' + dataset gate dry-run."""
         from scribe.models.presets.factory import create_model
 
         # This configuration previously failed during model validation dry run
@@ -1731,11 +1733,11 @@ class TestHierarchicalFlags:
             base_model="zinbvcp",
             parameterization="mean_odds",
             unconstrained=True,
-            hierarchical_p=True,
-            hierarchical_dataset_gate=True,
+            p_prior="gaussian",
+            gate_dataset_prior="gaussian",
             n_datasets=2,
             # Keep these enabled to match the failing override family.
-            hierarchical_dataset_mu=True,
+            mu_dataset_prior="gaussian",
         )
 
         model, guide, specs = create_model(config, validate=True)
@@ -1746,18 +1748,18 @@ class TestHierarchicalFlags:
         assert "gate" in spec_names
 
     def test_is_hierarchical_property(self):
-        """is_hierarchical is True when either flag is set."""
+        """is_hierarchical is True when p_prior or gate_prior is set."""
         config_p = ModelConfig(
             base_model="nbdm",
             unconstrained=True,
-            hierarchical_p=True,
+            p_prior="gaussian",
         )
         assert config_p.is_hierarchical is True
 
         config_gate = ModelConfig(
             base_model="zinb",
             unconstrained=True,
-            hierarchical_gate=True,
+            gate_prior="gaussian",
         )
         assert config_gate.is_hierarchical is True
 
@@ -1803,14 +1805,14 @@ class TestHierarchicalMuConfig:
             )
 
     def test_hierarchical_mu_excludes_dataset_mu(self):
-        """hierarchical_mu and hierarchical_dataset_mu are mutually exclusive."""
+        """hierarchical_mu and mu_dataset_prior are mutually exclusive."""
         with pytest.raises(
-            ValueError, match="hierarchical_mu.*hierarchical_dataset_mu"
+            ValueError, match="hierarchical_mu.*mu_dataset_prior"
         ):
             ModelConfig(
                 base_model="nbdm",
                 hierarchical_mu=True,
-                hierarchical_dataset_mu=True,
+                mu_dataset_prior="gaussian",
                 unconstrained=True,
                 n_components=3,
                 n_datasets=2,
@@ -2042,7 +2044,7 @@ class TestHierarchicalMuModelTracing:
         )
 
     def test_combined_with_hierarchical_p(self, small_dims):
-        """hierarchical_mu + hierarchical_p on the same model."""
+        """hierarchical_mu + p_prior='gaussian' on the same model."""
         from scribe.models.presets.factory import create_model
 
         config = (
@@ -2099,7 +2101,7 @@ class TestHierarchicalMuModelTracing:
         assert "gate" in trace
 
     def test_zinbvcp_with_hierarchical_mu_and_gate(self, small_dims):
-        """hierarchical_mu + hierarchical_gate on ZINBVCP."""
+        """hierarchical_mu + gate_prior='gaussian' on ZINBVCP."""
         from scribe.models.presets.factory import create_model
 
         config = (
@@ -2125,3 +2127,279 @@ class TestHierarchicalMuModelTracing:
         assert "logit_gate_loc" in trace
         assert "mu" in trace
         assert "gate" in trace
+
+
+# ==========================================================================
+# Tests: NEG (Normal-Exponential-Gamma) Prior
+# ==========================================================================
+
+
+class TestNEGPrior:
+    """Comprehensive tests for the NEG (Normal-Exponential-Gamma) sparsity prior.
+
+    The NEG prior uses a Gamma-Gamma hierarchy:
+    - zeta_g ~ Gamma(a, tau) (per-gene rate)
+    - psi_g ~ Gamma(u, zeta_g) (per-gene variance)
+    - z_g ~ Normal(0, 1) (NCP raw)
+    - p_g = sigmoid(loc + sqrt(psi_g) * z_g) (deterministic)
+
+    NEG trace sites differ from Gaussian: zeta_*, psi_*, *_raw instead of
+    logit_*_scale / log_*_scale.
+    """
+
+    # ------------------------------------------------------------------
+    # Config validation tests
+    # ------------------------------------------------------------------
+
+    def test_neg_p_requires_unconstrained(self):
+        """p_prior='neg' without unconstrained should raise.
+
+        The NEG prior uses an unconstrained (NCP) parameterization internally;
+        it cannot be used with constrained (Beta/LogNormal) parameterizations.
+        """
+        with pytest.raises(ValueError, match="p_prior.*unconstrained"):
+            ModelConfig(base_model="nbdm", p_prior="neg", unconstrained=False)
+
+    def test_neg_gate_requires_zi_model(self):
+        """gate_prior='neg' on a non-ZI model should raise.
+
+        The gate parameter only exists in zero-inflated models (zinb, zinbvcp).
+        """
+        with pytest.raises(ValueError, match="gate_prior.*zero-inflated"):
+            ModelConfig(base_model="nbdm", unconstrained=True, gate_prior="neg")
+
+    def test_neg_gate_requires_unconstrained(self):
+        """gate_prior='neg' without unconstrained should raise."""
+        with pytest.raises(ValueError, match="gate_prior.*unconstrained"):
+            ModelConfig(base_model="zinb", gate_prior="neg", unconstrained=False)
+
+    # ------------------------------------------------------------------
+    # Config property tests
+    # ------------------------------------------------------------------
+
+    def test_neg_p_sets_is_hierarchical(self):
+        """p_prior='neg' should set is_hierarchical=True."""
+        config = ModelConfig(
+            base_model="nbdm", unconstrained=True, p_prior="neg"
+        )
+        assert config.is_hierarchical is True
+        assert config.p_prior == HierarchicalPriorType.NEG
+
+    def test_neg_hyperparameters_default(self):
+        """Default NEG hyperparameters are u=1, a=1, tau=1."""
+        config = ModelConfig(
+            base_model="nbdm", unconstrained=True, p_prior="neg"
+        )
+        assert config.neg_u == 1.0
+        assert config.neg_a == 1.0
+        assert config.neg_tau == 1.0
+
+    def test_neg_hyperparameters_custom(self):
+        """Custom NEG hyperparameters are stored correctly."""
+        config = ModelConfig(
+            base_model="nbdm",
+            unconstrained=True,
+            p_prior="neg",
+            neg_u=2.0,
+            neg_a=0.5,
+            neg_tau=0.1,
+        )
+        assert config.neg_u == 2.0
+        assert config.neg_a == 0.5
+        assert config.neg_tau == 0.1
+
+    # ------------------------------------------------------------------
+    # Model creation tests
+    # ------------------------------------------------------------------
+
+    def test_neg_p_canonical_creates_model(self, small_dims):
+        """p_prior='neg' with canonical parameterization creates a valid model.
+
+        Canonical uses logit_p_loc, zeta_p, psi_p, p_raw, p.
+        """
+        from scribe.models.presets.factory import create_model
+
+        config = ModelConfig(
+            base_model="nbdm",
+            unconstrained=True,
+            p_prior="neg",
+            parameterization="canonical",
+        )
+        model, guide, specs = create_model(config, validate=True)
+        spec_names = [s.name for s in specs]
+        assert "logit_p_loc" in spec_names
+        assert "zeta_p" in spec_names
+        assert "psi_p" in spec_names
+        assert "p" in spec_names
+
+    def test_neg_p_mean_odds_creates_model(self, small_dims):
+        """p_prior='neg' with mean_odds parameterization creates a valid model.
+
+        Mean_odds uses log_phi_loc, zeta_phi, psi_phi, phi_raw, phi.
+        """
+        from scribe.models.presets.factory import create_model
+
+        config = ModelConfig(
+            base_model="nbdm",
+            unconstrained=True,
+            p_prior="neg",
+            parameterization="mean_odds",
+        )
+        model, guide, specs = create_model(config, validate=True)
+        spec_names = [s.name for s in specs]
+        assert "log_phi_loc" in spec_names
+        assert "zeta_phi" in spec_names
+        assert "psi_phi" in spec_names
+        assert "phi" in spec_names
+
+    def test_neg_gate_creates_model(self, small_dims):
+        """gate_prior='neg' on ZINB creates a valid model."""
+        from scribe.models.presets.factory import create_model
+
+        config = ModelConfig(
+            base_model="zinb",
+            unconstrained=True,
+            gate_prior="neg",
+            parameterization="mean_odds",
+        )
+        model, guide, specs = create_model(config, validate=True)
+        spec_names = [s.name for s in specs]
+        assert "logit_gate_loc" in spec_names
+        assert "zeta_gate" in spec_names
+        assert "psi_gate" in spec_names
+        assert "gate" in spec_names
+
+    def test_neg_p_and_gate_creates_model(self, small_dims):
+        """Both p_prior='neg' and gate_prior='neg' on ZINB."""
+        from scribe.models.presets.factory import create_model
+
+        config = ModelConfig(
+            base_model="zinb",
+            unconstrained=True,
+            p_prior="neg",
+            gate_prior="neg",
+            parameterization="mean_odds",
+        )
+        model, guide, specs = create_model(config, validate=True)
+        spec_names = [s.name for s in specs]
+        assert "zeta_phi" in spec_names
+        assert "psi_phi" in spec_names
+        assert "zeta_gate" in spec_names
+        assert "psi_gate" in spec_names
+
+    # ------------------------------------------------------------------
+    # Model tracing tests (verify sites)
+    # ------------------------------------------------------------------
+
+    def test_neg_p_mean_odds_traces_correctly(self, small_dims):
+        """p_prior='neg' mean_odds model produces correct NEG trace sites.
+
+        Verifies zeta_phi, psi_phi, phi_raw, log_phi_loc, phi are present
+        and Gaussian scale sites (log_phi_scale) are absent.
+        """
+        from scribe.models.presets.factory import create_model
+
+        config = ModelConfig(
+            base_model="nbdm",
+            unconstrained=True,
+            p_prior="neg",
+            parameterization="mean_odds",
+        )
+        model_fn, _, _ = create_model(config)
+        with numpyro.handlers.seed(rng_seed=0):
+            trace = numpyro.handlers.trace(model_fn).get_trace(
+                n_cells=small_dims["n_cells"],
+                n_genes=small_dims["n_genes"],
+                model_config=config,
+                counts=None,
+            )
+        # NEG-specific sites present
+        assert "zeta_phi" in trace
+        assert "psi_phi" in trace
+        assert "phi_raw" in trace
+        assert "log_phi_loc" in trace
+        assert "phi" in trace
+        # Gaussian hierarchy sites absent (no logit_phi_scale / log_phi_scale)
+        assert "log_phi_scale" not in trace
+        # Shape checks
+        phi_val = trace["phi"]["value"]
+        assert phi_val.shape == (small_dims["n_genes"],)
+        assert jnp.all(jnp.isfinite(phi_val))
+        assert jnp.all(phi_val > 0)
+
+    def test_neg_gate_traces_correctly(self, small_dims):
+        """gate_prior='neg' ZINB model produces correct NEG trace sites."""
+        from scribe.models.presets.factory import create_model
+
+        config = ModelConfig(
+            base_model="zinb",
+            unconstrained=True,
+            gate_prior="neg",
+            parameterization="mean_odds",
+        )
+        model_fn, _, _ = create_model(config)
+        with numpyro.handlers.seed(rng_seed=0):
+            trace = numpyro.handlers.trace(model_fn).get_trace(
+                n_cells=small_dims["n_cells"],
+                n_genes=small_dims["n_genes"],
+                model_config=config,
+                counts=None,
+            )
+        assert "zeta_gate" in trace
+        assert "psi_gate" in trace
+        assert "gate_raw" in trace
+        assert "logit_gate_loc" in trace
+        assert "gate" in trace
+        assert "logit_gate_scale" not in trace
+        gate_val = trace["gate"]["value"]
+        assert gate_val.shape == (small_dims["n_genes"],)
+        assert jnp.all(gate_val > 0)
+        assert jnp.all(gate_val < 1)
+
+    # ------------------------------------------------------------------
+    # Guide site alignment test
+    # ------------------------------------------------------------------
+
+    def test_neg_guide_sites_align_with_model(self, small_dims):
+        """Guide sample sites must match model sample sites for NEG prior.
+
+        All stochastic model sites (excluding observed) must be sampled
+        by the guide for valid SVI. Missing sites would cause
+        ELBO/REPARAMETERIZATION errors.
+        """
+        from scribe.models.presets.factory import create_model
+
+        config = ModelConfig(
+            base_model="nbdm",
+            unconstrained=True,
+            p_prior="neg",
+            parameterization="mean_odds",
+        )
+        model_fn, guide_fn, _ = create_model(config)
+        data = jnp.ones(
+            (small_dims["n_cells"], small_dims["n_genes"]), dtype=jnp.int32
+        )
+        kwargs = dict(
+            n_cells=small_dims["n_cells"],
+            n_genes=small_dims["n_genes"],
+            model_config=config,
+            counts=data,
+        )
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as model_tr:
+                model_fn(**kwargs)
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as guide_tr:
+                guide_fn(**kwargs)
+        model_sample = {
+            n
+            for n, s in model_tr.items()
+            if s["type"] == "sample" and not s.get("is_observed", False)
+        }
+        guide_sample = {
+            n for n, s in guide_tr.items() if s["type"] == "sample"
+        }
+        # All stochastic model sites must be covered by the guide
+        assert model_sample <= guide_sample, (
+            f"Missing in guide: {model_sample - guide_sample}"
+        )
