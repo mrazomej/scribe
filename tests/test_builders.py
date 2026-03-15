@@ -1748,7 +1748,7 @@ class TestJointLowRankIntegration:
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            hierarchical_p=True,
+            p_prior="gaussian",
             guide_rank=5,
             joint_params=["mu", "phi"],
         )
@@ -1770,7 +1770,7 @@ class TestJointLowRankIntegration:
                 model="nbdm",
                 parameterization="mean_odds",
                 unconstrained=True,
-                hierarchical_p=True,
+                p_prior="gaussian",
                 joint_params=["mu", "phi"],
             )
 
@@ -1784,7 +1784,7 @@ class TestJointLowRankIntegration:
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            hierarchical_p=True,
+            p_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi"],
         )
@@ -1830,7 +1830,7 @@ class TestJointLowRankIntegration:
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            hierarchical_p=True,
+            p_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi"],
         )
@@ -1875,7 +1875,7 @@ class TestJointLowRankIntegration:
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            hierarchical_p=True,
+            p_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi"],
         )
@@ -1921,7 +1921,7 @@ class TestJointLowRankIntegration:
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            hierarchical_p=True,
+            p_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi"],
         )
@@ -1984,8 +1984,8 @@ class TestJointLowRankIntegration:
             model="zinbvcp",
             parameterization="mean_odds",
             unconstrained=True,
-            hierarchical_p=True,
-            hierarchical_gate=True,
+            p_prior="gaussian",
+            gate_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi", "gate"],
             priors={"eta_capture": (11.51, 0.01)},
@@ -2025,8 +2025,8 @@ class TestJointLowRankIntegration:
             model="zinbvcp",
             parameterization="mean_odds",
             unconstrained=True,
-            hierarchical_p=True,
-            hierarchical_gate=True,
+            p_prior="gaussian",
+            gate_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi", "gate"],
             priors={"eta_capture": (11.51, 0.01)},
@@ -2080,8 +2080,8 @@ class TestJointLowRankIntegration:
             model="zinbvcp",
             parameterization="mean_odds",
             unconstrained=True,
-            hierarchical_p=True,
-            horseshoe_gate=True,
+            p_prior="gaussian",
+            gate_prior="horseshoe",
             guide_rank=3,
             joint_params=["mu", "phi", "gate"],
             priors={"eta_capture": (11.51, 0.01)},
@@ -2135,9 +2135,9 @@ class TestJointLowRankIntegration:
             model="zinbvcp",
             parameterization="mean_odds",
             unconstrained=True,
-            hierarchical_p=True,
+            p_prior="gaussian",
             hierarchical_mu=True,
-            horseshoe_gate=True,
+            gate_prior="horseshoe",
             guide_rank=3,
             n_components=3,
             mixture_params=["phi", "mu", "gate"],
@@ -2171,7 +2171,7 @@ class TestJointLowRankIntegration:
             model="nbdm",
             parameterization="mean_prob",
             unconstrained=True,
-            hierarchical_p=True,
+            p_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "p"],
         )
@@ -2208,7 +2208,7 @@ class TestJointLowRankIntegration:
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            hierarchical_p=True,
+            p_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi"],
         )
@@ -2284,7 +2284,7 @@ class TestJointLowRankIntegration:
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            hierarchical_p=True,
+            p_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi"],
             n_components=n_components,
@@ -2376,12 +2376,11 @@ class TestJointLowRankIntegration:
         key = random.PRNGKey(0)
         counts = random.poisson(key, lam=5.0, shape=(n_cells, n_genes))
 
-        # hierarchical_p=False makes phi scalar; mixture_params includes phi
+        # p_prior='none' makes phi scalar; mixture_params includes phi
         config = build_config_from_preset(
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            hierarchical_p=False,
             guide_rank=3,
             joint_params=["phi", "mu"],
             n_components=n_components,
@@ -2595,22 +2594,32 @@ class TestPosteriorContractExtraction:
             is_mixture=False,
             is_zero_inflated=False,
             uses_variable_capture=False,
-            hierarchical_p=False,
-            hierarchical_gate=False,
-            hierarchical_dataset_mu=False,
-            hierarchical_dataset_p="none",
-            hierarchical_dataset_gate=False,
-            horseshoe_p=False,
-            horseshoe_gate=False,
-            horseshoe_dataset_mu=False,
-            horseshoe_dataset_p=False,
-            horseshoe_dataset_gate=False,
+            p_prior="none",
+            gate_prior="none",
+            mu_dataset_prior="none",
+            p_dataset_prior="none",
+            p_dataset_mode="gene_specific",
+            gate_dataset_prior="none",
             uses_biology_informed_capture=False,
             shared_capture_scaling=False,
             joint_params=None,
         )
         defaults.update(overrides)
-        return SimpleNamespace(**defaults)
+        ns = SimpleNamespace(**defaults)
+        # Derive deprecated attrs for backward compat with get_posterior_distributions
+        ns.hierarchical_p = ns.p_prior != "none"
+        ns.horseshoe_p = ns.p_prior == "horseshoe"
+        ns.hierarchical_gate = ns.gate_prior != "none"
+        ns.horseshoe_gate = ns.gate_prior == "horseshoe"
+        ns.hierarchical_dataset_mu = ns.mu_dataset_prior != "none"
+        ns.horseshoe_dataset_mu = ns.mu_dataset_prior == "horseshoe"
+        ns.hierarchical_dataset_p = (
+            "none" if ns.p_dataset_prior == "none" else ns.p_dataset_mode
+        )
+        ns.horseshoe_dataset_p = ns.p_dataset_prior == "horseshoe"
+        ns.hierarchical_dataset_gate = ns.gate_dataset_prior != "none"
+        ns.horseshoe_dataset_gate = ns.gate_dataset_prior == "horseshoe"
+        return ns
 
     @staticmethod
     def _dist_kind(d):
@@ -2704,7 +2713,7 @@ class TestPosteriorContractExtraction:
                 _make_config.__func__(
                     parameterization=ParameterizationEnum.MEAN_ODDS,
                     unconstrained=True,
-                    horseshoe_p=True,
+                    p_prior="horseshoe",
                 ),
                 {
                     "mu_loc": jnp.zeros((4,)),
@@ -2743,8 +2752,9 @@ class TestPosteriorContractExtraction:
                 _make_config.__func__(
                     parameterization=ParameterizationEnum.MEAN_ODDS,
                     unconstrained=True,
-                    hierarchical_dataset_mu=True,
-                    hierarchical_dataset_p="gene_specific",
+                    mu_dataset_prior="gaussian",
+                    p_dataset_prior="gaussian",
+                    p_dataset_mode="gene_specific",
                     joint_params=["mu", "phi"],
                 ),
                 {
@@ -2797,7 +2807,7 @@ class TestPosteriorContractExtraction:
                     parameterization=ParameterizationEnum.MEAN_ODDS,
                     unconstrained=True,
                     is_zero_inflated=True,
-                    horseshoe_dataset_gate=True,
+                    gate_dataset_prior="horseshoe",
                     joint_params=["gate"],
                 ),
                 {
