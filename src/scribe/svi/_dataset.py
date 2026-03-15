@@ -51,6 +51,7 @@ def _key_matches_spec(key: str, spec) -> bool:
     raw_name = getattr(spec, "raw_name", None)
     if raw_name:
         names_to_check.append(raw_name)
+    _JOINT_SUFFIXES = ("_loc", "_W", "_raw_diag", "_scale")
     for name in names_to_check:
         if (
             key == name
@@ -60,8 +61,12 @@ def _key_matches_spec(key: str, spec) -> bool:
         ):
             return True
         # Joint guide keys: "joint_{group}_{name}_loc", etc.
-        if key.startswith("joint_") and f"_{name}_" in key:
-            return True
+        # Use endswith to avoid false positives (e.g. "phi" matching
+        # "phi_capture" via substring).
+        if key.startswith("joint_"):
+            for suf in _JOINT_SUFFIXES:
+                if key.endswith(f"_{name}{suf}"):
+                    return True
     return False
 
 

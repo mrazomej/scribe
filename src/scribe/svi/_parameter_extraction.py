@@ -668,6 +668,16 @@ class ParameterExtractionMixin:
                 ):
                     p_reshaped = p_reshaped[:, None]
 
+                # Mixture+dataset scalar p: shape (K, D) while mu is
+                # (K, D, G).  Add trailing singleton for broadcasting.
+                mu_shape = estimates["mu"]
+                if (
+                    p_reshaped.ndim >= 1
+                    and mu_shape.ndim > p_reshaped.ndim
+                    and mu_shape.shape[: p_reshaped.ndim] == p_reshaped.shape
+                ):
+                    p_reshaped = p_reshaped[..., None]
+
                 estimates["r"] = estimates["mu"] * (1 - p_reshaped) / p_reshaped
 
         # Handle odds_ratio / mean_odds parameterization
@@ -725,6 +735,17 @@ class ParameterExtractionMixin:
                     and estimates["mu"].ndim >= 2
                 ):
                     phi_reshaped = phi_reshaped[:, None]
+
+                # Mixture+dataset scalar phi: shape (K, D) while mu is
+                # (K, D, G).  Add trailing singleton for broadcasting.
+                mu_shape = estimates["mu"]
+                if (
+                    phi_reshaped.ndim >= 1
+                    and mu_shape.ndim > phi_reshaped.ndim
+                    and mu_shape.shape[: phi_reshaped.ndim]
+                    == phi_reshaped.shape
+                ):
+                    phi_reshaped = phi_reshaped[..., None]
 
                 estimates["r"] = estimates["mu"] * phi_reshaped
 
@@ -812,21 +833,20 @@ class ParameterExtractionMixin:
         ):
             p_val = estimates["p"]
 
-            # For hierarchical models p has shape (n_components, n_genes).
-            # Pre-computing p_hat would require a (n_cells, n_components,
-            # n_genes) tensor — too large to materialise here.  The
-            # cell-batched sampling code handles the broadcast per-batch
-            # instead, so we skip the pre-computation.
-            # Guard is intentionally broad: any 2D p whose dimensions
-            # don't match (n_cells,) will fail the broadcast, so we
-            # skip whenever p is 2D with both dims > 1.
-            p_is_gene_specific_2d = (
-                p_val.ndim == 2
-                and p_val.shape[0] > 1
-                and p_val.shape[1] > 1
+            # For hierarchical models p has shape (n_components, n_genes)
+            # or (K, D, G) for multi-dataset hierarchical models.
+            # Pre-computing p_hat would require a huge per-cell tensor —
+            # too large to materialise here.  The cell-batched sampling
+            # code handles the broadcast per-batch instead, so we skip.
+            # Guard: skip whenever p has >=2 dimensions with all sizes >1,
+            # since broadcasting with per-cell p_capture would either fail
+            # or produce a massive intermediate tensor.
+            p_is_high_dim = (
+                p_val.ndim >= 2
+                and all(s > 1 for s in p_val.shape)
             )
 
-            if p_is_gene_specific_2d:
+            if p_is_high_dim:
                 if verbose:
                     print(
                         "Skipping p_hat precomputation (gene-specific p "

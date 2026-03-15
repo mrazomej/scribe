@@ -394,12 +394,35 @@ def plot_p_capture_scaling(
 
     # Component panel: derive hard MAP assignments from assignment probabilities.
     if is_mixture:
-        component_probs = _get_cell_assignment_probabilities_for_plot(
-            results,
-            counts=counts,
-            batch_size=assignment_batch_size,
-            use_mean=False,
-        )
+        # Multi-dataset models: MAP params contain a D dimension that the
+        # per-cell log-likelihood function cannot broadcast.  Compute
+        # component probabilities per-dataset and concatenate instead.
+        if (
+            is_multi_dataset
+            and dataset_codes is not None
+            and hasattr(results, "get_dataset")
+        ):
+            _ds_codes = np.asarray(dataset_codes, dtype=int).reshape(-1)
+            _unique_ds = np.unique(_ds_codes)
+            _per_ds_probs = []
+            for _d in _unique_ds:
+                _mask = _ds_codes == _d
+                _ds_results = results.get_dataset(int(_d))
+                _ds_probs = _get_cell_assignment_probabilities_for_plot(
+                    _ds_results,
+                    counts=counts[_mask],
+                    batch_size=assignment_batch_size,
+                    use_mean=False,
+                )
+                _per_ds_probs.append(np.asarray(_ds_probs))
+            component_probs = np.concatenate(_per_ds_probs, axis=0)
+        else:
+            component_probs = _get_cell_assignment_probabilities_for_plot(
+                results,
+                counts=counts,
+                batch_size=assignment_batch_size,
+                use_mean=False,
+            )
         component_ids = np.argmax(np.asarray(component_probs), axis=1)
         unique_components = np.unique(component_ids)
         colors = plt.cm.tab10(np.linspace(0, 1, unique_components.size))
