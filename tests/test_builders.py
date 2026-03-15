@@ -12,12 +12,14 @@ This module tests:
 import pytest
 import jax
 import jax.numpy as jnp
+from types import SimpleNamespace
 from jax import random
 import numpyro
 from numpyro.infer import SVI, Trace_ELBO
 from numpyro.optim import Adam
 
 from scribe.models.config import ModelConfigBuilder, GuideFamilyConfig
+from scribe.models.config.enums import Parameterization as ParameterizationEnum
 
 # Import builder components
 from scribe.models.builders import (
@@ -2579,3 +2581,331 @@ class TestJointLowRankIntegration:
         assert joint_dist["param_sizes"] == [1, n_genes]
         assert isinstance(joint_dist["base"], dist.LowRankMultivariateNormal)
         assert joint_dist["base"].loc.shape == (1 + n_genes,)
+
+
+class TestPosteriorContractExtraction:
+    """Contract-focused tests for get_posterior_distributions orchestration."""
+
+    @staticmethod
+    def _make_config(**overrides):
+        """Build a minimal model-config-like object for posterior extraction."""
+        defaults = dict(
+            parameterization=ParameterizationEnum.CANONICAL,
+            unconstrained=False,
+            is_mixture=False,
+            is_zero_inflated=False,
+            uses_variable_capture=False,
+            hierarchical_p=False,
+            hierarchical_gate=False,
+            hierarchical_dataset_mu=False,
+            hierarchical_dataset_p="none",
+            hierarchical_dataset_gate=False,
+            horseshoe_p=False,
+            horseshoe_gate=False,
+            horseshoe_dataset_mu=False,
+            horseshoe_dataset_p=False,
+            horseshoe_dataset_gate=False,
+            uses_biology_informed_capture=False,
+            shared_capture_scaling=False,
+            joint_params=None,
+        )
+        defaults.update(overrides)
+        return SimpleNamespace(**defaults)
+
+    @staticmethod
+    def _dist_kind(d):
+        """Classify posterior object structure for stable contract assertions."""
+        import numpyro.distributions as dist
+
+        if isinstance(d, dict) and "base" in d and "transform" in d:
+            return "dict_transform"
+        if isinstance(d, dict) and "base" in d and "param_names" in d:
+            return "joint_dict"
+        if isinstance(d, dist.TransformedDistribution):
+            return "transformed_distribution"
+        if isinstance(d, dist.Distribution):
+            return "distribution"
+        if isinstance(d, list):
+            return "list"
+        return type(d).__name__
+
+    @staticmethod
+    def _dist_shape(d):
+        """Extract a stable shape tuple from a posterior object."""
+        if isinstance(d, dict):
+            base = d.get("base")
+            if hasattr(base, "loc"):
+                return tuple(base.loc.shape)
+            return ()
+        if hasattr(d, "loc"):
+            return tuple(d.loc.shape)
+        if hasattr(d, "base_dist") and hasattr(d.base_dist, "loc"):
+            return tuple(d.base_dist.loc.shape)
+        if hasattr(d, "concentration"):
+            return tuple(d.concentration.shape)
+        if hasattr(d, "concentration1"):
+            return tuple(d.concentration1.shape)
+        return ()
+
+    @pytest.mark.parametrize(
+        "case_name,config,params,expected_keys,expected_kind,expected_shape",
+        [
+            (
+                "canonical_constrained_single",
+                _make_config.__func__(),
+                {
+                    "p_alpha": jnp.array(2.0),
+                    "p_beta": jnp.array(3.0),
+                    "r_loc": jnp.zeros((4,)),
+                    "r_scale": jnp.ones((4,)),
+                },
+                {"p", "r"},
+                {"p": "distribution", "r": "transformed_distribution"},
+                {"p": (), "r": (4,)},
+            ),
+            (
+                "mixture_zinbvcp_unconstrained",
+                _make_config.__func__(
+                    parameterization=ParameterizationEnum.MEAN_ODDS,
+                    unconstrained=True,
+                    is_mixture=True,
+                    is_zero_inflated=True,
+                    uses_variable_capture=True,
+                ),
+                {
+                    "phi_loc": jnp.array(0.0),
+                    "phi_scale": jnp.array(1.0),
+                    "mu_loc": jnp.zeros((3, 4)),
+                    "mu_scale": jnp.ones((3, 4)),
+                    "gate_loc": jnp.zeros((3, 4)),
+                    "gate_scale": jnp.ones((3, 4)),
+                    "phi_capture_loc": jnp.zeros((5,)),
+                    "phi_capture_scale": jnp.ones((5,)),
+                    "mixing_concentrations": jnp.ones((3,)),
+                },
+                {"phi", "mu", "gate", "phi_capture", "mixing_weights"},
+                {
+                    "phi": "transformed_distribution",
+                    "mu": "transformed_distribution",
+                    "gate": "transformed_distribution",
+                    "phi_capture": "transformed_distribution",
+                    "mixing_weights": "distribution",
+                },
+                {
+                    "phi": (),
+                    "mu": (3, 4),
+                    "gate": (3, 4),
+                    "phi_capture": (5,),
+                    "mixing_weights": (3,),
+                },
+            ),
+            (
+                "horseshoe_gene_level_phi",
+                _make_config.__func__(
+                    parameterization=ParameterizationEnum.MEAN_ODDS,
+                    unconstrained=True,
+                    horseshoe_p=True,
+                ),
+                {
+                    "mu_loc": jnp.zeros((4,)),
+                    "mu_scale": jnp.ones((4,)),
+                    "log_phi_loc_loc": jnp.array(0.0),
+                    "log_phi_loc_scale": jnp.array(1.0),
+                    "tau_phi_loc": jnp.array(0.0),
+                    "tau_phi_scale": jnp.array(1.0),
+                    "lambda_phi_loc": jnp.zeros((4,)),
+                    "lambda_phi_scale": jnp.ones((4,)),
+                    "c_sq_phi_loc": jnp.array(0.0),
+                    "c_sq_phi_scale": jnp.array(1.0),
+                    "phi_raw_loc": jnp.zeros((4,)),
+                    "phi_raw_scale": jnp.ones((4,)),
+                },
+                {"mu", "log_phi_loc", "tau_phi", "lambda_phi", "c_sq_phi", "phi_raw"},
+                {
+                    "mu": "transformed_distribution",
+                    "log_phi_loc": "transformed_distribution",
+                    "tau_phi": "transformed_distribution",
+                    "lambda_phi": "transformed_distribution",
+                    "c_sq_phi": "transformed_distribution",
+                    "phi_raw": "distribution",
+                },
+                {
+                    "mu": (4,),
+                    "log_phi_loc": (),
+                    "tau_phi": (),
+                    "lambda_phi": (4,),
+                    "c_sq_phi": (),
+                    "phi_raw": (4,),
+                },
+            ),
+            (
+                "dataset_hierarchy_with_joint",
+                _make_config.__func__(
+                    parameterization=ParameterizationEnum.MEAN_ODDS,
+                    unconstrained=True,
+                    hierarchical_dataset_mu=True,
+                    hierarchical_dataset_p="gene_specific",
+                    joint_params=["mu", "phi"],
+                ),
+                {
+                    "joint_joint_mu_loc": jnp.zeros((4,)),
+                    "joint_joint_mu_W": 0.01 * jnp.ones((4, 2)),
+                    "joint_joint_mu_raw_diag": -3.0 * jnp.ones((4,)),
+                    "joint_joint_phi_loc": jnp.zeros((4,)),
+                    "joint_joint_phi_W": 0.01 * jnp.ones((4, 2)),
+                    "joint_joint_phi_raw_diag": -3.0 * jnp.ones((4,)),
+                    "log_mu_dataset_loc_loc": jnp.array(0.0),
+                    "log_mu_dataset_loc_scale": jnp.array(1.0),
+                    "log_mu_dataset_scale_loc": jnp.array(0.0),
+                    "log_mu_dataset_scale_scale": jnp.array(1.0),
+                    "log_phi_dataset_loc_loc": jnp.array(0.0),
+                    "log_phi_dataset_loc_scale": jnp.array(1.0),
+                    "log_phi_dataset_scale_loc": jnp.array(0.0),
+                    "log_phi_dataset_scale_scale": jnp.array(1.0),
+                },
+                {
+                    "mu",
+                    "phi",
+                    "log_mu_dataset_loc",
+                    "log_mu_dataset_scale",
+                    "log_phi_dataset_loc",
+                    "log_phi_dataset_scale",
+                    "joint:joint",
+                },
+                {
+                    "mu": "dict_transform",
+                    "phi": "dict_transform",
+                    "log_mu_dataset_loc": "distribution",
+                    "log_mu_dataset_scale": "transformed_distribution",
+                    "log_phi_dataset_loc": "distribution",
+                    "log_phi_dataset_scale": "transformed_distribution",
+                    "joint:joint": "joint_dict",
+                },
+                {
+                    "mu": (4,),
+                    "phi": (4,),
+                    "log_mu_dataset_loc": (),
+                    "log_mu_dataset_scale": (),
+                    "log_phi_dataset_loc": (),
+                    "log_phi_dataset_scale": (),
+                    "joint:joint": (8,),
+                },
+            ),
+            (
+                "dataset_horseshoe_gate_with_joint",
+                _make_config.__func__(
+                    parameterization=ParameterizationEnum.MEAN_ODDS,
+                    unconstrained=True,
+                    is_zero_inflated=True,
+                    horseshoe_dataset_gate=True,
+                    joint_params=["gate"],
+                ),
+                {
+                    "phi_loc": jnp.array(0.0),
+                    "phi_scale": jnp.array(1.0),
+                    "mu_loc": jnp.zeros((4,)),
+                    "mu_scale": jnp.ones((4,)),
+                    "mu_W": 0.01 * jnp.ones((4, 2)),
+                    "mu_raw_diag": -3.0 * jnp.ones((4,)),
+                    "joint_joint_gate_loc": jnp.zeros((4,)),
+                    "joint_joint_gate_W": 0.01 * jnp.ones((4, 2)),
+                    "joint_joint_gate_raw_diag": -3.0 * jnp.ones((4,)),
+                    "logit_gate_dataset_loc_loc": jnp.array(0.0),
+                    "logit_gate_dataset_loc_scale": jnp.array(1.0),
+                    "tau_gate_dataset_loc": jnp.array(0.0),
+                    "tau_gate_dataset_scale": jnp.array(1.0),
+                    "lambda_gate_dataset_loc": jnp.zeros((4,)),
+                    "lambda_gate_dataset_scale": jnp.ones((4,)),
+                    "c_sq_gate_dataset_loc": jnp.array(0.0),
+                    "c_sq_gate_dataset_scale": jnp.array(1.0),
+                },
+                {
+                    "phi",
+                    "mu",
+                    "gate",
+                    "logit_gate_dataset_loc",
+                    "tau_gate_dataset",
+                    "lambda_gate_dataset",
+                    "c_sq_gate_dataset",
+                    "joint:joint",
+                },
+                {
+                    "phi": "transformed_distribution",
+                    "mu": "dict_transform",
+                    "gate": "dict_transform",
+                    "logit_gate_dataset_loc": "transformed_distribution",
+                    "tau_gate_dataset": "transformed_distribution",
+                    "lambda_gate_dataset": "transformed_distribution",
+                    "c_sq_gate_dataset": "transformed_distribution",
+                    "joint:joint": "joint_dict",
+                },
+                {
+                    "phi": (),
+                    "mu": (4,),
+                    "gate": (4,),
+                    "logit_gate_dataset_loc": (),
+                    "tau_gate_dataset": (),
+                    "lambda_gate_dataset": (4,),
+                    "c_sq_gate_dataset": (),
+                    "joint:joint": (4,),
+                },
+            ),
+            (
+                "biology_informed_capture",
+                _make_config.__func__(
+                    parameterization=ParameterizationEnum.MEAN_ODDS,
+                    unconstrained=True,
+                    uses_variable_capture=True,
+                    uses_biology_informed_capture=True,
+                ),
+                {
+                    "phi_loc": jnp.array(0.0),
+                    "phi_scale": jnp.array(1.0),
+                    "mu_loc": jnp.zeros((4,)),
+                    "mu_scale": jnp.ones((4,)),
+                    "eta_capture_loc": jnp.zeros((5,)),
+                    "eta_capture_scale": jnp.ones((5,)),
+                    "mu_eta_loc": jnp.array(0.0),
+                    "mu_eta_scale": jnp.array(1.0),
+                },
+                {"phi", "mu", "eta_capture", "mu_eta"},
+                {
+                    "phi": "transformed_distribution",
+                    "mu": "transformed_distribution",
+                    "eta_capture": "distribution",
+                    "mu_eta": "distribution",
+                },
+                {"phi": (), "mu": (4,), "eta_capture": (5,), "mu_eta": ()},
+            ),
+        ],
+    )
+    def test_posterior_structural_contract_cases(
+        self,
+        case_name,
+        config,
+        params,
+        expected_keys,
+        expected_kind,
+        expected_shape,
+    ):
+        """Assert stable key/type/shape contracts for representative configs."""
+        from scribe.models.builders.posterior import get_posterior_distributions
+
+        # Structural contracts are stronger than numeric snapshots and remain
+        # stable across optimizer/JAX updates.
+        distributions = get_posterior_distributions(params, config, split=False)
+        assert set(distributions.keys()) == expected_keys, case_name
+
+        for key, kind in expected_kind.items():
+            assert self._dist_kind(distributions[key]) == kind, f"{case_name}:{key}"
+
+        for key, shape in expected_shape.items():
+            assert self._dist_shape(distributions[key]) == shape, f"{case_name}:{key}"
+
+        # Joint outputs must expose consistent concatenation metadata.
+        for key, value in distributions.items():
+            if not key.startswith("joint:"):
+                continue
+            assert isinstance(value, dict)
+            assert "param_names" in value and "param_sizes" in value
+            assert sum(value["param_sizes"]) == value["base"].loc.shape[-1]

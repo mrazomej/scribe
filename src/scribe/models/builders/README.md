@@ -308,6 +308,16 @@ parameterizations and guide families, including **joint-aware** extraction for
 - **`_build_joint_full_distribution`**: Stacks loc/W/D from each parameter in
   the group into a single joint `LowRankMultivariateNormal`.
 
+**Orchestration layout (`posterior.py`):**
+
+- `get_posterior_distributions()` is a thin, ordered orchestration layer.
+- Each concern is handled by a dedicated `_apply_*` helper (base
+  parameterization, gene hierarchy, dataset hierarchy for mu/p/gate,
+  zero-inflation gate, capture, mixture weights, and joint aggregation).
+- Leaf `_build_*_posterior` helpers remain responsible for constructing concrete
+  distribution objects, while `_apply_*` helpers decide which builders run and
+  in what order.
+
 ### Joint-Parameter Compatibility Checklist
 
 When enabling a new parameter in `joint_params` (for example, adding `gate` to
