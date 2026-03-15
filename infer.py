@@ -696,15 +696,15 @@ def main(cfg: DictConfig) -> None:
     # Validate dataset-level hierarchical/structured priors before data
     # loading so users fail fast when dataset splitting is not configured.
     uses_dataset_level_hierarchy = (
-        cfg.get("hierarchical_dataset_mu", False)
-        or cfg.get("hierarchical_dataset_p", "none") != "none"
-        or cfg.get("hierarchical_dataset_gate", False)
+        cfg.get("mu_dataset_prior", "none") != "none"
+        or cfg.get("p_dataset_prior", "none") != "none"
+        or cfg.get("gate_dataset_prior", "none") != "none"
     )
     if uses_dataset_level_hierarchy and dataset_key is None:
         raise ValueError(
             "Dataset-level hierarchical priors "
-            "(hierarchical_dataset_mu, hierarchical_dataset_p, "
-            "hierarchical_dataset_gate) require dataset_key so cells can "
+            "(mu_dataset_prior, p_dataset_prior, "
+            "gate_dataset_prior) require dataset_key so cells can "
             "be mapped to datasets. Set dataset_key to an adata.obs column "
             "when using dataset-level hierarchical priors."
         )
@@ -874,23 +874,17 @@ def main(cfg: DictConfig) -> None:
         "model": model_type,
         "parameterization": cfg.parameterization,
         "unconstrained": cfg.unconstrained,
-        "hierarchical_p": cfg.get("hierarchical_p", False),
-        "hierarchical_gate": cfg.get("hierarchical_gate", False),
+        "p_prior": cfg.get("p_prior", "none"),
+        "gate_prior": cfg.get("gate_prior", "none"),
         # Multi-dataset hierarchy
         "n_datasets": cfg.get("n_datasets"),
         "dataset_key": dataset_key,
         "dataset_params": cfg.get("dataset_params"),
-        "hierarchical_dataset_mu": cfg.get("hierarchical_dataset_mu", False),
-        "hierarchical_dataset_p": cfg.get("hierarchical_dataset_p", "none"),
-        "hierarchical_dataset_gate": cfg.get(
-            "hierarchical_dataset_gate", False
-        ),
-        # Horseshoe prior
-        "horseshoe_p": cfg.get("horseshoe_p", False),
-        "horseshoe_gate": cfg.get("horseshoe_gate", False),
-        "horseshoe_dataset_mu": cfg.get("horseshoe_dataset_mu", False),
-        "horseshoe_dataset_p": cfg.get("horseshoe_dataset_p", False),
-        "horseshoe_dataset_gate": cfg.get("horseshoe_dataset_gate", False),
+        "mu_dataset_prior": cfg.get("mu_dataset_prior", "none"),
+        "p_dataset_prior": cfg.get("p_dataset_prior", "none"),
+        "p_dataset_mode": cfg.get("p_dataset_mode", "gene_specific"),
+        "gate_dataset_prior": cfg.get("gate_dataset_prior", "none"),
+        # Horseshoe / NEG hyperparameters
         "horseshoe_tau0": cfg.get("horseshoe_tau0", 1.0),
         "horseshoe_slab_df": cfg.get("horseshoe_slab_df", 4),
         "horseshoe_slab_scale": cfg.get("horseshoe_slab_scale", 2.0),

@@ -39,6 +39,7 @@ from ..builders.parameter_specs import (
     DatasetHierarchicalSigmoidNormalSpec,
     ExpNormalSpec,
     GaussianLatentSpec,
+    GammaSpec,
     HalfCauchySpec,
     HierarchicalExpNormalSpec,
     HierarchicalSigmoidNormalSpec,
@@ -47,6 +48,10 @@ from ..builders.parameter_specs import (
     HorseshoeHierarchicalExpNormalSpec,
     HorseshoeHierarchicalSigmoidNormalSpec,
     InverseGammaSpec,
+    NEGDatasetExpNormalSpec,
+    NEGDatasetSigmoidNormalSpec,
+    NEGHierarchicalExpNormalSpec,
+    NEGHierarchicalSigmoidNormalSpec,
     NormalWithTransformSpec,
     SoftplusNormalSpec,
 )
@@ -57,7 +62,7 @@ from ..components.vae_components import (
     MultiHeadDecoder,
 )
 from ..config import GuideFamilyConfig, ModelConfig
-from ..config.enums import InferenceMethod
+from ..config.enums import HierarchicalPriorType, InferenceMethod
 from ..config.enums import Parameterization as ParamEnum
 from ..config.groups import VAEConfig
 from ..parameterizations import PARAMETERIZATIONS
@@ -289,7 +294,9 @@ def _create_vae_model(
                 unconstrained=unconstrained,
                 guide_families=guide_families,
                 param_strategy=param_strategy,
-                hierarchical_gate=model_config.hierarchical_gate,
+                hierarchical_gate=(
+                    model_config.gate_prior != HierarchicalPriorType.NONE
+                ),
                 model_config=model_config,
             )
             extra_specs.extend(specs)
@@ -539,12 +546,10 @@ def create_model(
     )
 
     # ==========================================================================
-    # Step 4.5: Apply hierarchical_p flag (replace flat p/phi with triplet)
-    # horseshoe_p also implies this step (horseshoe upgrades the hierarchy)
+    # Step 4.5: Apply gene-level p/phi hierarchy (Gaussian, horseshoe, or NEG)
     # ==========================================================================
-    if model_config.hierarchical_p or getattr(
-        model_config, "horseshoe_p", False
-    ):
+    _NONE = HierarchicalPriorType.NONE
+    if model_config.p_prior != _NONE:
         param_specs = _hierarchicalize_p(
             param_specs=param_specs,
             param_key=param_key,
@@ -567,7 +572,6 @@ def create_model(
 
     # ==========================================================================
     # Step 4.6: Apply dataset-level hierarchy flags
-    # horseshoe_dataset_* flags also trigger the corresponding hierarchy
     # ==========================================================================
     if model_config.n_datasets is not None:
         n_ds = model_config.n_datasets
@@ -576,9 +580,7 @@ def create_model(
         _sci = getattr(model_config, "shared_component_indices", None)
 
         # Hierarchical mu/r across datasets
-        if model_config.hierarchical_dataset_mu or getattr(
-            model_config, "horseshoe_dataset_mu", False
-        ):
+        if model_config.mu_dataset_prior != _NONE:
             param_specs = _datasetify_mu(
                 param_specs=param_specs,
                 param_key=param_key,
@@ -587,29 +589,23 @@ def create_model(
                 shared_component_indices=_sci,
             )
 
-        # Dataset-level p/phi
-        dataset_p_mode = model_config.hierarchical_dataset_p
-        if dataset_p_mode == "none" and getattr(
-            model_config, "horseshoe_dataset_p", False
-        ):
-            dataset_p_mode = "gene_specific"
-        if dataset_p_mode in ("scalar", "gene_specific"):
-            param_specs = _datasetify_p(
-                param_specs=param_specs,
-                param_key=param_key,
-                guide_families=guide_families,
-                n_datasets=n_ds,
-                mode=dataset_p_mode,
-                shared_component_indices=_sci,
-            )
+        # Dataset-level p/phi — resolve structural mode
+        if model_config.p_dataset_prior != _NONE:
+            dataset_p_mode = model_config.hierarchical_dataset_p
+            if dataset_p_mode in ("scalar", "gene_specific"):
+                param_specs = _datasetify_p(
+                    param_specs=param_specs,
+                    param_key=param_key,
+                    guide_families=guide_families,
+                    n_datasets=n_ds,
+                    mode=dataset_p_mode,
+                    shared_component_indices=_sci,
+                )
 
     # ==========================================================================
     # Step 5: Add model-specific extra parameters
     # ==========================================================================
-    # horseshoe_gate also implies hierarchical_gate for building the gate spec
-    effective_hierarchical_gate = model_config.hierarchical_gate or getattr(
-        model_config, "horseshoe_gate", False
-    )
+    effective_hierarchical_gate = model_config.gate_prior != _NONE
     extra_param_names = MODEL_EXTRA_PARAMS[base_model]
     for param_name in extra_param_names:
         extra_specs = build_extra_param_spec(
@@ -626,11 +622,10 @@ def create_model(
 
     # ==========================================================================
     # Step 5.5: Apply dataset-level gate hierarchy (after gate spec exists)
-    # horseshoe_dataset_gate also triggers this step
     # ==========================================================================
-    if model_config.n_datasets is not None and (
-        model_config.hierarchical_dataset_gate
-        or getattr(model_config, "horseshoe_dataset_gate", False)
+    if (
+        model_config.n_datasets is not None
+        and model_config.gate_dataset_prior != _NONE
     ):
         param_specs = _datasetify_gate(
             param_specs=param_specs,
@@ -641,31 +636,52 @@ def create_model(
     # ==========================================================================
     # Step 5.7: Apply horseshoe priors (upgrade normal hierarchies in-place)
     # ==========================================================================
+    _HS = HierarchicalPriorType.HORSESHOE
     horseshoe_kwargs = _horseshoe_kwargs_from_config(model_config)
 
-    # Gene-level horseshoe p
-    if getattr(model_config, "horseshoe_p", False):
+    if model_config.p_prior == _HS:
         param_specs = _horseshoe_p(param_specs, param_key, **horseshoe_kwargs)
 
-    # Gene-level horseshoe gate
-    if getattr(model_config, "horseshoe_gate", False):
+    if model_config.gate_prior == _HS:
         param_specs = _horseshoe_gate(param_specs, **horseshoe_kwargs)
 
-    # Dataset-level horseshoe mu
-    if getattr(model_config, "horseshoe_dataset_mu", False):
+    if model_config.mu_dataset_prior == _HS:
         param_specs = _horseshoe_dataset_mu(
             param_specs, param_key, **horseshoe_kwargs
         )
 
-    # Dataset-level horseshoe p
-    if getattr(model_config, "horseshoe_dataset_p", False):
+    if model_config.p_dataset_prior == _HS:
         param_specs = _horseshoe_dataset_p(
             param_specs, param_key, **horseshoe_kwargs
         )
 
-    # Dataset-level horseshoe gate
-    if getattr(model_config, "horseshoe_dataset_gate", False):
+    if model_config.gate_dataset_prior == _HS:
         param_specs = _horseshoe_dataset_gate(param_specs, **horseshoe_kwargs)
+
+    # ==========================================================================
+    # Step 5.8: Apply NEG priors (upgrade normal hierarchies in-place)
+    # ==========================================================================
+    _NEG = HierarchicalPriorType.NEG
+    neg_kwargs = _neg_kwargs_from_config(model_config)
+
+    if model_config.p_prior == _NEG:
+        param_specs = _neg_p(param_specs, param_key, **neg_kwargs)
+
+    if model_config.gate_prior == _NEG:
+        param_specs = _neg_gate(param_specs, **neg_kwargs)
+
+    if model_config.mu_dataset_prior == _NEG:
+        param_specs = _neg_dataset_mu(
+            param_specs, param_key, **neg_kwargs
+        )
+
+    if model_config.p_dataset_prior == _NEG:
+        param_specs = _neg_dataset_p(
+            param_specs, param_key, **neg_kwargs
+        )
+
+    if model_config.gate_dataset_prior == _NEG:
+        param_specs = _neg_dataset_gate(param_specs, **neg_kwargs)
 
     # ==========================================================================
     # Step 6: Apply user-provided prior/guide overrides
@@ -1741,6 +1757,414 @@ def _horseshoe_dataset_gate(
                 guide_family=getattr(spec, "guide_family", None),
             )
             new_specs.append(horseshoe_spec)
+        else:
+            new_specs.append(spec)
+    return new_specs
+
+
+# ==============================================================================
+# NEG (Normal-Exponential-Gamma) prior helpers
+# ==============================================================================
+
+
+def _neg_kwargs_from_config(model_config: ModelConfig) -> dict:
+    """Extract NEG hyperparameters from model config.
+
+    Parameters
+    ----------
+    model_config : ModelConfig
+        Model configuration.
+
+    Returns
+    -------
+    dict
+        Keys: ``u``, ``a``, ``tau``.
+    """
+    return {
+        "u": getattr(model_config, "neg_u", 1.0),
+        "a": getattr(model_config, "neg_a", 1.0),
+        "tau": getattr(model_config, "neg_tau", 1.0),
+    }
+
+
+def _make_neg_hypers(
+    prefix: str,
+    u: float = 1.0,
+    a: float = 1.0,
+    tau: float = 1.0,
+) -> Tuple:
+    """Create the two NEG hyperparameter specs (zeta, psi) for a prefix.
+
+    The Gamma-Gamma hierarchy:
+        zeta_g ~ Gamma(a, tau)      [per-gene rate]
+        psi_g  ~ Gamma(u, zeta_g)   [per-gene variance]
+
+    Parameters
+    ----------
+    prefix : str
+        Naming prefix, e.g. ``"p"``, ``"gate"``, ``"mu_dataset"``.
+    u : float
+        Shape for the inner Gamma (psi). u=1 is NEG (Exponential).
+    a : float
+        Shape for the outer Gamma (zeta).
+    tau : float
+        Rate for the outer Gamma (global shrinkage).
+
+    Returns
+    -------
+    Tuple[GammaSpec, GammaSpec]
+        (zeta_spec, psi_spec) — note zeta is listed first because psi
+        depends on zeta at sample time.
+    """
+    zeta_name = f"zeta_{prefix}"
+    psi_name = f"psi_{prefix}"
+
+    # Outer layer: zeta_g ~ Gamma(a, tau) with fixed rate
+    zeta_spec = GammaSpec(
+        name=zeta_name,
+        shape_dims=("n_genes",),
+        concentration=a,
+        rate=tau,
+        is_gene_specific=True,
+    )
+    # Inner layer: psi_g ~ Gamma(u, zeta_g) with dynamic rate from zeta
+    psi_spec = GammaSpec(
+        name=psi_name,
+        shape_dims=("n_genes",),
+        concentration=u,
+        rate_name=zeta_name,
+        is_gene_specific=True,
+    )
+    return zeta_spec, psi_spec
+
+
+# ------------------------------------------------------------------------------
+# Gene-level NEG p
+# ------------------------------------------------------------------------------
+
+
+def _neg_p(
+    param_specs: List,
+    param_key: str,
+    u: float = 1.0,
+    a: float = 1.0,
+    tau: float = 1.0,
+) -> List:
+    """Upgrade gene-level hierarchical p/phi to NEG.
+
+    Finds the hierarchical triplet (hyper_loc, hyper_scale, hier-p) produced
+    by ``_hierarchicalize_p``, replaces hyper_scale (SoftplusNormalSpec) with
+    the NEG pair (zeta, psi), and replaces the
+    ``HierarchicalSigmoidNormalSpec``/``HierarchicalExpNormalSpec`` with the
+    corresponding NEG spec.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Specs after ``_hierarchicalize_p`` has run.
+    param_key : str
+        Parameterization key.
+    u, a, tau : float
+        NEG hyperparameters.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Updated specs with NEG p.
+    """
+    if param_key == "mean_odds":
+        target_name = "phi"
+        scale_name = "log_phi_scale"
+        loc_name = "log_phi_loc"
+        prefix = "phi"
+    else:
+        target_name = "p"
+        scale_name = "logit_p_scale"
+        loc_name = "logit_p_loc"
+        prefix = "p"
+
+    raw_name = f"{target_name}_raw"
+    zeta_spec, psi_spec = _make_neg_hypers(prefix, u, a, tau)
+
+    new_specs = []
+    for spec in param_specs:
+        if spec.name == scale_name:
+            # Replace the SoftplusNormal hyper_scale with NEG pair (zeta, psi)
+            new_specs.extend([zeta_spec, psi_spec])
+        elif spec.name == target_name and isinstance(
+            spec, (HierarchicalSigmoidNormalSpec, HierarchicalExpNormalSpec)
+        ):
+            # Select NEG spec matching the original transform:
+            # ExpNormal (phi, range (0,inf)) vs SigmoidNormal (p, range (0,1))
+            if isinstance(spec, HierarchicalExpNormalSpec):
+                NEGSpec = NEGHierarchicalExpNormalSpec
+            else:
+                NEGSpec = NEGHierarchicalSigmoidNormalSpec
+            neg_spec = NEGSpec(
+                name=target_name,
+                shape_dims=spec.shape_dims,
+                default_params=spec.default_params,
+                hyper_loc_name=loc_name,
+                hyper_scale_name=f"psi_{prefix}",
+                psi_name=f"psi_{prefix}",
+                zeta_name=f"zeta_{prefix}",
+                raw_name=raw_name,
+                is_gene_specific=spec.is_gene_specific,
+                is_mixture=spec.is_mixture,
+                guide_family=getattr(spec, "guide_family", None),
+            )
+            new_specs.append(neg_spec)
+        else:
+            new_specs.append(spec)
+    return new_specs
+
+
+# ------------------------------------------------------------------------------
+# Gene-level NEG gate
+# ------------------------------------------------------------------------------
+
+
+def _neg_gate(
+    param_specs: List,
+    u: float = 1.0,
+    a: float = 1.0,
+    tau: float = 1.0,
+) -> List:
+    """Upgrade gene-level hierarchical gate to NEG.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Specs after ``build_gate_spec(hierarchical=True)`` has run.
+    u, a, tau : float
+        NEG hyperparameters.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Updated specs with NEG gate.
+    """
+    zeta_spec, psi_spec = _make_neg_hypers("gate", u, a, tau)
+
+    new_specs = []
+    for spec in param_specs:
+        if spec.name == "logit_gate_scale":
+            new_specs.extend([zeta_spec, psi_spec])
+        elif spec.name == "gate" and isinstance(
+            spec, HierarchicalSigmoidNormalSpec
+        ):
+            neg_spec = NEGHierarchicalSigmoidNormalSpec(
+                name="gate",
+                shape_dims=spec.shape_dims,
+                default_params=spec.default_params,
+                hyper_loc_name="logit_gate_loc",
+                hyper_scale_name="psi_gate",
+                psi_name="psi_gate",
+                zeta_name="zeta_gate",
+                raw_name="gate_raw",
+                is_gene_specific=spec.is_gene_specific,
+                is_mixture=spec.is_mixture,
+                guide_family=getattr(spec, "guide_family", None),
+            )
+            new_specs.append(neg_spec)
+        else:
+            new_specs.append(spec)
+    return new_specs
+
+
+# ------------------------------------------------------------------------------
+# Dataset-level NEG mu
+# ------------------------------------------------------------------------------
+
+
+def _neg_dataset_mu(
+    param_specs: List,
+    param_key: str,
+    u: float = 1.0,
+    a: float = 1.0,
+    tau: float = 1.0,
+) -> List:
+    """Upgrade dataset-level hierarchical mu/r to NEG.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Specs after ``_datasetify_mu`` has run.
+    param_key : str
+        Parameterization key.
+    u, a, tau : float
+        NEG hyperparameters.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Updated specs with NEG dataset mu.
+    """
+    if param_key in ("mean_odds", "mean_prob"):
+        target_name = "mu"
+        scale_name = "log_mu_dataset_scale"
+        loc_name = "log_mu_dataset_loc"
+        prefix = "mu_dataset"
+    else:
+        target_name = "r"
+        scale_name = "log_r_dataset_scale"
+        loc_name = "log_r_dataset_loc"
+        prefix = "r_dataset"
+
+    raw_name = f"{target_name}_raw"
+    zeta_spec, psi_spec = _make_neg_hypers(prefix, u, a, tau)
+
+    new_specs = []
+    for spec in param_specs:
+        if spec.name == scale_name:
+            new_specs.extend([zeta_spec, psi_spec])
+        elif spec.name == target_name and isinstance(
+            spec, DatasetHierarchicalExpNormalSpec
+        ):
+            neg_spec = NEGDatasetExpNormalSpec(
+                name=target_name,
+                shape_dims=spec.shape_dims,
+                default_params=spec.default_params,
+                hyper_loc_name=loc_name,
+                hyper_scale_name=f"psi_{prefix}",
+                psi_name=f"psi_{prefix}",
+                zeta_name=f"zeta_{prefix}",
+                raw_name=raw_name,
+                is_gene_specific=spec.is_gene_specific,
+                is_dataset=spec.is_dataset,
+                is_mixture=spec.is_mixture,
+                guide_family=getattr(spec, "guide_family", None),
+            )
+            new_specs.append(neg_spec)
+        else:
+            new_specs.append(spec)
+    return new_specs
+
+
+# ------------------------------------------------------------------------------
+# Dataset-level NEG p
+# ------------------------------------------------------------------------------
+
+
+def _neg_dataset_p(
+    param_specs: List,
+    param_key: str,
+    u: float = 1.0,
+    a: float = 1.0,
+    tau: float = 1.0,
+) -> List:
+    """Upgrade dataset-level hierarchical p/phi to NEG.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Specs after ``_datasetify_p`` has run.
+    param_key : str
+        Parameterization key.
+    u, a, tau : float
+        NEG hyperparameters.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Updated specs with NEG dataset p.
+    """
+    if param_key == "mean_odds":
+        target_name = "phi"
+        scale_name = "log_phi_dataset_scale"
+        loc_name = "log_phi_dataset_loc"
+        prefix = "phi_dataset"
+    else:
+        target_name = "p"
+        scale_name = "logit_p_dataset_scale"
+        loc_name = "logit_p_dataset_loc"
+        prefix = "p_dataset"
+
+    raw_name = f"{target_name}_raw_dataset"
+    zeta_spec, psi_spec = _make_neg_hypers(prefix, u, a, tau)
+
+    # Determine the correct NEG spec class based on the target transform
+    if param_key == "mean_odds":
+        TargetHierClass = DatasetHierarchicalExpNormalSpec
+        NEGClass = NEGDatasetExpNormalSpec
+    else:
+        TargetHierClass = DatasetHierarchicalSigmoidNormalSpec
+        NEGClass = NEGDatasetSigmoidNormalSpec
+
+    new_specs = []
+    for spec in param_specs:
+        if spec.name == scale_name:
+            new_specs.extend([zeta_spec, psi_spec])
+        elif spec.name == target_name and isinstance(spec, TargetHierClass):
+            neg_spec = NEGClass(
+                name=target_name,
+                shape_dims=spec.shape_dims,
+                default_params=spec.default_params,
+                hyper_loc_name=loc_name,
+                hyper_scale_name=f"psi_{prefix}",
+                psi_name=f"psi_{prefix}",
+                zeta_name=f"zeta_{prefix}",
+                raw_name=raw_name,
+                is_gene_specific=spec.is_gene_specific,
+                is_dataset=spec.is_dataset,
+                is_mixture=spec.is_mixture,
+                guide_family=getattr(spec, "guide_family", None),
+            )
+            new_specs.append(neg_spec)
+        else:
+            new_specs.append(spec)
+    return new_specs
+
+
+# ------------------------------------------------------------------------------
+# Dataset-level NEG gate
+# ------------------------------------------------------------------------------
+
+
+def _neg_dataset_gate(
+    param_specs: List,
+    u: float = 1.0,
+    a: float = 1.0,
+    tau: float = 1.0,
+) -> List:
+    """Upgrade dataset-level hierarchical gate to NEG.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Specs after ``_datasetify_gate`` has run.
+    u, a, tau : float
+        NEG hyperparameters.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Updated specs with NEG dataset gate.
+    """
+    zeta_spec, psi_spec = _make_neg_hypers("gate_dataset", u, a, tau)
+
+    new_specs = []
+    for spec in param_specs:
+        if spec.name == "logit_gate_dataset_scale":
+            new_specs.extend([zeta_spec, psi_spec])
+        elif spec.name == "gate" and isinstance(
+            spec, DatasetHierarchicalSigmoidNormalSpec
+        ):
+            neg_spec = NEGDatasetSigmoidNormalSpec(
+                name="gate",
+                shape_dims=spec.shape_dims,
+                default_params=spec.default_params,
+                hyper_loc_name="logit_gate_dataset_loc",
+                hyper_scale_name="psi_gate_dataset",
+                psi_name="psi_gate_dataset",
+                zeta_name="zeta_gate_dataset",
+                raw_name="gate_raw_dataset",
+                is_gene_specific=spec.is_gene_specific,
+                is_dataset=spec.is_dataset,
+                is_mixture=spec.is_mixture,
+                guide_family=getattr(spec, "guide_family", None),
+            )
+            new_specs.append(neg_spec)
         else:
             new_specs.append(spec)
     return new_specs

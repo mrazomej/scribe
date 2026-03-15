@@ -54,18 +54,14 @@ def build_config_from_preset(
     inference_method: str = "svi",
     unconstrained: bool = False,
     hierarchical_mu: bool = False,
-    hierarchical_p: bool = False,
-    hierarchical_gate: bool = False,
+    p_prior: str = "none",
+    gate_prior: str = "none",
     n_datasets: Optional[int] = None,
     dataset_params: Optional[List[str]] = None,
-    hierarchical_dataset_mu: bool = False,
-    hierarchical_dataset_p: str = "none",
-    hierarchical_dataset_gate: bool = False,
-    horseshoe_p: bool = False,
-    horseshoe_gate: bool = False,
-    horseshoe_dataset_mu: bool = False,
-    horseshoe_dataset_p: bool = False,
-    horseshoe_dataset_gate: bool = False,
+    mu_dataset_prior: str = "none",
+    p_dataset_prior: str = "none",
+    p_dataset_mode: str = "gene_specific",
+    gate_dataset_prior: str = "none",
     horseshoe_tau0: float = 1.0,
     horseshoe_slab_df: int = 4,
     horseshoe_slab_scale: float = 2.0,
@@ -329,47 +325,36 @@ def build_config_from_preset(
     if hierarchical_mu:
         builder.with_hierarchical_mu()
 
-    if hierarchical_p:
-        builder.with_hierarchical_p()
-
-    if hierarchical_gate:
-        builder.with_hierarchical_gate()
+    # Gene-level priors
+    if p_prior != "none":
+        builder._p_prior = p_prior
+        builder._unconstrained = True
+    if gate_prior != "none":
+        builder._gate_prior = gate_prior
+        builder._unconstrained = True
 
     # Multi-dataset configuration: set builder fields directly
     if n_datasets is not None:
         builder._n_datasets = n_datasets
         builder._dataset_params = dataset_params
-        builder._hierarchical_dataset_mu = hierarchical_dataset_mu
-        builder._hierarchical_dataset_p = hierarchical_dataset_p
-        builder._hierarchical_dataset_gate = hierarchical_dataset_gate
+        builder._mu_dataset_prior = mu_dataset_prior
+        builder._p_dataset_prior = p_dataset_prior
+        builder._p_dataset_mode = p_dataset_mode
+        builder._gate_dataset_prior = gate_dataset_prior
         if (
-            hierarchical_dataset_mu
-            or hierarchical_dataset_p != "none"
-            or hierarchical_dataset_gate
+            mu_dataset_prior != "none"
+            or p_dataset_prior != "none"
+            or gate_dataset_prior != "none"
         ):
             builder._unconstrained = True
 
-    # Horseshoe prior configuration (implies unconstrained + dataset config)
-    builder._horseshoe_p = horseshoe_p
-    builder._horseshoe_gate = horseshoe_gate
-    builder._horseshoe_dataset_mu = horseshoe_dataset_mu
-    builder._horseshoe_dataset_p = horseshoe_dataset_p
-    builder._horseshoe_dataset_gate = horseshoe_dataset_gate
+    # Horseshoe / NEG hyperparameters
     builder._horseshoe_tau0 = horseshoe_tau0
     builder._horseshoe_slab_df = horseshoe_slab_df
     builder._horseshoe_slab_scale = horseshoe_slab_scale
 
     # Biology-informed capture prior (configured via priors dict)
     builder._shared_capture_scaling = shared_capture_scaling
-
-    if horseshoe_p or horseshoe_gate:
-        builder._unconstrained = True
-    if (
-        horseshoe_dataset_mu
-        or horseshoe_dataset_p
-        or horseshoe_dataset_gate
-    ):
-        builder._unconstrained = True
 
     if n_components is not None:
         builder.as_mixture(n_components, mixture_params)
