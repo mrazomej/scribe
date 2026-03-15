@@ -51,8 +51,8 @@ class Parameterization(str, Enum):
       and r
 
     Hierarchical gene-specific priors (on p/phi and gate) are controlled via
-    boolean flags (``hierarchical_p``, ``hierarchical_gate``) in ModelConfig
-    rather than via separate enum values.
+    ``HierarchicalPriorType`` enum fields (``p_prior``, ``gate_prior``) in
+    ModelConfig rather than via separate enum values.
 
     The old names (STANDARD, LINKED, ODDS_RATIO) are kept for backward
     compatibility.
@@ -97,6 +97,38 @@ class InferenceMethod(str, Enum):
     SVI = "svi"
     MCMC = "mcmc"
     VAE = "vae"
+
+
+# ------------------------------------------------------------------------------
+
+
+class HierarchicalPriorType(str, Enum):
+    """Type of hierarchical shrinkage prior for a model parameter.
+
+    Each gene-level or dataset-level parameter slot can independently
+    select one of these prior types.  ``NONE`` means the parameter has
+    no hierarchy (shared / flat prior); any other value activates a
+    hierarchical prior with per-gene or per-dataset local scales.
+
+    Attributes
+    ----------
+    NONE : str
+        No hierarchy — parameter is shared or uses a flat prior.
+    GAUSSIAN : str
+        Normal (Gaussian) hierarchy with a shared location and scale.
+    HORSESHOE : str
+        Regularized (Finnish) horseshoe with Half-Cauchy global/local
+        scales and an Inverse-Gamma slab.
+    NEG : str
+        Normal-Exponential-Gamma — a member of the TPBN family using a
+        Gamma-Gamma hierarchy that is friendlier to SVI than the
+        horseshoe.
+    """
+
+    NONE = "none"
+    GAUSSIAN = "gaussian"
+    HORSESHOE = "horseshoe"
+    NEG = "neg"
 
 
 # ------------------------------------------------------------------------------

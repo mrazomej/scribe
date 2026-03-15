@@ -259,9 +259,11 @@ def get_active_parameters(
     hierarchical_mu : bool
         Whether hierarchical mu/r prior across components is enabled
     hierarchical_p : bool
-        Whether hierarchical p/phi prior is enabled
+        Whether hierarchical p/phi prior is enabled (True when
+        ``p_prior != "none"`` in ModelConfig).
     hierarchical_gate : bool
-        Whether hierarchical gate prior is enabled
+        Whether hierarchical gate prior is enabled (True when
+        ``gate_prior != "none"`` in ModelConfig).
 
     Returns
     -------
