@@ -2594,6 +2594,7 @@ class TestPosteriorContractExtraction:
             is_mixture=False,
             is_zero_inflated=False,
             uses_variable_capture=False,
+            mu_prior="none",
             p_prior="none",
             gate_prior="none",
             mu_dataset_prior="none",
@@ -2886,6 +2887,93 @@ class TestPosteriorContractExtraction:
                     "mu_eta": "distribution",
                 },
                 {"phi": (), "mu": (4,), "eta_capture": (5,), "mu_eta": ()},
+            ),
+            # Regression: gene-level Gaussian mu hierarchy with low-rank
+            # guide (no joint_params). Before the fix, Pass 2b tried
+            # _build_exp_normal_posterior which looked for "mu_scale"
+            # instead of the low-rank "mu_W"/"mu_raw_diag" params.
+            (
+                "gaussian_mu_hierarchy_low_rank",
+                _make_config.__func__(
+                    parameterization=ParameterizationEnum.MEAN_ODDS,
+                    unconstrained=True,
+                    is_mixture=True,
+                    mu_prior="gaussian",
+                ),
+                {
+                    "phi_loc": jnp.array(0.0),
+                    "phi_scale": jnp.array(1.0),
+                    # mu uses low-rank (W + raw_diag), no mu_scale
+                    "mu_loc": jnp.zeros((3, 4)),
+                    "mu_W": 0.01 * jnp.ones((3, 4, 2)),
+                    "mu_raw_diag": -3.0 * jnp.ones((3, 4)),
+                    # Hyperparameters for the Gaussian mu hierarchy
+                    "log_mu_loc_loc": jnp.zeros((4,)),
+                    "log_mu_loc_scale": jnp.ones((4,)),
+                    "log_mu_scale_loc": jnp.array(-2.0),
+                    "log_mu_scale_scale": jnp.array(0.5),
+                },
+                {
+                    "phi",
+                    "mu",
+                    "log_mu_loc",
+                    "log_mu_scale",
+                },
+                {
+                    "phi": "transformed_distribution",
+                    "mu": "dict_transform",
+                    "log_mu_loc": "distribution",
+                    "log_mu_scale": "transformed_distribution",
+                },
+                {
+                    "phi": (),
+                    "mu": (3, 4),
+                    "log_mu_loc": (4,),
+                    "log_mu_scale": (),
+                },
+            ),
+            # Regression: gene-level Gaussian p hierarchy with low-rank
+            # phi guide (no joint_params). Before the fix, the Gaussian
+            # path in Pass 2 tried _build_exp_normal_posterior which
+            # looked for "phi_scale" instead of low-rank params.
+            (
+                "gaussian_p_hierarchy_low_rank_phi",
+                _make_config.__func__(
+                    parameterization=ParameterizationEnum.MEAN_ODDS,
+                    unconstrained=True,
+                    p_prior="gaussian",
+                ),
+                {
+                    # phi uses low-rank (W + raw_diag), no phi_scale
+                    "phi_loc": jnp.zeros((4,)),
+                    "phi_W": 0.01 * jnp.ones((4, 2)),
+                    "phi_raw_diag": -3.0 * jnp.ones((4,)),
+                    "mu_loc": jnp.zeros((4,)),
+                    "mu_scale": jnp.ones((4,)),
+                    # Hyperparameters for the Gaussian p/phi hierarchy
+                    "log_phi_loc_loc": jnp.zeros((4,)),
+                    "log_phi_loc_scale": jnp.ones((4,)),
+                    "log_phi_scale_loc": jnp.array(-2.0),
+                    "log_phi_scale_scale": jnp.array(0.5),
+                },
+                {
+                    "phi",
+                    "mu",
+                    "log_phi_loc",
+                    "log_phi_scale",
+                },
+                {
+                    "phi": "dict_transform",
+                    "mu": "transformed_distribution",
+                    "log_phi_loc": "distribution",
+                    "log_phi_scale": "transformed_distribution",
+                },
+                {
+                    "phi": (4,),
+                    "mu": (4,),
+                    "log_phi_loc": (4,),
+                    "log_phi_scale": (),
+                },
             ),
         ],
     )

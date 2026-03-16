@@ -268,18 +268,19 @@ def _build_joint_full_distribution(
 def _build_base_skip_set(
     model_config: ModelConfig, parameterization: Parameterization
 ) -> set[str]:
-    """Determine which base params to skip because NCP (horseshoe/NEG) replaces them.
+    """Determine which base params to skip because a hierarchy pass replaces them.
 
-    When a horseshoe or NEG NCP prior is active for a parameter, the base guide
-    site (e.g. ``phi_loc/phi_scale``) does not exist — the NCP prior creates
-    ``phi_raw_loc/phi_raw_scale`` (the z variable) plus its own hyperparameters
-    instead.  The base builder must skip these names to avoid ``KeyError``s on
-    missing params.
+    When any hierarchical prior (Gaussian, horseshoe, or NEG) is active for
+    a parameter, the base builder should skip that parameter.  For NCP priors
+    (horseshoe/NEG) the base guide site doesn't exist at all; for Gaussian
+    hierarchical priors the guide may use low-rank format (W/raw_diag) that
+    the base mean-field builder cannot handle.  In all cases the hierarchy
+    pass (Pass 2/2b/3/4) is responsible for building the posterior.
 
     Parameters
     ----------
     model_config : ModelConfig
-        Model configuration carrying horseshoe/NEG prior flags.
+        Model configuration carrying hierarchical prior flags.
     parameterization : Parameterization
         Active parameterization enum.
 
@@ -289,21 +290,13 @@ def _build_base_skip_set(
         Parameter names to skip in base extraction.
     """
     skip: set[str] = set()
-    horseshoe_p = getattr(model_config, "horseshoe_p", False)
-    horseshoe_dataset_p = getattr(model_config, "horseshoe_dataset_p", False)
-    horseshoe_dataset_mu = getattr(model_config, "horseshoe_dataset_mu", False)
-    neg_p = model_config.p_prior == HierarchicalPriorType.NEG
-    neg_dataset_p = model_config.p_dataset_prior == HierarchicalPriorType.NEG
-    neg_dataset_mu = model_config.mu_dataset_prior == HierarchicalPriorType.NEG
-    horseshoe_mu = (
-        getattr(model_config, "mu_prior", None)
-        == HierarchicalPriorType.HORSESHOE
-    )
-    neg_mu = (
-        getattr(model_config, "mu_prior", None) == HierarchicalPriorType.NEG
-    )
 
-    if horseshoe_p or horseshoe_dataset_p or neg_p or neg_dataset_p:
+    # Any gene-level or dataset-level hierarchy on p/phi overrides the base
+    any_p_hierarchy = getattr(model_config, "hierarchical_p", False)
+    any_dataset_p_hierarchy = (
+        model_config.p_dataset_prior != HierarchicalPriorType.NONE
+    )
+    if any_p_hierarchy or any_dataset_p_hierarchy:
         if parameterization in (
             Parameterization.MEAN_ODDS,
             Parameterization.ODDS_RATIO,
@@ -311,7 +304,16 @@ def _build_base_skip_set(
             skip.add("phi")
         else:
             skip.add("p")
-    if horseshoe_mu or horseshoe_dataset_mu or neg_mu or neg_dataset_mu:
+
+    # Any gene-level or dataset-level hierarchy on mu/r overrides the base
+    any_mu_hierarchy = (
+        getattr(model_config, "mu_prior", HierarchicalPriorType.NONE)
+        != HierarchicalPriorType.NONE
+    )
+    any_dataset_mu_hierarchy = (
+        model_config.mu_dataset_prior != HierarchicalPriorType.NONE
+    )
+    if any_mu_hierarchy or any_dataset_mu_hierarchy:
         if parameterization in (
             Parameterization.CANONICAL,
             Parameterization.STANDARD,
@@ -452,6 +454,11 @@ def _apply_gene_level_hierarchy(
         distributions[target_name] = _build_joint_low_rank_posterior(
             params, target_name, jp, split
         )
+    elif f"{target_name}_W" in params:
+        # Per-parameter low-rank: guide stored W/raw_diag instead of scale
+        distributions[target_name] = _build_low_rank_exp_normal_posterior(
+            params, target_name, is_mixture, split
+        )
     elif target_name == "phi":
         distributions[target_name] = _build_exp_normal_posterior(
             params, target_name, is_mixture, split, is_scalar=False
@@ -535,6 +542,11 @@ def _apply_gene_level_mu_hierarchy(
     if jp:
         distributions[target_name] = _build_joint_low_rank_posterior(
             params, target_name, jp, split
+        )
+    elif f"{target_name}_W" in params:
+        # Per-parameter low-rank: guide stored W/raw_diag instead of scale
+        distributions[target_name] = _build_low_rank_exp_normal_posterior(
+            params, target_name, is_mixture, split
         )
     else:
         distributions[target_name] = _build_exp_normal_posterior(
@@ -631,7 +643,7 @@ def _apply_dataset_hierarchy_mu(
                         params, hyper_loc, hyper_loc
                     )
                 )
-            if f"psi_{hs_prefix}_loc" in params:
+            if f"psi_{hs_prefix}_concentration" in params:
                 distributions.update(
                     _build_neg_hyperparameter_posteriors(params, hs_prefix)
                 )
@@ -658,7 +670,7 @@ def _apply_dataset_hierarchy_mu(
         distributions[target] = _build_joint_low_rank_posterior(
             params, target, jp, split
         )
-    elif low_rank:
+    elif f"{target}_W" in params:
         distributions[target] = _build_low_rank_exp_normal_posterior(
             params, target, is_mixture, split
         )
@@ -754,7 +766,7 @@ def _apply_dataset_hierarchy_p(
                         params, hyper_loc, hyper_loc
                     )
                 )
-            if f"psi_{hs_prefix}_loc" in params:
+            if f"psi_{hs_prefix}_concentration" in params:
                 distributions.update(
                     _build_neg_hyperparameter_posteriors(params, hs_prefix)
                 )
@@ -780,6 +792,10 @@ def _apply_dataset_hierarchy_p(
     if jp:
         distributions[target] = _build_joint_low_rank_posterior(
             params, target, jp, split
+        )
+    elif f"{target}_W" in params:
+        distributions[target] = _build_low_rank_exp_normal_posterior(
+            params, target, is_mixture, split
         )
     elif target == "phi":
         distributions[target] = _build_exp_normal_posterior(
@@ -877,7 +893,7 @@ def _apply_dataset_hierarchy_gate(
                         "logit_gate_dataset_loc",
                     )
                 )
-            if "psi_gate_dataset_loc" in params:
+            if "psi_gate_dataset_concentration" in params:
                 distributions.update(
                     _build_neg_hyperparameter_posteriors(params, "gate_dataset")
                 )
@@ -1274,7 +1290,7 @@ def _build_canonical_posteriors(
                 distributions["r"] = _build_joint_low_rank_posterior(
                     params, "r", jp, split
                 )
-            elif low_rank:
+            elif "r_W" in params:
                 distributions["r"] = _build_low_rank_exp_normal_posterior(
                     params, "r", is_mixture, split
                 )
@@ -1288,7 +1304,7 @@ def _build_canonical_posteriors(
                 params, "p", is_scalar=True, is_mixture=False, split=split
             )
         if "r" not in skip:
-            if low_rank:
+            if "r_W" in params:
                 distributions["r"] = _build_low_rank_lognormal_posterior(
                     params, "r", is_mixture, split
                 )
@@ -1329,7 +1345,7 @@ def _build_mean_prob_posteriors(
                 distributions["mu"] = _build_joint_low_rank_posterior(
                     params, "mu", jp, split
                 )
-            elif low_rank:
+            elif "mu_W" in params:
                 distributions["mu"] = _build_low_rank_exp_normal_posterior(
                     params, "mu", is_mixture, split
                 )
@@ -1343,7 +1359,7 @@ def _build_mean_prob_posteriors(
                 params, "p", is_scalar=True, is_mixture=False, split=split
             )
         if "mu" not in skip:
-            if low_rank:
+            if "mu_W" in params:
                 distributions["mu"] = _build_low_rank_lognormal_posterior(
                     params, "mu", is_mixture, split
                 )
@@ -1374,6 +1390,10 @@ def _build_mean_odds_posteriors(
                 distributions["phi"] = _build_joint_low_rank_posterior(
                     params, "phi", jp, split
                 )
+            elif "phi_W" in params:
+                distributions["phi"] = _build_low_rank_exp_normal_posterior(
+                    params, "phi", is_mixture=False, split=split
+                )
             else:
                 distributions["phi"] = _build_exp_normal_posterior(
                     params, "phi", is_mixture=False, split=split, is_scalar=True
@@ -1384,7 +1404,7 @@ def _build_mean_odds_posteriors(
                 distributions["mu"] = _build_joint_low_rank_posterior(
                     params, "mu", jp, split
                 )
-            elif low_rank:
+            elif "mu_W" in params:
                 distributions["mu"] = _build_low_rank_exp_normal_posterior(
                     params, "mu", is_mixture, split
                 )
@@ -1398,7 +1418,7 @@ def _build_mean_odds_posteriors(
                 params, "phi", is_scalar=True, is_mixture=False, split=split
             )
         if "mu" not in skip:
-            if low_rank:
+            if "mu_W" in params:
                 distributions["mu"] = _build_low_rank_lognormal_posterior(
                     params, "mu", is_mixture, split
                 )
@@ -1497,17 +1517,18 @@ def _build_neg_hyperparameter_posteriors(
     params: Dict[str, jnp.ndarray],
     prefix: str,
 ) -> Dict[str, Any]:
-    """Build LogNormal posteriors for NEG hyperparameters.
+    """Build Gamma posteriors for NEG hyperparameters.
 
     The NEG prior uses psi (per-gene variance) and zeta (per-gene rate).
-    Both have LogNormal variational posteriors since they are positive-valued,
-    mirroring the GammaSpec guide implementation.
+    Both have Gamma variational posteriors (conjugate match), parameterised
+    by concentration and rate.
 
     Parameters
     ----------
     params : Dict[str, jnp.ndarray]
-        Guide parameters.  Must contain ``psi_{prefix}_loc``,
-        ``psi_{prefix}_scale``, ``zeta_{prefix}_loc``, ``zeta_{prefix}_scale``.
+        Guide parameters.  Must contain ``psi_{prefix}_concentration``,
+        ``psi_{prefix}_rate``, ``zeta_{prefix}_concentration``,
+        ``zeta_{prefix}_rate``.
     prefix : str
         Naming prefix (e.g. ``"p"``, ``"phi"``, ``"gate"``, ``"mu_dataset"``).
 
@@ -1520,9 +1541,9 @@ def _build_neg_hyperparameter_posteriors(
 
     for role in ("psi", "zeta"):
         name = f"{role}_{prefix}"
-        loc = params[f"{name}_loc"]
-        scale = params[f"{name}_scale"]
-        distributions[name] = dist.LogNormal(loc, scale)
+        concentration = params[f"{name}_concentration"]
+        rate = params[f"{name}_rate"]
+        distributions[name] = dist.Gamma(concentration, rate)
 
     return distributions
 
