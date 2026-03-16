@@ -1976,6 +1976,11 @@ class HorseshoeDatasetExpNormalSpec(DatasetHierarchicalNormalWithTransformSpec):
             is_dataset=self.is_dataset,
         )
 
+        # When both mixture and dataset, loc has (K, *shape) but we need
+        # (K, D, *shape).  Insert singleton D at axis 1 for broadcasting.
+        if self.is_mixture and self.is_dataset and loc.ndim >= 1:
+            loc = jnp.expand_dims(loc, axis=1)
+
         # Regularized local scale: c * lambda / sqrt(c^2 + tau^2 * lambda^2)
         c = jnp.sqrt(c_sq)
         eff_scale = tau * c * lam / jnp.sqrt(c_sq + tau**2 * lam**2)
@@ -2082,6 +2087,11 @@ class HorseshoeDatasetSigmoidNormalSpec(
             is_mixture=self.is_mixture,
             is_dataset=self.is_dataset,
         )
+
+        # When both mixture and dataset, loc has (K, *shape) but we need
+        # (K, D, *shape).  Insert singleton D at axis 1 for broadcasting.
+        if self.is_mixture and self.is_dataset and loc.ndim >= 1:
+            loc = jnp.expand_dims(loc, axis=1)
 
         # Regularized local scale
         c = jnp.sqrt(c_sq)
@@ -2452,6 +2462,11 @@ class NEGDatasetExpNormalSpec(DatasetHierarchicalNormalWithTransformSpec):
             is_dataset=self.is_dataset,
         )
 
+        # When both mixture and dataset, loc has (K, *shape) but we need
+        # (K, D, *shape).  Insert singleton D at axis 1 for broadcasting.
+        if self.is_mixture and self.is_dataset and loc.ndim >= 1:
+            loc = jnp.expand_dims(loc, axis=1)
+
         eff_scale = jnp.sqrt(psi)
 
         if shape == ():
@@ -2504,6 +2519,11 @@ class NEGDatasetSigmoidNormalSpec(DatasetHierarchicalNormalWithTransformSpec):
             is_mixture=self.is_mixture,
             is_dataset=self.is_dataset,
         )
+
+        # When both mixture and dataset, loc has (K, *shape) but we need
+        # (K, D, *shape).  Insert singleton D at axis 1 for broadcasting.
+        if self.is_mixture and self.is_dataset and loc.ndim >= 1:
+            loc = jnp.expand_dims(loc, axis=1)
 
         eff_scale = jnp.sqrt(psi)
 

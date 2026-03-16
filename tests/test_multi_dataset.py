@@ -2971,6 +2971,49 @@ class TestMixtureDatasetHierarchyFactory:
         svi_state = svi.init(rng_key, **model_args)
         assert svi_state is not None
 
+    def test_svi_init_vcp_mixture_neg_dataset_mu_and_gate(self):
+        """SVI init succeeds with NEG dataset priors on mu and gate.
+
+        Regression test for NCP dataset specs (NEG/Horseshoe) missing the
+        singleton-D insertion when both is_mixture and is_dataset are True.
+        The hyper_loc has shape (K, G) but z has (K, D, G).
+        """
+        from numpyro.infer import SVI, Trace_ELBO
+        from numpyro.optim import Adam
+        from scribe.models.model_registry import get_model_and_guide
+
+        K, D, G, N = 3, 2, 10, 20
+
+        b = self._builder(model_type="zinbvcp", parameterization="mean_odds")
+        b._n_datasets = D
+        b._mu_dataset_prior = "neg"
+        b._p_prior = "gaussian"
+        b._gate_dataset_prior = "neg"
+        b._n_components = K
+        b._mixture_params = ["phi", "mu"]
+        config = b.build()
+
+        model, guide, model_config_for_results = get_model_and_guide(
+            config, n_genes=G
+        )
+
+        counts = jnp.ones((N, G), dtype=jnp.float32)
+        dataset_indices = jnp.array([0] * (N // 2) + [1] * (N // 2))
+        model_args = {
+            "n_cells": N,
+            "n_genes": G,
+            "counts": counts,
+            "batch_size": N,
+            "model_config": model_config_for_results,
+            "annotation_prior_logits": None,
+            "dataset_indices": dataset_indices,
+        }
+
+        svi = SVI(model, guide, Adam(1e-3), loss=Trace_ELBO())
+        rng_key = random.PRNGKey(0)
+        svi_state = svi.init(rng_key, **model_args)
+        assert svi_state is not None
+
 
 # ==============================================================================
 # DE component matching
