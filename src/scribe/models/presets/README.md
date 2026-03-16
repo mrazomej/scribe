@@ -356,6 +356,23 @@ near-zero scale). The factory reads `model_config.shared_component_indices`,
 populated at runtime by `fit()` when `annotation_key` and `dataset_key` are both
 provided, and threads this through to the datasetify helpers.
 
+### Dataset-Level Gate (`gate_dataset_prior`)
+
+Unlike mu/p, `_datasetify_gate()` produces **independent** per-dataset gates
+pushed toward zero, not a pooling hierarchy. The population location
+`logit_gate_dataset_loc` is a **scalar** `N(-5, 1)` shared across all genes,
+datasets, and components. This scalar is robust against being overwhelmed by
+the likelihood (unlike the per-gene loc used by mu/p). Per-gene adaptive
+shrinkage comes from the NEG/horseshoe `psi_g` (or `lambda_g`), and
+per-dataset independence comes from the NCP `z_{g,d}` variable:
+
+```
+gate_g^(d) = sigmoid(loc + sqrt(psi_g) * z_{g,d})
+```
+
+When gate is mixture-aware (`gate in mixture_params`), the shape becomes
+`(K, D, G)`, giving each component its own independent gate per dataset.
+
 ## Adding New Models
 
 1. Add entry to `MODEL_EXTRA_PARAMS` in `registry.py`

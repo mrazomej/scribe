@@ -1190,12 +1190,12 @@ class TestMixtureDatasetComposition:
         assert r_specs[0].is_mixture is False
 
     def test_datasetify_gate_preserves_is_mixture(self):
-        """_datasetify_gate propagates is_mixture to both hier spec and hyper_loc.
+        """_datasetify_gate preserves is_mixture on the gate spec.
 
-        Regression test for a bug where the logit_gate_dataset_loc hyperprior
-        was created without is_mixture, giving it shape (G,) instead of (K, G)
-        when gate was a mixture parameter.  This caused a broadcast failure
-        in sample_hierarchical: Normal((G, 1)).expand((K, D, G)) → ValueError.
+        The gate spec itself must keep is_mixture so its shape includes
+        the component dimension (K, D, G).  The hyper_loc, however, is
+        always a scalar shared across genes, datasets, and components —
+        so it must have is_mixture=False and is_gene_specific=False.
         """
         from scribe.models.presets.factory import _datasetify_gate
 
@@ -1220,12 +1220,14 @@ class TestMixtureDatasetComposition:
         assert gate_specs[0].is_dataset is True
         assert gate_specs[0].is_mixture is True
 
-        # The hyper_loc must also be mixture-aware so its shape is (K, G)
+        # The hyper_loc must be scalar (not per-gene, not per-component)
         hyper_loc_specs = [
             s for s in result_specs if s.name == "logit_gate_dataset_loc"
         ]
         assert len(hyper_loc_specs) == 1
-        assert getattr(hyper_loc_specs[0], "is_mixture", False) is True
+        assert getattr(hyper_loc_specs[0], "is_mixture", False) is False
+        assert getattr(hyper_loc_specs[0], "is_gene_specific", True) is False
+        assert hyper_loc_specs[0].shape_dims == ()
 
     def test_datasetify_gate_non_mixture_stays_non_mixture(self):
         """_datasetify_gate does not add is_mixture when original lacks it."""
@@ -1250,11 +1252,110 @@ class TestMixtureDatasetComposition:
         assert gate_specs[0].is_dataset is True
         assert gate_specs[0].is_mixture is False
 
+        # hyper_loc is always scalar regardless of mixture status
         hyper_loc_specs = [
             s for s in result_specs if s.name == "logit_gate_dataset_loc"
         ]
         assert len(hyper_loc_specs) == 1
         assert getattr(hyper_loc_specs[0], "is_mixture", False) is False
+        assert getattr(hyper_loc_specs[0], "is_gene_specific", True) is False
+        assert hyper_loc_specs[0].shape_dims == ()
+
+    def test_datasetify_gate_scalar_loc_default_params(self):
+        """_datasetify_gate creates scalar loc with N(-5, 1) defaults."""
+        from scribe.models.presets.factory import _datasetify_gate
+
+        original_gate = SigmoidNormalSpec(
+            name="gate",
+            shape_dims=("n_genes",),
+            default_params=(-5.0, 1.0),
+            is_gene_specific=True,
+            is_mixture=False,
+            unconstrained=True,
+        )
+        result_specs = _datasetify_gate(
+            param_specs=[original_gate],
+            guide_families={},
+            n_datasets=2,
+        )
+
+        hyper_loc = [
+            s for s in result_specs if s.name == "logit_gate_dataset_loc"
+        ][0]
+
+        # Scalar shape, not gene-specific, not mixture
+        assert hyper_loc.shape_dims == ()
+        assert hyper_loc.is_gene_specific is False
+        assert getattr(hyper_loc, "is_mixture", False) is False
+        assert hyper_loc.default_params == (-5.0, 1.0)
+
+    def test_datasetify_gate_neg_upgrade_preserves_scalar_loc(self):
+        """NEG upgrade of dataset gate keeps hyper_loc as scalar."""
+        from scribe.models.presets.factory import (
+            _datasetify_gate,
+            _neg_dataset_gate,
+        )
+
+        original_gate = SigmoidNormalSpec(
+            name="gate",
+            shape_dims=("n_genes",),
+            default_params=(-5.0, 1.0),
+            is_gene_specific=True,
+            is_mixture=False,
+            unconstrained=True,
+        )
+        # First apply the Gaussian datasetification
+        specs = _datasetify_gate(
+            param_specs=[original_gate],
+            guide_families={},
+            n_datasets=2,
+        )
+        # Then upgrade to NEG
+        neg_specs = _neg_dataset_gate(specs, a=1.0, u=0.5, tau=1.0)
+
+        hyper_loc = [
+            s for s in neg_specs if s.name == "logit_gate_dataset_loc"
+        ][0]
+        assert hyper_loc.shape_dims == ()
+        assert hyper_loc.is_gene_specific is False
+
+        # psi and zeta should still be per-gene
+        psi_specs = [s for s in neg_specs if s.name == "psi_gate_dataset"]
+        assert len(psi_specs) == 1
+        assert psi_specs[0].is_gene_specific is True
+
+    def test_datasetify_gate_horseshoe_upgrade_preserves_scalar_loc(self):
+        """Horseshoe upgrade of dataset gate keeps hyper_loc as scalar."""
+        from scribe.models.presets.factory import (
+            _datasetify_gate,
+            _horseshoe_dataset_gate,
+        )
+
+        original_gate = SigmoidNormalSpec(
+            name="gate",
+            shape_dims=("n_genes",),
+            default_params=(-5.0, 1.0),
+            is_gene_specific=True,
+            is_mixture=False,
+            unconstrained=True,
+        )
+        specs = _datasetify_gate(
+            param_specs=[original_gate],
+            guide_families={},
+            n_datasets=2,
+        )
+        hs_specs = _horseshoe_dataset_gate(specs)
+
+        hyper_loc = [
+            s for s in hs_specs if s.name == "logit_gate_dataset_loc"
+        ][0]
+        assert hyper_loc.shape_dims == ()
+        assert hyper_loc.is_gene_specific is False
+
+        # lambda (local scale) should still be per-gene
+        lam_specs = [s for s in hs_specs if s.name == "lambda_gate_dataset"]
+        assert len(lam_specs) == 1
+        assert lam_specs[0].is_gene_specific is True
 
 
 # ==============================================================================
