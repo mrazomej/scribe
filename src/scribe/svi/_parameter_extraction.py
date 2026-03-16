@@ -209,8 +209,8 @@ def _reconstruct_neg_maps(
     ----------
     map_estimates : Dict[str, jnp.ndarray]
         MAP estimates including raw z and NEG psi hyperparameters.
-        Note: psi values from LogNormal posteriors are stored in log-space
-        (the .loc of the LogNormal), so we apply exp(psi) before sqrt.
+        psi values come from a Gamma variational posterior and are already
+        in the correct (positive) space — no exp() is needed.
     model_config
         Model configuration with p_prior, gate_prior, mu_dataset_prior,
         p_dataset_prior, gate_dataset_prior enum fields.
@@ -295,14 +295,14 @@ def _reconstruct_neg_maps(
             continue
 
         z = map_estimates[raw_name]
-        psi_loc = map_estimates.get(f"psi_{neg_prefix}")
+        psi = map_estimates.get(f"psi_{neg_prefix}")
         loc = map_estimates.get(loc_name)
 
-        if psi_loc is None or loc is None:
+        if psi is None or loc is None:
             continue
 
-        # psi from LogNormal posterior: map_estimates has log-space loc
-        psi = jnp.exp(psi_loc)
+        # psi from Gamma variational posterior — already positive-valued;
+        # MAP estimate is concentration/rate (the Gamma mean).
         eff_scale = _neg_eff_scale(psi)
         unconstrained = loc + eff_scale * z
         map_estimates[target_name] = transform(unconstrained)

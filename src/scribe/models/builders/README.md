@@ -327,6 +327,13 @@ parameterizations and guide families, including **joint-aware** extraction for
 - Leaf `_build_*_posterior` helpers remain responsible for constructing concrete
   distribution objects, while `_apply_*` helpers decide which builders run and
   in what order.
+- **Base skip set**: `_build_base_skip_set` skips any parameter that has an
+  active hierarchical prior (Gaussian, horseshoe, or NEG) at the gene or
+  dataset level, since the corresponding hierarchy pass handles it.
+- **Per-parameter low-rank detection**: dispatch in both base and hierarchy
+  passes checks `f"{name}_W" in params` instead of a global `low_rank` flag.
+  This correctly handles heterogeneous guide families (e.g., `mu` with
+  `LowRankGuide` while `phi` uses `MeanFieldGuide`).
 
 ### Joint-Parameter Compatibility Checklist
 

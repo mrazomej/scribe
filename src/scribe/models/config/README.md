@@ -98,8 +98,10 @@ structure:
   `"gaussian"`, `"horseshoe"`, or `"neg"`.  Unlike `mu_dataset_prior` and
   `p_dataset_prior`, this does **not** pool gates toward a shared per-gene
   mean.  Instead, each (dataset, gene) gate is independently shrunk toward
-  zero via a scalar population location `N(-5, 1)` with per-gene adaptive
-  shrinkage from the chosen sparsity prior
+  zero via a scalar population location `N(-5, 0.01)` (very tight so the
+  likelihood cannot drag it positive) with per-gene adaptive shrinkage from
+  the chosen sparsity prior.  NEG auxiliary variables (psi, zeta) use a
+  Gamma variational posterior that can concentrate at zero
 - `is_multi_dataset` (computed property) — `True` when `n_datasets >= 2`
 
 Dataset-level prior fields (`mu_dataset_prior`, `p_dataset_prior`,

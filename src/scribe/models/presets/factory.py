@@ -1466,16 +1466,15 @@ def _datasetify_gate(
             orig_is_mixture = getattr(spec, "is_mixture", False)
 
             # Population-level location is a scalar shared across all
-            # genes, datasets, and components.  A scalar prior N(-5, 1)
-            # is robust against being overwhelmed by the likelihood
-            # (unlike the previous per-gene loc which could be pushed
-            # positive gene-by-gene).  Per-gene adaptive shrinkage is
-            # handled by the NEG/horseshoe psi, and per-dataset
-            # independence comes from the NCP z variable.
+            # genes, datasets, and components.  A very tight prior
+            # N(-5, 0.01) anchors logit(gate) deep in the off region
+            # so the likelihood cannot drag it positive.  Per-gene
+            # adaptive shrinkage is handled by the NEG/horseshoe psi,
+            # and per-dataset independence comes from the NCP z variable.
             hyper_loc = NormalWithTransformSpec(
                 name=hyper_loc_name,
                 shape_dims=(),
-                default_params=(-5.0, 1.0),
+                default_params=(-5.0, 0.01),
                 is_gene_specific=False,
                 is_mixture=False,
             )

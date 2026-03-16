@@ -804,9 +804,10 @@ A scalar $\mu_\pi^{\text{pop}}$ is a deliberate design choice. With thousands
 of genes, each contributing likelihood signal from its zero counts, a per-gene
 population location $\mu_{\pi,g}$ can be overwhelmed gene-by-gene: the data
 push each $\mu_{\pi,g}$ positive, undermining the "default off" prior. A single
-scalar location is robust against this because the $\mathcal{N}(-5, 1)$ prior
-on one parameter is far harder to overwhelm than the same prior on $G$
-independent parameters.
+scalar location with a very tight prior $\mathcal{N}(-5, 0.01)$ anchors
+$\text{logit}(\pi)$ deep in the off region; the tiny variance ensures the
+aggregate likelihood from $K \times D \times G$ gate values cannot drag the
+location positive.
 
 **Dataset-specific gate:**
 
@@ -1286,7 +1287,7 @@ center with per-gene NEG shrinkage (@sec-hdata-gate-neg):
 $$
 \boxed{
 \begin{aligned}
-&\mu_\pi^{\text{pop}} \sim \mathcal{N}(-5, 1), \quad \text{(scalar)} \\
+&\mu_\pi^{\text{pop}} \sim \mathcal{N}(-5, 0.01), \quad \text{(scalar)} \\
 &\zeta_g \sim \text{Gamma}(a, \tau), \quad
 \psi_g \mid \zeta_g \sim \text{Gamma}(u, \zeta_g), \\
 &z_{g,d} \sim \mathcal{N}(0, 1), \quad
