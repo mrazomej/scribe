@@ -15,6 +15,7 @@ from jax import random
 
 from ..utils import numpyro_to_scipy
 from ..models.config.enums import HierarchicalPriorType
+from ..models.parameterizations import _align_gene_params
 
 
 # ==============================================================================
@@ -832,7 +833,13 @@ class ParameterExtractionMixin:
                 ):
                     p_reshaped = p_reshaped[..., None]
 
-                estimates["r"] = estimates["mu"] * (1 - p_reshaped) / p_reshaped
+                # Align intermediate dims when p and mu are both
+                # gene-specific but differ in dataset dimension, e.g.
+                # p=(K, G) vs mu=(K, D, G).
+                p_reshaped, mu_aligned = _align_gene_params(
+                    p_reshaped, estimates["mu"]
+                )
+                estimates["r"] = mu_aligned * (1 - p_reshaped) / p_reshaped
 
         # Handle odds_ratio / mean_odds parameterization
         elif parameterization in (
@@ -901,7 +908,13 @@ class ParameterExtractionMixin:
                 ):
                     phi_reshaped = phi_reshaped[..., None]
 
-                estimates["r"] = estimates["mu"] * phi_reshaped
+                # Align intermediate dims when phi and mu are both
+                # gene-specific but differ in dataset dimension, e.g.
+                # phi=(K, G) vs mu=(K, D, G).
+                phi_reshaped, mu_aligned = _align_gene_params(
+                    phi_reshaped, estimates["mu"]
+                )
+                estimates["r"] = mu_aligned * phi_reshaped
 
             # Handle VCP capture probability conversion
             if "phi_capture" in estimates and "p_capture" not in estimates:

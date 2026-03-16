@@ -40,7 +40,12 @@ that break when two different semantic layouts produce the same numeric shape
 4. **Gate broadcasting in VCP**: gate `(batch, G)` not expanded for mixture dim
    `(batch, K, G)` in `ZeroInflatedDistribution`.
 
-All four share the same root cause: dimension semantics lost → heuristic guess → edge case.
+5. **MAP canonical param reconstruction**: `_compute_canonical_parameters` in
+   `svi/_parameter_extraction.py` does `r = mu * phi` on MAP estimates without
+   aligning `phi=(K,G)` vs `mu=(K,D,G)`. This is a *separate code path* from
+   the model builder — the layout dict as designed wouldn't cover it directly.
+
+All five share the same root cause: dimension semantics lost → heuristic guess → edge case.
 
 ## Proposed Solution: `param_layouts` Dict
 
