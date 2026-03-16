@@ -8,7 +8,7 @@ loss convergence and Orbax checkpointing for resumable training.
 
 from dataclasses import dataclass
 import sys
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 import numpy as np
 import jax.numpy as jnp
 from jax import random, jit
@@ -127,6 +127,30 @@ def _should_emit_progress_update(step: int, n_steps: int) -> bool:
     """
     interval = _progress_display_interval(n_steps)
     return step % interval == 0
+
+
+def _display_window_from_last_update(
+    last_display_end: int, batch_end: int
+) -> Tuple[int, int]:
+    """
+    Compute the 1-based inclusive loss window since the last displayed update.
+
+    Parameters
+    ----------
+    last_display_end : int
+        Last 1-based loss index already shown in the progress display.
+    batch_end : int
+        Current 1-based loss index corresponding to the latest optimization step.
+
+    Returns
+    -------
+    Tuple[int, int]
+        Inclusive ``(start, end)`` indices representing the losses newly
+        accumulated since the last display event.
+    """
+    start = max(1, last_display_end + 1)
+    end = max(start, batch_end)
+    return start, end
 
 
 def _should_render_progress_update(
@@ -376,7 +400,9 @@ def _run_with_early_stopping(
     with progress_ctx as pbar:
         # Track initial loss for display (like NumPyro)
         init_loss = losses[0] if losses else 0.0
-        loss_display_interval = _progress_display_interval(n_steps)
+        # Track the last 1-based loss index already shown so display ranges
+        # report exactly "since previous display" instead of a rolling window.
+        last_display_end = start_step
 
         task = pbar.add_task(
             "SVI optimization" + (" (resumed)" if resumed else ""),
@@ -440,12 +466,16 @@ def _run_with_early_stopping(
             )
 
             if should_display_log or should_render:
-                batch_start = max(0, len(losses) - loss_display_interval)
                 batch_end = len(losses)
-                avg_loss = _mean_ignoring_nans(losses[batch_start:batch_end])
+                display_start, display_end = _display_window_from_last_update(
+                    last_display_end=last_display_end, batch_end=batch_end
+                )
+                avg_loss = _mean_ignoring_nans(
+                    losses[display_start - 1 : display_end]
+                )
                 loss_info = (
                     f"init loss: {init_loss:.4e}, "
-                    f"avg. loss [{batch_start + 1}-{batch_end}]: {avg_loss:.4e}"
+                    f"avg. loss [{display_start}-{display_end}]: {avg_loss:.4e}"
                 )
                 if should_render:
                     pbar.update(
@@ -457,9 +487,11 @@ def _run_with_early_stopping(
                         "SVI progress "
                         f"[{batch_end}/{n_steps}] "
                         f"init loss: {init_loss:.4e}, "
-                        f"avg. loss [{batch_start + 1}-{batch_end}]: "
+                        f"avg. loss [{display_start}-{display_end}]: "
                         f"{avg_loss:.4e}"
                     )
+                # Mark this range as displayed for the next update interval.
+                last_display_end = display_end
             # Periodically monitor loss and save checkpoints.
             # This runs regardless of early_stopping.enabled so that
             # checkpoints are always saved for resumability.

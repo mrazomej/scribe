@@ -421,6 +421,14 @@ class TestSVIProgressLoggingInterval:
         )
         assert updates == 20
 
+    def test_display_window_tracks_since_last_update(self):
+        """Displayed loss ranges advance from the last shown endpoint."""
+        from scribe.svi.inference_engine import _display_window_from_last_update
+
+        assert _display_window_from_last_update(0, 100) == (1, 100)
+        assert _display_window_from_last_update(100, 200) == (101, 200)
+        assert _display_window_from_last_update(3100, 3200) == (3101, 3200)
+
 
 class TestSVIProgressRenderCadence:
     """Test throttled interactive progress rendering behavior."""

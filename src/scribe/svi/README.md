@@ -914,6 +914,8 @@ final_results = SVIResultsFactory.create_results(
 - Progress-bar rolling mean loss ignores NaN/Inf values to keep reporting stable
 - Interactive progress redraws are throttled (default every 100 steps) to
   reduce IDE terminal rendering overhead
+- The displayed `avg. loss [start-end]` range reflects losses accumulated since
+  the previous displayed update, not a long rolling back-window
 - In non-interactive outputs (e.g. redirected logs), Rich live progress is
   disabled automatically; use `log_progress_lines=True` for periodic text logs
 
