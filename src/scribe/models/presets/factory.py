@@ -1419,21 +1419,23 @@ def _datasetify_gate(
     guide_families,
     n_datasets: int,
 ) -> List:
-    """Replace gate with a dataset-hierarchical triplet.
+    """Replace gate with per-dataset independent gates shrunk toward zero.
 
-    Adds population-level hyperparameters (loc, scale) and replaces the
-    flat or gene-level hierarchical gate spec with a
-    ``DatasetHierarchicalSigmoidNormalSpec`` that produces per-dataset,
-    gene-specific gate values.
+    Each (dataset, gene) pair—and each (component, dataset, gene) triple
+    when the gate is mixture-aware—gets its own gate independently pushed
+    toward zero.  The structure mirrors the gene-level gate hierarchy but
+    with an extra dataset dimension on the NCP ``z`` variable:
 
-    When the original gate is mixture-aware (``is_mixture=True``), the
-    population hyperprior ``hyper_loc`` is also made per-component so
-    that each cell type gets its own population logit-gate profile
-    (shape ``(K, G)`` instead of ``(G,)``).
+    * **Scalar loc** ``N(-5, 1)``—shared across genes, datasets, and
+      components.  A single scalar is robust against being overwhelmed
+      by the likelihood (unlike a per-gene loc).
+    * **Per-gene NEG/horseshoe psi** provides adaptive per-gene shrinkage.
+    * **Per-dataset z** gives each dataset its own independent gate draw.
 
-    Unlike ``_datasetify_mu``/``_datasetify_p``, the gate is always on
-    the logit scale regardless of parameterization, so no ``param_key``
-    dispatch is needed.
+    Unlike ``_datasetify_mu`` / ``_datasetify_p``, this function does
+    **not** create a hierarchical structure that pools gates across
+    datasets.  The NEG/horseshoe controls how far each gene's gate can
+    deviate from the scalar center, not the cross-dataset spread.
 
     Parameters
     ----------
@@ -1449,7 +1451,7 @@ def _datasetify_gate(
     -------
     List[ParamSpec]
         Updated parameter specs with the gate replaced by a
-        dataset-hierarchical triplet.
+        dataset-level triplet (scalar loc, scalar scale, per-dataset gate).
     """
     hyper_loc_name = "logit_gate_dataset_loc"
     hyper_scale_name = "logit_gate_dataset_scale"
@@ -1463,15 +1465,19 @@ def _datasetify_gate(
             # hierarchical parameter keeps its component dimension.
             orig_is_mixture = getattr(spec, "is_mixture", False)
 
-            # Population-level hyperparameters — per-component when gate
-            # is mixture-aware so each cell type gets its own population
-            # logit-gate profile (shape (K, G) instead of (G,)).
+            # Population-level location is a scalar shared across all
+            # genes, datasets, and components.  A scalar prior N(-5, 1)
+            # is robust against being overwhelmed by the likelihood
+            # (unlike the previous per-gene loc which could be pushed
+            # positive gene-by-gene).  Per-gene adaptive shrinkage is
+            # handled by the NEG/horseshoe psi, and per-dataset
+            # independence comes from the NCP z variable.
             hyper_loc = NormalWithTransformSpec(
                 name=hyper_loc_name,
-                shape_dims=("n_genes",),
+                shape_dims=(),
                 default_params=(-5.0, 1.0),
-                is_gene_specific=True,
-                is_mixture=orig_is_mixture,
+                is_gene_specific=False,
+                is_mixture=False,
             )
             hyper_scale = SoftplusNormalSpec(
                 name=hyper_scale_name,

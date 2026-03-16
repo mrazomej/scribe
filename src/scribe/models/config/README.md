@@ -95,7 +95,11 @@ structure:
 - `p_dataset_mode: str` — Structural mode for dataset-level p:
   `"none"`, `"scalar"`, `"gene_specific"`, or `"two_level"`
 - `gate_dataset_prior: str` — Prior for dataset-specific gate: `"none"`,
-  `"gaussian"`, `"horseshoe"`, or `"neg"`
+  `"gaussian"`, `"horseshoe"`, or `"neg"`.  Unlike `mu_dataset_prior` and
+  `p_dataset_prior`, this does **not** pool gates toward a shared per-gene
+  mean.  Instead, each (dataset, gene) gate is independently shrunk toward
+  zero via a scalar population location `N(-5, 1)` with per-gene adaptive
+  shrinkage from the chosen sparsity prior
 - `is_multi_dataset` (computed property) — `True` when `n_datasets >= 2`
 
 Dataset-level prior fields (`mu_dataset_prior`, `p_dataset_prior`,
