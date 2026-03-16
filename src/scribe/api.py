@@ -54,7 +54,7 @@ from .models.config import (
     ModelConfig,
     SVIConfig,
 )
-from .models.config.enums import InferenceMethod
+from .models.config.enums import HierarchicalPriorType, InferenceMethod
 from .inference.utils import (
     process_counts_data,
     validate_inference_config_match,
@@ -193,6 +193,28 @@ def _coerce_batch_size_for_dataset(
         )
         return None
     return batch_size
+
+
+# ------------------------------------------------------------------------------
+
+
+def _normalize_prior_type_name(prior: Any) -> str:
+    """Normalize a hierarchical prior selector to a lowercase string value.
+
+    Parameters
+    ----------
+    prior : Any
+        Prior selector coming from ``fit`` kwargs. This may be either a
+        ``HierarchicalPriorType`` enum instance or a plain string.
+
+    Returns
+    -------
+    str
+        Lowercase prior name (e.g. ``"none"``, ``"gaussian"``).
+    """
+    if isinstance(prior, str):
+        return prior.lower()
+    return str(getattr(prior, "value", prior)).lower()
 
 
 # ==============================================================================
@@ -792,13 +814,35 @@ def fit(
         # after min_cells filtering, downgrade to the canonical non-mixture
         # path instead of raising from mixture validation.
         if _n_comp_inferred and _n_comp <= 1:
+            # When the annotation filter leaves <=1 class, we must force
+            # non-mixture mode and clear any component-only prior settings.
+            # This keeps auto-downgrade behavior compatible with enum-style
+            # prior flags (e.g. mu_prior="gaussian"), which otherwise fail
+            # ModelConfig validation in non-mixture mode.
+            downgraded_messages = []
             n_components = None
             effective_mixture_params = None
+            if (
+                _normalize_prior_type_name(mu_prior)
+                != HierarchicalPriorType.NONE.value
+            ):
+                _mu_prior_old = _normalize_prior_type_name(mu_prior)
+                mu_prior = HierarchicalPriorType.NONE.value
+                downgraded_messages.append(
+                    f"mu_prior='{_mu_prior_old}' -> 'none'"
+                )
+
+            _downgrade_suffix = (
+                f"; {'; '.join(downgraded_messages)}"
+                if downgraded_messages
+                else ""
+            )
             warnings.warn(
                 "annotation_key/annotation_min_cells left <=1 surviving "
                 "annotation class after filtering. "
                 "Auto-downgrading to non-mixture mode "
-                "(n_components=None, mixture_params ignored).",
+                "(n_components=None, mixture_params ignored"
+                f"{_downgrade_suffix}).",
                 UserWarning,
                 stacklevel=2,
             )
