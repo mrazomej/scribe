@@ -83,7 +83,7 @@ class ModelConfigBuilder:
         self._parameterization: Parameterization = Parameterization.STANDARD
         self._inference_method: InferenceMethod = InferenceMethod.SVI
         self._unconstrained: bool = False
-        self._hierarchical_mu: bool = False
+        self._mu_prior: str = "none"
         self._p_prior: str = "none"
         self._gate_prior: str = "none"
         self._n_datasets: Optional[int] = None
@@ -200,14 +200,18 @@ class ModelConfigBuilder:
     # --------------------------------------------------------------------------
 
     def with_hierarchical_mu(self) -> "ModelConfigBuilder":
-        """Enable hierarchical prior on mu (or r) across mixture components.
+        """Enable Gaussian hierarchical prior on mu (or r) across components.
 
         Provides shrinkage so that per-component means are drawn from a
         shared gene-level population distribution.  Automatically enables
         unconstrained parameterization.  Requires a mixture model
         (``n_components >= 2``).
+
+        .. deprecated::
+            Use ``builder._mu_prior = "gaussian"`` (or ``"horseshoe"``
+            / ``"neg"``) instead.
         """
-        self._hierarchical_mu = True
+        self._mu_prior = "gaussian"
         self._unconstrained = True
         return self
 
@@ -630,7 +634,7 @@ class ModelConfigBuilder:
             parameterization=self._parameterization,
             inference_method=self._inference_method,
             unconstrained=self._unconstrained,
-            hierarchical_mu=self._hierarchical_mu,
+            mu_prior=self._mu_prior,
             p_prior=self._p_prior,
             gate_prior=self._gate_prior,
             n_datasets=self._n_datasets,

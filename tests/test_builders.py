@@ -2136,7 +2136,7 @@ class TestJointLowRankIntegration:
             parameterization="mean_odds",
             unconstrained=True,
             p_prior="gaussian",
-            hierarchical_mu=True,
+            mu_prior="gaussian",
             gate_prior="horseshoe",
             guide_rank=3,
             n_components=3,

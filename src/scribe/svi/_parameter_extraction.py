@@ -97,19 +97,24 @@ def _reconstruct_horseshoe_maps(
     if getattr(model_config, "horseshoe_p", False):
         parameterization = model_config.parameterization
         if parameterization in ("mean_odds", "odds_ratio"):
-            configs.append(
-                ("phi_raw", "phi", "phi", "log_phi_loc", jnp.exp)
-            )
+            configs.append(("phi_raw", "phi", "phi", "log_phi_loc", jnp.exp))
         else:
-            configs.append(
-                ("p_raw", "p", "p", "logit_p_loc", sigmoid)
-            )
+            configs.append(("p_raw", "p", "p", "logit_p_loc", sigmoid))
 
     # Gene-level horseshoe gate
     if getattr(model_config, "horseshoe_gate", False):
-        configs.append(
-            ("gate_raw", "gate", "gate", "logit_gate_loc", sigmoid)
-        )
+        configs.append(("gate_raw", "gate", "gate", "logit_gate_loc", sigmoid))
+
+    # Gene-level horseshoe mu (across mixture components)
+    if (
+        getattr(model_config, "mu_prior", None)
+        == HierarchicalPriorType.HORSESHOE
+    ):
+        parameterization = model_config.parameterization
+        if parameterization in ("canonical", "standard"):
+            configs.append(("r_raw", "r", "r", "log_r_loc", jnp.exp))
+        else:
+            configs.append(("mu_raw", "mu", "mu", "log_mu_loc", jnp.exp))
 
     # Dataset-level horseshoe mu
     if getattr(model_config, "horseshoe_dataset_mu", False):
@@ -220,19 +225,21 @@ def _reconstruct_neg_maps(
     if model_config.p_prior == HierarchicalPriorType.NEG:
         parameterization = model_config.parameterization
         if parameterization in ("mean_odds", "odds_ratio"):
-            configs.append(
-                ("phi_raw", "phi", "phi", "log_phi_loc", jnp.exp)
-            )
+            configs.append(("phi_raw", "phi", "phi", "log_phi_loc", jnp.exp))
         else:
-            configs.append(
-                ("p_raw", "p", "p", "logit_p_loc", sigmoid)
-            )
+            configs.append(("p_raw", "p", "p", "logit_p_loc", sigmoid))
 
     # Gene-level NEG gate
     if model_config.gate_prior == HierarchicalPriorType.NEG:
-        configs.append(
-            ("gate_raw", "gate", "gate", "logit_gate_loc", sigmoid)
-        )
+        configs.append(("gate_raw", "gate", "gate", "logit_gate_loc", sigmoid))
+
+    # Gene-level NEG mu (across mixture components)
+    if getattr(model_config, "mu_prior", None) == HierarchicalPriorType.NEG:
+        parameterization = model_config.parameterization
+        if parameterization in ("canonical", "standard"):
+            configs.append(("r_raw", "r", "r", "log_r_loc", jnp.exp))
+        else:
+            configs.append(("mu_raw", "mu", "mu", "log_mu_loc", jnp.exp))
 
     # Dataset-level NEG mu
     if model_config.mu_dataset_prior == HierarchicalPriorType.NEG:
@@ -733,9 +740,7 @@ class ParameterExtractionMixin:
         )
 
         # Reconstruct constrained parameters from NCP NEG if applicable
-        map_estimates = _reconstruct_neg_maps(
-            map_estimates, self.model_config
-        )
+        map_estimates = _reconstruct_neg_maps(map_estimates, self.model_config)
 
         # Compute canonical parameters if requested
         if canonical:
@@ -990,10 +995,7 @@ class ParameterExtractionMixin:
             # Guard: skip whenever p has >=2 dimensions with all sizes >1,
             # since broadcasting with per-cell p_capture would either fail
             # or produce a massive intermediate tensor.
-            p_is_high_dim = (
-                p_val.ndim >= 2
-                and all(s > 1 for s in p_val.shape)
-            )
+            p_is_high_dim = p_val.ndim >= 2 and all(s > 1 for s in p_val.shape)
 
             if p_is_high_dim:
                 if verbose:

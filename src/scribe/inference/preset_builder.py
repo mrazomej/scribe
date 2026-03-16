@@ -53,7 +53,7 @@ def build_config_from_preset(
     parameterization: str = "canonical",
     inference_method: str = "svi",
     unconstrained: bool = False,
-    hierarchical_mu: bool = False,
+    mu_prior: str = "none",
     p_prior: str = "none",
     gate_prior: str = "none",
     n_datasets: Optional[int] = None,
@@ -325,10 +325,10 @@ def build_config_from_preset(
     if unconstrained:
         builder.unconstrained()
 
-    if hierarchical_mu:
-        builder.with_hierarchical_mu()
-
     # Gene-level priors
+    if mu_prior != "none":
+        builder._mu_prior = mu_prior
+        builder._unconstrained = True
     if p_prior != "none":
         builder._p_prior = p_prior
         builder._unconstrained = True

@@ -42,9 +42,9 @@ unconstrained: false
 # prior type: "none" (flat), "gaussian" (Normal hierarchy), "horseshoe"
 # (regularized horseshoe), or "neg" (Normal-Exponential-Gamma).
 # All sparsity-inducing priors (horseshoe, neg) require unconstrained=true.
+mu_prior: "none"          # Gene-level prior for mu/r (mixtures only): none | gaussian | horseshoe | neg
 p_prior: "none"           # Gene-level prior for p/phi: none | gaussian | horseshoe | neg
 gate_prior: "none"        # Gene-level prior for gate (ZI only): none | gaussian | horseshoe | neg
-hierarchical_mu: false    # Hierarchical mu across mixture components (requires unconstrained=true)
 
 # --- Multi-Dataset Configuration ---
 # Joint modeling of multiple datasets with hierarchical priors across datasets.

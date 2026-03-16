@@ -875,6 +875,7 @@ def main(cfg: DictConfig) -> None:
         "model": model_type,
         "parameterization": cfg.parameterization,
         "unconstrained": cfg.unconstrained,
+        "mu_prior": cfg.get("mu_prior", "none"),
         "p_prior": cfg.get("p_prior", "none"),
         "gate_prior": cfg.get("gate_prior", "none"),
         # Multi-dataset hierarchy

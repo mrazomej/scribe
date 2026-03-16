@@ -295,6 +295,13 @@ def _build_base_skip_set(
     neg_p = model_config.p_prior == HierarchicalPriorType.NEG
     neg_dataset_p = model_config.p_dataset_prior == HierarchicalPriorType.NEG
     neg_dataset_mu = model_config.mu_dataset_prior == HierarchicalPriorType.NEG
+    horseshoe_mu = (
+        getattr(model_config, "mu_prior", None)
+        == HierarchicalPriorType.HORSESHOE
+    )
+    neg_mu = (
+        getattr(model_config, "mu_prior", None) == HierarchicalPriorType.NEG
+    )
 
     if horseshoe_p or horseshoe_dataset_p or neg_p or neg_dataset_p:
         if parameterization in (
@@ -304,7 +311,7 @@ def _build_base_skip_set(
             skip.add("phi")
         else:
             skip.add("p")
-    if horseshoe_dataset_mu or neg_dataset_mu:
+    if horseshoe_mu or horseshoe_dataset_mu or neg_mu or neg_dataset_mu:
         if parameterization in (
             Parameterization.CANONICAL,
             Parameterization.STANDARD,
@@ -452,6 +459,86 @@ def _apply_gene_level_hierarchy(
     else:
         distributions[target_name] = _build_sigmoid_normal_posterior(
             params, target_name, is_scalar=False, split=split
+        )
+
+
+def _apply_gene_level_mu_hierarchy(
+    distributions: Dict[str, Any],
+    params: Dict[str, jnp.ndarray],
+    model_config: ModelConfig,
+    parameterization: Parameterization,
+    is_mixture: bool,
+    low_rank: bool,
+    split: bool,
+) -> None:
+    """Pass 2b: override mu/r with a gene-level hierarchical prior.
+
+    Active when ``mu_prior != NONE``.  Adds population-level hyperparameter
+    posteriors (per-gene loc and scalar scale) and *replaces* the base
+    ``"mu"`` (or ``"r"``) entry with the gene-level distribution.
+
+    Horseshoe variant: adds the horseshoe trio (tau, lambda, c_sq) and
+    the NCP raw z variable instead of the constrained parameter.
+
+    NEG variant: adds psi and zeta LogNormal posteriors and the NCP raw z
+    variable instead of the constrained parameter.
+    """
+    mu_prior = getattr(model_config, "mu_prior", HierarchicalPriorType.NONE)
+    if mu_prior == HierarchicalPriorType.NONE:
+        return
+
+    if parameterization in (
+        Parameterization.CANONICAL,
+        Parameterization.STANDARD,
+    ):
+        target_name = "r"
+        loc_name = "log_r_loc"
+        scale_name = "log_r_scale"
+        prefix = "r"
+    else:
+        target_name = "mu"
+        loc_name = "log_mu_loc"
+        scale_name = "log_mu_scale"
+        prefix = "mu"
+
+    if mu_prior == HierarchicalPriorType.HORSESHOE:
+        # Horseshoe NCP: hyper_loc + {tau, lambda, c_sq} + raw z variable.
+        distributions.update(
+            _build_hyperparameter_posteriors(params, loc_name, loc_name)
+        )
+        distributions.update(
+            _build_horseshoe_hyperparameter_posteriors(params, prefix)
+        )
+        distributions[f"{target_name}_raw"] = _build_normal_posterior(
+            params, f"{target_name}_raw", low_rank=low_rank
+        )
+        return
+
+    if mu_prior == HierarchicalPriorType.NEG:
+        # NEG NCP: hyper_loc + {psi, zeta} + raw z variable.
+        distributions.update(
+            _build_hyperparameter_posteriors(params, loc_name, loc_name)
+        )
+        distributions.update(
+            _build_neg_hyperparameter_posteriors(params, prefix)
+        )
+        distributions[f"{target_name}_raw"] = _build_normal_posterior(
+            params, f"{target_name}_raw", low_rank=low_rank
+        )
+        return
+
+    # Gaussian hierarchical: population hyper-priors + constrained param.
+    distributions.update(
+        _build_hyperparameter_posteriors(params, loc_name, scale_name)
+    )
+    jp = _find_joint_prefix(params, target_name)
+    if jp:
+        distributions[target_name] = _build_joint_low_rank_posterior(
+            params, target_name, jp, split
+        )
+    else:
+        distributions[target_name] = _build_exp_normal_posterior(
+            params, target_name, is_mixture, split, is_scalar=False
         )
 
 
@@ -1081,7 +1168,16 @@ def get_posterior_distributions(
         split,
         skip,
     )
-    _apply_gene_level_hierarchy(  # Pass 2
+    _apply_gene_level_hierarchy(  # Pass 2: p/phi
+        distributions,
+        params,
+        model_config,
+        parameterization,
+        is_mixture,
+        low_rank,
+        split,
+    )
+    _apply_gene_level_mu_hierarchy(  # Pass 2b: mu/r
         distributions,
         params,
         model_config,

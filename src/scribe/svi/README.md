@@ -612,10 +612,15 @@ ScribeSVIResults
      - `_compute_canonical_parameters()`: Convert to canonical (p, r) form
      - `_convert_to_canonical()`: Deprecated conversion method
      - `_reconstruct_horseshoe_maps()`: Reconstruct constrained MAP from NCP
-       z components for horseshoe priors
+       z components for horseshoe priors. Handles gene-level p/gate, dataset-
+       level entries, and gene-level mu/r when `model_config.mu_prior ==
+       HORSESHOE`: `mu = exp(log_mu_loc + eff_scale * mu_raw)` (or `r` for
+       canonical param).
      - `_horseshoe_eff_scale()`: Compute regularized horseshoe effective scale
      - `_reconstruct_neg_maps()`: Reconstruct constrained MAP from NCP z
-       components for NEG priors
+       components for NEG priors. Handles gene-level p/gate, dataset-level
+       entries, and gene-level mu/r when `model_config.mu_prior == NEG`:
+       `mu = exp(log_mu_loc + sqrt(psi) * mu_raw)` (or `r` for canonical param).
      - `_neg_eff_scale()`: Compute NEG effective scale as sqrt(psi)
    - Dependencies: Uses `ModelHelpersMixin` methods
 

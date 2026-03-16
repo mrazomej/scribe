@@ -1767,11 +1767,11 @@ class TestHierarchicalFlags:
         assert config_neither.is_hierarchical is False
 
     def test_hierarchical_mu_sets_is_hierarchical(self):
-        """is_hierarchical is True when hierarchical_mu is set."""
+        """is_hierarchical is True when mu_prior='gaussian' is set."""
         config = ModelConfig(
             base_model="nbdm",
             unconstrained=True,
-            hierarchical_mu=True,
+            mu_prior="gaussian",
             n_components=3,
         )
         assert config.is_hierarchical is True
@@ -1783,35 +1783,35 @@ class TestHierarchicalFlags:
 
 
 class TestHierarchicalMuConfig:
-    """Config validation tests for hierarchical_mu flag."""
+    """Config validation tests for mu_prior='gaussian' (hierarchical mu)."""
 
     def test_hierarchical_mu_requires_unconstrained(self):
-        """hierarchical_mu=True without unconstrained should raise."""
-        with pytest.raises(ValueError, match="hierarchical_mu.*unconstrained"):
+        """mu_prior='gaussian' without unconstrained should raise."""
+        with pytest.raises(ValueError, match="mu_prior.*unconstrained"):
             ModelConfig(
                 base_model="nbdm",
-                hierarchical_mu=True,
+                mu_prior="gaussian",
                 unconstrained=False,
                 n_components=3,
             )
 
     def test_hierarchical_mu_requires_mixture(self):
-        """hierarchical_mu=True without n_components should raise."""
-        with pytest.raises(ValueError, match="hierarchical_mu.*mixture"):
+        """mu_prior='gaussian' without n_components should raise."""
+        with pytest.raises(ValueError, match="mu_prior.*mixture"):
             ModelConfig(
                 base_model="nbdm",
-                hierarchical_mu=True,
+                mu_prior="gaussian",
                 unconstrained=True,
             )
 
     def test_hierarchical_mu_excludes_dataset_mu(self):
-        """hierarchical_mu and mu_dataset_prior are mutually exclusive."""
+        """mu_prior='gaussian' and mu_dataset_prior are mutually exclusive."""
         with pytest.raises(
-            ValueError, match="hierarchical_mu.*mu_dataset_prior"
+            ValueError, match="mu_prior.*mu_dataset_prior"
         ):
             ModelConfig(
                 base_model="nbdm",
-                hierarchical_mu=True,
+                mu_prior="gaussian",
                 mu_dataset_prior="gaussian",
                 unconstrained=True,
                 n_components=3,
@@ -1819,18 +1819,18 @@ class TestHierarchicalMuConfig:
             )
 
     def test_hierarchical_mu_valid_config(self):
-        """Valid hierarchical_mu config should pass validation."""
+        """Valid mu_prior='gaussian' config should pass validation."""
         config = ModelConfig(
             base_model="nbdm",
-            hierarchical_mu=True,
+            mu_prior="gaussian",
             unconstrained=True,
             n_components=3,
         )
-        assert config.hierarchical_mu is True
+        assert config.mu_prior == "gaussian"
         assert config.is_hierarchical is True
 
     def test_builder_with_hierarchical_mu(self):
-        """Builder .with_hierarchical_mu() sets flag and unconstrained."""
+        """Builder .with_hierarchical_mu() sets mu_prior and unconstrained."""
         config = (
             ModelConfigBuilder()
             .for_model("nbdm")
@@ -1839,7 +1839,7 @@ class TestHierarchicalMuConfig:
             .with_hierarchical_mu()
             .build()
         )
-        assert config.hierarchical_mu is True
+        assert config.mu_prior == "gaussian"
         assert config.unconstrained is True
         assert config.is_hierarchical is True
         assert config.n_components == 3
@@ -2400,6 +2400,293 @@ class TestNEGPrior:
             n for n, s in guide_tr.items() if s["type"] == "sample"
         }
         # All stochastic model sites must be covered by the guide
+        assert model_sample <= guide_sample, (
+            f"Missing in guide: {model_sample - guide_sample}"
+        )
+
+
+# ==========================================================================
+# Tests: Gene-level mu_prior (horseshoe and NEG across components)
+# ==========================================================================
+
+
+class TestMuPriorConfig:
+    """Config validation tests for mu_prior enum field."""
+
+    def test_mu_prior_horseshoe_requires_unconstrained(self):
+        """mu_prior='horseshoe' without unconstrained should raise."""
+        with pytest.raises(ValueError, match="mu_prior.*unconstrained"):
+            ModelConfig(
+                base_model="nbdm",
+                mu_prior="horseshoe",
+                unconstrained=False,
+                n_components=3,
+            )
+
+    def test_mu_prior_neg_requires_mixture(self):
+        """mu_prior='neg' without n_components should raise."""
+        with pytest.raises(ValueError, match="mu_prior.*mixture"):
+            ModelConfig(
+                base_model="nbdm",
+                mu_prior="neg",
+                unconstrained=True,
+            )
+
+    def test_mu_prior_horseshoe_valid(self):
+        """Horseshoe mu_prior config passes validation."""
+        config = ModelConfig(
+            base_model="nbdm",
+            mu_prior="horseshoe",
+            unconstrained=True,
+            n_components=3,
+        )
+        assert config.mu_prior == "horseshoe"
+        assert config.is_hierarchical is True
+
+    def test_mu_prior_neg_valid(self):
+        """NEG mu_prior config passes validation."""
+        config = ModelConfig(
+            base_model="nbdm",
+            mu_prior="neg",
+            unconstrained=True,
+            n_components=3,
+        )
+        assert config.mu_prior == "neg"
+        assert config.is_hierarchical is True
+
+
+class TestMuPriorHorseshoeFactory:
+    """Test that horseshoe mu_prior produces the right parameter specs."""
+
+    def test_horseshoe_mu_mean_odds_specs(self):
+        """Horseshoe mu with mean_odds creates horseshoe sites."""
+        from scribe.models.presets.factory import create_model
+
+        config = ModelConfig(
+            base_model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            mu_prior="horseshoe",
+            n_components=2,
+        )
+        _, _, specs = create_model(config, validate=False)
+        spec_names = [s.name for s in specs]
+        assert "log_mu_loc" in spec_names
+        assert "tau_mu" in spec_names
+        assert "lambda_mu" in spec_names
+        assert "c_sq_mu" in spec_names
+        # The plain hyper_scale should be replaced
+        assert "log_mu_scale" not in spec_names
+
+    def test_horseshoe_mu_canonical_specs(self):
+        """Horseshoe mu with canonical creates horseshoe sites for r."""
+        from scribe.models.presets.factory import create_model
+
+        config = ModelConfig(
+            base_model="nbdm",
+            parameterization="canonical",
+            unconstrained=True,
+            mu_prior="horseshoe",
+            n_components=2,
+        )
+        _, _, specs = create_model(config, validate=False)
+        spec_names = [s.name for s in specs]
+        assert "log_r_loc" in spec_names
+        assert "tau_r" in spec_names
+        assert "lambda_r" in spec_names
+        assert "c_sq_r" in spec_names
+        assert "log_r_scale" not in spec_names
+
+
+class TestMuPriorNEGFactory:
+    """Test that NEG mu_prior produces the right parameter specs."""
+
+    def test_neg_mu_mean_odds_specs(self):
+        """NEG mu with mean_odds creates psi/zeta sites."""
+        from scribe.models.presets.factory import create_model
+
+        config = ModelConfig(
+            base_model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            mu_prior="neg",
+            n_components=2,
+        )
+        _, _, specs = create_model(config, validate=False)
+        spec_names = [s.name for s in specs]
+        assert "log_mu_loc" in spec_names
+        assert "psi_mu" in spec_names
+        assert "zeta_mu" in spec_names
+        # The plain hyper_scale should be replaced
+        assert "log_mu_scale" not in spec_names
+
+    def test_neg_mu_mean_prob_specs(self):
+        """NEG mu with mean_prob creates psi/zeta sites."""
+        from scribe.models.presets.factory import create_model
+
+        config = ModelConfig(
+            base_model="nbdm",
+            parameterization="mean_prob",
+            unconstrained=True,
+            mu_prior="neg",
+            n_components=3,
+        )
+        _, _, specs = create_model(config, validate=False)
+        spec_names = [s.name for s in specs]
+        assert "log_mu_loc" in spec_names
+        assert "psi_mu" in spec_names
+        assert "zeta_mu" in spec_names
+        assert "log_mu_scale" not in spec_names
+
+
+class TestMuPriorTracing:
+    """Test that horseshoe/NEG mu_prior models trace correctly."""
+
+    @pytest.fixture
+    def small_dims(self):
+        return {"n_cells": 20, "n_genes": 10, "n_components": 3}
+
+    def test_horseshoe_mu_traces(self, small_dims):
+        """Horseshoe mu_prior with mean_odds traces correctly."""
+        from scribe.models.presets.factory import create_model
+
+        config = ModelConfig(
+            base_model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            mu_prior="horseshoe",
+            n_components=small_dims["n_components"],
+        )
+        model_fn, guide_fn, _ = create_model(config, validate=False)
+
+        data = jnp.zeros(
+            (small_dims["n_cells"], small_dims["n_genes"]), dtype=jnp.int32
+        )
+        kwargs = dict(
+            n_cells=small_dims["n_cells"],
+            n_genes=small_dims["n_genes"],
+            model_config=config,
+            counts=data,
+        )
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                model_fn(**kwargs)
+        trace = dict(tr)
+
+        assert "log_mu_loc" in trace
+        assert "tau_mu" in trace
+        assert "lambda_mu" in trace
+        assert "c_sq_mu" in trace
+        assert "mu_raw" in trace
+
+    def test_neg_mu_traces(self, small_dims):
+        """NEG mu_prior with mean_prob traces correctly."""
+        from scribe.models.presets.factory import create_model
+
+        config = ModelConfig(
+            base_model="nbdm",
+            parameterization="mean_prob",
+            unconstrained=True,
+            mu_prior="neg",
+            n_components=small_dims["n_components"],
+        )
+        model_fn, guide_fn, _ = create_model(config, validate=False)
+
+        data = jnp.zeros(
+            (small_dims["n_cells"], small_dims["n_genes"]), dtype=jnp.int32
+        )
+        kwargs = dict(
+            n_cells=small_dims["n_cells"],
+            n_genes=small_dims["n_genes"],
+            model_config=config,
+            counts=data,
+        )
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                model_fn(**kwargs)
+        trace = dict(tr)
+
+        assert "log_mu_loc" in trace
+        assert "psi_mu" in trace
+        assert "zeta_mu" in trace
+        assert "mu_raw" in trace
+
+    def test_horseshoe_mu_guide_alignment(self, small_dims):
+        """Horseshoe mu_prior guide covers all model sample sites."""
+        from scribe.models.presets.factory import create_model
+
+        config = ModelConfig(
+            base_model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            mu_prior="horseshoe",
+            n_components=2,
+        )
+        model_fn, guide_fn, _ = create_model(config, validate=False)
+
+        data = jnp.zeros(
+            (small_dims["n_cells"], small_dims["n_genes"]), dtype=jnp.int32
+        )
+        kwargs = dict(
+            n_cells=small_dims["n_cells"],
+            n_genes=small_dims["n_genes"],
+            model_config=config,
+            counts=data,
+        )
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as model_tr:
+                model_fn(**kwargs)
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as guide_tr:
+                guide_fn(**kwargs)
+        model_sample = {
+            n
+            for n, s in model_tr.items()
+            if s["type"] == "sample" and not s.get("is_observed", False)
+        }
+        guide_sample = {
+            n for n, s in guide_tr.items() if s["type"] == "sample"
+        }
+        assert model_sample <= guide_sample, (
+            f"Missing in guide: {model_sample - guide_sample}"
+        )
+
+    def test_neg_mu_guide_alignment(self, small_dims):
+        """NEG mu_prior guide covers all model sample sites."""
+        from scribe.models.presets.factory import create_model
+
+        config = ModelConfig(
+            base_model="nbdm",
+            parameterization="mean_prob",
+            unconstrained=True,
+            mu_prior="neg",
+            n_components=3,
+        )
+        model_fn, guide_fn, _ = create_model(config, validate=False)
+
+        data = jnp.zeros(
+            (small_dims["n_cells"], small_dims["n_genes"]), dtype=jnp.int32
+        )
+        kwargs = dict(
+            n_cells=small_dims["n_cells"],
+            n_genes=small_dims["n_genes"],
+            model_config=config,
+            counts=data,
+        )
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as model_tr:
+                model_fn(**kwargs)
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as guide_tr:
+                guide_fn(**kwargs)
+        model_sample = {
+            n
+            for n, s in model_tr.items()
+            if s["type"] == "sample" and not s.get("is_observed", False)
+        }
+        guide_sample = {
+            n for n, s in guide_tr.items() if s["type"] == "sample"
+        }
         assert model_sample <= guide_sample, (
             f"Missing in guide: {model_sample - guide_sample}"
         )
