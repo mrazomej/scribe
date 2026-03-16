@@ -45,7 +45,8 @@ that break when two different semantic layouts produce the same numeric shape
    aligning `phi=(K,G)` vs `mu=(K,D,G)`. This is a *separate code path* from
    the model builder — the layout dict as designed wouldn't cover it directly.
 
-All five share the same root cause: dimension semantics lost → heuristic guess → edge case.
+All five share the same root cause: 
+dimension semantics lost → heuristic guess → edge case.
 
 ## Proposed Solution: `param_layouts` Dict
 
