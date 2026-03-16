@@ -26,7 +26,7 @@ from scribe.models.builders.parameter_specs import (
 )
 from scribe.models.config import ModelConfig, ModelConfigBuilder
 from scribe.models.components.likelihoods.base import (
-    broadcast_p_for_mixture,
+    broadcast_param_for_mixture,
     index_dataset_params,
 )
 from scribe.models.presets.factory import create_model
@@ -831,7 +831,7 @@ class TestMixtureDatasetComposition:
         assert result["phi"].shape == (G,)
 
     # ------------------------------------------------------------------
-    # broadcast_p_for_mixture with batch dim
+    # broadcast_param_for_mixture with batch dim
     # ------------------------------------------------------------------
 
     def test_broadcast_p_batch_with_3d_r(self):
@@ -840,7 +840,7 @@ class TestMixtureDatasetComposition:
         p = jnp.ones((batch, G))
         r = jnp.ones((batch, K, G))
 
-        result = broadcast_p_for_mixture(p, r)
+        result = broadcast_param_for_mixture(p, r)
         assert result.shape == (batch, 1, G)
 
     def test_broadcast_p_1d_gene_specific_with_3d_r(self):
@@ -849,7 +849,7 @@ class TestMixtureDatasetComposition:
         p = jnp.ones(G)
         r = jnp.ones((batch, K, G))
 
-        result = broadcast_p_for_mixture(p, r)
+        result = broadcast_param_for_mixture(p, r)
         assert result.shape == (1, 1, G)
 
     def test_broadcast_p_scalar_with_3d_r(self):
@@ -857,7 +857,7 @@ class TestMixtureDatasetComposition:
         p = jnp.array(0.5)
         r = jnp.ones((4, 3, 5))
 
-        result = broadcast_p_for_mixture(p, r)
+        result = broadcast_param_for_mixture(p, r)
         assert result.shape == (1, 1, 1)
 
     def test_broadcast_p_3d_passthrough(self):
@@ -866,7 +866,7 @@ class TestMixtureDatasetComposition:
         p = jnp.ones((batch, K, G))
         r = jnp.ones((batch, K, G))
 
-        result = broadcast_p_for_mixture(p, r)
+        result = broadcast_param_for_mixture(p, r)
         assert result.shape == (batch, K, G)
 
     def test_broadcast_p_existing_2d_behaviour(self):
@@ -875,7 +875,7 @@ class TestMixtureDatasetComposition:
         p = jnp.ones((K, G))
         r = jnp.ones((K, G))
 
-        result = broadcast_p_for_mixture(p, r)
+        result = broadcast_param_for_mixture(p, r)
         assert result.shape == (K, G)
 
     # ------------------------------------------------------------------

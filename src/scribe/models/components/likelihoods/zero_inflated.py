@@ -13,7 +13,7 @@ import numpyro.distributions as dist
 
 from .base import (
     Likelihood,
-    broadcast_p_for_mixture,
+    broadcast_param_for_mixture,
     compute_cell_specific_mixing,
     index_dataset_params,
 )
@@ -92,8 +92,8 @@ class ZeroInflatedNBLikelihood(Likelihood):
             mixing_dist = dist.Categorical(probs=mixing_weights)
 
             # Broadcast p and gate to match r shape (n_components, n_genes)
-            p = broadcast_p_for_mixture(p, r)
-            gate = broadcast_p_for_mixture(gate, r)
+            p = broadcast_param_for_mixture(p, r)
+            gate = broadcast_param_for_mixture(gate, r)
 
             base_nb = dist.NegativeBinomialProbs(r, p)
             zinb_base = dist.ZeroInflatedDistribution(
@@ -139,8 +139,8 @@ class ZeroInflatedNBLikelihood(Likelihood):
         mixing_dist = dist.Categorical(probs=cell_mixing)
 
         # Broadcast p and gate to match r shape (n_components, n_genes)
-        p = broadcast_p_for_mixture(p, r)
-        gate = broadcast_p_for_mixture(gate, r)
+        p = broadcast_param_for_mixture(p, r)
+        gate = broadcast_param_for_mixture(gate, r)
 
         base_nb = dist.NegativeBinomialProbs(r, p)
         zinb_base = dist.ZeroInflatedDistribution(base_nb, gate=gate).to_event(
