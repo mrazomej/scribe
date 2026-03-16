@@ -37,13 +37,14 @@ parameterization: mean_odds
 # Use unconstrained parameterization (Normal + transform)
 unconstrained: false
 
-# --- Hierarchical Flags ---
-# These flags enable gene-specific hierarchical priors on selected parameters.
-# When enabled, parameters are drawn from a learned population distribution
-# rather than a fixed prior, providing adaptive shrinkage across genes.
-hierarchical_p: false     # Gene-specific p/phi with hyperprior (requires unconstrained=true)
-hierarchical_gate: false  # Gene-specific gate with hyperprior (ZI models only, requires unconstrained=true)
-hierarchical_mu: false  # Hierarchical mu with hyperprior (requires unconstrained=true)
+# --- Hierarchical Prior Configuration ---
+# Gene-level priors control per-gene adaptive shrinkage. Each field accepts a
+# prior type: "none" (flat), "gaussian" (Normal hierarchy), "horseshoe"
+# (regularized horseshoe), or "neg" (Normal-Exponential-Gamma).
+# All sparsity-inducing priors (horseshoe, neg) require unconstrained=true.
+p_prior: "none"           # Gene-level prior for p/phi: none | gaussian | horseshoe | neg
+gate_prior: "none"        # Gene-level prior for gate (ZI only): none | gaussian | horseshoe | neg
+hierarchical_mu: false    # Hierarchical mu across mixture components (requires unconstrained=true)
 
 # --- Multi-Dataset Configuration ---
 # Joint modeling of multiple datasets with hierarchical priors across datasets.
@@ -52,23 +53,20 @@ hierarchical_mu: false  # Hierarchical mu with hyperprior (requires unconstraine
 n_datasets: null          # Number of datasets (null for single-dataset mode)
 dataset_key: null         # Column in adata.obs identifying dataset membership
 dataset_params: null      # Which params are per-dataset (null = default based on hierarchy flags)
-hierarchical_dataset_mu: false  # Hierarchical mu/r across datasets with learned tau
-hierarchical_dataset_p: "none"  # none | scalar | gene_specific | two_level
-hierarchical_dataset_gate: false  # Hierarchical gate across datasets with learned shrinkage
+mu_dataset_prior: "none"  # Dataset-level mu/r prior: none | gaussian | horseshoe | neg
+p_dataset_prior: "none"   # Dataset-level p/phi prior: none | gaussian | horseshoe | neg
+p_dataset_mode: "gene_specific"  # Structural mode for dataset p: none | scalar | gene_specific | two_level
+gate_dataset_prior: "none"  # Dataset-level gate prior: none | gaussian | horseshoe | neg
 
-# --- Horseshoe Prior Configuration ---
-# Regularized horseshoe (Piironen & Vehtari 2017) replaces the single global
-# scale in a hierarchy with per-gene local shrinkage. Each flag is MUTUALLY
-# EXCLUSIVE with its corresponding normal hierarchy flag — the horseshoe
-# implicitly creates the hierarchy, so do NOT set both.
-horseshoe_p: false              # Horseshoe for gene-level p (mutually exclusive with hierarchical_p)
-horseshoe_gate: false           # Horseshoe for gene-level gate (mutually exclusive with hierarchical_gate)
-horseshoe_dataset_mu: false     # Horseshoe for dataset-level mu (mutually exclusive with hierarchical_dataset_mu)
-horseshoe_dataset_p: false      # Horseshoe for dataset-level p (mutually exclusive with hierarchical_dataset_p)
-horseshoe_dataset_gate: false   # Horseshoe for dataset-level gate (mutually exclusive with hierarchical_dataset_gate)
+# --- Sparsity Prior Hyperparameters ---
+# Horseshoe hyperparameters (used when any *_prior is "horseshoe")
 horseshoe_tau0: 1.0             # Global shrinkage scale (Half-Cauchy prior on tau)
 horseshoe_slab_df: 4            # Slab degrees of freedom (Inverse-Gamma on c^2)
 horseshoe_slab_scale: 2.0       # Slab scale (Inverse-Gamma on c^2)
+# NEG hyperparameters (used when any *_prior is "neg")
+neg_u: 1.0    # Inner Gamma shape (u=1 => NEG/Exponential; u=0.5 => horseshoe-like)
+neg_a: 1.0    # Outer Gamma shape (controls tail weight)
+neg_tau: 1.0  # Global rate for outer Gamma
 
 # --- Biology-Informed Capture Prior ---
 # Anchors p_capture to library size via known total mRNA per cell.

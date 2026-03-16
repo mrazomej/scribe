@@ -404,7 +404,8 @@ def _compact_override_dirname(
         value = _normalize_override_value(raw_value)
         lowered_value = value.lower()
         is_true = lowered_value == "true"
-        is_false = lowered_value == "false"
+        # Treat "false" and "none" as omit-worthy defaults in dirname
+        is_false = lowered_value in ("false", "none")
         is_dotted = "." in key
         suffix = key.split(".")[-1] if is_dotted else key
 
@@ -888,6 +889,9 @@ def main(cfg: DictConfig) -> None:
         "horseshoe_tau0": cfg.get("horseshoe_tau0", 1.0),
         "horseshoe_slab_df": cfg.get("horseshoe_slab_df", 4),
         "horseshoe_slab_scale": cfg.get("horseshoe_slab_scale", 2.0),
+        "neg_u": cfg.get("neg_u", 1.0),
+        "neg_a": cfg.get("neg_a", 1.0),
+        "neg_tau": cfg.get("neg_tau", 1.0),
         "shared_capture_scaling": cfg.get("shared_capture_scaling", False),
         "n_components": n_components,
         "mixture_params": cfg.get("mixture_params"),

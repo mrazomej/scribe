@@ -95,6 +95,9 @@ class ModelConfigBuilder:
         self._horseshoe_tau0: float = 1.0
         self._horseshoe_slab_df: int = 4
         self._horseshoe_slab_scale: float = 2.0
+        self._neg_u: float = 1.0
+        self._neg_a: float = 1.0
+        self._neg_tau: float = 1.0
         self._shared_capture_scaling: bool = False
         self._n_components: Optional[int] = None
         self._mixture_params: Optional[List[str]] = None
@@ -639,6 +642,9 @@ class ModelConfigBuilder:
             horseshoe_tau0=self._horseshoe_tau0,
             horseshoe_slab_df=self._horseshoe_slab_df,
             horseshoe_slab_scale=self._horseshoe_slab_scale,
+            neg_u=self._neg_u,
+            neg_a=self._neg_a,
+            neg_tau=self._neg_tau,
             shared_capture_scaling=self._shared_capture_scaling,
             n_components=self._n_components,
             mixture_params=self._mixture_params,

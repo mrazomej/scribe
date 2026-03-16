@@ -218,10 +218,14 @@ def fit(
     p_dataset_mode: str = "gene_specific",
     gate_dataset_prior: str = "none",
     auto_downgrade_single_dataset_hierarchy: bool = True,
-    # Horseshoe / NEG hyperparameters
+    # Horseshoe hyperparameters
     horseshoe_tau0: float = 1.0,
     horseshoe_slab_df: int = 4,
     horseshoe_slab_scale: float = 2.0,
+    # NEG (Normal-Exponential-Gamma) hyperparameters
+    neg_u: float = 1.0,
+    neg_a: float = 1.0,
+    neg_tau: float = 1.0,
     # Biology-informed capture prior (configured via priors dict)
     shared_capture_scaling: bool = False,
     n_components: Optional[int] = None,
@@ -881,6 +885,9 @@ def fit(
             horseshoe_tau0=horseshoe_tau0,
             horseshoe_slab_df=horseshoe_slab_df,
             horseshoe_slab_scale=horseshoe_slab_scale,
+            neg_u=neg_u,
+            neg_a=neg_a,
+            neg_tau=neg_tau,
             shared_capture_scaling=shared_capture_scaling,
             guide_rank=guide_rank,
             joint_params=joint_params,
