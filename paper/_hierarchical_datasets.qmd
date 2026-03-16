@@ -768,13 +768,20 @@ dropout characteristics, a single shared gate may be insufficient: the model
 is forced to compromise between the different zero-inflation rates of each
 dataset, leading to a bimodal or otherwise distorted gate distribution.
 
-The solution is to make the gate per-dataset and gene-specific, with a
-hierarchical prior that provides shrinkage across datasets---exactly mirroring
-the structure used for $\mu_g^{(d)}$ and $p_g^{(d)}$ above. Since
-$\pi_g \in (0,1)$, we work in logit space, following the same strategy as the
-gene-level hierarchical gate in @sec-hgate-model.
+The solution is to give each (dataset, gene) pair its own gate, independently
+shrunk toward zero. Unlike the dataset-level hierarchies for $\mu_g^{(d)}$ and
+$p_g^{(d)}$, the gate hierarchy does **not** pool gates toward a shared
+per-gene population mean. Instead, it mirrors the gene-level gate architecture
+from @sec-hgate-model but extends the NCP $z$ variable with a dataset
+dimension: each dataset gets an independent draw, and the prior aggressively
+favors gates near zero.
 
-### Model specification
+### Model specification {#sec-hdata-gate-model}
+
+#### Gaussian variant
+
+The simplest dataset-level gate uses a Normal hierarchy with scalar
+population-level hyperparameters:
 
 **Population-level hyperparameters:**
 
@@ -787,12 +794,19 @@ $$
 \sigma_{\sigma,0})\right),
 $${#eq-hdata-gate-hyper-scale}
 
-where the default hyperparameters follow the "default off" convention from
-@sec-hgate-model: $\mu_{\pi,0} = -5$ (placing the population mean deep in the
-no-zero-inflation regime) and $\sigma_{\sigma,0}$ controls the permitted
-gene-to-gene spread. Both hyperparameters are gene-specific (the loc) and
-scalar (the scale), respectively, matching the architecture of the gene-level
-hierarchical gate.
+where both hyperparameters are **scalar** (shared across all genes, datasets,
+and mixture components). The default hyperparameters follow the "default off"
+convention from @sec-hgate-model: $\mu_{\pi,0} = -5$ places the population
+center deep in the no-zero-inflation regime, and $\sigma_{\sigma,0}$ controls
+how much any individual gate can deviate.
+
+A scalar $\mu_\pi^{\text{pop}}$ is a deliberate design choice. With thousands
+of genes, each contributing likelihood signal from its zero counts, a per-gene
+population location $\mu_{\pi,g}$ can be overwhelmed gene-by-gene: the data
+push each $\mu_{\pi,g}$ positive, undermining the "default off" prior. A single
+scalar location is robust against this because the $\mathcal{N}(-5, 1)$ prior
+on one parameter is far harder to overwhelm than the same prior on $G$
+independent parameters.
 
 **Dataset-specific gate:**
 
@@ -802,17 +816,67 @@ $$
 \quad g = 1, \ldots, G, \quad d = 1, \ldots, D.
 $${#eq-hdata-gate-draw}
 
-Each gene in each dataset draws its own gate from the shared population
-distribution, producing a $G \times D$ matrix of gate values. The degree of
-dataset-to-dataset variation in the gate is governed by $\sigma_\pi^{\text{pop}}$:
+Each gene in each dataset draws its own gate independently from the shared
+population distribution, producing a $G \times D$ matrix of gate values.
+Since $\mu_\pi^{\text{pop}}$ is scalar and strongly negative, most gates are
+near zero; genes that genuinely need zero inflation can escape through the
+random draw.
 
-- When $\sigma_\pi^{\text{pop}} \to 0$: all datasets share the same gate for
-  each gene, recovering the single-dataset hierarchical gate of
-  @sec-hierarchical-gate.
+#### NEG variant {#sec-hdata-gate-neg}
 
-- When $\sigma_\pi^{\text{pop}}$ is large: each dataset is free to have its
-  own gene-specific dropout rates, accommodating kits with fundamentally
-  different zero-inflation characteristics.
+When the NEG prior is used (`gate_dataset_prior="neg"`), the Gaussian scale
+$\sigma_\pi^{\text{pop}}$ is replaced by the per-gene Gamma-Gamma hierarchy
+from @sec-hgate-tpbn, extending the NCP $z$ variable with a dataset dimension:
+
+$$
+\mu_\pi^{\text{pop}} \sim \mathcal{N}(-5, 1),
+$${#eq-hdata-gate-neg-loc}
+
+$$
+\zeta_g \sim \text{Gamma}(a, \tau), \qquad
+\psi_g \mid \zeta_g \sim \text{Gamma}(u, \zeta_g),
+$${#eq-hdata-gate-neg-gamma-gamma}
+
+$$
+z_{g,d} \sim \mathcal{N}(0, 1), \qquad
+\text{logit}(\pi_g^{(d)}) = \mu_\pi^{\text{pop}} + \sqrt{\psi_g} \cdot z_{g,d}.
+$${#eq-hdata-gate-neg-ncp}
+
+The scalar $\mu_\pi^{\text{pop}}$ provides the global "default off" center,
+the per-gene $\psi_g$ controls how far each gene's gates can deviate from
+that center (adaptive shrinkage), and the per-dataset $z_{g,d}$ gives each
+dataset its own independent gate value. This structure is identical to the
+gene-level NEG gate from @eq-hgate-neg-ncp but with $z_{g,d}$ indexed by
+both gene and dataset instead of gene alone.
+
+The horseshoe variant (`gate_dataset_prior="horseshoe"`) follows the same
+pattern, replacing $\sqrt{\psi_g}$ with the regularized horseshoe effective
+scale $\tau \cdot \tilde{\lambda}_g$ as in @sec-hdata-horseshoe.
+
+### Shrinkage properties
+
+The shrinkage behavior of the dataset-level gate differs from the other
+dataset-level hierarchies ($\mu$, $p$) in an important way: the gate hierarchy
+does **not** pool across datasets. There is no mechanism for gates in different
+datasets to influence each other. Each (dataset, gene) gate is independently
+drawn from the same prior distribution and independently updated by its own
+dataset's likelihood.
+
+For the Gaussian variant:
+
+- When $\sigma_\pi^{\text{pop}} \to 0$: all gates are forced to
+  $\sigma(\mu_\pi^{\text{pop}}) \approx 0$, recovering the NB model.
+  This is the same recovery property as the gene-level gate
+  (@sec-hgate-shrinkage).
+
+- When $\sigma_\pi^{\text{pop}}$ is large: each (dataset, gene) gate is
+  essentially independent, free to capture dataset-specific dropout patterns.
+
+For the NEG variant, the per-gene $\psi_g$ provides **adaptive** shrinkage:
+genes with no evidence for zero inflation have $\psi_g \approx 0$ (all their
+gates across all datasets shrunk to near zero), while genes with genuine
+structural zeros have large $\psi_g$ (their gates can take substantial values,
+independently in each dataset).
 
 ### Relationship to the gene-level gate hierarchy
 
@@ -1157,7 +1221,7 @@ $$
 \sigma_p \sim \text{Softplus}(\mathcal{N}(0, 0.5)), \\
 &\quad \mu_\pi^{\text{pop}} \sim \mathcal{N}(\mu_{\pi,0}, \sigma_{\pi,0}),
 \quad \sigma_\pi^{\text{pop}} \sim \text{Softplus}(\mathcal{N}(\mu_{\sigma,0},
-\sigma_{\sigma,0})), \;\; \text{(ZI models)} \\[4pt]
+\sigma_{\sigma,0})), \;\; \text{(ZI, Gaussian gate; both scalar)} \\[4pt]
 &\textbf{Dataset level } (d = 1, \ldots, D): \\
 &\quad \log(\mu_g^{(d)}) \sim \mathcal{N}(\log(\mu_g), \tau_\mu), \\
 &\quad \text{logit}(p^{(d)}) \sim \mathcal{N}(\mu_p, \sigma_p), \\
@@ -1212,8 +1276,28 @@ c^2 \sim \text{Inv-Gamma}\!\left(\tfrac{\nu}{2},
 }
 $${#eq-hdata-summary-horseshoe}
 
-The same structure applies to dataset-level $p$, dataset-level gate,
-gene-level $p$, and gene-level gate (see @sec-hdata-horseshoe).
+The same structure applies to dataset-level $p$, gene-level $p$, and
+gene-level gate (see @sec-hdata-horseshoe).
+
+**NEG dataset-level gate variant (NCP form).** When
+`gate_dataset_prior="neg"`, the dataset-level gate uses a scalar population
+center with per-gene NEG shrinkage (@sec-hdata-gate-neg):
+
+$$
+\boxed{
+\begin{aligned}
+&\mu_\pi^{\text{pop}} \sim \mathcal{N}(-5, 1), \quad \text{(scalar)} \\
+&\zeta_g \sim \text{Gamma}(a, \tau), \quad
+\psi_g \mid \zeta_g \sim \text{Gamma}(u, \zeta_g), \\
+&z_{g,d} \sim \mathcal{N}(0, 1), \quad
+\text{logit}(\pi_g^{(d)}) = \mu_\pi^{\text{pop}} +
+\sqrt{\psi_g} \cdot z_{g,d}.
+\end{aligned}
+}
+$${#eq-hdata-summary-neg-gate}
+
+The horseshoe dataset-level gate follows the same pattern, replacing
+$\sqrt{\psi_g}$ with $\tau \cdot \tilde{\lambda}_g$.
 
 **Shrinkage diagnostics:**
 
@@ -1222,7 +1306,8 @@ $$
 \begin{aligned}
 &\tau_\mu \approx 0 \implies \text{identical biology across datasets}, \\
 &\sigma_p \approx 0 \implies \text{identical technical characteristics}, \\
-&\sigma_\pi^{\text{pop}} \approx 0 \implies \text{identical dropout/zero-inflation}, \\
+&\sigma_\pi^{\text{pop}} \approx 0 \implies \text{all gates near zero (Gaussian gate)}, \\
+&\psi_g \approx 0 \implies \text{gene $g$ gates near zero across all datasets (NEG gate)}, \\
 &\tau_\mu \gg 0 \implies \text{genuine biological differences}, \\
 &\kappa_g \approx 1 \implies \text{gene $g$ shrunk to population (horseshoe)}, \\
 &\kappa_g \approx 0 \implies \text{gene $g$ escapes shrinkage (horseshoe)}.
