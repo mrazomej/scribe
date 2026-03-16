@@ -752,6 +752,12 @@ class SVIConfig(BaseModel):
     stable_update : bool, default=True
         Use numerically stable parameter updates. When True, uses
         `svi.stable_update()` which handles NaN/Inf gracefully.
+    progress : bool, default=True
+        Whether to enable interactive Rich/terminal progress bars during
+        SVI training.
+    progress_update_every : int, default=100
+        Step cadence for interactive progress-bar redraws in the custom SVI
+        loop. Larger values reduce terminal rendering overhead.
     log_progress_lines : bool, default=False
         Whether to emit plain-text progress log lines during SVI training.
         When enabled, the engine writes one newline log approximately every
@@ -804,6 +810,18 @@ class SVIConfig(BaseModel):
     )
     stable_update: bool = Field(
         True, description="Use numerically stable parameter updates"
+    )
+    progress: bool = Field(
+        True,
+        description="Enable interactive progress bars during SVI training",
+    )
+    progress_update_every: int = Field(
+        100,
+        gt=0,
+        description=(
+            "Redraw interactive progress every N optimizer steps in the "
+            "custom SVI loop"
+        ),
     )
     log_progress_lines: bool = Field(
         False,

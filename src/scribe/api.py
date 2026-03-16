@@ -259,6 +259,8 @@ def fit(
     n_steps: int = 50_000,
     batch_size: Optional[int] = None,
     stable_update: bool = True,
+    progress: bool = True,
+    progress_update_every: int = 100,
     log_progress_lines: bool = False,
     n_samples: int = 2_000,
     n_warmup: int = 1_000,
@@ -418,6 +420,14 @@ def fit(
 
     stable_update : bool, default=True
         Use numerically stable parameter updates in SVI.
+
+    progress : bool, default=True
+        Whether to enable interactive progress-bar rendering during SVI/VAE
+        training in interactive terminals.
+
+    progress_update_every : int, default=100
+        Redraw cadence (in optimization steps) for interactive SVI progress
+        updates in the custom loop. Larger values reduce terminal render load.
 
     log_progress_lines : bool, default=False
         Whether to emit periodic plain-text progress lines during SVI/VAE
@@ -959,6 +969,8 @@ def fit(
                 n_steps=n_steps,
                 batch_size=effective_batch_size,
                 stable_update=stable_update,
+                progress=progress,
+                progress_update_every=progress_update_every,
                 log_progress_lines=log_progress_lines,
                 early_stopping=early_stop_config,
             )
@@ -1046,6 +1058,8 @@ def fit(
                 n_steps=n_steps,
                 batch_size=effective_batch_size,
                 stable_update=stable_update,
+                progress=progress,
+                progress_update_every=progress_update_every,
                 log_progress_lines=log_progress_lines,
                 early_stopping=early_stop_config,
             )

@@ -151,14 +151,15 @@ class TestSVIConfigWithEarlyStopping:
         assert inference_config.svi.early_stopping is not None
         assert inference_config.svi.early_stopping.patience == 200
 
-    def test_fit_api_exposes_log_progress_lines(self):
-        """The public fit API accepts the SLURM progress-lines flag."""
+    def test_fit_api_exposes_progress_controls(self):
+        """The public fit API exposes interactive and plain-text progress controls."""
         import inspect
         import scribe
 
-        assert "log_progress_lines" in inspect.signature(
-            scribe.fit
-        ).parameters
+        fit_params = inspect.signature(scribe.fit).parameters
+        assert "progress" in fit_params
+        assert "progress_update_every" in fit_params
+        assert "log_progress_lines" in fit_params
 
 
 class TestSVIRunResult:
@@ -409,7 +410,7 @@ class TestSVIProgressLoggingInterval:
         assert _progress_display_interval(19) == 1
 
     def test_progress_update_emits_about_twenty_times(self):
-        """Periodic updates are emitted ~20 times over large runs."""
+        """Log-line updates are emitted ~20 times over large runs."""
         from scribe.svi.inference_engine import _should_emit_progress_update
 
         n_steps = 50_000
@@ -419,6 +420,104 @@ class TestSVIProgressLoggingInterval:
             if _should_emit_progress_update(step, n_steps)
         )
         assert updates == 20
+
+
+class TestSVIProgressRenderCadence:
+    """Test throttled interactive progress rendering behavior."""
+
+    def test_render_interval_default_is_hundred_steps(self):
+        """Interactive rendering defaults to one redraw every 100 steps."""
+        from scribe.svi.inference_engine import _progress_render_interval
+
+        assert _progress_render_interval(100) == 100
+
+    def test_render_interval_clamps_to_one(self):
+        """Render interval is clamped to avoid zero or negative cadence."""
+        from scribe.svi.inference_engine import _progress_render_interval
+
+        assert _progress_render_interval(0) == 1
+        assert _progress_render_interval(-10) == 1
+
+    def test_should_render_progress_update_periodic_and_final_flush(self):
+        """Rendering happens on cadence ticks and always on final step."""
+        from scribe.svi.inference_engine import _should_render_progress_update
+
+        # Step 99 (completed step 100) should trigger periodic redraw.
+        assert _should_render_progress_update(
+            step=99,
+            start_step=0,
+            n_steps=250,
+            pending_advance=100,
+            progress_update_every=100,
+        )
+        # Step 199 also periodic.
+        assert _should_render_progress_update(
+            step=199,
+            start_step=0,
+            n_steps=250,
+            pending_advance=100,
+            progress_update_every=100,
+        )
+        # Final step must flush remaining 50 steps even off cadence.
+        assert _should_render_progress_update(
+            step=249,
+            start_step=0,
+            n_steps=250,
+            pending_advance=50,
+            progress_update_every=100,
+        )
+
+    def test_should_render_progress_update_skips_when_nothing_pending(self):
+        """No redraw is emitted when there are no buffered steps to flush."""
+        from scribe.svi.inference_engine import _should_render_progress_update
+
+        assert not _should_render_progress_update(
+            step=99,
+            start_step=0,
+            n_steps=250,
+            pending_advance=0,
+            progress_update_every=100,
+        )
+
+
+class TestSVIInteractiveTerminalGuard:
+    """Test non-interactive terminal fallback helper."""
+
+    def test_is_interactive_terminal_false_when_stdout_lacks_isatty(
+        self, monkeypatch
+    ):
+        """Non-TTY objects are treated as non-interactive outputs."""
+        from scribe.svi import inference_engine
+
+        class DummyStdout:
+            """Simple stdout stub with no isatty method."""
+
+        monkeypatch.setattr(inference_engine.sys, "stdout", DummyStdout())
+        assert not inference_engine._is_interactive_terminal()
+
+    def test_is_interactive_terminal_uses_isatty_result(
+        self, monkeypatch
+    ):
+        """TTY detection follows stdout.isatty() return value."""
+        from scribe.svi import inference_engine
+
+        class DummyStdout:
+            """Simple stdout stub exposing an isatty flag."""
+
+            def __init__(self, is_tty):
+                self._is_tty = is_tty
+
+            def isatty(self):
+                return self._is_tty
+
+        monkeypatch.setattr(
+            inference_engine.sys, "stdout", DummyStdout(is_tty=False)
+        )
+        assert not inference_engine._is_interactive_terminal()
+        monkeypatch.setattr(
+            inference_engine.sys, "stdout", DummyStdout(is_tty=True)
+        )
+        assert inference_engine._is_interactive_terminal()
 
 
 class TestSVIProgressLossAggregation:

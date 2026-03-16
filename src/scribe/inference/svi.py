@@ -113,6 +113,8 @@ def _run_svi_inference(
     n_steps = svi_config.n_steps
     batch_size = svi_config.batch_size
     stable_update = svi_config.stable_update
+    progress = svi_config.progress
+    progress_update_every = svi_config.progress_update_every
     log_progress_lines = svi_config.log_progress_lines
     early_stopping = svi_config.early_stopping
 
@@ -126,6 +128,8 @@ def _run_svi_inference(
         "batch_size": batch_size,
         "seed": seed,
         "stable_update": stable_update,
+        "progress": progress,
+        "progress_update_every": progress_update_every,
         "log_progress_lines": log_progress_lines,
         "early_stopping": early_stopping,
         "annotation_prior_logits": annotation_prior_logits,

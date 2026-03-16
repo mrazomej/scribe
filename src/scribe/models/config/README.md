@@ -240,6 +240,8 @@ SVI-specific configuration for Stochastic Variational Inference:
 - `n_steps`: Maximum number of optimization steps (must be > 0)
 - `batch_size`: Mini-batch size (must be > 0, None uses full dataset)
 - `stable_update`: Use numerically stable parameter updates
+- `progress`: Enable interactive progress bars in TTY terminals
+- `progress_update_every`: Redraw interactive progress every N optimizer steps
 - `early_stopping`: Optional `EarlyStoppingConfig` for automatic convergence
   detection
 
@@ -262,6 +264,8 @@ from scribe.models.config import SVIConfig, EarlyStoppingConfig
 svi_config = SVIConfig(
     n_steps=100000,
     batch_size=512,
+    progress=True,
+    progress_update_every=100,
     early_stopping=EarlyStoppingConfig(
         patience=500,
         min_delta=1.0,

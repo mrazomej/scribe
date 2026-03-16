@@ -89,6 +89,8 @@ svi_results = scribe.fit(
     parameterization="linked",
     unconstrained=True,
     n_steps=75000,
+    progress=True,
+    progress_update_every=100,
 )
 
 # MCMC inference (exact, high-quality)

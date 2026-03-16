@@ -7,6 +7,7 @@ loss convergence and Orbax checkpointing for resumable training.
 """
 
 from dataclasses import dataclass
+import sys
 from typing import Optional, Dict, Any, List
 import numpy as np
 import jax.numpy as jnp
@@ -90,6 +91,24 @@ def _progress_display_interval(n_steps: int) -> int:
     return max(1, n_steps // 20)
 
 
+def _progress_render_interval(progress_update_every: int) -> int:
+    """
+    Compute the interactive progress-bar render interval in steps.
+
+    Parameters
+    ----------
+    progress_update_every : int
+        Requested redraw cadence for Rich progress updates.
+
+    Returns
+    -------
+    int
+        A safe positive render interval. Values less than 1 are coerced
+        to ``1`` so callers never divide by zero.
+    """
+    return max(1, int(progress_update_every))
+
+
 def _should_emit_progress_update(step: int, n_steps: int) -> bool:
     """
     Determine whether to emit a periodic progress update at ``step``.
@@ -108,6 +127,65 @@ def _should_emit_progress_update(step: int, n_steps: int) -> bool:
     """
     interval = _progress_display_interval(n_steps)
     return step % interval == 0
+
+
+def _should_render_progress_update(
+    step: int,
+    start_step: int,
+    n_steps: int,
+    pending_advance: int,
+    progress_update_every: int,
+) -> bool:
+    """
+    Determine whether to redraw the interactive Rich progress bar.
+
+    Parameters
+    ----------
+    step : int
+        Zero-based optimization step index.
+    start_step : int
+        Initial step index when training starts or resumes.
+    n_steps : int
+        Total number of optimization steps.
+    pending_advance : int
+        Number of completed optimization steps not yet flushed to the bar.
+    progress_update_every : int
+        Requested redraw cadence for interactive progress rendering.
+
+    Returns
+    -------
+    bool
+        ``True`` when the bar should be redrawn at this step. The function
+        redraws periodically and always flushes on the final step.
+    """
+    # Skip no-op redraws so terminal rendering stays lightweight.
+    if pending_advance <= 0:
+        return False
+
+    completed_steps = step + 1
+    interval = _progress_render_interval(progress_update_every)
+
+    # Force a final flush so progress reaches the exact final total even when
+    # n_steps is not divisible by the render interval.
+    is_final_step = completed_steps == n_steps
+    is_periodic_tick = (completed_steps - start_step) % interval == 0
+    return is_periodic_tick or is_final_step
+
+
+def _is_interactive_terminal() -> bool:
+    """
+    Check whether stdout is an interactive TTY terminal.
+
+    Returns
+    -------
+    bool
+        ``True`` when stdout supports TTY-style live rendering. Non-interactive
+        contexts (e.g. redirected logs, many batch runners) return ``False``.
+    """
+    isatty_fn = getattr(sys.stdout, "isatty", None)
+    if not callable(isatty_fn):
+        return False
+    return bool(isatty_fn())
 
 
 def _mean_ignoring_nans(values: List[float]) -> float:
@@ -148,6 +226,7 @@ def _run_with_early_stopping(
     early_stopping: EarlyStoppingConfig,
     stable_update: bool = True,
     progress: bool = True,
+    progress_update_every: int = 100,
     log_progress_lines: bool = False,
     model_config: Optional[ModelConfig] = None,
 ) -> SVIRunResult:
@@ -183,6 +262,9 @@ def _run_with_early_stopping(
         Whether to use numerically stable updates.
     progress : bool, default=True
         Whether to show progress bar.
+    progress_update_every : int, default=100
+        Step cadence for interactive progress-bar redraws. A larger value
+        reduces terminal render pressure in IDE terminals.
     log_progress_lines : bool, default=False
         Whether to emit periodic plain-text progress lines. When enabled,
         one log line is emitted every ``max(1, n_steps // 20)`` steps
@@ -276,7 +358,11 @@ def _run_with_early_stopping(
             model_config=model_config,
         )
 
-    # Progress bar setup - matches NumPyro's format showing loss range
+    # Rich live rendering can overwhelm some IDE terminals when redraws happen
+    # at every optimization step, so only enable it for true interactive TTYs.
+    use_interactive_progress = progress and _is_interactive_terminal()
+
+    # Progress bar setup - matches NumPyro's format showing loss range.
     progress_ctx = Progress(
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
@@ -284,7 +370,7 @@ def _run_with_early_stopping(
         MofNCompleteColumn(),
         TimeRemainingColumn(),
         TextColumn("{task.fields[loss_info]}"),
-        disable=not progress,
+        disable=not use_interactive_progress,
     )
 
     with progress_ctx as pbar:
@@ -298,6 +384,7 @@ def _run_with_early_stopping(
             completed=start_step,
             loss_info=f"init loss: {init_loss:.4e}",
         )
+        pending_advance = 0
 
         eps = 1e-8  # Small constant to avoid division by zero
 
@@ -333,10 +420,26 @@ def _run_with_early_stopping(
             if step == start_step:
                 init_loss = loss_val
 
-            # Update progress bar periodically with avg loss over recent batch
-            # Format matches NumPyro: "init loss: X, avg. loss [start-end]: X"
-            should_display = _should_emit_progress_update(step, n_steps)
-            if should_display:
+            # Accumulate completed steps and flush them at a throttled cadence.
+            # This keeps terminal redraw overhead low while preserving accurate
+            # progress counts.
+            pending_advance += 1
+
+            # Compute summary loss info and plain-text logging cadence
+            # independently from redraw cadence so SLURM logs remain concise.
+            should_display_log = _should_emit_progress_update(step, n_steps)
+            should_render = (
+                use_interactive_progress
+                and _should_render_progress_update(
+                    step=step,
+                    start_step=start_step,
+                    n_steps=n_steps,
+                    pending_advance=pending_advance,
+                    progress_update_every=progress_update_every,
+                )
+            )
+
+            if should_display_log or should_render:
                 batch_start = max(0, len(losses) - loss_display_interval)
                 batch_end = len(losses)
                 avg_loss = _mean_ignoring_nans(losses[batch_start:batch_end])
@@ -344,8 +447,12 @@ def _run_with_early_stopping(
                     f"init loss: {init_loss:.4e}, "
                     f"avg. loss [{batch_start + 1}-{batch_end}]: {avg_loss:.4e}"
                 )
-                pbar.update(task, advance=1, loss_info=loss_info)
-                if log_progress_lines:
+                if should_render:
+                    pbar.update(
+                        task, advance=pending_advance, loss_info=loss_info
+                    )
+                    pending_advance = 0
+                if should_display_log and log_progress_lines:
                     print(
                         "SVI progress "
                         f"[{batch_end}/{n_steps}] "
@@ -353,9 +460,6 @@ def _run_with_early_stopping(
                         f"avg. loss [{batch_start + 1}-{batch_end}]: "
                         f"{avg_loss:.4e}"
                     )
-            else:
-                pbar.update(task, advance=1)
-
             # Periodically monitor loss and save checkpoints.
             # This runs regardless of early_stopping.enabled so that
             # checkpoints are always saved for resumability.
@@ -444,6 +548,11 @@ def _run_with_early_stopping(
                     and patience_counter >= early_stopping.patience
                 ):
                     early_stopped = True
+                    # Flush any pending bar steps before emitting the stopping
+                    # message so terminal state is consistent.
+                    if use_interactive_progress and pending_advance > 0:
+                        pbar.update(task, advance=pending_advance)
+                        pending_advance = 0
                     pbar.console.print(
                         f"[bold green]Early stopping triggered at step "
                         f"{step + 1}[/bold green] "
@@ -479,6 +588,7 @@ def _run_standard(
     model_args: Dict[str, Any],
     n_steps: int,
     stable_update: bool = True,
+    progress: bool = True,
     model_config: Optional[ModelConfig] = None,
 ) -> SVIRunResult:
     """Run SVI using NumPyro's built-in run method (no early stopping).
@@ -495,18 +605,24 @@ def _run_standard(
         Number of optimization steps.
     stable_update : bool, default=True
         Whether to use numerically stable updates.
+    progress : bool, default=True
+        Whether to show an interactive progress bar in TTY environments.
 
     Returns
     -------
     SVIRunResult
         Results containing optimized parameters and loss history.
     """
+    # Match custom-loop behavior: only enable live progress rendering on
+    # interactive terminals unless the caller disables progress explicitly.
+    use_interactive_progress = progress and _is_interactive_terminal()
+
     # Use NumPyro's built-in run method with progress bar
     result = svi.run(
         rng_key,
         n_steps,
         stable_update=stable_update,
-        progress_bar=True,
+        progress_bar=use_interactive_progress,
         **model_args,
     )
 
@@ -583,6 +699,7 @@ class SVIInferenceEngine:
         batch_size: Optional[int] = None,
         seed: int = 42,
         stable_update: bool = True,
+        progress_update_every: int = 100,
         log_progress_lines: bool = False,
         early_stopping: Optional[EarlyStoppingConfig] = None,
         annotation_prior_logits: Optional[jnp.ndarray] = None,
@@ -617,6 +734,9 @@ class SVIInferenceEngine:
         stable_update : bool, default=True
             Whether to use numerically stable parameter updates. When True,
             uses `svi.stable_update()` which handles NaN/Inf gracefully.
+        progress_update_every : int, default=100
+            Step cadence for interactive progress-bar redraws in the custom
+            loop used by SVI early-stopping/checkpoint execution.
         log_progress_lines : bool, default=False
             Whether to emit periodic plain-text progress lines in addition to
             the interactive progress bar. When enabled, one line is emitted
@@ -713,6 +833,7 @@ class SVIInferenceEngine:
                 early_stopping=early_stopping,
                 stable_update=stable_update,
                 progress=progress,
+                progress_update_every=progress_update_every,
                 log_progress_lines=log_progress_lines,
                 model_config=model_config_for_results,
             )
@@ -723,5 +844,6 @@ class SVIInferenceEngine:
                 model_args=model_args,
                 n_steps=n_steps,
                 stable_update=stable_update,
+                progress=progress,
                 model_config=model_config_for_results,
             )

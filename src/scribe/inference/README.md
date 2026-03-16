@@ -62,7 +62,12 @@ from scribe.inference import run_scribe
 from scribe.models.config import InferenceConfig, SVIConfig
 
 # Create inference config
-svi_config = SVIConfig(n_steps=50000, batch_size=256)
+svi_config = SVIConfig(
+    n_steps=50000,
+    batch_size=256,
+    progress=True,
+    progress_update_every=100,
+)
 inference_config = InferenceConfig.from_svi(svi_config)
 
 # Run inference
@@ -303,6 +308,8 @@ early_stopping = EarlyStoppingConfig(
 svi_config = SVIConfig(
     n_steps=100000,     # Maximum steps (may stop earlier)
     batch_size=512,
+    progress=True,      # Show interactive bar in TTY terminals
+    progress_update_every=100,  # Redraw every 100 optimizer steps
     early_stopping=early_stopping,
 )
 

@@ -24,6 +24,13 @@ batch_size: null
 # When true, handles NaN/Inf gracefully
 stable_update: true
 
+# Enable interactive progress-bar rendering in TTY terminals
+progress: true
+
+# Redraw interactive progress every N optimization steps
+# Higher values reduce terminal rendering overhead in IDE terminals
+progress_update_every: 100
+
 # Emit plain-text progress lines suitable for non-interactive logs (e.g., SLURM)
 # When true, prints an update every max(1, n_steps // 20) steps
 log_progress_lines: false

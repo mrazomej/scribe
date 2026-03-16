@@ -785,6 +785,9 @@ results = SVIInferenceEngine.run_inference(
     n_cells=n_cells,
     n_genes=n_genes,
     n_steps=75000,
+    progress=True,
+    progress_update_every=100,  # Throttle terminal redraws
+    log_progress_lines=False,
     batch_size=512  # For large datasets
 )
 ```
@@ -909,6 +912,10 @@ final_results = SVIResultsFactory.create_results(
 - Use unconstrained parameterizations when convergence is difficult
 - Check for NaN values in loss history
 - Progress-bar rolling mean loss ignores NaN/Inf values to keep reporting stable
+- Interactive progress redraws are throttled (default every 100 steps) to
+  reduce IDE terminal rendering overhead
+- In non-interactive outputs (e.g. redirected logs), Rich live progress is
+  disabled automatically; use `log_progress_lines=True` for periodic text logs
 
 ## Integration with Other Modules
 
