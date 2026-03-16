@@ -12,7 +12,7 @@ import numpyro.distributions as dist
 
 from .base import (
     Likelihood,
-    broadcast_p_for_mixture,
+    broadcast_param_for_mixture,
     compute_cell_specific_mixing,
     index_dataset_params,
 )
@@ -84,7 +84,7 @@ class NegativeBinomialLikelihood(Likelihood):
 
             # Broadcast p to match r shape (n_components, n_genes).
             # Handles scalar, gene-specific, and mixture-specific p.
-            p = broadcast_p_for_mixture(p, r)
+            p = broadcast_param_for_mixture(p, r)
 
             base_dist_component = dist.NegativeBinomialProbs(r, p).to_event(1)
             return dist.MixtureSameFamily(mixing_dist, base_dist_component)
@@ -128,7 +128,7 @@ class NegativeBinomialLikelihood(Likelihood):
 
         # Broadcast p to match r shape (n_components, n_genes).
         # Handles scalar, gene-specific, and mixture-specific p.
-        p = broadcast_p_for_mixture(p, r)
+        p = broadcast_param_for_mixture(p, r)
 
         base_dist_component = dist.NegativeBinomialProbs(r, p).to_event(1)
         return dist.MixtureSameFamily(mixing_dist, base_dist_component)

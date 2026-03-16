@@ -68,7 +68,7 @@ builder.with_likelihood(likelihood)
 When using hierarchical parameterizations, `p` (or `phi`) becomes gene-specific
 with shape `(n_genes,)` instead of a scalar. In mixture models this creates an
 ambiguity: a 1D array could be `(n_components,)` or `(n_genes,)`. The helper
-function `broadcast_p_for_mixture(p, r)` in `base.py` resolves this by checking
+function `broadcast_param_for_mixture(p, r)` in `base.py` resolves this by checking
 the shape against `r` and reshaping accordingly:
 
 - Scalar `p` -> `(1, 1)` for broadcasting with `(n_components, n_genes)`
@@ -84,7 +84,7 @@ building mixture distributions.
 When using hierarchical parameterizations, `p` (or `phi`) becomes gene-specific
 with shape `(n_genes,)` instead of a scalar. In mixture models this creates an
 ambiguity: a 1D array could be `(n_components,)` or `(n_genes,)`. The helper
-function `broadcast_p_for_mixture(p, r)` in `base.py` resolves this by checking
+function `broadcast_param_for_mixture(p, r)` in `base.py` resolves this by checking
 the shape against `r` and reshaping accordingly:
 
 - Scalar `p` to `(1, 1)` for broadcasting with `(n_components, n_genes)`
@@ -141,7 +141,7 @@ The `param_specs` argument (passed from `model_config.param_specs`) enables
 this spec-aware indexing. Without it, the function falls back to the legacy
 heuristic (`shape[0] == n_datasets`).
 
-`broadcast_p_for_mixture()` also handles the extra batch dimension: when `p`
+`broadcast_param_for_mixture()` also handles the extra batch dimension: when `p`
 is 2-D `(batch, G)` and `r` is 3-D `(batch, K, G)`, it inserts a component
 singleton to produce `(batch, 1, G)` for correct broadcasting.
 

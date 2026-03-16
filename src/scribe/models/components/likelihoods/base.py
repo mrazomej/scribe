@@ -133,26 +133,28 @@ def _sample_capture_biology_informed(
 # ==============================================================================
 
 
-def broadcast_p_for_mixture(
-    p: jnp.ndarray, r: jnp.ndarray
+def broadcast_param_for_mixture(
+    param: jnp.ndarray, reference: jnp.ndarray
 ) -> jnp.ndarray:
-    """Broadcast ``p`` to match ``r``'s shape for mixture NB distributions.
+    """Broadcast a parameter to match a reference tensor's mixture shape.
 
     Handles all combinations of scalar, gene-specific, and mixture-specific
-    shapes for the success probability parameter ``p``.  This is needed
-    because hierarchical parameterizations produce gene-specific ``p``
+    shapes.  Hierarchical parameterizations produce gene-specific parameters
     (shape ``(n_genes,)``), which must be expanded to ``(1, n_genes)`` for
-    broadcasting with mixture ``r`` of shape ``(n_components, n_genes)``.
+    broadcasting with per-component tensors of shape
+    ``(n_components, n_genes)``.
 
-    After dataset indexing, ``p`` may carry a leading batch dimension
-    (e.g., ``(batch, n_genes)``).  When ``r`` is 3-D
-    (``(batch, n_components, n_genes)``), ``p`` is reshaped to
+    After dataset indexing, parameters may carry a leading batch dimension
+    (e.g., ``(batch, n_genes)``).  When ``reference`` is 3-D
+    (``(batch, n_components, n_genes)``), the parameter is reshaped to
     ``(batch, 1, n_genes)`` so it broadcasts across components.
+
+    Works for any per-gene parameter (p, phi, gate, etc.).
 
     Parameters
     ----------
-    p : jnp.ndarray
-        Success probability.  Possible shapes:
+    param : jnp.ndarray
+        Parameter to broadcast.  Possible shapes:
 
         - ``()`` — scalar (shared across components and genes)
         - ``(n_components,)`` — mixture-specific scalar
@@ -162,15 +164,17 @@ def broadcast_p_for_mixture(
           indexing)
         - ``(batch, n_components, n_genes)`` — per-cell mixture+gene
 
-    r : jnp.ndarray
-        Dispersion parameter.  Shape ``(n_components, n_genes)`` or
+    reference : jnp.ndarray
+        Reference tensor whose shape defines the target layout.
+        Typically ``r`` with shape ``(n_components, n_genes)`` or
         ``(batch, n_components, n_genes)`` in mixture models.
 
     Returns
     -------
     jnp.ndarray
-        ``p`` reshaped for broadcasting with ``r``.
+        ``param`` reshaped for broadcasting with ``reference``.
     """
+    p, r = param, reference
     if p.ndim == 0:
         # Scalar — add two singleton dims for (K, G)
         if r.ndim == 3:

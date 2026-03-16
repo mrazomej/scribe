@@ -19,7 +19,7 @@ import numpyro.distributions as dist
 
 from .base import (
     Likelihood,
-    broadcast_p_for_mixture,
+    broadcast_param_for_mixture,
     compute_cell_specific_mixing,
     index_dataset_params,
     _sample_phi_capture_constrained,
@@ -325,7 +325,7 @@ class NBWithVCPLikelihood(Likelihood):
 
                 # Broadcast phi to match r for mixture models
                 if is_mixture:
-                    phi = broadcast_p_for_mixture(phi, r)
+                    phi = broadcast_param_for_mixture(phi, r)
 
                 logits = -jnp.log(phi * (1.0 + capture_reshaped))
 
@@ -378,7 +378,7 @@ class NBWithVCPLikelihood(Likelihood):
                     capture_reshaped = capture_value[:, None]
 
                 # Broadcast p for mixture models (handles gene-specific p)
-                p_for_hat = broadcast_p_for_mixture(p, r) if is_mixture else p
+                p_for_hat = broadcast_param_for_mixture(p, r) if is_mixture else p
 
                 p_hat = (
                     p_for_hat
@@ -563,14 +563,6 @@ class ZINBWithVCPLikelihood(Likelihood):
                 capture_prior_params = pspec.prior
                 break
 
-        # Broadcast gate if needed (non-VAE only; VAE path sets these inside
-        # plate)
-        if vae_cell_fn is None and is_mixture:
-            if gate.ndim == 1 and gate.shape[0] == r.shape[1]:
-                gate = gate[None, :]
-            elif gate.ndim == 0:
-                gate = gate[None, None]
-
         # Biology-informed capture: pre-compute log library sizes and sample
         # shared mu_eta (data-driven) before the cell plate.
         bio_spec = self.biology_informed_spec
@@ -688,9 +680,18 @@ class ZINBWithVCPLikelihood(Likelihood):
                 else:
                     capture_reshaped = capture_value[:, None]
 
-                # Broadcast phi for mixture models
+                # Broadcast phi and gate for mixture models.
+                # Gate may already be per-component (K, G) if it's a mixture
+                # param; JAX naturally promotes (K, G) → (1, K, G) for
+                # broadcasting with (batch, K, G).  Only call broadcast when
+                # gate is truly gene-specific (1-D or (batch, G) with batch
+                # matching r's batch dim), not when it's (K, G).
                 if is_mixture:
-                    phi = broadcast_p_for_mixture(phi, r)
+                    phi = broadcast_param_for_mixture(phi, r)
+                    if gate.ndim < r.ndim and (
+                        gate.ndim != 2 or gate.shape[0] == r.shape[0]
+                    ):
+                        gate = broadcast_param_for_mixture(gate, r)
 
                 logits = -jnp.log(phi * (1.0 + capture_reshaped))
 
@@ -743,8 +744,12 @@ class ZINBWithVCPLikelihood(Likelihood):
                 else:
                     capture_reshaped = capture_value[:, None]
 
-                # Broadcast p for mixture models (handles gene-specific p)
-                p_for_hat = broadcast_p_for_mixture(p, r) if is_mixture else p
+                # Broadcast p and gate for mixture models
+                p_for_hat = broadcast_param_for_mixture(p, r) if is_mixture else p
+                if is_mixture and gate.ndim < r.ndim and (
+                    gate.ndim != 2 or gate.shape[0] == r.shape[0]
+                ):
+                    gate = broadcast_param_for_mixture(gate, r)
 
                 p_hat = (
                     p_for_hat
