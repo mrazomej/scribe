@@ -394,6 +394,10 @@ def _run_with_early_stopping(
         MofNCompleteColumn(),
         TimeRemainingColumn(),
         TextColumn("{task.fields[loss_info]}"),
+        # Disable Rich's background auto-refresh loop so IDE terminals only
+        # repaint when we explicitly flush throttled progress updates.
+        auto_refresh=False,
+        refresh_per_second=1,
         disable=not use_interactive_progress,
     )
 
@@ -479,7 +483,10 @@ def _run_with_early_stopping(
                 )
                 if should_render:
                     pbar.update(
-                        task, advance=pending_advance, loss_info=loss_info
+                        task,
+                        advance=pending_advance,
+                        loss_info=loss_info,
+                        refresh=True,
                     )
                     pending_advance = 0
                 if should_display_log and log_progress_lines:
@@ -583,7 +590,9 @@ def _run_with_early_stopping(
                     # Flush any pending bar steps before emitting the stopping
                     # message so terminal state is consistent.
                     if use_interactive_progress and pending_advance > 0:
-                        pbar.update(task, advance=pending_advance)
+                        pbar.update(
+                            task, advance=pending_advance, refresh=True
+                        )
                         pending_advance = 0
                     pbar.console.print(
                         f"[bold green]Early stopping triggered at step "
