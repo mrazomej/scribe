@@ -192,9 +192,15 @@ def broadcast_param_for_mixture(
             return p[:, None]
     elif p.ndim == 2:
         if r.ndim == 3:
-            # p is (batch, G) after dataset indexing, r is (batch, K, G).
-            # Insert component singleton: (batch, 1, G)
-            return p[:, None, :]
+            # Disambiguate (batch, G) from (K, G) when r is (batch, K, G).
+            # After dataset indexing the batch dim matches r's leading dim;
+            # per-component params that skipped indexing have shape (K, G)
+            # where K == r.shape[1].
+            if p.shape[0] == r.shape[0]:
+                # (batch, G) — insert component singleton: (batch, 1, G)
+                return p[:, None, :]
+            # (K, G) or other non-batch 2-D — leave for JAX rank-promotion
+            return p
         # Already (K, G) or compatible 2-D shape
         return p
     # Already 3-D (batch, K, G) or compatible

@@ -539,11 +539,58 @@ def _broadcast_scalar_for_mixture(
     return scalar_param
 
 
+def _align_gene_params(
+    a: jnp.ndarray, b: jnp.ndarray
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Align two gene-specific arrays for broadcasting.
+
+    Both arrays share genes as the last dimension but may differ in
+    intermediate dimensions (e.g. dataset D).  Singleton dims are
+    inserted just before the gene axis in the lower-rank array so
+    that standard broadcasting works.
+
+    Examples:
+
+    - ``(K, G)`` + ``(K, D, G)`` -> ``(K, 1, G)`` + ``(K, D, G)``
+    - ``(G,)``   + ``(K, D, G)`` -> ``(1, 1, G)`` + ``(K, D, G)``
+    - ``(K, G)`` + ``(K, G)``    -> unchanged
+
+    Parameters
+    ----------
+    a : jnp.ndarray
+        First gene-specific array.
+    b : jnp.ndarray
+        Second gene-specific array.
+
+    Returns
+    -------
+    Tuple[jnp.ndarray, jnp.ndarray]
+        ``(a, b)`` with singletons inserted in the lower-rank array.
+    """
+    if a.ndim == b.ndim or a.ndim == 0 or b.ndim == 0:
+        return a, b
+    # Insert singletons just before the gene (last) axis in the
+    # lower-rank operand.  Using ``ndim - 1`` as the axis avoids
+    # negative-index edge cases with JAX tracing.
+    if a.ndim < b.ndim:
+        while a.ndim < b.ndim:
+            a = jnp.expand_dims(a, axis=a.ndim - 1)
+        return a, b
+    else:
+        while b.ndim < a.ndim:
+            b = jnp.expand_dims(b, axis=b.ndim - 1)
+        return a, b
+
+
 # ------------------------------------------------------------------------------
 
 
 def _compute_r_from_mu_phi(phi: jnp.ndarray, mu: jnp.ndarray) -> jnp.ndarray:
-    """Compute r = mu * phi with proper broadcasting for mixture models.
+    """Compute r = mu * phi with proper broadcasting.
+
+    Handles shape mismatches when mu and phi have different intermediate
+    dimensions (e.g. mu is ``(K, D, G)`` from dataset hierarchy while
+    phi is ``(K, G)`` from gene-level hierarchy only).
 
     Parameters
     ----------
@@ -558,6 +605,7 @@ def _compute_r_from_mu_phi(phi: jnp.ndarray, mu: jnp.ndarray) -> jnp.ndarray:
         Dispersion parameter r = mu * phi.
     """
     phi = _broadcast_scalar_for_mixture(phi, mu)
+    phi, mu = _align_gene_params(phi, mu)
     return mu * phi
 
 
@@ -565,7 +613,11 @@ def _compute_r_from_mu_phi(phi: jnp.ndarray, mu: jnp.ndarray) -> jnp.ndarray:
 
 
 def _compute_r_from_mu_p(p: jnp.ndarray, mu: jnp.ndarray) -> jnp.ndarray:
-    """Compute r = mu * (1 - p) / p with proper broadcasting for mixture models.
+    """Compute r = mu * (1 - p) / p with proper broadcasting.
+
+    Handles shape mismatches when mu and p have different intermediate
+    dimensions (e.g. mu is ``(K, D, G)`` from dataset hierarchy while
+    p is ``(K, G)`` from gene-level hierarchy only).
 
     Parameters
     ----------
@@ -580,6 +632,7 @@ def _compute_r_from_mu_p(p: jnp.ndarray, mu: jnp.ndarray) -> jnp.ndarray:
         Dispersion parameter r = mu * (1 - p) / p.
     """
     p = _broadcast_scalar_for_mixture(p, mu)
+    p, mu = _align_gene_params(p, mu)
     return mu * (1 - p) / p
 
 
@@ -614,6 +667,7 @@ __all__ = [
     "PARAMETERIZATIONS",
     # Helper functions for derived parameter broadcasting
     "_broadcast_scalar_for_mixture",
+    "_align_gene_params",
     "_compute_r_from_mu_phi",
     "_compute_r_from_mu_p",
 ]

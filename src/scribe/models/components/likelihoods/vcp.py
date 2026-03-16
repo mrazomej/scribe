@@ -680,18 +680,10 @@ class ZINBWithVCPLikelihood(Likelihood):
                 else:
                     capture_reshaped = capture_value[:, None]
 
-                # Broadcast phi and gate for mixture models.
-                # Gate may already be per-component (K, G) if it's a mixture
-                # param; JAX naturally promotes (K, G) → (1, K, G) for
-                # broadcasting with (batch, K, G).  Only call broadcast when
-                # gate is truly gene-specific (1-D or (batch, G) with batch
-                # matching r's batch dim), not when it's (K, G).
+                # Broadcast phi and gate for mixture models
                 if is_mixture:
                     phi = broadcast_param_for_mixture(phi, r)
-                    if gate.ndim < r.ndim and (
-                        gate.ndim != 2 or gate.shape[0] == r.shape[0]
-                    ):
-                        gate = broadcast_param_for_mixture(gate, r)
+                    gate = broadcast_param_for_mixture(gate, r)
 
                 logits = -jnp.log(phi * (1.0 + capture_reshaped))
 
@@ -746,9 +738,7 @@ class ZINBWithVCPLikelihood(Likelihood):
 
                 # Broadcast p and gate for mixture models
                 p_for_hat = broadcast_param_for_mixture(p, r) if is_mixture else p
-                if is_mixture and gate.ndim < r.ndim and (
-                    gate.ndim != 2 or gate.shape[0] == r.shape[0]
-                ):
+                if is_mixture:
                     gate = broadcast_param_for_mixture(gate, r)
 
                 p_hat = (
