@@ -21,18 +21,18 @@ dirname_aliases:
     annotation_min_cells: annmin
 
     # Hierarchical prior type fields
-    hierarchical_mu: hmu
-    p_prior: pp
-    gate_prior: gp
-    mu_dataset_prior: mdp
-    p_dataset_prior: pdp
-    p_dataset_mode: pdm
-    gate_dataset_prior: gdp
+    mu_prior: muprior
+    p_prior: pprior
+    gate_prior: gprior
+    mu_dataset_prior: mudataprior
+    p_dataset_prior: pdataprior
+    p_dataset_mode: pdatamode
+    gate_dataset_prior: gdataprior
 
     # Frequently seen prior overrides
-    priors.eta_capture: peta
-    priors.mixing: pmix
-    priors.gate: pgate
+    priors.eta_capture: etaprior
+    priors.mixing: mixprior
+    priors.gate: gateprior
 
     # Inference knobs (often long in paths)
     inference.batch_size: bsize

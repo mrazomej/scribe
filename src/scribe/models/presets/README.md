@@ -317,15 +317,31 @@ LIKELIHOOD_REGISTRY = {
 
 ## Sparsity-Inducing Prior Factory Functions
 
-**Horseshoe:** Gene-level: `_horseshoe_p`, `_horseshoe_gate`. Dataset-level:
-`_horseshoe_dataset_mu`, `_horseshoe_dataset_p`, `_horseshoe_dataset_gate`.
-Helper `_make_horseshoe_hypers` creates HalfCauchy/InverseGamma specs;
-`_horseshoe_kwargs_from_config` extracts horseshoe config from ModelConfig.
+**Horseshoe:** Gene-level: `_horseshoe_p`, `_horseshoe_gate`, `_horseshoe_mu`.
+Dataset-level: `_horseshoe_dataset_mu`, `_horseshoe_dataset_p`,
+`_horseshoe_dataset_gate`. Helper `_make_horseshoe_hypers` creates
+HalfCauchy/InverseGamma specs; `_horseshoe_kwargs_from_config` extracts
+horseshoe config from ModelConfig.
 
-**NEG:** Gene-level: `_neg_p`, `_neg_gate`. Dataset-level: `_neg_dataset_mu`,
-`_neg_dataset_p`, `_neg_dataset_gate`. Helper `_make_neg_hypers` creates
-GammaSpec pair (zeta, psi); `_neg_kwargs_from_config` extracts NEG config from
-ModelConfig.
+- `_horseshoe_mu(param_specs, param_key, tau0, slab_df, slab_scale)`: Upgrades
+  gene-level hierarchical mu/r to horseshoe. Replaces `log_mu_scale`
+  (SoftplusNormalSpec) with horseshoe trio, and `HierarchicalExpNormalSpec`
+  with `HorseshoeHierarchicalExpNormalSpec`. Dispatched when
+  `model_config.mu_prior == HORSESHOE`.
+
+**NEG:** Gene-level: `_neg_p`, `_neg_gate`, `_neg_mu`. Dataset-level:
+`_neg_dataset_mu`, `_neg_dataset_p`, `_neg_dataset_gate`. Helper
+`_make_neg_hypers` creates GammaSpec pair (zeta, psi); `_neg_kwargs_from_config`
+extracts NEG config from ModelConfig.
+
+- `_neg_mu(param_specs, param_key, u, a, tau)`: Upgrades gene-level
+  hierarchical mu/r to NEG. Replaces `log_mu_scale` with zeta/psi pair, and
+  `HierarchicalExpNormalSpec` with `NEGHierarchicalExpNormalSpec`. Dispatched
+  when `model_config.mu_prior == NEG`.
+
+Both `_horseshoe_mu` and `_neg_mu` are applied only when
+`model_config.mu_prior != _NONE` (i.e., when gene-level hierarchical mu is
+enabled).
 
 ## Multi-Dataset Mixture Hierarchy
 

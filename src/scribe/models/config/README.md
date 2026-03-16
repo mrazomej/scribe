@@ -48,8 +48,9 @@ The primary interface for creating configurations. Provides fluent methods:
 - `.with_parameterization(param)`: Set parameterization type
 - `.with_inference(method)`: Set inference method
 - `.unconstrained()`: Use unconstrained parameterization
-- `.with_hierarchical_mu()`: Enable hierarchical mu (or r) across mixture
-  components for shrinkage (requires unconstrained, mixture model)
+- `.with_hierarchical_mu()`: Set `mu_prior="gaussian"` for gene-level mu (or r)
+  shrinkage across mixture components (requires unconstrained, mixture model).
+  For horseshoe/neg, pass `mu_prior` when constructing ModelConfig directly.
 - `.with_hierarchical_p()`: Enable gene-specific p/phi hierarchical prior
   (requires unconstrained)
 - `.with_hierarchical_gate()`: Enable gene-specific gate hierarchical prior (ZI
@@ -71,6 +72,13 @@ Unified configuration class for all SCRIBE models. Supports both constrained and
 unconstrained parameterizations via the `unconstrained` boolean field. Prior and
 guide hyperparameters are stored in `param_specs` (list of `ParamSpec`); see
 `scribe.models.builders.parameter_specs`.
+
+#### Gene-Level Prior Fields
+
+- `p_prior: HierarchicalPriorType` — Gene-level prior for p/phi
+- `gate_prior: HierarchicalPriorType` — Gene-level prior for gate (ZI models)
+- `mu_prior: HierarchicalPriorType` — Gene-level prior for mu (or r) across
+  mixture components (replaces deprecated `hierarchical_mu: bool`)
 
 #### Multi-Dataset Hierarchical Model
 
@@ -95,7 +103,7 @@ Dataset-level prior fields (`mu_dataset_prior`, `p_dataset_prior`,
 practice, that means passing `dataset_key` to `scribe.fit(...)` (so
 `n_datasets` is inferred from `adata.obs[dataset_key]`) or otherwise
 configuring explicit multi-dataset mode. Single-dataset fits should use
-`p_prior` and/or `gate_prior` instead.
+`p_prior`, `gate_prior`, and/or `mu_prior` instead.
 
 When using the public `scribe.fit(...)` API, single-dataset `dataset_key`
 columns can be auto-downgraded via
@@ -163,7 +171,13 @@ Sparsity-inducing priors are configured via enum fields. Each parameter has a
 prior type: `"none"`, `"gaussian"`, `"horseshoe"`, or `"neg"`.
 
 **Enum fields:**
-- `p_prior`, `gate_prior` — Gene-level priors for p and gate (ZI models)
+- `p_prior`, `gate_prior`, `mu_prior` — Gene-level priors for p, gate (ZI
+  models), and mu across mixture components. All accept the same
+  `HierarchicalPriorType` values: `"none"`, `"gaussian"`, `"horseshoe"`, `"neg"`.
+  `mu_prior` requires a mixture model (`n_components >= 2`) and
+  `unconstrained=True`; each gene has its own hyperprior because expression
+  magnitudes vary by orders of magnitude. `mu_prior` and `mu_dataset_prior` are
+  mutually exclusive (component-level vs dataset-level shrinkage).
 - `mu_dataset_prior`, `p_dataset_prior`, `gate_dataset_prior` — Dataset-level
   priors for multi-dataset hierarchical models
 - `p_dataset_mode` — Structural mode for dataset-level p:
@@ -180,8 +194,9 @@ SVI than the horseshoe. Hyperparameters (defaults all 1.0):
 - `horseshoe_slab_df` — Slab degrees of freedom
 - `horseshoe_slab_scale` — Slab scale
 
-Boolean flags like `horseshoe_p` are deprecated; use the enum-based fields
-instead.
+Boolean flags like `horseshoe_p` and `hierarchical_mu` are deprecated; use the
+enum-based fields instead. The deprecated `hierarchical_mu` property is derived
+from `mu_prior` (returns `mu_prior != "none"`).
 
 ### PriorConfig / UnconstrainedPriorConfig
 
@@ -392,13 +407,23 @@ config = (ModelConfigBuilder()
     .build())
 
 # Hierarchical mu across mixture components — shrinks per-component means
-# toward a shared gene-level baseline (requires mixture model)
+# toward a shared gene-level baseline (requires mixture model, unconstrained)
 config = (ModelConfigBuilder()
     .for_model("nbdm")
     .with_parameterization("mean_prob")
+    .unconstrained()
     .as_mixture(3)
-    .with_hierarchical_mu()
+    .with_hierarchical_mu()  # sets mu_prior="gaussian"
     .build())
+
+# Or set mu_prior directly for gaussian/horseshoe/neg:
+config = ModelConfig(
+    base_model="nbdm",
+    unconstrained=True,
+    parameterization="mean_prob",
+    n_components=3,
+    mu_prior="gaussian",  # or "horseshoe", "neg"
+)
 
 # NEG prior for SVI-friendly sparsity (alternative to horseshoe)
 config = ModelConfig(

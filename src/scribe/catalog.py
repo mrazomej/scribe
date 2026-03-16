@@ -283,7 +283,7 @@ class ExperimentCatalog:
                 current_pair = f"{current_pair},{part}"
             else:
                 # Support compact run names where explicit boolean true values
-                # are emitted as key-only entries (e.g., "hierarchical_mu").
+                # are emitted as key-only entries (e.g., "unconstrained").
                 pairs.append(part)
 
         if current_pair:

@@ -559,9 +559,9 @@ def create_model(
         )
 
     # ==========================================================================
-    # Step 4.55: Apply hierarchical_mu flag (across-component shrinkage for mu)
+    # Step 4.55: Apply gene-level mu hierarchy (across-component shrinkage)
     # ==========================================================================
-    if model_config.hierarchical_mu:
+    if model_config.mu_prior != _NONE:
         param_specs = _hierarchicalize_mu(
             param_specs=param_specs,
             param_key=param_key,
@@ -639,6 +639,9 @@ def create_model(
     _HS = HierarchicalPriorType.HORSESHOE
     horseshoe_kwargs = _horseshoe_kwargs_from_config(model_config)
 
+    if model_config.mu_prior == _HS:
+        param_specs = _horseshoe_mu(param_specs, param_key, **horseshoe_kwargs)
+
     if model_config.p_prior == _HS:
         param_specs = _horseshoe_p(param_specs, param_key, **horseshoe_kwargs)
 
@@ -663,6 +666,9 @@ def create_model(
     # ==========================================================================
     _NEG = HierarchicalPriorType.NEG
     neg_kwargs = _neg_kwargs_from_config(model_config)
+
+    if model_config.mu_prior == _NEG:
+        param_specs = _neg_mu(param_specs, param_key, **neg_kwargs)
 
     if model_config.p_prior == _NEG:
         param_specs = _neg_p(param_specs, param_key, **neg_kwargs)
@@ -1037,6 +1043,156 @@ def _hierarchicalize_mu(
                 guide_family=target_family,
             )
             new_specs.extend([hyper_loc, hyper_scale, hier_spec])
+        else:
+            new_specs.append(spec)
+    return new_specs
+
+
+# ------------------------------------------------------------------------------
+# Gene-level horseshoe mu
+# ------------------------------------------------------------------------------
+
+
+def _horseshoe_mu(
+    param_specs: List,
+    param_key: str,
+    tau0: float = 1.0,
+    slab_df: int = 4,
+    slab_scale: float = 2.0,
+) -> List:
+    """Upgrade gene-level hierarchical mu/r to horseshoe.
+
+    Finds the hierarchical triplet (hyper_loc, hyper_scale, hier-mu)
+    produced by ``_hierarchicalize_mu``, replaces hyper_scale
+    (SoftplusNormalSpec) with the horseshoe trio (tau, lambda, c_sq),
+    and replaces the ``HierarchicalExpNormalSpec`` with
+    ``HorseshoeHierarchicalExpNormalSpec``.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Specs after ``_hierarchicalize_mu`` has run.
+    param_key : str
+        Parameterization key.
+    tau0, slab_df, slab_scale : float
+        Horseshoe hyperparameters.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Updated specs with horseshoe mu.
+    """
+    if param_key in ("mean_odds", "mean_prob"):
+        target_name = "mu"
+        scale_name = "log_mu_scale"
+        loc_name = "log_mu_loc"
+        prefix = "mu"
+    else:
+        target_name = "r"
+        scale_name = "log_r_scale"
+        loc_name = "log_r_loc"
+        prefix = "r"
+
+    raw_name = f"{target_name}_raw"
+    tau_spec, lambda_spec, c_sq_spec = _make_horseshoe_hypers(
+        prefix, tau0, slab_df, slab_scale
+    )
+
+    new_specs = []
+    for spec in param_specs:
+        if spec.name == scale_name:
+            new_specs.extend([tau_spec, lambda_spec, c_sq_spec])
+        elif spec.name == target_name and isinstance(
+            spec, HierarchicalExpNormalSpec
+        ):
+            horseshoe_spec = HorseshoeHierarchicalExpNormalSpec(
+                name=target_name,
+                shape_dims=spec.shape_dims,
+                default_params=spec.default_params,
+                hyper_loc_name=loc_name,
+                hyper_scale_name=f"tau_{prefix}",
+                tau_name=f"tau_{prefix}",
+                lambda_name=f"lambda_{prefix}",
+                c_sq_name=f"c_sq_{prefix}",
+                raw_name=raw_name,
+                is_gene_specific=spec.is_gene_specific,
+                is_mixture=spec.is_mixture,
+                guide_family=getattr(spec, "guide_family", None),
+            )
+            new_specs.append(horseshoe_spec)
+        else:
+            new_specs.append(spec)
+    return new_specs
+
+
+# ------------------------------------------------------------------------------
+# Gene-level NEG mu
+# ------------------------------------------------------------------------------
+
+
+def _neg_mu(
+    param_specs: List,
+    param_key: str,
+    u: float = 1.0,
+    a: float = 1.0,
+    tau: float = 1.0,
+) -> List:
+    """Upgrade gene-level hierarchical mu/r to NEG.
+
+    Finds the hierarchical triplet (hyper_loc, hyper_scale, hier-mu)
+    produced by ``_hierarchicalize_mu``, replaces hyper_scale
+    (SoftplusNormalSpec) with the NEG pair (zeta, psi), and replaces the
+    ``HierarchicalExpNormalSpec`` with ``NEGHierarchicalExpNormalSpec``.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Specs after ``_hierarchicalize_mu`` has run.
+    param_key : str
+        Parameterization key.
+    u, a, tau : float
+        NEG hyperparameters.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Updated specs with NEG mu.
+    """
+    if param_key in ("mean_odds", "mean_prob"):
+        target_name = "mu"
+        scale_name = "log_mu_scale"
+        loc_name = "log_mu_loc"
+        prefix = "mu"
+    else:
+        target_name = "r"
+        scale_name = "log_r_scale"
+        loc_name = "log_r_loc"
+        prefix = "r"
+
+    raw_name = f"{target_name}_raw"
+    zeta_spec, psi_spec = _make_neg_hypers(prefix, u, a, tau)
+
+    new_specs = []
+    for spec in param_specs:
+        if spec.name == scale_name:
+            new_specs.extend([zeta_spec, psi_spec])
+        elif spec.name == target_name and isinstance(
+            spec, HierarchicalExpNormalSpec
+        ):
+            neg_spec = NEGHierarchicalExpNormalSpec(
+                name=target_name,
+                shape_dims=spec.shape_dims,
+                default_params=spec.default_params,
+                hyper_loc_name=loc_name,
+                hyper_scale_name=f"psi_{prefix}",
+                psi_name=f"psi_{prefix}",
+                zeta_name=f"zeta_{prefix}",
+                raw_name=raw_name,
+                is_gene_specific=spec.is_gene_specific,
+                is_mixture=spec.is_mixture,
+                guide_family=getattr(spec, "guide_family", None),
+            )
+            new_specs.append(neg_spec)
         else:
             new_specs.append(spec)
     return new_specs

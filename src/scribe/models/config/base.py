@@ -168,7 +168,14 @@ class ModelConfig(BaseModel):
         # --- Backfill missing fields for very old pickles ----------------
         d.setdefault("n_datasets", None)
         d.setdefault("dataset_params", None)
-        d.setdefault("hierarchical_mu", False)
+        # Migrate old hierarchical_mu boolean → mu_prior enum
+        if "hierarchical_mu" in d:
+            old_hmu = d.pop("hierarchical_mu", False)
+            if old_hmu:
+                d.setdefault("mu_prior", "gaussian")
+            else:
+                d.setdefault("mu_prior", "none")
+        d.setdefault("mu_prior", "none")
         d.setdefault("shared_capture_scaling", False)
         d.setdefault("joint_params", None)
         d.setdefault("p_prior", "none")
@@ -233,14 +240,15 @@ class ModelConfig(BaseModel):
             "Requires a zero-inflated model and unconstrained=True."
         ),
     )
-    hierarchical_mu: bool = Field(
-        False,
+    mu_prior: HierarchicalPriorType = Field(
+        HierarchicalPriorType.NONE,
         description=(
-            "Hierarchical prior on mu (or r) across mixture components. "
-            "Provides shrinkage so that component-level means are drawn "
-            "from a shared gene-level population distribution. "
+            "Gene-level hierarchical prior for mu (or r) across mixture "
+            "components. Provides shrinkage so that per-component means "
+            "are drawn from a shared gene-level population distribution. "
             "Requires unconstrained=True and a mixture model "
-            "(n_components >= 2)."
+            "(n_components >= 2). Each gene has its own hyperprior because "
+            "expression magnitudes vary by orders of magnitude across genes."
         ),
     )
 
@@ -500,24 +508,27 @@ class ModelConfig(BaseModel):
                     "unconstrained=True."
                 )
 
-        # --- Hierarchical mu (mixture components) ----------------------------
-        if self.hierarchical_mu and not self.unconstrained:
-            raise ValueError(
-                "hierarchical_mu=True requires unconstrained=True."
-            )
-        if self.hierarchical_mu and not self.is_mixture:
-            raise ValueError(
-                "hierarchical_mu=True requires a mixture model "
-                "(n_components >= 2). The hierarchical prior on mu "
-                "provides shrinkage across mixture components."
-            )
-        if self.hierarchical_mu and self.mu_dataset_prior != _NONE:
-            raise ValueError(
-                "hierarchical_mu=True and mu_dataset_prior != 'none' "
-                "cannot be set simultaneously. hierarchical_mu provides "
-                "shrinkage across mixture components; "
-                "mu_dataset_prior across datasets."
-            )
+        # --- Gene-level mu (mixture components) --------------------------------
+        if self.mu_prior != _NONE:
+            if not self.unconstrained:
+                raise ValueError(
+                    f"mu_prior={self.mu_prior.value!r} requires "
+                    "unconstrained=True."
+                )
+            if not self.is_mixture:
+                raise ValueError(
+                    f"mu_prior={self.mu_prior.value!r} requires a mixture "
+                    "model (n_components >= 2). The hierarchical prior on "
+                    "mu provides shrinkage across mixture components."
+                )
+            if self.mu_dataset_prior != _NONE:
+                raise ValueError(
+                    f"mu_prior={self.mu_prior.value!r} and "
+                    f"mu_dataset_prior={self.mu_dataset_prior.value!r} "
+                    "cannot be set simultaneously. mu_prior provides "
+                    "shrinkage across mixture components; "
+                    "mu_dataset_prior across datasets."
+                )
 
         # --- p_dataset_mode validation ---------------------------------------
         valid_modes = {"scalar", "gene_specific", "two_level"}
@@ -698,7 +709,7 @@ class ModelConfig(BaseModel):
             is_mixture,
             is_zero_inflated,
             uses_variable_capture,
-            hierarchical_mu=self.hierarchical_mu,
+            hierarchical_mu=self.mu_prior != HierarchicalPriorType.NONE,
             hierarchical_p=self.hierarchical_p,
             hierarchical_gate=self.hierarchical_gate,
         )
@@ -719,6 +730,15 @@ class ModelConfig(BaseModel):
     # existing call sites, tests, and documentation continue to work.
     # New code should use p_prior, gate_prior, etc. directly.
     # --------------------------------------------------------------------------
+
+    @property
+    def hierarchical_mu(self) -> bool:
+        """Whether gene-level mu uses any hierarchical prior.
+
+        .. deprecated::
+            Use ``mu_prior`` instead.
+        """
+        return self.mu_prior != HierarchicalPriorType.NONE
 
     @property
     def hierarchical_p(self) -> bool:
@@ -893,7 +913,7 @@ class ModelConfig(BaseModel):
         """
         _NONE = HierarchicalPriorType.NONE
         return (
-            self.hierarchical_mu
+            self.mu_prior != _NONE
             or self.p_prior != _NONE
             or self.gate_prior != _NONE
         )
@@ -918,7 +938,7 @@ class ModelConfig(BaseModel):
             is_mixture=self.is_mixture,
             is_zero_inflated=self.is_zero_inflated,
             uses_variable_capture=self.uses_variable_capture,
-            hierarchical_mu=self.hierarchical_mu,
+            hierarchical_mu=self.mu_prior != HierarchicalPriorType.NONE,
             hierarchical_p=self.hierarchical_p,
             hierarchical_gate=self.hierarchical_gate,
         )
