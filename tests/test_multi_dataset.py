@@ -1262,7 +1262,7 @@ class TestMixtureDatasetComposition:
         assert hyper_loc_specs[0].shape_dims == ()
 
     def test_datasetify_gate_scalar_loc_default_params(self):
-        """_datasetify_gate creates scalar loc with N(-5, 1) defaults."""
+        """_datasetify_gate creates scalar loc with N(-5, 0.01) defaults."""
         from scribe.models.presets.factory import _datasetify_gate
 
         original_gate = SigmoidNormalSpec(
@@ -1287,7 +1287,7 @@ class TestMixtureDatasetComposition:
         assert hyper_loc.shape_dims == ()
         assert hyper_loc.is_gene_specific is False
         assert getattr(hyper_loc, "is_mixture", False) is False
-        assert hyper_loc.default_params == (-5.0, 1.0)
+        assert hyper_loc.default_params == (-5.0, 0.01)
 
     def test_datasetify_gate_neg_upgrade_preserves_scalar_loc(self):
         """NEG upgrade of dataset gate keeps hyper_loc as scalar."""

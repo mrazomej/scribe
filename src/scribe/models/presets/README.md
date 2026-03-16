@@ -360,11 +360,13 @@ provided, and threads this through to the datasetify helpers.
 
 Unlike mu/p, `_datasetify_gate()` produces **independent** per-dataset gates
 pushed toward zero, not a pooling hierarchy. The population location
-`logit_gate_dataset_loc` is a **scalar** `N(-5, 1)` shared across all genes,
-datasets, and components. This scalar is robust against being overwhelmed by
-the likelihood (unlike the per-gene loc used by mu/p). Per-gene adaptive
-shrinkage comes from the NEG/horseshoe `psi_g` (or `lambda_g`), and
-per-dataset independence comes from the NCP `z_{g,d}` variable:
+`logit_gate_dataset_loc` is a **scalar** `N(-5, 0.01)` shared across all genes,
+datasets, and components. The very tight variance (0.01) anchors logit(gate)
+deep in the off region so the aggregate likelihood cannot drag it positive.
+Per-gene adaptive shrinkage comes from the NEG/horseshoe `psi_g` (or
+`lambda_g`) with a **Gamma** variational posterior (mode at zero when
+concentration < 1), and per-dataset independence comes from the NCP
+`z_{g,d}` variable:
 
 ```
 gate_g^(d) = sigmoid(loc + sqrt(psi_g) * z_{g,d})

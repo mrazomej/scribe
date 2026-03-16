@@ -31,12 +31,15 @@ if TYPE_CHECKING:
 
 
 # ------------------------------------------------------------------------------
-# GammaSpec MeanField Guide (LogNormal variational family)
+# GammaSpec MeanField Guide (Gamma variational family)
 # ------------------------------------------------------------------------------
-# Gamma posteriors are positive and right-skewed; LogNormal is the natural
-# variational family (same rationale as HalfCauchySpec). The rate_name field
-# is only used in the model for prior sampling; the guide samples the
-# parameter directly and does not need to handle rate_name.
+# The Gamma variational family is the conjugate match for Gamma priors and,
+# crucially, can place its mode at zero when concentration < 1.  This lets
+# the optimizer learn strong shrinkage (psi → 0) for the NEG hierarchy,
+# which LogNormal cannot achieve because exp(·) > 0 always.
+# Initialization: concentration=0.5 (mode at 0), rate=1.0 (mean 0.5).
+# The rate_name field is only used in the model for prior sampling; the
+# guide samples the parameter directly.
 # ------------------------------------------------------------------------------
 
 
@@ -48,11 +51,11 @@ def setup_guide(
     model_config: "ModelConfig",
     **kwargs,
 ) -> jnp.ndarray:
-    """MeanField guide for Gamma parameters using LogNormal.
+    """MeanField guide for Gamma parameters using Gamma variational family.
 
-    LogNormal is the natural variational family for Gamma posteriors:
-    positive support, right-skewed, and reparameterizable. The guide samples
-    the parameter directly; rate_name (if set) is only used in the model prior.
+    Gamma is the natural conjugate variational family for Gamma posteriors.
+    With concentration < 1 the density diverges at zero, letting the
+    optimizer express strong shrinkage (psi → 0).
 
     Parameters
     ----------
@@ -77,100 +80,24 @@ def setup_guide(
         is_dataset=spec.is_dataset,
     )
 
-    loc = numpyro.param(
-        f"{spec.name}_loc",
-        jnp.full(shape, 0.0) if shape else jnp.array(0.0),
-    )
-    scale = numpyro.param(
-        f"{spec.name}_scale",
+    concentration = numpyro.param(
+        f"{spec.name}_concentration",
         jnp.full(shape, 0.5) if shape else jnp.array(0.5),
+        constraint=constraints.positive,
+    )
+    rate = numpyro.param(
+        f"{spec.name}_rate",
+        jnp.full(shape, 1.0) if shape else jnp.array(1.0),
         constraint=constraints.positive,
     )
 
     if shape == ():
-        d = dist.LogNormal(loc, scale)
+        d = dist.Gamma(concentration, rate)
     else:
-        d = dist.LogNormal(loc, scale).to_event(len(shape))
+        d = dist.Gamma(concentration, rate).to_event(len(shape))
 
     return numpyro.sample(spec.name, d)
 
-
-# ------------------------------------------------------------------------------
-# GammaSpec LowRank Guide (LogNormal variational family)
-# ------------------------------------------------------------------------------
-# Same as MeanFieldGuide but with LowRankMultivariateNormal in log-space,
-# then ExpTransform to obtain LogNormal support.
-# ------------------------------------------------------------------------------
-
-
-@dispatch(GammaSpec, LowRankGuide, dict, object)
-def setup_guide(
-    spec: GammaSpec,
-    guide: LowRankGuide,
-    dims: Dict[str, int],
-    model_config: "ModelConfig",
-    **kwargs,
-) -> jnp.ndarray:
-    """LowRank guide for Gamma parameters using LogNormal.
-
-    Parameters
-    ----------
-    spec : GammaSpec
-        Gamma parameter specification (psi or zeta in NEG hierarchy).
-    guide : LowRankGuide
-        Low-rank guide marker with rank.
-    dims : Dict[str, int]
-        Dimension sizes.
-    model_config : ModelConfig
-        Model configuration.
-
-    Returns
-    -------
-    jnp.ndarray
-        Sampled positive parameter value.
-    """
-    resolved_shape = resolve_shape(
-        spec.shape_dims,
-        dims,
-        is_mixture=spec.is_mixture,
-        is_dataset=spec.is_dataset,
-    )
-    k = guide.rank
-
-    n_batch_dims = len(resolved_shape) - 1
-    G = resolved_shape[-1] if resolved_shape else 1
-
-    loc = numpyro.param(
-        f"log_{spec.name}_loc",
-        jnp.zeros(resolved_shape) if resolved_shape else jnp.zeros(G),
-    )
-    W = numpyro.param(
-        f"log_{spec.name}_W",
-        (
-            0.01 * jnp.ones((*resolved_shape, k))
-            if resolved_shape
-            else 0.01 * jnp.ones((G, k))
-        ),
-    )
-    raw_diag = numpyro.param(
-        f"log_{spec.name}_raw_diag",
-        (
-            -3.0 * jnp.ones(resolved_shape)
-            if resolved_shape
-            else -3.0 * jnp.ones(G)
-        ),
-    )
-
-    D = jax.nn.softplus(raw_diag) + 1e-4
-    base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
-    transformed_dist = dist.TransformedDistribution(
-        base, dist.transforms.ExpTransform()
-    )
-
-    if n_batch_dims > 0:
-        transformed_dist = transformed_dist.to_event(n_batch_dims)
-
-    return numpyro.sample(spec.name, transformed_dist)
 
 
 # ------------------------------------------------------------------------------
