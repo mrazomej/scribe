@@ -940,6 +940,39 @@ class TestSVISmoke:
 
         assert result.n_components is None
 
+    def test_fit_api_single_survivor_clears_component_only_priors(self):
+        """Single-survivor downgrade clears component-only prior settings."""
+        import anndata
+        import scribe
+
+        n_genes = 5
+        rng = np.random.default_rng(42)
+        # Build a dataset where min_cells keeps only one annotation label.
+        labels = ["A"] * 10 + ["B"] * 1
+        X = rng.poisson(5, (11, n_genes)).astype(np.float32)
+        adata = anndata.AnnData(X=X, obs=pd.DataFrame({"ct": labels}))
+
+        # Auto-downgrade should keep the run valid by clearing mu_prior, which
+        # requires n_components >= 2 in enum-based prior mode.
+        with pytest.warns(
+            UserWarning,
+            match=r"mu_prior='gaussian' -> 'none'",
+        ):
+            result = scribe.fit(
+                adata,
+                model="nbdm",
+                n_steps=3,
+                batch_size=11,
+                annotation_key="ct",
+                annotation_confidence=3.0,
+                annotation_min_cells=5,
+                unconstrained=True,
+                mu_prior="gaussian",
+                seed=42,
+            )
+
+        assert result.n_components is None
+
     def test_fit_api_annotation_min_cells_single_survivor_explicit_strict(self):
         """Explicit n_components keeps strict mixture validation behavior."""
         import anndata
