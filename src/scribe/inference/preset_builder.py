@@ -65,6 +65,9 @@ def build_config_from_preset(
     horseshoe_tau0: float = 1.0,
     horseshoe_slab_df: int = 4,
     horseshoe_slab_scale: float = 2.0,
+    neg_u: float = 1.0,
+    neg_a: float = 1.0,
+    neg_tau: float = 1.0,
     shared_capture_scaling: bool = False,
     guide_rank: Optional[int] = None,
     joint_params: Optional[List[str]] = None,
@@ -348,10 +351,15 @@ def build_config_from_preset(
         ):
             builder._unconstrained = True
 
-    # Horseshoe / NEG hyperparameters
+    # Horseshoe hyperparameters
     builder._horseshoe_tau0 = horseshoe_tau0
     builder._horseshoe_slab_df = horseshoe_slab_df
     builder._horseshoe_slab_scale = horseshoe_slab_scale
+
+    # NEG hyperparameters
+    builder._neg_u = neg_u
+    builder._neg_a = neg_a
+    builder._neg_tau = neg_tau
 
     # Biology-informed capture prior (configured via priors dict)
     builder._shared_capture_scaling = shared_capture_scaling

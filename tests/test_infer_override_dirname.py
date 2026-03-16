@@ -83,7 +83,7 @@ def test_compact_override_dirname_applies_key_aliases():
         },
     )
 
-    assert compact == "mdp=gaussian,mixpar=phi,mu,gate"
+    assert compact == "mixpar=phi,mu,gate,mdp=gaussian"
 
 
 def test_compact_override_dirname_keeps_original_key_when_alias_missing():
