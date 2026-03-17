@@ -497,10 +497,10 @@ There are two ways to use shared scaling, depending on whether biological
 knowledge is available:
 
 1. **Biology + data** (`priors.organism="human"` or `priors.eta_capture` set,
-   with `shared_capture_scaling=true`): The prior on $\mu_\eta$ is centered on
-   the organism-specific $M_0$ (e.g., 200,000 for human). The standard
-   deviation $\sigma_\mu$ is controllable via `priors.mu_eta` (defaults to 1.0
-   when `shared_capture_scaling=true`).
+   with `mu_eta_prior` in {"gaussian", "horseshoe", "neg"}): The prior on
+   $\mu_\eta$ is centered on the organism-specific $M_0$ (e.g., 200,000 for
+   human). The standard deviation $\sigma_\mu$ is controllable via
+   `priors.mu_eta` (defaults to 1.0 when `mu_eta_prior != "none"`).
 
 ### Model specification
 
@@ -517,7 +517,7 @@ $${#eq-cap-dd-eta-prior}
 
 where $\log M_0$ and $\sigma_\mu$ come from `priors.eta_capture` and
 `priors.mu_eta` respectively. When `priors.mu_eta` is not set and
-`shared_capture_scaling=true`, the defaults are $(\log M_0, 1.0)$ where
+`mu_eta_prior != "none"`, the defaults are $(\log M_0, 1.0)$ where
 $\log M_0$ is taken from `priors.eta_capture[0]`. The parameter $\sigma_\eta$
 plays the same role as $\sigma_M$ in the biology-informed prior. As in the
 single-dataset case, the truncation at zero enforces $\nu_c \leq 1$.
@@ -547,15 +547,15 @@ rather than to different biological expression levels.
 ## Connection between the approaches {#sec-cap-connection}
 
 The capture prior behavior is determined by the presence of `priors.eta_capture`
-(set directly or resolved from `priors.organism`), `shared_capture_scaling`, and
-the value of $\sigma_M$:
+(set directly or resolved from `priors.organism`), `mu_eta_prior`, and the
+value of $\sigma_M$:
 
-| `priors.eta_capture` | `shared_capture_scaling` | $\sigma_M$ | Behavior |
+| `priors.eta_capture` | `mu_eta_prior` | $\sigma_M$ | Behavior |
 |---|---|---|---|
-| not set | `false` | — | Standard flat prior (no eta framework) |
-| set | `false` | $\approx 0$ | Deterministic anchoring (@sec-cap-deterministic) |
-| set | `false` | $> 0$ | Biology-informed prior with cell-to-cell variation |
-| set | `true` | $> 0$ | Shared $\mu_\eta$ centered on $M_0$ (@sec-cap-data-driven) |
+| not set | `"none"` (or omitted) | — | Standard flat prior (no eta framework) |
+| set | `"none"` | $\approx 0$ | Deterministic anchoring (@sec-cap-deterministic) |
+| set | `"none"` | $> 0$ | Biology-informed prior with cell-to-cell variation |
+| set | `"gaussian"`, `"horseshoe"`, or `"neg"` | $> 0$ | Shared $\mu_\eta$ centered on $M_0$ (@sec-cap-data-driven) |
 
 The four cases form a hierarchy of increasing flexibility. The deterministic
 anchoring ($\sigma_M \to 0$) completely eliminates the degeneracy by construction.

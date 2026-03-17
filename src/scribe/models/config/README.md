@@ -55,7 +55,7 @@ The primary interface for creating configurations. Provides fluent methods:
   (requires unconstrained)
 - `.with_hierarchical_gate()`: Enable gene-specific gate hierarchical prior (ZI
   models only, requires unconstrained)
-- `.with_capture_priors(organism, eta_capture, mu_eta, shared_capture_scaling)`:
+- `.with_capture_priors(organism, eta_capture, mu_eta, mu_eta_prior)`:
   Configure biology-informed capture prior (VCP models)
 - `.as_mixture(n_components, mixture_params)`: Configure as mixture
 - `.with_guide_families(guide_families)`: Set per-parameter guide families
@@ -142,21 +142,25 @@ biological knowledge about total cellular mRNA content. The biology-informed
 path activates automatically when any of `priors.organism`,
 `priors.eta_capture`, or `priors.mu_eta` is set.
 
-| `priors.eta_capture` | `shared_capture_scaling` | Behavior |
-|----------------------|--------------------------|----------|
-| not set | `false` | Standard flat prior (no eta framework) |
-| set (directly or via `priors.organism`) | `false` | Fixed M_0, no shared parameter |
-| set | `true` | Learn shared `mu_eta` centered on M_0. `priors.mu_eta` controls the prior on the shared parameter. |
+| `priors.eta_capture` | `mu_eta_prior` | Behavior |
+|----------------------|----------------|----------|
+| not set | `"none"` (or omitted) | Standard flat prior (no eta framework) |
+| set (directly or via `priors.organism`) | `"none"` | Fixed M_0, no shared parameter |
+| set | `"gaussian"`, `"horseshoe"`, or `"neg"` | Learn **per-dataset** `mu_eta` via hierarchical NCP prior, shrunk toward a shared population mean `mu_eta_pop`. `priors.mu_eta` controls `[center, sigma_mu]`. |
 
 - `priors.organism: str` — Shortcut to resolve default `eta_capture` and
   `mu_eta` values: `"human"`, `"mouse"`, `"yeast"`, `"ecoli"` (and aliases).
 - `priors.eta_capture: (float, float)` — `(log_M0, sigma_M)` for the per-cell
   TruncatedNormal+ prior on `eta_c`. Overrides organism defaults.
-- `priors.mu_eta: (float, float)` — `(center, sigma_mu)` for the shared
-  `mu_eta` Normal prior. When not set but `shared_capture_scaling=True`,
+- `priors.mu_eta: (float, float)` — `(center, sigma_mu)` for the population-
+  level `mu_eta_pop` Normal prior. When not set but `mu_eta_prior != "none"`,
   defaults to `(eta_capture[0], 1.0)`.
-- `shared_capture_scaling: bool` — When True, learn a shared `mu_eta` across
-  datasets instead of using a fixed M_0.
+- `mu_eta_prior: str` — Hierarchical prior type for per-dataset `mu_eta`:
+  `"none"`, `"gaussian"`, `"horseshoe"`, or `"neg"` (uses
+  `HierarchicalPriorType`). When not `"none"`, per-dataset `mu_eta` values
+  are learned via a non-centered parameterization, shrunk toward a shared
+  `mu_eta_pop` by the chosen shrinkage prior. For single-dataset runs, a
+  scalar `mu_eta` fallback is used automatically.
 
 The biology-informed prior samples a latent variable
 `eta_c ~ TruncatedNormal+(log M_0 - log L_c, sigma_M^2, low=0)` and derives

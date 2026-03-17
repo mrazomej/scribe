@@ -176,7 +176,10 @@ class ModelConfig(BaseModel):
             else:
                 d.setdefault("mu_prior", "none")
         d.setdefault("mu_prior", "none")
-        d.setdefault("shared_capture_scaling", False)
+        # Migrate old shared_capture_scaling → mu_eta_prior
+        if d.pop("shared_capture_scaling", False):
+            d.setdefault("mu_eta_prior", "gaussian")
+        d.setdefault("mu_eta_prior", "none")
         d.setdefault("joint_params", None)
         # Old pickles predate the softplus default; preserve exp behavior
         d.setdefault("positive_transform", "exp")
@@ -400,15 +403,19 @@ class ModelConfig(BaseModel):
     #   priors.organism    — shortcut to set defaults (e.g. "human")
     #   priors.eta_capture — [log_M0, sigma_M] per-cell prior
     #   priors.mu_eta      — [center, sigma_mu] shared mu_eta prior
-    # The biology-informed path activates automatically when any of
-    # these keys is present.
-    shared_capture_scaling: bool = Field(
-        False,
+    # Setting mu_eta_prior to a non-NONE value activates data-driven
+    # mode: log_M0 becomes a learned per-dataset latent with
+    # hierarchical shrinkage toward a shared population mean.
+    mu_eta_prior: HierarchicalPriorType = Field(
+        HierarchicalPriorType.NONE,
         description=(
-            "When True, learn a shared mu_eta parameter across "
-            "datasets/components instead of using a fixed M_0. "
-            "Requires priors.organism or priors.eta_capture to be set. "
-            "priors.mu_eta controls the prior on the shared parameter."
+            "Hierarchical prior type for per-dataset mu_eta "
+            "(log total-mRNA scaling).  NONE = fixed M_0 (no "
+            "learning).  GAUSSIAN / HORSESHOE / NEG = learn "
+            "per-dataset mu_eta with the chosen shrinkage prior, "
+            "enforcing similar total-mRNA scaling across datasets.  "
+            "Requires priors.organism or priors.eta_capture.  "
+            "priors.mu_eta controls [center, sigma_mu]."
         ),
     )
 
@@ -646,8 +653,10 @@ class ModelConfig(BaseModel):
         * ``priors.mu_eta``      — explicit ``[center, sigma_mu]``
 
         When any of these is present the biology-informed path activates.
-        ``shared_capture_scaling`` additionally learns a shared ``mu_eta``.
+        Setting ``mu_eta_prior`` to a non-NONE value activates data-driven
+        mode with hierarchical per-dataset shrinkage.
         """
+        _NONE = HierarchicalPriorType.NONE
         extra = getattr(self.priors, "__pydantic_extra__", None) or {}
 
         organism: Optional[str] = extra.get("organism")
@@ -663,22 +672,30 @@ class ModelConfig(BaseModel):
             sigma_M = org_priors["total_mrna_log_sigma"]
             eta_capture = (log_M0, sigma_M)
 
+        data_driven = self.mu_eta_prior != _NONE
         has_capture_priors = eta_capture is not None or mu_eta is not None
 
-        # VCP model required for capture priors or shared scaling
-        if has_capture_priors or self.shared_capture_scaling:
+        # VCP model required for capture priors or data-driven mu_eta
+        if has_capture_priors or data_driven:
             if not self.uses_variable_capture:
                 raise ValueError(
                     "Biology-informed capture priors (priors.organism, "
                     "priors.eta_capture, priors.mu_eta) or "
-                    "shared_capture_scaling=True requires a VCP model "
+                    "mu_eta_prior != 'none' requires a VCP model "
                     "(nbvcp or zinbvcp)."
                 )
 
-        # Default mu_eta prior when shared scaling is on and we have an
-        # anchor from eta_capture.  sigma_mu defaults to 1.0 (anchored)
-        # or 5.0 (vague, no anchor).
-        if self.shared_capture_scaling and eta_capture is not None:
+        # mu_eta_prior requires an eta_capture anchor
+        if data_driven and eta_capture is None:
+            raise ValueError(
+                f"mu_eta_prior={self.mu_eta_prior.value!r} requires "
+                "priors.organism or priors.eta_capture to be set so "
+                "the population mean has an anchor."
+            )
+
+        # Default mu_eta prior when data-driven mode is on and we have
+        # an anchor from eta_capture.  sigma_mu defaults to 1.0.
+        if data_driven and eta_capture is not None:
             if mu_eta is None:
                 mu_eta = (eta_capture[0], 1.0)
 

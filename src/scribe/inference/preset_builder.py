@@ -68,7 +68,7 @@ def build_config_from_preset(
     neg_u: float = 1.0,
     neg_a: float = 1.0,
     neg_tau: float = 1.0,
-    shared_capture_scaling: bool = False,
+    mu_eta_prior: str = "none",
     guide_rank: Optional[int] = None,
     joint_params: Optional[List[str]] = None,
     n_components: Optional[int] = None,
@@ -361,8 +361,8 @@ def build_config_from_preset(
     builder._neg_a = neg_a
     builder._neg_tau = neg_tau
 
-    # Biology-informed capture prior (configured via priors dict)
-    builder._shared_capture_scaling = shared_capture_scaling
+    # Hierarchical prior for per-dataset mu_eta (capture scaling)
+    builder._mu_eta_prior = mu_eta_prior
 
     if n_components is not None:
         builder.as_mixture(n_components, mixture_params)

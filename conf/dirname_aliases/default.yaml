@@ -43,4 +43,4 @@ dirname_aliases:
     inference.method: method
 
     # Biology-informed capture prior
-    shared_capture_scaling: sharescaling
+    mu_eta_prior: muetaprior

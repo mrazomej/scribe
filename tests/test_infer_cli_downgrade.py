@@ -100,7 +100,7 @@ def test_infer_main_single_survivor_downgrades_component_only_prior(
             "neg_u": 1.0,
             "neg_a": 1.0,
             "neg_tau": 1.0,
-            "shared_capture_scaling": False,
+            "mu_eta_prior": "none",
             "n_components": None,
             "mixture_params": None,
             "guide_rank": None,

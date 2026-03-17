@@ -16,7 +16,10 @@ import numpyro.distributions as dist
 from scribe.stats.distributions import BetaPrime
 
 if TYPE_CHECKING:
-    from ...builders.parameter_specs import ParamSpec
+    from ...builders.parameter_specs import (
+        BiologyInformedCaptureSpec,
+        ParamSpec,
+    )
     from ...config import ModelConfig
 
 
@@ -126,6 +129,243 @@ def _sample_capture_biology_informed(
         numpyro.deterministic("p_capture", capture_value)
 
     return capture_value
+
+
+# ==============================================================================
+# Hierarchical per-dataset mu_eta sampling helpers
+# ==============================================================================
+#
+# When mu_eta_prior is set, per-dataset mu_eta values are drawn from a
+# hierarchical prior centered on a shared population mean.  All variants
+# use non-centered parameterization (NCP) for SVI stability:
+#
+#   mu_eta_pop ~ N(log_M0, sigma_mu)              [population mean]
+#   mu_eta_raw ~ N(0, 1), shape (D,)              [per-dataset deviations]
+#   mu_eta = mu_eta_pop + effective_scale * mu_eta_raw  [deterministic]
+#
+# The effective_scale depends on the prior type.
+
+
+def _sample_hierarchical_mu_eta_gaussian(
+    log_M0: float,
+    sigma_mu: float,
+    n_datasets: int,
+) -> jnp.ndarray:
+    """Sample per-dataset mu_eta with Gaussian hierarchical shrinkage.
+
+    Parameters
+    ----------
+    log_M0 : float
+        Prior center for the population mean (log total mRNA).
+    sigma_mu : float
+        Prior std-dev on the population mean.
+    n_datasets : int
+        Number of datasets.
+
+    Returns
+    -------
+    jnp.ndarray
+        Per-dataset mu_eta values, shape ``(D,)``.
+    """
+    # Population mean: broad prior allows exploration
+    mu_eta_pop = numpyro.sample(
+        "mu_eta_pop", dist.Normal(log_M0, sigma_mu)
+    )
+    # Inter-dataset spread: Softplus-transformed Normal, initialized small
+    # so that datasets start nearly identical
+    tau_eta = numpyro.sample(
+        "tau_eta",
+        dist.TransformedDistribution(
+            dist.Normal(-2.0, 0.5),
+            dist.transforms.SoftplusTransform(),
+        ),
+    )
+    # NCP per-dataset deviations
+    mu_eta_raw = numpyro.sample(
+        "mu_eta_raw",
+        dist.Normal(0.0, 1.0).expand([n_datasets]).to_event(1),
+    )
+    mu_eta = numpyro.deterministic(
+        "mu_eta", mu_eta_pop + tau_eta * mu_eta_raw
+    )
+    return mu_eta
+
+
+def _sample_hierarchical_mu_eta_horseshoe(
+    log_M0: float,
+    sigma_mu: float,
+    n_datasets: int,
+    tau0: float = 1.0,
+    slab_df: int = 4,
+    slab_scale: float = 2.0,
+) -> jnp.ndarray:
+    """Sample per-dataset mu_eta with regularized horseshoe shrinkage.
+
+    Uses the Finnish (regularized) horseshoe prior with per-dataset
+    local shrinkage, encouraging most datasets to share the same
+    mu_eta while allowing occasional outliers.
+
+    Parameters
+    ----------
+    log_M0 : float
+        Prior center for the population mean.
+    sigma_mu : float
+        Prior std-dev on the population mean.
+    n_datasets : int
+        Number of datasets.
+    tau0 : float
+        Scale for global shrinkage Half-Cauchy.
+    slab_df : int
+        Degrees of freedom for the slab Inverse-Gamma.
+    slab_scale : float
+        Scale for the slab Inverse-Gamma.
+
+    Returns
+    -------
+    jnp.ndarray
+        Per-dataset mu_eta values, shape ``(D,)``.
+    """
+    mu_eta_pop = numpyro.sample(
+        "mu_eta_pop", dist.Normal(log_M0, sigma_mu)
+    )
+    # Global shrinkage
+    tau_mu_eta = numpyro.sample(
+        "tau_mu_eta", dist.HalfCauchy(tau0)
+    )
+    # Per-dataset local shrinkage
+    lambda_mu_eta = numpyro.sample(
+        "lambda_mu_eta",
+        dist.HalfCauchy(1.0).expand([n_datasets]).to_event(1),
+    )
+    # Slab width (regularization)
+    c_sq_mu_eta = numpyro.sample(
+        "c_sq_mu_eta",
+        dist.InverseGamma(
+            0.5 * slab_df,
+            0.5 * slab_df * slab_scale**2,
+        ),
+    )
+    # Regularized effective scale
+    c = jnp.sqrt(c_sq_mu_eta)
+    eff_scale = (
+        tau_mu_eta
+        * c
+        * lambda_mu_eta
+        / jnp.sqrt(c_sq_mu_eta + tau_mu_eta**2 * lambda_mu_eta**2)
+    )
+    # NCP per-dataset deviations
+    mu_eta_raw = numpyro.sample(
+        "mu_eta_raw",
+        dist.Normal(0.0, 1.0).expand([n_datasets]).to_event(1),
+    )
+    mu_eta = numpyro.deterministic(
+        "mu_eta", mu_eta_pop + eff_scale * mu_eta_raw
+    )
+    return mu_eta
+
+
+def _sample_hierarchical_mu_eta_neg(
+    log_M0: float,
+    sigma_mu: float,
+    n_datasets: int,
+    u: float = 1.0,
+    a: float = 1.0,
+    tau: float = 1.0,
+) -> jnp.ndarray:
+    """Sample per-dataset mu_eta with Normal-Exponential-Gamma shrinkage.
+
+    The NEG hierarchy:
+        zeta_d ~ Gamma(a, tau)     [per-dataset rate]
+        psi_d  ~ Gamma(u, zeta_d)  [per-dataset variance]
+        mu_eta_raw_d ~ N(0, 1)
+        mu_eta_d = mu_eta_pop + sqrt(psi_d) * mu_eta_raw_d
+
+    Parameters
+    ----------
+    log_M0 : float
+        Prior center for the population mean.
+    sigma_mu : float
+        Prior std-dev on the population mean.
+    n_datasets : int
+        Number of datasets.
+    u : float
+        Shape for the inner Gamma (psi). u=1 gives NEG (Exponential).
+    a : float
+        Shape for the outer Gamma (zeta).
+    tau : float
+        Rate for the outer Gamma (global shrinkage).
+
+    Returns
+    -------
+    jnp.ndarray
+        Per-dataset mu_eta values, shape ``(D,)``.
+    """
+    mu_eta_pop = numpyro.sample(
+        "mu_eta_pop", dist.Normal(log_M0, sigma_mu)
+    )
+    # Outer Gamma: per-dataset rate parameters
+    zeta_mu_eta = numpyro.sample(
+        "zeta_mu_eta",
+        dist.Gamma(a, tau).expand([n_datasets]).to_event(1),
+    )
+    # Inner Gamma: per-dataset variance (rate = zeta)
+    psi_mu_eta = numpyro.sample(
+        "psi_mu_eta",
+        dist.Gamma(u, zeta_mu_eta).to_event(1),
+    )
+    # NCP per-dataset deviations
+    mu_eta_raw = numpyro.sample(
+        "mu_eta_raw",
+        dist.Normal(0.0, 1.0).expand([n_datasets]).to_event(1),
+    )
+    mu_eta = numpyro.deterministic(
+        "mu_eta", mu_eta_pop + jnp.sqrt(psi_mu_eta) * mu_eta_raw
+    )
+    return mu_eta
+
+
+def _sample_hierarchical_mu_eta(
+    spec: "BiologyInformedCaptureSpec",
+    n_datasets: int,
+) -> jnp.ndarray:
+    """Dispatch to the appropriate hierarchical mu_eta sampler.
+
+    Parameters
+    ----------
+    spec : BiologyInformedCaptureSpec
+        Capture spec with ``mu_eta_prior`` set to one of
+        ``"gaussian"``, ``"horseshoe"``, ``"neg"``.
+    n_datasets : int
+        Number of datasets.
+
+    Returns
+    -------
+    jnp.ndarray
+        Per-dataset mu_eta values, shape ``(D,)``.
+
+    Raises
+    ------
+    ValueError
+        If ``spec.mu_eta_prior`` is not recognized.
+    """
+    prior = spec.mu_eta_prior
+    if prior == "gaussian":
+        return _sample_hierarchical_mu_eta_gaussian(
+            spec.log_M0, spec.sigma_mu, n_datasets
+        )
+    elif prior == "horseshoe":
+        return _sample_hierarchical_mu_eta_horseshoe(
+            spec.log_M0, spec.sigma_mu, n_datasets
+        )
+    elif prior == "neg":
+        return _sample_hierarchical_mu_eta_neg(
+            spec.log_M0, spec.sigma_mu, n_datasets
+        )
+    else:
+        raise ValueError(
+            f"Unknown mu_eta_prior={prior!r}. "
+            "Expected 'gaussian', 'horseshoe', or 'neg'."
+        )
 
 
 # ==============================================================================

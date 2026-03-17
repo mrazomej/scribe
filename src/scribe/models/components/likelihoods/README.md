@@ -186,24 +186,33 @@ library-size-anchored TruncatedNormal (low=0) prior on the latent variable
 biology-informed path activates automatically when `priors.organism`,
 `priors.eta_capture`, or `priors.mu_eta` is set:
 
-- **No capture priors + `shared_capture_scaling=false`**: Standard flat
+- **No capture priors + `mu_eta_prior="none"`** (or omitted): Standard flat
   prior (no eta framework).
-- **`priors.eta_capture` set + `shared_capture_scaling=false`**:
-  Fixed M_0, no shared parameter.
-- **`priors.eta_capture` set + `shared_capture_scaling=true`**: Learn shared
-  `mu_eta` centered on M_0. `priors.mu_eta` controls `sigma_mu`.
+- **`priors.eta_capture` set + `mu_eta_prior="none"`**: Fixed M_0, no shared
+  parameter.
+- **`priors.eta_capture` set + `mu_eta_prior` in {"gaussian", "horseshoe",
+  "neg"}**: Learn **per-dataset** `mu_eta` via a non-centered hierarchical
+  prior.  A population mean `mu_eta_pop ~ N(log_M0, sigma_mu)` is shared
+  across all datasets, while per-dataset deviations are shrunk toward zero
+  by the chosen prior (Gaussian scale, regularized Horseshoe, or NEG).
+  `priors.mu_eta` controls `[center, sigma_mu]`.
 
 When the eta framework is active:
 
 1. **Pre-plate**: Log library sizes are computed from `counts` (or synthetic
-   values during dry runs). When `shared_capture_scaling` is enabled, the shared
-   `mu_eta` is sampled.
+   values during dry runs). When `mu_eta_prior` is not "none" and
+   `n_datasets >= 2`, per-dataset `mu_eta` (shape `(D,)`) is sampled by
+   `_sample_hierarchical_mu_eta()` in `base.py`.  For single-dataset
+   fallback, a scalar `mu_eta` is sampled instead.
 2. **Inside plate**: `eta_c ~ N(log_M0 - log_L_c, sigma_M^2)` (or centered on
-   `mu_eta` when shared) is sampled via `_sample_capture_biology_informed()`,
-   then transformed to `p_capture` or `phi_capture` via exact formulas.
+   the per-dataset `mu_eta[d]` when hierarchical) is sampled via
+   `_sample_capture_biology_informed()`, then transformed to `p_capture`
+   or `phi_capture` via exact formulas.
 
-The helper `_sample_capture_biology_informed()` in `base.py` handles the
-sampling and deterministic transformation.
+Key helpers in `base.py`:
+- `_sample_hierarchical_mu_eta()` — dispatcher to prior-specific samplers
+- `_sample_hierarchical_mu_eta_{gaussian,horseshoe,neg}()` — NCP samplers
+- `_sample_capture_biology_informed()` — per-cell eta sampling and transform
 
 ## Annotation Priors for Mixture Models
 

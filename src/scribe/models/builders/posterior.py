@@ -1108,16 +1108,21 @@ def _apply_capture(
     """Pass 7: add the per-cell capture probability posterior.
 
     Active for VCP models.  Three variants:
-    - Biology-informed / shared-scaling: posterior on ``eta_capture``.
+    - Biology-informed / data-driven mu_eta: posterior on ``eta_capture``.
     - Mean-odds parameterization: posterior on ``phi_capture``.
     - Other parameterizations: posterior on ``p_capture``.
     """
     if not model_config.uses_variable_capture:
         return
 
+    from ..config.enums import HierarchicalPriorType
+
     bio_capture = getattr(model_config, "uses_biology_informed_capture", False)
-    shared_scaling = getattr(model_config, "shared_capture_scaling", False)
-    if bio_capture or shared_scaling:
+    mu_eta_active = (
+        getattr(model_config, "mu_eta_prior", HierarchicalPriorType.NONE)
+        != HierarchicalPriorType.NONE
+    )
+    if bio_capture or mu_eta_active:
         distributions.update(
             _build_biology_informed_capture_posterior(
                 params, model_config, split
@@ -1792,12 +1797,17 @@ def _build_biology_informed_capture_posterior(
     log(M_c / L_c), constrained >= 0 via TruncatedNormal).  The
     capture parameter is a deterministic transformation of eta.
 
+    Handles both:
+    - **Hierarchical mu_eta** (``mu_eta_pop_loc`` present): builds
+      posteriors for ``mu_eta_pop``, shrinkage auxiliaries, and
+      ``mu_eta_raw``.
+    - **Single-scalar mu_eta** (``mu_eta_loc`` present): backward-
+      compatible path for D <= 1 or old checkpoints.
+
     Parameters
     ----------
     params : Dict[str, jnp.ndarray]
-        Optimized variational parameters. Expected keys:
-        ``eta_capture_loc``, ``eta_capture_scale``, and optionally
-        ``mu_eta_loc``, ``mu_eta_scale`` (data-driven mode).
+        Optimized variational parameters.
     model_config : ModelConfig
         Model configuration.
     split : bool
@@ -1806,19 +1816,84 @@ def _build_biology_informed_capture_posterior(
     Returns
     -------
     Dict[str, Any]
-        Posterior distributions for ``eta_capture`` (and ``mu_eta`` if
-        data-driven).
+        Posterior distributions for ``eta_capture`` and ``mu_eta``
+        (and optional hierarchical auxiliaries).
     """
     distributions: Dict[str, Any] = {}
 
-    # Shared mu_eta for data-driven mode (unconstrained — can be any real)
-    if "mu_eta_loc" in params:
+    # --- Hierarchical per-dataset mu_eta ----------------------------------
+    if "mu_eta_pop_loc" in params:
+        # Population mean (unconstrained real)
+        distributions["mu_eta_pop"] = dist.Normal(
+            params["mu_eta_pop_loc"], params["mu_eta_pop_scale"]
+        )
+
+        # Gaussian: tau_eta (Softplus-transformed)
+        if "tau_eta_loc" in params:
+            distributions["tau_eta"] = dist.TransformedDistribution(
+                dist.Normal(
+                    params["tau_eta_loc"], params["tau_eta_scale"]
+                ),
+                dist.transforms.SoftplusTransform(),
+            )
+
+        # Horseshoe auxiliaries
+        if "tau_mu_eta_loc" in params:
+            distributions["tau_mu_eta"] = dist.TransformedDistribution(
+                dist.Normal(
+                    params["tau_mu_eta_loc"],
+                    params["tau_mu_eta_scale"],
+                ),
+                dist.transforms.SoftplusTransform(),
+            )
+        if "lambda_mu_eta_loc" in params:
+            distributions["lambda_mu_eta"] = dist.TransformedDistribution(
+                dist.Normal(
+                    params["lambda_mu_eta_loc"],
+                    params["lambda_mu_eta_scale"],
+                ),
+                dist.transforms.SoftplusTransform(),
+            )
+        if "c_sq_mu_eta_loc" in params:
+            distributions["c_sq_mu_eta"] = dist.TransformedDistribution(
+                dist.Normal(
+                    params["c_sq_mu_eta_loc"],
+                    params["c_sq_mu_eta_scale"],
+                ),
+                dist.transforms.SoftplusTransform(),
+            )
+
+        # NEG auxiliaries
+        if "zeta_mu_eta_loc" in params:
+            distributions["zeta_mu_eta"] = dist.TransformedDistribution(
+                dist.Normal(
+                    params["zeta_mu_eta_loc"],
+                    params["zeta_mu_eta_scale"],
+                ),
+                dist.transforms.SoftplusTransform(),
+            )
+        if "psi_mu_eta_loc" in params:
+            distributions["psi_mu_eta"] = dist.TransformedDistribution(
+                dist.Normal(
+                    params["psi_mu_eta_loc"],
+                    params["psi_mu_eta_scale"],
+                ),
+                dist.transforms.SoftplusTransform(),
+            )
+
+        # NCP deviations (shared across prior types)
+        if "mu_eta_raw_loc" in params:
+            distributions["mu_eta_raw"] = dist.Normal(
+                params["mu_eta_raw_loc"], params["mu_eta_raw_scale"]
+            )
+
+    # --- Single-scalar mu_eta (D<=1 fallback or old checkpoint) -----------
+    elif "mu_eta_loc" in params:
         distributions["mu_eta"] = dist.Normal(
             params["mu_eta_loc"], params["mu_eta_scale"]
         )
 
-    # Per-cell eta_capture posterior (truncated at 0 to enforce
-    # the physical constraint M_c >= L_c <=> p_capture <= 1)
+    # --- Per-cell eta_capture (truncated at 0: M_c >= L_c) ----------------
     if "eta_capture_loc" in params:
         loc = params["eta_capture_loc"]
         scale = params["eta_capture_scale"]

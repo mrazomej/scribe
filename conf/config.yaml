@@ -77,7 +77,10 @@ positive_transform: "softplus"
 # See paper/_capture_prior.qmd for derivation.
 # All capture-prior parameters live in the priors section below.
 # Set priors.organism (or priors.eta_capture) to activate biology-informed mode.
-shared_capture_scaling: false     # learn shared mu_eta across datasets
+# Hierarchical prior for per-dataset mu_eta (log total-mRNA scaling).
+# "none" = fixed M_0 (no learning); "gaussian" / "horseshoe" / "neg"
+# = learn per-dataset mu_eta with shrinkage toward a shared population mean.
+mu_eta_prior: "none"
 
 # Mixture model configuration
 # Set to integer >= 2 for mixture models, null for single component.

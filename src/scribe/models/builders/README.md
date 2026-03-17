@@ -110,13 +110,17 @@ count (`M_0`). The truncation at zero enforces the physical constraint
 derived via exact transformations.
 
 Fields: `log_M0` (log expected total mRNA), `sigma_M` (log-scale std-dev),
-`data_driven` (if True, `log_M0` is replaced by a learned shared parameter
-`mu_eta`; set by `shared_capture_scaling` config flag), `sigma_mu` (prior
-std-dev for `mu_eta`), `use_phi_capture` (selects transformation:
+`data_driven` (derived property: True when `mu_eta_prior` is not None),
+`mu_eta_prior` (hierarchical prior type: `"gaussian"`, `"horseshoe"`, or
+`"neg"`; `None` = fixed `M_0`), `sigma_mu` (prior std-dev for the
+population-level `mu_eta_pop`), `use_phi_capture` (selects transformation:
 `phi_capture = exp(eta) - 1` vs `p_capture = exp(-eta)`).
 
-The guide dispatch for this spec samples per-cell `eta_capture` variational
-parameters and (for data-driven mode) the shared `mu_eta` before the cell plate.
+When `data_driven` is True, per-dataset `mu_eta` values are sampled via a
+non-centered hierarchical prior (Gaussian, Horseshoe, or NEG) before the cell
+plate, using `guide_mu_eta_hierarchy()` in `_guide_cell_specific_mixin.py`.
+When `n_datasets < 2`, a single-scalar fallback is used instead.
+Per-cell `eta_capture` variational parameters are sampled inside the cell plate.
 
 ### ParamSpec Attributes
 
@@ -504,7 +508,7 @@ they have no guide counterpart.
 | `_guide_lowrank_mixin.py` | Standard low-rank dispatch registrations |
 | `_guide_horseshoe_mixin.py` | Horseshoe hyperparameter + NCP dispatch registrations |
 | `_guide_neg_mixin.py` | NEG hyperparameter + NCP dispatch registrations |
-| `_guide_cell_specific_mixin.py` | Cell-specific dispatch registrations |
+| `_guide_cell_specific_mixin.py` | Cell-specific dispatch registrations; `guide_mu_eta_hierarchy` (pre-plate hierarchical mu_eta guide) |
 | `_guide_amortized_mixin.py` | Amortized helpers and dispatch registration |
 | `_guide_joint_mixin.py` | Woodbury helpers and `setup_joint_guide` implementation |
 | `posterior.py` | `get_posterior_distributions`; joint-aware extraction from `JointLowRankGuide` params |

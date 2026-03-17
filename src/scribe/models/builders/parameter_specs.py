@@ -1114,8 +1114,16 @@ class BiologyInformedCaptureSpec(ParamSpec):
         phi_capture_c = exp(eta_c) - 1    (mean_odds parameterization)
         p_capture_c   = exp(-eta_c)       (canonical / mean_prob)
 
-    For the data-driven variant, log M_0 is replaced by a learned shared
-    parameter mu_eta ~ N(log M_0, sigma_mu^2).
+    For the data-driven variant (``mu_eta_prior`` is not None), log M_0
+    is replaced by a learned per-dataset latent variable with hierarchical
+    shrinkage toward a shared population mean:
+
+        mu_eta_pop  ~ N(log M_0, sigma_mu^2)
+        mu_eta^{(d)} ~ Shrinkage(mu_eta_pop, ...)   [shape (D,)]
+        eta_c       ~ TruncatedNormal(mu_eta^{(d_c)} - log L_c, sigma_M^2, low=0)
+
+    The shrinkage type (Gaussian, Horseshoe, NEG) is selected via
+    ``mu_eta_prior``.
 
     Parameters
     ----------
@@ -1125,10 +1133,11 @@ class BiologyInformedCaptureSpec(ParamSpec):
         log(M_0) where M_0 is the expected total mRNA per cell.
     sigma_M : float
         Log-scale std-dev of cell-to-cell mRNA variation.
-    data_driven : bool
-        If True, log_M0 is replaced by a learned shared latent variable.
+    mu_eta_prior : str or None
+        Hierarchical prior type for per-dataset mu_eta.  One of
+        ``"gaussian"``, ``"horseshoe"``, ``"neg"``, or ``None`` (fixed M_0).
     sigma_mu : float
-        Prior std-dev on the shared log_M0 parameter (data-driven mode).
+        Prior std-dev on the population-level mu_eta_pop parameter.
     use_phi_capture : bool
         If True, output phi_capture = exp(eta) - 1.
         If False, output p_capture = exp(-eta).
@@ -1144,14 +1153,18 @@ class BiologyInformedCaptureSpec(ParamSpec):
     sigma_M: float = Field(
         ..., gt=0, description="Log-scale cell-to-cell mRNA variation."
     )
-    data_driven: bool = Field(
-        False,
-        description="If True, log_M0 becomes a learned shared parameter.",
+    mu_eta_prior: Optional[str] = Field(
+        None,
+        description=(
+            "Hierarchical prior type for per-dataset mu_eta.  "
+            "None = fixed M_0; 'gaussian', 'horseshoe', 'neg' = "
+            "learn per-dataset mu_eta with shrinkage."
+        ),
     )
     sigma_mu: float = Field(
         1.0,
         gt=0,
-        description="Prior std-dev on shared log_M0 (data-driven mode).",
+        description="Prior std-dev on population-level mu_eta_pop.",
     )
     use_phi_capture: bool = Field(
         ...,
@@ -1159,6 +1172,11 @@ class BiologyInformedCaptureSpec(ParamSpec):
             "True → phi_capture = exp(eta)-1; " "False → p_capture = exp(-eta)."
         ),
     )
+
+    @property
+    def data_driven(self) -> bool:
+        """Whether mu_eta is learned (True) or fixed (False)."""
+        return self.mu_eta_prior is not None
 
     @property
     def alias_names(self) -> list:
