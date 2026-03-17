@@ -18,6 +18,7 @@ from ..components.guide_families import AmortizedGuide, VAELatentGuide
 if TYPE_CHECKING:
     from ..config import ModelConfig
 
+
 def _run_amortizer(
     guide: AmortizedGuide,
     spec: ParamSpec,
@@ -96,7 +97,8 @@ def setup_cell_specific_guide(
     distribution via spec.make_amortized_guide_dist(out.params) and samples at
     spec.amortized_guide_sample_site. Transform logic lives in the specs only.
 
-    Supported specs: BetaSpec, BetaPrimeSpec, SigmoidNormalSpec, ExpNormalSpec.
+    Supported specs: BetaSpec, BetaPrimeSpec, SigmoidNormalSpec,
+    PositiveNormalSpec.
     """
     out = _run_amortizer(guide, spec, counts, batch_idx)
     try:
@@ -105,6 +107,6 @@ def setup_cell_specific_guide(
     except NotImplementedError as e:
         raise ValueError(
             f"AmortizedGuide is not supported for spec type {type(spec).__name__}. "
-            "Supported: BetaSpec, BetaPrimeSpec, SigmoidNormalSpec, ExpNormalSpec."
+            "Supported: BetaSpec, BetaPrimeSpec, SigmoidNormalSpec, PositiveNormalSpec."
         ) from e
     return numpyro.sample(site, guide_dist)

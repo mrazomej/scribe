@@ -15,9 +15,9 @@ from numpyro.distributions import constraints
 
 from .parameter_specs import (
     HalfCauchySpec,
-    HorseshoeDatasetExpNormalSpec,
+    HorseshoeDatasetPositiveNormalSpec,
     HorseshoeDatasetSigmoidNormalSpec,
-    HorseshoeHierarchicalExpNormalSpec,
+    HorseshoeHierarchicalPositiveNormalSpec,
     HorseshoeHierarchicalSigmoidNormalSpec,
     InverseGammaSpec,
     resolve_shape,
@@ -411,9 +411,9 @@ def setup_guide(
 # ------------------------------------------------------------------------------
 
 
-@dispatch(HorseshoeHierarchicalExpNormalSpec, MeanFieldGuide, dict, object)
+@dispatch(HorseshoeHierarchicalPositiveNormalSpec, MeanFieldGuide, dict, object)
 def setup_guide(
-    spec: HorseshoeHierarchicalExpNormalSpec,
+    spec: HorseshoeHierarchicalPositiveNormalSpec,
     guide: MeanFieldGuide,
     dims: Dict[str, int],
     model_config: "ModelConfig",
@@ -423,7 +423,7 @@ def setup_guide(
 
     Parameters
     ----------
-    spec : HorseshoeHierarchicalExpNormalSpec
+    spec : HorseshoeHierarchicalPositiveNormalSpec
         Horseshoe gene-level phi specification.
     guide : MeanFieldGuide
         Mean-field guide marker.
@@ -467,9 +467,9 @@ def setup_guide(
 # ------------------------------------------------------------------------------
 
 
-@dispatch(HorseshoeHierarchicalExpNormalSpec, LowRankGuide, dict, object)
+@dispatch(HorseshoeHierarchicalPositiveNormalSpec, LowRankGuide, dict, object)
 def setup_guide(
-    spec: HorseshoeHierarchicalExpNormalSpec,
+    spec: HorseshoeHierarchicalPositiveNormalSpec,
     guide: LowRankGuide,
     dims: Dict[str, int],
     model_config: "ModelConfig",
@@ -479,7 +479,7 @@ def setup_guide(
 
     Parameters
     ----------
-    spec : HorseshoeHierarchicalExpNormalSpec
+    spec : HorseshoeHierarchicalPositiveNormalSpec
         Horseshoe gene-level phi specification.
     guide : LowRankGuide
         Low-rank guide marker with rank.
@@ -539,9 +539,9 @@ def setup_guide(
 # ------------------------------------------------------------------------------
 
 
-@dispatch(HorseshoeDatasetExpNormalSpec, MeanFieldGuide, dict, object)
+@dispatch(HorseshoeDatasetPositiveNormalSpec, MeanFieldGuide, dict, object)
 def setup_guide(
-    spec: HorseshoeDatasetExpNormalSpec,
+    spec: HorseshoeDatasetPositiveNormalSpec,
     guide: MeanFieldGuide,
     dims: Dict[str, int],
     model_config: "ModelConfig",
@@ -551,7 +551,7 @@ def setup_guide(
 
     Parameters
     ----------
-    spec : HorseshoeDatasetExpNormalSpec
+    spec : HorseshoeDatasetPositiveNormalSpec
         Horseshoe dataset-level mu specification.
     guide : MeanFieldGuide
         Mean-field guide marker.
@@ -595,9 +595,9 @@ def setup_guide(
 # ------------------------------------------------------------------------------
 
 
-@dispatch(HorseshoeDatasetExpNormalSpec, LowRankGuide, dict, object)
+@dispatch(HorseshoeDatasetPositiveNormalSpec, LowRankGuide, dict, object)
 def setup_guide(
-    spec: HorseshoeDatasetExpNormalSpec,
+    spec: HorseshoeDatasetPositiveNormalSpec,
     guide: LowRankGuide,
     dims: Dict[str, int],
     model_config: "ModelConfig",
@@ -607,7 +607,7 @@ def setup_guide(
 
     Parameters
     ----------
-    spec : HorseshoeDatasetExpNormalSpec
+    spec : HorseshoeDatasetPositiveNormalSpec
         Horseshoe dataset-level mu specification.
     guide : LowRankGuide
         Low-rank guide marker with rank.

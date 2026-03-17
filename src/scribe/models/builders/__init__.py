@@ -28,7 +28,7 @@ Parameter specs define the distribution and metadata for each parameter:
 | LogNormalSpec | LogNormal(μ, σ) | (0, ∞) | r, mu |
 | BetaPrimeSpec | BetaPrime(α, β) | (0, ∞) | phi |
 | SigmoidNormalSpec | Normal → sigmoid | (0, 1) | p_unconstrained |
-| ExpNormalSpec | Normal → exp | (0, ∞) | r_unconstrained |
+| PositiveNormalSpec | Normal → softplus/exp | (0, ∞) | r_unconstrained |
 
 Examples
 --------
@@ -58,22 +58,22 @@ from .parameter_specs import (
     # Unconstrained specs
     NormalWithTransformSpec,
     SigmoidNormalSpec,
-    ExpNormalSpec,
+    PositiveNormalSpec,
     SoftplusNormalSpec,
     # Biology-informed capture
     BiologyInformedCaptureSpec,
     # Hierarchical specs (gene-specific with learned hyperprior)
     HierarchicalNormalWithTransformSpec,
     HierarchicalSigmoidNormalSpec,
-    HierarchicalExpNormalSpec,
+    HierarchicalPositiveNormalSpec,
     # Dataset-level hierarchical specs
     DatasetHierarchicalNormalWithTransformSpec,
-    DatasetHierarchicalExpNormalSpec,
+    DatasetHierarchicalPositiveNormalSpec,
     DatasetHierarchicalSigmoidNormalSpec,
     # Horseshoe hierarchical specs (gene-level and dataset-level)
-    HorseshoeHierarchicalExpNormalSpec,
+    HorseshoeHierarchicalPositiveNormalSpec,
     HorseshoeHierarchicalSigmoidNormalSpec,
-    HorseshoeDatasetExpNormalSpec,
+    HorseshoeDatasetPositiveNormalSpec,
     HorseshoeDatasetSigmoidNormalSpec,
     # Horseshoe hyperparameter specs
     HalfCauchySpec,
@@ -81,9 +81,17 @@ from .parameter_specs import (
     # NEG hyperparameter and hierarchical specs
     GammaSpec,
     NEGHierarchicalSigmoidNormalSpec,
+    NEGHierarchicalPositiveNormalSpec,
+    NEGDatasetPositiveNormalSpec,
+    NEGDatasetSigmoidNormalSpec,
+    # Backward-compatible aliases (for old pickled models / downstream code)
+    ExpNormalSpec,
+    HierarchicalExpNormalSpec,
+    DatasetHierarchicalExpNormalSpec,
+    HorseshoeHierarchicalExpNormalSpec,
+    HorseshoeDatasetExpNormalSpec,
     NEGHierarchicalExpNormalSpec,
     NEGDatasetExpNormalSpec,
-    NEGDatasetSigmoidNormalSpec,
     # Latent specs (VAE z)
     LatentSpec,
     GaussianLatentSpec,
@@ -112,29 +120,37 @@ __all__ = [
     "DirichletSpec",
     "NormalWithTransformSpec",
     "SigmoidNormalSpec",
-    "ExpNormalSpec",
+    "PositiveNormalSpec",
     "SoftplusNormalSpec",
     # Biology-informed capture
     "BiologyInformedCaptureSpec",
     # Hierarchical specs
     "HierarchicalNormalWithTransformSpec",
     "HierarchicalSigmoidNormalSpec",
-    "HierarchicalExpNormalSpec",
+    "HierarchicalPositiveNormalSpec",
     "DatasetHierarchicalNormalWithTransformSpec",
-    "DatasetHierarchicalExpNormalSpec",
+    "DatasetHierarchicalPositiveNormalSpec",
     "DatasetHierarchicalSigmoidNormalSpec",
     # Horseshoe specs
-    "HorseshoeHierarchicalExpNormalSpec",
+    "HorseshoeHierarchicalPositiveNormalSpec",
     "HorseshoeHierarchicalSigmoidNormalSpec",
-    "HorseshoeDatasetExpNormalSpec",
+    "HorseshoeDatasetPositiveNormalSpec",
     "HorseshoeDatasetSigmoidNormalSpec",
     "HalfCauchySpec",
     "InverseGammaSpec",
     "GammaSpec",
     "NEGHierarchicalSigmoidNormalSpec",
+    "NEGHierarchicalPositiveNormalSpec",
+    "NEGDatasetPositiveNormalSpec",
+    "NEGDatasetSigmoidNormalSpec",
+    # Backward-compatible aliases
+    "ExpNormalSpec",
+    "HierarchicalExpNormalSpec",
+    "DatasetHierarchicalExpNormalSpec",
+    "HorseshoeHierarchicalExpNormalSpec",
+    "HorseshoeDatasetExpNormalSpec",
     "NEGHierarchicalExpNormalSpec",
     "NEGDatasetExpNormalSpec",
-    "NEGDatasetSigmoidNormalSpec",
     "LatentSpec",
     "GaussianLatentSpec",
     # Spec functions

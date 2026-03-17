@@ -12,11 +12,16 @@ import numpyro
 import numpyro.distributions as dist
 from multipledispatch import dispatch
 
-from .parameter_specs import LogNormalSpec, NormalWithTransformSpec, resolve_shape
+from .parameter_specs import (
+    LogNormalSpec,
+    NormalWithTransformSpec,
+    resolve_shape,
+)
 from ..components.guide_families import LowRankGuide
 
 if TYPE_CHECKING:
     from ..config import ModelConfig
+
 
 @dispatch(LogNormalSpec, LowRankGuide, dict, object)
 def setup_guide(
@@ -97,6 +102,7 @@ def setup_guide(
 
     return numpyro.sample(spec.name, transformed_dist)
 
+
 @dispatch(NormalWithTransformSpec, LowRankGuide, dict, object)
 def setup_guide(
     spec: NormalWithTransformSpec,
@@ -117,7 +123,8 @@ def setup_guide(
     Parameters
     ----------
     spec : NormalWithTransformSpec
-        Parameter specification (e.g., ExpNormalSpec for positive parameters).
+        Parameter specification (e.g., PositiveNormalSpec for positive
+        parameters).
     guide : LowRankGuide
         Low-rank guide marker with rank attribute.
     dims : Dict[str, int]
@@ -134,14 +141,14 @@ def setup_guide(
     Notes
     -----
     This handler enables low-rank guides for unconstrained models (e.g., models
-    using ExpNormalSpec, SigmoidNormalSpec). The low-rank MVN is defined in
+    using PositiveNormalSpec, SigmoidNormalSpec). The low-rank MVN is defined in
     unconstrained space, then wrapped with TransformedDistribution to apply the
     transform (exp, sigmoid, etc.) and handle Jacobian automatically.
 
     Examples
     --------
-    Works with ExpNormalSpec for positive parameters:
-        >>> spec = ExpNormalSpec("r", ("n_genes",), (0.0, 1.0))
+    Works with PositiveNormalSpec for positive parameters:
+        >>> spec = PositiveNormalSpec("r", ("n_genes",), (0.0, 1.0))
         >>> guide = LowRankGuide(rank=10)
         >>> setup_guide(spec, guide, {"n_genes": 100}, model_config)
         # Samples "r" from TransformedDistribution(LowRankMultivariateNormal, ExpTransform)

@@ -28,6 +28,7 @@ dirname_aliases:
     p_dataset_prior: pdataprior
     p_dataset_mode: pdatamode
     gate_dataset_prior: gdataprior
+    positive_transform: postransform
 
     # Frequently seen prior overrides
     priors.eta_capture: etaprior

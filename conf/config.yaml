@@ -68,6 +68,10 @@ neg_u: 1.0    # Inner Gamma shape (u=1 => NEG/Exponential; u=0.5 => horseshoe-li
 neg_a: 1.0    # Outer Gamma shape (controls tail weight)
 neg_tau: 1.0  # Global rate for outer Gamma
 
+# Transform for positive-valued hierarchical parameters (phi, mu, r).
+# "softplus" (default) prevents float32 overflow; "exp" restores log-Normal.
+positive_transform: "softplus"
+
 # --- Biology-Informed Capture Prior ---
 # Anchors p_capture to library size via known total mRNA per cell.
 # See paper/_capture_prior.qmd for derivation.

@@ -18,9 +18,9 @@ from numpyro.distributions import constraints
 
 from .parameter_specs import (
     GammaSpec,
-    NEGDatasetExpNormalSpec,
+    NEGDatasetPositiveNormalSpec,
     NEGDatasetSigmoidNormalSpec,
-    NEGHierarchicalExpNormalSpec,
+    NEGHierarchicalPositiveNormalSpec,
     NEGHierarchicalSigmoidNormalSpec,
     resolve_shape,
 )
@@ -97,7 +97,6 @@ def setup_guide(
         d = dist.Gamma(concentration, rate).to_event(len(shape))
 
     return numpyro.sample(spec.name, d)
-
 
 
 # ------------------------------------------------------------------------------
@@ -235,13 +234,13 @@ def setup_guide(
 
 
 # ------------------------------------------------------------------------------
-# NEGHierarchicalExpNormalSpec MeanField Guide (Normal for raw NCP site)
+# NEGHierarchicalPositiveNormalSpec MeanField Guide (Normal for raw NCP site)
 # ------------------------------------------------------------------------------
 
 
-@dispatch(NEGHierarchicalExpNormalSpec, MeanFieldGuide, dict, object)
+@dispatch(NEGHierarchicalPositiveNormalSpec, MeanFieldGuide, dict, object)
 def setup_guide(
-    spec: NEGHierarchicalExpNormalSpec,
+    spec: NEGHierarchicalPositiveNormalSpec,
     guide: MeanFieldGuide,
     dims: Dict[str, int],
     model_config: "ModelConfig",
@@ -251,7 +250,7 @@ def setup_guide(
 
     Parameters
     ----------
-    spec : NEGHierarchicalExpNormalSpec
+    spec : NEGHierarchicalPositiveNormalSpec
         NEG gene-level phi specification.
     guide : MeanFieldGuide
         Mean-field guide marker.
@@ -291,13 +290,13 @@ def setup_guide(
 
 
 # ------------------------------------------------------------------------------
-# NEGHierarchicalExpNormalSpec LowRank Guide
+# NEGHierarchicalPositiveNormalSpec LowRank Guide
 # ------------------------------------------------------------------------------
 
 
-@dispatch(NEGHierarchicalExpNormalSpec, LowRankGuide, dict, object)
+@dispatch(NEGHierarchicalPositiveNormalSpec, LowRankGuide, dict, object)
 def setup_guide(
-    spec: NEGHierarchicalExpNormalSpec,
+    spec: NEGHierarchicalPositiveNormalSpec,
     guide: LowRankGuide,
     dims: Dict[str, int],
     model_config: "ModelConfig",
@@ -307,7 +306,7 @@ def setup_guide(
 
     Parameters
     ----------
-    spec : NEGHierarchicalExpNormalSpec
+    spec : NEGHierarchicalPositiveNormalSpec
         NEG gene-level phi specification.
     guide : LowRankGuide
         Low-rank guide marker with rank.
@@ -363,13 +362,13 @@ def setup_guide(
 
 
 # ------------------------------------------------------------------------------
-# NEGDatasetExpNormalSpec MeanField Guide (Normal for raw NCP site)
+# NEGDatasetPositiveNormalSpec MeanField Guide (Normal for raw NCP site)
 # ------------------------------------------------------------------------------
 
 
-@dispatch(NEGDatasetExpNormalSpec, MeanFieldGuide, dict, object)
+@dispatch(NEGDatasetPositiveNormalSpec, MeanFieldGuide, dict, object)
 def setup_guide(
-    spec: NEGDatasetExpNormalSpec,
+    spec: NEGDatasetPositiveNormalSpec,
     guide: MeanFieldGuide,
     dims: Dict[str, int],
     model_config: "ModelConfig",
@@ -379,7 +378,7 @@ def setup_guide(
 
     Parameters
     ----------
-    spec : NEGDatasetExpNormalSpec
+    spec : NEGDatasetPositiveNormalSpec
         NEG dataset-level mu/r specification.
     guide : MeanFieldGuide
         Mean-field guide marker.
@@ -419,13 +418,13 @@ def setup_guide(
 
 
 # ------------------------------------------------------------------------------
-# NEGDatasetExpNormalSpec LowRank Guide
+# NEGDatasetPositiveNormalSpec LowRank Guide
 # ------------------------------------------------------------------------------
 
 
-@dispatch(NEGDatasetExpNormalSpec, LowRankGuide, dict, object)
+@dispatch(NEGDatasetPositiveNormalSpec, LowRankGuide, dict, object)
 def setup_guide(
-    spec: NEGDatasetExpNormalSpec,
+    spec: NEGDatasetPositiveNormalSpec,
     guide: LowRankGuide,
     dims: Dict[str, int],
     model_config: "ModelConfig",
@@ -435,7 +434,7 @@ def setup_guide(
 
     Parameters
     ----------
-    spec : NEGDatasetExpNormalSpec
+    spec : NEGDatasetPositiveNormalSpec
         NEG dataset-level mu/r specification.
     guide : LowRankGuide
         Low-rank guide marker with rank.

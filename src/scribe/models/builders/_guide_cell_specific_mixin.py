@@ -24,6 +24,7 @@ from ..components.guide_families import MeanFieldGuide
 if TYPE_CHECKING:
     from ..config import ModelConfig
 
+
 @dispatch(BetaSpec, MeanFieldGuide, dict, object)
 def setup_cell_specific_guide(
     spec: BetaSpec,
@@ -143,6 +144,7 @@ def setup_cell_specific_guide(
             spec.name, BetaPrime(alpha[batch_idx], beta[batch_idx])
         )
 
+
 @dispatch(NormalWithTransformSpec, MeanFieldGuide, dict, object)
 def setup_cell_specific_guide(
     spec: NormalWithTransformSpec,
@@ -154,13 +156,13 @@ def setup_cell_specific_guide(
 ) -> jnp.ndarray:
     """MeanField guide for cell-specific unconstrained parameters.
 
-    Works for SigmoidNormalSpec (Beta -> [0,1]), ExpNormalSpec (BetaPrime ->
-    [0,+inf)), and other NormalWithTransformSpec subclasses.
+    Works for SigmoidNormalSpec (Beta -> [0,1]), PositiveNormalSpec (BetaPrime
+    -> [0,+inf)), and other NormalWithTransformSpec subclasses.
 
     Parameters
     ----------
     spec : NormalWithTransformSpec
-        Parameter specification (SigmoidNormalSpec, ExpNormalSpec, etc.).
+        Parameter specification (SigmoidNormalSpec, PositiveNormalSpec, etc.).
     guide : MeanFieldGuide
         Mean-field guide marker.
     dims : Dict[str, int]

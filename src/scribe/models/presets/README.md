@@ -240,7 +240,7 @@ Use Normal + transform instead of constrained distributions:
 model, guide = create_model_from_params(
     model="nbdm",
     parameterization="canonical",
-    unconstrained=True,  # p ~ sigmoid(Normal), r ~ exp(Normal)
+    unconstrained=True,  # p ~ sigmoid(Normal), r ~ positive transform(Normal)
 )
 ```
 
@@ -325,8 +325,8 @@ horseshoe config from ModelConfig.
 
 - `_horseshoe_mu(param_specs, param_key, tau0, slab_df, slab_scale)`: Upgrades
   gene-level hierarchical mu/r to horseshoe. Replaces `log_mu_scale`
-  (SoftplusNormalSpec) with horseshoe trio, and `HierarchicalExpNormalSpec`
-  with `HorseshoeHierarchicalExpNormalSpec`. Dispatched when
+  (SoftplusNormalSpec) with horseshoe trio, and `HierarchicalPositiveNormalSpec`
+  with `HorseshoeHierarchicalPositiveNormalSpec`. Dispatched when
   `model_config.mu_prior == HORSESHOE`.
 
 **NEG:** Gene-level: `_neg_p`, `_neg_gate`, `_neg_mu`. Dataset-level:
@@ -336,8 +336,8 @@ extracts NEG config from ModelConfig.
 
 - `_neg_mu(param_specs, param_key, u, a, tau)`: Upgrades gene-level
   hierarchical mu/r to NEG. Replaces `log_mu_scale` with zeta/psi pair, and
-  `HierarchicalExpNormalSpec` with `NEGHierarchicalExpNormalSpec`. Dispatched
-  when `model_config.mu_prior == NEG`.
+  `HierarchicalPositiveNormalSpec` with `NEGHierarchicalPositiveNormalSpec`.
+  Dispatched when `model_config.mu_prior == NEG`.
 
 Both `_horseshoe_mu` and `_neg_mu` are applied only when
 `model_config.mu_prior != _NONE` (i.e., when gene-level hierarchical mu is

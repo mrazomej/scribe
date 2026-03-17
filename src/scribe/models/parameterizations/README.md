@@ -195,7 +195,7 @@ PARAMETERIZATIONS["my_param"] = MyParameterization()
 
 - `scribe.models.presets`: Preset factories that use parameterizations
 - `scribe.models.builders.parameter_specs`: Parameter specification classes,
-  including `HierarchicalSigmoidNormalSpec` and `HierarchicalExpNormalSpec` for
-  hierarchical gene-specific parameters
+  including `HierarchicalSigmoidNormalSpec` and `HierarchicalPositiveNormalSpec`
+  for hierarchical gene-specific parameters
 - `scribe.models.components.likelihoods`: Likelihoods that handle parameter
   transformations and gene-specific `p` broadcasting

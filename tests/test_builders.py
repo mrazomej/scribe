@@ -27,7 +27,7 @@ from scribe.models.builders import (
     LogNormalSpec,
     BetaPrimeSpec,
     SigmoidNormalSpec,
-    ExpNormalSpec,
+    PositiveNormalSpec,
     ModelBuilder,
     GuideBuilder,
     resolve_shape,
@@ -152,8 +152,8 @@ class TestParameterSpecs:
         assert hasattr(spec, "arg_constraints")
 
     def test_exp_normal_spec_support(self):
-        """Test ExpNormalSpec has correct support via transform."""
-        spec = ExpNormalSpec(
+        """Test PositiveNormalSpec has correct support via transform."""
+        spec = PositiveNormalSpec(
             name="r", shape_dims=("n_genes",), default_params=(0.0, 1.0)
         )
         # Support derived from transform codomain
@@ -1377,12 +1377,14 @@ class TestJointLowRankGuide:
     """Test JointLowRankGuide: chain rule decomposition with Woodbury conditioning."""
 
     def test_joint_guide_two_params(self, model_config, small_counts):
-        """Test joint guide with two gene-specific ExpNormalSpec parameters."""
+        """
+        Test joint guide with two gene-specific PositiveNormalSpec parameters.
+        """
         from scribe.models.components import JointLowRankGuide
 
         joint = JointLowRankGuide(rank=5, group="nb_params")
         specs = [
-            ExpNormalSpec(
+            PositiveNormalSpec(
                 name="mu",
                 shape_dims=("n_genes",),
                 default_params=(0.0, 1.0),
@@ -1390,7 +1392,7 @@ class TestJointLowRankGuide:
                 guide_family=joint,
                 constrained_name="mu",
             ),
-            ExpNormalSpec(
+            PositiveNormalSpec(
                 name="phi",
                 shape_dims=("n_genes",),
                 default_params=(0.0, 1.0),
@@ -1429,7 +1431,7 @@ class TestJointLowRankGuide:
 
         joint = JointLowRankGuide(rank=3, group="test")
         specs = [
-            ExpNormalSpec(
+            PositiveNormalSpec(
                 name="mu",
                 shape_dims=("n_genes",),
                 default_params=(0.0, 1.0),
@@ -1437,7 +1439,7 @@ class TestJointLowRankGuide:
                 guide_family=joint,
                 constrained_name="mu",
             ),
-            ExpNormalSpec(
+            PositiveNormalSpec(
                 name="phi",
                 shape_dims=("n_genes",),
                 default_params=(0.0, 1.0),
@@ -1476,7 +1478,7 @@ class TestJointLowRankGuide:
 
         joint = JointLowRankGuide(rank=4, group="zinb_params")
         specs = [
-            ExpNormalSpec(
+            PositiveNormalSpec(
                 name="mu",
                 shape_dims=("n_genes",),
                 default_params=(0.0, 1.0),
@@ -1484,7 +1486,7 @@ class TestJointLowRankGuide:
                 guide_family=joint,
                 constrained_name="mu",
             ),
-            ExpNormalSpec(
+            PositiveNormalSpec(
                 name="phi",
                 shape_dims=("n_genes",),
                 default_params=(0.0, 1.0),
@@ -1531,7 +1533,7 @@ class TestJointLowRankGuide:
         joint = JointLowRankGuide(rank=5, group="nb")
         specs = [
             # These two are jointly modeled
-            ExpNormalSpec(
+            PositiveNormalSpec(
                 name="mu",
                 shape_dims=("n_genes",),
                 default_params=(0.0, 1.0),
@@ -1539,7 +1541,7 @@ class TestJointLowRankGuide:
                 guide_family=joint,
                 constrained_name="mu",
             ),
-            ExpNormalSpec(
+            PositiveNormalSpec(
                 name="phi",
                 shape_dims=("n_genes",),
                 default_params=(0.0, 1.0),
@@ -1548,7 +1550,7 @@ class TestJointLowRankGuide:
                 constrained_name="phi",
             ),
             # This one is independent (separate LowRank)
-            ExpNormalSpec(
+            PositiveNormalSpec(
                 name="r_extra",
                 shape_dims=("n_genes",),
                 default_params=(0.0, 1.0),
@@ -1579,7 +1581,7 @@ class TestJointLowRankGuide:
 
         joint = JointLowRankGuide(rank=5, group="mygroup")
         specs = [
-            ExpNormalSpec(
+            PositiveNormalSpec(
                 name="mu",
                 shape_dims=("n_genes",),
                 default_params=(0.0, 1.0),
@@ -1587,7 +1589,7 @@ class TestJointLowRankGuide:
                 guide_family=joint,
                 constrained_name="mu",
             ),
-            ExpNormalSpec(
+            PositiveNormalSpec(
                 name="phi",
                 shape_dims=("n_genes",),
                 default_params=(0.0, 1.0),
@@ -2332,7 +2334,7 @@ class TestJointLowRankIntegration:
         joint = JointLowRankGuide(rank=3, group="test")
         # Scalar phi (is_gene_specific=False) + gene-specific mu
         specs = [
-            ExpNormalSpec(
+            PositiveNormalSpec(
                 name="phi",
                 shape_dims=(),
                 default_params=(0.0, 1.0),
@@ -2340,7 +2342,7 @@ class TestJointLowRankIntegration:
                 guide_family=joint,
                 constrained_name="phi",
             ),
-            ExpNormalSpec(
+            PositiveNormalSpec(
                 name="mu",
                 shape_dims=("n_genes",),
                 default_params=(0.0, 1.0),
@@ -2418,7 +2420,7 @@ class TestJointLowRankIntegration:
 
         joint = JointLowRankGuide(rank=4, group="zinb")
         specs = [
-            ExpNormalSpec(
+            PositiveNormalSpec(
                 name="phi",
                 shape_dims=(),
                 default_params=(0.0, 1.0),
@@ -2426,7 +2428,7 @@ class TestJointLowRankIntegration:
                 guide_family=joint,
                 constrained_name="phi",
             ),
-            ExpNormalSpec(
+            PositiveNormalSpec(
                 name="mu",
                 shape_dims=("n_genes",),
                 default_params=(0.0, 1.0),
@@ -2466,18 +2468,18 @@ class TestJointLowRankIntegration:
     def test_joint_heterogeneous_batch_mismatch_raises(self):
         """Mismatched batch dims in heterogeneous joint group raises."""
         from scribe.models.builders.guide_builder import setup_joint_guide
-        from scribe.models.builders.parameter_specs import ExpNormalSpec
+        from scribe.models.builders.parameter_specs import PositiveNormalSpec
         from scribe.models.components import JointLowRankGuide
 
         # phi is_mixture=True (batch=n_components), mu is_mixture=False (no batch)
-        spec_phi = ExpNormalSpec(
+        spec_phi = PositiveNormalSpec(
             name="phi",
             shape_dims=(),
             default_params=(0.0, 1.0),
             is_gene_specific=False,
             is_mixture=True,
         )
-        spec_mu = ExpNormalSpec(
+        spec_mu = PositiveNormalSpec(
             name="mu",
             shape_dims=("n_genes",),
             default_params=(0.0, 1.0),
@@ -2730,7 +2732,14 @@ class TestPosteriorContractExtraction:
                     "phi_raw_loc": jnp.zeros((4,)),
                     "phi_raw_scale": jnp.ones((4,)),
                 },
-                {"mu", "log_phi_loc", "tau_phi", "lambda_phi", "c_sq_phi", "phi_raw"},
+                {
+                    "mu",
+                    "log_phi_loc",
+                    "tau_phi",
+                    "lambda_phi",
+                    "c_sq_phi",
+                    "phi_raw",
+                },
                 {
                     "mu": "transformed_distribution",
                     "log_phi_loc": "transformed_distribution",
@@ -2995,10 +3004,14 @@ class TestPosteriorContractExtraction:
         assert set(distributions.keys()) == expected_keys, case_name
 
         for key, kind in expected_kind.items():
-            assert self._dist_kind(distributions[key]) == kind, f"{case_name}:{key}"
+            assert (
+                self._dist_kind(distributions[key]) == kind
+            ), f"{case_name}:{key}"
 
         for key, shape in expected_shape.items():
-            assert self._dist_shape(distributions[key]) == shape, f"{case_name}:{key}"
+            assert (
+                self._dist_shape(distributions[key]) == shape
+            ), f"{case_name}:{key}"
 
         # Joint outputs must expose consistent concatenation metadata.
         for key, value in distributions.items():

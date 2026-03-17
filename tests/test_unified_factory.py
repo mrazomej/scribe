@@ -1515,3 +1515,62 @@ class TestExtractGuidesFromParamSpecs:
         """Verify the function returns a dict (regression for missing return)."""
         result = _extract_guides_from_param_specs([])
         assert isinstance(result, dict)
+
+
+# ==============================================================================
+# Test positive_transform Factory Behavior
+# ==============================================================================
+
+
+class TestPositiveTransformFactory:
+    """Test that create_model produces specs with the correct transform.
+
+    The factory reads positive_transform from ModelConfig and passes the
+    corresponding numpyro transform (SoftplusTransform or ExpTransform)
+    into hierarchical parameter specs (e.g. phi in mean_odds with p_prior).
+    """
+
+    def test_positive_transform_softplus_default(self):
+        """Default positive_transform='softplus' produces SoftplusTransform specs.
+
+        When using hierarchical prior (p_prior='gaussian') with mean_odds
+        parameterization, the phi spec should use SoftplusTransform for
+        numerical stability.
+        """
+        import numpyro.distributions as dist
+
+        from scribe.models.config import ModelConfig
+
+        # Config with hierarchical phi; positive_transform defaults to softplus
+        config = ModelConfig(
+            base_model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            p_prior="gaussian",
+        )
+        _, _, param_specs = create_model(config, validate=False)
+        # Locate the phi spec (HierarchicalPositiveNormalSpec) from the triplet
+        phi_spec = next(s for s in param_specs if s.name == "phi")
+        assert isinstance(phi_spec.transform, dist.transforms.SoftplusTransform)
+
+    def test_positive_transform_exp_override(self):
+        """positive_transform='exp' produces ExpTransform specs.
+
+        When explicitly setting positive_transform='exp', the phi spec
+        should use ExpTransform (classic log-Normal behavior).
+        """
+        import numpyro.distributions as dist
+
+        from scribe.models.config import ModelConfig
+
+        # Config with hierarchical phi and explicit exp transform
+        config = ModelConfig(
+            base_model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            p_prior="gaussian",
+            positive_transform="exp",
+        )
+        _, _, param_specs = create_model(config, validate=False)
+        phi_spec = next(s for s in param_specs if s.name == "phi")
+        assert isinstance(phi_spec.transform, dist.transforms.ExpTransform)

@@ -27,8 +27,8 @@ NormalWithTransformSpec
     Base class for transformed Normal parameters.
 SigmoidNormalSpec
     Normal + sigmoid transform (support: (0, 1)).
-ExpNormalSpec
-    Normal + exp transform (support: (0, ∞)).
+PositiveNormalSpec
+    Normal + configurable positive transform (support: (0, ∞)).
 SoftplusNormalSpec
     Normal + softplus transform (support: (0, ∞)).
 GammaSpec
@@ -39,10 +39,10 @@ InverseGammaSpec
     Inverse-Gamma distributed parameter; horseshoe slab.
 NEGHierarchicalSigmoidNormalSpec
     Gene-level NEG prior with Sigmoid transform (p, gate).
-NEGHierarchicalExpNormalSpec
-    Gene-level NEG prior with Exp transform (phi).
-NEGDatasetExpNormalSpec
-    Dataset-level NEG prior with Exp transform (mu).
+NEGHierarchicalPositiveNormalSpec
+    Gene-level NEG prior with configurable positive transform (phi).
+NEGDatasetPositiveNormalSpec
+    Dataset-level NEG prior with configurable positive transform (mu).
 NEGDatasetSigmoidNormalSpec
     Dataset-level NEG prior with Sigmoid transform (p, gate).
 LatentSpec
@@ -500,7 +500,7 @@ class ParamSpec(BaseModel):
         """
         Build guide distribution from amortizer output (AmortizedOutput.params).
 
-        Only BetaSpec, BetaPrimeSpec, SigmoidNormalSpec, and ExpNormalSpec
+        Only BetaSpec, BetaPrimeSpec, SigmoidNormalSpec, and PositiveNormalSpec
         support amortization. Others raise NotImplementedError.
 
         Parameters
@@ -521,7 +521,7 @@ class ParamSpec(BaseModel):
         """
         raise NotImplementedError(
             f"Amortized guides are not supported for spec type {type(self).__name__}. "
-            "Supported specs: BetaSpec, BetaPrimeSpec, SigmoidNormalSpec, ExpNormalSpec."
+            "Supported specs: BetaSpec, BetaPrimeSpec, SigmoidNormalSpec, PositiveNormalSpec."
         )
 
     @property
@@ -888,7 +888,8 @@ class NormalWithTransformSpec(ParamSpec):
     See Also
     --------
     SigmoidNormalSpec : Normal + sigmoid.
-    ExpNormalSpec : Normal + exp.
+    PositiveNormalSpec : Normal + configurable positive transform (exp or
+    softplus).
     SoftplusNormalSpec : Normal + softplus.
 
     References
@@ -1014,14 +1015,16 @@ class SigmoidNormalSpec(NormalWithTransformSpec):
 
 
 # ------------------------------------------------------------------------------
-# Normal with Exp Transform Parameter Specification
+# Normal with Configurable Positive Transform Parameter Specification
 # ------------------------------------------------------------------------------
 
 
-class ExpNormalSpec(NormalWithTransformSpec):
-    """Normal + ExpTransform. For parameters in (0, ∞).
+class PositiveNormalSpec(NormalWithTransformSpec):
+    """Normal + configurable positive transform. For parameters in (0, ∞).
 
-    Samples from Normal, then applies exp to constrain to positive values.
+    Samples from Normal, then applies a positive transform (default:
+    ExpTransform, overridable by the factory to SoftplusTransform for
+    numerical stability) to constrain to positive values.
     Equivalent to LogNormal in the unconstrained parameterization.
 
     Parameters
@@ -1040,7 +1043,7 @@ class ExpNormalSpec(NormalWithTransformSpec):
     Examples
     --------
     >>> # Unconstrained dispersion
-    >>> ExpNormalSpec("r", ("n_genes",), (0.0, 1.0), is_gene_specific=True)
+    >>> PositiveNormalSpec("r", ("n_genes",), (0.0, 1.0), is_gene_specific=True)
     """
 
     transform: Transform = Field(
@@ -1153,8 +1156,7 @@ class BiologyInformedCaptureSpec(ParamSpec):
     use_phi_capture: bool = Field(
         ...,
         description=(
-            "True → phi_capture = exp(eta)-1; "
-            "False → p_capture = exp(-eta)."
+            "True → phi_capture = exp(eta)-1; " "False → p_capture = exp(-eta)."
         ),
     )
 
@@ -1243,7 +1245,8 @@ class HierarchicalNormalWithTransformSpec(NormalWithTransformSpec):
         If ``True``, parameter is per-component per-gene.
     transform : Transform
         NumPyro transform applied to the base Normal sample
-        (e.g., ``SigmoidTransform`` for (0,1), ``ExpTransform`` for (0,∞)).
+        (e.g., ``SigmoidTransform`` for (0,1), ``ExpTransform`` or
+        ``SoftplusTransform`` for (0,∞)).
 
     Examples
     --------
@@ -1260,7 +1263,7 @@ class HierarchicalNormalWithTransformSpec(NormalWithTransformSpec):
     See Also
     --------
     HierarchicalSigmoidNormalSpec : Sigmoid-transformed hierarchical spec.
-    HierarchicalExpNormalSpec : Exp-transformed hierarchical spec.
+    HierarchicalPositiveNormalSpec : Positive-transform hierarchical spec.
     """
 
     hyper_loc_name: str = Field(
@@ -1385,20 +1388,22 @@ class HierarchicalSigmoidNormalSpec(HierarchicalNormalWithTransformSpec):
 
 
 # ------------------------------------------------------------------------------
-# Hierarchical Exp Normal Specification
+# Hierarchical Positive Normal Specification
 # ------------------------------------------------------------------------------
 
 
-class HierarchicalExpNormalSpec(HierarchicalNormalWithTransformSpec):
-    """Hierarchical Normal + Exp for gene-specific parameters in (0, ∞).
+class HierarchicalPositiveNormalSpec(HierarchicalNormalWithTransformSpec):
+    """
+    Hierarchical Normal + positive transform for gene-specific parameters in (0,
+    ∞).
 
     Generative model::
 
         log_phi_loc   ~ Normal(0, 1)            [global hyperparameter]
         log_phi_scale ~ Softplus(Normal(0, 1))   [global hyperparameter]
-        phi_g = exp(Normal(log_phi_loc, log_phi_scale))  [per gene]
+        phi_g = transform(Normal(log_phi_loc, log_phi_scale))  [per gene; transform = exp or softplus]
 
-    This is the hierarchical extension of ``ExpNormalSpec``, used for
+    This is the hierarchical extension of ``PositiveNormalSpec``, used for
     gene-specific odds ratio ``phi_g`` in the hierarchical mean_odds
     parameterization.
 
@@ -1417,7 +1422,7 @@ class HierarchicalExpNormalSpec(HierarchicalNormalWithTransformSpec):
 
     Examples
     --------
-    >>> spec = HierarchicalExpNormalSpec(
+    >>> spec = HierarchicalPositiveNormalSpec(
     ...     name="phi",
     ...     shape_dims=("n_genes",),
     ...     default_params=(0.0, 1.0),
@@ -1429,7 +1434,7 @@ class HierarchicalExpNormalSpec(HierarchicalNormalWithTransformSpec):
     Notes
     -----
     When ``log_phi_scale`` is small, genes have similar odds ratios
-    (strong shrinkage toward ``exp(log_phi_loc)``).  When large,
+    (strong shrinkage toward the transformed location).  When large,
     genes can have widely varying phi values.
     """
 
@@ -1554,14 +1559,15 @@ class HorseshoeHierarchicalSigmoidNormalSpec(
         return constrained
 
 
-class HorseshoeHierarchicalExpNormalSpec(
+class HorseshoeHierarchicalPositiveNormalSpec(
     HierarchicalNormalWithTransformSpec
 ):
-    """Gene-level horseshoe prior with Exp transform and NCP.
+    """Gene-level horseshoe prior with positive transform and NCP.
 
     Identical to ``HorseshoeHierarchicalSigmoidNormalSpec`` but applies
-    an Exp transform so the constrained parameter lives in ``(0, inf)``.
-    Used for ``phi`` (odds ratio) under ``mean_odds`` parameterization.
+    a positive transform (exp or softplus) so the constrained parameter
+    lives in ``(0, inf)``.  Used for ``phi`` (odds ratio) under
+    ``mean_odds`` parameterization.
 
     Generative model (NCP form)::
 
@@ -1570,12 +1576,12 @@ class HorseshoeHierarchicalExpNormalSpec(
         c^2       ~ InvGamma(slab_df/2, slab_df*s^2/2)
         lt_g      = c * lambda_g / sqrt(c^2 + tau^2 * lambda_g^2)
         z_g       ~ Normal(0, 1)
-        phi_g     = exp(hyper_loc + tau * lt_g * z_g)
+        phi_g     = transform(hyper_loc + tau * lt_g * z_g)  [transform = exp or softplus]
 
     See Also
     --------
     HorseshoeHierarchicalSigmoidNormalSpec : Sigmoid variant for p / gate.
-    HorseshoeDatasetExpNormalSpec : Dataset-level variant.
+    HorseshoeDatasetPositiveNormalSpec : Dataset-level variant.
     """
 
     tau_name: str = Field(
@@ -1602,7 +1608,7 @@ class HorseshoeHierarchicalExpNormalSpec(
         dims: Dict[str, int],
         param_values: Dict[str, jnp.ndarray],
     ) -> jnp.ndarray:
-        """Sample via NCP: z ~ N(0,1), then deterministic Exp transform.
+        """Sample via NCP: z ~ N(0,1), then deterministic positive transform.
 
         Parameters
         ----------
@@ -1687,7 +1693,7 @@ class DatasetHierarchicalNormalWithTransformSpec(NormalWithTransformSpec):
 
     See Also
     --------
-    DatasetHierarchicalExpNormalSpec : Exp-transformed variant for (0, inf).
+    DatasetHierarchicalPositiveNormalSpec : Positive-transform variant for (0, inf).
     DatasetHierarchicalSigmoidNormalSpec : Sigmoid-transformed variant for (0, 1).
     """
 
@@ -1787,9 +1793,7 @@ class DatasetHierarchicalNormalWithTransformSpec(NormalWithTransformSpec):
         ):
             K = dims["n_components"]
             mask = jnp.zeros(K, dtype=bool)
-            mask = mask.at[
-                jnp.array(self.shared_component_indices)
-            ].set(True)
+            mask = mask.at[jnp.array(self.shared_component_indices)].set(True)
             # Reshape mask for broadcasting: (K,) → (K, 1, ..., 1)
             n_trailing = len(shape) - 1
             for _ in range(n_trailing):
@@ -1810,28 +1814,28 @@ class DatasetHierarchicalNormalWithTransformSpec(NormalWithTransformSpec):
 
 
 # ------------------------------------------------------------------------------
-# Dataset Hierarchical Exp Normal (for mu, r, phi — positive params)
+# Dataset Hierarchical Positive Normal (for mu, r, phi — positive params)
 # ------------------------------------------------------------------------------
 
 
-class DatasetHierarchicalExpNormalSpec(
+class DatasetHierarchicalPositiveNormalSpec(
     DatasetHierarchicalNormalWithTransformSpec
 ):
     """
-    Dataset-level hierarchical Normal + Exp for per-dataset parameters in (0,
-    inf).
+    Dataset-level hierarchical Normal + positive transform for per-dataset
+    parameters in (0, inf).
 
     Generative model::
 
         log_mu_loc   ~ Normal(0, 1)             [population hyperparameter]
         log_mu_scale ~ Softplus(Normal(0, 0.5))  [population hyperparameter]
-        mu^(d) = exp(Normal(log_mu_loc, log_mu_scale))  [per dataset]
+        mu^(d) = transform(Normal(log_mu_loc, log_mu_scale))  [per dataset; transform = exp or softplus]
 
     For gene-specific variants, the shape is ``(n_datasets, n_genes)``.
 
     Examples
     --------
-    >>> spec = DatasetHierarchicalExpNormalSpec(
+    >>> spec = DatasetHierarchicalPositiveNormalSpec(
     ...     name="mu",
     ...     shape_dims=("n_genes",),
     ...     default_params=(0.0, 1.0),
@@ -1887,10 +1891,12 @@ class DatasetHierarchicalSigmoidNormalSpec(
 # ==============================================================================
 
 
-class HorseshoeDatasetExpNormalSpec(DatasetHierarchicalNormalWithTransformSpec):
-    """Dataset-level horseshoe prior with Exp transform and NCP.
+class HorseshoeDatasetPositiveNormalSpec(
+    DatasetHierarchicalNormalWithTransformSpec
+):
+    """Dataset-level horseshoe prior with positive transform and NCP.
 
-    Replaces the single global scale of ``DatasetHierarchicalExpNormalSpec``
+    Replaces the single global scale of ``DatasetHierarchicalPositiveNormalSpec``
     with a regularized horseshoe structure.  Uses NCP: samples
     ``z_{g,d} ~ Normal(0, 1)`` and computes ``mu_g^{(d)}`` deterministically.
 
@@ -1901,7 +1907,7 @@ class HorseshoeDatasetExpNormalSpec(DatasetHierarchicalNormalWithTransformSpec):
         c^2        ~ InvGamma(slab_df/2, slab_df*s^2/2)  [slab]
         lt_g       = c * lambda_g / sqrt(c^2 + tau^2 * lambda_g^2)
         z_{g,d}    ~ Normal(0, 1)                        [NCP raw, (D, G)]
-        mu_g^{(d)} = exp(hyper_loc_g + tau * lt_g * z_{g,d})  [deterministic]
+        mu_g^{(d)} = transform(hyper_loc_g + tau * lt_g * z_{g,d})  [deterministic; transform = exp or softplus]
 
     Parameters
     ----------
@@ -1918,7 +1924,7 @@ class HorseshoeDatasetExpNormalSpec(DatasetHierarchicalNormalWithTransformSpec):
 
     See Also
     --------
-    DatasetHierarchicalExpNormalSpec : Normal-hierarchy version.
+    DatasetHierarchicalPositiveNormalSpec : Normal-hierarchy version.
     HorseshoeHierarchicalSigmoidNormalSpec : Gene-level variant.
     """
 
@@ -2364,12 +2370,13 @@ class NEGHierarchicalSigmoidNormalSpec(HierarchicalNormalWithTransformSpec):
         return constrained
 
 
-class NEGHierarchicalExpNormalSpec(HierarchicalNormalWithTransformSpec):
-    """Gene-level NEG prior with Exp transform and NCP.
+class NEGHierarchicalPositiveNormalSpec(HierarchicalNormalWithTransformSpec):
+    """Gene-level NEG prior with positive transform and NCP.
 
-    Identical to ``NEGHierarchicalSigmoidNormalSpec`` but applies an Exp
-    transform so the constrained parameter lives in ``(0, inf)``.  Used
-    for ``phi`` (odds ratio) under ``mean_odds`` parameterization.
+    Identical to ``NEGHierarchicalSigmoidNormalSpec`` but applies a
+    positive transform (exp or softplus) so the constrained parameter
+    lives in ``(0, inf)``.  Used for ``phi`` (odds ratio) under
+    ``mean_odds`` parameterization.
     """
 
     psi_name: str = Field(
@@ -2393,7 +2400,7 @@ class NEGHierarchicalExpNormalSpec(HierarchicalNormalWithTransformSpec):
         dims: Dict[str, int],
         param_values: Dict[str, jnp.ndarray],
     ) -> jnp.ndarray:
-        """Sample via NCP: z ~ N(0,1), then deterministic exp transform."""
+        """Sample via NCP: z ~ N(0,1), then deterministic positive transform."""
         loc = param_values[self.hyper_loc_name]
         psi = param_values[self.psi_name]
 
@@ -2423,8 +2430,8 @@ class NEGHierarchicalExpNormalSpec(HierarchicalNormalWithTransformSpec):
 # ==============================================================================
 
 
-class NEGDatasetExpNormalSpec(DatasetHierarchicalNormalWithTransformSpec):
-    """Dataset-level NEG prior with Exp transform (for mu/r datasets).
+class NEGDatasetPositiveNormalSpec(DatasetHierarchicalNormalWithTransformSpec):
+    """Dataset-level NEG prior with positive transform (for mu/r datasets).
 
     Replaces the horseshoe's Half-Cauchy scales with the NEG Gamma-Gamma
     hierarchy at the dataset level.
@@ -2451,7 +2458,7 @@ class NEGDatasetExpNormalSpec(DatasetHierarchicalNormalWithTransformSpec):
         dims: Dict[str, int],
         param_values: Dict[str, jnp.ndarray],
     ) -> jnp.ndarray:
-        """Sample via NCP: z ~ N(0,1), then deterministic exp transform."""
+        """Sample via NCP: z ~ N(0,1), then deterministic positive transform."""
         loc = param_values[self.hyper_loc_name]
         psi = param_values[self.psi_name]
 
@@ -3148,3 +3155,17 @@ def sample_prior(
     # Biology-informed with fixed M_0: no-op here; VCP likelihood handles
     # per-cell eta_c sampling
     return None
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible aliases for pickle deserialization of old models.
+# Old checkpoints reference the *Exp* names; these aliases ensure
+# unpickling resolves to the renamed *Positive* classes.
+# ---------------------------------------------------------------------------
+ExpNormalSpec = PositiveNormalSpec
+HierarchicalExpNormalSpec = HierarchicalPositiveNormalSpec
+DatasetHierarchicalExpNormalSpec = DatasetHierarchicalPositiveNormalSpec
+HorseshoeHierarchicalExpNormalSpec = HorseshoeHierarchicalPositiveNormalSpec
+HorseshoeDatasetExpNormalSpec = HorseshoeDatasetPositiveNormalSpec
+NEGHierarchicalExpNormalSpec = NEGHierarchicalPositiveNormalSpec
+NEGDatasetExpNormalSpec = NEGDatasetPositiveNormalSpec

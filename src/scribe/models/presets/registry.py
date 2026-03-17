@@ -39,7 +39,7 @@ from ..builders.parameter_specs import (
     BiologyInformedCaptureSpec,
     BetaPrimeSpec,
     BetaSpec,
-    ExpNormalSpec,
+    PositiveNormalSpec,
     HierarchicalSigmoidNormalSpec,
     NormalWithTransformSpec,
     ParamSpec,
@@ -357,7 +357,7 @@ def build_capture_spec(
 
     if unconstrained:
         if use_phi_capture:
-            return ExpNormalSpec(
+            return PositiveNormalSpec(
                 name=capture_param_name,
                 shape_dims=("n_cells",),
                 default_params=(0.0, 1.0),
