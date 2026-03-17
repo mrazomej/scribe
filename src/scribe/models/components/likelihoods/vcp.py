@@ -34,6 +34,11 @@ if TYPE_CHECKING:
     from ...config import ModelConfig
 
 
+# Minimum epsilon for clamping phi away from 0 (prevents log(0) in logits
+# computation) and p_hat to (eps, 1-eps) (prevents NaN in NB log-prob).
+# Mirrors the p_floor default in post-hoc log-likelihood evaluation.
+_P_EPS = 1e-6
+
 # ==============================================================================
 # Negative Binomial with Variable Capture Probability Likelihood
 # ==============================================================================
@@ -327,6 +332,8 @@ class NBWithVCPLikelihood(Likelihood):
                 if is_mixture:
                     phi = broadcast_param_for_mixture(phi, r)
 
+                # Clamp phi away from 0 so log(phi * ...) stays finite
+                phi = jnp.maximum(phi, _P_EPS)
                 logits = -jnp.log(phi * (1.0 + capture_reshaped))
 
                 if is_mixture:
@@ -385,6 +392,8 @@ class NBWithVCPLikelihood(Likelihood):
                     * capture_reshaped
                     / (1 - p_for_hat * (1 - capture_reshaped))
                 )
+                # Clamp p_hat to (eps, 1-eps) so NB log-prob stays finite
+                p_hat = jnp.clip(p_hat, _P_EPS, 1.0 - _P_EPS)
 
                 if is_mixture:
                     mixing_weights = param_values["mixing_weights"]
@@ -685,6 +694,8 @@ class ZINBWithVCPLikelihood(Likelihood):
                     phi = broadcast_param_for_mixture(phi, r)
                     gate = broadcast_param_for_mixture(gate, r)
 
+                # Clamp phi away from 0 so log(phi * ...) stays finite
+                phi = jnp.maximum(phi, _P_EPS)
                 logits = -jnp.log(phi * (1.0 + capture_reshaped))
 
                 if is_mixture:
@@ -746,6 +757,8 @@ class ZINBWithVCPLikelihood(Likelihood):
                     * capture_reshaped
                     / (1 - p_for_hat * (1 - capture_reshaped))
                 )
+                # Clamp p_hat to (eps, 1-eps) so NB log-prob stays finite
+                p_hat = jnp.clip(p_hat, _P_EPS, 1.0 - _P_EPS)
 
                 if is_mixture:
                     mixing_weights = param_values["mixing_weights"]
