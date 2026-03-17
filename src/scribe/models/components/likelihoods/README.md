@@ -286,6 +286,29 @@ result = scribe.inference.run_scribe(
 )
 ```
 
+## Numerical Stability Guards
+
+All likelihood components clamp `p`, `phi`, and `p_hat` away from degenerate
+values before constructing NB distributions.  This prevents NaN in the ELBO
+during SVI training when hierarchical priors produce extreme samples (e.g.
+`phi_g -> 0` causing `p_g -> 1.0`, or `phi_g -> inf` causing `p_g -> 0.0`).
+
+A module-level constant `_P_EPS = 1e-6` is defined in both
+`negative_binomial.py` and `vcp.py`.  The guards applied are:
+
+| Likelihood | Parameter | Guard |
+|------------|-----------|-------|
+| `NegativeBinomialLikelihood._build_dist` | `p` | `jnp.clip(p, _P_EPS, 1 - _P_EPS)` |
+| `NegativeBinomialLikelihood._build_annotated_mixture_dist` | `p` | `jnp.clip(p, _P_EPS, 1 - _P_EPS)` |
+| `NBWithVCPLikelihood` (mean-odds path) | `phi` | `jnp.maximum(phi, _P_EPS)` before `log(phi * ...)` |
+| `NBWithVCPLikelihood` (mean-prob path) | `p_hat` | `jnp.clip(p_hat, _P_EPS, 1 - _P_EPS)` |
+| `ZINBWithVCPLikelihood` (mean-odds path) | `phi` | `jnp.maximum(phi, _P_EPS)` before `log(phi * ...)` |
+| `ZINBWithVCPLikelihood` (mean-prob path) | `p_hat` | `jnp.clip(p_hat, _P_EPS, 1 - _P_EPS)` |
+
+This mirrors the `p_floor` parameter already used in the post-hoc
+log-likelihood evaluation functions in `log_likelihood.py`.  Tests for both
+layers live in `tests/test_floor.py`.
+
 ## Adding New Likelihoods
 
 To add a new likelihood:

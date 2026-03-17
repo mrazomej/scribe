@@ -22,6 +22,11 @@ if TYPE_CHECKING:
     from ...builders.parameter_specs import ParamSpec
     from ...config import ModelConfig
 
+# Minimum epsilon for clamping p away from 0 and 1 to prevent log(0) NaN
+# in the NB log-probability during SVI training.  Mirrors the p_floor
+# default used in post-hoc log-likelihood evaluation (log_likelihood.py).
+_P_EPS = 1e-6
+
 # ==============================================================================
 # Negative Binomial Likelihood
 # ==============================================================================
@@ -56,9 +61,11 @@ class NegativeBinomialLikelihood(Likelihood):
         self, param_values: Dict[str, jnp.ndarray]
     ) -> dist.Distribution:
         """Build the NB distribution from current param_values."""
-        # Extract NB parameters from param_values.
         p = param_values["p"]
         r = param_values["r"]
+
+        # Clamp p to (eps, 1-eps) so that log(p) and log(1-p) stay finite
+        p = jnp.clip(p, _P_EPS, 1.0 - _P_EPS)
 
         # Determine if this is a mixture NB model by the shape of r.
         # r shape (n_components, n_genes) → mixture; (n_genes,) → regular NB.
@@ -119,6 +126,9 @@ class NegativeBinomialLikelihood(Likelihood):
         mixing_weights = param_values["mixing_weights"]
         p = param_values["p"]
         r = param_values["r"]
+
+        # Clamp p to (eps, 1-eps) so that log(p) and log(1-p) stay finite
+        p = jnp.clip(p, _P_EPS, 1.0 - _P_EPS)
 
         # Cell-specific mixing via logit nudging
         cell_mixing = compute_cell_specific_mixing(
