@@ -3161,3 +3161,75 @@ class TestPosteriorPositiveTransform:
         assert isinstance(
             phi_dist.transforms[-1], dist.transforms.ExpTransform
         ), "Missing positive_transform should default to ExpTransform"
+
+    def test_joint_softplus_transform_on_phi_and_mu(self):
+        """Joint low-rank posteriors respect positive_transform='softplus'."""
+        import numpyro.distributions as dist
+        from scribe.models.builders.posterior import get_posterior_distributions
+
+        G = 10
+        rank = 3
+        # Simulate joint guide params for phi and mu (joint group "joint")
+        params = {
+            "joint_joint_phi_loc": jnp.zeros(G),
+            "joint_joint_phi_W": jnp.zeros((G, rank)),
+            "joint_joint_phi_raw_diag": jnp.zeros(G),
+            "joint_joint_mu_loc": jnp.zeros(G),
+            "joint_joint_mu_W": jnp.zeros((G, rank)),
+            "joint_joint_mu_raw_diag": jnp.zeros(G),
+            "joint_joint_gate_loc": jnp.zeros(G),
+            "joint_joint_gate_W": jnp.zeros((G, rank)),
+            "joint_joint_gate_raw_diag": jnp.zeros(G),
+        }
+        config = self._make_config(
+            positive_transform="softplus",
+            is_zero_inflated=True,
+            joint_params=["phi", "mu", "gate"],
+        )
+        distributions = get_posterior_distributions(params, config, split=False)
+
+        # phi and mu should use SoftplusTransform via the joint path
+        phi_entry = distributions["phi"]
+        mu_entry = distributions["mu"]
+        assert isinstance(phi_entry, dict), "Joint phi should return dict"
+        assert isinstance(mu_entry, dict), "Joint mu should return dict"
+        assert isinstance(
+            phi_entry["transform"], dist.transforms.SoftplusTransform
+        ), f"Expected SoftplusTransform for joint phi, got {type(phi_entry['transform'])}"
+        assert isinstance(
+            mu_entry["transform"], dist.transforms.SoftplusTransform
+        ), f"Expected SoftplusTransform for joint mu, got {type(mu_entry['transform'])}"
+
+        # gate should still use SigmoidTransform
+        gate_entry = distributions["gate"]
+        assert isinstance(gate_entry, dict), "Joint gate should return dict"
+        assert isinstance(
+            gate_entry["transform"], dist.transforms.SigmoidTransform
+        ), f"Expected SigmoidTransform for joint gate, got {type(gate_entry['transform'])}"
+
+    def test_joint_exp_transform_on_phi_and_mu(self):
+        """Joint low-rank posteriors use ExpTransform when positive_transform='exp'."""
+        import numpyro.distributions as dist
+        from scribe.models.builders.posterior import get_posterior_distributions
+
+        G = 10
+        rank = 3
+        params = {
+            "joint_joint_phi_loc": jnp.zeros(G),
+            "joint_joint_phi_W": jnp.zeros((G, rank)),
+            "joint_joint_phi_raw_diag": jnp.zeros(G),
+            "joint_joint_mu_loc": jnp.zeros(G),
+            "joint_joint_mu_W": jnp.zeros((G, rank)),
+            "joint_joint_mu_raw_diag": jnp.zeros(G),
+        }
+        config = self._make_config(positive_transform="exp")
+        distributions = get_posterior_distributions(params, config, split=False)
+
+        phi_entry = distributions["phi"]
+        mu_entry = distributions["mu"]
+        assert isinstance(
+            phi_entry["transform"], dist.transforms.ExpTransform
+        ), f"Expected ExpTransform for joint phi, got {type(phi_entry['transform'])}"
+        assert isinstance(
+            mu_entry["transform"], dist.transforms.ExpTransform
+        ), f"Expected ExpTransform for joint mu, got {type(mu_entry['transform'])}"
