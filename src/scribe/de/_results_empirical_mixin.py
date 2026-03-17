@@ -14,6 +14,18 @@ from ._set_level import (
 class EmpiricalResultsMixin:
     """Monte Carlo DE operations for empirical results classes."""
 
+    # Empirical results can export CLR and biological metric families.
+    _DATAFRAME_METRIC_ORDER = (
+        "clr",
+        "bio_lfc",
+        "bio_lvr",
+        "bio_kl",
+        "bio_aux",
+    )
+    _SUPPORTED_DATAFRAME_METRICS = frozenset(
+        {"clr", "bio_lfc", "bio_lvr", "bio_kl", "bio_aux"}
+    )
+
     @property
     def D(self) -> int:
         """Number of genes (CLR dimensionality)."""
@@ -396,8 +408,12 @@ class EmpiricalResultsMixin:
         tau: float = 0.0,
         target_pefp: float | None = None,
         use_lfsr_tau: bool = True,
+        metrics: str | list[str] | tuple[str, ...] | None = None,
+        tau_lfc: float = 0.0,
+        tau_var: float = 0.0,
+        tau_kl: float = 0.0,
     ):
-        """Extend base DataFrame export with mean-expression columns.
+        """Export selected CLR/biological metric families to a DataFrame.
 
         Parameters
         ----------
@@ -407,20 +423,65 @@ class EmpiricalResultsMixin:
             Optional PEFP target for ``is_de`` column.
         use_lfsr_tau : bool, default=True
             Which lfsr variant to use for PEFP thresholding.
+        metrics : {'clr', 'bio_lfc', 'bio_lvr', 'bio_kl', 'bio_aux', 'all'}
+            or iterable, optional
+            Metric families to include. ``None`` defaults to ``'clr'`` to
+            preserve existing behavior.
+
+            - ``'clr'``: compositional CLR gene-level DE summaries
+              (``delta_*``, ``lfsr*``, and effect probabilities).
+            - ``'bio_lfc'``: biological mean-shift summaries based on
+              log-fold-change (``lfc_*`` columns).
+            - ``'bio_lvr'``: biological variance-shift summaries based on
+              log-variance ratio (``lvr_*`` columns).
+            - ``'bio_kl'``: biological distribution-shift summaries from
+              Jeffreys divergence (``kl_*`` columns).
+            - ``'bio_aux'``: auxiliary biological context columns
+              (``mu_*``, ``var_*``, ``max_bio_expr``).
+            - ``'all'``: alias that expands to all families supported by
+              empirical/shrinkage results.
+        tau_lfc : float, default=0.0
+            Practical threshold passed to :meth:`biological_level` for LFC.
+        tau_var : float, default=0.0
+            Practical threshold passed to :meth:`biological_level` for LVR.
+        tau_kl : float, default=0.0
+            Practical threshold passed to :meth:`biological_level` for KL.
 
         Returns
         -------
         pandas.DataFrame
-            DataFrame with core DE columns and optional expression columns.
+            DataFrame with one row per gene and selected metric families.
         """
         import numpy as np
+        import pandas as pd
 
-        df = super().to_dataframe(
-            tau=tau, target_pefp=target_pefp, use_lfsr_tau=use_lfsr_tau
-        )
+        metric_families = self._resolve_dataframe_metrics(metrics)
+        include_clr = "clr" in metric_families
+
+        # Keep PEFP semantics explicit: thresholding uses CLR lfsr columns.
+        if target_pefp is not None and not include_clr:
+            raise ValueError(
+                "target_pefp requires metrics to include 'clr' because "
+                "'is_de' is defined from CLR lfsr values."
+            )
+
+        if include_clr:
+            df = super().to_dataframe(
+                tau=tau,
+                target_pefp=target_pefp,
+                use_lfsr_tau=use_lfsr_tau,
+                metrics="clr",
+            )
+        else:
+            # Build a valid gene index when users request only biological blocks.
+            df = pd.DataFrame({"gene": list(self.gene_names)})
 
         # Align stored expression vectors to the currently active mask.
-        if self.mu_map_A is not None and self.mu_map_B is not None:
+        if (
+            include_clr
+            and self.mu_map_A is not None
+            and self.mu_map_B is not None
+        ):
             mu_A = np.asarray(self.mu_map_A)
             mu_B = np.asarray(self.mu_map_B)
             if self._gene_mask is not None:
@@ -429,6 +490,70 @@ class EmpiricalResultsMixin:
                 mu_B = mu_B[mask]
             df["mean_expression_A"] = mu_A
             df["mean_expression_B"] = mu_B
+
+        bio_families = {
+            "bio_lfc",
+            "bio_lvr",
+            "bio_kl",
+            "bio_aux",
+        }
+        if any(family in metric_families for family in bio_families):
+            bio = self.biological_level(
+                tau_lfc=tau_lfc,
+                tau_var=tau_var,
+                tau_kl=tau_kl,
+            )
+            mask = None
+            if self._gene_mask is not None:
+                mask = np.asarray(self._gene_mask, dtype=bool)
+
+            def _bio_values(key: str) -> np.ndarray:
+                """Return biological vectors aligned to the active gene mask."""
+                values = np.asarray(bio[key])
+                if mask is not None and values.shape[0] == mask.shape[0]:
+                    return values[mask]
+                return values
+
+            # Keep each biological block grouped so callers can request subsets.
+            if "bio_lfc" in metric_families:
+                for key in (
+                    "lfc_mean",
+                    "lfc_sd",
+                    "lfc_prob_positive",
+                    "lfc_lfsr",
+                    "lfc_prob_up",
+                    "lfc_prob_down",
+                    "lfc_prob_effect",
+                    "lfc_lfsr_tau",
+                ):
+                    df[key] = _bio_values(key)
+
+            if "bio_lvr" in metric_families:
+                for key in (
+                    "lvr_mean",
+                    "lvr_sd",
+                    "lvr_prob_positive",
+                    "lvr_lfsr",
+                    "lvr_prob_up",
+                    "lvr_prob_down",
+                    "lvr_prob_effect",
+                    "lvr_lfsr_tau",
+                ):
+                    df[key] = _bio_values(key)
+
+            if "bio_kl" in metric_families:
+                for key in ("kl_mean", "kl_sd", "kl_prob_effect"):
+                    df[key] = _bio_values(key)
+
+            if "bio_aux" in metric_families:
+                for key in (
+                    "mu_A_mean",
+                    "mu_B_mean",
+                    "var_A_mean",
+                    "var_B_mean",
+                    "max_bio_expr",
+                ):
+                    df[key] = _bio_values(key)
 
         return df
 

@@ -142,18 +142,12 @@ def test_compare_with_embedded_alr():
 
     model_A = {
         "loc": jnp.concatenate([mu_alr, jnp.array([0.0])]),
-        "cov_factor": jnp.concatenate(
-            [W_alr, jnp.zeros((1, k))], axis=0
-        ),
+        "cov_factor": jnp.concatenate([W_alr, jnp.zeros((1, k))], axis=0),
         "cov_diag": jnp.concatenate([d_alr, jnp.array([0.0])]),
     }
     model_B = {
-        "loc": jnp.concatenate(
-            [jnp.ones(D_alr) * 0.2, jnp.array([0.0])]
-        ),
-        "cov_factor": jnp.concatenate(
-            [W_alr * 1.1, jnp.zeros((1, k))], axis=0
-        ),
+        "loc": jnp.concatenate([jnp.ones(D_alr) * 0.2, jnp.array([0.0])]),
+        "cov_factor": jnp.concatenate([W_alr * 1.1, jnp.zeros((1, k))], axis=0),
         "cov_diag": jnp.concatenate([d_alr, jnp.array([0.0])]),
     }
 
@@ -173,8 +167,13 @@ def test_gene_level_returns_dict(de_results):
     """gene_level() should return a dict with expected keys."""
     results = de_results.gene_level(tau=0.0)
     expected_keys = {
-        "delta_mean", "delta_sd", "prob_positive",
-        "prob_effect", "lfsr", "lfsr_tau", "gene_names",
+        "delta_mean",
+        "delta_sd",
+        "prob_positive",
+        "prob_effect",
+        "lfsr",
+        "lfsr_tau",
+        "gene_names",
     }
     assert set(results.keys()) == expected_keys
 
@@ -395,10 +394,28 @@ def test_to_dataframe_columns(de_results):
     df = de_results.to_dataframe(tau=0.0)
     assert isinstance(df, pd.DataFrame)
     expected_cols = {
-        "gene", "delta_mean", "delta_sd", "lfsr",
-        "lfsr_tau", "prob_effect", "prob_positive",
+        "gene",
+        "delta_mean",
+        "delta_sd",
+        "lfsr",
+        "lfsr_tau",
+        "prob_effect",
+        "prob_positive",
     }
     assert set(df.columns) == expected_cols
+
+
+def test_to_dataframe_metrics_all_alias_matches_default(de_results):
+    """The ``all`` alias should match default columns on base results."""
+    df_default = de_results.to_dataframe(tau=0.0)
+    df_all = de_results.to_dataframe(tau=0.0, metrics="all")
+    assert list(df_all.columns) == list(df_default.columns)
+
+
+def test_to_dataframe_invalid_metrics_raises(de_results):
+    """Invalid metric-family names should raise a clear ValueError."""
+    with pytest.raises(ValueError, match="Unsupported metrics family"):
+        de_results.to_dataframe(tau=0.0, metrics="bio_lfc")
 
 
 def test_to_dataframe_shape(de_results):
@@ -479,10 +496,30 @@ class TestEmpiricalToDataframe:
         r_A = jnp.abs(random.normal(rng, (200, D))) + 1.0
         r_B = jnp.abs(random.normal(random.PRNGKey(1), (200, D))) + 2.0
         return compare(
-            r_A, r_B,
+            r_A,
+            r_B,
             method="empirical",
             gene_names=[f"g{i}" for i in range(D)],
             rng_key=rng,
+        )
+
+    @pytest.fixture
+    def emp_de_bio(self):
+        """Create an empirical DE result with biological samples available."""
+        rng = random.PRNGKey(123)
+        D = 6
+        r_A = jnp.abs(random.normal(rng, (200, D))) + 1.0
+        r_B = jnp.abs(random.normal(random.PRNGKey(124), (200, D))) + 1.5
+        p_A = 0.35 * jnp.ones((200, D))
+        p_B = 0.45 * jnp.ones((200, D))
+        return compare(
+            r_A,
+            r_B,
+            method="empirical",
+            gene_names=[f"g{i}" for i in range(D)],
+            rng_key=rng,
+            p_samples_A=p_A,
+            p_samples_B=p_B,
         )
 
     def test_includes_mean_expression(self, emp_de):
@@ -498,6 +535,52 @@ class TestEmpiricalToDataframe:
         """Correct number of rows."""
         df = emp_de.to_dataframe(tau=0.1)
         assert len(df) == emp_de.D
+
+    def test_bio_lfc_metrics_export(self, emp_de_bio):
+        """Selecting ``bio_lfc`` exports only biological LFC summaries."""
+        df = emp_de_bio.to_dataframe(metrics="bio_lfc", tau_lfc=0.2)
+        expected = {
+            "gene",
+            "lfc_mean",
+            "lfc_sd",
+            "lfc_prob_positive",
+            "lfc_lfsr",
+            "lfc_prob_up",
+            "lfc_prob_down",
+            "lfc_prob_effect",
+            "lfc_lfsr_tau",
+        }
+        assert set(df.columns) == expected
+
+    def test_clr_plus_bio_kl_combination(self, emp_de_bio):
+        """Mixed CLR + KL export includes both metric families."""
+        df = emp_de_bio.to_dataframe(metrics=["clr", "bio_kl"], tau_kl=0.1)
+        assert "delta_mean" in df.columns
+        assert "lfsr_tau" in df.columns
+        assert "kl_mean" in df.columns
+        assert "kl_prob_effect" in df.columns
+
+    def test_metrics_all_includes_bio_blocks(self, emp_de_bio):
+        """The ``all`` alias includes CLR and all biological families."""
+        df = emp_de_bio.to_dataframe(metrics="all")
+        for col in (
+            "delta_mean",
+            "lfc_mean",
+            "lvr_mean",
+            "kl_mean",
+            "max_bio_expr",
+        ):
+            assert col in df.columns
+
+    def test_metrics_without_clr_rejects_target_pefp(self, emp_de_bio):
+        """PEFP-based calls require CLR metrics because is_de uses CLR lfsr."""
+        with pytest.raises(ValueError, match="target_pefp requires metrics"):
+            emp_de_bio.to_dataframe(metrics="bio_kl", target_pefp=0.05)
+
+    def test_bio_metrics_require_biological_samples(self, emp_de):
+        """Requesting biological families raises when biological data is absent."""
+        with pytest.raises(RuntimeError, match="Biological-level DE requires"):
+            emp_de.to_dataframe(metrics="bio_lfc")
 
 
 # --------------------------------------------------------------------------
@@ -515,6 +598,7 @@ class TestMaskManagement:
         Uses p_samples so that mu_map is derived from r and p.
         """
         import jax
+
         rng = random.PRNGKey(0)
         D = 8
         r_A = jnp.abs(random.normal(rng, (200, D))) + 1.0
@@ -525,7 +609,8 @@ class TestMaskManagement:
         names = [f"g{i}" for i in range(D)]
         mask = jnp.array([True, True, True, False, False, True, True, False])
         return compare(
-            r_A, r_B,
+            r_A,
+            r_B,
             method="empirical",
             gene_names=names,
             rng_key=rng,
@@ -549,9 +634,7 @@ class TestMaskManagement:
 
     def test_set_gene_mask_changes_d(self, masked_de):
         """set_gene_mask changes D and gene_names."""
-        new_mask = jnp.array(
-            [True, False, True, True, True, True, False, True]
-        )
+        new_mask = jnp.array([True, False, True, True, True, True, False, True])
         masked_de.set_gene_mask(new_mask)
         assert masked_de.D == 6  # 6 True values
         # Gene names should be filtered from the full list
@@ -656,6 +739,7 @@ class TestRespectMask:
     def masked_de(self):
         """Empirical DE with mask and simplex stored."""
         import jax
+
         rng = random.PRNGKey(0)
         D = 8
         r_A = jnp.abs(random.normal(rng, (200, D))) + 1.0
@@ -665,7 +749,8 @@ class TestRespectMask:
         names = [f"g{i}" for i in range(D)]
         mask = jnp.array([True, True, True, False, False, True, True, False])
         return compare(
-            r_A, r_B,
+            r_A,
+            r_B,
             method="empirical",
             gene_names=names,
             rng_key=rng,
@@ -685,9 +770,7 @@ class TestRespectMask:
         """respect_mask=False uses full-gene delta."""
         # Indices in full space (D=8)
         indices = jnp.array([0, 3, 7])
-        result = masked_de.test_gene_set(
-            indices, tau=0.0, respect_mask=False
-        )
+        result = masked_de.test_gene_set(indices, tau=0.0, respect_mask=False)
         assert "lfsr" in result
 
     def test_test_multiple_gene_sets_respect_mask(self, masked_de):
@@ -716,8 +799,7 @@ class TestRespectMask:
 def test_base_methods_come_from_base_mixin():
     """Shared methods should be provided by the base mixin module."""
     assert (
-        ScribeDEResults.call_genes.__module__
-        == "scribe.de._results_base_mixin"
+        ScribeDEResults.call_genes.__module__ == "scribe.de._results_base_mixin"
     )
     assert (
         ScribeDEResults.compute_pefp.__module__

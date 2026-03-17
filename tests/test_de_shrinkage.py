@@ -129,7 +129,9 @@ class TestFitScaleMixturePrior:
         """Estimated weights must sum to 1."""
         delta_mean, delta_sd = null_dominated_data
         result = fit_scale_mixture_prior(delta_mean, delta_sd)
-        np.testing.assert_allclose(float(jnp.sum(result["weights"])), 1.0, atol=1e-6)
+        np.testing.assert_allclose(
+            float(jnp.sum(result["weights"])), 1.0, atol=1e-6
+        )
 
     def test_weights_nonneg(self, null_dominated_data):
         """All weights must be non-negative."""
@@ -176,9 +178,7 @@ class TestFitScaleMixturePrior:
         """Log-likelihood should be non-decreasing (check final > initial)."""
         delta_mean, delta_sd = null_dominated_data
         # Run a few iterations only
-        result_early = fit_scale_mixture_prior(
-            delta_mean, delta_sd, max_iter=2
-        )
+        result_early = fit_scale_mixture_prior(delta_mean, delta_sd, max_iter=2)
         result_late = fit_scale_mixture_prior(
             delta_mean, delta_sd, max_iter=100
         )
@@ -210,7 +210,8 @@ class TestShrinkagePosterior:
         delta_mean, delta_sd = null_dominated_data
         em = fit_scale_mixture_prior(delta_mean, delta_sd)
         post = shrinkage_posterior(
-            delta_mean, delta_sd,
+            delta_mean,
+            delta_sd,
             weights=em["weights"],
             sigma_grid=em["sigma_grid"],
             posterior_probs=em["posterior_probs"],
@@ -222,7 +223,8 @@ class TestShrinkagePosterior:
         delta_mean, delta_sd = null_dominated_data
         em = fit_scale_mixture_prior(delta_mean, delta_sd)
         post = shrinkage_posterior(
-            delta_mean, delta_sd,
+            delta_mean,
+            delta_sd,
             weights=em["weights"],
             sigma_grid=em["sigma_grid"],
         )
@@ -237,7 +239,8 @@ class TestShrinkagePosterior:
         delta_mean, delta_sd = null_dominated_data
         em = fit_scale_mixture_prior(delta_mean, delta_sd)
         post = shrinkage_posterior(
-            delta_mean, delta_sd,
+            delta_mean,
+            delta_sd,
             weights=em["weights"],
             sigma_grid=em["sigma_grid"],
             posterior_probs=em["posterior_probs"],
@@ -254,7 +257,8 @@ class TestShrinkagePosterior:
         delta_mean, delta_sd = null_dominated_data
         em = fit_scale_mixture_prior(delta_mean, delta_sd)
         post = shrinkage_posterior(
-            delta_mean, delta_sd,
+            delta_mean,
+            delta_sd,
             weights=em["weights"],
             sigma_grid=em["sigma_grid"],
             posterior_probs=em["posterior_probs"],
@@ -266,7 +270,8 @@ class TestShrinkagePosterior:
         delta_mean, delta_sd = null_dominated_data
         em = fit_scale_mixture_prior(delta_mean, delta_sd)
         post = shrinkage_posterior(
-            delta_mean, delta_sd,
+            delta_mean,
+            delta_sd,
             weights=em["weights"],
             sigma_grid=em["sigma_grid"],
         )
@@ -290,10 +295,19 @@ class TestShrinkageDifferentialExpression:
         delta_mean, delta_sd = null_dominated_data
         result = shrinkage_differential_expression(delta_mean, delta_sd)
         expected = {
-            "delta_mean", "delta_sd", "prob_positive", "prob_effect",
-            "lfsr", "lfsr_tau", "gene_names",
-            "null_proportion", "prior_weights", "sigma_grid",
-            "em_converged", "em_n_iter", "em_log_likelihood",
+            "delta_mean",
+            "delta_sd",
+            "prob_positive",
+            "prob_effect",
+            "lfsr",
+            "lfsr_tau",
+            "gene_names",
+            "null_proportion",
+            "prior_weights",
+            "sigma_grid",
+            "em_converged",
+            "em_n_iter",
+            "em_log_likelihood",
         }
         assert set(result.keys()) == expected
 
@@ -368,9 +382,7 @@ class TestCompareDispatchShrinkage:
         """Gene names are propagated in shrinkage mode."""
         r = jnp.abs(random.normal(rng, (50, 4))) + 1.0
         names = ["A", "B", "C", "D"]
-        de = compare(
-            r, r, method="shrinkage", gene_names=names, rng_key=rng
-        )
+        de = compare(r, r, method="shrinkage", gene_names=names, rng_key=rng)
         assert de.gene_names == names
 
     def test_gene_names_length_mismatch(self, rng):
@@ -378,17 +390,22 @@ class TestCompareDispatchShrinkage:
         r = jnp.abs(random.normal(rng, (50, 4))) + 1.0
         with pytest.raises(ValueError, match="gene_names"):
             compare(
-                r, r, method="shrinkage",
-                gene_names=["a", "b"], rng_key=rng,
+                r,
+                r,
+                method="shrinkage",
+                gene_names=["a", "b"],
+                rng_key=rng,
             )
 
     def test_mixture_input(self, rng):
         """Shrinkage works with 3D (mixture) inputs."""
         r_mix = jnp.abs(random.normal(rng, (100, 3, 5))) + 1.0
         de = compare(
-            r_mix, r_mix,
+            r_mix,
+            r_mix,
             method="shrinkage",
-            component_A=0, component_B=1,
+            component_A=0,
+            component_B=1,
             rng_key=rng,
         )
         assert isinstance(de, ScribeShrinkageDEResults)
@@ -402,7 +419,8 @@ class TestCompareDispatchShrinkage:
         mask = jnp.array([True, True, True, False, False, True, True, False])
         names = [f"g{i}" for i in range(D)]
         de = compare(
-            r_A, r_B,
+            r_A,
+            r_B,
             method="shrinkage",
             gene_names=names,
             rng_key=rng,
@@ -427,7 +445,8 @@ class TestShrinkageResultsMethods:
         r_A = jnp.abs(random.normal(rng, (500, 8))) + 1.0
         r_B = jnp.abs(random.normal(random.PRNGKey(1), (500, 8))) + 2.0
         return compare(
-            r_A, r_B,
+            r_A,
+            r_B,
             method="shrinkage",
             gene_names=[f"g{i}" for i in range(8)],
             rng_key=rng,
@@ -437,10 +456,19 @@ class TestShrinkageResultsMethods:
         """gene_level returns a dict with expected keys."""
         result = shrinkage_de.gene_level(tau=0.0)
         expected_keys = {
-            "delta_mean", "delta_sd", "prob_positive",
-            "prob_effect", "lfsr", "lfsr_tau", "gene_names",
-            "null_proportion", "prior_weights", "sigma_grid",
-            "em_converged", "em_n_iter", "em_log_likelihood",
+            "delta_mean",
+            "delta_sd",
+            "prob_positive",
+            "prob_effect",
+            "lfsr",
+            "lfsr_tau",
+            "gene_names",
+            "null_proportion",
+            "prior_weights",
+            "sigma_grid",
+            "em_converged",
+            "em_n_iter",
+            "em_log_likelihood",
         }
         assert set(result.keys()) == expected_keys
 
@@ -611,7 +639,8 @@ class TestShrinkageMaskManagement:
         p_B = 0.4 * jnp.ones((200, D))
         mask = jnp.array([True] * 5 + [False] * 3)
         return compare(
-            r_A, r_B,
+            r_A,
+            r_B,
             method="empirical",
             gene_names=[f"g{i}" for i in range(D)],
             rng_key=rng,
@@ -709,6 +738,18 @@ class TestShrinkageMaskManagement:
         assert df["is_de"].dtype == bool
         assert len(df) == de_s.D
 
+    def test_shrinkage_to_dataframe_with_bio_metrics(self, empirical_de):
+        """Shrinkage exports combined CLR and biological metric families."""
+        de_s = empirical_de.shrink()
+        df = de_s.to_dataframe(
+            metrics=["clr", "bio_lfc", "bio_kl"],
+            tau_lfc=0.1,
+            tau_kl=0.2,
+        )
+        for col in ("delta_mean", "lfc_mean", "lfc_lfsr_tau", "kl_mean"):
+            assert col in df.columns
+        assert len(df) == de_s.D
+
     def test_shrinkage_method_chaining(self, empirical_de):
         """Mask management methods return self for chaining on shrinkage."""
         de_s = empirical_de.shrink()
@@ -723,7 +764,9 @@ class TestShrinkageMaskManagement:
         assert result is de_s
 
         # Full chain
-        df = de_s.set_gene_mask(new_mask).to_dataframe(tau=0.1, target_pefp=0.10)
+        df = de_s.set_gene_mask(new_mask).to_dataframe(
+            tau=0.1, target_pefp=0.10
+        )
         assert "is_de" in df.columns
         assert len(df) == 3
 
