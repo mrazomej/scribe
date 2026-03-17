@@ -230,7 +230,7 @@ def setup_guide(
     - Samples directly in constrained space
     - Constraint derived from spec.transform.codomain
 
-    Works for SigmoidNormalSpec, ExpNormalSpec, SoftplusNormalSpec, etc.
+    Works for SigmoidNormalSpec, PositiveNormalSpec, SoftplusNormalSpec, etc.
 
     Parameters
     ----------

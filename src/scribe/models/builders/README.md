@@ -25,7 +25,7 @@ Parameter specs define the distribution and metadata for each parameter:
 | `BetaPrimeSpec` | BetaPrime(α, β) | (0, ∞) | phi |
 | `DirichletSpec` | Dirichlet(α) | simplex | weights |
 | `SigmoidNormalSpec` | Normal → sigmoid | (0, 1) | p_unconstrained |
-| `ExpNormalSpec` | Normal → exp | (0, ∞) | r_unconstrained |
+| `PositiveNormalSpec` | Normal → configurable positive transform (exp or softplus) | (0, ∞) | r_unconstrained |
 | `SoftplusNormalSpec` | Normal → softplus | (0, ∞) | r (smooth) |
 | `BiologyInformedCaptureSpec` | Normal(η) → exp/exp-1 | cell-specific | p_capture, phi_capture |
 | `LatentSpec` | Base for VAE latent z | — | abstract |
@@ -33,10 +33,11 @@ Parameter specs define the distribution and metadata for each parameter:
 
 ### Hierarchical Parameter Specs
 
-`HierarchicalSigmoidNormalSpec` and `HierarchicalExpNormalSpec` inherit from
-`HierarchicalNormalWithTransformSpec`, which extends `NormalWithTransformSpec`.
-They define gene-specific parameters whose Normal prior has learnable location
-and scale drawn from hyperparameters sampled earlier in the model.
+`HierarchicalSigmoidNormalSpec` and `HierarchicalPositiveNormalSpec` inherit
+from `HierarchicalNormalWithTransformSpec`, which extends
+`NormalWithTransformSpec`. They define gene-specific parameters whose Normal
+prior has learnable location and scale drawn from hyperparameters sampled
+earlier in the model.
 
 Each hierarchical spec carries `hyper_loc_name` and `hyper_scale_name` fields
 identifying which sample sites provide its prior parameters. The model builder
@@ -49,8 +50,8 @@ low-rank) works without modification.
 
 For multi-dataset models, **`DatasetHierarchicalNormalWithTransformSpec`** is
 the base class for per-dataset parameters drawn from population-level
-hyperparameters. Subclasses: **`DatasetHierarchicalExpNormalSpec`** (positive
-params: mu, r, phi; exp transform) and
+hyperparameters. Subclasses: **`DatasetHierarchicalPositiveNormalSpec`** (positive
+params: mu, r, phi; configurable positive transform) and
 **`DatasetHierarchicalSigmoidNormalSpec`** ((0,1) params: p, gate; sigmoid
 transform). The **`ParamSpec`** base class adds an **`is_dataset`** flag; when
 True, `resolve_shape` prepends the `n_datasets` dimension to the parameter
@@ -85,17 +86,18 @@ concatenation in the likelihood and guide.
 **Horseshoe:** Regularized horseshoe shrinkage uses **`HalfCauchySpec`** (τ, λ
 scales) and **`InverseGammaSpec`** (slab c²). Gene-level:
 **`HorseshoeHierarchicalSigmoidNormalSpec`** (p, gate; sigmoid). Dataset-level:
-**`HorseshoeDatasetExpNormalSpec`** (mu; exp),
+**`HorseshoeDatasetPositiveNormalSpec`** (mu; configurable positive transform),
 **`HorseshoeDatasetSigmoidNormalSpec`** (p, gate; sigmoid). All use NCP
 (non-centered parameterization) with z ~ Normal(0,1).
 
 **NEG (Normal-Exponential-Gamma):** Uses **`GammaSpec`** for psi and zeta sites
 in the Gamma-Gamma hierarchy. Gene-level: **`NEGHierarchicalSigmoidNormalSpec`**
-(p, gate; sigmoid) and **`NEGHierarchicalExpNormalSpec`** (mu, r, phi; exp).
-Dataset-level: **`NEGDatasetExpNormalSpec`** (mu; exp) and
-**`NEGDatasetSigmoidNormalSpec`** (p, gate; sigmoid). All NEG specs use NCP
-with `raw_name` for the z variable, `psi_name` and `zeta_name` referencing the
-Gamma hierarchy sites.
+(p, gate; sigmoid) and **`NEGHierarchicalPositiveNormalSpec`** (mu, r, phi;
+configurable positive transform). Dataset-level:
+**`NEGDatasetPositiveNormalSpec`** (mu; configurable positive transform) and
+**`NEGDatasetSigmoidNormalSpec`** (p, gate; sigmoid). All NEG specs use NCP with
+`raw_name` for the z variable, `psi_name` and `zeta_name` referencing the Gamma
+hierarchy sites.
 
 #### Biology-Informed Capture Spec
 
@@ -248,15 +250,15 @@ and collapsed back to a `Normal` at sampling time.
 
 ```python
 from scribe.models.components import JointLowRankGuide
-from scribe.models.builders import ExpNormalSpec, SigmoidNormalSpec, GuideBuilder
+from scribe.models.builders import PositiveNormalSpec, SigmoidNormalSpec, GuideBuilder
 
 joint = JointLowRankGuide(rank=10, group="nb_params")
 specs = [
     # Scalar phi (not gene-specific)
-    ExpNormalSpec("phi", (), (0.0, 1.0),
+    PositiveNormalSpec("phi", (), (0.0, 1.0),
                   is_gene_specific=False, guide_family=joint, constrained_name="phi"),
     # Gene-specific mu
-    ExpNormalSpec("mu", ("n_genes",), (0.0, 1.0),
+    PositiveNormalSpec("mu", ("n_genes",), (0.0, 1.0),
                   is_gene_specific=True, guide_family=joint, constrained_name="mu"),
     # Gene-specific gate
     SigmoidNormalSpec("gate", ("n_genes",), (0.0, 1.0),

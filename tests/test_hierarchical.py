@@ -18,7 +18,7 @@ import pytest
 from jax import random
 
 from scribe.models.builders.parameter_specs import (
-    HierarchicalExpNormalSpec,
+    HierarchicalPositiveNormalSpec,
     HierarchicalNormalWithTransformSpec,
     HierarchicalSigmoidNormalSpec,
     NormalWithTransformSpec,
@@ -134,8 +134,8 @@ class TestHierarchicalSpecs:
         assert spec.constrained_name == "p"
 
     def test_hierarchical_exp_creation(self):
-        """Test creating a HierarchicalExpNormalSpec."""
-        spec = HierarchicalExpNormalSpec(
+        """Test creating a HierarchicalPositiveNormalSpec."""
+        spec = HierarchicalPositiveNormalSpec(
             name="phi",
             shape_dims=("n_genes",),
             default_params=(0.0, 1.0),
@@ -161,7 +161,7 @@ class TestHierarchicalSpecs:
             sigmoid_spec.transform, dist.transforms.SigmoidTransform
         )
 
-        exp_spec = HierarchicalExpNormalSpec(
+        exp_spec = HierarchicalPositiveNormalSpec(
             name="phi",
             shape_dims=("n_genes",),
             default_params=(0.0, 1.0),
@@ -1869,7 +1869,7 @@ class TestHierarchicalMuFactory:
 
         # Verify the mu spec is the hierarchical type
         mu_spec = next(s for s in specs if s.name == "mu")
-        assert isinstance(mu_spec, HierarchicalExpNormalSpec)
+        assert isinstance(mu_spec, HierarchicalPositiveNormalSpec)
         assert mu_spec.is_mixture is True
         assert mu_spec.is_gene_specific is True
         assert mu_spec.hyper_loc_name == "log_mu_loc"
@@ -1914,7 +1914,7 @@ class TestHierarchicalMuFactory:
         assert "r" in spec_names
 
         r_spec = next(s for s in specs if s.name == "r")
-        assert isinstance(r_spec, HierarchicalExpNormalSpec)
+        assert isinstance(r_spec, HierarchicalPositiveNormalSpec)
         assert r_spec.hyper_loc_name == "log_r_loc"
         assert r_spec.hyper_scale_name == "log_r_scale"
 

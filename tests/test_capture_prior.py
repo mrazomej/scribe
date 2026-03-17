@@ -287,7 +287,9 @@ class TestBuildCaptureSpec:
     """Test build_capture_spec with the new priors-based config."""
 
     def test_flat_returns_standard_spec(self):
-        """Default (no priors) should return ExpNormalSpec for phi_capture."""
+        """
+        Default (no priors) should return PositiveNormalSpec for phi_capture.
+        """
         config = (
             ModelConfigBuilder()
             .for_model("nbvcp")
@@ -295,7 +297,7 @@ class TestBuildCaptureSpec:
             .unconstrained()
             .build()
         )
-        from scribe.models.builders.parameter_specs import ExpNormalSpec
+        from scribe.models.builders.parameter_specs import PositiveNormalSpec
         from scribe.models.parameterizations import PARAMETERIZATIONS
 
         param_strategy = PARAMETERIZATIONS[config.parameterization]
@@ -305,7 +307,7 @@ class TestBuildCaptureSpec:
             param_strategy=param_strategy,
             model_config=config,
         )
-        assert isinstance(spec, ExpNormalSpec)
+        assert isinstance(spec, PositiveNormalSpec)
 
     def test_organism_returns_bio_spec(self):
         """priors.organism should produce BiologyInformedCaptureSpec."""
@@ -335,9 +337,7 @@ class TestBuildCaptureSpec:
             ModelConfigBuilder()
             .for_model("nbvcp")
             .with_parameterization("mean_odds")
-            .with_capture_priors(
-                organism="mouse", shared_capture_scaling=True
-            )
+            .with_capture_priors(organism="mouse", shared_capture_scaling=True)
             .build()
         )
         from scribe.models.parameterizations import PARAMETERIZATIONS
@@ -404,8 +404,7 @@ class TestModelDryRun:
         assert guide_fn is not None
 
         bio_specs = [
-            s for s in param_specs
-            if isinstance(s, BiologyInformedCaptureSpec)
+            s for s in param_specs if isinstance(s, BiologyInformedCaptureSpec)
         ]
         assert len(bio_specs) == 1
         assert bio_specs[0].use_phi_capture is True
@@ -426,8 +425,7 @@ class TestModelDryRun:
         assert model_fn is not None
 
         bio_specs = [
-            s for s in param_specs
-            if isinstance(s, BiologyInformedCaptureSpec)
+            s for s in param_specs if isinstance(s, BiologyInformedCaptureSpec)
         ]
         assert len(bio_specs) == 1
         assert bio_specs[0].use_phi_capture is False
@@ -450,8 +448,7 @@ class TestModelDryRun:
         assert model_fn is not None
 
         bio_specs = [
-            s for s in param_specs
-            if isinstance(s, BiologyInformedCaptureSpec)
+            s for s in param_specs if isinstance(s, BiologyInformedCaptureSpec)
         ]
         assert len(bio_specs) == 1
         assert bio_specs[0].data_driven is True
@@ -477,8 +474,7 @@ class TestModelDryRun:
         assert model_fn is not None
 
         bio_specs = [
-            s for s in param_specs
-            if isinstance(s, BiologyInformedCaptureSpec)
+            s for s in param_specs if isinstance(s, BiologyInformedCaptureSpec)
         ]
         assert len(bio_specs) == 1
         spec = bio_specs[0]
@@ -558,14 +554,12 @@ class TestTruncatedNormalPrior:
                 use_phi_capture=False,
             )
 
-        predictive = numpyro.infer.Predictive(
-            _model, num_samples=1000
-        )
+        predictive = numpyro.infer.Predictive(_model, num_samples=1000)
         samples = predictive(jax.random.PRNGKey(42))
         eta_samples = samples["eta_capture"]
-        assert jnp.all(eta_samples >= 0), (
-            f"Found negative eta_capture: min={float(eta_samples.min())}"
-        )
+        assert jnp.all(
+            eta_samples >= 0
+        ), f"Found negative eta_capture: min={float(eta_samples.min())}"
         p_samples = jnp.exp(-eta_samples)
         assert jnp.all(p_samples <= 1.0)
         assert jnp.all(p_samples > 0.0)
@@ -592,14 +586,10 @@ class TestTruncatedNormalPrior:
             params, config, split=False
         )
         eta_dist = result["eta_capture"]
-        assert isinstance(
-            eta_dist, dist.truncated.LeftTruncatedDistribution
-        )
+        assert isinstance(eta_dist, dist.truncated.LeftTruncatedDistribution)
 
         result_split = _build_biology_informed_capture_posterior(
             params, config, split=True
         )
         for d in result_split["eta_capture"]:
-            assert isinstance(
-                d, dist.truncated.LeftTruncatedDistribution
-            )
+            assert isinstance(d, dist.truncated.LeftTruncatedDistribution)

@@ -12,13 +12,13 @@ import numpyro
 import numpyro.distributions as dist
 
 from .parameter_specs import (
-    HorseshoeDatasetExpNormalSpec,
+    HorseshoeDatasetPositiveNormalSpec,
     HorseshoeDatasetSigmoidNormalSpec,
-    HorseshoeHierarchicalExpNormalSpec,
+    HorseshoeHierarchicalPositiveNormalSpec,
     HorseshoeHierarchicalSigmoidNormalSpec,
-    NEGDatasetExpNormalSpec,
+    NEGDatasetPositiveNormalSpec,
     NEGDatasetSigmoidNormalSpec,
-    NEGHierarchicalExpNormalSpec,
+    NEGHierarchicalPositiveNormalSpec,
     NEGHierarchicalSigmoidNormalSpec,
     NormalWithTransformSpec,
     resolve_shape,
@@ -251,13 +251,13 @@ def _is_joint_ncp_spec(spec: "NormalWithTransformSpec") -> bool:
         spec,
         (
             HorseshoeHierarchicalSigmoidNormalSpec,
-            HorseshoeHierarchicalExpNormalSpec,
+            HorseshoeHierarchicalPositiveNormalSpec,
             HorseshoeDatasetSigmoidNormalSpec,
-            HorseshoeDatasetExpNormalSpec,
+            HorseshoeDatasetPositiveNormalSpec,
             NEGHierarchicalSigmoidNormalSpec,
-            NEGHierarchicalExpNormalSpec,
+            NEGHierarchicalPositiveNormalSpec,
             NEGDatasetSigmoidNormalSpec,
-            NEGDatasetExpNormalSpec,
+            NEGDatasetPositiveNormalSpec,
         ),
     )
 

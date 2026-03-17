@@ -42,7 +42,7 @@ from ..builders.parameter_specs import (
     BetaSpec,
     BetaPrimeSpec,
     DerivedParam,
-    ExpNormalSpec,
+    PositiveNormalSpec,
     LogNormalSpec,
     ParamSpec,
     SigmoidNormalSpec,
@@ -234,7 +234,7 @@ class CanonicalParameterization(Parameterization):
                     guide_family=p_family,
                     is_mixture=is_p_mixture,
                 ),
-                ExpNormalSpec(
+                PositiveNormalSpec(
                     name="r",
                     shape_dims=("n_genes",),
                     default_params=(0.0, 1.0),
@@ -336,7 +336,7 @@ class MeanProbParameterization(Parameterization):
                     guide_family=p_family,
                     is_mixture=is_p_mixture,
                 ),
-                ExpNormalSpec(
+                PositiveNormalSpec(
                     name="mu",
                     shape_dims=("n_genes",),
                     default_params=(0.0, 1.0),
@@ -436,14 +436,14 @@ class MeanOddsParameterization(Parameterization):
 
         if unconstrained:
             return [
-                ExpNormalSpec(
+                PositiveNormalSpec(
                     name="phi",
                     shape_dims=(),
                     default_params=(0.0, 1.0),
                     guide_family=phi_family,
                     is_mixture=is_phi_mixture,
                 ),
-                ExpNormalSpec(
+                PositiveNormalSpec(
                     name="mu",
                     shape_dims=("n_genes",),
                     default_params=(0.0, 1.0),

@@ -221,9 +221,9 @@ class JointLowRankGuide(GuideFamily):
     --------
     >>> # Joint guide for gene-specific mu and scalar phi
     >>> joint = JointLowRankGuide(rank=10, group="nb_params")
-    >>> ExpNormalSpec("phi", (), (0.0, 1.0),
+    >>> PositiveNormalSpec("phi", (), (0.0, 1.0),
     ...     is_gene_specific=False, guide_family=joint)
-    >>> ExpNormalSpec("mu", ("n_genes",), (0.0, 1.0),
+    >>> PositiveNormalSpec("mu", ("n_genes",), (0.0, 1.0),
     ...     is_gene_specific=True, guide_family=joint)
 
     See Also

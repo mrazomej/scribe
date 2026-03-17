@@ -18,9 +18,9 @@ import pytest
 from jax import random
 
 from scribe.models.builders.parameter_specs import (
-    DatasetHierarchicalExpNormalSpec,
+    DatasetHierarchicalPositiveNormalSpec,
     DatasetHierarchicalSigmoidNormalSpec,
-    ExpNormalSpec,
+    PositiveNormalSpec,
     SigmoidNormalSpec,
     resolve_shape,
 )
@@ -84,11 +84,11 @@ class TestResolveShapeDataset:
 
 
 class TestDatasetHierarchicalSpecs:
-    """Test DatasetHierarchicalExpNormalSpec and SigmoidNormal creation."""
+    """Test DatasetHierarchicalPositiveNormalSpec and SigmoidNormal creation."""
 
     def test_exp_normal_creation(self):
-        """DatasetHierarchicalExpNormalSpec with correct fields."""
-        spec = DatasetHierarchicalExpNormalSpec(
+        """DatasetHierarchicalPositiveNormalSpec with correct fields."""
+        spec = DatasetHierarchicalPositiveNormalSpec(
             name="mu",
             shape_dims=("n_genes",),
             default_params=(0.0, 1.0),
@@ -122,7 +122,7 @@ class TestDatasetHierarchicalSpecs:
 
     def test_sample_hierarchical(self):
         """sample_hierarchical produces correctly shaped output."""
-        spec = DatasetHierarchicalExpNormalSpec(
+        spec = DatasetHierarchicalPositiveNormalSpec(
             name="mu",
             shape_dims=("n_genes",),
             default_params=(0.0, 1.0),
@@ -300,7 +300,7 @@ class TestIndexDatasetParams:
         # The param spec metadata should keep this gene-specific vector intact.
         param_values = {"phi": jnp.linspace(0.1, 0.3, n_genes)}
         param_specs = [
-            ExpNormalSpec(
+            PositiveNormalSpec(
                 name="phi",
                 shape_dims=("n_genes",),
                 default_params=(0.0, 1.0),
@@ -319,13 +319,13 @@ class TestIndexDatasetParams:
 
 
 # ==============================================================================
-# Helper to build a minimal DatasetHierarchicalExpNormalSpec
+# Helper to build a minimal DatasetHierarchicalPositiveNormalSpec
 # ==============================================================================
 
 
 def _make_ds_exp_spec(name="r"):
-    """Create a DatasetHierarchicalExpNormalSpec for testing."""
-    return DatasetHierarchicalExpNormalSpec(
+    """Create a DatasetHierarchicalPositiveNormalSpec for testing."""
+    return DatasetHierarchicalPositiveNormalSpec(
         name=name,
         shape_dims=("n_genes",),
         default_params=(0.0, 1.0),
@@ -653,8 +653,8 @@ class TestCompareDatasets:
 
 
 def _make_ds_exp_spec_mixture(name="r"):
-    """Create a DatasetHierarchicalExpNormalSpec that is also mixture-specific."""
-    return DatasetHierarchicalExpNormalSpec(
+    """Create a DatasetHierarchicalPositiveNormalSpec that is also mixture-specific."""
+    return DatasetHierarchicalPositiveNormalSpec(
         name=name,
         shape_dims=("n_genes",),
         default_params=(0.0, 1.0),
@@ -1119,7 +1119,7 @@ class TestMixtureDatasetComposition:
         from scribe.models.presets.factory import _datasetify_mu
 
         # Create a spec list where 'r' is mixture-specific
-        original_r = ExpNormalSpec(
+        original_r = PositiveNormalSpec(
             name="r",
             shape_dims=("n_genes",),
             default_params=(0.0, 1.0),
@@ -1169,7 +1169,7 @@ class TestMixtureDatasetComposition:
         """_datasetify_mu does not add is_mixture when original lacks it."""
         from scribe.models.presets.factory import _datasetify_mu
 
-        original_r = ExpNormalSpec(
+        original_r = PositiveNormalSpec(
             name="r",
             shape_dims=("n_genes",),
             default_params=(0.0, 1.0),
@@ -2172,7 +2172,7 @@ class TestHorseshoeCreateModel:
         """create_model with horseshoe_dataset_mu produces horseshoe specs."""
         from scribe.models.builders.parameter_specs import (
             HalfCauchySpec,
-            HorseshoeDatasetExpNormalSpec,
+            HorseshoeDatasetPositiveNormalSpec,
             InverseGammaSpec,
         )
 
@@ -2201,7 +2201,7 @@ class TestHorseshoeCreateModel:
         assert lambda_spec.shape_dims == ("n_genes",)
 
         mu_spec = next(s for s in specs if s.name == "mu")
-        assert isinstance(mu_spec, HorseshoeDatasetExpNormalSpec)
+        assert isinstance(mu_spec, HorseshoeDatasetPositiveNormalSpec)
         assert mu_spec.raw_name == "mu_raw"
         assert mu_spec.uses_ncp is True
 
@@ -2275,9 +2275,9 @@ class TestHorseshoeCreateModel:
         assert p_spec.raw_name == "p_raw"
 
     def test_horseshoe_gene_level_phi_mean_odds(self):
-        """horseshoe_p with mean_odds should use ExpNormalSpec for phi."""
+        """horseshoe_p with mean_odds should use PositiveNormalSpec for phi."""
         from scribe.models.builders.parameter_specs import (
-            HorseshoeHierarchicalExpNormalSpec,
+            HorseshoeHierarchicalPositiveNormalSpec,
         )
 
         b = (
@@ -2298,7 +2298,7 @@ class TestHorseshoeCreateModel:
         assert "lambda_phi" in spec_names
 
         phi_spec = next(s for s in specs if s.name == "phi")
-        assert isinstance(phi_spec, HorseshoeHierarchicalExpNormalSpec)
+        assert isinstance(phi_spec, HorseshoeHierarchicalPositiveNormalSpec)
         assert phi_spec.raw_name == "phi_raw"
 
     def test_horseshoe_gene_level_gate(self):
@@ -2776,7 +2776,7 @@ class TestPerComponentHyperpriors:
 
     def test_sample_hierarchical_mixture_dataset_broadcast(self):
         """sample_hierarchical broadcasts (K, G) loc to (K, D, G)."""
-        spec = DatasetHierarchicalExpNormalSpec(
+        spec = DatasetHierarchicalPositiveNormalSpec(
             name="mu",
             shape_dims=("n_genes",),
             default_params=(0.0, 1.0),
@@ -2807,7 +2807,7 @@ class TestPerComponentHyperpriors:
     def test_sample_hierarchical_scale_masking(self):
         """Non-shared components get near-zero scale via masking."""
         # Components 0 and 2 are shared, component 1 is exclusive
-        spec = DatasetHierarchicalExpNormalSpec(
+        spec = DatasetHierarchicalPositiveNormalSpec(
             name="mu",
             shape_dims=("n_genes",),
             default_params=(0.0, 1.0),
@@ -2846,7 +2846,7 @@ class TestPerComponentHyperpriors:
 
     def test_scalar_mode_broadcast(self):
         """Scalar p/phi with mixture+dataset: (K, D) shape works."""
-        spec = DatasetHierarchicalExpNormalSpec(
+        spec = DatasetHierarchicalPositiveNormalSpec(
             name="phi",
             shape_dims=(),
             default_params=(0.0, 1.0),

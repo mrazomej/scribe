@@ -1,6 +1,8 @@
 """Tests for the new ModelConfig system."""
 
 import pytest
+from pydantic import ValidationError
+
 from src.scribe.models.config import (
     ModelConfigBuilder,
     ModelConfig,
@@ -733,3 +735,90 @@ class TestMixingScalarExpansion:
         )
 
         assert config.priors.mixing == (5.0, 5.0)
+
+
+# ==============================================================================
+# Test positive_transform Config Field
+# ==============================================================================
+
+
+class TestPositiveTransform:
+    """Test the positive_transform config field validation and defaults.
+
+    The positive_transform field controls how unconstrained Normal samples
+    are mapped to (0, inf) for hierarchical parameters (phi, mu, r).
+    Valid values are 'softplus' (default, numerically stable) and 'exp'
+    (classic log-Normal behavior).
+    """
+
+    def test_positive_transform_default_value(self):
+        """ModelConfig without positive_transform defaults to 'softplus'.
+
+        When positive_transform is omitted, the config uses the default
+        'softplus' transform for numerical stability in float32.
+        """
+        # Direct construction; positive_transform is not passed, so default applies
+        config = ModelConfig(base_model="nbdm")
+        assert config.positive_transform == "softplus"
+
+    def test_positive_transform_explicit_softplus(self):
+        """ModelConfig with positive_transform='softplus' is accepted.
+
+        Explicitly setting softplus should succeed and be stored correctly.
+        """
+        config = ModelConfig(
+            base_model="nbdm",
+            positive_transform="softplus",
+        )
+        assert config.positive_transform == "softplus"
+
+    def test_positive_transform_explicit_exp(self):
+        """ModelConfig with positive_transform='exp' is accepted.
+
+        The 'exp' transform restores the original log-Normal behavior;
+        power users may prefer it for exact priors at the cost of
+        numerical stability.
+        """
+        config = ModelConfig(
+            base_model="nbdm",
+            positive_transform="exp",
+        )
+        assert config.positive_transform == "exp"
+
+    def test_positive_transform_invalid_value_raises(self):
+        """ModelConfig with invalid positive_transform raises ValidationError.
+
+        Only 'softplus' and 'exp' are valid; other values (e.g. 'sigmoid')
+        must raise a validation error.
+        """
+        with pytest.raises(
+            (ValueError, ValidationError), match="positive_transform"
+        ):
+            ModelConfig(
+                base_model="nbdm",
+                positive_transform="sigmoid",
+            )
+
+    def test_pickle_backward_compat_positive_transform(self):
+        """Old pickled configs without positive_transform default to 'exp'.
+
+        When unpickling a config saved before positive_transform was added,
+        __setstate__ backfills positive_transform='exp' to preserve the
+        original behavior (log-Normal via exp). This ensures backward
+        compatibility with existing saved checkpoints.
+
+        Notes
+        -----
+        We simulate an old pickle by constructing a minimal state dict
+        that lacks positive_transform, then calling __setstate__ directly.
+        The parent implementation backfills missing fields with defaults.
+        """
+        # Simulate an old pickle payload: state dict without positive_transform
+        state = {
+            "__dict__": {"base_model": "nbdm"},
+            "__pydantic_fields_set__": set(),
+        }
+        # Create instance without __init__ and restore from state
+        config = ModelConfig.__new__(ModelConfig)
+        config.__setstate__(state)
+        assert config.positive_transform == "exp"

@@ -178,6 +178,8 @@ class ModelConfig(BaseModel):
         d.setdefault("mu_prior", "none")
         d.setdefault("shared_capture_scaling", False)
         d.setdefault("joint_params", None)
+        # Old pickles predate the softplus default; preserve exp behavior
+        d.setdefault("positive_transform", "exp")
         d.setdefault("p_prior", "none")
         d.setdefault("gate_prior", "none")
         d.setdefault("mu_dataset_prior", "none")
@@ -352,6 +354,19 @@ class ModelConfig(BaseModel):
         ),
     )
 
+    # Positive-parameter transform for hierarchical specs.
+    # Controls how unconstrained Normal samples are mapped to (0, inf).
+    positive_transform: str = Field(
+        "softplus",
+        description=(
+            "Transform for positive-valued hierarchical parameters "
+            "(phi, mu, r). 'softplus' (default) prevents float32 overflow "
+            "via log(1+exp(z)); 'exp' restores the original log-Normal "
+            "behavior via exp(z). Power users may prefer 'exp' for exact "
+            "log-Normal priors at the cost of numerical stability."
+        ),
+    )
+
     # Component matching for multi-dataset mixtures.
     # When annotation_key and dataset_key are both provided, labels in 2+
     # datasets are automatically treated as "shared" and get dataset-level
@@ -484,8 +499,17 @@ class ModelConfig(BaseModel):
         - Gate priors require a zero-inflated model.
         - Dataset-level priors require ``n_datasets >= 2``.
         - Gene-level and dataset-level p/gate priors are mutually exclusive.
+        - ``positive_transform`` must be ``"softplus"`` or ``"exp"``.
         """
         _NONE = HierarchicalPriorType.NONE
+
+        # --- positive_transform validation ------------------------------------
+        valid_transforms = {"softplus", "exp"}
+        if self.positive_transform not in valid_transforms:
+            raise ValueError(
+                f"positive_transform must be one of {valid_transforms}, "
+                f"got {self.positive_transform!r}."
+            )
 
         # --- Gene-level p/phi ------------------------------------------------
         if self.p_prior != _NONE and not self.unconstrained:
