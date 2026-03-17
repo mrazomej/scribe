@@ -5,10 +5,13 @@ This mixin provides methods for subsetting results by gene indices, enabling
 indexing operations like `results[:, genes]`.
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, TYPE_CHECKING
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    from .results import ScribeSVIResults
 
 # ==============================================================================
 # Gene metadata helper
@@ -66,11 +69,7 @@ def build_gene_axis_by_key(
         for key in params:
             if "$" in key:
                 continue
-            if (
-                key != name
-                and not key.startswith(name + "_")
-                and not key.startswith("log_" + name + "_")
-            ):
+            if not _matches_spec_param_key(name, key):
                 continue
 
             value = params[key]
@@ -78,6 +77,7 @@ def build_gene_axis_by_key(
                 continue
 
             try:
+                assigned = False
                 if (
                     shape_dims
                     and "n_genes" in shape_dims
@@ -86,13 +86,79 @@ def build_gene_axis_by_key(
                     gene_axis = list(shape_dims).index("n_genes")
                     if value.shape[gene_axis] == n_genes:
                         gene_axis_by_key[key] = gene_axis
-                else:
+                        assigned = True
+                # Low-rank guide covariance factors append a trailing rank axis
+                # to the logical parameter shape, e.g. (K, G, rank) for a
+                # (K, G) spec.  Reuse the metadata-derived gene axis from
+                # shape_dims and ignore the final rank axis.
+                elif (
+                    shape_dims
+                    and "n_genes" in shape_dims
+                    and len(value.shape) == len(shape_dims) + 1
+                ):
+                    gene_axis = list(shape_dims).index("n_genes")
+                    if value.shape[gene_axis] == n_genes:
+                        gene_axis_by_key[key] = gene_axis
+                        assigned = True
+
+                # If metadata-based shape alignment did not produce an axis,
+                # fall back to the legacy heuristic so sample tensors like
+                # (n_samples, K, G) still resolve to axis=2.
+                if not assigned:
                     gene_axis = value.shape.index(n_genes)
                     gene_axis_by_key[key] = gene_axis
             except (ValueError, IndexError):
                 continue
 
     return gene_axis_by_key if gene_axis_by_key else None
+
+
+def _matches_spec_param_key(name: str, key: str) -> bool:
+    """
+    Return whether a params key belongs to a given spec name.
+
+    The matcher supports both the legacy per-parameter naming scheme and the
+    joint-guide namespace:
+
+    - Legacy keys: ``{name}_*`` and ``log_{name}_*``
+    - Joint keys: ``joint_{group}_{name}_*`` and ``joint_{group}_log_{name}_*``
+
+    Parameters
+    ----------
+    name : str
+        Parameter spec name.
+    key : str
+        Parameter key from the flattened params dict.
+
+    Returns
+    -------
+    bool
+        True when ``key`` should be treated as part of ``name``.
+    """
+    # Legacy keys (existing behavior).
+    if (
+        key == name
+        or key.startswith(name + "_")
+        or key.startswith("log_" + name + "_")
+    ):
+        return True
+
+    # Joint-guide keys are prefixed as joint_{group}_*.  We strip the first
+    # two segments ("joint" and group) and reuse the same legacy matcher on
+    # the remainder to keep behavior consistent.
+    if not key.startswith("joint_"):
+        return False
+
+    rest = key[len("joint_") :]
+    _, sep, remainder = rest.partition("_")
+    if not sep:
+        return False
+
+    return (
+        remainder == name
+        or remainder.startswith(name + "_")
+        or remainder.startswith("log_" + name + "_")
+    )
 
 
 # ==============================================================================
@@ -259,7 +325,9 @@ class GeneSubsettingMixin:
             gene_subset = self[gene_indexer]
 
             # Apply component selection (skip if slice(None))
-            if isinstance(component_indexer, slice) and component_indexer == slice(None):
+            if isinstance(
+                component_indexer, slice
+            ) and component_indexer == slice(None):
                 result = gene_subset
             else:
                 result = gene_subset.get_component(component_indexer)
