@@ -101,7 +101,7 @@ When results objects are passed, `compare()`:
 | `de.compute_pefp(threshold, tau, use_lfsr_tau)` | Posterior expected FDP |
 | `de.find_threshold(target_pefp, tau, use_lfsr_tau)` | Find lfsr threshold for PEFP control |
 | `de.summary(tau, sort_by, top_n)` | Formatted results table |
-| `de.to_dataframe(tau, target_pefp, use_lfsr_tau)` | Export gene-level results to a pandas DataFrame |
+| `de.to_dataframe(tau, target_pefp, use_lfsr_tau, metrics, tau_lfc, tau_var, tau_kl, column_naming)` | Export selected metric families to a pandas DataFrame |
 
 **Empirical/Shrinkage-only methods:**
 
@@ -440,7 +440,8 @@ metrics:
 
 ```python
 df = de.to_dataframe(tau=0.5)
-# Columns: gene, delta_mean, delta_sd, lfsr, lfsr_tau, prob_effect, prob_positive
+# Columns: gene, clr_delta_mean, clr_delta_sd, clr_lfsr, clr_lfsr_tau,
+#          clr_prob_effect, clr_prob_positive
 ```
 
 For empirical and shrinkage results, the `metrics` argument allows composable
@@ -463,34 +464,38 @@ df_all = de.to_dataframe(metrics="all")
 Supported empirical/shrinkage families:
 
 - `clr` — CLR DE columns (`delta_mean`, `delta_sd`, `lfsr`, `lfsr_tau`, ...)
-- `bio_lfc` — biological mean-shift summaries (`lfc_*`)
-- `bio_lvr` — biological variance-shift summaries (`lvr_*`)
-- `bio_kl` — biological Jeffreys summaries (`kl_*`)
-- `bio_aux` — biological context columns (`mu_*`, `var_*`, `max_bio_expr`)
+  (prefixed as `clr_*` by default)
+- `bio_lfc` — biological mean-shift summaries (`bio_lfc_*`)
+- `bio_lvr` — biological variance-shift summaries (`bio_lvr_*`)
+- `bio_kl` — biological Jeffreys summaries (`bio_kl_*`)
+- `bio_aux` — biological context columns (`bio_mu_*`, `bio_var_*`, `bio_max_bio_expr`)
 
 For empirical/shrinkage results with stored MAP mean expression, CLR exports
-also include `mean_expression_A` and `mean_expression_B`.
+also include `clr_mean_expression_A` and `clr_mean_expression_B`.
+
+Use `column_naming="legacy"` to recover historical un-prefixed column names.
 
 #### PEFP-controlled DE calls
 
-Pass `target_pefp` to automatically add a boolean `is_de` column that
+Pass `target_pefp` to automatically add a boolean `clr_is_de` column that
 controls the posterior expected false discovery proportion (PEFP) at the
 specified level:
 
 ```python
 # Call DE genes at PEFP ≤ 5%, using lfsr_tau (the default)
 df = de.to_dataframe(tau=0.5, target_pefp=0.05)
-de_genes = df[df["is_de"]]
+de_genes = df[df["clr_is_de"]]
 ```
 
-The `is_de` column is computed by finding the largest lfsr (or `lfsr_tau`)
+The `clr_is_de` column is computed by finding the largest CLR lfsr
+(or `clr_lfsr_tau`)
 threshold `t*` such that the average lfsr among genes with lfsr < `t*` does
 not exceed `target_pefp`, then flagging all genes below that threshold.
 By default `use_lfsr_tau=True`, so the practical-significance variant is
 used (recommended when `tau > 0`).  Set `use_lfsr_tau=False` to threshold
 on the standard `lfsr` instead.
 
-`target_pefp` requires `metrics` to include `clr`, because `is_de` is defined
+`target_pefp` requires `metrics` to include `clr`, because `clr_is_de` is defined
 from CLR lfsr values.
 
 ## Empirical (Non-Parametric) DE

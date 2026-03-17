@@ -395,12 +395,12 @@ def test_to_dataframe_columns(de_results):
     assert isinstance(df, pd.DataFrame)
     expected_cols = {
         "gene",
-        "delta_mean",
-        "delta_sd",
-        "lfsr",
-        "lfsr_tau",
-        "prob_effect",
-        "prob_positive",
+        "clr_delta_mean",
+        "clr_delta_sd",
+        "clr_lfsr",
+        "clr_lfsr_tau",
+        "clr_prob_effect",
+        "clr_prob_positive",
     }
     assert set(df.columns) == expected_cols
 
@@ -410,6 +410,21 @@ def test_to_dataframe_metrics_all_alias_matches_default(de_results):
     df_default = de_results.to_dataframe(tau=0.0)
     df_all = de_results.to_dataframe(tau=0.0, metrics="all")
     assert list(df_all.columns) == list(df_default.columns)
+
+
+def test_to_dataframe_legacy_naming_option(de_results):
+    """Legacy naming mode should keep historical CLR column names."""
+    df = de_results.to_dataframe(tau=0.0, column_naming="legacy")
+    expected_cols = {
+        "gene",
+        "delta_mean",
+        "delta_sd",
+        "lfsr",
+        "lfsr_tau",
+        "prob_effect",
+        "prob_positive",
+    }
+    assert set(df.columns) == expected_cols
 
 
 def test_to_dataframe_invalid_metrics_raises(de_results):
@@ -433,14 +448,14 @@ def test_to_dataframe_gene_names(de_results):
 def test_to_dataframe_no_pefp_no_is_de(de_results):
     """Without target_pefp the is_de column should not be present."""
     df = de_results.to_dataframe(tau=0.0)
-    assert "is_de" not in df.columns
+    assert "clr_is_de" not in df.columns
 
 
 def test_to_dataframe_with_pefp_adds_is_de(de_results):
     """Passing target_pefp adds a boolean is_de column."""
     df = de_results.to_dataframe(tau=0.0, target_pefp=0.05)
-    assert "is_de" in df.columns
-    assert df["is_de"].dtype == bool
+    assert "clr_is_de" in df.columns
+    assert df["clr_is_de"].dtype == bool
     assert len(df) == de_results.D
 
 
@@ -454,9 +469,9 @@ def test_to_dataframe_pefp_controls_fdr(de_results):
 
     target = 0.10
     df = de_results.to_dataframe(tau=0.0, target_pefp=target)
-    called = df[df["is_de"]]
+    called = df[df["clr_is_de"]]
     if len(called) > 0:
-        avg_lfsr_tau = np.mean(called["lfsr_tau"].to_numpy())
+        avg_lfsr_tau = np.mean(called["clr_lfsr_tau"].to_numpy())
         assert avg_lfsr_tau <= target + 1e-8
 
 
@@ -467,9 +482,9 @@ def test_to_dataframe_pefp_with_lfsr_tau(de_results):
     tau = 0.1
     target = 0.10
     df = de_results.to_dataframe(tau=tau, target_pefp=target, use_lfsr_tau=True)
-    called = df[df["is_de"]]
+    called = df[df["clr_is_de"]]
     if len(called) > 0:
-        avg_lfsr_tau = np.mean(called["lfsr_tau"].to_numpy())
+        avg_lfsr_tau = np.mean(called["clr_lfsr_tau"].to_numpy())
         assert avg_lfsr_tau <= target + 1e-8
 
 
@@ -477,7 +492,7 @@ def test_to_dataframe_pefp_stringent_fewer_calls(de_results):
     """A more stringent target_pefp should call no more genes than a lenient one."""
     df_lenient = de_results.to_dataframe(tau=0.0, target_pefp=0.20)
     df_stringent = de_results.to_dataframe(tau=0.0, target_pefp=0.01)
-    assert df_stringent["is_de"].sum() <= df_lenient["is_de"].sum()
+    assert df_stringent["clr_is_de"].sum() <= df_lenient["clr_is_de"].sum()
 
 
 # --------------------------------------------------------------------------
@@ -527,8 +542,8 @@ class TestEmpiricalToDataframe:
         # mu_map is derived from r/p during compare() when possible
         if emp_de.mu_map_A is not None:
             df = emp_de.to_dataframe()
-            assert "mean_expression_A" in df.columns
-            assert "mean_expression_B" in df.columns
+            assert "clr_mean_expression_A" in df.columns
+            assert "clr_mean_expression_B" in df.columns
             assert len(df) == emp_de.D
 
     def test_shape_correct(self, emp_de):
@@ -541,34 +556,34 @@ class TestEmpiricalToDataframe:
         df = emp_de_bio.to_dataframe(metrics="bio_lfc", tau_lfc=0.2)
         expected = {
             "gene",
-            "lfc_mean",
-            "lfc_sd",
-            "lfc_prob_positive",
-            "lfc_lfsr",
-            "lfc_prob_up",
-            "lfc_prob_down",
-            "lfc_prob_effect",
-            "lfc_lfsr_tau",
+            "bio_lfc_mean",
+            "bio_lfc_sd",
+            "bio_lfc_prob_positive",
+            "bio_lfc_lfsr",
+            "bio_lfc_prob_up",
+            "bio_lfc_prob_down",
+            "bio_lfc_prob_effect",
+            "bio_lfc_lfsr_tau",
         }
         assert set(df.columns) == expected
 
     def test_clr_plus_bio_kl_combination(self, emp_de_bio):
         """Mixed CLR + KL export includes both metric families."""
         df = emp_de_bio.to_dataframe(metrics=["clr", "bio_kl"], tau_kl=0.1)
-        assert "delta_mean" in df.columns
-        assert "lfsr_tau" in df.columns
-        assert "kl_mean" in df.columns
-        assert "kl_prob_effect" in df.columns
+        assert "clr_delta_mean" in df.columns
+        assert "clr_lfsr_tau" in df.columns
+        assert "bio_kl_mean" in df.columns
+        assert "bio_kl_prob_effect" in df.columns
 
     def test_metrics_all_includes_bio_blocks(self, emp_de_bio):
         """The ``all`` alias includes CLR and all biological families."""
         df = emp_de_bio.to_dataframe(metrics="all")
         for col in (
-            "delta_mean",
-            "lfc_mean",
-            "lvr_mean",
-            "kl_mean",
-            "max_bio_expr",
+            "clr_delta_mean",
+            "bio_lfc_mean",
+            "bio_lvr_mean",
+            "bio_kl_mean",
+            "bio_max_bio_expr",
         ):
             assert col in df.columns
 

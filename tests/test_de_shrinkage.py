@@ -734,8 +734,8 @@ class TestShrinkageMaskManagement:
         """to_dataframe(target_pefp=...) works on shrinkage results."""
         de_s = empirical_de.shrink()
         df = de_s.to_dataframe(tau=0.1, target_pefp=0.10)
-        assert "is_de" in df.columns
-        assert df["is_de"].dtype == bool
+        assert "clr_is_de" in df.columns
+        assert df["clr_is_de"].dtype == bool
         assert len(df) == de_s.D
 
     def test_shrinkage_to_dataframe_with_bio_metrics(self, empirical_de):
@@ -746,7 +746,12 @@ class TestShrinkageMaskManagement:
             tau_lfc=0.1,
             tau_kl=0.2,
         )
-        for col in ("delta_mean", "lfc_mean", "lfc_lfsr_tau", "kl_mean"):
+        for col in (
+            "clr_delta_mean",
+            "bio_lfc_mean",
+            "bio_lfc_lfsr_tau",
+            "bio_kl_mean",
+        ):
             assert col in df.columns
         assert len(df) == de_s.D
 
@@ -767,7 +772,7 @@ class TestShrinkageMaskManagement:
         df = de_s.set_gene_mask(new_mask).to_dataframe(
             tau=0.1, target_pefp=0.10
         )
-        assert "is_de" in df.columns
+        assert "clr_is_de" in df.columns
         assert len(df) == 3
 
 
