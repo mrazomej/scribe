@@ -41,3 +41,6 @@ dirname_aliases:
     inference.n_samples: nsamples
     inference.n_warmup: nwarmup
     inference.method: method
+
+    # Biology-informed capture prior
+    shared_capture_scaling: sharescaling
