@@ -1104,6 +1104,8 @@ def _apply_capture(
     parameterization: Parameterization,
     unconstrained: bool,
     split: bool,
+    *,
+    pos_transform=None,
 ) -> None:
     """Pass 7: add the per-cell capture probability posterior.
 
@@ -1135,7 +1137,12 @@ def _apply_capture(
         Parameterization.ODDS_RATIO,
     ):
         distributions.update(
-            _build_phi_capture_posterior(params, unconstrained, split)
+            _build_phi_capture_posterior(
+                params,
+                unconstrained,
+                split,
+                transform=pos_transform,
+            )
         )
     else:
         distributions.update(
@@ -1330,6 +1337,7 @@ def get_posterior_distributions(
         parameterization,
         unconstrained,
         split,
+        pos_transform=pos_transform,
     )
     _apply_mixture_weights(distributions, params, is_mixture)  # Pass 8
     _apply_joint_aggregation(distributions, params, model_config)  # Pass 9
@@ -1762,6 +1770,8 @@ def _build_phi_capture_posterior(
     params: Dict[str, jnp.ndarray],
     unconstrained: bool,
     split: bool,
+    *,
+    transform=None,
 ) -> Dict[str, Any]:
     """Build posterior for capture odds ratio parameter."""
     distributions = {}
@@ -1773,6 +1783,7 @@ def _build_phi_capture_posterior(
             is_mixture=False,
             split=split,
             is_scalar=False,
+            transform=transform,
         )
     else:
         distributions["phi_capture"] = _build_betaprime_posterior(

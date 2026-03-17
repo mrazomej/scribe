@@ -247,6 +247,7 @@ def build_capture_spec(
     guide_families: GuideFamilyConfig,
     param_strategy: Parameterization,
     model_config: Optional[Any] = None,
+    positive_transform: Optional[Any] = None,
 ) -> ParamSpec:
     """Build capture probability parameter spec for VCP models (NBVCP, ZINBVCP).
 
@@ -280,6 +281,10 @@ def build_capture_spec(
     model_config : ModelConfig, optional
         Full model configuration. Used to check ``capture_prior`` mode
         and organism/M_0 settings.
+    positive_transform : Transform, optional
+        Positive transform to use for unconstrained ``phi_capture``.
+        If None, ``PositiveNormalSpec`` default transform is used
+        (``ExpTransform`` for backward compatibility).
 
     Returns
     -------
@@ -364,12 +369,19 @@ def build_capture_spec(
 
     if unconstrained:
         if use_phi_capture:
+            # Keep default behavior (ExpTransform) when no transform is
+            # provided by caller, but allow factory-resolved
+            # positive_transform to drive unconstrained phi_capture.
+            _kwargs = {}
+            if positive_transform is not None:
+                _kwargs["transform"] = positive_transform
             return PositiveNormalSpec(
                 name=capture_param_name,
                 shape_dims=("n_cells",),
                 default_params=(0.0, 1.0),
                 is_cell_specific=True,
                 guide_family=capture_family,
+                **_kwargs,
             )
         else:
             return SigmoidNormalSpec(
@@ -410,6 +422,7 @@ def build_extra_param_spec(
     mixture_params: Optional[List[str]] = None,
     hierarchical_gate: bool = False,
     model_config: Optional[Any] = None,
+    positive_transform: Optional[Any] = None,
 ) -> List[ParamSpec]:
     """Build model-specific extra parameter spec(s).
 
@@ -434,6 +447,8 @@ def build_extra_param_spec(
         If True and param_name is "gate", build hierarchical gate specs.
     model_config : ModelConfig, optional
         Full model configuration (passed to ``build_capture_spec``).
+    positive_transform : Transform, optional
+        Positive transform for unconstrained ``phi_capture``.
 
     Returns
     -------
@@ -460,6 +475,7 @@ def build_extra_param_spec(
                 guide_families=guide_families,
                 param_strategy=param_strategy,
                 model_config=model_config,
+                positive_transform=positive_transform,
             )
         ]
     else:

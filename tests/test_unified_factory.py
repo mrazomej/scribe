@@ -1434,7 +1434,9 @@ class TestMixtureParamsValidation:
 class _FakeSpec:
     """Minimal stand-in for a ParamSpec with optional prior/guide attrs."""
 
-    def __init__(self, name, prior=None, guide=None, *, has_prior=True, has_guide=True):
+    def __init__(
+        self, name, prior=None, guide=None, *, has_prior=True, has_guide=True
+    ):
         self.name = name
         if has_prior:
             self.prior = prior
@@ -1574,3 +1576,42 @@ class TestPositiveTransformFactory:
         _, _, param_specs = create_model(config, validate=False)
         phi_spec = next(s for s in param_specs if s.name == "phi")
         assert isinstance(phi_spec.transform, dist.transforms.ExpTransform)
+
+    def test_positive_transform_softplus_applies_to_phi_capture(self):
+        """Default softplus also applies to unconstrained mean-odds phi_capture."""
+        import numpyro.distributions as dist
+
+        from scribe.models.config import ModelConfig
+
+        config = ModelConfig(
+            base_model="nbvcp",
+            parameterization="mean_odds",
+            unconstrained=True,
+        )
+        _, _, param_specs = create_model(config, validate=False)
+        phi_capture_spec = next(
+            s for s in param_specs if s.name == "phi_capture"
+        )
+        assert isinstance(
+            phi_capture_spec.transform, dist.transforms.SoftplusTransform
+        )
+
+    def test_positive_transform_exp_applies_to_phi_capture(self):
+        """Explicit positive_transform='exp' keeps phi_capture on ExpTransform."""
+        import numpyro.distributions as dist
+
+        from scribe.models.config import ModelConfig
+
+        config = ModelConfig(
+            base_model="nbvcp",
+            parameterization="mean_odds",
+            unconstrained=True,
+            positive_transform="exp",
+        )
+        _, _, param_specs = create_model(config, validate=False)
+        phi_capture_spec = next(
+            s for s in param_specs if s.name == "phi_capture"
+        )
+        assert isinstance(
+            phi_capture_spec.transform, dist.transforms.ExpTransform
+        )

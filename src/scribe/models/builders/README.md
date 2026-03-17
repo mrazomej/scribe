@@ -346,11 +346,10 @@ parameterizations and guide families, including **joint-aware** extraction for
   `ExpTransform`. This transform is threaded to every
   `_build_positive_normal_posterior`, `_build_low_rank_positive_normal_posterior`,
   and `_build_joint_low_rank_posterior` call for positive-valued parameters
-  (`mu`, `phi`, `r`). This covers all three posterior code paths: mean-field,
-  per-parameter low-rank, and joint low-rank guides. Probability-valued
-  parameters (`p`, `gate`, `p_capture`) continue to use `SigmoidTransform`
-  regardless. The capture-specific `phi_capture` is exempt and always uses
-  `ExpTransform` since it is not governed by `positive_transform`.
+  (`mu`, `phi`, `r`, `phi_capture`). This covers all three posterior code
+  paths: mean-field, per-parameter low-rank, and joint low-rank guides.
+  Probability-valued parameters (`p`, `gate`, `p_capture`) continue to use
+  `SigmoidTransform` regardless.
 
 ### Joint-Parameter Compatibility Checklist
 

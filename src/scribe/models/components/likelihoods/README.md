@@ -168,10 +168,12 @@ variation in capture efficiency. They support two parameterizations:
 likelihood = NBWithVCPLikelihood(capture_param_name="phi_capture")
 
 # With unconstrained sampling for better optimization
+# The transform for phi_capture should align with ModelConfig.positive_transform
+# (softplus by default; exp for legacy/backward-compatible configs).
 likelihood = NBWithVCPLikelihood(
     capture_param_name="phi_capture",
     is_unconstrained=True,
-    transform=ExpTransform(),
+    transform=SoftplusTransform(),
     constrained_name="phi_capture",
 )
 ```
