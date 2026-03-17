@@ -408,6 +408,11 @@ class EmpiricalResultsMixin:
         tau: float = 0.0,
         target_pefp: float | None = None,
         use_lfsr_tau: bool = True,
+        target_pefp_lfc: float | None = None,
+        use_lfsr_tau_lfc: bool = True,
+        target_pefp_lvr: float | None = None,
+        use_lfsr_tau_lvr: bool = True,
+        target_pefp_kl: float | None = None,
         metrics: str | list[str] | tuple[str, ...] | None = None,
         tau_lfc: float = 0.0,
         tau_var: float = 0.0,
@@ -424,6 +429,17 @@ class EmpiricalResultsMixin:
             Optional PEFP target for ``is_de`` column.
         use_lfsr_tau : bool, default=True
             Which lfsr variant to use for PEFP thresholding.
+        target_pefp_lfc : float, optional
+            PEFP target used to add an LFC call column.
+        use_lfsr_tau_lfc : bool, default=True
+            Whether LFC calls use ``lfsr_tau`` (if ``True``) or ``lfsr``.
+        target_pefp_lvr : float, optional
+            PEFP target used to add an LVR call column.
+        use_lfsr_tau_lvr : bool, default=True
+            Whether LVR calls use ``lfsr_tau`` (if ``True``) or ``lfsr``.
+        target_pefp_kl : float, optional
+            PEFP target used to add a KL call column. KL calls use
+            ``lfer = 1 - prob_effect`` as the error score.
         metrics : {'clr', 'bio_lfc', 'bio_lvr', 'bio_kl', 'bio_aux', 'all'}
             or iterable, optional
             Metric families to include. ``None`` defaults to ``'clr'`` to
@@ -468,6 +484,18 @@ class EmpiricalResultsMixin:
             raise ValueError(
                 "target_pefp requires metrics to include 'clr' because "
                 "'is_de' is defined from CLR lfsr values."
+            )
+        if target_pefp_lfc is not None and "bio_lfc" not in metric_families:
+            raise ValueError(
+                "target_pefp_lfc requires metrics to include 'bio_lfc'."
+            )
+        if target_pefp_lvr is not None and "bio_lvr" not in metric_families:
+            raise ValueError(
+                "target_pefp_lvr requires metrics to include 'bio_lvr'."
+            )
+        if target_pefp_kl is not None and "bio_kl" not in metric_families:
+            raise ValueError(
+                "target_pefp_kl requires metrics to include 'bio_kl'."
             )
 
         if include_clr:
@@ -536,6 +564,17 @@ class EmpiricalResultsMixin:
                     return f"bio_kl_{key.removeprefix('kl_')}"
                 return f"bio_{key}"
 
+            def _call_column_name(metric: str) -> str:
+                """Name per-metric DE call columns by naming convention."""
+                if column_naming == "legacy":
+                    legacy_map = {
+                        "bio_lfc": "lfc_is_de",
+                        "bio_lvr": "lvr_is_de",
+                        "bio_kl": "kl_is_de",
+                    }
+                    return legacy_map[metric]
+                return f"{metric}_is_de"
+
             # Keep each biological block grouped so callers can request subsets.
             if "bio_lfc" in metric_families:
                 for key in (
@@ -549,6 +588,17 @@ class EmpiricalResultsMixin:
                     "lfc_lfsr_tau",
                 ):
                     df[_bio_column_name(key)] = _bio_values(key)
+                if target_pefp_lfc is not None:
+                    lfc_score_key = (
+                        "lfc_lfsr_tau" if use_lfsr_tau_lfc else "lfc_lfsr"
+                    )
+                    lfc_is_de, _ = self._compute_is_de_mask_from_scores(
+                        _bio_values(lfc_score_key),
+                        target_pefp=target_pefp_lfc,
+                    )
+                    df[_call_column_name("bio_lfc")] = np.asarray(
+                        lfc_is_de, dtype=bool
+                    )
 
             if "bio_lvr" in metric_families:
                 for key in (
@@ -562,10 +612,35 @@ class EmpiricalResultsMixin:
                     "lvr_lfsr_tau",
                 ):
                     df[_bio_column_name(key)] = _bio_values(key)
+                if target_pefp_lvr is not None:
+                    lvr_score_key = (
+                        "lvr_lfsr_tau" if use_lfsr_tau_lvr else "lvr_lfsr"
+                    )
+                    lvr_is_de, _ = self._compute_is_de_mask_from_scores(
+                        _bio_values(lvr_score_key),
+                        target_pefp=target_pefp_lvr,
+                    )
+                    df[_call_column_name("bio_lvr")] = np.asarray(
+                        lvr_is_de, dtype=bool
+                    )
 
             if "bio_kl" in metric_families:
                 for key in ("kl_mean", "kl_sd", "kl_prob_effect"):
                     df[_bio_column_name(key)] = _bio_values(key)
+                if target_pefp_kl is not None:
+                    # KL is non-negative and non-directional, so we map
+                    # ``prob_effect`` to an error score via lfer.
+                    kl_lfer = 1.0 - _bio_values("kl_prob_effect")
+                    kl_is_de, _ = self._compute_is_de_mask_from_scores(
+                        kl_lfer, target_pefp=target_pefp_kl
+                    )
+                    if column_naming == "legacy":
+                        df["kl_lfer"] = kl_lfer
+                    else:
+                        df["bio_kl_lfer"] = kl_lfer
+                    df[_call_column_name("bio_kl")] = np.asarray(
+                        kl_is_de, dtype=bool
+                    )
 
             if "bio_aux" in metric_families:
                 for key in (

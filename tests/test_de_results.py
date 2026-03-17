@@ -592,6 +592,62 @@ class TestEmpiricalToDataframe:
         with pytest.raises(ValueError, match="target_pefp requires metrics"):
             emp_de_bio.to_dataframe(metrics="bio_kl", target_pefp=0.05)
 
+    def test_metric_specific_is_de_columns(self, emp_de_bio):
+        """Per-family PEFP targets should emit per-metric call columns."""
+        df = emp_de_bio.to_dataframe(
+            metrics=["bio_lfc", "bio_lvr", "bio_kl"],
+            target_pefp_lfc=0.10,
+            target_pefp_lvr=0.10,
+            target_pefp_kl=0.10,
+        )
+        for col in ("bio_lfc_is_de", "bio_lvr_is_de", "bio_kl_is_de"):
+            assert col in df.columns
+            assert df[col].dtype == bool
+
+    def test_metric_specific_pefp_property_lfc(self, emp_de_bio):
+        """LFC calls should satisfy PEFP under selected lfsr variant."""
+        import numpy as np
+
+        target = 0.10
+        df = emp_de_bio.to_dataframe(
+            metrics="bio_lfc",
+            target_pefp_lfc=target,
+            use_lfsr_tau_lfc=True,
+        )
+        called = df[df["bio_lfc_is_de"]]
+        if len(called) > 0:
+            avg_error = np.mean(called["bio_lfc_lfsr_tau"].to_numpy())
+            assert avg_error <= target + 1e-8
+
+    def test_metric_specific_pefp_property_lvr(self, emp_de_bio):
+        """LVR calls should satisfy PEFP under selected lfsr variant."""
+        import numpy as np
+
+        target = 0.10
+        df = emp_de_bio.to_dataframe(
+            metrics="bio_lvr",
+            target_pefp_lvr=target,
+            use_lfsr_tau_lvr=True,
+        )
+        called = df[df["bio_lvr_is_de"]]
+        if len(called) > 0:
+            avg_error = np.mean(called["bio_lvr_lfsr_tau"].to_numpy())
+            assert avg_error <= target + 1e-8
+
+    def test_metric_specific_pefp_property_kl_lfer(self, emp_de_bio):
+        """KL calls should satisfy PEFP using lfer = 1 - prob_effect."""
+        import numpy as np
+
+        target = 0.10
+        df = emp_de_bio.to_dataframe(
+            metrics="bio_kl",
+            target_pefp_kl=target,
+        )
+        called = df[df["bio_kl_is_de"]]
+        if len(called) > 0:
+            avg_lfer = np.mean(called["bio_kl_lfer"].to_numpy())
+            assert avg_lfer <= target + 1e-8
+
     def test_bio_metrics_require_biological_samples(self, emp_de):
         """Requesting biological families raises when biological data is absent."""
         with pytest.raises(RuntimeError, match="Biological-level DE requires"):
