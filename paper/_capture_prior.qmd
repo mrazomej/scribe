@@ -584,6 +584,166 @@ cell in the respective organism:
 For all organisms, $\sigma_M = 0.5$ is a reasonable default, corresponding to
 $\sim 1.5$--$2 \times$ fold variation in total mRNA content.
 
+## Variational approximation for the capture probability {#sec-cap-variational}
+
+The preceding sections define the **model**: the prior on $\eta_c$ and its exact
+transformations to $\nu_c$ and $\phi_c$. In this section, we turn to the
+**variational guide**---the approximate posterior used for stochastic variational
+inference. The model is unchanged; what follows is a choice of variational
+family that better approximates the true posterior of $\eta_c$.
+
+### The variational problem
+
+After fitting, we need a distribution $q(\eta_c)$ that approximates the true
+posterior $\pi(\eta_c \mid \underline{u})$. The model prior is a truncated
+normal:
+
+$$
+\eta_c \sim \mathcal{N}^{+}(\log M_0 - \log L_c, \; \sigma_M^2),
+$${#eq-cap-var-prior}
+
+with support $\eta_c \geq 0$. A natural first choice for the variational
+family is to match the prior's functional form, using a truncated normal guide:
+
+$$
+q_{\text{trunc}}(\eta_c) = \mathcal{N}^{+}(\mu_c, \sigma_c^2),
+$${#eq-cap-var-trunc}
+
+where $\mu_c$ and $\sigma_c$ are learnable per-cell variational parameters. This
+is the approach used in the original implementation. While correct, it has
+several practical drawbacks that motivate a reparameterization.
+
+### A reparameterization via $\tilde{\eta}_c$
+
+Define the auxiliary variable
+
+$$
+\tilde{\eta}_c = \log \phi_c = \log\!\left(\exp(\eta_c) - 1\right).
+$${#eq-cap-var-etatilde-def}
+
+This is the inverse softplus of $\eta_c$, and it is an unconstrained real number:
+$\tilde{\eta}_c \in (-\infty, \infty)$. From $\tilde{\eta}_c$, all quantities
+of interest can be recovered via exact identities:
+
+$$
+\eta_c = \operatorname{softplus}(\tilde{\eta}_c) = \log(1 + \exp(\tilde{\eta}_c)),
+$${#eq-cap-var-eta-softplus}
+
+$$
+\phi_c = \exp(\tilde{\eta}_c),
+$${#eq-cap-var-phi-exp}
+
+$$
+\nu_c = \sigma(-\tilde{\eta}_c) = \frac{1}{1 + \exp(\tilde{\eta}_c)},
+$${#eq-cap-var-nu-sigmoid}
+
+where $\sigma(\cdot)$ denotes the sigmoid function. We can verify the
+consistency of these identities:
+
+$$
+\nu_c = \frac{1}{1 + \phi_c} = \frac{1}{1 + \exp(\tilde{\eta}_c)} = \sigma(-\tilde{\eta}_c),
+$${#eq-cap-var-consistency}
+
+confirming that all three parameterizations agree.
+
+### The softplus-normal guide
+
+With $\tilde{\eta}_c$ in hand, we define the variational family
+
+$$
+q_{\text{sp}}(\eta_c): \quad
+\tilde{\eta}_c \sim \mathcal{N}(\tilde{\mu}_c, \tilde{\sigma}_c^2),
+\quad
+\eta_c = \operatorname{softplus}(\tilde{\eta}_c),
+$${#eq-cap-var-softplus-guide}
+
+where $\tilde{\mu}_c$ and $\tilde{\sigma}_c > 0$ are the learnable per-cell
+variational parameters. This is a ``TransformedDistribution``: a normal base
+distribution pushed through the softplus transform. The resulting distribution
+on $\eta_c$ has support $(0, \infty)$, matching the truncated normal prior.
+
+The induced distribution on the capture probability $\nu_c$ is a **logit-normal**:
+since $\nu_c = \sigma(-\tilde{\eta}_c)$ and $\tilde{\eta}_c$ is Gaussian, the
+logit of $\nu_c$ is exactly Gaussian:
+
+$$
+\operatorname{logit}(\nu_c) = \log \frac{\nu_c}{1 - \nu_c} = -\tilde{\eta}_c
+\sim \mathcal{N}(-\tilde{\mu}_c, \tilde{\sigma}_c^2).
+$${#eq-cap-var-logit-normal}
+
+The logit-normal is the canonical variational family for a probability on
+$(0, 1)$, in the same way that the log-normal is canonical for a positive
+quantity: it maps the unrestricted Gaussian to the constrained domain via the
+natural link function.
+
+### Why the softplus-normal guide is preferable
+
+The softplus-normal guide offers three concrete advantages over the truncated
+normal.
+
+**No truncation boundary.** The truncated normal enforces $\eta_c \geq 0$ by
+cutting off the left tail of the Gaussian density. At the truncation point, the
+density has a discontinuous derivative, which creates gradient pathologies in the
+reparameterization estimator of the ELBO. When the variational mean $\mu_c$ is
+close to zero---as occurs for high-capture cells where $\nu_c$ approaches
+1---a substantial fraction of the untruncated mass lies below zero, and the
+inverse-CDF reparameterization through the truncated normal produces large,
+noisy gradients. In the softplus-normal guide, $\eta_c > 0$ is enforced
+structurally by the softplus transform (which is always positive), with no
+truncation. The density is smooth everywhere, and the reparameterization
+gradient flows through the softplus, whose derivative is the sigmoid---bounded
+in $[0, 1]$.
+
+**Symmetric boundary treatment.** The capture probability $\nu_c \in (0, 1)$ has
+two boundaries. The truncated normal treats them asymmetrically: $\nu_c \to 0$
+is captured by $\eta_c \to \infty$ (a smooth Gaussian tail), while
+$\nu_c \to 1$ is captured by $\eta_c \to 0^+$ (the hard truncation boundary).
+The logit-normal treats both boundaries symmetrically: $\nu_c \to 0$
+corresponds to $\tilde{\eta}_c \to +\infty$ (right tail of the Gaussian), and
+$\nu_c \to 1$ corresponds to $\tilde{\eta}_c \to -\infty$ (left tail). Both
+limits are handled by smooth Gaussian tails, with no boundary artifacts.
+
+**Unconstrained optimization.** The variational parameters
+$(\tilde{\mu}_c, \tilde{\sigma}_c)$ are unconstrained (aside from
+$\tilde{\sigma}_c > 0$, which is standard). In the truncated-normal guide, the
+optimizer must navigate the interaction between the variational mean and the
+truncation point: when $\mu_c$ decreases toward zero, the effective distribution
+shape changes qualitatively (from approximately Gaussian to half-normal). In the
+softplus-normal guide, the shape varies smoothly with $\tilde{\mu}_c$, with no
+qualitative transitions.
+
+### When the two guides differ
+
+For typical single-cell experiments, the prior mean $\log M_0 - \log L_c$ is
+well above zero (e.g., 2--6 for mammalian cells with $M_0 = 200{,}000$ and
+$L_c \in [500, 100{,}000]$). In this regime, the truncation at zero is
+irrelevant---almost no mass falls below zero---and both guides produce nearly
+identical approximations. The softplus is approximately linear for large
+arguments ($\operatorname{softplus}(x) \approx x$ for $x \gg 0$), so the
+softplus-normal guide is approximately a shifted Gaussian in $\eta_c$-space,
+just like the truncated normal.
+
+The guides diverge for **high-capture cells** where $\eta_c$ is near zero,
+corresponding to $\nu_c$ close to 1. This is the regime where the truncation
+boundary affects the shape of the truncated-normal guide, while the
+softplus-normal guide smoothly compresses the left tail through the softplus
+nonlinearity. If the true posterior of $\eta_c$ has appreciable mass near zero,
+the softplus-normal guide provides a better approximation because it does not
+introduce the artificial density spike at the boundary that truncation creates.
+
+### Summary
+
+The softplus-normal guide is a drop-in replacement for the truncated-normal
+guide that leaves the model (prior and likelihood) completely unchanged. It
+reparameterizes the guide's base distribution from
+$\eta_c \sim \mathcal{N}^+$ to
+$\tilde{\eta}_c \sim \mathcal{N},\; \eta_c = \operatorname{softplus}(\tilde{\eta}_c)$,
+yielding a logit-normal variational family on $\nu_c$ with smooth gradients,
+symmetric boundary behavior, and unconstrained optimization. For the vast
+majority of cells the two guides are numerically equivalent; the improvement
+appears at the high-capture boundary where the truncated normal's gradient
+pathologies are most pronounced.
+
 ## Mathematical summary {#sec-cap-summary}
 
 We collect the key results of this section.
