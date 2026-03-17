@@ -98,7 +98,7 @@ class ModelConfigBuilder:
         self._neg_u: float = 1.0
         self._neg_a: float = 1.0
         self._neg_tau: float = 1.0
-        self._shared_capture_scaling: bool = False
+        self._mu_eta_prior: str = "none"
         self._n_components: Optional[int] = None
         self._mixture_params: Optional[List[str]] = None
         self._joint_params: Optional[List[str]] = None
@@ -222,7 +222,7 @@ class ModelConfigBuilder:
         organism: Optional[str] = None,
         eta_capture: Optional[tuple] = None,
         mu_eta: Optional[tuple] = None,
-        shared_capture_scaling: bool = False,
+        mu_eta_prior: str = "none",
     ) -> "ModelConfigBuilder":
         """Configure the biology-informed capture probability prior.
 
@@ -238,11 +238,13 @@ class ModelConfigBuilder:
         eta_capture : tuple of (float, float), optional
             ``(log_M0, sigma_M)`` for the per-cell prior.
         mu_eta : tuple of (float, float), optional
-            ``(center, sigma_mu)`` for the shared mu_eta prior.
-        shared_capture_scaling : bool
-            If True, learn a shared mu_eta across datasets.
+            ``(center, sigma_mu)`` for the population-level mu_eta prior.
+        mu_eta_prior : str
+            Hierarchical prior type for per-dataset mu_eta.
+            ``"none"`` = fixed M_0, ``"gaussian"`` / ``"horseshoe"`` /
+            ``"neg"`` = learn per-dataset mu_eta with shrinkage.
         """
-        self._shared_capture_scaling = shared_capture_scaling
+        self._mu_eta_prior = mu_eta_prior
         if organism is not None:
             self._priors["organism"] = organism
         if eta_capture is not None:
@@ -649,7 +651,7 @@ class ModelConfigBuilder:
             neg_u=self._neg_u,
             neg_a=self._neg_a,
             neg_tau=self._neg_tau,
-            shared_capture_scaling=self._shared_capture_scaling,
+            mu_eta_prior=self._mu_eta_prior,
             n_components=self._n_components,
             mixture_params=self._mixture_params,
             joint_params=self._joint_params,

@@ -8,8 +8,6 @@ from typing import TYPE_CHECKING, Callable, Dict, List, Optional
 
 import jax.numpy as jnp
 import numpyro
-import numpyro.distributions as dist
-from numpyro.distributions import constraints
 
 from .parameter_specs import (
     BiologyInformedCaptureSpec,
@@ -30,7 +28,10 @@ from . import _guide_meanfield_mixin as _guide_meanfield_mixin
 
 # Import concrete symbols used directly by GuideBuilder.
 from ._guide_amortized_mixin import _setup_grouped_amortized_latent
-from ._guide_cell_specific_mixin import setup_cell_specific_guide
+from ._guide_cell_specific_mixin import (
+    guide_mu_eta_hierarchy,
+    setup_cell_specific_guide,
+)
 from ._guide_joint_mixin import _woodbury_conditional_params, setup_joint_guide
 from ._guide_meanfield_mixin import setup_guide
 
@@ -262,22 +263,13 @@ class GuideBuilder:
             # 2.5. Pre-plate: data-driven biology-informed capture mu_eta
             # ================================================================
             cell_specs = [s for s in specs if s.is_cell_specific]
+            _n_ds = getattr(model_config, "n_datasets", None) or 0
             for spec in cell_specs:
                 if (
                     isinstance(spec, BiologyInformedCaptureSpec)
                     and spec.data_driven
                 ):
-                    mu_eta_loc = numpyro.param(
-                        "mu_eta_loc", jnp.array(spec.log_M0)
-                    )
-                    mu_eta_scale = numpyro.param(
-                        "mu_eta_scale",
-                        jnp.array(0.1),
-                        constraint=constraints.positive,
-                    )
-                    numpyro.sample(
-                        "mu_eta", dist.Normal(mu_eta_loc, mu_eta_scale)
-                    )
+                    guide_mu_eta_hierarchy(spec, _n_ds)
 
             # ================================================================
             # 3. Setup guides for CELL-SPECIFIC parameters (inside cell plate)

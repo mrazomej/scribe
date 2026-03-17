@@ -1,8 +1,8 @@
 """Tests for biology-informed capture probability prior.
 
 Tests organism prior resolution, BiologyInformedCaptureSpec creation,
-ModelConfig validation, shared_capture_scaling, TruncatedNormal
-enforcement, and model dry-run with the biology-informed capture prior.
+ModelConfig validation, mu_eta_prior, TruncatedNormal enforcement,
+and model dry-run with the biology-informed capture prior.
 
 The capture prior is configured entirely through the ``priors`` dict:
   - ``priors.organism``    — shortcut to resolve defaults
@@ -130,16 +130,16 @@ class TestModelConfigCapturePrior:
         # Explicit eta_capture wins
         assert extra["eta_capture"] == (10.0, 0.2)
 
-    def test_shared_scaling_with_organism(self):
-        """shared_capture_scaling=True + organism resolves mu_eta defaults."""
+    def test_mu_eta_prior_with_organism(self):
+        """mu_eta_prior='gaussian' + organism resolves mu_eta defaults."""
         config = (
             ModelConfigBuilder()
             .for_model("nbvcp")
             .with_parameterization("mean_odds")
-            .with_capture_priors(organism="human", shared_capture_scaling=True)
+            .with_capture_priors(organism="human", mu_eta_prior="gaussian")
             .build()
         )
-        assert config.shared_capture_scaling is True
+        assert config.mu_eta_prior.value == "gaussian"
         extra = getattr(config.priors, "__pydantic_extra__", {})
         mu_eta = extra.get("mu_eta")
         assert mu_eta is not None
@@ -147,7 +147,7 @@ class TestModelConfigCapturePrior:
         assert mu_eta[0] == pytest.approx(math.log(200_000))
         assert mu_eta[1] == pytest.approx(1.0)
 
-    def test_shared_scaling_explicit_mu_eta(self):
+    def test_mu_eta_prior_explicit_mu_eta(self):
         """Explicit priors.mu_eta overrides defaults."""
         config = (
             ModelConfigBuilder()
@@ -156,21 +156,21 @@ class TestModelConfigCapturePrior:
             .with_capture_priors(
                 organism="human",
                 mu_eta=(11.5, 0.5),
-                shared_capture_scaling=True,
+                mu_eta_prior="gaussian",
             )
             .build()
         )
         extra = getattr(config.priors, "__pydantic_extra__", {})
         assert extra["mu_eta"] == (11.5, 0.5)
 
-    def test_shared_scaling_requires_vcp(self):
-        """shared_capture_scaling with non-VCP model should raise."""
+    def test_mu_eta_prior_requires_vcp(self):
+        """mu_eta_prior with non-VCP model should raise."""
         with pytest.raises(ValueError, match="VCP"):
             (
                 ModelConfigBuilder()
                 .for_model("nbdm")
                 .with_capture_priors(
-                    organism="human", shared_capture_scaling=True
+                    organism="human", mu_eta_prior="gaussian"
                 )
                 .build()
             )
@@ -186,13 +186,13 @@ class TestModelConfigCapturePrior:
             )
 
     def test_sigma_mu_default_anchored(self):
-        """When shared scaling + anchor, sigma_mu defaults to 1.0."""
+        """When mu_eta_prior + anchor, sigma_mu defaults to 1.0."""
         config = (
             ModelConfigBuilder()
             .for_model("nbvcp")
             .with_parameterization("mean_odds")
             .with_capture_priors(
-                eta_capture=(11.5, 0.5), shared_capture_scaling=True
+                eta_capture=(11.5, 0.5), mu_eta_prior="gaussian"
             )
             .build()
         )
@@ -240,7 +240,6 @@ class TestBiologyInformedCaptureSpec:
             is_cell_specific=True,
             log_M0=math.log(200_000),
             sigma_M=0.5,
-            data_driven=False,
             use_phi_capture=True,
         )
         assert spec.use_phi_capture is True
@@ -256,13 +255,12 @@ class TestBiologyInformedCaptureSpec:
             is_cell_specific=True,
             log_M0=math.log(200_000),
             sigma_M=0.5,
-            data_driven=False,
             use_phi_capture=False,
         )
         assert spec.use_phi_capture is False
 
     def test_data_driven_spec(self):
-        """Data-driven spec with learned mu_eta."""
+        """Data-driven spec with learned mu_eta (mu_eta_prior='gaussian')."""
         spec = BiologyInformedCaptureSpec(
             name="phi_capture",
             shape_dims=("n_cells",),
@@ -270,7 +268,7 @@ class TestBiologyInformedCaptureSpec:
             is_cell_specific=True,
             log_M0=math.log(200_000),
             sigma_M=0.5,
-            data_driven=True,
+            mu_eta_prior="gaussian",
             sigma_mu=1.0,
             use_phi_capture=True,
         )
@@ -331,13 +329,13 @@ class TestBuildCaptureSpec:
         assert spec.use_phi_capture is True
         assert spec.log_M0 == pytest.approx(math.log(200_000))
 
-    def test_shared_scaling_returns_data_driven(self):
-        """shared_capture_scaling + organism should produce data_driven spec."""
+    def test_mu_eta_prior_returns_data_driven(self):
+        """mu_eta_prior='gaussian' + organism should produce data_driven spec."""
         config = (
             ModelConfigBuilder()
             .for_model("nbvcp")
             .with_parameterization("mean_odds")
-            .with_capture_priors(organism="mouse", shared_capture_scaling=True)
+            .with_capture_priors(organism="mouse", mu_eta_prior="gaussian")
             .build()
         )
         from scribe.models.parameterizations import PARAMETERIZATIONS
@@ -361,7 +359,7 @@ class TestBuildCaptureSpec:
             .with_capture_priors(
                 organism="human",
                 mu_eta=(math.log(200_000), 0.5),
-                shared_capture_scaling=True,
+                mu_eta_prior="gaussian",
             )
             .build()
         )
@@ -431,8 +429,8 @@ class TestModelDryRun:
         assert bio_specs[0].use_phi_capture is False
         assert bio_specs[0].log_M0 == pytest.approx(math.log(60_000))
 
-    def test_nbvcp_shared_capture_scaling(self):
-        """NBVCP with shared_capture_scaling should create data_driven spec."""
+    def test_nbvcp_mu_eta_prior(self):
+        """NBVCP with mu_eta_prior='gaussian' should create data_driven spec."""
         from scribe.models.presets.factory import create_model
 
         config = (
@@ -440,7 +438,7 @@ class TestModelDryRun:
             .for_model("nbvcp")
             .with_parameterization("mean_odds")
             .unconstrained()
-            .with_capture_priors(organism="human", shared_capture_scaling=True)
+            .with_capture_priors(organism="human", mu_eta_prior="gaussian")
             .build()
         )
 
@@ -453,7 +451,7 @@ class TestModelDryRun:
         assert len(bio_specs) == 1
         assert bio_specs[0].data_driven is True
 
-    def test_shared_scaling_with_explicit_eta_and_mu(self):
+    def test_mu_eta_prior_with_explicit_eta_and_mu(self):
         """Explicit eta_capture + mu_eta should propagate to spec."""
         from scribe.models.presets.factory import create_model
 
@@ -465,7 +463,7 @@ class TestModelDryRun:
             .with_capture_priors(
                 eta_capture=(11.5, 0.3),
                 mu_eta=(11.5, 0.5),
-                shared_capture_scaling=True,
+                mu_eta_prior="gaussian",
             )
             .build()
         )
@@ -593,3 +591,503 @@ class TestTruncatedNormalPrior:
         )
         for d in result_split["eta_capture"]:
             assert isinstance(d, dist.truncated.LeftTruncatedDistribution)
+
+
+# =============================================================================
+# Hierarchical mu_eta model-side helpers
+# =============================================================================
+
+
+class TestHierarchicalMuEtaSamplers:
+    """Test _sample_hierarchical_mu_eta_* model-side helper functions.
+
+    Each prior type should produce per-dataset mu_eta values with the
+    expected shape, finite values, and the correct set of sample sites.
+    """
+
+    N_DATASETS = 4
+    LOG_M0 = math.log(200_000)
+    SIGMA_MU = 1.0
+
+    @pytest.fixture()
+    def _trace_gaussian(self):
+        """Trace the Gaussian hierarchical mu_eta sampler."""
+        import numpyro
+
+        from scribe.models.components.likelihoods.base import (
+            _sample_hierarchical_mu_eta_gaussian,
+        )
+
+        def _model():
+            _sample_hierarchical_mu_eta_gaussian(
+                self.LOG_M0, self.SIGMA_MU, self.N_DATASETS
+            )
+
+        return numpyro.handlers.trace(
+            numpyro.handlers.seed(_model, rng_seed=0)
+        ).get_trace()
+
+    @pytest.fixture()
+    def _trace_horseshoe(self):
+        """Trace the Horseshoe hierarchical mu_eta sampler."""
+        import numpyro
+
+        from scribe.models.components.likelihoods.base import (
+            _sample_hierarchical_mu_eta_horseshoe,
+        )
+
+        def _model():
+            _sample_hierarchical_mu_eta_horseshoe(
+                self.LOG_M0, self.SIGMA_MU, self.N_DATASETS
+            )
+
+        return numpyro.handlers.trace(
+            numpyro.handlers.seed(_model, rng_seed=0)
+        ).get_trace()
+
+    @pytest.fixture()
+    def _trace_neg(self):
+        """Trace the NEG hierarchical mu_eta sampler."""
+        import numpyro
+
+        from scribe.models.components.likelihoods.base import (
+            _sample_hierarchical_mu_eta_neg,
+        )
+
+        def _model():
+            _sample_hierarchical_mu_eta_neg(
+                self.LOG_M0, self.SIGMA_MU, self.N_DATASETS
+            )
+
+        return numpyro.handlers.trace(
+            numpyro.handlers.seed(_model, rng_seed=0)
+        ).get_trace()
+
+    # -- Gaussian -------------------------------------------------------------
+
+    def test_gaussian_shape(self, _trace_gaussian):
+        """Gaussian mu_eta should have shape (D,)."""
+        mu_eta = _trace_gaussian["mu_eta"]["value"]
+        assert mu_eta.shape == (self.N_DATASETS,)
+
+    def test_gaussian_finite(self, _trace_gaussian):
+        """All Gaussian mu_eta values should be finite."""
+        mu_eta = _trace_gaussian["mu_eta"]["value"]
+        assert jnp.all(jnp.isfinite(mu_eta))
+
+    def test_gaussian_sites(self, _trace_gaussian):
+        """Gaussian sampler should register mu_eta_pop, tau_eta, mu_eta_raw."""
+        trace = _trace_gaussian
+        assert "mu_eta_pop" in trace
+        assert "tau_eta" in trace
+        assert "mu_eta_raw" in trace
+        assert "mu_eta" in trace
+
+    # -- Horseshoe ------------------------------------------------------------
+
+    def test_horseshoe_shape(self, _trace_horseshoe):
+        """Horseshoe mu_eta should have shape (D,)."""
+        mu_eta = _trace_horseshoe["mu_eta"]["value"]
+        assert mu_eta.shape == (self.N_DATASETS,)
+
+    def test_horseshoe_finite(self, _trace_horseshoe):
+        """All Horseshoe mu_eta values should be finite."""
+        mu_eta = _trace_horseshoe["mu_eta"]["value"]
+        assert jnp.all(jnp.isfinite(mu_eta))
+
+    def test_horseshoe_sites(self, _trace_horseshoe):
+        """Horseshoe sampler should register the expected sample sites."""
+        trace = _trace_horseshoe
+        for name in (
+            "mu_eta_pop",
+            "tau_mu_eta",
+            "lambda_mu_eta",
+            "c_sq_mu_eta",
+            "mu_eta_raw",
+            "mu_eta",
+        ):
+            assert name in trace, f"Missing site: {name}"
+
+    def test_horseshoe_lambda_shape(self, _trace_horseshoe):
+        """lambda_mu_eta should be per-dataset, shape (D,)."""
+        lam = _trace_horseshoe["lambda_mu_eta"]["value"]
+        assert lam.shape == (self.N_DATASETS,)
+
+    # -- NEG ------------------------------------------------------------------
+
+    def test_neg_shape(self, _trace_neg):
+        """NEG mu_eta should have shape (D,)."""
+        mu_eta = _trace_neg["mu_eta"]["value"]
+        assert mu_eta.shape == (self.N_DATASETS,)
+
+    def test_neg_finite(self, _trace_neg):
+        """All NEG mu_eta values should be finite."""
+        mu_eta = _trace_neg["mu_eta"]["value"]
+        assert jnp.all(jnp.isfinite(mu_eta))
+
+    def test_neg_sites(self, _trace_neg):
+        """NEG sampler should register zeta, psi, raw, pop, mu_eta."""
+        trace = _trace_neg
+        for name in (
+            "mu_eta_pop",
+            "zeta_mu_eta",
+            "psi_mu_eta",
+            "mu_eta_raw",
+            "mu_eta",
+        ):
+            assert name in trace, f"Missing site: {name}"
+
+    def test_neg_psi_shape(self, _trace_neg):
+        """psi_mu_eta should be per-dataset, shape (D,)."""
+        psi = _trace_neg["psi_mu_eta"]["value"]
+        assert psi.shape == (self.N_DATASETS,)
+
+    # -- Dispatcher -----------------------------------------------------------
+
+    def test_dispatcher_gaussian(self):
+        """_sample_hierarchical_mu_eta dispatches to Gaussian correctly."""
+        import numpyro
+
+        from scribe.models.components.likelihoods.base import (
+            _sample_hierarchical_mu_eta,
+        )
+
+        spec = BiologyInformedCaptureSpec(
+            name="phi_capture",
+            shape_dims=(),
+            default_params=(0.0, 1.0),
+            log_M0=self.LOG_M0,
+            sigma_M=0.5,
+            mu_eta_prior="gaussian",
+            sigma_mu=self.SIGMA_MU,
+            use_phi_capture=True,
+        )
+
+        def _model():
+            return _sample_hierarchical_mu_eta(spec, self.N_DATASETS)
+
+        trace = numpyro.handlers.trace(
+            numpyro.handlers.seed(_model, rng_seed=0)
+        ).get_trace()
+        assert "tau_eta" in trace
+        assert trace["mu_eta"]["value"].shape == (self.N_DATASETS,)
+
+    def test_dispatcher_unknown_raises(self):
+        """_sample_hierarchical_mu_eta raises for unknown prior types."""
+        import numpyro
+
+        from scribe.models.components.likelihoods.base import (
+            _sample_hierarchical_mu_eta,
+        )
+
+        spec = BiologyInformedCaptureSpec(
+            name="phi_capture",
+            shape_dims=(),
+            default_params=(0.0, 1.0),
+            log_M0=self.LOG_M0,
+            sigma_M=0.5,
+            mu_eta_prior="unknown_type",
+            sigma_mu=self.SIGMA_MU,
+            use_phi_capture=True,
+        )
+        with pytest.raises(ValueError, match="Unknown mu_eta_prior"):
+            with numpyro.handlers.seed(rng_seed=0):
+                _sample_hierarchical_mu_eta(spec, self.N_DATASETS)
+
+
+# =============================================================================
+# Hierarchical mu_eta guide-side helper
+# =============================================================================
+
+
+class TestGuideMuEtaHierarchy:
+    """Test guide_mu_eta_hierarchy variational parameter registration.
+
+    Verifies that the guide helper creates the correct numpyro params
+    and sample sites for each prior type, and that the single-dataset
+    fallback works.
+    """
+
+    N_DATASETS = 4
+    LOG_M0 = math.log(200_000)
+
+    def _make_spec(self, prior_type):
+        return BiologyInformedCaptureSpec(
+            name="phi_capture",
+            shape_dims=(),
+            default_params=(0.0, 1.0),
+            log_M0=self.LOG_M0,
+            sigma_M=0.5,
+            mu_eta_prior=prior_type,
+            sigma_mu=1.0,
+            use_phi_capture=True,
+        )
+
+    def _trace_guide(self, prior_type, n_datasets=None):
+        """Run guide_mu_eta_hierarchy under trace and return the trace."""
+        import numpyro
+
+        from scribe.models.builders._guide_cell_specific_mixin import (
+            guide_mu_eta_hierarchy,
+        )
+
+        n_ds = n_datasets if n_datasets is not None else self.N_DATASETS
+        spec = self._make_spec(prior_type)
+
+        def _guide():
+            guide_mu_eta_hierarchy(spec, n_ds)
+
+        return numpyro.handlers.trace(
+            numpyro.handlers.seed(_guide, rng_seed=0)
+        ).get_trace()
+
+    def test_gaussian_guide_sites(self):
+        """Gaussian guide should register pop, tau_eta, and raw sites."""
+        trace = self._trace_guide("gaussian")
+        assert "mu_eta_pop" in trace
+        assert "tau_eta" in trace
+        assert "mu_eta_raw" in trace
+
+    def test_horseshoe_guide_sites(self):
+        """Horseshoe guide should register pop, tau, lambda, c_sq, and raw."""
+        trace = self._trace_guide("horseshoe")
+        for name in (
+            "mu_eta_pop",
+            "tau_mu_eta",
+            "lambda_mu_eta",
+            "c_sq_mu_eta",
+            "mu_eta_raw",
+        ):
+            assert name in trace, f"Missing guide site: {name}"
+
+    def test_neg_guide_sites(self):
+        """NEG guide should register pop, zeta, psi, and raw."""
+        trace = self._trace_guide("neg")
+        for name in (
+            "mu_eta_pop",
+            "zeta_mu_eta",
+            "psi_mu_eta",
+            "mu_eta_raw",
+        ):
+            assert name in trace, f"Missing guide site: {name}"
+
+    def test_single_dataset_fallback(self):
+        """n_datasets=1 should use scalar mu_eta instead of hierarchy."""
+        trace = self._trace_guide("gaussian", n_datasets=1)
+        assert "mu_eta" in trace
+        # Hierarchy sites should NOT be present
+        assert "mu_eta_pop" not in trace
+        assert "tau_eta" not in trace
+        assert "mu_eta_raw" not in trace
+
+    def test_single_dataset_scalar_shape(self):
+        """Single-dataset mu_eta should be a scalar."""
+        trace = self._trace_guide("gaussian", n_datasets=1)
+        mu_eta_val = trace["mu_eta"]["value"]
+        assert mu_eta_val.ndim == 0
+
+    def test_guide_raw_shape(self):
+        """mu_eta_raw guide should have shape (D,)."""
+        trace = self._trace_guide("gaussian")
+        raw = trace["mu_eta_raw"]["value"]
+        assert raw.shape == (self.N_DATASETS,)
+
+
+# =============================================================================
+# Posterior extraction for hierarchical mu_eta
+# =============================================================================
+
+
+class TestHierarchicalMuEtaPosterior:
+    """Test _build_biology_informed_capture_posterior with hierarchical params."""
+
+    def _make_config(self, mu_eta_prior="gaussian"):
+        return (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("mean_odds")
+            .with_capture_priors(organism="human", mu_eta_prior=mu_eta_prior)
+            .build()
+        )
+
+    def test_gaussian_posterior_sites(self):
+        """Gaussian hierarchical posterior should extract pop, tau, raw."""
+        from scribe.models.builders.posterior import (
+            _build_biology_informed_capture_posterior,
+        )
+
+        params = {
+            "mu_eta_pop_loc": jnp.array(11.5),
+            "mu_eta_pop_scale": jnp.array(0.1),
+            "tau_eta_loc": jnp.array(-2.0),
+            "tau_eta_scale": jnp.array(0.1),
+            "mu_eta_raw_loc": jnp.array([0.0, 0.1, -0.1, 0.05]),
+            "mu_eta_raw_scale": jnp.array([0.1, 0.1, 0.1, 0.1]),
+            "eta_capture_loc": jnp.array([1.0, 2.0]),
+            "eta_capture_scale": jnp.array([0.5, 0.5]),
+        }
+        config = self._make_config("gaussian")
+        result = _build_biology_informed_capture_posterior(
+            params, config, split=False
+        )
+        assert "mu_eta_pop" in result
+        assert "tau_eta" in result
+        assert "mu_eta_raw" in result
+        assert isinstance(result["mu_eta_pop"], dist.Normal)
+
+    def test_horseshoe_posterior_sites(self):
+        """Horseshoe hierarchical posterior should extract all auxiliary sites."""
+        from scribe.models.builders.posterior import (
+            _build_biology_informed_capture_posterior,
+        )
+
+        n_ds = 3
+        params = {
+            "mu_eta_pop_loc": jnp.array(11.5),
+            "mu_eta_pop_scale": jnp.array(0.1),
+            "tau_mu_eta_loc": jnp.array(0.1),
+            "tau_mu_eta_scale": jnp.array(0.1),
+            "lambda_mu_eta_loc": jnp.ones(n_ds) * 0.1,
+            "lambda_mu_eta_scale": jnp.ones(n_ds) * 0.1,
+            "c_sq_mu_eta_loc": jnp.array(2.0),
+            "c_sq_mu_eta_scale": jnp.array(0.1),
+            "mu_eta_raw_loc": jnp.zeros(n_ds),
+            "mu_eta_raw_scale": jnp.ones(n_ds) * 0.1,
+            "eta_capture_loc": jnp.array([1.0, 2.0]),
+            "eta_capture_scale": jnp.array([0.5, 0.5]),
+        }
+        config = self._make_config("horseshoe")
+        result = _build_biology_informed_capture_posterior(
+            params, config, split=False
+        )
+        for name in (
+            "mu_eta_pop",
+            "tau_mu_eta",
+            "lambda_mu_eta",
+            "c_sq_mu_eta",
+            "mu_eta_raw",
+        ):
+            assert name in result, f"Missing posterior site: {name}"
+
+    def test_neg_posterior_sites(self):
+        """NEG hierarchical posterior should extract zeta, psi, raw."""
+        from scribe.models.builders.posterior import (
+            _build_biology_informed_capture_posterior,
+        )
+
+        n_ds = 3
+        params = {
+            "mu_eta_pop_loc": jnp.array(11.5),
+            "mu_eta_pop_scale": jnp.array(0.1),
+            "zeta_mu_eta_loc": jnp.ones(n_ds),
+            "zeta_mu_eta_scale": jnp.ones(n_ds) * 0.1,
+            "psi_mu_eta_loc": jnp.ones(n_ds),
+            "psi_mu_eta_scale": jnp.ones(n_ds) * 0.1,
+            "mu_eta_raw_loc": jnp.zeros(n_ds),
+            "mu_eta_raw_scale": jnp.ones(n_ds) * 0.1,
+            "eta_capture_loc": jnp.array([1.0, 2.0]),
+            "eta_capture_scale": jnp.array([0.5, 0.5]),
+        }
+        config = self._make_config("neg")
+        result = _build_biology_informed_capture_posterior(
+            params, config, split=False
+        )
+        for name in ("mu_eta_pop", "zeta_mu_eta", "psi_mu_eta", "mu_eta_raw"):
+            assert name in result, f"Missing posterior site: {name}"
+
+    def test_scalar_mu_eta_fallback(self):
+        """Old/single-dataset params with mu_eta_loc should still work."""
+        from scribe.models.builders.posterior import (
+            _build_biology_informed_capture_posterior,
+        )
+
+        params = {
+            "mu_eta_loc": jnp.array(11.5),
+            "mu_eta_scale": jnp.array(0.1),
+            "eta_capture_loc": jnp.array([1.0, 2.0]),
+            "eta_capture_scale": jnp.array([0.5, 0.5]),
+        }
+        config = self._make_config("gaussian")
+        result = _build_biology_informed_capture_posterior(
+            params, config, split=False
+        )
+        assert "mu_eta" in result
+        assert isinstance(result["mu_eta"], dist.Normal)
+        # Hierarchy sites should NOT be present
+        assert "mu_eta_pop" not in result
+
+    def test_eta_capture_always_present(self):
+        """eta_capture posterior should always be present when params exist."""
+        from scribe.models.builders.posterior import (
+            _build_biology_informed_capture_posterior,
+        )
+
+        params = {
+            "mu_eta_pop_loc": jnp.array(11.5),
+            "mu_eta_pop_scale": jnp.array(0.1),
+            "tau_eta_loc": jnp.array(-2.0),
+            "tau_eta_scale": jnp.array(0.1),
+            "mu_eta_raw_loc": jnp.zeros(3),
+            "mu_eta_raw_scale": jnp.ones(3) * 0.1,
+            "eta_capture_loc": jnp.array([1.0, 2.0, 0.3]),
+            "eta_capture_scale": jnp.array([0.5, 0.4, 0.6]),
+        }
+        config = self._make_config("gaussian")
+        result = _build_biology_informed_capture_posterior(
+            params, config, split=False
+        )
+        assert "eta_capture" in result
+        assert isinstance(
+            result["eta_capture"],
+            dist.truncated.LeftTruncatedDistribution,
+        )
+
+
+# =============================================================================
+# Stale shared_capture_scaling references
+# =============================================================================
+
+
+class TestSharedCaptureScalingRemoved:
+    """Ensure shared_capture_scaling is fully removed from the public API."""
+
+    def test_model_config_no_shared_capture_field(self):
+        """ModelConfig should not have a shared_capture_scaling field."""
+        assert not hasattr(ModelConfig, "shared_capture_scaling")
+        config = ModelConfig(base_model="nbdm")
+        assert not hasattr(config, "shared_capture_scaling")
+
+    def test_model_config_builder_no_shared_capture(self):
+        """ModelConfigBuilder.with_capture_priors should reject the kwarg."""
+        with pytest.raises(TypeError):
+            (
+                ModelConfigBuilder()
+                .for_model("nbvcp")
+                .with_parameterization("mean_odds")
+                .with_capture_priors(
+                    organism="human", shared_capture_scaling=True
+                )
+                .build()
+            )
+
+    def test_pickle_compat_migrates_shared_capture(self):
+        """Old pickles with shared_capture_scaling=True migrate to mu_eta_prior."""
+        import pickle
+
+        config = ModelConfig(
+            base_model="nbvcp",
+            parameterization="mean_odds",
+            mu_eta_prior="none",
+        )
+        state = config.__getstate__()
+        state["__dict__"]["shared_capture_scaling"] = True
+        state["__dict__"].pop("mu_eta_prior", None)
+        restored = pickle.loads(pickle.dumps(config))
+        restored.__setstate__(state)
+        # After __setstate__ the field is a raw string (not yet re-validated);
+        # it migrates to "gaussian" which is the enum's value.
+        mu_eta_val = restored.__dict__.get("mu_eta_prior", None)
+        if hasattr(mu_eta_val, "value"):
+            assert mu_eta_val.value == "gaussian"
+        else:
+            assert str(mu_eta_val) == "gaussian"

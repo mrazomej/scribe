@@ -27,6 +27,7 @@ from .base import (
     _sample_p_capture_constrained,
     _sample_p_capture_unconstrained,
     _sample_capture_biology_informed,
+    _sample_hierarchical_mu_eta,
 )
 
 if TYPE_CHECKING:
@@ -205,25 +206,32 @@ class NBWithVCPLikelihood(Likelihood):
                 break
 
         # Biology-informed capture: pre-compute log library sizes and sample
-        # the shared mu_eta parameter (data-driven) before the cell plate.
+        # mu_eta (data-driven) before the cell plate.
         bio_spec = self.biology_informed_spec
         bio_log_lib_sizes = None
         bio_log_M0 = None
+        # Track whether mu_eta is per-dataset (needs cell-level indexing)
+        _hierarchical_mu_eta = False
         if bio_spec is not None:
             if counts is not None:
                 bio_log_lib_sizes = jnp.log(
                     jnp.maximum(counts.sum(axis=-1), 1.0).astype(jnp.float32)
                 )
             else:
-                # Prior predictive / dry-run: use synthetic library sizes so
-                # eta_capture is still registered as a sample site.
                 bio_log_lib_sizes = jnp.full(n_cells, bio_spec.log_M0 - 1.0)
             if bio_spec.data_driven:
-                # Shared latent: mu_eta ~ N(log_M0, sigma_mu^2)
-                bio_log_M0 = numpyro.sample(
-                    "mu_eta",
-                    dist.Normal(bio_spec.log_M0, bio_spec.sigma_mu),
-                )
+                # Hierarchical per-dataset mu_eta when D >= 2
+                if n_datasets is not None and n_datasets >= 2:
+                    bio_log_M0 = _sample_hierarchical_mu_eta(
+                        bio_spec, n_datasets
+                    )
+                    _hierarchical_mu_eta = True
+                else:
+                    # Single-dataset fallback: scalar mu_eta
+                    bio_log_M0 = numpyro.sample(
+                        "mu_eta",
+                        dist.Normal(bio_spec.log_M0, bio_spec.sigma_mu),
+                    )
             else:
                 bio_log_M0 = bio_spec.log_M0
 
@@ -289,9 +297,19 @@ class NBWithVCPLikelihood(Likelihood):
                     if idx is not None
                     else bio_log_lib_sizes
                 )
+                # Per-dataset mu_eta: index to per-cell log_M0
+                if _hierarchical_mu_eta and use_dataset_indexing:
+                    ds_idx_cap = (
+                        dataset_indices[idx]
+                        if idx is not None
+                        else dataset_indices
+                    )
+                    bio_log_M0_cell = bio_log_M0[ds_idx_cap]
+                else:
+                    bio_log_M0_cell = bio_log_M0
                 capture_value = _sample_capture_biology_informed(
                     log_lib_batch,
-                    bio_log_M0,
+                    bio_log_M0_cell,
                     bio_spec.sigma_M,
                     use_phi_capture,
                 )
@@ -573,24 +591,31 @@ class ZINBWithVCPLikelihood(Likelihood):
                 break
 
         # Biology-informed capture: pre-compute log library sizes and sample
-        # shared mu_eta (data-driven) before the cell plate.
+        # mu_eta (data-driven) before the cell plate.
         bio_spec = self.biology_informed_spec
         bio_log_lib_sizes = None
         bio_log_M0 = None
+        _hierarchical_mu_eta = False
         if bio_spec is not None:
             if counts is not None:
                 bio_log_lib_sizes = jnp.log(
                     jnp.maximum(counts.sum(axis=-1), 1.0).astype(jnp.float32)
                 )
             else:
-                # Prior predictive / dry-run: use synthetic library sizes so
-                # eta_capture is still registered as a sample site.
                 bio_log_lib_sizes = jnp.full(n_cells, bio_spec.log_M0 - 1.0)
             if bio_spec.data_driven:
-                bio_log_M0 = numpyro.sample(
-                    "mu_eta",
-                    dist.Normal(bio_spec.log_M0, bio_spec.sigma_mu),
-                )
+                # Hierarchical per-dataset mu_eta when D >= 2
+                if n_datasets is not None and n_datasets >= 2:
+                    bio_log_M0 = _sample_hierarchical_mu_eta(
+                        bio_spec, n_datasets
+                    )
+                    _hierarchical_mu_eta = True
+                else:
+                    # Single-dataset fallback: scalar mu_eta
+                    bio_log_M0 = numpyro.sample(
+                        "mu_eta",
+                        dist.Normal(bio_spec.log_M0, bio_spec.sigma_mu),
+                    )
             else:
                 bio_log_M0 = bio_spec.log_M0
 
@@ -650,9 +675,19 @@ class ZINBWithVCPLikelihood(Likelihood):
                     if idx is not None
                     else bio_log_lib_sizes
                 )
+                # Per-dataset mu_eta: index to per-cell log_M0
+                if _hierarchical_mu_eta and use_dataset_indexing:
+                    ds_idx_cap = (
+                        dataset_indices[idx]
+                        if idx is not None
+                        else dataset_indices
+                    )
+                    bio_log_M0_cell = bio_log_M0[ds_idx_cap]
+                else:
+                    bio_log_M0_cell = bio_log_M0
                 capture_value = _sample_capture_biology_informed(
                     log_lib_batch,
-                    bio_log_M0,
+                    bio_log_M0_cell,
                     bio_spec.sigma_M,
                     use_phi_capture,
                 )

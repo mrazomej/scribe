@@ -258,9 +258,8 @@ def build_capture_spec(
 
     When ``model_config.capture_prior`` is ``"biology_informed"``, returns a
     ``BiologyInformedCaptureSpec`` that anchors the capture probability to
-    library size via total mRNA per cell.  If ``shared_capture_scaling`` is
-    True, the spec's ``data_driven`` flag is set so that ``mu_eta`` is learned
-    as a shared latent parameter.
+    library size via total mRNA per cell.  If ``mu_eta_prior`` is non-NONE,
+    the spec learns a per-dataset ``mu_eta`` with hierarchical shrinkage.
 
     If amortization is enabled in guide_families.capture_amortization, the
     guide will use a neural network to predict variational parameters from
@@ -309,13 +308,21 @@ def build_capture_spec(
 
     eta_capture = priors_extra.get("eta_capture")
     mu_eta = priors_extra.get("mu_eta")
-    shared_scaling = getattr(
-        model_config, "shared_capture_scaling", False
+
+    # Resolve mu_eta_prior from config (HierarchicalPriorType enum)
+    from ..config.enums import HierarchicalPriorType
+
+    mu_eta_prior_enum = getattr(
+        model_config, "mu_eta_prior", HierarchicalPriorType.NONE
+    )
+    mu_eta_prior_str = (
+        None
+        if mu_eta_prior_enum == HierarchicalPriorType.NONE
+        else mu_eta_prior_enum.value
     )
 
     if eta_capture is not None:
         log_M0, sigma_M = eta_capture
-        data_driven = shared_scaling
 
         spec_kwargs = dict(
             name=capture_param_name,
@@ -325,11 +332,11 @@ def build_capture_spec(
             guide_family=guide_families.get(capture_param_name),
             log_M0=log_M0,
             sigma_M=sigma_M,
-            data_driven=data_driven,
+            mu_eta_prior=mu_eta_prior_str,
             use_phi_capture=use_phi_capture,
         )
-        # When shared scaling is on, sigma_mu comes from mu_eta prior
-        if data_driven and mu_eta is not None:
+        # sigma_mu comes from mu_eta prior config when data-driven
+        if mu_eta_prior_str is not None and mu_eta is not None:
             spec_kwargs["sigma_mu"] = mu_eta[1]
 
         return BiologyInformedCaptureSpec(**spec_kwargs)

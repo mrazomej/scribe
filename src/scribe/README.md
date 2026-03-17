@@ -386,19 +386,19 @@ results = scribe.fit(
     priors={"eta_capture": (11.5, 0.3)},  # Custom log_M0 and sigma_M
 )
 
-# Shared capture scaling (learns M_0 across datasets)
+# Hierarchical per-dataset mu_eta (learns total-mRNA scaling across datasets)
 results = scribe.fit(
     adata,
     model="nbvcp",
-    shared_capture_scaling=True,
+    mu_eta_prior="gaussian",
     priors={"organism": "mouse"},
 )
 
-# Shared scaling with tight sigma_mu control
+# Hierarchical mu_eta with tight sigma_mu control
 results = scribe.fit(
     adata,
     model="nbvcp",
-    shared_capture_scaling=True,
+    mu_eta_prior="gaussian",
     priors={"organism": "human", "mu_eta": (12.2, 0.3)},
 )
 ```
@@ -411,7 +411,7 @@ from scribe.models.config import ModelConfigBuilder
 config = (ModelConfigBuilder()
     .for_model("nbvcp")
     .with_parameterization("mean_odds")
-    .with_capture_priors(organism="human", shared_capture_scaling=True)
+    .with_capture_priors(organism="human", mu_eta_prior="gaussian")
     .build())
 ```
 

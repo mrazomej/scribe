@@ -893,7 +893,7 @@ def main(cfg: DictConfig) -> None:
         "neg_u": cfg.get("neg_u", 1.0),
         "neg_a": cfg.get("neg_a", 1.0),
         "neg_tau": cfg.get("neg_tau", 1.0),
-        "shared_capture_scaling": cfg.get("shared_capture_scaling", False),
+        "mu_eta_prior": cfg.get("mu_eta_prior", "none"),
         "n_components": n_components,
         "mixture_params": cfg.get("mixture_params"),
         "guide_rank": cfg.guide_rank,

@@ -248,8 +248,8 @@ def fit(
     neg_u: float = 1.0,
     neg_a: float = 1.0,
     neg_tau: float = 1.0,
-    # Biology-informed capture prior (configured via priors dict)
-    shared_capture_scaling: bool = False,
+    # Hierarchical prior for per-dataset mu_eta (capture scaling)
+    mu_eta_prior: str = "none",
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
     guide_rank: Optional[int] = None,
@@ -936,7 +936,7 @@ def fit(
             neg_u=neg_u,
             neg_a=neg_a,
             neg_tau=neg_tau,
-            shared_capture_scaling=shared_capture_scaling,
+            mu_eta_prior=mu_eta_prior,
             guide_rank=guide_rank,
             joint_params=joint_params,
             n_components=n_components,

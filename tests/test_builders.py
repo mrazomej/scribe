@@ -2604,7 +2604,7 @@ class TestPosteriorContractExtraction:
             p_dataset_mode="gene_specific",
             gate_dataset_prior="none",
             uses_biology_informed_capture=False,
-            shared_capture_scaling=False,
+            mu_eta_prior="none",
             joint_params=None,
         )
         defaults.update(overrides)
@@ -3042,7 +3042,7 @@ class TestPosteriorPositiveTransform:
             p_dataset_mode="gene_specific",
             gate_dataset_prior="none",
             uses_biology_informed_capture=False,
-            shared_capture_scaling=False,
+            mu_eta_prior="none",
             joint_params=None,
             positive_transform="softplus",
         )
