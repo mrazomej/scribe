@@ -1180,14 +1180,17 @@ class BiologyInformedCaptureSpec(ParamSpec):
 
     @property
     def alias_names(self) -> list:
-        """``eta_capture`` is the latent variable sampled by the guide.
+        """Latent variable aliases sampled by the guide.
 
         The spec name is ``phi_capture`` or ``p_capture``, but the guide
-        creates ``eta_capture_loc`` / ``eta_capture_scale``.  Exposing
-        ``"eta_capture"`` as an alias ensures cell-specific subsetting
-        picks up these keys when splitting by dataset.
+        creates variational parameters keyed on ``eta_capture`` (legacy
+        truncated-normal: ``eta_capture_loc`` / ``eta_capture_scale``)
+        or ``eta_capture_raw`` (softplus-normal: ``eta_capture_raw_loc``
+        / ``eta_capture_raw_scale``).  Exposing both aliases ensures
+        cell-specific subsetting picks up whichever set of keys is
+        present when splitting by dataset.
         """
-        return ["eta_capture"]
+        return ["eta_capture", "eta_capture_raw"]
 
     def _get_distribution_type(self) -> Type:
         """Return Normal as the base distribution type for eta."""

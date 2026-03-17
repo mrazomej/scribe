@@ -1091,3 +1091,229 @@ class TestSharedCaptureScalingRemoved:
             assert mu_eta_val.value == "gaussian"
         else:
             assert str(mu_eta_val) == "gaussian"
+
+
+# =============================================================================
+# Softplus-normal guide for eta_capture
+# =============================================================================
+
+
+class TestSoftplusNormalGuide:
+    """Tests for the softplus-normal variational guide on eta_capture.
+
+    The softplus-normal guide samples an unconstrained Normal (params
+    ``eta_capture_raw_loc`` / ``eta_capture_raw_scale``) and maps
+    through softplus to get ``eta_capture``. This induces a logit-normal
+    on ``nu_c``, with smooth gradients and no truncation boundary.
+    """
+
+    def test_softplus_normal_guide_sites(self):
+        """Guide should register eta_capture_raw_loc/scale params."""
+        import numpyro
+
+        from scribe.models.presets.factory import create_model
+
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("mean_odds")
+            .unconstrained()
+            .with_capture_priors(organism="human")
+            .build()
+        )
+        # Default eta_capture_guide is "softplus_normal"
+        assert config.eta_capture_guide == "softplus_normal"
+
+        _model_fn, guide_fn, _specs = create_model(config)
+
+        n_cells, n_genes = 5, 10
+        counts = jnp.ones((n_cells, n_genes), dtype=jnp.int32)
+        guide_kwargs = dict(
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
+        )
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as guide_tr:
+                guide_fn(**guide_kwargs)
+
+        # Softplus-normal path should register raw params
+        param_names = {
+            k for k, v in guide_tr.items() if v.get("type") == "param"
+        }
+        assert "eta_capture_raw_loc" in param_names
+        assert "eta_capture_raw_scale" in param_names
+        # Legacy params should NOT be present
+        assert "eta_capture_loc" not in param_names
+        assert "eta_capture_scale" not in param_names
+
+    def test_softplus_normal_guide_eta_positive(self):
+        """eta_capture sampled via softplus should always be positive."""
+        import jax
+        import numpyro
+
+        from scribe.models.presets.factory import create_model
+
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("mean_odds")
+            .unconstrained()
+            .with_capture_priors(organism="human")
+            .build()
+        )
+
+        _model_fn, guide_fn, _specs = create_model(config)
+
+        n_cells, n_genes = 20, 10
+        counts = jnp.ones((n_cells, n_genes), dtype=jnp.int32)
+        guide_kwargs = dict(
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
+        )
+
+        # Draw many samples and verify all positive
+        predictive = numpyro.infer.Predictive(guide_fn, num_samples=200)
+        samples = predictive(jax.random.PRNGKey(42), **guide_kwargs)
+
+        assert "eta_capture" in samples
+        eta_vals = samples["eta_capture"]
+        assert jnp.all(
+            eta_vals > 0
+        ), f"Found non-positive eta: min={float(eta_vals.min())}"
+
+    def test_softplus_normal_posterior_reconstruction(self):
+        """Posterior with eta_capture_raw_loc should use TransformedDist."""
+        from scribe.models.builders.posterior import (
+            _build_biology_informed_capture_posterior,
+        )
+
+        # Softplus-normal params (new path)
+        params = {
+            "eta_capture_raw_loc": jnp.array([1.0, 2.0, 0.3]),
+            "eta_capture_raw_scale": jnp.array([0.5, 0.4, 0.6]),
+        }
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("mean_odds")
+            .with_capture_priors(organism="human")
+            .build()
+        )
+
+        # Non-split
+        result = _build_biology_informed_capture_posterior(
+            params, config, split=False
+        )
+        eta_dist = result["eta_capture"]
+        assert isinstance(eta_dist, dist.TransformedDistribution)
+        assert isinstance(
+            eta_dist.transforms[-1], dist.transforms.SoftplusTransform
+        )
+
+        # Split per-cell
+        result_split = _build_biology_informed_capture_posterior(
+            params, config, split=True
+        )
+        for d in result_split["eta_capture"]:
+            assert isinstance(d, dist.TransformedDistribution)
+
+    def test_backward_compat_eta_capture_guide_defaults_truncated(self):
+        """Old pickles without eta_capture_guide default to truncated_normal."""
+        config = ModelConfig(
+            base_model="nbvcp",
+            parameterization="mean_odds",
+        )
+        state = config.__getstate__()
+        # Remove the new field to simulate an old pickle
+        state["__dict__"].pop("eta_capture_guide", None)
+        restored = ModelConfig.__new__(ModelConfig)
+        restored.__setstate__(state)
+
+        guide_val = restored.__dict__.get("eta_capture_guide", None)
+        if hasattr(guide_val, "value"):
+            assert guide_val.value == "truncated_normal"
+        else:
+            assert str(guide_val) == "truncated_normal"
+
+    def test_truncated_normal_guide_still_works(self):
+        """Explicit eta_capture_guide='truncated_normal' uses old path."""
+        import numpyro
+
+        from scribe.models.presets.factory import create_model
+
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("mean_odds")
+            .unconstrained()
+            .with_capture_priors(organism="human")
+            .build()
+        )
+        # Override to legacy guide
+        config = config.model_copy(
+            update={"eta_capture_guide": "truncated_normal"}
+        )
+        assert config.eta_capture_guide == "truncated_normal"
+
+        _model_fn, guide_fn, _specs = create_model(config)
+
+        n_cells, n_genes = 5, 10
+        counts = jnp.ones((n_cells, n_genes), dtype=jnp.int32)
+        guide_kwargs = dict(
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
+        )
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as guide_tr:
+                guide_fn(**guide_kwargs)
+
+        param_names = {
+            k for k, v in guide_tr.items() if v.get("type") == "param"
+        }
+        # Legacy path should use eta_capture_loc/scale
+        assert "eta_capture_loc" in param_names
+        assert "eta_capture_scale" in param_names
+        # New params should NOT be present
+        assert "eta_capture_raw_loc" not in param_names
+
+    def test_legacy_posterior_still_reconstructs_truncated_normal(self):
+        """Posterior with eta_capture_loc (no _raw) still uses TruncatedNormal."""
+        from scribe.models.builders.posterior import (
+            _build_biology_informed_capture_posterior,
+        )
+
+        params = {
+            "eta_capture_loc": jnp.array([1.0, 2.0]),
+            "eta_capture_scale": jnp.array([0.5, 0.4]),
+        }
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("mean_odds")
+            .with_capture_priors(organism="human")
+            .build()
+        )
+
+        result = _build_biology_informed_capture_posterior(
+            params, config, split=False
+        )
+        eta_dist = result["eta_capture"]
+        assert isinstance(eta_dist, dist.truncated.LeftTruncatedDistribution)
+
+    def test_invalid_eta_capture_guide_raises(self):
+        """Invalid eta_capture_guide value should raise in validate_config."""
+        with pytest.raises(ValueError, match="eta_capture_guide"):
+            config = ModelConfig(
+                base_model="nbvcp",
+                parameterization="mean_odds",
+                eta_capture_guide="invalid_value",
+            )
+            config.validate_config()

@@ -183,6 +183,9 @@ class ModelConfig(BaseModel):
         d.setdefault("joint_params", None)
         # Old pickles predate the softplus default; preserve exp behavior
         d.setdefault("positive_transform", "exp")
+        # Old pickles used TruncatedNormal guide for eta_capture;
+        # new default is softplus_normal, so preserve old behavior.
+        d.setdefault("eta_capture_guide", "truncated_normal")
         d.setdefault("p_prior", "none")
         d.setdefault("gate_prior", "none")
         d.setdefault("mu_dataset_prior", "none")
@@ -370,6 +373,20 @@ class ModelConfig(BaseModel):
         ),
     )
 
+    # Variational guide parameterization for the biology-informed
+    # eta_capture latent variable.
+    eta_capture_guide: str = Field(
+        "softplus_normal",
+        description=(
+            "Guide distribution for the biology-informed eta_capture "
+            "parameter. 'softplus_normal' (default) samples an "
+            "unconstrained Normal and maps through softplus, yielding a "
+            "logit-normal on nu_c with smooth gradients everywhere. "
+            "'truncated_normal' uses the legacy TruncatedNormal(low=0) "
+            "guide (preserved for backward compat with old checkpoints)."
+        ),
+    )
+
     # Component matching for multi-dataset mixtures.
     # When annotation_key and dataset_key are both provided, labels in 2+
     # datasets are automatically treated as "shared" and get dataset-level
@@ -516,6 +533,14 @@ class ModelConfig(BaseModel):
             raise ValueError(
                 f"positive_transform must be one of {valid_transforms}, "
                 f"got {self.positive_transform!r}."
+            )
+
+        # --- eta_capture_guide validation ------------------------------------
+        valid_eta_guides = {"truncated_normal", "softplus_normal"}
+        if self.eta_capture_guide not in valid_eta_guides:
+            raise ValueError(
+                f"eta_capture_guide must be one of {valid_eta_guides}, "
+                f"got {self.eta_capture_guide!r}."
             )
 
         # --- Gene-level p/phi ------------------------------------------------

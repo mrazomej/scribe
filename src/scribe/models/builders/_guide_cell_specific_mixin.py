@@ -371,10 +371,21 @@ def setup_cell_specific_guide(
     """MeanField guide for biology-informed capture parameter.
 
     Provides per-cell variational parameters for eta_capture (the
-    latent log(M_c / L_c), constrained >= 0). Uses TruncatedNormal(low=0)
-    to enforce the physical constraint that a cell cannot emit more
-    molecules than it contains. The model then applies the exact
-    transformation to phi_capture or p_capture inside the likelihood.
+    latent log(M_c / L_c), constrained >= 0).
+
+    Two guide parameterizations are supported, controlled by
+    ``model_config.eta_capture_guide``:
+
+    * ``"softplus_normal"`` (default) — samples an unconstrained
+      Normal and maps through softplus, yielding a logit-normal on
+      nu_c with smooth gradients everywhere. Variational params:
+      ``eta_capture_raw_loc``, ``eta_capture_raw_scale``.
+    * ``"truncated_normal"`` (legacy) — uses TruncatedNormal(low=0)
+      to enforce eta >= 0 directly. Variational params:
+      ``eta_capture_loc``, ``eta_capture_scale``.
+
+    The model then applies the exact transformation to phi_capture or
+    p_capture inside the likelihood (unchanged by guide choice).
 
     For data-driven mode, the hierarchical mu_eta variational parameters
     are registered by ``guide_mu_eta_hierarchy`` (called before the plate).
@@ -398,31 +409,59 @@ def setup_cell_specific_guide(
         Sampled eta_capture values and deterministic capture parameter.
     """
     n_cells = dims["n_cells"]
+    eta_guide = getattr(model_config, "eta_capture_guide", "truncated_normal")
 
-    # Per-cell eta_capture variational parameters
-    # (mu_eta for data-driven mode is sampled before the plate in the
-    # GuideBuilder.build() method)
-    # Initialize loc near the prior mean: log_M0 (will be offset by
-    # -log_lib in the likelihood, but the guide learns the full eta)
-    eta_loc = numpyro.param("eta_capture_loc", jnp.full(n_cells, spec.log_M0))
-    eta_scale = numpyro.param(
-        "eta_capture_scale",
-        jnp.full(n_cells, spec.sigma_M),
-        constraint=constraints.positive,
-    )
-
-    # TruncatedNormal(low=0) matches the model prior and enforces
-    # eta_c >= 0 <=> p_capture <= 1.
-    if batch_idx is None:
-        base_dist = dist.TruncatedNormal(eta_loc, eta_scale, low=0.0)
-    else:
-        base_dist = dist.TruncatedNormal(
-            eta_loc[batch_idx], eta_scale[batch_idx], low=0.0
+    if eta_guide == "softplus_normal":
+        # Softplus-normal guide: sample unconstrained eta_capture_raw,
+        # then map through softplus to get eta_capture in (0, inf).
+        # This induces a logit-normal on nu_c = sigmoid(-raw), with
+        # smooth bounded gradients and no truncation boundary.
+        # softplus_inv(x) = log(exp(x) - 1) ≈ x for x >> 1
+        raw_init = jnp.log(jnp.expm1(jnp.full(n_cells, spec.log_M0)))
+        raw_loc = numpyro.param("eta_capture_raw_loc", raw_init)
+        raw_scale = numpyro.param(
+            "eta_capture_raw_scale",
+            jnp.full(n_cells, spec.sigma_M),
+            constraint=constraints.positive,
         )
 
-    eta = numpyro.sample("eta_capture", base_dist)
+        if batch_idx is None:
+            base_normal = dist.Normal(raw_loc, raw_scale)
+        else:
+            base_normal = dist.Normal(
+                raw_loc[batch_idx], raw_scale[batch_idx]
+            )
 
-    # Deterministic transform to capture parameter
+        # eta = softplus(raw) lives in (0, inf), matching the
+        # TruncatedNormal prior's support.
+        eta_dist = dist.TransformedDistribution(
+            base_normal, dist.transforms.SoftplusTransform()
+        )
+        eta = numpyro.sample("eta_capture", eta_dist)
+
+    else:
+        # Legacy TruncatedNormal guide: direct truncation at 0.
+        eta_loc = numpyro.param(
+            "eta_capture_loc", jnp.full(n_cells, spec.log_M0)
+        )
+        eta_scale = numpyro.param(
+            "eta_capture_scale",
+            jnp.full(n_cells, spec.sigma_M),
+            constraint=constraints.positive,
+        )
+
+        if batch_idx is None:
+            base_dist = dist.TruncatedNormal(
+                eta_loc, eta_scale, low=0.0
+            )
+        else:
+            base_dist = dist.TruncatedNormal(
+                eta_loc[batch_idx], eta_scale[batch_idx], low=0.0
+            )
+        eta = numpyro.sample("eta_capture", base_dist)
+
+    # Deterministic transform to capture parameter (identical for
+    # both guide types — the model physics are unchanged).
     if spec.use_phi_capture:
         capture_value = jnp.exp(eta) - 1.0
         numpyro.deterministic("phi_capture", capture_value)
