@@ -131,6 +131,8 @@ def _build_joint_low_rank_posterior(
     name: str,
     prefix: str,
     split: bool,
+    *,
+    transform=None,
 ) -> Dict[str, Any]:
     """Build a low-rank marginal posterior from joint guide params.
 
@@ -149,11 +151,16 @@ def _build_joint_low_rank_posterior(
     params : dict
         Variational parameter dictionary.
     name : str
-        Logical parameter name (determines transform: Exp vs Sigmoid).
+        Logical parameter name (used for fallback transform selection).
     prefix : str
         Full key prefix (e.g. ``"joint_joint_mu"``).
     split : bool
         Whether to split (not supported for low-rank; ignored).
+    transform : numpyro Transform, optional
+        Transform mapping unconstrained reals to the parameter support.
+        When ``None`` (backward compat), falls back to name-based
+        selection: ``SigmoidTransform`` for probability params,
+        ``ExpTransform`` for positive params.
 
     Returns
     -------
@@ -175,10 +182,12 @@ def _build_joint_low_rank_posterior(
     else:
         base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
 
-    if name in ("p", "gate", "p_capture"):
-        transform = dist.transforms.SigmoidTransform()
-    else:
-        transform = dist.transforms.ExpTransform()
+    # Use caller-supplied transform, or fall back to name-based default
+    if transform is None:
+        if name in ("p", "gate", "p_capture"):
+            transform = dist.transforms.SigmoidTransform()
+        else:
+            transform = dist.transforms.ExpTransform()
 
     return {"base": base, "transform": transform}
 
@@ -469,18 +478,16 @@ def _apply_gene_level_hierarchy(
     distributions.update(
         _build_hyperparameter_posteriors(params, loc_name, scale_name)
     )
-    # If this param lives inside a JointLowRankGuide, extract its marginal
-    # from the joint block instead of building from individual _loc/_scale.
+    # Resolve transform: phi is positive (use pos_transform), p is (0,1).
+    _jp_tf = pos_transform if target_name == "phi" else None
     jp = _find_joint_prefix(params, target_name)
     if jp:
         distributions[target_name] = _build_joint_low_rank_posterior(
-            params, target_name, jp, split
+            params, target_name, jp, split, transform=_jp_tf
         )
     elif f"{target_name}_W" in params:
-        # Per-parameter low-rank: guide stored W/raw_diag instead of scale
-        _tf = pos_transform if target_name == "phi" else None
         distributions[target_name] = _build_low_rank_positive_normal_posterior(
-            params, target_name, is_mixture, split, transform=_tf
+            params, target_name, is_mixture, split, transform=_jp_tf
         )
     elif target_name == "phi":
         distributions[target_name] = _build_positive_normal_posterior(
@@ -568,13 +575,13 @@ def _apply_gene_level_mu_hierarchy(
     distributions.update(
         _build_hyperparameter_posteriors(params, loc_name, scale_name)
     )
+    # mu and r are always positive-valued — use pos_transform.
     jp = _find_joint_prefix(params, target_name)
     if jp:
         distributions[target_name] = _build_joint_low_rank_posterior(
-            params, target_name, jp, split
+            params, target_name, jp, split, transform=pos_transform
         )
     elif f"{target_name}_W" in params:
-        # Per-parameter low-rank: guide stored W/raw_diag instead of scale
         distributions[target_name] = _build_low_rank_positive_normal_posterior(
             params,
             target_name,
@@ -658,7 +665,7 @@ def _apply_dataset_hierarchy_mu(
                     )
                 )
             distributions[target] = _build_joint_low_rank_posterior(
-                params, target, jp, split
+                params, target, jp, split, transform=pos_transform
             )
         else:
             distributions.update(
@@ -689,7 +696,7 @@ def _apply_dataset_hierarchy_mu(
                     _build_neg_hyperparameter_posteriors(params, hs_prefix)
                 )
             distributions[target] = _build_joint_low_rank_posterior(
-                params, target, jp, split
+                params, target, jp, split, transform=pos_transform
             )
         else:
             distributions.update(
@@ -709,7 +716,7 @@ def _apply_dataset_hierarchy_mu(
     jp = _find_joint_prefix(params, target)
     if jp:
         distributions[target] = _build_joint_low_rank_posterior(
-            params, target, jp, split
+            params, target, jp, split, transform=pos_transform
         )
     elif f"{target}_W" in params:
         distributions[target] = _build_low_rank_positive_normal_posterior(
@@ -791,8 +798,10 @@ def _apply_dataset_hierarchy_p(
                         params, hs_prefix
                     )
                 )
+            # phi is positive (use pos_transform), p is (0,1).
+            _jp_tf = pos_transform if target == "phi" else None
             distributions[target] = _build_joint_low_rank_posterior(
-                params, target, jp, split
+                params, target, jp, split, transform=_jp_tf
             )
         else:
             distributions.update(
@@ -821,8 +830,9 @@ def _apply_dataset_hierarchy_p(
                 distributions.update(
                     _build_neg_hyperparameter_posteriors(params, hs_prefix)
                 )
+            _jp_tf = pos_transform if target == "phi" else None
             distributions[target] = _build_joint_low_rank_posterior(
-                params, target, jp, split
+                params, target, jp, split, transform=_jp_tf
             )
         else:
             distributions.update(
@@ -839,10 +849,11 @@ def _apply_dataset_hierarchy_p(
     distributions.update(
         _build_hyperparameter_posteriors(params, hyper_loc, hyper_scale)
     )
+    _jp_tf = pos_transform if target == "phi" else None
     jp = _find_joint_prefix(params, target)
     if jp:
         distributions[target] = _build_joint_low_rank_posterior(
-            params, target, jp, split
+            params, target, jp, split, transform=_jp_tf
         )
     elif f"{target}_W" in params:
         _tf = pos_transform if target == "phi" else None
@@ -1361,7 +1372,7 @@ def _build_canonical_posteriors(
             jp = _find_joint_prefix(params, "r")
             if jp:
                 distributions["r"] = _build_joint_low_rank_posterior(
-                    params, "r", jp, split
+                    params, "r", jp, split, transform=pos_transform
                 )
             elif "r_W" in params:
                 distributions["r"] = _build_low_rank_positive_normal_posterior(
@@ -1426,7 +1437,7 @@ def _build_mean_prob_posteriors(
             jp = _find_joint_prefix(params, "mu")
             if jp:
                 distributions["mu"] = _build_joint_low_rank_posterior(
-                    params, "mu", jp, split
+                    params, "mu", jp, split, transform=pos_transform
                 )
             elif "mu_W" in params:
                 distributions["mu"] = _build_low_rank_positive_normal_posterior(
@@ -1481,7 +1492,7 @@ def _build_mean_odds_posteriors(
             jp = _find_joint_prefix(params, "phi")
             if jp:
                 distributions["phi"] = _build_joint_low_rank_posterior(
-                    params, "phi", jp, split
+                    params, "phi", jp, split, transform=pos_transform
                 )
             elif "phi_W" in params:
                 distributions["phi"] = (
@@ -1506,7 +1517,7 @@ def _build_mean_odds_posteriors(
             jp = _find_joint_prefix(params, "mu")
             if jp:
                 distributions["mu"] = _build_joint_low_rank_posterior(
-                    params, "mu", jp, split
+                    params, "mu", jp, split, transform=pos_transform
                 )
             elif "mu_W" in params:
                 distributions["mu"] = _build_low_rank_positive_normal_posterior(
