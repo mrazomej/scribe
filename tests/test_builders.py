@@ -2899,7 +2899,7 @@ class TestPosteriorContractExtraction:
             ),
             # Regression: gene-level Gaussian mu hierarchy with low-rank
             # guide (no joint_params). Before the fix, Pass 2b tried
-            # _build_exp_normal_posterior which looked for "mu_scale"
+            # _build_positive_normal_posterior which looked for "mu_scale"
             # instead of the low-rank "mu_W"/"mu_raw_diag" params.
             (
                 "gaussian_mu_hierarchy_low_rank",
@@ -2943,7 +2943,7 @@ class TestPosteriorContractExtraction:
             ),
             # Regression: gene-level Gaussian p hierarchy with low-rank
             # phi guide (no joint_params). Before the fix, the Gaussian
-            # path in Pass 2 tried _build_exp_normal_posterior which
+            # path in Pass 2 tried _build_positive_normal_posterior which
             # looked for "phi_scale" instead of low-rank params.
             (
                 "gaussian_p_hierarchy_low_rank_phi",
@@ -3020,3 +3020,144 @@ class TestPosteriorContractExtraction:
             assert isinstance(value, dict)
             assert "param_names" in value and "param_sizes" in value
             assert sum(value["param_sizes"]) == value["base"].loc.shape[-1]
+
+
+class TestPosteriorPositiveTransform:
+    """Verify get_posterior_distributions respects positive_transform config."""
+
+    @staticmethod
+    def _make_config(**overrides):
+        """Build a minimal model-config-like object for posterior extraction."""
+        defaults = dict(
+            parameterization=ParameterizationEnum.MEAN_ODDS,
+            unconstrained=True,
+            is_mixture=False,
+            is_zero_inflated=False,
+            uses_variable_capture=False,
+            mu_prior="none",
+            p_prior="none",
+            gate_prior="none",
+            mu_dataset_prior="none",
+            p_dataset_prior="none",
+            p_dataset_mode="gene_specific",
+            gate_dataset_prior="none",
+            uses_biology_informed_capture=False,
+            shared_capture_scaling=False,
+            joint_params=None,
+            positive_transform="softplus",
+        )
+        defaults.update(overrides)
+        ns = SimpleNamespace(**defaults)
+        ns.hierarchical_p = ns.p_prior != "none"
+        ns.horseshoe_p = ns.p_prior == "horseshoe"
+        ns.hierarchical_gate = ns.gate_prior != "none"
+        ns.horseshoe_gate = ns.gate_prior == "horseshoe"
+        ns.hierarchical_dataset_mu = ns.mu_dataset_prior != "none"
+        ns.horseshoe_dataset_mu = ns.mu_dataset_prior == "horseshoe"
+        ns.hierarchical_dataset_p = (
+            "none" if ns.p_dataset_prior == "none" else ns.p_dataset_mode
+        )
+        ns.horseshoe_dataset_p = ns.p_dataset_prior == "horseshoe"
+        ns.hierarchical_dataset_gate = ns.gate_dataset_prior != "none"
+        ns.horseshoe_dataset_gate = ns.gate_dataset_prior == "horseshoe"
+        return ns
+
+    def test_softplus_transform_on_phi_and_mu(self):
+        """With positive_transform='softplus', phi and mu posteriors use SoftplusTransform."""
+        import numpyro.distributions as dist
+        from scribe.models.builders.posterior import get_posterior_distributions
+
+        G = 10
+        params = {
+            "phi_loc": jnp.zeros(G),
+            "phi_scale": jnp.ones(G),
+            "mu_loc": jnp.zeros(G),
+            "mu_scale": jnp.ones(G),
+        }
+        config = self._make_config(positive_transform="softplus")
+        distributions = get_posterior_distributions(params, config, split=False)
+
+        phi_dist = distributions["phi"]
+        mu_dist = distributions["mu"]
+        assert isinstance(phi_dist, dist.TransformedDistribution)
+        assert isinstance(mu_dist, dist.TransformedDistribution)
+
+        assert isinstance(
+            phi_dist.transforms[-1], dist.transforms.SoftplusTransform
+        ), f"Expected SoftplusTransform for phi, got {type(phi_dist.transforms[-1])}"
+        assert isinstance(
+            mu_dist.transforms[-1], dist.transforms.SoftplusTransform
+        ), f"Expected SoftplusTransform for mu, got {type(mu_dist.transforms[-1])}"
+
+    def test_exp_transform_on_phi_and_mu(self):
+        """With positive_transform='exp', phi and mu posteriors use ExpTransform."""
+        import numpyro.distributions as dist
+        from scribe.models.builders.posterior import get_posterior_distributions
+
+        G = 10
+        params = {
+            "phi_loc": jnp.zeros(G),
+            "phi_scale": jnp.ones(G),
+            "mu_loc": jnp.zeros(G),
+            "mu_scale": jnp.ones(G),
+        }
+        config = self._make_config(positive_transform="exp")
+        distributions = get_posterior_distributions(params, config, split=False)
+
+        phi_dist = distributions["phi"]
+        mu_dist = distributions["mu"]
+        assert isinstance(phi_dist, dist.TransformedDistribution)
+        assert isinstance(mu_dist, dist.TransformedDistribution)
+
+        assert isinstance(
+            phi_dist.transforms[-1], dist.transforms.ExpTransform
+        ), f"Expected ExpTransform for phi, got {type(phi_dist.transforms[-1])}"
+        assert isinstance(
+            mu_dist.transforms[-1], dist.transforms.ExpTransform
+        ), f"Expected ExpTransform for mu, got {type(mu_dist.transforms[-1])}"
+
+    def test_low_rank_softplus_transform(self):
+        """Low-rank posteriors also respect positive_transform='softplus'."""
+        import numpyro.distributions as dist
+        from scribe.models.builders.posterior import get_posterior_distributions
+
+        G = 10
+        rank = 3
+        params = {
+            "phi_loc": jnp.zeros(G),
+            "phi_scale": jnp.ones(G),
+            "mu_loc": jnp.zeros(G),
+            "mu_W": jnp.zeros((G, rank)),
+            "mu_raw_diag": jnp.zeros(G),
+        }
+        config = self._make_config(positive_transform="softplus")
+        distributions = get_posterior_distributions(params, config, split=False)
+
+        # mu has low-rank guide -> returns dict with "transform" key
+        mu_entry = distributions["mu"]
+        assert isinstance(mu_entry, dict), "Low-rank mu should return dict"
+        assert isinstance(
+            mu_entry["transform"], dist.transforms.SoftplusTransform
+        ), f"Expected SoftplusTransform for low-rank mu, got {type(mu_entry['transform'])}"
+
+    def test_backward_compat_defaults_to_exp(self):
+        """Config without positive_transform attribute defaults to ExpTransform."""
+        import numpyro.distributions as dist
+        from scribe.models.builders.posterior import get_posterior_distributions
+
+        G = 10
+        params = {
+            "phi_loc": jnp.zeros(G),
+            "phi_scale": jnp.ones(G),
+            "mu_loc": jnp.zeros(G),
+            "mu_scale": jnp.ones(G),
+        }
+        config = self._make_config()
+        # Remove positive_transform to simulate old pickled config
+        del config.positive_transform
+        distributions = get_posterior_distributions(params, config, split=False)
+
+        phi_dist = distributions["phi"]
+        assert isinstance(
+            phi_dist.transforms[-1], dist.transforms.ExpTransform
+        ), "Missing positive_transform should default to ExpTransform"

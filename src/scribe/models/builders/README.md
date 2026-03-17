@@ -336,6 +336,15 @@ parameterizations and guide families, including **joint-aware** extraction for
   passes checks `f"{name}_W" in params` instead of a global `low_rank` flag.
   This correctly handles heterogeneous guide families (e.g., `mu` with
   `LowRankGuide` while `phi` uses `MeanFieldGuide`).
+- **Positive transform**: `get_posterior_distributions` reads
+  `model_config.positive_transform` (defaulting to `"exp"` for old configs
+  that lack the field) and resolves it into either `SoftplusTransform` or
+  `ExpTransform`. This transform is threaded to every
+  `_build_positive_normal_posterior` and `_build_low_rank_positive_normal_posterior`
+  call for positive-valued parameters (`mu`, `phi`, `r`). Probability-valued
+  parameters (`p`, `gate`, `p_capture`) continue to use `SigmoidTransform`
+  regardless. The capture-specific `phi_capture` is exempt and always uses
+  `ExpTransform` since it is not governed by `positive_transform`.
 
 ### Joint-Parameter Compatibility Checklist
 

@@ -29,7 +29,7 @@ The module is organised into four layers, top-to-bottom:
    correct set of distribution constructors.
 
 4. **Leaf builders** — ``_build_beta_posterior``, ``_build_lognormal_posterior``,
-   ``_build_low_rank_exp_normal_posterior``, etc.
+   ``_build_low_rank_positive_normal_posterior``, etc.
    Low-level functions that construct a single numpyro distribution object
    from raw variational parameters (``_loc``, ``_scale``, ``_W``,
    ``_raw_diag``, ``_alpha``, ``_beta``).
@@ -137,7 +137,7 @@ def _build_joint_low_rank_posterior(
     Uses the stored ``{prefix}_loc``, ``{prefix}_W``,
     ``{prefix}_raw_diag`` to reconstruct the per-parameter marginal
     distribution + transform, identical in structure to the output
-    of ``_build_low_rank_exp_normal_posterior``.
+    of ``_build_low_rank_positive_normal_posterior``.
 
     For gene-specific parameters (G > 1), returns a
     ``LowRankMultivariateNormal``.  For scalar parameters that were
@@ -333,6 +333,8 @@ def _apply_base_parameterization(
     low_rank: bool,
     split: bool,
     skip: set[str],
+    *,
+    pos_transform=None,
 ) -> None:
     """Pass 1: build posteriors for the core model parameters.
 
@@ -348,7 +350,13 @@ def _apply_base_parameterization(
     ):
         distributions.update(
             _build_canonical_posteriors(
-                params, unconstrained, is_mixture, low_rank, split, skip
+                params,
+                unconstrained,
+                is_mixture,
+                low_rank,
+                split,
+                skip,
+                pos_transform=pos_transform,
             )
         )
     elif parameterization in (
@@ -357,7 +365,13 @@ def _apply_base_parameterization(
     ):
         distributions.update(
             _build_mean_prob_posteriors(
-                params, unconstrained, is_mixture, low_rank, split, skip
+                params,
+                unconstrained,
+                is_mixture,
+                low_rank,
+                split,
+                skip,
+                pos_transform=pos_transform,
             )
         )
     elif parameterization in (
@@ -366,7 +380,13 @@ def _apply_base_parameterization(
     ):
         distributions.update(
             _build_mean_odds_posteriors(
-                params, unconstrained, is_mixture, low_rank, split, skip
+                params,
+                unconstrained,
+                is_mixture,
+                low_rank,
+                split,
+                skip,
+                pos_transform=pos_transform,
             )
         )
     else:
@@ -381,6 +401,8 @@ def _apply_gene_level_hierarchy(
     is_mixture: bool,
     low_rank: bool,
     split: bool,
+    *,
+    pos_transform=None,
 ) -> None:
     """Pass 2: override p/phi with a gene-level hierarchical prior.
 
@@ -456,12 +478,18 @@ def _apply_gene_level_hierarchy(
         )
     elif f"{target_name}_W" in params:
         # Per-parameter low-rank: guide stored W/raw_diag instead of scale
-        distributions[target_name] = _build_low_rank_exp_normal_posterior(
-            params, target_name, is_mixture, split
+        _tf = pos_transform if target_name == "phi" else None
+        distributions[target_name] = _build_low_rank_positive_normal_posterior(
+            params, target_name, is_mixture, split, transform=_tf
         )
     elif target_name == "phi":
-        distributions[target_name] = _build_exp_normal_posterior(
-            params, target_name, is_mixture, split, is_scalar=False
+        distributions[target_name] = _build_positive_normal_posterior(
+            params,
+            target_name,
+            is_mixture,
+            split,
+            is_scalar=False,
+            transform=pos_transform,
         )
     else:
         distributions[target_name] = _build_sigmoid_normal_posterior(
@@ -477,6 +505,8 @@ def _apply_gene_level_mu_hierarchy(
     is_mixture: bool,
     low_rank: bool,
     split: bool,
+    *,
+    pos_transform=None,
 ) -> None:
     """Pass 2b: override mu/r with a gene-level hierarchical prior.
 
@@ -545,12 +575,21 @@ def _apply_gene_level_mu_hierarchy(
         )
     elif f"{target_name}_W" in params:
         # Per-parameter low-rank: guide stored W/raw_diag instead of scale
-        distributions[target_name] = _build_low_rank_exp_normal_posterior(
-            params, target_name, is_mixture, split
+        distributions[target_name] = _build_low_rank_positive_normal_posterior(
+            params,
+            target_name,
+            is_mixture,
+            split,
+            transform=pos_transform,
         )
     else:
-        distributions[target_name] = _build_exp_normal_posterior(
-            params, target_name, is_mixture, split, is_scalar=False
+        distributions[target_name] = _build_positive_normal_posterior(
+            params,
+            target_name,
+            is_mixture,
+            split,
+            is_scalar=False,
+            transform=pos_transform,
         )
 
 
@@ -562,6 +601,8 @@ def _apply_dataset_hierarchy_mu(
     is_mixture: bool,
     low_rank: bool,
     split: bool,
+    *,
+    pos_transform=None,
 ) -> None:
     """Pass 3: override mu/r with a dataset-level hierarchical prior.
 
@@ -671,12 +712,20 @@ def _apply_dataset_hierarchy_mu(
             params, target, jp, split
         )
     elif f"{target}_W" in params:
-        distributions[target] = _build_low_rank_exp_normal_posterior(
-            params, target, is_mixture, split
+        distributions[target] = _build_low_rank_positive_normal_posterior(
+            params,
+            target,
+            is_mixture,
+            split,
+            transform=pos_transform,
         )
     else:
-        distributions[target] = _build_exp_normal_posterior(
-            params, target, is_mixture, split
+        distributions[target] = _build_positive_normal_posterior(
+            params,
+            target,
+            is_mixture,
+            split,
+            transform=pos_transform,
         )
 
 
@@ -688,6 +737,8 @@ def _apply_dataset_hierarchy_p(
     is_mixture: bool,
     low_rank: bool,
     split: bool,
+    *,
+    pos_transform=None,
 ) -> None:
     """Pass 4: override p/phi with a dataset-level hierarchical prior.
 
@@ -794,12 +845,18 @@ def _apply_dataset_hierarchy_p(
             params, target, jp, split
         )
     elif f"{target}_W" in params:
-        distributions[target] = _build_low_rank_exp_normal_posterior(
-            params, target, is_mixture, split
+        _tf = pos_transform if target == "phi" else None
+        distributions[target] = _build_low_rank_positive_normal_posterior(
+            params, target, is_mixture, split, transform=_tf
         )
     elif target == "phi":
-        distributions[target] = _build_exp_normal_posterior(
-            params, target, is_mixture, split, is_scalar=False
+        distributions[target] = _build_positive_normal_posterior(
+            params,
+            target,
+            is_mixture,
+            split,
+            is_scalar=False,
+            transform=pos_transform,
         )
     else:
         distributions[target] = _build_sigmoid_normal_posterior(
@@ -1162,6 +1219,15 @@ def get_posterior_distributions(
     unconstrained = model_config.unconstrained
     is_mixture = model_config.is_mixture
 
+    # Resolve the positive-value transform from config (softplus or exp).
+    # Old pickled configs that lack the field default to "exp" via __setstate__.
+    _pt = getattr(model_config, "positive_transform", "exp")
+    pos_transform = (
+        dist.transforms.SoftplusTransform()
+        if _pt == "softplus"
+        else dist.transforms.ExpTransform()
+    )
+
     # Detect low-rank guides by checking for the W + raw_diag param pairs
     # that LowRankMVN guides always emit.
     low_rank = any(
@@ -1183,6 +1249,7 @@ def get_posterior_distributions(
         low_rank,
         split,
         skip,
+        pos_transform=pos_transform,
     )
     _apply_gene_level_hierarchy(  # Pass 2: p/phi
         distributions,
@@ -1192,6 +1259,7 @@ def get_posterior_distributions(
         is_mixture,
         low_rank,
         split,
+        pos_transform=pos_transform,
     )
     _apply_gene_level_mu_hierarchy(  # Pass 2b: mu/r
         distributions,
@@ -1201,6 +1269,7 @@ def get_posterior_distributions(
         is_mixture,
         low_rank,
         split,
+        pos_transform=pos_transform,
     )
     _apply_dataset_hierarchy_mu(  # Pass 3
         distributions,
@@ -1210,6 +1279,7 @@ def get_posterior_distributions(
         is_mixture,
         low_rank,
         split,
+        pos_transform=pos_transform,
     )
     _apply_dataset_hierarchy_p(  # Pass 4
         distributions,
@@ -1219,6 +1289,7 @@ def get_posterior_distributions(
         is_mixture,
         low_rank,
         split,
+        pos_transform=pos_transform,
     )
     _apply_dataset_hierarchy_gate(  # Pass 5
         distributions,
@@ -1268,6 +1339,8 @@ def _build_canonical_posteriors(
     low_rank: bool,
     split: bool,
     skip: Optional[set] = None,
+    *,
+    pos_transform=None,
 ) -> Dict[str, Any]:
     """Build posteriors for canonical (standard) parameterization."""
     distributions = {}
@@ -1291,12 +1364,20 @@ def _build_canonical_posteriors(
                     params, "r", jp, split
                 )
             elif "r_W" in params:
-                distributions["r"] = _build_low_rank_exp_normal_posterior(
-                    params, "r", is_mixture, split
+                distributions["r"] = _build_low_rank_positive_normal_posterior(
+                    params,
+                    "r",
+                    is_mixture,
+                    split,
+                    transform=pos_transform,
                 )
             else:
-                distributions["r"] = _build_exp_normal_posterior(
-                    params, "r", is_mixture, split
+                distributions["r"] = _build_positive_normal_posterior(
+                    params,
+                    "r",
+                    is_mixture,
+                    split,
+                    transform=pos_transform,
                 )
     else:
         if "p" not in skip:
@@ -1323,6 +1404,8 @@ def _build_mean_prob_posteriors(
     low_rank: bool,
     split: bool,
     skip: Optional[set] = None,
+    *,
+    pos_transform=None,
 ) -> Dict[str, Any]:
     """Build posteriors for mean_prob (linked) parameterization."""
     distributions = {}
@@ -1346,12 +1429,20 @@ def _build_mean_prob_posteriors(
                     params, "mu", jp, split
                 )
             elif "mu_W" in params:
-                distributions["mu"] = _build_low_rank_exp_normal_posterior(
-                    params, "mu", is_mixture, split
+                distributions["mu"] = _build_low_rank_positive_normal_posterior(
+                    params,
+                    "mu",
+                    is_mixture,
+                    split,
+                    transform=pos_transform,
                 )
             else:
-                distributions["mu"] = _build_exp_normal_posterior(
-                    params, "mu", is_mixture, split
+                distributions["mu"] = _build_positive_normal_posterior(
+                    params,
+                    "mu",
+                    is_mixture,
+                    split,
+                    transform=pos_transform,
                 )
     else:
         if "p" not in skip:
@@ -1378,6 +1469,8 @@ def _build_mean_odds_posteriors(
     low_rank: bool,
     split: bool,
     skip: Optional[set] = None,
+    *,
+    pos_transform=None,
 ) -> Dict[str, Any]:
     """Build posteriors for mean_odds (odds_ratio) parameterization."""
     distributions = {}
@@ -1391,12 +1484,23 @@ def _build_mean_odds_posteriors(
                     params, "phi", jp, split
                 )
             elif "phi_W" in params:
-                distributions["phi"] = _build_low_rank_exp_normal_posterior(
-                    params, "phi", is_mixture=False, split=split
+                distributions["phi"] = (
+                    _build_low_rank_positive_normal_posterior(
+                        params,
+                        "phi",
+                        is_mixture=False,
+                        split=split,
+                        transform=pos_transform,
+                    )
                 )
             else:
-                distributions["phi"] = _build_exp_normal_posterior(
-                    params, "phi", is_mixture=False, split=split, is_scalar=True
+                distributions["phi"] = _build_positive_normal_posterior(
+                    params,
+                    "phi",
+                    is_mixture=False,
+                    split=split,
+                    is_scalar=True,
+                    transform=pos_transform,
                 )
         if "mu" not in skip:
             jp = _find_joint_prefix(params, "mu")
@@ -1405,12 +1509,20 @@ def _build_mean_odds_posteriors(
                     params, "mu", jp, split
                 )
             elif "mu_W" in params:
-                distributions["mu"] = _build_low_rank_exp_normal_posterior(
-                    params, "mu", is_mixture, split
+                distributions["mu"] = _build_low_rank_positive_normal_posterior(
+                    params,
+                    "mu",
+                    is_mixture,
+                    split,
+                    transform=pos_transform,
                 )
             else:
-                distributions["mu"] = _build_exp_normal_posterior(
-                    params, "mu", is_mixture, split
+                distributions["mu"] = _build_positive_normal_posterior(
+                    params,
+                    "mu",
+                    is_mixture,
+                    split,
+                    transform=pos_transform,
                 )
     else:
         if "phi" not in skip:
@@ -1639,7 +1751,7 @@ def _build_phi_capture_posterior(
     distributions = {}
 
     if unconstrained:
-        distributions["phi_capture"] = _build_exp_normal_posterior(
+        distributions["phi_capture"] = _build_positive_normal_posterior(
             params,
             "phi_capture",
             is_mixture=False,
@@ -1812,14 +1924,15 @@ def _build_low_rank_lognormal_posterior(
     return posterior
 
 
-def _build_low_rank_exp_normal_posterior(
+def _build_low_rank_positive_normal_posterior(
     params: Dict[str, jnp.ndarray],
     name: str,
     is_mixture: bool,
     split: bool,
+    transform=None,
 ) -> Union[dist.Distribution, List[dist.Distribution]]:
     """
-    Build low-rank TransformedDistribution posterior for unconstrained models.
+    Build low-rank TransformedDistribution posterior for positive-valued params.
 
     For unconstrained models with low-rank guides, the parameters are:
         - {name}_loc: location parameter
@@ -1840,6 +1953,10 @@ def _build_low_rank_exp_normal_posterior(
     split : bool
         Whether to split into per-gene distributions (not supported for
         low-rank).
+    transform : numpyro Transform, optional
+        Transform mapping unconstrained reals to (0, inf).  When ``None``
+        (backward compat), falls back to ``ExpTransform`` for positive
+        params or ``SigmoidTransform`` for probability params.
 
     Returns
     -------
@@ -1858,18 +1975,12 @@ def _build_low_rank_exp_normal_posterior(
     # Create low-rank MVN in unconstrained space
     base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
 
-    # Wrap with transform (ExpTransform for positive, SigmoidTransform for (0,1))
-    # Determine transform from parameter name or use ExpTransform as default
-    if name in ["p", "gate", "p_capture"]:
-        transform = dist.transforms.SigmoidTransform()
-    else:
-        transform = dist.transforms.ExpTransform()
-
-    # Return as dict structure to match get_map expectations
-    # get_map expects {"base": base_dist, "transform": transform} for low-rank guides
-    if split:
-        # For low-rank, we can't easily split - return full distribution
-        return {"base": base, "transform": transform}
+    # Use caller-supplied transform, or fall back to name-based default
+    if transform is None:
+        if name in ["p", "gate", "p_capture"]:
+            transform = dist.transforms.SigmoidTransform()
+        else:
+            transform = dist.transforms.ExpTransform()
 
     return {"base": base, "transform": transform}
 
@@ -1897,21 +2008,40 @@ def _build_sigmoid_normal_posterior(
     return posterior
 
 
-def _build_exp_normal_posterior(
+def _build_positive_normal_posterior(
     params: Dict[str, jnp.ndarray],
     name: str,
     is_mixture: bool,
     split: bool,
     is_scalar: bool = False,
+    transform=None,
 ) -> Union[dist.Distribution, List[dist.Distribution]]:
-    """Build transformed Normal posterior for (0,∞) support."""
+    """Build transformed Normal posterior for (0, inf) support.
+
+    Parameters
+    ----------
+    params : Dict[str, jnp.ndarray]
+        Dictionary of variational parameters.
+    name : str
+        Parameter name (e.g., "r", "mu", "phi").
+    is_mixture : bool
+        Whether this is a mixture model.
+    split : bool
+        Whether to split into per-gene distributions.
+    is_scalar : bool, optional
+        Whether this is a scalar parameter.
+    transform : numpyro Transform, optional
+        Transform mapping unconstrained reals to (0, inf).  When ``None``
+        (backward compat), defaults to ``ExpTransform``.
+    """
     loc = params[f"{name}_loc"]
     scale = params[f"{name}_scale"]
 
+    if transform is None:
+        transform = dist.transforms.ExpTransform()
+
     base = dist.Normal(loc, scale)
-    posterior = dist.TransformedDistribution(
-        base, dist.transforms.ExpTransform()
-    )
+    posterior = dist.TransformedDistribution(base, transform)
 
     if is_scalar or (loc.ndim == 0):
         return posterior
