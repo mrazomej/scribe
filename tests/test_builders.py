@@ -3089,6 +3089,36 @@ class TestPosteriorPositiveTransform:
             mu_dist.transforms[-1], dist.transforms.SoftplusTransform
         ), f"Expected SoftplusTransform for mu, got {type(mu_dist.transforms[-1])}"
 
+    def test_softplus_transform_on_phi_capture(self):
+        """With positive_transform='softplus', phi_capture uses SoftplusTransform."""
+        import numpyro.distributions as dist
+        from scribe.models.builders.posterior import get_posterior_distributions
+
+        G = 10
+        C = 5
+        params = {
+            "phi_loc": jnp.zeros(G),
+            "phi_scale": jnp.ones(G),
+            "mu_loc": jnp.zeros(G),
+            "mu_scale": jnp.ones(G),
+            "phi_capture_loc": jnp.zeros(C),
+            "phi_capture_scale": jnp.ones(C),
+        }
+        config = self._make_config(
+            positive_transform="softplus",
+            uses_variable_capture=True,
+        )
+        distributions = get_posterior_distributions(params, config, split=False)
+
+        phi_capture_dist = distributions["phi_capture"]
+        assert isinstance(phi_capture_dist, dist.TransformedDistribution)
+        assert isinstance(
+            phi_capture_dist.transforms[-1], dist.transforms.SoftplusTransform
+        ), (
+            "Expected SoftplusTransform for phi_capture, "
+            f"got {type(phi_capture_dist.transforms[-1])}"
+        )
+
     def test_exp_transform_on_phi_and_mu(self):
         """With positive_transform='exp', phi and mu posteriors use ExpTransform."""
         import numpyro.distributions as dist
@@ -3115,6 +3145,36 @@ class TestPosteriorPositiveTransform:
         assert isinstance(
             mu_dist.transforms[-1], dist.transforms.ExpTransform
         ), f"Expected ExpTransform for mu, got {type(mu_dist.transforms[-1])}"
+
+    def test_exp_transform_on_phi_capture(self):
+        """With positive_transform='exp', phi_capture uses ExpTransform."""
+        import numpyro.distributions as dist
+        from scribe.models.builders.posterior import get_posterior_distributions
+
+        G = 10
+        C = 5
+        params = {
+            "phi_loc": jnp.zeros(G),
+            "phi_scale": jnp.ones(G),
+            "mu_loc": jnp.zeros(G),
+            "mu_scale": jnp.ones(G),
+            "phi_capture_loc": jnp.zeros(C),
+            "phi_capture_scale": jnp.ones(C),
+        }
+        config = self._make_config(
+            positive_transform="exp",
+            uses_variable_capture=True,
+        )
+        distributions = get_posterior_distributions(params, config, split=False)
+
+        phi_capture_dist = distributions["phi_capture"]
+        assert isinstance(phi_capture_dist, dist.TransformedDistribution)
+        assert isinstance(
+            phi_capture_dist.transforms[-1], dist.transforms.ExpTransform
+        ), (
+            "Expected ExpTransform for phi_capture, "
+            f"got {type(phi_capture_dist.transforms[-1])}"
+        )
 
     def test_low_rank_softplus_transform(self):
         """Low-rank posteriors also respect positive_transform='softplus'."""
@@ -3161,6 +3221,31 @@ class TestPosteriorPositiveTransform:
         assert isinstance(
             phi_dist.transforms[-1], dist.transforms.ExpTransform
         ), "Missing positive_transform should default to ExpTransform"
+
+    def test_backward_compat_phi_capture_defaults_to_exp(self):
+        """Config without positive_transform defaults phi_capture to ExpTransform."""
+        import numpyro.distributions as dist
+        from scribe.models.builders.posterior import get_posterior_distributions
+
+        G = 10
+        C = 5
+        params = {
+            "phi_loc": jnp.zeros(G),
+            "phi_scale": jnp.ones(G),
+            "mu_loc": jnp.zeros(G),
+            "mu_scale": jnp.ones(G),
+            "phi_capture_loc": jnp.zeros(C),
+            "phi_capture_scale": jnp.ones(C),
+        }
+        config = self._make_config(uses_variable_capture=True)
+        # Remove positive_transform to simulate old pickled config.
+        del config.positive_transform
+        distributions = get_posterior_distributions(params, config, split=False)
+
+        phi_capture_dist = distributions["phi_capture"]
+        assert isinstance(
+            phi_capture_dist.transforms[-1], dist.transforms.ExpTransform
+        ), "Missing positive_transform should default phi_capture to ExpTransform"
 
     def test_joint_softplus_transform_on_phi_and_mu(self):
         """Joint low-rank posteriors respect positive_transform='softplus'."""

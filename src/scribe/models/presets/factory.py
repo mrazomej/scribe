@@ -210,6 +210,14 @@ def _create_vae_model(
     param_key = _get_parameterization_key(model_config.parameterization)
     param_strategy = PARAMETERIZATIONS[param_key]
     guide_families = model_config.guide_families or GuideFamilyConfig()
+    # Resolve positive transform for unconstrained positive-valued parameters.
+    # Fallback to "exp" preserves behavior for legacy configs missing the field.
+    _pt = getattr(model_config, "positive_transform", "exp")
+    _pos_transform = (
+        npdist.transforms.SoftplusTransform()
+        if _pt == "softplus"
+        else npdist.transforms.ExpTransform()
+    )
 
     # 1. Build decoder output heads from parameterization (with optional
     #    overrides)
@@ -299,6 +307,7 @@ def _create_vae_model(
                     model_config.gate_prior != HierarchicalPriorType.NONE
                 ),
                 model_config=model_config,
+                positive_transform=_pos_transform,
             )
             extra_specs.extend(specs)
 
@@ -638,6 +647,7 @@ def create_model(
             mixture_params=effective_mixture_params,
             hierarchical_gate=effective_hierarchical_gate,
             model_config=model_config,
+            positive_transform=_pos_transform,
         )
         param_specs.extend(extra_specs)
 
