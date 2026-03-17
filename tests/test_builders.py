@@ -2897,6 +2897,35 @@ class TestPosteriorContractExtraction:
                 },
                 {"phi": (), "mu": (4,), "eta_capture": (5,), "mu_eta": ()},
             ),
+            # Softplus-normal guide for eta_capture (new default):
+            # eta_capture_raw_loc/scale → TransformedDistribution
+            (
+                "biology_informed_capture_softplus_normal",
+                _make_config.__func__(
+                    parameterization=ParameterizationEnum.MEAN_ODDS,
+                    unconstrained=True,
+                    uses_variable_capture=True,
+                    uses_biology_informed_capture=True,
+                ),
+                {
+                    "phi_loc": jnp.array(0.0),
+                    "phi_scale": jnp.array(1.0),
+                    "mu_loc": jnp.zeros((4,)),
+                    "mu_scale": jnp.ones((4,)),
+                    "eta_capture_raw_loc": jnp.zeros((5,)),
+                    "eta_capture_raw_scale": jnp.ones((5,)),
+                    "mu_eta_loc": jnp.array(0.0),
+                    "mu_eta_scale": jnp.array(1.0),
+                },
+                {"phi", "mu", "eta_capture", "mu_eta"},
+                {
+                    "phi": "transformed_distribution",
+                    "mu": "transformed_distribution",
+                    "eta_capture": "transformed_distribution",
+                    "mu_eta": "distribution",
+                },
+                {"phi": (), "mu": (4,), "eta_capture": (5,), "mu_eta": ()},
+            ),
             # Regression: gene-level Gaussian mu hierarchy with low-rank
             # guide (no joint_params). Before the fix, Pass 2b tried
             # _build_positive_normal_posterior which looked for "mu_scale"

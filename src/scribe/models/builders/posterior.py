@@ -1904,8 +1904,28 @@ def _build_biology_informed_capture_posterior(
             params["mu_eta_loc"], params["mu_eta_scale"]
         )
 
-    # --- Per-cell eta_capture (truncated at 0: M_c >= L_c) ----------------
-    if "eta_capture_loc" in params:
+    # --- Per-cell eta_capture ------------------------------------------------
+    # Two guide parameterizations: softplus-normal (new, detected by
+    # eta_capture_raw_loc) and truncated-normal (legacy, eta_capture_loc).
+    if "eta_capture_raw_loc" in params:
+        # Softplus-normal guide: eta = softplus(raw), raw ~ Normal
+        raw_loc = params["eta_capture_raw_loc"]
+        raw_scale = params["eta_capture_raw_scale"]
+        if split:
+            distributions["eta_capture"] = [
+                dist.TransformedDistribution(
+                    dist.Normal(raw_loc[i], raw_scale[i]),
+                    dist.transforms.SoftplusTransform(),
+                )
+                for i in range(raw_loc.shape[0])
+            ]
+        else:
+            distributions["eta_capture"] = dist.TransformedDistribution(
+                dist.Normal(raw_loc, raw_scale),
+                dist.transforms.SoftplusTransform(),
+            )
+    elif "eta_capture_loc" in params:
+        # Legacy truncated-normal guide: eta ~ TruncatedNormal(low=0)
         loc = params["eta_capture_loc"]
         scale = params["eta_capture_scale"]
         eta_dist = dist.TruncatedNormal(loc, scale, low=0.0)

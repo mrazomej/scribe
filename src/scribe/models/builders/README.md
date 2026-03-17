@@ -27,7 +27,7 @@ Parameter specs define the distribution and metadata for each parameter:
 | `SigmoidNormalSpec` | Normal → sigmoid | (0, 1) | p_unconstrained |
 | `PositiveNormalSpec` | Normal → configurable positive transform (exp or softplus) | (0, ∞) | r_unconstrained |
 | `SoftplusNormalSpec` | Normal → softplus | (0, ∞) | r (smooth) |
-| `BiologyInformedCaptureSpec` | Normal(η) → exp/exp-1 | cell-specific | p_capture, phi_capture |
+| `BiologyInformedCaptureSpec` | Normal(η) → exp/exp-1; guide: softplus-normal or truncated-normal | cell-specific | p_capture, phi_capture |
 | `LatentSpec` | Base for VAE latent z | — | abstract |
 | `GaussianLatentSpec` | Normal(loc, scale).to_event(1) from encoder output | — | z (guide only) |
 
@@ -121,6 +121,15 @@ non-centered hierarchical prior (Gaussian, Horseshoe, or NEG) before the cell
 plate, using `guide_mu_eta_hierarchy()` in `_guide_cell_specific_mixin.py`.
 When `n_datasets < 2`, a single-scalar fallback is used instead.
 Per-cell `eta_capture` variational parameters are sampled inside the cell plate.
+
+**Guide parameterization** (`ModelConfig.eta_capture_guide`):
+
+- `"softplus_normal"` (default): samples `eta_capture_raw` from an
+  unconstrained Normal and maps through `SoftplusTransform` to get
+  `eta_capture`. Yields a logit-normal on `nu_c` with smooth gradients.
+- `"truncated_normal"` (legacy): samples `eta_capture` directly from
+  `TruncatedNormal(low=0)`. Preserved for backward compatibility with old
+  checkpoints that have `eta_capture_loc` / `eta_capture_scale` params.
 
 ### ParamSpec Attributes
 
@@ -350,6 +359,12 @@ parameterizations and guide families, including **joint-aware** extraction for
   paths: mean-field, per-parameter low-rank, and joint low-rank guides.
   Probability-valued parameters (`p`, `gate`, `p_capture`) continue to use
   `SigmoidTransform` regardless.
+- **Capture guide detection**: `_build_biology_informed_capture_posterior`
+  auto-detects the guide type from variational parameter names:
+  `eta_capture_raw_loc` → softplus-normal (reconstructs
+  `TransformedDistribution(Normal, SoftplusTransform)`);
+  `eta_capture_loc` → legacy truncated-normal (reconstructs
+  `TruncatedNormal(low=0)`).
 
 ### Joint-Parameter Compatibility Checklist
 

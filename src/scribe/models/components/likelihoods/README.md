@@ -211,6 +211,16 @@ When the eta framework is active:
    `_sample_capture_biology_informed()`, then transformed to `p_capture`
    or `phi_capture` via exact formulas.
 
+**Guide parameterization** (`ModelConfig.eta_capture_guide`):
+
+- `"softplus_normal"` (default): The guide samples an unconstrained Normal
+  (`eta_capture_raw_loc/scale`) and maps through softplus to produce
+  `eta_capture`. This induces a logit-normal on `nu_c` with smooth gradients
+  and no truncation boundary.
+- `"truncated_normal"` (legacy): The guide uses `TruncatedNormal(low=0)` for
+  `eta_capture` directly (`eta_capture_loc/scale`). Preserved for backward
+  compatibility with old checkpoints.
+
 Key helpers in `base.py`:
 - `_sample_hierarchical_mu_eta()` — dispatcher to prior-specific samplers
 - `_sample_hierarchical_mu_eta_{gaussian,horseshoe,neg}()` — NCP samplers
