@@ -432,16 +432,44 @@ sampling the lower-dimensional Dirichlet.
 
 ### `to_dataframe()` — exporting results
 
-All DE results objects provide a `to_dataframe(tau)` method that returns a
-pandas DataFrame with one row per gene:
+All DE results objects provide a `to_dataframe(...)` method that returns a
+pandas DataFrame with one row per gene.
+
+By default, export remains backward-compatible and includes CLR gene-level
+metrics:
 
 ```python
 df = de.to_dataframe(tau=0.5)
 # Columns: gene, delta_mean, delta_sd, lfsr, lfsr_tau, prob_effect, prob_positive
 ```
 
-For empirical results with stored MAP mean expression, the DataFrame also
-includes `mean_expression_A` and `mean_expression_B` columns.
+For empirical and shrinkage results, the `metrics` argument allows composable
+selection of CLR and biological metric families:
+
+```python
+# CLR only (default behavior)
+df_clr = de.to_dataframe(metrics="clr", tau=0.5)
+
+# CLR + biological LFC
+df_lfc = de.to_dataframe(metrics=["clr", "bio_lfc"], tau=0.5, tau_lfc=0.3)
+
+# CLR + Jeffreys divergence only
+df_kl = de.to_dataframe(metrics=["clr", "bio_kl"], tau=0.5, tau_kl=0.2)
+
+# All available families (CLR + biological blocks)
+df_all = de.to_dataframe(metrics="all")
+```
+
+Supported empirical/shrinkage families:
+
+- `clr` — CLR DE columns (`delta_mean`, `delta_sd`, `lfsr`, `lfsr_tau`, ...)
+- `bio_lfc` — biological mean-shift summaries (`lfc_*`)
+- `bio_lvr` — biological variance-shift summaries (`lvr_*`)
+- `bio_kl` — biological Jeffreys summaries (`kl_*`)
+- `bio_aux` — biological context columns (`mu_*`, `var_*`, `max_bio_expr`)
+
+For empirical/shrinkage results with stored MAP mean expression, CLR exports
+also include `mean_expression_A` and `mean_expression_B`.
 
 #### PEFP-controlled DE calls
 
@@ -461,6 +489,9 @@ not exceed `target_pefp`, then flagging all genes below that threshold.
 By default `use_lfsr_tau=True`, so the practical-significance variant is
 used (recommended when `tau > 0`).  Set `use_lfsr_tau=False` to threshold
 on the standard `lfsr` instead.
+
+`target_pefp` requires `metrics` to include `clr`, because `is_de` is defined
+from CLR lfsr values.
 
 ## Empirical (Non-Parametric) DE
 

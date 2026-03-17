@@ -6,6 +6,7 @@ implementations, independent of how gene-level statistics are produced.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Optional, TYPE_CHECKING
 
 from ._error_control import compute_pefp, find_lfsr_threshold, format_de_table
@@ -27,6 +28,70 @@ class BaseResultsMixin:
     - ``_cached_tau`` cache key.
     - a ``gene_level(tau, coordinate)`` method.
     """
+
+    # Supported metric families at the base level (CLR summaries only).
+    _DATAFRAME_METRIC_ORDER = ("clr",)
+    _SUPPORTED_DATAFRAME_METRICS = frozenset({"clr"})
+
+    def _resolve_dataframe_metrics(
+        self,
+        metrics: str | Iterable[str] | None,
+    ) -> tuple[str, ...]:
+        """Normalize and validate metric-family selections for export.
+
+        Parameters
+        ----------
+        metrics : str or iterable of str, optional
+            Requested metric families. ``None`` defaults to ``("clr",)``.
+            The ``"all"`` alias expands to all supported families.
+
+        Returns
+        -------
+        tuple of str
+            Ordered tuple of validated metric-family identifiers.
+
+        Raises
+        ------
+        ValueError
+            If the selection is empty or contains unsupported names.
+        """
+        # Preserve current behavior by defaulting to CLR metrics.
+        if metrics is None:
+            return ("clr",)
+
+        if isinstance(metrics, str):
+            metric_values = [metrics]
+        else:
+            metric_values = list(metrics)
+
+        if not metric_values:
+            raise ValueError("metrics must include at least one metric family.")
+
+        resolved: list[str] = []
+        supported = self._SUPPORTED_DATAFRAME_METRICS
+        metric_order = tuple(
+            metric
+            for metric in self._DATAFRAME_METRIC_ORDER
+            if metric in supported
+        )
+
+        # Expand aliases and preserve order while removing duplicates.
+        for metric in metric_values:
+            if metric == "all":
+                resolved.extend(
+                    m for m in metric_order if m not in resolved
+                )
+                continue
+
+            if metric not in supported:
+                raise ValueError(
+                    f"Unsupported metrics family '{metric}'. "
+                    f"Supported values: {sorted(supported | {'all'})}."
+                )
+            if metric not in resolved:
+                resolved.append(metric)
+
+        return tuple(resolved)
 
     def _ensure_gene_results(self, tau: float = 0.0) -> None:
         """Recompute gene-level results when the cache is stale.
@@ -154,6 +219,7 @@ class BaseResultsMixin:
         tau: float = 0.0,
         target_pefp: Optional[float] = None,
         use_lfsr_tau: bool = True,
+        metrics: str | Iterable[str] | None = None,
     ) -> "pandas.DataFrame":
         """Export cached gene-level statistics to a pandas DataFrame.
 
@@ -166,6 +232,26 @@ class BaseResultsMixin:
             from :meth:`find_threshold`.
         use_lfsr_tau : bool, default=True
             Select whether PEFP control uses ``lfsr_tau`` or ``lfsr``.
+        metrics : {'clr', 'bio_lfc', 'bio_lvr', 'bio_kl', 'bio_aux', 'all'}
+            or iterable, optional
+            Metric families to export. ``None`` and ``'clr'`` produce the
+            current CLR-focused DataFrame. Valid families are:
+
+            - ``'clr'``: compositional CLR gene-level DE summaries
+              (``delta_*``, ``lfsr*``, and effect probabilities).
+            - ``'bio_lfc'``: biological mean-shift summaries based on
+              log-fold-change (``lfc_*`` columns).
+            - ``'bio_lvr'``: biological variance-shift summaries based on
+              log-variance ratio (``lvr_*`` columns).
+            - ``'bio_kl'``: biological distribution-shift summaries from
+              Jeffreys divergence (``kl_*`` columns).
+            - ``'bio_aux'``: auxiliary biological context columns
+              (``mu_*``, ``var_*``, ``max_bio_expr``).
+            - ``'all'``: alias that expands to every family supported by the
+              concrete results class.
+
+            On this base results class, only ``'clr'`` (and therefore
+            ``'all'`` -> ``'clr'``) is supported.
 
         Returns
         -------
@@ -174,6 +260,15 @@ class BaseResultsMixin:
         """
         import numpy as np
         import pandas as pd
+
+        metric_families = self._resolve_dataframe_metrics(metrics)
+
+        # Base results objects only provide CLR gene-level summaries.
+        if "clr" not in metric_families:
+            raise ValueError(
+                "At least one CLR metric family is required for this "
+                "results class."
+            )
 
         self._ensure_gene_results(tau=tau)
         gs = self._gene_results
