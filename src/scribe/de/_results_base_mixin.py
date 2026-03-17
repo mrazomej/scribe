@@ -220,6 +220,7 @@ class BaseResultsMixin:
         target_pefp: Optional[float] = None,
         use_lfsr_tau: bool = True,
         metrics: str | Iterable[str] | None = None,
+        column_naming: str = "prefixed",
     ) -> "pandas.DataFrame":
         """Export cached gene-level statistics to a pandas DataFrame.
 
@@ -252,6 +253,11 @@ class BaseResultsMixin:
 
             On this base results class, only ``'clr'`` (and therefore
             ``'all'`` -> ``'clr'``) is supported.
+        column_naming : {'prefixed', 'legacy'}, default='prefixed'
+            Column naming convention for CLR metrics. ``'prefixed'`` uses
+            explicit namespaced columns (for example ``clr_delta_mean`` and
+            ``clr_is_de``). ``'legacy'`` preserves historical names
+            (for example ``delta_mean`` and ``is_de``).
 
         Returns
         -------
@@ -262,6 +268,10 @@ class BaseResultsMixin:
         import pandas as pd
 
         metric_families = self._resolve_dataframe_metrics(metrics)
+        if column_naming not in {"prefixed", "legacy"}:
+            raise ValueError(
+                "column_naming must be one of {'prefixed', 'legacy'}."
+            )
 
         # Base results objects only provide CLR gene-level summaries.
         if "clr" not in metric_families:
@@ -272,15 +282,34 @@ class BaseResultsMixin:
 
         self._ensure_gene_results(tau=tau)
         gs = self._gene_results
-        df = pd.DataFrame(
-            {
-                "gene": gs["gene_names"],
+        # Keep CLR column naming explicit while retaining a legacy mode.
+        if column_naming == "prefixed":
+            clr_columns = {
+                "clr_delta_mean": np.asarray(gs["delta_mean"]),
+                "clr_delta_sd": np.asarray(gs["delta_sd"]),
+                "clr_lfsr": np.asarray(gs["lfsr"]),
+                "clr_lfsr_tau": np.asarray(gs["lfsr_tau"]),
+                "clr_prob_effect": np.asarray(gs["prob_effect"]),
+                "clr_prob_positive": np.asarray(gs["prob_positive"]),
+            }
+            lfsr_col = "clr_lfsr_tau" if use_lfsr_tau else "clr_lfsr"
+            is_de_col = "clr_is_de"
+        else:
+            clr_columns = {
                 "delta_mean": np.asarray(gs["delta_mean"]),
                 "delta_sd": np.asarray(gs["delta_sd"]),
                 "lfsr": np.asarray(gs["lfsr"]),
                 "lfsr_tau": np.asarray(gs["lfsr_tau"]),
                 "prob_effect": np.asarray(gs["prob_effect"]),
                 "prob_positive": np.asarray(gs["prob_positive"]),
+            }
+            lfsr_col = "lfsr_tau" if use_lfsr_tau else "lfsr"
+            is_de_col = "is_de"
+
+        df = pd.DataFrame(
+            {
+                "gene": gs["gene_names"],
+                **clr_columns,
             }
         )
 
@@ -289,7 +318,6 @@ class BaseResultsMixin:
             threshold = self.find_threshold(
                 target_pefp=target_pefp, tau=tau, use_lfsr_tau=use_lfsr_tau
             )
-            lfsr_col = "lfsr_tau" if use_lfsr_tau else "lfsr"
-            df["is_de"] = df[lfsr_col].to_numpy() < threshold
+            df[is_de_col] = df[lfsr_col].to_numpy() < threshold
 
         return df

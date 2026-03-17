@@ -412,6 +412,7 @@ class EmpiricalResultsMixin:
         tau_lfc: float = 0.0,
         tau_var: float = 0.0,
         tau_kl: float = 0.0,
+        column_naming: str = "prefixed",
     ):
         """Export selected CLR/biological metric families to a DataFrame.
 
@@ -446,6 +447,10 @@ class EmpiricalResultsMixin:
             Practical threshold passed to :meth:`biological_level` for LVR.
         tau_kl : float, default=0.0
             Practical threshold passed to :meth:`biological_level` for KL.
+        column_naming : {'prefixed', 'legacy'}, default='prefixed'
+            Column naming convention. ``'prefixed'`` produces explicit family
+            namespaces (for example ``clr_*``, ``bio_lfc_*``). ``'legacy'``
+            preserves historical un-prefixed biological names and CLR names.
 
         Returns
         -------
@@ -471,6 +476,7 @@ class EmpiricalResultsMixin:
                 target_pefp=target_pefp,
                 use_lfsr_tau=use_lfsr_tau,
                 metrics="clr",
+                column_naming=column_naming,
             )
         else:
             # Build a valid gene index when users request only biological blocks.
@@ -488,8 +494,12 @@ class EmpiricalResultsMixin:
                 mask = np.asarray(self._gene_mask, dtype=bool)
                 mu_A = mu_A[mask]
                 mu_B = mu_B[mask]
-            df["mean_expression_A"] = mu_A
-            df["mean_expression_B"] = mu_B
+            if column_naming == "prefixed":
+                df["clr_mean_expression_A"] = mu_A
+                df["clr_mean_expression_B"] = mu_B
+            else:
+                df["mean_expression_A"] = mu_A
+                df["mean_expression_B"] = mu_B
 
         bio_families = {
             "bio_lfc",
@@ -514,6 +524,18 @@ class EmpiricalResultsMixin:
                     return values[mask]
                 return values
 
+            def _bio_column_name(key: str) -> str:
+                """Map internal biological keys to exported column names."""
+                if column_naming == "legacy":
+                    return key
+                if key.startswith("lfc_"):
+                    return f"bio_lfc_{key.removeprefix('lfc_')}"
+                if key.startswith("lvr_"):
+                    return f"bio_lvr_{key.removeprefix('lvr_')}"
+                if key.startswith("kl_"):
+                    return f"bio_kl_{key.removeprefix('kl_')}"
+                return f"bio_{key}"
+
             # Keep each biological block grouped so callers can request subsets.
             if "bio_lfc" in metric_families:
                 for key in (
@@ -526,7 +548,7 @@ class EmpiricalResultsMixin:
                     "lfc_prob_effect",
                     "lfc_lfsr_tau",
                 ):
-                    df[key] = _bio_values(key)
+                    df[_bio_column_name(key)] = _bio_values(key)
 
             if "bio_lvr" in metric_families:
                 for key in (
@@ -539,11 +561,11 @@ class EmpiricalResultsMixin:
                     "lvr_prob_effect",
                     "lvr_lfsr_tau",
                 ):
-                    df[key] = _bio_values(key)
+                    df[_bio_column_name(key)] = _bio_values(key)
 
             if "bio_kl" in metric_families:
                 for key in ("kl_mean", "kl_sd", "kl_prob_effect"):
-                    df[key] = _bio_values(key)
+                    df[_bio_column_name(key)] = _bio_values(key)
 
             if "bio_aux" in metric_families:
                 for key in (
@@ -553,7 +575,7 @@ class EmpiricalResultsMixin:
                     "var_B_mean",
                     "max_bio_expr",
                 ):
-                    df[key] = _bio_values(key)
+                    df[_bio_column_name(key)] = _bio_values(key)
 
         return df
 
