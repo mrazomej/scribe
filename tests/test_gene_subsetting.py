@@ -68,6 +68,20 @@ class TestBuildGeneAxisByKey:
         out = build_gene_axis_by_key([spec], params, 5)
         assert "amortizer$params" not in (out or {})
 
+    def test_detects_joint_prefixed_keys_from_metadata(self):
+        """Joint guide keys should be mapped with metadata-derived gene axes."""
+        spec = _MockSpec("mu", ("n_components", "n_genes"))
+        params = {
+            # Joint variational params mirror LowRankMVN tensors and should
+            # follow the same axis mapping semantics as non-joint keys.
+            "joint_joint_mu_loc": jnp.ones((3, 5)),
+            "joint_joint_mu_W": jnp.ones((3, 5, 2)),
+        }
+        out = build_gene_axis_by_key([spec], params, 5)
+        assert out is not None
+        assert out["joint_joint_mu_loc"] == 1
+        assert out["joint_joint_mu_W"] == 1
+
 
 class TestMetadataSubsettingCorrectAxis:
     """Test that subsetting uses the correct axis when metadata is present."""
@@ -145,6 +159,42 @@ class TestMetadataSubsettingCorrectAxis:
         index = jnp.array([True, False, True, False])
         new_samples = results._subset_posterior_samples(samples, index)
         assert new_samples["r"].shape == (10, 3, 2)
+
+    def test_subset_joint_params_uses_gene_axis_from_metadata(
+        self, model_config_with_param_specs
+    ):
+        """Joint keys with ambiguous shapes must subset the gene axis, not axis 0."""
+        n_genes = 5
+        params = {
+            # Ambiguous (5, 5): metadata says gene axis is 1 for (K, G).
+            "joint_joint_r_loc": jnp.arange(25).reshape(5, 5).astype(float),
+            "joint_joint_r_W": jnp.arange(50).reshape(5, 5, 2).astype(float),
+        }
+        gene_axis_by_key = build_gene_axis_by_key(
+            model_config_with_param_specs.param_specs, params, n_genes
+        )
+        assert gene_axis_by_key is not None
+        assert gene_axis_by_key["joint_joint_r_loc"] == 1
+        assert gene_axis_by_key["joint_joint_r_W"] == 1
+
+        results = ScribeSVIResults(
+            params=params,
+            loss_history=jnp.array([1.0]),
+            n_cells=10,
+            n_genes=n_genes,
+            model_type="nbdm",
+            model_config=model_config_with_param_specs,
+            prior_params={},
+            _gene_axis_by_key=gene_axis_by_key,
+        )
+        index = jnp.array([True, False, False, False, False])
+        new_params = results._subset_params(params, index)
+
+        assert new_params["joint_joint_r_loc"].shape == (5, 1)
+        assert new_params["joint_joint_r_W"].shape == (5, 1, 2)
+        np.testing.assert_array_almost_equal(
+            new_params["joint_joint_r_loc"][:, 0], params["joint_joint_r_loc"][:, 0]
+        )
 
 
 class TestFallbackWhenParamSpecsEmpty:
@@ -228,6 +278,43 @@ class TestConcatGeneAlignment:
             n_vars=len(var_index),
         )
 
+    def _make_joint_concat_ready_result(self, var_index, r_values):
+        """Construct a minimal SVI result with joint-guide r variational params."""
+        r_spec = LogNormalSpec(
+            name="r",
+            shape_dims=("n_genes",),
+            default_params=(0.0, 1.0),
+            is_gene_specific=True,
+            unconstrained=True,
+        )
+        config = ModelConfig(
+            base_model="nbdm",
+            unconstrained=True,
+            param_specs=[r_spec],
+            joint_params=["r"],
+        )
+        return ScribeSVIResults(
+            params={
+                # Joint-key tensors must be reordered by strict concat when
+                # var indices are permuted across result objects.
+                "joint_joint_r_loc": jnp.array(r_values, dtype=jnp.float32),
+                "joint_joint_r_W": jnp.ones(
+                    (len(var_index), 2), dtype=jnp.float32
+                ),
+                "joint_joint_r_raw_diag": jnp.zeros(
+                    len(var_index), dtype=jnp.float32
+                ),
+            },
+            loss_history=jnp.array([1.0], dtype=jnp.float32),
+            n_cells=2,
+            n_genes=len(var_index),
+            model_type="nbdm",
+            model_config=config,
+            prior_params={},
+            var=pd.DataFrame(index=var_index),
+            n_vars=len(var_index),
+        )
+
     def test_concat_reorders_genes_using_var_index(self):
         """Concat should reorder gene axes when ``var.index`` content matches."""
         res_a = self._make_concat_ready_result(
@@ -255,6 +342,28 @@ class TestConcatGeneAlignment:
         np.testing.assert_allclose(
             combined.params["p_capture_loc"],
             jnp.array([0.1, 0.2, 0.3, 0.4, 0.5]),
+        )
+
+    def test_concat_reorders_joint_params_using_var_index(self):
+        """Strict concat should reorder joint-guide gene axes from var metadata."""
+        res_a = self._make_joint_concat_ready_result(
+            var_index=["g1", "g2", "g3"],
+            r_values=[10.0, 20.0, 30.0],
+        )
+        res_b = self._make_joint_concat_ready_result(
+            var_index=["g3", "g1", "g2"],
+            r_values=[30.0, 10.0, 20.0],
+        )
+
+        combined = ScribeSVIResults.concat(
+            [res_a, res_b], align_genes="strict", validation="var_only"
+        )
+        assert list(combined.var.index) == ["g1", "g2", "g3"]
+
+        # Promotion stacks non-cell params along a dataset axis after alignment.
+        np.testing.assert_allclose(
+            combined.params["joint_joint_r_loc"],
+            jnp.array([[10.0, 20.0, 30.0], [10.0, 20.0, 30.0]]),
         )
 
     def test_concat_rejects_different_gene_sets(self):

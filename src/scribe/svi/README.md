@@ -633,6 +633,11 @@ ScribeSVIResults
      - `_subset_predictive_samples()`: Subset predictive samples by genes
      - `_create_subset()`: Create new instance with gene subset
      - `_subset_gene_params()`: Static helper for gene parameter subsetting
+   - Notes:
+     - Metadata-based axis detection recognizes both legacy variational keys
+       (for example, `mu_loc`) and joint-guide keys
+       (for example, `joint_joint_mu_loc`), so gene indexing remains correct
+       under `joint_params` even when shapes are ambiguous.
    - Dependencies: None (self-contained)
 
 5. **ComponentMixin** (`_component.py`)

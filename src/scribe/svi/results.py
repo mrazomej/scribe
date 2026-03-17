@@ -4,7 +4,16 @@ Results classes for SCRIBE inference.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, Optional, Union, Callable, Tuple, Any, List
+from typing import (
+    TYPE_CHECKING,
+    Dict,
+    Optional,
+    Union,
+    Callable,
+    Tuple,
+    Any,
+    List,
+)
 from dataclasses import dataclass
 
 if TYPE_CHECKING:
@@ -304,10 +313,7 @@ class ScribeSVIResults(
             ]
         )
         dataset_indices = _concat_dataset_indices(
-            [
-                getattr(res, "_dataset_indices", None)
-                for res in aligned_results
-            ]
+            [getattr(res, "_dataset_indices", None) for res in aligned_results]
         )
 
         # When all inputs are single-dataset and we are combining more than
@@ -505,9 +511,7 @@ def _reorder_svi_result_genes(
 def _svi_param_gene_axes(result: ScribeSVIResults) -> Dict[str, int]:
     """Infer gene-axis mapping for SVI params using stored metadata when possible."""
     existing = getattr(result, "_gene_axis_by_key", None)
-    if existing is not None:
-        return existing
-    return (
+    inferred = (
         build_gene_axis_by_key(
             result.model_config.param_specs or [],
             result.params,
@@ -515,6 +519,16 @@ def _svi_param_gene_axes(result: ScribeSVIResults) -> Dict[str, int]:
         )
         or {}
     )
+    if existing is None:
+        return inferred
+
+    # Keep stored metadata as source-of-truth but augment with any newly
+    # inferable keys (e.g., joint-guide keys added after older pickles were
+    # created with partial mappings).
+    merged = dict(existing)
+    for key, axis in inferred.items():
+        merged.setdefault(key, axis)
+    return merged
 
 
 def _reorder_dict_by_gene_axis(
