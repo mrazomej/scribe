@@ -101,7 +101,7 @@ When results objects are passed, `compare()`:
 | `de.compute_pefp(threshold, tau, use_lfsr_tau)` | Posterior expected FDP |
 | `de.find_threshold(target_pefp, tau, use_lfsr_tau)` | Find lfsr threshold for PEFP control |
 | `de.summary(tau, sort_by, top_n)` | Formatted results table |
-| `de.to_dataframe(tau, target_pefp, use_lfsr_tau, metrics, tau_lfc, tau_var, tau_kl, column_naming)` | Export selected metric families to a pandas DataFrame |
+| `de.to_dataframe(tau, target_pefp, use_lfsr_tau, target_pefp_lfc, use_lfsr_tau_lfc, target_pefp_lvr, use_lfsr_tau_lvr, target_pefp_kl, metrics, tau_lfc, tau_var, tau_kl, column_naming)` | Export selected metric families and optional per-metric call columns |
 
 **Empirical/Shrinkage-only methods:**
 
@@ -475,6 +475,31 @@ also include `clr_mean_expression_A` and `clr_mean_expression_B`.
 
 Use `column_naming="legacy"` to recover historical un-prefixed column names.
 
+#### Per-metric PEFP call columns
+
+In addition to `target_pefp` for CLR (`clr_is_de`), empirical/shrinkage
+exports support per-family PEFP targets:
+
+```python
+df = de.to_dataframe(
+    metrics=["bio_lfc", "bio_lvr", "bio_kl"],
+    target_pefp_lfc=0.05,
+    target_pefp_lvr=0.05,
+    target_pefp_kl=0.05,
+)
+# Emits: bio_lfc_is_de, bio_lvr_is_de, bio_kl_is_de
+```
+
+LFC/LVR calls use lfsr-based error scores (or lfsr_tau variants):
+
+- `target_pefp_lfc`, `use_lfsr_tau_lfc`
+- `target_pefp_lvr`, `use_lfsr_tau_lvr`
+
+KL calls are non-directional, so PEFP is controlled via local false effect rate:
+
+- `bio_kl_lfer = 1 - bio_kl_prob_effect`
+- `target_pefp_kl` thresholds `bio_kl_lfer` with the same PEFP algorithm.
+
 #### PEFP-controlled DE calls
 
 Pass `target_pefp` to automatically add a boolean `clr_is_de` column that
@@ -495,8 +520,9 @@ By default `use_lfsr_tau=True`, so the practical-significance variant is
 used (recommended when `tau > 0`).  Set `use_lfsr_tau=False` to threshold
 on the standard `lfsr` instead.
 
-`target_pefp` requires `metrics` to include `clr`, because `clr_is_de` is defined
-from CLR lfsr values.
+`target_pefp` requires `metrics` to include `clr`, because `clr_is_de` is
+defined from CLR lfsr values. Likewise, each metric-specific PEFP target
+requires its family to be present in `metrics`.
 
 ## Empirical (Non-Parametric) DE
 

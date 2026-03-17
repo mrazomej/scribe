@@ -755,6 +755,19 @@ class TestShrinkageMaskManagement:
             assert col in df.columns
         assert len(df) == de_s.D
 
+    def test_shrinkage_metric_specific_is_de_columns(self, empirical_de):
+        """Shrinkage supports metric-specific PEFP call columns."""
+        de_s = empirical_de.shrink()
+        df = de_s.to_dataframe(
+            metrics=["bio_lfc", "bio_lvr", "bio_kl"],
+            target_pefp_lfc=0.10,
+            target_pefp_lvr=0.10,
+            target_pefp_kl=0.10,
+        )
+        for col in ("bio_lfc_is_de", "bio_lvr_is_de", "bio_kl_is_de"):
+            assert col in df.columns
+            assert df[col].dtype == bool
+
     def test_shrinkage_method_chaining(self, empirical_de):
         """Mask management methods return self for chaining on shrinkage."""
         de_s = empirical_de.shrink()

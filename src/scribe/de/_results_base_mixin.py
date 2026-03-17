@@ -106,6 +106,32 @@ class BaseResultsMixin:
         if self._gene_results is None or self._cached_tau != tau:
             self.gene_level(tau=tau)
 
+    def _compute_is_de_mask_from_scores(
+        self,
+        error_scores: "jnp.ndarray",
+        target_pefp: float,
+    ) -> tuple["jnp.ndarray", float]:
+        """Compute PEFP-controlled DE calls from an error-score vector.
+
+        Parameters
+        ----------
+        error_scores : jnp.ndarray
+            Per-gene Bayesian error scores where smaller values are better
+            evidence for differential expression.
+        target_pefp : float
+            Desired posterior expected false discovery proportion.
+
+        Returns
+        -------
+        tuple of (jnp.ndarray, float)
+            Boolean mask of called genes and the selected threshold.
+        """
+        threshold = find_lfsr_threshold(
+            error_scores, target_pefp=target_pefp
+        )
+        is_de = error_scores < threshold
+        return is_de, threshold
+
     def call_genes(
         self,
         tau: float = 0.0,
