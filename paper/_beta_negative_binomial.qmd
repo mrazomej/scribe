@@ -629,6 +629,184 @@ recovering the standard NB model. The posterior of $\omega_g$ (or
 equivalently $\kappa_g$) serves as a **per-gene diagnostic** for the
 presence of extra overdispersion beyond what the NB can accommodate.
 
+## Statistical risks of the mean-preserving constraint {#sec-bnb-risks}
+
+The mean-preserving constraint @eq-bnb-alpha-from-kappa is the unique
+algebraic relationship between $\alpha_{gc}$ and $(\kappa_g,
+\hat{p}_{gc})$ that leaves the compositional analysis pipeline intact.
+No other choice of constraint achieves this---matching the *variance*
+instead of the mean, for instance, would distort the expected
+proportions $\rho_g$ and invalidate the normalization. In this section
+we examine what the constraint achieves, where it leaves residual
+ambiguity, and what could go wrong in practice.
+
+### What the constraint buys
+
+Setting $\alpha_{gc}$ via @eq-bnb-alpha-from-kappa guarantees three
+things simultaneously:
+
+1. **Exact mean preservation** for every cell--gene pair.
+2. **Gene $\times$ cell factorization intact**: the mean structure on
+which normalisation, CLR coordinates, and differential expression
+depend is unchanged.
+3. **A single new degree of freedom**: the only free parameter added to
+the model is $\kappa_g$ (or equivalently $\omega_g$), which controls
+how much extra variance the gene is allowed.
+
+### A subtlety: Beta mean versus count mean {#sec-bnb-jensen}
+
+The constraint matches the *marginal count mean*, not the mean of the
+mixing distribution. The NB mean given the mixing variable $q$ is
+$r q/(1-q)$, a convex function of $q$. By Jensen's inequality,
+
+$$
+\left\langle \frac{q}{1 - q} \right\rangle
+> \frac{\langle q \rangle}{1 - \langle q \rangle}
+$${#eq-bnb-jensen}
+
+whenever $q$ has non-degenerate variance. The mean-preserving constraint
+forces the left-hand side to equal $q_0/(1-q_0)$, where $q_0 =
+1 - \hat{p}_{gc}$ is the NB's fixed observation probability.
+Consequently,
+
+$$
+\langle q \rangle_{\text{Beta}} < q_0.
+$${#eq-bnb-beta-mean-lower}
+
+In words, the Beta distribution's mean is *slightly lower* than the NB's
+observation probability, because the convexity of $q \mapsto q/(1-q)$
+inflates the marginal mean relative to the mean of $q$ itself. The gap
+is of order $1/\kappa_g$ and vanishes in the NB limit ($\kappa_g \to
+\infty$).
+
+This is the mathematically correct behaviour: normalization and
+differential expression depend on the count mean $\langle u_{gc}
+\rangle$, not on the internal mixing parameter $\langle q \rangle$.
+But it means that interpreting $\alpha_{gc}$ as "the average
+capture probability under Beta mixing" requires care.
+
+### Ridgeline ambiguity between $r_g$ and $\kappa_g$ {#sec-bnb-ridgeline}
+
+From @eq-bnb-variance-inflation, the total BNB variance contains the
+product of the NB variance (which depends on $r_g$) and the inflation
+factor (which depends on both $r_g$ and $\kappa_g$). Both parameters
+influence the total spread, creating a **ridgeline** in the posterior:
+configurations with large $r_g$ (less NB overdispersion) and small
+$\kappa_g$ (more BNB overdispersion) can produce similar total variance
+to those with small $r_g$ and large $\kappa_g$. This is a practical
+(not exact) degeneracy---a ridge of approximately constant variance in
+$(r_g, \kappa_g)$ space.
+
+What resolves this ridgeline is the qualitative difference in
+**distributional shape**. The NB PMF decays geometrically ($\sim
+(1-p)^k$) while the BNB decays as a power law ($\sim k^{-(1+\kappa_g)}$;
+@eq-bnb-tail). Genes with occasional very large counts---outliers that
+an NB simply cannot accommodate regardless of its $r_g$---provide the
+tail signal that separates the two parameters. For lowly expressed genes,
+where tail information is scarce, the hierarchical prior on $\omega_g$
+defaults to the NB solution and prevents the ridgeline from
+destabilizing inference.
+
+This has a practical implication for dataset selection: the BNB
+extension is most informative for genes with **high expression and
+visible right-tail excess**---precisely the genes that produce the
+zero-spike and heavy-tail artefacts in posterior predictive checks.
+For the majority of genes (low to moderate expression), the prior will
+shrink $\omega_g \to 0$ and the model reduces to the standard NB
+regardless.
+
+### Competition with zero inflation {#sec-bnb-zi-competition}
+
+Both the BNB's heavier body and the zero-inflation gate $\pi_g$ can
+explain excess zeros. A diffuse BNB (small $\kappa_g$) places more
+probability near zero than the NB, potentially substituting for part
+of $\pi_g$. In principle, the two mechanisms are distinguishable:
+structural zeros from the ZI gate do not scale with library size
+($\nu_c$), while zeros from the BNB's count distribution do. In
+practice, with one observation per cell--gene, disentangling them
+requires strong prior guidance---the sparsity priors on both $\pi_g$
+and $\omega_g$ play this role.
+
+When using the BNB extension with zero inflation (ZINB--BNB), we expect
+the inferred $\pi_g$ to decrease relative to the ZINB--NB model for
+genes where the zero-inflation gate was compensating for distributional
+misfit rather than reflecting genuine structural absence. This provides
+an indirect diagnostic: if adding BNB shifts probability mass from
+$\pi_g$ to the count distribution, the BNB is capturing real signal
+that was previously mis-attributed to zero inflation.
+
+### Cell dependence of $\alpha_{gc}$ {#sec-bnb-cell-dependence}
+
+Because the mean-preserving constraint involves $\hat{p}_{gc}$, the
+first Beta parameter $\alpha_{gc}$ varies across cells. In VCP models,
+where $\hat{p}_{gc}$ depends on $\nu_c$, this cell dependence is
+pronounced:
+
+- **Low-capture cells** ($\nu_c$ small, $\hat{p}_{gc}$ large):
+$\alpha_{gc}$ is small, giving a diffuse Beta.
+- **High-capture cells** ($\nu_c$ large, $\hat{p}_{gc}$ small):
+$\alpha_{gc}$ is large, giving a concentrated Beta.
+
+This is the mathematically necessary consequence of requiring each
+cell--gene pair to have the same expected count as the NB. It also
+admits a sensible interpretation: cells with lower capture contribute
+fewer total UMIs, so the counting noise is already large and the
+*relative* contribution of the BNB's extra variance is modest. The
+varying $\alpha_{gc}$ correctly recalibrates the extra noise across
+cells of different sequencing depth.
+
+### The constraint is hard, not soft {#sec-bnb-hardness}
+
+The mean-preserving relationship is an exact algebraic identity, not a
+penalty or regularization term. This has consequences:
+
+1. All flexibility afforded by $\kappa_g$ goes *exclusively* into the
+variance and higher moments (tail weight). The mean has zero slack.
+
+2. If the true data-generating process has systematic gene-specific
+mean shifts beyond what $r_g$ and $p_g$ can capture---for example,
+gene-level capture biases---the BNB cannot absorb them through
+$\kappa_g$. Such misfit must be addressed by the existing mean-level
+parameters.
+
+3. If the real excess variance lives in the **body** of the
+distribution (e.g., bimodality from cell subpopulations) rather than
+the **tails**, the BNB's power-law tails may be a poor approximation.
+The BNB adds variance by fattening the right tail; it does not produce
+multimodality.
+
+This hardness is deliberate: it is what guarantees exact preservation of
+the compositional framework. The trade-off is that the BNB is not a
+remedy for all forms of model misfit---only for tail-and-variance
+misfit.
+
+### The hierarchical prior as a structural necessity {#sec-bnb-prior-structural}
+
+Given the ridgeline ambiguity and the competition with zero inflation,
+the sparsity-inducing prior on $\omega_g$ is not merely a regularizer:
+it is a structural component of the model. Without it:
+
+- Most genes would settle on moderate $\omega_g$ values, creating a
+diffuse "all genes are slightly BNB" regime that adds complexity
+without clear benefit.
+- The $r_g$--$\kappa_g$ ridgeline would be poorly resolved, yielding
+diffuse posteriors and slow convergence.
+- Predictions would be dominated by prior sensitivity rather than data.
+
+With the horseshoe or NEG prior, the posterior landscape is sculpted so
+that most genes are pulled strongly toward $\omega_g = 0$ (NB
+behaviour), and only genes with clear evidence for power-law tails
+escape. The global shrinkage scale $\tau$ adapts to the dataset's
+overall level of extra overdispersion, providing automatic multiplicity
+correction across the $G$ genes being tested simultaneously.
+
+This makes the prior conceptually analogous to a **Bayesian model
+comparison**: for each gene, the posterior of $\omega_g$ answers the
+question "does this gene require the BNB, or is the NB sufficient?"
+The horseshoe's behaviour---effectively zero for most genes, large for
+a sparse subset---mimics a gene-level Bayes factor in favour of the
+BNB.
+
 ## Interaction with existing model components {#sec-bnb-interactions}
 
 ### Zero inflation
