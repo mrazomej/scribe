@@ -592,3 +592,198 @@ class TestBNBMixture:
         kappa = 2.0 + (r + 1.0) / omega_safe
         assert kappa.shape == (D, K, G)
         assert jnp.all(kappa > 2.0)
+
+
+# ============================================================================
+# Mixture log-likelihood broadcasting tests
+# ============================================================================
+
+
+class TestMixtureLLBroadcasting:
+    """Verify _build_ll_count_dist reshapes bnb_concentration to match
+    the (1, G, K) layout used by mixture log-likelihood functions."""
+
+    def test_mixture_specific_bnb_in_ll(self):
+        """bnb_concentration (K, G) is reshaped to (1, G, K) when r is
+        (1, G, K)."""
+        from scribe.models.log_likelihood import _build_ll_count_dist
+
+        K, G = 4, 20
+        r = jnp.ones((1, G, K)) * 5.0
+        p = jnp.full((1, G, K), 0.4)
+        params = {"bnb_concentration": jnp.ones((K, G)) * 0.2}
+
+        d = _build_ll_count_dist(r, p, params)
+        # Should produce a distribution that can evaluate log_prob
+        # with shape (1, G, K)
+        counts = jnp.ones((1, G, K))
+        lp = d.log_prob(counts)
+        assert lp.shape == (1, G, K)
+        assert jnp.all(jnp.isfinite(lp))
+
+    def test_shared_bnb_in_mixture_ll(self):
+        """bnb_concentration (G,) is reshaped to (1, G, 1) when r is
+        (1, G, K)."""
+        from scribe.models.log_likelihood import _build_ll_count_dist
+
+        K, G = 4, 20
+        r = jnp.ones((1, G, K)) * 5.0
+        p = jnp.full((1, G, K), 0.4)
+        params = {"bnb_concentration": jnp.ones(G) * 0.2}
+
+        d = _build_ll_count_dist(r, p, params)
+        counts = jnp.ones((1, G, K))
+        lp = d.log_prob(counts)
+        assert lp.shape == (1, G, K)
+        assert jnp.all(jnp.isfinite(lp))
+
+    def test_no_bnb_in_mixture_ll(self):
+        """Without bnb_concentration, returns NB in mixture layout."""
+        from scribe.models.log_likelihood import _build_ll_count_dist
+
+        K, G = 4, 20
+        r = jnp.ones((1, G, K)) * 5.0
+        p = jnp.full((1, G, K), 0.4)
+        params = {}
+
+        d = _build_ll_count_dist(r, p, params)
+        counts = jnp.ones((1, G, K))
+        lp = d.log_prob(counts)
+        assert lp.shape == (1, G, K)
+        assert jnp.all(jnp.isfinite(lp))
+
+    def test_nbvcp_mixture_ll_with_bnb(self):
+        """End-to-end: nbvcp_mixture_log_likelihood with mixture BNB."""
+        from scribe.models.log_likelihood import nbvcp_mixture_log_likelihood
+
+        n_cells, n_genes, K = 50, 10, 3
+        rng = np.random.default_rng(42)
+        counts = jnp.array(
+            rng.poisson(5, size=(n_cells, n_genes)), dtype=jnp.float32
+        )
+        params = {
+            "p": jnp.full((K, n_genes), 0.4),
+            "r": jnp.ones((K, n_genes)) * 5.0,
+            "p_capture": jnp.full(n_cells, 0.8),
+            "mixing_weights": jnp.ones(K) / K,
+            "bnb_concentration": jnp.ones((K, n_genes)) * 0.3,
+        }
+
+        # Cell-level, split by component
+        ll_split = nbvcp_mixture_log_likelihood(
+            counts, params, split_components=True
+        )
+        assert ll_split.shape == (n_cells, K)
+        assert jnp.all(jnp.isfinite(ll_split))
+
+        # Cell-level, mixed
+        ll_mixed = nbvcp_mixture_log_likelihood(
+            counts, params, split_components=False
+        )
+        assert ll_mixed.shape == (n_cells,)
+        assert jnp.all(jnp.isfinite(ll_mixed))
+
+
+# ============================================================================
+# Sampling with mixture BNB tests
+# ============================================================================
+
+
+class TestSamplingMixtureBNB:
+    """Verify that sample_biological_nb and sample_posterior_ppc handle
+    mixture-specific bnb_concentration correctly, both in the MAP (loop)
+    and posterior (vmap) paths."""
+
+    def test_bio_nb_map_mixture_bnb(self):
+        """MAP path: sample_biological_nb with mixture BNB."""
+        from scribe.sampling import sample_biological_nb
+
+        K, G, C = 4, 15, 30
+        r = jnp.ones((K, G)) * 5.0
+        p = jnp.full(K, 0.4)
+        mw = jnp.ones(K) / K
+        bnb = jnp.ones((K, G)) * 0.2
+        key = jax.random.PRNGKey(0)
+
+        samples = sample_biological_nb(
+            r=r, p=p, n_cells=C, rng_key=key, n_samples=3,
+            mixing_weights=mw, bnb_concentration=bnb,
+        )
+        assert samples.shape == (3, C, G)
+        assert jnp.all(jnp.isfinite(samples))
+
+    def test_bio_nb_posterior_mixture_bnb(self):
+        """Posterior (vmap) path: sample_biological_nb with BNB."""
+        from scribe.sampling import sample_biological_nb
+
+        S, K, G, C = 5, 3, 10, 20
+        r = jnp.ones((S, K, G)) * 5.0
+        p = jnp.full((S, K), 0.4)
+        mw = jnp.ones((S, K)) / K
+        bnb = jnp.ones((S, K, G)) * 0.2
+        key = jax.random.PRNGKey(1)
+
+        samples = sample_biological_nb(
+            r=r, p=p, n_cells=C, rng_key=key,
+            mixing_weights=mw, bnb_concentration=bnb,
+        )
+        assert samples.shape == (S, C, G)
+        assert jnp.all(jnp.isfinite(samples))
+
+    def test_posterior_ppc_map_mixture_bnb(self):
+        """MAP path: sample_posterior_ppc with mixture BNB + VCP."""
+        from scribe.sampling import sample_posterior_ppc
+
+        K, G, C = 4, 15, 30
+        r = jnp.ones((K, G)) * 5.0
+        p = jnp.full(K, 0.4)
+        mw = jnp.ones(K) / K
+        p_capture = jnp.full(C, 0.8)
+        bnb = jnp.ones((K, G)) * 0.2
+        key = jax.random.PRNGKey(2)
+
+        samples = sample_posterior_ppc(
+            r=r, p=p, n_cells=C, rng_key=key, n_samples=2,
+            mixing_weights=mw, p_capture=p_capture,
+            bnb_concentration=bnb,
+        )
+        assert samples.shape == (2, C, G)
+        assert jnp.all(jnp.isfinite(samples))
+
+    def test_posterior_ppc_vmap_mixture_bnb(self):
+        """Posterior (vmap) path: sample_posterior_ppc with BNB + VCP."""
+        from scribe.sampling import sample_posterior_ppc
+
+        S, K, G, C = 5, 3, 10, 20
+        r = jnp.ones((S, K, G)) * 5.0
+        p = jnp.full((S, K), 0.4)
+        mw = jnp.ones((S, K)) / K
+        p_capture = jnp.full((S, C), 0.8)
+        bnb = jnp.ones((S, K, G)) * 0.2
+        key = jax.random.PRNGKey(3)
+
+        samples = sample_posterior_ppc(
+            r=r, p=p, n_cells=C, rng_key=key,
+            mixing_weights=mw, p_capture=p_capture,
+            bnb_concentration=bnb,
+        )
+        assert samples.shape == (S, C, G)
+        assert jnp.all(jnp.isfinite(samples))
+
+    def test_bio_nb_shared_bnb_in_mixture(self):
+        """bnb_concentration (G,) works correctly in mixture sampling."""
+        from scribe.sampling import sample_biological_nb
+
+        K, G, C = 3, 10, 25
+        r = jnp.ones((K, G)) * 5.0
+        p = jnp.full(K, 0.4)
+        mw = jnp.ones(K) / K
+        bnb = jnp.ones(G) * 0.2
+        key = jax.random.PRNGKey(4)
+
+        samples = sample_biological_nb(
+            r=r, p=p, n_cells=C, rng_key=key, n_samples=2,
+            mixing_weights=mw, bnb_concentration=bnb,
+        )
+        assert samples.shape == (2, C, G)
+        assert jnp.all(jnp.isfinite(samples))

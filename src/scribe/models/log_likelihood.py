@@ -79,10 +79,17 @@ def _build_ll_count_dist(
     ``build_count_dist`` which returns either NegativeBinomialProbs or
     BetaNegativeBinomial.
 
+    Mixture log-likelihood functions reshape ``r`` from its MAP layout
+    ``(K, G)`` to a broadcast-friendly ``(1, G, K)`` (transpose then
+    expand).  ``bnb_concentration`` in ``params`` still carries its
+    original MAP shape, so we align it with ``r`` here to avoid
+    broadcasting failures.
+
     Parameters
     ----------
     r : jnp.ndarray
-        Dispersion parameter.
+        Dispersion parameter.  In mixture LL paths this has already been
+        reshaped to ``(1, n_genes, n_components)``.
     p : jnp.ndarray
         Success probability (clamped).
     params : Dict
@@ -94,6 +101,15 @@ def _build_ll_count_dist(
         NB or BNB distribution instance.
     """
     bnb_conc = params.get("bnb_concentration")
+    if bnb_conc is not None and r.ndim == 3 and bnb_conc.ndim != r.ndim:
+        # Mixture LL layout: r is (1, G, K).
+        # bnb_conc may be (K, G) (mixture-specific) or (G,) (shared).
+        if bnb_conc.ndim == 2:
+            # (K, G) -> (G, K) -> (1, G, K)
+            bnb_conc = jnp.expand_dims(jnp.transpose(bnb_conc), axis=0)
+        elif bnb_conc.ndim == 1:
+            # (G,) -> (1, G, 1) to broadcast across components
+            bnb_conc = bnb_conc[jnp.newaxis, :, jnp.newaxis]
     return build_count_dist(r, p, bnb_conc)
 
 
