@@ -199,6 +199,18 @@ def _reconstruct_horseshoe_maps(
         if all(v is not None for v in (tau, lam, c_sq, loc)):
             from numpyro.distributions.transforms import SoftplusTransform
 
+            # Global scalars (loc, tau, c_sq) may acquire a leading
+            # dataset dimension (D,) after concat while gene-level
+            # arrays (z, lam) have shape (D, G).  Expand the
+            # lower-rank tensors so everything broadcasts correctly.
+            ref_ndim = z.ndim
+            if loc.ndim > 0 and loc.ndim < ref_ndim:
+                loc = loc[..., jnp.newaxis]
+            if tau.ndim > 0 and tau.ndim < ref_ndim:
+                tau = tau[..., jnp.newaxis]
+            if c_sq.ndim > 0 and c_sq.ndim < ref_ndim:
+                c_sq = c_sq[..., jnp.newaxis]
+
             eff = _horseshoe_eff_scale(tau, lam, c_sq)
             unconstrained = loc + eff * z
             map_estimates["bnb_concentration"] = SoftplusTransform()(
@@ -344,6 +356,12 @@ def _reconstruct_neg_maps(
 
         if psi is not None and loc is not None:
             from numpyro.distributions.transforms import SoftplusTransform
+
+            # loc is a global scalar that may acquire a leading dataset
+            # dimension (D,) after concat.  Expand it so it broadcasts
+            # with the gene-level z of shape (D, G).
+            if loc.ndim > 0 and loc.ndim < z.ndim:
+                loc = loc[..., jnp.newaxis]
 
             eff_scale = _neg_eff_scale(psi)
             unconstrained = loc + eff_scale * z
@@ -800,6 +818,11 @@ class ParameterExtractionMixin:
                     r_for_kappa = mu * phi
             if r_for_kappa is not None:
                 omega_safe = jnp.clip(omega, 1e-6, None)
+                # omega is (…, G) but r may have extra axes such as a
+                # mixture-component dimension (…, K, G).  Expand omega
+                # so that it broadcasts correctly.
+                while omega_safe.ndim < r_for_kappa.ndim:
+                    omega_safe = jnp.expand_dims(omega_safe, axis=-2)
                 map_estimates["bnb_kappa"] = (
                     2.0 + (r_for_kappa + 1.0) / omega_safe
                 )
