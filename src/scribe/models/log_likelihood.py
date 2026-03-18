@@ -12,6 +12,8 @@ import numpyro.distributions as dist
 # Import typing
 from typing import Dict, Optional
 
+from .components.likelihoods.beta_negative_binomial import build_count_dist
+
 
 def _validate_mixture_component_shapes(
     r: jnp.ndarray,
@@ -64,6 +66,36 @@ def _validate_mixture_component_shapes(
             f"Expected probs.shape[-1] in {{1, {n_components}}}, got probs.shape="
             f"{tuple(probs.shape)}.{hint}"
         )
+
+
+def _build_ll_count_dist(
+    r: jnp.ndarray,
+    p: jnp.ndarray,
+    params: Dict,
+) -> dist.Distribution:
+    """Build NB or BNB count distribution for log-likelihood evaluation.
+
+    Checks ``params`` for ``"bnb_concentration"`` and delegates to
+    ``build_count_dist`` which returns either NegativeBinomialProbs or
+    BetaNegativeBinomial.
+
+    Parameters
+    ----------
+    r : jnp.ndarray
+        Dispersion parameter.
+    p : jnp.ndarray
+        Success probability (clamped).
+    params : Dict
+        Full parameter dictionary; may contain ``"bnb_concentration"``.
+
+    Returns
+    -------
+    dist.Distribution
+        NB or BNB distribution instance.
+    """
+    bnb_conc = params.get("bnb_concentration")
+    return build_count_dist(r, p, bnb_conc)
+
 
 # ------------------------------------------------------------------------------
 # Negative Binomial-Dirichlet Multinomial (NBDM) likelihood
@@ -156,7 +188,7 @@ def nbdm_log_likelihood(
         # If no batch size provided, process all cells at once
         if batch_size is None:
             # Create base Negative Binomial distribution
-            base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
+            base_dist = _build_ll_count_dist(r, p, params).to_event(1)
             # Return per-cell log probabilities
             return base_dist.log_prob(counts)
 
@@ -173,7 +205,7 @@ def nbdm_log_likelihood(
             batch_counts = counts[start_idx:end_idx]
 
             # Create base Negative Binomial distribution
-            base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
+            base_dist = _build_ll_count_dist(r, p, params).to_event(1)
             # Store batch log probabilities
             cell_log_probs = cell_log_probs.at[start_idx:end_idx].set(
                 base_dist.log_prob(batch_counts)
@@ -186,7 +218,7 @@ def nbdm_log_likelihood(
         if batch_size is None:
             # Compute log probabilities for all genes at once
             return jnp.sum(
-                dist.NegativeBinomialProbs(r, p).log_prob(counts),
+                _build_ll_count_dist(r, p, params).log_prob(counts),
                 axis=0,  # Sum over cells
             )
 
@@ -202,7 +234,7 @@ def nbdm_log_likelihood(
             batch_counts = counts[start_idx:end_idx]
 
             # Create NB distribution and compute log probs for each gene
-            nb_dist = dist.NegativeBinomialProbs(r, p)
+            nb_dist = _build_ll_count_dist(r, p, params)
             # Shape of batch_counts is (batch_size, n_genes)
             # We want log probs for each gene summed over the batch
             # Shape: (batch_size, n_genes)
@@ -298,7 +330,7 @@ def zinb_log_likelihood(
         # If no batch size provided, process all cells at once
         if batch_size is None:
             # Create base Negative Binomial distribution
-            base_dist = dist.NegativeBinomialProbs(r, p)
+            base_dist = _build_ll_count_dist(r, p, params)
             # Create Zero-Inflated distribution
             zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(
                 1
@@ -319,7 +351,7 @@ def zinb_log_likelihood(
             batch_counts = counts[start_idx:end_idx]
 
             # Create base Negative Binomial distribution
-            base_dist = dist.NegativeBinomialProbs(r, p)
+            base_dist = _build_ll_count_dist(r, p, params)
             # Create Zero-Inflated distribution
             zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(
                 1
@@ -335,7 +367,7 @@ def zinb_log_likelihood(
         # For per-gene likelihood
         if batch_size is None:
             # Create base distribution and compute all at once
-            base_dist = dist.NegativeBinomialProbs(r, p)
+            base_dist = _build_ll_count_dist(r, p, params)
             zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate)
             return jnp.sum(zinb.log_prob(counts), axis=0)
 
@@ -352,7 +384,7 @@ def zinb_log_likelihood(
             batch_counts = counts[start_idx:end_idx]
 
             # Create distributions and compute log probs
-            base_dist = dist.NegativeBinomialProbs(r, p)
+            base_dist = _build_ll_count_dist(r, p, params)
             zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate)
             # Shape: (batch_size, n_genes)
             batch_log_probs = zinb.log_prob(batch_counts)
@@ -467,7 +499,7 @@ def nbvcp_log_likelihood(
                 p_hat = jnp.clip(p_hat, p_floor, 1.0 - p_floor)
             # Return per-cell log probabilities
             return (
-                dist.NegativeBinomialProbs(r, p_hat)
+                _build_ll_count_dist(r, p_hat, params)
                 .to_event(1)
                 .log_prob(counts)
             )
@@ -493,7 +525,7 @@ def nbvcp_log_likelihood(
                 batch_p_hat = jnp.clip(batch_p_hat, p_floor, 1.0 - p_floor)
             # Store batch log probabilities
             cell_log_probs = cell_log_probs.at[start_idx:end_idx].set(
-                dist.NegativeBinomialProbs(r, batch_p_hat)
+                _build_ll_count_dist(r, batch_p_hat, params)
                 .to_event(1)
                 .log_prob(batch_counts)
             )
@@ -512,7 +544,7 @@ def nbvcp_log_likelihood(
                 p_hat = jnp.clip(p_hat, p_floor, 1.0 - p_floor)
             # Compute log probabilities for each gene
             return jnp.sum(
-                dist.NegativeBinomialProbs(r, p_hat).log_prob(counts),
+                _build_ll_count_dist(r, p_hat, params).log_prob(counts),
                 axis=0,  # Sum over cells
             )
 
@@ -536,8 +568,8 @@ def nbvcp_log_likelihood(
             if p_floor > 0.0:
                 batch_p_hat = jnp.clip(batch_p_hat, p_floor, 1.0 - p_floor)
             # Compute log probabilities for batch
-            batch_log_probs = dist.NegativeBinomialProbs(
-                r, batch_p_hat
+            batch_log_probs = _build_ll_count_dist(
+                r, batch_p_hat, params
             ).log_prob(batch_counts)
 
             # Add the batch contribution to the running total
@@ -651,7 +683,7 @@ def zinbvcp_log_likelihood(
             if p_floor > 0.0:
                 p_hat = jnp.clip(p_hat, p_floor, 1.0 - p_floor)
             # Create base Negative Binomial distribution
-            base_dist = dist.NegativeBinomialProbs(r, p_hat)
+            base_dist = _build_ll_count_dist(r, p_hat, params)
             # Create Zero-Inflated distribution
             zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(
                 1
@@ -679,7 +711,7 @@ def zinbvcp_log_likelihood(
             if p_floor > 0.0:
                 batch_p_hat = jnp.clip(batch_p_hat, p_floor, 1.0 - p_floor)
             # Create base Negative Binomial distribution
-            base_dist = dist.NegativeBinomialProbs(r, batch_p_hat)
+            base_dist = _build_ll_count_dist(r, batch_p_hat, params)
             # Create Zero-Inflated distribution
             zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(
                 1
@@ -702,7 +734,7 @@ def zinbvcp_log_likelihood(
             if p_floor > 0.0:
                 p_hat = jnp.clip(p_hat, p_floor, 1.0 - p_floor)
             # Create base distribution and compute all at once
-            base_dist = dist.NegativeBinomialProbs(r, p_hat)
+            base_dist = _build_ll_count_dist(r, p_hat, params)
             zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate)
             return jnp.sum(zinb.log_prob(counts), axis=0)
 
@@ -726,7 +758,7 @@ def zinbvcp_log_likelihood(
             if p_floor > 0.0:
                 batch_p_hat = jnp.clip(batch_p_hat, p_floor, 1.0 - p_floor)
             # Create distributions and compute log probs
-            base_dist = dist.NegativeBinomialProbs(r, batch_p_hat)
+            base_dist = _build_ll_count_dist(r, batch_p_hat, params)
             zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate)
             batch_log_probs = zinb.log_prob(batch_counts)
 
@@ -859,7 +891,9 @@ def nbdm_mixture_log_likelihood(
     r = jnp.expand_dims(jnp.transpose(r), axis=0)
 
     # Handle p: scalar, (n_components,), or (n_components, n_genes)
-    p_is_gene_specific = p.ndim == 2 and p.shape[0] == n_components and p.shape[1] > 1
+    p_is_gene_specific = (
+        p.ndim == 2 and p.shape[0] == n_components and p.shape[1] > 1
+    )
     p_is_component_specific = (
         not p_is_gene_specific and p.ndim >= 1 and p.shape[0] == n_components
     )
@@ -871,7 +905,7 @@ def nbdm_mixture_log_likelihood(
     else:
         p = jnp.array(p)[None, None, None]
 
-    nb_dist = dist.NegativeBinomialProbs(r, p)
+    nb_dist = _build_ll_count_dist(r, p, params)
 
     # Validate and process weights
     if weights is not None:
@@ -1088,7 +1122,9 @@ def zinb_mixture_log_likelihood(
     gate = jnp.expand_dims(jnp.transpose(gate), axis=0)
 
     # Handle p: scalar, (n_components,), or (n_components, n_genes)
-    p_is_gene_specific = p.ndim == 2 and p.shape[0] == n_components and p.shape[1] > 1
+    p_is_gene_specific = (
+        p.ndim == 2 and p.shape[0] == n_components and p.shape[1] > 1
+    )
     p_is_component_specific = (
         not p_is_gene_specific and p.ndim >= 1 and p.shape[0] == n_components
     )
@@ -1105,7 +1141,7 @@ def zinb_mixture_log_likelihood(
     # p: (1, 1, 1) or scalar
     # counts: (n_cells, n_genes, 1)
     # This will broadcast to: (n_cells, n_genes, n_components)
-    base_dist = dist.NegativeBinomialProbs(r, p)
+    base_dist = _build_ll_count_dist(r, p, params)
     # Create zero-inflated distribution for each component
     # This will broadcast to: (n_cells, n_genes, n_components)
     zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate)
@@ -1340,7 +1376,9 @@ def nbvcp_mixture_log_likelihood(
     p_capture = jnp.expand_dims(p_capture, axis=(-1, -2))
 
     # Handle p parameter: scalar, (n_components,), or (n_components, n_genes)
-    p_is_gene_specific = p.ndim == 2 and p.shape[0] == n_components and p.shape[1] > 1
+    p_is_gene_specific = (
+        p.ndim == 2 and p.shape[0] == n_components and p.shape[1] > 1
+    )
     p_is_component_specific = (
         not p_is_gene_specific and p.ndim >= 1 and p.shape[0] == n_components
     )
@@ -1386,7 +1424,7 @@ def nbvcp_mixture_log_likelihood(
             # p_hat: (n_cells, 1, n_components) or (n_cells, 1, 1)
             # counts: (n_cells, n_genes, 1)
             # This will broadcast to: (n_cells, n_genes, n_components)
-            nb_dist = dist.NegativeBinomialProbs(r, p_hat)
+            nb_dist = _build_ll_count_dist(r, p_hat, params)
 
             # Compute log probs for all cells at once
             # This gives (n_cells, n_genes, n_components)
@@ -1425,7 +1463,7 @@ def nbvcp_mixture_log_likelihood(
                 )
 
                 # Create base NB distribution for batch
-                nb_dist = dist.NegativeBinomialProbs(r, batch_p_hat)
+                nb_dist = _build_ll_count_dist(r, batch_p_hat, params)
 
                 # Compute log probs for batch
                 batch_log_probs = nb_dist.log_prob(counts[start_idx:end_idx])
@@ -1449,7 +1487,7 @@ def nbvcp_mixture_log_likelihood(
             # p_hat: (n_cells, 1, n_components) or (n_cells, 1, 1)
             # counts: (n_cells, n_genes, 1)
             # This will broadcast to: (n_cells, n_genes, n_components)
-            nb_dist = dist.NegativeBinomialProbs(r, p_hat)
+            nb_dist = _build_ll_count_dist(r, p_hat, params)
             # Compute log probs for each gene
             gene_log_probs = nb_dist.log_prob(counts)
 
@@ -1487,7 +1525,7 @@ def nbvcp_mixture_log_likelihood(
                 )
 
                 # Create base NB distribution for batch
-                nb_dist = dist.NegativeBinomialProbs(r, batch_p_hat)
+                nb_dist = _build_ll_count_dist(r, batch_p_hat, params)
 
                 # Compute log probs for batch
                 # Shape: (batch_size, n_genes, n_components)
@@ -1641,7 +1679,9 @@ def zinbvcp_mixture_log_likelihood(
     p_capture = jnp.expand_dims(p_capture, axis=(-1, -2))
 
     # Handle p: scalar, (n_components,), or (n_components, n_genes)
-    p_is_gene_specific = p.ndim == 2 and p.shape[0] == n_components and p.shape[1] > 1
+    p_is_gene_specific = (
+        p.ndim == 2 and p.shape[0] == n_components and p.shape[1] > 1
+    )
     p_is_component_specific = (
         not p_is_gene_specific and p.ndim >= 1 and p.shape[0] == n_components
     )
@@ -1683,7 +1723,7 @@ def zinbvcp_mixture_log_likelihood(
             # p_hat: (n_cells, 1, n_components) or (n_cells, 1, 1)
             # counts: (n_cells, n_genes, 1)
             # This will broadcast to: (n_cells, n_genes, n_components)
-            nb_dist = dist.NegativeBinomialProbs(r, p_hat)
+            nb_dist = _build_ll_count_dist(r, p_hat, params)
             # Create zero-inflated distribution for each component
             zinb = dist.ZeroInflatedDistribution(nb_dist, gate=gate)
             # Compute log probs for all cells at once
@@ -1715,8 +1755,8 @@ def zinbvcp_mixture_log_likelihood(
                 # p_hat: (n_cells, 1, n_components) or (n_cells, 1, 1)
                 # counts: (n_cells, n_genes, 1)
                 # This will broadcast to: (batch_size, n_genes, n_components)
-                nb_dist = dist.NegativeBinomialProbs(
-                    r, p_hat[start_idx:end_idx]
+                nb_dist = _build_ll_count_dist(
+                    r, p_hat[start_idx:end_idx], params
                 )
                 # Create zero-inflated distribution for each component
                 zinb = dist.ZeroInflatedDistribution(nb_dist, gate=gate)
@@ -1744,7 +1784,7 @@ def zinbvcp_mixture_log_likelihood(
             # p_hat: (n_cells, 1, n_components) or (n_cells, 1, 1)
             # counts: (n_cells, n_genes, 1)
             # This will broadcast to: (n_cells, n_genes, n_components)
-            nb_dist = dist.NegativeBinomialProbs(r, p_hat)
+            nb_dist = _build_ll_count_dist(r, p_hat, params)
             # Create zero-inflated distribution for each component
             zinb = dist.ZeroInflatedDistribution(nb_dist, gate=gate)
             # Compute log probs for each gene
@@ -1776,8 +1816,8 @@ def zinbvcp_mixture_log_likelihood(
                 # p_hat: (n_cells, 1, n_components) or (n_cells, 1, 1)
                 # counts: (n_cells, n_genes, 1)
                 # This will broadcast to: (batch_size, n_genes, n_components)
-                nb_dist = dist.NegativeBinomialProbs(
-                    r, p_hat[start_idx:end_idx]
+                nb_dist = _build_ll_count_dist(
+                    r, p_hat[start_idx:end_idx], params
                 )
                 # Create zero-inflated distribution for each component
                 zinb = dist.ZeroInflatedDistribution(nb_dist, gate=gate)

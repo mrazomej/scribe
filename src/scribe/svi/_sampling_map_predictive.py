@@ -261,9 +261,7 @@ class MapPredictiveSamplingMixin:
         # Determine if p is component-specific and/or gene-specific.
         # Standard mixture: p is (n_components,) — component-specific only.
         # Hierarchical mixture: p is (n_components, n_genes) — both.
-        p_is_component_specific = (
-            p.ndim >= 1 and p.shape[0] == n_components
-        )
+        p_is_component_specific = p.ndim >= 1 and p.shape[0] == n_components
         p_is_gene_specific = p.ndim == 2 and p.shape[1] == n_genes
 
         # Initialize output array
@@ -449,22 +447,19 @@ class MapPredictiveSamplingMixin:
             )
 
         # ---- 2. Extract parameters from posterior_samples ----
-        r = self.posterior_samples["r"]   # (S, G) or (S, K, G)
-        p = self.posterior_samples["p"]   # (S,) or (S, K)
+        r = self.posterior_samples["r"]  # (S, G) or (S, K, G)
+        p = self.posterior_samples["p"]  # (S,) or (S, K)
 
         is_mixture = self.n_components is not None and self.n_components > 1
         has_gate = "gate" in self.posterior_samples
         has_vcp = "p_capture" in self.posterior_samples
 
         gate = self.posterior_samples.get("gate") if has_gate else None
-        p_capture = (
-            self.posterior_samples.get("p_capture") if has_vcp else None
-        )
+        p_capture = self.posterior_samples.get("p_capture") if has_vcp else None
         mixing_weights = (
-            self.posterior_samples.get("mixing_weights")
-            if is_mixture
-            else None
+            self.posterior_samples.get("mixing_weights") if is_mixture else None
         )
+        bnb_concentration = self.posterior_samples.get("bnb_concentration")
 
         if verbose:
             model_desc = (
@@ -485,7 +480,7 @@ class MapPredictiveSamplingMixin:
 
         # ---- 3. Slice gene dimension if requested ----
         # Parameters that may carry a gene axis: r, p (hierarchical),
-        # gate.  p_capture is cell-indexed, not gene-indexed.
+        # gate, bnb_concentration.  p_capture is cell-indexed, not gene-indexed.
         if gene_indices is not None:
             n_genes = r.shape[-1]
             if is_mixture:
@@ -496,6 +491,11 @@ class MapPredictiveSamplingMixin:
                 # p may be (S, K, G) for hierarchical mixtures
                 if p.ndim == 3 and p.shape[-1] == n_genes:
                     p = p[:, :, gene_indices]
+                if (
+                    bnb_concentration is not None
+                    and bnb_concentration.shape[-1] == n_genes
+                ):
+                    bnb_concentration = bnb_concentration[..., gene_indices]
             else:
                 # r: (S, G) -> (S, G_batch)
                 r = r[:, gene_indices]
@@ -504,6 +504,11 @@ class MapPredictiveSamplingMixin:
                 # p may be (S, G) for hierarchical (per-gene p) models
                 if p.ndim == 2 and p.shape[-1] == n_genes:
                     p = p[:, gene_indices]
+                if (
+                    bnb_concentration is not None
+                    and bnb_concentration.shape[-1] == n_genes
+                ):
+                    bnb_concentration = bnb_concentration[..., gene_indices]
 
         # ---- 4. Sample via the full-model helper ----
         _, key_ppc = random.split(rng_key)
@@ -516,12 +521,11 @@ class MapPredictiveSamplingMixin:
             p_capture=p_capture,
             mixing_weights=mixing_weights,
             cell_batch_size=cell_batch_size,
+            bnb_concentration=bnb_concentration,
         )
 
         if verbose:
-            print(
-                f"Generated posterior PPC samples with shape {samples.shape}"
-            )
+            print(f"Generated posterior PPC samples with shape {samples.shape}")
 
         if store_samples:
             self.predictive_samples = samples
