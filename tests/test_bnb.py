@@ -222,6 +222,63 @@ class TestBNBRegistry:
         assert "bnb_concentration" in names
         assert len(specs) == 4
 
+    def test_build_bnb_gaussian_specs(self):
+        """build_bnb_concentration_spec returns specs for Gaussian prior.
+
+        The Gaussian path uses a simple hierarchical Normal + softplus
+        with no sparsity induction: hyper-loc, hyper-scale, and per-gene
+        omega_g = softplus(Normal(loc, scale)).
+
+        Hyper-param names use ``bnb_omega_hyper_`` prefix to avoid
+        collision with guide's auto-generated variational params.
+        """
+        from scribe.models.config import GuideFamilyConfig
+        from scribe.models.presets.registry import (
+            build_bnb_concentration_spec,
+        )
+
+        specs = build_bnb_concentration_spec(
+            overdispersion_prior="gaussian",
+            guide_families=GuideFamilyConfig(),
+        )
+        names = [s.name for s in specs]
+        assert "bnb_omega_hyper_loc" in names
+        assert "bnb_omega_hyper_scale" in names
+        assert "bnb_concentration" in names
+        # Gaussian has no auxiliary shrinkage sites
+        assert "bnb_concentration_tau" not in names
+        assert "bnb_concentration_lambda" not in names
+        assert "bnb_concentration_psi" not in names
+        assert "bnb_concentration_zeta" not in names
+        assert len(specs) == 3
+
+    def test_build_bnb_gaussian_mixture(self):
+        """Gaussian BNB spec respects mixture_params for is_mixture flag."""
+        from scribe.models.config import GuideFamilyConfig
+        from scribe.models.presets.registry import (
+            build_bnb_concentration_spec,
+        )
+
+        # With bnb_concentration in mixture_params, per-gene spec is mixture
+        specs = build_bnb_concentration_spec(
+            overdispersion_prior="gaussian",
+            guide_families=GuideFamilyConfig(),
+            n_components=4,
+            mixture_params=["bnb_concentration"],
+        )
+        bnb_spec = [s for s in specs if s.name == "bnb_concentration"][0]
+        assert bnb_spec.is_mixture is True
+
+        # Without bnb_concentration in mixture_params, it's not mixture
+        specs_no = build_bnb_concentration_spec(
+            overdispersion_prior="gaussian",
+            guide_families=GuideFamilyConfig(),
+            n_components=4,
+            mixture_params=["phi"],
+        )
+        bnb_spec_no = [s for s in specs_no if s.name == "bnb_concentration"][0]
+        assert bnb_spec_no.is_mixture is False
+
 
 # ============================================================================
 # Log-likelihood tests

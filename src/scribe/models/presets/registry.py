@@ -438,6 +438,7 @@ def build_bnb_concentration_spec(
     neg_tau: float = 1.0,
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
+    positive_transform=None,
 ) -> List[ParamSpec]:
     """Build parameter specs for the BNB concentration kappa_g.
 
@@ -452,7 +453,7 @@ def build_bnb_concentration_spec(
     Parameters
     ----------
     overdispersion_prior : str
-        Prior family: ``"horseshoe"`` or ``"neg"``.
+        Prior family: ``"gaussian"``, ``"horseshoe"``, or ``"neg"``.
     guide_families : GuideFamilyConfig
         Guide family configuration.
     horseshoe_tau0 : float
@@ -476,6 +477,10 @@ def build_bnb_concentration_spec(
         ``"bnb_concentration"`` is in this list (and *n_components*
         is set), the resulting specs will have ``is_mixture=True``,
         giving each component its own omega_g.
+    positive_transform : Transform, optional
+        NumPyro transform mapping unconstrained reals to (0, inf).
+        Used by the ``"gaussian"`` prior branch.  Falls back to
+        ``SoftplusTransform`` when ``None``.
 
     Returns
     -------
@@ -490,14 +495,72 @@ def build_bnb_concentration_spec(
             is_mixture = True
         else:
             is_mixture = "bnb_concentration" in mixture_params
+    from numpyro.distributions import transforms as nptransforms
+
     from ..builders.parameter_specs import (
         NormalWithTransformSpec,
+        SoftplusNormalSpec,
+        HierarchicalPositiveNormalSpec,
         HalfCauchySpec,
         InverseGammaSpec,
         GammaSpec,
     )
 
+    # Fall back to SoftplusTransform when no explicit transform is provided.
+    _transform = (
+        positive_transform
+        if positive_transform is not None
+        else nptransforms.SoftplusTransform()
+    )
+
     specs: List[ParamSpec] = []
+
+    if overdispersion_prior == "gaussian":
+        # -----------------------------------------------------------------
+        # Simple hierarchical Gaussian prior:
+        #   bnb_omega_hyper_loc   ~ Normal(0, 1)          [shared hyper-loc]
+        #   bnb_omega_hyper_scale ~ Softplus(Normal(0, 1)) [shared hyper-scale]
+        #   omega_g = transform(Normal(loc, scale))        [per gene]
+        #
+        # No sparsity induction: every gene is free to adopt whatever
+        # BNB concentration the data supports.  The learned loc/scale
+        # provide adaptive regularisation without aggressive shrinkage
+        # toward the NB limit.
+        #
+        # Hyper-parameter names use the ``bnb_omega_hyper_`` prefix
+        # (not ``bnb_concentration_``) to avoid colliding with the
+        # guide's auto-generated variational parameters for the
+        # ``bnb_concentration`` sample site (``bnb_concentration_loc``
+        # and ``bnb_concentration_scale``).
+        # -----------------------------------------------------------------
+        specs.append(
+            NormalWithTransformSpec(
+                name="bnb_omega_hyper_loc",
+                shape_dims=(),
+                default_params=(0.0, 1.0),
+            )
+        )
+        specs.append(
+            SoftplusNormalSpec(
+                name="bnb_omega_hyper_scale",
+                shape_dims=(),
+                default_params=(0.0, 1.0),
+            )
+        )
+        specs.append(
+            HierarchicalPositiveNormalSpec(
+                name="bnb_concentration",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                hyper_loc_name="bnb_omega_hyper_loc",
+                hyper_scale_name="bnb_omega_hyper_scale",
+                transform=_transform,
+                is_gene_specific=True,
+                is_mixture=is_mixture,
+                guide_family=guide_families.get("bnb_concentration"),
+            )
+        )
+        return specs
 
     # Shared location in unconstrained space (strongly negative so that
     # softplus(loc) ~ 0, defaulting to NB behaviour).
@@ -598,7 +661,7 @@ def build_bnb_concentration_spec(
     else:
         raise ValueError(
             f"Unsupported overdispersion_prior: {overdispersion_prior!r}. "
-            "Valid options: 'horseshoe', 'neg'."
+            "Valid options: 'gaussian', 'horseshoe', 'neg'."
         )
 
     return specs
@@ -706,6 +769,7 @@ def build_extra_param_spec(
             ),
             n_components=n_components,
             mixture_params=mixture_params,
+            positive_transform=positive_transform,
         )
     else:
         raise ValueError(
