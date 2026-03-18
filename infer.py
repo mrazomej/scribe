@@ -894,6 +894,9 @@ def main(cfg: DictConfig) -> None:
         "neg_a": cfg.get("neg_a", 1.0),
         "neg_tau": cfg.get("neg_tau", 1.0),
         "mu_eta_prior": cfg.get("mu_eta_prior", "none"),
+        # Gene-specific overdispersion (e.g. BNB)
+        "overdispersion": cfg.get("overdispersion", "none"),
+        "overdispersion_prior": cfg.get("overdispersion_prior", "horseshoe"),
         "n_components": n_components,
         "mixture_params": cfg.get("mixture_params"),
         "guide_rank": cfg.guide_rank,
@@ -947,6 +950,11 @@ def main(cfg: DictConfig) -> None:
         console.print(
             f"[dim]Amortized capture:[/dim] [bold]{kwargs['capture_hidden_dims']}[/bold] "
             f"[dim]({kwargs['capture_activation']})[/dim]"
+        )
+    if kwargs.get("overdispersion", "none") != "none":
+        console.print(
+            f"[dim]Overdispersion:[/dim] [bold]{kwargs['overdispersion']}[/bold] "
+            f"[dim](prior={kwargs['overdispersion_prior']})[/dim]"
         )
     if kwargs.get("annotation_key"):
         ann_msg = (

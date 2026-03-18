@@ -99,6 +99,8 @@ class ModelConfigBuilder:
         self._neg_a: float = 1.0
         self._neg_tau: float = 1.0
         self._mu_eta_prior: str = "none"
+        self._overdispersion: str = "none"
+        self._overdispersion_prior: str = "horseshoe"
         self._n_components: Optional[int] = None
         self._mixture_params: Optional[List[str]] = None
         self._joint_params: Optional[List[str]] = None
@@ -652,6 +654,8 @@ class ModelConfigBuilder:
             neg_a=self._neg_a,
             neg_tau=self._neg_tau,
             mu_eta_prior=self._mu_eta_prior,
+            overdispersion=self._overdispersion,
+            overdispersion_prior=self._overdispersion_prior,
             n_components=self._n_components,
             mixture_params=self._mixture_params,
             joint_params=self._joint_params,

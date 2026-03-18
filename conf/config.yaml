@@ -24,6 +24,14 @@ defaults:
 zero_inflation: false    # Add zero-inflation gate (for excess zeros)
 variable_capture: false  # Add cell-specific capture probability
 
+# Gene-specific overdispersion beyond the NB family.
+# "none": standard Negative Binomial (default).
+# "bnb":  Beta Negative Binomial — adds per-gene kappa_g for heavier tails.
+overdispersion: "none"
+# Hierarchical prior for the BNB concentration parameter (kappa_g).
+# Only used when overdispersion is not "none".
+overdispersion_prior: "horseshoe"
+
 # --- Model Configuration ---
 # Power users can override the model directly: model=zinb, model=nbvcp, etc.
 # This takes precedence over the feature flags above.
