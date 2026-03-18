@@ -39,9 +39,9 @@ inference (@sec-hierarchical-p) is unaffected.
 3. The BNB has **power-law tails**, which are qualitatively heavier than
 the NB's geometric (exponentially decaying) tails.
 
-4. The BNB can be connected to a **biophysical story** about cell-to-cell
-variability in promoter activity, drawing on the two-state promoter
-model.
+4. The BNB admits a clean **biophysical interpretation** as **extrinsic
+regulatory noise**---cell-to-cell variability in promoter kinetics---on
+top of the **intrinsic noise** already captured by the NB.
 
 5. A **hierarchical sparsity-inducing prior** on the BNB concentration
 parameter ensures that most genes default to NB behaviour, with only a
@@ -323,71 +323,113 @@ for $r_g = 5$. {#tbl-bnb-inflation}
 
 ## Biophysical interpretation {#sec-bnb-biophysics}
 
-### Connection to the two-state promoter model
+### Intrinsic noise: the NB from the two-state promoter
 
 In the standard NBDM framework (@sec-dirichlet-multinomial), the
 negative binomial distribution for true transcript counts arises from a
 two-state promoter model: a gene switches between an OFF state (no
-transcription) and an ON state (transcription at rate $r$), with
+transcription) and an ON state (transcription at rate $s$), with
 switching rates $k^+$ (OFF$\to$ON) and $k^-$ (ON$\to$OFF). At steady
 state, the number of mRNA molecules follows an NB distribution whose
 parameters are determined by the ratio of these rates and the mRNA
-degradation rate $\gamma$.
+degradation rate $\gamma$. This is **intrinsic noise**: the irreducible
+stochastic fluctuation produced by a single promoter switching between
+states with *fixed* kinetic rates.
 
-A key result from the theory of gene regulation is that the fraction
-of time a promoter spends in the ON state---the memory-weighted average
-of past promoter activity---follows a **Beta distribution**:
+Crucially, the NB already accounts for bursty transcription. The burst
+frequency $k^+/\gamma$ and burst size $s/k^-$ are encoded in the NB
+parameters $r_g$ and $p_g$. If every cell in the population had
+identical promoter kinetics for gene $g$, the NB would be the
+exact steady-state mRNA distribution.
+
+### Extrinsic noise: the BNB from cell-to-cell regulatory heterogeneity
+
+In reality, promoter kinetics are not identical across cells.
+Concentrations of upstream transcription factors fluctuate, chromatin
+accessibility varies with cell-cycle stage and local remodelling, and
+enhancer--promoter contact frequencies differ from cell to cell. These
+sources of variability---collectively known as **extrinsic noise** in
+the gene-expression literature---cause the effective NB parameter $p_g$
+to vary across the cell population even for a single gene.
+
+If this cell-to-cell fluctuation in $p_g$ follows a Beta distribution
+centred on the population value,
 
 $$
-p(t) \sim \text{Beta}(\hat{k}^+, \hat{k}^-),
+p_{gc} \sim \text{Beta}(\alpha_{gc}, \kappa_g),
 $${#eq-bnb-beta-promoter}
 
-where $\hat{k}^+ = k^+/\gamma$ and $\hat{k}^- = k^-/\gamma$ are the
-non-dimensionalized switching rates. This is the stationary
-distribution of the piecewise-deterministic Markov process governing
-$p(t)$.
+the marginal count distribution obtained by integrating out $p_{gc}$ is
+the BNB, as derived in @sec-bnb-definition. The concentration
+$\kappa_g$ therefore quantifies the magnitude of **extrinsic regulatory
+noise** for gene $g$:
 
-### From promoter variability to BNB
-
-The standard NB model treats the promoter state as fixed for each
-gene---all cells see the same (expected) promoter activity. In reality,
-promoter activity varies across cells due to chromatin remodelling,
-transcription factor fluctuations, and other regulatory mechanisms. If
-we model this cell-to-cell variability by allowing the NB success
-probability to fluctuate according to a Beta distribution, the marginal
-count distribution becomes a BNB.
-
-More precisely, if the effective NB parameter for gene $g$ in cell $c$
-is drawn from a Beta distribution centred on the population value but
-with finite concentration, the resulting count distribution is the BNB.
-The concentration parameter $\kappa_g$ then captures the degree of
-regulatory heterogeneity for gene $g$:
-
-- **Large $\kappa_g$** (tight Beta): little cell-to-cell variability in
-promoter state; gene behaves as a standard NB.
+- **Large $\kappa_g$** (tight Beta): extrinsic noise is negligible;
+the NB intrinsic noise dominates and the gene behaves as a standard NB.
 - **Small $\kappa_g$** (diffuse Beta): substantial cell-to-cell
-variability; gene exhibits heavier tails than the NB predicts.
+heterogeneity in regulatory state; the gene exhibits heavier tails and
+a wider body than the NB predicts.
 
-This is a plausible but **phenomenological** connection. The exact
-compound from the two-state model is a Poisson-Gamma-Beta distribution,
-not precisely the BNB, because the Beta-distributed promoter state
-modulates the Poisson rate (not the NB success probability directly).
-However, the BNB captures the same qualitative phenomenon---extra
-variability from multi-layer gene regulation---and does so with a
-closed-form PMF that is computationally tractable.
+This two-layer picture---intrinsic NB noise *plus* extrinsic Beta
+noise---mirrors the classical decomposition of gene-expression
+variability (Elowitz et al., *Science* 2002; Swain et al., *PNAS*
+2002). Concretely, one can think of
+the extrinsic noise as arising from fluctuations in burst size (varying
+$s/k^-$ across cells) or burst frequency (varying $k^+/\gamma$), both
+of which would perturb the effective $p_g$.
+
+We note that the exact compound arising from a Poisson--Gamma model
+with Beta-distributed rates is a Poisson--Gamma--Beta distribution,
+which is not algebraically identical to the BNB (since the Beta
+modulates the Poisson rate rather than the NB success probability
+directly). The BNB is therefore a **phenomenological approximation** to
+the full three-layer model, but one that captures the same qualitative
+phenomenon---extra variance from extrinsic regulatory noise---with a
+closed-form PMF that is computationally tractable and preserves the
+mean structure of the model.
+
+### Why $\kappa_g$ is biological, not technical
+
+A natural question is whether the extra dispersion captured by
+$\kappa_g$ could reflect technical artifacts rather than genuine
+biology. Three considerations argue against a technical interpretation:
+
+1. **UMIs remove technical heavy tails.** The most common source of
+technical overdispersion in RNA-seq is PCR amplification bias (jackpot
+effects). Unique Molecular Identifiers collapse PCR duplicates by
+design, so UMI counts should not exhibit the power-law tails that
+PCR-driven variance produces.
+
+2. **Variable capture already handles technical scaling.** The
+cell-specific capture probability $\nu_c$ (@sec-capture-prior) absorbs
+the dominant technical artifact: variations in sequencing depth and
+droplet capture efficiency. Because $\nu_c$ acts multiplicatively on
+the mean, it accounts for cell-level differences in total UMI counts
+without altering the distributional shape per gene.
+
+3. **Gene-specific hyper-variability is a biological signature.**
+Genes that require finite $\kappa_g$ (i.e., that escape the NB regime)
+are typically those with complex regulation: stress-response genes,
+cell-cycle-dependent genes, or genes sensitive to fluctuating
+transcription-factor gradients. Their excess variability reflects
+genuine heterogeneity in the regulatory environment across cells.
+
+Taken together, these arguments motivate treating $\kappa_g$ as a
+**per-gene biological parameter** measuring extrinsic regulatory noise,
+in contrast to $\nu_c$ which is a per-cell technical parameter
+measuring capture efficiency.
 
 ### Normalization implications
 
-A crucial distinction between $\kappa_g$ and the capture probability
-$\nu_c$ is that $\kappa_g$ represents **biological** variability
-(heterogeneity in gene regulation) rather than **technical** variability
-(capture efficiency). Since $\kappa_g$ affects the mean through
-$\alpha_{gc}$ in a way that preserves the gene $\times$ cell
-factorization (@eq-bnb-mean-preserved), it correctly participates in
-compositional analysis. This is by design: genes whose regulatory state
-is more variable across cells are expected to have genuinely different
-relative abundances, and this should be reflected in the normalized
-expression profiles.
+Because $\kappa_g$ enters the model through $\alpha_{gc}$ in a way
+that preserves the gene $\times$ cell mean factorization
+(@eq-bnb-mean-preserved), it correctly participates in compositional
+analysis. Genes whose regulatory state is more variable across cells
+are expected to have genuinely different relative abundances, and this
+is reflected in the normalized expression profiles. The compositional
+sampling procedure (@eq-bnb-composition) depends only on $r_g$ and
+$p_g$---not on $\kappa_g$---so the entire differential expression
+pipeline carries through unchanged.
 
 ## Non-identifiability and its resolution {#sec-bnb-identifiability}
 
