@@ -2,6 +2,7 @@
 
 This module provides likelihoods that include cell-specific capture probability
 parameters, modeling technical variation in capture efficiency across cells.
+BNB support is provided by the subclasses in ``beta_negative_binomial.py``.
 
 Classes
 -------
@@ -121,6 +122,52 @@ class NBWithVCPLikelihood(Likelihood):
         self.transform = transform
         self.constrained_name = constrained_name or capture_param_name
         self.biology_informed_spec = biology_informed_spec
+
+    # ------------------------------------------------------------------
+    # Hooks: subclasses override to swap the base count distribution.
+    # ------------------------------------------------------------------
+
+    def _make_count_dist(
+        self, r: jnp.ndarray, p: jnp.ndarray
+    ) -> dist.Distribution:
+        """Create the base count distribution from (r, probs).
+
+        Override in BNB subclasses to return BetaNegativeBinomial.
+
+        Parameters
+        ----------
+        r : jnp.ndarray
+            NB dispersion (>0).
+        p : jnp.ndarray
+            Failure probability, clamped to (eps, 1-eps).
+
+        Returns
+        -------
+        dist.Distribution
+        """
+        return dist.NegativeBinomialProbs(r, p)
+
+    def _make_count_dist_logits(
+        self, r: jnp.ndarray, logits: jnp.ndarray
+    ) -> dist.Distribution:
+        """Create the base count distribution from (r, logits).
+
+        The NB version uses ``NegativeBinomialLogits`` for numerical
+        stability.  BNB subclasses override to convert logits to probs
+        and return ``BetaNegativeBinomial``.
+
+        Parameters
+        ----------
+        r : jnp.ndarray
+            NB dispersion (>0).
+        logits : jnp.ndarray
+            Log-odds of the failure probability.
+
+        Returns
+        -------
+        dist.Distribution
+        """
+        return dist.NegativeBinomialLogits(r, logits)
 
     # --------------------------------------------------------------------------
 
@@ -352,6 +399,7 @@ class NBWithVCPLikelihood(Likelihood):
 
                 # Clamp phi away from 0 so log(phi * ...) stays finite
                 phi = jnp.maximum(phi, _P_EPS)
+
                 logits = -jnp.log(phi * (1.0 + capture_reshaped))
 
                 if is_mixture:
@@ -368,9 +416,9 @@ class NBWithVCPLikelihood(Likelihood):
                         mixing_dist = dist.Categorical(probs=cell_mixing)
                     else:
                         mixing_dist = dist.Categorical(probs=mixing_weights)
-                    base_dist = dist.NegativeBinomialLogits(r, logits).to_event(
-                        1
-                    )
+                    base_dist = self._make_count_dist_logits(
+                        r, logits
+                    ).to_event(1)
                     mixture_dist = dist.MixtureSameFamily(
                         mixing_dist, base_dist
                     )
@@ -378,7 +426,7 @@ class NBWithVCPLikelihood(Likelihood):
                 else:
                     numpyro.sample(
                         "counts",
-                        dist.NegativeBinomialLogits(r, logits).to_event(1),
+                        self._make_count_dist_logits(r, logits).to_event(1),
                         obs=obs,
                     )
             else:
@@ -403,7 +451,9 @@ class NBWithVCPLikelihood(Likelihood):
                     capture_reshaped = capture_value[:, None]
 
                 # Broadcast p for mixture models (handles gene-specific p)
-                p_for_hat = broadcast_param_for_mixture(p, r) if is_mixture else p
+                p_for_hat = (
+                    broadcast_param_for_mixture(p, r) if is_mixture else p
+                )
 
                 p_hat = (
                     p_for_hat
@@ -427,7 +477,7 @@ class NBWithVCPLikelihood(Likelihood):
                         mixing_dist = dist.Categorical(probs=cell_mixing)
                     else:
                         mixing_dist = dist.Categorical(probs=mixing_weights)
-                    base_dist = dist.NegativeBinomialProbs(r, p_hat).to_event(1)
+                    base_dist = self._make_count_dist(r, p_hat).to_event(1)
                     mixture_dist = dist.MixtureSameFamily(
                         mixing_dist, base_dist
                     )
@@ -435,7 +485,7 @@ class NBWithVCPLikelihood(Likelihood):
                 else:
                     numpyro.sample(
                         "counts",
-                        dist.NegativeBinomialProbs(r, p_hat).to_event(1),
+                        self._make_count_dist(r, p_hat).to_event(1),
                         obs=obs,
                     )
 
@@ -511,6 +561,29 @@ class ZINBWithVCPLikelihood(Likelihood):
         self.transform = transform
         self.constrained_name = constrained_name or capture_param_name
         self.biology_informed_spec = biology_informed_spec
+
+    # ------------------------------------------------------------------
+    # Hooks: subclasses override to swap the base count distribution.
+    # ------------------------------------------------------------------
+
+    def _make_count_dist(
+        self, r: jnp.ndarray, p: jnp.ndarray
+    ) -> dist.Distribution:
+        """Create the base count distribution from (r, probs).
+
+        Override in BNB subclasses to return BetaNegativeBinomial.
+        """
+        return dist.NegativeBinomialProbs(r, p)
+
+    def _make_count_dist_logits(
+        self, r: jnp.ndarray, logits: jnp.ndarray
+    ) -> dist.Distribution:
+        """Create the base count distribution from (r, logits).
+
+        NB uses ``NegativeBinomialLogits``; BNB overrides to convert
+        logits to probs.
+        """
+        return dist.NegativeBinomialLogits(r, logits)
 
     # --------------------------------------------------------------------------
 
@@ -707,9 +780,6 @@ class ZINBWithVCPLikelihood(Likelihood):
 
                 # Scalar-per-dataset phi becomes (n_cells,) after indexing;
                 # expand to (n_cells, 1) so it broadcasts with capture and r.
-                # Guard with use_dataset_indexing and a cell-axis size check so
-                # gene-specific phi (n_genes,) is left alone. Only per-cell
-                # vectors (n_cells,) should be expanded.
                 if (
                     phi.ndim == 1
                     and not is_mixture
@@ -731,6 +801,7 @@ class ZINBWithVCPLikelihood(Likelihood):
 
                 # Clamp phi away from 0 so log(phi * ...) stays finite
                 phi = jnp.maximum(phi, _P_EPS)
+
                 logits = -jnp.log(phi * (1.0 + capture_reshaped))
 
                 if is_mixture:
@@ -747,7 +818,7 @@ class ZINBWithVCPLikelihood(Likelihood):
                         mixing_dist = dist.Categorical(probs=cell_mixing)
                     else:
                         mixing_dist = dist.Categorical(probs=mixing_weights)
-                    base_nb = dist.NegativeBinomialLogits(r, logits)
+                    base_nb = self._make_count_dist_logits(r, logits)
                     zinb_base = dist.ZeroInflatedDistribution(
                         base_nb, gate=gate
                     ).to_event(1)
@@ -756,7 +827,7 @@ class ZINBWithVCPLikelihood(Likelihood):
                     )
                     numpyro.sample("counts", mixture_dist, obs=obs)
                 else:
-                    base_nb = dist.NegativeBinomialLogits(r, logits)
+                    base_nb = self._make_count_dist_logits(r, logits)
                     zinb_dist = dist.ZeroInflatedDistribution(
                         base_nb, gate=gate
                     )
@@ -766,9 +837,6 @@ class ZINBWithVCPLikelihood(Likelihood):
 
                 # Scalar-per-dataset p becomes (n_cells,) after indexing;
                 # expand to (n_cells, 1) so it broadcasts with capture and r.
-                # Guard with use_dataset_indexing and a cell-axis size check so
-                # gene-specific p (n_genes,) is left alone. Only per-cell
-                # vectors (n_cells,) should be expanded.
                 if (
                     p.ndim == 1
                     and not is_mixture
@@ -783,7 +851,9 @@ class ZINBWithVCPLikelihood(Likelihood):
                     capture_reshaped = capture_value[:, None]
 
                 # Broadcast p and gate for mixture models
-                p_for_hat = broadcast_param_for_mixture(p, r) if is_mixture else p
+                p_for_hat = (
+                    broadcast_param_for_mixture(p, r) if is_mixture else p
+                )
                 if is_mixture:
                     gate = broadcast_param_for_mixture(gate, r)
 
@@ -809,7 +879,7 @@ class ZINBWithVCPLikelihood(Likelihood):
                         mixing_dist = dist.Categorical(probs=cell_mixing)
                     else:
                         mixing_dist = dist.Categorical(probs=mixing_weights)
-                    base_nb = dist.NegativeBinomialProbs(r, p_hat)
+                    base_nb = self._make_count_dist(r, p_hat)
                     zinb_base = dist.ZeroInflatedDistribution(
                         base_nb, gate=gate
                     ).to_event(1)
@@ -818,7 +888,7 @@ class ZINBWithVCPLikelihood(Likelihood):
                     )
                     numpyro.sample("counts", mixture_dist, obs=obs)
                 else:
-                    base_nb = dist.NegativeBinomialProbs(r, p_hat)
+                    base_nb = self._make_count_dist(r, p_hat)
                     zinb_dist = dist.ZeroInflatedDistribution(
                         base_nb, gate=gate
                     )
