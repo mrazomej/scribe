@@ -1150,6 +1150,65 @@ def _apply_capture(
         )
 
 
+def _apply_bnb_concentration(
+    distributions: Dict[str, Any],
+    params: Dict[str, jnp.ndarray],
+    model_config: ModelConfig,
+    low_rank: bool,
+) -> None:
+    """Pass 7b: add the BNB overdispersion concentration posterior.
+
+    Active when ``model_config.is_bnb`` is True.  Adds posteriors for the
+    hyper-location, horseshoe/NEG auxiliary sites, and the NCP raw z
+    variable for ``bnb_concentration``.
+
+    Parameters
+    ----------
+    distributions : Dict[str, Any]
+        Accumulator dict (mutated in place).
+    params : Dict[str, jnp.ndarray]
+        Optimized variational parameters.
+    model_config : ModelConfig
+        Model configuration.
+    low_rank : bool
+        Whether LowRank guides are used.
+    """
+    if not getattr(model_config, "is_bnb", False):
+        return
+
+    prefix = "bnb_concentration"
+
+    # Hyper-location posterior
+    loc_key = f"{prefix}_loc"
+    if f"{loc_key}_loc" in params:
+        distributions[loc_key] = dist.Normal(
+            params[f"{loc_key}_loc"], params[f"{loc_key}_scale"]
+        )
+
+    # Horseshoe auxiliary sites
+    for role in ("tau", "lambda", "c_sq"):
+        name = f"{prefix}_{role}"
+        if f"{name}_loc" in params:
+            distributions[name] = dist.LogNormal(
+                params[f"{name}_loc"], params[f"{name}_scale"]
+            )
+
+    # NEG auxiliary sites
+    for role in ("psi", "zeta"):
+        name = f"{prefix}_{role}"
+        if f"{name}_concentration" in params:
+            distributions[name] = dist.Gamma(
+                params[f"{name}_concentration"], params[f"{name}_rate"]
+            )
+
+    # NCP raw z variable
+    raw_name = f"{prefix}_raw"
+    if f"{raw_name}_loc" in params:
+        distributions[raw_name] = _build_normal_posterior(
+            params, raw_name, low_rank=low_rank
+        )
+
+
 def _apply_mixture_weights(
     distributions: Dict[str, Any],
     params: Dict[str, jnp.ndarray],
@@ -1338,6 +1397,9 @@ def get_posterior_distributions(
         unconstrained,
         split,
         pos_transform=pos_transform,
+    )
+    _apply_bnb_concentration(  # Pass 7b
+        distributions, params, model_config, low_rank
     )
     _apply_mixture_weights(distributions, params, is_mixture)  # Pass 8
     _apply_joint_aggregation(distributions, params, model_config)  # Pass 9

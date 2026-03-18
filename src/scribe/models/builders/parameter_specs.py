@@ -3178,6 +3178,194 @@ def sample_prior(
     return None
 
 
+# ==============================================================================
+# BNB (Beta Negative Binomial) Overdispersion Specs
+# ==============================================================================
+
+
+class HorseshoeBNBConcentrationSpec(HierarchicalNormalWithTransformSpec):
+    """Horseshoe prior on the BNB excess-dispersion fraction omega_g.
+
+    The BNB extension adds a per-gene parameter kappa_g > 2 that
+    controls overdispersion beyond the NB.  We reparameterize as
+    omega_g = softplus(loc + scale * z), which is non-negative, and
+    recover kappa_g = 2 + (r_g + 1) / omega_g in the likelihood.
+
+    The horseshoe encourages omega_g ~ 0 (NB behaviour) for most
+    genes, with a data-driven subset escaping to finite omega_g.
+
+    Generative model (NCP form)::
+
+        tau         ~ HalfCauchy(tau_0)
+        lambda_g    ~ HalfCauchy(1)
+        c^2         ~ InvGamma(slab_df/2, slab_df*s^2/2)
+        lt_g        = c * lambda_g / sqrt(c^2 + tau^2 * lambda_g^2)
+        z_g         ~ Normal(0, 1)
+        omega_g     = softplus(hyper_loc + tau * lt_g * z_g)
+
+    Parameters
+    ----------
+    name : str
+        Constrained parameter name (``"bnb_concentration"``).
+    tau_name : str
+        Global shrinkage HalfCauchy site.
+    lambda_name : str
+        Per-gene local scale HalfCauchy site.
+    c_sq_name : str
+        Slab InverseGamma site.
+    raw_name : str
+        NCP z site (``"bnb_concentration_raw"``).
+    """
+
+    tau_name: str = Field(
+        ..., description="Name of the global shrinkage HalfCauchy site"
+    )
+    lambda_name: str = Field(
+        ..., description="Name of the per-gene local scale HalfCauchy site"
+    )
+    c_sq_name: str = Field(
+        ..., description="Name of the slab InverseGamma site"
+    )
+    raw_name: str = Field(
+        ..., description="Sample-site name for the NCP z variable"
+    )
+    uses_ncp: bool = Field(
+        True, description="Flag indicating NCP parameterization"
+    )
+    transform: Transform = Field(
+        default_factory=lambda: dist.transforms.SoftplusTransform()
+    )
+
+    def sample_hierarchical(
+        self,
+        dims: Dict[str, int],
+        param_values: Dict[str, jnp.ndarray],
+    ) -> jnp.ndarray:
+        """Sample omega_g via NCP with horseshoe shrinkage.
+
+        Parameters
+        ----------
+        dims : Dict[str, int]
+            Dimension sizes.
+        param_values : Dict[str, jnp.ndarray]
+            Must contain hyper_loc, tau, lambda, c_sq sites.
+
+        Returns
+        -------
+        jnp.ndarray
+            omega_g in (0, inf), shape ``(n_genes,)``.
+        """
+        loc = param_values[self.hyper_loc_name]
+        tau = param_values[self.tau_name]
+        lam = param_values[self.lambda_name]
+        c_sq = param_values[self.c_sq_name]
+
+        shape = resolve_shape(
+            self.shape_dims,
+            dims,
+            is_mixture=self.is_mixture,
+            is_dataset=self.is_dataset,
+        )
+
+        c = jnp.sqrt(c_sq)
+        eff_scale = tau * c * lam / jnp.sqrt(c_sq + tau**2 * lam**2)
+
+        if shape == ():
+            z_dist = dist.Normal(0.0, 1.0)
+        else:
+            z_dist = dist.Normal(0.0, 1.0).expand(shape).to_event(len(shape))
+        z = numpyro.sample(self.raw_name, z_dist)
+
+        unconstrained = loc + eff_scale * z
+        constrained = self.transform(unconstrained)
+        numpyro.deterministic(self.constrained_name, constrained)
+        return constrained
+
+
+class NEGBNBConcentrationSpec(HierarchicalNormalWithTransformSpec):
+    """NEG prior on the BNB excess-dispersion fraction omega_g.
+
+    Same role as ``HorseshoeBNBConcentrationSpec`` but uses the
+    Normal-Exponential-Gamma hierarchy, which is friendlier to SVI.
+
+    Generative model (NCP form)::
+
+        zeta_g  ~ Gamma(a, tau_NEG)
+        psi_g   ~ Gamma(u, zeta_g)
+        z_g     ~ Normal(0, 1)
+        omega_g = softplus(hyper_loc + sqrt(psi_g) * z_g)
+
+    Parameters
+    ----------
+    name : str
+        Constrained parameter name (``"bnb_concentration"``).
+    psi_name : str
+        Per-gene variance Gamma site.
+    zeta_name : str
+        Per-gene rate Gamma site.
+    raw_name : str
+        NCP z site (``"bnb_concentration_raw"``).
+    """
+
+    psi_name: str = Field(
+        ..., description="Name of the per-gene variance Gamma site"
+    )
+    zeta_name: str = Field(
+        ..., description="Name of the per-gene rate Gamma site"
+    )
+    raw_name: str = Field(
+        ..., description="Sample-site name for the NCP z variable"
+    )
+    uses_ncp: bool = Field(
+        True, description="Flag indicating NCP parameterization"
+    )
+    transform: Transform = Field(
+        default_factory=lambda: dist.transforms.SoftplusTransform()
+    )
+
+    def sample_hierarchical(
+        self,
+        dims: Dict[str, int],
+        param_values: Dict[str, jnp.ndarray],
+    ) -> jnp.ndarray:
+        """Sample omega_g via NCP with NEG shrinkage.
+
+        Parameters
+        ----------
+        dims : Dict[str, int]
+            Dimension sizes.
+        param_values : Dict[str, jnp.ndarray]
+            Must contain hyper_loc, psi, zeta sites.
+
+        Returns
+        -------
+        jnp.ndarray
+            omega_g in (0, inf), shape ``(n_genes,)``.
+        """
+        loc = param_values[self.hyper_loc_name]
+        psi = param_values[self.psi_name]
+
+        shape = resolve_shape(
+            self.shape_dims,
+            dims,
+            is_mixture=self.is_mixture,
+            is_dataset=self.is_dataset,
+        )
+
+        eff_scale = jnp.sqrt(psi)
+
+        if shape == ():
+            z_dist = dist.Normal(0.0, 1.0)
+        else:
+            z_dist = dist.Normal(0.0, 1.0).expand(shape).to_event(len(shape))
+        z = numpyro.sample(self.raw_name, z_dist)
+
+        unconstrained = loc + eff_scale * z
+        constrained = self.transform(unconstrained)
+        numpyro.deterministic(self.constrained_name, constrained)
+        return constrained
+
+
 # ---------------------------------------------------------------------------
 # Backward-compatible aliases for pickle deserialization of old models.
 # Old checkpoints reference the *Exp* names; these aliases ensure
