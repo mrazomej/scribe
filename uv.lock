@@ -1513,7 +1513,7 @@ wheels = [
 
 [[package]]
 name = "marimo"
-version = "0.19.11"
+version = "0.21.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -1534,9 +1534,9 @@ dependencies = [
     { name = "uvicorn" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/06/31/aa12298afce0c7cf6bc0d8ffe664b4cfb295451f9029ca7a461c6e30390d/marimo-0.19.11.tar.gz", hash = "sha256:1f65a19f9dced82ae2d041dbe31b3f47ba16993f6411d41ba526b3b322abd948", size = 38203731, upload-time = "2026-02-12T18:37:49.536Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ea/30/052e4ebf21bd3f49fa47fd844716c53292e468ee6d6d8c716852dcbe3764/marimo-0.21.0.tar.gz", hash = "sha256:b4d515858eded6b6a25b58ce971fd62080cbb89738a73aaf6c29c34da489d47b", size = 38366236, upload-time = "2026-03-16T21:55:12.436Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/47/d4/817cfdcf9636fc75036b9e0f7aa458c0bedec420d79768005ccfcf7fc9d8/marimo-0.19.11-py3-none-any.whl", hash = "sha256:4f98b677c89cada69c330e38f0747b4fca73cedb6f81b66832df3035ab8b6cff", size = 38609582, upload-time = "2026-02-12T18:37:53.954Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/e7/215d55f2d485f508d23a1dcbec57f3edd4a913ad06c3cabe6cb353d31933/marimo-0.21.0-py3-none-any.whl", hash = "sha256:5a54bdc6ae38486f7af1d287778d4b888e7ebaea6fce885439835ea2a037d381", size = 38780820, upload-time = "2026-03-16T21:55:09.217Z" },
 ]
 
 [[package]]
@@ -3070,6 +3070,7 @@ dependencies = [
     { name = "flax" },
     { name = "graphviz" },
     { name = "jax", extra = ["cuda12"] },
+    { name = "marimo" },
     { name = "matplotlib" },
     { name = "multipledispatch" },
     { name = "myst-parser" },
@@ -3123,6 +3124,7 @@ requires-dist = [
     { name = "flax", specifier = ">=0.12.2" },
     { name = "graphviz", specifier = ">=0.20.3" },
     { name = "jax", extras = ["cuda12"], specifier = ">=0.9.0.1" },
+    { name = "marimo", specifier = ">=0.20.2" },
     { name = "matplotlib", specifier = ">=3.9.3" },
     { name = "multipledispatch", specifier = ">=1.0.0" },
     { name = "myst-parser", specifier = ">=4.0.0" },
