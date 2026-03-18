@@ -844,3 +844,137 @@ class TestSamplingMixtureBNB:
         )
         assert samples.shape == (2, C, G)
         assert jnp.all(jnp.isfinite(samples))
+
+
+# ============================================================================
+# Posterior extraction tests for Gaussian BNB prior
+# ============================================================================
+
+
+class TestBNBGaussianPosterior:
+    """Verify _apply_bnb_concentration correctly handles the Gaussian prior.
+
+    The Gaussian branch emits ``bnb_concentration_loc`` /
+    ``bnb_concentration_scale`` as direct guide variational params
+    (no NCP raw/auxiliary sites), plus ``bnb_omega_hyper_*`` hyper-params.
+    """
+
+    def test_gaussian_distributions_extracted(self):
+        """get_posterior_distributions returns bnb_concentration for Gaussian."""
+        from scribe.models.builders.posterior import get_posterior_distributions
+        from scribe.models.config import ModelConfig
+
+        mc = ModelConfig(
+            base_model="nbdm",
+            parameterization="canonical",
+            unconstrained=True,
+            overdispersion="bnb",
+            overdispersion_prior="gaussian",
+            positive_transform="softplus",
+        )
+
+        # Minimal params mimicking Gaussian prior's guide output
+        params = {
+            "r_loc": jnp.zeros(5),
+            "r_scale": jnp.ones(5),
+            "p_loc": jnp.zeros(5),
+            "p_scale": jnp.ones(5),
+            "bnb_omega_hyper_loc_loc": jnp.array(0.0),
+            "bnb_omega_hyper_loc_scale": jnp.array(1.0),
+            "bnb_omega_hyper_scale_loc": jnp.array(0.0),
+            "bnb_omega_hyper_scale_scale": jnp.array(1.0),
+            "bnb_concentration_loc": jnp.zeros(5),
+            "bnb_concentration_scale": jnp.ones(5),
+        }
+
+        dists = get_posterior_distributions(params, mc)
+        assert "bnb_concentration" in dists
+        assert "bnb_omega_hyper_loc" in dists
+        assert "bnb_omega_hyper_scale" in dists
+
+        # bnb_concentration should be dict with base + transform
+        d = dists["bnb_concentration"]
+        assert isinstance(d, dict)
+        assert "base" in d and "transform" in d
+
+    def test_gaussian_map_extraction(self):
+        """MAP extraction produces bnb_concentration and bnb_kappa for Gaussian."""
+        from numpyro.distributions.transforms import SoftplusTransform
+
+        from scribe.models.builders.posterior import get_posterior_distributions
+        from scribe.models.config import ModelConfig
+
+        mc = ModelConfig(
+            base_model="nbdm",
+            parameterization="canonical",
+            unconstrained=True,
+            overdispersion="bnb",
+            overdispersion_prior="gaussian",
+            positive_transform="softplus",
+        )
+
+        # Simulate params where bnb_concentration_loc = 1.0 for all genes
+        loc_val = 1.0
+        G = 5
+        params = {
+            "r_loc": jnp.zeros(G),
+            "r_scale": jnp.ones(G),
+            "p_loc": jnp.zeros(G),
+            "p_scale": jnp.ones(G),
+            "bnb_omega_hyper_loc_loc": jnp.array(0.0),
+            "bnb_omega_hyper_loc_scale": jnp.array(1.0),
+            "bnb_omega_hyper_scale_loc": jnp.array(0.0),
+            "bnb_omega_hyper_scale_scale": jnp.array(1.0),
+            "bnb_concentration_loc": jnp.full(G, loc_val),
+            "bnb_concentration_scale": jnp.ones(G),
+        }
+
+        dists = get_posterior_distributions(params, mc)
+
+        # Manually compute expected MAP: softplus(loc_val)
+        expected_omega = SoftplusTransform()(jnp.array(loc_val))
+
+        d = dists["bnb_concentration"]
+        base = d["base"]
+        transform = d["transform"]
+        map_omega = transform(base.loc)
+        assert jnp.allclose(map_omega, jnp.full(G, expected_omega), atol=1e-5)
+
+    def test_neg_prior_not_affected(self):
+        """NEG prior path still works (regression check)."""
+        from scribe.models.builders.posterior import get_posterior_distributions
+        from scribe.models.config import ModelConfig
+
+        mc = ModelConfig(
+            base_model="nbdm",
+            parameterization="canonical",
+            unconstrained=True,
+            overdispersion="bnb",
+            overdispersion_prior="neg",
+            positive_transform="softplus",
+        )
+
+        # Params mimicking NEG prior guide output
+        params = {
+            "r_loc": jnp.zeros(5),
+            "r_scale": jnp.ones(5),
+            "p_loc": jnp.zeros(5),
+            "p_scale": jnp.ones(5),
+            "bnb_concentration_loc_loc": jnp.array(0.0),
+            "bnb_concentration_loc_scale": jnp.array(1.0),
+            "bnb_concentration_psi_concentration": jnp.ones(5),
+            "bnb_concentration_psi_rate": jnp.ones(5),
+            "bnb_concentration_zeta_concentration": jnp.ones(5),
+            "bnb_concentration_zeta_rate": jnp.ones(5),
+            "bnb_concentration_raw_loc": jnp.zeros(5),
+            "bnb_concentration_raw_scale": jnp.ones(5),
+        }
+
+        dists = get_posterior_distributions(params, mc)
+        # NEG should have the NCP auxiliary sites, not direct bnb_concentration
+        assert "bnb_concentration_loc" in dists
+        assert "bnb_concentration_psi" in dists
+        assert "bnb_concentration_raw" in dists
+        # Direct bnb_concentration should NOT be present (it's reconstructed
+        # later in get_map via _reconstruct_neg_maps)
+        assert "bnb_concentration" not in dists

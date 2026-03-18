@@ -1155,12 +1155,23 @@ def _apply_bnb_concentration(
     params: Dict[str, jnp.ndarray],
     model_config: ModelConfig,
     low_rank: bool,
+    *,
+    pos_transform=None,
 ) -> None:
     """Pass 7b: add the BNB overdispersion concentration posterior.
 
-    Active when ``model_config.is_bnb`` is True.  Adds posteriors for the
-    hyper-location, horseshoe/NEG auxiliary sites, and the NCP raw z
-    variable for ``bnb_concentration``.
+    Active when ``model_config.is_bnb`` is True.  Handles three prior
+    families:
+
+    * **Horseshoe / NEG** (NCP priors): adds posteriors for the hyper-
+      location (``bnb_concentration_loc``), auxiliary sites (tau, lambda,
+      c_sq for horseshoe; psi, zeta for NEG), and the NCP raw z variable.
+      The constrained ``bnb_concentration`` is later reconstructed in
+      ``_reconstruct_horseshoe_maps`` / ``_reconstruct_neg_maps``.
+    * **Gaussian** (hierarchical Normal): adds the hyper-location
+      (``bnb_omega_hyper_loc``), hyper-scale (``bnb_omega_hyper_scale``),
+      and the per-gene ``bnb_concentration`` directly as a
+      ``TransformedDistribution(Normal, pos_transform)``.
 
     Parameters
     ----------
@@ -1172,13 +1183,60 @@ def _apply_bnb_concentration(
         Model configuration.
     low_rank : bool
         Whether LowRank guides are used.
+    pos_transform : numpyro Transform, optional
+        Positive-value transform (SoftplusTransform or ExpTransform).
+        Required for Gaussian prior; ignored for NCP priors.
     """
     if not getattr(model_config, "is_bnb", False):
         return
 
     prefix = "bnb_concentration"
 
-    # Hyper-location posterior
+    # ------------------------------------------------------------------
+    # Gaussian hierarchical prior
+    # ------------------------------------------------------------------
+    # Detect by checking for the guide's variational params for the
+    # ``bnb_concentration`` sample site (``bnb_concentration_loc``),
+    # while the NCP priors would instead have ``bnb_concentration_raw_loc``.
+    is_gaussian = (
+        f"{prefix}_loc" in params and f"{prefix}_raw_loc" not in params
+    )
+    if is_gaussian:
+        # Hyper-location: bnb_omega_hyper_loc ~ Normal(loc, scale)
+        hyper_loc_key = "bnb_omega_hyper_loc"
+        if f"{hyper_loc_key}_loc" in params:
+            distributions[hyper_loc_key] = dist.Normal(
+                params[f"{hyper_loc_key}_loc"],
+                params[f"{hyper_loc_key}_scale"],
+            )
+
+        # Hyper-scale: bnb_omega_hyper_scale ~ Softplus(Normal(loc, scale))
+        hyper_scale_key = "bnb_omega_hyper_scale"
+        if f"{hyper_scale_key}_loc" in params:
+            _t = pos_transform or dist.transforms.SoftplusTransform()
+            distributions[hyper_scale_key] = {
+                "base": dist.Normal(
+                    params[f"{hyper_scale_key}_loc"],
+                    params[f"{hyper_scale_key}_scale"],
+                ),
+                "transform": _t,
+            }
+
+        # Per-gene bnb_concentration: transform(Normal(loc, scale))
+        _t = pos_transform or dist.transforms.SoftplusTransform()
+        distributions[prefix] = {
+            "base": _build_normal_posterior(
+                params, prefix, low_rank=low_rank
+            ),
+            "transform": _t,
+        }
+        return
+
+    # ------------------------------------------------------------------
+    # Horseshoe / NEG NCP priors (existing logic)
+    # ------------------------------------------------------------------
+
+    # Hyper-location posterior (NCP: model site is ``bnb_concentration_loc``)
     loc_key = f"{prefix}_loc"
     if f"{loc_key}_loc" in params:
         distributions[loc_key] = dist.Normal(
@@ -1399,7 +1457,8 @@ def get_posterior_distributions(
         pos_transform=pos_transform,
     )
     _apply_bnb_concentration(  # Pass 7b
-        distributions, params, model_config, low_rank
+        distributions, params, model_config, low_rank,
+        pos_transform=pos_transform,
     )
     _apply_mixture_weights(distributions, params, is_mixture)  # Pass 8
     _apply_joint_aggregation(distributions, params, model_config)  # Pass 9
