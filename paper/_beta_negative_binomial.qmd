@@ -58,6 +58,12 @@ mean--odds) can produce mean miscalibration that the BNB is powerless
 to fix. The **canonical parameterization** ($r_g$, $p_g$ independent)
 is recommended when using the BNB (@sec-bnb-parameterization-remark).
 
+7. **Bayesian denoising** under the BNB reduces to a tractable
+one-dimensional integral over the latent Beta mixing variable, which
+can be evaluated via Gauss--Legendre quadrature for point estimates or
+sampled via grid-based inverse CDF for fully Bayesian denoising
+(@sec-bnb-denoising).
+
 ## The Beta Negative Binomial distribution {#sec-bnb-definition}
 
 ### Definition as an NB-Beta compound
@@ -991,6 +997,407 @@ Its mean is `n * concentration1 / (concentration0 - 1)` $= r\alpha /
 The log-PMF is evaluated via `gammaln` and `betaln` functions, making
 it fully differentiable with respect to all parameters.
 
+## Denoising under the BNB {#sec-bnb-denoising}
+
+In @sec-denoising, we showed that the Bayesian denoising of NB-modelled
+counts has a clean closed-form solution: the uncaptured transcripts
+$d_g \mid u_g$ follow a shifted negative binomial, and the posterior
+mean is a shrinkage estimator computable in closed form. This result
+relies on the Poisson-Gamma conjugacy that underlies the NB. When the
+count distribution is upgraded from NB to BNB, a latent Beta mixing
+variable enters the picture and breaks this conjugacy. In this section
+we derive the BNB denoising posterior, show that it reduces to a
+tractable one-dimensional integral, and describe both a quadrature-based
+point estimate and a sampling procedure.
+
+### Problem setup {#sec-bnb-denoising-setup}
+
+We restate the generative model for a single gene $g$ in a single cell
+$c$. Under the BNB, the true transcript count is generated in two
+steps. First, a latent success probability is drawn from a Beta
+distribution:
+
+$$
+p_g \sim \text{Beta}(\alpha_g, \kappa_g),
+$${#eq-bnb-denoise-beta-prior}
+
+where $\alpha_g$ is determined by the mean-preserving constraint
+(@eq-bnb-alpha-from-kappa) and $\kappa_g$ is the gene-specific
+concentration parameter. Conditional on $p_g$, the true count is
+negative binomial:
+
+$$
+m_g \mid p_g \sim \text{NB}(r_g, p_g).
+$${#eq-bnb-denoise-conditional-nb}
+
+The observed UMI count arises from binomial thinning:
+
+$$
+u_g \mid m_g, \nu_c \sim \text{Binomial}(m_g, \nu_c),
+$${#eq-bnb-denoise-capture}
+
+where $\nu_c$ is the cell-specific capture probability. Our goal is the
+posterior distribution of the true count given the observation:
+
+$$
+\pi(m_g \mid u_g, r_g, \alpha_g, \kappa_g, \nu_c).
+$${#eq-bnb-denoise-goal}
+
+### The conditional NB denoising result {#sec-bnb-denoise-conditional}
+
+The key structural insight is that, conditional on the latent $p_g$,
+the BNB model reduces to an NB model. All of the NB denoising
+machinery from @sec-denoising therefore applies exactly: we decompose
+$m_g = u_g + d_g$ (captured plus uncaptured transcripts), and from
+@eq-denoising-dropped-dist the conditional posterior of the uncaptured
+transcripts is
+
+$$
+d_g \mid u_g, p_g \sim \text{NB}\!\left(r_g + u_g, \;\;
+\nu_c + p_g(1 - \nu_c)\right).
+$${#eq-bnb-denoise-conditional-d}
+
+We define the conditional posterior probability parameter
+
+$$
+p'(p_g) \;\equiv\; \nu_c + p_g(1 - \nu_c),
+$${#eq-bnb-denoise-pprime}
+
+exactly as in @eq-denoising-pprime-final, but here viewed as a function
+of the random variable $p_g$. The conditional moments of $d_g$ are
+therefore (from @eq-denoising-expected-dropped and the NB variance
+formula):
+
+$$
+\langle d_g \mid u_g, p_g \rangle
+= (r_g + u_g) \cdot
+\frac{1 - p'(p_g)}{p'(p_g)}
+= (r_g + u_g) \cdot
+\frac{(1 - \nu_c)(1 - p_g)}{\nu_c + p_g(1 - \nu_c)},
+$${#eq-bnb-denoise-conditional-mean}
+
+$$
+\text{Var}(d_g \mid u_g, p_g)
+= (r_g + u_g) \cdot
+\frac{(1 - \nu_c)(1 - p_g)}{[\nu_c + p_g(1 - \nu_c)]^2}.
+$${#eq-bnb-denoise-conditional-var}
+
+These are the same closed-form NB formulas as in @sec-denoising, simply
+evaluated at a particular value of $p_g$.
+
+### Posterior of the latent $p_g$ given $u_g$ {#sec-bnb-denoise-p-posterior}
+
+To obtain the marginal denoising posterior we must average the
+conditional result over $p_g$. This requires the posterior distribution
+of $p_g$ given the observed count $u_g$.
+
+The marginal likelihood of $u_g$ given $p_g$ under binomial thinning of
+an NB is itself a negative binomial (this is the fundamental
+thinning result from @sec-dirichlet-multinomial):
+
+$$
+\pi(u_g \mid p_g, r_g, \nu_c)
+= \binom{u_g + r_g - 1}{u_g}
+\bigl[\hat{p}(p_g)\bigr]^{r_g}
+\bigl[1 - \hat{p}(p_g)\bigr]^{u_g},
+$${#eq-bnb-denoise-thinned-likelihood}
+
+where $\hat{p}(p_g) = p_g / [\nu_c + p_g(1 - \nu_c)]$ is the effective
+success probability after capture (@sec-dirichlet-multinomial). We
+write this in terms of $p_g$ and $\nu_c$ explicitly. From the identity
+$\hat{p} = p_g / p'$ and $1 - \hat{p} = (1 - p_g)\nu_c / p'$
+(where $p' = \nu_c + p_g(1 - \nu_c)$):
+
+$$
+\pi(u_g \mid p_g)
+\propto
+\frac{p_g^{r_g} \,[\nu_c(1 - p_g)]^{u_g}}
+{[\nu_c + p_g(1 - \nu_c)]^{r_g + u_g}}.
+$${#eq-bnb-denoise-likelihood-explicit}
+
+Here we have dropped factors that do not depend on $p_g$. Combining
+with the Beta prior:
+
+$$
+\pi(p_g \mid u_g)
+\propto
+\pi(u_g \mid p_g) \cdot \pi(p_g)
+\propto
+\frac{p_g^{r_g}[\nu_c(1-p_g)]^{u_g}}
+{[\nu_c + p_g(1-\nu_c)]^{r_g+u_g}}
+\cdot
+\frac{p_g^{\alpha_g - 1}(1-p_g)^{\kappa_g - 1}}
+{B(\alpha_g, \kappa_g)}.
+$${#eq-bnb-denoise-posterior-bayes}
+
+Dropping normalizing constants that do not depend on $p_g$ and
+collecting powers:
+
+$$
+\boxed{
+\pi(p_g \mid u_g)
+\propto
+\frac{p_g^{r_g + \alpha_g - 1}\;(1 - p_g)^{u_g + \kappa_g - 1}}
+{[\nu_c + p_g(1 - \nu_c)]^{r_g + u_g}}.
+}
+$${#eq-bnb-denoise-p-posterior}
+
+This is not a standard Beta distribution. The numerator
+$p_g^{r_g + \alpha_g - 1}(1 - p_g)^{u_g + \kappa_g - 1}$ looks like a
+$\text{Beta}(r_g + \alpha_g, \; u_g + \kappa_g)$ kernel, but the
+denominator $[\nu_c + p_g(1 - \nu_c)]^{r_g + u_g}$ breaks the
+conjugacy. This denominator arises from the binomial thinning: it
+couples $p_g$ with the capture probability $\nu_c$ through the
+effective $\hat{p}$ parameter. If we were to set $\nu_c = 1$ (no
+capture loss), then $\nu_c + p_g(1 - \nu_c) = 1$ and the denominator
+disappears, recovering a proper Beta posterior. But for $\nu_c < 1$,
+the posterior is a non-standard distribution on $[0, 1]$.
+
+### Marginal posterior mean of the denoised count {#sec-bnb-denoise-marginal-mean}
+
+By the **law of total expectation**, the marginal posterior mean of the
+uncaptured transcripts is
+
+$$
+\langle d_g \mid u_g \rangle
+= \mathbb{E}_{p_g \mid u_g}\!\bigl[
+\langle d_g \mid u_g, p_g \rangle\bigr]
+= \int_0^1
+\langle d_g \mid u_g, p_g \rangle
+\;\pi(p_g \mid u_g)\, dp_g,
+$${#eq-bnb-denoise-total-expectation}
+
+where $\langle d_g \mid u_g, p_g \rangle$ is the conditional NB
+posterior mean from @eq-bnb-denoise-conditional-mean. Substituting:
+
+$$
+\langle d_g \mid u_g \rangle
+= (r_g + u_g)
+\int_0^1
+\frac{(1-\nu_c)(1-p_g)}{\nu_c + p_g(1-\nu_c)}
+\;\pi(p_g \mid u_g)\, dp_g.
+$${#eq-bnb-denoise-marginal-d-integral}
+
+The posterior mean of the full denoised count is therefore
+
+$$
+\langle m_g \mid u_g \rangle
+= u_g + \langle d_g \mid u_g \rangle.
+$${#eq-bnb-denoise-marginal-m}
+
+Let us write this integral in a form amenable to numerical evaluation.
+Define the unnormalized posterior density
+
+$$
+\tilde{\pi}(p_g \mid u_g)
+\;\equiv\;
+\frac{p_g^{r_g + \alpha_g - 1}\;(1-p_g)^{u_g + \kappa_g - 1}}
+{[\nu_c + p_g(1-\nu_c)]^{r_g+u_g}},
+$${#eq-bnb-denoise-unnormalized}
+
+and the conditional mean function
+
+$$
+f(p_g) \;\equiv\;
+\frac{(1-\nu_c)(1-p_g)}{\nu_c + p_g(1-\nu_c)}.
+$${#eq-bnb-denoise-f-def}
+
+Then the posterior mean of $d_g$ can be expressed as a ratio of two
+one-dimensional integrals:
+
+$$
+\boxed{
+\langle d_g \mid u_g \rangle
+= (r_g + u_g) \cdot
+\frac{\displaystyle\int_0^1 f(p_g)\;\tilde{\pi}(p_g \mid u_g)\,dp_g}
+{\displaystyle\int_0^1 \tilde{\pi}(p_g \mid u_g)\,dp_g}.
+}
+$${#eq-bnb-denoise-ratio-form}
+
+Both integrals are one-dimensional, the integrand is smooth on $[0,1]$,
+and the domain is bounded. This makes the problem ideally suited to
+**Gauss--Legendre quadrature** with a modest number of nodes (32--64
+suffice for high accuracy).
+
+### Numerical evaluation via Gauss--Legendre quadrature {#sec-bnb-denoise-quadrature}
+
+Gauss--Legendre quadrature approximates a definite integral on
+$[a, b]$ as a weighted sum:
+
+$$
+\int_a^b g(x)\, dx
+\approx
+\sum_{i=1}^{N} w_i \, g(x_i),
+$${#eq-bnb-denoise-gl-rule}
+
+where $\{x_i, w_i\}_{i=1}^N$ are the nodes and weights of the $N$-point
+Gauss--Legendre rule transformed from the reference interval $[-1, 1]$
+to $[a, b]$. For our problem, $[a, b] = [0, 1]$.
+
+The posterior mean from @eq-bnb-denoise-ratio-form becomes
+
+$$
+\langle d_g \mid u_g \rangle
+\approx (r_g + u_g) \cdot
+\frac{\displaystyle\sum_{i=1}^N w_i \; f(p_i)\;
+\tilde{\pi}(p_i \mid u_g)}
+{\displaystyle\sum_{i=1}^N w_i \;
+\tilde{\pi}(p_i \mid u_g)}.
+$${#eq-bnb-denoise-gl-mean}
+
+Crucially, this computation is fully **vectorizable**. The quadrature
+nodes $\{p_i\}$ have shape $(N, 1, 1)$, and the gene/cell parameters
+$(r_g, \alpha_g, \kappa_g, \nu_c, u_{gc})$ broadcast along their
+natural dimensions. A single batched evaluation produces the denoised
+posterior mean for all cells and genes simultaneously, with
+computational cost $\mathcal{O}(N \cdot C \cdot G)$ where $N \sim 64$
+is negligible compared to the cell $\times$ gene matrix.
+
+### Posterior variance of the denoised count {#sec-bnb-denoise-variance}
+
+By the **law of total variance**, the marginal posterior variance of the
+uncaptured transcripts is
+
+$$
+\text{Var}(d_g \mid u_g)
+= \underbrace{
+\mathbb{E}_{p_g}\!\bigl[\text{Var}(d_g \mid u_g, p_g)\bigr]
+}_{\text{average conditional variance}}
++ \underbrace{
+\text{Var}_{p_g}\!\bigl[\langle d_g \mid u_g, p_g \rangle\bigr]
+}_{\text{variance of conditional means}}.
+$${#eq-bnb-denoise-total-variance}
+
+The first term averages the NB posterior variance
+(@eq-bnb-denoise-conditional-var) over the posterior of $p_g$:
+
+$$
+\mathbb{E}_{p_g}\!\bigl[\text{Var}(d_g \mid u_g, p_g)\bigr]
+= (r_g + u_g)
+\int_0^1
+\frac{(1-\nu_c)(1-p_g)}{[\nu_c + p_g(1-\nu_c)]^2}
+\;\pi(p_g \mid u_g)\,dp_g.
+$${#eq-bnb-denoise-E-var}
+
+The second term captures the extra uncertainty arising from not knowing
+$p_g$ exactly. Define
+$h(p_g) \equiv (r_g + u_g) \cdot f(p_g) = \langle d_g \mid u_g, p_g
+\rangle$. Then
+
+$$
+\text{Var}_{p_g}(h)
+= \mathbb{E}_{p_g}[h^2] - (\mathbb{E}_{p_g}[h])^2.
+$${#eq-bnb-denoise-Var-h}
+
+Both expectations are again one-dimensional integrals computable via the
+same quadrature infrastructure, requiring only an additional evaluation
+of $h^2$ on the quadrature nodes.
+
+The total variance of the denoised count $m_g = u_g + d_g$ (where $u_g$
+is fixed) equals $\text{Var}(d_g \mid u_g)$.
+
+### Sampling from the denoising posterior {#sec-bnb-denoise-sampling}
+
+For applications requiring posterior samples (e.g., fully Bayesian
+denoising, preserving cross-gene correlations), we use an **augmented
+sampling** strategy:
+
+**Step 1.** Draw $p_g^{(s)}$ from the posterior $\pi(p_g \mid u_g)$
+in @eq-bnb-denoise-p-posterior.
+
+Since this is a one-dimensional distribution on $[0,1]$ with a known
+unnormalized density, we employ grid-based inverse CDF sampling:
+
+1. Evaluate $\tilde{\pi}(p_g \mid u_g)$ on a fine uniform grid
+   $\{q_j\}_{j=1}^M$ over $[0, 1]$ (e.g., $M = 1000$).
+2. Normalize to obtain a probability vector
+   $\hat{\pi}_j \propto \tilde{\pi}(q_j \mid u_g)$.
+3. Compute the cumulative sum $F_j = \sum_{k=1}^j \hat{\pi}_k$.
+4. Draw $U \sim \text{Uniform}(0, 1)$ and find
+   $p_g^{(s)} = q_{j^*}$ where $j^* = \min\{j : F_j \geq U\}$.
+
+This is vectorizable over cells and genes, and the grid evaluation
+reuses the same unnormalized density as the quadrature approach.
+
+**Step 2.** Conditional on $p_g^{(s)}$, draw from the NB denoising
+posterior:
+
+$$
+d_g^{(s)} \sim \text{NB}\!\bigl(r_g + u_g,\;\;
+\nu_c + p_g^{(s)}(1 - \nu_c)\bigr).
+$${#eq-bnb-denoise-d-sample}
+
+This is a standard NB sample, identical to the NB denoising sampling
+path in @sec-denoising.
+
+**Step 3.** The denoised sample is
+$m_g^{(s)} = u_g + d_g^{(s)}$.
+
+For **fully Bayesian denoising**, this two-step sampling nests inside
+the outer loop over posterior parameter samples: for each draw
+$(r_g^{(s)}, p_g^{(s)}, \nu_c^{(s)}, \kappa_g^{(s)})$ from the
+variational posterior, perform Steps 1--3 above.
+
+### Special cases {#sec-bnb-denoise-special-cases}
+
+**NB recovery** ($\kappa_g \to \infty$, i.e., $\omega_g \to 0$). As
+the BNB concentration $\kappa_g$ grows, the Beta prior concentrates
+around its mean $\bar{p}_g = \alpha_g / (\alpha_g + \kappa_g)$. The
+posterior $\pi(p_g \mid u_g)$ collapses to a point mass at $\bar{p}_g$,
+and the integral in @eq-bnb-denoise-ratio-form reduces to the integrand
+evaluated at that single point:
+
+$$
+\langle d_g \mid u_g \rangle
+\;\xrightarrow{\kappa_g \to \infty}\;
+(r_g + u_g) \cdot f(\bar{p}_g)
+= (r_g + u_g) \cdot
+\frac{(1-\nu_c)(1-\bar{p}_g)}{\nu_c + \bar{p}_g(1-\nu_c)},
+$$
+
+which is the closed-form NB denoising formula
+(@eq-denoising-expected-dropped-explicit). In other words, BNB denoising
+recovers NB denoising exactly in the NB limit, as expected.
+
+**Perfect capture** ($\nu_c = 1$). When all transcripts are captured,
+$p'(p_g) = 1$ for every $p_g$, so $f(p_g) = 0$ and
+$\langle d_g \mid u_g \rangle = 0$. The denoised count equals the
+observed count: $\langle m_g \mid u_g \rangle = u_g$. This is
+independent of the BNB parameters.
+
+**No-capture limit** ($\nu_c \to 0$). In this limit,
+$f(p_g) \to (1-p_g)/p_g$ (the NB mean-to-success ratio), and the
+denominator in @eq-bnb-denoise-p-posterior becomes $p_g^{r_g + u_g}$.
+The posterior of $p_g$ reduces to
+$\pi(p_g \mid u_g) \propto
+p_g^{2r_g + \alpha_g + u_g - 1}(1-p_g)^{u_g + \kappa_g - 1}$,
+which is a standard Beta distribution. In this edge case the integral
+is again available in closed form (via Beta function ratios), though
+this regime is not practically relevant for scRNA-seq.
+
+### Cross-gene correlations {#sec-bnb-denoise-correlations}
+
+The denoised counts of two genes $g$ and $g'$ in the same cell $c$ are
+generally correlated, even conditional on all model parameters, because
+they share the cell's capture probability $\nu_c$ and (in the standard
+model) the shared $p$ parameter. Under the BNB, an additional source of
+correlation arises: the genes share the same capture process, and the
+law of total covariance introduces coupling through the posterior of the
+latent mixing variable.
+
+The law of total covariance structure derived in
+@sec-denoising-correlations generalizes naturally. In particular, the
+outer-expectation term in the variance decomposition
+(@sec-denoising-variance-decomposition) acquires an additional layer of
+averaging over the BNB mixing variables, but the overall low-rank
+structure is preserved. For practical purposes, the **correlated
+denoising via posterior sampling** strategy from
+@sec-denoising-correlated-sampling carries through unchanged: draw a
+full set of parameters from the variational posterior, then for each
+cell and each gene independently perform the augmented BNB denoising
+(Steps 1--3 above). The shared parameter draws (especially $\nu_c$)
+induce the desired cross-gene correlations automatically.
+
 ## Mathematical summary {#sec-bnb-summary}
 
 We collect the key mathematical results for reference.
@@ -1043,3 +1450,19 @@ $${#eq-bnb-summary-prior}
 ($r_g$, $p_g$ independent) is recommended when using the BNB, as mean-coupled
 parameterizations can restrict the NB's dynamic range and produce mean
 miscalibration that $\kappa_g$ cannot remedy (@sec-bnb-parameterization-remark).
+
+**Denoising.** The posterior mean of the denoised count under the BNB
+is (@sec-bnb-denoising):
+
+$$
+\langle m_g \mid u_g \rangle
+= u_g + (r_g + u_g) \cdot
+\frac{\displaystyle\int_0^1 f(p)\;\tilde{\pi}(p \mid u_g)\,dp}
+{\displaystyle\int_0^1 \tilde{\pi}(p \mid u_g)\,dp},
+$${#eq-bnb-summary-denoising}
+
+where $f(p) = (1-\nu_c)(1-p) / [\nu_c + p(1-\nu_c)]$ and
+$\tilde{\pi}(p \mid u_g) \propto p^{r+\alpha-1}(1-p)^{u+\kappa-1} /
+[\nu_c + p(1-\nu_c)]^{r+u}$ is the unnormalized posterior of the
+latent mixing variable. This reduces to the NB closed-form formula when
+$\kappa_g \to \infty$.
