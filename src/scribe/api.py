@@ -250,6 +250,9 @@ def fit(
     neg_tau: float = 1.0,
     # Hierarchical prior for per-dataset mu_eta (capture scaling)
     mu_eta_prior: str = "none",
+    # Gene-specific overdispersion beyond the NB family
+    overdispersion: str = "none",
+    overdispersion_prior: str = "horseshoe",
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
     guide_rank: Optional[int] = None,
@@ -349,6 +352,18 @@ def fit(
         magnitude across genes.  Requires ``unconstrained=True`` and
         ``n_components >= 2``.  Accepted values: ``"none"``,
         ``"gaussian"``, ``"horseshoe"``, ``"neg"``.
+
+    overdispersion : str, default="none"
+        Gene-specific overdispersion model.  ``"none"`` uses the
+        standard Negative Binomial.  ``"bnb"`` uses the Beta Negative
+        Binomial, adding a per-gene concentration parameter that
+        allows heavier-than-NB tails.
+
+    overdispersion_prior : str, default="horseshoe"
+        Hierarchical prior for the BNB concentration parameter
+        (``kappa_g``).  Controls shrinkage toward the NB limit.
+        Only used when ``overdispersion`` is not ``"none"``.
+        Accepted values: ``"horseshoe"``, ``"neg"``.
 
     n_components : int, optional
         Number of mixture components for cell type discovery.
@@ -937,6 +952,8 @@ def fit(
             neg_a=neg_a,
             neg_tau=neg_tau,
             mu_eta_prior=mu_eta_prior,
+            overdispersion=overdispersion,
+            overdispersion_prior=overdispersion_prior,
             guide_rank=guide_rank,
             joint_params=joint_params,
             n_components=n_components,
