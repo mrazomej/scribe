@@ -101,6 +101,7 @@ class BiologicalSamplingMixin:
         r = self.posterior_samples["r"]
         p = self.posterior_samples["p"]
         mixing_weights = self.posterior_samples.get("mixing_weights", None)
+        bnb_concentration = self.posterior_samples.get("bnb_concentration")
 
         # Generate biological (denoised) count samples
         _, key_bio = random.split(rng_key)
@@ -110,6 +111,7 @@ class BiologicalSamplingMixin:
             n_cells=self.n_cells,
             rng_key=key_bio,
             mixing_weights=mixing_weights,
+            bnb_concentration=bnb_concentration,
         )
 
         if store_samples:
@@ -194,7 +196,10 @@ class BiologicalSamplingMixin:
 
         # For mixture models, also grab mixing_weights
         is_mixture = self.n_components is not None and self.n_components > 1
-        mixing_weights = map_estimates.get("mixing_weights") if is_mixture else None
+        mixing_weights = (
+            map_estimates.get("mixing_weights") if is_mixture else None
+        )
+        bnb_concentration = map_estimates.get("bnb_concentration")
 
         if verbose:
             model_desc = (
@@ -216,6 +221,7 @@ class BiologicalSamplingMixin:
             n_samples=n_samples,
             mixing_weights=mixing_weights,
             cell_batch_size=cell_batch_size,
+            bnb_concentration=bnb_concentration,
         )
 
         if verbose:

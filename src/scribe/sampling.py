@@ -26,6 +26,10 @@ therefore ``r * p / (1 - p)``.  This is the *complement* of the paper's
 from jax import random, vmap
 import jax.numpy as jnp
 import numpyro.distributions as dist
+
+from scribe.models.components.likelihoods.beta_negative_binomial import (
+    build_count_dist,
+)
 from numpyro.infer import Predictive
 from typing import Dict, Optional, Tuple, Union, Callable, List
 from numpyro.infer import SVI
@@ -296,6 +300,7 @@ def sample_biological_nb(
     n_samples: int = 1,
     mixing_weights: Optional[jnp.ndarray] = None,
     cell_batch_size: Optional[int] = None,
+    bnb_concentration: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
     """Sample from the base Negative Binomial, stripping technical noise.
 
@@ -415,6 +420,7 @@ def sample_biological_nb(
                 rng_key=key_i,
                 mixing_weights=mw_i,
                 cell_batch_size=cell_batch_size,
+                bnb_concentration=bnb_concentration,
             )
 
         # Prepare mixing_weights for vmap (None → dummy zeros that are
@@ -432,6 +438,7 @@ def sample_biological_nb(
                     rng_key=k,
                     mixing_weights=None,
                     cell_batch_size=cell_batch_size,
+                    bnb_concentration=bnb_concentration,
                 )
             )(keys, r, p, dummy_mw)
     else:
@@ -446,6 +453,7 @@ def sample_biological_nb(
                 rng_key=keys[i],
                 mixing_weights=mixing_weights,
                 cell_batch_size=cell_batch_size,
+                bnb_concentration=bnb_concentration,
             )
             all_samples.append(sample_i)
         # Stack along a new leading sample axis → (n_samples, n_cells, n_genes)
@@ -462,6 +470,7 @@ def _sample_biological_nb_single(
     rng_key: random.PRNGKey,
     mixing_weights: Optional[jnp.ndarray] = None,
     cell_batch_size: Optional[int] = None,
+    bnb_concentration: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
     """Sample one realisation of biological NB counts for all cells.
 
@@ -535,14 +544,16 @@ def _sample_biological_nb_single(
             else:
                 p_batch = p
 
-            nb = dist.NegativeBinomialProbs(r_batch, p_batch)
+            nb = build_count_dist(r_batch, p_batch, bnb_concentration)
             batch_counts = nb.sample(sample_key)  # (batch_n, n_genes)
         else:
             # ----------------------------------------------------------
             # Standard model: p is shared across all cells.
             # ----------------------------------------------------------
-            nb = dist.NegativeBinomialProbs(r, p)
-            batch_counts = nb.sample(batch_key, (batch_n,))  # (batch_n, n_genes)
+            nb = build_count_dist(r, p, bnb_concentration)
+            batch_counts = nb.sample(
+                batch_key, (batch_n,)
+            )  # (batch_n, n_genes)
 
         batch_results.append(batch_counts)
 
@@ -564,6 +575,7 @@ def sample_posterior_ppc(
     p_capture: Optional[jnp.ndarray] = None,
     mixing_weights: Optional[jnp.ndarray] = None,
     cell_batch_size: Optional[int] = None,
+    bnb_concentration: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
     """Sample from the full generative model using posterior parameters.
 
@@ -671,9 +683,7 @@ def sample_posterior_ppc(
         # so vmap sees concrete array inputs.
         gate_arr = gate if gate is not None else jnp.zeros(actual_n_samples)
         p_cap_arr = (
-            p_capture
-            if p_capture is not None
-            else jnp.zeros(actual_n_samples)
+            p_capture if p_capture is not None else jnp.zeros(actual_n_samples)
         )
         mw_arr = (
             mixing_weights
@@ -696,11 +706,10 @@ def sample_posterior_ppc(
                 p_capture=p_cap_i if _has_p_capture else None,
                 mixing_weights=mw_i if _is_mixture else None,
                 cell_batch_size=cell_batch_size,
+                bnb_concentration=bnb_concentration,
             )
 
-        return vmap(_sample_one)(
-            keys, r, p, gate_arr, p_cap_arr, mw_arr
-        )
+        return vmap(_sample_one)(keys, r, p, gate_arr, p_cap_arr, mw_arr)
     else:
         # MAP path: loop n_samples times
         keys = random.split(rng_key, n_samples)
@@ -715,6 +724,7 @@ def sample_posterior_ppc(
                 p_capture=p_capture,
                 mixing_weights=mixing_weights,
                 cell_batch_size=cell_batch_size,
+                bnb_concentration=bnb_concentration,
             )
             all_samples.append(sample_i)
         return jnp.stack(all_samples, axis=0)
@@ -729,6 +739,7 @@ def _sample_posterior_ppc_single(
     p_capture: Optional[jnp.ndarray] = None,
     mixing_weights: Optional[jnp.ndarray] = None,
     cell_batch_size: Optional[int] = None,
+    bnb_concentration: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
     """Sample one PPC realisation from the full generative model.
 
@@ -796,9 +807,7 @@ def _sample_posterior_ppc_single(
             r_batch = r[components]
 
             # Gather per-cell p
-            p_is_component_specific = (
-                p.ndim >= 1 and p.shape[0] == n_components
-            )
+            p_is_component_specific = p.ndim >= 1 and p.shape[0] == n_components
             if p_is_component_specific:
                 p_batch = p[components]
                 if p_batch.ndim == 1:
@@ -818,7 +827,7 @@ def _sample_posterior_ppc_single(
             # VCP: compute p_effective
             if has_vcp:
                 p_cap = p_capture[start:end]  # (batch_n,)
-                p_cap_exp = p_cap[:, None]    # (batch_n, 1)
+                p_cap_exp = p_cap[:, None]  # (batch_n, 1)
                 p_effective = (
                     p_batch * p_cap_exp / (1 - p_batch * (1 - p_cap_exp))
                 )
@@ -826,13 +835,11 @@ def _sample_posterior_ppc_single(
                 p_effective = p_batch
 
             # NB distribution
-            nb = dist.NegativeBinomialProbs(r_batch, p_effective)
+            nb = build_count_dist(r_batch, p_effective, bnb_concentration)
 
             # Apply zero-inflation if present
             if gate_batch is not None:
-                sample_dist = dist.ZeroInflatedDistribution(
-                    nb, gate=gate_batch
-                )
+                sample_dist = dist.ZeroInflatedDistribution(nb, gate=gate_batch)
             else:
                 sample_dist = nb
 
@@ -844,21 +851,18 @@ def _sample_posterior_ppc_single(
             # -------------------------------------------------------
             # VCP: compute effective p per cell in this batch
             if has_vcp:
-                p_cap = p_capture[start:end]       # (batch_n,)
-                p_cap_reshaped = p_cap[:, None]    # (batch_n, 1)
+                p_cap = p_capture[start:end]  # (batch_n,)
+                p_cap_reshaped = p_cap[:, None]  # (batch_n, 1)
                 p_effective = (
-                    p * p_cap_reshaped
-                    / (1 - p * (1 - p_cap_reshaped))
+                    p * p_cap_reshaped / (1 - p * (1 - p_cap_reshaped))
                 )
             else:
                 p_effective = p
 
-            nb = dist.NegativeBinomialProbs(r, p_effective)
+            nb = build_count_dist(r, p_effective, bnb_concentration)
 
             if has_gate:
-                sample_dist = dist.ZeroInflatedDistribution(
-                    nb, gate=gate
-                )
+                sample_dist = dist.ZeroInflatedDistribution(nb, gate=gate)
             else:
                 sample_dist = nb
 
@@ -867,9 +871,7 @@ def _sample_posterior_ppc_single(
             if has_vcp:
                 batch_counts = sample_dist.sample(batch_key)
             else:
-                batch_counts = sample_dist.sample(
-                    batch_key, (batch_n,)
-                )
+                batch_counts = sample_dist.sample(batch_key, (batch_n,))
 
         batch_results.append(batch_counts)
 
@@ -944,6 +946,7 @@ def denoise_counts(
     mixing_weights: Optional[jnp.ndarray] = None,
     component_assignment: Optional[jnp.ndarray] = None,
     cell_batch_size: Optional[int] = None,
+    bnb_concentration: Optional[jnp.ndarray] = None,
 ) -> Union[jnp.ndarray, Dict[str, jnp.ndarray]]:
     """Denoise observed counts using the Bayesian posterior of true transcripts.
 
@@ -1095,6 +1098,7 @@ def denoise_counts(
             mixing_weights=mixing_weights,
             component_assignment=component_assignment,
             cell_batch_size=cell_batch_size,
+            bnb_concentration=bnb_concentration,
         )
 
     # Multi-sample path: iterate over posterior draws
@@ -1126,6 +1130,12 @@ def denoise_counts(
             if mixing_weights is not None and mixing_weights.ndim == 2
             else mixing_weights
         )
+        bnb_s = (
+            bnb_concentration[s]
+            if bnb_concentration is not None
+            and bnb_concentration.ndim > (1 if not is_mixture else 2)
+            else bnb_concentration
+        )
 
         out = _denoise_single(
             counts=counts,
@@ -1139,6 +1149,7 @@ def denoise_counts(
             mixing_weights=mw_s,
             component_assignment=component_assignment,
             cell_batch_size=cell_batch_size,
+            bnb_concentration=bnb_s,
         )
 
         if return_variance:
@@ -1171,6 +1182,7 @@ def _denoise_single(
     mixing_weights: Optional[jnp.ndarray],
     component_assignment: Optional[jnp.ndarray],
     cell_batch_size: Optional[int],
+    bnb_concentration: Optional[jnp.ndarray] = None,
 ) -> Union[jnp.ndarray, Dict[str, jnp.ndarray]]:
     """Dispatch denoising for a single set of parameters.
 
@@ -1229,20 +1241,45 @@ def _denoise_single(
             else gate
         )
         return _denoise_standard(
-            counts, r_cell, p_cell, p_capture, g_cell,
-            method, rng_key, return_variance, cell_batch_size,
+            counts,
+            r_cell,
+            p_cell,
+            p_capture,
+            g_cell,
+            method,
+            rng_key,
+            return_variance,
+            cell_batch_size,
+            bnb_concentration=bnb_concentration,
         )
 
     if is_mixture and component_assignment is None:
         return _denoise_mixture_marginal(
-            counts, r, p, p_capture, gate, method, rng_key,
-            return_variance, mixing_weights, cell_batch_size,
+            counts,
+            r,
+            p,
+            p_capture,
+            gate,
+            method,
+            rng_key,
+            return_variance,
+            mixing_weights,
+            cell_batch_size,
+            bnb_concentration=bnb_concentration,
         )
 
     # Standard (non-mixture) model
     return _denoise_standard(
-        counts, r, p, p_capture, gate,
-        method, rng_key, return_variance, cell_batch_size,
+        counts,
+        r,
+        p,
+        p_capture,
+        gate,
+        method,
+        rng_key,
+        return_variance,
+        cell_batch_size,
+        bnb_concentration=bnb_concentration,
     )
 
 
@@ -1259,6 +1296,7 @@ def _denoise_standard(
     rng_key: Optional[random.PRNGKey],
     return_variance: bool,
     cell_batch_size: Optional[int],
+    bnb_concentration: Optional[jnp.ndarray] = None,
 ) -> Union[jnp.ndarray, Dict[str, jnp.ndarray]]:
     """Denoise counts for a standard (non-mixture) model, single param set.
 
@@ -1316,9 +1354,7 @@ def _denoise_standard(
         counts_b = counts[start:end]
 
         # Slice cell-specific params
-        pc_b = (
-            p_capture[start:end] if p_capture is not None else None
-        )
+        pc_b = p_capture[start:end] if p_capture is not None else None
 
         # r may be (n_genes,) or (n_cells, n_genes) [component-gathered]
         r_b = r[start:end] if r.ndim == 2 else r
@@ -1328,14 +1364,17 @@ def _denoise_standard(
             gate[start:end] if gate is not None and gate.ndim == 2 else gate
         )
 
+        # bnb_concentration may be (n_genes,) or (n_cells, n_genes)
+        bnb_b = (
+            bnb_concentration[start:end]
+            if bnb_concentration is not None and bnb_concentration.ndim == 2
+            else bnb_concentration
+        )
+
         # After the reshape in _denoise_single, per-cell p is always 2D:
         # (n_cells, 1) or (n_cells, n_genes).  Gene-specific p is 1D
         # (n_genes,) and scalar p is 0D — neither should be sliced.
-        p_b = (
-            p[start:end]
-            if p.ndim >= 2 and p.shape[0] == n_cells
-            else p
-        )
+        p_b = p[start:end] if p.ndim >= 2 and p.shape[0] == n_cells else p
 
         if needs_rng:
             rng_key, batch_key = random.split(rng_key)
@@ -1343,7 +1382,14 @@ def _denoise_standard(
             batch_key = None
 
         d, v = _denoise_batch(
-            counts_b, r_b, p_b, pc_b, gate_b, method, batch_key,
+            counts_b,
+            r_b,
+            p_b,
+            pc_b,
+            gate_b,
+            method,
+            batch_key,
+            bnb_concentration=bnb_b,
         )
         denoised_parts.append(d)
         if return_variance:
@@ -1367,6 +1413,7 @@ def _denoise_batch(
     gate: Optional[jnp.ndarray],
     method: Union[str, Tuple[str, str]],
     rng_key: Optional[random.PRNGKey],
+    bnb_concentration: Optional[jnp.ndarray] = None,
 ) -> tuple:
     """Denoise a single batch of cells (no further splitting).
 
@@ -1443,8 +1490,8 @@ def _denoise_batch(
         # general_method == "sample"
         alpha = r + counts
         key_nb, rng_key = random.split(rng_key)
-        d_sample = dist.NegativeBinomialProbs(
-            total_count=alpha, probs=probs_post
+        d_sample = build_count_dist(
+            alpha, probs_post, bnb_concentration
         ).sample(key_nb)
         denoised_nb = counts + d_sample
 
@@ -1472,9 +1519,9 @@ def _denoise_batch(
             )
         else:
             key_gate, rng_key = random.split(rng_key)
-            gate_val = dist.NegativeBinomialProbs(
-                total_count=r, probs=p_eff
-            ).sample(key_gate)
+            gate_val = build_count_dist(r, p_eff, bnb_concentration).sample(
+                key_gate
+            )
 
         # NB pathway value at u=0: the posterior for unobserved mRNA
         # given that the NB component produced the zero.  For VCP models
@@ -1487,8 +1534,7 @@ def _denoise_batch(
         elif zi_zero_method == "mode":
             alpha_z = r + counts
             d_mode_z = jnp.floor(
-                jnp.maximum(alpha_z - 1.0, 0.0)
-                * probs_post / one_minus_pp
+                jnp.maximum(alpha_z - 1.0, 0.0) * probs_post / one_minus_pp
             )
             nb_zero_val = counts + d_mode_z
         else:
@@ -1497,8 +1543,8 @@ def _denoise_batch(
             # lost to capture.  Without VCP probs_post=0 → d=0.
             alpha_z = r + counts
             key_nb_z, rng_key = random.split(rng_key)
-            d_sample_z = dist.NegativeBinomialProbs(
-                total_count=alpha_z, probs=probs_post
+            d_sample_z = build_count_dist(
+                alpha_z, probs_post, bnb_concentration
             ).sample(key_nb_z)
             nb_zero_val = counts + d_sample_z
 
@@ -1514,9 +1560,7 @@ def _denoise_batch(
             # NB posterior (accounts for mRNA lost to capture in VCP;
             # collapses to 0 without VCP since probs_post=0).
             key_bern, rng_key = random.split(rng_key)
-            chose_gate = (
-                dist.Bernoulli(probs=w).sample(key_bern).astype(bool)
-            )
+            chose_gate = dist.Bernoulli(probs=w).sample(key_bern).astype(bool)
             zinb_zero = jnp.where(chose_gate, gate_val, nb_zero_val)
 
         denoised = jnp.where(is_zero, zinb_zero, denoised_nb)
@@ -1584,7 +1628,7 @@ def _compute_gate_weight(
     # p_hat_paper = (1 - canonical_p) / one_minus_probs_post
     # P_NB(u=0) = p_hat_paper^r  in the paper convention
     p_hat_paper = (1.0 - p) / one_minus_probs_post
-    nb_zero_prob = p_hat_paper ** r
+    nb_zero_prob = p_hat_paper**r
 
     w = gate / (gate + (1.0 - gate) * nb_zero_prob)
     return w
@@ -1604,6 +1648,7 @@ def _denoise_mixture_marginal(
     return_variance: bool,
     mixing_weights: jnp.ndarray,
     cell_batch_size: Optional[int],
+    bnb_concentration: Optional[jnp.ndarray] = None,
 ) -> Union[jnp.ndarray, Dict[str, jnp.ndarray]]:
     """Denoise by marginalising over mixture components.
 
@@ -1666,12 +1711,18 @@ def _denoise_mixture_marginal(
         # Disambiguate per-cell p from gene-specific p (see _denoise_single)
         if p_cell.ndim == 1 and p_cell.shape[0] == counts.shape[0]:
             p_cell = p_cell[:, None]
-        g_cell = (
-            gate[comp] if gate is not None and gate.ndim == 2 else gate
-        )
+        g_cell = gate[comp] if gate is not None and gate.ndim == 2 else gate
         return _denoise_standard(
-            counts, r_cell, p_cell, p_capture, g_cell,
-            method, key_rest, return_variance, cell_batch_size,
+            counts,
+            r_cell,
+            p_cell,
+            p_capture,
+            g_cell,
+            method,
+            key_rest,
+            return_variance,
+            cell_batch_size,
+            bnb_concentration=bnb_concentration,
         )
 
     # Marginalise over components (mean or mode for the general path).
@@ -1684,9 +1735,7 @@ def _denoise_mixture_marginal(
     for k in range(n_components):
         r_k = r[k]
         p_k = p[k] if p_is_comp else p
-        g_k = (
-            gate[k] if gate is not None and gate.ndim == 2 else gate
-        )
+        g_k = gate[k] if gate is not None and gate.ndim == 2 else gate
 
         # Split rng_key per component if the zi_zero path needs sampling
         if needs_rng:
@@ -1695,8 +1744,16 @@ def _denoise_mixture_marginal(
             comp_key = None
 
         out_k = _denoise_standard(
-            counts, r_k, p_k, p_capture, g_k,
-            method, comp_key, True, cell_batch_size,
+            counts,
+            r_k,
+            p_k,
+            p_capture,
+            g_k,
+            method,
+            comp_key,
+            True,
+            cell_batch_size,
+            bnb_concentration=bnb_concentration,
         )
 
         d_k = out_k["denoised_counts"]

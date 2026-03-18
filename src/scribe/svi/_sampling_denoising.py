@@ -63,6 +63,7 @@ def _denoise_per_dataset(
     return_variance: bool,
     mixing_weights: Optional[jnp.ndarray],
     cell_batch_size: Optional[int],
+    bnb_concentration: Optional[jnp.ndarray] = None,
 ) -> "Union[jnp.ndarray, Dict[str, jnp.ndarray]]":
     """Denoise a multi-dataset model by processing each dataset separately.
 
@@ -112,7 +113,8 @@ def _denoise_per_dataset(
     denoised_out = jnp.empty((n_cells, n_genes), dtype=counts.dtype)
     variance_out = (
         jnp.empty((n_cells, n_genes), dtype=jnp.float32)
-        if return_variance else None
+        if return_variance
+        else None
     )
 
     for d in range(n_datasets):
@@ -126,6 +128,7 @@ def _denoise_per_dataset(
         p_d = _slice_param_for_dataset(p, d, n_datasets)
         gate_d = _slice_param_for_dataset(gate, d, n_datasets)
         pc_d = p_capture[idx] if p_capture is not None else None
+        bnb_d = _slice_param_for_dataset(bnb_concentration, d, n_datasets)
 
         if rng_key is not None:
             rng_key, d_key = random.split(rng_key)
@@ -143,12 +146,11 @@ def _denoise_per_dataset(
             return_variance=return_variance,
             mixing_weights=mixing_weights,
             cell_batch_size=cell_batch_size,
+            bnb_concentration=bnb_d,
         )
 
         if return_variance:
-            denoised_out = denoised_out.at[idx].set(
-                result_d["denoised_counts"]
-            )
+            denoised_out = denoised_out.at[idx].set(result_d["denoised_counts"])
             variance_out = variance_out.at[idx].set(result_d["variance"])
         else:
             denoised_out = denoised_out.at[idx].set(result_d)
@@ -230,7 +232,9 @@ class DenoisingSamplingMixin:
             print("Getting MAP estimates for denoising...")
 
         map_estimates = self.get_map(
-            use_mean=use_mean, canonical=True, verbose=False,
+            use_mean=use_mean,
+            canonical=True,
+            verbose=False,
             counts=counts,
         )
 
@@ -248,6 +252,7 @@ class DenoisingSamplingMixin:
         mixing_weights = (
             map_estimates.get("mixing_weights") if is_mixture else None
         )
+        bnb_concentration = map_estimates.get("bnb_concentration")
 
         if verbose:
             model_desc = (
@@ -286,6 +291,7 @@ class DenoisingSamplingMixin:
                 return_variance=return_variance,
                 mixing_weights=mixing_weights,
                 cell_batch_size=cell_batch_size,
+                bnb_concentration=bnb_concentration,
             )
         else:
             result = denoise_counts(
@@ -299,6 +305,7 @@ class DenoisingSamplingMixin:
                 return_variance=return_variance,
                 mixing_weights=mixing_weights,
                 cell_batch_size=cell_batch_size,
+                bnb_concentration=bnb_concentration,
             )
 
         if verbose:
@@ -395,10 +402,9 @@ class DenoisingSamplingMixin:
         gate = self.posterior_samples.get("gate")
         is_mixture = self.n_components is not None and self.n_components > 1
         mixing_weights = (
-            self.posterior_samples.get("mixing_weights")
-            if is_mixture
-            else None
+            self.posterior_samples.get("mixing_weights") if is_mixture else None
         )
+        bnb_concentration = self.posterior_samples.get("bnb_concentration")
 
         if verbose:
             extras = []
@@ -425,6 +431,7 @@ class DenoisingSamplingMixin:
             return_variance=return_variance,
             mixing_weights=mixing_weights,
             cell_batch_size=cell_batch_size,
+            bnb_concentration=bnb_concentration,
         )
 
         if verbose:
