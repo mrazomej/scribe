@@ -82,7 +82,7 @@ $$
 \pi(k \mid r, \alpha, \beta)
 = \int_0^1
 \underbrace{
-\binom{r + k - 1}{k} p^r (1 - p)^k
+\binom{r + k - 1}{k} (1-p)^r p^k
 }_{\text{NB}(k \mid r, p)}
 \;
 \underbrace{
@@ -91,19 +91,24 @@ $$
 \, dp.
 $${#eq-bnb-integral}
 
+Note that this uses the NB parameterization where $p$ acts as the
+transcript-observation probability and $\langle X \mid p \rangle = rp/(1-p)$,
+consistent with the NumPyro convention and the moments below; the
+paper's standard NB has the roles of $p$ and $1-p$ interchanged.
+
 Collecting powers of $p$ and $(1-p)$:
 
 $$
 = \frac{1}{B(\alpha, \beta)}
 \binom{r+k-1}{k}
-\int_0^1 p^{\alpha + r - 1}(1-p)^{\beta + k - 1}\, dp.
+\int_0^1 p^{\alpha + k - 1}(1-p)^{\beta + r - 1}\, dp.
 $${#eq-bnb-integral-collected}
 
 The integral is recognized as a Beta function,
 
 $$
-\int_0^1 p^{\alpha + r - 1}(1-p)^{\beta + k - 1}\, dp
-= B(\alpha + r,\; \beta + k),
+\int_0^1 p^{\alpha + k - 1}(1-p)^{\beta + r - 1}\, dp
+= B(\alpha + k,\; \beta + r),
 $${#eq-bnb-beta-integral}
 
 yielding @eq-bnb-pmf after writing the binomial coefficient in terms
@@ -114,7 +119,7 @@ of Gamma functions.
 The BNB has the following moments (when they exist):
 
 $$
-\mathbb{E}[X] = \frac{r\alpha}{\beta - 1},
+\langle X \rangle = \frac{r\alpha}{\beta - 1},
 \qquad \beta > 1,
 $${#eq-bnb-mean}
 
@@ -171,7 +176,7 @@ The normalization and compositional analysis framework developed in
 factoring as (gene-specific term) $\times$ (cell-specific term):
 
 $$
-\mathbb{E}[u_{gc}] =
+\langle u_{gc} \rangle =
 \underbrace{
 \frac{r_g(1 - p_g)}{p_g}
 }_{\text{gene-specific}}
@@ -191,7 +196,7 @@ mean exactly.
 The NB mean in the effective model is
 
 $$
-\mathbb{E}[u_{gc}]_{\text{NB}}
+\langle u_{gc} \rangle_{\text{NB}}
 = \frac{r_g(1 - \hat{p}_{gc})}{\hat{p}_{gc}},
 $${#eq-bnb-nb-mean-effective}
 
@@ -225,7 +230,7 @@ is $\kappa_g > 2$.
 Substituting @eq-bnb-alpha-from-kappa into the BNB mean:
 
 $$
-\mathbb{E}[u_{gc}]_{\text{BNB}}
+\langle u_{gc} \rangle_{\text{BNB}}
 = \frac{r_g \, \alpha_{gc}}{\kappa_g - 1}
 = \frac{r_g(1 - \hat{p}_{gc})}{\hat{p}_{gc}}
 = \frac{r_g(1 - p_g)}{p_g} \cdot \nu_c,
@@ -369,22 +374,32 @@ expression profiles.
 ## Non-identifiability and its resolution {#sec-bnb-identifiability}
 
 The BNB distribution has a known non-identifiability: the PMF is
-invariant under the exchange $r \leftrightarrow \beta$. This can be
-seen directly from @eq-bnb-pmf by noting that $B(\alpha + k, \beta + r)
-= B(\alpha + k, r + \beta)$ is symmetric in its arguments with respect
-to the interchange of terms that involve $r$ and $\beta$ in the
-combinatorial prefactor.
+invariant under the exchange $r \leftrightarrow \alpha$. This can be
+seen by expanding @eq-bnb-pmf in terms of Gamma functions,
+
+$$
+\pi(k \mid r, \alpha, \beta) \propto
+\frac{\Gamma(r+k)\,\Gamma(\alpha+k)\,\Gamma(\beta+r)\,\Gamma(\alpha+\beta)}
+{\Gamma(r)\,\Gamma(\alpha)\,\Gamma(\alpha+\beta+r+k)},
+$$
+
+which is manifestly symmetric under $r \leftrightarrow \alpha$: the
+factors $\Gamma(r+k)$ and $\Gamma(\alpha+k)$ swap in the numerator,
+$\Gamma(\beta+r)$ and $\Gamma(\alpha+\beta)$ swap, and $\Gamma(r)$ and
+$\Gamma(\alpha)$ swap in the denominator, leaving the expression
+unchanged.
 
 In our model, this symmetry is **structurally broken** because $r_g$ is
 not a free parameter of the BNB. It is constrained by the gene
 expression model: $r_g$ is determined by the mean expression $\mu_g$
 and the NB parameterization (e.g., $r_g = \mu_g \cdot \phi$ in the
 shared-$p$ case, or $r_g$ is directly inferred as part of the NB
-model). The BNB's $\kappa_g$, on the other hand, is a new parameter
-that governs only the excess dispersion. Since $r_g$ and $\kappa_g$
-enter the model through fundamentally different pathways and have
-different prior structures, the exchange symmetry does not pose a
-practical identifiability problem.
+model). The BNB's $\alpha_{gc}$, on the other hand, is fully determined
+by $\kappa_g$ and $\hat{p}_{gc}$ via @eq-bnb-alpha-from-kappa and is
+not independently free. Since $r_g$ and $\alpha_{gc}$ enter the model
+through fundamentally different pathways and have different prior
+structures, the exchange symmetry does not pose a practical
+identifiability problem.
 
 ## Hierarchical prior on $\kappa_g$ {#sec-bnb-hierarchical-prior}
 
@@ -589,9 +604,9 @@ without variable capture).
 **Mean preservation:**
 
 $$
-\mathbb{E}[u_{gc}]_{\text{BNB}} =
+\langle u_{gc} \rangle_{\text{BNB}} =
 \frac{r_g(1 - \hat{p}_{gc})}{\hat{p}_{gc}}
-= \mathbb{E}[u_{gc}]_{\text{NB}}.
+= \langle u_{gc} \rangle_{\text{NB}}.
 $${#eq-bnb-summary-mean}
 
 **Variance inflation:**
