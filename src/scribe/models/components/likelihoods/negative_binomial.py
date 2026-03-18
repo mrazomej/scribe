@@ -1,7 +1,8 @@
 """Standard Negative Binomial likelihood for count data.
 
 This module provides the basic Negative Binomial likelihood without
-zero-inflation or variable capture probability.
+zero-inflation or variable capture probability.  BNB support is
+provided by the subclass in ``beta_negative_binomial.py``.
 """
 
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
 # in the NB log-probability during SVI training.  Mirrors the p_floor
 # default used in post-hoc log-likelihood evaluation (log_likelihood.py).
 _P_EPS = 1e-6
+
 
 # ==============================================================================
 # Negative Binomial Likelihood
@@ -57,6 +59,35 @@ class NegativeBinomialLikelihood(Likelihood):
     >>> builder.with_likelihood(likelihood)
     """
 
+    # ------------------------------------------------------------------
+    # Hook: subclasses override to swap the base count distribution.
+    # ------------------------------------------------------------------
+
+    def _make_count_dist(
+        self, r: jnp.ndarray, p: jnp.ndarray
+    ) -> dist.Distribution:
+        """Create the base count distribution for observed UMI counts.
+
+        Override in subclasses (e.g. ``BetaNegativeBinomialLikelihood``)
+        to replace the NB with a different distribution while keeping
+        all plate / batching / mixture logic unchanged.
+
+        Parameters
+        ----------
+        r : jnp.ndarray
+            NB dispersion parameter (>0).
+        p : jnp.ndarray
+            Failure probability, already clamped to (eps, 1-eps).
+
+        Returns
+        -------
+        dist.Distribution
+            A distribution over non-negative integers.
+        """
+        return dist.NegativeBinomialProbs(r, p)
+
+    # ------------------------------------------------------------------
+
     def _build_dist(
         self, param_values: Dict[str, jnp.ndarray]
     ) -> dist.Distribution:
@@ -84,20 +115,17 @@ class NegativeBinomialLikelihood(Likelihood):
                 p = p[None, :]
 
         if is_mixture:
-            # Mixture model: expect mixing_weights giving Categorical mixture
-            # probabilities.
             mixing_weights = param_values["mixing_weights"]
             mixing_dist = dist.Categorical(probs=mixing_weights)
 
             # Broadcast p to match r shape (n_components, n_genes).
-            # Handles scalar, gene-specific, and mixture-specific p.
             p = broadcast_param_for_mixture(p, r)
 
-            base_dist_component = dist.NegativeBinomialProbs(r, p).to_event(1)
+            base_dist_component = self._make_count_dist(r, p).to_event(1)
             return dist.MixtureSameFamily(mixing_dist, base_dist_component)
 
-        # Standard (non-mixture) Negative Binomial: return as event of size 1.
-        return dist.NegativeBinomialProbs(r, p).to_event(1)
+        # Standard (non-mixture) path
+        return self._make_count_dist(r, p).to_event(1)
 
     # --------------------------------------------------------------------------
 
@@ -137,10 +165,9 @@ class NegativeBinomialLikelihood(Likelihood):
         mixing_dist = dist.Categorical(probs=cell_mixing)
 
         # Broadcast p to match r shape (n_components, n_genes).
-        # Handles scalar, gene-specific, and mixture-specific p.
         p = broadcast_param_for_mixture(p, r)
 
-        base_dist_component = dist.NegativeBinomialProbs(r, p).to_event(1)
+        base_dist_component = self._make_count_dist(r, p).to_event(1)
         return dist.MixtureSameFamily(mixing_dist, base_dist_component)
 
     # --------------------------------------------------------------------------

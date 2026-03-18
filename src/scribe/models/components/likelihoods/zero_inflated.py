@@ -2,7 +2,8 @@
 
 This module provides the ZINB likelihood which models both biological
 zeros (from the NB distribution) and structural/technical zeros
-(from the zero-inflation component).
+(from the zero-inflation component).  BNB support is provided by the
+subclass in ``beta_negative_binomial.py``.
 """
 
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional
@@ -58,6 +59,35 @@ class ZeroInflatedNBLikelihood(Likelihood):
     >>> builder.with_likelihood(likelihood)
     """
 
+    # ------------------------------------------------------------------
+    # Hook: subclasses override to swap the base count distribution.
+    # ------------------------------------------------------------------
+
+    def _make_count_dist(
+        self, r: jnp.ndarray, p: jnp.ndarray
+    ) -> dist.Distribution:
+        """Create the base count distribution (before zero-inflation wrap).
+
+        Override in subclasses (e.g. ``ZeroInflatedBNBLikelihood``) to
+        replace the NB with a different distribution while keeping
+        all ZI / plate / mixture logic unchanged.
+
+        Parameters
+        ----------
+        r : jnp.ndarray
+            NB dispersion parameter (>0).
+        p : jnp.ndarray
+            Failure probability, already clamped to (eps, 1-eps).
+
+        Returns
+        -------
+        dist.Distribution
+            A distribution over non-negative integers.
+        """
+        return dist.NegativeBinomialProbs(r, p)
+
+    # ------------------------------------------------------------------
+
     def _build_dist(
         self, param_values: Dict[str, jnp.ndarray]
     ) -> dist.Distribution:
@@ -85,9 +115,6 @@ class ZeroInflatedNBLikelihood(Likelihood):
                     gate = gate[None, :]
 
         if is_mixture:
-            # ================================================================
-            # Mixture model: use MixtureSameFamily
-            # ================================================================
             mixing_weights = param_values["mixing_weights"]
             mixing_dist = dist.Categorical(probs=mixing_weights)
 
@@ -95,13 +122,13 @@ class ZeroInflatedNBLikelihood(Likelihood):
             p = broadcast_param_for_mixture(p, r)
             gate = broadcast_param_for_mixture(gate, r)
 
-            base_nb = dist.NegativeBinomialProbs(r, p)
+            base_nb = self._make_count_dist(r, p)
             zinb_base = dist.ZeroInflatedDistribution(
                 base_nb, gate=gate
             ).to_event(1)
             return dist.MixtureSameFamily(mixing_dist, zinb_base)
 
-        base_nb = dist.NegativeBinomialProbs(r, p)
+        base_nb = self._make_count_dist(r, p)
         return dist.ZeroInflatedDistribution(base_nb, gate=gate).to_event(1)
 
     # --------------------------------------------------------------------------
@@ -142,7 +169,7 @@ class ZeroInflatedNBLikelihood(Likelihood):
         p = broadcast_param_for_mixture(p, r)
         gate = broadcast_param_for_mixture(gate, r)
 
-        base_nb = dist.NegativeBinomialProbs(r, p)
+        base_nb = self._make_count_dist(r, p)
         zinb_base = dist.ZeroInflatedDistribution(base_nb, gate=gate).to_event(
             1
         )
