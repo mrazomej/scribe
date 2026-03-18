@@ -38,6 +38,12 @@ from .divergences import (
     hellinger,
 )
 
+# Quadrature
+from .quadrature import (
+    gauss_legendre_integrate,
+    gauss_legendre_nodes_weights,
+)
+
 # Mode patches
 from .patches import apply_distribution_mode_patches
 
@@ -66,6 +72,9 @@ __all__ = [
     "jensen_shannon",
     "sq_hellinger",
     "hellinger",
+    # Quadrature
+    "gauss_legendre_integrate",
+    "gauss_legendre_nodes_weights",
     # Patches
     "apply_distribution_mode_patches",
 ]
