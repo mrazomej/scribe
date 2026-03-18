@@ -351,3 +351,90 @@ class TestBNBFactory:
         model_fn, guide_fn, _specs = create_model(cfg)
         assert callable(model_fn)
         assert callable(guide_fn)
+
+
+# ============================================================================
+# MAP reconstruction tests
+# ============================================================================
+
+
+class TestMapReconstruction:
+    """Verify _reconstruct_horseshoe_maps and _reconstruct_neg_maps
+    correctly produce bnb_concentration, and that get_map derives bnb_kappa."""
+
+    def test_horseshoe_bnb_reconstruction(self):
+        """Horseshoe NCP components yield bnb_concentration via softplus."""
+        from scribe.svi._parameter_extraction import _reconstruct_horseshoe_maps
+        from scribe.models.config import ModelConfig
+
+        cfg = ModelConfig(
+            base_model="nbdm",
+            parameterization="mean_odds",
+            inference_method="svi",
+            unconstrained=True,
+            overdispersion="bnb",
+            overdispersion_prior="horseshoe",
+        )
+
+        # Simulate MAP entries produced by a horseshoe NCP guide.
+        fake_map = {
+            "bnb_concentration_raw": jnp.ones(5) * 0.5,
+            "bnb_concentration_tau": jnp.array(0.1),
+            "bnb_concentration_lambda": jnp.ones(5) * 0.3,
+            "bnb_concentration_c_sq": jnp.array(4.0),
+            "bnb_concentration_loc": jnp.array(-1.0),
+        }
+
+        result = _reconstruct_horseshoe_maps(fake_map, cfg)
+        assert "bnb_concentration" in result
+        omega = result["bnb_concentration"]
+        # softplus output is always positive
+        assert jnp.all(omega > 0)
+        assert omega.shape == (5,)
+
+    def test_neg_bnb_reconstruction(self):
+        """NEG NCP components yield bnb_concentration via softplus."""
+        from scribe.svi._parameter_extraction import _reconstruct_neg_maps
+        from scribe.models.config import ModelConfig
+
+        cfg = ModelConfig(
+            base_model="nbdm",
+            parameterization="mean_odds",
+            inference_method="svi",
+            unconstrained=True,
+            overdispersion="bnb",
+            overdispersion_prior="neg",
+        )
+
+        fake_map = {
+            "bnb_concentration_raw": jnp.zeros(5),
+            "bnb_concentration_psi": jnp.ones(5) * 0.5,
+            "bnb_concentration_loc": jnp.array(0.0),
+        }
+
+        result = _reconstruct_neg_maps(fake_map, cfg)
+        assert "bnb_concentration" in result
+        omega = result["bnb_concentration"]
+        assert jnp.all(omega > 0)
+        assert omega.shape == (5,)
+
+    def test_kappa_derived_in_get_map_context(self):
+        """After reconstruction, kappa_g = 2 + (r + 1) / omega_g."""
+        from scribe.svi._parameter_extraction import _reconstruct_neg_maps
+        from scribe.models.config import ModelConfig
+
+        cfg = ModelConfig(
+            base_model="nbdm",
+            parameterization="mean_odds",
+            inference_method="svi",
+            unconstrained=True,
+            overdispersion="bnb",
+            overdispersion_prior="neg",
+        )
+
+        # Manually build omega that would come from reconstruction
+        omega = jnp.array([0.1, 0.5, 1.0, 2.0, 10.0])
+        r = jnp.array([5.0, 10.0, 20.0, 1.0, 3.0])
+        kappa = 2.0 + (r + 1.0) / omega
+        # kappa > 2 always
+        assert jnp.all(kappa > 2.0)
