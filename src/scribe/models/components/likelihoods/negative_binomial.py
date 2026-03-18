@@ -115,10 +115,13 @@ class NegativeBinomialLikelihood(Likelihood):
                 p = p[None, :]
 
         if is_mixture:
+            # Mixture model: expect mixing_weights giving Categorical mixture
+            # probabilities.
             mixing_weights = param_values["mixing_weights"]
             mixing_dist = dist.Categorical(probs=mixing_weights)
 
             # Broadcast p to match r shape (n_components, n_genes).
+            # Handles scalar, gene-specific, and mixture-specific p.
             p = broadcast_param_for_mixture(p, r)
 
             base_dist_component = self._make_count_dist(r, p).to_event(1)
@@ -165,6 +168,7 @@ class NegativeBinomialLikelihood(Likelihood):
         mixing_dist = dist.Categorical(probs=cell_mixing)
 
         # Broadcast p to match r shape (n_components, n_genes).
+        # Handles scalar, gene-specific, and mixture-specific p.
         p = broadcast_param_for_mixture(p, r)
 
         base_dist_component = self._make_count_dist(r, p).to_event(1)

@@ -780,6 +780,9 @@ class ZINBWithVCPLikelihood(Likelihood):
 
                 # Scalar-per-dataset phi becomes (n_cells,) after indexing;
                 # expand to (n_cells, 1) so it broadcasts with capture and r.
+                # Guard with use_dataset_indexing and a cell-axis size check so
+                # gene-specific phi (n_genes,) is left alone. Only per-cell
+                # vectors (n_cells,) should be expanded.
                 if (
                     phi.ndim == 1
                     and not is_mixture
@@ -837,6 +840,9 @@ class ZINBWithVCPLikelihood(Likelihood):
 
                 # Scalar-per-dataset p becomes (n_cells,) after indexing;
                 # expand to (n_cells, 1) so it broadcasts with capture and r.
+                # Guard with use_dataset_indexing and a cell-axis size check so
+                # gene-specific p (n_genes,) is left alone. Only per-cell
+                # vectors (n_cells,) should be expanded.
                 if (
                     p.ndim == 1
                     and not is_mixture
