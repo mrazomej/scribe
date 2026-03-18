@@ -21,6 +21,7 @@ from .dirichlet import (
 
 # Custom distributions
 from .distributions import (
+    BetaNegativeBinomial,
     BetaPrime,
     LowRankLogisticNormal,
     SoftmaxNormal,
@@ -52,6 +53,7 @@ __all__ = [
     "fit_dirichlet_mle",
     "fit_dirichlet_minka",
     # Distributions
+    "BetaNegativeBinomial",
     "BetaPrime",
     "LowRankLogisticNormal",
     "SoftmaxNormal",
