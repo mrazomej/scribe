@@ -1,0 +1,617 @@
+---
+editor:
+    render-on-save: true
+# bibliography: references.bib
+csl: ieee.csl
+format:
+  html:
+    filters: [tikz.lua, strip-yaml-frontmatter.lua, maintext-filter.lua, sitext-filter.lua]
+---
+
+# Beyond the negative binomial: the Beta Negative Binomial {#sec-bnb}
+
+In the preceding sections we developed a family of models centred on the
+negative binomial (NB) distribution: the NB with shared $p$
+(@sec-dirichlet-multinomial), gene-specific $p_g$
+(@sec-hierarchical-p), variable capture probability
+(@sec-capture-prior), and a zero-inflation gate
+(@sec-hierarchical-gate). Despite the flexibility afforded by
+gene-specific parameters $r_g$ and $p_g$, the NB constrains every gene
+to the same parametric *shape*. For many datasets, this is adequate; for
+others, posterior predictive checks (PPCs) reveal systematic misfit:
+excess probability mass at zero, or right-shifted spikes for
+high-variance genes, that no NB---regardless of parameterization---can
+accommodate.
+
+In this section, we introduce the **Beta Negative Binomial (BNB)**
+distribution as an optional extension that preserves the NB's mean
+structure (and therefore the entire normalization and compositional
+analysis pipeline) while admitting heavier tails on a per-gene basis.
+We will show that:
+
+1. The BNB arises as a natural compound distribution: an NB whose
+success probability is itself random, drawn from a Beta distribution.
+
+2. A **mean-preserving parameterization** ensures that the BNB has the
+same expected count as the NB it replaces, so that compositional
+inference (@sec-hierarchical-p) is unaffected.
+
+3. The BNB has **power-law tails**, which are qualitatively heavier than
+the NB's geometric (exponentially decaying) tails.
+
+4. The BNB can be connected to a **biophysical story** about cell-to-cell
+variability in promoter activity, drawing on the two-state promoter
+model.
+
+5. A **hierarchical sparsity-inducing prior** on the BNB concentration
+parameter ensures that most genes default to NB behaviour, with only a
+data-driven subset escaping to the heavier-tailed BNB.
+
+## The Beta Negative Binomial distribution {#sec-bnb-definition}
+
+### Definition as an NB-Beta compound
+
+The Beta Negative Binomial arises by placing a Beta prior on the success
+probability of a negative binomial. Let
+
+$$
+X \mid p \sim \text{NB}(r, p), \qquad
+p \sim \text{Beta}(\alpha, \beta).
+$${#eq-bnb-compound}
+
+Marginalizing over $p$, we obtain the BNB distribution
+$X \sim \text{BNB}(r, \alpha, \beta)$ whose probability mass function
+(PMF) is
+
+$$
+\pi(k \mid r, \alpha, \beta) =
+\frac{\Gamma(r + k)}{k!\;\Gamma(r)}
+\frac{B(\alpha + k,\; \beta + r)}{B(\alpha, \beta)},
+\qquad k = 0, 1, 2, \ldots
+$${#eq-bnb-pmf}
+
+where $B(\cdot, \cdot)$ denotes the Beta function. This PMF is
+well-defined for $r > 0$, $\alpha > 0$, $\beta > 0$.
+
+### Derivation of the PMF
+
+The marginal PMF is obtained by integrating the NB likelihood over
+the Beta prior:
+
+$$
+\pi(k \mid r, \alpha, \beta)
+= \int_0^1
+\underbrace{
+\binom{r + k - 1}{k} p^r (1 - p)^k
+}_{\text{NB}(k \mid r, p)}
+\;
+\underbrace{
+\frac{p^{\alpha - 1}(1-p)^{\beta - 1}}{B(\alpha, \beta)}
+}_{\text{Beta}(p \mid \alpha, \beta)}
+\, dp.
+$${#eq-bnb-integral}
+
+Collecting powers of $p$ and $(1-p)$:
+
+$$
+= \frac{1}{B(\alpha, \beta)}
+\binom{r+k-1}{k}
+\int_0^1 p^{\alpha + r - 1}(1-p)^{\beta + k - 1}\, dp.
+$${#eq-bnb-integral-collected}
+
+The integral is recognized as a Beta function,
+
+$$
+\int_0^1 p^{\alpha + r - 1}(1-p)^{\beta + k - 1}\, dp
+= B(\alpha + r,\; \beta + k),
+$${#eq-bnb-beta-integral}
+
+yielding @eq-bnb-pmf after writing the binomial coefficient in terms
+of Gamma functions.
+
+### Moments
+
+The BNB has the following moments (when they exist):
+
+$$
+\mathbb{E}[X] = \frac{r\alpha}{\beta - 1},
+\qquad \beta > 1,
+$${#eq-bnb-mean}
+
+$$
+\text{Var}(X) =
+\frac{r\alpha\,(r + \beta - 1)\,(\alpha + \beta - 1)}
+{(\beta - 1)^2\,(\beta - 2)},
+\qquad \beta > 2.
+$${#eq-bnb-variance}
+
+Note that the mean requires $\beta > 1$ and the variance requires
+$\beta > 2$. These are mild constraints that will be enforced by the
+parameterization below.
+
+### Tail behaviour
+
+For large $k$, the BNB PMF decays as a **power law**:
+
+$$
+\pi(k \mid r, \alpha, \beta) \sim
+C \cdot k^{-(1 + \beta)},
+\qquad k \to \infty,
+$${#eq-bnb-tail}
+
+where $C$ is a constant depending on $r$, $\alpha$, $\beta$. This is
+qualitatively different from the NB, whose PMF decays geometrically
+(exponentially) as $(1-p)^k$. The power-law tail means that the BNB can
+accommodate occasional very large counts that the NB cannot.
+
+### Reduction to the NB
+
+As the Beta prior concentrates around a point $p_0$---that is,
+$\alpha, \beta \to \infty$ with $\alpha / (\alpha + \beta) \to p_0$---the
+BNB converges to $\text{NB}(r, p_0)$. Concretely, parameterize
+$\alpha = \kappa p_0$ and $\beta = \kappa(1 - p_0)$ and take
+$\kappa \to \infty$. The Beta distribution degenerates to a point mass
+at $p_0$, and the BNB reduces to the NB:
+
+$$
+\lim_{\kappa \to \infty}
+\text{BNB}\bigl(r,\; \kappa p_0,\; \kappa(1-p_0)\bigr)
+= \text{NB}(r, p_0).
+$${#eq-bnb-nb-limit}
+
+This ensures that the BNB is a strict generalization of the NB: every
+NB distribution is a special case of the BNB.
+
+## Mean-preserving parameterization {#sec-bnb-mean-preserving}
+
+### Motivation
+
+The normalization and compositional analysis framework developed in
+@sec-hierarchical-p relies on the mean of the count distribution
+factoring as (gene-specific term) $\times$ (cell-specific term):
+
+$$
+\mathbb{E}[u_{gc}] =
+\underbrace{
+\frac{r_g(1 - p_g)}{p_g}
+}_{\text{gene-specific}}
+\times
+\underbrace{
+\vphantom{\frac{r_g}{p_g}}
+\nu_c
+}_{\text{cell-specific}},
+$${#eq-bnb-mean-factorization-nb}
+
+which enters through $\hat{p}_{gc}$ in the effective NB model. To
+preserve this structure, we require the BNB's mean to match the NB's
+mean exactly.
+
+### Derivation
+
+The NB mean in the effective model is
+
+$$
+\mathbb{E}[u_{gc}]_{\text{NB}}
+= \frac{r_g(1 - \hat{p}_{gc})}{\hat{p}_{gc}},
+$${#eq-bnb-nb-mean-effective}
+
+where $\hat{p}_{gc} = p_g / (\nu_c + p_g(1 - \nu_c))$ as derived in
+@sec-dirichlet-multinomial. We denote the BNB's $\beta$ parameter by
+$\kappa_g$ (per gene) and derive $\alpha_{gc}$ from the mean-matching
+condition.
+
+Setting the BNB mean equal to the NB mean:
+
+$$
+\frac{r_g \, \alpha_{gc}}{\kappa_g - 1}
+= \frac{r_g(1 - \hat{p}_{gc})}{\hat{p}_{gc}},
+$${#eq-bnb-mean-matching}
+
+which gives
+
+$$
+\boxed{
+\alpha_{gc} =
+\frac{(1 - \hat{p}_{gc})\,(\kappa_g - 1)}{\hat{p}_{gc}}.
+}
+$${#eq-bnb-alpha-from-kappa}
+
+Note that $\alpha_{gc}$ depends on both the gene (through $\kappa_g$)
+and the cell (through $\hat{p}_{gc}$). The only new per-gene parameter
+is $\kappa_g > 2$.
+
+### Verification of the mean factorization
+
+Substituting @eq-bnb-alpha-from-kappa into the BNB mean:
+
+$$
+\mathbb{E}[u_{gc}]_{\text{BNB}}
+= \frac{r_g \, \alpha_{gc}}{\kappa_g - 1}
+= \frac{r_g(1 - \hat{p}_{gc})}{\hat{p}_{gc}}
+= \frac{r_g(1 - p_g)}{p_g} \cdot \nu_c,
+$${#eq-bnb-mean-preserved}
+
+which is identical to the NB mean. The gene $\times$ cell factorization
+is intact. **All compositional quantities derived from the mean---the
+Gamma-based composition sampling of @sec-hierarchical-p, the CLR
+coordinates, the differential expression pipeline---carry through
+unchanged.**
+
+### Variance inflation factor
+
+Under this parameterization, the BNB variance (@eq-bnb-variance) becomes
+
+$$
+\text{Var}(u_{gc})_{\text{BNB}} =
+\underbrace{
+\frac{r_g(1 - \hat{p}_{gc})}{\hat{p}_{gc}^2}
+}_{\text{NB variance}}
+\times
+\underbrace{
+\frac{r_g + \kappa_g - 1}{\kappa_g - 2}
+}_{\text{inflation factor}}.
+$${#eq-bnb-variance-inflation}
+
+We verify this by computing the intermediate quantities. From
+@eq-bnb-alpha-from-kappa:
+
+$$
+\alpha_{gc} + \kappa_g - 1 =
+\frac{(1-\hat{p}_{gc})(\kappa_g - 1)}{\hat{p}_{gc}}
++ \kappa_g - 1
+= \frac{\kappa_g - 1}{\hat{p}_{gc}}.
+$${#eq-bnb-alpha-plus-kappa}
+
+Substituting into @eq-bnb-variance:
+
+$$
+\text{Var}(u_{gc})_{\text{BNB}}
+= \frac{r_g \cdot
+\frac{(1-\hat{p}_{gc})(\kappa_g-1)}{\hat{p}_{gc}}
+\cdot (r_g + \kappa_g - 1) \cdot
+\frac{\kappa_g - 1}{\hat{p}_{gc}}}
+{(\kappa_g - 1)^2 (\kappa_g - 2)}
+= \frac{r_g(1 - \hat{p}_{gc})(r_g + \kappa_g - 1)}
+{\hat{p}_{gc}^2\,(\kappa_g - 2)},
+$${#eq-bnb-variance-derivation}
+
+which confirms @eq-bnb-variance-inflation. The **inflation factor**
+$\zeta_g = (r_g + \kappa_g - 1) / (\kappa_g - 2)$ satisfies:
+
+- When $\kappa_g \to \infty$: $\zeta_g \to 1$ (NB variance recovered).
+- When $\kappa_g \to 2^+$: $\zeta_g \to \infty$ (arbitrarily large
+overdispersion).
+- For all finite $\kappa_g > 2$: $\zeta_g > 1$ (variance strictly
+exceeds NB).
+
+The following table illustrates the inflation factor for representative
+values of $r_g = 5$:
+
+| $\kappa_g$ | Inflation factor | Regime |
+|:-----------:|:----------------:|:-------|
+| $\infty$    | $1$              | Pure NB |
+| $100$       | $\approx 1.06$   | Nearly NB |
+| $10$        | $\approx 1.75$   | Moderate extra dispersion |
+| $5$         | $3$              | Heavy extra dispersion |
+| $3$         | $r_g + 2 = 7$    | Very heavy |
+
+: Variance inflation factor $(r_g + \kappa_g - 1)/(\kappa_g - 2)$
+for $r_g = 5$. {#tbl-bnb-inflation}
+
+## Biophysical interpretation {#sec-bnb-biophysics}
+
+### Connection to the two-state promoter model
+
+In the standard NBDM framework (@sec-dirichlet-multinomial), the
+negative binomial distribution for true transcript counts arises from a
+two-state promoter model: a gene switches between an OFF state (no
+transcription) and an ON state (transcription at rate $r$), with
+switching rates $k^+$ (OFF$\to$ON) and $k^-$ (ON$\to$OFF). At steady
+state, the number of mRNA molecules follows an NB distribution whose
+parameters are determined by the ratio of these rates and the mRNA
+degradation rate $\gamma$.
+
+A key result from the theory of gene regulation is that the fraction
+of time a promoter spends in the ON state---the memory-weighted average
+of past promoter activity---follows a **Beta distribution**:
+
+$$
+p(t) \sim \text{Beta}(\hat{k}^+, \hat{k}^-),
+$${#eq-bnb-beta-promoter}
+
+where $\hat{k}^+ = k^+/\gamma$ and $\hat{k}^- = k^-/\gamma$ are the
+non-dimensionalized switching rates. This is the stationary
+distribution of the piecewise-deterministic Markov process governing
+$p(t)$.
+
+### From promoter variability to BNB
+
+The standard NB model treats the promoter state as fixed for each
+gene---all cells see the same (expected) promoter activity. In reality,
+promoter activity varies across cells due to chromatin remodelling,
+transcription factor fluctuations, and other regulatory mechanisms. If
+we model this cell-to-cell variability by allowing the NB success
+probability to fluctuate according to a Beta distribution, the marginal
+count distribution becomes a BNB.
+
+More precisely, if the effective NB parameter for gene $g$ in cell $c$
+is drawn from a Beta distribution centred on the population value but
+with finite concentration, the resulting count distribution is the BNB.
+The concentration parameter $\kappa_g$ then captures the degree of
+regulatory heterogeneity for gene $g$:
+
+- **Large $\kappa_g$** (tight Beta): little cell-to-cell variability in
+promoter state; gene behaves as a standard NB.
+- **Small $\kappa_g$** (diffuse Beta): substantial cell-to-cell
+variability; gene exhibits heavier tails than the NB predicts.
+
+This is a plausible but **phenomenological** connection. The exact
+compound from the two-state model is a Poisson-Gamma-Beta distribution,
+not precisely the BNB, because the Beta-distributed promoter state
+modulates the Poisson rate (not the NB success probability directly).
+However, the BNB captures the same qualitative phenomenon---extra
+variability from multi-layer gene regulation---and does so with a
+closed-form PMF that is computationally tractable.
+
+### Normalization implications
+
+A crucial distinction between $\kappa_g$ and the capture probability
+$\nu_c$ is that $\kappa_g$ represents **biological** variability
+(heterogeneity in gene regulation) rather than **technical** variability
+(capture efficiency). Since $\kappa_g$ affects the mean through
+$\alpha_{gc}$ in a way that preserves the gene $\times$ cell
+factorization (@eq-bnb-mean-preserved), it correctly participates in
+compositional analysis. This is by design: genes whose regulatory state
+is more variable across cells are expected to have genuinely different
+relative abundances, and this should be reflected in the normalized
+expression profiles.
+
+## Non-identifiability and its resolution {#sec-bnb-identifiability}
+
+The BNB distribution has a known non-identifiability: the PMF is
+invariant under the exchange $r \leftrightarrow \beta$. This can be
+seen directly from @eq-bnb-pmf by noting that $B(\alpha + k, \beta + r)
+= B(\alpha + k, r + \beta)$ is symmetric in its arguments with respect
+to the interchange of terms that involve $r$ and $\beta$ in the
+combinatorial prefactor.
+
+In our model, this symmetry is **structurally broken** because $r_g$ is
+not a free parameter of the BNB. It is constrained by the gene
+expression model: $r_g$ is determined by the mean expression $\mu_g$
+and the NB parameterization (e.g., $r_g = \mu_g \cdot \phi$ in the
+shared-$p$ case, or $r_g$ is directly inferred as part of the NB
+model). The BNB's $\kappa_g$, on the other hand, is a new parameter
+that governs only the excess dispersion. Since $r_g$ and $\kappa_g$
+enter the model through fundamentally different pathways and have
+different prior structures, the exchange symmetry does not pose a
+practical identifiability problem.
+
+## Hierarchical prior on $\kappa_g$ {#sec-bnb-hierarchical-prior}
+
+### Design principle
+
+The BNB extension introduces one new parameter per gene: $\kappa_g$.
+Since most genes are expected to be adequately described by the NB
+(i.e., $\kappa_g \to \infty$), we require a prior that:
+
+1. **Defaults to NB**: the prior concentrates mass at the NB limit
+($\kappa_g = \infty$, equivalently $\omega_g = 0$).
+
+2. **Allows escape**: genes with strong evidence for extra
+overdispersion can have finite $\kappa_g$ (positive $\omega_g$).
+
+3. **Is sparse**: only a minority of genes should deviate from the NB.
+
+This is the same design principle used for the zero-inflation gate in
+@sec-hierarchical-gate, and we apply the same tools: hierarchical
+priors with adaptive shrinkage.
+
+### Reparameterization via the excess dispersion fraction
+
+To apply sparsity-inducing priors, we reparameterize in terms of the
+**excess dispersion fraction**:
+
+$$
+\omega_g = \frac{r_g + 1}{\kappa_g - 2},
+\qquad \kappa_g > 2.
+$${#eq-bnb-omega-def}
+
+This reparameterization has the following properties:
+
+- $\omega_g = 0 \Leftrightarrow \kappa_g = \infty$: no overdispersion
+(NB limit).
+- $\omega_g > 0$: positive overdispersion; the variance inflation factor
+is $1 + \omega_g$.
+- $\omega_g \to \infty$: $\kappa_g \to 2^+$, maximum overdispersion.
+
+The inverse transformation is
+
+$$
+\kappa_g = 2 + \frac{r_g + 1}{\omega_g}.
+$${#eq-bnb-kappa-from-omega}
+
+### Horseshoe prior on $\omega_g$
+
+We place a regularized horseshoe prior on $\omega_g$, following the
+same structure used for the gate (@sec-hgate-tpbn) and for gene-specific
+$p_g$ (@sec-hierarchical-p). The non-centered parameterization is:
+
+$$
+\tau \sim \text{Half-Cauchy}(\tau_0), \qquad
+\lambda_g \sim \text{Half-Cauchy}(1), \qquad
+c^2 \sim \text{Inv-Gamma}\!\left(\tfrac{\nu}{2},
+\tfrac{\nu s^2}{2}\right),
+$${#eq-bnb-horseshoe-hyperpriors}
+
+$$
+\tilde{\lambda}_g =
+\frac{c \, \lambda_g}{\sqrt{c^2 + \tau^2 \lambda_g^2}}, \qquad
+z_g \sim \mathcal{N}(0, 1),
+$${#eq-bnb-horseshoe-ncp}
+
+$$
+\omega_g = \text{softplus}(\mu_\omega + \tau \, \tilde{\lambda}_g \,
+z_g),
+$${#eq-bnb-horseshoe-omega}
+
+where $\mu_\omega$ is a shared location parameter that defaults to a
+large negative value (pushing $\omega_g \approx 0$, i.e., the NB
+regime), $\tau_0$ is the global shrinkage scale, and $(\nu, s)$ are the
+slab degrees of freedom and scale.
+
+### NEG prior on $\omega_g$
+
+As an alternative to the horseshoe, we can use the
+Normal-Exponential-Gamma (NEG) prior, which is more SVI-friendly. The
+NEG hierarchy replaces the horseshoe with:
+
+$$
+\zeta_g \sim \text{Gamma}(a, \tau_{\text{NEG}}), \qquad
+\psi_g \sim \text{Gamma}(u, \zeta_g), \qquad
+z_g \sim \mathcal{N}(0, 1),
+$${#eq-bnb-neg-hierarchy}
+
+$$
+\omega_g = \text{softplus}(\mu_\omega + \sqrt{\psi_g} \, z_g),
+$${#eq-bnb-neg-omega}
+
+where $(a, u, \tau_{\text{NEG}})$ are the NEG hyperparameters. The
+NEG prior has a finite peak at zero (unlike the horseshoe's pole),
+making it better suited for stochastic variational inference.
+
+### NB recovery
+
+When the prior shrinks $\omega_g \to 0$ for all genes:
+
+$$
+\kappa_g \to \infty, \qquad
+\alpha_{gc} \to \infty, \qquad
+\text{BNB}(r_g, \alpha_{gc}, \kappa_g) \to \text{NB}(r_g, \hat{p}_{gc}),
+$${#eq-bnb-recovery}
+
+recovering the standard NB model. The posterior of $\omega_g$ (or
+equivalently $\kappa_g$) serves as a **per-gene diagnostic** for the
+presence of extra overdispersion beyond what the NB can accommodate.
+
+## Interaction with existing model components {#sec-bnb-interactions}
+
+### Zero inflation
+
+The BNB composes with the zero-inflation gate in exactly the same way
+as the NB. The zero-inflated BNB model is:
+
+$$
+u_{gc} \sim
+\begin{cases}
+0 & \text{with probability } \pi_g, \\
+\text{BNB}(r_g, \alpha_{gc}, \kappa_g) & \text{with probability }
+1 - \pi_g,
+\end{cases}
+$${#eq-bnb-zi}
+
+where $\alpha_{gc}$ is given by @eq-bnb-alpha-from-kappa. The
+hierarchical gate from @sec-hierarchical-gate applies unchanged.
+Importantly, the BNB's heavier tails may reduce the need for
+zero inflation by better fitting the body and tail of the count
+distribution, potentially leading to smaller inferred $\pi_g$ values.
+
+### Variable capture probability
+
+The variable capture probability enters through $\hat{p}_{gc}$, which
+is a function of the gene-level $p_g$ and the cell-level $\nu_c$
+(@sec-capture-prior). Since $\alpha_{gc}$ in the BNB is a function of
+$\hat{p}_{gc}$ (@eq-bnb-alpha-from-kappa), the VCP framework integrates
+seamlessly:
+
+$$
+\hat{p}_{gc} = \frac{p_g}{\nu_c + p_g(1 - \nu_c)},
+\qquad
+\alpha_{gc} = \frac{(1 - \hat{p}_{gc})(\kappa_g - 1)}{\hat{p}_{gc}},
+$${#eq-bnb-vcp}
+
+and the BNB distribution is
+$\text{BNB}(r_g, \alpha_{gc}, \kappa_g)$.
+
+### Composition sampling
+
+The Gamma-based composition sampling of @sec-hierarchical-p relies on
+the mean of the count distribution. Since the BNB mean is identical to
+the NB mean (@eq-bnb-mean-preserved), the composition procedure is
+unchanged:
+
+$$
+\rho_g =
+\frac{\gamma_g \cdot (1 - p_g) / p_g}
+{\sum_{j=1}^G \gamma_j \cdot (1 - p_j) / p_j},
+\qquad
+\gamma_g \sim \text{Gamma}(r_g, 1).
+$${#eq-bnb-composition}
+
+This is independent of $\kappa_g$. The BNB extension does not alter the
+compositional analysis or differential expression pipeline.
+
+## Implementation note: NumPyro parameterization {#sec-bnb-numpyro}
+
+The `BetaNegativeBinomial` distribution in NumPyro uses the
+parameterization:
+
+- `concentration1` $= \alpha$ (first Beta parameter),
+- `concentration0` $= \beta$ (second Beta parameter),
+- `n` $= r$ (number of successes).
+
+Its mean is `n * concentration1 / (concentration0 - 1)` $= r\alpha /
+(\beta - 1)$. In our notation:
+
+- `concentration1` $= \alpha_{gc}$, given by @eq-bnb-alpha-from-kappa,
+- `concentration0` $= \kappa_g$, the per-gene overdispersion parameter,
+- `n` $= r_g$, the gene-specific dispersion.
+
+The log-PMF is evaluated via `gammaln` and `betaln` functions, making
+it fully differentiable with respect to all parameters.
+
+## Mathematical summary {#sec-bnb-summary}
+
+We collect the key mathematical results for reference.
+
+**Generative model (BNB extension).** The BNB count model replaces the
+NB in any of the four model variants (NBDM, ZINB, NBVCP, ZINBVCP):
+
+$$
+\alpha_{gc} = \frac{(1 - \hat{p}_{gc})(\kappa_g - 1)}
+{\hat{p}_{gc}}, \qquad
+u_{gc} \mid r_g, \hat{p}_{gc}, \kappa_g
+\sim \text{BNB}(r_g, \alpha_{gc}, \kappa_g),
+$${#eq-bnb-summary-model}
+
+where $\hat{p}_{gc}$ is defined as in the standard model (with or
+without variable capture).
+
+**Mean preservation:**
+
+$$
+\mathbb{E}[u_{gc}]_{\text{BNB}} =
+\frac{r_g(1 - \hat{p}_{gc})}{\hat{p}_{gc}}
+= \mathbb{E}[u_{gc}]_{\text{NB}}.
+$${#eq-bnb-summary-mean}
+
+**Variance inflation:**
+
+$$
+\text{Var}(u_{gc})_{\text{BNB}} =
+\text{Var}(u_{gc})_{\text{NB}} \times
+\frac{r_g + \kappa_g - 1}{\kappa_g - 2}.
+$${#eq-bnb-summary-variance}
+
+**Hierarchical prior on the excess dispersion fraction:**
+
+$$
+\omega_g = \frac{r_g + 1}{\kappa_g - 2}, \qquad
+\omega_g \sim \text{Horseshoe}(\tau_0) \;\text{or}\;
+\text{NEG}(a, u, \tau_{\text{NEG}}).
+$${#eq-bnb-summary-prior}
+
+**NB recovery.** When $\omega_g \to 0$ (equivalently $\kappa_g \to
+\infty$), the BNB reduces to the NB for all genes.
+
+**Composition sampling.** Unchanged from the standard model
+(@eq-bnb-composition): $\kappa_g$ does not enter the composition formula.
