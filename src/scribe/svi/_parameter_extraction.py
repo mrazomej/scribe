@@ -182,6 +182,29 @@ def _reconstruct_horseshoe_maps(
         unconstrained = loc + eff * z
         map_estimates[target_name] = transform(unconstrained)
 
+    # BNB concentration uses a different naming convention
+    # (bnb_concentration_tau, not tau_bnb_concentration).
+    if (
+        getattr(model_config, "is_bnb", False)
+        and getattr(model_config, "overdispersion_prior", None)
+        == HierarchicalPriorType.HORSESHOE
+        and "bnb_concentration_raw" in map_estimates
+    ):
+        z = map_estimates["bnb_concentration_raw"]
+        tau = map_estimates.get("bnb_concentration_tau")
+        lam = map_estimates.get("bnb_concentration_lambda")
+        c_sq = map_estimates.get("bnb_concentration_c_sq")
+        loc = map_estimates.get("bnb_concentration_loc")
+
+        if all(v is not None for v in (tau, lam, c_sq, loc)):
+            from numpyro.distributions.transforms import SoftplusTransform
+
+            eff = _horseshoe_eff_scale(tau, lam, c_sq)
+            unconstrained = loc + eff * z
+            map_estimates["bnb_concentration"] = SoftplusTransform()(
+                unconstrained
+            )
+
     return map_estimates
 
 
@@ -306,6 +329,27 @@ def _reconstruct_neg_maps(
         eff_scale = _neg_eff_scale(psi)
         unconstrained = loc + eff_scale * z
         map_estimates[target_name] = transform(unconstrained)
+
+    # BNB concentration uses a different naming convention
+    # (bnb_concentration_psi, not psi_bnb_concentration).
+    if (
+        getattr(model_config, "is_bnb", False)
+        and getattr(model_config, "overdispersion_prior", None)
+        == HierarchicalPriorType.NEG
+        and "bnb_concentration_raw" in map_estimates
+    ):
+        z = map_estimates["bnb_concentration_raw"]
+        psi = map_estimates.get("bnb_concentration_psi")
+        loc = map_estimates.get("bnb_concentration_loc")
+
+        if psi is not None and loc is not None:
+            from numpyro.distributions.transforms import SoftplusTransform
+
+            eff_scale = _neg_eff_scale(psi)
+            unconstrained = loc + eff_scale * z
+            map_estimates["bnb_concentration"] = SoftplusTransform()(
+                unconstrained
+            )
 
     return map_estimates
 
@@ -742,6 +786,23 @@ class ParameterExtractionMixin:
 
         # Reconstruct constrained parameters from NCP NEG if applicable
         map_estimates = _reconstruct_neg_maps(map_estimates, self.model_config)
+
+        # Derive kappa_g from omega_g (bnb_concentration) when available.
+        # kappa_g = 2 + (r + 1) / omega_g, matching build_bnb_dist.
+        if "bnb_concentration" in map_estimates:
+            omega = map_estimates["bnb_concentration"]
+            r_for_kappa = map_estimates.get("r")
+            if r_for_kappa is None:
+                # mean_odds/mean_prob: derive r from mu and phi (or p)
+                mu = map_estimates.get("mu")
+                phi = map_estimates.get("phi")
+                if mu is not None and phi is not None:
+                    r_for_kappa = mu / phi
+            if r_for_kappa is not None:
+                omega_safe = jnp.clip(omega, 1e-6, None)
+                map_estimates["bnb_kappa"] = (
+                    2.0 + (r_for_kappa + 1.0) / omega_safe
+                )
 
         # Compute canonical parameters if requested
         if canonical:
