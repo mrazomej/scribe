@@ -978,3 +978,370 @@ class TestBNBGaussianPosterior:
         # Direct bnb_concentration should NOT be present (it's reconstructed
         # later in get_map via _reconstruct_neg_maps)
         assert "bnb_concentration" not in dists
+
+
+# ============================================================================
+# Quadrature utility tests
+# ============================================================================
+
+
+class TestGaussLegendreQuadrature:
+    """Verify the Gauss--Legendre quadrature utility."""
+
+    def test_polynomial_exact(self):
+        """Gauss-Legendre with n nodes is exact for polynomials of degree <= 2n-1."""
+        from scribe.stats.quadrature import gauss_legendre_integrate
+
+        # int_0^1 x^2 dx = 1/3; exact for n >= 2
+        result = gauss_legendre_integrate(lambda x: x**2, 0.0, 1.0, n=4)
+        np.testing.assert_allclose(float(result), 1.0 / 3.0, atol=1e-12)
+
+    def test_x_cubed(self):
+        """int_0^1 x^3 dx = 1/4."""
+        from scribe.stats.quadrature import gauss_legendre_integrate
+
+        result = gauss_legendre_integrate(lambda x: x**3, 0.0, 1.0, n=4)
+        np.testing.assert_allclose(float(result), 0.25, atol=1e-12)
+
+    def test_beta_function_integral(self):
+        """int_0^1 x^(a-1)(1-x)^(b-1) dx = B(a, b) for a=3, b=4."""
+        from scribe.stats.quadrature import gauss_legendre_integrate
+        from jax.scipy.special import betaln
+
+        a, b = 3.0, 4.0
+        expected = float(jnp.exp(betaln(a, b)))
+        result = gauss_legendre_integrate(
+            lambda x: x ** (a - 1) * (1 - x) ** (b - 1), 0.0, 1.0, n=32
+        )
+        np.testing.assert_allclose(float(result), expected, rtol=1e-5)
+
+    def test_nodes_weights_shape(self):
+        """Nodes and weights have the requested shape."""
+        from scribe.stats.quadrature import gauss_legendre_nodes_weights
+
+        nodes, weights = gauss_legendre_nodes_weights(16, 0.0, 1.0)
+        assert nodes.shape == (16,)
+        assert weights.shape == (16,)
+
+    def test_nodes_within_interval(self):
+        """All nodes lie within [a, b]."""
+        from scribe.stats.quadrature import gauss_legendre_nodes_weights
+
+        nodes, _ = gauss_legendre_nodes_weights(64, -2.0, 3.0)
+        assert float(jnp.min(nodes)) >= -2.0
+        assert float(jnp.max(nodes)) <= 3.0
+
+    def test_weights_sum_to_interval_length(self):
+        """Weights sum to b - a (integral of f=1)."""
+        from scribe.stats.quadrature import gauss_legendre_nodes_weights
+
+        _, weights = gauss_legendre_nodes_weights(32, 2.0, 5.0)
+        np.testing.assert_allclose(float(jnp.sum(weights)), 3.0, atol=1e-5)
+
+    def test_batched_integrand(self):
+        """Integrand returning (N, batch) produces a (batch,) result."""
+        from scribe.stats.quadrature import gauss_legendre_integrate
+
+        # int_0^1 [x, x^2, x^3] dx = [1/2, 1/3, 1/4]
+        def f(x):
+            return jnp.stack([x, x**2, x**3], axis=-1)
+
+        result = gauss_legendre_integrate(f, 0.0, 1.0, n=8)
+        np.testing.assert_allclose(
+            np.array(result), [0.5, 1.0 / 3.0, 0.25], atol=1e-10
+        )
+
+
+# ============================================================================
+# BNB denoising tests
+# ============================================================================
+
+
+class TestBNBDenoisingQuadrature:
+    """Verify BNB MAP denoising via quadrature."""
+
+    @pytest.fixture
+    def nb_params(self):
+        """Standard NB parameters for a small example."""
+        C, G = 4, 3
+        r = jnp.array([5.0, 10.0, 2.0])
+        p = jnp.array([0.3, 0.6, 0.1])
+        p_capture = jnp.array([0.05, 0.08, 0.03, 0.10])
+        counts = jnp.array(
+            [[2, 15, 0], [0, 5, 1], [10, 0, 3], [1, 20, 0]]
+        )
+        return counts, r, p, p_capture
+
+    def test_reduces_to_nb_when_kappa_large(self, nb_params):
+        """As omega shrinks, BNB denoising approaches NB closed-form.
+
+        We use a moderately small omega (0.01) with extra quadrature
+        nodes (256) to resolve the increasingly peaked posterior.  The
+        posterior mean should be within ~5% of the NB closed-form.
+        """
+        from scribe.sampling import _denoise_bnb_quadrature
+
+        counts, r, p, p_capture = nb_params
+
+        # Moderately small omega => large kappa => near-NB regime
+        # omega=0.01 gives kappa ~ 602 for r=5, which concentrates the
+        # Beta prior but is still resolvable by 256 quadrature nodes.
+        omega = jnp.full(r.shape, 0.01)
+        bnb_mean, _ = _denoise_bnb_quadrature(
+            counts, r, p, p_capture, omega, n_nodes=256
+        )
+
+        # NB closed-form
+        nu = p_capture[:, None]
+        probs_post = p * (1.0 - nu)
+        one_minus_pp = 1.0 - probs_post
+        nb_mean = (counts + r * probs_post) / one_minus_pp
+
+        np.testing.assert_allclose(
+            np.array(bnb_mean), np.array(nb_mean), rtol=0.05
+        )
+
+    def test_identity_when_nu_is_one(self, nb_params):
+        """When nu = 1, denoised = observed (no capture loss)."""
+        from scribe.sampling import _denoise_bnb_quadrature
+
+        counts, r, p, _ = nb_params
+        p_capture_perfect = jnp.ones(counts.shape[0])
+        omega = jnp.full(r.shape, 0.5)
+
+        bnb_mean, bnb_var = _denoise_bnb_quadrature(
+            counts, r, p, p_capture_perfect, omega
+        )
+
+        np.testing.assert_allclose(
+            np.array(bnb_mean), np.array(counts), atol=1e-4
+        )
+        np.testing.assert_allclose(
+            np.array(bnb_var), 0.0, atol=1e-4
+        )
+
+    def test_bnb_mean_differs_from_nb(self, nb_params):
+        """BNB posterior mean should differ from NB for finite kappa."""
+        from scribe.sampling import _denoise_bnb_quadrature
+
+        counts, r, p, p_capture = nb_params
+
+        # Moderate overdispersion
+        omega = jnp.full(r.shape, 1.0)
+        bnb_mean, _ = _denoise_bnb_quadrature(
+            counts, r, p, p_capture, omega
+        )
+
+        # NB closed-form
+        nu = p_capture[:, None]
+        probs_post = p * (1.0 - nu)
+        one_minus_pp = 1.0 - probs_post
+        nb_mean = (counts + r * probs_post) / one_minus_pp
+
+        # With omega=1.0, BNB adds substantial uncertainty.  The means
+        # should be positive and finite, and should differ from NB.
+        assert jnp.all(jnp.isfinite(bnb_mean))
+        assert jnp.all(bnb_mean > 0)
+        assert not jnp.allclose(bnb_mean, nb_mean, atol=0.5)
+
+    def test_variance_positive(self, nb_params):
+        """BNB denoised variance should be non-negative."""
+        from scribe.sampling import _denoise_bnb_quadrature
+
+        counts, r, p, p_capture = nb_params
+        omega = jnp.full(r.shape, 0.5)
+        _, bnb_var = _denoise_bnb_quadrature(
+            counts, r, p, p_capture, omega
+        )
+        assert jnp.all(bnb_var >= -1e-6)
+
+    def test_output_shape(self, nb_params):
+        """Output shapes match (C, G)."""
+        from scribe.sampling import _denoise_bnb_quadrature
+
+        counts, r, p, p_capture = nb_params
+        omega = jnp.full(r.shape, 0.5)
+        bnb_mean, bnb_var = _denoise_bnb_quadrature(
+            counts, r, p, p_capture, omega
+        )
+        assert bnb_mean.shape == counts.shape
+        assert bnb_var.shape == counts.shape
+
+
+class TestBNBDenoSampling:
+    """Verify BNB augmented sampling denoising."""
+
+    def test_sample_shape(self):
+        """Sampled p values have shape (C, G)."""
+        from scribe.sampling import _sample_p_posterior_bnb
+
+        C, G = 8, 5
+        r = jnp.ones(G) * 5.0
+        p = jnp.ones(G) * 0.4
+        p_capture = jnp.ones(C) * 0.05
+        counts = jnp.ones((C, G), dtype=jnp.float32) * 3.0
+        omega = jnp.ones(G) * 0.5
+        key = jax.random.PRNGKey(0)
+
+        p_samples = _sample_p_posterior_bnb(
+            key, counts, r, p, p_capture, omega
+        )
+        assert p_samples.shape == (C, G)
+
+    def test_samples_in_unit_interval(self):
+        """All sampled p values lie in (0, 1)."""
+        from scribe.sampling import _sample_p_posterior_bnb
+
+        C, G = 16, 4
+        r = jnp.ones(G) * 3.0
+        p = jnp.ones(G) * 0.5
+        p_capture = jnp.ones(C) * 0.07
+        counts = jnp.ones((C, G), dtype=jnp.float32) * 2.0
+        omega = jnp.ones(G) * 1.0
+        key = jax.random.PRNGKey(42)
+
+        p_samples = _sample_p_posterior_bnb(
+            key, counts, r, p, p_capture, omega
+        )
+        assert jnp.all(p_samples > 0.0)
+        assert jnp.all(p_samples < 1.0)
+
+    def test_sampling_mean_matches_quadrature(self):
+        """Mean of many samples should be close to quadrature expectation."""
+        from scribe.sampling import (
+            _denoise_bnb_quadrature,
+            _sample_p_posterior_bnb,
+        )
+
+        # Single cell, single gene to make comparison clean
+        C, G = 1, 1
+        r = jnp.array([5.0])
+        p = jnp.array([0.4])
+        p_capture = jnp.array([0.06])
+        counts = jnp.array([[3.0]])
+        omega = jnp.array([0.5])
+
+        # Quadrature mean
+        bnb_mean, _ = _denoise_bnb_quadrature(
+            counts, r, p, p_capture, omega
+        )
+
+        # Many augmented samples
+        n_samples = 5000
+        denoised_samples = []
+        for i in range(n_samples):
+            key = jax.random.PRNGKey(i)
+            key_p, key_nb = jax.random.split(key)
+            p_s = _sample_p_posterior_bnb(
+                key_p, counts, r, p, p_capture, omega
+            )
+            nu = p_capture[:, None]
+            probs_cond = p_s * (1.0 - nu)
+            alpha_cond = r + counts
+            d = dist.NegativeBinomialProbs(
+                total_count=alpha_cond, probs=probs_cond
+            ).sample(key_nb)
+            denoised_samples.append(float((counts + d)[0, 0]))
+
+        sample_mean = np.mean(denoised_samples)
+        quad_mean = float(bnb_mean[0, 0])
+
+        # Allow 10% relative tolerance for Monte Carlo
+        np.testing.assert_allclose(sample_mean, quad_mean, rtol=0.15)
+
+
+class TestDenoiseBatchBNBDispatch:
+    """Verify that _denoise_batch correctly dispatches to BNB denoising."""
+
+    def test_bnb_mean_dispatches(self):
+        """method='mean' with bnb_concentration triggers quadrature."""
+        from scribe.sampling import _denoise_batch
+
+        C, G = 4, 3
+        counts = jnp.array(
+            [[2.0, 10.0, 0.0], [0.0, 5.0, 1.0],
+             [8.0, 0.0, 3.0], [1.0, 15.0, 0.0]]
+        )
+        r = jnp.array([5.0, 8.0, 3.0])
+        p = jnp.array([0.3, 0.5, 0.2])
+        p_capture = jnp.array([0.05, 0.08, 0.04, 0.10])
+        omega = jnp.full(G, 0.5)
+
+        key = jax.random.PRNGKey(0)
+        denoised, variance = _denoise_batch(
+            counts, r, p, p_capture, gate=None,
+            method="mean", rng_key=key, bnb_concentration=omega,
+        )
+
+        assert denoised.shape == (C, G)
+        assert variance.shape == (C, G)
+        # With VCP, denoised should be >= counts (inflated for loss)
+        assert jnp.all(denoised >= counts - 0.01)
+
+    def test_bnb_sample_dispatches(self):
+        """method='sample' with bnb_concentration triggers augmented sampling."""
+        from scribe.sampling import _denoise_batch
+
+        C, G = 4, 3
+        counts = jnp.array(
+            [[2.0, 10.0, 0.0], [0.0, 5.0, 1.0],
+             [8.0, 0.0, 3.0], [1.0, 15.0, 0.0]]
+        )
+        r = jnp.array([5.0, 8.0, 3.0])
+        p = jnp.array([0.3, 0.5, 0.2])
+        p_capture = jnp.array([0.05, 0.08, 0.04, 0.10])
+        omega = jnp.full(G, 0.5)
+
+        key = jax.random.PRNGKey(42)
+        denoised, variance = _denoise_batch(
+            counts, r, p, p_capture, gate=None,
+            method="sample", rng_key=key, bnb_concentration=omega,
+        )
+
+        assert denoised.shape == (C, G)
+        # Sampled denoised values should be >= counts
+        assert jnp.all(denoised >= counts)
+
+    def test_no_bnb_falls_back_to_nb(self):
+        """Without bnb_concentration, NB closed-form is used."""
+        from scribe.sampling import _denoise_batch
+
+        counts = jnp.array([[5.0, 0.0], [0.0, 10.0]])
+        r = jnp.array([3.0, 7.0])
+        p = jnp.array([0.4, 0.6])
+        p_capture = jnp.array([0.05, 0.08])
+
+        key = jax.random.PRNGKey(0)
+        denoised, _ = _denoise_batch(
+            counts, r, p, p_capture, gate=None,
+            method="mean", rng_key=key, bnb_concentration=None,
+        )
+
+        # NB closed-form
+        nu = p_capture[:, None]
+        probs_post = p * (1.0 - nu)
+        expected = (counts + r * probs_post) / (1.0 - probs_post)
+
+        np.testing.assert_allclose(
+            np.array(denoised), np.array(expected), atol=1e-5
+        )
+
+    def test_no_vcp_bnb_falls_back_to_nb(self):
+        """Without p_capture, BNB denoising falls back to NB identity."""
+        from scribe.sampling import _denoise_batch
+
+        counts = jnp.array([[5.0, 0.0], [0.0, 10.0]])
+        r = jnp.array([3.0, 7.0])
+        p = jnp.array([0.4, 0.6])
+        omega = jnp.full(2, 0.5)
+
+        key = jax.random.PRNGKey(0)
+        denoised, _ = _denoise_batch(
+            counts, r, p, p_capture=None, gate=None,
+            method="mean", rng_key=key, bnb_concentration=omega,
+        )
+
+        # Without VCP: probs_post=0, so denoised = counts
+        np.testing.assert_allclose(
+            np.array(denoised), np.array(counts), atol=1e-5
+        )
