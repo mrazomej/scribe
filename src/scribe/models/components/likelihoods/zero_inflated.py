@@ -115,6 +115,9 @@ class ZeroInflatedNBLikelihood(Likelihood):
                     gate = gate[None, :]
 
         if is_mixture:
+            # ================================================================
+            # Mixture model: use MixtureSameFamily
+            # ================================================================
             mixing_weights = param_values["mixing_weights"]
             mixing_dist = dist.Categorical(probs=mixing_weights)
 
@@ -227,18 +230,20 @@ class ZeroInflatedNBLikelihood(Likelihood):
                         for spec in cell_specs:
                             sample_prior(spec, dims, model_config)
                         cell_pv = index_dataset_params(
-                            param_values, dataset_indices, n_datasets,
+                            param_values,
+                            dataset_indices,
+                            n_datasets,
                             param_specs=model_config.param_specs,
                         )
-                        numpyro.sample(
-                            "counts", self._build_dist(cell_pv)
-                        )
+                        numpyro.sample("counts", self._build_dist(cell_pv))
                 elif batch_size is None:
                     with numpyro.plate("cells", n_cells):
                         for spec in cell_specs:
                             sample_prior(spec, dims, model_config)
                         cell_pv = index_dataset_params(
-                            param_values, dataset_indices, n_datasets,
+                            param_values,
+                            dataset_indices,
+                            n_datasets,
                             param_specs=model_config.param_specs,
                         )
                         numpyro.sample(
