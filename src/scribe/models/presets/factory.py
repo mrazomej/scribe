@@ -537,6 +537,7 @@ def create_model(
             mixture_params=model_config.mixture_params,
             param_strategy=param_strategy,
             base_model=base_model,
+            model_config=model_config,
         )
 
     # ==========================================================================
@@ -2445,6 +2446,7 @@ def _validate_mixture_params(
     mixture_params: List[str],
     param_strategy,
     base_model: str,
+    model_config=None,
 ) -> None:
     """Validate that mixture_params contains only valid parameter names.
 
@@ -2456,6 +2458,10 @@ def _validate_mixture_params(
         The parameterization strategy being used.
     base_model : str
         The base model type (nbdm, zinb, nbvcp, zinbvcp).
+    model_config : ModelConfig, optional
+        Full model configuration.  Used to check whether BNB
+        overdispersion is enabled (adds ``bnb_concentration``
+        to the valid set).
 
     Raises
     ------
@@ -2473,6 +2479,10 @@ def _validate_mixture_params(
         valid_params.add(transformed)
         # Also accept the original name as an alias
         valid_params.add(param)
+
+    # BNB concentration is a dynamically added extra param
+    if model_config is not None and getattr(model_config, "is_bnb", False):
+        valid_params.add("bnb_concentration")
 
     # Check for invalid parameters
     invalid_params = set(mixture_params) - valid_params

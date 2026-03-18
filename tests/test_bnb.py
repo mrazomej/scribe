@@ -438,3 +438,157 @@ class TestMapReconstruction:
         kappa = 2.0 + (r + 1.0) / omega
         # kappa > 2 always
         assert jnp.all(kappa > 2.0)
+
+    def test_neg_reconstruction_broadcasts_loc_with_dataset_dim(self):
+        """loc (D,) broadcasts correctly with z (D, G) after concat."""
+        from scribe.svi._parameter_extraction import _reconstruct_neg_maps
+        from scribe.models.config import ModelConfig
+
+        cfg = ModelConfig(
+            base_model="nbdm",
+            parameterization="mean_odds",
+            inference_method="svi",
+            unconstrained=True,
+            overdispersion="bnb",
+            overdispersion_prior="neg",
+        )
+
+        D, G = 2, 10
+        fake_map = {
+            "bnb_concentration_raw": jnp.zeros((D, G)),
+            "bnb_concentration_psi": jnp.ones((D, G)) * 0.5,
+            "bnb_concentration_loc": jnp.array([-1.0, -2.0]),
+        }
+
+        result = _reconstruct_neg_maps(fake_map, cfg)
+        assert "bnb_concentration" in result
+        assert result["bnb_concentration"].shape == (D, G)
+
+    def test_horseshoe_reconstruction_broadcasts_loc_with_dataset_dim(self):
+        """loc (D,) broadcasts correctly with z (D, G) for horseshoe."""
+        from scribe.svi._parameter_extraction import _reconstruct_horseshoe_maps
+        from scribe.models.config import ModelConfig
+
+        cfg = ModelConfig(
+            base_model="nbdm",
+            parameterization="mean_odds",
+            inference_method="svi",
+            unconstrained=True,
+            overdispersion="bnb",
+            overdispersion_prior="horseshoe",
+        )
+
+        D, G = 3, 8
+        fake_map = {
+            "bnb_concentration_raw": jnp.ones((D, G)) * 0.5,
+            "bnb_concentration_tau": jnp.array([0.1, 0.2, 0.3]),
+            "bnb_concentration_lambda": jnp.ones((D, G)) * 0.3,
+            "bnb_concentration_c_sq": jnp.array([4.0, 4.0, 4.0]),
+            "bnb_concentration_loc": jnp.array([-1.0, -1.5, -2.0]),
+        }
+
+        result = _reconstruct_horseshoe_maps(fake_map, cfg)
+        assert "bnb_concentration" in result
+        assert result["bnb_concentration"].shape == (D, G)
+
+
+# ============================================================================
+# Mixture support tests
+# ============================================================================
+
+
+class TestBNBMixture:
+    """Test that bnb_concentration can be made mixture-specific."""
+
+    def test_mixture_validation_accepts_bnb_concentration(self):
+        """bnb_concentration is accepted in mixture_params when BNB is on."""
+        from scribe.models.config import ModelConfig
+
+        cfg = ModelConfig(
+            base_model="nbvcp",
+            parameterization="mean_odds",
+            inference_method="svi",
+            unconstrained=True,
+            overdispersion="bnb",
+            overdispersion_prior="neg",
+            n_components=4,
+            mixture_params=["phi", "mu", "bnb_concentration"],
+        )
+        # Should not raise during model creation
+        from scribe.models.presets.factory import create_model
+
+        model_fn, guide_fn, _specs = create_model(cfg)
+        assert callable(model_fn)
+        assert callable(guide_fn)
+
+    def test_mixture_validation_rejects_bnb_without_overdispersion(self):
+        """bnb_concentration in mixture_params without overdispersion=bnb
+        is rejected (not a valid parameter when BNB is off)."""
+        from scribe.models.config import ModelConfig
+        from scribe.models.presets.factory import create_model
+
+        cfg = ModelConfig(
+            base_model="nbvcp",
+            parameterization="mean_odds",
+            inference_method="svi",
+            unconstrained=True,
+            n_components=4,
+            mixture_params=["phi", "mu", "bnb_concentration"],
+        )
+        with pytest.raises(ValueError, match="Invalid mixture_params"):
+            create_model(cfg)
+
+    def test_bnb_specs_have_is_mixture_true(self):
+        """When bnb_concentration is in mixture_params, specs get
+        is_mixture=True."""
+        from scribe.models.config import GuideFamilyConfig
+        from scribe.models.presets.registry import (
+            build_bnb_concentration_spec,
+        )
+
+        specs = build_bnb_concentration_spec(
+            overdispersion_prior="neg",
+            guide_families=GuideFamilyConfig(),
+            n_components=4,
+            mixture_params=["bnb_concentration"],
+        )
+        # The main spec and gene-level auxiliaries should be mixture
+        main = [s for s in specs if s.name == "bnb_concentration"][0]
+        assert main.is_mixture is True
+        psi = [s for s in specs if s.name == "bnb_concentration_psi"][0]
+        assert psi.is_mixture is True
+        # The hyper-location stays shared (not mixture)
+        loc = [s for s in specs if s.name == "bnb_concentration_loc"][0]
+        assert loc.is_mixture is False
+
+    def test_bnb_specs_not_mixture_by_default(self):
+        """Without bnb_concentration in mixture_params, specs are not
+        mixture-specific."""
+        from scribe.models.config import GuideFamilyConfig
+        from scribe.models.presets.registry import (
+            build_bnb_concentration_spec,
+        )
+
+        specs = build_bnb_concentration_spec(
+            overdispersion_prior="neg",
+            guide_families=GuideFamilyConfig(),
+            n_components=4,
+            mixture_params=["phi", "mu"],
+        )
+        main = [s for s in specs if s.name == "bnb_concentration"][0]
+        assert main.is_mixture is False
+
+    def test_kappa_broadcasts_with_mixture_r(self):
+        """omega (D, G) broadcasts correctly with r (D, K, G) for kappa."""
+        D, K, G = 2, 4, 10
+        omega = jnp.ones((D, G)) * 0.5
+        r = jnp.ones((D, K, G)) * 5.0
+
+        omega_safe = jnp.clip(omega, 1e-6, None)
+        # Expand omega to broadcast: (D, G) -> (D, 1, G)
+        while omega_safe.ndim < r.ndim:
+            omega_safe = jnp.expand_dims(omega_safe, axis=-2)
+
+        kappa = 2.0 + (r + 1.0) / omega_safe
+        assert kappa.shape == (D, K, G)
+        assert jnp.all(kappa > 2.0)

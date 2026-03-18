@@ -436,6 +436,8 @@ def build_bnb_concentration_spec(
     neg_u: float = 1.0,
     neg_a: float = 1.0,
     neg_tau: float = 1.0,
+    n_components: Optional[int] = None,
+    mixture_params: Optional[List[str]] = None,
 ) -> List[ParamSpec]:
     """Build parameter specs for the BNB concentration kappa_g.
 
@@ -465,6 +467,15 @@ def build_bnb_concentration_spec(
         NEG tail parameter.
     neg_tau : float
         NEG global rate.
+    n_components : int, optional
+        Number of mixture components.  When provided together with
+        ``mixture_params``, determines whether the BNB concentration
+        is per-component.
+    mixture_params : list of str, optional
+        Parameter names that should be mixture-specific.  If
+        ``"bnb_concentration"`` is in this list (and *n_components*
+        is set), the resulting specs will have ``is_mixture=True``,
+        giving each component its own omega_g.
 
     Returns
     -------
@@ -472,6 +483,13 @@ def build_bnb_concentration_spec(
         Specs for hyper-location, auxiliary sites, and the hierarchical
         ``bnb_concentration`` parameter.
     """
+    # Determine whether omega should vary across mixture components.
+    is_mixture = False
+    if n_components is not None:
+        if mixture_params is None:
+            is_mixture = True
+        else:
+            is_mixture = "bnb_concentration" in mixture_params
     from ..builders.parameter_specs import (
         NormalWithTransformSpec,
         HalfCauchySpec,
@@ -492,12 +510,13 @@ def build_bnb_concentration_spec(
     )
 
     if overdispersion_prior == "horseshoe":
-        # Global shrinkage scale
+        # Global shrinkage scale (shared across components if mixture)
         specs.append(
             HalfCauchySpec(
                 name="bnb_concentration_tau",
                 shape_dims=(),
                 default_params=(horseshoe_tau0,),
+                is_mixture=is_mixture,
             )
         )
         # Per-gene local scales
@@ -507,6 +526,7 @@ def build_bnb_concentration_spec(
                 shape_dims=("n_genes",),
                 default_params=(1.0,),
                 is_gene_specific=True,
+                is_mixture=is_mixture,
             )
         )
         # Slab for regularisation
@@ -516,6 +536,7 @@ def build_bnb_concentration_spec(
                 shape_dims=(),
                 concentration=horseshoe_slab_df / 2.0,
                 rate=horseshoe_slab_df * horseshoe_slab_scale**2 / 2.0,
+                is_mixture=is_mixture,
             )
         )
         # The hierarchical spec itself
@@ -531,6 +552,7 @@ def build_bnb_concentration_spec(
                 c_sq_name="bnb_concentration_c_sq",
                 raw_name="bnb_concentration_raw",
                 is_gene_specific=True,
+                is_mixture=is_mixture,
                 guide_family=guide_families.get("bnb_concentration"),
             )
         )
@@ -543,6 +565,7 @@ def build_bnb_concentration_spec(
                 concentration=neg_a,
                 rate=neg_tau,
                 is_gene_specific=True,
+                is_mixture=is_mixture,
             )
         )
         # NEG inner variance site: psi_g ~ Gamma(u, zeta_g)
@@ -553,6 +576,7 @@ def build_bnb_concentration_spec(
                 concentration=neg_u,
                 rate_name="bnb_concentration_zeta",
                 is_gene_specific=True,
+                is_mixture=is_mixture,
             )
         )
         # The hierarchical spec itself
@@ -567,6 +591,7 @@ def build_bnb_concentration_spec(
                 zeta_name="bnb_concentration_zeta",
                 raw_name="bnb_concentration_raw",
                 is_gene_specific=True,
+                is_mixture=is_mixture,
                 guide_family=guide_families.get("bnb_concentration"),
             )
         )
@@ -679,6 +704,8 @@ def build_extra_param_spec(
             neg_tau=(
                 model_config.neg_tau if model_config is not None else 1.0
             ),
+            n_components=n_components,
+            mixture_params=mixture_params,
         )
     else:
         raise ValueError(
