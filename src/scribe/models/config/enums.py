@@ -102,6 +102,31 @@ class InferenceMethod(str, Enum):
 # ------------------------------------------------------------------------------
 
 
+class OverdispersionType(str, Enum):
+    """Type of gene-specific overdispersion beyond the NB family.
+
+    Controls whether the count distribution uses the standard Negative
+    Binomial or a heavier-tailed generalization.  The overdispersion
+    model is orthogonal to the model type (NBDM / ZINB / NBVCP /
+    ZINBVCP) and composes with zero-inflation and variable capture.
+
+    Attributes
+    ----------
+    NONE : str
+        Standard Negative Binomial — no extra overdispersion.
+    BNB : str
+        Beta Negative Binomial — a Beta-distributed cell-to-cell
+        variability in the NB success probability, yielding power-law
+        tails and a closed-form PMF.
+    """
+
+    NONE = "none"
+    BNB = "bnb"
+
+
+# ------------------------------------------------------------------------------
+
+
 class HierarchicalPriorType(str, Enum):
     """Type of hierarchical shrinkage prior for a model parameter.
 
