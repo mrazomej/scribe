@@ -1160,8 +1160,7 @@ uncaptured transcripts is
 
 $$
 \langle d_g \mid u_g \rangle
-= \mathbb{E}_{p_g \mid u_g}\!\bigl[
-\langle d_g \mid u_g, p_g \rangle\bigr]
+= \langle\langle d_g \mid u_g, p_g \rangle\rangle_{p_g \mid u_g}
 = \int_0^1
 \langle d_g \mid u_g, p_g \rangle
 \;\pi(p_g \mid u_g)\, dp_g,
@@ -1261,7 +1260,7 @@ uncaptured transcripts is
 $$
 \text{Var}(d_g \mid u_g)
 = \underbrace{
-\mathbb{E}_{p_g}\!\bigl[\text{Var}(d_g \mid u_g, p_g)\bigr]
+\langle\text{Var}(d_g \mid u_g, p_g)\rangle_{p_g}
 }_{\text{average conditional variance}}
 + \underbrace{
 \text{Var}_{p_g}\!\bigl[\langle d_g \mid u_g, p_g \rangle\bigr]
@@ -1272,7 +1271,7 @@ The first term averages the NB posterior variance
 (@eq-bnb-denoise-conditional-var) over the posterior of $p_g$:
 
 $$
-\mathbb{E}_{p_g}\!\bigl[\text{Var}(d_g \mid u_g, p_g)\bigr]
+\langle\text{Var}(d_g \mid u_g, p_g)\rangle_{p_g}
 = (r_g + u_g)
 \int_0^1
 \frac{(1-\nu_c)(1-p_g)}{[\nu_c + p_g(1-\nu_c)]^2}
@@ -1286,7 +1285,7 @@ $h(p_g) \equiv (r_g + u_g) \cdot f(p_g) = \langle d_g \mid u_g, p_g
 
 $$
 \text{Var}_{p_g}(h)
-= \mathbb{E}_{p_g}[h^2] - (\mathbb{E}_{p_g}[h])^2.
+= \langle h^2 \rangle_{p_g} - \langle h \rangle_{p_g}^2.
 $${#eq-bnb-denoise-Var-h}
 
 Both expectations are again one-dimensional integrals computable via the
