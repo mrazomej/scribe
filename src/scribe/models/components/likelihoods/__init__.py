@@ -9,6 +9,10 @@ This module provides likelihood classes that handle the three plate modes:
 Each likelihood handles cell-specific parameter sampling and observation
 sampling within the cell plate.
 
+NB-based likelihoods live in ``negative_binomial.py``, ``zero_inflated.py``,
+and ``vcp.py``.  Their BNB counterparts (which override only the base
+distribution) live in ``beta_negative_binomial.py``.
+
 Classes
 -------
 Likelihood
@@ -21,6 +25,14 @@ NBWithVCPLikelihood
     Negative Binomial with Variable Capture Probability.
 ZINBWithVCPLikelihood
     Zero-Inflated NB with Variable Capture Probability.
+BetaNegativeBinomialLikelihood
+    BNB counterpart of NegativeBinomialLikelihood.
+ZeroInflatedBNBLikelihood
+    BNB counterpart of ZeroInflatedNBLikelihood.
+BNBWithVCPLikelihood
+    BNB counterpart of NBWithVCPLikelihood.
+ZIBNBWithVCPLikelihood
+    BNB counterpart of ZINBWithVCPLikelihood.
 
 Examples
 --------
@@ -38,12 +50,24 @@ from .base import Likelihood, compute_cell_specific_mixing
 from .negative_binomial import NegativeBinomialLikelihood
 from .zero_inflated import ZeroInflatedNBLikelihood
 from .vcp import NBWithVCPLikelihood, ZINBWithVCPLikelihood
+from .beta_negative_binomial import (
+    BetaNegativeBinomialLikelihood,
+    ZeroInflatedBNBLikelihood,
+    BNBWithVCPLikelihood,
+    ZIBNBWithVCPLikelihood,
+)
 
 __all__ = [
     "Likelihood",
     "compute_cell_specific_mixing",
+    # NB family
     "NegativeBinomialLikelihood",
     "ZeroInflatedNBLikelihood",
     "NBWithVCPLikelihood",
     "ZINBWithVCPLikelihood",
+    # BNB family
+    "BetaNegativeBinomialLikelihood",
+    "ZeroInflatedBNBLikelihood",
+    "BNBWithVCPLikelihood",
+    "ZIBNBWithVCPLikelihood",
 ]

@@ -39,6 +39,8 @@ from ..builders.parameter_specs import (
     BiologyInformedCaptureSpec,
     BetaPrimeSpec,
     BetaSpec,
+    HorseshoeBNBConcentrationSpec,
+    NEGBNBConcentrationSpec,
     PositiveNormalSpec,
     HierarchicalSigmoidNormalSpec,
     NormalWithTransformSpec,
@@ -58,6 +60,10 @@ from ..components.likelihoods import (
     NegativeBinomialLikelihood,
     ZeroInflatedNBLikelihood,
     ZINBWithVCPLikelihood,
+    BetaNegativeBinomialLikelihood,
+    ZeroInflatedBNBLikelihood,
+    BNBWithVCPLikelihood,
+    ZIBNBWithVCPLikelihood,
 )
 from ..config import GuideFamilyConfig
 from ..parameterizations import Parameterization
@@ -81,6 +87,14 @@ LIKELIHOOD_REGISTRY: Dict[str, Type[Likelihood]] = {
     "zinb": ZeroInflatedNBLikelihood,
     "nbvcp": NBWithVCPLikelihood,
     "zinbvcp": ZINBWithVCPLikelihood,
+}
+
+# BNB counterparts -- selected when overdispersion='bnb'
+BNB_LIKELIHOOD_REGISTRY: Dict[str, Type[Likelihood]] = {
+    "nbdm": BetaNegativeBinomialLikelihood,
+    "zinb": ZeroInflatedBNBLikelihood,
+    "nbvcp": BNBWithVCPLikelihood,
+    "zinbvcp": ZIBNBWithVCPLikelihood,
 }
 
 # Guide family registry - maps string names to guide family classes
@@ -413,6 +427,161 @@ def build_capture_spec(
 # ------------------------------------------------------------------------------
 
 
+def build_bnb_concentration_spec(
+    overdispersion_prior: str,
+    guide_families: GuideFamilyConfig,
+    horseshoe_tau0: float = 1.0,
+    horseshoe_slab_df: int = 4,
+    horseshoe_slab_scale: float = 2.0,
+    neg_u: float = 1.0,
+    neg_a: float = 1.0,
+    neg_tau: float = 1.0,
+) -> List[ParamSpec]:
+    """Build parameter specs for the BNB concentration kappa_g.
+
+    Returns the hierarchical spec and its auxiliary sites (global
+    shrinkage, per-gene local scales, slab / NEG variance sites, and
+    the shared hyper-location).
+
+    The constrained parameter is ``omega_g = softplus(loc + scale * z)``,
+    the excess-dispersion fraction.  The likelihood converts this to
+    ``kappa_g = 2 + (r_g + 1) / omega_g``.
+
+    Parameters
+    ----------
+    overdispersion_prior : str
+        Prior family: ``"horseshoe"`` or ``"neg"``.
+    guide_families : GuideFamilyConfig
+        Guide family configuration.
+    horseshoe_tau0 : float
+        Global shrinkage scale for horseshoe.
+    horseshoe_slab_df : int
+        Slab degrees of freedom for horseshoe.
+    horseshoe_slab_scale : float
+        Slab scale for horseshoe.
+    neg_u : float
+        NEG inner shape parameter.
+    neg_a : float
+        NEG tail parameter.
+    neg_tau : float
+        NEG global rate.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Specs for hyper-location, auxiliary sites, and the hierarchical
+        ``bnb_concentration`` parameter.
+    """
+    from ..builders.parameter_specs import (
+        NormalWithTransformSpec,
+        HalfCauchySpec,
+        InverseGammaSpec,
+        GammaSpec,
+    )
+
+    specs: List[ParamSpec] = []
+
+    # Shared location in unconstrained space (strongly negative so that
+    # softplus(loc) ~ 0, defaulting to NB behaviour).
+    specs.append(
+        NormalWithTransformSpec(
+            name="bnb_concentration_loc",
+            shape_dims=(),
+            default_params=(-5.0, 1.0),
+        )
+    )
+
+    if overdispersion_prior == "horseshoe":
+        # Global shrinkage scale
+        specs.append(
+            HalfCauchySpec(
+                name="bnb_concentration_tau",
+                shape_dims=(),
+                default_params=(horseshoe_tau0,),
+            )
+        )
+        # Per-gene local scales
+        specs.append(
+            HalfCauchySpec(
+                name="bnb_concentration_lambda",
+                shape_dims=("n_genes",),
+                default_params=(1.0,),
+                is_gene_specific=True,
+            )
+        )
+        # Slab for regularisation
+        specs.append(
+            InverseGammaSpec(
+                name="bnb_concentration_c_sq",
+                shape_dims=(),
+                concentration=horseshoe_slab_df / 2.0,
+                rate=horseshoe_slab_df * horseshoe_slab_scale**2 / 2.0,
+            )
+        )
+        # The hierarchical spec itself
+        specs.append(
+            HorseshoeBNBConcentrationSpec(
+                name="bnb_concentration",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                hyper_loc_name="bnb_concentration_loc",
+                hyper_scale_name="bnb_concentration_loc",
+                tau_name="bnb_concentration_tau",
+                lambda_name="bnb_concentration_lambda",
+                c_sq_name="bnb_concentration_c_sq",
+                raw_name="bnb_concentration_raw",
+                is_gene_specific=True,
+                guide_family=guide_families.get("bnb_concentration"),
+            )
+        )
+    elif overdispersion_prior == "neg":
+        # NEG outer rate site: zeta_g ~ Gamma(a, tau)
+        specs.append(
+            GammaSpec(
+                name="bnb_concentration_zeta",
+                shape_dims=("n_genes",),
+                concentration=neg_a,
+                rate=neg_tau,
+                is_gene_specific=True,
+            )
+        )
+        # NEG inner variance site: psi_g ~ Gamma(u, zeta_g)
+        specs.append(
+            GammaSpec(
+                name="bnb_concentration_psi",
+                shape_dims=("n_genes",),
+                concentration=neg_u,
+                rate_name="bnb_concentration_zeta",
+                is_gene_specific=True,
+            )
+        )
+        # The hierarchical spec itself
+        specs.append(
+            NEGBNBConcentrationSpec(
+                name="bnb_concentration",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                hyper_loc_name="bnb_concentration_loc",
+                hyper_scale_name="bnb_concentration_loc",
+                psi_name="bnb_concentration_psi",
+                zeta_name="bnb_concentration_zeta",
+                raw_name="bnb_concentration_raw",
+                is_gene_specific=True,
+                guide_family=guide_families.get("bnb_concentration"),
+            )
+        )
+    else:
+        raise ValueError(
+            f"Unsupported overdispersion_prior: {overdispersion_prior!r}. "
+            "Valid options: 'horseshoe', 'neg'."
+        )
+
+    return specs
+
+
+# ------------------------------------------------------------------------------
+
+
 def build_extra_param_spec(
     param_name: str,
     unconstrained: bool,
@@ -478,10 +647,43 @@ def build_extra_param_spec(
                 positive_transform=positive_transform,
             )
         ]
+    elif param_name == "bnb_concentration":
+        return build_bnb_concentration_spec(
+            overdispersion_prior=(
+                model_config.overdispersion_prior.value
+                if model_config is not None
+                else "horseshoe"
+            ),
+            guide_families=guide_families,
+            horseshoe_tau0=(
+                model_config.horseshoe_tau0
+                if model_config is not None
+                else 1.0
+            ),
+            horseshoe_slab_df=(
+                model_config.horseshoe_slab_df
+                if model_config is not None
+                else 4
+            ),
+            horseshoe_slab_scale=(
+                model_config.horseshoe_slab_scale
+                if model_config is not None
+                else 2.0
+            ),
+            neg_u=(
+                model_config.neg_u if model_config is not None else 1.0
+            ),
+            neg_a=(
+                model_config.neg_a if model_config is not None else 1.0
+            ),
+            neg_tau=(
+                model_config.neg_tau if model_config is not None else 1.0
+            ),
+        )
     else:
         raise ValueError(
             f"Unknown extra parameter: {param_name}. "
-            f"Valid parameters are: gate, p_capture"
+            f"Valid parameters are: gate, p_capture, bnb_concentration"
         )
 
 
@@ -872,10 +1074,12 @@ __all__ = [
     # Registries
     "MODEL_EXTRA_PARAMS",
     "LIKELIHOOD_REGISTRY",
+    "BNB_LIKELIHOOD_REGISTRY",
     "GUIDE_FAMILY_REGISTRY",
     # Builders
     "build_gate_spec",
     "build_capture_spec",
+    "build_bnb_concentration_spec",
     "build_extra_param_spec",
     # Helpers
     "apply_prior_guide_overrides",

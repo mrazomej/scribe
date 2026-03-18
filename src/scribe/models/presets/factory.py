@@ -70,6 +70,7 @@ import numpyro.distributions as npdist
 from scribe.flows import FlowChain
 from .registry import (
     LIKELIHOOD_REGISTRY,
+    BNB_LIKELIHOOD_REGISTRY,
     MODEL_EXTRA_PARAMS,
     apply_prior_guide_overrides,
     build_extra_param_spec,
@@ -343,7 +344,11 @@ def _create_vae_model(
         )
 
     # 9. Build model
-    likelihood_class = LIKELIHOOD_REGISTRY[base_model]
+    # Select BNB likelihood class when overdispersion is active
+    if model_config.is_bnb:
+        likelihood_class = BNB_LIKELIHOOD_REGISTRY[base_model]
+    else:
+        likelihood_class = LIKELIHOOD_REGISTRY[base_model]
     if base_model in ("nbvcp", "zinbvcp"):
         capture_param_name = param_strategy.transform_model_param("p_capture")
         likelihood_instance = likelihood_class(
@@ -636,7 +641,10 @@ def create_model(
     # Step 5: Add model-specific extra parameters
     # ==========================================================================
     effective_hierarchical_gate = model_config.gate_prior != _NONE
-    extra_param_names = MODEL_EXTRA_PARAMS[base_model]
+    extra_param_names = list(MODEL_EXTRA_PARAMS[base_model])
+    # Append BNB concentration when overdispersion is enabled
+    if model_config.is_bnb:
+        extra_param_names.append("bnb_concentration")
     for param_name in extra_param_names:
         extra_specs = build_extra_param_spec(
             param_name=param_name,
@@ -753,8 +761,11 @@ def create_model(
         model_builder.add_derived(d_param.name, d_param.compute, d_param.deps)
 
     # Get likelihood from registry
-    # For VCP models, pass the capture parameter name from the parameterization
-    likelihood_class = LIKELIHOOD_REGISTRY[base_model]
+    # Select BNB likelihood class when overdispersion is active
+    if model_config.is_bnb:
+        likelihood_class = BNB_LIKELIHOOD_REGISTRY[base_model]
+    else:
+        likelihood_class = LIKELIHOOD_REGISTRY[base_model]
     if base_model in ("nbvcp", "zinbvcp"):
         # Get the transformed capture param name (p_capture or phi_capture)
         capture_param_name = param_strategy.transform_model_param("p_capture")
