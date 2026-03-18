@@ -40,8 +40,12 @@ inference (@sec-hierarchical-p) is unaffected.
 the NB's geometric (exponentially decaying) tails.
 
 4. The BNB admits a clean **biophysical interpretation** as **extrinsic
-regulatory noise**---cell-to-cell variability in promoter kinetics---on
-top of the **intrinsic noise** already captured by the NB.
+noise in burst size**---cell-to-cell variability in transcription burst
+kinetics---on top of the **intrinsic noise** already captured by the NB.
+Two independent biophysical routes (the one-state bursty promoter and
+the two-state promoter in its bursty limit) both lead to the NB as a
+starting point, and both yield the BNB when extrinsic noise is
+included.
 
 5. A **hierarchical sparsity-inducing prior** on the BNB concentration
 parameter ensures that most genes default to NB behaviour, with only a
@@ -323,70 +327,127 @@ for $r_g = 5$. {#tbl-bnb-inflation}
 
 ## Biophysical interpretation {#sec-bnb-biophysics}
 
-### Intrinsic noise: the NB from the two-state promoter
+### Two routes to the Negative Binomial {#sec-bnb-nb-routes}
 
-In the standard NBDM framework (@sec-dirichlet-multinomial), the
-negative binomial distribution for true transcript counts arises from a
-two-state promoter model: a gene switches between an OFF state (no
-transcription) and an ON state (transcription at rate $s$), with
-switching rates $k^+$ (OFF$\to$ON) and $k^-$ (ON$\to$OFF). At steady
-state, the number of mRNA molecules follows an NB distribution whose
-parameters are determined by the ratio of these rates and the mRNA
-degradation rate $\gamma$. This is **intrinsic noise**: the irreducible
-stochastic fluctuation produced by a single promoter switching between
-states with *fixed* kinetic rates.
+A central ingredient of the NBDM framework
+(@sec-dirichlet-multinomial) is the negative binomial distribution for
+true transcript counts. Two distinct biophysical models lead to the NB;
+understanding both clarifies the role of the BNB extension.
 
-Crucially, the NB already accounts for bursty transcription. The burst
-frequency $k^+/\gamma$ and burst size $s/k^-$ are encoded in the NB
-parameters $r_g$ and $p_g$. If every cell in the population had
-identical promoter kinetics for gene $g$, the NB would be the
-exact steady-state mRNA distribution.
-
-### Extrinsic noise: the BNB from cell-to-cell regulatory heterogeneity
-
-In reality, promoter kinetics are not identical across cells.
-Concentrations of upstream transcription factors fluctuate, chromatin
-accessibility varies with cell-cycle stage and local remodelling, and
-enhancer--promoter contact frequencies differ from cell to cell. These
-sources of variability---collectively known as **extrinsic noise** in
-the gene-expression literature---cause the effective NB parameter $p_g$
-to vary across the cell population even for a single gene.
-
-If this cell-to-cell fluctuation in $p_g$ follows a Beta distribution
-centred on the population value,
+**Route A: the one-state bursty promoter (exact).**
+Consider a constitutive promoter that initiates transcription bursts at
+rate $k_i$. Each burst produces a geometrically distributed number of
+mRNA molecules with mean burst size $b$, and mRNA is degraded at rate
+$\gamma$. The chemical master equation for this process can be solved
+exactly via generating functions (see e.g. Shahrezaei & Swain, *PNAS*
+2008). The steady-state mRNA distribution is
 
 $$
-p_{gc} \sim \text{Beta}(\alpha_{gc}, \kappa_g),
+P(m) = \frac{\Gamma(m + \lambda)}{\Gamma(m+1)\,\Gamma(\lambda)}
+\left(\frac{1}{1+b}\right)^{\!\lambda}
+\left(\frac{b}{1+b}\right)^{\!m},
+$${#eq-bnb-nb-bursty}
+
+where $\lambda \equiv k_i / \gamma$ is the dimensionless burst
+frequency. This is **exactly** the negative binomial with parameters
+
+$$
+r_g = \lambda = \frac{k_i}{\gamma}, \qquad
+p_g = \frac{1}{1+b} = \theta,
+$${#eq-bnb-nb-params-bursty}
+
+where $\theta$ is the geometric stopping probability that sets the
+burst size ($b = (1-\theta)/\theta$). No approximation is involved:
+the NB is the *exact* steady-state distribution of the one-state
+bursty promoter.
+
+**Route B: the two-state promoter in the bursty limit
+(approximate).**
+A two-state promoter switches between a transcriptionally inactive
+state (OFF) and an active state (ON) with rates $k^+$
+(OFF$\to$ON) and $k^-$ (ON$\to$OFF); transcription occurs at rate
+$r_m$ from the ON state only, and mRNA degrades at rate $\gamma$.
+The full steady-state mRNA distribution involves the confluent
+hypergeometric function ${}_1F_1$:
+
+$$
+P(m) = \frac{1}{m!}\,
+\frac{(k^+/\gamma)^{(m)}}{((k^++k^-)/\gamma)^{(m)}}
+\left(\frac{r_m}{\gamma}\right)^{\!m}\;
+{}_1F_1\!\left(
+  \frac{k^+}{\gamma}+m,\;
+  \frac{k^++k^-}{\gamma}+m,\;
+  -\frac{r_m}{\gamma}
+\right),
+$${#eq-bnb-two-state-full}
+
+where $a^{(m)}$ denotes the rising factorial. This is *not* an NB in
+general. It reduces to the NB only in the **bursty limit**
+$k^- \gg \gamma$, where the promoter switches off much faster than
+mRNA degrades, making bursts effectively instantaneous. In that limit,
+we recover @eq-bnb-nb-bursty with $\lambda \to k^+/\gamma$ and
+$b \to r_m/k^-$.
+
+Both routes converge on the same NB, but Route A is exact and
+parameter-free in its approximation, making it the more natural
+starting point for the BNB extension. In either case, the NB encodes
+the **intrinsic noise** of gene expression: the irreducible
+stochastic fluctuations that arise when all kinetic rates are fixed
+across the cell population.
+
+### From variable burst size to the BNB {#sec-bnb-variable-burst}
+
+In practice, kinetic rates are not identical across cells. The
+classical decomposition of gene-expression noise (Elowitz et al.,
+*Science* 2002; Swain et al., *PNAS* 2002) distinguishes:
+
+- **Intrinsic noise**: stochastic fluctuations produced by a promoter
+with *fixed* kinetic rates---this is the NB derived above.
+- **Extrinsic noise**: cell-to-cell variability in the kinetic rates
+*themselves*, caused by fluctuating transcription-factor
+concentrations, varying chromatin accessibility, cell-cycle effects,
+and differences in local metabolic or signalling environments.
+
+The BNB arises naturally when extrinsic noise is layered on top of the
+intrinsic NB. The cleanest derivation starts from the one-state bursty
+promoter (Route A). In that model, the NB success probability
+$p_g = 1/(1+b_g)$ is entirely determined by the mean burst size
+$b_g$. If $b_g$ varies from cell to cell---for instance because
+
+- RNA polymerase processivity fluctuates with local NTP
+concentrations,
+- chromatin state modulates transcription elongation efficiency, or
+- upstream signalling alters co-factor availability and thereby the
+effective burst length,
+
+then $p_g$ fluctuates across the population. If we model this
+cell-to-cell variation as a Beta distribution centred on the
+population value,
+
+$$
+p_{gc} \sim \text{Beta}(\alpha_{gc},\; \kappa_g),
 $${#eq-bnb-beta-promoter}
 
-the marginal count distribution obtained by integrating out $p_{gc}$ is
-the BNB, as derived in @sec-bnb-definition. The concentration
-$\kappa_g$ therefore quantifies the magnitude of **extrinsic regulatory
-noise** for gene $g$:
+the marginal count distribution obtained by integrating out $p_{gc}$
+is exactly the BNB, as derived in @sec-bnb-definition. The
+concentration parameter $\kappa_g$ therefore measures the magnitude
+of **extrinsic noise in burst size** for gene $g$:
 
-- **Large $\kappa_g$** (tight Beta): extrinsic noise is negligible;
-the NB intrinsic noise dominates and the gene behaves as a standard NB.
+- **Large $\kappa_g$** (tight Beta): burst size is nearly constant
+across cells; extrinsic noise is negligible and the gene behaves as a
+standard NB.
 - **Small $\kappa_g$** (diffuse Beta): substantial cell-to-cell
-heterogeneity in regulatory state; the gene exhibits heavier tails and
-a wider body than the NB predicts.
+heterogeneity in burst size; the gene exhibits heavier tails and a
+wider body than any NB can accommodate.
 
-This two-layer picture---intrinsic NB noise *plus* extrinsic Beta
-noise---mirrors the classical decomposition of gene-expression
-variability (Elowitz et al., *Science* 2002; Swain et al., *PNAS*
-2002). Concretely, one can think of
-the extrinsic noise as arising from fluctuations in burst size (varying
-$s/k^-$ across cells) or burst frequency (varying $k^+/\gamma$), both
-of which would perturb the effective $p_g$.
-
-We note that the exact compound arising from a Poisson--Gamma model
-with Beta-distributed rates is a Poisson--Gamma--Beta distribution,
-which is not algebraically identical to the BNB (since the Beta
-modulates the Poisson rate rather than the NB success probability
-directly). The BNB is therefore a **phenomenological approximation** to
-the full three-layer model, but one that captures the same qualitative
-phenomenon---extra variance from extrinsic regulatory noise---with a
-closed-form PMF that is computationally tractable and preserves the
-mean structure of the model.
+The same conclusion holds if we start from Route B (the two-state
+promoter in the bursty limit) and allow extrinsic noise to perturb
+the effective switching rates $k^+$ or $k^-$, which in turn modulate
+the NB parameters. Regardless of which route produces the NB, placing
+a Beta distribution on the NB success probability yields the BNB.
+Multiple biophysical paths lead to the same mathematical object---a
+reassuring sign that the BNB extension is robust to the specific
+microscopic model assumed for transcription.
 
 ### Why $\kappa_g$ is biological, not technical
 
