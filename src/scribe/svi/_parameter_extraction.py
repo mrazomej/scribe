@@ -797,7 +797,7 @@ class ParameterExtractionMixin:
                 mu = map_estimates.get("mu")
                 phi = map_estimates.get("phi")
                 if mu is not None and phi is not None:
-                    r_for_kappa = mu / phi
+                    r_for_kappa = mu * phi
             if r_for_kappa is not None:
                 omega_safe = jnp.clip(omega, 1e-6, None)
                 map_estimates["bnb_kappa"] = (
