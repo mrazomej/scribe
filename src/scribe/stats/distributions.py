@@ -1,8 +1,10 @@
 """Custom probability distributions for SCRIBE."""
 
+import jax
 import jax.numpy as jnp
 import jax.random as random
-from jax import scipy as jsp
+from jax import lax, scipy as jsp
+from jax.scipy.special import betaln, gammaln
 
 from numpyro.distributions import (
     Distribution,
@@ -10,7 +12,10 @@ from numpyro.distributions import (
     Gamma,
     LowRankMultivariateNormal,
 )
+from numpyro.distributions.continuous import Beta
+from numpyro.distributions.conjugate import NegativeBinomialProbs
 from numpyro.distributions.util import promote_shapes, validate_sample
+from numpyro.util import is_prng_key
 
 # ==============================================================================
 # Beta Prime Distribution
@@ -129,6 +134,117 @@ class BetaPrime(Distribution):
     def concentration0(self):
         """Access to concentration0 parameter (β) for NumPyro compatibility."""
         return self.beta
+
+
+# ==============================================================================
+# Beta Negative Binomial Distribution
+# ==============================================================================
+
+
+class BetaNegativeBinomial(Distribution):
+    """Beta Negative Binomial compound distribution.
+
+    Arises by marginalising the success probability of a Negative
+    Binomial over a Beta prior:
+
+        p ~ Beta(concentration1, concentration0)
+        X | p ~ NegativeBinomial(n, p)
+
+    This is a local fallback for numpyro < 0.20 which added the
+    distribution natively.  The implementation mirrors the upstream
+    NumPyro version exactly so that behaviour is identical regardless
+    of which class is used.
+
+    Parameters
+    ----------
+    concentration1 : array_like
+        First Beta parameter (alpha).
+    concentration0 : array_like
+        Second Beta parameter (beta).
+    n : array_like
+        Number of successes for the Negative Binomial.
+
+    References
+    ----------
+    .. [1] https://en.wikipedia.org/wiki/Beta_negative_binomial_distribution
+    .. [2] https://num.pyro.ai/en/stable/_modules/numpyro/distributions/conjugate.html#BetaNegativeBinomial
+    """
+
+    arg_constraints = {
+        "concentration1": constraints.positive,
+        "concentration0": constraints.positive,
+        "n": constraints.positive,
+    }
+    support = constraints.nonnegative_integer
+    pytree_data_fields = ("concentration1", "concentration0", "n", "_beta")
+
+    def __init__(
+        self,
+        concentration1,
+        concentration0,
+        n,
+        *,
+        validate_args=None,
+    ):
+        self.concentration1, self.concentration0, self.n = promote_shapes(
+            concentration1, concentration0, n
+        )
+        batch_shape = lax.broadcast_shapes(
+            jnp.shape(concentration1),
+            jnp.shape(concentration0),
+            jnp.shape(n),
+        )
+        concentration1 = jnp.broadcast_to(concentration1, batch_shape)
+        concentration0 = jnp.broadcast_to(concentration0, batch_shape)
+        self._beta = Beta(concentration1, concentration0)
+        super().__init__(batch_shape, validate_args=validate_args)
+
+    def sample(self, key, sample_shape=()):
+        """Two-step compound sampling: Beta then NegativeBinomial."""
+        assert is_prng_key(key)
+        key_beta, key_nb = random.split(key)
+        probs = self._beta.sample(key_beta, sample_shape)
+        return NegativeBinomialProbs(total_count=self.n, probs=probs).sample(
+            key_nb
+        )
+
+    @validate_sample
+    def log_prob(self, value):
+        """Log PMF: Gamma(n+k)/(k! Gamma(n)) * B(a+k, b+n) / B(a, b)."""
+        return (
+            gammaln(self.n + value)
+            - gammaln(self.n)
+            - gammaln(value + 1)
+            + betaln(
+                self.concentration1 + value,
+                self.concentration0 + self.n,
+            )
+            - betaln(self.concentration1, self.concentration0)
+        )
+
+    @property
+    def mean(self):
+        """E[X] = n * alpha / (beta - 1) when beta > 1."""
+        return jnp.where(
+            self.concentration0 > 1,
+            self.n * self.concentration1 / (self.concentration0 - 1),
+            jnp.inf,
+        )
+
+    @property
+    def variance(self):
+        """Var[X] when beta > 2; infinite otherwise."""
+        alpha = self.concentration1
+        beta = self.concentration0
+        n = self.n
+        var = (
+            n
+            * alpha
+            * (n + beta - 1)
+            * (alpha + beta - 1)
+            / (jnp.square(beta - 1) * (beta - 2))
+        )
+        return jnp.where(beta > 2, var, jnp.inf)
 
 
 # ==============================================================================
