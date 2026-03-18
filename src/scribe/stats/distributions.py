@@ -151,18 +151,24 @@ class BetaNegativeBinomial(Distribution):
         X | p ~ NegativeBinomial(n, p)
 
     This is a local fallback for numpyro < 0.20 which added the
-    distribution natively.  The implementation mirrors the upstream
-    NumPyro version exactly so that behaviour is identical regardless
-    of which class is used.
+    distribution natively.
+
+    Optimisation over the upstream NumPyro version: ``log_prob``
+    expands ``betaln`` manually and evaluates ``gammaln`` on the
+    original (un-promoted) gene-only arrays ``concentration0`` and
+    ``n`` *before* broadcasting.  For typical SCRIBE shapes
+    (alpha = C x G, kappa = G, r = G) this avoids ~33 % of
+    ``gammaln`` FLOPs.
 
     Parameters
     ----------
     concentration1 : array_like
-        First Beta parameter (alpha).
+        First Beta parameter (alpha).  May be cell x gene shaped.
     concentration0 : array_like
-        Second Beta parameter (beta).
+        Second Beta parameter (kappa).  Typically gene-only.
     n : array_like
-        Number of successes for the Negative Binomial.
+        Number of successes for the Negative Binomial (r).
+        Typically gene-only.
 
     References
     ----------
@@ -176,7 +182,14 @@ class BetaNegativeBinomial(Distribution):
         "n": constraints.positive,
     }
     support = constraints.nonnegative_integer
-    pytree_data_fields = ("concentration1", "concentration0", "n", "_beta")
+    pytree_data_fields = (
+        "concentration1",
+        "concentration0",
+        "n",
+        "_beta",
+        "_c0_raw",
+        "_n_raw",
+    )
 
     def __init__(
         self,
@@ -186,6 +199,11 @@ class BetaNegativeBinomial(Distribution):
         *,
         validate_args=None,
     ):
+        # Keep the original (possibly lower-rank) arrays so that
+        # log_prob can compute gammaln at the smaller shape.
+        self._c0_raw = jnp.asarray(concentration0)
+        self._n_raw = jnp.asarray(n)
+
         self.concentration1, self.concentration0, self.n = promote_shapes(
             concentration1, concentration0, n
         )
@@ -210,17 +228,32 @@ class BetaNegativeBinomial(Distribution):
 
     @validate_sample
     def log_prob(self, value):
-        """Log PMF: Gamma(n+k)/(k! Gamma(n)) * B(a+k, b+n) / B(a, b)."""
-        return (
-            gammaln(self.n + value)
-            - gammaln(self.n)
+        """Log PMF with optimised gammaln evaluation.
+
+        Expands betaln manually so that the three gene-only terms
+        (gammaln(kappa), gammaln(r), gammaln(kappa + r)) are computed
+        at their native (G,) shape rather than the broadcast (C, G).
+        JAX broadcasting handles the addition with the (C, G) terms.
+        """
+        c1 = self.concentration1   # alpha — (C, G) or full batch
+        c0 = self._c0_raw          # kappa — original shape, e.g. (G,)
+        n = self._n_raw            # r     — original shape, e.g. (G,)
+
+        # Gene-only terms: 3 gammaln at the smaller (G,) shape.
+        gene_terms = gammaln(c0 + n) - gammaln(n) - gammaln(c0)
+
+        # Cell x gene terms: 6 gammaln at full (C, G) shape.
+        # n and c0 broadcast automatically inside the additions.
+        cell_terms = (
+            gammaln(n + value)
             - gammaln(value + 1)
-            + betaln(
-                self.concentration1 + value,
-                self.concentration0 + self.n,
-            )
-            - betaln(self.concentration1, self.concentration0)
+            + gammaln(c1 + value)
+            - gammaln(c1 + value + c0 + n)
+            - gammaln(c1)
+            + gammaln(c1 + c0)
         )
+
+        return gene_terms + cell_terms
 
     @property
     def mean(self):
