@@ -18,6 +18,7 @@ from numpyro.distributions import constraints
 
 from .parameter_specs import (
     GammaSpec,
+    NEGBNBConcentrationSpec,
     NEGDatasetPositiveNormalSpec,
     NEGDatasetSigmoidNormalSpec,
     NEGHierarchicalPositiveNormalSpec,
@@ -308,6 +309,134 @@ def setup_guide(
     ----------
     spec : NEGHierarchicalPositiveNormalSpec
         NEG gene-level phi specification.
+    guide : LowRankGuide
+        Low-rank guide marker with rank.
+    dims : Dict[str, int]
+        Dimension sizes.
+    model_config : ModelConfig
+        Model configuration.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled z value (unconstrained).
+    """
+    resolved_shape = resolve_shape(
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
+    )
+    k = guide.rank
+
+    n_batch_dims = len(resolved_shape) - 1
+    G = resolved_shape[-1] if resolved_shape else 1
+
+    loc = numpyro.param(
+        f"{spec.raw_name}_loc",
+        jnp.zeros(resolved_shape) if resolved_shape else jnp.zeros(G),
+    )
+    W = numpyro.param(
+        f"{spec.raw_name}_W",
+        (
+            0.01 * jnp.ones((*resolved_shape, k))
+            if resolved_shape
+            else 0.01 * jnp.ones((G, k))
+        ),
+    )
+    raw_diag = numpyro.param(
+        f"{spec.raw_name}_raw_diag",
+        (
+            -3.0 * jnp.ones(resolved_shape)
+            if resolved_shape
+            else -3.0 * jnp.ones(G)
+        ),
+    )
+
+    D = jax.nn.softplus(raw_diag) + 1e-4
+    z_dist = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
+
+    if n_batch_dims > 0:
+        z_dist = z_dist.to_event(n_batch_dims)
+
+    return numpyro.sample(spec.raw_name, z_dist)
+
+
+# ------------------------------------------------------------------------------
+# NEGBNBConcentrationSpec MeanField Guide (Normal for raw NCP site)
+# ------------------------------------------------------------------------------
+
+
+@dispatch(NEGBNBConcentrationSpec, MeanFieldGuide, dict, object)
+def setup_guide(
+    spec: NEGBNBConcentrationSpec,
+    guide: MeanFieldGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    **kwargs,
+) -> jnp.ndarray:
+    """MeanField guide for NEG BNB concentration NCP z variable (gene-level omega).
+
+    Parameters
+    ----------
+    spec : NEGBNBConcentrationSpec
+        NEG BNB concentration specification.
+    guide : MeanFieldGuide
+        Mean-field guide marker.
+    dims : Dict[str, int]
+        Dimension sizes.
+    model_config : ModelConfig
+        Model configuration.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled z value (unconstrained).
+    """
+    shape = resolve_shape(
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
+    )
+
+    loc = numpyro.param(
+        f"{spec.raw_name}_loc",
+        jnp.full(shape, 0.0) if shape else jnp.array(0.0),
+    )
+    scale = numpyro.param(
+        f"{spec.raw_name}_scale",
+        jnp.full(shape, 1.0) if shape else jnp.array(1.0),
+        constraint=constraints.positive,
+    )
+
+    if shape == ():
+        z_dist = dist.Normal(loc, scale)
+    else:
+        z_dist = dist.Normal(loc, scale).to_event(len(shape))
+
+    return numpyro.sample(spec.raw_name, z_dist)
+
+
+# ------------------------------------------------------------------------------
+# NEGBNBConcentrationSpec LowRank Guide
+# ------------------------------------------------------------------------------
+
+
+@dispatch(NEGBNBConcentrationSpec, LowRankGuide, dict, object)
+def setup_guide(
+    spec: NEGBNBConcentrationSpec,
+    guide: LowRankGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    **kwargs,
+) -> jnp.ndarray:
+    """LowRank guide for NEG BNB concentration NCP z variable (gene-level omega).
+
+    Parameters
+    ----------
+    spec : NEGBNBConcentrationSpec
+        NEG BNB concentration specification.
     guide : LowRankGuide
         Low-rank guide marker with rank.
     dims : Dict[str, int]
