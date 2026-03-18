@@ -411,36 +411,35 @@ def sample_biological_nb(
         # Generate one PRNG key per posterior sample
         keys = random.split(rng_key, actual_n_samples)
 
-        # Define a single-sample helper that we will vmap over
-        def _sample_one(key_i, r_i, p_i, mw_i):
+        # Flags evaluated at Python (trace) time, safe inside vmap.
+        _is_mixture = is_mixture
+        _has_bnb = bnb_concentration is not None
+
+        def _sample_one(key_i, r_i, p_i, mw_i, bnb_i):
             return _sample_biological_nb_single(
                 r=r_i,
                 p=p_i,
                 n_cells=n_cells,
                 rng_key=key_i,
-                mixing_weights=mw_i,
+                mixing_weights=mw_i if _is_mixture else None,
                 cell_batch_size=cell_batch_size,
-                bnb_concentration=bnb_concentration,
+                bnb_concentration=bnb_i if _has_bnb else None,
             )
 
-        # Prepare mixing_weights for vmap (None → dummy zeros that are
-        # ignored inside the helper)
-        if is_mixture:
-            return vmap(_sample_one)(keys, r, p, mixing_weights)
-        else:
-            # vmap requires concrete arrays – pass a dummy for mw
-            dummy_mw = jnp.zeros(actual_n_samples)
-            return vmap(
-                lambda k, ri, pi, _mw: _sample_biological_nb_single(
-                    r=ri,
-                    p=pi,
-                    n_cells=n_cells,
-                    rng_key=k,
-                    mixing_weights=None,
-                    cell_batch_size=cell_batch_size,
-                    bnb_concentration=bnb_concentration,
-                )
-            )(keys, r, p, dummy_mw)
+        # vmap requires concrete arrays for every argument, so we
+        # substitute dummy arrays for optional parameters that are None.
+        mw_arr = (
+            mixing_weights
+            if is_mixture
+            else jnp.zeros(actual_n_samples)
+        )
+        bnb_arr = (
+            bnb_concentration
+            if bnb_concentration is not None
+            else jnp.zeros(actual_n_samples)
+        )
+
+        return vmap(_sample_one)(keys, r, p, mw_arr, bnb_arr)
     else:
         # MAP path: no leading sample dimension, so we loop n_samples times
         keys = random.split(rng_key, n_samples)
@@ -544,7 +543,13 @@ def _sample_biological_nb_single(
             else:
                 p_batch = p
 
-            nb = build_count_dist(r_batch, p_batch, bnb_concentration)
+            # Gather per-cell bnb_concentration when it varies by component.
+            bnb_batch = bnb_concentration
+            if bnb_concentration is not None and bnb_concentration.ndim == 2:
+                # (K, G) -> (batch_n, G)
+                bnb_batch = bnb_concentration[components]
+
+            nb = build_count_dist(r_batch, p_batch, bnb_batch)
             batch_counts = nb.sample(sample_key)  # (batch_n, n_genes)
         else:
             # ----------------------------------------------------------
@@ -690,13 +695,19 @@ def sample_posterior_ppc(
             if mixing_weights is not None
             else jnp.zeros(actual_n_samples)
         )
+        bnb_arr = (
+            bnb_concentration
+            if bnb_concentration is not None
+            else jnp.zeros(actual_n_samples)
+        )
 
         # Flags must be static for the vmap-ed function
         _has_gate = gate is not None
         _has_p_capture = p_capture is not None
         _is_mixture = is_mixture
+        _has_bnb = bnb_concentration is not None
 
-        def _sample_one(key_i, r_i, p_i, gate_i, p_cap_i, mw_i):
+        def _sample_one(key_i, r_i, p_i, gate_i, p_cap_i, mw_i, bnb_i):
             return _sample_posterior_ppc_single(
                 r=r_i,
                 p=p_i,
@@ -706,10 +717,12 @@ def sample_posterior_ppc(
                 p_capture=p_cap_i if _has_p_capture else None,
                 mixing_weights=mw_i if _is_mixture else None,
                 cell_batch_size=cell_batch_size,
-                bnb_concentration=bnb_concentration,
+                bnb_concentration=bnb_i if _has_bnb else None,
             )
 
-        return vmap(_sample_one)(keys, r, p, gate_arr, p_cap_arr, mw_arr)
+        return vmap(_sample_one)(
+            keys, r, p, gate_arr, p_cap_arr, mw_arr, bnb_arr
+        )
     else:
         # MAP path: loop n_samples times
         keys = random.split(rng_key, n_samples)
@@ -834,8 +847,14 @@ def _sample_posterior_ppc_single(
             else:
                 p_effective = p_batch
 
+            # Gather per-cell bnb_concentration when it varies by component.
+            bnb_batch = bnb_concentration
+            if bnb_concentration is not None and bnb_concentration.ndim == 2:
+                # (K, G) -> (batch_n, G)
+                bnb_batch = bnb_concentration[components]
+
             # NB distribution
-            nb = build_count_dist(r_batch, p_effective, bnb_concentration)
+            nb = build_count_dist(r_batch, p_effective, bnb_batch)
 
             # Apply zero-inflation if present
             if gate_batch is not None:
