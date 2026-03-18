@@ -17,6 +17,7 @@ from .enums import (
     Parameterization,
     InferenceMethod,
     HierarchicalPriorType,
+    OverdispersionType,
 )
 from .groups import (
     VAEConfig,
@@ -192,6 +193,8 @@ class ModelConfig(BaseModel):
         d.setdefault("p_dataset_prior", "none")
         d.setdefault("p_dataset_mode", "gene_specific")
         d.setdefault("gate_dataset_prior", "none")
+        d.setdefault("overdispersion", "none")
+        d.setdefault("overdispersion_prior", "horseshoe")
 
         # Migrate legacy top-level capture prior fields into priors dict.
         old_capture = d.pop("capture_prior", "default")
@@ -370,6 +373,25 @@ class ModelConfig(BaseModel):
             "via log(1+exp(z)); 'exp' restores the original log-Normal "
             "behavior via exp(z). Power users may prefer 'exp' for exact "
             "log-Normal priors at the cost of numerical stability."
+        ),
+    )
+
+    # Gene-specific overdispersion beyond the NB family.
+    overdispersion: OverdispersionType = Field(
+        OverdispersionType.NONE,
+        description=(
+            "Gene-specific overdispersion model. 'none' uses the standard "
+            "Negative Binomial. 'bnb' uses the Beta Negative Binomial, "
+            "which adds a per-gene concentration parameter kappa_g that "
+            "allows power-law tails while preserving the NB mean structure."
+        ),
+    )
+    overdispersion_prior: HierarchicalPriorType = Field(
+        HierarchicalPriorType.HORSESHOE,
+        description=(
+            "Hierarchical prior for the overdispersion concentration "
+            "parameter (e.g. kappa_g for BNB). Controls shrinkage toward "
+            "the NB limit. Only used when overdispersion is not 'none'."
         ),
     )
 
@@ -983,6 +1005,20 @@ class ModelConfig(BaseModel):
             or self.p_prior != _NONE
             or self.gate_prior != _NONE
         )
+
+    # --------------------------------------------------------------------------
+
+    @property
+    def is_overdispersed(self) -> bool:
+        """Whether the model uses gene-specific overdispersion (e.g. BNB)."""
+        return self.overdispersion != OverdispersionType.NONE
+
+    # --------------------------------------------------------------------------
+
+    @property
+    def is_bnb(self) -> bool:
+        """Whether the model uses the Beta Negative Binomial distribution."""
+        return self.overdispersion == OverdispersionType.BNB
 
     # --------------------------------------------------------------------------
 
