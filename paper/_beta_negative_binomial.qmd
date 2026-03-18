@@ -225,6 +225,24 @@ Note that $\alpha_{gc}$ depends on both the gene (through $\kappa_g$)
 and the cell (through $\hat{p}_{gc}$). The only new per-gene parameter
 is $\kappa_g > 2$.
 
+**Convention note.** The formula above uses the paper's convention where
+$p$ denotes the success (stopping) probability, so
+$\langle u \rangle = r(1-p)/p$, and
+$\hat{p} = p / (\nu + p(1-\nu))$.
+The codebase passes the complementary quantity
+$\tilde{p} = 1 - \hat{p}$ as NumPyro's `probs` argument (which
+represents the observation probability, giving
+$\langle u \rangle = r\tilde{p}/(1-\tilde{p})$).
+Because $\tilde{p} = 1 - \hat{p}$, the code's alpha formula
+$$
+\alpha_{gc}
+= \frac{\tilde{p}_{gc}\,(\kappa_g - 1)}{1 - \tilde{p}_{gc}}
+$$
+is algebraically identical to @eq-bnb-alpha-from-kappa and produces
+exactly the same numerical value of $\alpha_{gc}$. In other words, the
+convention swap between $p$ and $1-p$ cancels in the ratio, so the BNB
+distribution constructed by the code is the same one derived here.
+
 ### Verification of the mean factorization
 
 Substituting @eq-bnb-alpha-from-kappa into the BNB mean:
