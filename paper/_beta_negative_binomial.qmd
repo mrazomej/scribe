@@ -51,6 +51,13 @@ included.
 parameter ensures that most genes default to NB behaviour, with only a
 data-driven subset escaping to the heavier-tailed BNB.
 
+6. The BNB's effectiveness depends on the underlying NB's ability to
+calibrate gene-level means. Because the mean-preserving constraint is
+hard, parameterizations that constrain the NB's dynamic range (notably
+mean--odds) can produce mean miscalibration that the BNB is powerless
+to fix. The **canonical parameterization** ($r_g$, $p_g$ independent)
+is recommended when using the BNB (@sec-bnb-parameterization-remark).
+
 ## The Beta Negative Binomial distribution {#sec-bnb-definition}
 
 ### Definition as an NB-Beta compound
@@ -864,6 +871,107 @@ $${#eq-bnb-composition}
 This is independent of $\kappa_g$. The BNB extension does not alter the
 compositional analysis or differential expression pipeline.
 
+## Practical remark: BNB effectiveness and the NB base layer {#sec-bnb-parameterization-remark}
+
+The BNB can only add variance on top of an already correct mean
+structure (@sec-bnb-hardness). This has an important consequence: the
+BNB's effectiveness critically depends on the underlying NB
+parameterization's ability to calibrate gene-level means. We briefly
+discuss how different NB parameterizations interact with the BNB
+extension.
+
+### Why the mean--odds parameterization can be limiting
+
+In the **mean--odds** parameterization, the NB parameters are coupled
+through the dispersion $\phi_g$:
+
+$$
+r_g = \mu_g \cdot \phi_g, \qquad
+p_g = \frac{1}{1 + \phi_g}.
+$${#eq-bnb-mean-odds-coupling}
+
+A hierarchical prior on $\log \phi_g$ constrains all genes to lie within
+a few standard deviations of a shared hyper-mean:
+
+$$
+\log \phi_g \sim \mathcal{N}(\phi_0, \sigma_\phi^2).
+$$
+
+However, the NB's probability parameter $p_g$ is a nonlinear function of
+$\phi_g$ that compresses the entire unit interval into one end of
+$\phi_g$'s range:
+
+- $p_g \to 1$ requires $\phi_g \to 0$,
+- $p_g \to 0$ requires $\phi_g \to \infty$.
+
+In single-cell datasets with capture efficiencies $\nu_c \sim 0.01$--$0.10$,
+a gene with observed mean $\langle u \rangle = 350$ may need a
+pre-capture NB mean of $\sim 5000$, requiring $p_g \approx 0.9998$ (i.e.
+$\phi_g \approx 5 \times 10^{-4}$). A lowly expressed gene with
+$\langle u \rangle = 1$ may need $p_g \approx 0.005$ (i.e.
+$\phi_g \approx 200$). The hierarchical prior would need to span from
+$\log \phi_g \approx -7.6$ to $\log \phi_g \approx 5.3$---a range of
+$\sim 13$ in log-space---to accommodate both extremes simultaneously.
+A Gaussian prior with the standard deviation $\sigma_\phi \gtrsim 4$
+required for this range provides negligible shrinkage, defeating the
+purpose of the hierarchy.
+
+In practice, the prior settles on a moderate $\sigma_\phi$ that permits
+reasonable dispersion for most genes but prevents $p_g$ from reaching the
+extreme values that rare, highly-expressed genes demand. The result is
+systematic mean miscalibration: predicted means for high-expression genes
+are too small, and the model compensates by inflating zero-probability or
+(with BNB) by attempting to widen tails. But because the mean-preserving
+constraint is hard (@sec-bnb-hardness), the BNB's $\kappa_g$ cannot
+shift the distribution's centre, only its spread. The resulting PPCs show
+excess probability mass at zero and thin tails---exactly the artefacts
+that motivated the BNB---even though the BNB is active and converged.
+
+### The canonical parameterization resolves the dynamic-range problem
+
+In the **canonical** parameterization, $r_g$ and $p_g$ are independent:
+
+$$
+\log r_g \sim \mathcal{N}(r_0, \sigma_r^2), \qquad
+\operatorname{logit}(p_g) \sim \mathcal{N}(p_0, \sigma_p^2).
+$${#eq-bnb-canonical-priors}
+
+There is no coupling between the two parameters. For $p_g$ to range from
+$0.005$ to $0.999$, $\operatorname{logit}(p_g)$ needs to span from
+$\approx -5.3$ to $\approx 6.9$---a range easily accommodated by a
+Gaussian with $\sigma_p \approx 3$, which still provides meaningful
+regularization. Similarly, $r_g$ is free to take any positive value via
+its own log-Normal prior.
+
+This decoupling allows the NB to correctly capture each gene's mean
+across the full dynamic range of single-cell expression. The BNB then
+adds value in its intended role: modelling genuine excess variance (from
+extrinsic noise, @sec-bnb-variable-burst) on top of a correctly calibrated
+mean.
+
+### Would the mean--probability parameterization help?
+
+A natural intermediate is the **mean--probability** parameterization,
+where $\mu_g$ (mean) and $p_g$ (NB probability) are the primary
+parameters and $r_g$ is derived:
+
+$$
+r_g = \frac{\mu_g \, p_g}{1 - p_g}
+\qquad \text{(or the convention-appropriate variant).}
+$$
+
+Since $p_g$ is directly parameterized with a logit-Normal prior, it can
+more easily reach extreme values than the $\phi$-derived $p_g$ of
+mean--odds. This partially alleviates the dynamic-range issue. However,
+$r_g$ remains coupled to both $\mu_g$ and $p_g$: genes that need
+simultaneously extreme $\mu_g$ and $p_g$ may find that the product
+$\mu_g p_g / (1-p_g)$ is constrained by the hierarchical prior on $\mu$.
+Thus mean--probability is an improvement over mean--odds but does not
+fully resolve the coupling. In general, **for datasets where the BNB is
+needed, the canonical parameterization is recommended** because it gives
+the NB base layer maximum flexibility to calibrate the mean, reserving
+$\kappa_g$ exclusively for genuine extra variance.
+
 ## Implementation note: NumPyro parameterization {#sec-bnb-numpyro}
 
 The `BetaNegativeBinomial` distribution in NumPyro uses the
@@ -920,8 +1028,9 @@ $${#eq-bnb-summary-variance}
 
 $$
 \omega_g = \frac{r_g + 1}{\kappa_g - 2}, \qquad
-\omega_g \sim \text{Horseshoe}(\tau_0) \;\text{or}\;
-\text{NEG}(a, u, \tau_{\text{NEG}}).
+\omega_g \sim \text{Horseshoe}(\tau_0),\;
+\text{NEG}(a, u, \tau_{\text{NEG}}),\;
+\text{or Hierarchical Gaussian.}
 $${#eq-bnb-summary-prior}
 
 **NB recovery.** When $\omega_g \to 0$ (equivalently $\kappa_g \to
@@ -929,3 +1038,8 @@ $${#eq-bnb-summary-prior}
 
 **Composition sampling.** Unchanged from the standard model
 (@eq-bnb-composition): $\kappa_g$ does not enter the composition formula.
+
+**Recommended parameterization.** The canonical parameterization
+($r_g$, $p_g$ independent) is recommended when using the BNB, as mean-coupled
+parameterizations can restrict the NB's dynamic range and produce mean
+miscalibration that $\kappa_g$ cannot remedy (@sec-bnb-parameterization-remark).
