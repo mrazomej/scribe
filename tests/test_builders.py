@@ -1910,6 +1910,76 @@ class TestJointLowRankIntegration:
         assert isinstance(base, dist.LowRankMultivariateNormal)
         assert base.loc.shape == (2 * n_genes,)
 
+    def test_joint_posterior_mixed_shared_and_dataset_batches(self):
+        """Joint posterior works for shared phi + dataset-specific mu batches.
+
+        Regression target: mixed batch ranks in one joint group should be
+        supported when the shared parameter (`phi`) appears before the
+        dataset-specific parameter (`mu`) in ``joint_params``.
+        """
+        from scribe.models.builders.posterior import get_posterior_distributions
+        import numpyro.distributions as dist
+
+        n_cells, n_genes = 40, 8
+        n_datasets, n_components = 2, 3
+        key = random.PRNGKey(123)
+        counts = random.poisson(key, lam=5.0, shape=(n_cells, n_genes))
+        dataset_indices = jnp.array([0] * (n_cells // 2) + [1] * (n_cells // 2))
+
+        # This configuration intentionally creates heterogeneous joint batches:
+        # - phi: shared across datasets, mixture-aware -> shape (K,)
+        # - mu: dataset-specific and mixture-aware -> shape (K, D, G)
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            p_prior="gaussian",
+            n_datasets=n_datasets,
+            mu_dataset_prior="gaussian",
+            p_dataset_prior="none",
+            n_components=n_components,
+            mixture_params=["phi", "mu"],
+            guide_rank=3,
+            joint_params=["phi", "mu"],
+        )
+        model_fn, guide_fn, config = get_model_and_guide(config)
+        model_kwargs = dict(
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
+            dataset_indices=dataset_indices,
+        )
+
+        optimizer = Adam(1e-3)
+        svi = SVI(model_fn, guide_fn, optimizer, loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(7), **model_kwargs)
+        for _ in range(3):
+            svi_state, loss = svi.update(svi_state, **model_kwargs)
+            assert jnp.isfinite(loss), f"SVI loss is non-finite: {loss}"
+        params = svi.get_params(svi_state)
+
+        distributions = get_posterior_distributions(params, config)
+
+        # Per-parameter marginals are still available.
+        assert "phi" in distributions
+        assert "mu" in distributions
+
+        # Full joint key should be present for mixed batch-rank groups.
+        assert "joint:joint" in distributions
+        joint = distributions["joint:joint"]
+        base = joint["base"]
+        assert isinstance(base, dist.LowRankMultivariateNormal)
+        assert joint["param_names"] == ["phi", "mu"]
+        # Depending on the selected phi prior, phi may be scalar or gene-level.
+        assert joint["param_sizes"][0] in (1, n_genes)
+        assert joint["param_sizes"][1] == n_genes
+        assert base.loc.shape == (
+            n_components,
+            n_datasets,
+            sum(joint["param_sizes"]),
+        )
+
     def test_get_map_skips_joint_keys(self):
         """get_map should work and not include joint:* keys."""
         from scribe.svi._parameter_extraction import ParameterExtractionMixin

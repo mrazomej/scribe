@@ -72,7 +72,7 @@ Examples
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import jax.numpy as jnp
 import numpyro.distributions as dist
@@ -224,6 +224,7 @@ def _build_joint_full_distribution(
 
     locs, Ws, Ds = [], [], []
     sizes = []
+    batch_shapes: List[Tuple[int, ...]] = []
     for pname in joint_params:
         prefix = f"joint_{group}_{pname}"
         loc_key = f"{prefix}_loc"
@@ -238,6 +239,66 @@ def _build_joint_full_distribution(
         Ws.append(W_i)
         Ds.append(D_i)
         sizes.append(loc_i.shape[-1])
+        batch_shapes.append(loc_i.shape[:-1])
+
+    # Resolve a shared batch shape for heterogeneous joint groups where
+    # some members are shared across datasets and others are dataset-specific.
+    ref_batch = max(batch_shapes, key=len)
+
+    # Broadcast helper keeps trailing event/rank dimensions untouched while
+    # expanding only leading batch dimensions to the reference shape.
+    def _broadcast_batch(
+        arr: jnp.ndarray, keep_last_dims: int, name: str
+    ) -> jnp.ndarray:
+        """Broadcast ``arr`` batch axes to the joint reference batch shape.
+
+        Parameters
+        ----------
+        arr : jnp.ndarray
+            Array to broadcast.
+        keep_last_dims : int
+            Number of trailing non-batch dimensions that must be preserved.
+            Use 1 for ``loc``/``D`` and 2 for ``W``.
+        name : str
+            Name used in error messages.
+
+        Returns
+        -------
+        jnp.ndarray
+            Broadcasted array with batch shape equal to ``ref_batch``.
+        """
+        if keep_last_dims <= 0:
+            raise ValueError("keep_last_dims must be positive")
+
+        arr_batch = arr.shape[:-keep_last_dims]
+        arr_tail = arr.shape[-keep_last_dims:]
+
+        if len(arr_batch) > len(ref_batch):
+            raise ValueError(
+                f"Joint group '{group}': tensor '{name}' has batch shape "
+                f"{arr_batch}, which has higher rank than reference batch "
+                f"shape {ref_batch}."
+            )
+
+        if arr_batch != ref_batch[: len(arr_batch)]:
+            raise ValueError(
+                f"Joint group '{group}': tensor '{name}' has incompatible "
+                f"batch shape {arr_batch} for reference batch shape "
+                f"{ref_batch}. Expected a prefix-compatible batch."
+            )
+
+        # Insert singleton axes between existing batch axes and trailing
+        # event/rank axes so prefix-compatible tensors can expand to ref_batch.
+        pad = (1,) * (len(ref_batch) - len(arr_batch))
+        arr = jnp.reshape(arr, arr_batch + pad + arr_tail)
+        target_shape = ref_batch + arr_tail
+        return jnp.broadcast_to(arr, target_shape)
+
+    locs = [
+        _broadcast_batch(loc_i, keep_last_dims=1, name="loc") for loc_i in locs
+    ]
+    Ds = [_broadcast_batch(D_i, keep_last_dims=1, name="diag") for D_i in Ds]
+    Ws = [_broadcast_batch(W_i, keep_last_dims=2, name="factor") for W_i in Ws]
 
     # Stack into single vectors / matrices
     full_loc = jnp.concatenate(locs, axis=-1)
@@ -1225,9 +1286,7 @@ def _apply_bnb_concentration(
         # Per-gene bnb_concentration: transform(Normal(loc, scale))
         _t = pos_transform or dist.transforms.SoftplusTransform()
         distributions[prefix] = {
-            "base": _build_normal_posterior(
-                params, prefix, low_rank=low_rank
-            ),
+            "base": _build_normal_posterior(params, prefix, low_rank=low_rank),
             "transform": _t,
         }
         return
@@ -1457,7 +1516,10 @@ def get_posterior_distributions(
         pos_transform=pos_transform,
     )
     _apply_bnb_concentration(  # Pass 7b
-        distributions, params, model_config, low_rank,
+        distributions,
+        params,
+        model_config,
+        low_rank,
         pos_transform=pos_transform,
     )
     _apply_mixture_weights(distributions, params, is_mixture)  # Pass 8
@@ -1963,9 +2025,7 @@ def _build_biology_informed_capture_posterior(
         # Gaussian: tau_eta (Softplus-transformed)
         if "tau_eta_loc" in params:
             distributions["tau_eta"] = dist.TransformedDistribution(
-                dist.Normal(
-                    params["tau_eta_loc"], params["tau_eta_scale"]
-                ),
+                dist.Normal(params["tau_eta_loc"], params["tau_eta_scale"]),
                 dist.transforms.SoftplusTransform(),
             )
 

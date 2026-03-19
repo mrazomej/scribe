@@ -261,6 +261,12 @@ distribution while maintaining separate NumPyro sample sites.
 joint group. Scalar specs are internally expanded with a trailing dimension of 1
 and collapsed back to a `Normal` at sampling time.
 
+**Mixed dataset batch ranks** are also supported when one parameter is shared
+across datasets and another is dataset-specific. The joint group requires
+prefix-compatible batch shapes (for example `()` with `(K, D)` or `(K,)` with
+`(K, D)`), and parameters must be ordered from shorter/shared batches to longer
+batches in `joint_params`.
+
 ```python
 from scribe.models.components import JointLowRankGuide
 from scribe.models.builders import PositiveNormalSpec, SigmoidNormalSpec, GuideBuilder
@@ -322,7 +328,25 @@ parameterizations and guide families, including **joint-aware** extraction for
   - **Full joint distribution** keyed as `"joint:{group}"` (e.g., `"joint:joint"`):
     a stacked `LowRankMultivariateNormal` over the concatenated parameter
     space, with `param_names` and `param_sizes` for indexing.  Supports
-    heterogeneous sizes (e.g., `param_sizes=[1, n_genes]`).
+  heterogeneous sizes (e.g., `param_sizes=[1, n_genes]`) and mixed compatible
+  batch ranks via internal broadcasting to the longest group batch shape.
+
+Example (shared `phi`, dataset-specific `mu`, both mixture-aware):
+
+```python
+config = build_config_from_preset(
+    model="nbdm",
+    parameterization="mean_odds",
+    unconstrained=True,
+    n_datasets=2,
+    mu_dataset_prior="gaussian",
+    p_dataset_prior="none",
+    n_components=3,
+    mixture_params=["phi", "mu"],
+    guide_rank=3,
+    joint_params=["phi", "mu"],  # shorter/shared first
+)
+```
 
 **Helper functions:**
 
