@@ -3778,11 +3778,12 @@ class TestStructuredJointGuide:
         assert "base" in mu_entry
         assert isinstance(mu_entry["base"], ndist.LowRankMultivariateNormal)
 
-        # phi is nondense: base should be Normal (scalar)
+        # phi is nondense gene-specific: base should be Independent(Normal)
+        # so the gene dim is event (matching LowRankMVN convention).
         phi_entry = distributions["phi"]
         assert isinstance(phi_entry, dict)
         assert "base" in phi_entry
-        assert isinstance(phi_entry["base"], ndist.Normal)
+        assert isinstance(phi_entry["base"], ndist.Independent)
 
         # joint:{group} should exist and only contain dense block
         joint_key = "joint:joint"
