@@ -15,7 +15,10 @@ from jax import random
 
 from ..utils import numpyro_to_scipy
 from ..models.config.enums import HierarchicalPriorType
-from ..models.parameterizations import _align_gene_params
+from ..models.parameterizations import (
+    _align_gene_params,
+    _broadcast_scalar_for_mixture,
+)
 
 
 # ==============================================================================
@@ -841,7 +844,7 @@ class ParameterExtractionMixin:
         self, map_estimates: Dict, verbose: bool = True
     ) -> Dict:
         """
-        Compute canonical parameters (p, r) from other parameters for different
+        Compute canonical parameters from other parameters for different
         parameterizations.
 
         Parameters
@@ -854,7 +857,9 @@ class ParameterExtractionMixin:
         Returns
         -------
         Dict
-            Updated dictionary with canonical parameters computed
+            Updated dictionary with canonical parameters computed.  For
+            canonical/standard parameterization this may also include
+            deterministic ``mu`` derived from ``p`` and ``r``.
         """
         estimates = map_estimates.copy()
         parameterization = self.model_config.parameterization
@@ -1061,6 +1066,39 @@ class ParameterExtractionMixin:
                 estimates["mixing_weights"] = softmax(
                     estimates["mixing_logits_unconstrained"], axis=-1
                 )
+
+        # Canonical/standard parameterization may only have p and r in the MAP.
+        # Add deterministic mu so downstream code can rely on a mean parameter
+        # regardless of the sampling parameterization.
+        if (
+            parameterization in ("canonical", "standard")
+            and "r" in estimates
+            and "p" in estimates
+            and "mu" not in estimates
+        ):
+            if verbose:
+                print(
+                    "Computing mu from r and p for "
+                    f"{parameterization} parameterization"
+                )
+            # Reuse shared broadcasting/alignment helpers to support
+            # scalar/per-component/per-dataset and gene-specific layouts.
+            p_for_mu = _broadcast_scalar_for_mixture(
+                estimates["p"], estimates["r"]
+            )
+            # Special-case dataset+gene p against mixture+dataset+gene r:
+            # p=(D,G), r=(K,D,G) should become p=(1,D,G) so broadcasting
+            # happens across components.  Generic gene-axis alignment inserts
+            # singleton dims before the gene axis, which would yield (D,1,G).
+            if (
+                p_for_mu.ndim + 1 == estimates["r"].ndim
+                and p_for_mu.shape == estimates["r"].shape[1:]
+            ):
+                p_for_mu = jnp.expand_dims(p_for_mu, axis=0)
+            p_for_mu, r_aligned = _align_gene_params(p_for_mu, estimates["r"])
+            # Guard against numerical blow-ups when p is very close to 1.
+            one_minus_p = jnp.clip(1.0 - p_for_mu, 1e-8, None)
+            estimates["mu"] = r_aligned * p_for_mu / one_minus_p
 
         # Convert eta_capture to capture parameter (biology-informed prior)
         if "eta_capture" in estimates:

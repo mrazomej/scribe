@@ -203,6 +203,8 @@ results = ScribeSVIResults.from_anndata(
 ```python
 # Get MAP (maximum a posteriori) estimates
 map_params = results.get_map()
+# Canonical/standard MAP also includes deterministic mu:
+# mu = r * p / (1 - p)
 
 # Get posterior distributions
 distributions = results.get_distributions()
@@ -540,7 +542,8 @@ norm_post = results.normalize_counts(
 
 `normalize_counts_map(estimator="mean")` is parameterization-aware:
 
-- If MAP includes `mu` (for example with `mean_prob` / `mean_odds` styles),
+- If MAP includes `mu` (for example with `mean_prob` / `mean_odds`, and
+  canonical/standard after deterministic MAP conversion),
   it uses `rho = mu / sum(mu)` directly.
 - If gene-specific `p_g` or `phi_g` is detected, it applies the hierarchical
   scaling implied by the paper derivation:
@@ -609,7 +612,10 @@ ScribeSVIResults
    - Methods:
      - `get_distributions()`: Get posterior distributions (NumPyro or SciPy)
      - `get_map()`: Get maximum a posteriori (MAP) estimates
-     - `_compute_canonical_parameters()`: Convert to canonical (p, r) form
+     - `_compute_canonical_parameters()`: Convert to canonical form and derive
+       missing deterministic quantities (for canonical/standard MAP, includes
+       `mu = r * p / (1 - p)` with shape-aware broadcasting across component,
+       dataset, and gene axes)
      - `_convert_to_canonical()`: Deprecated conversion method
      - `_reconstruct_horseshoe_maps()`: Reconstruct constrained MAP from NCP
        z components for horseshoe priors. Handles gene-level p/gate, dataset-

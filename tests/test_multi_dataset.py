@@ -221,7 +221,9 @@ class TestModelConfigDataset:
 
     def test_hierarchical_dataset_gate_requires_zero_inflated(self):
         """gate_dataset_prior on a non-ZI model should raise."""
-        with pytest.raises(ValueError, match="gate_dataset_prior.*zero-inflated"):
+        with pytest.raises(
+            ValueError, match="gate_dataset_prior.*zero-inflated"
+        ):
             ModelConfig(
                 base_model="nbdm",
                 n_datasets=2,
@@ -231,7 +233,9 @@ class TestModelConfigDataset:
 
     def test_hierarchical_gate_and_dataset_gate_conflict(self):
         """Cannot set both gate_prior and gate_dataset_prior."""
-        with pytest.raises(ValueError, match="gate_prior.*gate_dataset_prior.*simultaneously"):
+        with pytest.raises(
+            ValueError, match="gate_prior.*gate_dataset_prior.*simultaneously"
+        ):
             ModelConfig(
                 base_model="zinb",
                 n_datasets=2,
@@ -464,7 +468,9 @@ class TestSliceParamForDataset:
         """None input returns None."""
         from scribe.svi._sampling_denoising import _slice_param_for_dataset
 
-        assert _slice_param_for_dataset(None, dataset_idx=0, n_datasets=2) is None
+        assert (
+            _slice_param_for_dataset(None, dataset_idx=0, n_datasets=2) is None
+        )
 
     def test_scalar_returned_unchanged(self):
         """0D scalar params pass through unchanged."""
@@ -565,6 +571,84 @@ class TestCanonicalParamsScalarDataset:
         assert out["r"].shape == (n_ds, n_genes)
         assert jnp.allclose(out["r"][0], 10.0)
         assert jnp.allclose(out["r"][1], 30.0)
+
+    def test_canonical_adds_mu_from_p_and_r(self):
+        """mu = r * p / (1 - p) for canonical with per-dataset p and r."""
+        n_ds, n_genes = 3, 12
+        results = self._make_results(
+            parameterization="canonical", n_datasets=n_ds, n_genes=n_genes
+        )
+        estimates = {
+            "p": jnp.array([0.25, 0.5, 0.75]),
+            "r": jnp.ones((n_ds, n_genes)) * 4.0,
+        }
+        out = results._compute_canonical_parameters(estimates, verbose=False)
+
+        # Ensure canonical MAP includes mu with dataset-wise broadcasting.
+        assert "mu" in out
+        assert out["mu"].shape == (n_ds, n_genes)
+        assert jnp.allclose(out["mu"][0], 4.0 * 0.25 / 0.75)
+        assert jnp.allclose(out["mu"][1], 4.0 * 0.5 / 0.5)
+        assert jnp.allclose(out["mu"][2], 4.0 * 0.75 / 0.25)
+
+    def test_canonical_adds_mu_mixture_dataset_broadcast(self):
+        """mu broadcasting supports p=(K,D) with r=(K,D,G)."""
+        n_ds, n_genes, n_components = 2, 5, 3
+        results = self._make_results(
+            parameterization="canonical", n_datasets=n_ds, n_genes=n_genes
+        )
+        p = jnp.array(
+            [
+                [0.25, 0.5],
+                [0.4, 0.2],
+                [0.3, 0.6],
+            ]
+        )
+        r = jnp.ones((n_components, n_ds, n_genes)) * 10.0
+        estimates = {"p": p, "r": r}
+        out = results._compute_canonical_parameters(estimates, verbose=False)
+
+        # p should expand to the gene axis and preserve K/D layout.
+        expected = r * p[..., None] / (1.0 - p[..., None])
+        assert out["mu"].shape == (n_components, n_ds, n_genes)
+        assert jnp.allclose(out["mu"], expected)
+
+    def test_canonical_adds_mu_dataset_gene_p_with_mixture_dataset_r(self):
+        """mu broadcasting supports p=(D,G) with r=(K,D,G)."""
+        n_ds, n_genes, n_components = 3, 4, 2
+        results = self._make_results(
+            parameterization="canonical", n_datasets=n_ds, n_genes=n_genes
+        )
+        p = jnp.array(
+            [
+                [0.2, 0.2, 0.2, 0.2],
+                [0.5, 0.5, 0.5, 0.5],
+                [0.8, 0.8, 0.8, 0.8],
+            ]
+        )
+        r = jnp.ones((n_components, n_ds, n_genes)) * 6.0
+        estimates = {"p": p, "r": r}
+        out = results._compute_canonical_parameters(estimates, verbose=False)
+
+        # p should broadcast across components without changing D/G structure.
+        expected = r * p[None, :, :] / (1.0 - p[None, :, :])
+        assert out["mu"].shape == (n_components, n_ds, n_genes)
+        assert jnp.allclose(out["mu"], expected)
+
+    def test_canonical_preserves_existing_mu(self):
+        """Existing mu is kept unchanged in canonical mode."""
+        n_ds, n_genes = 2, 6
+        results = self._make_results(
+            parameterization="canonical", n_datasets=n_ds, n_genes=n_genes
+        )
+        mu_existing = jnp.ones((n_ds, n_genes)) * 11.0
+        estimates = {
+            "p": jnp.array([0.25, 0.5]),
+            "r": jnp.ones((n_ds, n_genes)) * 7.0,
+            "mu": mu_existing,
+        }
+        out = results._compute_canonical_parameters(estimates, verbose=False)
+        assert jnp.allclose(out["mu"], mu_existing)
 
 
 # ==============================================================================
@@ -884,7 +968,9 @@ class TestMixtureDatasetComposition:
 
     def test_model_config_rejects_p_prior_plus_dataset_p(self):
         """Cannot set p_prior and p_dataset_prior simultaneously."""
-        with pytest.raises(ValueError, match="p_prior.*p_dataset_prior.*simultaneously"):
+        with pytest.raises(
+            ValueError, match="p_prior.*p_dataset_prior.*simultaneously"
+        ):
             ModelConfig(
                 base_model="nbdm",
                 n_datasets=2,
@@ -1346,9 +1432,9 @@ class TestMixtureDatasetComposition:
         )
         hs_specs = _horseshoe_dataset_gate(specs)
 
-        hyper_loc = [
-            s for s in hs_specs if s.name == "logit_gate_dataset_loc"
-        ][0]
+        hyper_loc = [s for s in hs_specs if s.name == "logit_gate_dataset_loc"][
+            0
+        ]
         assert hyper_loc.shape_dims == ()
         assert hyper_loc.is_gene_specific is False
 
@@ -2065,7 +2151,8 @@ class TestResultsConcat:
         res_b = ScribeMCMCResults(
             samples={
                 **shared_samples,
-                "p_capture": jnp.arange(n_samples * 4).reshape(n_samples, 4) + 100,
+                "p_capture": jnp.arange(n_samples * 4).reshape(n_samples, 4)
+                + 100,
             },
             n_cells=4,
             n_genes=n_genes,
@@ -2144,9 +2231,7 @@ class TestHorseshoeConfigValidation:
 
     def test_horseshoe_dataset_mu_requires_n_datasets(self):
         """mu_dataset_prior='horseshoe' without n_datasets should fail."""
-        with pytest.raises(
-            ValueError, match="mu_dataset_prior.*n_datasets"
-        ):
+        with pytest.raises(ValueError, match="mu_dataset_prior.*n_datasets"):
             ModelConfig(
                 base_model="nbdm",
                 unconstrained=True,
@@ -2691,18 +2776,13 @@ class TestComponentMapping:
         # Dataset A: TypeA (10), TypeB (2)
         # Dataset B: TypeA (10), TypeB (10)
         labels = (
-            ["TypeA"] * 10
-            + ["TypeB"] * 2
-            + ["TypeA"] * 10
-            + ["TypeB"] * 10
+            ["TypeA"] * 10 + ["TypeB"] * 2 + ["TypeA"] * 10 + ["TypeB"] * 10
         )
         datasets = ["A"] * 12 + ["B"] * 20
         X = rng.poisson(5, (32, n_genes)).astype(np.float32)
         adata = anndata.AnnData(
             X=X,
-            obs=pd.DataFrame(
-                {"cell_type": labels, "dataset": datasets}
-            ),
+            obs=pd.DataFrame({"cell_type": labels, "dataset": datasets}),
         )
 
         from scribe.core.annotation_prior import build_component_mapping
@@ -2741,17 +2821,18 @@ class TestComponentMapping:
         n_genes = 3
         # A: TypeX, TypeY; B: TypeX, TypeZ; C: TypeY, TypeZ
         labels = (
-            ["TypeX"] * 5 + ["TypeY"] * 5
-            + ["TypeX"] * 5 + ["TypeZ"] * 5
-            + ["TypeY"] * 5 + ["TypeZ"] * 5
+            ["TypeX"] * 5
+            + ["TypeY"] * 5
+            + ["TypeX"] * 5
+            + ["TypeZ"] * 5
+            + ["TypeY"] * 5
+            + ["TypeZ"] * 5
         )
         datasets = ["A"] * 10 + ["B"] * 10 + ["C"] * 10
         X = rng.poisson(5, (30, n_genes)).astype(np.float32)
         adata = anndata.AnnData(
             X=X,
-            obs=pd.DataFrame(
-                {"cell_type": labels, "dataset": datasets}
-            ),
+            obs=pd.DataFrame({"cell_type": labels, "dataset": datasets}),
         )
 
         from scribe.core.annotation_prior import build_component_mapping
@@ -2917,9 +2998,7 @@ class TestMixtureDatasetHierarchyFactory:
         b._n_components = 3
         config = b.build()
         # Inject shared_component_indices (normally done by fit())
-        config = config.model_copy(
-            update={"shared_component_indices": (0, 2)}
-        )
+        config = config.model_copy(update={"shared_component_indices": (0, 2)})
 
         model, guide, param_specs = create_model(config, validate=False)
 
@@ -2927,8 +3006,7 @@ class TestMixtureDatasetHierarchyFactory:
         hier_specs = [
             s
             for s in param_specs
-            if hasattr(s, "shared_component_indices")
-            and s.name == "mu"
+            if hasattr(s, "shared_component_indices") and s.name == "mu"
         ]
         assert len(hier_specs) == 1
         assert hier_specs[0].shared_component_indices == (0, 2)
@@ -2968,9 +3046,7 @@ class TestMixtureDatasetHierarchyFactory:
         model, guide, specs = create_model(config, validate=False)
 
         # hyper_loc for phi should be mixture-aware
-        hyper_specs = [
-            s for s in specs if s.name == "log_phi_dataset_loc"
-        ]
+        hyper_specs = [s for s in specs if s.name == "log_phi_dataset_loc"]
         assert len(hyper_specs) == 1
         assert hyper_specs[0].is_mixture is True
 
