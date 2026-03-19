@@ -104,6 +104,7 @@ class ModelConfigBuilder:
         self._n_components: Optional[int] = None
         self._mixture_params: Optional[List[str]] = None
         self._joint_params: Optional[List[str]] = None
+        self._dense_params: Optional[List[str]] = None
         self._guide_families: Optional[GuideFamilyConfig] = None
         self._priors: Dict[str, Any] = (
             {}
@@ -294,6 +295,23 @@ class ModelConfigBuilder:
             set so the rank is known.
         """
         self._joint_params = joint_params
+        return self
+
+    # --------------------------------------------------------------------------
+
+    def with_dense_params(
+        self, dense_params: List[str]
+    ) -> "ModelConfigBuilder":
+        """Specify which joint params get full cross-gene low-rank coupling.
+
+        Parameters
+        ----------
+        dense_params : List[str]
+            Subset of ``joint_params`` that receive full cross-gene
+            low-rank factors. Non-dense joint params get gene-local
+            conditioning only.
+        """
+        self._dense_params = dense_params
         return self
 
     # --------------------------------------------------------------------------
@@ -659,6 +677,7 @@ class ModelConfigBuilder:
             n_components=self._n_components,
             mixture_params=self._mixture_params,
             joint_params=self._joint_params,
+            dense_params=self._dense_params,
             guide_families=self._guide_families,
             param_specs=param_specs,
             priors=priors,

@@ -182,6 +182,7 @@ class ModelConfig(BaseModel):
             d.setdefault("mu_eta_prior", "gaussian")
         d.setdefault("mu_eta_prior", "none")
         d.setdefault("joint_params", None)
+        d.setdefault("dense_params", None)
         # Old pickles predate the softplus default; preserve exp behavior
         d.setdefault("positive_transform", "exp")
         # Old pickles used TruncatedNormal guide for eta_capture;
@@ -470,6 +471,18 @@ class ModelConfig(BaseModel):
             "heterogeneous dimensions: scalar parameters (e.g. phi "
             "when p_prior='none') can be mixed with gene-specific "
             "parameters (e.g. mu, gate)."
+        ),
+    )
+
+    # Structured joint guide: dense subset
+    dense_params: Optional[List[str]] = Field(
+        None,
+        description=(
+            "Subset of joint_params that receive full cross-gene low-rank "
+            "coupling (the 'dense block'). Non-dense joint params get only "
+            "gene-local conditioning on dense params plus a per-gene "
+            "Cholesky among themselves. When None or equal to joint_params, "
+            "the standard fully-dense JointLowRankGuide is used."
         ),
     )
 
@@ -808,6 +821,45 @@ class ModelConfig(BaseModel):
                 f"Unexpected parameters for {self.base_model} with "
                 f"{self.parameterization.value} parameterization: "
                 f"{', '.join(sorted(unexpected_params))}"
+            )
+
+        return self
+
+    # --------------------------------------------------------------------------
+
+    @model_validator(mode="after")
+    def validate_dense_params(self) -> "ModelConfig":
+        """Validate dense_params is a proper subset of joint_params.
+
+        Rules
+        -----
+        - ``dense_params`` requires ``joint_params`` to be set.
+        - ``dense_params`` must be a non-empty subset of ``joint_params``.
+        - If ``dense_params`` equals ``joint_params``, it is normalised
+          to ``None`` (fully-dense fallback) via ``__init__`` override
+          in the builder; the validator here raises if the caller
+          bypasses that normalisation.
+        """
+        if self.dense_params is None:
+            return self
+
+        if self.joint_params is None:
+            raise ValueError(
+                "dense_params requires joint_params to be set."
+            )
+
+        if not self.dense_params:
+            raise ValueError(
+                "dense_params must contain at least one parameter name."
+            )
+
+        joint_set = set(self.joint_params)
+        dense_set = set(self.dense_params)
+        if not dense_set.issubset(joint_set):
+            extra = dense_set - joint_set
+            raise ValueError(
+                f"dense_params {sorted(extra)} are not in joint_params "
+                f"{self.joint_params}."
             )
 
         return self

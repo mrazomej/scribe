@@ -76,6 +76,15 @@ vector. Parameters sharing the same `group` string are modeled jointly using a
 chain rule decomposition with Woodbury-efficient conditional distributions. See
 `paper/_joint_low_rank_guide.qmd` for the full derivation.
 
+**`dense_params`** (optional): Subset of `joint_params` that receive full
+cross-gene low-rank coupling. When set, dense params use the Woodbury chain;
+non-dense params get per-gene regression on dense params plus per-gene Cholesky
+among themselves. Scalar non-dense params do not regress on gene-specific dense
+params. When `dense_params` is `None` or equals `joint_params`, the standard
+joint low-rank path is used. Example: `dense_params=["mu"]` with
+`joint_params=["mu", "phi", "gate"]` gives mu cross-gene correlations while
+phi and gate only couple to mu at the same gene.
+
 **Heterogeneous dimensions** are supported: scalar and gene-specific parameters
 can coexist in the same joint group.  Only batch dimensions must match; the
 trailing "gene" dimension may differ (e.g., G=1 for a scalar, G=n_genes for

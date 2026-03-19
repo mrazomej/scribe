@@ -170,17 +170,30 @@ def _build_joint_low_rank_posterior(
     import jax
 
     loc = params[f"{prefix}_loc"]
-    W = params[f"{prefix}_W"]
     raw_diag = params[f"{prefix}_raw_diag"]
-
     D = jax.nn.softplus(raw_diag) + 1e-4
 
-    # Scalar params expanded to G=1: collapse to Normal for correct shape
-    if loc.shape[-1] == 1:
-        scalar_var = jnp.sum(W[..., 0, :] ** 2, axis=-1) + D[..., 0]
-        base = dist.Normal(loc[..., 0], jnp.sqrt(scalar_var))
+    W_key = f"{prefix}_W"
+    has_W = W_key in params
+
+    if has_W:
+        # Dense (low-rank) param in a joint group
+        W = params[W_key]
+        if loc.shape[-1] == 1:
+            scalar_var = jnp.sum(W[..., 0, :] ** 2, axis=-1) + D[..., 0]
+            base = dist.Normal(loc[..., 0], jnp.sqrt(scalar_var))
+        else:
+            base = dist.LowRankMultivariateNormal(
+                loc=loc, cov_factor=W, cov_diag=D
+            )
     else:
-        base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
+        # Nondense param in a structured joint group: diagonal Normal.
+        # This gives the conditional marginal (at dense params = MAP).
+        sigma = jnp.sqrt(D)
+        if loc.shape[-1] == 1:
+            base = dist.Normal(loc[..., 0], sigma[..., 0])
+        else:
+            base = dist.Normal(loc, sigma)
 
     # Use caller-supplied transform, or fall back to name-based default
     if transform is None:
@@ -224,14 +237,19 @@ def _build_joint_full_distribution(
 
     locs, Ws, Ds = [], [], []
     sizes = []
+    dense_names = []
     batch_shapes: List[Tuple[int, ...]] = []
     for pname in joint_params:
         prefix = f"joint_{group}_{pname}"
         loc_key = f"{prefix}_loc"
         if loc_key not in params:
             return None
+        W_key = f"{prefix}_W"
+        # Skip nondense params in structured groups (they lack _W)
+        if W_key not in params:
+            continue
         loc_i = params[loc_key]
-        W_i = params[f"{prefix}_W"]
+        W_i = params[W_key]
         raw_diag_i = params[f"{prefix}_raw_diag"]
         D_i = jax.nn.softplus(raw_diag_i) + 1e-4
 
@@ -239,7 +257,11 @@ def _build_joint_full_distribution(
         Ws.append(W_i)
         Ds.append(D_i)
         sizes.append(loc_i.shape[-1])
+        dense_names.append(pname)
         batch_shapes.append(loc_i.shape[:-1])
+
+    if not locs:
+        return None
 
     # Resolve a shared batch shape for heterogeneous joint groups where
     # some members are shared across datasets and others are dataset-specific.
@@ -310,7 +332,7 @@ def _build_joint_full_distribution(
     )
     return {
         "base": base,
-        "param_names": list(joint_params),
+        "param_names": dense_names,
         "param_sizes": sizes,
     }
 

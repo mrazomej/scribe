@@ -73,6 +73,7 @@ def build_config_from_preset(
     overdispersion_prior: str = "horseshoe",
     guide_rank: Optional[int] = None,
     joint_params: Optional[List[str]] = None,
+    dense_params: Optional[List[str]] = None,
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
     priors: Optional[Dict[str, Any]] = None,
@@ -247,7 +248,20 @@ def build_config_from_preset(
         if joint_params is not None:
             # Joint low-rank: all listed params share a single covariance.
             # Supports heterogeneous dimensions (scalar + gene-specific).
-            joint_guide = JointLowRankGuide(rank=guide_rank, group="joint")
+            # When dense_params is a strict subset, the guide uses a
+            # structured block where only dense params get cross-gene
+            # low-rank factors and non-dense params get gene-local coupling.
+            _effective_dense = dense_params
+            if (
+                dense_params is not None
+                and set(dense_params) == set(joint_params)
+            ):
+                _effective_dense = None
+            joint_guide = JointLowRankGuide(
+                rank=guide_rank,
+                group="joint",
+                dense_params=_effective_dense,
+            )
             for pname in joint_params:
                 guide_family_kwargs[pname] = joint_guide
             # If the gene param is not in joint_params, give it an
@@ -375,6 +389,9 @@ def build_config_from_preset(
 
     if joint_params is not None:
         builder.with_joint_params(joint_params)
+
+    if dense_params is not None:
+        builder.with_dense_params(dense_params)
 
     if guide_families is not None:
         builder.with_guide_families(guide_families)

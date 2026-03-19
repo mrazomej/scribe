@@ -61,6 +61,8 @@ The primary interface for creating configurations. Provides fluent methods:
 - `.with_guide_families(guide_families)`: Set per-parameter guide families
 - `.with_joint_params(joint_params)`: Specify parameters to model jointly via
   JointLowRankGuide
+- `.with_dense_params(dense_params)`: Subset of `joint_params` for full
+  cross-gene coupling (structured joint guide); non-dense params stay gene-local
 - `.with_priors(**priors)`: Set prior parameters
 - `.with_guides(**guides)`: Set guide parameters
 - `.with_vae(**vae_params)`: Configure VAE parameters
@@ -134,6 +136,10 @@ factorization:
 
 - `joint_params: Optional[List[str]]` — List of gene-specific parameter names
   to model jointly via JointLowRankGuide.
+- `dense_params: Optional[List[str]]` — Subset of `joint_params` that receive
+  full cross-gene low-rank coupling. Non-dense params get per-gene regression
+  on dense params plus per-gene Cholesky among themselves. When `None` or equal
+  to `joint_params`, standard JointLowRankGuide is used.
 
 #### Biology-Informed Capture Prior
 
