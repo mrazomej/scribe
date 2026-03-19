@@ -16,6 +16,7 @@ viz:
   annotation_ppc: false  # Only runs when annotation_key is set; per-annotation component PPC
   capture_anchor: false  # Only runs for biology-informed capture prior runs
   p_capture_scaling: false  # Only runs for VCP models; independent of eta prior
+  mean_calibration: false  # Log-log scatter of observed vs predicted per-gene means
   format: png  # Output format: png, pdf, svg, eps
 
   # ECDF plot options

@@ -50,6 +50,7 @@ from viz_utils import (
     plot_annotation_ppc,
     plot_capture_anchor,
     plot_p_capture_scaling,
+    plot_mean_calibration,
 )
 from viz_utils.memory import cleanup_plot_memory
 
@@ -183,12 +184,20 @@ Examples:
         "(for VCP models).",
     )
     parser.add_argument(
+        "--mean-calibration",
+        action="store_true",
+        default=None,
+        dest="mean_calibration",
+        help="Enable mean-calibration diagnostic (log-log scatter of "
+        "observed vs predicted per-gene means).",
+    )
+    parser.add_argument(
         "--all",
         action="store_true",
         dest="all_plots",
         help="Enable all plots (loss, ECDF, PPC, bio-PPC, UMAP, heatmap, "
         "mixture PPC, mixture composition, annotation PPC, capture-anchor, "
-        "p-capture-scaling)",
+        "p-capture-scaling, mean-calibration)",
     )
 
     # Recursive mode
@@ -283,6 +292,7 @@ def _load_default_viz_config():
                 "annotation_ppc": False,
                 "capture_anchor": False,
                 "p_capture_scaling": False,
+                "mean_calibration": False,
                 "format": "png",
                 "ecdf_opts": {"n_genes": 25},
                 "ppc_opts": {
@@ -371,6 +381,7 @@ def _build_viz_config(args):
         viz_cfg.annotation_ppc = True
         viz_cfg.capture_anchor = True
         viz_cfg.p_capture_scaling = True
+        viz_cfg.mean_calibration = True
 
     # Apply boolean overrides only when flags are explicitly provided.
     if args.no_loss:
@@ -395,6 +406,8 @@ def _build_viz_config(args):
         viz_cfg.capture_anchor = True
     if args.p_capture_scaling:
         viz_cfg.p_capture_scaling = True
+    if args.mean_calibration:
+        viz_cfg.mean_calibration = True
 
     # Scalar / numeric overrides (only when provided).
     if args.format is not None:
@@ -884,6 +897,50 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                 _cleanup_after_plot()
 
     # ------------------------------------------------------------------
+    # Mean calibration is a global diagnostic (handles multi-dataset
+    # panels internally).
+    # ------------------------------------------------------------------
+    if viz_cfg.mean_calibration:
+        if not overwrite and _plot_exists(
+            figs_dir, "_mean_calibration", fmt
+        ):
+            plots_skipped.append("mean calibration")
+            console.print(
+                "[yellow]  Skipping mean calibration "
+                "(already exists)[/yellow]"
+            )
+        else:
+            console.print(
+                "[dim]Generating mean-calibration diagnostic...[/dim]"
+            )
+            try:
+                output_path = plot_mean_calibration(
+                    results=results,
+                    counts=counts,
+                    figs_dir=figs_dir,
+                    cfg=orig_cfg,
+                    viz_cfg=viz_cfg,
+                    is_mixture=is_global_mixture,
+                    is_multi_dataset=is_multi_dataset,
+                    dataset_codes=dataset_codes if is_multi_dataset else None,
+                    dataset_names=dataset_names if is_multi_dataset else None,
+                )
+                if output_path is not None:
+                    plots_generated.append("mean calibration")
+                    console.print(
+                        "[green]  Mean-calibration plot saved[/green]"
+                    )
+                else:
+                    plots_skipped.append("mean calibration")
+            except Exception as e:
+                console.print(
+                    f"[red]  Failed to generate mean-calibration plot: "
+                    f"{e}[/red]"
+                )
+            finally:
+                _cleanup_after_plot()
+
+    # ------------------------------------------------------------------
     # Per-dataset loop for all remaining plots.
     # For single-dataset models this iterates once with the full data.
     # ------------------------------------------------------------------
@@ -1256,6 +1313,8 @@ def main() -> None:
         enabled_plots.append("mixture composition")
     if viz_cfg.annotation_ppc:
         enabled_plots.append("annotation PPC")
+    if viz_cfg.mean_calibration:
+        enabled_plots.append("mean calibration")
 
     console.print(f"[dim]Plots to generate:[/dim] {', '.join(enabled_plots)}")
     console.print(f"[dim]Output format:[/dim] {viz_cfg.format}")
