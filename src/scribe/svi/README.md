@@ -418,6 +418,16 @@ ppc_samples = results.get_ppc_samples(
 )
 ```
 
+**MAP PPC shape guarantees:** `get_map_ppc_samples()` always returns
+`(n_samples, n_cells, n_genes_subset)` with an explicit gene axis, including
+singleton subsets (`n_genes_subset=1`) after pipelines such as
+`results.get_component(k)[gene_idx]`. This keeps annotation-PPC and targeted
+gene workflows stable even when upstream MAP parameter tensors are scalar-like.
+
+**MAP PPC batching semantics:** `cell_batch_size` controls only memory/throughput
+trade-offs in cell-wise sampling. It does not change output shape contracts or
+the selected gene/component semantics.
+
 **Note:** The `counts` parameter should be the same observed data used during
 inference. For non-amortized models (standard VCP models or non-VCP models), the
 `counts` parameter is optional and can be omitted.

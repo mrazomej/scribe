@@ -1156,6 +1156,90 @@ class TestHierarchicalComponentSubsetting:
         assert samples.shape == (2, results.n_cells, len(gene_idx))
         assert jnp.all(samples >= 0)
 
+    def test_get_component_single_gene_subset_ppc(
+        self, hierarchical_mixture_results
+    ):
+        """Singleton gene subset keeps a stable gene axis in MAP PPC.
+
+        This regression test covers the brittle edge case where single-gene
+        subsetting could collapse MAP tensors to rank-0 and break MAP PPC
+        shape assumptions.
+        """
+        results = hierarchical_mixture_results
+        comp = results.get_component(1)
+        comp_sub = comp[jnp.array([2])]
+
+        samples = comp_sub.get_map_ppc_samples(
+            rng_key=random.PRNGKey(7),
+            n_samples=3,
+            cell_batch_size=4,
+            use_mean=True,
+            store_samples=False,
+            verbose=False,
+        )
+        assert samples.shape == (3, results.n_cells, 1)
+        assert jnp.all(samples >= 0)
+        assert jnp.all(jnp.isfinite(samples))
+
+    def test_get_component_single_gene_subset_ppc_batching_stability(
+        self, hierarchical_mixture_results
+    ):
+        """Singleton-gene MAP PPC preserves output shape across batching.
+
+        The single-gene pipeline should produce the same output shape for
+        small, exact, and over-sized cell batches.
+        """
+        results = hierarchical_mixture_results
+        comp = results.get_component(0)
+        comp_sub = comp[jnp.array([1])]
+
+        shapes = set()
+        for batch_size in [1, 3, results.n_cells, results.n_cells + 5]:
+            samples = comp_sub.get_map_ppc_samples(
+                rng_key=random.PRNGKey(8),
+                n_samples=2,
+                cell_batch_size=batch_size,
+                use_mean=True,
+                store_samples=False,
+                verbose=False,
+            )
+            shapes.add(samples.shape)
+
+        assert len(shapes) == 1
+        assert shapes.pop() == (2, results.n_cells, 1)
+
+    def test_get_map_ppc_scalar_map_params_normalized(
+        self, hierarchical_mixture_results, monkeypatch
+    ):
+        """Scalar MAP parameters are normalized to singleton-gene PPC output.
+
+        This guards the scalar-shape edge case directly by forcing ``get_map``
+        to return rank-0 ``r`` and ``p`` and checking that MAP PPC still
+        returns ``(S, n_cells, 1)``.
+        """
+        results = hierarchical_mixture_results
+        comp_sub = results.get_component(0)[jnp.array([0])]
+
+        def _fake_get_map(*args, **kwargs):
+            _ = args, kwargs
+            return {
+                "r": jnp.array(2.0),
+                "p": jnp.array(0.4),
+                "p_capture": jnp.ones(results.n_cells) * 0.9,
+            }
+
+        monkeypatch.setattr(comp_sub, "get_map", _fake_get_map)
+        samples = comp_sub.get_map_ppc_samples(
+            rng_key=random.PRNGKey(123),
+            n_samples=2,
+            cell_batch_size=3,
+            use_mean=True,
+            store_samples=False,
+            verbose=False,
+        )
+        assert samples.shape == (2, results.n_cells, 1)
+        assert jnp.all(samples >= 0)
+
     def test_get_component_each_component_differs(
         self, hierarchical_mixture_results
     ):
