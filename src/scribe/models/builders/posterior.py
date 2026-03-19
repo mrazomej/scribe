@@ -189,11 +189,15 @@ def _build_joint_low_rank_posterior(
     else:
         # Nondense param in a structured joint group: diagonal Normal.
         # This gives the conditional marginal (at dense params = MAP).
+        # Wrap in Independent so the gene dimension is event (matching
+        # the LowRankMVN convention used for dense params).
         sigma = jnp.sqrt(D)
         if loc.shape[-1] == 1:
             base = dist.Normal(loc[..., 0], sigma[..., 0])
         else:
-            base = dist.Normal(loc, sigma)
+            base = dist.Independent(
+                dist.Normal(loc, sigma), reinterpreted_batch_ndims=1
+            )
 
     # Use caller-supplied transform, or fall back to name-based default
     if transform is None:
