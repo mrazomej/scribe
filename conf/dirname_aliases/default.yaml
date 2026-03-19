@@ -16,6 +16,7 @@ dirname_aliases:
     # Mixture / annotation controls
     mixture_params: mixparam
     joint_params: jointparam
+    dense_params: denseparam
     annotation_key: annkey
     annotation_confidence: annconf
     annotation_min_cells: annmin
