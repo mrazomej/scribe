@@ -162,6 +162,13 @@ Build ModelConfig from preset parameters.
     `horseshoe_gate=True`), joint modeling is applied to the corresponding
     NCP raw latent (for example `gate_raw`) so model/guide sample sites remain
     consistent.
+- `dense_params`: Optional subset of `joint_params`. When set, dense params get
+  full cross-gene low-rank coupling; non-dense params get per-gene regression on
+  dense params plus per-gene Cholesky. When `None` or equal to `joint_params`,
+  standard JointLowRankGuide is used. Example: `joint_params=["mu", "phi",
+  "gate"], dense_params=["mu"]` gives mu cross-gene correlations while phi and
+  gate only couple to mu at the same gene. Threaded to the guide via
+  `JointLowRankGuide.dense_params`.
 - `n_components`: Number of mixture components
 - `priors`: Dictionary of prior parameters
 - `capture_amortization`: Optional `AmortizationConfig` or dict. When provided,

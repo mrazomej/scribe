@@ -257,6 +257,7 @@ def fit(
     mixture_params: Optional[List[str]] = None,
     guide_rank: Optional[int] = None,
     joint_params: Optional[List[str]] = None,
+    dense_params: Optional[List[str]] = None,
     priors: Optional[Dict[str, Any]] = None,
     # VAE architecture options (when inference_method="vae")
     vae_latent_dim: int = 10,
@@ -391,6 +392,16 @@ def fit(
         cross-parameter correlations. Requires ``guide_rank`` to be set.
         Typically used with ``p_prior='gaussian'`` where multiple
         parameters become gene-specific.
+
+    dense_params : List[str], optional
+        Subset of ``joint_params`` that receive full cross-gene low-rank
+        coupling. Non-dense joint params get only gene-local conditioning
+        on dense params (per-gene regression + per-gene Cholesky among
+        non-dense params). When ``None`` or equal to ``joint_params``,
+        the standard fully-dense JointLowRankGuide is used.
+        Example: ``joint_params=["mu", "phi", "gate"],
+        dense_params=["mu"]`` gives ``mu`` cross-gene correlations while
+        ``phi`` and ``gate`` only couple to ``mu`` at the same gene.
 
     priors : Dict[str, Any], optional
         Dictionary of prior hyperparameters keyed by parameter name. Values
@@ -956,6 +967,7 @@ def fit(
             overdispersion_prior=overdispersion_prior,
             guide_rank=guide_rank,
             joint_params=joint_params,
+            dense_params=dense_params,
             n_components=n_components,
             mixture_params=effective_mixture_params,
             priors=priors,

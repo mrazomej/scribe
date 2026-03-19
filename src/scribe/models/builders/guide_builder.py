@@ -33,6 +33,7 @@ from ._guide_cell_specific_mixin import (
     setup_cell_specific_guide,
 )
 from ._guide_joint_mixin import _woodbury_conditional_params, setup_joint_guide
+from ._guide_structured_joint_mixin import setup_structured_joint_guide
 from ._guide_meanfield_mixin import setup_guide
 
 if TYPE_CHECKING:
@@ -236,10 +237,19 @@ class GuideBuilder:
                     joint_handled.add(spec.name)
 
             # Process joint groups first (may contain a mix of scalar
-            # and gene-specific specs with heterogeneous shapes)
+            # and gene-specific specs with heterogeneous shapes).
+            # When dense_params is set on the guide marker, use the
+            # structured path (dense low-rank + nondense gene-local).
             for grp_name, grp_specs in joint_groups.items():
                 guide_family = grp_specs[0].guide_family
-                setup_joint_guide(grp_specs, guide_family, dims, model_config)
+                if guide_family.dense_params is not None:
+                    setup_structured_joint_guide(
+                        grp_specs, guide_family, dims, model_config
+                    )
+                else:
+                    setup_joint_guide(
+                        grp_specs, guide_family, dims, model_config
+                    )
 
             # ================================================================
             # 2. Setup guides for remaining GLOBAL parameters

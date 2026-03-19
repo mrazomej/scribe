@@ -3417,3 +3417,409 @@ class TestPosteriorPositiveTransform:
         assert isinstance(
             mu_entry["transform"], dist.transforms.ExpTransform
         ), f"Expected ExpTransform for joint mu, got {type(mu_entry['transform'])}"
+
+
+# ===========================================================================
+# Structured Joint Low-Rank Guide Tests
+# ===========================================================================
+
+
+class TestStructuredJointGuide:
+    """Tests for the structured joint guide (dense + nondense blocks)."""
+
+    # ---- Config validation ------------------------------------------------
+
+    def test_config_dense_params_field(self):
+        """ModelConfig and builder accept dense_params."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("mean_odds")
+            .unconstrained()
+            .with_hierarchical_p()
+            .with_joint_params(["mu", "phi"])
+            .with_dense_params(["mu"])
+            .build()
+        )
+        assert config.joint_params == ["mu", "phi"]
+        assert config.dense_params == ["mu"]
+
+    def test_config_dense_params_requires_joint(self):
+        """dense_params without joint_params raises."""
+        with pytest.raises(ValueError, match="requires joint_params"):
+            (
+                ModelConfigBuilder()
+                .for_model("nbdm")
+                .with_parameterization("mean_odds")
+                .unconstrained()
+                .with_dense_params(["mu"])
+                .build()
+            )
+
+    def test_config_dense_params_must_be_subset(self):
+        """dense_params not subset of joint_params raises."""
+        with pytest.raises(ValueError, match="not in joint_params"):
+            (
+                ModelConfigBuilder()
+                .for_model("nbdm")
+                .with_parameterization("mean_odds")
+                .unconstrained()
+                .with_hierarchical_p()
+                .with_joint_params(["mu", "phi"])
+                .with_dense_params(["mu", "gate"])
+                .build()
+            )
+
+    def test_config_dense_equals_joint_falls_back(self):
+        """dense_params == joint_params normalised to None in preset builder."""
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            p_prior="gaussian",
+            guide_rank=3,
+            joint_params=["mu", "phi"],
+            dense_params=["mu", "phi"],
+        )
+        # The preset builder normalises dense==joint to None
+        from scribe.models.components import JointLowRankGuide
+
+        families = config.guide_families
+        for pname in ["mu", "phi"]:
+            gf = getattr(families, pname, None)
+            if isinstance(gf, dict):
+                assert gf.get("dense_params") is None
+            elif isinstance(gf, JointLowRankGuide):
+                assert gf.dense_params is None
+
+    # ---- SVI smoke: mean_odds parameterization ----------------------------
+
+    def test_svi_mean_odds_dense_mu(self):
+        """SVI smoke: joint=[mu, phi], dense=[mu] (mean_odds)."""
+        n_cells, n_genes = 50, 10
+        key = random.PRNGKey(42)
+        counts = random.poisson(key, lam=5.0, shape=(n_cells, n_genes))
+
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            p_prior="gaussian",
+            guide_rank=3,
+            joint_params=["mu", "phi"],
+            dense_params=["mu"],
+        )
+        model_fn, guide_fn, config = get_model_and_guide(config)
+        kw = dict(
+            n_cells=n_cells, n_genes=n_genes,
+            model_config=config, counts=counts,
+        )
+
+        optimizer = Adam(1e-3)
+        svi = SVI(model_fn, guide_fn, optimizer, loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(0), **kw)
+
+        for _ in range(5):
+            svi_state, loss = svi.update(svi_state, **kw)
+            assert jnp.isfinite(loss), f"SVI loss non-finite: {loss}"
+
+        params = svi.get_params(svi_state)
+        # Dense param gets _W; nondense does not but gets _alpha
+        assert "joint_joint_mu_W" in params
+        assert "joint_joint_phi_W" not in params
+        assert "joint_joint_phi_alpha_mu" in params
+
+    # ---- SVI smoke: canonical parameterization ----------------------------
+
+    def test_svi_canonical_dense_r(self):
+        """SVI smoke: joint=[r, p], dense=[r] (canonical)."""
+        n_cells, n_genes = 50, 10
+        key = random.PRNGKey(42)
+        counts = random.poisson(key, lam=5.0, shape=(n_cells, n_genes))
+
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="canonical",
+            unconstrained=True,
+            p_prior="gaussian",
+            guide_rank=3,
+            joint_params=["r", "p"],
+            dense_params=["r"],
+        )
+        model_fn, guide_fn, config = get_model_and_guide(config)
+        kw = dict(
+            n_cells=n_cells, n_genes=n_genes,
+            model_config=config, counts=counts,
+        )
+
+        svi = SVI(model_fn, guide_fn, Adam(1e-3), loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(0), **kw)
+
+        for _ in range(5):
+            svi_state, loss = svi.update(svi_state, **kw)
+            assert jnp.isfinite(loss)
+
+    # ---- SVI smoke: mean_prob parameterization ----------------------------
+
+    def test_svi_mean_prob_dense_mu(self):
+        """SVI smoke: joint=[mu, p], dense=[mu] (mean_prob)."""
+        n_cells, n_genes = 50, 10
+        key = random.PRNGKey(42)
+        counts = random.poisson(key, lam=5.0, shape=(n_cells, n_genes))
+
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="mean_prob",
+            unconstrained=True,
+            p_prior="gaussian",
+            guide_rank=3,
+            joint_params=["mu", "p"],
+            dense_params=["mu"],
+        )
+        model_fn, guide_fn, config = get_model_and_guide(config)
+        kw = dict(
+            n_cells=n_cells, n_genes=n_genes,
+            model_config=config, counts=counts,
+        )
+
+        svi = SVI(model_fn, guide_fn, Adam(1e-3), loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(0), **kw)
+
+        for _ in range(5):
+            svi_state, loss = svi.update(svi_state, **kw)
+            assert jnp.isfinite(loss)
+
+    # ---- Inverted dense: phi dense, mu nondense ---------------------------
+
+    def test_svi_inverted_dense_phi(self):
+        """SVI smoke: joint=[mu, phi], dense=[phi] — inverted."""
+        n_cells, n_genes = 50, 10
+        key = random.PRNGKey(42)
+        counts = random.poisson(key, lam=5.0, shape=(n_cells, n_genes))
+
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            p_prior="gaussian",
+            guide_rank=3,
+            joint_params=["mu", "phi"],
+            dense_params=["phi"],
+        )
+        model_fn, guide_fn, config = get_model_and_guide(config)
+        kw = dict(
+            n_cells=n_cells, n_genes=n_genes,
+            model_config=config, counts=counts,
+        )
+
+        svi = SVI(model_fn, guide_fn, Adam(1e-3), loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(0), **kw)
+
+        for _ in range(5):
+            svi_state, loss = svi.update(svi_state, **kw)
+            assert jnp.isfinite(loss)
+
+        params = svi.get_params(svi_state)
+        # phi is dense (gets W), mu is nondense (gets alpha_phi)
+        assert "joint_joint_phi_W" in params
+        assert "joint_joint_mu_W" not in params
+        assert "joint_joint_mu_alpha_phi" in params
+
+    # ---- Mixture model ----------------------------------------------------
+
+    def test_svi_mixture_structured(self):
+        """SVI smoke: structured guide in a 3-component mixture."""
+        n_cells, n_genes = 60, 8
+        key = random.PRNGKey(42)
+        counts = random.poisson(key, lam=5.0, shape=(n_cells, n_genes))
+
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            p_prior="gaussian",
+            guide_rank=3,
+            joint_params=["mu", "phi"],
+            dense_params=["mu"],
+            n_components=3,
+        )
+        model_fn, guide_fn, config = get_model_and_guide(config)
+        kw = dict(
+            n_cells=n_cells, n_genes=n_genes,
+            model_config=config, counts=counts,
+        )
+
+        svi = SVI(model_fn, guide_fn, Adam(1e-3), loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(0), **kw)
+
+        for _ in range(5):
+            svi_state, loss = svi.update(svi_state, **kw)
+            assert jnp.isfinite(loss)
+
+        params = svi.get_params(svi_state)
+        # mu is (K, G) dense; phi is (K,) nondense scalar
+        assert params["joint_joint_mu_loc"].shape == (3, n_genes)
+        assert params["joint_joint_mu_W"].shape == (3, n_genes, 3)
+
+    # ---- 3-param group with nondense Cholesky chain -----------------------
+
+    def test_svi_three_params_nondense_chain(self):
+        """SVI smoke: joint=[mu,phi,gate], dense=[mu], phi-gate chain."""
+        n_cells, n_genes = 50, 10
+        key = random.PRNGKey(42)
+        counts = random.poisson(key, lam=5.0, shape=(n_cells, n_genes))
+
+        config = build_config_from_preset(
+            model="zinb",
+            parameterization="mean_odds",
+            unconstrained=True,
+            p_prior="gaussian",
+            gate_prior="gaussian",
+            guide_rank=3,
+            joint_params=["mu", "phi", "gate"],
+            dense_params=["mu"],
+        )
+        model_fn, guide_fn, config = get_model_and_guide(config)
+        kw = dict(
+            n_cells=n_cells, n_genes=n_genes,
+            model_config=config, counts=counts,
+        )
+
+        svi = SVI(model_fn, guide_fn, Adam(1e-3), loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(0), **kw)
+
+        for _ in range(5):
+            svi_state, loss = svi.update(svi_state, **kw)
+            assert jnp.isfinite(loss)
+
+        params = svi.get_params(svi_state)
+        # gate is gene-specific nondense; should have beta_phi (chain)
+        assert "joint_joint_gate_alpha_mu" in params
+        # phi is scalar nondense so gate (gene-specific) cannot chain
+        # from phi because scalar-to-gene chain is skipped
+        # (phi is scalar, gate is gene-specific -> no beta)
+
+    # ---- Multi-dataset: shared phi + dataset-specific mu ------------------
+
+    def test_svi_multi_dataset_structured(self):
+        """SVI smoke: structured guide with shared phi + dataset mu."""
+        n_cells, n_genes = 60, 8
+        key = random.PRNGKey(42)
+        counts = random.poisson(key, lam=5.0, shape=(n_cells, n_genes))
+
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            p_prior="gaussian",
+            mu_dataset_prior="gaussian",
+            n_datasets=2,
+            guide_rank=3,
+            joint_params=["mu", "phi"],
+            dense_params=["mu"],
+        )
+        model_fn, guide_fn, config = get_model_and_guide(config)
+        dataset_indices = jnp.array([0] * 30 + [1] * 30)
+        kw = dict(
+            n_cells=n_cells, n_genes=n_genes,
+            model_config=config, counts=counts,
+            dataset_indices=dataset_indices,
+        )
+
+        svi = SVI(model_fn, guide_fn, Adam(1e-3), loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(0), **kw)
+
+        for _ in range(5):
+            svi_state, loss = svi.update(svi_state, **kw)
+            assert jnp.isfinite(loss)
+
+    # ---- Posterior extraction ---------------------------------------------
+
+    def test_posterior_extraction_structured(self):
+        """MAP and marginals work for structured joint groups."""
+        from scribe.models.builders.posterior import get_posterior_distributions
+
+        n_cells, n_genes = 50, 10
+        key = random.PRNGKey(0)
+        counts = random.poisson(key, lam=5.0, shape=(n_cells, n_genes))
+
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            p_prior="gaussian",
+            guide_rank=3,
+            joint_params=["mu", "phi"],
+            dense_params=["mu"],
+        )
+        model_fn, guide_fn, config = get_model_and_guide(config)
+        kw = dict(
+            n_cells=n_cells, n_genes=n_genes,
+            model_config=config, counts=counts,
+        )
+
+        svi = SVI(model_fn, guide_fn, Adam(1e-3), loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(1), **kw)
+        for _ in range(3):
+            svi_state, _ = svi.update(svi_state, **kw)
+        params = svi.get_params(svi_state)
+
+        distributions = get_posterior_distributions(params, config)
+
+        # Per-parameter marginals should exist
+        assert "mu" in distributions
+        assert "phi" in distributions
+
+        # mu is dense: base should be LowRankMultivariateNormal
+        import numpyro.distributions as ndist
+
+        mu_entry = distributions["mu"]
+        assert isinstance(mu_entry, dict)
+        assert "base" in mu_entry
+        assert isinstance(mu_entry["base"], ndist.LowRankMultivariateNormal)
+
+        # phi is nondense: base should be Normal (scalar)
+        phi_entry = distributions["phi"]
+        assert isinstance(phi_entry, dict)
+        assert "base" in phi_entry
+        assert isinstance(phi_entry["base"], ndist.Normal)
+
+        # joint:{group} should exist and only contain dense block
+        joint_key = "joint:joint"
+        assert joint_key in distributions
+        joint_dist = distributions[joint_key]
+        assert joint_dist["param_names"] == ["mu"]
+
+    # ---- Fallback: dense == joint -> fully dense --------------------------
+
+    def test_fallback_dense_equals_joint(self):
+        """dense_params == joint_params uses standard JointLowRankGuide."""
+        n_cells, n_genes = 50, 10
+        key = random.PRNGKey(42)
+        counts = random.poisson(key, lam=5.0, shape=(n_cells, n_genes))
+
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            p_prior="gaussian",
+            guide_rank=3,
+            joint_params=["mu", "phi"],
+            dense_params=["mu", "phi"],
+        )
+        model_fn, guide_fn, config = get_model_and_guide(config)
+        kw = dict(
+            n_cells=n_cells, n_genes=n_genes,
+            model_config=config, counts=counts,
+        )
+
+        svi = SVI(model_fn, guide_fn, Adam(1e-3), loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(0), **kw)
+        for _ in range(3):
+            svi_state, loss = svi.update(svi_state, **kw)
+            assert jnp.isfinite(loss)
+
+        params = svi.get_params(svi_state)
+        # Both should have _W (fully dense)
+        assert "joint_joint_mu_W" in params
+        assert "joint_joint_phi_W" in params

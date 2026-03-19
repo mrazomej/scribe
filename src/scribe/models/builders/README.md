@@ -464,6 +464,16 @@ For `JointLowRankGuide`, parameters are grouped by `group` name and processed
 through `setup_joint_guide` using a chain rule decomposition rather than
 individual dispatch.
 
+#### Structured Joint Guide Dispatch
+
+When `JointLowRankGuide.dense_params` is set to a proper subset of
+`joint_params`, the guide builder dispatches to the **structured joint path**
+implemented in `_guide_structured_joint_mixin.py`. Dense params get full
+cross-gene low-rank coupling (Woodbury chain); non-dense params get per-gene
+regression on dense params plus per-gene Cholesky among themselves. When
+`dense_params` is `None` or equals `joint_params`, the standard
+`_guide_joint_mixin.py` path is used.
+
 ## Plate Handling
 
 The ModelBuilder handles three plate modes:
@@ -549,5 +559,6 @@ they have no guide counterpart.
 | `_guide_cell_specific_mixin.py` | Cell-specific dispatch registrations; `guide_mu_eta_hierarchy` (pre-plate hierarchical mu_eta guide) |
 | `_guide_amortized_mixin.py` | Amortized helpers and dispatch registration |
 | `_guide_joint_mixin.py` | Woodbury helpers and `setup_joint_guide` implementation |
+| `_guide_structured_joint_mixin.py` | Structured joint path: dense params (cross-gene low-rank) vs non-dense params (gene-local conditioning) |
 | `posterior.py` | `get_posterior_distributions`; joint-aware extraction from `JointLowRankGuide` params |
 | `__init__.py` | Public API exports |

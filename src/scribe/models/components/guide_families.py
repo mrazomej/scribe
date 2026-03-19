@@ -233,6 +233,7 @@ class JointLowRankGuide(GuideFamily):
 
     rank: int = 10
     group: str = "default"
+    dense_params: Optional[List[str]] = None
 
     def __post_init__(self) -> None:
         if self.rank <= 0:
