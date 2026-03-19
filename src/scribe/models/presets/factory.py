@@ -35,6 +35,7 @@ import numpyro
 
 from ..builders import GuideBuilder, ModelBuilder
 from ..builders.parameter_specs import (
+    AnchoredNormalSpec,
     DatasetHierarchicalPositiveNormalSpec,
     DatasetHierarchicalSigmoidNormalSpec,
     PositiveNormalSpec,
@@ -605,6 +606,26 @@ def create_model(
         )
 
     # ==========================================================================
+    # Step 4.57: Apply data-informed mean anchoring prior
+    # ==========================================================================
+    # When mu_mean_anchor is True and anchor centers have been computed
+    # (stored in priors.mu_anchor_centers), replace the NormalWithTransformSpec
+    # for log_mu_loc (or log_mu_dataset_loc) with an AnchoredNormalSpec that
+    # uses per-gene data-derived centers.
+    if model_config.mu_mean_anchor:
+        _anchor_extra = (
+            getattr(model_config.priors, "__pydantic_extra__", None) or {}
+        )
+        _anchor_centers = _anchor_extra.get("mu_anchor_centers")
+        if _anchor_centers is not None:
+            param_specs = _apply_mean_anchor(
+                param_specs=param_specs,
+                param_key=param_key,
+                anchor_centers=_anchor_centers,
+                anchor_sigma=model_config.mu_mean_anchor_sigma,
+            )
+
+    # ==========================================================================
     # Step 4.6: Apply dataset-level hierarchy flags
     # ==========================================================================
     if model_config.n_datasets is not None:
@@ -1097,6 +1118,71 @@ def _hierarchicalize_mu(
                 ),
             )
             new_specs.extend([hyper_loc, hyper_scale, hier_spec])
+        else:
+            new_specs.append(spec)
+    return new_specs
+
+
+# ------------------------------------------------------------------------------
+
+
+def _apply_mean_anchor(
+    param_specs: List,
+    param_key: str,
+    anchor_centers: Tuple[float, ...],
+    anchor_sigma: float = 0.3,
+) -> List:
+    """Replace the flat log_mu_loc (or log_r_loc) with an anchored spec.
+
+    Finds the NormalWithTransformSpec for the population-level mu/r
+    hyperprior location (created by ``_hierarchicalize_mu`` or
+    ``_datasetify_mu``) and replaces it with an ``AnchoredNormalSpec``
+    whose per-gene centers are derived from the observed data.
+
+    This implements the data-informed mean anchoring prior from
+    ``paper/_mean_anchoring_prior.qmd``.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Current parameter specs (must already contain a log_mu_loc or
+        log_mu_dataset_loc spec from the hierarchy step).
+    param_key : str
+        Parameterization registry key ("canonical", "mean_prob", "mean_odds").
+    anchor_centers : Tuple[float, ...]
+        Per-gene log-space anchor centers (output of ``compute_mu_anchor``).
+    anchor_sigma : float, default=0.3
+        Log-scale standard deviation for the anchoring prior.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Updated specs with the flat hyper_loc replaced by an anchored spec.
+    """
+    # Determine target hyper_loc name based on parameterization.
+    # Also check for the dataset-level variant.
+    if param_key in ("mean_odds", "mean_prob"):
+        loc_names = ("log_mu_loc", "log_mu_dataset_loc")
+    else:
+        loc_names = ("log_r_loc", "log_r_dataset_loc")
+
+    new_specs = []
+    for spec in param_specs:
+        if spec.name in loc_names and isinstance(
+            spec, NormalWithTransformSpec
+        ):
+            # Replace with AnchoredNormalSpec preserving other attributes
+            anchored = AnchoredNormalSpec(
+                name=spec.name,
+                shape_dims=spec.shape_dims,
+                default_params=spec.default_params,
+                is_gene_specific=spec.is_gene_specific,
+                is_mixture=getattr(spec, "is_mixture", False),
+                transform=spec.transform,
+                anchor_centers=tuple(anchor_centers),
+                anchor_sigma=anchor_sigma,
+            )
+            new_specs.append(anchored)
         else:
             new_specs.append(spec)
     return new_specs

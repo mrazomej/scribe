@@ -1615,3 +1615,200 @@ class TestPositiveTransformFactory:
         assert isinstance(
             phi_capture_spec.transform, dist.transforms.ExpTransform
         )
+
+
+# ==============================================================================
+# Tests for Data-Informed Mean Anchoring Prior
+# ==============================================================================
+
+
+class TestMeanAnchor:
+    """Tests for the mu_mean_anchor data-informed prior."""
+
+    def test_compute_mu_anchor_basic(self):
+        """Test compute_mu_anchor returns correct shape and reasonable values."""
+        import numpy as np
+        from scribe.models.model_utils import compute_mu_anchor
+
+        rng = np.random.default_rng(42)
+        n_cells, n_genes = 500, 50
+        # Poisson counts with known means ranging from 1 to 100
+        true_means = np.linspace(1, 100, n_genes)
+        counts = rng.poisson(true_means, size=(n_cells, n_genes))
+
+        log_anchors = compute_mu_anchor(counts, epsilon=1e-3)
+
+        assert log_anchors.shape == (n_genes,)
+        # Anchors should be close to log(true_means) since nu_bar=1
+        np.testing.assert_allclose(
+            log_anchors, np.log(true_means), atol=0.3
+        )
+
+    def test_compute_mu_anchor_with_capture(self):
+        """Test compute_mu_anchor with capture probability correction.
+
+        The library sizes must reflect the full transcriptome (not just the
+        gene subset), since M0 is the total mRNA count per cell.
+        """
+        import numpy as np
+        from scribe.models.model_utils import compute_mu_anchor
+
+        rng = np.random.default_rng(42)
+        n_cells, n_genes = 1000, 30
+        M0 = 10_000.0
+        true_nu = 0.1
+        true_means = np.full(n_genes, 50.0)
+
+        # Simulate observed counts: Poisson(mu * nu)
+        counts = rng.poisson(true_means * true_nu, size=(n_cells, n_genes))
+        # Library sizes represent the full transcriptome capture.
+        # For nu = L / M0, set L ~ M0 * nu = 1000 per cell.
+        lib_sizes = rng.poisson(M0 * true_nu, size=n_cells).astype(float)
+
+        log_anchors = compute_mu_anchor(
+            counts, library_sizes=lib_sizes, total_mrna_mean=M0
+        )
+
+        assert log_anchors.shape == (n_genes,)
+        # After capture correction: mu_hat = u_bar / nu_bar
+        # u_bar ~ 5 (50 * 0.1), nu_bar ~ 0.1 → mu_hat ~ 50
+        expected = np.log(50.0)
+        np.testing.assert_allclose(
+            log_anchors, expected, atol=0.3
+        )
+
+    def test_compute_mu_anchor_epsilon_prevents_log_zero(self):
+        """Test that epsilon prevents log(0) for zero-expression genes."""
+        import numpy as np
+        from scribe.models.model_utils import compute_mu_anchor
+
+        counts = np.zeros((100, 10))
+        log_anchors = compute_mu_anchor(counts, epsilon=1e-3)
+
+        # All genes have zero counts, so anchor = log(epsilon / 1.0)
+        expected = np.log(1e-3)
+        np.testing.assert_allclose(log_anchors, expected)
+
+    def test_config_mu_mean_anchor_requires_unconstrained(self):
+        """Test that mu_mean_anchor=True requires unconstrained=True."""
+        from scribe.models.config import ModelConfig
+
+        with pytest.raises(ValueError, match="mu_mean_anchor.*unconstrained"):
+            ModelConfig(
+                base_model="nbdm",
+                mu_mean_anchor=True,
+                unconstrained=False,
+            )
+
+    def test_config_mu_mean_anchor_with_unconstrained(self):
+        """Test mu_mean_anchor=True works with unconstrained=True."""
+        from scribe.models.config import ModelConfig
+
+        config = ModelConfig(
+            base_model="nbdm",
+            mu_mean_anchor=True,
+            unconstrained=True,
+        )
+        assert config.mu_mean_anchor is True
+        assert config.mu_mean_anchor_sigma == 0.3
+
+    def test_config_mu_mean_anchor_custom_sigma(self):
+        """Test mu_mean_anchor_sigma can be customized."""
+        from scribe.models.config import ModelConfig
+
+        config = ModelConfig(
+            base_model="nbdm",
+            mu_mean_anchor=True,
+            mu_mean_anchor_sigma=0.5,
+            unconstrained=True,
+        )
+        assert config.mu_mean_anchor_sigma == 0.5
+
+    def test_builder_with_mean_anchor(self):
+        """Test ModelConfigBuilder.with_mean_anchor() fluent API."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("mean_odds")
+            .with_mean_anchor(sigma=0.2)
+            .build()
+        )
+        assert config.mu_mean_anchor is True
+        assert config.mu_mean_anchor_sigma == 0.2
+        assert config.unconstrained is True
+
+    def test_factory_with_anchor_replaces_hyper_loc(self):
+        """Test factory replaces log_mu_loc with AnchoredNormalSpec."""
+        import numpy as np
+        from scribe.models.config import ModelConfig
+        from scribe.models.config.groups import PriorOverrides
+        from scribe.models.builders.parameter_specs import AnchoredNormalSpec
+
+        # Build config with anchor centers pre-computed
+        n_genes = 20
+        fake_centers = tuple(np.log(np.linspace(1, 100, n_genes)).tolist())
+        priors = PriorOverrides(mu_anchor_centers=fake_centers)
+
+        config = ModelConfig(
+            base_model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            mu_mean_anchor=True,
+            mu_mean_anchor_sigma=0.3,
+            mu_prior="gaussian",
+            n_components=2,
+            priors=priors,
+        )
+
+        _, _, param_specs = create_model(config, validate=False)
+
+        # Find the log_mu_loc spec — should be an AnchoredNormalSpec
+        log_mu_loc_specs = [
+            s for s in param_specs if s.name == "log_mu_loc"
+        ]
+        assert len(log_mu_loc_specs) == 1
+        spec = log_mu_loc_specs[0]
+        assert isinstance(spec, AnchoredNormalSpec)
+        assert len(spec.anchor_centers) == n_genes
+        assert spec.anchor_sigma == 0.3
+
+    def test_factory_without_anchor_uses_normal_spec(self):
+        """Test factory uses NormalWithTransformSpec when anchor not set."""
+        from scribe.models.config import ModelConfig
+        from scribe.models.builders.parameter_specs import (
+            AnchoredNormalSpec,
+            NormalWithTransformSpec,
+        )
+
+        config = ModelConfig(
+            base_model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            mu_mean_anchor=False,
+            mu_prior="gaussian",
+            n_components=2,
+        )
+
+        _, _, param_specs = create_model(config, validate=False)
+
+        log_mu_loc_specs = [
+            s for s in param_specs if s.name == "log_mu_loc"
+        ]
+        assert len(log_mu_loc_specs) == 1
+        spec = log_mu_loc_specs[0]
+        # Should NOT be an AnchoredNormalSpec
+        assert not isinstance(spec, AnchoredNormalSpec)
+        assert isinstance(spec, NormalWithTransformSpec)
+
+    def test_backward_compat_pickle_defaults(self):
+        """Test old pickles without mu_mean_anchor get correct defaults."""
+        from scribe.models.config import ModelConfig
+
+        state = {
+            "__dict__": {"base_model": "nbdm"},
+            "__pydantic_fields_set__": set(),
+        }
+        config = ModelConfig.__new__(ModelConfig)
+        config.__setstate__(state)
+        assert config.mu_mean_anchor is False
+        assert config.mu_mean_anchor_sigma == 0.3

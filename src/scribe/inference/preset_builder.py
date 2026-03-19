@@ -69,6 +69,8 @@ def build_config_from_preset(
     neg_a: float = 1.0,
     neg_tau: float = 1.0,
     mu_eta_prior: str = "none",
+    mu_mean_anchor: bool = False,
+    mu_mean_anchor_sigma: float = 0.3,
     overdispersion: str = "none",
     overdispersion_prior: str = "horseshoe",
     guide_rank: Optional[int] = None,
@@ -379,6 +381,10 @@ def build_config_from_preset(
 
     # Hierarchical prior for per-dataset mu_eta (capture scaling)
     builder._mu_eta_prior = mu_eta_prior
+
+    # Data-informed mean anchoring prior
+    builder._mu_mean_anchor = mu_mean_anchor
+    builder._mu_mean_anchor_sigma = mu_mean_anchor_sigma
 
     # Gene-specific overdispersion (e.g. BNB)
     builder._overdispersion = overdispersion
