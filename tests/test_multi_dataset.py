@@ -2974,6 +2974,40 @@ class TestMixtureDatasetHierarchyFactory:
         assert len(hyper_specs) == 1
         assert hyper_specs[0].is_mixture is True
 
+    def test_create_model_joint_shared_phi_dataset_mu(self):
+        """Factory supports joint shared-phi + dataset-mu mixture setup.
+
+        Regression target: this configuration yields heterogeneous joint batch
+        ranks (`phi` with `(K, ...)`, `mu` with `(K, D, G)`) and should build
+        model/guide/specs without joint-guide batch mismatch errors.
+        """
+        K, D = 3, 2
+
+        b = self._builder(model_type="nbdm", parameterization="mean_odds")
+        b._n_datasets = D
+        b._mu_dataset_prior = "gaussian"
+        b._p_dataset_prior = "none"
+        b._n_components = K
+        b._mixture_params = ["phi", "mu"]
+        b._guide_rank = 3
+        # Order is intentional: shared/shorter-batch param first.
+        b._joint_params = ["phi", "mu"]
+        config = b.build()
+
+        model, guide, specs = create_model(config, validate=False)
+        assert callable(model)
+        assert callable(guide)
+
+        # Confirm shared-vs-dataset semantics are preserved in produced specs.
+        phi_specs = [s for s in specs if s.name == "phi"]
+        mu_specs = [s for s in specs if s.name == "mu"]
+        assert len(phi_specs) == 1
+        assert len(mu_specs) == 1
+        assert phi_specs[0].is_dataset is False
+        assert phi_specs[0].is_mixture is True
+        assert mu_specs[0].is_dataset is True
+        assert mu_specs[0].is_mixture is True
+
     def test_svi_init_vcp_mixture_dataset_mean_odds(self):
         """SVI init succeeds for VCP + mixture + dataset hierarchy + mean_odds.
 

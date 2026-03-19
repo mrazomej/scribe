@@ -4,7 +4,7 @@ This module contains Woodbury-based conditional utilities and the
 `setup_joint_guide` implementation used by `GuideBuilder`.
 """
 
-from typing import TYPE_CHECKING, Dict, List
+from typing import TYPE_CHECKING, Dict, List, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -27,6 +27,91 @@ from ..components.guide_families import JointLowRankGuide
 
 if TYPE_CHECKING:
     from ..config import ModelConfig
+
+
+def _is_batch_prefix(shorter: Tuple[int, ...], longer: Tuple[int, ...]) -> bool:
+    """Return whether ``shorter`` matches the leading axes of ``longer``.
+
+    Parameters
+    ----------
+    shorter : tuple of int
+        Candidate prefix batch shape (for example ``()`` or ``(K,)``).
+    longer : tuple of int
+        Candidate reference batch shape (for example ``(K, D)``).
+
+    Returns
+    -------
+    bool
+        True when ``shorter`` is a valid prefix of ``longer``.
+    """
+    if len(shorter) > len(longer):
+        return False
+    return shorter == longer[: len(shorter)]
+
+
+def _select_reference_batch_shape(
+    batch_shapes: List[Tuple[int, ...]],
+) -> Tuple[int, ...]:
+    """Select the longest compatible batch shape in a joint group.
+
+    Parameters
+    ----------
+    batch_shapes : list of tuple of int
+        Batch shapes from each expanded joint specification
+        (that is, all dimensions except the trailing gene axis).
+
+    Returns
+    -------
+    tuple of int
+        The reference batch shape with maximal rank.
+    """
+    return max(batch_shapes, key=len)
+
+
+def _broadcast_to_batch_prefix(
+    arr: jnp.ndarray,
+    target_batch: Tuple[int, ...],
+    keep_last_dims: int,
+    name: str,
+) -> jnp.ndarray:
+    """Broadcast a tensor to ``target_batch`` using prefix-compatible semantics.
+
+    Parameters
+    ----------
+    arr : jnp.ndarray
+        Tensor to broadcast.
+    target_batch : tuple of int
+        Desired batch shape.
+    keep_last_dims : int
+        Number of trailing event/matrix dimensions to preserve.
+    name : str
+        Tensor name for validation errors.
+
+    Returns
+    -------
+    jnp.ndarray
+        Tensor with batch shape equal to ``target_batch``.
+    """
+    if keep_last_dims <= 0:
+        raise ValueError("keep_last_dims must be positive")
+
+    arr_batch = arr.shape[:-keep_last_dims]
+    arr_tail = arr.shape[-keep_last_dims:]
+    if len(arr_batch) > len(target_batch):
+        raise ValueError(
+            f"Tensor '{name}' has batch shape {arr_batch}, which has higher rank "
+            f"than target batch shape {target_batch}."
+        )
+    if not _is_batch_prefix(arr_batch, target_batch):
+        raise ValueError(
+            f"Tensor '{name}' has incompatible batch shape {arr_batch}; expected "
+            f"a prefix of target batch shape {target_batch}."
+        )
+
+    pad = (1,) * (len(target_batch) - len(arr_batch))
+    reshaped = jnp.reshape(arr, arr_batch + pad + arr_tail)
+    return jnp.broadcast_to(reshaped, target_batch + arr_tail)
+
 
 def _woodbury_conditional_params(
     W1: jnp.ndarray,
@@ -51,6 +136,11 @@ def _woodbury_conditional_params(
     **Heterogeneous dimensions**: G1 and G2 may differ.  The
     intermediate matrices H, M, L_M are all k x k regardless of G1 or
     G2, so the Woodbury formulas apply without modification.
+
+    **Heterogeneous batch ranks** are also supported when the conditioning
+    batch is prefix-compatible with the target batch (for example `(K,)`
+    conditioning `(K, D)`). The helper aligns the conditioning tensors to
+    the target batch rank via singleton insertion + broadcasting.
 
     Parameters
     ----------
@@ -78,6 +168,28 @@ def _woodbury_conditional_params(
     cond_D : jnp.ndarray, shape (..., G2)
         Conditional diagonal covariance (same as D2).
     """
+    # Align theta_1 tensors to theta_2 batch rank so mixed-rank joint groups
+    # (for example `(K,) -> (K, D)`) can use the same Woodbury algebra.
+    target_batch = W2.shape[:-2]
+    W1 = _broadcast_to_batch_prefix(
+        W1, target_batch, keep_last_dims=2, name="W1"
+    )
+    D1 = _broadcast_to_batch_prefix(
+        D1, target_batch, keep_last_dims=1, name="D1"
+    )
+    loc1 = _broadcast_to_batch_prefix(
+        loc1, target_batch, keep_last_dims=1, name="loc1"
+    )
+    theta1_sample = _broadcast_to_batch_prefix(
+        theta1_sample, target_batch, keep_last_dims=1, name="theta1_sample"
+    )
+    loc2 = _broadcast_to_batch_prefix(
+        loc2, target_batch, keep_last_dims=1, name="loc2"
+    )
+    D2 = _broadcast_to_batch_prefix(
+        D2, target_batch, keep_last_dims=1, name="D2"
+    )
+
     # H = W1^T @ diag(1/D1) @ W1, shape (..., k, k)
     D1_inv = 1.0 / D1
     W1_scaled = W1 * D1_inv[..., :, None]  # (..., G, k) * (..., G, 1)
@@ -214,7 +326,9 @@ def _build_base_distribution_for_joint_spec(
     # Woodbury chain. Collapse to a scalar Normal for sampling to preserve the
     # model's event shape semantics.
     if is_scalar_in_joint:
-        scalar_var = jnp.sum(cov_factor[..., 0, :] ** 2, axis=-1) + cov_diag[..., 0]
+        scalar_var = (
+            jnp.sum(cov_factor[..., 0, :] ** 2, axis=-1) + cov_diag[..., 0]
+        )
         scalar_loc = loc[..., 0]
         base = dist.Normal(scalar_loc, jnp.sqrt(scalar_var))
         if n_batch_dims > 0:
@@ -278,6 +392,11 @@ def setup_joint_guide(
     specs are collapsed back to a ``Normal`` distribution matching the
     model's event shape.
 
+    Mixed batch-rank groups are allowed when each shorter batch shape is a
+    prefix of the longest batch shape in the group (for example ``()`` with
+    ``(K, D)``). For stable conditioning semantics, specs must be ordered
+    from shorter/shared batches to longer batches.
+
     The chain rule decomposition samples each parameter in unconstrained
     space from the marginal/conditional LowRankMVN, then applies the
     transform via ``TransformedDistribution``.  Unconstrained samples are
@@ -328,18 +447,37 @@ def setup_joint_guide(
             is_scalar_flags.append(False)
         expanded_shapes.append(expanded)
 
-    # Validate that batch shapes (all dims except the trailing gene dim)
-    # are consistent across all specs in the group.
+    # Validate batch compatibility across specs. Unlike the earlier strict
+    # equality requirement, mixed-rank batches are now supported when each
+    # shorter batch is a prefix of the longest batch. This enables
+    # shared-across-dataset parameters (for example `(K,)`) to be jointly
+    # modeled with dataset-specific parameters `(K, D)` in the same group.
     batch_shapes = [es[:-1] for es in expanded_shapes]
-    ref_batch = batch_shapes[0]
-    for i, bs in enumerate(batch_shapes[1:], start=1):
-        if bs != ref_batch:
+    ref_batch = _select_reference_batch_shape(batch_shapes)
+
+    for i, bs in enumerate(batch_shapes):
+        if not _is_batch_prefix(bs, ref_batch):
             raise ValueError(
                 f"Joint group '{guide.group}': spec '{specs[i].name}' has "
-                f"batch shape {bs}, but '{specs[0].name}' has batch shape "
-                f"{ref_batch}. All specs in a joint group must share the "
-                f"same batch dimensions (only the trailing gene dimension "
-                f"may differ)."
+                f"batch shape {bs}, which is incompatible with reference "
+                f"batch shape {ref_batch}. Joint groups require each spec "
+                f"batch shape to be a prefix of the longest batch shape "
+                f"(only the trailing gene dimension may differ)."
+            )
+
+    # Guard chain order: the Woodbury conditioning path assumes batch ranks
+    # do not decrease as we iterate through specs. In practice this means
+    # shared/shorter-batch parameters must appear before longer-batch specs.
+    for i in range(1, len(batch_shapes)):
+        prev_bs = batch_shapes[i - 1]
+        curr_bs = batch_shapes[i]
+        if not _is_batch_prefix(prev_bs, curr_bs):
+            raise ValueError(
+                f"Joint group '{guide.group}': invalid order for specs "
+                f"'{specs[i - 1].name}' -> '{specs[i].name}' with batch "
+                f"shapes {prev_bs} -> {curr_bs}. For mixed batch ranks, "
+                f"order specs from shared/shorter batches to longer batches "
+                f"(for example () -> (K,) -> (K, D))."
             )
 
     # ------------------------------------------------------------------
