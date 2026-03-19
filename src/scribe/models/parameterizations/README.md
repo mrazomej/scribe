@@ -104,6 +104,16 @@ After fitting with `hierarchical_p=True`, `posterior_samples["logit_p_scale"]`
 assumption: small values validate shared-p; large values indicate gene-specific
 heterogeneity.
 
+### Data-Informed Mean Anchoring
+
+When `ModelConfig.mu_mean_anchor=True`, the factory computes per-gene prior
+centers from observed sample means and replaces the flat `log_mu_loc` (or
+`log_mu_dataset_loc`) hyperprior with an `AnchoredNormalSpec`. This resolves
+the mu-phi likelihood ridge that makes the mean_odds and mean_prob
+parameterizations fragile with hierarchical phi priors. The anchor works with
+all three parameterizations (canonical targets `log_r_loc`; mean_prob and
+mean_odds target `log_mu_loc`). See `paper/_mean_anchoring_prior.qmd`.
+
 ## Usage in Unified Factory
 
 The unified factory uses parameterizations to eliminate nested conditionals:

@@ -1092,6 +1092,47 @@ class SoftplusNormalSpec(NormalWithTransformSpec):
 
 
 # ==============================================================================
+# Data-Informed Mean Anchoring Specification
+# ==============================================================================
+
+
+class AnchoredNormalSpec(NormalWithTransformSpec):
+    """NormalWithTransformSpec with per-gene anchor centers from data.
+
+    Used for the data-informed mean anchoring prior where each gene's
+    prior center is derived from the observed sample mean:
+
+        log(mu_g) ~ N(log(u_bar_g / nu_bar), sigma^2)
+
+    The per-gene centers are stored as a tuple of floats (one per gene)
+    and the shared sigma controls the tightness of the anchor.
+
+    Parameters
+    ----------
+    name : str
+        Parameter name (e.g. "log_mu_loc", "log_mu_dataset_loc").
+    shape_dims : Tuple[str, ...]
+        Shape dimensions (typically ("n_genes",)).
+    default_params : Tuple[float, float]
+        Fallback (loc, scale) used only if anchor_centers is empty.
+    anchor_centers : Tuple[float, ...]
+        Per-gene log-centers: log(u_bar_g / nu_bar + epsilon).
+    anchor_sigma : float
+        Log-scale standard deviation for the anchoring prior.
+    """
+
+    anchor_centers: Tuple[float, ...] = Field(
+        default_factory=tuple,
+        description="Per-gene log-space anchor centers.",
+    )
+    anchor_sigma: float = Field(
+        0.3,
+        gt=0.0,
+        description="Log-scale sigma for the anchoring prior.",
+    )
+
+
+# ==============================================================================
 # Biology-Informed Capture Probability Specification
 # ==============================================================================
 
@@ -2924,6 +2965,49 @@ def sample_prior(
     transformed_dist = dist.TransformedDistribution(base_dist, spec.transform)
 
     # Sample directly in constrained space (transform applied internally)
+    return numpyro.sample(spec.constrained_name, transformed_dist)
+
+
+# ------------------------------------------------------------------------------
+# Anchored Normal Distribution Prior Sampling
+# ------------------------------------------------------------------------------
+
+
+@dispatch(AnchoredNormalSpec, dict, object)
+def sample_prior(
+    spec: AnchoredNormalSpec,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+) -> jnp.ndarray:
+    """Sample from Normal prior with per-gene data-informed centers.
+
+    Each gene gets its own prior center derived from the observed
+    sample mean, while the log-scale sigma is shared across genes.
+
+    Parameters
+    ----------
+    spec : AnchoredNormalSpec
+        The anchored parameter specification with per-gene centers.
+    dims : Dict[str, int]
+        Dimension sizes (must include "n_genes").
+    model_config : ModelConfig
+        Model configuration.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled parameter values in constrained space.
+    """
+    centers = jnp.array(spec.anchor_centers)
+    sigma = spec.anchor_sigma
+
+    # Build distribution with per-gene centers and shared sigma.
+    # centers has shape (n_genes,); sigma is a scalar.
+    base_dist = dist.Normal(centers, sigma).to_event(1)
+
+    # Apply transform (identity for log_mu_loc, but kept for generality)
+    transformed_dist = dist.TransformedDistribution(base_dist, spec.transform)
+
     return numpyro.sample(spec.constrained_name, transformed_dist)
 
 

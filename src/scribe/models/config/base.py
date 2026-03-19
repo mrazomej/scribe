@@ -196,6 +196,8 @@ class ModelConfig(BaseModel):
         d.setdefault("gate_dataset_prior", "none")
         d.setdefault("overdispersion", "none")
         d.setdefault("overdispersion_prior", "horseshoe")
+        d.setdefault("mu_mean_anchor", False)
+        d.setdefault("mu_mean_anchor_sigma", 0.3)
 
         # Migrate legacy top-level capture prior fields into priors dict.
         old_capture = d.pop("capture_prior", "default")
@@ -438,6 +440,36 @@ class ModelConfig(BaseModel):
         ),
     )
 
+    # Data-informed mean anchoring prior.
+    # When enabled, the per-gene biological mean mu_g is anchored to
+    # the sample mean scaled by the average capture probability:
+    #   log(mu_g) ~ N(log(u_bar_g / nu_bar), sigma_mu^2).
+    # The anchor values are computed from the data at fit time and
+    # stored in priors.mu_anchor_centers (tuple of per-gene log-centers).
+    mu_mean_anchor: bool = Field(
+        False,
+        description=(
+            "Enable data-informed anchoring prior on the biological mean "
+            "mu_g. When True, a per-gene prior center is computed from "
+            "the observed sample means and average capture probability, "
+            "resolving the mu-phi degeneracy in the negative binomial. "
+            "Requires unconstrained=True and a VCP model for capture-"
+            "aware anchoring (non-VCP models use nu_bar=1)."
+        ),
+    )
+    mu_mean_anchor_sigma: float = Field(
+        0.3,
+        gt=0.0,
+        description=(
+            "Log-scale standard deviation for the mean anchoring prior. "
+            "Controls how tightly mu_g is constrained to the data-implied "
+            "value. Smaller values (0.1-0.2) give tight anchoring; "
+            "moderate values (0.3-0.5) are recommended; large values "
+            "(>1.0) give weak anchoring. Default 0.3 allows ~1.35x "
+            "fold variation around the anchor."
+        ),
+    )
+
     # Biology-informed capture prior configuration.
     # The capture prior is configured via the priors section:
     #   priors.organism    — shortcut to set defaults (e.g. "human")
@@ -576,6 +608,12 @@ class ModelConfig(BaseModel):
             raise ValueError(
                 f"eta_capture_guide must be one of {valid_eta_guides}, "
                 f"got {self.eta_capture_guide!r}."
+            )
+
+        # --- Mean anchoring prior -----------------------------------------------
+        if self.mu_mean_anchor and not self.unconstrained:
+            raise ValueError(
+                "mu_mean_anchor=True requires unconstrained=True."
             )
 
         # --- Gene-level p/phi ------------------------------------------------

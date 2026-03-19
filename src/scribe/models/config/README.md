@@ -181,6 +181,43 @@ config = (ModelConfigBuilder()
     .build())
 ```
 
+#### Data-Informed Mean Anchoring Prior
+
+The mean anchoring prior resolves the mu-phi degeneracy in the negative binomial
+by anchoring the per-gene biological mean `mu_g` to the observed sample mean
+scaled by the average capture probability. This is an empirical Bayes approach
+analogous to DESeq2's dispersion shrinkage.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `mu_mean_anchor` | `bool` | `False` | Enable data-informed anchoring prior on `mu_g` |
+| `mu_mean_anchor_sigma` | `float` | `0.3` | Log-scale sigma (tightness: 0.1=tight, 0.3=moderate, 1.0=weak) |
+
+When enabled, per-gene prior centers are computed at fit time from the data:
+`log(mu_g) ~ N(log(u_bar_g / nu_bar), sigma^2)`. Requires `unconstrained=True`.
+
+```python
+# Via builder
+config = (ModelConfigBuilder()
+    .for_model("nbvcp")
+    .with_parameterization("mean_odds")
+    .with_capture_priors(organism="human")
+    .with_mean_anchor(sigma=0.3)
+    .with_hierarchical_p()
+    .build())
+
+# Via fit()
+results = scribe.fit(
+    adata, model="nbvcp", parameterization="mean_odds",
+    mu_mean_anchor=True, mu_mean_anchor_sigma=0.3,
+    p_prior="gaussian",
+    priors={"organism": "human"},
+)
+```
+
+See `paper/_mean_anchoring_prior.qmd` for the full mathematical derivation,
+including the concentration-of-measure argument and mixture model extensions.
+
 #### Sparsity-Inducing Prior Configuration
 
 Sparsity-inducing priors are configured via enum fields. Each parameter has a
