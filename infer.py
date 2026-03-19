@@ -901,6 +901,7 @@ def main(cfg: DictConfig) -> None:
         "mixture_params": cfg.get("mixture_params"),
         "guide_rank": cfg.guide_rank,
         "joint_params": cfg.get("joint_params"),
+        "dense_params": cfg.get("dense_params"),
         "priors": priors,
         # Amortization: single config object (when set, fit() uses it; else uses
         # individual params)
@@ -945,6 +946,10 @@ def main(cfg: DictConfig) -> None:
     if kwargs.get("joint_params"):
         console.print(
             f"[dim]Joint params:[/dim] [bold]{kwargs['joint_params']}[/bold]"
+        )
+    if kwargs.get("dense_params"):
+        console.print(
+            f"[dim]Dense params:[/dim] [bold]{kwargs['dense_params']}[/bold]"
         )
     if kwargs.get("amortize_capture"):
         console.print(

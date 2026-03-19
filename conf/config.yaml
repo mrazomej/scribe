@@ -109,6 +109,12 @@ guide_rank: null
 # Requires guide_rank to be set. Example: [mu, phi]
 joint_params: null
 
+# Structured joint guide: subset of joint_params that get full cross-gene
+# low-rank coupling. Non-dense params get only gene-local conditioning.
+# null = all joint_params are dense (standard JointLowRankGuide).
+# Example: dense_params: [mu] with joint_params: [mu, phi, gate]
+dense_params: null
+
 # --- Priors Configuration (optional overrides) ---
 # Each prior is a list [param1, param2] for the distribution
 # - Beta priors: [alpha, beta]
