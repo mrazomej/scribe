@@ -149,9 +149,30 @@ def _compute_per_dataset_means(
 
         r_d = _slice(r, int(d))
         p_d = _slice(p, int(d))
+
+        # Mixing weights need dedicated slicing logic because a 1-D global
+        # weight vector has shape (K,). When K == n_datasets, generic shape
+        # heuristics would incorrectly treat it as per-dataset and slice a
+        # scalar, breaking mixture broadcasting.
+        def _slice_mixing(weights, ds_idx):
+            if weights is None:
+                return None
+            weights = np.asarray(weights, dtype=float)
+            if weights.ndim == 1:
+                # Global mixture weights (K,) shared by all datasets.
+                return weights
+            if weights.ndim >= 2 and weights.shape[0] == _n_ds:
+                # Dataset-major layout: (D, K)
+                return weights[ds_idx]
+            if weights.ndim >= 2 and weights.shape[1] == _n_ds:
+                # Component-major layout: (K, D)
+                return weights[:, ds_idx]
+            return weights
+
+        mixing_d = _slice_mixing(mixing_weights, int(d))
         pc_d = np.asarray(p_capture, dtype=float)[mask] if p_capture is not None else None
 
-        pred_mean = _compute_predicted_mean(r_d, p_d, mixing_weights, pc_d)
+        pred_mean = _compute_predicted_mean(r_d, p_d, mixing_d, pc_d)
 
         name = (
             str(dataset_names[int(d)])
