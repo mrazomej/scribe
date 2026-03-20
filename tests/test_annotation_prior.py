@@ -213,6 +213,40 @@ class TestBuildAnnotationPriorLogits:
                 component_order=["A", "C", "D"],  # Missing "B"
             )
 
+    def test_component_order_missing_label_with_min_cells_drops_to_unlabeled(
+        self,
+    ):
+        """
+        With min_cells filtering, uncovered labels become unlabeled.
+
+        This mirrors dataset-level component ordering flows where the
+        component order can intentionally omit labels that did not survive
+        thresholding in any dataset arm.
+        """
+        import anndata
+
+        rng = np.random.default_rng(7)
+        # Label B survives global min_cells but is intentionally not included
+        # in component_order to emulate per-dataset filtering outcomes.
+        labels = ["A"] * 12 + ["B"] * 8
+        X = rng.poisson(5, (len(labels), 4)).astype(np.float32)
+        adata = anndata.AnnData(X=X, obs=pd.DataFrame({"ct": labels}))
+
+        logits, label_map = build_annotation_prior_logits(
+            adata,
+            "ct",
+            n_components=2,
+            confidence=3.0,
+            component_order=["A"],
+            min_cells=5,
+        )
+
+        # Only labels covered by component_order are kept in the map.
+        assert label_map == {"A": 0}
+        # Uncovered label B is treated as unlabeled with zero logits.
+        b_mask = adata.obs["ct"] == "B"
+        assert np.allclose(np.asarray(logits)[b_mask.values], 0.0)
+
     # --- min_cells filtering tests ---
 
     def test_min_cells_filters_rare_labels(self):

@@ -182,6 +182,10 @@ def build_annotation_prior_logits(
         bias toward any component).  Those labels are excluded from
         ``label_map`` and do not occupy a component index.  A warning is
         logged listing the filtered-out labels and their cell counts.
+        When ``component_order`` is provided, any remaining labels not
+        covered by that order are also treated as unlabeled when
+        ``min_cells > 0`` (instead of raising), which supports workflows
+        where component orders are built from per-dataset label survival.
         Default is ``0`` (no filtering).
 
     Returns
@@ -297,18 +301,36 @@ def build_annotation_prior_logits(
             label: idx for idx, label in enumerate(component_order)
         }
         # Check that all observed labels are covered
-        unique_labels = set(labels.unique())
+        unique_labels = set(str(l) for l in labels.unique())
         missing = unique_labels - set(label_map.keys())
         if missing:
-            obs_key_display = (
-                obs_keys[0] if len(obs_keys) == 1 else str(obs_keys)
-            )
-            raise ValueError(
-                f"The following annotation labels are not in "
-                f"component_order: {missing}. component_order must "
-                f"cover all labels present in "
-                f"adata.obs[{obs_key_display!r}]."
-            )
+            # When min_cells filtering is active, allow uncovered labels to be
+            # treated as unlabeled so per-dataset component_order generation
+            # can intentionally drop labels that do not survive in any dataset.
+            if min_cells > 0:
+                logger.warning(
+                    "Annotation labels not covered by component_order after "
+                    "min_cells filtering will be treated as unlabeled (zero "
+                    "bias): %s",
+                    sorted(missing),
+                )
+                missing_mask = annotations.apply(
+                    lambda value: (
+                        (not pd.isna(value)) and (str(value) in missing)
+                    )
+                )
+                is_labeled = is_labeled & ~missing_mask
+                labels = annotations[is_labeled]
+            else:
+                obs_key_display = (
+                    obs_keys[0] if len(obs_keys) == 1 else str(obs_keys)
+                )
+                raise ValueError(
+                    f"The following annotation labels are not in "
+                    f"component_order: {missing}. component_order must "
+                    f"cover all labels present in "
+                    f"adata.obs[{obs_key_display!r}]."
+                )
     else:
         unique_labels_sorted = sorted(str(l) for l in labels.unique())
         label_map = {

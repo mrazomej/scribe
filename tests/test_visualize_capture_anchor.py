@@ -76,7 +76,12 @@ def _make_minimal_model_dir(
     return str(model_dir)
 
 
-def _make_minimal_viz_cfg(*, capture_anchor=True, p_capture_scaling=False):
+def _make_minimal_viz_cfg(
+    *,
+    capture_anchor=True,
+    p_capture_scaling=False,
+    mu_pairwise=False,
+):
     """Build a compact viz config that enables only capture-anchor plotting.
 
     Returns
@@ -97,6 +102,8 @@ def _make_minimal_viz_cfg(*, capture_anchor=True, p_capture_scaling=False):
             "annotation_ppc": False,
             "capture_anchor": capture_anchor,
             "p_capture_scaling": p_capture_scaling,
+            "mean_calibration": False,
+            "mu_pairwise": mu_pairwise,
             "format": "png",
             "capture_anchor_opts": {
                 "n_bins": 10,
@@ -107,6 +114,12 @@ def _make_minimal_viz_cfg(*, capture_anchor=True, p_capture_scaling=False):
                 "n_bins": 10,
                 "min_cells_per_bin": 2,
                 "assignment_batch_size": 8,
+            },
+            "mu_pairwise_opts": {
+                "hist_bins": 20,
+                "point_alpha": 0.3,
+                "point_size": 4.0,
+                "pseudocount": 1.0,
             },
         }
     )
@@ -363,6 +376,58 @@ def test_p_capture_scaling_receives_both_split_groupings(monkeypatch, tmp_path):
     assert ok is True
     assert captured["is_mixture"] is True
     assert captured["is_multi_dataset"] is True
+    assert list(captured["dataset_names"]) == ["a", "b"]
+
+
+def test_process_single_model_dir_runs_mu_pairwise_for_multi_dataset(
+    monkeypatch, tmp_path
+):
+    """Mu pairwise branch should run only when multi-dataset is detected."""
+    model_dir = _make_minimal_model_dir(
+        tmp_path,
+        cfg_data={
+            "priors": {"eta_capture": None},
+            "data": {"name": "toy", "dataset_key": "batch"},
+            "inference": {"method": "svi"},
+            "parameterization": "mean_odds",
+            "model": "zinb",
+        },
+        n_datasets=2,
+        n_components=1,
+    )
+
+    fake_adata = SimpleNamespace(
+        X=np.array([[3.0, 1.0], [0.0, 2.0], [4.0, 1.0], [1.0, 0.0]]),
+        layers={},
+        obs=pd.DataFrame({"batch": ["a", "a", "b", "b"]}),
+    )
+    monkeypatch.setattr(
+        visualize.scribe.data_loader,
+        "load_and_preprocess_anndata",
+        lambda *args, **kwargs: fake_adata,
+    )
+    monkeypatch.setattr(visualize, "cleanup_plot_memory", lambda **kwargs: None)
+
+    captured = {"count": 0}
+
+    def _fake_plot_mu_pairwise(*args, **kwargs):
+        captured["count"] += 1
+        captured["dataset_names"] = kwargs.get("dataset_names")
+        return str(tmp_path / "mu_pairwise.png")
+
+    monkeypatch.setattr(visualize, "plot_mu_pairwise", _fake_plot_mu_pairwise)
+
+    ok = visualize._process_single_model_dir(
+        model_dir=model_dir,
+        viz_cfg=_make_minimal_viz_cfg(
+            capture_anchor=False,
+            p_capture_scaling=False,
+            mu_pairwise=True,
+        ),
+        overwrite=True,
+    )
+    assert ok is True
+    assert captured["count"] == 1
     assert list(captured["dataset_names"]) == ["a", "b"]
 
 

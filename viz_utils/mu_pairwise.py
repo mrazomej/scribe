@@ -1,0 +1,285 @@
+"""Dataset-level pairwise mean (mu) comparison diagnostic.
+
+This module provides a corner-style plot for hierarchical multi-dataset
+models. The plot uses MAP-estimated gene means (``mu``) and compares
+datasets pairwise:
+
+- diagonal panels: marginal distributions for each dataset's gene means
+- lower-triangle panels: pairwise comparisons in log-log space
+- identity line on each pairwise panel for visual calibration
+
+The diagnostic is intentionally skipped for single-dataset runs.
+"""
+
+import os
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+from ._common import console
+from .config import _get_config_values
+from .dispatch import _get_map_estimates_for_plot
+
+
+def _get_dataset_count(results, mu_values):
+    """Infer the number of datasets from result metadata and ``mu`` shape.
+
+    Parameters
+    ----------
+    results : object
+        Fitted results object that may expose ``model_config.n_datasets``.
+    mu_values : ndarray
+        MAP estimate for ``mu``.
+
+    Returns
+    -------
+    int
+        Inferred number of datasets. Returns ``1`` when no multi-dataset
+        signal is available.
+    """
+    # Prefer explicit model metadata because it is the most reliable source.
+    model_cfg = getattr(results, "model_config", None)
+    n_datasets = getattr(model_cfg, "n_datasets", None)
+    if n_datasets is not None:
+        return int(n_datasets)
+
+    # Fall back to shape-based inference for ad hoc test stubs.
+    mu_arr = np.asarray(mu_values)
+    if mu_arr.ndim >= 2:
+        return int(mu_arr.shape[0])
+    return 1
+
+
+def _collapse_mixture_axis(mu_values, mixing_weights):
+    """Collapse mixture-specific ``mu`` into dataset-level ``mu``.
+
+    Parameters
+    ----------
+    mu_values : ndarray
+        MAP estimate for mean parameter ``mu`` with shape one of:
+        ``(D, G)``, ``(K, D, G)``, ``(K, G)``, or ``(G,)``.
+    mixing_weights : ndarray or None
+        Mixture weights if available. Supported shapes are ``(K,)`` and
+        ``(K, D)``.
+
+    Returns
+    -------
+    ndarray
+        Dataset-level ``mu`` matrix of shape ``(D, G)`` when multi-dataset,
+        or ``(1, G)`` for single-dataset inputs.
+    """
+    mu_arr = np.asarray(mu_values, dtype=float)
+    if mu_arr.ndim == 1:
+        return mu_arr[None, :]
+    if mu_arr.ndim == 2:
+        return mu_arr
+
+    # For (K, D, G) or similar high-rank structures, use provided mixture
+    # weights when available and otherwise average across component axis.
+    if mu_arr.ndim >= 3:
+        if mixing_weights is None:
+            return np.mean(mu_arr, axis=0)
+
+        w = np.asarray(mixing_weights, dtype=float)
+        if w.ndim == 1 and w.shape[0] == mu_arr.shape[0]:
+            w = w[:, None, None]
+            return np.sum(w * mu_arr, axis=0)
+        if w.ndim == 2 and w.shape == mu_arr.shape[:2]:
+            w = w[:, :, None]
+            return np.sum(w * mu_arr, axis=0)
+        return np.mean(mu_arr, axis=0)
+
+    # Degenerate fallback keeps output 2D to simplify downstream plotting.
+    return mu_arr.reshape(1, -1)
+
+
+def _resolve_dataset_names(dataset_names, n_datasets):
+    """Resolve dataset labels with stable defaults.
+
+    Parameters
+    ----------
+    dataset_names : sequence of str or None
+        Dataset names passed from the visualization pipeline.
+    n_datasets : int
+        Number of datasets to label.
+
+    Returns
+    -------
+    list of str
+        Dataset labels with length equal to ``n_datasets``.
+    """
+    if dataset_names is None:
+        return [f"dataset_{idx}" for idx in range(n_datasets)]
+
+    names = [str(name) for name in dataset_names]
+    if len(names) < n_datasets:
+        names.extend(
+            [f"dataset_{idx}" for idx in range(len(names), n_datasets)]
+        )
+    return names[:n_datasets]
+
+
+def plot_mu_pairwise(
+    results,
+    counts,
+    figs_dir,
+    cfg,
+    viz_cfg,
+    *,
+    dataset_names=None,
+):
+    """Render pairwise dataset ``mu`` comparisons as a corner plot.
+
+    Parameters
+    ----------
+    results : ScribeSVIResults or ScribeMCMCResults
+        Fitted model results object.
+    counts : array-like
+        Observed count matrix. This is forwarded to MAP extraction to support
+        models that require counts-aware MAP reconstruction.
+    figs_dir : str
+        Output figure directory.
+    cfg : OmegaConf
+        Run configuration loaded from ``.hydra/config.yaml``.
+    viz_cfg : OmegaConf
+        Visualization configuration.
+    dataset_names : sequence of str, optional
+        Optional names for dataset indices.
+
+    Returns
+    -------
+    str or None
+        Path to the saved figure, or ``None`` when the plot is skipped.
+    """
+    console.print("[dim]Plotting pairwise mu dataset comparison...[/dim]")
+
+    map_estimates = _get_map_estimates_for_plot(results, counts=counts)
+    mu_values = map_estimates.get("mu")
+    if mu_values is None:
+        console.print(
+            "[yellow]Skipping mu pairwise plot: mu unavailable in MAP "
+            "estimates.[/yellow]"
+        )
+        return None
+
+    inferred_n_datasets = _get_dataset_count(results, mu_values)
+    if inferred_n_datasets <= 1:
+        console.print(
+            "[yellow]Skipping mu pairwise plot: run is not multi-dataset."
+            "[/yellow]"
+        )
+        return None
+
+    # Collapse optional mixture axis so we always plot one mu vector per dataset.
+    mu_dataset = _collapse_mixture_axis(
+        mu_values=mu_values,
+        mixing_weights=map_estimates.get("mixing_weights"),
+    )
+    if mu_dataset.ndim != 2:
+        mu_dataset = np.asarray(mu_dataset, dtype=float).reshape(
+            inferred_n_datasets, -1
+        )
+
+    n_datasets = min(inferred_n_datasets, mu_dataset.shape[0])
+    mu_dataset = mu_dataset[:n_datasets]
+    labels = _resolve_dataset_names(dataset_names, n_datasets)
+
+    pseudocount = float(
+        viz_cfg.get("mu_pairwise_opts", {}).get("pseudocount", 1.0)
+    )
+    n_bins = int(viz_cfg.get("mu_pairwise_opts", {}).get("hist_bins", 40))
+    point_alpha = float(
+        viz_cfg.get("mu_pairwise_opts", {}).get("point_alpha", 0.25)
+    )
+    point_size = float(
+        viz_cfg.get("mu_pairwise_opts", {}).get("point_size", 5.0)
+    )
+
+    mu_log = np.log10(np.clip(mu_dataset, a_min=0.0, a_max=None) + pseudocount)
+
+    fig, axes = plt.subplots(
+        n_datasets,
+        n_datasets,
+        figsize=(2.8 * n_datasets, 2.8 * n_datasets),
+        squeeze=False,
+    )
+
+    # Populate a corner-style layout:
+    # - diagonal: marginal histograms
+    # - lower triangle: pairwise scatter + identity line
+    # - upper triangle: hidden
+    for row_idx in range(n_datasets):
+        for col_idx in range(n_datasets):
+            axis = axes[row_idx, col_idx]
+            x_values = mu_log[col_idx]
+            y_values = mu_log[row_idx]
+
+            if row_idx == col_idx:
+                axis.hist(
+                    x_values,
+                    bins=n_bins,
+                    color="steelblue",
+                    alpha=0.85,
+                    edgecolor="white",
+                    linewidth=0.4,
+                )
+                axis.set_title(labels[row_idx], fontsize=9)
+                axis.set_yticks([])
+                continue
+
+            if row_idx > col_idx:
+                axis.scatter(
+                    x_values,
+                    y_values,
+                    s=point_size,
+                    alpha=point_alpha,
+                    color="royalblue",
+                    edgecolors="none",
+                    rasterized=True,
+                )
+                min_lim = float(min(x_values.min(), y_values.min()))
+                max_lim = float(max(x_values.max(), y_values.max()))
+                margin = (max_lim - min_lim) * 0.05
+                if margin <= 0:
+                    margin = 0.5
+                lo = min_lim - margin
+                hi = max_lim + margin
+                axis.plot([lo, hi], [lo, hi], "--", color="0.3", lw=1.0)
+                axis.set_xlim(lo, hi)
+                axis.set_ylim(lo, hi)
+                axis.set_aspect("equal", adjustable="box")
+            else:
+                axis.axis("off")
+
+            if row_idx == n_datasets - 1 and row_idx > col_idx:
+                axis.set_xlabel(labels[col_idx], fontsize=8)
+            else:
+                axis.set_xticklabels([])
+            if col_idx == 0 and row_idx > col_idx:
+                axis.set_ylabel(labels[row_idx], fontsize=8)
+            else:
+                axis.set_yticklabels([])
+
+    fig.suptitle(
+        r"Dataset Pairwise Mean Comparison ($\log_{10}(\mu + c)$)",
+        fontsize=11,
+        y=1.01,
+    )
+    plt.tight_layout()
+
+    output_format = viz_cfg.get("format", "png")
+    config_vals = _get_config_values(cfg, results=results)
+    filename = (
+        f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
+        f"{config_vals['model_type'].replace('_', '-')}_"
+        f"{config_vals['n_components']:02d}components_"
+        f"{config_vals['run_size_token']}_mu_pairwise.{output_format}"
+    )
+    output_path = os.path.join(figs_dir, filename)
+    fig.savefig(output_path, bbox_inches="tight", dpi=150)
+    plt.close(fig)
+    console.print(
+        "[green]✓[/green] [dim]Saved mu pairwise plot to[/dim] "
+        f"[cyan]{output_path}[/cyan]"
+    )
+    return output_path
