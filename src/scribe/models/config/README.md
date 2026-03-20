@@ -195,6 +195,11 @@ analogous to DESeq2's dispersion shrinkage.
 
 When enabled, per-gene prior centers are computed at fit time from the data:
 `log(mu_g) ~ N(log(u_bar_g / nu_bar), sigma^2)`. Requires `unconstrained=True`.
+For VCP models (`nbvcp`, `zinbvcp`), `priors.eta_capture` or `priors.organism`
+must also be set so that `nu_bar` (average capture probability) can be
+estimated; without it, the anchor would silently use `nu_bar=1` and give
+incorrect `mu_g` values. Non-VCP models (`nbdm`, `zinb`) correctly use
+`nu_bar=1` by default.
 
 ```python
 # Via builder

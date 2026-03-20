@@ -363,7 +363,10 @@ def fit(
         the observed sample means and average capture probability,
         anchoring ``log(mu_g) ~ N(log(u_bar_g / nu_bar), sigma^2)``.
         This resolves the mu-phi degeneracy in the negative binomial.
-        Automatically enables ``unconstrained=True``.
+        Automatically enables ``unconstrained=True``.  For VCP models,
+        ``priors.eta_capture`` or ``priors.organism`` must be set so
+        that ``nu_bar`` can be estimated from library sizes and
+        ``M_0``.  Non-VCP models use ``nu_bar=1`` by default.
 
     mu_mean_anchor_sigma : float, default=0.3
         Log-scale standard deviation for the mean anchoring prior.
@@ -769,9 +772,7 @@ def fit(
         # disable it explicitly.
         if mu_dataset_prior != "none":
             mu_dataset_prior = "none"
-            downgrade_messages.append(
-                "mu_dataset_prior -> 'none'"
-            )
+            downgrade_messages.append("mu_dataset_prior -> 'none'")
 
         # Map dataset-level p modes to their single-dataset equivalents:
         # scalar -> shared p/phi; gene_specific/two_level -> gene-level hierarchy.
@@ -1112,10 +1113,7 @@ def fit(
                     compute_init_values,
                 )
 
-                if (
-                    svi_init.model_config.base_model
-                    != model_config.base_model
-                ):
+                if svi_init.model_config.base_model != model_config.base_model:
                     warnings.warn(
                         f"SVI base model '{svi_init.model_config.base_model}' "
                         f"differs from MCMC target "

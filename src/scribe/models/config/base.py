@@ -453,8 +453,9 @@ class ModelConfig(BaseModel):
             "mu_g. When True, a per-gene prior center is computed from "
             "the observed sample means and average capture probability, "
             "resolving the mu-phi degeneracy in the negative binomial. "
-            "Requires unconstrained=True and a VCP model for capture-"
-            "aware anchoring (non-VCP models use nu_bar=1)."
+            "Requires unconstrained=True. On VCP models, also requires "
+            "priors.eta_capture or priors.organism so nu_bar can be "
+            "estimated (non-VCP models correctly use nu_bar=1)."
         ),
     )
     mu_mean_anchor_sigma: float = Field(
@@ -615,6 +616,22 @@ class ModelConfig(BaseModel):
             raise ValueError(
                 "mu_mean_anchor=True requires unconstrained=True."
             )
+
+        # VCP models need eta_capture so nu_bar can be estimated; without it
+        # the anchor would silently use nu_bar=1, giving wrong mu_g values.
+        if self.mu_mean_anchor and self.uses_variable_capture:
+            extra = getattr(self.priors, "__pydantic_extra__", None) or {}
+            has_capture_info = (
+                extra.get("eta_capture") is not None
+                or extra.get("organism") is not None
+            )
+            if not has_capture_info:
+                raise ValueError(
+                    "mu_mean_anchor=True on a VCP model (variable capture) "
+                    "requires priors.eta_capture or priors.organism to be "
+                    "set so the average capture probability can be estimated. "
+                    "For non-VCP models, the anchor uses nu_bar=1 by default."
+                )
 
         # --- Gene-level p/phi ------------------------------------------------
         if self.p_prior != _NONE and not self.unconstrained:
