@@ -274,6 +274,18 @@ class TestSVIBiologicalPPC:
         )
         assert pred.shape == (1, n_cells, n_genes)
 
+    def test_svi_biological_with_cell_batching(self, bio_dataset, rng):
+        """Posterior biological PPC with cell batching produces correct shape."""
+        counts, n_cells, n_genes = bio_dataset
+        results = _fit_svi("nbvcp", counts)
+
+        ppc = results.get_ppc_samples_biological(
+            rng_key=rng, n_samples=3, cell_batch_size=3, store_samples=False,
+        )
+        pred = ppc["predictive_samples"]
+        assert pred.shape == (3, n_cells, n_genes)
+        assert jnp.all(pred >= 0)
+
     def test_svi_biological_reuses_posterior_samples(self, bio_dataset, rng):
         """Should reuse existing posterior_samples if already available."""
         counts, _, _ = bio_dataset
