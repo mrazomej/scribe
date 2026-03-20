@@ -15,6 +15,10 @@ The SVI module provides:
 4. **Results Management**: Comprehensive results class with analysis methods
 5. **Results Factory**: Streamlined creation and packaging of results objects
 
+For multi-dataset mixture models, post-fit empirical mixing replacement now
+computes dataset-specific soft counts and updates mixing parameters per dataset
+instead of collapsing all cells into one global correction.
+
 ## Key Components
 
 ### SVIInferenceEngine (`inference_engine.py`)

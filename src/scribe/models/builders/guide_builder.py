@@ -199,12 +199,19 @@ class GuideBuilder:
                         mixing_prior_params = tuple([1.0] * n_components)
                     from .parameter_specs import DirichletSpec
 
+                    use_dataset_mixing = bool(
+                        getattr(model_config, "dataset_mixing_enabled", False)
+                    )
+                    shape_dims = (
+                        ("n_components",) if use_dataset_mixing else ()
+                    )
                     mixing_spec = DirichletSpec(
                         name="mixing_weights",
-                        shape_dims=(),
+                        shape_dims=shape_dims,
                         default_params=mixing_prior_params,
                         prior=mixing_prior_params,
                         is_mixture=False,  # Mixing weights are not mixture-specific
+                        is_dataset=use_dataset_mixing,
                     )
                 guide_family = mixing_spec.guide_family or MeanFieldGuide()
                 setup_guide(mixing_spec, guide_family, dims, model_config)

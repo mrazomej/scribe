@@ -32,6 +32,11 @@ Parameter specs define the distribution and metadata for each parameter:
 | `LatentSpec` | Base for VAE latent z | — | abstract |
 | `GaussianLatentSpec` | Normal(loc, scale).to_event(1) from encoder output | — | z (guide only) |
 
+For multi-dataset mixture models, `DirichletSpec` can be marked with
+`is_dataset=True` and `shape_dims=("n_components",)`, yielding a
+dataset-specific mixing tensor with shape `(n_datasets, n_components)`.
+When `is_dataset=False`, mixing remains global with shape `(n_components,)`.
+
 ### Hierarchical Parameter Specs
 
 `HierarchicalSigmoidNormalSpec` and `HierarchicalPositiveNormalSpec` inherit

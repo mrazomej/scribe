@@ -306,14 +306,18 @@ class MixtureAnalysisMixin:
         Dict[str, Any]
             Dictionary with keys:
 
-            - ``"weights"`` : jnp.ndarray, shape ``(n_components,)``
+            - ``"weights"`` : jnp.ndarray, shape ``(n_components,)`` or
+              ``(n_datasets, n_components)``
                 Posterior-mean mixing weights (point estimate).
-            - ``"concentrations"`` : jnp.ndarray, shape ``(n_components,)``
+            - ``"concentrations"`` : jnp.ndarray, shape ``(n_components,)`` or
+              ``(n_datasets, n_components)``
                 Full Dirichlet posterior concentrations
                 ``alpha_0 + N_soft``.
             - ``"effective_counts"`` : jnp.ndarray, shape ``(n_components,)``
+              or ``(n_datasets, n_components)``
                 Soft cell counts per component (``N_soft``).
-            - ``"prior_concentrations"`` : jnp.ndarray, shape ``(n_components,)``
+            - ``"prior_concentrations"`` : jnp.ndarray, shape
+              ``(n_components,)`` or ``(n_datasets, n_components)``
                 The Dirichlet prior concentrations ``alpha_0``.
 
         Raises
@@ -350,31 +354,90 @@ class MixtureAnalysisMixin:
         )
         learned_weights = map_estimates.get("mixing_weights")
         if learned_weights is not None:
-            log_liks = log_liks - jnp.log(
-                jnp.clip(jnp.asarray(learned_weights, dtype=dtype), 1e-30)
-            )
+            learned_weights = jnp.asarray(learned_weights, dtype=dtype)
+            log_learned_weights = jnp.log(jnp.clip(learned_weights, 1e-30))
+            if log_learned_weights.ndim == 1:
+                log_liks = log_liks - log_learned_weights
+            elif log_learned_weights.ndim == 2:
+                ds_idx = getattr(self, "_dataset_indices", None)
+                if ds_idx is None:
+                    raise ValueError(
+                        "Dataset-specific mixing weights require "
+                        "_dataset_indices to align per-cell responsibilities."
+                    )
+                ds_idx = jnp.asarray(ds_idx, dtype=jnp.int32).reshape(-1)
+                if ds_idx.shape[0] != log_liks.shape[0]:
+                    raise ValueError(
+                        "Mismatch between dataset index length and number "
+                        f"of cells: {ds_idx.shape[0]} vs {log_liks.shape[0]}."
+                    )
+                log_liks = log_liks - log_learned_weights[ds_idx]
+            else:
+                raise ValueError(
+                    "mixing_weights must be rank 1 or 2; got shape "
+                    f"{log_learned_weights.shape}."
+                )
 
         # ---- 3. Softmax → responsibilities  (n_cells, n_components)
         responsibilities = softmax(log_liks, axis=-1)
 
         # ---- 4. Effective soft counts per component
-        n_soft = jnp.sum(responsibilities, axis=0)
+        use_dataset_mixing = bool(
+            getattr(self.model_config, "dataset_mixing_enabled", False)
+        )
+        if use_dataset_mixing:
+            n_datasets = getattr(self.model_config, "n_datasets", None)
+            ds_idx = getattr(self, "_dataset_indices", None)
+            if n_datasets is None or ds_idx is None:
+                raise ValueError(
+                    "dataset_mixing is enabled, but n_datasets or "
+                    "_dataset_indices is missing on results."
+                )
+            ds_idx = jnp.asarray(ds_idx, dtype=jnp.int32).reshape(-1)
+            if ds_idx.shape[0] != responsibilities.shape[0]:
+                raise ValueError(
+                    "Mismatch between dataset index length and number "
+                    "of responsibility rows."
+                )
+            n_soft = (
+                jnp.zeros((int(n_datasets), n_components), dtype=dtype)
+                .at[ds_idx]
+                .add(responsibilities)
+            )
+        else:
+            n_soft = jnp.sum(responsibilities, axis=0)
 
         # ---- 5. Dirichlet prior concentrations from model config
-        mixing_prior = self.model_config.priors.mixing
-        alpha_0 = jnp.array(mixing_prior, dtype=dtype)
+        priors_extra = (
+            getattr(self.model_config.priors, "__pydantic_extra__", None) or {}
+        )
+        mixing_prior = priors_extra.get("mixing")
+        if mixing_prior is None:
+            alpha_0 = jnp.ones((n_components,), dtype=dtype)
+        else:
+            alpha_0 = jnp.array(mixing_prior, dtype=dtype).reshape(-1)
         if alpha_0.shape[0] != n_components:
-            alpha_0 = jnp.full(n_components, alpha_0[0], dtype=dtype)
+            alpha_0 = jnp.full((n_components,), alpha_0[0], dtype=dtype)
+        alpha_0 = jnp.clip(alpha_0, 1e-6)
+        if n_soft.ndim == 2:
+            alpha_0 = jnp.broadcast_to(alpha_0, n_soft.shape)
 
         # ---- 6. Conditional posterior  Dir(alpha_0 + N_soft)
         concentrations = alpha_0 + n_soft
-        weights = concentrations / jnp.sum(concentrations)
+        weights = concentrations / jnp.sum(
+            concentrations, axis=-1, keepdims=True
+        )
 
         if verbose:
-            print(
-                f"Empirical mixing weights: "
-                f"{[f'{w:.3f}' for w in weights.tolist()]}"
-            )
+            if weights.ndim == 1:
+                print(
+                    f"Empirical mixing weights: "
+                    f"{[f'{w:.3f}' for w in weights.tolist()]}"
+                )
+            else:
+                for d in range(weights.shape[0]):
+                    ws = [f"{w:.3f}" for w in weights[d].tolist()]
+                    print(f"Empirical mixing weights (dataset {d}): {ws}")
 
         return {
             "weights": weights,
@@ -442,9 +505,9 @@ class MixtureAnalysisMixin:
         # Stash original SVI-learned mixing params for diagnostics
         self._svi_mixing_params = {}
         if "mixing_concentrations" in self.params:
-            self._svi_mixing_params["mixing_concentrations"] = (
-                self.params["mixing_concentrations"].copy()
-            )
+            self._svi_mixing_params["mixing_concentrations"] = self.params[
+                "mixing_concentrations"
+            ].copy()
         if "mixing_logits_unconstrained" in self.params:
             self._svi_mixing_params["mixing_logits_unconstrained"] = (
                 self.params["mixing_logits_unconstrained"].copy()

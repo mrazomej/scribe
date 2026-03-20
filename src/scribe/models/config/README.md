@@ -90,6 +90,9 @@ structure:
 - `n_datasets: Optional[int]` — Number of datasets for joint multi-dataset
   modeling
 - `dataset_params: Optional[List[str]]` — Which parameters are per-dataset
+- `dataset_mixing: Optional[bool]` — Whether mixture weights are per-dataset.
+  `None` enables dataset-specific mixing automatically when `n_datasets >= 2`
+  and keeps global mixing otherwise.
 - `mu_dataset_prior: str` — Prior for hierarchical mu/r across datasets:
   `"none"`, `"gaussian"`, `"horseshoe"`, or `"neg"` (requires `unconstrained`)
 - `p_dataset_prior: str` — Prior for dataset-specific p: `"none"`,
@@ -105,6 +108,8 @@ structure:
   the chosen sparsity prior.  NEG auxiliary variables (psi, zeta) use a
   Gamma variational posterior that can concentrate at zero
 - `is_multi_dataset` (computed property) — `True` when `n_datasets >= 2`
+- `dataset_mixing_enabled` (computed property) — Effective switch used by model
+  builders to decide whether `mixing_weights` have shape `(K,)` or `(D, K)`.
 
 Dataset-level prior fields (`mu_dataset_prior`, `p_dataset_prior`,
 `gate_dataset_prior`) are only valid when cells can be mapped to datasets. In

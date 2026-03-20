@@ -457,7 +457,7 @@ def compute_cell_specific_mixing(
     annotation_logits: jnp.ndarray,
 ) -> jnp.ndarray:
     """
-    Combine global mixing weights with per-cell annotation logits.
+    Combine mixing weights with per-cell annotation logits.
 
     Computes cell-specific mixing probabilities by adding annotation logit
     offsets to the log of the global mixing weights and applying softmax.
@@ -466,9 +466,10 @@ def compute_cell_specific_mixing(
 
     Parameters
     ----------
-    mixing_weights : jnp.ndarray, shape ``(K,)``
-        Global mixing weight vector (simplex, sums to 1).  Typically
-        sampled from a Dirichlet prior.
+    mixing_weights : jnp.ndarray, shape ``(K,)`` or ``(batch, K)``
+        Mixing weights before annotation nudging. A global simplex
+        ``(K,)`` is broadcast to all cells. A batch-aligned tensor
+        ``(batch, K)`` supports dataset-specific mixing after indexing.
     annotation_logits : jnp.ndarray, shape ``(batch, K)``
         Per-cell additive logit offsets.  Zero rows leave the mixing
         weights unchanged; positive entries bias toward the corresponding
@@ -493,8 +494,8 @@ def compute_cell_specific_mixing(
     strategy can replace this function while keeping the rest of the
     likelihood code unchanged.
     """
-    log_weights = jnp.log(mixing_weights + 1e-8)  # (K,)
-    cell_logits = log_weights + annotation_logits  # (batch, K)
+    log_weights = jnp.log(mixing_weights + 1e-8)
+    cell_logits = log_weights + annotation_logits
     return jax.nn.softmax(cell_logits, axis=-1)  # (batch, K)
 
 
@@ -564,7 +565,12 @@ def index_dataset_params(
             else:
                 # Shape (D, ...) — dataset axis is 0
                 indexed[name] = val[dataset_indices]
-        elif spec is None and val.ndim >= 1 and val.shape[0] == n_datasets:
+        elif (
+            spec is None
+            and name not in {"mixing_weights", "mixing_concentrations"}
+            and val.ndim >= 1
+            and val.shape[0] == n_datasets
+        ):
             # Legacy fallback for params without specs — dataset axis is 0
             indexed[name] = val[dataset_indices]
         elif (

@@ -47,6 +47,11 @@ def _key_matches_spec(key: str, spec) -> bool:
     names_to_check = [spec.name] + list(
         getattr(spec, "alias_names", [])
     )
+    if spec.name == "mixing_weights":
+        # Dirichlet mixture weights use specialized variational parameter names.
+        names_to_check.extend(
+            ["mixing_concentrations", "mixing_logits_unconstrained"]
+        )
     # Also include the NCP raw name if present (horseshoe specs)
     raw_name = getattr(spec, "raw_name", None)
     if raw_name:

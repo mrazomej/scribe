@@ -42,6 +42,11 @@ model, guide = create_model_from_params(
 )
 ```
 
+For multi-dataset mixture models, the factory now supports dataset-specific
+mixing weights. By default this is enabled when `n_datasets >= 2` via
+`ModelConfig.dataset_mixing_enabled`; set `dataset_mixing=False` in config/API
+to keep one global mixing vector shared by all datasets.
+
 ### Parameterization Options
 
 | Name          | Parameters | Derived                   |

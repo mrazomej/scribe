@@ -58,6 +58,7 @@ def build_config_from_preset(
     gate_prior: str = "none",
     n_datasets: Optional[int] = None,
     dataset_params: Optional[List[str]] = None,
+    dataset_mixing: Optional[bool] = None,
     mu_dataset_prior: str = "none",
     p_dataset_prior: str = "none",
     p_dataset_mode: str = "gene_specific",
@@ -358,6 +359,7 @@ def build_config_from_preset(
     if n_datasets is not None:
         builder._n_datasets = n_datasets
         builder._dataset_params = dataset_params
+        builder._dataset_mixing = dataset_mixing
         builder._mu_dataset_prior = mu_dataset_prior
         builder._p_dataset_prior = p_dataset_prior
         builder._p_dataset_mode = p_dataset_mode
@@ -368,6 +370,9 @@ def build_config_from_preset(
             or gate_dataset_prior != "none"
         ):
             builder._unconstrained = True
+    else:
+        # Keep user intent explicit even when currently not multi-dataset.
+        builder._dataset_mixing = dataset_mixing
 
     # Horseshoe hyperparameters
     builder._horseshoe_tau0 = horseshoe_tau0

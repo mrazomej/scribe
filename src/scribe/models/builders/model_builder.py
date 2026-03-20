@@ -357,14 +357,22 @@ class ModelBuilder:
                     (s for s in specs if s.name == "mixing_weights"), None
                 )
                 if mixing_spec is None:
-                    # Create default Dirichlet spec for mixing weights
-                    # Use uniform prior (all concentrations = 1)
+                    # Create default Dirichlet spec for mixing weights.
+                    # For multi-dataset models, dataset_mixing_enabled adds a
+                    # dataset axis so each dataset gets its own simplex.
                     mixing_prior_params = tuple([1.0] * n_components)
+                    use_dataset_mixing = bool(
+                        getattr(model_config, "dataset_mixing_enabled", False)
+                    )
+                    shape_dims = (
+                        ("n_components",) if use_dataset_mixing else ()
+                    )
                     mixing_spec = DirichletSpec(
                         name="mixing_weights",
-                        shape_dims=(),
+                        shape_dims=shape_dims,
                         default_params=mixing_prior_params,
                         is_mixture=False,  # Mixing weights are not mixture-specific
+                        is_dataset=use_dataset_mixing,
                     )
 
                 param_values["mixing_weights"] = sample_prior(
