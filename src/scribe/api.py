@@ -250,6 +250,9 @@ def fit(
     neg_tau: float = 1.0,
     # Hierarchical prior for per-dataset mu_eta (capture scaling)
     mu_eta_prior: str = "none",
+    # Data-informed mean anchoring prior
+    mu_mean_anchor: bool = False,
+    mu_mean_anchor_sigma: float = 0.3,
     # Gene-specific overdispersion beyond the NB family
     overdispersion: str = "none",
     overdispersion_prior: str = "horseshoe",
@@ -353,6 +356,23 @@ def fit(
         magnitude across genes.  Requires ``unconstrained=True`` and
         ``n_components >= 2``.  Accepted values: ``"none"``,
         ``"gaussian"``, ``"horseshoe"``, ``"neg"``.
+
+    mu_mean_anchor : bool, default=False
+        Enable data-informed anchoring prior on the biological mean
+        ``mu_g``.  When True, per-gene prior centers are computed from
+        the observed sample means and average capture probability,
+        anchoring ``log(mu_g) ~ N(log(u_bar_g / nu_bar), sigma^2)``.
+        This resolves the mu-phi degeneracy in the negative binomial.
+        Automatically enables ``unconstrained=True``.  For VCP models,
+        ``priors.eta_capture`` or ``priors.organism`` must be set so
+        that ``nu_bar`` can be estimated from library sizes and
+        ``M_0``.  Non-VCP models use ``nu_bar=1`` by default.
+
+    mu_mean_anchor_sigma : float, default=0.3
+        Log-scale standard deviation for the mean anchoring prior.
+        Smaller values (0.1--0.2) give tight anchoring; moderate
+        values (0.3--0.5) are recommended; large values (>1) give
+        weak anchoring.
 
     overdispersion : str, default="none"
         Gene-specific overdispersion model.  ``"none"`` uses the
@@ -752,9 +772,7 @@ def fit(
         # disable it explicitly.
         if mu_dataset_prior != "none":
             mu_dataset_prior = "none"
-            downgrade_messages.append(
-                "mu_dataset_prior -> 'none'"
-            )
+            downgrade_messages.append("mu_dataset_prior -> 'none'")
 
         # Map dataset-level p modes to their single-dataset equivalents:
         # scalar -> shared p/phi; gene_specific/two_level -> gene-level hierarchy.
@@ -963,6 +981,8 @@ def fit(
             neg_a=neg_a,
             neg_tau=neg_tau,
             mu_eta_prior=mu_eta_prior,
+            mu_mean_anchor=mu_mean_anchor,
+            mu_mean_anchor_sigma=mu_mean_anchor_sigma,
             overdispersion=overdispersion,
             overdispersion_prior=overdispersion_prior,
             guide_rank=guide_rank,
@@ -1001,6 +1021,46 @@ def fit(
             update={
                 "shared_component_indices": _component_mapping.shared_indices,
             }
+        )
+
+    # ==========================================================================
+    # Step 3c: Compute data-informed mean anchor (if enabled)
+    # ==========================================================================
+    # When mu_mean_anchor is True, compute per-gene log-anchor centers
+    # from the observed count matrix and store them in the priors dict.
+    # The factory reads these to build AnchoredNormalSpec for log_mu_loc.
+    if model_config.mu_mean_anchor:
+        from .models.model_utils import compute_mu_anchor
+
+        import numpy as _np
+
+        _counts_np = _np.asarray(count_data)
+        _lib_sizes = _counts_np.sum(axis=1)
+
+        # Extract M_0 from capture prior if available (VCP models)
+        _extra = getattr(model_config.priors, "__pydantic_extra__", None) or {}
+        _eta_capture = _extra.get("eta_capture")
+        _total_mrna = None
+        if _eta_capture is not None:
+            import math as _math
+
+            _total_mrna = _math.exp(_eta_capture[0])
+
+        _log_anchors = compute_mu_anchor(
+            counts=_counts_np,
+            library_sizes=_lib_sizes,
+            total_mrna_mean=_total_mrna,
+            epsilon=1e-3,
+        )
+
+        # Inject into priors as mu_anchor_centers (keep as numpy array
+        # to avoid expensive Python-tuple round-trips for large gene counts)
+        _updated_priors = dict(_extra)
+        _updated_priors["mu_anchor_centers"] = _log_anchors
+        from .models.config.groups import PriorOverrides
+
+        model_config = model_config.model_copy(
+            update={"priors": PriorOverrides(**_updated_priors)}
         )
 
     # ==========================================================================
@@ -1054,10 +1114,7 @@ def fit(
                     compute_init_values,
                 )
 
-                if (
-                    svi_init.model_config.base_model
-                    != model_config.base_model
-                ):
+                if svi_init.model_config.base_model != model_config.base_model:
                     warnings.warn(
                         f"SVI base model '{svi_init.model_config.base_model}' "
                         f"differs from MCMC target "

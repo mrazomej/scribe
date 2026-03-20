@@ -28,6 +28,7 @@ Parameter specs define the distribution and metadata for each parameter:
 | `PositiveNormalSpec` | Normal → configurable positive transform (exp or softplus) | (0, ∞) | r_unconstrained |
 | `SoftplusNormalSpec` | Normal → softplus | (0, ∞) | r (smooth) |
 | `BiologyInformedCaptureSpec` | Normal(η) → exp/exp-1; guide: softplus-normal or truncated-normal | cell-specific | p_capture, phi_capture |
+| `AnchoredNormalSpec` | Normal(per-gene centers, σ) | (−∞, ∞) | log_mu_loc (mean anchoring) |
 | `LatentSpec` | Base for VAE latent z | — | abstract |
 | `GaussianLatentSpec` | Normal(loc, scale).to_event(1) from encoder output | — | z (guide only) |
 
@@ -130,6 +131,22 @@ Per-cell `eta_capture` variational parameters are sampled inside the cell plate.
 - `"truncated_normal"` (legacy): samples `eta_capture` directly from
   `TruncatedNormal(low=0)`. Preserved for backward compatibility with old
   checkpoints that have `eta_capture_loc` / `eta_capture_scale` params.
+
+#### Data-Informed Mean Anchoring Spec
+
+**`AnchoredNormalSpec`** extends `NormalWithTransformSpec` with per-gene anchor
+centers derived from the observed data. It implements the data-informed mean
+anchoring prior that resolves the mu-phi degeneracy in the negative binomial:
+`log(mu_g) ~ N(log(u_bar_g / nu_bar), sigma^2)`.
+
+Fields: `anchor_centers` (tuple of per-gene log-space centers, output of
+`compute_mu_anchor`), `anchor_sigma` (log-scale std-dev, default 0.3).
+
+The spec is created by the factory's `_apply_mean_anchor` helper when
+`ModelConfig.mu_mean_anchor=True` and anchor centers have been computed. It
+replaces the flat `NormalWithTransformSpec` for `log_mu_loc` (or
+`log_mu_dataset_loc`). The guide side works identically to a standard
+`NormalWithTransformSpec`—only the prior uses per-gene centers.
 
 ### ParamSpec Attributes
 
