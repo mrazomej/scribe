@@ -18,6 +18,7 @@ class BiologicalSamplingMixin:
         rng_key: Optional[random.PRNGKey] = None,
         n_samples: int = 100,
         batch_size: Optional[int] = None,
+        cell_batch_size: Optional[int] = None,
         store_samples: bool = True,
         counts: Optional[jnp.ndarray] = None,
     ) -> Dict:
@@ -46,10 +47,13 @@ class BiologicalSamplingMixin:
             Default: 100.
         batch_size : Optional[int], optional
             Batch size for posterior sampling (passed to
-            :meth:`get_posterior_samples`).  This is *not* the cell batch
-            size for count generation - use ``cell_batch_size`` in
-            :meth:`get_map_ppc_samples_biological` for that purpose.
-            Default: ``None``.
+            :meth:`get_posterior_samples`).  Only used when
+            ``self.posterior_samples`` is ``None``.  Default: ``None``.
+        cell_batch_size : Optional[int], optional
+            Number of cells to process per batch when drawing biological
+            count samples via :func:`scribe.sampling.sample_biological_nb`.
+            Use this to limit GPU peak memory on large datasets; ``None``
+            processes all cells in a single pass.  Default: ``None``.
         store_samples : bool, optional
             If ``True``, stores the generated predictive samples in
             ``self.predictive_samples_biological``.  Default: ``True``.
@@ -103,7 +107,8 @@ class BiologicalSamplingMixin:
         mixing_weights = self.posterior_samples.get("mixing_weights", None)
         bnb_concentration = self.posterior_samples.get("bnb_concentration")
 
-        # Generate biological (denoised) count samples
+        # Generate biological (denoised) count samples, processing cells in
+        # batches when cell_batch_size is set to avoid GPU OOM on large datasets.
         _, key_bio = random.split(rng_key)
         bio_samples = sample_biological_nb(
             r=r,
@@ -112,6 +117,7 @@ class BiologicalSamplingMixin:
             rng_key=key_bio,
             mixing_weights=mixing_weights,
             bnb_concentration=bnb_concentration,
+            cell_batch_size=cell_batch_size,
         )
 
         if store_samples:
