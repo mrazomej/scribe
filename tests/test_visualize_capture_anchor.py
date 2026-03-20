@@ -19,6 +19,7 @@ from scribe.inference.preset_builder import build_config_from_preset
 from scribe.models import get_model_and_guide
 from scribe.svi.results import ScribeSVIResults
 from viz_utils.capture_anchor import plot_p_capture_scaling
+from viz_utils.mean_calibration import _compute_per_dataset_means
 
 
 class _DummyResults:
@@ -180,6 +181,76 @@ def test_process_single_model_dir_runs_capture_anchor_when_prior_present(
     )
     assert ok is True
     assert calls["count"] == 1
+
+
+def test_mean_calibration_uses_per_dataset_mixing_weights():
+    """Per-dataset mixing weights should be sliced by dataset index."""
+    # Two datasets, three components, three genes (K != D avoids axis
+    # ambiguity in legacy dataset slicing heuristics).
+    counts = np.array(
+        [[1.0, 2.0, 3.0], [2.0, 2.0, 2.0], [4.0, 5.0, 6.0], [6.0, 5.0, 4.0]]
+    )
+    dataset_codes = np.array([0, 0, 1, 1])
+    dataset_names = ["d0", "d1"]
+    r = np.array(
+        [
+            [[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]],  # component 0 over datasets
+            [[70.0, 80.0, 90.0], [15.0, 25.0, 35.0]],  # component 1 over datasets
+            [[5.0, 10.0, 15.0], [20.0, 30.0, 40.0]],   # component 2 over datasets
+        ]
+    )
+    p = 0.5  # mean reduces to r for this test
+    mixing = np.array([[0.8, 0.1, 0.1], [0.1, 0.2, 0.7]])  # (D, K)
+
+    out = _compute_per_dataset_means(
+        counts=counts,
+        r=r,
+        p=p,
+        dataset_codes=dataset_codes,
+        dataset_names=dataset_names,
+        mixing_weights=mixing,
+        p_capture=None,
+        n_datasets=2,
+    )
+
+    pred0_expected = 0.8 * r[0, 0] + 0.1 * r[1, 0] + 0.1 * r[2, 0]
+    pred1_expected = 0.1 * r[0, 1] + 0.2 * r[1, 1] + 0.7 * r[2, 1]
+    assert np.allclose(out[0]["pred_mean"], pred0_expected)
+    assert np.allclose(out[1]["pred_mean"], pred1_expected)
+
+
+def test_mean_calibration_keeps_global_mixing_weights_shared():
+    """Global (K,) mixing should remain shared across dataset panels."""
+    counts = np.array(
+        [[1.0, 2.0, 3.0], [2.0, 2.0, 2.0], [4.0, 5.0, 6.0], [6.0, 5.0, 4.0]]
+    )
+    dataset_codes = np.array([0, 0, 1, 1])
+    dataset_names = ["d0", "d1"]
+    r = np.array(
+        [
+            [[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]],
+            [[70.0, 80.0, 90.0], [15.0, 25.0, 35.0]],
+            [[5.0, 10.0, 15.0], [20.0, 30.0, 40.0]],
+        ]
+    )
+    p = 0.5
+    global_mixing = np.array([0.6, 0.2, 0.2])
+
+    out = _compute_per_dataset_means(
+        counts=counts,
+        r=r,
+        p=p,
+        dataset_codes=dataset_codes,
+        dataset_names=dataset_names,
+        mixing_weights=global_mixing,
+        p_capture=None,
+        n_datasets=2,
+    )
+
+    pred0_expected = 0.6 * r[0, 0] + 0.2 * r[1, 0] + 0.2 * r[2, 0]
+    pred1_expected = 0.6 * r[0, 1] + 0.2 * r[1, 1] + 0.2 * r[2, 1]
+    assert np.allclose(out[0]["pred_mean"], pred0_expected)
+    assert np.allclose(out[1]["pred_mean"], pred1_expected)
 
 
 def test_process_single_model_dir_skips_capture_anchor_without_prior(
