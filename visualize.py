@@ -51,6 +51,7 @@ from viz_utils import (
     plot_capture_anchor,
     plot_p_capture_scaling,
     plot_mean_calibration,
+    plot_mu_pairwise,
 )
 from viz_utils.memory import cleanup_plot_memory
 
@@ -192,12 +193,20 @@ Examples:
         "observed vs predicted per-gene means).",
     )
     parser.add_argument(
+        "--mu-pairwise",
+        action="store_true",
+        default=None,
+        dest="mu_pairwise",
+        help="Enable pairwise dataset-level mu comparison for "
+        "hierarchical multi-dataset runs.",
+    )
+    parser.add_argument(
         "--all",
         action="store_true",
         dest="all_plots",
         help="Enable all plots (loss, ECDF, PPC, bio-PPC, UMAP, heatmap, "
         "mixture PPC, mixture composition, annotation PPC, capture-anchor, "
-        "p-capture-scaling, mean-calibration)",
+        "p-capture-scaling, mean-calibration, mu-pairwise)",
     )
 
     # Recursive mode
@@ -293,6 +302,7 @@ def _load_default_viz_config():
                 "capture_anchor": False,
                 "p_capture_scaling": False,
                 "mean_calibration": False,
+                "mu_pairwise": False,
                 "format": "png",
                 "ecdf_opts": {"n_genes": 25},
                 "ppc_opts": {
@@ -351,6 +361,12 @@ def _load_default_viz_config():
                     "min_cells_per_bin": 5,
                     "assignment_batch_size": 512,
                 },
+                "mu_pairwise_opts": {
+                    "hist_bins": 40,
+                    "point_alpha": 0.25,
+                    "point_size": 5.0,
+                    "pseudocount": 1.0,
+                },
             }
         )
 
@@ -382,6 +398,7 @@ def _build_viz_config(args):
         viz_cfg.capture_anchor = True
         viz_cfg.p_capture_scaling = True
         viz_cfg.mean_calibration = True
+        viz_cfg.mu_pairwise = True
 
     # Apply boolean overrides only when flags are explicitly provided.
     if args.no_loss:
@@ -408,6 +425,8 @@ def _build_viz_config(args):
         viz_cfg.p_capture_scaling = True
     if args.mean_calibration:
         viz_cfg.mean_calibration = True
+    if args.mu_pairwise:
+        viz_cfg.mu_pairwise = True
 
     # Scalar / numeric overrides (only when provided).
     if args.format is not None:
@@ -941,6 +960,48 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                 _cleanup_after_plot()
 
     # ------------------------------------------------------------------
+    # Dataset-level mu pairwise comparison is a global diagnostic over all
+    # datasets and runs only when multi-dataset structure is present.
+    # ------------------------------------------------------------------
+    if viz_cfg.mu_pairwise:
+        if not is_multi_dataset or len(dataset_names) <= 1:
+            console.print(
+                "[yellow]  Skipping mu pairwise "
+                "(run is not multi-dataset)[/yellow]"
+            )
+        elif not overwrite and _plot_exists(figs_dir, "_mu_pairwise", fmt):
+            plots_skipped.append("mu pairwise")
+            console.print(
+                "[yellow]  Skipping mu pairwise "
+                "(already exists)[/yellow]"
+            )
+        else:
+            console.print(
+                "[dim]Generating pairwise dataset mu diagnostic...[/dim]"
+            )
+            try:
+                output_path = plot_mu_pairwise(
+                    results=results,
+                    counts=counts,
+                    figs_dir=figs_dir,
+                    cfg=orig_cfg,
+                    viz_cfg=viz_cfg,
+                    dataset_names=dataset_names if is_multi_dataset else None,
+                )
+                if output_path is not None:
+                    plots_generated.append("mu pairwise")
+                    console.print("[green]  Mu pairwise plot saved[/green]")
+                else:
+                    plots_skipped.append("mu pairwise")
+            except Exception as e:
+                console.print(
+                    f"[red]  Failed to generate mu pairwise plot: "
+                    f"{e}[/red]"
+                )
+            finally:
+                _cleanup_after_plot()
+
+    # ------------------------------------------------------------------
     # Per-dataset loop for all remaining plots.
     # For single-dataset models this iterates once with the full data.
     # ------------------------------------------------------------------
@@ -1315,6 +1376,8 @@ def main() -> None:
         enabled_plots.append("annotation PPC")
     if viz_cfg.mean_calibration:
         enabled_plots.append("mean calibration")
+    if viz_cfg.mu_pairwise:
+        enabled_plots.append("mu pairwise")
 
     console.print(f"[dim]Plots to generate:[/dim] {', '.join(enabled_plots)}")
     console.print(f"[dim]Output format:[/dim] {viz_cfg.format}")

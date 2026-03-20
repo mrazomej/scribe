@@ -118,6 +118,7 @@ sandbox/**
 # Output files
 output/**
 outputs/**
+.tmp_outputs/**
 **/output/**
 # Exploratory code
 code/exploratory/**

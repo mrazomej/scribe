@@ -17,6 +17,7 @@ viz:
   capture_anchor: false  # Only runs for biology-informed capture prior runs
   p_capture_scaling: false  # Only runs for VCP models; independent of eta prior
   mean_calibration: false  # Log-log scatter of observed vs predicted per-gene means
+  mu_pairwise: false  # Pairwise dataset-level mu comparison (multi-dataset runs only)
   format: png  # Output format: png, pdf, svg, eps
 
   # ECDF plot options
@@ -91,3 +92,10 @@ viz:
     n_bins: 30  # Number of quantile bins for trend curves
     min_cells_per_bin: 5  # Minimum cells required to keep a trend bin
     assignment_batch_size: 512  # Batch size for mixture assignment probabilities
+
+  # Dataset-level mu pairwise options
+  mu_pairwise_opts:
+    hist_bins: 40  # Number of bins for marginal log10(mu + c) histograms
+    point_alpha: 0.25  # Alpha for pairwise scatter points
+    point_size: 5.0  # Marker size for pairwise scatter points
+    pseudocount: 1.0  # Additive constant c used in log10(mu + c)

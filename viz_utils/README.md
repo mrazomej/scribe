@@ -26,3 +26,12 @@ and annotation PPC.
   compact line-mode plotting after bin capping.
 - Histogram credible regions are now capped before percentile computation, which
   significantly reduces compute time for heavy-tailed/high-expression genes.
+
+## Mu Pairwise Diagnostic
+
+For hierarchical multi-dataset runs, `plot_mu_pairwise` renders a corner-style
+dataset comparison using MAP `mu` estimates:
+
+- diagonal panels show marginal `log10(mu + c)` distributions per dataset
+- lower-triangle panels show pairwise scatter plots with identity lines
+- output is skipped automatically for single-dataset runs

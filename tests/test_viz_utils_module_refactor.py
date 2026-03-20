@@ -33,6 +33,7 @@ from viz_utils import (
     plot_loss,
     plot_mixture_composition,
     plot_mixture_ppc,
+    plot_mu_pairwise,
     plot_ppc,
     plot_umap,
 )
@@ -80,6 +81,7 @@ def test_package_root_exports_expected_symbols():
     assert callable(plot_annotation_ppc)
     assert callable(plot_capture_anchor)
     assert callable(plot_p_capture_scaling)
+    assert callable(plot_mu_pairwise)
     assert callable(_get_config_values)
     assert callable(_get_predictive_samples_for_plot)
     assert callable(_get_training_diagnostic_payload)
@@ -622,3 +624,58 @@ def test_should_use_line_mode_obeys_threshold():
     opts = {"render_auto_line_bin_threshold": 1000}
     assert should_use_line_mode(1001, opts) is True
     assert should_use_line_mode(1000, opts) is False
+
+
+def test_plot_mu_pairwise_saves_output_for_multi_dataset(monkeypatch, tmp_path):
+    """Mu pairwise plot should save output when multi-dataset mu is available.
+
+    The test stubs MAP extraction and filename metadata to keep behavior
+    deterministic and independent of heavy model objects.
+    """
+    import viz_utils.mu_pairwise as mu_pairwise_module
+
+    class _FakeResults:
+        """Minimal result stub that exposes multi-dataset model metadata."""
+
+        model_type = "zinb"
+        n_components = 1
+
+        def __init__(self):
+            self.model_config = MagicMock(n_datasets=2)
+
+    # Provide two dataset-specific mu vectors over shared genes.
+    fake_mu = np.array(
+        [
+            [1.0, 2.0, 4.0, 8.0],
+            [1.5, 3.0, 6.0, 12.0],
+        ],
+        dtype=float,
+    )
+    monkeypatch.setattr(
+        mu_pairwise_module,
+        "_get_map_estimates_for_plot",
+        lambda *_args, **_kwargs: {"mu": fake_mu},
+    )
+    monkeypatch.setattr(
+        mu_pairwise_module,
+        "_get_config_values",
+        lambda *_args, **_kwargs: {
+            "method": "svi",
+            "parameterization": "mean_odds",
+            "model_type": "zinb",
+            "n_components": 1,
+            "run_size_token": "100steps",
+        },
+    )
+
+    output_path = plot_mu_pairwise(
+        results=_FakeResults(),
+        counts=np.zeros((5, 4), dtype=float),
+        figs_dir=str(tmp_path),
+        cfg=OmegaConf.create({}),
+        viz_cfg=OmegaConf.create({"format": "png"}),
+        dataset_names=["A", "B"],
+    )
+
+    assert output_path is not None
+    assert output_path.endswith("_mu_pairwise.png")
