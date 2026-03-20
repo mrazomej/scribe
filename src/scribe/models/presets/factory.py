@@ -1129,7 +1129,7 @@ def _hierarchicalize_mu(
 def _apply_mean_anchor(
     param_specs: List,
     param_key: str,
-    anchor_centers: Tuple[float, ...],
+    anchor_centers,
     anchor_sigma: float = 0.3,
 ) -> List:
     """Replace the flat log_mu_loc (or log_r_loc) with an anchored spec.
@@ -1149,8 +1149,9 @@ def _apply_mean_anchor(
         log_mu_dataset_loc spec from the hierarchy step).
     param_key : str
         Parameterization registry key ("canonical", "mean_prob", "mean_odds").
-    anchor_centers : Tuple[float, ...]
+    anchor_centers : array-like
         Per-gene log-space anchor centers (output of ``compute_mu_anchor``).
+        Typically a numpy array; tuples also accepted.
     anchor_sigma : float, default=0.3
         Log-scale standard deviation for the anchoring prior.
 
@@ -1171,7 +1172,8 @@ def _apply_mean_anchor(
         if spec.name in loc_names and isinstance(
             spec, NormalWithTransformSpec
         ):
-            # Replace with AnchoredNormalSpec preserving other attributes
+            # Replace with AnchoredNormalSpec preserving other attributes.
+            # anchor_centers is passed as-is (numpy array) — no tuple copy.
             anchored = AnchoredNormalSpec(
                 name=spec.name,
                 shape_dims=spec.shape_dims,
@@ -1179,7 +1181,7 @@ def _apply_mean_anchor(
                 is_gene_specific=spec.is_gene_specific,
                 is_mixture=getattr(spec, "is_mixture", False),
                 transform=spec.transform,
-                anchor_centers=tuple(anchor_centers),
+                anchor_centers=anchor_centers,
                 anchor_sigma=anchor_sigma,
             )
             new_specs.append(anchored)
