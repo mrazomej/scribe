@@ -753,12 +753,23 @@ def create_model(
     # Capture-prior keys are handled by ModelConfig / registry; filter them.
     _CAPTURE_PRIOR_KEYS = {"organism", "eta_capture", "mu_eta"}
     merged_priors = _extract_priors_from_param_specs(model_config.param_specs)
+    # Backward-compat: persisted configs may carry override entries for
+    # transient/implicit specs (e.g. mixing_weights) that are not present
+    # in the current rebuilt spec set. Keep only currently valid keys from
+    # stored overrides; explicit user-provided overrides are still validated.
+    current_spec_names = {spec.name for spec in param_specs}
+    merged_priors = {
+        k: v for k, v in merged_priors.items() if k in current_spec_names
+    }
     if priors:
         merged_priors.update(
             {k: v for k, v in priors.items() if k not in _CAPTURE_PRIOR_KEYS}
         )
 
     merged_guides = _extract_guides_from_param_specs(model_config.param_specs)
+    merged_guides = {
+        k: v for k, v in merged_guides.items() if k in current_spec_names
+    }
     if guides:
         merged_guides.update(guides)
 

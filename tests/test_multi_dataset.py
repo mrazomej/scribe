@@ -19,6 +19,7 @@ import types
 from jax import random
 
 from scribe.models.builders.parameter_specs import (
+    DirichletSpec,
     DatasetHierarchicalPositiveNormalSpec,
     DatasetHierarchicalSigmoidNormalSpec,
     PositiveNormalSpec,
@@ -3054,6 +3055,34 @@ class TestMixtureDatasetHierarchyFactory:
             assert len(mixing_specs) == 1
             assert mixing_specs[0].is_dataset is False
             assert mixing_specs[0].shape_dims == ()
+
+    def test_stale_stored_mixing_override_is_ignored(self):
+        """create_model ignores stale stored mixing_weights override keys."""
+        b = self._builder()
+        b._n_datasets = 2
+        b._n_components = 3
+        b._dataset_mixing = False
+        config = b.build()
+
+        # Simulate an older/newer persisted config carrying a stale override
+        # for explicit dataset-level mixing specs.
+        stale_spec = DirichletSpec(
+            name="mixing_weights",
+            shape_dims=("n_components",),
+            default_params=(1.0, 1.0, 1.0),
+            prior=(5.0, 5.0, 5.0),
+            is_dataset=True,
+        )
+        config = config.model_copy(update={"param_specs": [stale_spec]})
+
+        model, guide, specs = create_model(config, validate=False)
+        assert callable(model)
+        assert callable(guide)
+        # In opt-out mode, explicit dataset-level mixing spec should not
+        # be required in the rebuilt spec list.
+        mixing_specs = [s for s in specs if s.name == "mixing_weights"]
+        if mixing_specs:
+            assert mixing_specs[0].is_dataset is False
 
     def test_create_model_with_shared_component_indices(self):
         """shared_component_indices flows through to hierarchical spec."""
