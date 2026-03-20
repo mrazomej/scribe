@@ -18,6 +18,13 @@ provides:
 Multi-dataset mixture configs support `dataset_mixing` (default-on when
 `n_datasets >= 2`) to choose between per-dataset and global mixing weights.
 
+When fitting with `annotation_key`, inference stores the fit-time
+label-to-component mapping on the results object. Downstream dataset subsetting
+and visualization should consume this canonical mapping and preserve missing
+annotation values as unlabeled (instead of coercing them to the string
+`"nan"`), so per-dataset composition and annotation diagnostics stay aligned
+with training-time component indices.
+
 ## Architecture
 
 ```

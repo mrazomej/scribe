@@ -37,6 +37,33 @@ def _reconstruct_label_map(cell_labels, component_order=None):
     return label_map
 
 
+def _resolve_label_map(results, cell_labels, component_order=None):
+    """Resolve label mapping with fit-time metadata priority.
+
+    Parameters
+    ----------
+    results : object
+        Results object that may carry ``_label_map`` from fitting.
+    cell_labels : array-like
+        Per-cell annotation labels used as a fallback mapping source.
+    component_order : sequence of str, optional
+        Optional explicit component order from config.
+
+    Returns
+    -------
+    dict
+        Mapping from label string to component index.
+    """
+    stored_label_map = getattr(results, "_label_map", None)
+    if isinstance(stored_label_map, dict) and len(stored_label_map) > 0:
+        return {
+            str(label): int(idx)
+            for label, idx in stored_label_map.items()
+            if idx is not None
+        }
+    return _reconstruct_label_map(cell_labels, component_order)
+
+
 def plot_annotation_ppc(results, counts, cell_labels, figs_dir, cfg, viz_cfg):
     """
     Plot per-annotation posterior predictive checks.
@@ -66,16 +93,16 @@ def plot_annotation_ppc(results, counts, cell_labels, figs_dir, cfg, viz_cfg):
     n_samples = ann_opts.get("n_samples", ppc_opts.get("n_samples", 1500))
 
     component_order = cfg.get("annotation_component_order", None)
-    label_map = _reconstruct_label_map(cell_labels, component_order)
+    label_map = _resolve_label_map(results, cell_labels, component_order)
 
-    annotations = pd.Series(cell_labels)
+    annotations = pd.Series(np.asarray(cell_labels, dtype=object))
 
     console.print(
         f"[dim]Label → component mapping ({len(label_map)} labels, "
         f"{n_components} components):[/dim]"
     )
     for label, idx in label_map.items():
-        n_cells_label = int((annotations.astype(str) == label).sum())
+        n_cells_label = int(annotations.eq(label).sum())
         console.print(
             f"[dim]  {label} → component {idx} "
             f"({n_cells_label} cells)[/dim]"
@@ -109,7 +136,7 @@ def plot_annotation_ppc(results, counts, cell_labels, figs_dir, cfg, viz_cfg):
             f"(component {component_idx})...[/dim]"
         )
 
-        cell_mask = np.array(annotations.astype(str) == label)
+        cell_mask = np.array(annotations.eq(label))
         n_cells_label = int(cell_mask.sum())
         if n_cells_label == 0:
             console.print(

@@ -371,6 +371,10 @@ class DatasetMixin:
             posterior_samples=new_posterior_samples,
             predictive_samples=None,
             n_components=getattr(self, "n_components", None),
+            # Preserve fit-time annotation/component metadata so per-dataset
+            # plotting and downstream component lookups stay index-consistent.
+            _label_map=getattr(self, "_label_map", None),
+            _component_mapping=getattr(self, "_component_mapping", None),
         )
 
     # ------------------------------------------------------------------
