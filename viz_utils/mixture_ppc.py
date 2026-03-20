@@ -692,8 +692,74 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
     del results_subset
 
 
+def _resolve_weight_fractions_for_composition(
+    mixing_weights, n_components, dataset_indices=None
+):
+    """Convert MAP mixing weights into a normalized component-fraction vector.
+
+    Parameters
+    ----------
+    mixing_weights : array-like
+        MAP ``mixing_weights`` parameter from fitted model.
+    n_components : int
+        Number of mixture components.
+    dataset_indices : array-like, optional
+        Per-cell dataset ids used to build a dataset-size-weighted aggregate
+        when ``mixing_weights`` is dataset-specific with shape ``(D, K)``.
+
+    Returns
+    -------
+    np.ndarray or None
+        Normalized component fractions with shape ``(K,)`` or ``None`` if
+        ``mixing_weights`` is missing.
+    """
+    if mixing_weights is None:
+        return None
+
+    w = np.asarray(mixing_weights, dtype=float)
+    if w.ndim == 0:
+        return None
+
+    if w.ndim == 1:
+        fractions = w
+    elif w.ndim == 2:
+        # Prefer (D, K) orientation. If not already in that orientation,
+        # transpose when that produces (D, K).
+        if w.shape[-1] == n_components:
+            w_dk = w
+        elif w.shape[0] == n_components:
+            w_dk = w.T
+        else:
+            # Fall back to flatten+truncate behavior only when no axis
+            # matches K; this keeps plots robust to unexpected shapes.
+            fractions = w.reshape(-1)
+            fractions = fractions[:n_components]
+            fractions = np.clip(fractions, a_min=0.0, a_max=None)
+            return fractions / max(np.sum(fractions), 1e-12)
+
+        if dataset_indices is not None:
+            ds_idx = np.asarray(dataset_indices)
+            if ds_idx.ndim == 1 and ds_idx.size > 0:
+                n_datasets = w_dk.shape[0]
+                counts = np.bincount(ds_idx.astype(int), minlength=n_datasets)
+                ds_weights = counts / max(int(np.sum(counts)), 1)
+                fractions = np.sum(w_dk * ds_weights[:, None], axis=0)
+            else:
+                fractions = np.mean(w_dk, axis=0)
+        else:
+            fractions = np.mean(w_dk, axis=0)
+    else:
+        fractions = w.reshape(-1)
+
+    fractions = np.asarray(fractions, dtype=float).reshape(-1)
+    if fractions.shape[0] != n_components:
+        fractions = fractions[:n_components]
+    fractions = np.clip(fractions, a_min=0.0, a_max=None)
+    return fractions / max(np.sum(fractions), 1e-12)
+
+
 def _reconstruct_label_map_for_composition(cell_labels, component_order=None):
-    """Build label-to-component mapping used for composition comparison plots.
+    """Build fallback label-to-component mapping for composition plots.
 
     Parameters
     ----------
@@ -717,6 +783,26 @@ def _reconstruct_label_map_for_composition(cell_labels, component_order=None):
 
     unique_sorted = sorted(str(label) for label in labels.unique())
     return {label: idx for idx, label in enumerate(unique_sorted)}
+
+
+def _resolve_label_map_for_composition(results, cell_labels, cfg):
+    """Resolve label-to-component mapping with training-time priority.
+
+    The preferred source is ``results._label_map`` because it reflects the
+    mapping actually used during fitting (including any filtering logic).
+    """
+    stored_label_map = getattr(results, "_label_map", None)
+    if isinstance(stored_label_map, dict) and len(stored_label_map) > 0:
+        return {
+            str(label): int(idx)
+            for label, idx in stored_label_map.items()
+            if idx is not None
+        }
+
+    component_order = cfg.get("annotation_component_order", None)
+    return _reconstruct_label_map_for_composition(
+        cell_labels=cell_labels, component_order=component_order
+    )
 
 
 def plot_mixture_composition(
@@ -745,15 +831,12 @@ def plot_mixture_composition(
     # Extract MAP mixture weights (global composition prior at MAP).
     map_estimates = _get_map_estimates_for_plot(results, counts=counts)
     mixing_weights = map_estimates.get("mixing_weights")
-    weight_fractions = None
-    if mixing_weights is not None:
-        weight_fractions = np.array(mixing_weights, dtype=float).reshape(-1)
-        if weight_fractions.shape[0] != n_components:
-            weight_fractions = weight_fractions[:n_components]
-        weight_fractions = np.clip(weight_fractions, a_min=0.0, a_max=None)
-        weight_fractions = weight_fractions / max(
-            np.sum(weight_fractions), 1e-12
-        )
+    dataset_indices = getattr(results, "_dataset_indices", None)
+    weight_fractions = _resolve_weight_fractions_for_composition(
+        mixing_weights=mixing_weights,
+        n_components=n_components,
+        dataset_indices=dataset_indices,
+    )
 
     fig, ax = plt.subplots(1, 1, figsize=(max(6.0, 1.1 * n_components + 2.0), 4.0))
 
@@ -791,9 +874,10 @@ def plot_mixture_composition(
         # Compare observed annotation proportions against model-predicted
         # proportions by mapping each annotation to its configured component.
         annotations = np.asarray(cell_labels).astype(str)
-        component_order = cfg.get("annotation_component_order", None)
-        label_map = _reconstruct_label_map_for_composition(
-            cell_labels=annotations, component_order=component_order
+        label_map = _resolve_label_map_for_composition(
+            results=results,
+            cell_labels=annotations,
+            cfg=cfg,
         )
         labels_by_component = sorted(label_map.keys(), key=lambda x: label_map[x])
         labels_by_component = [
