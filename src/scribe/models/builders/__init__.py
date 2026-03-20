@@ -62,6 +62,8 @@ from .parameter_specs import (
     SoftplusNormalSpec,
     # Biology-informed capture
     BiologyInformedCaptureSpec,
+    # Data-informed mean anchoring
+    AnchoredNormalSpec,
     # Hierarchical specs (gene-specific with learned hyperprior)
     HierarchicalNormalWithTransformSpec,
     HierarchicalSigmoidNormalSpec,
@@ -124,6 +126,8 @@ __all__ = [
     "SoftplusNormalSpec",
     # Biology-informed capture
     "BiologyInformedCaptureSpec",
+    # Data-informed mean anchoring
+    "AnchoredNormalSpec",
     # Hierarchical specs
     "HierarchicalNormalWithTransformSpec",
     "HierarchicalSigmoidNormalSpec",

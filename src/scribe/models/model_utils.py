@@ -3,17 +3,24 @@ Utility functions for model guide parameter setup.
 
 This module provides shared helper functions for setting up variational guide
 parameters across all SCRIBE model types (standard, mixture, unconstrained).
+
+It also provides the ``compute_mu_anchor`` utility for the data-informed mean
+anchoring prior (see ``paper/_mean_anchoring_prior.qmd``).
 """
+
+import math
 
 # Import JAX-related libraries
 import jax.numpy as jnp
+
+import numpy as np
 
 # Import Pyro-related libraries
 import numpyro
 import numpyro.distributions as dist
 
 # Import typing
-from typing import Dict, Tuple, Optional, List
+from typing import Dict, Tuple, Optional, List, Union
 
 # Import model config
 from .config import ModelConfig
@@ -333,3 +340,95 @@ def setup_guide_parameters_from_config(
             shape = shape_spec
 
         setup_and_sample_parameter(param_name, distribution, shape)
+
+
+# ==============================================================================
+# Data-Informed Mean Anchoring Prior
+# ==============================================================================
+
+
+def compute_mu_anchor(
+    counts: Union[np.ndarray, "jnp.ndarray"],
+    library_sizes: Optional[Union[np.ndarray, "jnp.ndarray"]] = None,
+    total_mrna_mean: Optional[float] = None,
+    epsilon: float = 1e-3,
+) -> np.ndarray:
+    """Compute per-gene log-anchor centers for the mean anchoring prior.
+
+    Implements the estimator from the data-informed prior derivation:
+
+        mu_hat_g = (u_bar_g + epsilon) / nu_bar
+
+    where u_bar_g is the sample mean of gene g across all cells, nu_bar
+    is the average capture probability, and epsilon prevents log(0).
+
+    For VCP models, nu_bar is computed from library sizes and total mRNA:
+        nu_bar = mean(L_c / M_0).
+    For non-VCP models, nu_bar = 1 (no capture correction).
+
+    Parameters
+    ----------
+    counts : ndarray, shape (n_cells, n_genes)
+        Raw UMI count matrix (cells x genes).
+    library_sizes : ndarray of shape (n_cells,), optional
+        Per-cell library sizes (sum of counts per cell). If None,
+        computed from counts. Only used when total_mrna_mean is set.
+    total_mrna_mean : float, optional
+        Expected total mRNA molecules per cell (M_0). When provided,
+        the capture probability nu_c = L_c / M_0 is used to scale
+        the anchor. When None, nu_bar = 1 (non-VCP models).
+    epsilon : float, default=1e-3
+        Pseudocount added to per-gene means to prevent log(0) for
+        unexpressed genes.
+
+    Returns
+    -------
+    log_mu_hat : ndarray, shape (n_genes,)
+        Per-gene log-anchor centers: log((u_bar_g + epsilon) / nu_bar).
+
+    Notes
+    -----
+    The returned values are in log-space, suitable for use as the center
+    of a log-normal prior: log(mu_g) ~ N(log_mu_hat_g, sigma^2).
+
+    The concentration argument guarantees CV(u_bar_g) ~ 1-5% for
+    typical single-cell datasets (C >= 1000), so the anchor is
+    precise enough to resolve the mu-phi degeneracy.
+
+    See Also
+    --------
+    paper/_mean_anchoring_prior.qmd : Full mathematical derivation.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> counts = np.random.poisson(5, size=(1000, 100))
+    >>> anchors = compute_mu_anchor(counts)
+    >>> anchors.shape
+    (100,)
+
+    >>> # With capture correction for VCP models
+    >>> lib_sizes = counts.sum(axis=1)
+    >>> anchors = compute_mu_anchor(counts, lib_sizes, total_mrna_mean=200000)
+    """
+    counts = np.asarray(counts, dtype=np.float64)
+
+    # Per-gene sample mean across all cells
+    u_bar = counts.mean(axis=0)
+
+    # Compute average capture probability
+    if total_mrna_mean is not None and total_mrna_mean > 0:
+        if library_sizes is None:
+            library_sizes = counts.sum(axis=1)
+        lib_sizes = np.asarray(library_sizes, dtype=np.float64)
+        # nu_c = L_c / M_0 for each cell
+        nu_bar = float(np.mean(lib_sizes / total_mrna_mean))
+    else:
+        # Non-VCP: no capture correction
+        nu_bar = 1.0
+
+    # Anchor: mu_hat_g = (u_bar_g + epsilon) / nu_bar
+    mu_hat = (u_bar + epsilon) / nu_bar
+
+    # Return log-space centers
+    return np.log(mu_hat)

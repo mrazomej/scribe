@@ -196,6 +196,8 @@ class ModelConfig(BaseModel):
         d.setdefault("gate_dataset_prior", "none")
         d.setdefault("overdispersion", "none")
         d.setdefault("overdispersion_prior", "horseshoe")
+        d.setdefault("mu_mean_anchor", False)
+        d.setdefault("mu_mean_anchor_sigma", 0.3)
 
         # Migrate legacy top-level capture prior fields into priors dict.
         old_capture = d.pop("capture_prior", "default")
@@ -438,6 +440,37 @@ class ModelConfig(BaseModel):
         ),
     )
 
+    # Data-informed mean anchoring prior.
+    # When enabled, the per-gene biological mean mu_g is anchored to
+    # the sample mean scaled by the average capture probability:
+    #   log(mu_g) ~ N(log(u_bar_g / nu_bar), sigma_mu^2).
+    # The anchor values are computed from the data at fit time and
+    # stored in priors.mu_anchor_centers (tuple of per-gene log-centers).
+    mu_mean_anchor: bool = Field(
+        False,
+        description=(
+            "Enable data-informed anchoring prior on the biological mean "
+            "mu_g. When True, a per-gene prior center is computed from "
+            "the observed sample means and average capture probability, "
+            "resolving the mu-phi degeneracy in the negative binomial. "
+            "Requires unconstrained=True. On VCP models, also requires "
+            "priors.eta_capture or priors.organism so nu_bar can be "
+            "estimated (non-VCP models correctly use nu_bar=1)."
+        ),
+    )
+    mu_mean_anchor_sigma: float = Field(
+        0.3,
+        gt=0.0,
+        description=(
+            "Log-scale standard deviation for the mean anchoring prior. "
+            "Controls how tightly mu_g is constrained to the data-implied "
+            "value. Smaller values (0.1-0.2) give tight anchoring; "
+            "moderate values (0.3-0.5) are recommended; large values "
+            "(>1.0) give weak anchoring. Default 0.3 allows ~1.35x "
+            "fold variation around the anchor."
+        ),
+    )
+
     # Biology-informed capture prior configuration.
     # The capture prior is configured via the priors section:
     #   priors.organism    — shortcut to set defaults (e.g. "human")
@@ -577,6 +610,28 @@ class ModelConfig(BaseModel):
                 f"eta_capture_guide must be one of {valid_eta_guides}, "
                 f"got {self.eta_capture_guide!r}."
             )
+
+        # --- Mean anchoring prior -----------------------------------------------
+        if self.mu_mean_anchor and not self.unconstrained:
+            raise ValueError(
+                "mu_mean_anchor=True requires unconstrained=True."
+            )
+
+        # VCP models need eta_capture so nu_bar can be estimated; without it
+        # the anchor would silently use nu_bar=1, giving wrong mu_g values.
+        if self.mu_mean_anchor and self.uses_variable_capture:
+            extra = getattr(self.priors, "__pydantic_extra__", None) or {}
+            has_capture_info = (
+                extra.get("eta_capture") is not None
+                or extra.get("organism") is not None
+            )
+            if not has_capture_info:
+                raise ValueError(
+                    "mu_mean_anchor=True on a VCP model (variable capture) "
+                    "requires priors.eta_capture or priors.organism to be "
+                    "set so the average capture probability can be estimated. "
+                    "For non-VCP models, the anchor uses nu_bar=1 by default."
+                )
 
         # --- Gene-level p/phi ------------------------------------------------
         if self.p_prior != _NONE and not self.unconstrained:

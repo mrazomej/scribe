@@ -90,6 +90,13 @@ positive_transform: "softplus"
 # = learn per-dataset mu_eta with shrinkage toward a shared population mean.
 mu_eta_prior: "none"
 
+# --- Data-Informed Mean Anchoring Prior ---
+# Anchors mu_g to the observed sample mean scaled by capture probability.
+# Resolves the mu-phi degeneracy in the negative binomial.
+# See paper/_mean_anchoring_prior.qmd for derivation.
+mu_mean_anchor: false        # Enable data-informed anchoring on mu_g
+mu_mean_anchor_sigma: 0.3    # Log-scale sigma (0.1=tight, 0.3=moderate, 1.0=weak)
+
 # Mixture model configuration
 # Set to integer >= 2 for mixture models, null for single component.
 # When annotation_key is provided and n_components is null, the number

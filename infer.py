@@ -894,6 +894,9 @@ def main(cfg: DictConfig) -> None:
         "neg_a": cfg.get("neg_a", 1.0),
         "neg_tau": cfg.get("neg_tau", 1.0),
         "mu_eta_prior": cfg.get("mu_eta_prior", "none"),
+        # Data-informed mean anchoring prior
+        "mu_mean_anchor": cfg.get("mu_mean_anchor", False),
+        "mu_mean_anchor_sigma": cfg.get("mu_mean_anchor_sigma", 0.3),
         # Gene-specific overdispersion (e.g. BNB)
         "overdispersion": cfg.get("overdispersion", "none"),
         "overdispersion_prior": cfg.get("overdispersion_prior", "horseshoe"),
@@ -955,6 +958,11 @@ def main(cfg: DictConfig) -> None:
         console.print(
             f"[dim]Amortized capture:[/dim] [bold]{kwargs['capture_hidden_dims']}[/bold] "
             f"[dim]({kwargs['capture_activation']})[/dim]"
+        )
+    if kwargs.get("mu_mean_anchor"):
+        console.print(
+            f"[dim]Mean anchor:[/dim] [bold]enabled[/bold] "
+            f"[dim](sigma={kwargs['mu_mean_anchor_sigma']})[/dim]"
         )
     if kwargs.get("overdispersion", "none") != "none":
         console.print(

@@ -1,0 +1,822 @@
+---
+editor:
+    render-on-save: true
+# bibliography: references.bib
+csl: ieee.csl
+format:
+  html:
+    filters: [tikz.lua, strip-yaml-frontmatter.lua, maintext-filter.lua, sitext-filter.lua]
+---
+
+# Data-informed prior for the biological mean expression {#sec-mean-anchoring}
+
+In @sec-capture-prior, we introduced a biology-informed prior for the capture
+probability $\nu_c$ that resolved the first source of practical
+non-identifiability in the variable capture probability (VCP) model: the
+degeneracy between the capture efficiency and the total biological expression.
+The key idea was to anchor $\nu_c$ using the known relationship
+$\nu_c \approx L_c / M_0$, where $L_c$ is the observed library size and $M_0$
+is the expected total mRNA content per cell.
+
+In this section, we address a **second source of practical non-identifiability**
+that persists even after the capture prior has been applied: the degeneracy
+between the biological mean expression $\mu_g$ and the overdispersion parameter
+$\phi_g$ (or equivalently $p_g$) within the negative binomial distribution. We
+develop a data-informed prior on $\mu_g$ that resolves this degeneracy by
+exploiting a concentration-of-measure argument over cells---directly analogous
+to how the capture prior exploits concentration over genes.
+
+## The residual identifiability problem {#sec-mean-residual-identifiability}
+
+### The expected count under the VCP model
+
+Recall from @sec-dirichlet-multinomial and @sec-denoising that, under the
+mean-odds parameterization, the expected observed UMI count for gene $g$ in
+cell $c$ is
+
+$$
+\langle u_{gc} \rangle = \mu_g \cdot \nu_c,
+$${#eq-mean-expected-count}
+
+where $\mu_g$ is the biological mean expression (the expected number of mRNA
+molecules for gene $g$ in the cell) and $\nu_c$ is the capture probability for
+cell $c$. The negative binomial parameters are related to $\mu_g$ through the
+mean-odds parameterization as
+
+$$
+r_g = \mu_g \cdot \phi, \qquad p = \frac{1}{1 + \phi},
+$${#eq-mean-nb-params}
+
+where $\phi$ is the odds ratio parameter that controls the overdispersion.
+
+### What the capture prior constrains
+
+The biology-informed capture prior from @sec-capture-prior constrains
+$\nu_c \approx L_c / M_0$, effectively pinning the capture probability for
+each cell. After this constraint is applied, the expected count
+@eq-mean-expected-count becomes
+
+$$
+\langle u_{gc} \rangle \approx \mu_g \cdot \frac{L_c}{M_0}.
+$${#eq-mean-expected-count-anchored}
+
+The ratio $L_c / M_0$ is a known quantity for each cell (computed from the
+observed data and the biological constant $M_0$). Therefore, the expected count
+is now controlled by a **single unknown per gene**: $\mu_g$.
+
+### What remains unconstrained
+
+While the expected count constrains $\mu_g$, the full shape of the negative
+binomial distribution depends on **two** parameters: the dispersion $r_g$ and
+the success probability $p$ (or equivalently, $\mu_g$ and $\phi$). The
+variance of the observed count is
+
+$$
+\text{Var}(u_{gc}) = \langle u_{gc} \rangle \cdot
+\frac{1}{\hat{p}_c},
+$${#eq-mean-variance}
+
+where $\hat{p}_c = p / (\nu_c + p(1 - \nu_c))$ is the effective success
+probability after capture thinning (see @eq-umicounts-marginal-nb-p). The
+variance-to-mean ratio is $1/\hat{p}_c$, which depends on both $p$ (or $\phi$)
+and $\nu_c$.
+
+This means that the data constrain $\mu_g$ primarily through the **first
+moment** (the mean) and $\phi$ primarily through the **second moment** (the
+variance-to-mean ratio). However, the second moment is inherently noisier to
+estimate than the first: the sample variance has variance proportional to the
+fourth central moment, while the sample mean has variance proportional to only
+the second moment. This asymmetry creates a **practical non-identifiability**:
+the data strongly constrain $\mu_g$ but only weakly constrain $\phi$.
+
+### The likelihood ridge
+
+To make this precise, consider the negative binomial log-likelihood for a
+single gene $g$ observed across $C$ cells with counts
+$\underline{u}_g = (u_{g1}, u_{g2}, \ldots, u_{gC})$. In the mean-odds
+parameterization, the log-likelihood as a function of $(\mu_g, \phi)$ is
+
+$$
+\ell(\mu_g, \phi \mid \underline{u}_g) = \sum_{c=1}^C
+\log \text{NB}(u_{gc} \mid r_g = \mu_g \phi, \; \hat{p}_c(\phi, \nu_c)).
+$${#eq-mean-loglik}
+
+The maximum likelihood surface in $(\mu_g, \phi)$ space exhibits a
+characteristic **ridge**: there is a well-defined maximum along the $\mu_g$
+direction (the mean is tightly constrained), but the curvature along the $\phi$
+direction is much weaker (the overdispersion is loosely constrained). In
+variational inference with a mean-field guide, this manifests as a broad,
+poorly-resolved posterior for $\phi$ that can drift during optimization without
+substantially changing the ELBO.
+
+### Consequences for cross-dataset comparison
+
+When two datasets from the same biological condition are fitted
+**independently**, each model finds its own point on the likelihood ridge.
+Because the ridge is broad in the $\phi$ direction, the two models may settle
+on different $\phi$ values. In the canonical parameterization, where $r_g$ and
+$p$ are jointly constrained by the mean, different $\phi$ (equivalently $p$)
+values lead to different $r_g$ estimates even when the underlying biology is
+identical. This is why the inferred means can show poor correspondence across
+independently-fitted models despite excellent posterior predictive checks
+within each model: the mean is well-calibrated within each model, but the
+parameter decomposition into $(r_g, p)$ or $(\mu_g, \phi)$ differs.
+
+### Consequences for the hierarchical $\phi_g$ prior
+
+In the hierarchical gene-specific $\phi_g$ model from @sec-hierarchical-p
+(adapted to the mean-odds parameterization), each gene draws its own $\phi_g$
+from a population distribution:
+
+$$
+\log(\phi_g) \sim \mathcal{N}(\mu_\phi, \sigma_\phi).
+$${#eq-mean-hier-phi}
+
+Since $\phi_g$ only affects the overdispersion (not the mean) in the mean-odds
+parameterization, the hierarchical prior on $\phi_g$ has no leverage on the
+mean structure. The optimizer can find configurations where different genes have
+very different $\phi_g$ values that all produce similar likelihoods, creating
+$G$ independent degeneracy manifolds. This explains why the mean-odds
+parameterization can fail with hierarchical $\phi_g$ even when the canonical
+parameterization (where $p_g$ affects both the mean and the variance)
+succeeds: the canonical parameterization's coupling between $p_g$ and the
+mean provides implicit regularization that the mean-odds parameterization
+lacks.
+
+## The concentration argument {#sec-mean-concentration}
+
+### Sample mean as an estimator of $\mu_g$
+
+Consider the sample mean of gene $g$ across all $C$ cells:
+
+$$
+\bar{u}_g = \frac{1}{C} \sum_{c=1}^C u_{gc}.
+$${#eq-mean-sample-mean}
+
+Under the model, the expected value of this quantity is
+
+$$
+\langle \bar{u}_g \rangle = \frac{1}{C} \sum_{c=1}^C \langle u_{gc} \rangle =
+\frac{1}{C} \sum_{c=1}^C \mu_g \cdot \nu_c = \mu_g \cdot \bar{\nu},
+$${#eq-mean-sample-mean-expectation}
+
+where
+
+$$
+\bar{\nu} = \frac{1}{C} \sum_{c=1}^C \nu_c
+$${#eq-mean-nu-bar}
+
+is the average capture probability across all cells in the dataset. Given the
+capture prior, $\bar{\nu}$ is approximately a known quantity (it can be
+computed from the library sizes and $M_0$). Therefore, the sample mean
+$\bar{u}_g$ is an unbiased estimator of $\mu_g \cdot \bar{\nu}$, and
+inverting gives
+
+$$
+\hat{\mu}_g = \frac{\bar{u}_g}{\bar{\nu}}
+$${#eq-mean-mu-hat}
+
+as the natural point estimator of $\mu_g$.
+
+### Variance of the sample mean
+
+To quantify how precisely $\bar{u}_g$ pins $\mu_g$, we compute its variance.
+Since the cells are independent (conditional on the model parameters), the
+variance of $\bar{u}_g$ is
+
+$$
+\text{Var}(\bar{u}_g) = \frac{1}{C^2} \sum_{c=1}^C \text{Var}(u_{gc}).
+$${#eq-mean-var-sample-mean}
+
+For a negative binomial random variable $u_{gc} \sim \text{NB}(r_g,
+\hat{p}_c)$, the variance is
+
+$$
+\text{Var}(u_{gc}) = \frac{r_g \hat{p}_c}{(1 - \hat{p}_c)^2}
+= \langle u_{gc} \rangle \cdot \frac{1}{1 - \hat{p}_c},
+$${#eq-mean-nb-variance}
+
+where we used the fact that the mean of the negative binomial (in our
+convention) is $r_g \hat{p}_c / (1 - \hat{p}_c)$. The factor $1/(1 -
+\hat{p}_c)$ is the variance-to-mean ratio, which quantifies the
+overdispersion.
+
+For a useful approximation, we note that $\hat{p}_c = p / (\nu_c + p(1 -
+\nu_c))$, and for typical single-cell experiments where $\nu_c \ll 1$, we have
+$\hat{p}_c \approx p / \nu_c$ when $p$ is not too close to zero. In this
+regime, $1 - \hat{p}_c \approx 1$, and the variance simplifies to
+
+$$
+\text{Var}(u_{gc}) \approx \mu_g \nu_c + \frac{(\mu_g \nu_c)^2}{r_g}.
+$${#eq-mean-nb-variance-approx}
+
+The first term is the Poisson contribution (shot noise), and the second is the
+overdispersion contribution scaled by $1/r_g$. Substituting into
+@eq-mean-var-sample-mean and using the approximation that all cells have
+similar capture probabilities $\nu_c \approx \bar{\nu}$, we obtain
+
+$$
+\text{Var}(\bar{u}_g) \approx \frac{1}{C}
+\left(\mu_g \bar{\nu} + \frac{(\mu_g \bar{\nu})^2}{r_g}\right).
+$${#eq-mean-var-sample-mean-approx}
+
+### Coefficient of variation
+
+The coefficient of variation (CV) of $\bar{u}_g$ relative to its expectation
+$\mu_g \bar{\nu}$ is
+
+$$
+\text{CV}(\bar{u}_g) = \frac{\sqrt{\text{Var}(\bar{u}_g)}}{\mu_g \bar{\nu}}
+\approx \frac{1}{\sqrt{C}} \sqrt{\frac{1}{\mu_g \bar{\nu}} + \frac{1}{r_g}}.
+$${#eq-mean-cv}
+
+This is the key result. The CV decreases as $1/\sqrt{C}$ with the number of
+cells, and depends on two gene-specific quantities: the expected observed
+count $\mu_g \bar{\nu}$ (controlling the Poisson noise) and the dispersion
+$r_g$ (controlling the overdispersion noise).
+
+### Numerical examples
+
+To assess the magnitude of this CV for realistic parameters, consider a
+dataset with $C = 1{,}000$ cells and average capture probability
+$\bar{\nu} = 0.1$ (corresponding to $M_0 = 200{,}000$ and median library
+size $\approx 20{,}000$).
+
+**Case 1: Low-expression, high-overdispersion gene.** With $\mu_g = 10$ and
+$r_g = 1$ (strong overdispersion):
+
+$$
+\text{CV}(\bar{u}_g) = \frac{1}{\sqrt{1{,}000}}
+\sqrt{\frac{1}{10 \times 0.1} + \frac{1}{1}}
+= \frac{1}{31.6} \sqrt{1 + 1}
+\approx 4.5\%.
+$${#eq-mean-cv-case1}
+
+**Case 2: Moderate-expression gene.** With $\mu_g = 100$ and $r_g = 5$:
+
+$$
+\text{CV}(\bar{u}_g) = \frac{1}{\sqrt{1{,}000}}
+\sqrt{\frac{1}{100 \times 0.1} + \frac{1}{5}}
+= \frac{1}{31.6} \sqrt{0.1 + 0.2}
+\approx 1.7\%.
+$${#eq-mean-cv-case2}
+
+**Case 3: High-expression gene.** With $\mu_g = 1{,}000$ and $r_g = 10$:
+
+$$
+\text{CV}(\bar{u}_g) = \frac{1}{\sqrt{1{,}000}}
+\sqrt{\frac{1}{1{,}000 \times 0.1} + \frac{1}{10}}
+= \frac{1}{31.6} \sqrt{0.01 + 0.1}
+\approx 1.0\%.
+$${#eq-mean-cv-case3}
+
+Even for the worst case (low expression, high overdispersion), the sample mean
+pins $\mu_g \bar{\nu}$ to within $\approx 5\%$. For moderately and highly
+expressed genes, the precision is $1$--$2\%$. With $C = 5{,}000$ cells
+(common in modern datasets), these values improve by a factor of $\sqrt{5}$,
+yielding sub-percent precision for all but the most extreme genes.
+
+### Comparison with the capture prior's concentration argument
+
+The capture prior in @sec-capture-prior exploited the law of large numbers
+**over genes** within a single cell: the total mRNA count $M_c = \sum_{g=1}^G
+m_g$ concentrates around its expectation with $\text{CV}(M_c) = 1/\sqrt{r_T
+p} \approx 0.5\%$ for mammalian cells with $G \approx 20{,}000$ genes.
+
+The mean anchoring prior exploits the law of large numbers **over cells**
+within a single gene: the sample mean $\bar{u}_g$ concentrates around its
+expectation with $\text{CV}(\bar{u}_g) \approx 1$--$5\%$ for typical
+single-cell datasets with $C \approx 1{,}000$--$10{,}000$ cells.
+
+The two arguments are complementary. The capture prior uses concentration over
+the gene dimension (large $G$) to anchor the cell-level parameter $\nu_c$.
+The mean anchoring prior uses concentration over the cell dimension (large
+$C$) to anchor the gene-level parameter $\mu_g$. Together, they constrain
+both factors in the product $\mu_g \cdot \nu_c$ that determines the expected
+count.
+
+## The data-informed prior on $\mu_g$ {#sec-mean-prior}
+
+### Prior specification
+
+Given the concentration argument of the previous section, we define the
+**data-informed prior** on the biological mean expression as follows. First,
+compute the empirical anchor for each gene:
+
+$$
+\hat{\mu}_g = \frac{\bar{u}_g + \epsilon}{\bar{\nu}},
+$${#eq-mean-anchor-def}
+
+where $\bar{u}_g$ is the observed sample mean for gene $g$, $\bar{\nu}$ is
+the average capture probability (computed from the library sizes and $M_0$ as
+in @sec-capture-prior), and $\epsilon > 0$ is a small pseudocount that
+prevents $\log(0)$ for unexpressed genes (typically $\epsilon \approx 10^{-3}$).
+
+The prior on $\mu_g$ is then a log-normal distribution centered on this
+anchor:
+
+$$
+\log(\mu_g) \sim \mathcal{N}\!\left(\log(\hat{\mu}_g), \; \sigma_\mu^2\right),
+$${#eq-mean-prior-def}
+
+where $\sigma_\mu > 0$ controls the tightness of the anchor. Equivalently,
+$\mu_g$ has a log-normal distribution with geometric mean $\hat{\mu}_g$ and
+log-scale $\sigma_\mu$.
+
+### Interpretation of $\sigma_\mu$
+
+The hyperparameter $\sigma_\mu$ plays the same role for the mean anchor as
+$\sigma_M$ plays for the capture prior: it controls how tightly the prior
+constrains the parameter to its data-implied value.
+
+- **Small $\sigma_\mu$ (e.g., $0.1$--$0.2$):** Strong anchor. The prior
+  tightly constrains $\mu_g$ to within $\sim 10$--$20\%$ of the
+  data-implied value (since $e^{0.2} \approx 1.22$). Appropriate when the
+  dataset has many cells and the sample mean is very precise.
+
+- **Moderate $\sigma_\mu$ (e.g., $0.3$--$0.5$):** The recommended default.
+  Allows $\sim 1.3$--$1.6\times$ fold variation around the anchor. This
+  accommodates the finite-sample noise in $\bar{u}_g$ and the approximation
+  in $\bar{\nu}$, while still providing strong regularization against the
+  $\mu_g$--$\phi_g$ degeneracy.
+
+- **Large $\sigma_\mu$ (e.g., $> 1$):** Weak anchor. The prior provides
+  mild regularization but does not strongly constrain $\mu_g$. In the limit
+  $\sigma_\mu \to \infty$, the prior becomes flat (uninformative) and the
+  anchoring effect disappears, recovering the standard model.
+
+### Relationship to empirical Bayes
+
+The data-informed prior is a form of **empirical Bayes**: the prior
+hyperparameters (the per-gene centers $\log \hat{\mu}_g$) are estimated from
+the data. This is standard practice in genomics---DESeq2 estimates dispersion
+priors from marginal gene-level statistics, edgeR computes a common dispersion
+from data, and limma-voom learns the mean-variance relationship empirically.
+
+The key requirement for empirical Bayes to be valid is that the prior should be
+estimated from summary statistics that are approximately sufficient for the
+hyperparameters and approximately independent of the gene-level parameters
+being estimated. In our case, the anchor $\hat{\mu}_g$ is derived from the
+sample mean, which is a sufficient statistic for $\mu_g$ in the negative
+binomial family (conditional on the overdispersion). The full likelihood
+constrains the posterior through the complete count distribution (all moments),
+so the prior center provides a starting point that the model refines using
+overdispersion information. There is no circularity: we use the first moment
+(mean) to center the prior, and the likelihood uses the full distribution
+(including higher moments) to determine the posterior.
+
+### Gene subsetting
+
+When the model is fitted on a subset of genes (e.g., the 2,000 most variable),
+the anchor $\hat{\mu}_g$ is computed from the observed means of the selected
+genes, and $\bar{\nu}$ should be adjusted as described in
+@sec-cap-gene-subset. When fitting the full transcriptome, no adjustment is
+needed.
+
+## Implied prior on $r_g$ {#sec-mean-implied-r}
+
+The mean anchor constrains $\mu_g$ but not $\phi_g$ (or $p_g$). Since the
+dispersion parameter $r_g$ depends on both, the anchor has different
+implications for each parameterization.
+
+### Mean-odds parameterization
+
+In the mean-odds parameterization, $r_g = \mu_g \cdot \phi$. With $\mu_g$
+anchored at $\hat{\mu}_g$, the dispersion becomes
+
+$$
+r_g \approx \hat{\mu}_g \cdot \phi,
+$${#eq-mean-r-meanodds}
+
+and is determined entirely by $\phi$ (scalar or gene-specific $\phi_g$). The
+mean and overdispersion are now cleanly separated: $\mu_g$ controls the mean,
+$\phi$ controls the shape. There is no residual degeneracy.
+
+### Mean-probability parameterization
+
+In the mean-probability parameterization, $r_g = \mu_g \cdot (1 - p) / p$.
+With $\mu_g$ anchored:
+
+$$
+r_g \approx \hat{\mu}_g \cdot \frac{1 - p}{p},
+$${#eq-mean-r-meanprob}
+
+and $r_g$ is again determined by the single remaining free parameter $p$.
+
+### Canonical parameterization
+
+In the canonical parameterization, the gene-specific parameter is $r_g$
+directly. The mean is $\mu_g = r_g \cdot (1 - p) / p$ (or equivalently
+$r_g / \phi$ in the odds formulation). Anchoring the mean implies
+
+$$
+r_g \approx \hat{\mu}_g \cdot \frac{p}{1 - p} = \frac{\hat{\mu}_g}{\phi},
+$${#eq-mean-r-canonical}
+
+which constrains $r_g$ given $\phi$ (or $p$). In this parameterization, the
+anchor is applied to $r_g$ directly, with $\hat{r}_g = \hat{\mu}_g / \phi_0$
+for some reference $\phi_0$ or equivalently as a constraint on the product
+$r_g \cdot \phi$.
+
+## Why this fixes the hierarchical $\phi_g$ failure {#sec-mean-fixes-hier-phi}
+
+With the mean anchor in place, the $(\mu_g, \phi_g)$ degeneracy is broken.
+To see this explicitly, consider the mean-odds parameterization with
+gene-specific $\phi_g$ from @sec-hierarchical-p.
+
+**Without the anchor**: the model has $2G$ free parameters ($\mu_g$ and
+$\phi_g$ for each gene). The likelihood constrains $G$ equations (one mean
+per gene) and $G$ variance conditions (one variance-to-mean ratio per gene).
+In principle, this system is determined. In practice, the variance conditions
+are noisy and the optimizer finds broad ridges in the $(\mu_g, \phi_g)$
+space for each gene, creating $G$ independent degeneracy manifolds.
+
+**With the anchor**: the prior on $\mu_g$ effectively fixes $G$ parameters
+(up to the slack $\sigma_\mu$). The remaining $G$ free parameters ($\phi_g$)
+are constrained by the $G$ variance conditions. The hierarchical prior on
+$\phi_g$ provides cross-gene regularization, pulling genes with similar
+overdispersion toward a common value. With only one free parameter per gene
+($\phi_g$), the optimizer has a well-defined target.
+
+Concretely, the ELBO gradient with respect to $\phi_g$ now receives
+unambiguous signal: any change in $\phi_g$ changes the overdispersion
+(and hence the likelihood) without being compensated by a change in $\mu_g$
+(which is held near $\hat{\mu}_g$ by the prior). The banana-shaped ridges
+in $(\mu_g, \phi_g)$ space are replaced by well-defined optima along the
+$\phi_g$ axis.
+
+In the canonical parameterization, the situation is analogous: the mean
+anchor constrains $r_g \phi$ (or equivalently $r_g (1-p)/p$), so that
+changes in $p_g$ directly affect the likelihood through the overdispersion
+without being offset by compensating changes in $r_g$.
+
+## Mixture models {#sec-mean-mixture}
+
+### The marginal mean
+
+For a $K$-component mixture model (see @sec-mixture-weights-svi), the
+expected observed count for gene $g$ in cell $c$, marginalized over the
+component assignment, is
+
+$$
+\langle u_{gc} \rangle = \sum_{k=1}^K \gamma_{ck} \cdot \mu_g^{(k)} \cdot
+\nu_c,
+$${#eq-mean-mixture-expected}
+
+where $\gamma_{ck}$ is the responsibility (posterior probability that cell $c$
+belongs to component $k$) and $\mu_g^{(k)}$ is the component-specific
+biological mean for gene $g$.
+
+The sample-wide mean for gene $g$ converges to the **marginal mean**:
+
+$$
+\bar{u}_g \;\xrightarrow{C \to \infty}\; \bar{\nu} \sum_{k=1}^K
+\pi_k \, \mu_g^{(k)},
+$${#eq-mean-mixture-convergence}
+
+where $\pi_k$ are the mixing weights. Therefore, the simple anchor
+
+$$
+\hat{\mu}_g = \frac{\bar{u}_g}{\bar{\nu}}
+$${#eq-mean-mixture-anchor}
+
+estimates the population-averaged mean $\sum_k \pi_k \mu_g^{(k)}$, not any
+single component's mean.
+
+### Where the anchor targets in the hierarchical structure
+
+In mixture models, the existing hierarchical mu structure (from
+@sec-hdata-hierarchical-mu) decomposes the mean into a population level and
+per-component deviations:
+
+$$
+\log(\mu_g^{(k)}) = \log(\mu_g) + \tau_\mu \cdot z_{g,k},
+\qquad z_{g,k} \sim \mathcal{N}(0, 1),
+$${#eq-mean-mixture-hierarchy}
+
+where $\mu_g$ is the population-level parameter and $\tau_\mu$ controls the
+magnitude of per-component deviations. The data-informed anchor targets this
+**population-level** $\mu_g$:
+
+$$
+\log(\mu_g) \sim \mathcal{N}\!\left(\log(\hat{\mu}_g),
+\; \sigma_\mu^2\right).
+$${#eq-mean-mixture-prior}
+
+This is the correct level at which to anchor. The population parameter $\mu_g$
+represents the "average" expression across components, and the per-component
+deviations $\mu_g^{(k)}$ are learned through the hierarchical shrinkage
+governed by $\tau_\mu$. The anchor constrains the overall scale while leaving
+component-specific variation free.
+
+### Jensen's inequality and the log-normal bias
+
+There is a subtle bias arising from the log-normal structure of the hierarchy.
+The marginal arithmetic mean across components is
+
+$$
+\sum_{k=1}^K \pi_k \, \mu_g^{(k)} =
+\mu_g \sum_{k=1}^K \pi_k \exp(\tau_\mu \, z_{g,k}).
+$${#eq-mean-mixture-jensen-lhs}
+
+By Jensen's inequality, since $\exp(\cdot)$ is convex,
+
+$$
+\sum_{k=1}^K \pi_k \exp(\tau_\mu \, z_{g,k}) \geq
+\exp\!\left(\tau_\mu \sum_{k=1}^K \pi_k \, z_{g,k}\right).
+$${#eq-mean-mixture-jensen}
+
+More precisely, the expected value of $\exp(\tau_\mu z_{g,k})$ when
+$z_{g,k} \sim \mathcal{N}(0, 1)$ is $\exp(\tau_\mu^2 / 2)$. This means the
+marginal arithmetic mean exceeds the population parameter $\mu_g$ by a factor
+of approximately $\exp(\tau_\mu^2 / 2)$:
+
+$$
+\left\langle \sum_{k=1}^K \pi_k \, \mu_g^{(k)} \right\rangle \approx
+\mu_g \cdot \exp\!\left(\frac{\tau_\mu^2}{2}\right).
+$${#eq-mean-mixture-bias}
+
+For the typical regime where the hierarchical prior does its job ($\tau_\mu$
+small), this bias is negligible:
+
+- $\tau_\mu = 0.1$: bias factor $\approx \exp(0.005) = 1.005$ (0.5\%)
+- $\tau_\mu = 0.3$: bias factor $\approx \exp(0.045) = 1.046$ (4.6\%)
+- $\tau_\mu = 0.5$: bias factor $\approx \exp(0.125) = 1.133$ (13.3\%)
+
+For small to moderate $\tau_\mu$, the bias is well within the tolerance
+provided by $\sigma_\mu$. For large $\tau_\mu$ (which indicates genuinely
+different expression across components), the bias represents a mild
+conservatism: the population parameter $\mu_g$ is slightly below the marginal
+mean, which is absorbed by the component-level deviations.
+
+If desired, the bias can be corrected by adjusting the anchor:
+
+$$
+\hat{\mu}_g^{\text{corrected}} = \frac{\bar{u}_g}{\bar{\nu}} \cdot
+\exp\!\left(-\frac{\tau_\mu^2}{2}\right),
+$${#eq-mean-mixture-bias-correction}
+
+but since $\tau_\mu$ is itself a learned parameter, this correction is
+typically unnecessary---the model absorbs the small shift into the
+hierarchical structure.
+
+### Independence from mixing weight estimation
+
+A notable property of the anchor computation is that it is **completely
+independent of the mixing weights**. The sample mean $\bar{u}_g$ is a raw data
+average over all cells, with no reference to component assignments,
+responsibilities, or mixing weights. This is important in light of the mixing
+weight non-identifiability discussed in @sec-mixture-weights-svi: while the SVI
+mixing weights can drift to arbitrary values on the flat ELBO landscape, the
+anchor $\hat{\mu}_g = \bar{u}_g / \bar{\nu}$ remains well-defined and
+correctly determined.
+
+This immunity to the mixing weight pathology is a strength of the approach.
+The mean anchor constrains the one quantity that is unambiguously
+well-determined by the data (the marginal gene mean), and delegates the
+component-level decomposition to the hierarchical structure---which is itself
+regularized by the shrinkage prior on $\tau_\mu$.
+
+## Multi-dataset extension {#sec-mean-multi-dataset}
+
+### Population-level anchor
+
+In the multi-dataset hierarchical model from @sec-hierarchical-datasets, the
+population-level mean $\mu_g$ is shared across datasets, with dataset-specific
+deviations governed by $\tau_\mu$. The mean anchor targets this population
+level:
+
+$$
+\hat{\mu}_g^{\text{pooled}} = \frac{\bar{u}_g^{\text{pooled}} + \epsilon}{
+    \bar{\nu}^{\text{pooled}}
+},
+$${#eq-mean-multi-anchor}
+
+where $\bar{u}_g^{\text{pooled}}$ is the sample mean of gene $g$ across all
+cells from all datasets, and $\bar{\nu}^{\text{pooled}}$ is the average
+capture probability across all cells. The prior is then
+
+$$
+\log(\mu_g) \sim \mathcal{N}\!\left(
+    \log(\hat{\mu}_g^{\text{pooled}}), \; \sigma_\mu^2
+\right).
+$${#eq-mean-multi-prior}
+
+Dataset-specific means $\mu_g^{(d)}$ deviate from this population baseline
+through the hierarchical structure:
+
+$$
+\log(\mu_g^{(d)}) = \log(\mu_g) + \tau_\mu \cdot z_{g,d},
+\qquad z_{g,d} \sim \mathcal{N}(0, 1).
+$${#eq-mean-multi-deviation}
+
+The anchor pins the shared baseline; genuine biological differences between
+datasets are captured by the $\tau_\mu$ hierarchy.
+
+### Cross-dataset comparability
+
+A key benefit of the population-level anchor in the multi-dataset setting is
+that it ensures **cross-dataset comparability** of the inferred parameters.
+When two datasets share the same anchor (because they share the same biology),
+their $\mu_g$ estimates are placed on a common scale. Differences in library
+size or capture efficiency between datasets are correctly attributed to
+$\nu_c$ (via the capture prior) and $p^{(d)}$ (via the dataset-specific scalar
+$p$), rather than being absorbed into $\mu_g$.
+
+This addresses the parameter degeneracy described in @sec-hdata-motivation:
+with $\mu_g$ anchored, the systematic difference in total counts between
+datasets must be explained by the technical parameters $\nu_c$ and $p^{(d)}$,
+which is where it belongs.
+
+### Multi-dataset mixtures
+
+For multi-dataset mixture models, the anchor targets the population-level
+$\mu_g$ that is shared across both datasets and components. The hierarchical
+structure provides two layers of deviation: dataset-level (governed by
+$\tau_\mu^{\text{dataset}}$) and component-level (governed by
+$\tau_\mu^{\text{component}}$). The anchor constrains the top-level parameter,
+and the hierarchies partition the variation into its dataset and component
+contributions.
+
+## Connection to standard normalization {#sec-mean-normalization}
+
+The data-informed prior on $\mu_g$ has a close relationship to the
+normalization methods widely used in single-cell and bulk RNA-seq analysis.
+
+### Size-factor normalization
+
+Methods such as scran, DESeq2, and edgeR compute **size factors** for each
+cell (or sample) and divide the observed counts by these factors to obtain
+"normalized" counts. In our framework, the size factor for cell $c$ is
+essentially $\nu_c$ (the capture probability), and the "normalized" count
+for gene $g$ in cell $c$ is
+
+$$
+\tilde{u}_{gc} = \frac{u_{gc}}{\nu_c} \approx \mu_g + \text{noise}.
+$${#eq-mean-normalized-count}
+
+The average normalized count across cells is then $\bar{\tilde{u}}_g \approx
+\mu_g$---precisely our anchor $\hat{\mu}_g$.
+
+The difference between our approach and standard normalization is threefold:
+
+1. **Within the probabilistic model.** Standard normalization is a
+   preprocessing step that operates outside the likelihood. Our anchor
+   operates within the model as a prior, preserving the full probabilistic
+   framework including uncertainty quantification and the nonlinear coupling
+   between capture and expression.
+
+2. **Adaptive tightness.** Standard normalization fixes the "normalized mean"
+   as a point estimate. Our prior centers on this value but allows deviation
+   through $\sigma_\mu$, letting the model refine $\mu_g$ using the full
+   count distribution (not just the mean).
+
+3. **Compatible with hierarchical structure.** Standard normalization cannot
+   account for hierarchical relationships between datasets, components, or
+   conditions. Our anchor integrates naturally with the hierarchical priors
+   of @sec-hierarchical-datasets, providing a shared baseline while allowing
+   structured deviations.
+
+### Empirical Bayes in genomics
+
+The use of data-derived priors is a hallmark of successful genomics methods.
+DESeq2's dispersion shrinkage estimates a prior on the overdispersion from the
+marginal distribution of gene-level dispersions. edgeR's empirical Bayes
+approach estimates a common dispersion from the data. limma-voom learns the
+mean-variance relationship empirically. In each case, the data are used to set
+prior hyperparameters that regularize gene-level estimates.
+
+Our mean anchor follows the same philosophy: the sample mean provides a
+precise, data-derived center for the prior on $\mu_g$. The width $\sigma_\mu$
+controls the degree of shrinkage, just as the prior variance controls
+shrinkage in the methods above.
+
+## Deterministic anchoring {#sec-mean-deterministic}
+
+### The deterministic limit
+
+Setting $\sigma_\mu \to 0$ in @eq-mean-prior-def gives a delta-function prior:
+
+$$
+\mu_g = \hat{\mu}_g = \frac{\bar{u}_g + \epsilon}{\bar{\nu}}
+\quad \text{(deterministic)}.
+$${#eq-mean-deterministic}
+
+In this limit, the biological mean expression is no longer a latent
+variable---it is a **known function of the data**. The model has zero degrees
+of freedom in $\mu_g$: every gene's mean is pinned by its sample mean and
+the average capture probability. Only the overdispersion parameters ($\phi$ or
+$\phi_g$) remain to be inferred.
+
+### Analogy with deterministic capture anchoring
+
+This parallels the deterministic limit of the capture prior
+(@sec-cap-deterministic), where $\sigma_M \to 0$ fixes $\nu_c = L_c / M_0$.
+In both cases, the deterministic limit completely eliminates the corresponding
+degeneracy by removing the latent variable from the model. The justification
+in both cases is a law of large numbers argument: the stochastic variation in
+the anchored quantity is negligible compared to the systematic signal.
+
+### When to use the deterministic limit
+
+The deterministic limit is appropriate when:
+
+- The dataset has many cells ($C \gtrsim 1{,}000$) and the sample means are
+  precise.
+- The goal is to infer overdispersion (e.g., for differential variability
+  analysis) rather than to refine mean estimates.
+- Computational speed is important: removing $G$ latent variables from the
+  model can substantially accelerate inference.
+
+For most applications, the stochastic prior with moderate
+$\sigma_\mu \approx 0.3$ is recommended, as it preserves the model's ability
+to refine $\mu_g$ while providing strong regularization.
+
+## Mathematical summary {#sec-mean-summary}
+
+We collect the key results of this section.
+
+**Data-informed anchor.** The empirical estimate of the biological mean:
+
+$$
+\boxed{
+\hat{\mu}_g = \frac{\bar{u}_g + \epsilon}{\bar{\nu}},
+\qquad \bar{\nu} = \frac{1}{C} \sum_{c=1}^C \nu_c \approx
+\frac{1}{C} \sum_{c=1}^C \frac{L_c}{M_0}.
+}
+$${#eq-mean-summary-anchor}
+
+**Data-informed prior.** The log-normal prior centered on the anchor:
+
+$$
+\boxed{
+\log(\mu_g) \sim \mathcal{N}\!\left(\log(\hat{\mu}_g),
+\; \sigma_\mu^2\right).
+}
+$${#eq-mean-summary-prior}
+
+**Concentration bound.** The coefficient of variation of the sample mean:
+
+$$
+\boxed{
+\text{CV}(\bar{u}_g) \approx \frac{1}{\sqrt{C}}
+\sqrt{\frac{1}{\mu_g \bar{\nu}} + \frac{1}{r_g}}.
+}
+$${#eq-mean-summary-cv}
+
+Typical values: $1$--$5\%$ for $C = 1{,}000$; sub-percent for $C = 5{,}000$.
+
+**Deterministic limit** ($\sigma_\mu \to 0$):
+
+$$
+\boxed{
+\mu_g = \hat{\mu}_g = \frac{\bar{u}_g + \epsilon}{\bar{\nu}}.
+}
+$${#eq-mean-summary-deterministic}
+
+**Mixture model anchor.** For $K$-component mixtures with hierarchical mu:
+
+$$
+\boxed{
+\log(\mu_g) \sim \mathcal{N}\!\left(\log(\hat{\mu}_g),
+\; \sigma_\mu^2\right), \qquad
+\log(\mu_g^{(k)}) = \log(\mu_g) + \tau_\mu \cdot z_{g,k}.
+}
+$${#eq-mean-summary-mixture}
+
+The anchor targets the population-level $\mu_g$; per-component deviations are
+governed by $\tau_\mu$. The anchor is independent of mixing weights.
+
+**Multi-dataset anchor.** For $D$-dataset hierarchical model:
+
+$$
+\boxed{
+\log(\mu_g) \sim \mathcal{N}\!\left(
+    \log(\hat{\mu}_g^{\text{pooled}}), \; \sigma_\mu^2
+\right), \qquad
+\log(\mu_g^{(d)}) = \log(\mu_g) + \tau_\mu \cdot z_{g,d}.
+}
+$${#eq-mean-summary-multi}
+
+**Regularization stack.** The complete three-layer regularization:
+
+$$
+\boxed{
+\begin{aligned}
+&\text{Layer 1 (capture):} &&
+\nu_c \approx L_c / M_0
+&& \text{(LLN over genes)} \\
+&\text{Layer 2 (mean):} &&
+\mu_g \approx \bar{u}_g / \bar{\nu}
+&& \text{(LLN over cells)} \\
+&\text{Layer 3 (overdispersion):} &&
+\phi_g \sim \text{Hierarchical prior}
+&& \text{(shrinkage across genes)}
+\end{aligned}
+}
+$${#eq-mean-summary-stack}
+
+Each layer constrains one factor in the multiplicative decomposition of the
+expected count $\langle u_{gc} \rangle = \mu_g \cdot \nu_c$, with the
+overdispersion parameter $\phi_g$ (or $p_g$) regularized by the hierarchical
+prior across genes.

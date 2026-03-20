@@ -99,6 +99,8 @@ class ModelConfigBuilder:
         self._neg_a: float = 1.0
         self._neg_tau: float = 1.0
         self._mu_eta_prior: str = "none"
+        self._mu_mean_anchor: bool = False
+        self._mu_mean_anchor_sigma: float = 0.3
         self._overdispersion: str = "none"
         self._overdispersion_prior: str = "horseshoe"
         self._n_components: Optional[int] = None
@@ -254,6 +256,32 @@ class ModelConfigBuilder:
             self._priors["eta_capture"] = eta_capture
         if mu_eta is not None:
             self._priors["mu_eta"] = mu_eta
+        return self
+
+    # --------------------------------------------------------------------------
+
+    def with_mean_anchor(
+        self,
+        sigma: float = 0.3,
+    ) -> "ModelConfigBuilder":
+        """Enable data-informed mean anchoring prior on mu_g.
+
+        Anchors the per-gene biological mean expression to the observed
+        sample mean scaled by the average capture probability. Resolves
+        the mu-phi degeneracy in the negative binomial distribution.
+
+        Automatically enables unconstrained parameterization.
+
+        Parameters
+        ----------
+        sigma : float, default=0.3
+            Log-scale standard deviation for the anchoring prior.
+            Controls tightness: 0.1-0.2 = tight, 0.3-0.5 = moderate,
+            >1.0 = weak.
+        """
+        self._mu_mean_anchor = True
+        self._mu_mean_anchor_sigma = sigma
+        self._unconstrained = True
         return self
 
     # --------------------------------------------------------------------------
@@ -672,6 +700,8 @@ class ModelConfigBuilder:
             neg_a=self._neg_a,
             neg_tau=self._neg_tau,
             mu_eta_prior=self._mu_eta_prior,
+            mu_mean_anchor=self._mu_mean_anchor,
+            mu_mean_anchor_sigma=self._mu_mean_anchor_sigma,
             overdispersion=self._overdispersion,
             overdispersion_prior=self._overdispersion_prior,
             n_components=self._n_components,
