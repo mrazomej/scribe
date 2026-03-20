@@ -42,6 +42,10 @@ from viz_utils.ppc_rendering import (
     get_ppc_render_options,
     should_use_line_mode,
 )
+from viz_utils.mixture_ppc import (
+    _resolve_label_map_for_composition,
+    _resolve_weight_fractions_for_composition,
+)
 
 
 def _make_mcmc_results_for_viz():
@@ -679,3 +683,42 @@ def test_plot_mu_pairwise_saves_output_for_multi_dataset(monkeypatch, tmp_path):
 
     assert output_path is not None
     assert output_path.endswith("_mu_pairwise.png")
+
+
+def test_mixture_composition_uses_trained_label_map_before_alphabetical_fallback():
+    """Composition mapping should reuse the fit-time label map when present."""
+
+    class _FakeResults:
+        """Expose a non-alphabetical fit-time label map for regression coverage."""
+
+        _label_map = {"Endothelial": 0, "Epithelial": 1}
+
+    annotations = np.array(["Epithelial", "Endothelial", "Epithelial"])
+    resolved = _resolve_label_map_for_composition(
+        results=_FakeResults(),
+        cell_labels=annotations,
+        cfg={},
+    )
+    assert resolved["Endothelial"] == 0
+    assert resolved["Epithelial"] == 1
+
+
+def test_mixture_composition_aggregates_dataset_specific_weights():
+    """Dataset-specific (D, K) weights should aggregate by dataset cell fractions."""
+
+    # Dataset 0 has two cells and dataset 1 has one cell.
+    dataset_indices = np.array([0, 0, 1], dtype=int)
+    # Use clearly distinct per-dataset mixtures to ensure weighted averaging.
+    mixing_weights = np.array(
+        [
+            [1.0, 0.0],
+            [0.0, 1.0],
+        ],
+        dtype=float,
+    )
+    resolved = _resolve_weight_fractions_for_composition(
+        mixing_weights=mixing_weights,
+        n_components=2,
+        dataset_indices=dataset_indices,
+    )
+    np.testing.assert_allclose(resolved, np.array([2.0 / 3.0, 1.0 / 3.0]))
