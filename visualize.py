@@ -786,18 +786,53 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
     cell_labels = None
     if annotation_key is not None:
         if isinstance(annotation_key, str):
-            cell_labels = np.array(adata.obs[annotation_key].astype(str))
+            # Preserve missing values instead of stringifying to "nan" so
+            # visualization semantics match fit-time annotation handling.
+            ann = adata.obs[annotation_key]
+            if hasattr(ann, "cat"):
+                ann = ann.astype(object)
+            cell_labels = np.array(ann, dtype=object)
         else:
-            # List of columns → composite labels joined with "__"
+            # Build composite labels using fit-time semantics: a cell is
+            # unlabeled when any annotation column is missing.
             annotation_key = list(annotation_key)
-            parts = [adata.obs[k].astype(str) for k in annotation_key]
-            combined = parts[0]
-            for part in parts[1:]:
-                combined = combined + "__" + part
-            cell_labels = np.array(combined)
+            cols = []
+            for key in annotation_key:
+                col = adata.obs[key]
+                if hasattr(col, "cat"):
+                    col = col.astype(object)
+                cols.append(col)
+            labeled_mask = np.ones(adata.n_obs, dtype=bool)
+            for col in cols:
+                labeled_mask &= ~np.asarray(col.isna())
+            combined = np.full(adata.n_obs, np.nan, dtype=object)
+            if np.any(labeled_mask):
+                parts = [
+                    np.asarray(col[labeled_mask].astype(str), dtype=object)
+                    for col in cols
+                ]
+                merged = parts[0]
+                for part in parts[1:]:
+                    merged = merged + "__" + part
+                combined[labeled_mask] = merged
+            cell_labels = combined
+        labels_arr = np.asarray(cell_labels, dtype=object)
+        valid_mask = np.array(
+            [
+                not (
+                    value is None
+                    or (isinstance(value, (float, np.floating)) and np.isnan(value))
+                )
+                for value in labels_arr
+            ],
+            dtype=bool,
+        )
+        n_unique_labeled = (
+            len(np.unique(labels_arr[valid_mask])) if np.any(valid_mask) else 0
+        )
         console.print(
             f"[dim]Annotation key:[/dim] [cyan]{annotation_key}[/cyan] "
-            f"({len(np.unique(cell_labels))} unique labels)"
+            f"({n_unique_labeled} unique non-null labels)"
         )
 
     # ======================================================================

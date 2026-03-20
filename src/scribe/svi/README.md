@@ -199,6 +199,11 @@ results = ScribeSVIResults.from_anndata(
   When present, `get_dataset(d)` uses this to set the correct `n_cells` on the
   returned single-dataset view so that downstream PPC generation works with
   the right number of cells.
+- **`_label_map`**: Optional mapping from annotation label string to component
+  index, populated when fitting with `annotation_key`.
+- **`_component_mapping`**: Optional multi-dataset component metadata
+  (shared/exclusive structure) populated when fitting with
+  `annotation_key + dataset_key`.
 - **`obs`**, **`var`**, **`uns`**: Metadata from AnnData objects
 
 #### Key Analysis Methods
@@ -397,6 +402,11 @@ transparent — no extra arguments are needed.  For jointly hierarchical models
 (fit with `hierarchical_dataset_*` or `horseshoe_dataset` flags), the standard
 `Predictive` path is used directly since the guide was built for the
 multi-dataset structure.
+
+When `annotation_key` is used during fitting, `get_dataset(i)` also preserves
+the fit-time `_label_map` and `_component_mapping` metadata. This guarantees
+that per-dataset visualization and component lookups reuse the original
+label-to-component assignment rather than reconstructing a dataset-local order.
 
 **Amortized Capture Probability and PPC:**
 

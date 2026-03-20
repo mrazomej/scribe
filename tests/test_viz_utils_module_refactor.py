@@ -46,6 +46,9 @@ from viz_utils.mixture_ppc import (
     _resolve_label_map_for_composition,
     _resolve_weight_fractions_for_composition,
 )
+from viz_utils.annotation_ppc import (
+    _resolve_label_map as _resolve_annotation_label_map,
+)
 
 
 def _make_mcmc_results_for_viz():
@@ -444,7 +447,10 @@ def test_plot_bio_ppc_joint_gate_results_no_gate_loc_error(tmp_path):
         cfg=cfg,
         viz_cfg=viz_cfg,
     )
-    assert any(path.name.endswith("_bio_ppc.png") for path in tmp_path.iterdir())
+    assert any(
+        path.name.endswith("_bio_ppc.png") for path in tmp_path.iterdir()
+    )
+
 
 def test_plot_capture_anchor_saves_output(monkeypatch, tmp_path):
     """Capture-anchor plot should write an output file with expected suffix.
@@ -722,3 +728,36 @@ def test_mixture_composition_aggregates_dataset_specific_weights():
         dataset_indices=dataset_indices,
     )
     np.testing.assert_allclose(resolved, np.array([2.0 / 3.0, 1.0 / 3.0]))
+
+
+def test_mixture_composition_fallback_map_ignores_missing_labels():
+    """Fallback composition mapping should exclude NaN labels."""
+    annotations = np.array(
+        ["Epithelial", np.nan, "Endothelial", None], dtype=object
+    )
+    resolved = _resolve_label_map_for_composition(
+        results=object(),
+        cell_labels=annotations,
+        cfg={},
+    )
+    assert "nan" not in resolved
+    assert "None" not in resolved
+    assert set(resolved.keys()) == {"Endothelial", "Epithelial"}
+
+
+def test_annotation_ppc_uses_trained_label_map_before_fallback():
+    """Annotation PPC mapping should prioritize fit-time metadata."""
+
+    class _FakeResults:
+        """Expose fit-time label mapping with non-alphabetical indices."""
+
+        _label_map = {"Endothelial": 0, "Epithelial": 1}
+
+    annotations = np.array(["Epithelial", "Endothelial", "Epithelial"])
+    resolved = _resolve_annotation_label_map(
+        results=_FakeResults(),
+        cell_labels=annotations,
+        component_order=None,
+    )
+    assert resolved["Endothelial"] == 0
+    assert resolved["Epithelial"] == 1

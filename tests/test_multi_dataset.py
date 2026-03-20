@@ -465,6 +465,20 @@ class TestSVIDatasetMixin:
         assert ds0.model_config.n_datasets is None
         assert ds0.params["log_r_loc"].shape == (10,)
 
+    def test_get_dataset_preserves_label_and_component_mapping(
+        self, multi_dataset_svi_results
+    ):
+        """Dataset subsetting should keep fit-time label/component metadata."""
+        results = multi_dataset_svi_results
+        results._label_map = {"Endothelial": 0, "Epithelial": 1}
+        results._component_mapping = types.SimpleNamespace(
+            component_order=["Endothelial", "Epithelial"]
+        )
+
+        ds0 = results.get_dataset(0)
+        assert ds0._label_map == results._label_map
+        assert ds0._component_mapping is results._component_mapping
+
 
 # ==============================================================================
 # _slice_param_for_dataset broadcasting

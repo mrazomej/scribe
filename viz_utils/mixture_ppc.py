@@ -873,7 +873,9 @@ def plot_mixture_composition(
 
         # Compare observed annotation proportions against model-predicted
         # proportions by mapping each annotation to its configured component.
-        annotations = np.asarray(cell_labels).astype(str)
+        # Keep raw annotation values so missing labels stay missing instead of
+        # becoming the literal string "nan" during visualization.
+        annotations = np.asarray(cell_labels, dtype=object)
         label_map = _resolve_label_map_for_composition(
             results=results,
             cell_labels=annotations,
