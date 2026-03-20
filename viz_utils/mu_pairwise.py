@@ -196,6 +196,18 @@ def plot_mu_pairwise(
     )
 
     mu_log = np.log10(np.clip(mu_dataset, a_min=0.0, a_max=None) + pseudocount)
+    # Pre-compute per-dataset axis limits so all panels in a column/row align.
+    # This keeps the corner grid visually tight and avoids panel drift caused by
+    # per-panel autoscaling.
+    axis_limits = []
+    for dataset_idx in range(n_datasets):
+        values = mu_log[dataset_idx]
+        lo = float(np.min(values))
+        hi = float(np.max(values))
+        margin = (hi - lo) * 0.05
+        if margin <= 0:
+            margin = 0.5
+        axis_limits.append((lo - margin, hi + margin))
 
     fig, axes = plt.subplots(
         n_datasets,
@@ -223,11 +235,13 @@ def plot_mu_pairwise(
                     edgecolor="white",
                     linewidth=0.4,
                 )
-                axis.set_title(labels[row_idx], fontsize=9)
+                axis.set_xlim(*axis_limits[col_idx])
+                axis.set_title(
+                    rf"{labels[row_idx]}  ($\log_{{10}}(\mu + {pseudocount:g})$)",
+                    fontsize=9,
+                )
                 axis.set_yticks([])
-                continue
-
-            if row_idx > col_idx:
+            elif row_idx > col_idx:
                 axis.scatter(
                     x_values,
                     y_values,
@@ -237,35 +251,66 @@ def plot_mu_pairwise(
                     edgecolors="none",
                     rasterized=True,
                 )
-                min_lim = float(min(x_values.min(), y_values.min()))
-                max_lim = float(max(x_values.max(), y_values.max()))
-                margin = (max_lim - min_lim) * 0.05
-                if margin <= 0:
-                    margin = 0.5
-                lo = min_lim - margin
-                hi = max_lim + margin
-                axis.plot([lo, hi], [lo, hi], "--", color="0.3", lw=1.0)
-                axis.set_xlim(lo, hi)
-                axis.set_ylim(lo, hi)
-                axis.set_aspect("equal", adjustable="box")
+                x_lo, x_hi = axis_limits[col_idx]
+                y_lo, y_hi = axis_limits[row_idx]
+                axis.set_xlim(x_lo, x_hi)
+                axis.set_ylim(y_lo, y_hi)
+                # Identity line is drawn in the plotted coordinate system so
+                # each pairwise panel is directly comparable.
+                line_lo = min(x_lo, y_lo)
+                line_hi = max(x_hi, y_hi)
+                axis.plot(
+                    [line_lo, line_hi],
+                    [line_lo, line_hi],
+                    "--",
+                    color="0.3",
+                    lw=1.0,
+                )
             else:
                 axis.axis("off")
+                continue
 
-            if row_idx == n_datasets - 1 and row_idx > col_idx:
-                axis.set_xlabel(labels[col_idx], fontsize=8)
+            # Only the bottom row exposes x-axis ticks/labels.
+            if row_idx == n_datasets - 1:
+                axis.set_xlabel(
+                    rf"{labels[col_idx]}  ($\log_{{10}}(\mu + {pseudocount:g})$)",
+                    fontsize=8,
+                )
             else:
                 axis.set_xticklabels([])
+                axis.tick_params(axis="x", which="both", bottom=False)
+
+            # Only the first column of lower-triangle panels exposes y labels.
             if col_idx == 0 and row_idx > col_idx:
-                axis.set_ylabel(labels[row_idx], fontsize=8)
+                axis.set_ylabel(
+                    rf"{labels[row_idx]}  ($\log_{{10}}(\mu + {pseudocount:g})$)",
+                    fontsize=8,
+                )
             else:
                 axis.set_yticklabels([])
+                axis.tick_params(axis="y", which="both", left=False)
+
+            # Diagonal panels should not inherit x ticks unless they are in the
+            # bottom row; this avoids tick clutter above pairwise scatter.
+            if row_idx == col_idx and row_idx != n_datasets - 1:
+                axis.set_xticklabels([])
+                axis.tick_params(axis="x", which="both", bottom=False)
 
     fig.suptitle(
         r"Dataset Pairwise Mean Comparison ($\log_{10}(\mu + c)$)",
         fontsize=11,
         y=1.01,
     )
-    plt.tight_layout()
+    # Keep panel spacing very tight so the corner layout reads as a single
+    # matrix rather than isolated subplots.
+    fig.subplots_adjust(
+        left=0.08,
+        right=0.99,
+        bottom=0.08,
+        top=0.92,
+        wspace=0.03,
+        hspace=0.03,
+    )
 
     output_format = viz_cfg.get("format", "png")
     config_vals = _get_config_values(cfg, results=results)
