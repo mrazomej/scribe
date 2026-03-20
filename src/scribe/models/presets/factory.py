@@ -38,6 +38,7 @@ from ..builders.parameter_specs import (
     AnchoredNormalSpec,
     DatasetHierarchicalPositiveNormalSpec,
     DatasetHierarchicalSigmoidNormalSpec,
+    DirichletSpec,
     PositiveNormalSpec,
     GaussianLatentSpec,
     GammaSpec,
@@ -767,6 +768,50 @@ def create_model(
             priors=merged_priors or None,
             guides=merged_guides or None,
         )
+
+    # ==========================================================================
+    # Step 6.5: Ensure mixing_weights spec is explicit
+    # ==========================================================================
+    # An explicit spec keeps dataset slicing/indexing metadata available in
+    # downstream results (e.g., get_dataset()) and lets multi-dataset mixture
+    # models promote mixing weights to shape (n_datasets, n_components).
+    if (
+        model_config.n_components is not None
+        and bool(model_config.dataset_mixing_enabled)
+    ):
+        has_mixing_spec = any(s.name == "mixing_weights" for s in param_specs)
+        if not has_mixing_spec:
+            mixing_prior = (
+                getattr(model_config.priors, "__pydantic_extra__", None) or {}
+            ).get("mixing")
+            if mixing_prior is None:
+                mixing_prior_tuple = tuple([1.0] * model_config.n_components)
+            elif isinstance(mixing_prior, (list, tuple)):
+                mixing_prior_tuple = tuple(mixing_prior)
+            else:
+                mixing_prior_tuple = tuple(
+                    [float(mixing_prior)] * model_config.n_components
+                )
+            # Guard against legacy/non-positive defaults that violate
+            # Dirichlet concentration constraints.
+            if any(float(v) <= 0.0 for v in mixing_prior_tuple):
+                mixing_prior_tuple = tuple([1.0] * model_config.n_components)
+
+            _mix_guide = None
+            if guide_families is not None:
+                _mix_guide = getattr(guide_families, "mixing", None)
+
+            use_dataset_mixing = bool(model_config.dataset_mixing_enabled)
+            mixing_spec = DirichletSpec(
+                name="mixing_weights",
+                shape_dims=("n_components",) if use_dataset_mixing else (),
+                default_params=mixing_prior_tuple,
+                prior=mixing_prior_tuple,
+                guide=mixing_prior_tuple,
+                guide_family=_mix_guide,
+                is_dataset=use_dataset_mixing,
+            )
+            param_specs.append(mixing_spec)
 
     # ==========================================================================
     # Step 7: Get derived parameters from parameterization strategy

@@ -2902,10 +2902,16 @@ def sample_prior(
         is_dataset=spec.is_dataset,
     )
 
-    # For Dirichlet, concentration is a vector
-    concentration = (
-        jnp.full(shape, params[0]) if len(params) == 1 else jnp.array(params)
-    )
+    # For Dirichlet, concentration is a vector over components. When a
+    # dataset axis is active, broadcast that vector across datasets.
+    if len(params) == 1:
+        concentration = jnp.full(shape, params[0])
+    else:
+        base_concentration = jnp.array(params)
+        if shape == () or base_concentration.shape == shape:
+            concentration = base_concentration
+        else:
+            concentration = jnp.broadcast_to(base_concentration, shape)
 
     return numpyro.sample(spec.name, dist.Dirichlet(concentration))
 

@@ -15,6 +15,9 @@ provides:
 4. **Multiple Dispatch**: Type-safe routing to inference handlers
 5. **Comprehensive Documentation**: Numpy-style docstrings and examples
 
+Multi-dataset mixture configs support `dataset_mixing` (default-on when
+`n_datasets >= 2`) to choose between per-dataset and global mixing weights.
+
 ## Architecture
 
 ```

@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 import numpyro
 import pytest
+import types
 from jax import random
 
 from scribe.models.builders.parameter_specs import (
@@ -165,6 +166,8 @@ class TestModelConfigDataset:
         assert config.n_datasets is None
         assert config.mu_dataset_prior == "none"
         assert config.p_dataset_prior == "none"
+        assert config.dataset_mixing is None
+        assert config.dataset_mixing_enabled is False
 
     def test_is_multi_dataset_property(self):
         """is_multi_dataset is True only when n_datasets >= 2."""
@@ -175,6 +178,38 @@ class TestModelConfigDataset:
 
         config2 = ModelConfig(base_model="nbdm")
         assert config2.is_multi_dataset is False
+
+    def test_dataset_mixing_defaults_on_for_multi_dataset(self):
+        """dataset_mixing defaults to enabled for multi-dataset models."""
+        config = ModelConfig(
+            base_model="nbdm",
+            n_datasets=2,
+            n_components=3,
+            unconstrained=True,
+        )
+        assert config.dataset_mixing is None
+        assert config.dataset_mixing_enabled is True
+
+    def test_dataset_mixing_explicit_opt_out(self):
+        """dataset_mixing=False keeps global mixing in multi-dataset models."""
+        config = ModelConfig(
+            base_model="nbdm",
+            n_datasets=2,
+            n_components=3,
+            unconstrained=True,
+            dataset_mixing=False,
+        )
+        assert config.dataset_mixing_enabled is False
+
+    def test_dataset_mixing_requires_multi_dataset(self):
+        """dataset_mixing=True without n_datasets must fail validation."""
+        with pytest.raises(ValueError, match="dataset_mixing=True"):
+            ModelConfig(
+                base_model="nbdm",
+                n_components=3,
+                unconstrained=True,
+                dataset_mixing=True,
+            )
 
     def test_hierarchical_dataset_mu_requires_n_datasets(self):
         """mu_dataset_prior without n_datasets should raise."""
@@ -2990,6 +3025,36 @@ class TestMixtureDatasetHierarchyFactory:
         assert len(hyper_loc_specs) == 1
         assert hyper_loc_specs[0].is_mixture is True
 
+    def test_mixing_spec_is_dataset_aware_by_default(self):
+        """Factory emits dataset-aware mixing spec for multi-dataset mixtures."""
+        b = self._builder()
+        b._n_datasets = 2
+        b._n_components = 3
+        config = b.build()
+
+        _, _, specs = create_model(config, validate=False)
+        mixing_specs = [s for s in specs if s.name == "mixing_weights"]
+        assert len(mixing_specs) == 1
+        assert mixing_specs[0].is_dataset is True
+        assert mixing_specs[0].shape_dims == ("n_components",)
+
+    def test_mixing_spec_opt_out_stays_global(self):
+        """dataset_mixing=False keeps mixing_weights as one global simplex."""
+        b = self._builder()
+        b._n_datasets = 2
+        b._n_components = 3
+        b._dataset_mixing = False
+        config = b.build()
+
+        _, _, specs = create_model(config, validate=False)
+        mixing_specs = [s for s in specs if s.name == "mixing_weights"]
+        # Global mixing may be implicit (no explicit spec) or explicit (shape
+        # (K,)).
+        if mixing_specs:
+            assert len(mixing_specs) == 1
+            assert mixing_specs[0].is_dataset is False
+            assert mixing_specs[0].shape_dims == ()
+
     def test_create_model_with_shared_component_indices(self):
         """shared_component_indices flows through to hierarchical spec."""
         b = self._builder()
@@ -3283,3 +3348,122 @@ class TestComponentMatchingDE:
 
         shared = get_shared_labels(r_A, r_B)
         assert shared == ["Fibroblast", "Macrophage"]
+
+
+class TestEmpiricalMixingPerDataset:
+    """Validate empirical mixing replacement in multi-dataset models."""
+
+    def test_compute_empirical_mixing_weights_per_dataset(self):
+        """Per-dataset empirical weights should return shape (D, K)."""
+        from scribe.svi.results import ScribeSVIResults
+
+        D, K, G, N = 2, 2, 3, 4
+        ds_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        learned = jnp.array([[0.9, 0.1], [0.2, 0.8]], dtype=jnp.float32)
+        raw_log_liks = jnp.array(
+            [[3.0, 1.0], [2.0, 0.0], [0.0, 2.0], [1.0, 3.0]],
+            dtype=jnp.float32,
+        )
+        biased_log_liks = raw_log_liks + jnp.log(learned[ds_idx])
+
+        config = ModelConfig(
+            base_model="nbdm",
+            unconstrained=True,
+            n_components=K,
+            n_datasets=D,
+        )
+        results = ScribeSVIResults(
+            params={"mixing_concentrations": jnp.ones((D, K))},
+            loss_history=jnp.array([1.0]),
+            n_cells=N,
+            n_genes=G,
+            model_type="nbdm",
+            model_config=config,
+            prior_params={},
+            n_components=K,
+            _dataset_indices=ds_idx,
+            _n_cells_per_dataset=jnp.array([2, 2]),
+        )
+
+        # Patch methods so the test targets only empirical-mixing math.
+        def _fake_ll(self, counts, **kwargs):
+            return biased_log_liks
+
+        def _fake_map(self, **kwargs):
+            return {"mixing_weights": learned}
+
+        results.log_likelihood_map = types.MethodType(_fake_ll, results)
+        results.get_map = types.MethodType(_fake_map, results)
+
+        emp = results.compute_empirical_mixing_weights(
+            counts=jnp.ones((N, G)), verbose=False
+        )
+
+        assert emp["weights"].shape == (D, K)
+        assert emp["concentrations"].shape == (D, K)
+        assert emp["effective_counts"].shape == (D, K)
+        assert jnp.allclose(jnp.sum(emp["weights"], axis=1), 1.0, atol=1e-5)
+        assert jnp.allclose(
+            jnp.sum(emp["effective_counts"], axis=1),
+            jnp.array([2.0, 2.0]),
+            atol=1e-5,
+        )
+        assert emp["weights"][0, 0] > emp["weights"][0, 1]
+        assert emp["weights"][1, 1] > emp["weights"][1, 0]
+
+    def test_apply_empirical_mixing_weights_updates_dataset_tensor(self):
+        """apply_empirical_mixing_weights should write back (D, K) params."""
+        from scribe.svi.results import ScribeSVIResults
+
+        D, K, G, N = 2, 2, 3, 4
+        ds_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        learned = jnp.array([[0.8, 0.2], [0.3, 0.7]], dtype=jnp.float32)
+        raw_log_liks = jnp.array(
+            [[2.0, 0.0], [1.5, 0.0], [0.0, 1.5], [0.0, 2.0]],
+            dtype=jnp.float32,
+        )
+        biased_log_liks = raw_log_liks + jnp.log(learned[ds_idx])
+
+        config = ModelConfig(
+            base_model="nbdm",
+            unconstrained=True,
+            n_components=K,
+            n_datasets=D,
+        )
+        original_conc = jnp.full((D, K), 2.0, dtype=jnp.float32)
+        results = ScribeSVIResults(
+            params={"mixing_concentrations": original_conc},
+            loss_history=jnp.array([1.0]),
+            n_cells=N,
+            n_genes=G,
+            model_type="nbdm",
+            model_config=config,
+            prior_params={},
+            n_components=K,
+            _dataset_indices=ds_idx,
+            _n_cells_per_dataset=jnp.array([2, 2]),
+        )
+
+        def _fake_ll(self, counts, **kwargs):
+            return biased_log_liks
+
+        def _fake_map(self, **kwargs):
+            return {"mixing_weights": learned}
+
+        results.log_likelihood_map = types.MethodType(_fake_ll, results)
+        results.get_map = types.MethodType(_fake_map, results)
+
+        results.apply_empirical_mixing_weights(
+            counts=jnp.ones((N, G)), verbose=False
+        )
+
+        assert results.params["mixing_concentrations"].shape == (D, K)
+        assert not jnp.allclose(
+            results.params["mixing_concentrations"], original_conc
+        )
+        assert results._mixing_weights_replaced is True
+        assert "mixing_concentrations" in results._svi_mixing_params
+        assert results._svi_mixing_params["mixing_concentrations"].shape == (
+            D,
+            K,
+        )

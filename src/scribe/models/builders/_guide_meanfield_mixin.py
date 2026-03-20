@@ -317,8 +317,24 @@ def setup_guide(
     # Get guide params or use default
     params = spec.guide if spec.guide is not None else spec.default_params
 
-    # Convert tuple to array and ensure all values are positive
-    concentrations = jnp.array(params)
+    # Resolve expected concentration tensor shape. For dataset-specific
+    # mixing this is (n_datasets, n_components); for global mixing it is
+    # (n_components,).
+    shape = resolve_shape(
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
+    )
+
+    # Convert tuple to array and broadcast to the resolved shape when needed.
+    base_conc = jnp.array(params)
+    if shape == ():
+        concentrations = base_conc
+    elif base_conc.shape == shape:
+        concentrations = base_conc
+    else:
+        concentrations = jnp.broadcast_to(base_conc, shape)
 
     # Determine parameter name: use "mixing_concentrations" for mixing_weights
     # (matching legacy code), otherwise use "{name}_concentrations"

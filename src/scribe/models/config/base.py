@@ -169,6 +169,7 @@ class ModelConfig(BaseModel):
         # --- Backfill missing fields for very old pickles ----------------
         d.setdefault("n_datasets", None)
         d.setdefault("dataset_params", None)
+        d.setdefault("dataset_mixing", None)
         # Migrate old hierarchical_mu boolean → mu_prior enum
         if "hierarchical_mu" in d:
             old_hmu = d.pop("hierarchical_mu", False)
@@ -289,6 +290,14 @@ class ModelConfig(BaseModel):
         description=(
             "List of parameter names that should be per-dataset. "
             "Analogous to mixture_params but for the dataset axis."
+        ),
+    )
+    dataset_mixing: Optional[bool] = Field(
+        None,
+        description=(
+            "Whether to fit dataset-specific mixing weights for mixture models. "
+            "When None, defaults to True for multi-dataset models and False "
+            "otherwise."
         ),
     )
     # Dataset-level hierarchical prior types
@@ -753,6 +762,16 @@ class ModelConfig(BaseModel):
                 raise ValueError(
                     "shared_components requires n_datasets >= 2."
                 )
+        if self.dataset_mixing:
+            if self.n_datasets is None:
+                raise ValueError(
+                    "dataset_mixing=True requires n_datasets >= 2."
+                )
+            if not self.is_mixture:
+                raise ValueError(
+                    "dataset_mixing=True requires a mixture model "
+                    "(n_components >= 2)."
+                )
         return self
 
     # --------------------------------------------------------------------------
@@ -1134,6 +1153,16 @@ class ModelConfig(BaseModel):
     def is_multi_dataset(self) -> bool:
         """Check if this is a multi-dataset joint model."""
         return self.n_datasets is not None and self.n_datasets > 1
+
+    # --------------------------------------------------------------------------
+
+    @computed_field
+    @property
+    def dataset_mixing_enabled(self) -> bool:
+        """Whether mixing weights should carry a dataset axis."""
+        if self.dataset_mixing is not None:
+            return bool(self.dataset_mixing)
+        return self.is_multi_dataset
 
     # --------------------------------------------------------------------------
 

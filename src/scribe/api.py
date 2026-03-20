@@ -235,6 +235,7 @@ def fit(
     n_datasets: Optional[int] = None,
     dataset_key: Optional[str] = None,
     dataset_params: Optional[List[str]] = None,
+    dataset_mixing: Optional[bool] = None,
     mu_dataset_prior: str = "none",
     p_dataset_prior: str = "none",
     p_dataset_mode: str = "gene_specific",
@@ -532,6 +533,13 @@ def fit(
           (gene-level).
         A ``UserWarning`` is emitted when any downgrade is applied.
 
+    dataset_mixing : bool, optional
+        Whether to use dataset-specific mixture weights in multi-dataset
+        mixture models. If ``None`` (default), SCRIBE enables dataset-specific
+        mixing automatically when ``n_datasets >= 2`` and uses global mixing
+        otherwise. Set to ``False`` to opt out and keep one global mixing
+        vector shared by all datasets.
+
     seed : int, default=42
         Random seed for reproducibility.
 
@@ -803,6 +811,9 @@ def fit(
             # Collapse back to single-dataset mode in ModelConfig, which uses
             # n_datasets=None as the canonical non-multi-dataset state.
             n_datasets = None
+            # Single-dataset mode has no dataset axis for mixing.
+            if dataset_mixing is None:
+                dataset_mixing = False
             warnings.warn(
                 "Detected a single dataset from dataset_key "
                 f"'{dataset_key}'. Applied automatic hierarchy downgrade: "
@@ -970,6 +981,7 @@ def fit(
             gate_prior=gate_prior,
             n_datasets=n_datasets,
             dataset_params=dataset_params,
+            dataset_mixing=dataset_mixing,
             mu_dataset_prior=mu_dataset_prior,
             p_dataset_prior=p_dataset_prior,
             p_dataset_mode=p_dataset_mode,

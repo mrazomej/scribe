@@ -141,6 +141,10 @@ The `param_specs` argument (passed from `model_config.param_specs`) enables
 this spec-aware indexing. Without it, the function falls back to the legacy
 heuristic (`shape[0] == n_datasets`).
 
+When dataset-specific mixture weights are enabled, `mixing_weights` follow the
+same indexing rule and become `(batch, K)` inside the cell plate. Annotation
+logit nudging supports both global `(K,)` and batch-aligned `(batch, K)` inputs.
+
 `broadcast_param_for_mixture()` also handles the extra batch dimension: when `p`
 is 2-D `(batch, G)` and `r` is 3-D `(batch, K, G)`, it inserts a component
 singleton to produce `(batch, 1, G)` for correct broadcasting.

@@ -88,6 +88,7 @@ class ModelConfigBuilder:
         self._gate_prior: str = "none"
         self._n_datasets: Optional[int] = None
         self._dataset_params: Optional[List[str]] = None
+        self._dataset_mixing: Optional[bool] = None
         self._mu_dataset_prior: str = "none"
         self._p_dataset_prior: str = "none"
         self._p_dataset_mode: str = "gene_specific"
@@ -689,6 +690,7 @@ class ModelConfigBuilder:
             gate_prior=self._gate_prior,
             n_datasets=self._n_datasets,
             dataset_params=self._dataset_params,
+            dataset_mixing=self._dataset_mixing,
             mu_dataset_prior=self._mu_dataset_prior,
             p_dataset_prior=self._p_dataset_prior,
             p_dataset_mode=self._p_dataset_mode,
