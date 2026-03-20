@@ -31,6 +31,10 @@ dirname_aliases:
     gate_dataset_prior: gdataprior
     positive_transform: postransform
 
+    # Data-informed mean anchoring prior
+    mu_mean_anchor: meananchor
+    mu_mean_anchor_sigma: meananchorsigma
+
     # Frequently seen prior overrides
     priors.eta_capture: etaprior
     priors.mixing: mixprior

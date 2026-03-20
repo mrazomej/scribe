@@ -1700,6 +1700,58 @@ class TestMeanAnchor:
                 unconstrained=False,
             )
 
+    def test_config_mu_mean_anchor_vcp_requires_eta_capture(self):
+        """VCP + mu_mean_anchor without eta_capture must raise."""
+        from scribe.models.config import ModelConfig
+
+        with pytest.raises(ValueError, match="VCP.*eta_capture.*organism"):
+            ModelConfig(
+                base_model="nbvcp",
+                mu_mean_anchor=True,
+                unconstrained=True,
+            )
+
+    def test_config_mu_mean_anchor_vcp_with_eta_capture(self):
+        """VCP + mu_mean_anchor + eta_capture should succeed."""
+        from scribe.models.config import ModelConfig
+        from scribe.models.config.groups import PriorOverrides
+
+        priors = PriorOverrides(eta_capture=(12.59, 0.01))
+        config = ModelConfig(
+            base_model="nbvcp",
+            mu_mean_anchor=True,
+            unconstrained=True,
+            priors=priors,
+        )
+        assert config.mu_mean_anchor is True
+        assert config.uses_variable_capture is True
+
+    def test_config_mu_mean_anchor_vcp_with_organism(self):
+        """VCP + mu_mean_anchor + organism shortcut should succeed."""
+        from scribe.models.config import ModelConfig
+        from scribe.models.config.groups import PriorOverrides
+
+        priors = PriorOverrides(organism="human")
+        config = ModelConfig(
+            base_model="nbvcp",
+            mu_mean_anchor=True,
+            unconstrained=True,
+            priors=priors,
+        )
+        assert config.mu_mean_anchor is True
+
+    def test_config_mu_mean_anchor_nonvcp_no_eta_capture_ok(self):
+        """Non-VCP + mu_mean_anchor without eta_capture is allowed."""
+        from scribe.models.config import ModelConfig
+
+        config = ModelConfig(
+            base_model="nbdm",
+            mu_mean_anchor=True,
+            unconstrained=True,
+        )
+        assert config.mu_mean_anchor is True
+        assert not config.uses_variable_capture
+
     def test_config_mu_mean_anchor_with_unconstrained(self):
         """Test mu_mean_anchor=True works with unconstrained=True."""
         from scribe.models.config import ModelConfig
