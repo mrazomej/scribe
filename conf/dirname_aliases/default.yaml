@@ -20,6 +20,7 @@ dirname_aliases:
     annotation_key: annkey
     annotation_confidence: annconf
     annotation_min_cells: annmin
+    dataset_mixing: datamix
 
     # Hierarchical prior type fields
     mu_prior: muprior
