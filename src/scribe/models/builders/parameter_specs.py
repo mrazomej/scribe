@@ -1104,8 +1104,8 @@ class AnchoredNormalSpec(NormalWithTransformSpec):
 
         log(mu_g) ~ N(log(u_bar_g / nu_bar), sigma^2)
 
-    The per-gene centers are stored as a tuple of floats (one per gene)
-    and the shared sigma controls the tightness of the anchor.
+    Per-gene centers are stored as a numpy/JAX array for efficiency;
+    Python tuples are also accepted but converted on first use.
 
     Parameters
     ----------
@@ -1115,15 +1115,16 @@ class AnchoredNormalSpec(NormalWithTransformSpec):
         Shape dimensions (typically ("n_genes",)).
     default_params : Tuple[float, float]
         Fallback (loc, scale) used only if anchor_centers is empty.
-    anchor_centers : Tuple[float, ...]
+    anchor_centers : array-like
         Per-gene log-centers: log(u_bar_g / nu_bar + epsilon).
+        Accepts numpy arrays, JAX arrays, or tuples of floats.
     anchor_sigma : float
         Log-scale standard deviation for the anchoring prior.
     """
 
-    anchor_centers: Tuple[float, ...] = Field(
+    anchor_centers: Any = Field(
         default_factory=tuple,
-        description="Per-gene log-space anchor centers.",
+        description="Per-gene log-space anchor centers (array-like).",
     )
     anchor_sigma: float = Field(
         0.3,
@@ -2998,7 +2999,9 @@ def sample_prior(
     jnp.ndarray
         Sampled parameter values in constrained space.
     """
-    centers = jnp.array(spec.anchor_centers)
+    # jnp.asarray is a no-op when the input is already a JAX array,
+    # avoiding repeated Python-to-JAX conversion during JIT tracing.
+    centers = jnp.asarray(spec.anchor_centers)
     sigma = spec.anchor_sigma
 
     # Build distribution with per-gene centers and shared sigma.

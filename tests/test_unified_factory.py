@@ -1796,9 +1796,10 @@ class TestMeanAnchor:
         from scribe.models.config.groups import PriorOverrides
         from scribe.models.builders.parameter_specs import AnchoredNormalSpec
 
-        # Build config with anchor centers pre-computed
+        # Build config with anchor centers pre-computed (numpy array,
+        # matching the real flow where compute_mu_anchor returns ndarray)
         n_genes = 20
-        fake_centers = tuple(np.log(np.linspace(1, 100, n_genes)).tolist())
+        fake_centers = np.log(np.linspace(1, 100, n_genes))
         priors = PriorOverrides(mu_anchor_centers=fake_centers)
 
         config = ModelConfig(

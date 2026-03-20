@@ -1053,9 +1053,10 @@ def fit(
             epsilon=1e-3,
         )
 
-        # Inject into priors as mu_anchor_centers
+        # Inject into priors as mu_anchor_centers (keep as numpy array
+        # to avoid expensive Python-tuple round-trips for large gene counts)
         _updated_priors = dict(_extra)
-        _updated_priors["mu_anchor_centers"] = tuple(_log_anchors.tolist())
+        _updated_priors["mu_anchor_centers"] = _log_anchors
         from .models.config.groups import PriorOverrides
 
         model_config = model_config.model_copy(
