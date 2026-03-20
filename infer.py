@@ -882,6 +882,7 @@ def main(cfg: DictConfig) -> None:
         "n_datasets": cfg.get("n_datasets"),
         "dataset_key": dataset_key,
         "dataset_params": cfg.get("dataset_params"),
+        "dataset_mixing": cfg.get("dataset_mixing"),
         "mu_dataset_prior": cfg.get("mu_dataset_prior", "none"),
         "p_dataset_prior": cfg.get("p_dataset_prior", "none"),
         "p_dataset_mode": cfg.get("p_dataset_mode", "gene_specific"),
@@ -941,6 +942,11 @@ def main(cfg: DictConfig) -> None:
     if kwargs.get("n_components"):
         console.print(
             f"[dim]Mixture components:[/dim] [bold]{kwargs['n_components']}[/bold]"
+        )
+    if kwargs.get("dataset_mixing") is not None:
+        console.print(
+            "[dim]Dataset-specific mixing:[/dim] "
+            f"[bold]{kwargs['dataset_mixing']}[/bold]"
         )
     if kwargs.get("guide_rank"):
         console.print(

@@ -61,6 +61,7 @@ gate_prior: "none"        # Gene-level prior for gate (ZI only): none | gaussian
 n_datasets: null          # Number of datasets (null for single-dataset mode)
 dataset_key: null         # Column in adata.obs identifying dataset membership
 dataset_params: null      # Which params are per-dataset (null = default based on hierarchy flags)
+dataset_mixing: null      # null => auto (on for n_datasets>=2), false => one global mixing vector
 mu_dataset_prior: "none"  # Dataset-level mu/r prior: none | gaussian | horseshoe | neg
 p_dataset_prior: "none"   # Dataset-level p/phi prior: none | gaussian | horseshoe | neg
 p_dataset_mode: "gene_specific"  # Structural mode for dataset p: none | scalar | gene_specific | two_level
@@ -271,3 +272,4 @@ hydra:
           - data.subset_column
           - model
           - unconstrained
+          - dataset_mixing
