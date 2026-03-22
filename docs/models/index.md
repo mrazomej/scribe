@@ -3,8 +3,8 @@
 SCRIBE provides a family of probabilistic models for single-cell RNA sequencing
 data, all built on the foundational **Negative Binomial-Dirichlet Multinomial
 (NBDM)** framework. Rather than choosing between completely different models,
-you select the variant that best matches your data characteristics using simple
-boolean flags.
+you select the variant that best matches your data characteristics by passing a
+model string to `scribe.fit()`.
 
 ## Quick Start
 
@@ -14,30 +14,24 @@ All models are accessed through the same unified interface:
 import scribe
 
 # Basic NBDM model with SVI
-results = scribe.run_scribe(counts, inference_method="svi")
+results = scribe.fit(adata, model="nbdm")
 
 # Zero-inflated model for data with excess zeros
-results = scribe.run_scribe(counts, inference_method="svi", zero_inflated=True)
+results = scribe.fit(adata, model="zinb")
 
 # Variable capture model for cells with different capture efficiencies
-results = scribe.run_scribe(counts, inference_method="svi", variable_capture=True)
+results = scribe.fit(adata, model="nbvcp")
 
 # Combined model addressing both issues
-results = scribe.run_scribe(
-    counts, inference_method="svi",
-    zero_inflated=True, variable_capture=True
-)
+results = scribe.fit(adata, model="zinbvcp")
 
 # Mixture model for multiple cell populations
-results = scribe.run_scribe(
-    counts, inference_method="svi",
-    mixture_model=True, n_components=3
-)
+results = scribe.fit(adata, model="nbdm", n_components=3)
 
 # MCMC inference with any model
-results = scribe.run_scribe(
-    counts, inference_method="mcmc",
-    zero_inflated=True, n_samples=2000
+results = scribe.fit(
+    adata, model="zinb",
+    inference_method="mcmc", n_samples=2000,
 )
 ```
 
@@ -48,13 +42,13 @@ Choose your model by answering these questions:
 ```mermaid
 graph TD
     Start["Start with NBDM"] --> Q1{"Excess zeros beyond<br/>biological variation?"}
-    Q1 -->|Yes| ZI["Set zero_inflated=True"]
+    Q1 -->|Yes| ZI["Use model='zinb'"]
     Q1 -->|No| Q2
     ZI --> Q2{"Cells vary significantly<br/>in total UMI counts?"}
-    Q2 -->|Yes| VCP["Set variable_capture=True"]
+    Q2 -->|Yes| VCP["Use model='nbvcp' or 'zinbvcp'"]
     Q2 -->|No| Q3
     VCP --> Q3{"Multiple distinct<br/>cell populations?"}
-    Q3 -->|Yes| Mix["Set mixture_model=True"]
+    Q3 -->|Yes| Mix["Add n_components=K"]
     Q3 -->|No| Done["Done"]
     Mix --> Done
 ```
@@ -99,16 +93,11 @@ graph TD
 ### Mixture Models
 
 Any of the above models can be extended to mixture variants by adding
-`mixture_model=True`:
+`n_components=K`:
 
 ```python
 # ZINB mixture model for 3 cell populations
-results = scribe.run_scribe(
-    counts, inference_method="svi",
-    zero_inflated=True,
-    mixture_model=True,
-    n_components=3
-)
+results = scribe.fit(adata, model="zinb", n_components=3)
 ```
 
 *Use when*: Your sample contains multiple distinct cell types or states.
@@ -125,7 +114,7 @@ import anndata as ad
 adata = ad.read_h5ad("data.h5ad")
 
 # Fit basic model using SVI
-results = scribe.run_scribe(adata, inference_method="svi", n_steps=100_000)
+results = scribe.fit(adata, model="nbdm", n_steps=100_000)
 
 # Get posterior predictive samples
 ppc_samples = results.ppc_samples(n_samples=100)
@@ -138,10 +127,10 @@ scribe.viz.plot_parameter_posteriors(results)
 
 ```python
 # Fit model using MCMC
-mcmc_results = scribe.run_scribe(
-    counts=counts,
+mcmc_results = scribe.fit(
+    adata,
+    model="zinb",
     inference_method="mcmc",
-    zero_inflated=True,
     n_samples=2000,
     n_warmup=1000,
 )
@@ -154,29 +143,27 @@ print(mcmc_results.summary)
 
 ```python
 # Fit different models
-basic_results = scribe.run_scribe(counts=counts, inference_method="svi")
-zinb_results = scribe.run_scribe(
-    counts=counts, inference_method="svi", zero_inflated=True
-)
+basic_results = scribe.fit(adata, model="nbdm")
+zinb_results = scribe.fit(adata, model="zinb")
 
 # Compare model fit using WAIC
-from scribe.model_comparison import compute_waic
+from scribe import compare_models
 
-basic_waic = compute_waic(basic_results, counts)
-zinb_waic = compute_waic(zinb_results, counts)
-
-print(f"Basic WAIC: {basic_waic['waic_2']:.2f}")
-print(f"ZINB WAIC: {zinb_waic['waic_2']:.2f}")
+mc = compare_models(
+    [basic_results, zinb_results],
+    counts=adata.X,
+    model_names=["NBDM", "ZINB"],
+)
+print(mc.summary())
 ```
 
 ### Mixture Model Analysis
 
 ```python
 # Fit mixture model
-mixture_results = scribe.run_scribe(
-    counts=counts,
-    inference_method="svi",
-    mixture_model=True,
+mixture_results = scribe.fit(
+    adata,
+    model="nbdm",
     n_components=3,
     n_steps=150_000,
 )

@@ -15,11 +15,7 @@ import anndata as ad
 adata = ad.read_h5ad("data.h5ad")
 
 # Run inference with the default NBDM model
-results = scribe.run_scribe(
-    adata,
-    inference_method="svi",
-    n_steps=100_000
-)
+results = scribe.fit(adata, model="nbdm", n_steps=100_000)
 
 # Inspect convergence
 print(results.loss_history[-10:])
