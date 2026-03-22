@@ -26,10 +26,12 @@ dirname_aliases:
     mu_prior: muprior
     p_prior: pprior
     gate_prior: gprior
+    overdispersion_prior: overdispprior
     mu_dataset_prior: mudataprior
     p_dataset_prior: pdataprior
     p_dataset_mode: pdatamode
     gate_dataset_prior: gdataprior
+    overdispersion_dataset_prior: overdispdatasetprior
     positive_transform: postransform
 
     # Data-informed mean anchoring prior
