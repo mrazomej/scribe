@@ -14,7 +14,7 @@ Creating a custom model in SCRIBE involves several key components:
 2. Defining the guide function
 3. Specifying parameter types (either `global`, `gene-specific`, or
    `cell-specific`)
-4. Running inference using `run_scribe`
+4. Running inference using `scribe.fit()`
 5. Working with the results
 
 Let's go through each step in detail. First, we begin with the needed imports:
@@ -241,11 +241,11 @@ Each parameter must be categorized as one of:
 
 ## Running Inference
 
-Once the model, guide, and param_spec are defined, pass them to `run_scribe`:
+Once the model, guide, and param_spec are defined, pass them to `scribe.fit()`:
 
 ```python
-results = scribe.run_scribe(
-    counts=counts,
+results = scribe.fit(
+    counts,
     custom_model=nbdm_lognormal_model,
     custom_guide=nbdm_lognormal_guide,
     custom_args={"total_counts": jnp.sum(counts, axis=1)},
@@ -297,7 +297,7 @@ def get_distributions_fn(params, backend="scipy"):
             "r": dist.LogNormal(params["mu_r"], params["sigma_r"]),
         }
 
-results = scribe.run_scribe(..., get_distributions_fn=get_distributions_fn)
+results = scribe.fit(..., get_distributions_fn=get_distributions_fn)
 ```
 
 !!! warning
@@ -315,7 +315,7 @@ def get_model_args_fn(results):
         "my_custom_arg": results.custom_value,
     }
 
-results = scribe.run_scribe(..., get_model_args_fn=get_model_args_fn)
+results = scribe.fit(..., get_model_args_fn=get_model_args_fn)
 ```
 
 ### Custom Log Likelihood
@@ -325,7 +325,7 @@ def custom_log_likelihood_fn(counts, params):
     # Compute log likelihood
     return log_prob
 
-results = scribe.run_scribe(
+results = scribe.fit(
     ..., custom_log_likelihood_fn=custom_log_likelihood_fn
 )
 ```
