@@ -8,7 +8,10 @@ loss convergence and Orbax checkpointing for resumable training.
 
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, List
+import logging
 import numpy as np
+
+logger = logging.getLogger(__name__)
 import jax.numpy as jnp
 from jax import random, jit
 import numpyro
@@ -213,6 +216,8 @@ def _run_with_early_stopping(
     best_loss = float("inf")
     patience_counter = 0
     resumed = False
+    # Step index from checkpoint metadata (set only after a successful load).
+    restored_checkpoint_step: Optional[int] = None
 
     # Always initialize fresh state first (needed for target structure)
     svi_state = svi.init(rng_key, **model_args)
@@ -228,6 +233,7 @@ def _run_with_early_stopping(
         )
         if checkpoint_data is not None:
             restored_optim_state, metadata, restored_losses = checkpoint_data
+            restored_checkpoint_step = metadata.step
             start_step = metadata.step + 1
             best_loss = metadata.best_loss
             losses = restored_losses
@@ -264,7 +270,29 @@ def _run_with_early_stopping(
     # Calculate remaining steps
     remaining_steps = n_steps - start_step
     if remaining_steps <= 0:
-        # Already completed
+        # The loop runs for step in range(start_step, n_steps). If a resumed
+        # checkpoint already completed the final index (metadata.step ==
+        # n_steps - 1), or n_steps was lowered vs the prior run, there are no
+        # iterations left — easy to misread as a failed job in batch logs.
+        if resumed and restored_checkpoint_step is not None:
+            logger.warning(
+                "SVI skipped all optimization steps: checkpoint at %r reports "
+                "last step index %d, so start_step=%d with n_steps=%d (no "
+                "remaining iterations). To train from scratch, set "
+                "inference.early_stopping.resume=false or remove the checkpoint "
+                "directory.",
+                checkpoint_dir,
+                restored_checkpoint_step,
+                start_step,
+                n_steps,
+            )
+        elif n_steps <= 0:
+            logger.warning(
+                "SVI skipped all optimization steps: n_steps=%d is not "
+                "positive.",
+                n_steps,
+            )
+        # Already completed (or nothing to run)
         params = svi.get_params(svi_state)
         return SVIRunResult(
             params=params,
