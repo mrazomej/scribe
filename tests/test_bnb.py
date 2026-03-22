@@ -94,6 +94,18 @@ class TestModelConfigBNBFields:
         )
         assert cfg.overdispersion_prior == HierarchicalPriorType.NEG
 
+    def test_overdispersion_dataset_prior_default(self):
+        """Dataset overdispersion prior defaults to none."""
+        from scribe.models.config import ModelConfig
+
+        cfg = ModelConfig(
+            base_model="nbdm",
+            parameterization="canonical",
+            inference_method="svi",
+            overdispersion="bnb",
+        )
+        assert cfg.overdispersion_dataset_prior == HierarchicalPriorType.NONE
+
 
 # ============================================================================
 # Distribution builder tests
@@ -279,6 +291,21 @@ class TestBNBRegistry:
         bnb_spec_no = [s for s in specs_no if s.name == "bnb_concentration"][0]
         assert bnb_spec_no.is_mixture is False
 
+    def test_build_bnb_gaussian_dataset(self):
+        """Gaussian BNB spec supports dataset-indexed concentration."""
+        from scribe.models.config import GuideFamilyConfig
+        from scribe.models.presets.registry import (
+            build_bnb_concentration_spec,
+        )
+
+        specs = build_bnb_concentration_spec(
+            overdispersion_prior="gaussian",
+            guide_families=GuideFamilyConfig(),
+            is_dataset=True,
+        )
+        bnb_spec = [s for s in specs if s.name == "bnb_concentration"][0]
+        assert bnb_spec.is_dataset is True
+
 
 # ============================================================================
 # Log-likelihood tests
@@ -408,6 +435,26 @@ class TestBNBFactory:
         model_fn, guide_fn, _specs = create_model(cfg)
         assert callable(model_fn)
         assert callable(guide_fn)
+
+    def test_create_model_bnb_with_dataset_overdispersion_prior(self):
+        """Factory uses dataset-indexed BNB concentration when requested."""
+        from scribe.models.presets.factory import create_model
+        from scribe.models.config import ModelConfig
+
+        cfg = ModelConfig(
+            base_model="nbdm",
+            parameterization="canonical",
+            inference_method="svi",
+            unconstrained=True,
+            overdispersion="bnb",
+            n_datasets=2,
+            overdispersion_dataset_prior="gaussian",
+        )
+        model_fn, guide_fn, specs = create_model(cfg)
+        assert callable(model_fn)
+        assert callable(guide_fn)
+        bnb_spec = [s for s in specs if s.name == "bnb_concentration"][0]
+        assert bnb_spec.is_dataset is True
 
 
 # ============================================================================

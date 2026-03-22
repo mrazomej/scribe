@@ -197,6 +197,7 @@ class ModelConfig(BaseModel):
         d.setdefault("gate_dataset_prior", "none")
         d.setdefault("overdispersion", "none")
         d.setdefault("overdispersion_prior", "horseshoe")
+        d.setdefault("overdispersion_dataset_prior", "none")
         d.setdefault("mu_mean_anchor", False)
         d.setdefault("mu_mean_anchor_sigma", 0.3)
 
@@ -404,6 +405,15 @@ class ModelConfig(BaseModel):
             "Hierarchical prior for the overdispersion concentration "
             "parameter (e.g. kappa_g for BNB). Controls shrinkage toward "
             "the NB limit. Only used when overdispersion is not 'none'."
+        ),
+    )
+    overdispersion_dataset_prior: HierarchicalPriorType = Field(
+        HierarchicalPriorType.NONE,
+        description=(
+            "Dataset-level hierarchical prior for the overdispersion "
+            "concentration parameter (e.g. kappa_{d,g} for BNB). "
+            "Requires n_datasets >= 2, unconstrained=True, and "
+            "overdispersion='bnb'."
         ),
     )
 
@@ -738,6 +748,30 @@ class ModelConfig(BaseModel):
                     f"but base_model={self.base_model!r}."
                 )
 
+        # --- Dataset-level overdispersion ------------------------------------
+        if self.overdispersion_dataset_prior != _NONE:
+            # Dataset-level overdispersion requires an explicit dataset axis.
+            if self.n_datasets is None:
+                raise ValueError(
+                    "overdispersion_dataset_prior="
+                    f"{self.overdispersion_dataset_prior.value!r} "
+                    "requires n_datasets >= 2."
+                )
+            # Overdispersion hierarchies use unconstrained + positive transform.
+            if not self.unconstrained:
+                raise ValueError(
+                    "overdispersion_dataset_prior="
+                    f"{self.overdispersion_dataset_prior.value!r} "
+                    "requires unconstrained=True."
+                )
+            # The concentration slot exists only for BNB overdispersion.
+            if self.overdispersion != OverdispersionType.BNB:
+                raise ValueError(
+                    "overdispersion_dataset_prior="
+                    f"{self.overdispersion_dataset_prior.value!r} "
+                    "requires overdispersion='bnb'."
+                )
+
         # --- Cross-level conflicts -------------------------------------------
         # Gene-level p + dataset-level p are mutually exclusive
         if self.p_prior != _NONE and self.p_dataset_prior != _NONE:
@@ -755,7 +789,6 @@ class ModelConfig(BaseModel):
                 "cannot be set simultaneously. The dataset-level "
                 "hierarchy subsumes gene-level."
             )
-
         # shared_components validation: requires multi-dataset mixture setup
         if self.shared_components is not None:
             if self.n_datasets is None:
@@ -1071,6 +1104,7 @@ class ModelConfig(BaseModel):
                 "mu_dataset_prior",
                 "p_dataset_prior",
                 "gate_dataset_prior",
+                "overdispersion_dataset_prior",
             )
         )
 

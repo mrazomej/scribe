@@ -438,6 +438,7 @@ def build_bnb_concentration_spec(
     neg_tau: float = 1.0,
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
+    is_dataset: bool = False,
     positive_transform=None,
 ) -> List[ParamSpec]:
     """Build parameter specs for the BNB concentration kappa_g.
@@ -477,6 +478,11 @@ def build_bnb_concentration_spec(
         ``"bnb_concentration"`` is in this list (and *n_components*
         is set), the resulting specs will have ``is_mixture=True``,
         giving each component its own omega_g.
+    is_dataset : bool, default=False
+        Whether ``bnb_concentration`` should carry a dataset axis.
+        When True, the hierarchical concentration site has shape
+        ``(n_datasets, n_genes)`` (or ``(n_components, n_datasets, n_genes)``
+        for mixture models).
     positive_transform : Transform, optional
         NumPyro transform mapping unconstrained reals to (0, inf).
         Used by the ``"gaussian"`` prior branch.  Falls back to
@@ -556,6 +562,7 @@ def build_bnb_concentration_spec(
                 hyper_scale_name="bnb_omega_hyper_scale",
                 transform=_transform,
                 is_gene_specific=True,
+                is_dataset=is_dataset,
                 is_mixture=is_mixture,
                 guide_family=guide_families.get("bnb_concentration"),
             )
@@ -615,6 +622,7 @@ def build_bnb_concentration_spec(
                 c_sq_name="bnb_concentration_c_sq",
                 raw_name="bnb_concentration_raw",
                 is_gene_specific=True,
+                is_dataset=is_dataset,
                 is_mixture=is_mixture,
                 guide_family=guide_families.get("bnb_concentration"),
             )
@@ -654,6 +662,7 @@ def build_bnb_concentration_spec(
                 zeta_name="bnb_concentration_zeta",
                 raw_name="bnb_concentration_raw",
                 is_gene_specific=True,
+                is_dataset=is_dataset,
                 is_mixture=is_mixture,
                 guide_family=guide_families.get("bnb_concentration"),
             )
@@ -736,12 +745,24 @@ def build_extra_param_spec(
             )
         ]
     elif param_name == "bnb_concentration":
-        return build_bnb_concentration_spec(
-            overdispersion_prior=(
+        # Prefer dataset-level overdispersion prior when configured for
+        # multi-dataset BNB. Otherwise fall back to the gene-level prior.
+        if model_config is not None and (
+            model_config.overdispersion_dataset_prior.value != "none"
+            and model_config.n_datasets is not None
+        ):
+            _bnb_prior = model_config.overdispersion_dataset_prior.value
+            _bnb_is_dataset = True
+        else:
+            _bnb_prior = (
                 model_config.overdispersion_prior.value
                 if model_config is not None
                 else "horseshoe"
-            ),
+            )
+            _bnb_is_dataset = False
+
+        return build_bnb_concentration_spec(
+            overdispersion_prior=_bnb_prior,
             guide_families=guide_families,
             horseshoe_tau0=(
                 model_config.horseshoe_tau0
@@ -769,6 +790,7 @@ def build_extra_param_spec(
             ),
             n_components=n_components,
             mixture_params=mixture_params,
+            is_dataset=_bnb_is_dataset,
             positive_transform=positive_transform,
         )
     else:

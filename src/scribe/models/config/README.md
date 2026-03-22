@@ -107,6 +107,10 @@ structure:
   likelihood cannot drag it positive) with per-gene adaptive shrinkage from
   the chosen sparsity prior.  NEG auxiliary variables (psi, zeta) use a
   Gamma variational posterior that can concentrate at zero
+- `overdispersion_dataset_prior: str` — Prior for dataset-specific BNB
+  concentration (`bnb_concentration`, i.e. `kappa_{d,g}`): `"none"`,
+  `"gaussian"`, `"horseshoe"`, or `"neg"`. Requires
+  `overdispersion="bnb"` and `unconstrained=True`.
 - `is_multi_dataset` (computed property) — `True` when `n_datasets >= 2`
 - `dataset_mixing_enabled` (computed property) — Effective switch used by model
   builders to decide whether `mixing_weights` have shape `(K,)` or `(D, K)`.
@@ -129,6 +133,7 @@ columns can be auto-downgraded via
   'two_level'}` -> `p_prior` set from `p_dataset_prior`, `p_dataset_prior='none'`
 - `gate_dataset_prior != "none"` -> `gate_prior` set from
   `gate_dataset_prior`, `gate_dataset_prior='none'`
+- `overdispersion_dataset_prior != "none"` -> `overdispersion_dataset_prior='none'`
 
 `scribe.fit(...)` emits a `UserWarning` whenever one or more of these
 single-dataset downgrades are applied. Setting
@@ -241,8 +246,9 @@ prior type: `"none"`, `"gaussian"`, `"horseshoe"`, or `"neg"`.
   `unconstrained=True`; each gene has its own hyperprior because expression
   magnitudes vary by orders of magnitude. `mu_prior` and `mu_dataset_prior` are
   mutually exclusive (component-level vs dataset-level shrinkage).
-- `mu_dataset_prior`, `p_dataset_prior`, `gate_dataset_prior` — Dataset-level
-  priors for multi-dataset hierarchical models
+- `mu_dataset_prior`, `p_dataset_prior`, `gate_dataset_prior`,
+  `overdispersion_dataset_prior` — Dataset-level priors for multi-dataset
+  hierarchical models
 - `p_dataset_mode` — Structural mode for dataset-level p:
   `"none"`, `"scalar"`, `"gene_specific"`, or `"two_level"`
 
