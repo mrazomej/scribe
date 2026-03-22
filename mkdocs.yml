@@ -1,0 +1,141 @@
+# Project information
+site_name: SCRIBE
+site_description: >-
+  Single-Cell RNA-Seq Inference using Bayesian Estimation — a Python package
+  for analyzing scRNA-seq data with variational inference powered by NumPyro
+  and JAX.
+repo_url: https://github.com/mrazomej/scribe
+repo_name: mrazomej/scribe
+# NOTE: strict mode is disabled during initial migration because griffe emits
+# warnings for Pydantic/Flax dataclass parameters. Re-enable once docstrings
+# are cleaned up.
+# strict: true
+
+# Theme configuration
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+    - content.code.copy
+    - content.code.annotate
+    - search.highlight
+    - search.suggest
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+# Plugins
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: numpy
+            docstring_section_style: spacy
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            members_order: source
+            merge_init_into_class: true
+            show_if_no_docstring: false
+            signature_crossrefs: true
+            separate_signature: true
+            allow_inspection: false
+  - gen-files:
+      scripts:
+        - docs/gen_ref_pages.py
+  - literate-nav:
+      nav_file: SUMMARY.md
+  - section-index
+
+# Markdown extensions
+markdown_extensions:
+  # Math support
+  - pymdownx.arithmatex:
+      generic: true
+  # Admonitions (note, warning, tip, etc.)
+  - admonition
+  - pymdownx.details
+  # Code blocks
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  # Tabs
+  - pymdownx.tabbed:
+      alternate_style: true
+  # Formatting
+  - pymdownx.critic
+  - pymdownx.caret
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.tilde
+  # Table of contents
+  - toc:
+      permalink: true
+  # Tables
+  - tables
+  # Definition lists
+  - def_list
+  # Footnotes
+  - footnotes
+  # Content tabs & task lists
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+# MathJax support
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+# Navigation
+nav:
+  - Home: index.md
+  - Getting Started:
+    - getting-started/index.md
+    - Installation: getting-started/installation.md
+    - Quick Overview: getting-started/quick-overview.md
+    - Quickstart: getting-started/quickstart.md
+  - Models:
+    - models/index.md
+    - NBDM: models/nbdm.md
+    - ZINB: models/zinb.md
+    - NBVCP: models/nbvcp.md
+    - ZINBVCP: models/zinbvcp.md
+    - Mixture Models: models/mixture.md
+  - User Guide:
+    - guide/index.md
+    - Results Class: guide/results.md
+    - Custom Models: guide/custom-model.md
+  - API Reference: reference/
+  - Contributing: contributing.md
