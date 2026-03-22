@@ -31,6 +31,9 @@ overdispersion: "none"
 # Hierarchical prior for the BNB concentration parameter (kappa_g).
 # Only used when overdispersion is not "none".
 overdispersion_prior: "horseshoe"
+# Dataset-level hierarchical prior for BNB concentration (kappa_{d,g}).
+# Only used in multi-dataset mode (n_datasets>=2) when overdispersion is "bnb".
+overdispersion_dataset_prior: "none"
 
 # --- Model Configuration ---
 # Power users can override the model directly: model=zinb, model=nbvcp, etc.

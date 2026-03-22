@@ -700,12 +700,14 @@ def main(cfg: DictConfig) -> None:
         cfg.get("mu_dataset_prior", "none") != "none"
         or cfg.get("p_dataset_prior", "none") != "none"
         or cfg.get("gate_dataset_prior", "none") != "none"
+        or cfg.get("overdispersion_dataset_prior", "none") != "none"
     )
     if uses_dataset_level_hierarchy and dataset_key is None:
         raise ValueError(
             "Dataset-level hierarchical priors "
             "(mu_dataset_prior, p_dataset_prior, "
-            "gate_dataset_prior) require dataset_key so cells can "
+            "gate_dataset_prior, overdispersion_dataset_prior) "
+            "require dataset_key so cells can "
             "be mapped to datasets. Set dataset_key to an adata.obs column "
             "when using dataset-level hierarchical priors."
         )
@@ -887,6 +889,9 @@ def main(cfg: DictConfig) -> None:
         "p_dataset_prior": cfg.get("p_dataset_prior", "none"),
         "p_dataset_mode": cfg.get("p_dataset_mode", "gene_specific"),
         "gate_dataset_prior": cfg.get("gate_dataset_prior", "none"),
+        "overdispersion_dataset_prior": cfg.get(
+            "overdispersion_dataset_prior", "none"
+        ),
         # Horseshoe / NEG hyperparameters
         "horseshoe_tau0": cfg.get("horseshoe_tau0", 1.0),
         "horseshoe_slab_df": cfg.get("horseshoe_slab_df", 4),
@@ -971,9 +976,18 @@ def main(cfg: DictConfig) -> None:
             f"[dim](sigma={kwargs['mu_mean_anchor_sigma']})[/dim]"
         )
     if kwargs.get("overdispersion", "none") != "none":
-        console.print(
+        _od_message = (
             f"[dim]Overdispersion:[/dim] [bold]{kwargs['overdispersion']}[/bold] "
             f"[dim](prior={kwargs['overdispersion_prior']})[/dim]"
+        )
+        if kwargs.get("overdispersion_dataset_prior", "none") != "none":
+            _od_message += (
+                " "
+                "[dim](dataset_prior="
+                f"{kwargs['overdispersion_dataset_prior']})[/dim]"
+            )
+        console.print(
+            _od_message
         )
     if kwargs.get("annotation_key"):
         ann_msg = (

@@ -104,6 +104,7 @@ class ModelConfigBuilder:
         self._mu_mean_anchor_sigma: float = 0.3
         self._overdispersion: str = "none"
         self._overdispersion_prior: str = "horseshoe"
+        self._overdispersion_dataset_prior: str = "none"
         self._n_components: Optional[int] = None
         self._mixture_params: Optional[List[str]] = None
         self._joint_params: Optional[List[str]] = None
@@ -706,6 +707,7 @@ class ModelConfigBuilder:
             mu_mean_anchor_sigma=self._mu_mean_anchor_sigma,
             overdispersion=self._overdispersion,
             overdispersion_prior=self._overdispersion_prior,
+            overdispersion_dataset_prior=self._overdispersion_dataset_prior,
             n_components=self._n_components,
             mixture_params=self._mixture_params,
             joint_params=self._joint_params,

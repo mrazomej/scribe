@@ -167,6 +167,7 @@ class TestModelConfigDataset:
         assert config.n_datasets is None
         assert config.mu_dataset_prior == "none"
         assert config.p_dataset_prior == "none"
+        assert config.overdispersion_dataset_prior == "none"
         assert config.dataset_mixing is None
         assert config.dataset_mixing_enabled is False
 
@@ -264,6 +265,44 @@ class TestModelConfigDataset:
                 base_model="nbdm",
                 n_datasets=2,
                 gate_dataset_prior="gaussian",
+                unconstrained=True,
+            )
+
+    def test_overdispersion_dataset_prior_requires_n_datasets(self):
+        """Dataset overdispersion prior without n_datasets should raise."""
+        with pytest.raises(
+            ValueError, match="overdispersion_dataset_prior.*n_datasets"
+        ):
+            ModelConfig(
+                base_model="nbdm",
+                overdispersion="bnb",
+                overdispersion_dataset_prior="gaussian",
+                unconstrained=True,
+            )
+
+    def test_overdispersion_dataset_prior_requires_unconstrained(self):
+        """Dataset overdispersion prior requires unconstrained=True."""
+        with pytest.raises(
+            ValueError, match="overdispersion_dataset_prior.*unconstrained"
+        ):
+            ModelConfig(
+                base_model="nbdm",
+                overdispersion="bnb",
+                n_datasets=2,
+                overdispersion_dataset_prior="gaussian",
+                unconstrained=False,
+            )
+
+    def test_overdispersion_dataset_prior_requires_bnb(self):
+        """Dataset overdispersion prior requires overdispersion='bnb'."""
+        with pytest.raises(
+            ValueError, match="overdispersion_dataset_prior.*overdispersion='bnb'"
+        ):
+            ModelConfig(
+                base_model="nbdm",
+                n_datasets=2,
+                overdispersion="none",
+                overdispersion_dataset_prior="gaussian",
                 unconstrained=True,
             )
 

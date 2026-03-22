@@ -240,6 +240,7 @@ def fit(
     p_dataset_prior: str = "none",
     p_dataset_mode: str = "gene_specific",
     gate_dataset_prior: str = "none",
+    overdispersion_dataset_prior: str = "none",
     auto_downgrade_single_dataset_hierarchy: bool = True,
     # Horseshoe hyperparameters
     horseshoe_tau0: float = 1.0,
@@ -386,6 +387,12 @@ def fit(
         (``kappa_g``).  Controls shrinkage toward the NB limit.
         Only used when ``overdispersion`` is not ``"none"``.
         Accepted values: ``"horseshoe"``, ``"neg"``.
+    overdispersion_dataset_prior : str, default="none"
+        Dataset-level hierarchical prior for BNB concentration
+        (``kappa_{d,g}``) in multi-dataset mode. Accepted values:
+        ``"none"``, ``"gaussian"``, ``"horseshoe"``, ``"neg"``.
+        Requires ``dataset_key``, ``n_datasets>=2``,
+        ``unconstrained=True``, and ``overdispersion="bnb"``.
 
     n_components : int, optional
         Number of mixture components for cell type discovery.
@@ -531,6 +538,8 @@ def fit(
           ``p_prior`` (gene-level).
         - ``gate_dataset_prior`` is promoted to ``gate_prior``
           (gene-level).
+        - ``overdispersion_dataset_prior`` is downgraded to ``'none'``
+          because the dataset axis collapses in single-dataset mode.
         A ``UserWarning`` is emitted when any downgrade is applied.
 
     dataset_mixing : bool, optional
@@ -806,6 +815,13 @@ def fit(
             downgrade_messages.append(
                 f"gate_dataset_prior -> gate_prior='{gate_prior}'"
             )
+        # Dataset-level overdispersion has no meaningful single-dataset
+        # hierarchy, so disable it explicitly.
+        if overdispersion_dataset_prior != "none":
+            overdispersion_dataset_prior = "none"
+            downgrade_messages.append(
+                "overdispersion_dataset_prior -> 'none'"
+            )
 
         if downgrade_messages:
             # Collapse back to single-dataset mode in ModelConfig, which uses
@@ -828,12 +844,14 @@ def fit(
         mu_dataset_prior != "none"
         or p_dataset_prior != "none"
         or gate_dataset_prior != "none"
+        or overdispersion_dataset_prior != "none"
     )
     if uses_dataset_level_hierarchy and dataset_indices is None:
         raise ValueError(
             "Dataset-level hierarchical priors "
             "(mu_dataset_prior, p_dataset_prior, "
-            "gate_dataset_prior) require dataset_key so cells can "
+            "gate_dataset_prior, overdispersion_dataset_prior) "
+            "require dataset_key so cells can "
             "be mapped to datasets. Provide dataset_key as an adata.obs "
             "column when using dataset-level hierarchical priors."
         )
@@ -986,6 +1004,7 @@ def fit(
             p_dataset_prior=p_dataset_prior,
             p_dataset_mode=p_dataset_mode,
             gate_dataset_prior=gate_dataset_prior,
+            overdispersion_dataset_prior=overdispersion_dataset_prior,
             horseshoe_tau0=horseshoe_tau0,
             horseshoe_slab_df=horseshoe_slab_df,
             horseshoe_slab_scale=horseshoe_slab_scale,

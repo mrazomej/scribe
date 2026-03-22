@@ -63,6 +63,7 @@ def build_config_from_preset(
     p_dataset_prior: str = "none",
     p_dataset_mode: str = "gene_specific",
     gate_dataset_prior: str = "none",
+    overdispersion_dataset_prior: str = "none",
     horseshoe_tau0: float = 1.0,
     horseshoe_slab_df: int = 4,
     horseshoe_slab_scale: float = 2.0,
@@ -364,10 +365,12 @@ def build_config_from_preset(
         builder._p_dataset_prior = p_dataset_prior
         builder._p_dataset_mode = p_dataset_mode
         builder._gate_dataset_prior = gate_dataset_prior
+        builder._overdispersion_dataset_prior = overdispersion_dataset_prior
         if (
             mu_dataset_prior != "none"
             or p_dataset_prior != "none"
             or gate_dataset_prior != "none"
+            or overdispersion_dataset_prior != "none"
         ):
             builder._unconstrained = True
     else:
@@ -394,6 +397,7 @@ def build_config_from_preset(
     # Gene-specific overdispersion (e.g. BNB)
     builder._overdispersion = overdispersion
     builder._overdispersion_prior = overdispersion_prior
+    builder._overdispersion_dataset_prior = overdispersion_dataset_prior
 
     if n_components is not None:
         builder.as_mixture(n_components, mixture_params)
