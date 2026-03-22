@@ -14,6 +14,12 @@ normalization into the generative process (via the Dirichlet-multinomial). This
 can provide a more principled measure of uncertainty and can help separate
 technical from biological variation.
 
+!!! abstract "Mathematical background"
+    For a detailed walkthrough of the theoretical derivations behind this model,
+    see the [Theory section](../theory/dirichlet-multinomial.md). To understand
+    what happens when the shared-\(p\) assumption is relaxed, see
+    [Hierarchical Gene-Specific \(p\)](../theory/hierarchical-p.md).
+
 ## Model Structure
 
 The NBDM model follows a hierarchical structure where:
