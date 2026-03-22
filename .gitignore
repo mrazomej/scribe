@@ -51,7 +51,8 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 
-# Sphinx documentation
+# Documentation build output
+site/
 docs/_build/
 docs/source/_dummy_gallery/
 
