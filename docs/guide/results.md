@@ -17,18 +17,12 @@ The `ScribeResults` class provides core functionality for:
 
 ## Basic Usage
 
-After running inference with `run_scribe`, you'll get a results object:
+After running inference with `scribe.fit()`, you'll get a results object:
 
 ```python
 import scribe
 
-results = scribe.run_scribe(
-    counts=counts,
-    zero_inflated=False,
-    variable_capture=False,
-    mixture_model=False,
-    n_steps=10000,
-)
+results = scribe.fit(adata, model="nbdm", n_steps=10_000)
 ```
 
 The results object contains several key attributes:
@@ -236,7 +230,7 @@ on the distributions used.
 === "NBDM"
 
     ```python
-    nbdm_results = scribe.run_scribe(counts)
+    nbdm_results = scribe.fit(adata, model="nbdm")
 
     # Dispersion parameters (LogNormal distribution)
     r_loc = nbdm_results.params["r_loc"]
@@ -254,7 +248,7 @@ on the distributions used.
 === "ZINB"
 
     ```python
-    zinb_results = scribe.run_scribe(counts, zero_inflated=True)
+    zinb_results = scribe.fit(adata, model="zinb")
 
     # Additional dropout parameters
     gate_concentration1 = zinb_results.params["gate_concentration1"]
@@ -264,7 +258,7 @@ on the distributions used.
 === "NBVCP"
 
     ```python
-    nbvcp_results = scribe.run_scribe(counts, variable_capture=True)
+    nbvcp_results = scribe.fit(adata, model="nbvcp")
 
     # Additional capture probability parameters
     p_capture_concentration1 = nbvcp_results.params["p_capture_concentration1"]
@@ -274,9 +268,7 @@ on the distributions used.
 === "ZINBVCP"
 
     ```python
-    zinbvcp_results = scribe.run_scribe(
-        counts, zero_inflated=True, variable_capture=True
-    )
+    zinbvcp_results = scribe.fit(adata, model="zinbvcp")
 
     # Additional dropout and capture probability parameters
     gate_concentration1 = zinbvcp_results.params["gate_concentration1"]
@@ -288,12 +280,7 @@ on the distributions used.
 === "Mixture"
 
     ```python
-    mix_results = scribe.run_scribe(
-        counts,
-        mixture_model=True,
-        n_components=3,
-        mixing_prior=(1.0, 1.0, 1.0),
-    )
+    mix_results = scribe.fit(adata, model="nbdm", n_components=3)
 
     # Mixing weights concentration parameters
     mixing_concentration = mix_results.params["mixing_concentration"]
@@ -308,23 +295,22 @@ on the distributions used.
 To compare models, you can use the model comparison utilities:
 
 ```python
-from scribe.model_comparison import compare_models, compare_models_by_gene
+from scribe import compare_models
 
 # Fit multiple models
-nbdm_results = scribe.run_scribe(
-    counts, zero_inflated=False, variable_capture=False
-)
-zinb_results = scribe.run_scribe(
-    counts, zero_inflated=True, variable_capture=False
-)
+nbdm_results = scribe.fit(adata, model="nbdm")
+zinb_results = scribe.fit(adata, model="zinb")
 
-# Compare models using WAIC
-comparison = compare_models([nbdm_results, zinb_results], counts, n_samples=1000)
-
-# Compare models gene by gene
-gene_comparison = compare_models_by_gene(
-    [nbdm_results, zinb_results], counts, n_samples=1000
+# Compare models
+mc = compare_models(
+    [nbdm_results, zinb_results],
+    counts=adata.X,
+    model_names=["NBDM", "ZINB"],
 )
+print(mc.summary())
+
+# Per-gene comparison
+gene_df = mc.gene_level_comparison("NBDM", "ZINB")
 ```
 
 ## Best Practices
