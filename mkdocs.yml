@@ -133,6 +133,10 @@ nav:
     - NBVCP: models/nbvcp.md
     - ZINBVCP: models/zinbvcp.md
     - Mixture Models: models/mixture.md
+  - Theory:
+    - theory/index.md
+    - Dirichlet-Multinomial Model: theory/dirichlet-multinomial.md
+    - Hierarchical Gene-Specific p: theory/hierarchical-p.md
   - User Guide:
     - guide/index.md
     - Results Class: guide/results.md

@@ -234,9 +234,14 @@ be decomposed into:
 2. **Gene-wise allocation** (how molecules are distributed among genes)
 
 This decomposition enables principled normalization and uncertainty
-quantification. The mathematical derivation showing how this leads to the
-Negative Binomial-Dirichlet Multinomial formulation is detailed in the
-[NBDM model](nbdm.md) page.
+quantification. For the full theoretical background, see the
+[Theory section](../theory/index.md), which covers:
+
+- The [Dirichlet-Multinomial derivation](../theory/dirichlet-multinomial.md)
+  showing how independent negative binomials factorize into the NBDM
+  formulation
+- The [Hierarchical Gene-Specific \(p\)](../theory/hierarchical-p.md) extension
+  that relaxes the shared success probability assumption
 
 Model variants extend this foundation by:
 
