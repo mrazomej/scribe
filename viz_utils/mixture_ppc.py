@@ -301,10 +301,12 @@ def _plot_ppc_figure(
     sort_order = np.argsort(selected_means)
     selected_idx_sorted = selected_idx[sort_order]
 
-    selected_idx_sorted_by_original = np.sort(selected_idx)
+    # results[selected_idx] preserves the caller-specified gene order, so
+    # subset_positions must map each gene's original index to its position in
+    # selected_idx (not the old sorted-original order).
     subset_positions = {
-        gene_idx: pos
-        for pos, gene_idx in enumerate(selected_idx_sorted_by_original)
+        int(gene_idx): pos
+        for pos, gene_idx in enumerate(selected_idx)
     }
 
     fig, axes = plt.subplots(
@@ -408,10 +410,12 @@ def _plot_ppc_comparison_figure(
     sort_order = np.argsort(selected_means)
     selected_idx_sorted = selected_idx[sort_order]
 
-    selected_idx_sorted_by_original = np.sort(selected_idx)
+    # results[selected_idx] preserves the caller-specified gene order, so
+    # subset_positions must map each gene's original index to its position in
+    # selected_idx (not the old sorted-original order).
     subset_positions = {
-        gene_idx: pos
-        for pos, gene_idx in enumerate(selected_idx_sorted_by_original)
+        int(gene_idx): pos
+        for pos, gene_idx in enumerate(selected_idx)
     }
 
     fig, axes = plt.subplots(

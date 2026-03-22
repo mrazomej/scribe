@@ -197,6 +197,78 @@ class TestMetadataSubsettingCorrectAxis:
         )
 
 
+class TestIntegerArrayIndexingPreservesOrder:
+    """Integer-array indexing must preserve the caller-specified gene order.
+
+    Before the fix, ``__getitem__`` converted integer arrays to a boolean mask
+    via ``jnp.isin``, which always returned genes in their original list order
+    and silently discarded the requested ordering.  These tests assert the
+    corrected behaviour.
+    """
+
+    @pytest.fixture
+    def ordered_results(self):
+        """Results object with five genes whose r_loc values equal their index."""
+        r_spec = LogNormalSpec(
+            name="r",
+            shape_dims=("n_genes",),
+            default_params=(0.0, 1.0),
+            is_gene_specific=True,
+        )
+        config = ModelConfig(
+            base_model="nbdm",
+            parameterization="standard",
+            unconstrained=False,
+            param_specs=[r_spec],
+        )
+        return ScribeSVIResults(
+            params={"r_loc": jnp.array([10.0, 20.0, 30.0, 40.0, 50.0])},
+            loss_history=jnp.array([1.0]),
+            n_cells=6,
+            n_genes=5,
+            model_type="nbdm",
+            model_config=config,
+            prior_params={},
+            var=pd.DataFrame(index=["g0", "g1", "g2", "g3", "g4"]),
+        )
+
+    def test_integer_array_preserves_param_order(self, ordered_results):
+        """results[[4, 1, 3]] should yield r_loc=[50, 20, 40], not [20, 40, 50]."""
+        subset = ordered_results[[4, 1, 3]]
+        np.testing.assert_array_equal(
+            subset.params["r_loc"], jnp.array([50.0, 20.0, 40.0])
+        )
+
+    def test_integer_array_preserves_var_index_order(self, ordered_results):
+        """var.index of the subset must follow the caller's specified gene order."""
+        subset = ordered_results[[4, 1, 3]]
+        assert list(subset.var.index) == ["g4", "g1", "g3"]
+
+    def test_integer_array_n_genes_is_element_count(self, ordered_results):
+        """n_genes must equal the number of selected genes, not the sum of indices."""
+        subset = ordered_results[[4, 1, 3]]
+        # Before the fix, index.sum() = 4+1+3 = 8; correct value is 3.
+        assert subset.n_genes == 3
+
+    def test_numpy_integer_array_preserves_order(self, ordered_results):
+        """numpy integer arrays should behave identically to Python lists."""
+        subset = ordered_results[np.array([4, 1, 3])]
+        np.testing.assert_array_equal(
+            subset.params["r_loc"], jnp.array([50.0, 20.0, 40.0])
+        )
+        assert list(subset.var.index) == ["g4", "g1", "g3"]
+
+    def test_boolean_mask_still_preserves_original_order(self, ordered_results):
+        """Boolean-mask indexing must continue to select genes in original order."""
+        mask = jnp.array([False, True, False, True, True])
+        subset = ordered_results[mask]
+        # Boolean mask selects g1, g3, g4 — always in original list order.
+        np.testing.assert_array_equal(
+            subset.params["r_loc"], jnp.array([20.0, 40.0, 50.0])
+        )
+        assert list(subset.var.index) == ["g1", "g3", "g4"]
+
+
 class TestFallbackWhenParamSpecsEmpty:
     """Test that subsetting still runs (heuristic) when param_specs is empty."""
 

@@ -338,55 +338,65 @@ class GeneSubsettingMixin:
 
             return result
 
-        # If index is a boolean mask, use it directly
+        # Normalize the selector to a single ``gene_index`` variable that is
+        # passed to all downstream slicer helpers.  Boolean masks select genes
+        # in their original list order (unchanged); integer arrays preserve the
+        # caller-specified order so that, e.g., results[[2, 0, 1]] returns genes
+        # in the order [gene_2, gene_0, gene_1] rather than silently sorting
+        # them back to [gene_0, gene_1, gene_2].
         if isinstance(index, (jnp.ndarray, np.ndarray)) and index.dtype == bool:
-            bool_index = index
-        # Handle integer indexing
+            # Boolean mask: keep as-is; order follows original gene list.
+            gene_index = index
         elif isinstance(index, int):
-            # Initialize boolean index
-            bool_index = jnp.zeros(self.n_genes, dtype=bool)
-            # Set True for the given index
-            bool_index = bool_index.at[index].set(True)
-        # Handle slice indexing
+            # Single integer: convert to a length-1 boolean mask to keep the
+            # same shape semantics as the boolean-mask path.
+            gene_index = jnp.zeros(self.n_genes, dtype=bool)
+            gene_index = gene_index.at[index].set(True)
         elif isinstance(index, slice):
-            # Get indices from slice
-            indices = jnp.arange(self.n_genes)[index]
-            # Initialize boolean index
-            bool_index = jnp.zeros(self.n_genes, dtype=bool)
-            # Set True for the given indices
-            bool_index = jnp.isin(jnp.arange(self.n_genes), indices)
-        # Handle list/array indexing (by integer indices)
-        elif isinstance(index, (list, np.ndarray, jnp.ndarray)) and not (
-            isinstance(index, (jnp.ndarray, np.ndarray)) and index.dtype == bool
-        ):
-            indices = jnp.array(index)
-            bool_index = jnp.isin(jnp.arange(self.n_genes), indices)
+            # Slice: extract positions from the slice in slice order (always
+            # monotone), then keep as an integer array.
+            gene_index = np.asarray(jnp.arange(self.n_genes)[index], dtype=int)
+        elif isinstance(index, (list, np.ndarray, jnp.ndarray)):
+            # Integer list/array: convert to a plain numpy integer array to
+            # preserve the caller-specified ordering.  jnp.isin would produce a
+            # boolean mask that silently re-sorts genes back to original-list
+            # order, discarding the requested ordering (e.g. DE-significance
+            # rank).  All downstream slicer methods accept integer arrays and
+            # already perform order-preserving fancy indexing.
+            gene_index = np.asarray(index, dtype=int)
         else:
             raise TypeError(f"Unsupported index type: {type(index)}")
 
         # Create new params dict with subset of parameters
-        new_params = self._subset_params(self.params, bool_index)
+        new_params = self._subset_params(self.params, gene_index)
 
-        # Create new metadata if available
-        new_var = self.var.iloc[bool_index] if self.var is not None else None
+        # Create new metadata if available.
+        # Convert gene_index to numpy before calling iloc: pandas does not
+        # recognise JAX arrays as boolean masks and would interpret a bool
+        # array as integer indices (False=0, True=1), selecting the wrong rows.
+        new_var = (
+            self.var.iloc[np.asarray(gene_index)]
+            if self.var is not None
+            else None
+        )
 
         # Create new posterior samples if available
         new_posterior_samples = (
-            self._subset_posterior_samples(self.posterior_samples, bool_index)
+            self._subset_posterior_samples(self.posterior_samples, gene_index)
             if self.posterior_samples is not None
             else None
         )
 
         # Create new predictive samples if available
         new_predictive_samples = (
-            self._subset_predictive_samples(self.predictive_samples, bool_index)
+            self._subset_predictive_samples(self.predictive_samples, gene_index)
             if self.predictive_samples is not None
             else None
         )
 
         # Create new instance with subset data
         return self._create_subset(
-            index=bool_index,
+            index=gene_index,
             new_params=new_params,
             new_var=new_var,
             new_posterior_samples=new_posterior_samples,
@@ -420,7 +430,18 @@ class GeneSubsettingMixin:
             params=new_params,
             loss_history=self.loss_history,
             n_cells=self.n_cells,
-            n_genes=int(index.sum() if hasattr(index, "sum") else len(index)),
+            # Boolean masks count True entries; integer arrays count elements.
+            # Both numpy and jax arrays have .sum(), so dtype must be checked
+            # explicitly — summing an integer index array gives the sum of the
+            # index values (e.g. 42+7+15+3=67), not the gene count (4).
+            n_genes=(
+                int(index.sum())
+                if (
+                    hasattr(index, "dtype")
+                    and np.dtype(index.dtype) == np.bool_
+                )
+                else len(index)
+            ),
             model_type=self.model_type,
             model_config=self.model_config,
             prior_params=self.prior_params,

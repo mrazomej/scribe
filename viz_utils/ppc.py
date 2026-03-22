@@ -53,10 +53,12 @@ def plot_ppc(results, counts, figs_dir, cfg, viz_cfg):
         store_samples=True,
     )
 
-    selected_idx_sorted_by_original = np.sort(selected_idx)
+    # results[selected_idx] now preserves the caller-specified gene order, so
+    # subset_positions must map each gene's original index to its position in
+    # selected_idx (not in the old sorted-original order).
     subset_positions = {
-        gene_idx: pos
-        for pos, gene_idx in enumerate(selected_idx_sorted_by_original)
+        int(gene_idx): pos
+        for pos, gene_idx in enumerate(selected_idx)
     }
 
     fig, axes = plt.subplots(
