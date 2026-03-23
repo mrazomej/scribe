@@ -5,7 +5,7 @@ statistics and probabilistic modeling. This section provides an accessible
 overview of the core theoretical results that underpin the package, presenting
 the key ideas and their implications without exhaustive algebraic derivations.
 
-The probabilistic framework of SCRIBE can be understood through six
+The probabilistic framework of SCRIBE can be understood through seven
 theoretical contributions:
 
 - [**Dirichlet-Multinomial Model**](dirichlet-multinomial.md) — Derives how
@@ -41,6 +41,12 @@ theoretical contributions:
   shrinkage across genes, mixture components, and datasets, with
   applications to gene-specific \(p\), \(\mu\), the zero-inflation gate,
   and multi-dataset hierarchical models.
+
+- [**Differential Expression**](differential-expression.md) — Develops a
+  fully Bayesian DE framework in compositional (CLR) space with three
+  inference methods (parametric, empirical, shrinkage), complemented by
+  biological-level metrics (LFC, log-variance ratio, Jeffreys divergence)
+  that are free of compositional closure.
 
 !!! tip "For practitioners"
     You do not need to read these pages to use SCRIBE effectively. The

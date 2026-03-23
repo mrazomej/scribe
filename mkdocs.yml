@@ -141,6 +141,7 @@ nav:
     - Beta Negative Binomial: theory/beta-negative-binomial.md
     - Hierarchical Priors: theory/hierarchical-priors.md
     - Bayesian Denoising: theory/denoising.md
+    - Differential Expression: theory/differential-expression.md
   - User Guide:
     - guide/index.md
     - Inference Methods: guide/inference.md
