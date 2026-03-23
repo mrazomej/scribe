@@ -1,12 +1,19 @@
 # Welcome to SCRIBE
 
 **SCRIBE** (Single-Cell RNA-seq Inference with Bayesian Estimation) is a
-comprehensive Python package for Bayesian analysis of single-cell RNA
-sequencing (scRNA-seq) data. Built on
-[JAX](https://jax.readthedocs.io/en/latest/) and
-[NumPyro](https://num.pyro.ai/en/stable/index.html), SCRIBE provides a
-unified framework for probabilistic modeling, variational inference, uncertainty
-quantification, differential expression, and model comparison in single-cell
+comprehensive Python package for
+[Bayesian](https://en.wikipedia.org/wiki/Bayesian_inference) analysis of
+[single-cell RNA
+sequencing](https://en.wikipedia.org/wiki/Single-cell_transcriptomics)
+(scRNA-seq) data. Built on [JAX](https://jax.readthedocs.io/en/latest/) and
+[NumPyro](https://num.pyro.ai/en/stable/index.html), SCRIBE provides a unified
+framework for probabilistic modeling, [variational
+inference](https://en.wikipedia.org/wiki/Variational_Bayesian_methods),
+[uncertainty
+quantification](https://en.wikipedia.org/wiki/Uncertainty_quantification),
+[differential
+expression](https://en.wikipedia.org/wiki/Gene_expression), and
+model comparison in single-cell
 genomics.
 
 ## Generative Model
@@ -23,33 +30,43 @@ genomics.
 
 SCRIBE is grounded in a biophysical generative model of scRNA-seq count data.
 Transcription (rate \(b\)) and degradation (rate \(\gamma\)) set the
-steady-state mRNA content per gene, giving rise to a Negative Binomial
-distribution over true molecular counts \(m_g\) with parameters \(r_g\) and
-\(p_g\). During library preparation each molecule is independently captured
-with cell-specific probability \(\nu^{(c)}\), so the observed UMI count
-\(u_g\) follows a Binomial sub-sampling of \(m_g\). Marginalizing over the
-latent counts yields a Negative Binomial likelihood for the observations with
-an effective success probability \(\hat{p}_g^{(c)}\) that absorbs the capture
-efficiency.
+steady-state mRNA content per gene, giving rise to a [Negative Binomial
+distribution](https://en.wikipedia.org/wiki/Negative_binomial_distribution) over
+true molecular counts \(m_g\) with parameters \(r_g\) and \(p_g\). During
+library preparation each
+molecule is independently captured with cell-specific probability \(\nu^{(c)}\),
+so the observed [UMI](https://en.wikipedia.org/wiki/Unique_molecular_identifier)
+count \(u_g\) follows a
+[Binomial](https://en.wikipedia.org/wiki/Binomial_distribution) sub-sampling of
+\(m_g\). Marginalizing over the latent counts yields a Negative Binomial
+likelihood for the observations with an effective success probability
+\(\hat{p}_g^{(c)}\) that absorbs the capture efficiency.
 
 For the full mathematical derivation, see the
 [Theory section](theory/index.md).
 
 ## Why SCRIBE?
 
-- **Unified Framework**: Single `scribe.fit()` interface for SVI, MCMC, and
-  VAE inference methods
+- **Unified Framework**: Single `scribe.fit()` interface for
+  [SVI](https://en.wikipedia.org/wiki/Variational_Bayesian_methods),
+  [MCMC](https://en.wikipedia.org/wiki/Markov_chain_Monte_Carlo), and
+  [VAE](https://en.wikipedia.org/wiki/Variational_autoencoder) inference methods
 - **Compositional Models**: Four constructive likelihoods -- from the base
-  Negative Binomial up to zero-inflated models with variable capture
-  probability
+  Negative Binomial up to
+  [zero-inflated](https://en.wikipedia.org/wiki/Zero-inflated_model) models with
+  variable capture probability
 - **Compositional Differential Expression**: Bayesian DE in log-ratio
-  coordinates with proper uncertainty propagation and error control (lfsr,
-  PEFP)
-- **Model Comparison**: WAIC, PSIS-LOO, stacking weights, and goodness-of-fit
-  diagnostics for principled model selection
+  coordinates with proper uncertainty propagation and error control (lfsr, PEFP)
+- **Model Comparison**:
+  [WAIC](https://en.wikipedia.org/wiki/Watanabe%E2%80%93Akaike_information_criterion),
+  [PSIS-LOO](https://en.wikipedia.org/wiki/Cross-validation_(statistics)#Leave-one-out_cross-validation),
+  stacking weights, and goodness-of-fit diagnostics for principled model
+  selection
 - **GPU Accelerated**: JAX-based implementation with automatic GPU support
 - **Flexible Architecture**: Three parameterizations, constrained/unconstrained
-  modes, hierarchical priors, horseshoe sparsity, and normalizing flows
+  modes, hierarchical priors,
+  horseshoe sparsity, and
+  [normalizing flows](https://en.wikipedia.org/wiki/Flow-based_generative_model)
 - **Scalable**: From small experiments to large-scale atlases with mini-batch
   support
 
@@ -57,20 +74,24 @@ For the full mathematical derivation, see the
 
 - **Three Inference Methods**:
     - SVI for speed and scalability
-    - MCMC (NUTS) for exact Bayesian inference
+    - MCMC ([NUTS](https://en.wikipedia.org/wiki/Hamiltonian_Monte_Carlo#No_U-Turn_Sampler)) for exact
+      Bayesian inference
     - VAE for representation learning with normalizing flow priors
 - **Constructive Likelihood System**: Negative Binomial as the base, extended
   with zero inflation and/or variable capture probability
 - **Multiple Parameterizations**: Canonical, linked (mean-prob), and odds-ratio
   with constrained or unconstrained priors
-- **Advanced Guide Families**: Mean-field, low-rank, joint low-rank, and
-  amortized variational guides
+- **Advanced Guide Families**:
+  [Mean-field](https://en.wikipedia.org/wiki/Mean-field_approximation),
+  low-rank, joint low-rank, and amortized variational guides
 - **Mixture Models**: K-component mixtures for cell type discovery with
   annotation-guided priors
 - **Hierarchical Priors**: Gene-specific and dataset-level hierarchical
   structures with optional horseshoe sparsity
-- **Bayesian Differential Expression**: Parametric, empirical (Monte Carlo),
-  and shrinkage (empirical Bayes) methods in CLR/ILR coordinates
+- **Bayesian Differential Expression**: Parametric, empirical (Monte Carlo), and
+  shrinkage ([empirical
+  Bayes](https://en.wikipedia.org/wiki/Empirical_Bayes_method)) methods in
+  [CLR/ILR](https://en.wikipedia.org/wiki/Compositional_data) coordinates
 - **Model Comparison**: WAIC, PSIS-LOO, stacking, per-gene elpd, and
   goodness-of-fit via randomized quantile residuals
 - **Seamless Integration**: Works with AnnData and the scanpy ecosystem
@@ -223,9 +244,9 @@ results = scribe.fit(
 
 | Method | Engine | Precision | Use Case |
 |---|---|---|---|
-| **SVI** | Adam optimizer | float32 | Fast exploration, large datasets |
+| **SVI** | [Adam optimizer](https://en.wikipedia.org/wiki/Adam_(optimization_algorithm)) | float32 | Fast exploration, large datasets |
 | **MCMC** | NUTS sampler | float64 | Exact posterior, gold standard |
-| **VAE** | Encoder-decoder | float32 | Latent representations, embeddings |
+| **VAE** | [Encoder-decoder](https://en.wikipedia.org/wiki/Autoencoder) | float32 | Latent representations, embeddings |
 
 ```python
 # Fast exploration with SVI (default)
