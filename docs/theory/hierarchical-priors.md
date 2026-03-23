@@ -270,6 +270,37 @@ results = scribe.fit(
 )
 ```
 
+### BNB overdispersion (kappa_g)
+
+The [Beta Negative Binomial](beta-negative-binomial.md) extension adds a
+per-gene concentration parameter \(\kappa_g\) that allows heavier-than-NB
+tails. Since most genes are adequately described by the NB, the
+hierarchical prior on \(\kappa_g\) must default to NB behaviour while
+allowing a sparse subset of genes to escape.
+
+The concentration is reparameterized as the excess dispersion fraction
+\(\omega_g = (r_g + 1) / (\kappa_g - 2)\), and the horseshoe or NEG
+prior is applied to \(\omega_g\) so that most genes are shrunk toward
+\(\omega_g = 0\) (the NB limit). See the
+[BNB page](beta-negative-binomial.md#hierarchical-prior-on-kappa_g) for
+the full derivation.
+
+```python
+# BNB with horseshoe prior on kappa_g
+results = scribe.fit(
+    adata,
+    model="nbdm",
+    parameterization="canonical",
+    overdispersion="bnb",
+    overdispersion_prior="horseshoe",   # or "neg"
+)
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `overdispersion` | `"none"` (default) or `"bnb"` to enable the BNB |
+| `overdispersion_prior` | Prior on \(\kappa_g\): `"horseshoe"` (default) or `"neg"` |
+
 ---
 
 ## Extension to Multiple Datasets
@@ -419,6 +450,9 @@ results = scribe.fit(
 | `p_dataset_prior` | Dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key` |
 | `p_dataset_mode` | -- | `"scalar"`, `"gene_specific"`, `"two_level"` | `p_dataset_prior` set |
 | `gate_dataset_prior` | Dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key`, ZI model |
+| `overdispersion` | -- | `"none"`, `"bnb"` | -- |
+| `overdispersion_prior` | Gene | `"horseshoe"`, `"neg"` | `overdispersion="bnb"` |
+| `overdispersion_dataset_prior` | Dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `overdispersion="bnb"`, `dataset_key` |
 
 ### Horseshoe and NEG hyperparameters
 
