@@ -344,8 +344,8 @@ and the [API Reference](../reference/scribe/svi/) for SVI or
     - See [Beta Negative Binomial](beta-negative-binomial.md) for how
       denoising extends to power-law tail distributions via a one-dimensional
       integral over the latent Beta mixing variable.
-    - See the [ZINB model](../models/zinb.md) for practical details on the
-      zero-inflated models whose gate/NB mixture denoising is derived here.
+    - See the [Model Selection](../guide/model-selection.md#zero-inflation-zinb)
+      guide for practical details on the zero-inflated models.
     - See the [Results Class guide](../guide/results.md) for the full denoising
       API, including `denoise_counts`, `denoise_counts_posterior`, and
       `get_denoised_anndata`.

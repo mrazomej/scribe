@@ -333,6 +333,5 @@ For the full API details, see the [API Reference](../reference/scribe/api/).
     - See [Beta Negative Binomial](beta-negative-binomial.md) for an
       orthogonal overdispersion extension whose mean structure critically
       depends on the mean anchoring prior.
-    - See the [NBVCP model](../models/nbvcp.md) and
-      [ZINBVCP model](../models/zinbvcp.md) for the models where anchoring
-      priors are most important in practice.
+    - See the [Model Selection](../guide/model-selection.md) guide for
+      NBVCP and ZINBVCP models where anchoring priors are most important.
