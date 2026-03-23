@@ -146,6 +146,5 @@ nav:
     - Results Class: guide/results.md
     - Differential Expression: guide/differential-expression.md
     - Model Comparison: guide/model-comparison.md
-    - Custom Models: guide/custom-model.md
   - API Reference: reference/
   - Contributing: contributing.md

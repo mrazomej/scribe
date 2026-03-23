@@ -28,6 +28,3 @@ model through downstream analysis.
 - [**Model Comparison**](model-comparison.md) — comparing models with WAIC and
   PSIS-LOO, stacking weights, per-gene goodness-of-fit diagnostics, and
   integration with the DE pipeline
-
-- [**Custom Models**](custom-model.md) — defining your own probabilistic models
-  and guides within the SCRIBE framework
