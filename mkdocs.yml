@@ -142,6 +142,7 @@ nav:
     - Hierarchical Priors: theory/hierarchical-priors.md
     - Bayesian Denoising: theory/denoising.md
     - Differential Expression: theory/differential-expression.md
+    - Model Comparison: theory/model-comparison.md
     - Goodness-of-Fit Diagnostics: theory/goodness-of-fit.md
   - User Guide:
     - guide/index.md
