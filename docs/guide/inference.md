@@ -58,43 +58,24 @@ results = scribe.fit(
 ### Guide families
 
 The variational guide controls the flexibility of the posterior approximation.
-SCRIBE supports several guide families, configurable per parameter:
-
-**Mean-field** (default) -- independent normal for each parameter. Fast but
-ignores correlations.
-
-**Low-rank** -- captures the top-\(k\) correlations between parameters within
-a group. Use `guide_rank` to set the rank:
+SCRIBE supports several families---mean-field (default), low-rank,
+joint low-rank, amortized, and VAE latent---each offering different
+trade-offs between speed and the ability to capture correlations:
 
 ```python
+# Low-rank guide for gene correlations
 results = scribe.fit(adata, model="nbdm", guide_rank=8)
-```
 
-**Joint low-rank** -- captures correlations *across* parameter groups (e.g.,
-between \(r\) and \(p\)). Use `joint_params` to specify which parameters
-share a joint guide:
-
-```python
+# Joint low-rank across parameter groups
 results = scribe.fit(
-    adata,
-    model="nbdm",
-    guide_rank=8,
-    joint_params=["r", "p"],
+    adata, model="nbdm", guide_rank=8, joint_params=["r", "p"],
 )
+
+# Amortized capture for VCP models
+results = scribe.fit(adata, model="nbvcp", amortize_capture=True)
 ```
 
-**Amortized** -- a neural network maps each cell's data to its variational
-parameters, enabling inference without per-cell parameters. Useful for
-capture-probability models:
-
-```python
-results = scribe.fit(
-    adata,
-    model="nbvcp",
-    amortize_capture=True,
-    capture_hidden_dims=[128, 64],
-)
-```
+[:octicons-arrow-right-24: Full guide families documentation](guide-families.md)
 
 ### Early stopping
 

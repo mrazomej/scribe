@@ -219,8 +219,8 @@ used.
 !!! tip "Next steps"
     - See the [Dirichlet-Multinomial Model](dirichlet-multinomial.md) page for
       the foundational theory.
-    - See the [NBDM model page](../models/nbdm.md) for practical usage and
-      implementation details.
+    - See the [Model Selection](../guide/model-selection.md) guide for
+      practical usage and choosing a model variant.
     - See [Hierarchical Priors](hierarchical-priors.md) for the full theory of
       the Gaussian, Horseshoe, and NEG prior families used for adaptive
       shrinkage of gene-specific parameters.

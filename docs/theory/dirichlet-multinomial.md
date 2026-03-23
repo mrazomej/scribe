@@ -1,8 +1,8 @@
 # Dirichlet-Multinomial Model
 
-This page presents the key theoretical results underlying the
-[NBDM model](../models/nbdm.md). For complete derivations with all algebraic
-steps, see the accompanying paper.
+This page presents the key theoretical results underlying the [NBDM
+model](../guide/model-selection.md#base-negative-binomial-nbdm). For complete
+derivations with all algebraic steps, see the accompanying paper.
 
 ## Model Setup
 
@@ -235,8 +235,8 @@ working with the full distribution enables principled uncertainty quantification
 ---
 
 !!! tip "Next steps"
-    - See the [NBDM model page](../models/nbdm.md) for practical usage and
-      implementation details.
+    - See the [Model Selection](../guide/model-selection.md) guide for
+      practical usage and choosing the right model variant.
     - See the [Hierarchical Gene-Specific \(p\)](hierarchical-p.md) page for
       what happens when the shared-\(p\) assumption is relaxed.
     - See [Bayesian Denoising](denoising.md) to learn how the NB generative

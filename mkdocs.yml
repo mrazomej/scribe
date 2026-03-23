@@ -126,13 +126,6 @@ nav:
     - Installation: getting-started/installation.md
     - Quick Overview: getting-started/quick-overview.md
     - Quickstart: getting-started/quickstart.md
-  - Models:
-    - models/index.md
-    - NBDM: models/nbdm.md
-    - ZINB: models/zinb.md
-    - NBVCP: models/nbvcp.md
-    - ZINBVCP: models/zinbvcp.md
-    - Mixture Models: models/mixture.md
   - Theory:
     - theory/index.md
     - Dirichlet-Multinomial Model: theory/dirichlet-multinomial.md
@@ -146,6 +139,8 @@ nav:
     - Goodness-of-Fit Diagnostics: theory/goodness-of-fit.md
   - User Guide:
     - guide/index.md
+    - Model Selection: guide/model-selection.md
+    - Variational Guide Families: guide/guide-families.md
     - Inference Methods: guide/inference.md
     - Results Class: guide/results.md
     - Differential Expression: guide/differential-expression.md

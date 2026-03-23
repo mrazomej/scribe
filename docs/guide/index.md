@@ -1,11 +1,18 @@
 # User Guide
 
-This section covers the practical workflow of using SCRIBE -- from choosing an
-inference method through downstream analysis.
+This section covers the practical workflow of using SCRIBE---from selecting a
+model through downstream analysis.
+
+- [**Model Selection**](model-selection.md) — choosing the right model for your
+  data: NB base, zero inflation, variable capture, BNB overdispersion, mixture
+  components, parameterizations, and hierarchical priors
+
+- [**Variational Guide Families**](guide-families.md) — mean-field, low-rank,
+  joint low-rank, amortized, and VAE latent guides: what they capture, when to
+  use each, and how to configure them
 
 - [**Inference Methods**](inference.md) — choosing between SVI, MCMC, and VAE,
-  key parameters, guide families, early stopping, and the SVI-to-MCMC
-  warm-start workflow
+  key parameters, early stopping, and the SVI-to-MCMC warm-start workflow
 
 - [**Results Class**](results.md) — understanding and using the `ScribeResults`
   object for posterior analysis, sampling, denoising, and normalization

@@ -3,7 +3,7 @@
 SCRIBE provides a flexible framework for implementing and working with custom
 models while maintaining compatibility with the package's infrastructure. This
 tutorial walks you through the process of creating and using custom models,
-using a real example of modifying the [NBDM](../models/nbdm.md) model to use a
+using a real example of modifying the NBDM model to use a
 [LogNormal](https://en.wikipedia.org/wiki/Log-normal_distribution) prior.
 
 ## Overview
@@ -30,7 +30,7 @@ import scribe
 ## Defining the Model
 
 The model function defines your probabilistic model using NumPyro primitives.
-For this tutorial, we will modify the [NBDM](../models/nbdm.md) model to use a
+For this tutorial, we will modify the NBDM model to use a
 LogNormal prior for the dispersion parameters. The function must have the
 following signature:
 
@@ -361,7 +361,7 @@ results = scribe.fit(
 
 ## See Also
 
-- [NBDM model](../models/nbdm.md) — details on the base NBDM model
+- [Model Selection](model-selection.md) — choosing the right model variant
 - [Results class](results.md) — working with result objects
 - [NumPyro documentation](https://num.pyro.ai/en/stable/) — distribution
   details
