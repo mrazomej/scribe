@@ -53,7 +53,7 @@ computation path based on which posterior samples are supplied:
    (``mu_A`` or ``mu_B``) before interpreting the results.
 """
 
-from typing import Optional, List
+from typing import Optional, List, Iterable, Set
 
 import jax.numpy as jnp
 
@@ -78,6 +78,7 @@ def biological_differential_expression(
     tau_var: float = 0.0,
     tau_kl: float = 0.0,
     gene_names: Optional[List[str]] = None,
+    metric_families: Optional[Iterable[str]] = None,
 ) -> dict:
     """Compute biological-level DE statistics from posterior NB parameters.
 
@@ -117,6 +118,9 @@ def biological_differential_expression(
         Practical significance threshold for the Jeffreys divergence.
     gene_names : list of str, optional
         Gene names.  If ``None``, generic names are generated.
+    metric_families : iterable of {'bio_lfc', 'bio_lvr', 'bio_kl', 'bio_aux'}, optional
+        Biological families to compute. When ``None``, all biological families
+        are computed for backward compatibility.
 
     Returns
     -------
@@ -170,7 +174,15 @@ def biological_differential_expression(
     3. **Fallback** (``canonical``): ``mu = r * (1 - p) / p``,
        ``var = mu / p``, ``beta = p / (1 - p)``.
     """
-    # Broadcast shared p to (N, 1) so element-wise ops work correctly
+    # Resolve requested biological families once so downstream blocks can skip
+    # unused expensive computations (for example KL divergence).
+    metric_families_set = _resolve_biological_metric_families(metric_families)
+    include_lfc = "bio_lfc" in metric_families_set
+    include_lvr = "bio_lvr" in metric_families_set
+    include_kl = "bio_kl" in metric_families_set
+    include_aux = "bio_aux" in metric_families_set
+
+    # Broadcast shared p to (N, 1) so element-wise ops work correctly.
     if p_samples_A.ndim == 1:
         p_samples_A = p_samples_A[:, None]
     if p_samples_B.ndim == 1:
@@ -189,45 +201,63 @@ def biological_differential_expression(
     _has_mu = mu_samples_A is not None and mu_samples_B is not None
     _has_phi = phi_samples_A is not None and phi_samples_B is not None
 
-    # ------------------------------------------------------------------
-    # Biological mean: mu_g
-    # ------------------------------------------------------------------
-    if _has_mu:
-        mu_A = mu_samples_A
-        mu_B = mu_samples_B
-    else:
-        # Fallback: mu = r * (1 - p) / p
-        mu_A = r_samples_A * (1.0 - p_samples_A) / p_samples_A
-        mu_B = r_samples_B * (1.0 - p_samples_B) / p_samples_B
+    # Compute mu only when any requested family depends on it.
+    compute_mu = include_lfc or include_lvr or include_aux
+    mu_A = None
+    mu_B = None
+    if compute_mu:
+        if _has_mu:
+            mu_A = mu_samples_A
+            mu_B = mu_samples_B
+        else:
+            # Fallback: mu = r * (1 - p) / p.
+            mu_A = r_samples_A * (1.0 - p_samples_A) / p_samples_A
+            mu_B = r_samples_B * (1.0 - p_samples_B) / p_samples_B
 
-    # ------------------------------------------------------------------
-    # Biological variance: var_g
-    #   mean_odds:  var = mu * (1 + phi)   [since 1/p = 1 + phi]
-    #   otherwise:  var = mu / p
-    # ------------------------------------------------------------------
-    if _has_phi:
-        var_A = mu_A * (1.0 + phi_samples_A)
-        var_B = mu_B * (1.0 + phi_samples_B)
-    else:
-        var_A = mu_A / p_samples_A
-        var_B = mu_B / p_samples_B
+    # Compute variance only for requested LVR/aux families.
+    compute_var = include_lvr or include_aux
+    var_A = None
+    var_B = None
+    if compute_var:
+        if mu_A is None or mu_B is None:
+            raise RuntimeError(
+                "Internal error: variance requested but mu was not computed."
+            )
+        if _has_phi:
+            var_A = mu_A * (1.0 + phi_samples_A)
+            var_B = mu_B * (1.0 + phi_samples_B)
+        else:
+            var_A = mu_A / p_samples_A
+            var_B = mu_B / p_samples_B
 
     # ------------------------------------------------------------------
     # Biological LFC: log(mu_A / mu_B)
     # ------------------------------------------------------------------
     eps = 1e-30
-    lfc_samples = jnp.log(jnp.maximum(mu_A, eps)) - jnp.log(
-        jnp.maximum(mu_B, eps)
-    )
-    lfc_stats = _summarise_signed_metric(lfc_samples, tau_lfc)
+    lfc_stats = None
+    if include_lfc:
+        if mu_A is None or mu_B is None:
+            raise RuntimeError(
+                "Internal error: LFC requested but mu was not computed."
+            )
+        lfc_samples = jnp.log(jnp.maximum(mu_A, eps)) - jnp.log(
+            jnp.maximum(mu_B, eps)
+        )
+        lfc_stats = _summarise_signed_metric(lfc_samples, tau_lfc)
 
     # ------------------------------------------------------------------
     # Log-variance ratio: log(var_A / var_B)
     # ------------------------------------------------------------------
-    lvr_samples = jnp.log(jnp.maximum(var_A, eps)) - jnp.log(
-        jnp.maximum(var_B, eps)
-    )
-    lvr_stats = _summarise_signed_metric(lvr_samples, tau_var)
+    lvr_stats = None
+    if include_lvr:
+        if var_A is None or var_B is None:
+            raise RuntimeError(
+                "Internal error: LVR requested but variance was not computed."
+            )
+        lvr_samples = jnp.log(jnp.maximum(var_A, eps)) - jnp.log(
+            jnp.maximum(var_B, eps)
+        )
+        lvr_stats = _summarise_signed_metric(lvr_samples, tau_var)
 
     # ------------------------------------------------------------------
     # Gamma Jeffreys divergence (symmetrised KL on the latent rate)
@@ -235,18 +265,20 @@ def biological_differential_expression(
     #     mean_odds:  beta = 1 / phi
     #     otherwise:  beta = p / (1 - p)
     # ------------------------------------------------------------------
-    if _has_phi:
-        # beta = 1 / phi avoids the catastrophic p / (1 - p) computation
-        beta_A = 1.0 / phi_samples_A
-        beta_B = 1.0 / phi_samples_B
-    else:
-        beta_A = p_samples_A / (1.0 - p_samples_A)
-        beta_B = p_samples_B / (1.0 - p_samples_B)
+    kl_stats = None
+    if include_kl:
+        if _has_phi:
+            # beta = 1 / phi avoids catastrophic p / (1 - p) cancellation.
+            beta_A = 1.0 / phi_samples_A
+            beta_B = 1.0 / phi_samples_B
+        else:
+            beta_A = p_samples_A / (1.0 - p_samples_A)
+            beta_B = p_samples_B / (1.0 - p_samples_B)
 
-    jeffreys_samples = gamma_jeffreys(
-        r_samples_A, beta_A, r_samples_B, beta_B
-    )
-    kl_stats = _summarise_nonneg_metric(jeffreys_samples, tau_kl)
+        jeffreys_samples = gamma_jeffreys(
+            r_samples_A, beta_A, r_samples_B, beta_B
+        )
+        kl_stats = _summarise_nonneg_metric(jeffreys_samples, tau_kl)
 
     # ------------------------------------------------------------------
     # Gene names and auxiliary quantities for downstream filtering
@@ -255,44 +287,99 @@ def biological_differential_expression(
     if gene_names is None:
         gene_names = [f"gene_{i}" for i in range(D)]
 
-    mu_A_mean = jnp.mean(mu_A, axis=0)
-    mu_B_mean = jnp.mean(mu_B, axis=0)
-    max_bio_expr = jnp.maximum(mu_A_mean, mu_B_mean)
+    mu_A_mean = jnp.mean(mu_A, axis=0) if mu_A is not None else None
+    mu_B_mean = jnp.mean(mu_B, axis=0) if mu_B is not None else None
+    max_bio_expr = (
+        jnp.maximum(mu_A_mean, mu_B_mean)
+        if (mu_A_mean is not None and mu_B_mean is not None)
+        else None
+    )
 
     # ------------------------------------------------------------------
     # Assemble output
     # ------------------------------------------------------------------
-    return {
-        # LFC
-        "lfc_mean": lfc_stats["mean"],
-        "lfc_sd": lfc_stats["sd"],
-        "lfc_prob_positive": lfc_stats["prob_positive"],
-        "lfc_lfsr": lfc_stats["lfsr"],
-        "lfc_prob_up": lfc_stats["prob_up"],
-        "lfc_prob_down": lfc_stats["prob_down"],
-        "lfc_prob_effect": lfc_stats["prob_effect"],
-        "lfc_lfsr_tau": lfc_stats["lfsr_tau"],
-        # LVR
-        "lvr_mean": lvr_stats["mean"],
-        "lvr_sd": lvr_stats["sd"],
-        "lvr_prob_positive": lvr_stats["prob_positive"],
-        "lvr_lfsr": lvr_stats["lfsr"],
-        "lvr_prob_up": lvr_stats["prob_up"],
-        "lvr_prob_down": lvr_stats["prob_down"],
-        "lvr_prob_effect": lvr_stats["prob_effect"],
-        "lvr_lfsr_tau": lvr_stats["lfsr_tau"],
-        # KL
-        "kl_mean": kl_stats["mean"],
-        "kl_sd": kl_stats["sd"],
-        "kl_prob_effect": kl_stats["prob_effect"],
-        # Auxiliary
-        "mu_A_mean": mu_A_mean,
-        "mu_B_mean": mu_B_mean,
-        "var_A_mean": jnp.mean(var_A, axis=0),
-        "var_B_mean": jnp.mean(var_B, axis=0),
-        "max_bio_expr": max_bio_expr,
-        "gene_names": gene_names,
-    }
+    results = {"gene_names": gene_names}
+    if include_lfc and lfc_stats is not None:
+        results.update(
+            {
+                "lfc_mean": lfc_stats["mean"],
+                "lfc_sd": lfc_stats["sd"],
+                "lfc_prob_positive": lfc_stats["prob_positive"],
+                "lfc_lfsr": lfc_stats["lfsr"],
+                "lfc_prob_up": lfc_stats["prob_up"],
+                "lfc_prob_down": lfc_stats["prob_down"],
+                "lfc_prob_effect": lfc_stats["prob_effect"],
+                "lfc_lfsr_tau": lfc_stats["lfsr_tau"],
+            }
+        )
+    if include_lvr and lvr_stats is not None:
+        results.update(
+            {
+                "lvr_mean": lvr_stats["mean"],
+                "lvr_sd": lvr_stats["sd"],
+                "lvr_prob_positive": lvr_stats["prob_positive"],
+                "lvr_lfsr": lvr_stats["lfsr"],
+                "lvr_prob_up": lvr_stats["prob_up"],
+                "lvr_prob_down": lvr_stats["prob_down"],
+                "lvr_prob_effect": lvr_stats["prob_effect"],
+                "lvr_lfsr_tau": lvr_stats["lfsr_tau"],
+            }
+        )
+    if include_kl and kl_stats is not None:
+        results.update(
+            {
+                "kl_mean": kl_stats["mean"],
+                "kl_sd": kl_stats["sd"],
+                "kl_prob_effect": kl_stats["prob_effect"],
+            }
+        )
+    if include_aux:
+        if mu_A_mean is None or mu_B_mean is None:
+            raise RuntimeError(
+                "Internal error: auxiliary outputs requested but means missing."
+            )
+        results.update(
+            {
+                "mu_A_mean": mu_A_mean,
+                "mu_B_mean": mu_B_mean,
+                "var_A_mean": (
+                    jnp.mean(var_A, axis=0) if var_A is not None else jnp.nan
+                ),
+                "var_B_mean": (
+                    jnp.mean(var_B, axis=0) if var_B is not None else jnp.nan
+                ),
+                "max_bio_expr": max_bio_expr,
+            }
+        )
+    return results
+
+
+def _resolve_biological_metric_families(
+    metric_families: Optional[Iterable[str]],
+) -> Set[str]:
+    """Normalize requested biological families into a validated set.
+
+    Parameters
+    ----------
+    metric_families : iterable of str, optional
+        Requested biological families. ``None`` requests all families.
+
+    Returns
+    -------
+    set[str]
+        Validated biological family set.
+    """
+    supported = {"bio_lfc", "bio_lvr", "bio_kl", "bio_aux"}
+    if metric_families is None:
+        return set(supported)
+    normalized = set(metric_families)
+    invalid = normalized - supported
+    if invalid:
+        raise ValueError(
+            "Unsupported biological metric families: "
+            f"{sorted(invalid)}. Supported: {sorted(supported)}."
+        )
+    return normalized
 
 
 # --------------------------------------------------------------------------

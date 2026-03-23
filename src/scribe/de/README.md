@@ -470,6 +470,10 @@ Supported empirical/shrinkage families:
 - `bio_kl` — biological Jeffreys summaries (`bio_kl_*`)
 - `bio_aux` — biological context columns (`bio_mu_*`, `bio_var_*`, `bio_max_bio_expr`)
 
+Biological computation is now family-selective: requesting only
+`metrics="bio_lfc"` computes only LFC summaries (and skips LVR/KL), which
+reduces memory pressure for large comparisons.
+
 For empirical/shrinkage results with stored MAP mean expression, CLR exports
 also include `clr_mean_expression_A` and `clr_mean_expression_B`.
 
