@@ -46,6 +46,7 @@ class EmpiricalResultsMixin:
         tau_lfc: float = 0.0,
         tau_var: float = 0.0,
         tau_kl: float = 0.0,
+        metric_families: tuple[str, ...] | None = None,
     ) -> dict:
         """Compute biological-level DE statistics from NB parameters.
 
@@ -57,6 +58,9 @@ class EmpiricalResultsMixin:
             Practical threshold for log-variance ratio.
         tau_kl : float, default=0.0
             Practical threshold for Jeffreys divergence.
+        metric_families : tuple of {'bio_lfc', 'bio_lvr', 'bio_kl', 'bio_aux'}, optional
+            Biological families to compute. ``None`` computes all families for
+            backward compatibility.
 
         Returns
         -------
@@ -70,11 +74,18 @@ class EmpiricalResultsMixin:
                 "compute_biological=True (the default)."
             )
 
-        taus = (tau_lfc, tau_var, tau_kl)
-        if self._biological_results is None or self._cached_bio_taus != taus:
+        # Include requested families in cache identity to avoid serving stale
+        # partial results when callers switch between subsets and full outputs.
+        family_key = (
+            tuple(sorted(metric_families))
+            if metric_families is not None
+            else ("bio_lfc", "bio_lvr", "bio_kl", "bio_aux")
+        )
+        cache_key = (tau_lfc, tau_var, tau_kl, family_key)
+        if self._biological_results is None or self._cached_bio_taus != cache_key:
             from ._biological import biological_differential_expression
 
-            self._cached_bio_taus = taus
+            self._cached_bio_taus = cache_key
             self._biological_results = biological_differential_expression(
                 r_samples_A=self.r_samples_A,
                 r_samples_B=self.r_samples_B,
@@ -88,6 +99,7 @@ class EmpiricalResultsMixin:
                 tau_var=tau_var,
                 tau_kl=tau_kl,
                 gene_names=self.gene_names,
+                metric_families=family_key,
             )
         return self._biological_results
 
@@ -536,10 +548,16 @@ class EmpiricalResultsMixin:
             "bio_aux",
         }
         if any(family in metric_families for family in bio_families):
+            requested_bio_families = tuple(
+                family
+                for family in self._DATAFRAME_METRIC_ORDER
+                if family in bio_families and family in metric_families
+            )
             bio = self.biological_level(
                 tau_lfc=tau_lfc,
                 tau_var=tau_var,
                 tau_kl=tau_kl,
+                metric_families=requested_bio_families,
             )
             mask = None
             if self._gene_mask is not None:

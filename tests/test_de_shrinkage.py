@@ -768,6 +768,14 @@ class TestShrinkageMaskManagement:
             assert col in df.columns
             assert df[col].dtype == bool
 
+    def test_shrinkage_bio_lfc_only_export(self, empirical_de):
+        """Shrinkage LFC-only export includes no KL/LVR columns."""
+        de_s = empirical_de.shrink()
+        df = de_s.to_dataframe(metrics="bio_lfc", tau_lfc=0.1)
+        assert "bio_lfc_mean" in df.columns
+        assert "bio_lvr_mean" not in df.columns
+        assert "bio_kl_mean" not in df.columns
+
     def test_shrinkage_method_chaining(self, empirical_de):
         """Mask management methods return self for chaining on shrinkage."""
         de_s = empirical_de.shrink()
