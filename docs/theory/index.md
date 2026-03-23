@@ -5,7 +5,7 @@ statistics and probabilistic modeling. This section provides an accessible
 overview of the core theoretical results that underpin the package, presenting
 the key ideas and their implications without exhaustive algebraic derivations.
 
-The probabilistic framework of SCRIBE can be understood through seven
+The probabilistic framework of SCRIBE can be understood through eight
 theoretical contributions:
 
 - [**Dirichlet-Multinomial Model**](dirichlet-multinomial.md) — Derives how
@@ -47,6 +47,11 @@ theoretical contributions:
   inference methods (parametric, empirical, shrinkage), complemented by
   biological-level metrics (LFC, log-variance ratio, Jeffreys divergence)
   that are free of compositional closure.
+
+- [**Goodness-of-Fit Diagnostics**](goodness-of-fit.md) — Provides
+  expression-scale-invariant per-gene diagnostics via randomized quantile
+  residuals (RQR) and posterior predictive checks (PPC), enabling
+  principled gene filtering before downstream inference.
 
 !!! tip "For practitioners"
     You do not need to read these pages to use SCRIBE effectively. The
