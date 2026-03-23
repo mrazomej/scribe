@@ -171,12 +171,12 @@ model can be extended with zero inflation and/or variable capture probability:
 
 | Likelihood | Code | Construction | Extra Parameters | Best For |
 |---|---|---|---|---|
-| [**Negative Binomial**](models/nbdm.md) | `"nbdm"` | Base model | -- | Baseline analysis, fast |
-| [**Zero-Inflated NB**](models/zinb.md) | `"zinb"` | NB + zero inflation | `gate` | Data with excess zeros |
-| [**NB + variable capture**](models/nbvcp.md) | `"nbvcp"` | NB + capture probability | `p_capture` | Variable sequencing depth |
-| [**ZINB + variable capture**](models/zinbvcp.md) | `"zinbvcp"` | ZINB + capture probability | `gate`, `p_capture` | Complex technical variation |
+| **Negative Binomial** | `"nbdm"` | Base model | -- | Baseline analysis, fast |
+| **Zero-Inflated NB** | `"zinb"` | NB + zero inflation | `gate` | Data with excess zeros |
+| **NB + variable capture** | `"nbvcp"` | NB + capture probability | `p_capture` | Variable sequencing depth |
+| **ZINB + variable capture** | `"zinbvcp"` | ZINB + capture probability | `gate`, `p_capture` | Complex technical variation |
 
-Any of the above can be extended to [**mixture models**](models/mixture.md)
+Any of the above can be extended to **mixture models** with `n_components=K`
 for subpopulation analysis.
 
 ### Parameterizations
@@ -367,13 +367,13 @@ gene_df = mc.gene_level_comparison("NB", "Hierarchical")
 
     [:octicons-arrow-right-24: Theory](theory/index.md)
 
--   :material-view-grid:{ .lg .middle } **Models**
+-   :material-view-grid:{ .lg .middle } **Model Selection**
 
     ---
 
-    Explore all available probabilistic models
+    Choose the right model for your data
 
-    [:octicons-arrow-right-24: Models](models/index.md)
+    [:octicons-arrow-right-24: Model Selection](guide/model-selection.md)
 
 -   :material-book-open-page-variant:{ .lg .middle } **User Guide**
 

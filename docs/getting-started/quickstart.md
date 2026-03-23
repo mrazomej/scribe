@@ -2,8 +2,8 @@
 
 This tutorial walks you through a basic SCRIBE analysis. For a deeper
 understanding of the models and methods, see the
-[Quick Overview](quick-overview.md) and the [Models](../models/index.md)
-section.
+[Quick Overview](quick-overview.md) and the
+[Model Selection](../guide/model-selection.md) guide.
 
 ## Basic Workflow
 
@@ -38,8 +38,8 @@ scribe.viz.plot_parameter_posteriors(results)
 
 ## Next Steps
 
-- Explore the [available models](../models/index.md) to find the right one for
-  your data
+- Explore the [Model Selection](../guide/model-selection.md) guide to find the
+  right model for your data
 - Learn about the [Results class](../guide/results.md) for downstream analysis
 - See the [Custom Models](../guide/custom-model.md) guide to build your own
   models

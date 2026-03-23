@@ -504,5 +504,5 @@ For the full API details, see the [API Reference](../reference/scribe/api/).
       mean-matching constraint is a hard dependency.
     - See [Bayesian Denoising](denoising.md) for the NB denoising result on
       which BNB denoising (conditional NB plus Beta integral) is built.
-    - See the [NBDM model page](../models/nbdm.md) for practical usage,
-      including the `overdispersion` and `overdispersion_prior` parameters.
+    - See the [Model Selection](../guide/model-selection.md#bnb-overdispersion)
+      guide for practical usage of the `overdispersion` parameter.

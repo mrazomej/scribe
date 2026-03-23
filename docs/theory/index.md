@@ -59,7 +59,7 @@ theoretical contributions:
   principled gene filtering before downstream inference.
 
 !!! tip "For practitioners"
-    You do not need to read these pages to use SCRIBE effectively. The
-    [Models](../models/index.md) section provides all the practical information
-    needed to choose and run models. The theory pages are for users who want to
-    understand *why* the models work the way they do.
+    You do not need to read these pages to use SCRIBE effectively. The [Model
+    Selection](../guide/model-selection.md) guide provides all the practical
+    information needed to choose and run models. The theory pages are for users
+    who want to understand *why* the models work the way they do.
