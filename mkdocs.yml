@@ -139,7 +139,10 @@ nav:
     - Hierarchical Gene-Specific p: theory/hierarchical-p.md
   - User Guide:
     - guide/index.md
+    - Inference Methods: guide/inference.md
     - Results Class: guide/results.md
+    - Differential Expression: guide/differential-expression.md
+    - Model Comparison: guide/model-comparison.md
     - Custom Models: guide/custom-model.md
   - API Reference: reference/
   - Contributing: contributing.md

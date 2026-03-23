@@ -284,6 +284,8 @@ gene_results = de.gene_level(tau=jnp.log(1.1))
 is_de = de.call_genes(lfsr_threshold=0.05)
 ```
 
+[:octicons-arrow-right-24: Full Differential Expression guide](guide/differential-expression.md)
+
 ## Model Comparison
 
 Principled Bayesian model comparison with WAIC, PSIS-LOO, stacking weights,
@@ -305,6 +307,8 @@ print(mc.summary())
 # Per-gene elpd differences
 gene_df = mc.gene_level_comparison("NB", "Hierarchical")
 ```
+
+[:octicons-arrow-right-24: Full Model Comparison guide](guide/model-comparison.md)
 
 ## Getting Started
 
@@ -349,6 +353,14 @@ gene_df = mc.gene_level_comparison("NB", "Hierarchical")
     Explore all available probabilistic models
 
     [:octicons-arrow-right-24: Models](models/index.md)
+
+-   :material-book-open-page-variant:{ .lg .middle } **User Guide**
+
+    ---
+
+    Inference methods, DE, model comparison, and more
+
+    [:octicons-arrow-right-24: User guide](guide/index.md)
 
 -   :material-api:{ .lg .middle } **API Reference**
 
