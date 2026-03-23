@@ -221,3 +221,9 @@ used.
       the foundational theory.
     - See the [NBDM model page](../models/nbdm.md) for practical usage and
       implementation details.
+    - See [Hierarchical Priors](hierarchical-priors.md) for the full theory of
+      the Gaussian, Horseshoe, and NEG prior families used for adaptive
+      shrinkage of gene-specific parameters.
+    - See [Differential Expression](differential-expression.md) to understand
+      how the Gamma-based composition sampling procedure derived here is called
+      under the hood by the empirical DE method.

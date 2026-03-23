@@ -239,3 +239,9 @@ working with the full distribution enables principled uncertainty quantification
       implementation details.
     - See the [Hierarchical Gene-Specific \(p\)](hierarchical-p.md) page for
       what happens when the shared-\(p\) assumption is relaxed.
+    - See [Bayesian Denoising](denoising.md) to learn how the NB generative
+      model here enables closed-form posterior recovery of true transcript
+      counts from observed UMIs.
+    - See [Differential Expression](differential-expression.md) for how the
+      Dirichlet compositions derived here serve as the direct input to the
+      compositional DE framework.

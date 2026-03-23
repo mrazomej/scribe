@@ -478,3 +478,22 @@ These are shared across all parameters that use the corresponding prior:
       need the stronger pole at zero.
 
 For the full API details, see the [API Reference](../reference/scribe/api/).
+
+---
+
+!!! tip "Next steps"
+    - See [Hierarchical Gene-Specific \(p\)](hierarchical-p.md) for the
+      foundational derivation of gene-specific success probabilities, the
+      primary application of these prior families.
+    - See [Anchoring Priors](anchoring-priors.md) for the complementary
+      regularization layers — anchors constrain the mean and capture
+      probability while hierarchical priors shrink the overdispersion.
+    - See [Beta Negative Binomial](beta-negative-binomial.md) for how the
+      Horseshoe and NEG priors are applied to the BNB concentration parameter
+      \(\kappa_g\) to enforce sparsity in extra overdispersion.
+    - See [Differential Expression](differential-expression.md) to see how
+      joint multi-dataset hierarchical models enable paired CLR-difference DE
+      that accounts for posterior correlation across datasets.
+    - See the [Inference Methods guide](../guide/inference.md) for practical
+      guidance on choosing SVI vs MCMC, directly relevant to the Horseshoe vs
+      NEG recommendation.

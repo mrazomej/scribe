@@ -282,11 +282,11 @@ amplifies small values, so genes with very low expression can appear
 strongly DE in CLR space when their biological distributions have barely
 changed.
 
-To complement the compositional view, SCRIBE computes DE metrics directly
-on the **denoised negative binomial distribution**---the biological count
-distribution before technical noise is applied. These metrics are free of
-the closure constraint and provide a second, independent perspective on
-each gene.
+To complement the compositional view, SCRIBE computes DE metrics directly on the
+**[denoised negative binomial distribution](denoising.md)**---the biological
+count distribution before technical noise is applied. These metrics are free of
+the closure constraint and provide a second, independent perspective on each
+gene.
 
 ### Metric 1: Biological log-fold change (LFC)
 
@@ -420,3 +420,19 @@ bio = de.biological_level(tau_lfc=jnp.log(1.5))
 For full API details and more examples, see the
 [Differential Expression guide](../guide/differential-expression.md) and the
 [API Reference](../reference/scribe/de/).
+
+---
+
+!!! tip "Next steps"
+    - See the [Dirichlet-Multinomial Model](dirichlet-multinomial.md) for the
+      compositional foundations — the simplex, NB factorization, and Dirichlet
+      distributions — that underpin the CLR-based DE framework.
+    - See [Hierarchical Gene-Specific \(p\)](hierarchical-p.md) for the
+      derivation of the Gamma-based composition sampling procedure that the
+      empirical DE method calls when gene-specific \(p_g\) are fitted.
+    - See [Bayesian Denoising](denoising.md) for the denoised NB distributions
+      used to compute the biological LFC, log-variance ratio, and Jeffreys
+      divergence metrics in Part II.
+    - See the [Model Comparison guide](../guide/model-comparison.md) for using
+      WAIC and PSIS-LOO to validate model choice before committing to a DE
+      analysis.

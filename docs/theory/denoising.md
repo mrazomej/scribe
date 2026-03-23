@@ -334,3 +334,18 @@ adatas = results.get_denoised_anndata(
 For the full API details, see the [Results Class](../guide/results.md) guide
 and the [API Reference](../reference/scribe/svi/) for SVI or
 [API Reference](../reference/scribe/mcmc/) for MCMC.
+
+---
+
+!!! tip "Next steps"
+    - See the [Dirichlet-Multinomial Model](dirichlet-multinomial.md) for the
+      NB generative model and capture-probability derivation that underpin the
+      denoising result.
+    - See [Beta Negative Binomial](beta-negative-binomial.md) for how
+      denoising extends to power-law tail distributions via a one-dimensional
+      integral over the latent Beta mixing variable.
+    - See the [ZINB model](../models/zinb.md) for practical details on the
+      zero-inflated models whose gate/NB mixture denoising is derived here.
+    - See the [Results Class guide](../guide/results.md) for the full denoising
+      API, including `denoise_counts`, `denoise_counts_posterior`, and
+      `get_denoised_anndata`.
