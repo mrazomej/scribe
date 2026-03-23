@@ -5,7 +5,7 @@ statistics and probabilistic modeling. This section provides an accessible
 overview of the core theoretical results that underpin the package, presenting
 the key ideas and their implications without exhaustive algebraic derivations.
 
-The probabilistic framework of SCRIBE can be understood through five
+The probabilistic framework of SCRIBE can be understood through six
 theoretical contributions:
 
 - [**Dirichlet-Multinomial Model**](dirichlet-multinomial.md) — Derives how
@@ -30,6 +30,11 @@ theoretical contributions:
   capture-expression degeneracy (via biology-informed capture prior) and
   the mean-overdispersion degeneracy (via data-informed mean anchoring),
   each justified by a law-of-large-numbers concentration argument.
+
+- [**Beta Negative Binomial**](beta-negative-binomial.md) — Extends the
+  NB with per-gene power-law tails via a mean-preserving Beta compound,
+  with a biophysical interpretation as extrinsic noise in burst size and
+  a sparsity-inducing hierarchical prior that defaults to NB behaviour.
 
 - [**Hierarchical Priors**](hierarchical-priors.md) — Introduces the
   three prior families (Gaussian, Horseshoe, NEG) used for adaptive
