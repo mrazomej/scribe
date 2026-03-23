@@ -139,6 +139,7 @@ nav:
     - Goodness-of-Fit Diagnostics: theory/goodness-of-fit.md
   - User Guide:
     - guide/index.md
+    - "The scribe.fit() Interface": guide/fit.md
     - Model Selection: guide/model-selection.md
     - Variational Guide Families: guide/guide-families.md
     - Inference Methods: guide/inference.md

@@ -3,6 +3,10 @@
 This section covers the practical workflow of using SCRIBE---from selecting a
 model through downstream analysis.
 
+- [**The `scribe.fit()` Interface**](fit.md) — the single entry point for all
+  SCRIBE inference, with every parameter group explained, practical guidance,
+  code examples, and links to deeper pages
+
 - [**Model Selection**](model-selection.md) — choosing the right model for your
   data: NB base, zero inflation, variable capture, BNB overdispersion, mixture
   components, parameterizations, and hierarchical priors
