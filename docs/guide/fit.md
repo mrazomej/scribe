@@ -643,7 +643,7 @@ corresponding keyword arguments.
 from scribe.models.config import ModelConfigBuilder
 from scribe.inference import InferenceConfig
 
-# Build a custom model config step by step
+# Build a model config step by step
 model_cfg = (
     ModelConfigBuilder()
     .set_model("nbvcp")
@@ -655,8 +655,6 @@ model_cfg = (
 
 results = scribe.fit(adata, model_config=model_cfg)
 ```
-
-**Full guide:** [Custom Models](custom-model.md)
 
 ---
 

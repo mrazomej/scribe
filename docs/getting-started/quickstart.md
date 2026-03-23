@@ -41,5 +41,5 @@ scribe.viz.plot_parameter_posteriors(results)
 - Explore the [Model Selection](../guide/model-selection.md) guide to find the
   right model for your data
 - Learn about the [Results class](../guide/results.md) for downstream analysis
-- See the [Custom Models](../guide/custom-model.md) guide to build your own
-  models
+- See the [`scribe.fit()` Interface](../guide/fit.md) for full parameter
+  documentation

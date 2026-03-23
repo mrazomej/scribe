@@ -274,8 +274,6 @@ hierarchical priors and BNB):
 results = scribe.fit(adata, model="nbdm", unconstrained=True)
 ```
 
-For building custom models step by step, see [Custom Models](custom-model.md).
-
 ---
 
 ## Hierarchical priors
