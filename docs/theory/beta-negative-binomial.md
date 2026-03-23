@@ -492,3 +492,17 @@ results = scribe.fit(
     to the standard NB.
 
 For the full API details, see the [API Reference](../reference/scribe/api/).
+
+---
+
+!!! tip "Next steps"
+    - See [Hierarchical Priors](hierarchical-priors.md) for the full theory of
+      the Horseshoe and NEG prior families applied to the BNB concentration
+      parameter \(\kappa_g\).
+    - See [Anchoring Priors](anchoring-priors.md) for why the NB mean must be
+      correctly anchored before the BNB extension is effective — the
+      mean-matching constraint is a hard dependency.
+    - See [Bayesian Denoising](denoising.md) for the NB denoising result on
+      which BNB denoising (conditional NB plus Beta integral) is built.
+    - See the [NBDM model page](../models/nbdm.md) for practical usage,
+      including the `overdispersion` and `overdispersion_prior` parameters.
