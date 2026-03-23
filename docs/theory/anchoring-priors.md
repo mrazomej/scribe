@@ -233,7 +233,7 @@ overdispersion, form a complete regularization stack:
 
 Each layer constrains one factor in the expected count
 \(\langle u_{gc} \rangle = \mu_g \cdot \nu_c\), with the overdispersion
-regularized by the hierarchical prior across genes.
+regularized by a [hierarchical prior](hierarchical-priors.md) across genes.
 
 ---
 
@@ -320,3 +320,19 @@ parameters that are comparable across datasets and compatible with
 hierarchical gene-specific \(\phi_g\) models.
 
 For the full API details, see the [API Reference](../reference/scribe/api/).
+
+---
+
+!!! tip "Next steps"
+    - See the [Dirichlet-Multinomial Model](dirichlet-multinomial.md) for the
+      NB generative model and capture-probability derivation that these priors
+      regularize.
+    - See [Hierarchical Priors](hierarchical-priors.md) for Layer 3 of the
+      regularization stack — adaptive shrinkage on overdispersion using
+      Gaussian, Horseshoe, and NEG prior families.
+    - See [Beta Negative Binomial](beta-negative-binomial.md) for an
+      orthogonal overdispersion extension whose mean structure critically
+      depends on the mean anchoring prior.
+    - See the [NBVCP model](../models/nbvcp.md) and
+      [ZINBVCP model](../models/zinbvcp.md) for the models where anchoring
+      priors are most important in practice.
