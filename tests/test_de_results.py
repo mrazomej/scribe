@@ -567,6 +567,21 @@ class TestEmpiricalToDataframe:
         }
         assert set(df.columns) == expected
 
+    def test_bio_lfc_export_does_not_compute_kl(self, emp_de_bio, monkeypatch):
+        """LFC-only dataframe export should skip KL/Jeffreys computation."""
+        from scribe.de import _biological as bio_mod
+
+        # Raise if KL path is invoked unexpectedly during LFC-only export.
+        def _raise_on_kl(*args, **kwargs):
+            raise AssertionError(
+                "gamma_jeffreys should not run for bio_lfc-only"
+            )
+
+        monkeypatch.setattr(bio_mod, "gamma_jeffreys", _raise_on_kl)
+        df = emp_de_bio.to_dataframe(metrics="bio_lfc", tau_lfc=0.2)
+        assert "bio_lfc_mean" in df.columns
+        assert "bio_kl_mean" not in df.columns
+
     def test_clr_plus_bio_kl_combination(self, emp_de_bio):
         """Mixed CLR + KL export includes both metric families."""
         df = emp_de_bio.to_dataframe(metrics=["clr", "bio_kl"], tau_kl=0.1)

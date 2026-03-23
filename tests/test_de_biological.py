@@ -98,9 +98,7 @@ class TestKnownMeanShift:
     def test_lfc_log2(self, known_mean_shift):
         r_A, p_A, r_B, p_B = known_mean_shift
         result = biological_differential_expression(r_A, r_B, p_A, p_B)
-        np.testing.assert_allclose(
-            result["lfc_mean"], np.log(2), atol=1e-4
-        )
+        np.testing.assert_allclose(result["lfc_mean"], np.log(2), atol=1e-4)
 
     def test_lfc_lfsr_near_zero(self, known_mean_shift):
         """Strong signal → lfsr should be very small."""
@@ -138,9 +136,7 @@ class TestPracticalSignificance:
         result = biological_differential_expression(
             r_A, r_B, p_A, p_B, tau_lfc=0.5
         )
-        np.testing.assert_allclose(
-            result["lfc_prob_effect"], 1.0, atol=0.01
-        )
+        np.testing.assert_allclose(result["lfc_prob_effect"], 1.0, atol=0.01)
 
     def test_prob_effect_with_large_tau(self, known_mean_shift):
         """With tau_lfc > log(2), prob_effect should be ~0."""
@@ -148,9 +144,7 @@ class TestPracticalSignificance:
         result = biological_differential_expression(
             r_A, r_B, p_A, p_B, tau_lfc=1.0
         )
-        np.testing.assert_allclose(
-            result["lfc_prob_effect"], 0.0, atol=0.01
-        )
+        np.testing.assert_allclose(result["lfc_prob_effect"], 0.0, atol=0.01)
 
 
 # --------------------------------------------------------------------------
@@ -210,9 +204,7 @@ class TestSharedP:
             r_A, r_B, p_shared, p_shared
         )
         # mu = r*(1-p)/p, same p → LFC = log(r_A/r_B) = log(2)
-        np.testing.assert_allclose(
-            result["lfc_mean"], np.log(2), atol=1e-4
-        )
+        np.testing.assert_allclose(result["lfc_mean"], np.log(2), atol=1e-4)
 
     def test_shared_p_kl(self):
         """Same r, same shared p → KL = 0."""
@@ -303,6 +295,88 @@ class TestResultsObjectIntegration:
         bio2 = results.biological_level(tau_lfc=0.5)
         assert bio1 is not bio2
 
+    def test_cache_invalidation_by_metric_families(self):
+        """Changing requested biological families invalidates cache entries."""
+        N, D = 100, 3
+        r = jnp.ones((N, D)) * 5.0
+        p = jnp.ones((N, D)) * 0.3
+        results = ScribeEmpiricalDEResults(
+            delta_samples=jnp.zeros((N, D)),
+            gene_names=["a", "b", "c"],
+            label_A="A",
+            label_B="B",
+            r_samples_A=r,
+            r_samples_B=r,
+            p_samples_A=p,
+            p_samples_B=p,
+        )
+        bio_lfc = results.biological_level(metric_families=("bio_lfc",))
+        bio_lfc_again = results.biological_level(metric_families=("bio_lfc",))
+        bio_kl = results.biological_level(metric_families=("bio_kl",))
+        assert bio_lfc is bio_lfc_again
+        assert bio_lfc is not bio_kl
+        assert "lfc_mean" in bio_lfc
+        assert "kl_mean" not in bio_lfc
+        assert "kl_mean" in bio_kl
+
+
+class TestSelectiveMetricFamilies:
+    """Validate family-selective biological computation behavior."""
+
+    def test_lfc_only_skips_kl_path(self, monkeypatch):
+        """Requesting only LFC should not evaluate Gamma Jeffreys divergence."""
+        N, D = 200, 5
+        r_A = jnp.ones((N, D)) * 5.0
+        r_B = jnp.ones((N, D)) * 4.0
+        p_A = jnp.ones((N, D)) * 0.25
+        p_B = jnp.ones((N, D)) * 0.35
+
+        # Raise immediately if KL path is touched unexpectedly.
+        from scribe.de import _biological as bio_mod
+
+        def _raise_on_kl(*args, **kwargs):
+            raise AssertionError(
+                "gamma_jeffreys should not be called for bio_lfc"
+            )
+
+        monkeypatch.setattr(bio_mod, "gamma_jeffreys", _raise_on_kl)
+        result = biological_differential_expression(
+            r_A,
+            r_B,
+            p_A,
+            p_B,
+            metric_families=("bio_lfc",),
+        )
+        assert "lfc_mean" in result
+        assert "kl_mean" not in result
+        assert "lvr_mean" not in result
+
+    def test_aux_only_returns_auxiliary_columns(self):
+        """Requesting ``bio_aux`` should return only auxiliary summaries."""
+        N, D = 120, 4
+        r_A = jnp.ones((N, D)) * 6.0
+        r_B = jnp.ones((N, D)) * 3.0
+        p_A = jnp.ones((N, D)) * 0.3
+        p_B = jnp.ones((N, D)) * 0.4
+        result = biological_differential_expression(
+            r_A,
+            r_B,
+            p_A,
+            p_B,
+            metric_families=("bio_aux",),
+        )
+        for key in (
+            "mu_A_mean",
+            "mu_B_mean",
+            "var_A_mean",
+            "var_B_mean",
+            "max_bio_expr",
+        ):
+            assert key in result
+        assert "lfc_mean" not in result
+        assert "lvr_mean" not in result
+        assert "kl_mean" not in result
+
 
 # --------------------------------------------------------------------------
 # Test: internal helpers
@@ -316,9 +390,7 @@ class TestHelpers:
         stats = _summarise_signed_metric(samples, tau=0.5)
         np.testing.assert_allclose(stats["mean"], [1.0, -1.0], atol=1e-5)
         np.testing.assert_allclose(stats["lfsr"], [0.0, 0.0], atol=1e-5)
-        np.testing.assert_allclose(
-            stats["prob_effect"], [1.0, 1.0], atol=1e-5
-        )
+        np.testing.assert_allclose(stats["prob_effect"], [1.0, 1.0], atol=1e-5)
 
     def test_summarise_nonneg_metric(self):
         samples = jnp.array([[2.0, 0.1], [3.0, 0.2], [4.0, 0.05]])
@@ -354,9 +426,14 @@ class TestPhiPath:
         """phi path and fallback should agree for well-conditioned params."""
         r_A, p_A, r_B, p_B, mu_A, mu_B, phi_A, phi_B = mean_odds_params
         res_phi = biological_differential_expression(
-            r_A, r_B, p_A, p_B,
-            mu_samples_A=mu_A, mu_samples_B=mu_B,
-            phi_samples_A=phi_A, phi_samples_B=phi_B,
+            r_A,
+            r_B,
+            p_A,
+            p_B,
+            mu_samples_A=mu_A,
+            mu_samples_B=mu_B,
+            phi_samples_A=phi_A,
+            phi_samples_B=phi_B,
         )
         res_fallback = biological_differential_expression(r_A, r_B, p_A, p_B)
         np.testing.assert_allclose(
@@ -367,9 +444,14 @@ class TestPhiPath:
         """KL via beta=1/phi should match beta=p/(1-p) for good params."""
         r_A, p_A, r_B, p_B, mu_A, mu_B, phi_A, phi_B = mean_odds_params
         res_phi = biological_differential_expression(
-            r_A, r_B, p_A, p_B,
-            mu_samples_A=mu_A, mu_samples_B=mu_B,
-            phi_samples_A=phi_A, phi_samples_B=phi_B,
+            r_A,
+            r_B,
+            p_A,
+            p_B,
+            mu_samples_A=mu_A,
+            mu_samples_B=mu_B,
+            phi_samples_A=phi_A,
+            phi_samples_B=phi_B,
         )
         res_fallback = biological_differential_expression(r_A, r_B, p_A, p_B)
         np.testing.assert_allclose(
@@ -380,9 +462,14 @@ class TestPhiPath:
         """var = mu * (1 + phi) should match var = mu / p."""
         r_A, p_A, r_B, p_B, mu_A, mu_B, phi_A, phi_B = mean_odds_params
         res_phi = biological_differential_expression(
-            r_A, r_B, p_A, p_B,
-            mu_samples_A=mu_A, mu_samples_B=mu_B,
-            phi_samples_A=phi_A, phi_samples_B=phi_B,
+            r_A,
+            r_B,
+            p_A,
+            p_B,
+            mu_samples_A=mu_A,
+            mu_samples_B=mu_B,
+            phi_samples_A=phi_A,
+            phi_samples_B=phi_B,
         )
         # var_A = 20 * (1 + 4) = 100
         np.testing.assert_allclose(res_phi["var_A_mean"], 100.0, atol=1e-2)
@@ -399,13 +486,16 @@ class TestPhiPath:
         r_B = mu_B * phi_shared[:, None]
         p = 1.0 / (1.0 + phi_shared)
         result = biological_differential_expression(
-            r_A, r_B, p, p,
-            mu_samples_A=mu_A, mu_samples_B=mu_B,
-            phi_samples_A=phi_shared, phi_samples_B=phi_shared,
+            r_A,
+            r_B,
+            p,
+            p,
+            mu_samples_A=mu_A,
+            mu_samples_B=mu_B,
+            phi_samples_A=phi_shared,
+            phi_samples_B=phi_shared,
         )
-        np.testing.assert_allclose(
-            result["lfc_mean"], np.log(2), atol=1e-4
-        )
+        np.testing.assert_allclose(result["lfc_mean"], np.log(2), atol=1e-4)
 
 
 # --------------------------------------------------------------------------
@@ -426,12 +516,14 @@ class TestMuPath:
         r_B = mu_B * (1.0 - p) / p
 
         result = biological_differential_expression(
-            r_A, r_B, p, p,
-            mu_samples_A=mu_A, mu_samples_B=mu_B,
+            r_A,
+            r_B,
+            p,
+            p,
+            mu_samples_A=mu_A,
+            mu_samples_B=mu_B,
         )
-        np.testing.assert_allclose(
-            result["lfc_mean"], np.log(2), atol=1e-4
-        )
+        np.testing.assert_allclose(result["lfc_mean"], np.log(2), atol=1e-4)
 
     def test_kl_uses_p_for_beta(self):
         """Without phi, beta should still come from p/(1-p)."""
@@ -442,7 +534,12 @@ class TestMuPath:
 
         # Identical conditions → KL = 0
         result = biological_differential_expression(
-            r, r, p, p, mu_samples_A=mu, mu_samples_B=mu,
+            r,
+            r,
+            p,
+            p,
+            mu_samples_A=mu,
+            mu_samples_B=mu,
         )
         np.testing.assert_allclose(result["kl_mean"], 0.0, atol=1e-5)
 
@@ -481,9 +578,14 @@ class TestNearZeroExpression:
         p_B = 1.0 / (1.0 + phi_small_B)
 
         result = biological_differential_expression(
-            r, r_B, p, p_B,
-            mu_samples_A=mu_tiny, mu_samples_B=mu_tiny_B,
-            phi_samples_A=phi_small, phi_samples_B=phi_small_B,
+            r,
+            r_B,
+            p,
+            p_B,
+            mu_samples_A=mu_tiny,
+            mu_samples_B=mu_tiny_B,
+            phi_samples_A=phi_small,
+            phi_samples_B=phi_small_B,
         )
 
         # All values should be finite (no inf/nan)
@@ -502,13 +604,16 @@ class TestNearZeroExpression:
         p = 1.0 / (1.0 + phi)
 
         result = biological_differential_expression(
-            r_A, r_B, p, p,
-            mu_samples_A=mu_A, mu_samples_B=mu_B,
-            phi_samples_A=phi, phi_samples_B=phi,
+            r_A,
+            r_B,
+            p,
+            p,
+            mu_samples_A=mu_A,
+            mu_samples_B=mu_B,
+            phi_samples_A=phi,
+            phi_samples_B=phi,
         )
-        np.testing.assert_allclose(
-            result["lfc_mean"], np.log(2), atol=1e-4
-        )
+        np.testing.assert_allclose(result["lfc_mean"], np.log(2), atol=1e-4)
 
     def test_phi_path_identical_gives_zero_kl(self):
         """Identical small-phi conditions → KL = 0 (no spurious signal)."""
@@ -519,9 +624,14 @@ class TestNearZeroExpression:
         p = 1.0 / (1.0 + phi)
 
         result = biological_differential_expression(
-            r, r, p, p,
-            mu_samples_A=mu, mu_samples_B=mu,
-            phi_samples_A=phi, phi_samples_B=phi,
+            r,
+            r,
+            p,
+            p,
+            mu_samples_A=mu,
+            mu_samples_B=mu,
+            phi_samples_A=phi,
+            phi_samples_B=phi,
         )
         np.testing.assert_allclose(result["kl_mean"], 0.0, atol=1e-5)
         np.testing.assert_allclose(result["lfc_mean"], 0.0, atol=1e-5)
