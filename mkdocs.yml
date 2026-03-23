@@ -137,6 +137,7 @@ nav:
     - theory/index.md
     - Dirichlet-Multinomial Model: theory/dirichlet-multinomial.md
     - Hierarchical Gene-Specific p: theory/hierarchical-p.md
+    - Bayesian Denoising: theory/denoising.md
   - User Guide:
     - guide/index.md
     - Inference Methods: guide/inference.md
