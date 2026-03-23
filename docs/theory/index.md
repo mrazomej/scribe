@@ -5,7 +5,7 @@ statistics and probabilistic modeling. This section provides an accessible
 overview of the core theoretical results that underpin the package, presenting
 the key ideas and their implications without exhaustive algebraic derivations.
 
-The probabilistic framework of SCRIBE can be understood through two main
+The probabilistic framework of SCRIBE can be understood through three
 theoretical contributions:
 
 - [**Dirichlet-Multinomial Model**](dirichlet-multinomial.md) — Derives how
@@ -18,6 +18,12 @@ theoretical contributions:
   shared-\(p\) assumption by placing a hierarchical prior on gene-specific
   success probabilities, with a generalized composition sampling procedure
   that strictly extends the Dirichlet model.
+
+- [**Bayesian Denoising**](denoising.md) — Derives a closed-form posterior
+  for the true transcript counts given observed UMIs, exploiting
+  Poisson-Gamma conjugacy to recover a shifted negative binomial denoised
+  distribution, with extensions for zero-inflated models and cross-gene
+  correlations.
 
 !!! tip "For practitioners"
     You do not need to read these pages to use SCRIBE effectively. The
