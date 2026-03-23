@@ -75,7 +75,7 @@ results = scribe.fit(
 results = scribe.fit(adata, model="nbvcp", amortize_capture=True)
 ```
 
-[:octicons-arrow-right-24: Full guide families documentation](guide-families.md)
+**Full guide:** [Variational guide families](guide-families.md)
 
 ### Early stopping
 

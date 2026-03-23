@@ -79,8 +79,8 @@ For the full mathematical derivation, see the
     - VAE for representation learning with normalizing flow priors
 - **Constructive Likelihood System**: Negative Binomial as the base, extended
   with zero inflation and/or variable capture probability
-- **Multiple Parameterizations**: Canonical, linked (mean-prob), and odds-ratio
-  with constrained or unconstrained priors
+- **Multiple Parameterizations**: Canonical, mean probs, and mean odds
+  (with `linked` / `odds_ratio` aliases), constrained or unconstrained priors
 - **Advanced Guide Families**:
   [Mean-field](https://en.wikipedia.org/wiki/Mean-field_approximation),
   low-rank, joint low-rank, and amortized variational guides
@@ -118,8 +118,8 @@ graph TD
 
     subgraph parameterization ["2 - Parameterization"]
         canonical["canonical<br/><i>sample p, r directly</i>"]
-        linked["linked<br/><i>sample p, mu; derive r</i>"]
-        oddsRatio["odds_ratio<br/><i>sample phi, mu; derive p, r</i>"]
+        meanProbs["mean_prob<br/><i>sample p, mu; derive r</i>"]
+        meanOdds["mean_odds<br/><i>sample phi, mu; derive p, r</i>"]
     end
 
     subgraph constraint ["3 - Constraint Mode"]
@@ -171,10 +171,10 @@ model can be extended with zero inflation and/or variable capture probability:
 
 | Likelihood | Code | Construction | Extra Parameters | Best For |
 |---|---|---|---|---|
-| **Negative Binomial** | `"nbdm"` | Base model | -- | Baseline analysis, fast |
-| **Zero-Inflated NB** | `"zinb"` | NB + zero inflation | `gate` | Data with excess zeros |
-| **NB + variable capture** | `"nbvcp"` | NB + capture probability | `p_capture` | Variable sequencing depth |
-| **ZINB + variable capture** | `"zinbvcp"` | ZINB + capture probability | `gate`, `p_capture` | Complex technical variation |
+| **Negative Binomial** | `"nbdm"` | Base model | -- | Very **tight** total-UMI distribution |
+| **NB + variable capture** | `"nbvcp"` | NB + capture probability | `p_capture` | **Typical** heterogeneous library sizes |
+| **Zero-Inflated NB** | `"zinb"` | NB + zero inflation | `gate` | Excess zeros after VCP ruled out |
+| **ZINB + variable capture** | `"zinbvcp"` | ZINB + capture probability | `gate`, `p_capture` | Both ZI and VCP supported by diagnostics |
 
 Any of the above can be extended to **mixture models** with `n_components=K`
 for subpopulation analysis.
@@ -183,11 +183,11 @@ for subpopulation analysis.
 
 Each likelihood can be parameterized in three ways:
 
-| Parameterization | Aliases | Core Parameters | Derived | When to Use |
-|---|---|---|---|---|
-| **canonical** | `standard` | p, r | -- | Direct interpretation |
-| **linked** | `mean_prob` | p, mu | r = mu(1-p)/p | Captures p-r correlation |
-| **odds_ratio** | `mean_odds` | phi, mu | p = 1/(1+phi), r = mu*phi | Numerically stable near p ~ 1 |
+| Name | `parameterization=` | Aliases | Core | Derived | When to Use |
+|---|---|---|---|---|---|
+| **Canonical** | `canonical` | `standard` | p, r | -- | Direct interpretation |
+| **Mean probs** | `mean_prob` | `linked` | p, mu | r = mu(1-p)/p | Couples mean and p |
+| **Mean odds** | `mean_odds` | `odds_ratio` | phi, mu | p = 1/(1+phi), r = mu*phi | Stable when p is near 1 |
 
 ### Constrained vs Unconstrained
 
@@ -205,8 +205,9 @@ import scanpy as sc
 # Load your single-cell data
 adata = sc.read_h5ad("your_data.h5ad")
 
-# Run SCRIBE with default settings (SVI inference, NB model)
-results = scribe.fit(adata, model="nbdm")
+# Typical default: variable capture when total UMIs vary across cells
+results = scribe.fit(adata, model="nbvcp", amortize_capture=True)
+# If total UMIs per cell are very homogeneous (~within 2x), try model="nbdm"
 
 # Analyze results
 posterior_samples = results.get_posterior_samples()
@@ -305,7 +306,7 @@ gene_results = de.gene_level(tau=jnp.log(1.1))
 is_de = de.call_genes(lfsr_threshold=0.05)
 ```
 
-[:octicons-arrow-right-24: Full Differential Expression guide](guide/differential-expression.md)
+**Full guide:** [Differential Expression](guide/differential-expression.md)
 
 ## Model Comparison
 
@@ -329,7 +330,7 @@ print(mc.summary())
 gene_df = mc.gene_level_comparison("NB", "Hierarchical")
 ```
 
-[:octicons-arrow-right-24: Full Model Comparison guide](guide/model-comparison.md)
+**Full guide:** [Model Comparison](guide/model-comparison.md)
 
 ## Getting Started
 
@@ -341,7 +342,7 @@ gene_df = mc.gene_level_comparison("NB", "Hierarchical")
 
     Install SCRIBE and set up your environment
 
-    [:octicons-arrow-right-24: Installation guide](getting-started/installation.md)
+    [Installation guide](getting-started/installation.md)
 
 -   :material-book-open-variant:{ .lg .middle } **Quick Overview**
 
@@ -349,7 +350,7 @@ gene_df = mc.gene_level_comparison("NB", "Hierarchical")
 
     Understand the probabilistic approach behind SCRIBE
 
-    [:octicons-arrow-right-24: Quick overview](getting-started/quick-overview.md)
+    [Quick overview](getting-started/quick-overview.md)
 
 -   :material-rocket-launch:{ .lg .middle } **Quickstart**
 
@@ -357,7 +358,7 @@ gene_df = mc.gene_level_comparison("NB", "Hierarchical")
 
     Run your first inference in minutes
 
-    [:octicons-arrow-right-24: Quickstart tutorial](getting-started/quickstart.md)
+    [Quickstart tutorial](getting-started/quickstart.md)
 
 -   :material-function-variant:{ .lg .middle } **Theory**
 
@@ -365,7 +366,7 @@ gene_df = mc.gene_level_comparison("NB", "Hierarchical")
 
     Mathematical foundations of the SCRIBE models
 
-    [:octicons-arrow-right-24: Theory](theory/index.md)
+    [Theory](theory/index.md)
 
 -   :material-view-grid:{ .lg .middle } **Model Selection**
 
@@ -373,7 +374,7 @@ gene_df = mc.gene_level_comparison("NB", "Hierarchical")
 
     Choose the right model for your data
 
-    [:octicons-arrow-right-24: Model Selection](guide/model-selection.md)
+    [Model Selection](guide/model-selection.md)
 
 -   :material-book-open-page-variant:{ .lg .middle } **User Guide**
 
@@ -381,7 +382,7 @@ gene_df = mc.gene_level_comparison("NB", "Hierarchical")
 
     Inference methods, DE, model comparison, and more
 
-    [:octicons-arrow-right-24: User guide](guide/index.md)
+    [User guide](guide/index.md)
 
 -   :material-api:{ .lg .middle } **API Reference**
 
@@ -389,6 +390,6 @@ gene_df = mc.gene_level_comparison("NB", "Hierarchical")
 
     Full reference for all modules and classes
 
-    [:octicons-arrow-right-24: API reference](reference/)
+    [API reference](reference/)
 
 </div>

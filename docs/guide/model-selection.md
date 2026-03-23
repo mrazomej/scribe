@@ -2,11 +2,37 @@
 
 SCRIBE provides a family of probabilistic models for scRNA-seq data, all built
 on the foundational **Negative Binomial** (NB) distribution dictated by the
-biophysics of transcription and mRNA capture. Rather than choosing between
-completely different models, you extend the base NB by layering on the features
-your data requires---zero inflation, variable capture probability, BNB
-overdispersion, or mixture components---then pass a model string to
-`scribe.fit()`.
+biophysics of transcription and mRNA capture. You choose a **likelihood**
+(`nbdm`, `nbvcp`, `zinb`, `zinbvcp`) and optional extensions (BNB
+overdispersion, mixture components) via `scribe.fit()`.
+
+---
+
+## Practical default: variable capture (NBVCP)
+
+In typical scRNA-seq data, **per-cell total UMI counts vary widely** across the
+experiment. When the spread is **not** very tight---for example, when the ratio
+of the largest to smallest total UMI among cells exceeds about **two-fold**---a
+model that **absorbs library-size variation into technical capture**
+(`model="nbvcp"`) is usually **essential**. Treating that variation as purely
+biological without an explicit capture channel can distort gene-level inference.
+
+```python
+# Recommended starting point for most datasets with heterogeneous library sizes
+results = scribe.fit(adata, model="nbvcp", amortize_capture=True)
+```
+
+**When NBDM (`model="nbdm"`) is reasonable:** total UMIs per cell are **very
+homogeneous** (e.g. max/min total UMI within roughly a factor of two, after
+basic QC), so a shared effective capture is a good approximation.
+
+!!! tip "Zero inflation is often optional"
+    **Explicit zero inflation (`zinb` / `zinbvcp`) is not always necessary.**
+    Apparent "excess zeros" frequently arise because **low capture cells**
+    produce many zeros across genes. Fitting **variable capture first**
+    (`nbvcp`) often explains those zeros without a separate dropout layer. Add
+    zero inflation only when diagnostics and **model comparison** show a clear
+    gain after a good VCP fit.
 
 ---
 
@@ -34,37 +60,66 @@ graph TD
 
 ```mermaid
 graph TD
-    Start["Start with NBDM"] --> Q1{"Excess zeros beyond<br/>NB prediction?"}
-    Q1 -->|Yes| ZI["Add zero inflation<br/>model='zinb'"]
-    Q1 -->|No| Q2
-    ZI --> Q2{"Large variation in<br/>total UMI per cell?"}
-    Q2 -->|Yes| VCP["Add variable capture<br/>model='nbvcp' or 'zinbvcp'"]
-    Q2 -->|No| Q3
-    VCP --> Q3{"Heavy-tailed genes<br/>beyond NB?"}
-    Q3 -->|Yes| BNB["Add BNB overdispersion<br/>overdispersion='bnb'"]
-    Q3 -->|No| Q4
-    BNB --> Q4{"Multiple cell<br/>populations?"}
-    Q4 -->|Yes| Mix["Add mixture<br/>n_components=K"]
-    Q4 -->|No| Done["Done"]
+    Start["Assess total UMI per cell"] --> Qtot{"Max total UMI / min total UMI<br/>roughly within 2x?"}
+    Qtot -->|Yes, very tight| Base["NBDM often sufficient<br/>model='nbdm'"]
+    Qtot -->|No, wider spread| VCP0["Prefer NBVCP<br/>model='nbvcp'"]
+    Base --> Qzi{"Still poor fit / excess zeros<br/>after NBDM + PPC?"}
+    Qzi -->|Try VCP first| VCP0
+    Qzi -->|Yes, after VCP| ZI["Consider ZINB or ZINBVCP"]
+    VCP0 --> Qzi2{"Excess zeros remain<br/>after good VCP fit?"}
+    Qzi2 -->|No| Qtail{"Heavy tails remain<br/>in PPC after VCP?"}
+    Qzi2 -->|Yes| ZINBV["ZINBVCP<br/>model='zinbvcp'"]
+    ZINBV --> Qtail
+    Qtail -->|Yes| BNB["Add BNB overdispersion<br/>overdispersion='bnb'"]
+    Qtail -->|No| Qmix{"Multiple cell<br/>populations?"}
+    BNB --> Qmix
+    Qmix -->|Yes| Mix["Add mixture<br/>n_components=K"]
+    Qmix -->|No| Done["Tune with model comparison"]
     Mix --> Done
 ```
 
-!!! tip "Start simple"
-    Begin with `model="nbdm"` and add complexity only when diagnostics
-    (posterior predictive checks, goodness-of-fit residuals) indicate the
-    simpler model is insufficient. Use
-    [model comparison](model-comparison.md) to verify that added
-    complexity improves out-of-sample prediction.
+Use [model comparison](model-comparison.md) and
+[goodness-of-fit diagnostics](model-comparison.md#goodness-of-fit-diagnostics)
+to justify adding ZI, BNB, or extra mixture components.
+
+---
+
+## Variable capture probability (NBVCP)
+
+When cells differ in mRNA capture efficiency, the same underlying expression
+can produce very different total UMIs. The VCP extension introduces a
+cell-specific capture probability \(\nu^{(c)}\) that modifies the base success
+probability:
+
+\[
+\hat{p}^{(c)} = \frac{p\,\nu^{(c)}}{1 - p\,(1 - \nu^{(c)})},
+\]
+
+so
+\(u_g^{(c)} \mid r_g, \hat{p}^{(c)}\) is distributed as
+\(\text{NB}(r_g, \hat{p}^{(c)})\).
+Genes are modelled independently given \(\nu^{(c)}\) (no Dirichlet-Multinomial
+factorization in this likelihood).
+
+```python
+results = scribe.fit(adata, model="nbvcp")
+```
+
+For many cells, **amortized** capture inference scales better:
+
+```python
+results = scribe.fit(adata, model="nbvcp", amortize_capture=True)
+```
+
+**See also:** [Theory: Anchoring priors](../theory/anchoring-priors.md) (capture
+identifiability and priors).
 
 ---
 
 ## Base: Negative Binomial (NBDM)
 
-The biophysics of transcription and degradation produce a steady-state mRNA
-distribution that is well-described by a Negative Binomial. During library
-preparation, each molecule is independently captured with some probability, and
-marginalizing over the latent mRNA counts yields an NB likelihood for the
-observed UMIs:
+When total UMIs per cell are **homogeneous**, a single effective capture shared
+across cells is often adequate. The NB likelihood for UMIs is
 
 \[
 u_g \mid r_g, \hat{p}
@@ -72,26 +127,22 @@ u_g \mid r_g, \hat{p}
 \text{NB}(r_g, \hat{p}),
 \]
 
-where \(r_g\) is the gene-specific dispersion and \(\hat{p}\) is the effective
-success probability (absorbing the capture efficiency). When \(\hat{p}\) is
-shared across genes, the joint distribution factorizes into a **Negative
-Binomial for totals** and a **Dirichlet-Multinomial for compositions**---a
-principled normalization that avoids ad-hoc library-size corrections.
+with gene-specific \(r_g\). When \(\hat{p}\) is shared across genes, the joint
+distribution factorizes into a **Negative Binomial for totals** and a
+**Dirichlet-Multinomial for compositions**---principled normalization without
+ad-hoc library-size scaling.
 
 ```python
 results = scribe.fit(adata, model="nbdm")
 ```
 
-[:octicons-arrow-right-24: Theory: Dirichlet-Multinomial](../theory/dirichlet-multinomial.md)
+**See also:** [Theory: Dirichlet-Multinomial](../theory/dirichlet-multinomial.md).
 
 ---
 
-## + Zero Inflation (ZINB)
+## Zero inflation (ZINB)
 
-Some genes show more zeros than the NB predicts, due to technical dropouts
-(failed capture, amplification failure). The ZINB model adds a per-gene **gate**
-probability \(\pi_g\) that a zero is produced by a technical dropout rather than
-genuine absence:
+Adds a per-gene **gate** \(\pi_g\) for technical dropout:
 
 \[
 u_g \mid \pi_g, r_g, \hat{p}
@@ -99,9 +150,9 @@ u_g \mid \pi_g, r_g, \hat{p}
 \pi_g\,\delta_0 + (1 - \pi_g)\,\text{NB}(r_g, \hat{p}).
 \]
 
-Each gene is fitted to an independent zero-inflated NB (no Dirichlet-Multinomial
-factorization). If all zero-inflation is technical, the \(r_g\) parameters still
-govern each gene's share of the transcriptome.
+Prefer trying **`nbvcp` first** when library sizes vary; add `zinb` or
+`zinbvcp` only when the data still need an explicit dropout layer after a
+strong VCP fit.
 
 ```python
 results = scribe.fit(adata, model="zinb")
@@ -109,40 +160,9 @@ results = scribe.fit(adata, model="zinb")
 
 ---
 
-## + Variable Capture Probability (NBVCP)
+## Both: ZINBVCP
 
-When cells vary significantly in their total UMI counts, this may reflect
-differences in mRNA capture efficiency rather than true biology. The VCP
-extension introduces a cell-specific capture probability \(\nu^{(c)}\) that
-modifies the base success probability:
-
-\[
-\hat{p}^{(c)} = \frac{p\,\nu^{(c)}}{1 - p\,(1 - \nu^{(c)})},
-\]
-
-so each cell's counts are
-\(u_g^{(c)} \mid r_g, \hat{p}^{(c)} \text{ distributed as } \text{NB}(r_g, \hat{p}^{(c)})\).
-Once the capture effect is removed, the remaining variation can be
-normalized using the same \(r_g\) parameters as NBDM.
-
-```python
-results = scribe.fit(adata, model="nbvcp")
-```
-
-For large cell counts, amortized inference is recommended:
-
-```python
-results = scribe.fit(adata, model="nbvcp", amortize_capture=True)
-```
-
-[:octicons-arrow-right-24: Theory: Anchoring Priors (capture identifiability)](../theory/anchoring-priors.md)
-
----
-
-## + Both: ZINBVCP
-
-Combines zero inflation and variable capture. Each cell has its own effective
-\(\hat{p}^{(c)}\) and each gene has its own gate \(\pi_g\):
+Combines zero inflation and variable capture:
 
 \[
 u_g^{(c)} \mid \pi_g, r_g, \hat{p}^{(c)}
@@ -150,8 +170,8 @@ u_g^{(c)} \mid \pi_g, r_g, \hat{p}^{(c)}
 \pi_g\,\delta_0 + (1 - \pi_g)\,\text{NB}(r_g, \hat{p}^{(c)}).
 \]
 
-The most comprehensive single-cell artifact model, at the highest computational
-cost.
+Highest flexibility and cost; use when both mechanisms are supported by
+diagnostics.
 
 ```python
 results = scribe.fit(adata, model="zinbvcp")
@@ -159,59 +179,60 @@ results = scribe.fit(adata, model="zinbvcp")
 
 ---
 
-## + BNB Overdispersion
+## BNB overdispersion
 
-For genes with power-law tails that exceed the NB's variance, the **Beta
-Negative Binomial** (BNB) replaces the fixed \(\hat{p}\) with a Beta-distributed
-random variable per observation, introducing an extra dispersion parameter
-\(\kappa_g\). A sparsity-inducing hierarchical prior defaults to NB behaviour
-unless the data demands heavier tails.
+**Beta Negative Binomial** adds heavy tails via a Beta randomization of the NB
+success probability and an extra \(\kappa_g\). Requires `unconstrained=True`.
+
+!!! warning "Fit variable capture first"
+    What looks like heavy tails in the raw data can often be explained by
+    **variable capture efficiency**: cells with high capture produce counts
+    in the upper tail while low-capture cells pile up near zero, mimicking
+    a heavier-tailed distribution. Fit an NBVCP model first, then check
+    the posterior predictive distribution. Add BNB only when genuine
+    per-gene excess dispersion remains after accounting for capture.
 
 ```python
 results = scribe.fit(
     adata,
-    model="nbdm",         # or any other model
+    model="nbdm",         # or nbvcp / zinb / zinbvcp
     overdispersion="bnb",
-    unconstrained=True,   # required for BNB
+    unconstrained=True,
 )
 ```
 
-[:octicons-arrow-right-24: Theory: Beta Negative Binomial](../theory/beta-negative-binomial.md)
+**See also:** [Theory: Beta Negative Binomial](../theory/beta-negative-binomial.md).
 
 ---
 
-## + Mixture Components
+## Mixture components
 
-Any of the above models can be extended to \(K\)-component mixtures for
-cell-type discovery. Gene-specific parameters (\(r_g\), and \(\pi_g\) if
-applicable) become component-specific, while global parameters (\(\hat{p}\), and
-\(\nu^{(c)}\) if applicable) are shared.
+Any of the above supports `n_components=K` for subpopulations. Gene-specific
+parameters (\(r_g\), and \(\pi_g\) if applicable) are usually
+component-specific; global \(p\) and cell-specific \(\nu^{(c)}\) stay shared as
+in the base construction.
 
 ```python
 results = scribe.fit(
     adata,
-    model="zinb",
+    model="nbvcp",
     n_components=3,
     n_steps=150_000,
 )
 
-# Cell type assignments
 assignments = results.cell_type_assignments(counts=adata.X)
 ```
-
-You can control which parameters become component-specific with
-`mixture_params`:
 
 ```python
 results = scribe.fit(
     adata,
     model="zinb",
     n_components=3,
-    mixture_params=["r"],  # only r varies by component; gate is shared
+    mixture_params=["r"],
 )
 ```
 
-[:octicons-arrow-right-24: Working with mixture results](results.md)
+**See also:** [Results class](results.md) (mixture assignments and components).
 
 ---
 
@@ -219,57 +240,60 @@ results = scribe.fit(
 
 | Model | Zero Inflated | Variable Capture | BNB | Mixture | Best For |
 |-------|:---:|:---:|:---:|:---:|----------|
-| `"nbdm"` | -- | -- | opt. | opt. | Clean data, fast baseline |
-| `"zinb"` | Yes | -- | opt. | opt. | Excess zeros / technical dropouts |
-| `"nbvcp"` | -- | Yes | opt. | opt. | Variable library sizes |
-| `"zinbvcp"` | Yes | Yes | opt. | opt. | Complex technical artifacts |
+| `"nbdm"` | -- | -- | opt. | opt. | **Tight** total-UMI distribution (~within 2x) |
+| `"nbvcp"` | -- | Yes | opt. | opt. | **Typical** data; heterogeneous library sizes |
+| `"zinb"` | Yes | -- | opt. | opt. | Excess zeros **after** VCP ruled out / no VCP |
+| `"zinbvcp"` | Yes | Yes | opt. | opt. | Strong evidence for **both** ZI and VCP |
 
-"opt." = can be added with `overdispersion="bnb"` or `n_components=K`.
+"opt." = add `overdispersion="bnb"` or `n_components=K`.
 
 ---
 
 ## Parameterizations
 
-Each model can be parameterized in three ways, controlling how the NB parameters
-are represented internally:
+Each model can be parameterized in three ways (how the NB parameters are
+represented internally). SCRIBE names them **canonical**, **mean probs**, and
+**mean odds**; the `parameterization=` string uses the codes below (aliases in
+parentheses).
 
-| Parameterization | Code | Samples | Derives | Best For |
-|---|---|---|---|---|
-| **Canonical** | `"canonical"` | \(p, r\) | -- | Direct interpretation |
-| **Linked** | `"linked"` | \(p, \mu\) | \(r = \mu(1-p)/p\) | Captures p-r correlation |
-| **Odds-ratio** | `"odds_ratio"` | \(\phi, \mu\) | \(p = 1/(1+\phi)\) | Numerically stable near p close to 1 |
+| Name | `parameterization=` | Samples | Derives | Best For |
+|------|---------------------|---------|---------|----------|
+| **Canonical** | `"canonical"` (alias `"standard"`) | \(p, r\) | -- | Direct interpretation |
+| **Mean probs** | `"mean_prob"` (alias `"linked"`) | \(p, \mu\) | \(r = \mu(1-p)/p\) | Couples mean and success probability |
+| **Mean odds** | `"mean_odds"` (alias `"odds_ratio"`) | \(\phi, \mu\) | \(p = 1/(1+\phi)\), \(r = \mu\phi\) | Stable when \(p\) is near 1 |
 
 ```python
-results = scribe.fit(adata, model="nbdm", parameterization="linked")
+results = scribe.fit(adata, model="nbvcp", parameterization="mean_prob")
+# equivalent: parameterization="linked"
 ```
 
-Additionally, each parameterization can run in **constrained** (default;
-Beta/LogNormal/BetaPrime priors) or **unconstrained** mode (Normal + sigmoid/exp
-transforms; required for hierarchical priors):
+**Constrained** (default) vs **unconstrained** (Normal + transforms; required for
+hierarchical priors and BNB):
 
 ```python
 results = scribe.fit(adata, model="nbdm", unconstrained=True)
 ```
 
+For building custom models step by step, see [Custom Models](custom-model.md).
+
 ---
 
 ## Hierarchical priors
 
-Any unconstrained model can be extended with hierarchical priors on
-gene-specific parameters (\(\mu\), \(p\), gate, overdispersion), enabling
-adaptive shrinkage across genes:
+With `unconstrained=True`, you can use hierarchical priors on gene-specific
+parameters (\(\mu\), \(p\), gate, overdispersion):
 
 ```python
 results = scribe.fit(
     adata,
     model="nbdm",
     unconstrained=True,
-    mu_prior="horseshoe",  # or "gaussian", "neg"
+    mu_prior="horseshoe",
     p_prior="gaussian",
 )
 ```
 
-[:octicons-arrow-right-24: Theory: Hierarchical Priors](../theory/hierarchical-priors.md)
+**See also:** [Theory: Hierarchical priors](../theory/hierarchical-priors.md).
 
 ---
 
@@ -277,24 +301,16 @@ results = scribe.fit(
 
 ### Computational cost
 
-All models are \(O(N \times G)\) per step. VCP adds \(N\) cell parameters,
-mixtures multiply by \(K\) components.
+All models are \(O(N \times G)\) per step. VCP adds cell-level structure;
+mixtures scale with \(K\).
 
-### Typical SVI convergence
+### Typical SVI step counts
 
-| Model | Standard | Odds-Ratio | Unconstrained |
-|-------|----------|------------|---------------|
+| Model | Canonical / mean probs | Mean odds | Unconstrained |
+|-------|------------------------|-----------|---------------|
 | NBDM, ZINB | 50k--100k | 25k--50k | 100k--200k |
 | NBVCP, ZINBVCP | 100k--150k | 50k--100k | 150k--300k |
 | Mixture | 150k--300k | 100k--200k | 300k--500k |
 
-### Recommendation
-
-Start with the simplest model that matches your data characteristics.
-Add complexity incrementally and use
-[model comparison](model-comparison.md) (WAIC, PSIS-LOO) to verify that
-added features improve out-of-sample prediction. Check fit quality with
-[goodness-of-fit diagnostics](model-comparison.md#goodness-of-fit-diagnostics).
-
-For the full mathematical details behind each model component, see the
-[Theory section](../theory/index.md).
+Validate choices with [model comparison](model-comparison.md) and the
+[Theory section](../theory/index.md) for full derivations.
