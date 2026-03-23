@@ -306,9 +306,7 @@ multiple families:
 
 For the built-in models via `scribe.fit()`, the `guide_rank` and
 `joint_params` arguments configure the gene-specific parameters while
-`amortize_capture` configures cell-specific parameters. See the
-[Custom Models](custom-model.md) guide for full control over
-per-parameter guide families.
+`amortize_capture` configures cell-specific parameters.
 
 ---
 
