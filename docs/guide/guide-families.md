@@ -131,7 +131,7 @@ and gate in a ZINB model).
 results = scribe.fit(
     adata,
     model="nbdm",
-    parameterization="odds_ratio",
+    parameterization="mean_odds",  # alias: "odds_ratio"
     unconstrained=True,
     guide_rank=10,
     joint_params=["mu", "phi"],
