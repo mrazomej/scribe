@@ -73,6 +73,10 @@ plugins:
 
 # Markdown extensions
 markdown_extensions:
+  # Image sizing ({ width="..." }) and other attribute lists
+  - attr_list
+  # Process Markdown inside HTML blocks (e.g. <figure markdown="span">)
+  - md_in_html
   # Math support
   - pymdownx.arithmatex:
       generic: true
