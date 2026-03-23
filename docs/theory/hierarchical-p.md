@@ -138,10 +138,12 @@ using only the posterior samples of \(\underline{r}\). With gene-specific
 
 ### The Gamma-based procedure
 
-The key insight is the Poisson-Gamma representation: if
-\(\gamma_g \sim \text{Gamma}(r_g, 1)\) (unit rate), then
-\(\tilde{\lambda}_g = \gamma_g \cdot (1 - p_g) / p_g\) has the distribution
-\(\text{Gamma}(r_g, \theta_g)\) — the latent expected count for gene \(g\).
+The key insight is the Poisson-Gamma representation. Draw
+\(\gamma_g\) from a \(\text{Gamma}(r_g, 1)\) distribution (unit rate).
+
+Then \(\tilde{\lambda}_g = \gamma_g \cdot (1 - p_g) / p_g\) has the
+distribution \(\text{Gamma}(r_g, \theta_g)\) — the latent expected count
+for gene \(g\).
 
 The composition is then:
 

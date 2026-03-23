@@ -5,7 +5,7 @@ statistics and probabilistic modeling. This section provides an accessible
 overview of the core theoretical results that underpin the package, presenting
 the key ideas and their implications without exhaustive algebraic derivations.
 
-The probabilistic framework of SCRIBE can be understood through three
+The probabilistic framework of SCRIBE can be understood through four
 theoretical contributions:
 
 - [**Dirichlet-Multinomial Model**](dirichlet-multinomial.md) — Derives how
@@ -24,6 +24,12 @@ theoretical contributions:
   Poisson-Gamma conjugacy to recover a shifted negative binomial denoised
   distribution, with extensions for zero-inflated models and cross-gene
   correlations.
+
+- [**Anchoring Priors**](anchoring-priors.md) — Resolves two layers of
+  practical non-identifiability in the variable capture model: the
+  capture-expression degeneracy (via biology-informed capture prior) and
+  the mean-overdispersion degeneracy (via data-informed mean anchoring),
+  each justified by a law-of-large-numbers concentration argument.
 
 !!! tip "For practitioners"
     You do not need to read these pages to use SCRIBE effectively. The
