@@ -102,6 +102,7 @@ guide_flow: null                # null = disabled; "spline_coupling", "affine_co
 guide_flow_num_layers: 4        # number of flow layers
 guide_flow_hidden_dims: [64, 64]  # conditioner MLP hidden dims
 guide_flow_n_bins: 8            # spline bins (spline_coupling only)
+guide_flow_mixture_strategy: "independent"  # or "shared"; how mixture (and dataset) axes pair with flow guides
 ```
 
 ### Prior Configuration

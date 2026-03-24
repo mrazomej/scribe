@@ -11,9 +11,17 @@ through the flow chain.  Non-dense parameters receive diagonal-Normal
 treatment with learned regression on the dense-flow residuals and a
 per-gene autoregressive chain among themselves — identical to the
 pattern in ``_guide_structured_joint_mixin``.
+
+**Mixture / dataset support**: when a spec has ``is_mixture=True`` or
+``is_dataset=True``, the batch-rank ordering guard places it *after*
+non-batch specs.  The flow for that spec is expanded into a
+``ComponentFlowDistribution`` (independent or shared, per
+``guide.mixture_strategy``) so every component / dataset gets its own
+flow transformation.  Context vectors for these specs are built
+per-component by slicing batch-aware previous unconstrained values.
 """
 
-from typing import TYPE_CHECKING, Dict, List, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -21,7 +29,7 @@ import numpyro
 import numpyro.distributions as dist
 from numpyro.contrib.module import flax_module
 
-from scribe.flows import FlowChain, FlowDistribution
+from scribe.flows import ComponentFlowDistribution, FlowChain, FlowDistribution
 from .parameter_specs import (
     NormalWithTransformSpec,
     resolve_shape,
@@ -305,6 +313,232 @@ def _reduce_dense_residual(
 
 
 # ======================================================================
+# Mixture / dataset batch-axis helpers
+# ======================================================================
+
+
+def _batch_info_for_spec(
+    spec: NormalWithTransformSpec,
+    dims: Dict[str, int],
+) -> Tuple[Tuple[int, ...], List[str]]:
+    """Determine leading batch sizes and axis labels for a spec.
+
+    Returns ``(batch_shape, axis_names)``.  Mixture is outermost,
+    dataset is next.  Empty if neither flag is set.
+    """
+    sizes: List[int] = []
+    names: List[str] = []
+    if spec.is_mixture and "n_components" in dims:
+        sizes.append(dims["n_components"])
+        names.append("component")
+    if spec.is_dataset and "n_datasets" in dims:
+        sizes.append(dims["n_datasets"])
+        names.append("dataset")
+    return tuple(sizes), names
+
+
+def _build_per_component_contexts(
+    entries: List[Tuple[jnp.ndarray, Tuple[int, ...]]],
+    K: int,
+) -> List[Optional[jnp.ndarray]]:
+    """Build K context vectors from tracked unconstrained entries.
+
+    Non-batch entries are broadcast (shared across K).
+    Batch entries are sliced per-component.
+
+    Parameters
+    ----------
+    entries : list of (value, batch_shape)
+        Each entry is ``(unconstrained_value, its_batch_shape)``.
+    K : int
+        Number of components.
+
+    Returns
+    -------
+    list of jnp.ndarray or None
+        K context vectors, one per component.  ``None`` when no entries.
+    """
+    if not entries:
+        return [None] * K
+
+    contexts: List[Optional[jnp.ndarray]] = []
+    for k in range(K):
+        pieces: List[jnp.ndarray] = []
+        for value, bs in entries:
+            if not bs:
+                pieces.append(value)
+            else:
+                pieces.append(value[k])
+        contexts.append(
+            jnp.concatenate(pieces, axis=-1) if pieces else None
+        )
+    return contexts
+
+
+def _sample_mixture_flow_in_joint(
+    spec: NormalWithTransformSpec,
+    guide: JointNormalizingFlowGuide,
+    K: int,
+    G_i: int,
+    per_comp_contexts: List[Optional[jnp.ndarray]],
+    context_dim: int,
+    axis_name: str,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Sample a mixture gene-specific param using ComponentFlowDistribution.
+
+    Creates K separate conditioned ``FlowDistribution`` instances
+    (independent or shared) and wraps them in a
+    ``ComponentFlowDistribution``.
+
+    Parameters
+    ----------
+    spec : NormalWithTransformSpec
+        Parameter specification.
+    guide : JointNormalizingFlowGuide
+        Guide marker.
+    K : int
+        Number of mixture components (or dataset indices).
+    G_i : int
+        Gene / trailing event dimension.
+    per_comp_contexts : list of jnp.ndarray or None
+        Per-component context vectors from previous params.
+    context_dim : int
+        Expected dimensionality of each context vector.
+    axis_name : str
+        Label for the batch axis (``"component"`` or ``"dataset"``).
+
+    Returns
+    -------
+    constrained : jnp.ndarray
+        Shape ``(K, G_i)`` in constrained space.
+    unconstrained : jnp.ndarray
+        Shape ``(K, G_i)`` in unconstrained space.
+    """
+
+    def _base():
+        return dist.Normal(jnp.zeros(G_i), jnp.ones(G_i)).to_event(1)
+
+    if guide.mixture_strategy == "independent":
+        component_dists = []
+        for k in range(K):
+            chain_k = _build_flow_chain_for_joint(
+                guide, features=G_i, context_dim=context_dim,
+            )
+            mod_name = f"joint_flow_{guide.group}_{spec.name}_idx{k}"
+            fn_k = _register_flow(
+                mod_name, chain_k, features=G_i, context_dim=context_dim,
+            )
+
+            ctx_k = per_comp_contexts[k]
+            if ctx_k is not None:
+                def _cond(x, reverse=False, _fn=fn_k, _ctx=ctx_k):
+                    return _fn(x, reverse=reverse, context=_ctx)
+                active = _cond
+            else:
+                active = fn_k
+            component_dists.append(FlowDistribution(active, _base()))
+    else:
+        # Shared: one FlowChain with context_dim += K for one-hot
+        total_ctx_dim = context_dim + K
+        chain = _build_flow_chain_for_joint(
+            guide, features=G_i, context_dim=total_ctx_dim,
+        )
+        mod_name = f"joint_flow_{guide.group}_{spec.name}"
+        fn = _register_flow(
+            mod_name, chain, features=G_i, context_dim=total_ctx_dim,
+        )
+        component_dists = []
+        for k in range(K):
+            oh_k = jax.nn.one_hot(k, K)
+            ctx_k = per_comp_contexts[k]
+            full_ctx = (
+                jnp.concatenate([ctx_k, oh_k])
+                if ctx_k is not None
+                else oh_k
+            )
+
+            def _cond(x, reverse=False, _fn=fn, _ctx=full_ctx):
+                return _fn(x, reverse=reverse, context=_ctx)
+            component_dists.append(FlowDistribution(_cond, _base()))
+
+    comp_dist = ComponentFlowDistribution(
+        component_dists, axis_name=axis_name,
+    )
+
+    if _is_joint_ncp_spec(spec):
+        unconstrained = numpyro.sample(spec.raw_name, comp_dist)
+        constrained = spec.transform(unconstrained)
+        numpyro.deterministic(spec.constrained_name, constrained)
+    else:
+        transformed = dist.TransformedDistribution(comp_dist, spec.transform)
+        constrained = numpyro.sample(spec.constrained_name, transformed)
+        unconstrained = spec.transform.inv(constrained)
+
+    return constrained, unconstrained
+
+
+def _sample_mixture_scalar_in_joint(
+    spec: NormalWithTransformSpec,
+    guide: JointNormalizingFlowGuide,
+    K: int,
+    per_comp_contexts: List[Optional[jnp.ndarray]],
+    context_dim: int,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Sample a mixture scalar param using a K-dimensional Normal.
+
+    Each component gets its own ``(loc, scale)`` with optional linear
+    regression on its per-component context vector.
+
+    Parameters
+    ----------
+    spec : NormalWithTransformSpec
+        Parameter specification.
+    guide : JointNormalizingFlowGuide
+        Guide marker.
+    K : int
+        Number of mixture components (or dataset indices).
+    per_comp_contexts : list of jnp.ndarray or None
+        Per-component context vectors from previous params.
+    context_dim : int
+        Context dimensionality.
+
+    Returns
+    -------
+    constrained : jnp.ndarray
+        Shape ``(K,)`` in constrained space.
+    unconstrained_expanded : jnp.ndarray
+        Shape ``(K, 1)`` — expanded for context concatenation.
+    """
+    prefix = f"joint_flow_{guide.group}_{spec.name}"
+
+    loc = numpyro.param(f"{prefix}_scalar_loc", jnp.zeros(K))
+    raw_scale = numpyro.param(f"{prefix}_scalar_raw_scale", jnp.zeros(K))
+    scale = jax.nn.softplus(raw_scale) + 1e-4
+
+    # Per-component context regression
+    if context_dim > 0 and per_comp_contexts[0] is not None:
+        alpha = numpyro.param(
+            f"{prefix}_scalar_ctx_alpha",
+            jnp.zeros((K, context_dim)),
+        )
+        stacked_ctx = jnp.stack(per_comp_contexts)  # (K, context_dim)
+        loc = loc + jnp.sum(alpha * stacked_ctx, axis=-1)
+
+    base_d = dist.Normal(loc, scale).to_event(1)
+
+    if _is_joint_ncp_spec(spec):
+        unconstrained = numpyro.sample(spec.raw_name, base_d)
+        constrained = spec.transform(unconstrained)
+        numpyro.deterministic(spec.constrained_name, constrained)
+    else:
+        transformed = dist.TransformedDistribution(base_d, spec.transform)
+        constrained = numpyro.sample(spec.constrained_name, transformed)
+        unconstrained = spec.transform.inv(constrained)
+
+    return constrained, unconstrained[..., None]
+
+
+# ======================================================================
 # Public entry point
 # ======================================================================
 
@@ -400,8 +634,11 @@ def setup_joint_flow_guide(
 
     flow_constrained: Dict[str, jnp.ndarray] = {}
     flow_unconstrained: Dict[str, jnp.ndarray] = {}
-    # Flat list of unconstrained samples for building context vectors
-    flow_unconstrained_list: List[jnp.ndarray] = []
+
+    # Track unconstrained values with their batch structure so
+    # per-component context can be built for mixture specs.
+    # Each entry: (unconstrained_value, batch_shape_tuple)
+    flow_unc_entries: List[Tuple[jnp.ndarray, Tuple[int, ...]]] = []
 
     for idx, spec in enumerate(flow_specs):
         exp_shape = all_expanded[spec.name]
@@ -409,27 +646,81 @@ def setup_joint_flow_guide(
         G_i = exp_shape[-1]
         n_batch_dims_i = len(exp_shape) - 1
 
-        # Context = cumulative dim of all previously sampled flow blocks
+        # Context dim = cumulative trailing dim of all previous blocks
         context_dim = sum(
             all_expanded[flow_specs[j].name][-1] for j in range(idx)
         )
 
-        # Build context from previously sampled unconstrained values
-        context = None
-        if flow_unconstrained_list:
-            context = jnp.concatenate(flow_unconstrained_list, axis=-1)
+        # Detect per-index batch axes (mixture / dataset)
+        batch_shape, axis_names = _batch_info_for_spec(spec, dims)
+        has_batch = len(batch_shape) > 0
 
-        # Coupling flows cannot operate on features=1 (binary mask
-        # would give one empty partition).  For scalars expanded to
-        # dim 1, use a context-conditioned Normal instead.
-        if G_i <= 1:
-            constrained, unconstrained = _sample_scalar_in_joint(
-                spec,
-                guide,
-                context,
-                context_dim,
-                n_batch_dims_i,
+        if has_batch:
+            # -----------------------------------------------------------
+            # Mixture / dataset spec: per-index flows
+            # -----------------------------------------------------------
+            K = batch_shape[0]
+            per_comp_ctx = _build_per_component_contexts(
+                flow_unc_entries, K,
             )
+
+            if G_i <= 1:
+                constrained, unconstrained = _sample_mixture_scalar_in_joint(
+                    spec, guide, K, per_comp_ctx, context_dim,
+                )
+            else:
+                constrained, unconstrained = _sample_mixture_flow_in_joint(
+                    spec, guide, K, G_i, per_comp_ctx, context_dim,
+                    axis_name=axis_names[0],
+                )
+
+            flow_constrained[spec.name] = constrained
+            flow_unconstrained[spec.name] = unconstrained
+            flow_unc_entries.append((unconstrained, batch_shape))
+
+        else:
+            # -----------------------------------------------------------
+            # Non-batch spec: original code path
+            # -----------------------------------------------------------
+
+            # Build flat context from all previous non-batch entries
+            # (ordering guarantees non-batch specs come first)
+            context = None
+            if flow_unc_entries:
+                pieces = [v for v, _bs in flow_unc_entries]
+                context = jnp.concatenate(pieces, axis=-1)
+
+            # Coupling flows cannot operate on features=1 (binary mask
+            # would give one empty partition).
+            if G_i <= 1:
+                constrained, unconstrained = _sample_scalar_in_joint(
+                    spec, guide, context, context_dim, n_batch_dims_i,
+                )
+                flow_constrained[spec.name] = constrained
+                if (
+                    is_scalar
+                    and unconstrained.ndim > 0
+                    and unconstrained.shape[-1] != 1
+                ):
+                    unconstrained = unconstrained[..., None]
+                flow_unconstrained[spec.name] = unconstrained
+                flow_unc_entries.append((unconstrained, ()))
+                continue
+
+            flow_chain = _build_flow_chain_for_joint(
+                guide, features=G_i, context_dim=context_dim,
+            )
+            module_name = f"joint_flow_{guide.group}_{spec.name}"
+            flow_fn = _register_flow(
+                module_name, flow_chain,
+                features=G_i, context_dim=context_dim,
+            )
+
+            constrained, unconstrained = _sample_flow_spec(
+                flow_fn, G_i, spec, is_scalar,
+                n_batch_dims_i, context=context,
+            )
+
             flow_constrained[spec.name] = constrained
             if (
                 is_scalar
@@ -437,45 +728,9 @@ def setup_joint_flow_guide(
                 and unconstrained.shape[-1] != 1
             ):
                 unconstrained = unconstrained[..., None]
+
             flow_unconstrained[spec.name] = unconstrained
-            flow_unconstrained_list.append(unconstrained)
-            continue
-
-        # Build and register the flow module
-        flow_chain = _build_flow_chain_for_joint(
-            guide,
-            features=G_i,
-            context_dim=context_dim,
-        )
-        module_name = f"joint_flow_{guide.group}_{spec.name}"
-        flow_fn = _register_flow(
-            module_name,
-            flow_chain,
-            features=G_i,
-            context_dim=context_dim,
-        )
-
-        constrained, unconstrained = _sample_flow_spec(
-            flow_fn,
-            G_i,
-            spec,
-            is_scalar,
-            n_batch_dims_i,
-            context=context,
-        )
-
-        flow_constrained[spec.name] = constrained
-
-        # Ensure unconstrained has the expanded trailing dim for scalars
-        if (
-            is_scalar
-            and unconstrained.ndim > 0
-            and unconstrained.shape[-1] != 1
-        ):
-            unconstrained = unconstrained[..., None]
-
-        flow_unconstrained[spec.name] = unconstrained
-        flow_unconstrained_list.append(unconstrained)
+            flow_unc_entries.append((unconstrained, ()))
 
     # ==================================================================
     # Phase 2: Nondense block (diagonal + regression)

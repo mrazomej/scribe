@@ -83,6 +83,7 @@ def build_config_from_preset(
     guide_flow_num_layers: int = 4,
     guide_flow_hidden_dims: Optional[List[int]] = None,
     guide_flow_n_bins: int = 8,
+    guide_flow_mixture_strategy: str = "independent",
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
     priors: Optional[Dict[str, Any]] = None,
@@ -148,6 +149,11 @@ def build_config_from_preset(
         Hidden dimensions for the conditioner network. Default is [64, 64].
     guide_flow_n_bins : int, default=8
         Number of spline bins (only for ``guide_flow="spline_coupling"``).
+    guide_flow_mixture_strategy : str, default="independent"
+        How to handle mixture components and dataset indices in flow
+        guides.  ``"independent"`` creates separate ``FlowChain``
+        per component; ``"shared"`` uses one flow conditioned on a
+        one-hot index vector.
     n_components : Optional[int], default=None
         Number of mixture components. If provided, creates a mixture model.
     mixture_params : Optional[List[str]], default=None
@@ -337,6 +343,7 @@ def build_config_from_preset(
             num_layers=guide_flow_num_layers,
             hidden_dims=tuple(guide_flow_hidden_dims or [64, 64]),
             n_bins=guide_flow_n_bins,
+            mixture_strategy=guide_flow_mixture_strategy,
         )
 
         if joint_params is not None:

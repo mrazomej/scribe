@@ -43,8 +43,8 @@ from .coupling import AffineCoupling, SplineCoupling
 # Autoregressive layers and MADE conditioner.
 from .autoregressive import MAF, IAF, MADE
 
-# NumPyro distribution wrapper for use in probabilistic models.
-from .distributions import FlowDistribution
+# NumPyro distribution wrappers for use in probabilistic models.
+from .distributions import ComponentFlowDistribution, FlowDistribution
 
 # RQS spline primitives (used by SplineCoupling).
 from .transforms import rqs_forward, rqs_inverse, unconstrained_to_rqs_params
@@ -59,8 +59,9 @@ __all__ = [
     "MAF",
     "IAF",
     "MADE",
-    # Distribution wrapper
+    # Distribution wrappers
     "FlowDistribution",
+    "ComponentFlowDistribution",
     # Spline primitives
     "rqs_forward",
     "rqs_inverse",

@@ -267,6 +267,18 @@ dict format. Joint flow entries additionally include `"conditional": True` to
 indicate that they represent conditional distributions (from the chain-rule
 decomposition) and require guide execution for proper joint sampling.
 
+**Mixture models and flow guides:**
+
+For mixture-aware flow parameters, `get_distributions()` returns
+`ComponentFlowDistribution`-based entries (instead of plain `FlowDistribution`)
+so the full component structure is preserved. Use `get_component(k)` to obtain a
+single-component view and read per-component flow posteriors there. Sampling-
+based `get_map()` strategies (`flow_map_method` `"mean"`, `"empirical"`, or
+`"optimize"`) automatically handle `(K, G)` shapes alongside multi-dataset
+layouts. Which flow parameters are shared vs. per-component is set at fit time
+via `guide_flow_mixture_strategy`: `"independent"` (separate flows per mixture
+component) or `"shared"` (one flow structure across components).
+
 **Posterior Sampling:**
 ```python
 # Sample from variational posterior

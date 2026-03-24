@@ -427,6 +427,33 @@ is non-linear or the joint posterior is non-Gaussian (e.g., banana-shaped,
 multimodal). For approximately Gaussian joint posteriors, `JointLowRankGuide` is
 more parameter-efficient.
 
+### Mixture / Dataset Support in Flow Guides
+
+When a parameter has `is_mixture=True` or `is_dataset=True`, the flow guide
+creates a `ComponentFlowDistribution` instead of a plain `FlowDistribution`.
+The behaviour is controlled by `guide.mixture_strategy`:
+
+- **`"independent"` (default):** K separate `FlowChain` instances, each with
+  its own Flax parameters.  Per-param naming: `flow_{name}_idx{k}`.  Joint
+  naming: `joint_flow_{group}_{name}_idx{k}`.
+- **`"shared"`:** One `FlowChain` with `context_dim += K`, conditioned on a
+  one-hot component index.  The Flax module name stays the same as non-mixture.
+
+For joint flows, batch-rank ordering ensures non-mixture specs are sampled
+first.  Context vectors for mixture specs are built per-component by slicing
+batch-aware previous unconstrained values.
+
+Dataset-level flows follow the same mechanism (`is_dataset=True`).  When both
+flags are set, nested `ComponentFlowDistribution` objects are created
+recursively (outer axis = component, inner axis = dataset).
+
+```python
+NormalizingFlowGuide(
+    flow_type="spline_coupling", num_layers=4,
+    mixture_strategy="independent",  # or "shared"
+)
+```
+
 ## Posterior Extraction
 
 The **`posterior`** module extracts posterior distributions from optimized
