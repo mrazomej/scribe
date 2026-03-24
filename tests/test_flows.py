@@ -242,17 +242,15 @@ class TestSplineCoupling:
         y, _ = flow.apply(params, x)
         npt.assert_allclose(y[..., 0::2], x[..., 0::2], atol=1e-5)
 
-    def test_near_identity_at_init(self, flow_and_params):
-        """With zero-initialized conditioner, transform should be near-identity.
-
-        Not exact because softplus(0)+eps derivative != bin slope. But the
-        deviation should be small (< 0.1 per dimension).
+    def test_identity_at_init(self, flow_and_params):
+        """With zero_init_output=True (default), the custom bias initializer
+        sets knot derivatives to 1.0 so the spline is exact identity at init.
         """
         flow, params = flow_and_params
         x = jax.random.normal(jax.random.PRNGKey(22), (4, 6)) * 2.0
         y, log_det = flow.apply(params, x)
-        npt.assert_allclose(y, x, atol=0.1)
-        npt.assert_allclose(log_det, jnp.zeros(4), atol=0.5)
+        npt.assert_allclose(y, x, atol=1e-5)
+        npt.assert_allclose(log_det, jnp.zeros(4), atol=1e-5)
 
     def test_log_det_finite(self, flow_and_params, sample_data):
         flow, params = flow_and_params
@@ -755,13 +753,13 @@ class TestConditionerStability:
         npt.assert_allclose(y, x, atol=1e-6)
         npt.assert_allclose(log_det, jnp.zeros(3), atol=1e-6)
 
-    def test_spline_near_identity_at_init(self, rng):
+    def test_spline_identity_at_init(self, rng):
         """With zero_init_output=True, a spline coupling layer should be
-        near-identity at initialization.
+        exact identity at initialization.
 
-        The RQS with zero raw params gives uniform bin widths/heights and
-        derivatives = softplus(0) ~ 0.693 (not exactly 1.0), so the
-        transform is close to — but not exactly — identity.
+        The custom bias initializer sets derivative entries to
+        ``softplus_inv(1 - min_derivative)`` so that the knot slopes are
+        exactly 1.0, giving identity output and zero log-det.
         """
         dim = 50
         layer = SplineCoupling(
@@ -776,10 +774,8 @@ class TestConditionerStability:
         params = layer.init(rng, jnp.zeros(dim))
 
         y, log_det = layer.apply(params, x)
-        # Near-identity: masked dims are unchanged, unmasked are close
-        npt.assert_allclose(y, x, atol=0.05)
-        assert jnp.all(jnp.isfinite(y))
-        assert jnp.all(jnp.isfinite(log_det))
+        npt.assert_allclose(y, x, atol=1e-5)
+        npt.assert_allclose(log_det, jnp.zeros(3), atol=1e-5)
 
     def test_maf_high_dim_no_nan(self, rng):
         """MADE-based MAF with default flags stays finite at high dim."""
