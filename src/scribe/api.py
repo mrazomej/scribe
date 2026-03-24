@@ -263,6 +263,11 @@ def fit(
     guide_rank: Optional[int] = None,
     joint_params: Optional[List[str]] = None,
     dense_params: Optional[List[str]] = None,
+    # Flow-based guide (mutually exclusive with guide_rank)
+    guide_flow: Optional[str] = None,
+    guide_flow_num_layers: int = 4,
+    guide_flow_hidden_dims: Optional[List[int]] = None,
+    guide_flow_n_bins: int = 8,
     priors: Optional[Dict[str, Any]] = None,
     # VAE architecture options (when inference_method="vae")
     vae_latent_dim: int = 10,
@@ -431,6 +436,23 @@ def fit(
         Example: ``joint_params=["mu", "phi", "gate"],
         dense_params=["mu"]`` gives ``mu`` cross-gene correlations while
         ``phi`` and ``gate`` only couple to ``mu`` at the same gene.
+
+    guide_flow : str, optional
+        Normalizing-flow type for the variational guide. Mutually exclusive
+        with ``guide_rank``. When set, uses a ``NormalizingFlowGuide``
+        (per-parameter) or ``JointNormalizingFlowGuide`` (when combined
+        with ``joint_params``). Supported types: ``"spline_coupling"``,
+        ``"affine_coupling"``, ``"maf"``, ``"iaf"``.
+
+    guide_flow_num_layers : int, default=4
+        Number of flow layers in the normalizing-flow guide.
+
+    guide_flow_hidden_dims : List[int], optional
+        Hidden dimensions for the conditioner network in each flow layer.
+        Default is ``[64, 64]``.
+
+    guide_flow_n_bins : int, default=8
+        Number of spline bins (only used when ``guide_flow="spline_coupling"``).
 
     priors : Dict[str, Any], optional
         Dictionary of prior hyperparameters keyed by parameter name. Values
@@ -1031,6 +1053,10 @@ def fit(
             guide_rank=guide_rank,
             joint_params=joint_params,
             dense_params=dense_params,
+            guide_flow=guide_flow,
+            guide_flow_num_layers=guide_flow_num_layers,
+            guide_flow_hidden_dims=guide_flow_hidden_dims,
+            guide_flow_n_bins=guide_flow_n_bins,
             n_components=n_components,
             mixture_params=effective_mixture_params,
             priors=priors,

@@ -167,22 +167,28 @@ Build ModelConfig from preset parameters.
 - `parameterization`: Parameterization string
 - `inference_method`: Inference method string
 - `unconstrained`: Use unconstrained parameterization
-- `guide_rank`: Rank for low-rank guide
+- `guide_rank`: Rank for low-rank guide. Mutually exclusive with `guide_flow`.
+- `guide_flow`: Normalizing-flow type for the variational guide. Mutually
+  exclusive with `guide_rank`. Supported: `"spline_coupling"`,
+  `"affine_coupling"`, `"maf"`, `"iaf"`.
+- `guide_flow_num_layers`: Number of flow layers (default 4).
+- `guide_flow_hidden_dims`: Conditioner MLP hidden dims (default [64, 64]).
+- `guide_flow_n_bins`: Spline bins for `"spline_coupling"` (default 8).
 - `joint_params`: Optional list of gene-specific parameter names. When set, the
-  listed parameters share a single JointLowRankGuide that captures
-  cross-parameter correlations via a shared low-rank covariance. Requires
-  `guide_rank` to be set. Example: `["mu", "phi"]`
+  listed parameters share a single JointLowRankGuide (with `guide_rank`) or
+  JointNormalizingFlowGuide (with `guide_flow`) that captures cross-parameter
+  correlations. Requires `guide_rank` or `guide_flow` to be set.
+  Example: `["mu", "phi"]`
   - For horseshoe-enabled parameters (for example `gate` with
     `horseshoe_gate=True`), joint modeling is applied to the corresponding
     NCP raw latent (for example `gate_raw`) so model/guide sample sites remain
     consistent.
 - `dense_params`: Optional subset of `joint_params`. When set, dense params get
-  full cross-gene low-rank coupling; non-dense params get per-gene regression on
-  dense params plus per-gene Cholesky. When `None` or equal to `joint_params`,
-  standard JointLowRankGuide is used. Example: `joint_params=["mu", "phi",
-  "gate"], dense_params=["mu"]` gives mu cross-gene correlations while phi and
-  gate only couple to mu at the same gene. Threaded to the guide via
-  `JointLowRankGuide.dense_params`.
+  full cross-gene low-rank coupling (low-rank) or full flow treatment (flow);
+  non-dense params get per-gene regression on dense params plus per-gene
+  Cholesky (low-rank) or context-conditioned Normal (flow). When `None` or
+  equal to `joint_params`, the standard fully-joint guide is used. Example:
+  `joint_params=["mu", "phi", "gate"], dense_params=["mu"]`.
 - `n_components`: Number of mixture components
 - `priors`: Dictionary of prior parameters
 - `capture_amortization`: Optional `AmortizationConfig` or dict. When provided,
@@ -261,7 +267,16 @@ model_config = build_config_from_preset(
     guide_rank=15,
 )
 
-# Option B: ModelConfigBuilder with explicit guide families
+# Option B: preset with normalizing-flow guide
+model_config = build_config_from_preset(
+    model="nbdm",
+    parameterization="mean_odds",
+    inference_method="svi",
+    guide_flow="spline_coupling",
+    joint_params=["mu", "phi"],
+)
+
+# Option C: ModelConfigBuilder with explicit guide families
 from scribe.models.config import ModelConfigBuilder
 
 model_config = (

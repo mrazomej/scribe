@@ -911,6 +911,10 @@ def main(cfg: DictConfig) -> None:
         "guide_rank": cfg.guide_rank,
         "joint_params": cfg.get("joint_params"),
         "dense_params": cfg.get("dense_params"),
+        "guide_flow": cfg.get("guide_flow"),
+        "guide_flow_num_layers": cfg.get("guide_flow_num_layers", 4),
+        "guide_flow_hidden_dims": cfg.get("guide_flow_hidden_dims"),
+        "guide_flow_n_bins": cfg.get("guide_flow_n_bins", 8),
         "priors": priors,
         # Amortization: single config object (when set, fit() uses it; else uses
         # individual params)
@@ -956,6 +960,11 @@ def main(cfg: DictConfig) -> None:
     if kwargs.get("guide_rank"):
         console.print(
             f"[dim]Guide rank:[/dim] [bold]{kwargs['guide_rank']}[/bold]"
+        )
+    if kwargs.get("guide_flow"):
+        console.print(
+            f"[dim]Guide flow:[/dim] [bold]{kwargs['guide_flow']}[/bold] "
+            f"({kwargs.get('guide_flow_num_layers', 4)} layers)"
         )
     if kwargs.get("joint_params"):
         console.print(

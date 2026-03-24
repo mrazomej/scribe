@@ -22,6 +22,12 @@ dirname_aliases:
     annotation_min_cells: annmin
     dataset_mixing: datamix
 
+    # Flow-based guide controls
+    guide_flow: gflow
+    guide_flow_num_layers: gflowlayers
+    guide_flow_hidden_dims: gflowhidden
+    guide_flow_n_bins: gflowbins
+
     # Hierarchical prior type fields
     mu_prior: muprior
     p_prior: pprior

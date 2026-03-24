@@ -78,6 +78,11 @@ def build_config_from_preset(
     guide_rank: Optional[int] = None,
     joint_params: Optional[List[str]] = None,
     dense_params: Optional[List[str]] = None,
+    # Flow-based guide (mutually exclusive with guide_rank)
+    guide_flow: Optional[str] = None,
+    guide_flow_num_layers: int = 4,
+    guide_flow_hidden_dims: Optional[List[int]] = None,
+    guide_flow_n_bins: int = 8,
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
     priors: Optional[Dict[str, Any]] = None,
@@ -110,7 +115,7 @@ def build_config_from_preset(
 
     - Model type validation
     - Parameterization validation and aliasing
-    - Guide family configuration from guide_rank
+    - Guide family configuration from guide_rank or guide_flow
     - Mixture model configuration
 
     The actual model/guide construction is done by `create_model()` in
@@ -130,6 +135,19 @@ def build_config_from_preset(
     guide_rank : Optional[int], default=None
         Rank for low-rank guide on gene-specific parameter. If provided,
         creates a LowRankGuide for the appropriate parameter (r or mu).
+        Mutually exclusive with ``guide_flow``.
+    guide_flow : Optional[str], default=None
+        Normalizing-flow type for the variational guide. Mutually exclusive
+        with ``guide_rank``. When set, creates a NormalizingFlowGuide
+        (per-parameter) or JointNormalizingFlowGuide (when combined with
+        ``joint_params``). Supported: "spline_coupling", "affine_coupling",
+        "maf", "iaf".
+    guide_flow_num_layers : int, default=4
+        Number of flow layers in the normalizing-flow guide.
+    guide_flow_hidden_dims : Optional[List[int]], default=None
+        Hidden dimensions for the conditioner network. Default is [64, 64].
+    guide_flow_n_bins : int, default=8
+        Number of spline bins (only for ``guide_flow="spline_coupling"``).
     n_components : Optional[int], default=None
         Number of mixture components. If provided, creates a mixture model.
     mixture_params : Optional[List[str]], default=None
@@ -206,13 +224,33 @@ def build_config_from_preset(
     ...     priors={"p": (2.0, 2.0), "r": (1.0, 0.5)},
     ... )
 
+    With normalizing-flow guide:
+
+    >>> config = build_config_from_preset(
+    ...     model="nbdm",
+    ...     parameterization="mean_odds",
+    ...     guide_flow="spline_coupling",
+    ... )
+
+    Joint normalizing-flow guide:
+
+    >>> config = build_config_from_preset(
+    ...     model="nbdm",
+    ...     parameterization="mean_odds",
+    ...     unconstrained=True,
+    ...     p_prior="gaussian",
+    ...     guide_flow="spline_coupling",
+    ...     joint_params=["mu", "phi"],
+    ... )
+
     Notes
     -----
     - Parameterization names support both new ("canonical", "mean_prob",
       "mean_odds") and old ("standard", "linked", "odds_ratio") for
       backward compatibility.
     - Guide rank is applied to the gene-specific parameter (r for canonical,
-      mu for mean_prob/mean_odds).
+      mu for mean_prob/mean_odds). Guide flow follows the same convention.
+    - ``guide_rank`` and ``guide_flow`` are mutually exclusive.
     - The returned ModelConfig can be passed to `create_model()` to get
       the actual model and guide functions.
 
@@ -234,20 +272,28 @@ def build_config_from_preset(
     # ==========================================================================
     guide_family_kwargs = {}
 
-    # Validate joint_params requires guide_rank
-    if joint_params is not None and guide_rank is None:
+    # guide_rank and guide_flow are mutually exclusive
+    if guide_rank is not None and guide_flow is not None:
         raise ValueError(
-            "joint_params requires guide_rank to be set (it determines "
-            "the rank of the joint low-rank covariance)"
+            "guide_rank and guide_flow are mutually exclusive — "
+            "use guide_rank for low-rank guides or guide_flow for "
+            "normalizing-flow guides, not both"
         )
+
+    # joint_params requires either guide_rank or guide_flow
+    if joint_params is not None and guide_rank is None and guide_flow is None:
+        raise ValueError(
+            "joint_params requires guide_rank or guide_flow to be set"
+        )
+
+    # Resolve parameterization strategy (needed by both low-rank and flow)
+    param_strategy = PARAMETERIZATIONS[parameterization]
+    gene_param_name = param_strategy.gene_param_name  # "r" or "mu"
 
     # Handle low-rank guide for parameters.  joint_params may include
     # both gene-specific and scalar parameters (heterogeneous dims).
     if guide_rank is not None:
         from ..models.components import JointLowRankGuide, LowRankGuide
-
-        param_strategy = PARAMETERIZATIONS[parameterization]
-        gene_param_name = param_strategy.gene_param_name  # "r" or "mu"
 
         if joint_params is not None:
             # Joint low-rank: all listed params share a single covariance.
@@ -277,6 +323,45 @@ def build_config_from_preset(
         else:
             guide_family_kwargs[gene_param_name] = LowRankGuide(
                 rank=guide_rank
+            )
+
+    # Handle normalizing-flow guide (parallels the low-rank block above)
+    if guide_flow is not None:
+        from ..models.components import (
+            JointNormalizingFlowGuide,
+            NormalizingFlowGuide,
+        )
+
+        flow_kwargs = dict(
+            flow_type=guide_flow,
+            num_layers=guide_flow_num_layers,
+            hidden_dims=tuple(guide_flow_hidden_dims or [64, 64]),
+            n_bins=guide_flow_n_bins,
+        )
+
+        if joint_params is not None:
+            _effective_dense = dense_params
+            if (
+                dense_params is not None
+                and set(dense_params) == set(joint_params)
+            ):
+                _effective_dense = None
+            joint_guide = JointNormalizingFlowGuide(
+                group="joint",
+                dense_params=_effective_dense,
+                **flow_kwargs,
+            )
+            for pname in joint_params:
+                guide_family_kwargs[pname] = joint_guide
+            # If the gene param is not in joint_params, give it an
+            # individual NormalizingFlowGuide
+            if gene_param_name not in joint_params:
+                guide_family_kwargs[gene_param_name] = (
+                    NormalizingFlowGuide(**flow_kwargs)
+                )
+        else:
+            guide_family_kwargs[gene_param_name] = NormalizingFlowGuide(
+                **flow_kwargs
             )
 
     # Handle amortized inference for capture probability (VCP models only)
