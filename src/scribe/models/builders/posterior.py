@@ -74,6 +74,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
+import jax
 import jax.numpy as jnp
 import numpyro.distributions as dist
 
@@ -1621,18 +1622,68 @@ def _apply_flow_posteriors(
         pos_transform = dist.transforms.ExpTransform()
 
     # ------------------------------------------------------------------
-    # Per-parameter flows: flow_{name}$params
+    # Per-parameter flows: flow_{name}$params  (non-mixture)
+    #                      flow_{name}_idx{k}$params (independent mixture)
+    #                      flow_{name}$params + shared ctx (shared mixture)
     # ------------------------------------------------------------------
+    _handled_per_param: set = set()
+
+    # Pass A: detect independent-mixture component flows and group them
+    _component_groups: Dict[str, List[Tuple[int, str]]] = {}
     for key in params:
         if not key.startswith("flow_") or not key.endswith("$params"):
             continue
-        # Extract logical name: flow_{name}$params -> name
-        name = key[len("flow_"):-len("$params")]
-        if name in distributions:
+        inner = key[len("flow_"):-len("$params")]
+        # Independent mixture: flow_{name}_idx{k}$params
+        if "_idx" in inner:
+            base_name = inner.rsplit("_idx", 1)[0]
+            try:
+                k_idx = int(inner.rsplit("_idx", 1)[1])
+            except ValueError:
+                continue
+            _component_groups.setdefault(base_name, []).append((k_idx, key))
+
+    for base_name, entries in _component_groups.items():
+        if base_name in distributions:
+            continue
+        guide = guide_families.get(base_name)
+        if not isinstance(guide, NormalizingFlowGuide):
+            continue
+        comp_dist = _reconstruct_component_flow(
+            params, base_name, entries, guide, pos_transform,
+        )
+        if comp_dist is not None:
+            distributions[base_name] = comp_dist
+        _handled_per_param.add(base_name)
+
+    # Pass B: non-mixture / shared-mixture per-parameter flows
+    for key in params:
+        if not key.startswith("flow_") or not key.endswith("$params"):
+            continue
+        inner = key[len("flow_"):-len("$params")]
+        if "_idx" in inner:
+            continue
+        name = inner
+        if name in distributions or name in _handled_per_param:
             continue
 
         guide = guide_families.get(name)
         if not isinstance(guide, NormalizingFlowGuide):
+            continue
+
+        # Shared mixture: guide has mixture_strategy="shared" and
+        # the model_config indicates n_components > 0
+        n_comps = _get_n_components(model_config)
+        if (
+            getattr(guide, "mixture_strategy", "independent") == "shared"
+            and n_comps is not None
+            and n_comps > 1
+        ):
+            comp_dist = _reconstruct_shared_component_flow(
+                params, key, name, guide, n_comps, pos_transform,
+            )
+            if comp_dist is not None:
+                distributions[name] = comp_dist
             continue
 
         flow_dist = _reconstruct_per_param_flow(
@@ -1643,19 +1694,57 @@ def _apply_flow_posteriors(
 
     # ------------------------------------------------------------------
     # Joint flow dense params: joint_flow_{group}_{name}$params
+    #                         joint_flow_{group}_{name}_idx{k}$params
     # ------------------------------------------------------------------
+    _handled_joint: set = set()
+
+    # Pass A: detect independent-mixture joint component flows
+    _joint_comp_groups: Dict[Tuple[str, str], List[Tuple[int, str]]] = {}
     for key in params:
         if not key.startswith("joint_flow_") or not key.endswith("$params"):
             continue
-        # Parse: joint_flow_{group}_{name}$params
         inner = key[len("joint_flow_"):-len("$params")]
-        # The group is the first token, name is everything after the
-        # first underscore within `inner`.
+        if "_idx" not in inner:
+            continue
+        # Split: {group}_{name}_idx{k}
+        pre_idx, idx_part = inner.rsplit("_idx", 1)
+        try:
+            k_idx = int(idx_part)
+        except ValueError:
+            continue
+        parts = pre_idx.split("_", 1)
+        if len(parts) != 2:
+            continue
+        group, name = parts
+        _joint_comp_groups.setdefault((group, name), []).append(
+            (k_idx, key)
+        )
+
+    for (group, name), entries in _joint_comp_groups.items():
+        if name in distributions:
+            continue
+        guide = guide_families.get(name)
+        if not isinstance(guide, JointNormalizingFlowGuide):
+            continue
+        comp_dist = _reconstruct_joint_component_flow(
+            params, name, group, entries, guide, pos_transform,
+        )
+        if comp_dist is not None:
+            distributions[name] = comp_dist
+        _handled_joint.add(name)
+
+    # Pass B: non-mixture / shared joint flows
+    for key in params:
+        if not key.startswith("joint_flow_") or not key.endswith("$params"):
+            continue
+        inner = key[len("joint_flow_"):-len("$params")]
+        if "_idx" in inner:
+            continue
         parts = inner.split("_", 1)
         if len(parts) != 2:
             continue
         group, name = parts
-        if name in distributions:
+        if name in distributions or name in _handled_joint:
             continue
 
         guide = guide_families.get(name)
@@ -1733,6 +1822,162 @@ def _reconstruct_per_param_flow(
     flow_dist = FlowDistribution(flow_fn, base)
 
     return {"base": flow_dist, "transform": pos_transform}
+
+
+def _get_n_components(model_config) -> Optional[int]:
+    """Extract n_components from a model_config, returning None if absent."""
+    if hasattr(model_config, "n_components"):
+        return getattr(model_config, "n_components", None)
+    dims = getattr(model_config, "dims", None) or {}
+    if isinstance(dims, dict):
+        return dims.get("n_components")
+    return None
+
+
+def _reconstruct_component_flow(
+    params: Dict[str, jnp.ndarray],
+    base_name: str,
+    entries: List[Tuple[int, str]],
+    guide: Any,
+    pos_transform,
+) -> Optional[Dict[str, Any]]:
+    """Rebuild a ``ComponentFlowDistribution`` for independent mixture flows.
+
+    Each entry is ``(component_index, param_key)`` for one component's
+    FlowChain weights.
+    """
+    from scribe.flows import (
+        ComponentFlowDistribution,
+        FlowChain,
+        FlowDistribution,
+    )
+
+    entries_sorted = sorted(entries, key=lambda e: e[0])
+    component_dists = []
+    for _k, key in entries_sorted:
+        flax_params = params[key]
+        features = _infer_flow_features(flax_params)
+        if features is None:
+            return None
+
+        chain = FlowChain(
+            features=features,
+            num_layers=guide.num_layers,
+            flow_type=guide.flow_type,
+            hidden_dims=list(guide.hidden_dims),
+            activation=guide.activation,
+            n_bins=guide.n_bins,
+        )
+
+        def _fn(x, reverse=False, _p=flax_params, _c=chain):
+            return _c.apply({"params": _p}, x, reverse=reverse)
+
+        base = dist.Normal(jnp.zeros(features), jnp.ones(features)).to_event(1)
+        component_dists.append(FlowDistribution(_fn, base))
+
+    comp_dist = ComponentFlowDistribution(
+        component_dists, axis_name="component"
+    )
+    return {"base": comp_dist, "transform": pos_transform}
+
+
+def _reconstruct_shared_component_flow(
+    params: Dict[str, jnp.ndarray],
+    key: str,
+    name: str,
+    guide: Any,
+    n_components: int,
+    pos_transform,
+) -> Optional[Dict[str, Any]]:
+    """Rebuild a shared ``ComponentFlowDistribution`` from one FlowChain.
+
+    The single FlowChain is conditioned on a one-hot component index.
+    """
+    from scribe.flows import (
+        ComponentFlowDistribution,
+        FlowChain,
+        FlowDistribution,
+    )
+
+    flax_params = params[key]
+    features = _infer_flow_features(flax_params)
+    if features is None:
+        return None
+
+    chain = FlowChain(
+        features=features,
+        num_layers=guide.num_layers,
+        flow_type=guide.flow_type,
+        hidden_dims=list(guide.hidden_dims),
+        activation=guide.activation,
+        n_bins=guide.n_bins,
+        context_dim=n_components,
+    )
+
+    component_dists = []
+    for k in range(n_components):
+        ctx = jax.nn.one_hot(k, n_components)
+
+        def _fn(x, reverse=False, _p=flax_params, _c=chain, _ctx=ctx):
+            return _c.apply(
+                {"params": _p}, x, reverse=reverse, context=_ctx,
+            )
+
+        base = dist.Normal(jnp.zeros(features), jnp.ones(features)).to_event(1)
+        component_dists.append(FlowDistribution(_fn, base))
+
+    comp_dist = ComponentFlowDistribution(
+        component_dists, axis_name="component"
+    )
+    return {"base": comp_dist, "transform": pos_transform}
+
+
+def _reconstruct_joint_component_flow(
+    params: Dict[str, jnp.ndarray],
+    name: str,
+    group: str,
+    entries: List[Tuple[int, str]],
+    guide: Any,
+    pos_transform,
+) -> Optional[Dict[str, Any]]:
+    """Rebuild a ``ComponentFlowDistribution`` for independent joint flows."""
+    from scribe.flows import (
+        ComponentFlowDistribution,
+        FlowChain,
+        FlowDistribution,
+    )
+
+    entries_sorted = sorted(entries, key=lambda e: e[0])
+    component_dists = []
+    for _k, key in entries_sorted:
+        flax_params = params[key]
+        features = _infer_flow_features(flax_params)
+        if features is None:
+            return None
+
+        chain = FlowChain(
+            features=features,
+            num_layers=guide.num_layers,
+            flow_type=guide.flow_type,
+            hidden_dims=list(guide.hidden_dims),
+            activation=guide.activation,
+            n_bins=guide.n_bins,
+        )
+
+        def _fn(x, reverse=False, _p=flax_params, _c=chain):
+            return _c.apply({"params": _p}, x, reverse=reverse)
+
+        base = dist.Normal(jnp.zeros(features), jnp.ones(features)).to_event(1)
+        component_dists.append(FlowDistribution(_fn, base))
+
+    comp_dist = ComponentFlowDistribution(
+        component_dists, axis_name="component"
+    )
+    return {
+        "base": comp_dist,
+        "transform": pos_transform,
+        "conditional": True,
+    }
 
 
 def _reconstruct_joint_flow_block(

@@ -10,9 +10,12 @@ Classes
 -------
 FlowDistribution
     Wraps a flow callable as a NumPyro distribution.
+ComponentFlowDistribution
+    Stacks K independent ``FlowDistribution`` instances along a leading
+    batch axis (e.g. mixture components or datasets).
 """
 
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -235,3 +238,250 @@ class FlowDistribution(dist.Distribution):
 
         (x_opt, _), _ = jax.lax.scan(step_fn, (x, opt_state), None, n_steps)
         return x_opt
+
+
+# ==============================================================================
+
+
+class ComponentFlowDistribution(dist.Distribution):
+    """K independent flow distributions stacked along a leading batch axis.
+
+    Wraps *K* ``FlowDistribution`` (or nested ``ComponentFlowDistribution``)
+    instances into a single NumPyro distribution whose ``event_shape`` gains
+    an extra leading *K* dimension.  This is the core primitive for
+    mixture-aware and dataset-aware normalizing-flow guides: each mixture
+    component (or dataset) gets its own flow transformation while the
+    combined object remains a single ``numpyro.sample`` site.
+
+    For the **shared** strategy each wrapped distribution is a closure that
+    already binds the correct one-hot covariate, so
+    ``get_component(k)`` always returns a distribution ready to use.
+
+    Nesting is supported: for a parameter with shape
+    ``(n_components, n_datasets, n_genes)`` the outer
+    ``ComponentFlowDistribution`` (axis ``"component"``) wraps K inner
+    ``ComponentFlowDistribution`` objects (axis ``"dataset"``), each of
+    which wraps D ``FlowDistribution`` instances.
+
+    Parameters
+    ----------
+    component_dists : list of Distribution
+        One distribution per index along this axis.  Each should share the
+        same ``batch_shape`` and ``event_shape``.
+    axis_name : str, default ``"component"``
+        Descriptive label (``"component"`` or ``"dataset"``).
+    validate_args : bool, optional
+        Whether to validate distribution arguments.
+
+    Examples
+    --------
+    Build three independent flows for a 3-component mixture::
+
+        dists = [FlowDistribution(fn_k, base) for fn_k in per_comp_fns]
+        comp = ComponentFlowDistribution(dists, axis_name="component")
+        sample = comp.sample(key)          # shape (3, G)
+        lp     = comp.log_prob(sample)     # scalar
+        d1     = comp.get_component(1)     # FlowDistribution for comp 1
+
+    Nested (components × datasets)::
+
+        inner = [ComponentFlowDistribution(ds, "dataset") for ds in per_comp]
+        outer = ComponentFlowDistribution(inner, "component")
+        outer.get_component(0).get_component(2)  # comp 0, dataset 2
+    """
+
+    def __init__(
+        self,
+        component_dists: List[dist.Distribution],
+        axis_name: str = "component",
+        validate_args=None,
+    ):
+        if not component_dists:
+            raise ValueError("component_dists must be non-empty")
+
+        self.component_dists = list(component_dists)
+        self.axis_name = axis_name
+
+        inner_event = component_dists[0].event_shape
+        K = len(component_dists)
+        event_shape = (K, *inner_event)
+        batch_shape = component_dists[0].batch_shape
+
+        super().__init__(
+            batch_shape=batch_shape,
+            event_shape=event_shape,
+            validate_args=validate_args,
+        )
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
+
+    @property
+    def n_components(self) -> int:
+        """Number of indices along this axis."""
+        return len(self.component_dists)
+
+    @property
+    def support(self):
+        return self.component_dists[0].support
+
+    # ------------------------------------------------------------------
+    # Indexing
+    # ------------------------------------------------------------------
+
+    def get_component(self, index: int) -> dist.Distribution:
+        """Return the distribution for a specific index.
+
+        For the *shared* strategy the returned distribution already has
+        its one-hot covariate bound, so callers need not manage context.
+
+        Parameters
+        ----------
+        index : int
+            Position along this axis (0-based).
+
+        Returns
+        -------
+        Distribution
+            ``FlowDistribution`` (leaf) or nested
+            ``ComponentFlowDistribution``.
+        """
+        return self.component_dists[index]
+
+    # ------------------------------------------------------------------
+    # Core distribution interface
+    # ------------------------------------------------------------------
+
+    def sample(self, key, sample_shape=()):
+        """
+        Draw a sample of shape ``(*sample_shape, *batch_shape, K, *inner_event)``.
+
+        Each component is sampled independently with its own PRNG split.
+        """
+        keys = random.split(key, self.n_components)
+        inner_event_ndims = len(self.component_dists[0].event_shape)
+        # Stack along the axis just before inner_event dims
+        samples = [
+            d.sample(k, sample_shape)
+            for k, d in zip(keys, self.component_dists)
+        ]
+        return jnp.stack(samples, axis=-(inner_event_ndims + 1))
+
+    @validate_sample
+    def log_prob(self, value: jnp.ndarray) -> jnp.ndarray:
+        """Sum of per-component log-probabilities.
+
+        Parameters
+        ----------
+        value : jnp.ndarray
+            Tensor whose shape ends with ``(K, *inner_event)``.
+        """
+        inner_ndims = len(self.component_dists[0].event_shape)
+        # Axis position of the K dimension in *value*
+        k_axis = -(inner_ndims + 1)
+        lps = [
+            d.log_prob(jnp.take(value, k, axis=k_axis))
+            for k, d in enumerate(self.component_dists)
+        ]
+        return sum(lps)
+
+    def sample_with_intermediates(self, key, sample_shape=()):
+        """Sample and collect per-component intermediates."""
+        keys = random.split(key, self.n_components)
+        inner_event_ndims = len(self.component_dists[0].event_shape)
+        samples, all_inter = [], []
+        for k, d in zip(keys, self.component_dists):
+            if hasattr(d, "sample_with_intermediates"):
+                s, inter = d.sample_with_intermediates(k, sample_shape)
+            else:
+                s = d.sample(k, sample_shape)
+                inter = {}
+            samples.append(s)
+            all_inter.append(inter)
+        stacked = jnp.stack(samples, axis=-(inner_event_ndims + 1))
+        return stacked, {"per_component": all_inter}
+
+    # ------------------------------------------------------------------
+    # Point-estimation helpers
+    # ------------------------------------------------------------------
+
+    def estimate_mean(
+        self,
+        key: jax.Array,
+        n_samples: int = 1000,
+    ) -> jnp.ndarray:
+        """Monte Carlo mean — delegates to each component independently.
+
+        Parameters
+        ----------
+        key : jax.Array
+            PRNG key.
+        n_samples : int
+            Samples per component.
+
+        Returns
+        -------
+        jnp.ndarray
+            Shape ``(K, *inner_event)``.
+        """
+        keys = random.split(key, self.n_components)
+        inner_event_ndims = len(self.component_dists[0].event_shape)
+        means = [
+            (
+                d.estimate_mean(k, n_samples)
+                if hasattr(d, "estimate_mean")
+                else _mc_mean(d, k, n_samples)
+            )
+            for k, d in zip(keys, self.component_dists)
+        ]
+        return jnp.stack(means, axis=-(inner_event_ndims + 1))
+
+    def find_mode(
+        self,
+        key: jax.Array,
+        n_init_samples: int = 100,
+        n_steps: int = 300,
+        lr: float = 1e-3,
+    ) -> jnp.ndarray:
+        """Per-component mode finding via gradient ascent.
+
+        Parameters
+        ----------
+        key : jax.Array
+            PRNG key.
+        n_init_samples : int
+            Initial candidates per component.
+        n_steps : int
+            Adam steps per component.
+        lr : float
+            Learning rate.
+
+        Returns
+        -------
+        jnp.ndarray
+            Shape ``(K, *inner_event)``.
+        """
+        keys = random.split(key, self.n_components)
+        inner_event_ndims = len(self.component_dists[0].event_shape)
+        modes = [
+            (
+                d.find_mode(k, n_init_samples, n_steps, lr)
+                if hasattr(d, "find_mode")
+                else _mc_mean(d, k, n_init_samples)
+            )
+            for k, d in zip(keys, self.component_dists)
+        ]
+        return jnp.stack(modes, axis=-(inner_event_ndims + 1))
+
+
+# ==============================================================================
+# Helpers
+# ==============================================================================
+
+
+def _mc_mean(d: dist.Distribution, key: jax.Array, n: int) -> jnp.ndarray:
+    """Fallback Monte Carlo mean for distributions without ``estimate_mean``."""
+    keys = random.split(key, n)
+    samples = jax.vmap(lambda k: d.sample(k))(keys)
+    return jnp.mean(samples, axis=0)

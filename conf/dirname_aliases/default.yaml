@@ -27,6 +27,7 @@ dirname_aliases:
     guide_flow_num_layers: gflowlayers
     guide_flow_hidden_dims: gflowhidden
     guide_flow_n_bins: gflowbins
+    guide_flow_mixture_strategy: gflowmix
 
     # Hierarchical prior type fields
     mu_prior: muprior

@@ -281,6 +281,21 @@ class NormalizingFlowGuide(GuideFamily):
     n_bins : int
         Number of rational-quadratic spline bins (only used when
         ``flow_type`` is ``"spline_coupling"``).
+    mixture_strategy : str, default ``"independent"``
+        How to handle mixture components (and dataset indices) when the
+        parameter has ``is_mixture=True`` or ``is_dataset=True``.
+
+        ``"independent"``
+            Create a separate ``FlowChain`` for each index along every
+            leading batch axis.  Most expressive — each component /
+            dataset learns a completely different density.
+        ``"shared"``
+            Use a single ``FlowChain`` conditioned on a one-hot index
+            vector.  Parameter-efficient — components share the
+            conditioner backbone and specialise via context.
+
+        When neither ``is_mixture`` nor ``is_dataset`` is set this
+        parameter is ignored.
 
     Advantages
     ----------
@@ -304,6 +319,14 @@ class NormalizingFlowGuide(GuideFamily):
     ...     ),
     ... )
 
+    Mixture model with independent per-component flows::
+
+        NormalizingFlowGuide(mixture_strategy="independent")
+
+    Shared flow conditioned on component one-hot::
+
+        NormalizingFlowGuide(mixture_strategy="shared")
+
     See Also
     --------
     LowRankGuide : Gaussian low-rank alternative.
@@ -315,12 +338,19 @@ class NormalizingFlowGuide(GuideFamily):
     hidden_dims: tuple = (64, 64)
     activation: str = "relu"
     n_bins: int = 8
+    mixture_strategy: str = "independent"
 
     def __post_init__(self) -> None:
         if self.num_layers <= 0:
             raise ValueError("num_layers must be positive")
         if not self.hidden_dims:
             raise ValueError("hidden_dims must be non-empty")
+        _VALID_MIX = ("independent", "shared")
+        if self.mixture_strategy not in _VALID_MIX:
+            raise ValueError(
+                f"mixture_strategy must be one of {_VALID_MIX}, "
+                f"got {self.mixture_strategy!r}"
+            )
 
 
 # ------------------------------------------------------------------------------
@@ -365,6 +395,11 @@ class JointNormalizingFlowGuide(GuideFamily):
         flow chain.  Non-dense parameters get diagonal Normal
         treatment with learned regression on the dense-flow
         residuals, mirroring ``JointLowRankGuide.dense_params``.
+    mixture_strategy : str, default ``"independent"``
+        How to handle leading batch axes (mixture components, datasets).
+        ``"independent"`` creates per-index flows; ``"shared"`` uses one
+        flow conditioned on a one-hot index vector.  Same semantics as
+        ``NormalizingFlowGuide.mixture_strategy``.
 
     Advantages
     ----------
@@ -400,6 +435,7 @@ class JointNormalizingFlowGuide(GuideFamily):
     n_bins: int = 8
     group: str = "default"
     dense_params: Optional[List[str]] = None
+    mixture_strategy: str = "independent"
 
     def __post_init__(self) -> None:
         if self.num_layers <= 0:
@@ -408,6 +444,12 @@ class JointNormalizingFlowGuide(GuideFamily):
             raise ValueError("hidden_dims must be non-empty")
         if not self.group:
             raise ValueError("group must be a non-empty string")
+        _VALID_MIX = ("independent", "shared")
+        if self.mixture_strategy not in _VALID_MIX:
+            raise ValueError(
+                f"mixture_strategy must be one of {_VALID_MIX}, "
+                f"got {self.mixture_strategy!r}"
+            )
 
 
 # ------------------------------------------------------------------------------

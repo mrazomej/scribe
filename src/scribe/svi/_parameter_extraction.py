@@ -19,6 +19,7 @@ from ..models.parameterizations import (
     _align_gene_params,
     _broadcast_scalar_for_mixture,
 )
+from ..flows import ComponentFlowDistribution, FlowDistribution
 
 
 # ==============================================================================
@@ -409,24 +410,31 @@ def _detect_flow_params(distributions: Dict[str, Any]) -> set:
     return flow_names
 
 
+_FLOW_DIST_TYPES = (FlowDistribution, ComponentFlowDistribution)
+
+
 def _is_flow_dist(obj) -> bool:
-    """Check whether a distribution entry wraps a ``FlowDistribution``."""
-    # Dict-style: {"base": FlowDistribution, "transform": ...}
+    """Check whether a distribution entry wraps a flow distribution.
+
+    Recognises both ``FlowDistribution`` (scalar / non-mixture) and
+    ``ComponentFlowDistribution`` (mixture / dataset-aware flows).
+    """
+    # Dict-style: {"base": FlowDistribution|ComponentFlowDistribution, ...}
     if isinstance(obj, dict) and "base" in obj:
         base = obj["base"]
-        if type(base).__name__ == "FlowDistribution":
+        if isinstance(base, _FLOW_DIST_TYPES):
             return True
-        # Independent wrapping a FlowDistribution
+        # Independent wrapping (e.g. .to_event())
         if hasattr(base, "base_dist"):
-            if type(base.base_dist).__name__ == "FlowDistribution":
+            if isinstance(base.base_dist, _FLOW_DIST_TYPES):
                 return True
-    # TransformedDistribution wrapping a FlowDistribution
+    # TransformedDistribution wrapping
     if isinstance(obj, dist.TransformedDistribution):
         bd = obj.base_dist
-        if type(bd).__name__ == "FlowDistribution":
+        if isinstance(bd, _FLOW_DIST_TYPES):
             return True
         if hasattr(bd, "base_dist"):
-            if type(bd.base_dist).__name__ == "FlowDistribution":
+            if isinstance(bd.base_dist, _FLOW_DIST_TYPES):
                 return True
     return False
 
