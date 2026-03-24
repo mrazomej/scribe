@@ -6,6 +6,15 @@ In coupling flows, the input is split into two halves: one half passes
 through unchanged while conditioning a transform applied to the other
 half. Both forward and inverse are efficient (single network call each).
 
+Stability features (all on by default, user-configurable):
+
+* ``zero_init_output`` — zero-initializes the conditioner's output Dense
+  layer so the flow starts as identity.
+* ``use_layer_norm`` — applies ``nn.LayerNorm`` after each hidden Dense
+  layer to stabilize activations at high fan-in.
+* ``use_residual`` — adds a skip connection between consecutive hidden
+  layers of the same width.
+
 Classes
 -------
 AffineCoupling
@@ -102,6 +111,49 @@ def _merge_by_mask(
     return y
 
 
+# ---------------------------------------------------------------------------
+# Shared conditioner MLP builder
+# ---------------------------------------------------------------------------
+
+
+def _conditioner_mlp(
+    h: jnp.ndarray,
+    hidden_dims: List[int],
+    act,
+    use_layer_norm: bool,
+    use_residual: bool,
+) -> jnp.ndarray:
+    """Run a conditioner MLP with optional LayerNorm and residual connections.
+
+    Parameters
+    ----------
+    h : jnp.ndarray
+        Input (masked half, optionally concatenated with context).
+    hidden_dims : list of int
+        Hidden layer widths.
+    act : callable
+        Activation function.
+    use_layer_norm : bool
+        If True, apply ``nn.LayerNorm`` after each hidden Dense.
+    use_residual : bool
+        If True, add a skip connection when consecutive widths match.
+
+    Returns
+    -------
+    jnp.ndarray
+        Hidden representation ready for the output projection.
+    """
+    for i, dim in enumerate(hidden_dims):
+        prev_h = h
+        h = nn.Dense(dim, name=f"hidden_{i}")(h)
+        if use_layer_norm:
+            h = nn.LayerNorm(name=f"ln_{i}")(h)
+        h = act(h)
+        if use_residual and prev_h.shape[-1] == h.shape[-1]:
+            h = h + prev_h
+    return h
+
+
 # ===========================================================================
 # Affine Coupling (Real NVP)
 # ===========================================================================
@@ -124,6 +176,17 @@ class AffineCoupling(nn.Module):
         0 or 1 — determines which half is masked.
     activation : str
         Activation function for the conditioner.
+    context_dim : int
+        Dimensionality of an optional continuous context vector.
+    zero_init_output : bool
+        If True (default), zero-initialize the output Dense layers so
+        the flow starts as an identity transform.
+    use_layer_norm : bool
+        If True (default), apply ``nn.LayerNorm`` after each hidden
+        Dense layer in the conditioner MLP.
+    use_residual : bool
+        If True (default), add residual (skip) connections between
+        consecutive hidden layers of the same width.
     """
 
     features: int
@@ -131,6 +194,9 @@ class AffineCoupling(nn.Module):
     mask_parity: int = 0
     activation: str = "relu"
     context_dim: int = 0
+    zero_init_output: bool = True
+    use_layer_norm: bool = True
+    use_residual: bool = True
 
     @nn.compact
     def __call__(
@@ -163,11 +229,22 @@ class AffineCoupling(nn.Module):
         h = x_masked
         if context is not None:
             h = jnp.concatenate([h, context], axis=-1)
-        for i, dim in enumerate(self.hidden_dims):
-            h = nn.Dense(dim, name=f"hidden_{i}")(h)
-            h = act(h)
-        shift = nn.Dense(n_unmasked, name="shift")(h)
-        log_scale = nn.Dense(n_unmasked, name="log_scale")(h)
+
+        h = _conditioner_mlp(
+            h, self.hidden_dims, act,
+            self.use_layer_norm, self.use_residual,
+        )
+
+        # Output projection — zero-init keeps the flow as identity at init
+        _init = (
+            nn.initializers.zeros
+            if self.zero_init_output
+            else nn.initializers.lecun_normal()
+        )
+        shift = nn.Dense(n_unmasked, name="shift", kernel_init=_init)(h)
+        log_scale = nn.Dense(
+            n_unmasked, name="log_scale", kernel_init=_init,
+        )(h)
         # Clamp log_scale to prevent numerical overflow in exp()
         log_scale = jnp.clip(log_scale, -5.0, 5.0)
 
@@ -206,10 +283,21 @@ class SplineCoupling(nn.Module):
         0 or 1 — determines which half is masked.
     activation : str
         Activation function for the conditioner.
+    context_dim : int
+        Dimensionality of an optional continuous context vector.
     n_bins : int
         Number of spline bins (higher = more expressive, more parameters).
     boundary : float
         Spline domain is ``[-boundary, boundary]``; identity outside.
+    zero_init_output : bool
+        If True (default), zero-initialize the spline parameter output
+        Dense layer so the flow starts as an identity transform.
+    use_layer_norm : bool
+        If True (default), apply ``nn.LayerNorm`` after each hidden
+        Dense layer in the conditioner MLP.
+    use_residual : bool
+        If True (default), add residual (skip) connections between
+        consecutive hidden layers of the same width.
 
     References
     ----------
@@ -223,6 +311,9 @@ class SplineCoupling(nn.Module):
     context_dim: int = 0
     n_bins: int = 8
     boundary: float = 3.0
+    zero_init_output: bool = True
+    use_layer_norm: bool = True
+    use_residual: bool = True
 
     @nn.compact
     def __call__(
@@ -238,13 +329,22 @@ class SplineCoupling(nn.Module):
         h = x_masked
         if context is not None:
             h = jnp.concatenate([h, context], axis=-1)
-        for i, dim in enumerate(self.hidden_dims):
-            h = nn.Dense(dim, name=f"hidden_{i}")(h)
-            h = act(h)
+
+        h = _conditioner_mlp(
+            h, self.hidden_dims, act,
+            self.use_layer_norm, self.use_residual,
+        )
+
+        # Output projection — zero-init keeps the spline as identity at init
+        _init = (
+            nn.initializers.zeros
+            if self.zero_init_output
+            else nn.initializers.lecun_normal()
+        )
         raw_params = nn.Dense(
             n_unmasked * n_params_per_dim,
             name="spline_params",
-            kernel_init=nn.initializers.zeros,
+            kernel_init=_init,
         )(h)
 
         # Reshape to (..., n_unmasked, n_params_per_dim)

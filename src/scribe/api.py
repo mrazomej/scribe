@@ -269,6 +269,9 @@ def fit(
     guide_flow_hidden_dims: Optional[List[int]] = None,
     guide_flow_n_bins: int = 8,
     guide_flow_mixture_strategy: str = "independent",
+    guide_flow_zero_init: bool = True,
+    guide_flow_layer_norm: bool = True,
+    guide_flow_residual: bool = True,
     priors: Optional[Dict[str, Any]] = None,
     # VAE architecture options (when inference_method="vae")
     vae_latent_dim: int = 10,
@@ -461,6 +464,19 @@ def fit(
         per component — most expressive.  ``"shared"`` uses a single
         FlowChain conditioned on a one-hot component index — more
         parameter-efficient.  Ignored when no mixture / dataset axes.
+
+    guide_flow_zero_init : bool, default=True
+        Zero-initialize the conditioner output layer so the flow starts as an
+        identity transform.  Prevents log-determinant overflow at init in
+        high-dimensional flows.
+
+    guide_flow_layer_norm : bool, default=True
+        Apply ``nn.LayerNorm`` after each hidden Dense layer in the conditioner
+        MLP.  Stabilizes activations when input fan-in is large.
+
+    guide_flow_residual : bool, default=True
+        Add residual (skip) connections between consecutive hidden layers of the
+        same width in the conditioner MLP.
 
     priors : Dict[str, Any], optional
         Dictionary of prior hyperparameters keyed by parameter name. Values
@@ -861,9 +877,7 @@ def fit(
         # hierarchy, so disable it explicitly.
         if overdispersion_dataset_prior != "none":
             overdispersion_dataset_prior = "none"
-            downgrade_messages.append(
-                "overdispersion_dataset_prior -> 'none'"
-            )
+            downgrade_messages.append("overdispersion_dataset_prior -> 'none'")
 
         if downgrade_messages:
             # Collapse back to single-dataset mode in ModelConfig, which uses
@@ -1066,6 +1080,9 @@ def fit(
             guide_flow_hidden_dims=guide_flow_hidden_dims,
             guide_flow_n_bins=guide_flow_n_bins,
             guide_flow_mixture_strategy=guide_flow_mixture_strategy,
+            guide_flow_zero_init=guide_flow_zero_init,
+            guide_flow_layer_norm=guide_flow_layer_norm,
+            guide_flow_residual=guide_flow_residual,
             n_components=n_components,
             mixture_params=effective_mixture_params,
             priors=priors,
