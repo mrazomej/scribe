@@ -174,6 +174,15 @@ Build ModelConfig from preset parameters.
 - `guide_flow_num_layers`: Number of flow layers (default 4).
 - `guide_flow_hidden_dims`: Conditioner MLP hidden dims (default [64, 64]).
 - `guide_flow_n_bins`: Spline bins for `"spline_coupling"` (default 8).
+- `guide_flow_mixture_strategy`: How mixture components (and, when applicable,
+  datasets) interact with flow guides — `"independent"` or `"shared"`.
+  ```text
+  guide_flow_mixture_strategy: "independent"  # or "shared"
+  ```
+  This controls whether flow guides treat mixture components (and related
+  multi-dataset structure) with separate variational flows per component or a
+  shared flow across them; use it when `guide_flow` is set together with mixture
+  or multi-dataset configs.
 - `joint_params`: Optional list of gene-specific parameter names. When set, the
   listed parameters share a single JointLowRankGuide (with `guide_rank`) or
   JointNormalizingFlowGuide (with `guide_flow`) that captures cross-parameter

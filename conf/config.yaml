@@ -132,6 +132,10 @@ guide_flow: null
 guide_flow_num_layers: 4
 guide_flow_hidden_dims: [64, 64]
 guide_flow_n_bins: 8
+# How to handle mixture components / datasets in flow guides.
+# "independent" = separate FlowChain per component (most expressive)
+# "shared"      = one FlowChain conditioned on component one-hot (parameter-efficient)
+guide_flow_mixture_strategy: "independent"
 
 # --- Priors Configuration (optional overrides) ---
 # Each prior is a list [param1, param2] for the distribution

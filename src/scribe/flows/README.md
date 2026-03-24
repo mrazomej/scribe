@@ -176,3 +176,61 @@ K+1 derivatives), predicted by the conditioner network.
 
 These are useful for standalone analysis but the main `get_map()` pipeline uses
 guide-execution-based sampling for uniformity across flow types.
+
+## ComponentFlowDistribution (Mixture / Dataset Support)
+
+`ComponentFlowDistribution` stacks K independent `FlowDistribution` instances
+along a leading batch axis, producing a single NumPyro distribution whose
+`event_shape` gains an extra leading K dimension.  It is the core primitive for
+mixture-aware and dataset-aware normalizing-flow guides.
+
+Two construction strategies are supported:
+
+- **`"independent"`** (default): K separate `FlowChain` instances with
+  independent Flax parameters — maximum expressiveness.
+- **`"shared"`**: A single `FlowChain` conditioned on a one-hot index vector —
+  parameter-efficient, components specialise through the context pathway.
+
+In either case, `get_component(k)` returns a ready-to-use distribution for
+index `k`.  For the shared strategy the one-hot covariate is already bound in
+the closure, so callers do not need to manage context.
+
+### Basic usage
+
+```python
+from scribe.flows import ComponentFlowDistribution, FlowDistribution
+
+# K=3 independent flows over G=20 genes
+comp_dist = ComponentFlowDistribution(
+    [FlowDistribution(fn_k, base) for fn_k in per_comp_fns],
+    axis_name="component",
+)
+
+sample = comp_dist.sample(key)           # shape (3, 20)
+lp     = comp_dist.log_prob(sample)      # scalar
+comp_0 = comp_dist.get_component(0)      # FlowDistribution for component 0
+s0     = comp_0.sample(key)              # shape (20,)
+```
+
+### Nesting (components x datasets)
+
+For parameters with both `is_mixture=True` and `is_dataset=True`, shapes
+resolve to `(K, D, G)`.  The distribution is nested: the outer
+`ComponentFlowDistribution` (axis `"component"`) wraps K inner instances
+(axis `"dataset"`), each of which wraps D leaf `FlowDistribution` objects.
+
+```python
+nested = ComponentFlowDistribution(
+    [ComponentFlowDistribution(per_ds, "dataset") for per_ds in per_comp],
+    axis_name="component",
+)
+nested.event_shape                        # (K, D, G)
+nested.get_component(0).get_component(1)  # FlowDistribution for comp 0, ds 1
+```
+
+### Point estimation
+
+`ComponentFlowDistribution` delegates `estimate_mean` and `find_mode` to each
+component independently, stacking the results back into `(K, *inner_event)`.
+These are used by `get_map()` when the `flow_map_method` is `"mean"` or
+`"optimize"`.

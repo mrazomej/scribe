@@ -232,6 +232,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="anndata")
 # Custom Hydra Resolvers
 # ==============================================================================
 
+
 def _split_override_segments(override_dirname: str) -> list[str]:
     """Split Hydra override dirname into logical override segments.
 
@@ -437,14 +438,14 @@ def _compact_override_dirname(
         if bool(entry.get("is_dotted", False)):
             suffix = str(entry["suffix"])
             key_token = (
-                original_key
-                if dotted_suffix_counts[suffix] > 1
-                else suffix
+                original_key if dotted_suffix_counts[suffix] > 1 else suffix
             )
 
         # Apply aliases to keys only. Prefer full-key aliases so users can
         # target dotted keys explicitly; fall back to the emitted token alias.
-        aliased_key = alias_map.get(original_key, alias_map.get(key_token, key_token))
+        aliased_key = alias_map.get(
+            original_key, alias_map.get(key_token, key_token)
+        )
         alias_counts[aliased_key] += 1
         emission_entries.append(
             {
@@ -915,6 +916,9 @@ def main(cfg: DictConfig) -> None:
         "guide_flow_num_layers": cfg.get("guide_flow_num_layers", 4),
         "guide_flow_hidden_dims": cfg.get("guide_flow_hidden_dims"),
         "guide_flow_n_bins": cfg.get("guide_flow_n_bins", 8),
+        "guide_flow_mixture_strategy": cfg.get(
+            "guide_flow_mixture_strategy", "independent"
+        ),
         "priors": priors,
         # Amortization: single config object (when set, fit() uses it; else uses
         # individual params)
@@ -962,9 +966,11 @@ def main(cfg: DictConfig) -> None:
             f"[dim]Guide rank:[/dim] [bold]{kwargs['guide_rank']}[/bold]"
         )
     if kwargs.get("guide_flow"):
+        _mix_strat = kwargs.get("guide_flow_mixture_strategy", "independent")
         console.print(
             f"[dim]Guide flow:[/dim] [bold]{kwargs['guide_flow']}[/bold] "
-            f"({kwargs.get('guide_flow_num_layers', 4)} layers)"
+            f"({kwargs.get('guide_flow_num_layers', 4)} layers, "
+            f"mixture={_mix_strat})"
         )
     if kwargs.get("joint_params"):
         console.print(
@@ -995,9 +1001,7 @@ def main(cfg: DictConfig) -> None:
                 "[dim](dataset_prior="
                 f"{kwargs['overdispersion_dataset_prior']})[/dim]"
             )
-        console.print(
-            _od_message
-        )
+        console.print(_od_message)
     if kwargs.get("annotation_key"):
         ann_msg = (
             f"[dim]Annotation prior:[/dim] [bold]{kwargs['annotation_key']}[/bold] "

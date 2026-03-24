@@ -4950,3 +4950,472 @@ class TestFlowDistributionHelpers:
         # Mode should have higher log-prob than a random sample
         sample = fd.sample(random.PRNGKey(99))
         assert fd.log_prob(mode) >= fd.log_prob(sample) - 5.0
+
+
+# ==============================================================================
+# ComponentFlowDistribution and Mixture Flow Guide Tests
+# ==============================================================================
+
+
+class TestComponentFlowDistribution:
+    """Unit tests for ComponentFlowDistribution."""
+
+    @staticmethod
+    def _make_component_dist(K=3, G=10):
+        """Build a K-component ComponentFlowDistribution."""
+        import numpyro.distributions as ndist
+        from scribe.flows import (
+            ComponentFlowDistribution,
+            FlowChain,
+            FlowDistribution,
+        )
+
+        component_dists = []
+        for k in range(K):
+            chain = FlowChain(
+                features=G,
+                num_layers=2,
+                flow_type="affine_coupling",
+                hidden_dims=[16],
+                activation="relu",
+            )
+            rng = random.PRNGKey(42 + k)
+            variables = chain.init(rng, jnp.zeros(G))
+            flax_params = variables["params"]
+
+            def flow_fn(x, reverse=False, _p=flax_params, _c=chain):
+                return _c.apply({"params": _p}, x, reverse=reverse)
+
+            base = ndist.Normal(jnp.zeros(G), jnp.ones(G)).to_event(1)
+            component_dists.append(FlowDistribution(flow_fn, base))
+
+        return ComponentFlowDistribution(
+            component_dists, axis_name="component"
+        )
+
+    def test_sample_shape(self):
+        """Sample produces (K, G) tensor."""
+        cd = self._make_component_dist(K=3, G=10)
+        sample = cd.sample(random.PRNGKey(0))
+        assert sample.shape == (3, 10)
+        assert jnp.isfinite(sample).all()
+
+    def test_log_prob_scalar(self):
+        """log_prob returns a finite scalar for a valid sample."""
+        cd = self._make_component_dist(K=3, G=10)
+        sample = cd.sample(random.PRNGKey(0))
+        lp = cd.log_prob(sample)
+        assert lp.shape == ()
+        assert jnp.isfinite(lp)
+
+    def test_log_prob_equals_sum(self):
+        """log_prob equals sum of individual component log_probs."""
+        cd = self._make_component_dist(K=3, G=10)
+        sample = cd.sample(random.PRNGKey(0))
+        total_lp = cd.log_prob(sample)
+        manual_sum = sum(
+            cd.get_component(k).log_prob(sample[k])
+            for k in range(3)
+        )
+        assert jnp.allclose(total_lp, manual_sum, atol=1e-5)
+
+    def test_get_component(self):
+        """get_component returns a FlowDistribution for each index."""
+        from scribe.flows import FlowDistribution
+
+        cd = self._make_component_dist(K=3, G=10)
+        for k in range(3):
+            comp = cd.get_component(k)
+            assert isinstance(comp, FlowDistribution)
+            s = comp.sample(random.PRNGKey(k))
+            assert s.shape == (10,)
+
+    def test_n_components(self):
+        """n_components property returns K."""
+        cd = self._make_component_dist(K=5, G=8)
+        assert cd.n_components == 5
+
+    def test_event_shape(self):
+        """event_shape is (K, G)."""
+        cd = self._make_component_dist(K=3, G=10)
+        assert cd.event_shape == (3, 10)
+
+    def test_estimate_mean(self):
+        """estimate_mean returns (K, G) with finite values."""
+        cd = self._make_component_dist(K=3, G=10)
+        mean = cd.estimate_mean(random.PRNGKey(0), n_samples=50)
+        assert mean.shape == (3, 10)
+        assert jnp.isfinite(mean).all()
+
+    def test_find_mode(self):
+        """find_mode returns (K, G) with finite values."""
+        cd = self._make_component_dist(K=2, G=6)
+        mode = cd.find_mode(
+            random.PRNGKey(0),
+            n_init_samples=20,
+            n_steps=10,
+            lr=1e-3,
+        )
+        assert mode.shape == (2, 6)
+        assert jnp.isfinite(mode).all()
+
+    def test_nested_component_dist(self):
+        """Nested ComponentFlowDistribution (K outer × D inner) works."""
+        import numpyro.distributions as ndist
+        from scribe.flows import (
+            ComponentFlowDistribution,
+            FlowChain,
+            FlowDistribution,
+        )
+
+        K, D, G = 2, 3, 8
+        outer_dists = []
+        for k in range(K):
+            inner_dists = []
+            for d in range(D):
+                chain = FlowChain(
+                    features=G,
+                    num_layers=2,
+                    flow_type="affine_coupling",
+                    hidden_dims=[16],
+                )
+                rng = random.PRNGKey(100 * k + d)
+                variables = chain.init(rng, jnp.zeros(G))
+                fp = variables["params"]
+
+                def flow_fn(x, reverse=False, _p=fp, _c=chain):
+                    return _c.apply({"params": _p}, x, reverse=reverse)
+
+                base = ndist.Normal(jnp.zeros(G), jnp.ones(G)).to_event(1)
+                inner_dists.append(FlowDistribution(flow_fn, base))
+            outer_dists.append(
+                ComponentFlowDistribution(inner_dists, axis_name="dataset")
+            )
+
+        nested = ComponentFlowDistribution(
+            outer_dists, axis_name="component"
+        )
+
+        assert nested.event_shape == (K, D, G)
+        sample = nested.sample(random.PRNGKey(0))
+        assert sample.shape == (K, D, G)
+        assert jnp.isfinite(sample).all()
+
+        # Indexing: get component, then dataset
+        comp0 = nested.get_component(0)
+        assert isinstance(comp0, ComponentFlowDistribution)
+        assert comp0.event_shape == (D, G)
+        ds1 = comp0.get_component(1)
+        assert isinstance(ds1, FlowDistribution)
+        assert ds1.event_shape == (G,)
+
+
+class TestMixtureFlowGuide:
+    """Test flow guides with mixture parameters (is_mixture=True)."""
+
+    @staticmethod
+    def _mix_config(K=3, D=None):
+        """Build a ModelConfig with n_components (and optionally n_datasets)."""
+        from scribe.models.config import ModelType
+
+        builder = ModelConfigBuilder().for_model(ModelType.NBDM)
+        cfg = builder.build()
+        updates = {"n_components": K}
+        if D is not None:
+            updates["n_datasets"] = D
+        return cfg.model_copy(update=updates)
+
+    def test_per_param_flow_mixture_independent(self, small_counts):
+        """Independent strategy: K separate FlowChains for a mixture param."""
+        from scribe.models.components import NormalizingFlowGuide
+
+        K = 3
+        mc = self._mix_config(K=K)
+        specs = [
+            LogNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                is_mixture=True,
+                guide_family=NormalizingFlowGuide(
+                    flow_type="affine_coupling",
+                    num_layers=2,
+                    hidden_dims=(16,),
+                    mixture_strategy="independent",
+                ),
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=mc,
+                    counts=small_counts,
+                )
+
+        assert "r" in tr
+        assert tr["r"]["value"].shape == (K, 20)
+        assert jnp.all(tr["r"]["value"] > 0)
+
+    def test_per_param_flow_mixture_shared(self, small_counts):
+        """Shared strategy: one FlowChain conditioned on component one-hot."""
+        from scribe.models.components import NormalizingFlowGuide
+
+        K = 3
+        mc = self._mix_config(K=K)
+        specs = [
+            LogNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                is_mixture=True,
+                guide_family=NormalizingFlowGuide(
+                    flow_type="affine_coupling",
+                    num_layers=2,
+                    hidden_dims=(16,),
+                    mixture_strategy="shared",
+                ),
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=mc,
+                    counts=small_counts,
+                )
+
+        assert "r" in tr
+        assert tr["r"]["value"].shape == (K, 20)
+        assert jnp.all(tr["r"]["value"] > 0)
+
+    def test_per_param_flow_dataset_independent(self, small_counts):
+        """Independent dataset flows produce (D, G) samples."""
+        from scribe.models.components import NormalizingFlowGuide
+
+        D = 2
+        mc = self._mix_config(K=1, D=D)
+        specs = [
+            LogNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                is_dataset=True,
+                guide_family=NormalizingFlowGuide(
+                    flow_type="affine_coupling",
+                    num_layers=2,
+                    hidden_dims=(16,),
+                    mixture_strategy="independent",
+                ),
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=mc,
+                    counts=small_counts,
+                )
+
+        assert "r" in tr
+        assert tr["r"]["value"].shape == (D, 20)
+        assert jnp.all(tr["r"]["value"] > 0)
+
+    def test_per_param_flow_mixture_get_component(self, small_counts):
+        """get_component on the guide's distribution returns per-component dist."""
+        from scribe.flows import ComponentFlowDistribution
+        from scribe.models.components import NormalizingFlowGuide
+
+        K = 3
+        mc = self._mix_config(K=K)
+        specs = [
+            LogNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                is_mixture=True,
+                guide_family=NormalizingFlowGuide(
+                    flow_type="affine_coupling",
+                    num_layers=2,
+                    hidden_dims=(16,),
+                    mixture_strategy="independent",
+                ),
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=mc,
+                    counts=small_counts,
+                )
+
+        # The distribution in the trace should be a TransformedDistribution
+        # wrapping a ComponentFlowDistribution
+        dist_obj = tr["r"]["fn"]
+        # Unwrap TransformedDistribution to get the base
+        base = dist_obj.base_dist if hasattr(dist_obj, "base_dist") else dist_obj
+        assert isinstance(base, ComponentFlowDistribution)
+        assert base.n_components == K
+
+        # Each component should produce (G,) samples
+        comp0 = base.get_component(0)
+        s = comp0.sample(random.PRNGKey(42))
+        assert s.shape == (20,)
+
+    def test_joint_flow_mixture_independent(self, small_counts):
+        """Joint flow with mixture: independent per-component chain rules."""
+        from scribe.models.components import JointNormalizingFlowGuide
+
+        K = 3
+        mc = self._mix_config(K=K)
+        joint_guide = JointNormalizingFlowGuide(
+            flow_type="affine_coupling",
+            num_layers=2,
+            hidden_dims=(16,),
+            group="mix",
+            mixture_strategy="independent",
+        )
+        specs = [
+            PositiveNormalSpec(
+                name="phi",
+                shape_dims=(),
+                default_params=(0.0, 1.0),
+                is_gene_specific=False,
+                guide_family=joint_guide,
+                constrained_name="phi",
+            ),
+            PositiveNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                is_mixture=True,
+                guide_family=joint_guide,
+                constrained_name="r",
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=mc,
+                    counts=small_counts,
+                )
+
+        # phi is non-mixture — scalar
+        assert "phi" in tr
+        assert tr["phi"]["value"].shape == ()
+
+        # r is mixture — (K, G)
+        found = False
+        for site_name in tr:
+            val = tr[site_name]["value"]
+            if hasattr(val, "shape") and val.shape == (K, 20):
+                found = True
+                assert jnp.isfinite(val).all()
+                break
+        assert found, f"No site with shape ({K}, 20) found in trace"
+
+    def test_joint_flow_mixture_shared(self, small_counts):
+        """Joint flow with mixture: shared strategy."""
+        from scribe.models.components import JointNormalizingFlowGuide
+
+        K = 3
+        mc = self._mix_config(K=K)
+        joint_guide = JointNormalizingFlowGuide(
+            flow_type="affine_coupling",
+            num_layers=2,
+            hidden_dims=(16,),
+            group="mix",
+            mixture_strategy="shared",
+        )
+        specs = [
+            PositiveNormalSpec(
+                name="phi",
+                shape_dims=(),
+                default_params=(0.0, 1.0),
+                is_gene_specific=False,
+                guide_family=joint_guide,
+                constrained_name="phi",
+            ),
+            PositiveNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                is_mixture=True,
+                guide_family=joint_guide,
+                constrained_name="r",
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=mc,
+                    counts=small_counts,
+                )
+
+        # r should still produce (K, G) shape
+        found = False
+        for site_name in tr:
+            val = tr[site_name]["value"]
+            if hasattr(val, "shape") and val.shape == (K, 20):
+                found = True
+                assert jnp.isfinite(val).all()
+                break
+        assert found, f"No site with shape ({K}, 20) found in trace"
+
+    def test_preset_builder_mixture_strategy(self):
+        """build_config_from_preset forwards mixture_strategy correctly."""
+        from scribe.inference.preset_builder import build_config_from_preset
+        from scribe.models.components import NormalizingFlowGuide
+
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="canonical",
+            guide_flow="affine_coupling",
+            guide_flow_mixture_strategy="shared",
+        )
+
+        gf = config.guide_families
+        assert gf is not None
+        guide_obj = gf.get("r")
+        assert isinstance(guide_obj, NormalizingFlowGuide)
+        assert guide_obj.mixture_strategy == "shared"
+
+    def test_mixture_strategy_validation(self):
+        """Invalid mixture_strategy raises ValueError."""
+        from scribe.models.components import NormalizingFlowGuide
+
+        with pytest.raises(ValueError, match="mixture_strategy"):
+            NormalizingFlowGuide(mixture_strategy="invalid")

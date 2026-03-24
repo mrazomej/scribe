@@ -268,6 +268,7 @@ def fit(
     guide_flow_num_layers: int = 4,
     guide_flow_hidden_dims: Optional[List[int]] = None,
     guide_flow_n_bins: int = 8,
+    guide_flow_mixture_strategy: str = "independent",
     priors: Optional[Dict[str, Any]] = None,
     # VAE architecture options (when inference_method="vae")
     vae_latent_dim: int = 10,
@@ -453,6 +454,13 @@ def fit(
 
     guide_flow_n_bins : int, default=8
         Number of spline bins (only used when ``guide_flow="spline_coupling"``).
+
+    guide_flow_mixture_strategy : str, default="independent"
+        Strategy for handling mixture components (and datasets) in
+        flow guides.  ``"independent"`` creates a separate FlowChain
+        per component — most expressive.  ``"shared"`` uses a single
+        FlowChain conditioned on a one-hot component index — more
+        parameter-efficient.  Ignored when no mixture / dataset axes.
 
     priors : Dict[str, Any], optional
         Dictionary of prior hyperparameters keyed by parameter name. Values
@@ -1057,6 +1065,7 @@ def fit(
             guide_flow_num_layers=guide_flow_num_layers,
             guide_flow_hidden_dims=guide_flow_hidden_dims,
             guide_flow_n_bins=guide_flow_n_bins,
+            guide_flow_mixture_strategy=guide_flow_mixture_strategy,
             n_components=n_components,
             mixture_params=effective_mixture_params,
             priors=priors,

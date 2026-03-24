@@ -105,6 +105,25 @@ PositiveNormalSpec("mu", ("n_genes",), (0.0, 1.0),
              is_gene_specific=True, guide_family=joint, constrained_name="mu")
 ```
 
+### mixture_strategy (NormalizingFlowGuide / JointNormalizingFlowGuide)
+
+Both flow guide families accept a `mixture_strategy` field that controls how
+leading batch axes (mixture components and datasets) are handled:
+
+- **`"independent"` (default):** One `FlowChain` per index — maximum
+  expressiveness.
+- **`"shared"`:** One `FlowChain` conditioned on a one-hot index — parameter-
+  efficient.
+
+Applies when the parameter has `is_mixture=True` and/or `is_dataset=True`.
+
+```python
+from scribe.models.components import NormalizingFlowGuide
+
+NormalizingFlowGuide(mixture_strategy="independent")  # K separate flows
+NormalizingFlowGuide(mixture_strategy="shared")        # shared + one-hot context
+```
+
 ## Covariate embedding
 
 Categorical covariates (batch, donor, condition, etc.) are embedded and
