@@ -103,6 +103,9 @@ guide_flow_num_layers: 4        # number of flow layers
 guide_flow_hidden_dims: [64, 64]  # conditioner MLP hidden dims
 guide_flow_n_bins: 8            # spline bins (spline_coupling only)
 guide_flow_mixture_strategy: "independent"  # or "shared"; how mixture (and dataset) axes pair with flow guides
+guide_flow_zero_init: true       # zero-init conditioner output (identity at init)
+guide_flow_layer_norm: true      # LayerNorm after each hidden Dense
+guide_flow_residual: true        # residual connections between same-width layers
 ```
 
 ### Prior Configuration

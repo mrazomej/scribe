@@ -296,6 +296,16 @@ class NormalizingFlowGuide(GuideFamily):
 
         When neither ``is_mixture`` nor ``is_dataset`` is set this
         parameter is ignored.
+    zero_init_output : bool, default True
+        Zero-initialize the conditioner's output Dense layer so the
+        flow starts as an identity transform.  Prevents log-determinant
+        overflow at init in high dimensions.
+    use_layer_norm : bool, default True
+        Apply ``nn.LayerNorm`` after each hidden Dense layer in the
+        conditioner MLP.  Stabilizes activations when fan-in is large.
+    use_residual : bool, default True
+        Add skip connections between consecutive hidden layers of the
+        same width in the conditioner MLP.  Improves gradient flow.
 
     Advantages
     ----------
@@ -339,6 +349,9 @@ class NormalizingFlowGuide(GuideFamily):
     activation: str = "relu"
     n_bins: int = 8
     mixture_strategy: str = "independent"
+    zero_init_output: bool = True
+    use_layer_norm: bool = True
+    use_residual: bool = True
 
     def __post_init__(self) -> None:
         if self.num_layers <= 0:
@@ -400,6 +413,15 @@ class JointNormalizingFlowGuide(GuideFamily):
         ``"independent"`` creates per-index flows; ``"shared"`` uses one
         flow conditioned on a one-hot index vector.  Same semantics as
         ``NormalizingFlowGuide.mixture_strategy``.
+    zero_init_output : bool, default True
+        Zero-initialize the conditioner's output Dense layer so the flow starts
+        as an identity transform.
+    use_layer_norm : bool, default True
+        Apply ``nn.LayerNorm`` after each hidden Dense layer in the conditioner
+        MLP.
+    use_residual : bool, default True
+        Add skip connections between consecutive hidden layers of the same width
+        in the conditioner MLP.
 
     Advantages
     ----------
@@ -436,6 +458,9 @@ class JointNormalizingFlowGuide(GuideFamily):
     group: str = "default"
     dense_params: Optional[List[str]] = None
     mixture_strategy: str = "independent"
+    zero_init_output: bool = True
+    use_layer_norm: bool = True
+    use_residual: bool = True
 
     def __post_init__(self) -> None:
         if self.num_layers <= 0:

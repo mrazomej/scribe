@@ -136,6 +136,13 @@ guide_flow_n_bins: 8
 # "independent" = separate FlowChain per component (most expressive)
 # "shared"      = one FlowChain conditioned on component one-hot (parameter-efficient)
 guide_flow_mixture_strategy: "independent"
+# Conditioner stability flags (all true by default).
+# zero_init: zero-init output Dense so the flow starts as identity.
+# layer_norm: add LayerNorm after each hidden Dense in the conditioner.
+# residual: add skip connections between same-width hidden layers.
+guide_flow_zero_init: true
+guide_flow_layer_norm: true
+guide_flow_residual: true
 
 # --- Priors Configuration (optional overrides) ---
 # Each prior is a list [param1, param2] for the distribution
@@ -287,3 +294,6 @@ hydra:
           - data.subset_column
           - model
           - unconstrained
+          - guide_flow_zero_init
+          - guide_flow_layer_norm
+          - guide_flow_residual

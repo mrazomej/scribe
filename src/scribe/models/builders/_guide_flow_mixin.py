@@ -73,6 +73,9 @@ def _build_flow_chain(
         activation=guide.activation,
         n_bins=guide.n_bins,
         context_dim=context_dim,
+        zero_init_output=guide.zero_init_output,
+        use_layer_norm=guide.use_layer_norm,
+        use_residual=guide.use_residual,
     )
 
 
