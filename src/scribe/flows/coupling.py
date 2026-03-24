@@ -29,7 +29,12 @@ import jax
 import jax.numpy as jnp
 from flax import linen as nn
 
-from .transforms import rqs_forward, rqs_inverse, unconstrained_to_rqs_params
+from .transforms import (
+    DEFAULT_MIN_DERIVATIVE,
+    rqs_forward,
+    rqs_inverse,
+    unconstrained_to_rqs_params,
+)
 
 # ---------------------------------------------------------------------------
 # Activation helper
@@ -200,7 +205,9 @@ class AffineCoupling(nn.Module):
 
     @nn.compact
     def __call__(
-        self, x: jnp.ndarray, reverse: bool = False,
+        self,
+        x: jnp.ndarray,
+        reverse: bool = False,
         context: Optional[jnp.ndarray] = None,
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """Apply affine coupling.
@@ -231,8 +238,11 @@ class AffineCoupling(nn.Module):
             h = jnp.concatenate([h, context], axis=-1)
 
         h = _conditioner_mlp(
-            h, self.hidden_dims, act,
-            self.use_layer_norm, self.use_residual,
+            h,
+            self.hidden_dims,
+            act,
+            self.use_layer_norm,
+            self.use_residual,
         )
 
         # Output projection — zero-init keeps the flow as identity at init
@@ -243,7 +253,9 @@ class AffineCoupling(nn.Module):
         )
         shift = nn.Dense(n_unmasked, name="shift", kernel_init=_init)(h)
         log_scale = nn.Dense(
-            n_unmasked, name="log_scale", kernel_init=_init,
+            n_unmasked,
+            name="log_scale",
+            kernel_init=_init,
         )(h)
         # Clamp log_scale to prevent numerical overflow in exp()
         log_scale = jnp.clip(log_scale, -5.0, 5.0)
@@ -259,6 +271,43 @@ class AffineCoupling(nn.Module):
             x_masked, y_unmasked, self.features, self.mask_parity
         )
         return y, log_det
+
+
+# ===========================================================================
+# Spline identity-bias initializer
+# ===========================================================================
+
+
+def _spline_identity_bias_init(
+    n_unmasked: int,
+    n_bins: int,
+    min_derivative: float = DEFAULT_MIN_DERIVATIVE,
+):
+    """Bias initializer that makes zero-kernel spline output an exact identity.
+
+    The raw spline parameter vector has layout
+    ``[widths(K) | heights(K) | derivatives(K+1)]`` repeated ``n_unmasked``
+    times. Widths and heights at zero → softmax → uniform bins, which already
+    gives identity. Derivatives need ``softplus(raw_d) + min_derivative = 1``
+    so that the knot slopes equal 1.0.
+    """
+    n_params = 3 * n_bins + 1
+    # softplus_inv(1.0 - min_derivative)
+    target = 1.0 - min_derivative
+    raw_deriv = float(jnp.log(jnp.exp(target) - 1.0))
+
+    def init(key, shape, dtype=jnp.float32):
+        # Build a single-element template: 0s for widths/heights, raw_deriv
+        # for derivatives; then tile across all unmasked elements.
+        template = jnp.concatenate(
+            [
+                jnp.zeros(2 * n_bins, dtype=dtype),
+                jnp.full(n_bins + 1, raw_deriv, dtype=dtype),
+            ]
+        )
+        return jnp.tile(template, (n_unmasked,))
+
+    return init
 
 
 # ===========================================================================
@@ -290,8 +339,9 @@ class SplineCoupling(nn.Module):
     boundary : float
         Spline domain is ``[-boundary, boundary]``; identity outside.
     zero_init_output : bool
-        If True (default), zero-initialize the spline parameter output
-        Dense layer so the flow starts as an identity transform.
+        If True (default), zero-initialize the kernel and use a custom
+        bias that sets knot derivatives to 1.0, producing an exact
+        identity transform (log-det = 0) at initialization.
     use_layer_norm : bool
         If True (default), apply ``nn.LayerNorm`` after each hidden
         Dense layer in the conditioner MLP.
@@ -317,7 +367,9 @@ class SplineCoupling(nn.Module):
 
     @nn.compact
     def __call__(
-        self, x: jnp.ndarray, reverse: bool = False,
+        self,
+        x: jnp.ndarray,
+        reverse: bool = False,
         context: Optional[jnp.ndarray] = None,
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         act = _get_act(self.activation)
@@ -331,20 +383,30 @@ class SplineCoupling(nn.Module):
             h = jnp.concatenate([h, context], axis=-1)
 
         h = _conditioner_mlp(
-            h, self.hidden_dims, act,
-            self.use_layer_norm, self.use_residual,
+            h,
+            self.hidden_dims,
+            act,
+            self.use_layer_norm,
+            self.use_residual,
         )
 
-        # Output projection — zero-init keeps the spline as identity at init
-        _init = (
-            nn.initializers.zeros
-            if self.zero_init_output
-            else nn.initializers.lecun_normal()
-        )
+        # Output projection — zero kernel + identity-bias keeps the spline
+        # as an exact identity at init (log_det = 0).
+        if self.zero_init_output:
+            _kernel_init = nn.initializers.zeros
+            _bias_init = _spline_identity_bias_init(
+                n_unmasked,
+                self.n_bins,
+            )
+        else:
+            _kernel_init = nn.initializers.lecun_normal()
+            _bias_init = nn.initializers.zeros
+
         raw_params = nn.Dense(
             n_unmasked * n_params_per_dim,
             name="spline_params",
-            kernel_init=_init,
+            kernel_init=_kernel_init,
+            bias_init=_bias_init,
         )(h)
 
         # Reshape to (..., n_unmasked, n_params_per_dim)

@@ -150,7 +150,7 @@ the guide family dataclass, or via the Hydra/API config.
 
 | Flag | Default | What it does |
 |---|---|---|
-| `zero_init_output` | `True` | Zero-initialize the conditioner's output Dense layer so the flow starts as an identity transform.  Prevents log-determinant overflow when summing ~14K random log-scales. |
+| `zero_init_output` | `True` | Zero-initialize the conditioner's output Dense layer so the flow starts as an **exact identity** (log-det = 0).  For affine coupling this means zero shift / log-scale.  For spline coupling a custom bias initializer sets knot derivatives to 1.0, ensuring identity output *and* zero log-det even at 28K+ dimensions. |
 | `use_layer_norm` | `True` | Apply `nn.LayerNorm` after each hidden Dense in the conditioner MLP.  Stabilizes activations when fan-in is large (e.g. 42K inputs funneling into a 64-wide bottleneck). |
 | `use_residual` | `True` | Add skip connections between consecutive hidden layers of the same width.  Improves gradient flow during training. |
 
