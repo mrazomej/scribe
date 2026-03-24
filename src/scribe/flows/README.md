@@ -88,6 +88,31 @@ params = chain.init(rng, x, covariates=covs)
 z, log_det = chain.apply(params, x, covariates=covs)
 ```
 
+### Continuous context conditioning
+
+`FlowChain` also accepts a `context_dim: int` attribute and a `context` keyword
+argument to `__call__`. This enables conditioning on a pre-formed continuous
+vector (e.g., previously sampled parameters in a joint guide) without going
+through `CovariateEmbedding`. If both `covariates` and `context` are provided,
+the embedded covariates and the continuous context are concatenated.
+
+```python
+from scribe.flows import FlowChain
+
+chain = FlowChain(
+    features=10, num_layers=4, flow_type="spline_coupling",
+    hidden_dims=[64, 64], context_dim=5,  # 5-d continuous context
+)
+x = jnp.ones((3, 10))
+ctx = jnp.ones((3, 5))
+params = chain.init(rng, x, context=ctx)
+z, log_det = chain.apply(params, x, context=ctx)
+```
+
+This feature is used by `JointNormalizingFlowGuide` to pass the unconstrained
+samples of previously sampled parameters as context to conditional flows in the
+chain-rule decomposition.
+
 ### As a NumPyro Distribution (Learned Prior)
 
 ```python

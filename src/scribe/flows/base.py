@@ -32,7 +32,10 @@ from typing import Callable, Dict, List, Optional, Tuple
 import jax.numpy as jnp
 from flax import linen as nn
 
-from scribe.models.components.covariate_embedding import CovariateEmbedding, CovariateSpec
+from scribe.models.components.covariate_embedding import (
+    CovariateEmbedding,
+    CovariateSpec,
+)
 
 # ---------------------------------------------------------------------------
 # Flow layer registry: flow_type -> factory(chain, layer_idx) -> nn.Module
@@ -40,10 +43,16 @@ from scribe.models.components.covariate_embedding import CovariateEmbedding, Cov
 
 
 def _context_dim_from(chain) -> int:
-    """Compute context dimensionality from chain's covariate specs."""
+    """
+    Compute total context dimensionality from covariate specs and explicit
+    context_dim.
+    """
+    dim = 0
     if chain.covariate_specs:
-        return sum(s.embedding_dim for s in chain.covariate_specs)
-    return 0
+        dim += sum(s.embedding_dim for s in chain.covariate_specs)
+    if chain.context_dim:
+        dim += chain.context_dim
+    return dim
 
 
 def _make_affine_coupling(chain, layer_idx: int) -> nn.Module:
@@ -162,6 +171,11 @@ class FlowChain(nn.Module):
     # CovariateEmbedding is created and its output is passed as context
     # to each flow layer.
     covariate_specs: Optional[List[CovariateSpec]] = None
+    # Optional dimensionality for continuous context vectors passed
+    # directly to the flow layers (e.g., for conditioning on previously
+    # sampled parameters in a joint guide).  Unlike ``covariate_specs``
+    # (categorical → embedding), this expects a pre-formed float vector.
+    context_dim: int = 0
 
     def setup(self):
         """Create the stack of flow layers with alternating masks."""
@@ -180,8 +194,11 @@ class FlowChain(nn.Module):
     # --------------------------------------------------------------------------
 
     def __call__(
-        self, x: jnp.ndarray, reverse: bool = False,
+        self,
+        x: jnp.ndarray,
+        reverse: bool = False,
         covariates: Optional[Dict[str, jnp.ndarray]] = None,
+        context: Optional[jnp.ndarray] = None,
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """Apply the flow chain.
 
@@ -194,6 +211,12 @@ class FlowChain(nn.Module):
         covariates : dict, optional
             Maps covariate name → integer ID array, shape ``(...)``.
             Only used when ``covariate_specs`` was provided.
+        context : jnp.ndarray, optional
+            Pre-formed continuous context vector, shape ``(..., context_dim)``.
+            Passed directly to each flow layer without embedding.  Used for
+            conditioning on previously sampled parameters in joint guides.
+            If both ``covariates`` and ``context`` are provided, the embedded
+            covariates and the continuous context are concatenated.
 
         Returns
         -------
@@ -202,10 +225,14 @@ class FlowChain(nn.Module):
         log_det : jnp.ndarray
             Total log-determinant Jacobian, shape ``(...)``.
         """
-        # Embed covariates into a context vector (shared across all layers)
-        context = None
+        # Build the combined context vector for all layers.
+        # Categorical covariates are embedded; continuous context is used as-is.
+        parts = []
         if covariates is not None and self.covariate_specs:
-            context = self.cov_embed(covariates)
+            parts.append(self.cov_embed(covariates))
+        if context is not None:
+            parts.append(context)
+        combined_context = jnp.concatenate(parts, axis=-1) if parts else None
 
         # Start with zero log-det; same batch/event shape as input (no feature
         # dim).
@@ -216,7 +243,7 @@ class FlowChain(nn.Module):
         for layer in layers:
             # Each layer returns updated x and its log|det(J)|; chain rule sums
             # log-dets.
-            x, log_det = layer(x, reverse=reverse, context=context)
+            x, log_det = layer(x, reverse=reverse, context=combined_context)
             total_log_det = total_log_det + log_det
         # Final transformed tensor and total log-determinant (for density
         # computation).

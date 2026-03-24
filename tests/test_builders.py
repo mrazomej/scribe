@@ -3511,8 +3511,10 @@ class TestStructuredJointGuide:
         )
         model_fn, guide_fn, config = get_model_and_guide(config)
         kw = dict(
-            n_cells=n_cells, n_genes=n_genes,
-            model_config=config, counts=counts,
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
         )
 
         optimizer = Adam(1e-3)
@@ -3548,8 +3550,10 @@ class TestStructuredJointGuide:
         )
         model_fn, guide_fn, config = get_model_and_guide(config)
         kw = dict(
-            n_cells=n_cells, n_genes=n_genes,
-            model_config=config, counts=counts,
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
         )
 
         svi = SVI(model_fn, guide_fn, Adam(1e-3), loss=Trace_ELBO())
@@ -3578,8 +3582,10 @@ class TestStructuredJointGuide:
         )
         model_fn, guide_fn, config = get_model_and_guide(config)
         kw = dict(
-            n_cells=n_cells, n_genes=n_genes,
-            model_config=config, counts=counts,
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
         )
 
         svi = SVI(model_fn, guide_fn, Adam(1e-3), loss=Trace_ELBO())
@@ -3608,8 +3614,10 @@ class TestStructuredJointGuide:
         )
         model_fn, guide_fn, config = get_model_and_guide(config)
         kw = dict(
-            n_cells=n_cells, n_genes=n_genes,
-            model_config=config, counts=counts,
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
         )
 
         svi = SVI(model_fn, guide_fn, Adam(1e-3), loss=Trace_ELBO())
@@ -3645,8 +3653,10 @@ class TestStructuredJointGuide:
         )
         model_fn, guide_fn, config = get_model_and_guide(config)
         kw = dict(
-            n_cells=n_cells, n_genes=n_genes,
-            model_config=config, counts=counts,
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
         )
 
         svi = SVI(model_fn, guide_fn, Adam(1e-3), loss=Trace_ELBO())
@@ -3681,8 +3691,10 @@ class TestStructuredJointGuide:
         )
         model_fn, guide_fn, config = get_model_and_guide(config)
         kw = dict(
-            n_cells=n_cells, n_genes=n_genes,
-            model_config=config, counts=counts,
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
         )
 
         svi = SVI(model_fn, guide_fn, Adam(1e-3), loss=Trace_ELBO())
@@ -3721,8 +3733,10 @@ class TestStructuredJointGuide:
         model_fn, guide_fn, config = get_model_and_guide(config)
         dataset_indices = jnp.array([0] * 30 + [1] * 30)
         kw = dict(
-            n_cells=n_cells, n_genes=n_genes,
-            model_config=config, counts=counts,
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
             dataset_indices=dataset_indices,
         )
 
@@ -3754,8 +3768,10 @@ class TestStructuredJointGuide:
         )
         model_fn, guide_fn, config = get_model_and_guide(config)
         kw = dict(
-            n_cells=n_cells, n_genes=n_genes,
-            model_config=config, counts=counts,
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
         )
 
         svi = SVI(model_fn, guide_fn, Adam(1e-3), loss=Trace_ELBO())
@@ -3810,8 +3826,10 @@ class TestStructuredJointGuide:
         )
         model_fn, guide_fn, config = get_model_and_guide(config)
         kw = dict(
-            n_cells=n_cells, n_genes=n_genes,
-            model_config=config, counts=counts,
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
         )
 
         svi = SVI(model_fn, guide_fn, Adam(1e-3), loss=Trace_ELBO())
@@ -3824,3 +3842,589 @@ class TestStructuredJointGuide:
         # Both should have _W (fully dense)
         assert "joint_joint_mu_W" in params
         assert "joint_joint_phi_W" in params
+
+
+# ==============================================================================
+# Normalizing Flow Guide Tests
+# ==============================================================================
+
+
+class TestNormalizingFlowGuide:
+    """Test NormalizingFlowGuide (per-parameter flow) and JointNormalizingFlowGuide."""
+
+    # ------------------------------------------------------------------
+    # Per-parameter flow guides
+    # ------------------------------------------------------------------
+
+    def test_flow_guide_lognormal(self, model_config, small_counts):
+        """Flow guide for a gene-specific LogNormalSpec produces positive samples."""
+        from scribe.models.components import NormalizingFlowGuide
+
+        specs = [
+            LogNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=NormalizingFlowGuide(
+                    flow_type="spline_coupling",
+                    num_layers=2,
+                    hidden_dims=(32,),
+                    n_bins=4,
+                ),
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=model_config,
+                    counts=small_counts,
+                )
+
+        assert "r" in tr
+        assert tr["r"]["value"].shape == (20,)
+        # ExpTransform guarantees positivity
+        assert jnp.all(tr["r"]["value"] > 0)
+
+    def test_flow_guide_positive_normal(self, model_config, small_counts):
+        """Flow guide for a PositiveNormalSpec (NormalWithTransformSpec subclass)."""
+        from scribe.models.components import NormalizingFlowGuide
+
+        specs = [
+            PositiveNormalSpec(
+                name="mu",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=NormalizingFlowGuide(
+                    flow_type="spline_coupling",
+                    num_layers=2,
+                    hidden_dims=(32,),
+                    n_bins=4,
+                ),
+                constrained_name="mu",
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=model_config,
+                    counts=small_counts,
+                )
+
+        assert "mu" in tr
+        assert tr["mu"]["value"].shape == (20,)
+        assert jnp.all(tr["mu"]["value"] > 0)
+
+    def test_flow_guide_has_log_prob(self, model_config, small_counts):
+        """Flow guide sample sites have finite log_prob (not Delta)."""
+        from scribe.models.components import NormalizingFlowGuide
+
+        specs = [
+            LogNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=NormalizingFlowGuide(
+                    flow_type="spline_coupling",
+                    num_layers=2,
+                    hidden_dims=(32,),
+                    n_bins=4,
+                ),
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=model_config,
+                    counts=small_counts,
+                )
+
+        assert tr["r"]["type"] == "sample"
+        log_prob = tr["r"]["fn"].log_prob(tr["r"]["value"])
+        assert jnp.isfinite(log_prob).all()
+
+    def test_flow_guide_affine_coupling(self, model_config, small_counts):
+        """Flow guide works with affine_coupling flow type."""
+        from scribe.models.components import NormalizingFlowGuide
+
+        specs = [
+            LogNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=NormalizingFlowGuide(
+                    flow_type="affine_coupling",
+                    num_layers=2,
+                    hidden_dims=(32,),
+                ),
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=model_config,
+                    counts=small_counts,
+                )
+
+        assert "r" in tr
+        assert tr["r"]["value"].shape == (20,)
+        assert jnp.all(tr["r"]["value"] > 0)
+
+    # ------------------------------------------------------------------
+    # Joint flow guides
+    # ------------------------------------------------------------------
+
+    def test_joint_flow_guide_two_params(self, model_config, small_counts):
+        """Joint flow guide with two gene-specific parameters."""
+        from scribe.models.components import JointNormalizingFlowGuide
+
+        joint = JointNormalizingFlowGuide(
+            flow_type="spline_coupling",
+            num_layers=2,
+            hidden_dims=(32,),
+            n_bins=4,
+            group="nb_params",
+        )
+        specs = [
+            PositiveNormalSpec(
+                name="mu",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="mu",
+            ),
+            PositiveNormalSpec(
+                name="phi",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="phi",
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=model_config,
+                    counts=small_counts,
+                )
+
+        assert "mu" in tr
+        assert "phi" in tr
+        assert tr["mu"]["value"].shape == (20,)
+        assert tr["phi"]["value"].shape == (20,)
+        assert jnp.all(tr["mu"]["value"] > 0)
+        assert jnp.all(tr["phi"]["value"] > 0)
+
+    def test_joint_flow_guide_heterogeneous(self, model_config, small_counts):
+        """Joint flow guide with scalar + gene-specific parameters."""
+        from scribe.models.components import JointNormalizingFlowGuide
+
+        joint = JointNormalizingFlowGuide(
+            flow_type="spline_coupling",
+            num_layers=2,
+            hidden_dims=(32,),
+            n_bins=4,
+            group="hetero",
+        )
+        specs = [
+            PositiveNormalSpec(
+                name="phi",
+                shape_dims=(),
+                default_params=(0.0, 1.0),
+                is_gene_specific=False,
+                guide_family=joint,
+                constrained_name="phi",
+            ),
+            PositiveNormalSpec(
+                name="mu",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="mu",
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=model_config,
+                    counts=small_counts,
+                )
+
+        # Scalar phi should be present (via deterministic site)
+        assert "phi" in tr
+        assert "mu" in tr
+        # mu is gene-specific with 20 genes
+        assert tr["mu"]["value"].shape == (20,)
+        assert jnp.all(tr["mu"]["value"] > 0)
+        # phi is scalar
+        assert tr["phi"]["value"].shape == ()
+        assert jnp.all(tr["phi"]["value"] > 0)
+
+    def test_joint_flow_guide_three_params(self, model_config, small_counts):
+        """Joint flow guide with three parameters in the chain."""
+        from scribe.models.components import JointNormalizingFlowGuide
+
+        joint = JointNormalizingFlowGuide(
+            flow_type="spline_coupling",
+            num_layers=2,
+            hidden_dims=(32,),
+            n_bins=4,
+            group="tri",
+        )
+        specs = [
+            PositiveNormalSpec(
+                name="mu",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="mu",
+            ),
+            PositiveNormalSpec(
+                name="phi",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="phi",
+            ),
+            SigmoidNormalSpec(
+                name="gate",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="gate",
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=model_config,
+                    counts=small_counts,
+                )
+
+        for name in ["mu", "phi", "gate"]:
+            assert name in tr, f"Missing site: {name}"
+            assert tr[name]["value"].shape == (20,)
+
+        # Transform-specific constraints
+        assert jnp.all(tr["mu"]["value"] > 0)
+        assert jnp.all(tr["phi"]["value"] > 0)
+        assert jnp.all(tr["gate"]["value"] > 0)
+        assert jnp.all(tr["gate"]["value"] < 1)
+
+    def test_joint_flow_guide_dense_params(self, model_config, small_counts):
+        """Joint flow guide with dense_params: dense get flow, nondense get diagonal."""
+        from scribe.models.components import JointNormalizingFlowGuide
+
+        joint = JointNormalizingFlowGuide(
+            flow_type="spline_coupling",
+            num_layers=2,
+            hidden_dims=(32,),
+            n_bins=4,
+            group="dense_test",
+            dense_params=["mu"],
+        )
+        specs = [
+            PositiveNormalSpec(
+                name="mu",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="mu",
+            ),
+            PositiveNormalSpec(
+                name="phi",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="phi",
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=model_config,
+                    counts=small_counts,
+                )
+
+        assert "mu" in tr
+        assert "phi" in tr
+        assert tr["mu"]["value"].shape == (20,)
+        assert tr["phi"]["value"].shape == (20,)
+        assert jnp.all(tr["mu"]["value"] > 0)
+        assert jnp.all(tr["phi"]["value"] > 0)
+
+    def test_joint_flow_guide_has_log_prob(self, model_config, small_counts):
+        """Joint flow guide sites have finite log_prob."""
+        from scribe.models.components import JointNormalizingFlowGuide
+
+        joint = JointNormalizingFlowGuide(
+            flow_type="spline_coupling",
+            num_layers=2,
+            hidden_dims=(32,),
+            n_bins=4,
+            group="logprob",
+        )
+        specs = [
+            PositiveNormalSpec(
+                name="mu",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="mu",
+            ),
+            PositiveNormalSpec(
+                name="phi",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="phi",
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=model_config,
+                    counts=small_counts,
+                )
+
+        for name in ["mu", "phi"]:
+            assert tr[name]["type"] == "sample"
+            log_prob = tr[name]["fn"].log_prob(tr[name]["value"])
+            assert jnp.isfinite(
+                log_prob
+            ).all(), f"Site '{name}' has non-finite log_prob"
+
+    # ------------------------------------------------------------------
+    # SVI integration
+    # ------------------------------------------------------------------
+
+    def test_flow_guide_svi_integration(self, small_counts):
+        """SVI runs for several steps with a flow guide and loss stays finite."""
+        from scribe.models.components import NormalizingFlowGuide
+
+        n_cells, n_genes = small_counts.shape
+
+        # Minimal NB model with a single gene-specific parameter
+        def model(n_cells, n_genes, model_config, counts=None, **kw):
+            import numpyro.distributions as dist
+
+            r = numpyro.sample(
+                "r",
+                dist.LogNormal(jnp.zeros(n_genes), jnp.ones(n_genes)).to_event(
+                    1
+                ),
+            )
+            with numpyro.plate("cells", n_cells):
+                numpyro.sample(
+                    "obs",
+                    dist.Independent(
+                        dist.NegativeBinomial2(
+                            mean=jnp.ones(n_genes) * 5.0,
+                            concentration=r,
+                        ),
+                        1,
+                    ),
+                    obs=counts,
+                )
+
+        specs = [
+            LogNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=NormalizingFlowGuide(
+                    flow_type="spline_coupling",
+                    num_layers=2,
+                    hidden_dims=(32,),
+                    n_bins=4,
+                ),
+            ),
+        ]
+        guide_fn = GuideBuilder().from_specs(specs).build()
+
+        from scribe.models.config import ModelConfigBuilder, ModelType
+
+        config = ModelConfigBuilder().for_model(ModelType.NBDM).build()
+
+        model_kwargs = dict(
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=small_counts,
+        )
+
+        svi = SVI(model, guide_fn, Adam(1e-3), loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(0), **model_kwargs)
+
+        for _ in range(5):
+            svi_state, loss = svi.update(svi_state, **model_kwargs)
+            assert jnp.isfinite(loss), f"SVI loss is non-finite: {loss}"
+
+    def test_joint_flow_guide_svi_integration(self, small_counts):
+        """SVI runs with a joint flow guide over two parameters."""
+        from scribe.models.components import JointNormalizingFlowGuide
+        import numpyro.distributions as dist
+
+        n_cells, n_genes = small_counts.shape
+
+        # Simple model with two gene-specific positive parameters
+        def model(n_cells, n_genes, model_config, counts=None, **kw):
+            mu = numpyro.sample(
+                "mu",
+                dist.TransformedDistribution(
+                    dist.Normal(jnp.zeros(n_genes), jnp.ones(n_genes)).to_event(
+                        1
+                    ),
+                    dist.transforms.ExpTransform(),
+                ),
+            )
+            phi = numpyro.sample(
+                "phi",
+                dist.TransformedDistribution(
+                    dist.Normal(jnp.zeros(n_genes), jnp.ones(n_genes)).to_event(
+                        1
+                    ),
+                    dist.transforms.ExpTransform(),
+                ),
+            )
+            with numpyro.plate("cells", n_cells):
+                numpyro.sample(
+                    "obs",
+                    dist.Independent(
+                        dist.NegativeBinomial2(mean=mu, concentration=phi),
+                        1,
+                    ),
+                    obs=counts,
+                )
+
+        joint = JointNormalizingFlowGuide(
+            flow_type="spline_coupling",
+            num_layers=2,
+            hidden_dims=(32,),
+            n_bins=4,
+            group="joint",
+        )
+        specs = [
+            PositiveNormalSpec(
+                name="mu",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="mu",
+            ),
+            PositiveNormalSpec(
+                name="phi",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="phi",
+            ),
+        ]
+        guide_fn = GuideBuilder().from_specs(specs).build()
+
+        from scribe.models.config import ModelConfigBuilder, ModelType
+
+        config = ModelConfigBuilder().for_model(ModelType.NBDM).build()
+
+        model_kwargs = dict(
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=small_counts,
+        )
+
+        svi = SVI(model, guide_fn, Adam(1e-3), loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(0), **model_kwargs)
+
+        for _ in range(5):
+            svi_state, loss = svi.update(svi_state, **model_kwargs)
+            assert jnp.isfinite(loss), f"SVI loss is non-finite: {loss}"
+
+        # Variational params should include flow-related keys
+        params = svi.get_params(svi_state)
+        flow_keys = [k for k in params if "joint_flow_" in k]
+        assert (
+            len(flow_keys) > 0
+        ), f"Expected joint_flow_ prefixed params, got: {sorted(params.keys())}"
+
+    def test_normalizing_flow_guide_validation(self):
+        """NormalizingFlowGuide validation rejects invalid configs."""
+        from scribe.models.components import (
+            NormalizingFlowGuide,
+            JointNormalizingFlowGuide,
+        )
+
+        with pytest.raises(ValueError, match="num_layers must be positive"):
+            NormalizingFlowGuide(num_layers=0)
+
+        with pytest.raises(ValueError, match="hidden_dims must be non-empty"):
+            NormalizingFlowGuide(hidden_dims=())
+
+        with pytest.raises(ValueError, match="num_layers must be positive"):
+            JointNormalizingFlowGuide(num_layers=0)
+
+        with pytest.raises(
+            ValueError, match="group must be a non-empty string"
+        ):
+            JointNormalizingFlowGuide(group="")

@@ -24,6 +24,10 @@ LowRankGuide
     Marker for low-rank MVN covariance structure.
 JointLowRankGuide
     Marker for joint low-rank MVN across multiple parameter groups.
+NormalizingFlowGuide
+    Marker for normalizing-flow variational family (per-parameter).
+JointNormalizingFlowGuide
+    Marker for joint normalizing-flow across multiple parameter groups.
 AmortizedGuide
     Marker for amortized inference using neural networks.
 VAELatentGuide
@@ -238,6 +242,170 @@ class JointLowRankGuide(GuideFamily):
     def __post_init__(self) -> None:
         if self.rank <= 0:
             raise ValueError("rank must be positive")
+        if not self.group:
+            raise ValueError("group must be a non-empty string")
+
+
+# ------------------------------------------------------------------------------
+# Normalizing Flow Guide Family
+# ------------------------------------------------------------------------------
+
+
+@dataclass
+class NormalizingFlowGuide(GuideFamily):
+    """
+    Marker for normalizing-flow variational family (per-parameter).
+
+    Replaces the Gaussian base used by ``LowRankGuide`` with a
+    flow-transformed distribution, enabling multimodal, skewed, and
+    heavy-tailed posterior approximations.
+
+    A ``FlowChain`` is registered as a Flax module via
+    ``numpyro.contrib.module.flax_module`` and wrapped in a
+    ``FlowDistribution`` that serves as a proper NumPyro distribution
+    (with ``log_prob`` and ``sample``).
+
+    Parameters
+    ----------
+    flow_type : str
+        Type of flow layer.  Coupling flows (``"spline_coupling"``,
+        ``"affine_coupling"``) are recommended for guides because they
+        are O(1) in both the sampling and density-evaluation directions.
+        Autoregressive flows (``"maf"``, ``"iaf"``) are also supported.
+    num_layers : int
+        Number of flow layers to stack.
+    hidden_dims : tuple of int
+        Hidden-layer sizes for the conditioner networks in each layer.
+    activation : str
+        Activation function used inside conditioner networks.
+    n_bins : int
+        Number of rational-quadratic spline bins (only used when
+        ``flow_type`` is ``"spline_coupling"``).
+
+    Advantages
+    ----------
+    - Can represent multimodal, skewed, and heavy-tailed posteriors
+    - Strictly more expressive than Gaussian (LowRank / MeanField)
+    - Coupling flows are fast in both directions — ideal for SVI
+
+    Disadvantages
+    -------------
+    - More parameters (flow network weights) than LowRank
+    - Harder to interpret the learned covariance structure
+    - May require tuning ``num_layers`` / ``hidden_dims``
+
+    Examples
+    --------
+    >>> spec = LogNormalSpec(
+    ...     "r", ("n_genes",), (0.0, 1.0),
+    ...     is_gene_specific=True,
+    ...     guide_family=NormalizingFlowGuide(
+    ...         flow_type="spline_coupling", num_layers=4
+    ...     ),
+    ... )
+
+    See Also
+    --------
+    LowRankGuide : Gaussian low-rank alternative.
+    JointNormalizingFlowGuide : Joint version with cross-parameter flows.
+    """
+
+    flow_type: str = "spline_coupling"
+    num_layers: int = 4
+    hidden_dims: tuple = (64, 64)
+    activation: str = "relu"
+    n_bins: int = 8
+
+    def __post_init__(self) -> None:
+        if self.num_layers <= 0:
+            raise ValueError("num_layers must be positive")
+        if not self.hidden_dims:
+            raise ValueError("hidden_dims must be non-empty")
+
+
+# ------------------------------------------------------------------------------
+# Joint Normalizing Flow Guide Family
+# ------------------------------------------------------------------------------
+
+
+@dataclass
+class JointNormalizingFlowGuide(GuideFamily):
+    """
+    Marker for joint normalizing-flow across multiple parameter groups.
+
+    Analogous to ``JointLowRankGuide`` but uses normalizing flows instead
+    of low-rank Gaussians.  Cross-parameter dependencies are captured via
+    the chain-rule decomposition:
+
+        q(θ₁, θ₂) = q(θ₁) × q(θ₂ | θ₁)
+
+    where each factor is a full normalizing flow.  The conditional
+    ``q(θ₂ | θ₁)`` is implemented by passing the unconstrained sample
+    of θ₁ as a continuous *context* vector to the flow for θ₂.
+
+    Parameters
+    ----------
+    flow_type : str
+        Type of flow layer (see ``NormalizingFlowGuide``).
+    num_layers : int
+        Number of flow layers per parameter block.
+    hidden_dims : tuple of int
+        Hidden-layer sizes for conditioner networks.
+    activation : str
+        Activation function for conditioner networks.
+    n_bins : int
+        Spline bins (for ``"spline_coupling"`` only).
+    group : str
+        Identifier linking parameters that share the same joint flow.
+        All ``ParamSpec`` objects whose guide family is a
+        ``JointNormalizingFlowGuide`` with the same ``group`` are
+        modeled jointly.
+    dense_params : list of str, optional
+        Subset of parameter names in the group that go through the
+        flow chain.  Non-dense parameters get diagonal Normal
+        treatment with learned regression on the dense-flow
+        residuals, mirroring ``JointLowRankGuide.dense_params``.
+
+    Advantages
+    ----------
+    - Captures non-linear cross-parameter dependencies
+    - Each conditional is a full normalizing flow — more expressive than
+      the Woodbury LowRankMVN conditionals
+    - Natural extension to 3+ parameters via cumulative context
+
+    Disadvantages
+    -------------
+    - More flow parameters than ``JointLowRankGuide``
+    - Context-conditioned flows add dimensionality to conditioner nets
+
+    Examples
+    --------
+    >>> joint = JointNormalizingFlowGuide(
+    ...     flow_type="spline_coupling", num_layers=4, group="nb"
+    ... )
+    >>> PositiveNormalSpec("p", (), (0.0, 1.0), guide_family=joint)
+    >>> PositiveNormalSpec("r", ("n_genes",), (0.0, 1.0),
+    ...     is_gene_specific=True, guide_family=joint)
+
+    See Also
+    --------
+    JointLowRankGuide : Gaussian joint alternative using Woodbury identity.
+    NormalizingFlowGuide : Per-parameter (non-joint) flow guide.
+    """
+
+    flow_type: str = "spline_coupling"
+    num_layers: int = 4
+    hidden_dims: tuple = (64, 64)
+    activation: str = "relu"
+    n_bins: int = 8
+    group: str = "default"
+    dense_params: Optional[List[str]] = None
+
+    def __post_init__(self) -> None:
+        if self.num_layers <= 0:
+            raise ValueError("num_layers must be positive")
+        if not self.hidden_dims:
+            raise ValueError("hidden_dims must be non-empty")
         if not self.group:
             raise ValueError("group must be a non-empty string")
 
