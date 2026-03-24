@@ -376,6 +376,415 @@ def _reconstruct_neg_maps(
 
 
 # ==============================================================================
+# Flow-guide MAP helpers
+# ==============================================================================
+
+
+def _detect_flow_params(distributions: Dict[str, Any]) -> set:
+    """Return the set of parameter names backed by a FlowDistribution.
+
+    A distribution entry is considered "flow-based" if:
+
+    - It is a dict with a ``"base"`` whose type name contains
+      ``"FlowDistribution"`` (avoids hard import of the flows module).
+    - It is a ``TransformedDistribution`` whose ``base_dist`` is a
+      ``FlowDistribution`` (or wraps one through ``Independent``).
+
+    Parameters
+    ----------
+    distributions : dict
+        Output of ``get_posterior_distributions`` / ``get_distributions``.
+
+    Returns
+    -------
+    set of str
+        Parameter names that need sampling-based MAP estimation.
+    """
+    flow_names: set = set()
+    for name, obj in distributions.items():
+        if name.startswith("joint:"):
+            continue
+        if _is_flow_dist(obj):
+            flow_names.add(name)
+    return flow_names
+
+
+def _is_flow_dist(obj) -> bool:
+    """Check whether a distribution entry wraps a ``FlowDistribution``."""
+    # Dict-style: {"base": FlowDistribution, "transform": ...}
+    if isinstance(obj, dict) and "base" in obj:
+        base = obj["base"]
+        if type(base).__name__ == "FlowDistribution":
+            return True
+        # Independent wrapping a FlowDistribution
+        if hasattr(base, "base_dist"):
+            if type(base.base_dist).__name__ == "FlowDistribution":
+                return True
+    # TransformedDistribution wrapping a FlowDistribution
+    if isinstance(obj, dist.TransformedDistribution):
+        bd = obj.base_dist
+        if type(bd).__name__ == "FlowDistribution":
+            return True
+        if hasattr(bd, "base_dist"):
+            if type(bd.base_dist).__name__ == "FlowDistribution":
+                return True
+    return False
+
+
+def _flow_map_estimates(
+    model_and_guide_fn,
+    params: Dict[str, jnp.ndarray],
+    n_cells: int,
+    n_genes: int,
+    model_config,
+    flow_params: set,
+    method: str = "mean",
+    n_samples: int = 1000,
+    optimize_steps: int = 300,
+    optimize_lr: float = 1e-3,
+    counts=None,
+    verbose: bool = True,
+    batch_size: Optional[int] = None,
+) -> Dict[str, jnp.ndarray]:
+    """Compute MAP estimates for flow-guided parameters.
+
+    Reconstructs the optimized guide via ``model_and_guide_fn`` and
+    samples from it repeatedly.  The three strategies differ only in
+    how the N samples are aggregated into a point estimate.
+
+    Parameters
+    ----------
+    model_and_guide_fn : callable
+        ``() -> (model, guide)`` factory (typically ``self._model_and_guide``).
+    params : dict
+        Full SVI parameter dict.
+    n_cells, n_genes : int
+        Data dimensions for the guide call.
+    model_config : ModelConfig
+        Model configuration.
+    flow_params : set of str
+        Names of flow-guided parameters to estimate.
+    method : str
+        ``"mean"``, ``"empirical"``, or ``"optimize"``.
+    n_samples : int
+        Number of guide samples for mean / empirical strategies.
+    optimize_steps : int
+        Adam steps for the optimize strategy.
+    optimize_lr : float
+        Adam learning rate for the optimize strategy.
+    counts : array, optional
+        Count matrix (forwarded to guide if needed).
+    verbose : bool
+        Whether to print progress info.
+    batch_size : int, optional
+        Mini-batch size for cell-level sampling inside the guide.
+        ``None`` processes all cells at once.
+
+    Returns
+    -------
+    Dict[str, jnp.ndarray]
+        MAP estimates keyed by parameter name.
+    """
+    import numpyro.handlers
+    import jax
+
+    if method not in ("mean", "empirical", "optimize"):
+        raise ValueError(
+            f"flow_map_method must be 'mean', 'empirical', or 'optimize', "
+            f"got '{method}'"
+        )
+
+    _, guide = model_and_guide_fn()
+    if guide is None:
+        return {}
+
+    # ---- Collect N samples from the guide --------------------------------
+    if verbose:
+        print(f"Flow MAP ({method}): drawing {n_samples} guide samples...")
+
+    samples_by_site = _flow_sample_guide(
+        guide,
+        params,
+        n_cells,
+        n_genes,
+        model_config,
+        flow_params,
+        n_samples,
+        counts,
+        batch_size=batch_size,
+    )
+
+    if not samples_by_site:
+        return {}
+
+    # ---- Aggregate according to strategy ---------------------------------
+    if method == "mean":
+        return {
+            name: jnp.mean(stacked, axis=0)
+            for name, stacked in samples_by_site.items()
+        }
+
+    if method == "empirical":
+        return _flow_empirical_mode(
+            guide,
+            params,
+            n_cells,
+            n_genes,
+            model_config,
+            samples_by_site,
+            counts,
+            batch_size=batch_size,
+        )
+
+    # method == "optimize"
+    return _flow_optimize_mode(
+        guide,
+        params,
+        n_cells,
+        n_genes,
+        model_config,
+        samples_by_site,
+        flow_params,
+        optimize_steps,
+        optimize_lr,
+        counts,
+        verbose,
+        batch_size=batch_size,
+    )
+
+
+def _flow_sample_guide(
+    guide,
+    params,
+    n_cells,
+    n_genes,
+    model_config,
+    flow_params,
+    n_samples,
+    counts,
+    batch_size=None,
+) -> Dict[str, jnp.ndarray]:
+    """Run the guide *n_samples* times and stack flow-param samples.
+
+    When the guide includes cell-level parameters (e.g. amortized
+    capture), ``batch_size`` controls how many cells are processed
+    per guide call.  This avoids OOM for large datasets.
+
+    Parameters
+    ----------
+    guide : callable
+        Guide function.
+    params : dict
+        Optimized SVI parameters.
+    n_cells, n_genes : int
+        Data dimensions.
+    model_config : ModelConfig
+        Model configuration.
+    flow_params : set of str
+        Names of flow-guided sites to collect.
+    n_samples : int
+        Number of guide executions.
+    counts : array, optional
+        Count matrix forwarded to the guide.
+    batch_size : int, optional
+        Mini-batch size for cell-level sampling inside the guide.
+        ``None`` (default) processes all cells at once.
+
+    Returns
+    -------
+    Dict[str, jnp.ndarray]
+        ``{name: array of shape (n_samples, *param_shape)}``.
+    """
+    import numpyro.handlers
+
+    guide_kwargs = dict(
+        n_cells=n_cells,
+        n_genes=n_genes,
+        model_config=model_config,
+        counts=counts,
+        batch_size=batch_size,
+    )
+
+    collected: Dict[str, list] = {name: [] for name in flow_params}
+
+    for i in range(n_samples):
+        key = random.PRNGKey(i)
+        with numpyro.handlers.seed(rng_seed=key):
+            with numpyro.handlers.substitute(data=params):
+                with numpyro.handlers.trace() as tr:
+                    guide(**guide_kwargs)
+
+        for name in flow_params:
+            if name in tr and "value" in tr[name]:
+                collected[name].append(tr[name]["value"])
+
+    # Stack collected samples
+    result = {}
+    for name, vals in collected.items():
+        if vals:
+            result[name] = jnp.stack(vals, axis=0)
+    return result
+
+
+def _flow_empirical_mode(
+    guide,
+    params,
+    n_cells,
+    n_genes,
+    model_config,
+    samples_by_site,
+    counts,
+    batch_size=None,
+) -> Dict[str, jnp.ndarray]:
+    """Pick the sample with highest joint log-density across flow params.
+
+    Re-runs the guide for each sample to compute per-sample joint
+    log-probability, then selects the sample index with the highest
+    total.
+
+    Parameters
+    ----------
+    batch_size : int, optional
+        Mini-batch size for cell-level sampling inside the guide.
+
+    Returns
+    -------
+    Dict[str, jnp.ndarray]
+        Best sample per flow-guided parameter.
+    """
+    import numpyro.handlers
+
+    n_samples = next(iter(samples_by_site.values())).shape[0]
+    guide_kwargs = dict(
+        n_cells=n_cells,
+        n_genes=n_genes,
+        model_config=model_config,
+        counts=counts,
+        batch_size=batch_size,
+    )
+
+    log_probs = jnp.zeros(n_samples)
+    for i in range(n_samples):
+        key = random.PRNGKey(i)
+        # Substitute both learned params and this particular sample
+        sample_data = {**params}
+        for name, stacked in samples_by_site.items():
+            sample_data[name] = stacked[i]
+
+        with numpyro.handlers.seed(rng_seed=key):
+            with numpyro.handlers.substitute(data=sample_data):
+                with numpyro.handlers.trace() as tr:
+                    guide(**guide_kwargs)
+
+        # Sum log_prob of flow-guided sites
+        lp = 0.0
+        for name in samples_by_site:
+            if name in tr and "fn" in tr[name]:
+                try:
+                    lp = lp + tr[name]["fn"].log_prob(tr[name]["value"])
+                except Exception:
+                    pass
+        log_probs = log_probs.at[i].set(lp)
+
+    best_idx = int(jnp.argmax(log_probs))
+    return {
+        name: stacked[best_idx] for name, stacked in samples_by_site.items()
+    }
+
+
+def _flow_optimize_mode(
+    guide,
+    params,
+    n_cells,
+    n_genes,
+    model_config,
+    samples_by_site,
+    flow_params,
+    n_steps,
+    lr,
+    counts,
+    verbose,
+    batch_size=None,
+) -> Dict[str, jnp.ndarray]:
+    """Gradient-ascent mode finding starting from the sample mean.
+
+    Runs the guide under ``trace`` and ``substitute`` to compute the
+    joint log-density of the flow-guided sample sites, then optimizes
+    the unconstrained values with Adam.
+
+    Parameters
+    ----------
+    batch_size : int, optional
+        Mini-batch size for cell-level sampling inside the guide.
+
+    Returns
+    -------
+    Dict[str, jnp.ndarray]
+        Optimized MAP estimate per flow-guided parameter.
+    """
+    import numpyro.handlers
+
+    try:
+        import optax
+    except ImportError:
+        warnings.warn(
+            "optax is required for flow_map_method='optimize'. "
+            "Falling back to 'mean'.",
+            UserWarning,
+        )
+        return {
+            name: jnp.mean(stacked, axis=0)
+            for name, stacked in samples_by_site.items()
+        }
+
+    import jax
+
+    # Initialize from the sample mean
+    init_values = {
+        name: jnp.mean(stacked, axis=0)
+        for name, stacked in samples_by_site.items()
+    }
+
+    guide_kwargs = dict(
+        n_cells=n_cells,
+        n_genes=n_genes,
+        model_config=model_config,
+        counts=counts,
+        batch_size=batch_size,
+    )
+
+    def neg_log_prob(values):
+        """Negative joint log-prob of the flow-guided sites."""
+        sample_data = {**params, **values}
+        with numpyro.handlers.seed(rng_seed=random.PRNGKey(0)):
+            with numpyro.handlers.substitute(data=sample_data):
+                with numpyro.handlers.trace() as tr:
+                    guide(**guide_kwargs)
+
+        total = 0.0
+        for name in values:
+            if name in tr and "fn" in tr[name]:
+                total = total + tr[name]["fn"].log_prob(tr[name]["value"])
+        return -total
+
+    optimizer = optax.adam(lr)
+    opt_state = optimizer.init(init_values)
+    current = init_values
+
+    grad_fn = jax.grad(neg_log_prob)
+
+    for step in range(n_steps):
+        grads = grad_fn(current)
+        updates, opt_state = optimizer.update(grads, opt_state, current)
+        current = optax.apply_updates(current, updates)
+
+    if verbose:
+        print(f"Flow MAP optimize: completed {n_steps} steps.")
+
+    return current
+
+
+# ==============================================================================
 # Parameter Extraction Mixin
 # ==============================================================================
 
@@ -488,7 +897,14 @@ class ParameterExtractionMixin:
         This method uses the composable builder system to extract posterior
         distributions from the optimized variational parameters. It
         automatically handles all parameterizations, constrained/unconstrained
-        variants, and guide families.
+        variants, and guide families including normalizing-flow guides.
+
+        For flow-guided parameters, the returned entry is a dict
+        ``{"base": FlowDistribution, "transform": ...}``.  Joint-flow
+        (dense) parameters additionally include ``"conditional": True``
+        to flag that they represent conditional distributions from the
+        chain-rule decomposition and require guide execution for proper
+        joint sampling.
 
         Parameters
         ----------
@@ -512,6 +928,8 @@ class ParameterExtractionMixin:
         -------
         Dict[str, Any]
             Dictionary mapping parameter names to their distributions.
+            Flow-guided parameters are wrapped in
+            ``{"base": FlowDistribution, "transform": ...}`` dicts.
 
         Raises
         ------
@@ -566,6 +984,11 @@ class ParameterExtractionMixin:
         canonical: bool = True,
         verbose: bool = True,
         counts: Optional[jnp.ndarray] = None,
+        flow_map_method: str = "mean",
+        flow_n_samples: int = 1000,
+        flow_optimize_steps: int = 300,
+        flow_optimize_lr: float = 1e-3,
+        flow_batch_size: Optional[int] = None,
     ) -> Dict[str, jnp.ndarray]:
         """
         Get the maximum a posteriori (MAP) estimates from the variational
@@ -592,6 +1015,33 @@ class ParameterExtractionMixin:
             by summing across ALL genes, so it requires the full data.
 
             For non-amortized models, this can be None. Default: None.
+        flow_map_method : str, default="mean"
+            Strategy for MAP estimation of flow-guided parameters.
+            Ignored when no normalizing-flow guides are present.
+
+            - ``"mean"``: Sample ``flow_n_samples`` points from the
+              guide and average them.  Fast; gives the posterior mean.
+            - ``"empirical"``: Sample ``flow_n_samples`` points, evaluate
+              each sample's joint log-probability, and pick the sample
+              with highest density.  Medium cost; approximate mode.
+            - ``"optimize"``: Initialize from the sample mean, then run
+              gradient ascent on the guide's log-density for
+              ``flow_optimize_steps`` steps.  Highest quality mode
+              estimate.
+        flow_n_samples : int, default=1000
+            Number of samples drawn from the guide for the ``"mean"``
+            and ``"empirical"`` strategies.
+        flow_optimize_steps : int, default=300
+            Number of Adam steps for the ``"optimize"`` strategy.
+        flow_optimize_lr : float, default=1e-3
+            Learning rate for the ``"optimize"`` strategy.
+        flow_batch_size : int, optional
+            Mini-batch size for cell-level sampling inside the guide
+            during flow MAP estimation.  When the guide includes
+            cell-specific parameters (e.g. amortized capture), setting
+            this avoids processing all cells on every guide call.
+            ``None`` (default) processes all cells at once, which is
+            fine when the guide only has gene-level flow parameters.
 
         Returns
         -------
@@ -690,12 +1140,23 @@ class ParameterExtractionMixin:
         distributions = self.get_distributions(
             backend="numpyro", counts=counts, params=params
         )
-        # Get estimate of map
+
+        # Detect which parameters are flow-guided (their distributions
+        # are backed by a FlowDistribution which lacks .loc / .mode).
+        flow_params = _detect_flow_params(distributions)
+
+        # ----------------------------------------------------------
+        # Standard MAP extraction for non-flow parameters
+        # ----------------------------------------------------------
         map_estimates = {}
         for param, dist_obj in distributions.items():
             # Skip full joint distributions (keyed as "joint:{group}");
             # individual per-parameter marginals are already in the dict.
             if param.startswith("joint:"):
+                continue
+
+            # Defer flow-guided params to the sampling-based handler
+            if param in flow_params:
                 continue
 
             # Handle transformed distributions (dict with 'base' and
@@ -765,6 +1226,27 @@ class ParameterExtractionMixin:
                 map_estimates[param] = dist_obj.mode
             else:
                 map_estimates[param] = dist_obj.mean
+
+        # ----------------------------------------------------------
+        # Flow MAP estimation via guide sampling
+        # ----------------------------------------------------------
+        if flow_params:
+            flow_estimates = _flow_map_estimates(
+                model_and_guide_fn=self._model_and_guide,
+                params=params,
+                n_cells=self.n_cells,
+                n_genes=self.n_genes,
+                model_config=self.model_config,
+                flow_params=flow_params,
+                method=flow_map_method,
+                n_samples=flow_n_samples,
+                optimize_steps=flow_optimize_steps,
+                optimize_lr=flow_optimize_lr,
+                counts=counts,
+                verbose=verbose,
+                batch_size=flow_batch_size,
+            )
+            map_estimates.update(flow_estimates)
 
         # Replace NaN values with means if requested
         if use_mean:

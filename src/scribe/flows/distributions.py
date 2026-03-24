@@ -12,11 +12,12 @@ FlowDistribution
     Wraps a flow callable as a NumPyro distribution.
 """
 
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
 import numpyro.distributions as dist
+from jax import random
 from numpyro.distributions.util import validate_sample
 
 
@@ -51,6 +52,11 @@ class FlowDistribution(dist.Distribution):
         base = dist.Normal(jnp.zeros(latent_dim), 1.0).to_event(1)
         prior = FlowDistribution(flow_fn, base)
         z = numpyro.sample("z", prior)
+
+    Convenience methods for point estimation::
+
+        mean = prior.estimate_mean(rng_key, n_samples=1000)
+        mode = prior.find_mode(rng_key, n_steps=300)
     """
 
     def __init__(
@@ -140,3 +146,92 @@ class FlowDistribution(dist.Distribution):
         z = self.base_distribution.sample(key, sample_shape)
         x, log_det = self.flow(z, reverse=True)
         return x, {"z_base": z, "x": x, "log_det": log_det}
+
+    # --------------------------------------------------------------------------
+
+    def estimate_mean(
+        self,
+        key: jax.Array,
+        n_samples: int = 1000,
+    ) -> jnp.ndarray:
+        """Monte Carlo estimate of the distribution mean.
+
+        Draws ``n_samples`` independent samples and averages them.
+
+        Parameters
+        ----------
+        key : jax.Array
+            PRNG key.
+        n_samples : int, default=1000
+            Number of samples for the Monte Carlo estimate.
+
+        Returns
+        -------
+        jnp.ndarray
+            Estimated mean with the same shape as ``event_shape``.
+        """
+        keys = random.split(key, n_samples)
+        samples = jax.vmap(lambda k: self.sample(k))(keys)
+        return jnp.mean(samples, axis=0)
+
+    # --------------------------------------------------------------------------
+
+    def find_mode(
+        self,
+        key: jax.Array,
+        n_init_samples: int = 100,
+        n_steps: int = 300,
+        lr: float = 1e-3,
+    ) -> jnp.ndarray:
+        """Approximate mode via gradient ascent on ``log_prob``.
+
+        Initializes from the best of ``n_init_samples`` candidates,
+        then runs Adam for ``n_steps`` gradient-ascent steps on the
+        flow density.
+
+        Parameters
+        ----------
+        key : jax.Array
+            PRNG key.
+        n_init_samples : int, default=100
+            Number of initial candidates to seed the optimization.
+        n_steps : int, default=300
+            Number of Adam optimization steps.
+        lr : float, default=1e-3
+            Learning rate for Adam.
+
+        Returns
+        -------
+        jnp.ndarray
+            Approximate mode with the same shape as ``event_shape``.
+        """
+        try:
+            import optax
+        except ImportError:
+            # Graceful fallback: return Monte Carlo mean instead
+            return self.estimate_mean(key, n_samples=n_init_samples)
+
+        # Draw initial candidates and pick the one with highest density
+        keys = random.split(key, n_init_samples + 1)
+        init_key, opt_key = keys[0], keys[1:]
+        candidates = jax.vmap(lambda k: self.sample(k))(opt_key)
+        log_probs = jax.vmap(self.log_prob)(candidates)
+        best_idx = jnp.argmax(log_probs)
+        x = candidates[best_idx]
+
+        # Gradient ascent on log_prob
+        optimizer = optax.adam(lr)
+        opt_state = optimizer.init(x)
+
+        def step_fn(carry, _):
+            x_cur, state = carry
+            grad = jax.grad(self.log_prob)(x_cur)
+            # Ascent: negate grad for optax (which minimizes)
+            updates, new_state = optimizer.update(-grad, state, x_cur)
+            # apply_updates adds updates, so with negated grad this
+            # moves in the ascent direction
+            x_new = optax.apply_updates(x_cur, updates)
+            return (x_new, new_state), None
+
+        (x_opt, _), _ = jax.lax.scan(step_fn, (x, opt_state), None, n_steps)
+        return x_opt

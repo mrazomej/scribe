@@ -162,3 +162,17 @@ analytically invertible, element-wise monotone transform. Key parameters:
 
 Each spline dimension requires `3K + 1` parameters (K widths, K heights,
 K+1 derivatives), predicted by the conditioner network.
+
+## FlowDistribution Convenience Methods
+
+`FlowDistribution` provides two convenience methods for point estimation:
+
+- **`estimate_mean(key, n_samples=1000)`**: Monte Carlo estimate of the
+  distribution mean by averaging independent samples.
+- **`find_mode(key, n_init_samples=100, n_steps=300, lr=1e-3)`**: Approximate
+  mode via gradient ascent on `log_prob`. Initializes from the best of
+  `n_init_samples` candidates and runs Adam optimization. Requires `optax`
+  (falls back to `estimate_mean` if not available).
+
+These are useful for standalone analysis but the main `get_map()` pipeline uses
+guide-execution-based sampling for uniformity across flow types.
