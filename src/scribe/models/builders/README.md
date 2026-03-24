@@ -205,6 +205,8 @@ Each parameter can have its own guide family:
 | `MeanFieldGuide` | Factorized variational family | Default, fast |
 | `LowRankGuide(rank)` | Low-rank MVN covariance | Gene correlations |
 | `JointLowRankGuide(rank, group)` | Joint low-rank MVN across parameter groups | Cross-parameter correlations |
+| `NormalizingFlowGuide(...)` | Flow-based variational family (per-parameter) | Multimodal / skewed / heavy-tailed posteriors |
+| `JointNormalizingFlowGuide(...)` | Joint normalizing flow across parameter groups | Non-linear cross-parameter dependencies |
 | `AmortizedGuide(net)` | Neural network amortization | High-dim params |
 | `VAELatentGuide` | VAE: encoder + latent_spec (z) + decoder | Joint latent z; decoder-driven params (no guide sites) |
 
@@ -329,6 +331,101 @@ the intended prior structure:
 - prior-specific scale latents (horseshoe: `tau`, `lambda`, `c_sq`; NEG: `psi`,
   `zeta`) remain in their existing independent positive-support guides;
 - downstream MAP/posterior logic still uses constrained parameter names.
+
+### Normalizing Flow Guide (Per-Parameter)
+
+When a parameter has a posterior that is multimodal, skewed, or heavy-tailed,
+the Gaussian-based families (`MeanFieldGuide`, `LowRankGuide`) may
+underestimate the true uncertainty. `NormalizingFlowGuide` replaces the
+Gaussian base with a normalizing flow — a learned invertible transformation
+of a simple base distribution — that can represent arbitrarily complex
+densities.
+
+```python
+from scribe.models.components import NormalizingFlowGuide
+
+specs = [
+    LogNormalSpec(
+        "r", ("n_genes",), (0.0, 1.0),
+        is_gene_specific=True,
+        guide_family=NormalizingFlowGuide(
+            flow_type="spline_coupling",  # rational-quadratic splines (default)
+            num_layers=4,
+            hidden_dims=(64, 64),
+            n_bins=8,            # spline bins (finer = more expressive)
+        ),
+    ),
+]
+```
+
+**Supported flow types:** `"spline_coupling"` (default, recommended),
+`"affine_coupling"`, `"maf"`, `"iaf"`. Coupling flows are O(1) in both
+sampling and density evaluation — ideal for SVI where both are needed on
+every step.
+
+**When to use over `LowRankGuide`:** When the posterior is expected to
+deviate substantially from a Gaussian (e.g., bimodality, skewness,
+heavy tails). For nearly Gaussian posteriors, `LowRankGuide` is faster
+and equally accurate.
+
+### Joint Normalizing Flow Guide (Cross-Parameter)
+
+Analogous to `JointLowRankGuide` but uses flows instead of Gaussians.
+Cross-parameter dependencies are captured via a chain-rule decomposition:
+
+    q(θ₁, θ₂) = q(θ₁) × q(θ₂ | θ₁)
+
+where each factor is a full normalizing flow. The conditional q(θ₂ | θ₁)
+is implemented by passing the unconstrained sample of θ₁ as a continuous
+*context* vector to the flow for θ₂.
+
+```python
+from scribe.models.components import JointNormalizingFlowGuide
+from scribe.models.builders import PositiveNormalSpec, GuideBuilder
+
+joint = JointNormalizingFlowGuide(
+    flow_type="spline_coupling",
+    num_layers=4,
+    hidden_dims=(64, 64),
+    n_bins=8,
+    group="nb_params",
+)
+specs = [
+    # Scalar phi (not gene-specific) — uses context-conditioned Normal
+    PositiveNormalSpec("phi", (), (0.0, 1.0),
+                  is_gene_specific=False, guide_family=joint, constrained_name="phi"),
+    # Gene-specific mu — full flow conditioned on phi
+    PositiveNormalSpec("mu", ("n_genes",), (0.0, 1.0),
+                  is_gene_specific=True, guide_family=joint, constrained_name="mu"),
+]
+guide = GuideBuilder().from_specs(specs).build()
+```
+
+**Heterogeneous dimensions:** Scalar parameters in a joint flow group use a
+context-conditioned Normal (since coupling flows require ≥ 2 features). The
+scalar's distribution still depends on previously sampled parameters through a
+learned linear regression on the context.
+
+**`dense_params` support:** Like `JointLowRankGuide`, the joint flow guide
+supports a `dense_params` argument. Dense parameters go through the flow chain
+with context conditioning; non-dense parameters receive diagonal Normal
+distributions with learned regression coefficients on the dense-flow residuals
+and a per-gene autoregressive chain among themselves.
+
+```python
+joint = JointNormalizingFlowGuide(
+    flow_type="spline_coupling",
+    num_layers=2,
+    hidden_dims=(32,),
+    group="structured",
+    dense_params=["mu"],  # only mu gets a full flow
+)
+```
+
+**When to use over `JointLowRankGuide`:** When the cross-parameter relationship
+is non-linear or the joint posterior is non-Gaussian (e.g., banana-shaped,
+multimodal). For approximately Gaussian joint posteriors, `JointLowRankGuide` is
+more parameter-efficient.
 
 ## Posterior Extraction
 

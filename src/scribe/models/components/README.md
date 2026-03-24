@@ -8,7 +8,8 @@ This directory contains the atomic components used by the builders:
 
 - **likelihoods/**: Likelihood functions (NB, ZINB, VCP variants)
 - **guide_families.py**: Variational family implementations (MeanField, LowRank,
-  JointLowRank, Amortized, VAELatentGuide)
+  JointLowRank, NormalizingFlow, JointNormalizingFlow, Amortized,
+  VAELatentGuide)
 - **vae_components.py**: Encoder/decoder building blocks for VAE-style models
 - **covariate_embedding.py**: Categorical covariate embedding for conditioning
 - **amortizers.py**: Neural network amortizers for variational parameters
@@ -54,6 +55,8 @@ approximation to use:
 | `MeanFieldGuide`        | Factorized variational family   | Default, fast     |
 | `LowRankGuide(rank)`    | Low-rank MVN covariance         | Gene correlations |
 | `JointLowRankGuide(rank, group)` | Joint low-rank MVN across parameter groups | Cross-parameter correlations |
+| `NormalizingFlowGuide(...)` | Flow-based variational family | Multimodal / skewed / heavy-tailed posteriors |
+| `JointNormalizingFlowGuide(...)` | Joint normalizing flow across parameter groups | Non-linear cross-parameter dependencies |
 | `AmortizedGuide(net)`   | Neural network amortization     | High-dim params   |
 | `VAELatentGuide`        | VAE: encoder + latent_spec + decoder | Joint latent z + decoder-driven params |
 
@@ -445,6 +448,8 @@ MY_STATISTIC = SufficientStatistic(
 │  │ NegBinomial  │ │ MeanFieldGuide   │ │ CovariateSpec │ │ GaussianEnc   │  │
 │  │ ZINB, VCP    │ │ LowRankGuide     │ │ Covariate     │ │ MultiHeadDec   │  │
 │  │              │ │ JointLowRank     │ │ Embedding     │ │ AbstractEnc   │  │
+│  │              │ │ NormalizingFlow  │ │               │ │               │  │
+│  │              │ │ JointNormFlow    │ │               │ │               │  │
 │  │              │ │ AmortizedGuide   │ │               │ │ AbstractDec   │  │
 │  │              │ │ VAELatentGuide   │ │               │ │               │  │
 │  └──────────────┘ └─────────────────┘ └──────────────┘ └───────────────┘  │
