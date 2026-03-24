@@ -1406,21 +1406,23 @@ def get_posterior_distributions(
 ) -> Dict[str, Any]:
     """Extract posterior distributions from optimized guide parameters.
 
-    Runs nine ordered passes over a shared ``distributions`` dict.  Each
+    Runs ten ordered passes over a shared ``distributions`` dict.  Each
     pass is a no-op when its config flags are off, so the pipeline is safe
     for any ``ModelConfig``.
 
     Pass ordering (do not reorder):
 
-    1. Base parameterization  — core params (r/p, mu/p, mu/phi)
-    2. Gene-level hierarchy   — overrides p/phi with per-gene prior
-    3. Dataset hierarchy: mu  — overrides mu/r with per-dataset prior
-    4. Dataset hierarchy: p   — overrides p/phi with per-dataset prior
-    5. Dataset hierarchy: gate — overrides gate with per-dataset prior
-    6. Zero-inflation gate    — adds gate (if not handled by pass 5)
-    7. Capture probability    — adds per-cell p_capture / phi_capture
-    8. Mixture weights        — adds mixing_weights Dirichlet
-    9. Joint aggregation      — adds ``joint:{group}`` full distributions
+    1.  Base parameterization  — core params (r/p, mu/p, mu/phi)
+    2.  Gene-level hierarchy   — overrides p/phi with per-gene prior
+    3.  Dataset hierarchy: mu  — overrides mu/r with per-dataset prior
+    4.  Dataset hierarchy: p   — overrides p/phi with per-dataset prior
+    5.  Dataset hierarchy: gate — overrides gate with per-dataset prior
+    6.  Zero-inflation gate    — adds gate (if not handled by pass 5)
+    7.  Capture probability    — adds per-cell p_capture / phi_capture
+    8.  Mixture weights        — adds mixing_weights Dirichlet
+    9.  Joint aggregation      — adds ``joint:{group}`` full distributions
+    10. Flow posteriors        — reconstructs ``FlowDistribution`` objects
+        for flow-guided params missed by earlier passes
 
     Parameters
     ----------
@@ -1437,7 +1439,10 @@ def get_posterior_distributions(
     Dict[str, Any]
         Maps parameter names to posterior distributions.  Values are
         either numpyro ``Distribution`` objects or ``{"base", "transform"}``
-        dicts for unconstrained / low-rank guides.
+        dicts for unconstrained / low-rank guides.  Flow-based entries
+        have ``{"base": FlowDistribution, "transform": ...}``, and
+        conditional joint-flow entries additionally include
+        ``"conditional": True``.
     """
     distributions: Dict[str, Any] = {}
     parameterization = model_config.parameterization
@@ -1550,8 +1555,404 @@ def get_posterior_distributions(
     )
     _apply_mixture_weights(distributions, params, is_mixture)  # Pass 8
     _apply_joint_aggregation(distributions, params, model_config)  # Pass 9
+    _apply_flow_posteriors(  # Pass 10
+        distributions, params, model_config, pos_transform=pos_transform
+    )
 
     return distributions
+
+
+# =============================================================================
+# Pass 10: flow-guide posterior reconstruction
+# =============================================================================
+
+
+def _apply_flow_posteriors(
+    distributions: Dict[str, Any],
+    params: Dict[str, jnp.ndarray],
+    model_config: "ModelConfig",
+    *,
+    pos_transform=None,
+) -> None:
+    """Pass 10: reconstruct posterior distributions for flow-guided params.
+
+    After passes 1-9, any parameter whose guide is a normalizing flow
+    will be missing from *distributions* because the standard key
+    patterns (``_loc``/``_scale``, ``_W``/``_raw_diag``) do not match
+    flow param keys (``flow_*$params``, ``joint_flow_*$params``).
+
+    This pass detects those missing entries and reconstructs a
+    ``FlowDistribution`` wrapped in the appropriate constraint transform.
+
+    Per-parameter flows produce standalone distributions.  Joint flow
+    (dense) parameters produce **conditional** distributions — a flag
+    ``"conditional": True`` is set on the returned dict so downstream
+    consumers (``get_map``) know to use sampling-based strategies.
+
+    Joint-flow nondense / scalar params use ``_loc``/``_raw_diag`` keys
+    that should already be handled by ``_find_joint_prefix`` in earlier
+    passes; this function also covers them as a fallback if they were
+    missed (e.g. because the ``joint_flow_`` prefix differs from the
+    ``joint_`` prefix expected by ``_find_joint_prefix``).
+
+    Parameters
+    ----------
+    distributions : dict
+        Accumulated distributions dict (mutated in-place).
+    params : dict
+        Optimized variational parameters.
+    model_config : ModelConfig
+        Model configuration (must retain ``guide_families``).
+    pos_transform : Transform, optional
+        Positive-value transform (SoftplusTransform or ExpTransform).
+    """
+    guide_families = getattr(model_config, "guide_families", None)
+    if guide_families is None:
+        return
+
+    # Lazy import to avoid circular deps
+    from ..components.guide_families import (
+        NormalizingFlowGuide,
+        JointNormalizingFlowGuide,
+    )
+    from scribe.flows import FlowChain, FlowDistribution
+
+    if pos_transform is None:
+        pos_transform = dist.transforms.ExpTransform()
+
+    # ------------------------------------------------------------------
+    # Per-parameter flows: flow_{name}$params
+    # ------------------------------------------------------------------
+    for key in params:
+        if not key.startswith("flow_") or not key.endswith("$params"):
+            continue
+        # Extract logical name: flow_{name}$params -> name
+        name = key[len("flow_"):-len("$params")]
+        if name in distributions:
+            continue
+
+        guide = guide_families.get(name)
+        if not isinstance(guide, NormalizingFlowGuide):
+            continue
+
+        flow_dist = _reconstruct_per_param_flow(
+            params, key, name, guide, pos_transform
+        )
+        if flow_dist is not None:
+            distributions[name] = flow_dist
+
+    # ------------------------------------------------------------------
+    # Joint flow dense params: joint_flow_{group}_{name}$params
+    # ------------------------------------------------------------------
+    for key in params:
+        if not key.startswith("joint_flow_") or not key.endswith("$params"):
+            continue
+        # Parse: joint_flow_{group}_{name}$params
+        inner = key[len("joint_flow_"):-len("$params")]
+        # The group is the first token, name is everything after the
+        # first underscore within `inner`.
+        parts = inner.split("_", 1)
+        if len(parts) != 2:
+            continue
+        group, name = parts
+        if name in distributions:
+            continue
+
+        guide = guide_families.get(name)
+        if not isinstance(guide, JointNormalizingFlowGuide):
+            continue
+
+        flow_dist = _reconstruct_joint_flow_block(
+            params, key, name, group, guide, pos_transform
+        )
+        if flow_dist is not None:
+            distributions[name] = flow_dist
+
+    # ------------------------------------------------------------------
+    # Joint flow nondense / scalar fallback
+    # ------------------------------------------------------------------
+    # Nondense params use joint_flow_{group}_{name}_loc which
+    # _find_joint_prefix misses (it expects joint_{group}_{name}_loc).
+    # Scalar params use joint_flow_{group}_{name}_scalar_loc.
+    # Handle both as simple Normal posteriors.
+    _apply_joint_flow_nondense_fallback(
+        distributions, params, guide_families, pos_transform
+    )
+
+
+def _reconstruct_per_param_flow(
+    params: Dict[str, jnp.ndarray],
+    key: str,
+    name: str,
+    guide: Any,
+    pos_transform,
+) -> Optional[Dict[str, Any]]:
+    """Rebuild a standalone ``FlowDistribution`` for a per-parameter flow.
+
+    Parameters
+    ----------
+    params : dict
+        Full SVI params dict.
+    key : str
+        Key for the Flax module weights (e.g. ``"flow_mu$params"``).
+    name : str
+        Logical parameter name.
+    guide : NormalizingFlowGuide
+        Guide marker with architecture hyperparameters.
+    pos_transform : Transform
+        Positive-value transform.
+
+    Returns
+    -------
+    dict or None
+        ``{"base": FlowDistribution, "transform": transform}`` or None.
+    """
+    from scribe.flows import FlowChain, FlowDistribution
+
+    flax_params = params[key]
+
+    # Infer feature dim from the first flow layer's weight shape.
+    # FlowChain stores layers under 'layer_0', 'layer_1', etc.
+    features = _infer_flow_features(flax_params)
+    if features is None:
+        return None
+
+    chain = FlowChain(
+        features=features,
+        num_layers=guide.num_layers,
+        flow_type=guide.flow_type,
+        hidden_dims=list(guide.hidden_dims),
+        activation=guide.activation,
+        n_bins=guide.n_bins,
+    )
+
+    def flow_fn(x, reverse=False):
+        return chain.apply({"params": flax_params}, x, reverse=reverse)
+
+    base = dist.Normal(jnp.zeros(features), jnp.ones(features)).to_event(1)
+    flow_dist = FlowDistribution(flow_fn, base)
+
+    return {"base": flow_dist, "transform": pos_transform}
+
+
+def _reconstruct_joint_flow_block(
+    params: Dict[str, jnp.ndarray],
+    key: str,
+    name: str,
+    group: str,
+    guide: Any,
+    pos_transform,
+) -> Optional[Dict[str, Any]]:
+    """Rebuild a conditional ``FlowDistribution`` for a joint-flow block.
+
+    The returned distribution is **conditional** on an unspecified
+    context vector from previously-sampled parameters.  Downstream
+    MAP helpers must use sampling-based strategies for these entries.
+
+    Parameters
+    ----------
+    params : dict
+        Full SVI params dict.
+    key : str
+        Flax module weight key.
+    name : str
+        Logical parameter name.
+    group : str
+        Joint group identifier.
+    guide : JointNormalizingFlowGuide
+        Guide marker.
+    pos_transform : Transform
+        Positive-value transform.
+
+    Returns
+    -------
+    dict or None
+        ``{"base": FlowDistribution, "transform": ..., "conditional": True}``
+    """
+    from scribe.flows import FlowChain, FlowDistribution
+
+    flax_params = params[key]
+    features = _infer_flow_features(flax_params)
+    if features is None:
+        return None
+
+    # Infer context_dim from the conditioner network input shape.
+    # For a flow with context, the first layer's conditioner has
+    # input_dim = ceil(features/2) + context_dim.  Without inspecting
+    # all preceding blocks we cannot recover the exact context_dim,
+    # so we reconstruct the chain with context_dim=0 for density eval.
+    # The actual conditioned sampling is handled by guide execution
+    # in get_map's flow strategies.
+    chain = FlowChain(
+        features=features,
+        num_layers=guide.num_layers,
+        flow_type=guide.flow_type,
+        hidden_dims=list(guide.hidden_dims),
+        activation=guide.activation,
+        n_bins=guide.n_bins,
+        context_dim=0,
+    )
+
+    def flow_fn(x, reverse=False):
+        return chain.apply({"params": flax_params}, x, reverse=reverse)
+
+    base = dist.Normal(jnp.zeros(features), jnp.ones(features)).to_event(1)
+    flow_dist = FlowDistribution(flow_fn, base)
+
+    return {
+        "base": flow_dist,
+        "transform": pos_transform,
+        "conditional": True,
+    }
+
+
+def _apply_joint_flow_nondense_fallback(
+    distributions: Dict[str, Any],
+    params: Dict[str, jnp.ndarray],
+    guide_families,
+    pos_transform,
+) -> None:
+    """Handle joint-flow nondense and scalar params missed by earlier passes.
+
+    Nondense params have keys like ``joint_flow_{group}_{name}_loc``.
+    Scalar params have keys like ``joint_flow_{group}_{name}_scalar_loc``.
+    Both are simple Normal posteriors wrapped in the constraint transform.
+
+    Parameters
+    ----------
+    distributions : dict
+        Accumulated distributions dict (mutated in-place).
+    params : dict
+        Optimized variational parameters.
+    guide_families : GuideFamilyConfig
+        Guide family configuration.
+    pos_transform : Transform
+        Positive-value transform.
+    """
+    # Detect nondense: joint_flow_{group}_{name}_loc (not $params, not scalar)
+    seen = set()
+    for key in params:
+        if not key.startswith("joint_flow_"):
+            continue
+        if key.endswith("$params"):
+            continue
+
+        # Nondense pattern: joint_flow_{group}_{name}_loc
+        if key.endswith("_loc") and "_scalar_" not in key:
+            inner = key[len("joint_flow_"):-len("_loc")]
+            parts = inner.split("_", 1)
+            if len(parts) != 2:
+                continue
+            _group, name = parts
+            if name in distributions or name in seen:
+                continue
+            seen.add(name)
+
+            loc = params[key]
+            raw_diag_key = key.replace("_loc", "_raw_diag")
+            if raw_diag_key in params:
+                import jax
+                sigma = jnp.sqrt(jax.nn.softplus(params[raw_diag_key]) + 1e-4)
+            else:
+                sigma = jnp.ones_like(loc)
+
+            base = dist.Independent(
+                dist.Normal(loc, sigma),
+                reinterpreted_batch_ndims=1,
+            )
+            distributions[name] = {"base": base, "transform": pos_transform}
+
+        # Scalar pattern: joint_flow_{group}_{name}_scalar_loc
+        if "_scalar_loc" in key and key.endswith("_scalar_loc"):
+            inner = key[len("joint_flow_"):-len("_scalar_loc")]
+            parts = inner.split("_", 1)
+            if len(parts) != 2:
+                continue
+            _group, name = parts
+            if name in distributions or name in seen:
+                continue
+            seen.add(name)
+
+            loc = params[key]
+            raw_scale_key = key.replace("_scalar_loc", "_scalar_raw_scale")
+            if raw_scale_key in params:
+                import jax
+                scale = jax.nn.softplus(params[raw_scale_key]) + 1e-4
+            else:
+                scale = jnp.ones_like(loc)
+
+            base = dist.Normal(loc, scale)
+            distributions[name] = {"base": base, "transform": pos_transform}
+
+
+def _infer_flow_features(flax_params) -> Optional[int]:
+    """Infer the feature dimensionality from stored Flax flow params.
+
+    Inspects ``layer_0`` of the flow chain to recover the feature
+    count.  Strategy (in priority order):
+
+    1. **Affine coupling**: ``shift`` or ``log_scale`` param has shape
+       ``(ceil(F/2),)`` → ``features = ceil(F/2) * 2``.
+    2. **Coupling / autoregressive**: the first hidden-layer kernel
+       (``hidden_0/kernel``) has shape ``(input_dim, hidden_dim)``
+       where ``input_dim = ceil(F/2)`` for coupling flows without
+       context → ``features = input_dim * 2``.
+
+    Parameters
+    ----------
+    flax_params : dict
+        Flax ``params`` pytree for a ``FlowChain``.
+
+    Returns
+    -------
+    int or None
+        Inferred feature count, or None if detection fails.
+    """
+    layer0 = None
+    if isinstance(flax_params, dict):
+        layer0 = flax_params.get("layer_0")
+
+    if layer0 is None:
+        return None
+
+    # Affine coupling stores explicit shift / log_scale leaves
+    shift = _deep_get(layer0, "shift")
+    if shift is not None and hasattr(shift, "shape") and len(shift.shape) == 1:
+        return shift.shape[0] * 2
+
+    log_scale = _deep_get(layer0, "log_scale")
+    if (
+        log_scale is not None
+        and hasattr(log_scale, "shape")
+        and len(log_scale.shape) == 1
+    ):
+        return log_scale.shape[0] * 2
+
+    # For coupling / autoregressive flows the first hidden-layer
+    # kernel has shape (ceil(features/2) [+ context_dim], hidden_dim).
+    # When context_dim == 0 (per-param flows), ceil(features/2) ==
+    # kernel.shape[0].
+    hidden0 = _deep_get(layer0, "hidden_0")
+    if isinstance(hidden0, dict) and "kernel" in hidden0:
+        kernel = hidden0["kernel"]
+        if hasattr(kernel, "shape") and len(kernel.shape) == 2:
+            half_features = kernel.shape[0]
+            return half_features * 2
+
+    return None
+
+
+def _deep_get(d, key):
+    """Recursively search a nested dict for *key* and return the value."""
+    if not isinstance(d, dict):
+        return None
+    if key in d:
+        return d[key]
+    for v in d.values():
+        result = _deep_get(v, key)
+        if result is not None:
+            return result
+    return None
 
 
 # =============================================================================
