@@ -93,9 +93,15 @@ n_components: null    # null = single component, int >= 2 for mixture
 mixture_params: null  # which params are component-specific
 
 # Guide configuration
-guide_rank: null      # null = mean-field, int = low-rank
-joint_params: null    # null = per-param guides, list = joint low-rank for those params (requires guide_rank). E.g. [mu, phi]
+guide_rank: null      # null = mean-field, int = low-rank (mutually exclusive with guide_flow)
+joint_params: null    # null = per-param guides, list = joint guide for those params (requires guide_rank or guide_flow). E.g. [mu, phi]
 dense_params: null    # null = all joint_params dense, list = subset with full cross-gene coupling. E.g. [mu]
+
+# Flow-based guide (mutually exclusive with guide_rank)
+guide_flow: null                # null = disabled; "spline_coupling", "affine_coupling", "maf", "iaf"
+guide_flow_num_layers: 4        # number of flow layers
+guide_flow_hidden_dims: [64, 64]  # conditioner MLP hidden dims
+guide_flow_n_bins: 8            # spline bins (spline_coupling only)
 ```
 
 ### Prior Configuration
@@ -141,6 +147,19 @@ n_components: 3
 model: nbvcp
 parameterization: canonical
 guide_rank: 15
+
+# Flow-based guide on gene-specific parameter
+parameterization: mean_odds
+guide_flow: spline_coupling
+
+# Joint flow guide across mu and phi
+parameterization: mean_odds
+p_prior: gaussian
+unconstrained: true
+guide_flow: spline_coupling
+joint_params: [mu, phi]
+guide_flow_num_layers: 6
+guide_flow_hidden_dims: [128, 128]
 
 # NBVCP with amortized capture probability
 model: nbvcp
