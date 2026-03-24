@@ -23,6 +23,7 @@ SplineCoupling
     Rational-quadratic spline coupling layer.
 """
 
+import math
 from typing import List, Optional, Tuple
 
 import jax
@@ -291,10 +292,9 @@ def _spline_identity_bias_init(
     gives identity. Derivatives need ``softplus(raw_d) + min_derivative = 1``
     so that the knot slopes equal 1.0.
     """
-    n_params = 3 * n_bins + 1
-    # softplus_inv(1.0 - min_derivative)
-    target = 1.0 - min_derivative
-    raw_deriv = float(jnp.log(jnp.exp(target) - 1.0))
+    # softplus_inv(1.0 - min_derivative), computed with pure Python math
+    # to avoid JAX tracer issues under JIT.
+    raw_deriv = math.log(math.exp(1.0 - min_derivative) - 1.0)
 
     def init(key, shape, dtype=jnp.float32):
         # Build a single-element template: 0s for widths/heights, raw_deriv
