@@ -44,6 +44,8 @@ from .guide_families import (
     MeanFieldGuide,
     LowRankGuide,
     JointLowRankGuide,
+    NormalizingFlowGuide,
+    JointNormalizingFlowGuide,
     AmortizedGuide,
     VAELatentGuide,
 )
@@ -80,6 +82,8 @@ __all__ = [
     "MeanFieldGuide",
     "LowRankGuide",
     "JointLowRankGuide",
+    "NormalizingFlowGuide",
+    "JointNormalizingFlowGuide",
     "AmortizedGuide",
     "VAELatentGuide",
     # Amortizers

@@ -16,6 +16,7 @@ from .parameter_specs import (
 )
 from ..components.guide_families import (
     JointLowRankGuide,
+    JointNormalizingFlowGuide,
     MeanFieldGuide,
     VAELatentGuide,
 )
@@ -25,6 +26,7 @@ from . import _guide_horseshoe_mixin as _guide_horseshoe_mixin
 from . import _guide_neg_mixin as _guide_neg_mixin
 from . import _guide_lowrank_mixin as _guide_lowrank_mixin
 from . import _guide_meanfield_mixin as _guide_meanfield_mixin
+from . import _guide_flow_mixin as _guide_flow_mixin
 
 # Import concrete symbols used directly by GuideBuilder.
 from ._guide_amortized_mixin import _setup_grouped_amortized_latent
@@ -33,6 +35,7 @@ from ._guide_cell_specific_mixin import (
     setup_cell_specific_guide,
 )
 from ._guide_joint_mixin import _woodbury_conditional_params, setup_joint_guide
+from ._guide_joint_flow_mixin import setup_joint_flow_guide
 from ._guide_structured_joint_mixin import setup_structured_joint_guide
 from ._guide_meanfield_mixin import setup_guide
 
@@ -202,9 +205,7 @@ class GuideBuilder:
                     use_dataset_mixing = bool(
                         getattr(model_config, "dataset_mixing_enabled", False)
                     )
-                    shape_dims = (
-                        ("n_components",) if use_dataset_mixing else ()
-                    )
+                    shape_dims = ("n_components",) if use_dataset_mixing else ()
                     mixing_spec = DirichletSpec(
                         name="mixing_weights",
                         shape_dims=shape_dims,
@@ -232,11 +233,14 @@ class GuideBuilder:
             gene_specs = [s for s in specs if s.is_gene_specific]
 
             # Scan both global and gene-specific specs for joint groups
+            # (JointLowRankGuide and JointNormalizingFlowGuide).
             joint_groups: Dict[str, List] = {}
             joint_handled = set()
             for spec in (*global_specs, *gene_specs):
                 gf = spec.guide_family
-                if isinstance(gf, JointLowRankGuide):
+                if isinstance(
+                    gf, (JointLowRankGuide, JointNormalizingFlowGuide)
+                ):
                     grp = gf.group
                     if grp not in joint_groups:
                         joint_groups[grp] = []
@@ -245,15 +249,22 @@ class GuideBuilder:
 
             # Process joint groups first (may contain a mix of scalar
             # and gene-specific specs with heterogeneous shapes).
-            # When dense_params is set on the guide marker, use the
-            # structured path (dense low-rank + nondense gene-local).
             for grp_name, grp_specs in joint_groups.items():
                 guide_family = grp_specs[0].guide_family
-                if guide_family.dense_params is not None:
+
+                if isinstance(guide_family, JointNormalizingFlowGuide):
+                    # Normalizing-flow joint guide (flow chain with
+                    # context-conditioned conditionals)
+                    setup_joint_flow_guide(
+                        grp_specs, guide_family, dims, model_config
+                    )
+                elif guide_family.dense_params is not None:
+                    # JointLowRankGuide with dense_params → structured path
                     setup_structured_joint_guide(
                         grp_specs, guide_family, dims, model_config
                     )
                 else:
+                    # JointLowRankGuide without dense_params → full Woodbury
                     setup_joint_guide(
                         grp_specs, guide_family, dims, model_config
                     )
