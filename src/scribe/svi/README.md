@@ -219,6 +219,54 @@ map_params = results.get_map()
 distributions = results.get_distributions()
 ```
 
+**Flow Guide MAP Estimation:**
+
+When using normalizing flow guides (`guide_flow` parameter in `scribe.fit()` or
+`guide_flow` in the Hydra config), MAP estimation requires sampling-based
+strategies because flow transformations do not preserve modes. The `get_map()`
+method accepts additional parameters for controlling flow MAP estimation:
+
+```python
+# Default: posterior mean via Monte Carlo sampling
+map_params = results.get_map(flow_map_method="mean", flow_n_samples=1000)
+
+# Empirical mode: pick the sample with highest log-density
+map_params = results.get_map(flow_map_method="empirical", flow_n_samples=2000)
+
+# Gradient-based mode finding: most accurate, starts from mean
+map_params = results.get_map(
+    flow_map_method="optimize",
+    flow_n_samples=500,          # samples for initial mean estimate
+    flow_optimize_steps=300,     # Adam steps for gradient ascent
+    flow_optimize_lr=1e-3,       # learning rate
+)
+
+# For models with cell-level parameters (e.g. amortized capture),
+# use flow_batch_size to avoid processing all cells at once
+map_params = results.get_map(
+    flow_map_method="mean",
+    flow_batch_size=2048,        # mini-batch cells per guide call
+)
+```
+
+Strategy summary:
+- `"mean"` (default): Fast; gives the posterior mean. Best for most use cases.
+- `"empirical"`: Medium cost; picks the highest-density sample as an approximate
+  mode.
+- `"optimize"`: Highest quality mode estimate via gradient ascent on the guide's
+  log-density, initialized from the sample mean.
+
+Non-flow parameters are unaffected by these settings and continue to use the
+standard `transform(base.loc)` approach.
+
+**Flow Guide Posterior Distributions:**
+
+`get_distributions()` returns `FlowDistribution`-based entries for flow-guided
+parameters. These are wrapped in the standard `{"base": ..., "transform": ...}`
+dict format. Joint flow entries additionally include `"conditional": True` to
+indicate that they represent conditional distributions (from the chain-rule
+decomposition) and require guide execution for proper joint sampling.
+
 **Posterior Sampling:**
 ```python
 # Sample from variational posterior

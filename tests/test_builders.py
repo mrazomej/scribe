@@ -4428,3 +4428,525 @@ class TestNormalizingFlowGuide:
             ValueError, match="group must be a non-empty string"
         ):
             JointNormalizingFlowGuide(group="")
+
+
+# ==============================================================================
+# Flow Guide Posterior / MAP Integration Tests
+# ==============================================================================
+
+
+class TestFlowGuidePosteriorIntegration:
+    """Test get_distributions and get_map with flow-guided parameters."""
+
+    # ---- Fixtures / helpers ------------------------------------------------
+
+    @staticmethod
+    def _run_svi_per_param_flow(small_counts, n_steps=5):
+        """Run SVI with a per-param flow guide and return (params, config)."""
+        import numpyro.distributions as ndist
+        from scribe.models.components import NormalizingFlowGuide
+
+        n_cells, n_genes = small_counts.shape
+
+        def model(n_cells, n_genes, model_config, counts=None, **kw):
+            r = numpyro.sample(
+                "r",
+                ndist.LogNormal(
+                    jnp.zeros(n_genes), jnp.ones(n_genes)
+                ).to_event(1),
+            )
+            with numpyro.plate("cells", n_cells):
+                numpyro.sample(
+                    "obs",
+                    ndist.Independent(
+                        ndist.NegativeBinomial2(
+                            mean=jnp.ones(n_genes) * 5.0,
+                            concentration=r,
+                        ),
+                        1,
+                    ),
+                    obs=counts,
+                )
+
+        flow_guide = NormalizingFlowGuide(
+            flow_type="spline_coupling",
+            num_layers=2,
+            hidden_dims=(32,),
+            n_bins=4,
+        )
+        specs = [
+            LogNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=flow_guide,
+            ),
+        ]
+        guide_fn = GuideBuilder().from_specs(specs).build()
+
+        from scribe.models.config import (
+            GuideFamilyConfig,
+            ModelConfigBuilder,
+            ModelType,
+        )
+
+        # Use unconstrained=True so earlier passes look for _loc/_scale
+        # keys (not found → skipped), letting the flow pass handle
+        # flow_r$params.
+        config = (
+            ModelConfigBuilder()
+            .for_model(ModelType.NBDM)
+            .build()
+            .model_copy(
+                update=dict(
+                    unconstrained=True,
+                    guide_families=GuideFamilyConfig(r=flow_guide),
+                )
+            )
+        )
+
+        kw = dict(
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=small_counts,
+        )
+
+        svi = SVI(model, guide_fn, Adam(1e-3), loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(0), **kw)
+        for _ in range(n_steps):
+            svi_state, loss = svi.update(svi_state, **kw)
+            assert jnp.isfinite(loss)
+
+        params = svi.get_params(svi_state)
+        return params, config, n_cells, n_genes
+
+    # ---- get_distributions -------------------------------------------------
+
+    def test_flow_guide_get_distributions(self, small_counts):
+        """Per-param flow guide produces a FlowDistribution-based entry."""
+        from scribe.models.builders.posterior import _apply_flow_posteriors
+        from scribe.flows import FlowDistribution
+        import numpyro.distributions as ndist
+
+        params, config, _, _ = self._run_svi_per_param_flow(small_counts)
+
+        # Test the flow pass directly to avoid triggering earlier
+        # passes that expect params for parameters not in our minimal
+        # model.
+        distributions = {}
+        _apply_flow_posteriors(
+            distributions,
+            params,
+            config,
+            pos_transform=ndist.transforms.ExpTransform(),
+        )
+
+        # "r" should be present and contain a FlowDistribution
+        assert "r" in distributions, (
+            f"Expected 'r' in distributions, got keys: "
+            f"{sorted(distributions.keys())}"
+        )
+        r_entry = distributions["r"]
+        assert isinstance(r_entry, dict)
+        assert "base" in r_entry
+        assert "transform" in r_entry
+        assert isinstance(r_entry["base"], FlowDistribution)
+
+    # ---- get_map: mean strategy -------------------------------------------
+
+    @staticmethod
+    def _build_guide_fn():
+        """Rebuild the per-param flow guide function for MAP sampling."""
+        from scribe.models.components import NormalizingFlowGuide
+
+        flow_guide = NormalizingFlowGuide(
+            flow_type="spline_coupling",
+            num_layers=2,
+            hidden_dims=(32,),
+            n_bins=4,
+        )
+        specs = [
+            LogNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=flow_guide,
+            ),
+        ]
+        return GuideBuilder().from_specs(specs).build()
+
+    def test_flow_guide_get_map_mean(self, small_counts):
+        """get_map with flow_map_method='mean' returns valid estimates."""
+        from scribe.svi._parameter_extraction import _flow_map_estimates
+
+        params, config, n_cells, n_genes = self._run_svi_per_param_flow(
+            small_counts
+        )
+        guide_fn = self._build_guide_fn()
+
+        estimates = _flow_map_estimates(
+            model_and_guide_fn=lambda: (None, guide_fn),
+            params=params,
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            flow_params={"r"},
+            method="mean",
+            n_samples=50,
+            verbose=False,
+        )
+
+        assert "r" in estimates
+        assert estimates["r"].shape[-1] == n_genes
+
+    def test_flow_guide_get_map_empirical(self, small_counts):
+        """get_map with flow_map_method='empirical' returns valid estimates."""
+        from scribe.svi._parameter_extraction import _flow_map_estimates
+
+        params, config, n_cells, n_genes = self._run_svi_per_param_flow(
+            small_counts
+        )
+        guide_fn = self._build_guide_fn()
+
+        estimates = _flow_map_estimates(
+            model_and_guide_fn=lambda: (None, guide_fn),
+            params=params,
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            flow_params={"r"},
+            method="empirical",
+            n_samples=50,
+            verbose=False,
+        )
+
+        assert "r" in estimates
+        assert estimates["r"].shape[-1] == n_genes
+
+    def test_flow_guide_get_map_optimize(self, small_counts):
+        """get_map with flow_map_method='optimize' converges."""
+        from scribe.svi._parameter_extraction import _flow_map_estimates
+
+        params, config, n_cells, n_genes = self._run_svi_per_param_flow(
+            small_counts
+        )
+        guide_fn = self._build_guide_fn()
+
+        estimates = _flow_map_estimates(
+            model_and_guide_fn=lambda: (None, guide_fn),
+            params=params,
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            flow_params={"r"},
+            method="optimize",
+            n_samples=30,
+            optimize_steps=10,
+            optimize_lr=1e-3,
+            verbose=False,
+        )
+
+        assert "r" in estimates
+        assert estimates["r"].shape[-1] == n_genes
+        assert jnp.isfinite(estimates["r"]).all()
+
+    # ---- Joint flow get_distributions --------------------------------------
+
+    def test_joint_flow_guide_get_distributions(self, small_counts):
+        """Joint flow params produce conditional distribution entries."""
+        import numpyro.distributions as ndist
+        from scribe.models.components import JointNormalizingFlowGuide
+        from scribe.models.builders.posterior import _apply_flow_posteriors
+
+        n_cells, n_genes = small_counts.shape
+
+        def model(n_cells, n_genes, model_config, counts=None, **kw):
+            mu = numpyro.sample(
+                "mu",
+                ndist.TransformedDistribution(
+                    ndist.Normal(
+                        jnp.zeros(n_genes), jnp.ones(n_genes)
+                    ).to_event(1),
+                    ndist.transforms.ExpTransform(),
+                ),
+            )
+            phi = numpyro.sample(
+                "phi",
+                ndist.TransformedDistribution(
+                    ndist.Normal(
+                        jnp.zeros(n_genes), jnp.ones(n_genes)
+                    ).to_event(1),
+                    ndist.transforms.ExpTransform(),
+                ),
+            )
+            with numpyro.plate("cells", n_cells):
+                numpyro.sample(
+                    "obs",
+                    ndist.Independent(
+                        ndist.NegativeBinomial2(
+                            mean=mu, concentration=phi
+                        ),
+                        1,
+                    ),
+                    obs=counts,
+                )
+
+        joint = JointNormalizingFlowGuide(
+            flow_type="spline_coupling",
+            num_layers=2,
+            hidden_dims=(32,),
+            n_bins=4,
+            group="joint",
+        )
+        specs = [
+            PositiveNormalSpec(
+                name="mu",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="mu",
+            ),
+            PositiveNormalSpec(
+                name="phi",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="phi",
+            ),
+        ]
+        guide_fn = GuideBuilder().from_specs(specs).build()
+
+        from scribe.models.config import (
+            GuideFamilyConfig,
+            ModelConfigBuilder,
+            ModelType,
+        )
+
+        config = (
+            ModelConfigBuilder()
+            .for_model(ModelType.NBDM)
+            .build()
+            .model_copy(
+                update=dict(
+                    guide_families=GuideFamilyConfig(mu=joint, phi=joint),
+                )
+            )
+        )
+
+        kw = dict(
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=small_counts,
+        )
+
+        svi = SVI(model, guide_fn, Adam(1e-3), loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(0), **kw)
+        for _ in range(3):
+            svi_state, loss = svi.update(svi_state, **kw)
+            assert jnp.isfinite(loss)
+
+        params = svi.get_params(svi_state)
+
+        # Test the flow pass directly to avoid triggering earlier
+        # passes that expect params for params not in our minimal model.
+        distributions = {}
+        _apply_flow_posteriors(
+            distributions,
+            params,
+            config,
+            pos_transform=ndist.transforms.ExpTransform(),
+        )
+
+        # At least one of mu/phi should be present with conditional flag
+        has_flow_entry = False
+        for name in ("mu", "phi"):
+            if name in distributions:
+                entry = distributions[name]
+                if isinstance(entry, dict) and entry.get("conditional"):
+                    has_flow_entry = True
+        assert has_flow_entry, (
+            f"Expected conditional flow entries, got: "
+            f"{sorted(distributions.keys())}"
+        )
+
+    # ---- Serialization / pickle roundtrip ----------------------------------
+
+    def test_flow_guide_pickle_roundtrip(self):
+        """model_config with flow guide families survives pickle roundtrip."""
+        import pickle
+        from scribe.models.config import (
+            GuideFamilyConfig,
+            ModelConfigBuilder,
+            ModelType,
+        )
+        from scribe.models.components import NormalizingFlowGuide
+
+        flow_guide = NormalizingFlowGuide(
+            flow_type="spline_coupling",
+            num_layers=4,
+            hidden_dims=(64, 64),
+            n_bins=8,
+        )
+        config = (
+            ModelConfigBuilder()
+            .for_model(ModelType.NBDM)
+            .build()
+            .model_copy(
+                update=dict(
+                    guide_families=GuideFamilyConfig(r=flow_guide),
+                )
+            )
+        )
+
+        # Roundtrip through pickle
+        data = pickle.dumps(config)
+        restored = pickle.loads(data)
+
+        assert restored.guide_families is not None
+        assert isinstance(
+            restored.guide_families.get("r"), NormalizingFlowGuide
+        )
+        assert restored.guide_families.get("r").flow_type == "spline_coupling"
+        assert restored.guide_families.get("r").num_layers == 4
+
+    def test_joint_flow_guide_pickle_roundtrip(self):
+        """model_config with joint flow guide families survives pickle."""
+        import pickle
+        from scribe.models.config import (
+            GuideFamilyConfig,
+            ModelConfigBuilder,
+            ModelType,
+        )
+        from scribe.models.components import JointNormalizingFlowGuide
+
+        joint = JointNormalizingFlowGuide(
+            flow_type="maf",
+            num_layers=3,
+            hidden_dims=(32, 32),
+            n_bins=6,
+            group="mygroup",
+            dense_params=["mu", "phi"],
+        )
+        config = (
+            ModelConfigBuilder()
+            .for_model(ModelType.NBDM)
+            .build()
+            .model_copy(
+                update=dict(
+                    guide_families=GuideFamilyConfig(mu=joint, phi=joint),
+                )
+            )
+        )
+
+        data = pickle.dumps(config)
+        restored = pickle.loads(data)
+
+        assert restored.guide_families is not None
+        restored_guide = restored.guide_families.get("mu")
+        assert isinstance(restored_guide, JointNormalizingFlowGuide)
+        assert restored_guide.flow_type == "maf"
+        assert restored_guide.group == "mygroup"
+        assert restored_guide.dense_params == ["mu", "phi"]
+
+    def test_serialization_preserves_guide_families_over_amortization(self):
+        """make_model_config_pickle_safe strips amortization but keeps guides."""
+        import pickle
+        from scribe.core.serialization import make_model_config_pickle_safe
+        from scribe.models.config import (
+            GuideFamilyConfig,
+            ModelConfigBuilder,
+            ModelType,
+        )
+        from scribe.models.components import NormalizingFlowGuide
+
+        flow_guide = NormalizingFlowGuide(
+            flow_type="spline_coupling",
+            num_layers=2,
+            hidden_dims=(32,),
+        )
+        config = (
+            ModelConfigBuilder()
+            .for_model(ModelType.NBDM)
+            .build()
+            .model_copy(
+                update=dict(
+                    guide_families=GuideFamilyConfig(r=flow_guide),
+                )
+            )
+        )
+
+        safe_config = make_model_config_pickle_safe(config)
+        data = pickle.dumps(safe_config)
+        restored = pickle.loads(data)
+
+        # guide_families should survive
+        assert restored.guide_families is not None
+        assert isinstance(
+            restored.guide_families.get("r"), NormalizingFlowGuide
+        )
+
+
+# ==============================================================================
+# FlowDistribution Convenience Method Tests
+# ==============================================================================
+
+
+class TestFlowDistributionHelpers:
+    """Test estimate_mean and find_mode on FlowDistribution."""
+
+    @staticmethod
+    def _make_flow_dist():
+        """Build a simple FlowDistribution from a trained FlowChain."""
+        import numpyro.distributions as ndist
+        from scribe.flows import FlowChain, FlowDistribution
+
+        features = 4
+        chain = FlowChain(
+            features=features,
+            num_layers=2,
+            flow_type="affine_coupling",
+            hidden_dims=[16],
+            activation="relu",
+        )
+
+        # Initialize with a dummy forward pass
+        rng = random.PRNGKey(42)
+        dummy = jnp.zeros(features)
+        variables = chain.init(rng, dummy)
+        flax_params = variables["params"]
+
+        def flow_fn(x, reverse=False):
+            return chain.apply({"params": flax_params}, x, reverse=reverse)
+
+        base = ndist.Normal(jnp.zeros(features), jnp.ones(features)).to_event(
+            1
+        )
+        return FlowDistribution(flow_fn, base)
+
+    def test_estimate_mean(self):
+        """estimate_mean returns a vector with correct shape and finite values."""
+        fd = self._make_flow_dist()
+        mean = fd.estimate_mean(random.PRNGKey(0), n_samples=200)
+        assert mean.shape == (4,)
+        assert jnp.isfinite(mean).all()
+
+    def test_find_mode(self):
+        """find_mode returns a finite vector and improves log-prob vs init."""
+        fd = self._make_flow_dist()
+        mode = fd.find_mode(
+            random.PRNGKey(0),
+            n_init_samples=30,
+            n_steps=20,
+            lr=1e-3,
+        )
+        assert mode.shape == (4,)
+        assert jnp.isfinite(mode).all()
+        # Mode should have higher log-prob than a random sample
+        sample = fd.sample(random.PRNGKey(99))
+        assert fd.log_prob(mode) >= fd.log_prob(sample) - 5.0

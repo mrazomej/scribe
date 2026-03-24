@@ -37,11 +37,33 @@ def make_model_config_pickle_safe(model_config: Any) -> Any:
         return model_config
 
     # Try progressively safer copies for pydantic-based configs.
+    # The ordering matters: preserve as much config as possible.
+    #  1. Clear only param_specs (preserves guide_families fully).
+    #  2. Clear param_specs + strip capture_amortization from
+    #     guide_families (preserves flow guide markers that are needed
+    #     for posterior reconstruction while dropping the potentially
+    #     unpicklable AmortizationConfig).
+    #  3. Clear both param_specs and guide_families (last resort).
     if hasattr(model_config, "model_copy"):
-        for update in (
-            {"param_specs": []},
-            {"param_specs": [], "guide_families": None},
-        ):
+        updates_to_try = [{"param_specs": []}]
+
+        # Build an intermediate update that sanitizes only the
+        # amortization part of guide_families, keeping flow markers.
+        gf = getattr(model_config, "guide_families", None)
+        if gf is not None and hasattr(gf, "model_copy"):
+            try:
+                sanitized_gf = gf.model_copy(
+                    update={"capture_amortization": None}
+                )
+                updates_to_try.append(
+                    {"param_specs": [], "guide_families": sanitized_gf}
+                )
+            except Exception:
+                pass
+
+        updates_to_try.append({"param_specs": [], "guide_families": None})
+
+        for update in updates_to_try:
             try:
                 candidate = model_config.model_copy(update=update)
                 if _is_picklable(candidate):
