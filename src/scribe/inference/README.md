@@ -183,6 +183,12 @@ Build ModelConfig from preset parameters.
   multi-dataset structure) with separate variational flows per component or a
   shared flow across them; use it when `guide_flow` is set together with mixture
   or multi-dataset configs.
+- `guide_flow_zero_init`: Zero-init conditioner output layer (default `true`).
+- `guide_flow_layer_norm`: LayerNorm after each hidden Dense (default `true`).
+- `guide_flow_residual`: Residual connections between same-width layers (default `true`).
+  These three flags stabilize the conditioner MLP at initialization for
+  high-dimensional flows (e.g. 28K genes). Disable with `false` for full manual
+  control. See the [flows README](../flows/README.md#conditioner-stability-high-dimensional-inputs).
 - `joint_params`: Optional list of gene-specific parameter names. When set, the
   listed parameters share a single JointLowRankGuide (with `guide_rank`) or
   JointNormalizingFlowGuide (with `guide_flow`) that captures cross-parameter

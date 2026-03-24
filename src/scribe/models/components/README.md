@@ -124,6 +124,18 @@ NormalizingFlowGuide(mixture_strategy="independent")  # K separate flows
 NormalizingFlowGuide(mixture_strategy="shared")        # shared + one-hot context
 ```
 
+### Conditioner stability flags
+
+Both flow guide families expose three boolean flags (all `True` by default) that
+stabilize the conditioner MLP at initialization for high-dimensional inputs:
+
+- `zero_init_output` — zero-init the output Dense layer (identity at init).
+- `use_layer_norm` — LayerNorm after each hidden Dense.
+- `use_residual` — skip connections between same-width hidden layers.
+
+See the [flows README](../../flows/README.md#conditioner-stability-high-dimensional-inputs)
+for details.
+
 ## Covariate embedding
 
 Categorical covariates (batch, donor, condition, etc.) are embedded and

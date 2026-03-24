@@ -140,6 +140,51 @@ def model(counts, n_cells, n_genes, latent_dim=10):
     ...
 ```
 
+## Conditioner Stability (High-Dimensional Inputs)
+
+Three user-configurable flags stabilize the conditioner MLP in coupling and
+autoregressive flows, preventing NaN loss at initialization when input
+dimensionality is large (e.g. 28K genes in a joint flow).  All are **on by
+default**; disable any of them by setting the flag to `False` on `FlowChain`,
+the guide family dataclass, or via the Hydra/API config.
+
+| Flag | Default | What it does |
+|---|---|---|
+| `zero_init_output` | `True` | Zero-initialize the conditioner's output Dense layer so the flow starts as an identity transform.  Prevents log-determinant overflow when summing ~14K random log-scales. |
+| `use_layer_norm` | `True` | Apply `nn.LayerNorm` after each hidden Dense in the conditioner MLP.  Stabilizes activations when fan-in is large (e.g. 42K inputs funneling into a 64-wide bottleneck). |
+| `use_residual` | `True` | Add skip connections between consecutive hidden layers of the same width.  Improves gradient flow during training. |
+
+### Configuration
+
+At the `FlowChain` level:
+
+```python
+chain = FlowChain(
+    features=28000, num_layers=4, flow_type="spline_coupling",
+    hidden_dims=[64, 64],
+    zero_init_output=True,   # default
+    use_layer_norm=True,     # default
+    use_residual=True,       # default
+)
+```
+
+Via the guide family dataclass:
+
+```python
+NormalizingFlowGuide(
+    flow_type="spline_coupling",
+    zero_init_output=True,
+    use_layer_norm=True,
+    use_residual=True,
+)
+```
+
+Via Hydra command line:
+
+```bash
+guide_flow_zero_init=false guide_flow_layer_norm=false guide_flow_residual=false
+```
+
 ## Choosing a Flow
 
 - **Start with `affine_coupling`** for fast iteration and debugging.

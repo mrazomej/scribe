@@ -516,12 +516,15 @@ class TestFlowChain:
         covariate_specs = [
             CovariateSpec("batch", num_categories=4, embedding_dim=8),
         ]
+        # Disable zero_init_output so the conditioner's random weights
+        # produce context-dependent output at init.
         chain = FlowChain(
             features=4,
             num_layers=2,
             flow_type="affine_coupling",
             hidden_dims=[16, 16],
             covariate_specs=covariate_specs,
+            zero_init_output=False,
         )
         batch_size = 2
         x_init = jnp.zeros((batch_size, 4))
@@ -656,3 +659,170 @@ class TestNumericalStability:
 
         npt.assert_allclose(x_rec, x, atol=1e-5)
         npt.assert_allclose(log_det_fwd + log_det_inv, jnp.zeros(3), atol=1e-5)
+
+
+# ===========================================================================
+# Conditioner stability: high-dim init, flag toggling
+# ===========================================================================
+
+
+class TestConditionerStability:
+    """Verify that default stability flags prevent NaN at high dimensions."""
+
+    HIGH_DIM = 1000
+
+    @pytest.mark.parametrize(
+        "flow_type", ["affine_coupling", "spline_coupling"]
+    )
+    def test_coupling_high_dim_no_nan(self, rng, flow_type):
+        """Default flags (zero_init, LayerNorm, residual) keep init finite."""
+        chain = FlowChain(
+            features=self.HIGH_DIM,
+            num_layers=4,
+            flow_type=flow_type,
+            hidden_dims=[64, 64],
+        )
+        x = jax.random.normal(rng, (2, self.HIGH_DIM))
+        params = chain.init(rng, x[0])
+
+        z, log_det = chain.apply(params, x)
+        assert jnp.all(jnp.isfinite(z)), "Forward produced NaN/Inf"
+        assert jnp.all(jnp.isfinite(log_det)), "Forward log_det NaN/Inf"
+
+        x_rec, log_det_inv = chain.apply(params, z, reverse=True)
+        assert jnp.all(jnp.isfinite(x_rec)), "Inverse produced NaN/Inf"
+        assert jnp.all(jnp.isfinite(log_det_inv)), "Inverse log_det NaN/Inf"
+
+    @pytest.mark.parametrize(
+        "flow_type", ["affine_coupling", "spline_coupling"]
+    )
+    def test_coupling_high_dim_with_context(self, rng, flow_type):
+        """Default flags keep init finite even with large context dims."""
+        context_dim = self.HIGH_DIM
+        chain = FlowChain(
+            features=self.HIGH_DIM,
+            num_layers=2,
+            flow_type=flow_type,
+            hidden_dims=[64, 64],
+            context_dim=context_dim,
+        )
+        x = jax.random.normal(rng, (2, self.HIGH_DIM))
+        ctx = jax.random.normal(jax.random.PRNGKey(99), (2, context_dim))
+        params = chain.init(rng, x[0], context=jnp.zeros(context_dim))
+
+        z, log_det = chain.apply(params, x, context=ctx)
+        assert jnp.all(jnp.isfinite(z))
+        assert jnp.all(jnp.isfinite(log_det))
+
+    @pytest.mark.parametrize(
+        "flow_type", ["affine_coupling", "spline_coupling"]
+    )
+    def test_flags_all_off_still_runs(self, rng, flow_type):
+        """Disabling all stability flags should still produce valid output
+        at modest dimensions (not necessarily at very high dims)."""
+        dim = 20
+        chain = FlowChain(
+            features=dim,
+            num_layers=2,
+            flow_type=flow_type,
+            hidden_dims=[32, 32],
+            zero_init_output=False,
+            use_layer_norm=False,
+            use_residual=False,
+        )
+        x = jax.random.normal(rng, (4, dim))
+        params = chain.init(rng, x[0])
+
+        z, log_det = chain.apply(params, x)
+        assert z.shape == (4, dim)
+        assert jnp.all(jnp.isfinite(z))
+        assert jnp.all(jnp.isfinite(log_det))
+
+    def test_affine_identity_at_init(self, rng):
+        """With zero_init_output=True, an affine coupling layer should be
+        identity at initialization (shift=0, log_scale=0)."""
+        dim = 50
+        layer = AffineCoupling(
+            features=dim,
+            hidden_dims=[32, 32],
+            mask_parity=0,
+            zero_init_output=True,
+        )
+        x = jax.random.normal(rng, (3, dim))
+        params = layer.init(rng, x[0])
+
+        y, log_det = layer.apply(params, x)
+        npt.assert_allclose(y, x, atol=1e-6)
+        npt.assert_allclose(log_det, jnp.zeros(3), atol=1e-6)
+
+    def test_spline_near_identity_at_init(self, rng):
+        """With zero_init_output=True, a spline coupling layer should be
+        near-identity at initialization.
+
+        The RQS with zero raw params gives uniform bin widths/heights and
+        derivatives = softplus(0) ~ 0.693 (not exactly 1.0), so the
+        transform is close to — but not exactly — identity.
+        """
+        dim = 50
+        layer = SplineCoupling(
+            features=dim,
+            hidden_dims=[32, 32],
+            mask_parity=0,
+            zero_init_output=True,
+            n_bins=8,
+            boundary=3.0,
+        )
+        x = jax.random.uniform(rng, (3, dim), minval=-2.0, maxval=2.0)
+        params = layer.init(rng, jnp.zeros(dim))
+
+        y, log_det = layer.apply(params, x)
+        # Near-identity: masked dims are unchanged, unmasked are close
+        npt.assert_allclose(y, x, atol=0.05)
+        assert jnp.all(jnp.isfinite(y))
+        assert jnp.all(jnp.isfinite(log_det))
+
+    def test_maf_high_dim_no_nan(self, rng):
+        """MADE-based MAF with default flags stays finite at high dim."""
+        dim = 200
+        chain = FlowChain(
+            features=dim,
+            num_layers=2,
+            flow_type="maf",
+            hidden_dims=[64, 64],
+        )
+        x = jax.random.normal(rng, (2, dim))
+        params = chain.init(rng, x[0])
+
+        z, log_det = chain.apply(params, x)
+        assert jnp.all(jnp.isfinite(z)), "MAF forward NaN/Inf"
+        assert jnp.all(jnp.isfinite(log_det)), "MAF log_det NaN/Inf"
+
+    def test_layer_norm_present_when_enabled(self, rng):
+        """Verify LayerNorm parameters appear in the param tree."""
+        chain = FlowChain(
+            features=10,
+            num_layers=1,
+            flow_type="affine_coupling",
+            hidden_dims=[32, 32],
+            use_layer_norm=True,
+        )
+        params = chain.init(rng, jnp.zeros(10))
+        flat = jax.tree.leaves_with_path(params)
+        ln_keys = [str(path) for path, _ in flat if "ln_" in str(path)]
+        assert len(ln_keys) > 0, "No LayerNorm params found"
+
+    def test_no_layer_norm_when_disabled(self, rng):
+        """Verify LayerNorm parameters do NOT appear when disabled."""
+        chain = FlowChain(
+            features=10,
+            num_layers=1,
+            flow_type="affine_coupling",
+            hidden_dims=[32, 32],
+            use_layer_norm=False,
+        )
+        params = chain.init(rng, jnp.zeros(10))
+        flat = jax.tree.leaves_with_path(params)
+        ln_keys = [str(path) for path, _ in flat if "ln_" in str(path)]
+        assert (
+            len(ln_keys) == 0
+        ), f"Found unexpected LayerNorm params: {ln_keys}"

@@ -5,6 +5,14 @@ Implements Masked Autoregressive Flow (MAF) and Inverse Autoregressive Flow
 (IAF) using Masked Autoencoder for Distribution Estimation (MADE) as the
 autoregressive network.
 
+Stability features (all on by default, user-configurable):
+
+* ``zero_init_output`` — zero-initializes the MADE output layer kernel
+  so the flow starts as identity.
+* ``use_layer_norm`` — applies ``nn.LayerNorm`` after each hidden layer.
+* ``use_residual`` — adds a skip connection between consecutive hidden
+  layers of the same width.
+
 Key trade-offs:
 
 - **MAF**: Fast density evaluation (one MADE call), slow sampling
@@ -166,12 +174,24 @@ class MADE(nn.Module):
         Hidden layer sizes.
     activation : str
         Activation function.
+    context_dim : int
+        Dimensionality of optional context conditioning vector.
+    zero_init_output : bool
+        If True (default), zero-initialize the output layer kernel.
+    use_layer_norm : bool
+        If True (default), apply ``nn.LayerNorm`` after each hidden layer.
+    use_residual : bool
+        If True (default), add skip connections between consecutive
+        hidden layers of the same width.
     """
 
     features: int
     hidden_dims: List[int]
     activation: str = "relu"
     context_dim: int = 0
+    zero_init_output: bool = True
+    use_layer_norm: bool = True
+    use_residual: bool = True
 
     @nn.compact
     def __call__(
@@ -202,16 +222,27 @@ class MADE(nn.Module):
         # Build layer dimensions: input (+ context) → hidden → output
         input_dim = self.features + self.context_dim
         dims = [input_dim] + list(self.hidden_dims) + [2 * self.features]
+        n_layers = len(masks)
 
         h = x
         if context is not None and self.context_dim > 0:
             h = jnp.concatenate([x, context], axis=-1)
+
         for i, (in_dim, out_dim, mask) in enumerate(
             zip(dims[:-1], dims[1:], masks)
         ):
+            is_output_layer = (i == n_layers - 1)
+            prev_h = h
+
+            # Choose initializer: zero-init for output layer when enabled
+            k_init = (
+                nn.initializers.zeros
+                if is_output_layer and self.zero_init_output
+                else nn.initializers.lecun_normal()
+            )
             kernel = self.param(
                 f"kernel_{i}",
-                nn.initializers.lecun_normal(),
+                k_init,
                 (in_dim, out_dim),
             )
             bias = self.param(
@@ -222,9 +253,14 @@ class MADE(nn.Module):
             # mask shape: (out, in) → transpose to (in, out) for matmul
             masked_kernel = kernel * mask.T
             h = h @ masked_kernel + bias
-            # Apply activation (except on last layer)
-            if i < len(masks) - 1:
+
+            # Activation, LayerNorm, and residual — hidden layers only
+            if not is_output_layer:
+                if self.use_layer_norm:
+                    h = nn.LayerNorm(name=f"ln_{i}")(h)
                 h = act(h)
+                if self.use_residual and prev_h.shape[-1] == h.shape[-1]:
+                    h = h + prev_h
 
         # Split interleaved outputs into shift and log_scale
         shift = h[..., 0::2]
@@ -258,12 +294,21 @@ class MAF(nn.Module):
         Activation function.
     context_dim : int
         Dimensionality of optional context conditioning vector.
+    zero_init_output : bool
+        Zero-init the MADE output layer kernel. Default True.
+    use_layer_norm : bool
+        Apply LayerNorm after each hidden layer. Default True.
+    use_residual : bool
+        Add residual connections. Default True.
     """
 
     features: int
     hidden_dims: List[int]
     activation: str = "relu"
     context_dim: int = 0
+    zero_init_output: bool = True
+    use_layer_norm: bool = True
+    use_residual: bool = True
 
     @nn.compact
     def __call__(
@@ -293,6 +338,9 @@ class MAF(nn.Module):
             hidden_dims=self.hidden_dims,
             activation=self.activation,
             context_dim=self.context_dim,
+            zero_init_output=self.zero_init_output,
+            use_layer_norm=self.use_layer_norm,
+            use_residual=self.use_residual,
             name="made",
         )
 
@@ -344,12 +392,21 @@ class IAF(nn.Module):
         Activation function.
     context_dim : int
         Dimensionality of optional context conditioning vector.
+    zero_init_output : bool
+        Zero-init the MADE output layer kernel. Default True.
+    use_layer_norm : bool
+        Apply LayerNorm after each hidden layer. Default True.
+    use_residual : bool
+        Add residual connections. Default True.
     """
 
     features: int
     hidden_dims: List[int]
     activation: str = "relu"
     context_dim: int = 0
+    zero_init_output: bool = True
+    use_layer_norm: bool = True
+    use_residual: bool = True
 
     @nn.compact
     def __call__(
@@ -379,6 +436,9 @@ class IAF(nn.Module):
             hidden_dims=self.hidden_dims,
             activation=self.activation,
             context_dim=self.context_dim,
+            zero_init_output=self.zero_init_output,
+            use_layer_norm=self.use_layer_norm,
+            use_residual=self.use_residual,
             name="made",
         )
 

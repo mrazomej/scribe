@@ -64,6 +64,9 @@ def _make_affine_coupling(chain, layer_idx: int) -> nn.Module:
         mask_parity=layer_idx % 2,
         activation=chain.activation,
         context_dim=_context_dim_from(chain),
+        zero_init_output=chain.zero_init_output,
+        use_layer_norm=chain.use_layer_norm,
+        use_residual=chain.use_residual,
         name=f"layer_{layer_idx}",
     )
 
@@ -78,6 +81,9 @@ def _make_spline_coupling(chain, layer_idx: int) -> nn.Module:
         activation=chain.activation,
         context_dim=_context_dim_from(chain),
         n_bins=chain.n_bins,
+        zero_init_output=chain.zero_init_output,
+        use_layer_norm=chain.use_layer_norm,
+        use_residual=chain.use_residual,
         name=f"layer_{layer_idx}",
     )
 
@@ -90,6 +96,9 @@ def _make_maf(chain, layer_idx: int) -> nn.Module:
         hidden_dims=list(chain.hidden_dims),
         activation=chain.activation,
         context_dim=_context_dim_from(chain),
+        zero_init_output=chain.zero_init_output,
+        use_layer_norm=chain.use_layer_norm,
+        use_residual=chain.use_residual,
         name=f"layer_{layer_idx}",
     )
 
@@ -102,6 +111,9 @@ def _make_iaf(chain, layer_idx: int) -> nn.Module:
         hidden_dims=list(chain.hidden_dims),
         activation=chain.activation,
         context_dim=_context_dim_from(chain),
+        zero_init_output=chain.zero_init_output,
+        use_layer_norm=chain.use_layer_norm,
+        use_residual=chain.use_residual,
         name=f"layer_{layer_idx}",
     )
 
@@ -145,6 +157,15 @@ class FlowChain(nn.Module):
         Number of bins for spline flows (ignored for affine flows).
     covariate_specs : list of CovariateSpec, optional
         Categorical covariates to embed and pass as context to each layer.
+    zero_init_output : bool
+        Zero-init conditioner output layers so the flow starts as identity.
+        Default True.
+    use_layer_norm : bool
+        Apply ``nn.LayerNorm`` after each hidden Dense in the conditioner.
+        Default True.
+    use_residual : bool
+        Add skip connections between consecutive hidden layers of the
+        same width. Default True.
 
     Examples
     --------
@@ -176,6 +197,12 @@ class FlowChain(nn.Module):
     # sampled parameters in a joint guide).  Unlike ``covariate_specs``
     # (categorical → embedding), this expects a pre-formed float vector.
     context_dim: int = 0
+    # Zero-init the conditioner output layers so the flow starts as identity.
+    zero_init_output: bool = True
+    # Add LayerNorm after each hidden Dense in the conditioner MLP.
+    use_layer_norm: bool = True
+    # Add skip connections between same-width hidden layers.
+    use_residual: bool = True
 
     def setup(self):
         """Create the stack of flow layers with alternating masks."""

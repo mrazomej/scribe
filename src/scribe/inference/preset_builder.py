@@ -84,6 +84,9 @@ def build_config_from_preset(
     guide_flow_hidden_dims: Optional[List[int]] = None,
     guide_flow_n_bins: int = 8,
     guide_flow_mixture_strategy: str = "independent",
+    guide_flow_zero_init: bool = True,
+    guide_flow_layer_norm: bool = True,
+    guide_flow_residual: bool = True,
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
     priors: Optional[Dict[str, Any]] = None,
@@ -344,6 +347,9 @@ def build_config_from_preset(
             hidden_dims=tuple(guide_flow_hidden_dims or [64, 64]),
             n_bins=guide_flow_n_bins,
             mixture_strategy=guide_flow_mixture_strategy,
+            zero_init_output=guide_flow_zero_init,
+            use_layer_norm=guide_flow_layer_norm,
+            use_residual=guide_flow_residual,
         )
 
         if joint_params is not None:
