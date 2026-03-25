@@ -1380,18 +1380,26 @@ class ParameterExtractionMixin:
         if flow_targets:
             # Gene-subsetted results must run the flow guide at full
             # dimensionality, then slice the output to the subset.
+            # Use the original (unsubsetted) params so nondense
+            # regression coefficients match the flow output shape.
             _orig_ng = getattr(self, "_original_n_genes", None)
             _gene_idx = getattr(self, "_subset_gene_index", None)
+            _orig_params = getattr(self, "_original_params", None)
             _full_dim_flow = (
                 _orig_ng is not None
                 and _orig_ng != self.n_genes
                 and _gene_idx is not None
             )
             n_genes_for_flow = _orig_ng if _full_dim_flow else self.n_genes
+            params_for_flow = (
+                _orig_params
+                if (_full_dim_flow and _orig_params is not None)
+                else params
+            )
 
             flow_estimates = _flow_map_estimates(
                 model_and_guide_fn=self._model_and_guide,
-                params=params,
+                params=params_for_flow,
                 n_cells=self.n_cells,
                 n_genes=n_genes_for_flow,
                 model_config=self.model_config,
@@ -1409,6 +1417,7 @@ class ParameterExtractionMixin:
                 from ._sampling_posterior_predictive import (
                     _subset_gene_dim_samples,
                 )
+
                 flow_estimates = _subset_gene_dim_samples(
                     flow_estimates, _gene_idx, _orig_ng
                 )

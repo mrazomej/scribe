@@ -742,6 +742,15 @@ ScribeSVIResults
        (for example, `mu_loc`) and joint-guide keys
        (for example, `joint_joint_mu_loc`), so gene indexing remains correct
        under `joint_params` even when shapes are ambiguous.
+     - **Flow guide awareness**: when flow params are detected (keys ending
+       with `$params` prefixed by `flow_` or `joint_flow_`), `_create_subset`
+       stores the original unsubsetted params dict as `_original_params`.
+       This is critical for joint flow guides with nondense regression: the
+       flow chain produces full-gene-dimensional output while the nondense
+       array params (e.g. `joint_flow_joint_p_alpha_r`) would otherwise be
+       sliced to the gene subset, causing a broadcasting mismatch.
+       `_get_posterior_samples_standard` and `get_map` use `_original_params`
+       when sampling at the original full dimensionality.
    - Dependencies: None (self-contained)
 
 5. **ComponentMixin** (`_component.py`)

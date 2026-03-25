@@ -13,6 +13,20 @@ import pandas as pd
 if TYPE_CHECKING:
     from .results import ScribeSVIResults
 
+
+def _has_flow_params(params: Dict[str, Any]) -> bool:
+    """Return True if the param dict contains normalizing-flow weights.
+
+    Checks for Flax module dicts registered under the ``flow_`` or
+    ``joint_flow_`` naming convention.
+    """
+    return any(
+        k.endswith("$params")
+        and (k.startswith("flow_") or k.startswith("joint_flow_"))
+        for k in params
+    )
+
+
 # ==============================================================================
 # Gene metadata helper
 # ==============================================================================
@@ -473,5 +487,17 @@ class GeneSubsettingMixin:
         ds_idx = getattr(self, "_dataset_indices", None)
         if ds_idx is not None:
             subset._dataset_indices = ds_idx
+
+        # Preserve the full-dimension params dict for flow-guided posterior
+        # sampling.  When a joint flow guide mixes flow-backed parameters
+        # with nondense regression (dense_params), array-valued variational
+        # params (e.g. joint_flow_joint_p_loc) are sliced by the gene
+        # subsetter, but the flow chain still needs them at full dimension.
+        # Re-use the already-stored copy if this is a re-subset.
+        orig_params = getattr(self, "_original_params", None)
+        if orig_params is None and _has_flow_params(self.params):
+            orig_params = self.params
+        if orig_params is not None:
+            subset._original_params = orig_params
 
         return subset
