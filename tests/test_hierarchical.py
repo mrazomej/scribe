@@ -861,6 +861,51 @@ class TestHierarchicalMAPSampling:
             results.n_components, results.n_genes
         )
 
+    def test_get_map_targets_can_request_derived_r(
+        self, hierarchical_mean_odds_results
+    ):
+        """Selective MAP can return derived ``r`` only.
+
+        Parameters
+        ----------
+        hierarchical_mean_odds_results : ScribeSVIResults
+            Fixture with mean-odds parameterization where ``r`` is derived from
+            ``mu`` and ``phi`` when canonical conversion is enabled.
+        """
+        results = hierarchical_mean_odds_results
+        selected = results.get_map("r", canonical=True, verbose=False)
+        assert set(selected.keys()) == {"r"}
+        assert selected["r"].shape == (results.n_components, results.n_genes)
+
+    def test_get_map_targets_can_request_capture_only(
+        self, hierarchical_mean_prob_results
+    ):
+        """Selective MAP can return capture probability only.
+
+        Parameters
+        ----------
+        hierarchical_mean_prob_results : ScribeSVIResults
+            Fixture with VCP capture enabled.
+        """
+        results = hierarchical_mean_prob_results
+        selected = results.get_map("p_capture", canonical=True, verbose=False)
+        assert set(selected.keys()) == {"p_capture"}
+        assert selected["p_capture"].shape == (results.n_cells,)
+
+    def test_get_map_legacy_positional_use_mean_still_supported(
+        self, hierarchical_mean_prob_results
+    ):
+        """Legacy positional bool for ``use_mean`` remains backward compatible.
+
+        Parameters
+        ----------
+        hierarchical_mean_prob_results : ScribeSVIResults
+            Fixture used to exercise legacy call style.
+        """
+        results = hierarchical_mean_prob_results
+        legacy_map = results.get_map(True, canonical=True, verbose=False)
+        assert "p_capture" in legacy_map
+
     def test_get_map_ppc_samples_mean_odds(
         self, hierarchical_mean_odds_results
     ):

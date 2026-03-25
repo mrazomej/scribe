@@ -215,6 +215,12 @@ map_params = results.get_map()
 # Canonical/standard MAP also includes deterministic mu:
 # mu = r * p / (1 - p)
 
+# Get only one MAP key (avoids unrelated expensive flow MAP work)
+p_capture_map = results.get_map("p_capture")
+
+# Get a subset of MAP keys
+rp_map = results.get_map(["r", "p"])
+
 # Get posterior distributions
 distributions = results.get_distributions()
 ```
@@ -258,6 +264,10 @@ Strategy summary:
 
 Non-flow parameters are unaffected by these settings and continue to use the
 standard `transform(base.loc)` approach.
+
+Selective extraction composes with flow settings: if you request only
+non-flow targets, flow MAP optimization/sampling for unrelated parameters is
+skipped automatically.
 
 **Flow Guide Posterior Distributions:**
 
