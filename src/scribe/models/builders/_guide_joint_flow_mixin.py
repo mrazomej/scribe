@@ -82,6 +82,8 @@ def _build_flow_chain_for_joint(
         zero_init_output=guide.zero_init_output,
         use_layer_norm=guide.use_layer_norm,
         use_residual=guide.use_residual,
+        soft_clamp=guide.soft_clamp,
+        use_loft=guide.use_loft,
     )
 
 

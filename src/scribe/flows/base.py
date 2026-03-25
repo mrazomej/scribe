@@ -38,6 +38,76 @@ from scribe.models.components.covariate_embedding import (
 )
 
 # ---------------------------------------------------------------------------
+# LOFT (Log Soft Extension) — Andrade 2024, arXiv:2402.16408
+# ---------------------------------------------------------------------------
+
+
+def loft_forward(
+    z: jnp.ndarray,
+    tau: float = 100.0,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """LOFT forward pass: compress extreme values logarithmically.
+
+    For ``|z| <= tau`` the transform is identity.  Beyond ``tau`` it
+    grows as ``log(|z| - tau + 1) + tau``, bounding the output while
+    remaining bijective and differentiable everywhere.
+
+    Parameters
+    ----------
+    z : jnp.ndarray
+        Input tensor, shape ``(..., D)``.
+    tau : float
+        Threshold below which the transform is identity.
+
+    Returns
+    -------
+    y : jnp.ndarray
+        Compressed output, same shape as ``z``.
+    log_det : jnp.ndarray
+        Sum of per-dimension log-determinant Jacobian, shape ``(...)``.
+
+    References
+    ----------
+    Andrade, "Stable Training of Normalizing Flows for High-dimensional
+    Variational Inference", 2024. arXiv:2402.16408, Eq. 6-8.
+    """
+    abs_z = jnp.abs(z)
+    excess = jnp.maximum(abs_z - tau, 0.0)
+    y = jnp.sign(z) * (jnp.log(excess + 1.0) + jnp.minimum(abs_z, tau))
+    log_det_per_dim = -jnp.log(excess + 1.0)
+    return y, jnp.sum(log_det_per_dim, axis=-1)
+
+
+def loft_inverse(
+    y: jnp.ndarray,
+    tau: float = 100.0,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """LOFT inverse pass: expand compressed values back.
+
+    Parameters
+    ----------
+    y : jnp.ndarray
+        Compressed tensor from :func:`loft_forward`.
+    tau : float
+        Same threshold used in the forward pass.
+
+    Returns
+    -------
+    z : jnp.ndarray
+        Reconstructed tensor, same shape as ``y``.
+    log_det : jnp.ndarray
+        Sum of per-dimension log-determinant of the *inverse* Jacobian
+        (positive sign: ``log|dz/dy|``), shape ``(...)``.
+    """
+    abs_y = jnp.abs(y)
+    excess = jnp.maximum(abs_y - tau, 0.0)
+    z = jnp.sign(y) * (jnp.exp(excess) - 1.0 + jnp.minimum(abs_y, tau))
+    # log|dz/dy| per dimension = max(|y| - tau, 0)
+    log_det_per_dim = excess
+    return z, jnp.sum(log_det_per_dim, axis=-1)
+
+
+# ---------------------------------------------------------------------------
 # Flow layer registry: flow_type -> factory(chain, layer_idx) -> nn.Module
 # ---------------------------------------------------------------------------
 
@@ -67,6 +137,7 @@ def _make_affine_coupling(chain, layer_idx: int) -> nn.Module:
         zero_init_output=chain.zero_init_output,
         use_layer_norm=chain.use_layer_norm,
         use_residual=chain.use_residual,
+        soft_clamp=chain.soft_clamp,
         name=f"layer_{layer_idx}",
     )
 
@@ -166,6 +237,17 @@ class FlowChain(nn.Module):
     use_residual : bool
         Add skip connections between consecutive hidden layers of the
         same width. Default True.
+    soft_clamp : bool
+        Use smooth asymmetric arctan clamp on affine coupling log-scale
+        (Andrade 2024). Only affects ``"affine_coupling"`` flow type.
+        Default True.
+    use_loft : bool
+        Apply LOFT (Log Soft Extension) compression and a trainable
+        final affine layer after all coupling layers.  Bounds sample
+        magnitudes while preserving identity near zero.  Default True.
+    loft_tau : float
+        LOFT threshold: values with ``|z| < tau`` pass through
+        unchanged; beyond ``tau``, growth is logarithmic. Default 100.
 
     Examples
     --------
@@ -203,6 +285,12 @@ class FlowChain(nn.Module):
     use_layer_norm: bool = True
     # Add skip connections between same-width hidden layers.
     use_residual: bool = True
+    # Use smooth asymmetric arctan clamp on affine log-scale (Andrade 2024).
+    soft_clamp: bool = True
+    # Apply LOFT compression + trainable final affine after coupling layers.
+    use_loft: bool = True
+    # LOFT threshold: identity for |z| < tau, logarithmic beyond.
+    loft_tau: float = 100.0
 
     def setup(self):
         """Create the stack of flow layers with alternating masks."""
@@ -216,6 +304,16 @@ class FlowChain(nn.Module):
         if self.covariate_specs:
             self.cov_embed = CovariateEmbedding(
                 covariate_specs=self.covariate_specs,
+            )
+        # Trainable element-wise affine applied after LOFT compression.
+        # Initialized to identity (mu=0, sigma=1) so the full chain still
+        # starts as identity when combined with zero-init coupling layers.
+        if self.use_loft:
+            self.final_mu = self.param(
+                "final_mu", nn.initializers.zeros, (self.features,)
+            )
+            self.final_log_sigma = self.param(
+                "final_log_sigma", nn.initializers.zeros, (self.features,)
             )
 
     # --------------------------------------------------------------------------
@@ -264,14 +362,32 @@ class FlowChain(nn.Module):
         # Start with zero log-det; same batch/event shape as input (no feature
         # dim).
         total_log_det = jnp.zeros(x.shape[:-1])
-        # Inverse direction: apply layers in reverse order for correct
-        # composition.
-        layers = reversed(self.layers) if reverse else self.layers
-        for layer in layers:
-            # Each layer returns updated x and its log|det(J)|; chain rule sums
-            # log-dets.
-            x, log_det = layer(x, reverse=reverse, context=combined_context)
-            total_log_det = total_log_det + log_det
-        # Final transformed tensor and total log-determinant (for density
-        # computation).
+
+        if reverse:
+            # Inverse: final_affine_inv → LOFT_inv → coupling_layers (reversed)
+            if self.use_loft:
+                sigma = jnp.exp(self.final_log_sigma)
+                x = (x - self.final_mu) / sigma
+                total_log_det = total_log_det - jnp.sum(self.final_log_sigma)
+
+                x, ld = loft_inverse(x, tau=self.loft_tau)
+                total_log_det = total_log_det + ld
+
+            for layer in reversed(self.layers):
+                x, log_det = layer(x, reverse=True, context=combined_context)
+                total_log_det = total_log_det + log_det
+        else:
+            # Forward: coupling_layers → LOFT → final_affine
+            for layer in self.layers:
+                x, log_det = layer(x, reverse=False, context=combined_context)
+                total_log_det = total_log_det + log_det
+
+            if self.use_loft:
+                x, ld = loft_forward(x, tau=self.loft_tau)
+                total_log_det = total_log_det + ld
+
+                sigma = jnp.exp(self.final_log_sigma)
+                x = sigma * x + self.final_mu
+                total_log_det = total_log_det + jnp.sum(self.final_log_sigma)
+
         return x, total_log_det
