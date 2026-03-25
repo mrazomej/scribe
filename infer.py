@@ -923,6 +923,8 @@ def main(cfg: DictConfig) -> None:
         "guide_flow_zero_init": cfg.get("guide_flow_zero_init", True),
         "guide_flow_layer_norm": cfg.get("guide_flow_layer_norm", True),
         "guide_flow_residual": cfg.get("guide_flow_residual", True),
+        "guide_flow_soft_clamp": cfg.get("guide_flow_soft_clamp", True),
+        "guide_flow_loft": cfg.get("guide_flow_loft", True),
         "priors": priors,
         # Amortization: single config object (when set, fit() uses it; else uses
         # individual params)

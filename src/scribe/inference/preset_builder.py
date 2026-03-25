@@ -88,6 +88,8 @@ def build_config_from_preset(
     guide_flow_zero_init: bool = True,
     guide_flow_layer_norm: bool = True,
     guide_flow_residual: bool = True,
+    guide_flow_soft_clamp: bool = True,
+    guide_flow_loft: bool = True,
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
     priors: Optional[Dict[str, Any]] = None,
@@ -354,6 +356,8 @@ def build_config_from_preset(
             zero_init_output=guide_flow_zero_init,
             use_layer_norm=guide_flow_layer_norm,
             use_residual=guide_flow_residual,
+            soft_clamp=guide_flow_soft_clamp,
+            use_loft=guide_flow_loft,
         )
 
         if joint_params is not None:

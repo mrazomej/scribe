@@ -14,6 +14,9 @@ Stability features (all on by default, user-configurable):
   layer to stabilize activations at high fan-in.
 * ``use_residual`` — adds a skip connection between consecutive hidden
   layers of the same width.
+* ``soft_clamp`` — replaces hard ``jnp.clip`` on log-scale with a smooth
+  asymmetric ``arctan`` clamp (Andrade 2024) that preserves gradients at
+  the boundary and tightly bounds per-layer expansion.
 
 Classes
 -------
@@ -60,6 +63,54 @@ def _get_act(name: str):
             f"Choose from: {list(_ACTIVATIONS.keys())}"
         )
     return _ACTIVATIONS[name]
+
+
+# ---------------------------------------------------------------------------
+# Asymmetric soft clamping (Andrade 2024, arXiv:2402.16408)
+# ---------------------------------------------------------------------------
+
+
+def _soft_clamp(
+    s: jnp.ndarray,
+    alpha_pos: float = 0.1,
+    alpha_neg: float = 2.0,
+) -> jnp.ndarray:
+    """Asymmetric arctan-based soft clamp for log-scale values.
+
+    Replaces the hard ``jnp.clip`` used in standard Real NVP.  Unlike
+    hard clamping, this function is differentiable everywhere and provides
+    non-zero gradients even at extreme input values.
+
+    The asymmetry is deliberate: ``alpha_pos=0.1`` tightly bounds the
+    positive (expansion) direction so each layer can expand by at most
+    ~10%, while ``alpha_neg=2.0`` allows more contraction.  Over many
+    layers this prevents the cumulative blowup of sample magnitudes
+    that causes NaN gradients.
+
+    Parameters
+    ----------
+    s : jnp.ndarray
+        Raw log-scale values from the conditioner network.
+    alpha_pos : float
+        Saturation level for positive values. The output for large
+        positive ``s`` approaches ``alpha_pos``.
+    alpha_neg : float
+        Saturation level for negative values. The output for large
+        negative ``s`` approaches ``-alpha_neg``.
+
+    Returns
+    -------
+    jnp.ndarray
+        Clamped log-scale, same shape as ``s``.
+
+    References
+    ----------
+    Andrade, "Stable Training of Normalizing Flows for High-dimensional
+    Variational Inference", 2024. arXiv:2402.16408, Eq. 5.
+    """
+    pos = (2.0 / jnp.pi) * alpha_pos * jnp.arctan(s / alpha_pos)
+    neg = (2.0 / jnp.pi) * alpha_neg * jnp.arctan(s / alpha_neg)
+    return jnp.where(s >= 0, pos, neg)
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +244,16 @@ class AffineCoupling(nn.Module):
     use_residual : bool
         If True (default), add residual (skip) connections between
         consecutive hidden layers of the same width.
+    soft_clamp : bool
+        If True (default), use a smooth asymmetric ``arctan``-based
+        clamp on the log-scale (Andrade 2024) instead of hard
+        ``jnp.clip``.  Preserves gradients at the boundary.
+    alpha_pos : float
+        Positive saturation level for the soft clamp.  Controls the
+        maximum per-layer expansion (default 0.1 → ~10% expansion).
+    alpha_neg : float
+        Negative saturation level for the soft clamp.  Controls the
+        maximum per-layer contraction (default 2.0).
     """
 
     features: int
@@ -203,6 +264,11 @@ class AffineCoupling(nn.Module):
     zero_init_output: bool = True
     use_layer_norm: bool = True
     use_residual: bool = True
+    # Smooth asymmetric arctan clamp on log_scale (Andrade 2024).
+    # When False, falls back to the hard jnp.clip(-5, 5).
+    soft_clamp: bool = True
+    alpha_pos: float = 0.1
+    alpha_neg: float = 2.0
 
     @nn.compact
     def __call__(
@@ -258,8 +324,11 @@ class AffineCoupling(nn.Module):
             name="log_scale",
             kernel_init=_init,
         )(h)
-        # Clamp log_scale to prevent numerical overflow in exp()
-        log_scale = jnp.clip(log_scale, -5.0, 5.0)
+        # Bound log_scale to prevent numerical overflow in exp()
+        if self.soft_clamp:
+            log_scale = _soft_clamp(log_scale, self.alpha_pos, self.alpha_neg)
+        else:
+            log_scale = jnp.clip(log_scale, -5.0, 5.0)
 
         if reverse:
             y_unmasked = (x_unmasked - shift) * jnp.exp(-log_scale)
