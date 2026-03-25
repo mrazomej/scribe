@@ -735,6 +735,97 @@ class TestFlowGeneSubsetting:
         assert sub2._original_n_genes == 20
 
 
+class TestFlowGeneSubsettingOriginalParams:
+    """Gene subsetting preserves _original_params for joint flow + nondense."""
+
+    @staticmethod
+    def _make_joint_flow_results(n_genes=100):
+        """Create SVI results with joint flow (dense r) + nondense p."""
+        config = ModelConfig(
+            base_model="nbdm",
+            parameterization="canonical",
+            unconstrained=True,
+        )
+        params = {
+            # Flow param for dense spec r (nested dict — not subsetted)
+            "joint_flow_joint_r$params": {
+                "layer_0": {"hidden_0": {"kernel": jnp.ones((n_genes, 64))}}
+            },
+            # Nondense array params for p (gene-dimensional arrays)
+            "joint_flow_joint_p_loc": jnp.zeros(n_genes),
+            "joint_flow_joint_p_raw_diag": -3.0 * jnp.ones(n_genes),
+            "joint_flow_joint_p_alpha_r": jnp.zeros(n_genes),
+        }
+        return ScribeSVIResults(
+            params=params,
+            loss_history=jnp.array([1.0]),
+            n_cells=50,
+            n_genes=n_genes,
+            model_type="nbvcp",
+            model_config=config,
+            prior_params={},
+        )
+
+    def test_subset_stores_original_params(self):
+        """Subsetting flow results stores the original unsubsetted params."""
+        results = self._make_joint_flow_results(n_genes=100)
+        subset = results[np.array([2, 5, 10])]
+
+        assert hasattr(subset, "_original_params")
+        assert subset._original_params is results.params
+
+    def test_original_params_has_full_dimension(self):
+        """_original_params retains full-dimension nondense arrays."""
+        n_genes = 100
+        results = self._make_joint_flow_results(n_genes=n_genes)
+        idx = np.array([2, 5, 10])
+        subset = results[idx]
+
+        # Subsetted params should be sliced
+        assert subset.params["joint_flow_joint_p_loc"].shape == (3,)
+
+        # Original params should be full-dimensional
+        orig = subset._original_params
+        assert orig["joint_flow_joint_p_loc"].shape == (n_genes,)
+        assert orig["joint_flow_joint_p_alpha_r"].shape == (n_genes,)
+
+    def test_resubset_preserves_original_params(self):
+        """Re-subsetting carries over the first original params reference."""
+        n_genes = 100
+        results = self._make_joint_flow_results(n_genes=n_genes)
+        sub1 = results[np.array([2, 5, 10, 15, 20])]
+        sub2 = sub1[np.array([1, 3])]
+
+        # sub2's _original_params should be the same as sub1's
+        assert sub2._original_params is results.params
+        assert sub2._original_params["joint_flow_joint_p_loc"].shape == (
+            n_genes,
+        )
+
+    def test_no_original_params_without_flow(self):
+        """Results without flow params do not store _original_params."""
+        config = ModelConfig(
+            base_model="nbdm",
+            parameterization="canonical",
+            unconstrained=True,
+        )
+        params = {
+            "r_loc": jnp.zeros(20),
+            "p_loc": jnp.zeros(20),
+        }
+        results = ScribeSVIResults(
+            params=params,
+            loss_history=jnp.array([1.0]),
+            n_cells=50,
+            n_genes=20,
+            model_type="nbvcp",
+            model_config=config,
+            prior_params={},
+        )
+        subset = results[np.array([0, 5, 10])]
+        assert not hasattr(subset, "_original_params")
+
+
 class TestHierarchicalFlowSkip:
     """Verify that flow-guided params with hierarchical priors don't crash.
 
@@ -753,7 +844,9 @@ class TestHierarchicalFlowSkip:
         )
 
         guide = JointNormalizingFlowGuide(
-            group="joint", flow_type="affine_coupling", num_layers=2,
+            group="joint",
+            flow_type="affine_coupling",
+            num_layers=2,
         )
         config = ModelConfig(
             base_model="nbdm",
@@ -794,7 +887,9 @@ class TestHierarchicalFlowSkip:
         )
 
         guide = JointNormalizingFlowGuide(
-            group="joint", flow_type="affine_coupling", num_layers=2,
+            group="joint",
+            flow_type="affine_coupling",
+            num_layers=2,
         )
         config = ModelConfig(
             base_model="nbdm",

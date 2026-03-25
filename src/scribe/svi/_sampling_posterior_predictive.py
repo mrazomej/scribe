@@ -255,8 +255,16 @@ class PosteriorPredictiveSamplingMixin:
         # guide params, the flow must run at the original full
         # dimensionality.  We sample at _original_n_genes and then
         # slice the output to the requested gene indices.
+        #
+        # Crucially, we must use the *original* unsubsetted params dict
+        # for the guide call.  Gene subsetting slices array-valued
+        # variational params (e.g. nondense loc/alpha in a joint flow
+        # guide) to the gene subset, but the flow chain still expects
+        # them at full dimension.  ``_original_params`` is stored by
+        # ``_create_subset`` when flow params are detected.
         _orig_ng = getattr(self, "_original_n_genes", None)
         _gene_idx = getattr(self, "_subset_gene_index", None)
+        _orig_params = getattr(self, "_original_params", None)
         _full_dim = (
             _orig_ng is not None
             and _orig_ng != self.n_genes
@@ -264,6 +272,10 @@ class PosteriorPredictiveSamplingMixin:
             and _has_flow_params(self.params)
         )
         n_genes_for_guide = _orig_ng if _full_dim else self.n_genes
+        params_for_guide = (
+            _orig_params if (_full_dim and _orig_params is not None)
+            else self.params
+        )
 
         # Include dataset_indices so that when the model is replayed to
         # compute deterministic sites, index_dataset_params can convert
@@ -283,7 +295,7 @@ class PosteriorPredictiveSamplingMixin:
 
         posterior_samples = sample_variational_posterior(
             guide,
-            self.params,
+            params_for_guide,
             model,
             model_args,
             rng_key=rng_key,
