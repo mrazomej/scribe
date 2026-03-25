@@ -24,15 +24,17 @@ from .ppc_rendering import (
 
 def _select_divergent_genes(results, counts, n_rows, n_cols):
     """Select genes with highest divergence across components, binned by expression."""
-    map_estimates = _get_map_estimates_for_plot(
-        results, counts=counts, use_mean=False
-    )
-
     parameterization = results.model_config.parameterization
     if parameterization in ["linked", "mean_prob", "odds_ratio", "mean_odds"]:
         param_name = "mu"
     else:
         param_name = "r"
+    map_estimates = _get_map_estimates_for_plot(
+        results,
+        counts=counts,
+        use_mean=False,
+        targets=[param_name],
+    )
 
     param = map_estimates.get(param_name)
     if param is None:
@@ -147,7 +149,11 @@ def _get_component_ppc_samples(
     counts=None,
 ):
     """Generate PPC samples for a specific mixture component."""
-    map_estimates = _get_map_estimates_for_plot(results, counts=counts)
+    map_estimates = _get_map_estimates_for_plot(
+        results,
+        counts=counts,
+        targets=["r", "p", "gate", "p_capture"],
+    )
 
     r_all = map_estimates["r"]
     p_all = map_estimates["p"]
@@ -833,7 +839,9 @@ def plot_mixture_composition(
         return
 
     # Extract MAP mixture weights (global composition prior at MAP).
-    map_estimates = _get_map_estimates_for_plot(results, counts=counts)
+    map_estimates = _get_map_estimates_for_plot(
+        results, counts=counts, targets=["mixing_weights"]
+    )
     mixing_weights = map_estimates.get("mixing_weights")
     dataset_indices = getattr(results, "_dataset_indices", None)
     weight_fractions = _resolve_weight_fractions_for_composition(

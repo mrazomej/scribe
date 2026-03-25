@@ -153,7 +153,9 @@ def plot_mu_pairwise(
     """
     console.print("[dim]Plotting pairwise mu dataset comparison...[/dim]")
 
-    map_estimates = _get_map_estimates_for_plot(results, counts=counts)
+    map_estimates = _get_map_estimates_for_plot(
+        results, counts=counts, targets=["mu", "mixing_weights"]
+    )
     mu_values = map_estimates.get("mu")
     if mu_values is None:
         console.print(
