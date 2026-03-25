@@ -735,6 +735,96 @@ class TestFlowGeneSubsetting:
         assert sub2._original_n_genes == 20
 
 
+class TestHierarchicalFlowSkip:
+    """Verify that flow-guided params with hierarchical priors don't crash.
+
+    When ``p_prior=gaussian`` and ``p`` is flow-guided, Pass 2
+    (_apply_gene_level_hierarchy) must still build the hyperparameter
+    posteriors (logit_p_loc, logit_p_scale) but skip the gene-level
+    ``p`` posterior, deferring it to Pass 10.
+    """
+
+    def test_hierarchical_p_with_flow_guide_succeeds(self):
+        """get_posterior_distributions succeeds for hierarchical + flow p."""
+        from scribe.models.builders.posterior import get_posterior_distributions
+        from scribe.models.config.groups import GuideFamilyConfig
+        from scribe.models.components.guide_families import (
+            JointNormalizingFlowGuide,
+        )
+
+        guide = JointNormalizingFlowGuide(
+            group="joint", flow_type="affine_coupling", num_layers=2,
+        )
+        config = ModelConfig(
+            base_model="nbdm",
+            parameterization="canonical",
+            unconstrained=True,
+            p_prior="gaussian",
+            guide_families=GuideFamilyConfig(r=guide, p=guide),
+        )
+
+        # Minimal params: flow keys for r and p, mean-field hypers
+        params = {
+            "joint_flow_joint_r$params": {
+                "layer_0": {"hidden_0": {"kernel": jnp.ones((10, 64))}}
+            },
+            "joint_flow_joint_p$params": {
+                "layer_0": {"hidden_0": {"kernel": jnp.ones((10, 64))}}
+            },
+            "logit_p_loc_loc": jnp.array(0.0),
+            "logit_p_loc_scale": jnp.array(1.0),
+            "logit_p_scale_loc": jnp.array(0.0),
+            "logit_p_scale_scale": jnp.array(1.0),
+        }
+
+        dists = get_posterior_distributions(params, config)
+
+        # Hyperparameters must be present
+        assert "logit_p_loc" in dists
+        assert "logit_p_scale" in dists
+        # Gene-level p should NOT be built by Pass 2 (no p_loc key);
+        # the call itself must not raise a KeyError.
+
+    def test_hierarchical_mu_with_flow_guide_succeeds(self):
+        """get_posterior_distributions succeeds for hierarchical + flow r."""
+        from scribe.models.builders.posterior import get_posterior_distributions
+        from scribe.models.config.groups import GuideFamilyConfig
+        from scribe.models.components.guide_families import (
+            JointNormalizingFlowGuide,
+        )
+
+        guide = JointNormalizingFlowGuide(
+            group="joint", flow_type="affine_coupling", num_layers=2,
+        )
+        config = ModelConfig(
+            base_model="nbdm",
+            parameterization="canonical",
+            unconstrained=True,
+            mu_prior="gaussian",
+            n_components=2,
+            guide_families=GuideFamilyConfig(r=guide),
+        )
+
+        # r is flow-guided, log_r_loc/log_r_scale are mean-field hypers
+        params = {
+            "joint_flow_joint_r$params": {
+                "layer_0": {"hidden_0": {"kernel": jnp.ones((10, 64))}}
+            },
+            "p_loc": jnp.zeros(5),
+            "p_scale": jnp.ones(5),
+            "log_r_loc_loc": jnp.array(0.0),
+            "log_r_loc_scale": jnp.array(1.0),
+            "log_r_scale_loc": jnp.array(0.0),
+            "log_r_scale_scale": jnp.array(1.0),
+        }
+
+        dists = get_posterior_distributions(params, config)
+
+        # Hyperparameters must be present
+        assert "log_r_loc" in dists
+        assert "log_r_scale" in dists
+
+
 class TestFlowSamplingHelpers:
     """Tests for _has_flow_params and _subset_gene_dim_samples."""
 

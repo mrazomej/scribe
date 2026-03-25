@@ -540,6 +540,7 @@ def _apply_gene_level_hierarchy(
     is_mixture: bool,
     low_rank: bool,
     split: bool,
+    flow_skip: set[str],
     *,
     pos_transform=None,
 ) -> None:
@@ -555,6 +556,10 @@ def _apply_gene_level_hierarchy(
 
     NEG variant: adds psi and zeta LogNormal posteriors and the NCP raw z
     variable instead of the constrained parameter.
+
+    Parameters in *flow_skip* (flow-guided params) are excluded from
+    the gene-level posterior build; their hyperparameters are still built
+    and Pass 10 handles the gene-level distribution.
     """
     hierarchical_p = model_config.hierarchical_p
     horseshoe_p = getattr(model_config, "horseshoe_p", False)
@@ -582,6 +587,8 @@ def _apply_gene_level_hierarchy(
         distributions.update(
             _build_hyperparameter_posteriors(params, loc_name, loc_name)
         )
+        if target_name in flow_skip:
+            return
         distributions.update(
             _build_horseshoe_hyperparameter_posteriors(params, prefix)
         )
@@ -596,6 +603,8 @@ def _apply_gene_level_hierarchy(
         distributions.update(
             _build_hyperparameter_posteriors(params, loc_name, loc_name)
         )
+        if target_name in flow_skip:
+            return
         distributions.update(
             _build_neg_hyperparameter_posteriors(params, prefix)
         )
@@ -608,6 +617,9 @@ def _apply_gene_level_hierarchy(
     distributions.update(
         _build_hyperparameter_posteriors(params, loc_name, scale_name)
     )
+    # Flow-guided: hypers are built above; gene-level param handled by Pass 10.
+    if target_name in flow_skip:
+        return
     # Resolve transform: phi is positive (use pos_transform), p is (0,1).
     _jp_tf = pos_transform if target_name == "phi" else None
     jp = _find_joint_prefix(params, target_name)
@@ -642,6 +654,7 @@ def _apply_gene_level_mu_hierarchy(
     is_mixture: bool,
     low_rank: bool,
     split: bool,
+    flow_skip: set[str],
     *,
     pos_transform=None,
 ) -> None:
@@ -656,6 +669,10 @@ def _apply_gene_level_mu_hierarchy(
 
     NEG variant: adds psi and zeta LogNormal posteriors and the NCP raw z
     variable instead of the constrained parameter.
+
+    Parameters in *flow_skip* (flow-guided params) are excluded from
+    the gene-level posterior build; their hyperparameters are still built
+    and Pass 10 handles the gene-level distribution.
     """
     mu_prior = getattr(model_config, "mu_prior", HierarchicalPriorType.NONE)
     if mu_prior == HierarchicalPriorType.NONE:
@@ -680,6 +697,8 @@ def _apply_gene_level_mu_hierarchy(
         distributions.update(
             _build_hyperparameter_posteriors(params, loc_name, loc_name)
         )
+        if target_name in flow_skip:
+            return
         distributions.update(
             _build_horseshoe_hyperparameter_posteriors(params, prefix)
         )
@@ -693,6 +712,8 @@ def _apply_gene_level_mu_hierarchy(
         distributions.update(
             _build_hyperparameter_posteriors(params, loc_name, loc_name)
         )
+        if target_name in flow_skip:
+            return
         distributions.update(
             _build_neg_hyperparameter_posteriors(params, prefix)
         )
@@ -705,6 +726,9 @@ def _apply_gene_level_mu_hierarchy(
     distributions.update(
         _build_hyperparameter_posteriors(params, loc_name, scale_name)
     )
+    # Flow-guided: hypers are built above; gene-level param handled by Pass 10.
+    if target_name in flow_skip:
+        return
     # mu and r are always positive-valued — use pos_transform.
     jp = _find_joint_prefix(params, target_name)
     if jp:
@@ -1513,7 +1537,10 @@ def get_posterior_distributions(
 
     # Flow-guided params have no _loc/_scale keys; skip in pass 1 and
     # let pass 10 (_apply_flow_posteriors) reconstruct them.
-    skip |= _flow_guided_param_names(params)
+    # Keep the flow set separate so hierarchy passes only skip flow params,
+    # not params they are responsible for overriding.
+    flow_skip = _flow_guided_param_names(params)
+    skip |= flow_skip
 
     # --- Execute the pipeline (ordering matters — see docstring) ----------
 
@@ -1536,6 +1563,7 @@ def get_posterior_distributions(
         is_mixture,
         low_rank,
         split,
+        flow_skip,
         pos_transform=pos_transform,
     )
     _apply_gene_level_mu_hierarchy(  # Pass 2b: mu/r
@@ -1546,6 +1574,7 @@ def get_posterior_distributions(
         is_mixture,
         low_rank,
         split,
+        flow_skip,
         pos_transform=pos_transform,
     )
     _apply_dataset_hierarchy_mu(  # Pass 3
