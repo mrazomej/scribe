@@ -153,6 +153,11 @@ guide_flow_soft_clamp: true
 # Bounds sample magnitudes logarithmically at extremes while preserving identity
 # near zero. The final affine re-expands the range to match the target posterior.
 guide_flow_loft: true
+# Precision: accumulate log-determinant Jacobian in float64 to reduce rounding
+# error in high-dimensional flows (28K+ genes).  Automatically promotes
+# enable_x64=true. Off by default — consumer GPUs throttle float64 heavily.
+# Recommended for datacenter GPUs (A100, H100, MI250X) with full-rate float64.
+guide_flow_log_det_f64: false
 
 # --- Priors Configuration (optional overrides) ---
 # Each prior is a list [param1, param2] for the distribution
@@ -313,3 +318,4 @@ hydra:
           - guide_flow_residual
           - guide_flow_soft_clamp
           - guide_flow_loft
+          - guide_flow_log_det_f64

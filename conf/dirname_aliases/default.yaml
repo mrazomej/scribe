@@ -32,6 +32,7 @@ dirname_aliases:
     guide_flow_zero_init: gflowzinit
     guide_flow_layer_norm: gflowln
     guide_flow_residual: gflowres
+    guide_flow_log_det_f64: gflowf64
 
     # Hierarchical prior type fields
     mu_prior: muprior

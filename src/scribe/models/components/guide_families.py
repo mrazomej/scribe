@@ -312,6 +312,11 @@ class NormalizingFlowGuide(GuideFamily):
     use_loft : bool, default True
         Apply LOFT compression + trainable final affine after coupling
         layers.  Bounds sample magnitudes at extremes.
+    log_det_f64 : bool, default False
+        Accumulate the log-determinant Jacobian in float64 for
+        improved precision in high-dimensional flows.  Requires
+        ``jax_enable_x64`` (auto-promoted when set via ``fit()``).
+        Off by default; recommended for datacenter GPUs only.
 
     Advantages
     ----------
@@ -360,6 +365,7 @@ class NormalizingFlowGuide(GuideFamily):
     use_residual: bool = True
     soft_clamp: bool = True
     use_loft: bool = True
+    log_det_f64: bool = False
 
     def __post_init__(self) -> None:
         if self.num_layers <= 0:
@@ -436,6 +442,11 @@ class JointNormalizingFlowGuide(GuideFamily):
     use_loft : bool, default True
         Apply LOFT compression + trainable final affine after coupling
         layers.  Bounds sample magnitudes at extremes.
+    log_det_f64 : bool, default False
+        Accumulate the log-determinant Jacobian in float64 for
+        improved precision in high-dimensional flows.  Requires
+        ``jax_enable_x64`` (auto-promoted when set via ``fit()``).
+        Off by default; recommended for datacenter GPUs only.
 
     Advantages
     ----------
@@ -477,6 +488,7 @@ class JointNormalizingFlowGuide(GuideFamily):
     use_residual: bool = True
     soft_clamp: bool = True
     use_loft: bool = True
+    log_det_f64: bool = False
 
     def __post_init__(self) -> None:
         if self.num_layers <= 0:

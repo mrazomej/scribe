@@ -90,6 +90,7 @@ def build_config_from_preset(
     guide_flow_residual: bool = True,
     guide_flow_soft_clamp: bool = True,
     guide_flow_loft: bool = True,
+    guide_flow_log_det_f64: bool = False,
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
     priors: Optional[Dict[str, Any]] = None,
@@ -358,6 +359,7 @@ def build_config_from_preset(
             use_residual=guide_flow_residual,
             soft_clamp=guide_flow_soft_clamp,
             use_loft=guide_flow_loft,
+            log_det_f64=guide_flow_log_det_f64,
         )
 
         if joint_params is not None:
