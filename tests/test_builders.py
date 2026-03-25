@@ -4522,6 +4522,45 @@ class TestFlowGuidePosteriorIntegration:
         params = svi.get_params(svi_state)
         return params, config, n_cells, n_genes
 
+    @staticmethod
+    def _build_results_from_flow_run(small_counts):
+        """Create a ``ScribeSVIResults`` object from the flow integration helper.
+
+        Parameters
+        ----------
+        small_counts : jnp.ndarray
+            Small synthetic count matrix used by this test module fixtures.
+
+        Returns
+        -------
+        ScribeSVIResults
+            Results object carrying trained flow-guide parameters.
+        """
+        params, config, n_cells, n_genes = (
+            TestFlowGuidePosteriorIntegration._run_svi_per_param_flow(
+                small_counts
+            )
+        )
+        # Add minimal canonical ``p`` variational params because the helper
+        # model intentionally only sampled ``r`` while the NBDM posterior
+        # builder expects both canonical parameters.
+        params = {
+            **params,
+            "p_loc": jnp.array(0.0),
+            "p_scale": jnp.array(0.1),
+        }
+        # Build a lightweight results object so selective get_map behavior can be
+        # exercised through the public API, not internal helpers.
+        return ScribeSVIResults(
+            params=params,
+            loss_history=jnp.array([1.0]),
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_type="nbdm",
+            model_config=config,
+            prior_params={},
+        )
+
     # ---- get_distributions -------------------------------------------------
 
     def test_flow_guide_get_distributions(self, small_counts):
@@ -4652,6 +4691,59 @@ class TestFlowGuidePosteriorIntegration:
         assert "r" in estimates
         assert estimates["r"].shape[-1] == n_genes
         assert jnp.isfinite(estimates["r"]).all()
+
+    def test_get_map_targets_skip_unrelated_flow(self, small_counts, monkeypatch):
+        """Selective MAP for non-flow keys skips flow optimization work.
+
+        Parameters
+        ----------
+        small_counts : jnp.ndarray
+            Synthetic count matrix fixture.
+        monkeypatch : pytest.MonkeyPatch
+            Pytest fixture for replacing expensive flow-map helper calls.
+        """
+        from scribe.svi import _parameter_extraction as pe
+
+        results = self._build_results_from_flow_run(small_counts)
+
+        # The model has a flow-guided ``r``. Requesting only ``p`` should avoid
+        # calling the flow optimizer/sampler path entirely.
+        def _fail_flow_call(**kwargs):
+            raise AssertionError("Flow MAP helper should not be called")
+
+        monkeypatch.setattr(pe, "_flow_map_estimates", _fail_flow_call)
+        selected = results.get_map("p", canonical=True, verbose=False)
+        assert set(selected.keys()) == {"p"}
+
+    def test_get_map_targets_filter_output(self, small_counts):
+        """Selective MAP returns only the requested keys.
+
+        Parameters
+        ----------
+        small_counts : jnp.ndarray
+            Synthetic count matrix fixture.
+        """
+        results = self._build_results_from_flow_run(small_counts)
+        selected = results.get_map(
+            ["p", "r"],
+            canonical=True,
+            verbose=False,
+            flow_n_samples=25,
+            flow_optimize_steps=5,
+        )
+        assert set(selected.keys()) == {"p", "r"}
+
+    def test_get_map_targets_unknown_key_raises(self, small_counts):
+        """Unknown selective MAP keys raise a clear error.
+
+        Parameters
+        ----------
+        small_counts : jnp.ndarray
+            Synthetic count matrix fixture.
+        """
+        results = self._build_results_from_flow_run(small_counts)
+        with pytest.raises(ValueError, match="Requested MAP parameter"):
+            results.get_map("definitely_not_a_param", verbose=False)
 
     # ---- Joint flow get_distributions --------------------------------------
 
