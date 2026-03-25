@@ -424,10 +424,24 @@ def _build_base_skip_set(
 def _flow_guided_param_names(params: Dict[str, Any]) -> set[str]:
     """Return the set of base parameter names that are flow-guided.
 
-    Scans the variational parameter dict for flow keys
-    (``flow_{name}$params``, ``joint_flow_{group}_{name}$params``, and
-    their ``_idx{k}`` variants) and extracts the logical parameter name
-    so that earlier passes can skip those parameters.
+    Scans the variational parameter dict for flow keys and extracts the
+    logical parameter name so that earlier passes can skip those
+    parameters.  Detects three kinds of flow-managed parameters:
+
+    1. **Per-param flows**: ``flow_{name}$params`` /
+       ``flow_{name}_idx{k}$params``.
+    2. **Joint flow dense params**: ``joint_flow_{group}_{name}$params``
+       / ``joint_flow_{group}_{name}_idx{k}$params``.
+    3. **Joint flow nondense params**: Parameters whose variational
+       sites live under ``joint_flow_{group}_{name}_loc`` (with a
+       matching ``_raw_diag`` key) but have no ``$params`` key of their
+       own.  These are the diagonal-regression parameters created by
+       ``JointNormalizingFlowGuide`` when ``dense_params`` is set.
+
+    Without (3), nondense params like ``p`` in ``dense_params=r,
+    joint_param=r,p`` would be missed by ``flow_skip`` and incorrectly
+    processed by hierarchy passes (Pass 2/2b) instead of being deferred
+    to the joint-flow nondense fallback in Pass 10.
 
     Parameters
     ----------
@@ -459,6 +473,24 @@ def _flow_guided_param_names(params: Dict[str, Any]) -> set[str]:
             parts = inner.split("_", 1)
             if len(parts) == 2:
                 names.add(parts[1])
+
+    # Detect nondense joint-flow params that have _loc / _raw_diag but
+    # no $params key (diagonal-regression block in JointNormalizingFlowGuide).
+    for key in params:
+        if not key.startswith("joint_flow_") or not key.endswith("_loc"):
+            continue
+        if "$params" in key or "_scalar_" in key:
+            continue
+        inner = key[len("joint_flow_"): -len("_loc")]
+        parts = inner.split("_", 1)
+        if len(parts) != 2:
+            continue
+        _group, name = parts
+        # Only add if not already detected as a dense flow param
+        if name not in names:
+            raw_diag_key = key.replace("_loc", "_raw_diag")
+            if raw_diag_key in params:
+                names.add(name)
 
     return names
 
@@ -2149,6 +2181,10 @@ def _apply_joint_flow_nondense_fallback(
     pos_transform : Transform
         Positive-value transform.
     """
+    # Probability-support parameters use SigmoidTransform; all others
+    # use the caller-provided pos_transform (softplus or exp).
+    _SIGMOID_PARAMS = frozenset({"p", "gate", "p_capture"})
+
     # Detect nondense: joint_flow_{group}_{name}_loc (not $params, not scalar)
     seen = set()
     for key in params:
@@ -2183,9 +2219,14 @@ def _apply_joint_flow_nondense_fallback(
             # Mark as conditional: the actual guide loc is adjusted by
             # regression on the dense flow residuals (alpha * r_resid),
             # so get_map must use sampling-based estimation.
+            param_tf = (
+                dist.transforms.SigmoidTransform()
+                if name in _SIGMOID_PARAMS
+                else pos_transform
+            )
             distributions[name] = {
                 "base": base,
-                "transform": pos_transform,
+                "transform": param_tf,
                 "conditional": True,
             }
 
@@ -2209,9 +2250,14 @@ def _apply_joint_flow_nondense_fallback(
                 scale = jnp.ones_like(loc)
 
             base = dist.Normal(loc, scale)
+            param_tf = (
+                dist.transforms.SigmoidTransform()
+                if name in _SIGMOID_PARAMS
+                else pos_transform
+            )
             distributions[name] = {
                 "base": base,
-                "transform": pos_transform,
+                "transform": param_tf,
                 "conditional": True,
             }
 

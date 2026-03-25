@@ -535,6 +535,22 @@ config = build_config_from_preset(
   `TransformedDistribution(Normal, SoftplusTransform)`);
   `eta_capture_loc` → legacy truncated-normal (reconstructs
   `TruncatedNormal(low=0)`).
+- **Flow-guided param detection (`_flow_guided_param_names`)**: scans the
+  variational parameter dict for three kinds of flow-managed parameters:
+  (1) per-param flows (`flow_{name}$params`), (2) joint flow dense params
+  (`joint_flow_{group}_{name}$params`), and (3) joint flow nondense params
+  (`joint_flow_{group}_{name}_loc` with a matching `_raw_diag` key but no
+  `$params` key). Category (3) is critical for `dense_params` configs:
+  without it, nondense params like `p` in `dense_params=r, joint_param=r,p`
+  would be missed by `flow_skip` and incorrectly processed by hierarchy
+  passes (Pass 2/2b) instead of being deferred to Pass 10's nondense
+  fallback (`_apply_joint_flow_nondense_fallback`).
+- **Flow nondense fallback transform**: `_apply_joint_flow_nondense_fallback`
+  selects the correct constraint transform per parameter —
+  `SigmoidTransform` for probability params (`p`, `gate`, `p_capture`) and
+  `pos_transform` for positive params. Each nondense entry is marked
+  `"conditional": True` so that `get_map` routes it through the
+  sampling-based MAP path.
 
 ### Joint-Parameter Compatibility Checklist
 
