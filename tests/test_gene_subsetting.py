@@ -89,6 +89,7 @@ class TestMetadataSubsettingCorrectAxis:
     @pytest.fixture
     def model_config_with_param_specs(self):
         from scribe.models.builders.parameter_specs import LogNormalSpec
+
         spec = LogNormalSpec(
             name="r",
             shape_dims=("n_components", "n_genes"),
@@ -102,7 +103,9 @@ class TestMetadataSubsettingCorrectAxis:
             param_specs=[spec],
         )
 
-    def test_subset_uses_gene_axis_from_metadata(self, model_config_with_param_specs):
+    def test_subset_uses_gene_axis_from_metadata(
+        self, model_config_with_param_specs
+    ):
         """With (n_components, n_genes) = (5, 5), subsetting must use axis 1, not 0."""
         n_genes = 5
         # Param with shape (5, 5) - ambiguous without metadata
@@ -129,11 +132,16 @@ class TestMetadataSubsettingCorrectAxis:
         subset = new_params["r_loc"]
         # Subset along axis 1 (genes): shape should be (5, 1), not (1, 5)
         assert subset.shape == (5, 1)
-        np.testing.assert_array_almost_equal(subset[:, 0], params["r_loc"][:, 0])
+        np.testing.assert_array_almost_equal(
+            subset[:, 0], params["r_loc"][:, 0]
+        )
 
-    def test_subset_posterior_samples_uses_metadata(self, model_config_with_param_specs):
+    def test_subset_posterior_samples_uses_metadata(
+        self, model_config_with_param_specs
+    ):
         """Posterior samples with (n_samples, n_components, n_genes) use gene axis 2."""
         from scribe.models.builders.parameter_specs import LogNormalSpec
+
         spec = LogNormalSpec(
             name="r",
             shape_dims=("n_components", "n_genes"),
@@ -141,8 +149,12 @@ class TestMetadataSubsettingCorrectAxis:
             is_gene_specific=True,
         )
         n_genes = 4
-        samples = {"r": jnp.ones((10, 3, n_genes))}  # (n_samples, n_components, n_genes)
-        gene_axis_by_key = build_gene_axis_by_key([spec], {"r": samples["r"]}, n_genes)
+        samples = {
+            "r": jnp.ones((10, 3, n_genes))
+        }  # (n_samples, n_components, n_genes)
+        gene_axis_by_key = build_gene_axis_by_key(
+            [spec], {"r": samples["r"]}, n_genes
+        )
         assert gene_axis_by_key is not None
         assert gene_axis_by_key["r"] == 2
 
@@ -193,7 +205,8 @@ class TestMetadataSubsettingCorrectAxis:
         assert new_params["joint_joint_r_loc"].shape == (5, 1)
         assert new_params["joint_joint_r_W"].shape == (5, 1, 2)
         np.testing.assert_array_almost_equal(
-            new_params["joint_joint_r_loc"][:, 0], params["joint_joint_r_loc"][:, 0]
+            new_params["joint_joint_r_loc"][:, 0],
+            params["joint_joint_r_loc"][:, 0],
         )
 
 
@@ -274,8 +287,13 @@ class TestFallbackWhenParamSpecsEmpty:
 
     def test_subset_params_fallback_no_raise(self):
         """When _gene_axis_by_key is None, shape-based heuristic runs and does not raise."""
-        config = ModelConfig(base_model="nbdm", parameterization="standard", unconstrained=False)
-        assert getattr(config, "param_specs", None) == [] or config.param_specs == []
+        config = ModelConfig(
+            base_model="nbdm", parameterization="standard", unconstrained=False
+        )
+        assert (
+            getattr(config, "param_specs", None) == []
+            or config.param_specs == []
+        )
         params = {"r_loc": jnp.ones(5)}
         results = ScribeSVIResults(
             params=params,
@@ -294,7 +312,9 @@ class TestFallbackWhenParamSpecsEmpty:
 
     def test_subset_posterior_samples_fallback_no_raise(self):
         """When _gene_axis_by_key is None, last-axis heuristic runs and does not raise."""
-        config = ModelConfig(base_model="nbdm", parameterization="standard", unconstrained=False)
+        config = ModelConfig(
+            base_model="nbdm", parameterization="standard", unconstrained=False
+        )
         samples = {"r": jnp.ones((10, 5))}
         results = ScribeSVIResults(
             params={},
@@ -400,9 +420,7 @@ class TestConcatGeneAlignment:
             p_capture_values=[0.3, 0.4, 0.5],
         )
 
-        combined = ScribeSVIResults.concat(
-            [res_a, res_b], align_genes="strict"
-        )
+        combined = ScribeSVIResults.concat([res_a, res_b], align_genes="strict")
         assert combined.n_cells == 5
         assert list(combined.var.index) == ["g1", "g2", "g3"]
         # After gene alignment both results have identical r_loc; promotion
@@ -472,7 +490,9 @@ class TestConcatGeneAlignment:
 
         # In var_only mode, non-cell-specific params are stacked along a
         # dataset axis; cell-specific p_capture_loc is concatenated.
-        combined = ScribeSVIResults.concat([res_a, res_b], validation="var_only")
+        combined = ScribeSVIResults.concat(
+            [res_a, res_b], validation="var_only"
+        )
         np.testing.assert_allclose(
             combined.params["r_loc"],
             jnp.array([[10.0, 20.0, 30.0], [100.0, 200.0, 300.0]]),
@@ -594,3 +614,155 @@ class TestConcatGeneAlignment:
         )
         with pytest.raises(ValueError, match="at least two elements"):
             ScribeSVIResults.concat([res])
+
+
+# ===========================================================================
+# Flow-guided gene subsetting
+# ===========================================================================
+
+
+class TestFlowGuidedParamNames:
+    """Tests for _flow_guided_param_names in posterior.py."""
+
+    def test_detects_per_param_flow(self):
+        from scribe.models.builders.posterior import _flow_guided_param_names
+
+        params = {
+            "flow_r$params": {"layer_0": {}},
+            "eta_capture_loc": jnp.zeros(10),
+        }
+        assert _flow_guided_param_names(params) == {"r"}
+
+    def test_detects_joint_flow(self):
+        from scribe.models.builders.posterior import _flow_guided_param_names
+
+        params = {
+            "joint_flow_default_r$params": {"layer_0": {}},
+            "joint_flow_default_p$params": {"layer_0": {}},
+        }
+        assert _flow_guided_param_names(params) == {"r", "p"}
+
+    def test_detects_independent_mixture_flow(self):
+        from scribe.models.builders.posterior import _flow_guided_param_names
+
+        params = {
+            "flow_r_idx0$params": {"layer_0": {}},
+            "flow_r_idx1$params": {"layer_0": {}},
+        }
+        assert _flow_guided_param_names(params) == {"r"}
+
+    def test_ignores_non_flow_keys(self):
+        from scribe.models.builders.posterior import _flow_guided_param_names
+
+        params = {
+            "r_loc": jnp.zeros(5),
+            "r_scale": jnp.ones(5),
+            "amortizer$params": {"encoder": {}},
+        }
+        assert _flow_guided_param_names(params) == set()
+
+
+class TestFlowGeneSubsetting:
+    """Gene subsetting preserves flow params and stores _subset_gene_index."""
+
+    @staticmethod
+    def _make_flow_results(n_genes=20):
+        """Create minimal SVI results with a flow param key."""
+        config = ModelConfig(
+            base_model="nbdm",
+            parameterization="canonical",
+            unconstrained=True,
+        )
+        params = {
+            # Flow param (nested dict — not gene-subsettable)
+            "joint_flow_default_r$params": {
+                "layer_0": {"hidden_0": {"kernel": jnp.ones((10, 64))}}
+            },
+            "joint_flow_default_p$params": {
+                "layer_0": {"hidden_0": {"kernel": jnp.ones((10, 64))}}
+            },
+            # Cell-specific param (not gene-indexed)
+            "eta_capture_loc": jnp.zeros(50),
+        }
+        return ScribeSVIResults(
+            params=params,
+            loss_history=jnp.array([1.0]),
+            n_cells=50,
+            n_genes=n_genes,
+            model_type="nbvcp",
+            model_config=config,
+            prior_params={},
+        )
+
+    def test_subset_stores_gene_index(self):
+        """__getitem__ stores the gene index on the subsetted result."""
+        results = self._make_flow_results(n_genes=20)
+        subset = results[np.array([2, 5, 10])]
+
+        assert subset._subset_gene_index is not None
+        np.testing.assert_array_equal(
+            subset._subset_gene_index, np.array([2, 5, 10])
+        )
+
+    def test_subset_preserves_flow_params_intact(self):
+        """Flow params (nested dicts) survive gene subsetting unchanged."""
+        results = self._make_flow_results(n_genes=20)
+        subset = results[np.array([2, 5, 10])]
+
+        # Flow params must be the same objects (not subsetted)
+        assert "joint_flow_default_r$params" in subset.params
+        assert isinstance(subset.params["joint_flow_default_r$params"], dict)
+
+    def test_subset_n_genes_reflects_selection(self):
+        """n_genes on the subset reflects the selected count."""
+        results = self._make_flow_results(n_genes=20)
+        subset = results[np.array([2, 5, 10])]
+
+        assert subset.n_genes == 3
+        assert subset._original_n_genes == 20
+
+    def test_resubset_composes_indices(self):
+        """Re-subsetting composes gene indices relative to the original."""
+        results = self._make_flow_results(n_genes=20)
+        sub1 = results[np.array([2, 5, 10, 15])]
+        sub2 = sub1[np.array([1, 3])]
+
+        # sub2 indices should be [5, 15] in original space
+        np.testing.assert_array_equal(
+            sub2._subset_gene_index, np.array([5, 15])
+        )
+        assert sub2.n_genes == 2
+        assert sub2._original_n_genes == 20
+
+
+class TestFlowSamplingHelpers:
+    """Tests for _has_flow_params and _subset_gene_dim_samples."""
+
+    def test_has_flow_params_true(self):
+        from scribe.svi._sampling_posterior_predictive import _has_flow_params
+
+        assert _has_flow_params({"flow_r$params": {}})
+        assert _has_flow_params({"joint_flow_default_r$params": {}})
+
+    def test_has_flow_params_false(self):
+        from scribe.svi._sampling_posterior_predictive import _has_flow_params
+
+        assert not _has_flow_params({"r_loc": jnp.zeros(5)})
+        assert not _has_flow_params({"amortizer$params": {}})
+
+    def test_subset_gene_dim_samples(self):
+        from scribe.svi._sampling_posterior_predictive import (
+            _subset_gene_dim_samples,
+        )
+
+        samples = {
+            "r": jnp.arange(20).reshape(2, 10),  # (n_samples, n_genes)
+            "scalar": jnp.array([1.0, 2.0]),  # (n_samples,)
+        }
+        idx = np.array([0, 3, 7])
+        out = _subset_gene_dim_samples(samples, idx, original_n_genes=10)
+
+        assert out["r"].shape == (2, 3)
+        np.testing.assert_array_equal(out["r"][0], jnp.array([0, 3, 7]))
+        # Scalar should be unchanged
+        np.testing.assert_array_equal(out["scalar"], samples["scalar"])

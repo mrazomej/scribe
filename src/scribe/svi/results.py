@@ -19,6 +19,7 @@ from dataclasses import dataclass
 if TYPE_CHECKING:
     from ..core.annotation_prior import ComponentMapping
 
+import numpy as np
 import jax.numpy as jnp
 import pandas as pd
 
@@ -150,6 +151,11 @@ class ScribeSVIResults(
     # param_specs set). When present, _subset_params and
     # _subset_posterior_samples use this instead of heuristics.
     _gene_axis_by_key: Optional[Dict[str, int]] = None
+
+    # Gene indices used to create this subset.  When flow guides are present,
+    # posterior sampling must run at full dimensionality and then slice the
+    # output to these indices.
+    _subset_gene_index: Optional[np.ndarray] = None
 
     # Keys that were stacked along a new dataset axis during concat
     # promotion (single-dataset → multi-dataset).  Used by get_dataset()

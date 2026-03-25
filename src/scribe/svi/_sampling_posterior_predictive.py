@@ -2,12 +2,53 @@
 Posterior and constrained predictive sampling mixin for SVI results.
 """
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
+import numpy as np
 import jax.numpy as jnp
 from jax import random
 
 from ..sampling import generate_predictive_samples, sample_variational_posterior
+
+
+# ---------------------------------------------------------------------------
+# Helpers for flow-guide-aware gene subsetting
+# ---------------------------------------------------------------------------
+
+
+def _has_flow_params(params: Dict[str, Any]) -> bool:
+    """Return True if the param dict contains normalizing flow weights."""
+    return any(
+        k.endswith("$params")
+        and (k.startswith("flow_") or k.startswith("joint_flow_"))
+        for k in params
+    )
+
+
+def _subset_gene_dim_samples(
+    samples: Dict[str, Any],
+    gene_index: np.ndarray,
+    original_n_genes: int,
+) -> Dict[str, Any]:
+    """Slice the gene dimension of posterior/predictive sample arrays.
+
+    For every array in *samples* whose shape contains *original_n_genes*,
+    index the first matching axis with *gene_index*.  Non-matching arrays
+    are passed through unchanged.
+    """
+    out: Dict[str, Any] = {}
+    for key, value in samples.items():
+        if not hasattr(value, "shape"):
+            out[key] = value
+            continue
+        if original_n_genes in value.shape:
+            axis = list(value.shape).index(original_n_genes)
+            slicer = [slice(None)] * value.ndim
+            slicer[axis] = gene_index
+            out[key] = value[tuple(slicer)]
+        else:
+            out[key] = value
+    return out
 
 
 def _build_cell_specific_sample_keys(param_specs: list) -> set:
@@ -210,12 +251,26 @@ class PosteriorPredictiveSamplingMixin:
                 f"Could not find a guide for model '{self.model_type}'."
             )
 
+        # When the results have been gene-subsetted AND contain flow
+        # guide params, the flow must run at the original full
+        # dimensionality.  We sample at _original_n_genes and then
+        # slice the output to the requested gene indices.
+        _orig_ng = getattr(self, "_original_n_genes", None)
+        _gene_idx = getattr(self, "_subset_gene_index", None)
+        _full_dim = (
+            _orig_ng is not None
+            and _orig_ng != self.n_genes
+            and _gene_idx is not None
+            and _has_flow_params(self.params)
+        )
+        n_genes_for_guide = _orig_ng if _full_dim else self.n_genes
+
         # Include dataset_indices so that when the model is replayed to
         # compute deterministic sites, index_dataset_params can convert
         # (K, D, G) parameters to per-cell layout.
         model_args = {
             "n_cells": self.n_cells,
-            "n_genes": self.n_genes,
+            "n_genes": n_genes_for_guide,
             "model_config": self.model_config,
         }
         ds_idx = getattr(self, "_dataset_indices", None)
@@ -226,7 +281,7 @@ class PosteriorPredictiveSamplingMixin:
         if batch_size is not None:
             model_args["batch_size"] = batch_size
 
-        return sample_variational_posterior(
+        posterior_samples = sample_variational_posterior(
             guide,
             self.params,
             model,
@@ -235,6 +290,14 @@ class PosteriorPredictiveSamplingMixin:
             n_samples=n_samples,
             counts=counts,
         )
+
+        # Slice full-dim flow samples down to the gene subset
+        if _full_dim:
+            posterior_samples = _subset_gene_dim_samples(
+                posterior_samples, _gene_idx, _orig_ng,
+            )
+
+        return posterior_samples
 
     def _get_posterior_samples_per_dataset(
         self,
