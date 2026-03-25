@@ -170,7 +170,11 @@ def _compute_per_dataset_means(
             return weights
 
         mixing_d = _slice_mixing(mixing_weights, int(d))
-        pc_d = np.asarray(p_capture, dtype=float)[mask] if p_capture is not None else None
+        pc_d = (
+            np.asarray(p_capture, dtype=float)[mask]
+            if p_capture is not None
+            else None
+        )
 
         pred_mean = _compute_predicted_mean(r_d, p_d, mixing_d, pc_d)
 
@@ -179,11 +183,13 @@ def _compute_per_dataset_means(
             if int(d) < len(dataset_names)
             else f"dataset_{int(d)}"
         )
-        results.append({
-            "name": name,
-            "obs_mean": obs_mean,
-            "pred_mean": pred_mean,
-        })
+        results.append(
+            {
+                "name": name,
+                "obs_mean": obs_mean,
+                "pred_mean": pred_mean,
+            }
+        )
 
     return results
 
@@ -216,8 +222,16 @@ def _scatter_panel(
     log_obs = np.log10(obs + 1.0)
     log_pred = np.log10(pred + 1.0)
 
-    ax.scatter(log_obs, log_pred, s=s, alpha=alpha, color=color, label=label,
-               edgecolors="none", rasterized=True)
+    ax.scatter(
+        log_obs,
+        log_pred,
+        s=s,
+        alpha=alpha,
+        color=color,
+        label=label,
+        edgecolors="none",
+        rasterized=True,
+    )
 
     # Identity line spanning the data range
     lo = min(log_obs.min(), log_pred.min())
@@ -233,7 +247,9 @@ def _scatter_panel(
     valid = np.isfinite(log_obs) & np.isfinite(log_pred) & (obs > 0)
     if np.sum(valid) > 10:
         r_pearson = float(np.corrcoef(log_obs[valid], log_pred[valid])[0, 1])
-        r_spearman = float(sp_stats.spearmanr(obs[valid], pred[valid]).statistic)
+        r_spearman = float(
+            sp_stats.spearmanr(obs[valid], pred[valid]).statistic
+        )
         ratio = np.median(pred[valid] / obs[valid])
         stat_text = (
             f"Pearson $r = {r_pearson:.3f}$\n"
@@ -241,10 +257,15 @@ def _scatter_panel(
             f"median ratio $= {ratio:.2f}$"
         )
         ax.text(
-            0.05, 0.95, stat_text,
-            transform=ax.transAxes, fontsize=7,
+            0.05,
+            0.95,
+            stat_text,
+            transform=ax.transAxes,
+            fontsize=7,
             verticalalignment="top",
-            bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="0.7", alpha=0.85),
+            bbox=dict(
+                boxstyle="round,pad=0.3", fc="white", ec="0.7", alpha=0.85
+            ),
         )
 
 
@@ -306,17 +327,13 @@ def plot_mean_calibration(
     """
     console.print("[dim]Plotting mean-calibration diagnostic...[/dim]")
 
+    # Request only required keys up front so this diagnostic works for
+    # non-mixture and non-BNB models without forcing optional parameters.
+    required_targets = ["r", "p"]
+    if bool(getattr(results.model_config, "uses_variable_capture", False)):
+        required_targets.append("p_capture")
     map_estimates = _get_map_estimates_for_plot(
-        results,
-        counts=counts,
-        targets=[
-            "r",
-            "p",
-            "mixing_weights",
-            "p_capture",
-            "bnb_kappa",
-            "bnb_concentration",
-        ],
+        results, counts=counts, targets=required_targets
     )
     r = map_estimates.get("r")
     p = map_estimates.get("p")
@@ -327,16 +344,44 @@ def plot_mean_calibration(
         )
         return None
 
-    mixing_weights = map_estimates.get("mixing_weights") if is_mixture else None
+    mixing_weights = None
+    if is_mixture:
+        try:
+            mix_map = _get_map_estimates_for_plot(
+                results, counts=counts, targets=["mixing_weights"]
+            )
+            mixing_weights = mix_map.get("mixing_weights")
+        except ValueError:
+            mixing_weights = None
     p_capture = map_estimates.get("p_capture")
 
     # Build annotation string for model details
     _annotations = []
-    bnb_kappa = map_estimates.get("bnb_kappa")
+    bnb_kappa = None
+    bnb_concentration = None
+    if bool(getattr(results.model_config, "is_bnb", False)):
+        # BNB-specific annotations are optional and should never block plotting.
+        try:
+            bnb_map = _get_map_estimates_for_plot(
+                results, counts=counts, targets=["bnb_kappa"]
+            )
+            bnb_kappa = bnb_map.get("bnb_kappa")
+        except ValueError:
+            bnb_kappa = None
+        if bnb_kappa is None:
+            try:
+                bnb_map = _get_map_estimates_for_plot(
+                    results, counts=counts, targets=["bnb_concentration"]
+                )
+                bnb_concentration = bnb_map.get("bnb_concentration")
+            except ValueError:
+                bnb_concentration = None
     if bnb_kappa is not None:
         median_kappa = float(np.median(np.asarray(bnb_kappa)))
-        _annotations.append(f"BNB active (median $\\kappa = {median_kappa:.1f}$)")
-    elif map_estimates.get("bnb_concentration") is not None:
+        _annotations.append(
+            f"BNB active (median $\\kappa = {median_kappa:.1f}$)"
+        )
+    elif bnb_concentration is not None:
         _annotations.append("BNB active")
 
     if p_capture is not None:
@@ -353,14 +398,19 @@ def plot_mean_calibration(
             getattr(results, "model_config", None), "n_datasets", None
         )
         ds_results = _compute_per_dataset_means(
-            counts, r, p, dataset_codes, dataset_names,
+            counts,
+            r,
+            p,
+            dataset_codes,
+            dataset_names,
             mixing_weights=mixing_weights,
             p_capture=p_capture,
             n_datasets=n_ds_cfg,
         )
         n_panels = len(ds_results)
         fig, axes = plt.subplots(
-            1, n_panels,
+            1,
+            n_panels,
             figsize=(5.5 * n_panels, 5.0),
             squeeze=False,
         )
@@ -368,7 +418,9 @@ def plot_mean_calibration(
         colors = plt.cm.Set2(np.linspace(0, 1, max(n_panels, 2)))
         for i, ds in enumerate(ds_results):
             _scatter_panel(
-                axes[i], ds["obs_mean"], ds["pred_mean"],
+                axes[i],
+                ds["obs_mean"],
+                ds["pred_mean"],
                 color=colors[i],
             )
             axes[i].set_xlabel(r"$\log_{10}(\bar{u}_g^{\mathrm{obs}} + 1)$")
