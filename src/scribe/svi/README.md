@@ -232,6 +232,28 @@ When using normalizing flow guides (`guide_flow` parameter in `scribe.fit()` or
 strategies because flow transformations do not preserve modes. The `get_map()`
 method accepts additional parameters for controlling flow MAP estimation:
 
+Flow conditioner MLP activation can be configured with
+`guide_flow_activation` (default: `"relu"`). Supported values:
+`"relu"`, `"gelu"`, `"silu"`/`"swish"`, `"tanh"`, `"elu"`,
+`"leaky_relu"`, `"softplus"`.
+
+Hydra CLI example:
+
+```bash
+python infer.py data=singer model=nbdm guide_flow=spline_coupling guide_flow_activation=gelu
+```
+
+Python API example:
+
+```python
+results = scribe.fit(
+    counts=data,
+    model="nbdm",
+    guide_flow="spline_coupling",
+    guide_flow_activation="gelu",
+)
+```
+
 ```python
 # Default: posterior mean via Monte Carlo sampling
 map_params = results.get_map(flow_map_method="mean", flow_n_samples=1000)

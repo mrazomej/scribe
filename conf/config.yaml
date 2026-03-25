@@ -131,6 +131,9 @@ dense_params: null
 guide_flow: null
 guide_flow_num_layers: 4
 guide_flow_hidden_dims: [64, 64]
+# Activation used by flow conditioner MLPs.
+# Supported: relu, gelu, silu/swish, tanh, elu, leaky_relu, softplus
+guide_flow_activation: relu
 guide_flow_n_bins: 8
 # How to handle mixture components / datasets in flow guides.
 # "independent" = separate FlowChain per component (most expressive)

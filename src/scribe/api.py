@@ -267,6 +267,7 @@ def fit(
     guide_flow: Optional[str] = None,
     guide_flow_num_layers: int = 4,
     guide_flow_hidden_dims: Optional[List[int]] = None,
+    guide_flow_activation: str = "relu",
     guide_flow_n_bins: int = 8,
     guide_flow_mixture_strategy: str = "independent",
     guide_flow_zero_init: bool = True,
@@ -454,6 +455,11 @@ def fit(
     guide_flow_hidden_dims : List[int], optional
         Hidden dimensions for the conditioner network in each flow layer.
         Default is ``[64, 64]``.
+
+    guide_flow_activation : str, default="relu"
+        Activation function for flow conditioner MLPs. Supported values:
+        ``"relu"``, ``"gelu"``, ``"silu"``, ``"swish"``, ``"tanh"``,
+        ``"elu"``, ``"leaky_relu"``, ``"softplus"``.
 
     guide_flow_n_bins : int, default=8
         Number of spline bins (only used when ``guide_flow="spline_coupling"``).
@@ -1078,6 +1084,7 @@ def fit(
             guide_flow=guide_flow,
             guide_flow_num_layers=guide_flow_num_layers,
             guide_flow_hidden_dims=guide_flow_hidden_dims,
+            guide_flow_activation=guide_flow_activation,
             guide_flow_n_bins=guide_flow_n_bins,
             guide_flow_mixture_strategy=guide_flow_mixture_strategy,
             guide_flow_zero_init=guide_flow_zero_init,

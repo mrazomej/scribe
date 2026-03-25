@@ -82,6 +82,7 @@ def build_config_from_preset(
     guide_flow: Optional[str] = None,
     guide_flow_num_layers: int = 4,
     guide_flow_hidden_dims: Optional[List[int]] = None,
+    guide_flow_activation: str = "relu",
     guide_flow_n_bins: int = 8,
     guide_flow_mixture_strategy: str = "independent",
     guide_flow_zero_init: bool = True,
@@ -150,6 +151,8 @@ def build_config_from_preset(
         Number of flow layers in the normalizing-flow guide.
     guide_flow_hidden_dims : Optional[List[int]], default=None
         Hidden dimensions for the conditioner network. Default is [64, 64].
+    guide_flow_activation : str, default="relu"
+        Activation function for flow conditioner MLPs.
     guide_flow_n_bins : int, default=8
         Number of spline bins (only for ``guide_flow="spline_coupling"``).
     guide_flow_mixture_strategy : str, default="independent"
@@ -345,6 +348,7 @@ def build_config_from_preset(
             flow_type=guide_flow,
             num_layers=guide_flow_num_layers,
             hidden_dims=tuple(guide_flow_hidden_dims or [64, 64]),
+            activation=guide_flow_activation,
             n_bins=guide_flow_n_bins,
             mixture_strategy=guide_flow_mixture_strategy,
             zero_init_output=guide_flow_zero_init,

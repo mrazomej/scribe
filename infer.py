@@ -915,6 +915,7 @@ def main(cfg: DictConfig) -> None:
         "guide_flow": cfg.get("guide_flow"),
         "guide_flow_num_layers": cfg.get("guide_flow_num_layers", 4),
         "guide_flow_hidden_dims": cfg.get("guide_flow_hidden_dims"),
+        "guide_flow_activation": cfg.get("guide_flow_activation", "relu"),
         "guide_flow_n_bins": cfg.get("guide_flow_n_bins", 8),
         "guide_flow_mixture_strategy": cfg.get(
             "guide_flow_mixture_strategy", "independent"
@@ -970,10 +971,11 @@ def main(cfg: DictConfig) -> None:
         )
     if kwargs.get("guide_flow"):
         _mix_strat = kwargs.get("guide_flow_mixture_strategy", "independent")
+        _flow_act = kwargs.get("guide_flow_activation", "relu")
         console.print(
             f"[dim]Guide flow:[/dim] [bold]{kwargs['guide_flow']}[/bold] "
             f"({kwargs.get('guide_flow_num_layers', 4)} layers, "
-            f"mixture={_mix_strat})"
+            f"activation={_flow_act}, mixture={_mix_strat})"
         )
     if kwargs.get("joint_params"):
         console.print(

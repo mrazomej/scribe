@@ -26,6 +26,7 @@ dirname_aliases:
     guide_flow: gflow
     guide_flow_num_layers: gflowlayers
     guide_flow_hidden_dims: gflowhidden
+    guide_flow_activation: gflowact
     guide_flow_n_bins: gflowbins
     guide_flow_mixture_strategy: gflowmix
     guide_flow_zero_init: gflowzinit
