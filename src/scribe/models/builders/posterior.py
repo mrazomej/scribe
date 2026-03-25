@@ -2180,7 +2180,14 @@ def _apply_joint_flow_nondense_fallback(
                 dist.Normal(loc, sigma),
                 reinterpreted_batch_ndims=1,
             )
-            distributions[name] = {"base": base, "transform": pos_transform}
+            # Mark as conditional: the actual guide loc is adjusted by
+            # regression on the dense flow residuals (alpha * r_resid),
+            # so get_map must use sampling-based estimation.
+            distributions[name] = {
+                "base": base,
+                "transform": pos_transform,
+                "conditional": True,
+            }
 
         # Scalar pattern: joint_flow_{group}_{name}_scalar_loc
         if "_scalar_loc" in key and key.endswith("_scalar_loc"):
@@ -2202,7 +2209,11 @@ def _apply_joint_flow_nondense_fallback(
                 scale = jnp.ones_like(loc)
 
             base = dist.Normal(loc, scale)
-            distributions[name] = {"base": base, "transform": pos_transform}
+            distributions[name] = {
+                "base": base,
+                "transform": pos_transform,
+                "conditional": True,
+            }
 
 
 def _infer_flow_features(flax_params) -> Optional[int]:
