@@ -426,6 +426,14 @@ class GeneSubsettingMixin:
             getattr(self, "_original_n_genes", None) or self.n_genes
         )
 
+        # Compose gene indices when re-subsetting an already-subsetted result
+        # so that the final index is always relative to the original gene list.
+        prev_gene_idx = getattr(self, "_subset_gene_index", None)
+        if prev_gene_idx is not None:
+            gene_index_abs = prev_gene_idx[index]
+        else:
+            gene_index_abs = np.asarray(index)
+
         subset = type(self)(
             params=new_params,
             loss_history=self.loss_history,
@@ -455,6 +463,7 @@ class GeneSubsettingMixin:
             n_components=self.n_components,
             _original_n_genes=original_n_genes,
             _gene_axis_by_key=getattr(self, "_gene_axis_by_key", None),
+            _subset_gene_index=gene_index_abs,
         )
 
         # Carry over per-dataset metadata for downstream get_dataset()

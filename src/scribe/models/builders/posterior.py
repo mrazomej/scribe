@@ -421,6 +421,48 @@ def _build_base_skip_set(
     return skip
 
 
+def _flow_guided_param_names(params: Dict[str, Any]) -> set[str]:
+    """Return the set of base parameter names that are flow-guided.
+
+    Scans the variational parameter dict for flow keys
+    (``flow_{name}$params``, ``joint_flow_{group}_{name}$params``, and
+    their ``_idx{k}`` variants) and extracts the logical parameter name
+    so that earlier passes can skip those parameters.
+
+    Parameters
+    ----------
+    params : dict
+        Variational parameter dictionary.
+
+    Returns
+    -------
+    set of str
+        Base parameter names owned by a normalizing flow guide.
+    """
+    names: set[str] = set()
+    for key in params:
+        if not key.endswith("$params"):
+            continue
+
+        if key.startswith("flow_"):
+            inner = key[len("flow_"): -len("$params")]
+            # Independent mixture: flow_{name}_idx{k}$params
+            if "_idx" in inner:
+                inner = inner.rsplit("_idx", 1)[0]
+            names.add(inner)
+
+        elif key.startswith("joint_flow_"):
+            inner = key[len("joint_flow_"): -len("$params")]
+            # Independent mixture: joint_flow_{group}_{name}_idx{k}$params
+            if "_idx" in inner:
+                inner = inner.rsplit("_idx", 1)[0]
+            parts = inner.split("_", 1)
+            if len(parts) == 2:
+                names.add(parts[1])
+
+    return names
+
+
 def _apply_base_parameterization(
     distributions: Dict[str, Any],
     params: Dict[str, jnp.ndarray],
@@ -1468,6 +1510,10 @@ def get_posterior_distributions(
 
     # Horseshoe priors replace base guide sites; skip those in pass 1.
     skip = _build_base_skip_set(model_config, parameterization)
+
+    # Flow-guided params have no _loc/_scale keys; skip in pass 1 and
+    # let pass 10 (_apply_flow_posteriors) reconstruct them.
+    skip |= _flow_guided_param_names(params)
 
     # --- Execute the pipeline (ordering matters — see docstring) ----------
 
