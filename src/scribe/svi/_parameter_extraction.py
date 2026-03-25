@@ -1378,11 +1378,22 @@ class ParameterExtractionMixin:
         # Flow MAP estimation via guide sampling
         # ----------------------------------------------------------
         if flow_targets:
+            # Gene-subsetted results must run the flow guide at full
+            # dimensionality, then slice the output to the subset.
+            _orig_ng = getattr(self, "_original_n_genes", None)
+            _gene_idx = getattr(self, "_subset_gene_index", None)
+            _full_dim_flow = (
+                _orig_ng is not None
+                and _orig_ng != self.n_genes
+                and _gene_idx is not None
+            )
+            n_genes_for_flow = _orig_ng if _full_dim_flow else self.n_genes
+
             flow_estimates = _flow_map_estimates(
                 model_and_guide_fn=self._model_and_guide,
                 params=params,
                 n_cells=self.n_cells,
-                n_genes=self.n_genes,
+                n_genes=n_genes_for_flow,
                 model_config=self.model_config,
                 flow_params=flow_targets,
                 method=flow_map_method,
@@ -1393,6 +1404,15 @@ class ParameterExtractionMixin:
                 verbose=verbose,
                 batch_size=flow_batch_size,
             )
+
+            if _full_dim_flow:
+                from ._sampling_posterior_predictive import (
+                    _subset_gene_dim_samples,
+                )
+                flow_estimates = _subset_gene_dim_samples(
+                    flow_estimates, _gene_idx, _orig_ng
+                )
+
             map_estimates.update(flow_estimates)
 
         # Replace NaN values with means if requested
