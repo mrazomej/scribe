@@ -1093,3 +1093,92 @@ class TestAffineSoftClamp:
         y, ld = flow.apply(params, x)
         npt.assert_allclose(y, x, atol=1e-6)
         npt.assert_allclose(ld, jnp.zeros(3), atol=1e-6)
+
+
+# ===========================================================================
+# Float64 log-det accumulation
+# ===========================================================================
+
+
+class TestLogDetF64:
+    """Verify ``log_det_f64`` flag controls the dtype of the log-det output."""
+
+    def test_log_det_f64_produces_float64(self, rng):
+        """With log_det_f64=True and x64 enabled, log_det should be float64."""
+        with jax.enable_x64(True):
+            chain = FlowChain(
+                features=8,
+                num_layers=2,
+                flow_type="affine_coupling",
+                hidden_dims=[16, 16],
+                log_det_f64=True,
+            )
+            x = jax.random.normal(rng, (4, 8))
+            params = chain.init(rng, x[0])
+
+            # Forward
+            _, ld_fwd = chain.apply(params, x)
+            assert ld_fwd.dtype == jnp.float64, (
+                f"Expected float64, got {ld_fwd.dtype}"
+            )
+
+            # Inverse
+            _, ld_inv = chain.apply(params, x, reverse=True)
+            assert ld_inv.dtype == jnp.float64, (
+                f"Expected float64, got {ld_inv.dtype}"
+            )
+
+    def test_log_det_f32_by_default(self, rng):
+        """With log_det_f64=False (default), log_det should be float32."""
+        chain = FlowChain(
+            features=8,
+            num_layers=2,
+            flow_type="affine_coupling",
+            hidden_dims=[16, 16],
+            log_det_f64=False,
+        )
+        x = jax.random.normal(rng, (4, 8))
+        params = chain.init(rng, x[0])
+
+        _, ld_fwd = chain.apply(params, x)
+        assert ld_fwd.dtype == jnp.float32, (
+            f"Expected float32, got {ld_fwd.dtype}"
+        )
+
+    def test_log_det_f64_with_loft(self, rng):
+        """Float64 log-det should work when LOFT is enabled."""
+        with jax.enable_x64(True):
+            chain = FlowChain(
+                features=8,
+                num_layers=2,
+                flow_type="affine_coupling",
+                hidden_dims=[16, 16],
+                use_loft=True,
+                log_det_f64=True,
+            )
+            x = jax.random.normal(rng, (4, 8))
+            params = chain.init(rng, x[0])
+
+            _, ld_fwd = chain.apply(params, x)
+            assert ld_fwd.dtype == jnp.float64
+
+            _, ld_inv = chain.apply(params, x, reverse=True)
+            assert ld_inv.dtype == jnp.float64
+
+    def test_log_det_f64_invertibility(self, rng):
+        """Forward + inverse log-dets should cancel even in float64."""
+        with jax.enable_x64(True):
+            chain = FlowChain(
+                features=8,
+                num_layers=2,
+                flow_type="affine_coupling",
+                hidden_dims=[16, 16],
+                log_det_f64=True,
+            )
+            x = jax.random.normal(rng, (4, 8))
+            params = chain.init(rng, x[0])
+
+            y, ld_fwd = chain.apply(params, x)
+            x_rec, ld_inv = chain.apply(params, y, reverse=True)
+            npt.assert_allclose(x_rec, x, atol=1e-5)
+            npt.assert_allclose(ld_fwd + ld_inv, jnp.zeros(4), atol=1e-5)

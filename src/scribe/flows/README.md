@@ -202,6 +202,23 @@ high-dimensional flows.  Both are **on by default**.
 z_base → [coupling layers (soft-clamped)] → LOFT → final affine → z_out
 ```
 
+### Float64 log-det accumulation
+
+The log-determinant Jacobian is a running sum across all coupling layers,
+LOFT, and the final affine.  In high-dimensional flows (e.g. 28K genes)
+this sum can lose significant precision in float32.  Setting
+`log_det_f64=True` on `FlowChain` initializes the accumulator in float64;
+each per-layer contribution is promoted automatically via JAX type rules.
+
+This requires `jax_enable_x64=True` to be effective (otherwise JAX
+silently downcasts float64 to float32).  When set via `fit()` or Hydra
+(`guide_flow_log_det_f64=true`), `enable_x64` is **auto-promoted** so the
+user does not need to set both flags.
+
+**Off by default** because most consumer GPUs throttle float64 throughput
+to 1/32 or 1/64 of float32.  Recommended for datacenter GPUs (A100,
+H100, MI250X) with full-rate or half-rate float64.
+
 ### Configuration
 
 At the `FlowChain` level:
@@ -210,8 +227,9 @@ At the `FlowChain` level:
 chain = FlowChain(
     features=28000, num_layers=4, flow_type="affine_coupling",
     hidden_dims=[64, 64],
-    soft_clamp=True,   # default
-    use_loft=True,     # default
+    soft_clamp=True,      # default
+    use_loft=True,        # default
+    log_det_f64=False,    # default; set True on datacenter GPUs
 )
 ```
 
@@ -219,6 +237,7 @@ Via Hydra command line:
 
 ```bash
 guide_flow_soft_clamp=false guide_flow_loft=false
+guide_flow_log_det_f64=true   # auto-promotes enable_x64=true
 ```
 
 ## Choosing a Flow

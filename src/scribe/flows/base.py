@@ -45,6 +45,7 @@ from scribe.models.components.covariate_embedding import (
 def loft_forward(
     z: jnp.ndarray,
     tau: float = 100.0,
+    log_det_dtype=None,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """LOFT forward pass: compress extreme values logarithmically.
 
@@ -58,6 +59,10 @@ def loft_forward(
         Input tensor, shape ``(..., D)``.
     tau : float
         Threshold below which the transform is identity.
+    log_det_dtype : dtype, optional
+        If provided, upcast the per-dimension log-det values to this
+        dtype before summing.  Use ``jnp.float64`` with high-dimensional
+        flows to reduce precision loss in the reduction.
 
     Returns
     -------
@@ -75,12 +80,15 @@ def loft_forward(
     excess = jnp.maximum(abs_z - tau, 0.0)
     y = jnp.sign(z) * (jnp.log(excess + 1.0) + jnp.minimum(abs_z, tau))
     log_det_per_dim = -jnp.log(excess + 1.0)
+    if log_det_dtype is not None:
+        log_det_per_dim = log_det_per_dim.astype(log_det_dtype)
     return y, jnp.sum(log_det_per_dim, axis=-1)
 
 
 def loft_inverse(
     y: jnp.ndarray,
     tau: float = 100.0,
+    log_det_dtype=None,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """LOFT inverse pass: expand compressed values back.
 
@@ -90,6 +98,9 @@ def loft_inverse(
         Compressed tensor from :func:`loft_forward`.
     tau : float
         Same threshold used in the forward pass.
+    log_det_dtype : dtype, optional
+        If provided, upcast the per-dimension log-det values to this
+        dtype before summing (see :func:`loft_forward`).
 
     Returns
     -------
@@ -104,6 +115,8 @@ def loft_inverse(
     z = jnp.sign(y) * (jnp.exp(excess) - 1.0 + jnp.minimum(abs_y, tau))
     # log|dz/dy| per dimension = max(|y| - tau, 0)
     log_det_per_dim = excess
+    if log_det_dtype is not None:
+        log_det_per_dim = log_det_per_dim.astype(log_det_dtype)
     return z, jnp.sum(log_det_per_dim, axis=-1)
 
 
@@ -248,6 +261,14 @@ class FlowChain(nn.Module):
     loft_tau : float
         LOFT threshold: values with ``|z| < tau`` pass through
         unchanged; beyond ``tau``, growth is logarithmic. Default 100.
+    log_det_f64 : bool
+        Accumulate the log-determinant Jacobian in float64 to reduce
+        precision loss when summing many small per-layer contributions
+        in high-dimensional flows.  Requires ``jax_enable_x64=True``
+        to be effective (otherwise JAX silently downcasts to float32).
+        Off by default because most consumer GPUs throttle float64;
+        recommended for datacenter GPUs (A100, H100, MI250X).
+        Default False.
 
     Examples
     --------
@@ -291,6 +312,9 @@ class FlowChain(nn.Module):
     use_loft: bool = True
     # LOFT threshold: identity for |z| < tau, logarithmic beyond.
     loft_tau: float = 100.0
+    # Accumulate log-det Jacobian in float64 for high-dimensional precision.
+    # Requires jax_enable_x64=True; off by default (consumer GPU friendly).
+    log_det_f64: bool = False
 
     def setup(self):
         """Create the stack of flow layers with alternating masks."""
@@ -360,17 +384,27 @@ class FlowChain(nn.Module):
         combined_context = jnp.concatenate(parts, axis=-1) if parts else None
 
         # Start with zero log-det; same batch/event shape as input (no feature
-        # dim).
-        total_log_det = jnp.zeros(x.shape[:-1])
+        # dim).  When log_det_f64 is enabled, accumulate in float64 to reduce
+        # rounding error in high-dimensional flows (requires jax_enable_x64).
+        _ld_dtype = jnp.float64 if self.log_det_f64 else x.dtype
+        total_log_det = jnp.zeros(x.shape[:-1], dtype=_ld_dtype)
+
+        # Dtype for LOFT per-dim reduction (None = keep native float32)
+        _loft_ld_dtype = jnp.float64 if self.log_det_f64 else None
 
         if reverse:
             # Inverse: final_affine_inv → LOFT_inv → coupling_layers (reversed)
             if self.use_loft:
                 sigma = jnp.exp(self.final_log_sigma)
                 x = (x - self.final_mu) / sigma
-                total_log_det = total_log_det - jnp.sum(self.final_log_sigma)
+                _affine_ld = jnp.sum(self.final_log_sigma)
+                if self.log_det_f64:
+                    _affine_ld = _affine_ld.astype(jnp.float64)
+                total_log_det = total_log_det - _affine_ld
 
-                x, ld = loft_inverse(x, tau=self.loft_tau)
+                x, ld = loft_inverse(
+                    x, tau=self.loft_tau, log_det_dtype=_loft_ld_dtype,
+                )
                 total_log_det = total_log_det + ld
 
             for layer in reversed(self.layers):
@@ -383,11 +417,16 @@ class FlowChain(nn.Module):
                 total_log_det = total_log_det + log_det
 
             if self.use_loft:
-                x, ld = loft_forward(x, tau=self.loft_tau)
+                x, ld = loft_forward(
+                    x, tau=self.loft_tau, log_det_dtype=_loft_ld_dtype,
+                )
                 total_log_det = total_log_det + ld
 
                 sigma = jnp.exp(self.final_log_sigma)
                 x = sigma * x + self.final_mu
-                total_log_det = total_log_det + jnp.sum(self.final_log_sigma)
+                _affine_ld = jnp.sum(self.final_log_sigma)
+                if self.log_det_f64:
+                    _affine_ld = _affine_ld.astype(jnp.float64)
+                total_log_det = total_log_det + _affine_ld
 
         return x, total_log_det
