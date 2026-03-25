@@ -117,6 +117,8 @@ def _run_svi_inference(
     log_progress_lines = svi_config.log_progress_lines
     early_stopping = svi_config.early_stopping
 
+    restore_best = svi_config.restore_best
+
     # Build inference kwargs for the engine
     inference_kwargs = {
         "model_config": model_config,
@@ -131,6 +133,7 @@ def _run_svi_inference(
         "early_stopping": early_stopping,
         "annotation_prior_logits": annotation_prior_logits,
         "dataset_indices": dataset_indices,
+        "restore_best": restore_best,
     }
 
     # Add optional optimizer and loss if provided

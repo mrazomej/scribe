@@ -400,14 +400,19 @@ def _run_with_early_stopping(
                 )
                 smoothed_loss = _mean_ignoring_nans(losses[window_start:])
 
-                # Apply convergence logic only after warmup when enabled. During
-                # warmup, we intentionally skip best-loss/patience updates so
-                # early transient improvements do not set an unrealistically
-                # strict baseline.
-                if early_stopping.enabled and step >= early_stopping.warmup:
-                    # Initialize the post-warmup baseline on first eligible
-                    # check.
+                # Best-loss and best-state tracking is decoupled from the
+                # early-stopping patience logic so that ``restore_best``
+                # works even when early stopping is disabled.  The patience
+                # counter is updated in both branches (harmless when
+                # ``enabled=False``) to keep the logic unified.
+                past_warmup = step >= early_stopping.warmup
+                should_track = past_warmup and (
+                    early_stopping.enabled or early_stopping.restore_best
+                )
+
+                if should_track:
                     if not np.isfinite(best_loss):
+                        # First eligible check — establish baseline.
                         best_loss = smoothed_loss
                         best_step = step
                         if early_stopping.restore_best:
@@ -464,11 +469,10 @@ def _run_with_early_stopping(
                     )
                     last_checkpoint_step = step
 
-                # Check if patience exceeded (only when early stopping is
-                # enabled and past warmup)
+                # Early-stop trigger (only when enabled and past warmup)
                 if (
                     early_stopping.enabled
-                    and step >= early_stopping.warmup
+                    and past_warmup
                     and patience_counter >= early_stopping.patience
                 ):
                     early_stopped = True
@@ -480,9 +484,17 @@ def _run_with_early_stopping(
                     )
                     break
 
-    # Restore best state if requested and early stopping was triggered
-    if early_stopped and early_stopping.restore_best and best_state is not None:
+    # Restore best state when restore_best is enabled, regardless of
+    # whether early stopping actually triggered.
+    if early_stopping.restore_best and best_state is not None:
         svi_state = best_state
+        if not early_stopped:
+            logger.info(
+                "Restoring best params from step %d (best smoothed "
+                "loss: %.4e)",
+                best_step + 1,
+                best_loss,
+            )
 
     # Get final parameters
     params = svi.get_params(svi_state)
@@ -616,6 +628,7 @@ class SVIInferenceEngine:
         annotation_prior_logits: Optional[jnp.ndarray] = None,
         dataset_indices: Optional[jnp.ndarray] = None,
         progress: bool = True,
+        restore_best: bool = False,
     ) -> SVIRunResult:
         """
         Execute SVI inference with optional early stopping.
@@ -660,6 +673,13 @@ class SVIInferenceEngine:
             ``model_config.n_datasets`` is set.
         progress : bool, default=True
             Whether to show progress bar during training.
+        restore_best : bool, default=False
+            Track the best (lowest smoothed loss) variational parameters
+            during training and restore them at the end, regardless of
+            whether early stopping is enabled or triggered.  When True
+            and no ``early_stopping`` config is provided, a minimal
+            config is created internally to enable the custom training
+            loop with best-state tracking.
 
         Returns
         -------
@@ -727,11 +747,17 @@ class SVIInferenceEngine:
             "dataset_indices": dataset_indices,
         }
 
-        # Choose execution mode based on early stopping configuration.
+        # Choose execution mode based on early stopping / restore_best.
         # Use the custom loop whenever an early_stopping config is provided
-        # (even when enabled=False) so that checkpoint saving and resume
-        # are always available.  Only fall back to NumPyro's built-in
-        # svi.run() when no early_stopping config is supplied at all.
+        # (even with enabled=False) so that checkpoint saving and resume
+        # are always available.  When restore_best=True and no explicit
+        # early_stopping config exists, create a minimal config that
+        # enables best-state tracking without convergence-based stopping.
+        if early_stopping is None and restore_best:
+            early_stopping = EarlyStoppingConfig(
+                enabled=False, restore_best=True
+            )
+
         if early_stopping is not None:
             return _run_with_early_stopping(
                 svi=svi,

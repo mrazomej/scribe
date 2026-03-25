@@ -368,6 +368,12 @@ deviate substantially from a Gaussian (e.g., bimodality, skewness,
 heavy tails). For nearly Gaussian posteriors, `LowRankGuide` is faster
 and equally accurate.
 
+**Training stability:** Both flow guide families propagate `soft_clamp` and
+`use_loft` flags to the underlying `FlowChain`.  These features from
+[Andrade 2024](https://arxiv.org/abs/2402.16408) bound sample magnitudes
+during training to prevent NaN gradients at high dimensions.  Both are on
+by default; see the [flows README](../../flows/README.md) for details.
+
 ### Joint Normalizing Flow Guide (Cross-Parameter)
 
 Analogous to `JointLowRankGuide` but uses flows instead of Gaussians.

@@ -65,6 +65,25 @@ results = SVIInferenceEngine.run_inference(
 - `batch_size`: Mini-batch size for stochastic optimization
 - `seed`: Random seed for reproducibility
 - `early_stopping`: Optional `EarlyStoppingConfig` for convergence detection
+- `restore_best`: If True, track and restore best (lowest smoothed loss)
+  parameters at end of training, independently of early stopping
+
+### Best-Params Restoration
+
+The `restore_best` parameter (available at the `SVIConfig` level and as a
+top-level `fit()` argument) tracks the variational parameters that achieved
+the lowest smoothed loss during training and restores them at the end.  This
+works **independently of early stopping** — when `restore_best=True` and no
+`early_stopping` config is provided, a minimal internal training loop is
+created to enable best-state tracking.
+
+```python
+# Via scribe.fit()
+results = scribe.fit(counts, restore_best=True)
+
+# Via Hydra (conf/inference/svi.yaml)
+# inference.restore_best: true
+```
 
 ### Early Stopping
 
