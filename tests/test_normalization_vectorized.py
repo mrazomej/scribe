@@ -25,6 +25,7 @@ from scribe.core.normalization import (
     normalize_counts_from_posterior,
     normalize_counts_from_map,
 )
+from scribe.de._biological import biological_differential_expression
 from scribe.de._gaussianity import gaussianity_diagnostics
 
 
@@ -691,7 +692,7 @@ class TestNormalizeCountsFromMap:
         assert jnp.allclose(result["mean_probabilities"], expected, atol=1e-6)
 
     def test_non_mixture_gene_specific_p_path(self):
-        """Gene-specific p_g should induce hierarchical mu = r*(1-p)/p scaling."""
+        """Gene-specific p_g should induce hierarchical mu = r*p/(1-p) scaling."""
         map_estimates = {
             "r": jnp.array([2.0, 2.0]),
             "p": jnp.array([0.5, 0.2]),
@@ -699,8 +700,8 @@ class TestNormalizeCountsFromMap:
         result = normalize_counts_from_map(
             map_estimates=map_estimates, estimator="mean", verbose=False
         )
-        # mu = [2*(0.5/0.5), 2*(0.8/0.2)] = [2, 8] -> rho = [0.2, 0.8]
-        expected = jnp.array([0.2, 0.8])
+        # mu = [2*(0.5/0.5), 2*(0.2/0.8)] = [2, 0.5] -> rho = [0.8, 0.2]
+        expected = jnp.array([0.8, 0.2])
         assert jnp.allclose(result["mean_probabilities"], expected, atol=1e-6)
 
     def test_non_mixture_gene_specific_phi_path(self):
@@ -783,7 +784,7 @@ class TestNormalizeCountsFromMap:
         """mu-direct and reconstructed-rp paths should agree when equivalent."""
         r = jnp.array([2.0, 2.0])
         p = jnp.array([0.5, 0.2])
-        mu = r * (1.0 - p) / p
+        mu = r * p / (1.0 - p)
 
         result_mu = normalize_counts_from_map(
             map_estimates={"r": r, "mu": mu},
@@ -800,6 +801,33 @@ class TestNormalizeCountsFromMap:
             result_rp["mean_probabilities"],
             atol=1e-6,
         )
+
+    def test_canonical_mu_reconstruction_consistent_across_modules(self):
+        """Canonical mu reconstruction should match normalization and biological fallback."""
+        r = jnp.array([2.0, 5.0])
+        p = jnp.array([0.25, 0.5])
+        expected_mu = r * p / (1.0 - p)
+
+        # Normalization fallback uses r,p -> mu internally when mu is absent.
+        norm = normalize_counts_from_map(
+            map_estimates={"r": r, "p": p},
+            estimator="mean",
+            verbose=False,
+        )
+        expected_rho = expected_mu / jnp.sum(expected_mu)
+        assert jnp.allclose(norm["mean_probabilities"], expected_rho, atol=1e-6)
+
+        # Biological fallback should use the same r,p -> mu mapping.
+        r_samples = jnp.broadcast_to(r, (8, r.shape[0]))
+        p_samples = jnp.broadcast_to(p, (8, p.shape[0]))
+        bio = biological_differential_expression(
+            r_samples,
+            r_samples,
+            p_samples,
+            p_samples,
+        )
+        assert jnp.allclose(bio["mu_A_mean"], expected_mu, atol=1e-6)
+        assert jnp.allclose(bio["mu_B_mean"], expected_mu, atol=1e-6)
 
 
 # ---------------------------------------------------------------------------

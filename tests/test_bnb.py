@@ -153,7 +153,8 @@ class TestBuildCountDist:
         nb = build_count_dist(r, p, None)
         bnb = build_count_dist(r, p, omega)
 
-        # numpyro convention: probs = failure probability
+        # Canonical SCRIBE mapping for NB means with (r, p):
+        # mu = r * p / (1 - p)
         # NB mean = r * p / (1-p)
         nb_mean = r * p / (1.0 - p)
         assert jnp.allclose(nb.mean, nb_mean, atol=1e-4)

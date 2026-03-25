@@ -45,8 +45,8 @@ class NegativeBinomialLikelihood(Likelihood):
         counts ~ NegativeBinomialProbs(r, p)
 
     where:
-        - r > 0 is the dispersion parameter (number of failures)
-        - p in (0, 1) is the success probability
+        - r > 0 is the dispersion parameter (``total_count`` in NumPyro)
+        - p in (0, 1) is the ``NegativeBinomialProbs`` probability parameter
 
     Parameters
     ----------
@@ -77,7 +77,8 @@ class NegativeBinomialLikelihood(Likelihood):
         r : jnp.ndarray
             NB dispersion parameter (>0).
         p : jnp.ndarray
-            Failure probability, already clamped to (eps, 1-eps).
+            ``NegativeBinomialProbs`` probability parameter, already clamped
+            to ``(eps, 1-eps)``.
 
         Returns
         -------

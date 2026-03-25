@@ -41,7 +41,8 @@ computation path based on which posterior samples are supplied:
   but ``mu`` avoids the ``r * (1 − p) / p`` reconstruction.
 
 - **``canonical``** (fallback, only ``r`` and ``p``): ``mu`` and
-  ``beta`` are derived from ``(r, p)`` using the standard formulae.
+  ``beta`` are derived from ``(r, p)`` using the runtime canonical
+  mapping used by model extraction.
 
 .. warning::
 
@@ -171,7 +172,7 @@ def biological_differential_expression(
        ``var = mu * (1 + phi)``, ``beta = 1 / phi``.
     2. **mu path** (``mean_prob``): ``mu`` used directly,
        ``var = mu / p``, ``beta = p / (1 - p)``.
-    3. **Fallback** (``canonical``): ``mu = r * (1 - p) / p``,
+    3. **Fallback** (``canonical``): ``mu = r * p / (1 - p)``,
        ``var = mu / p``, ``beta = p / (1 - p)``.
     """
     # Resolve requested biological families once so downstream blocks can skip
@@ -210,9 +211,10 @@ def biological_differential_expression(
             mu_A = mu_samples_A
             mu_B = mu_samples_B
         else:
-            # Fallback: mu = r * (1 - p) / p.
-            mu_A = r_samples_A * (1.0 - p_samples_A) / p_samples_A
-            mu_B = r_samples_B * (1.0 - p_samples_B) / p_samples_B
+            # Fallback: keep mu reconstruction consistent with canonical
+            # extraction from (r, p) used by the training/runtime path.
+            mu_A = r_samples_A * p_samples_A / (1.0 - p_samples_A)
+            mu_B = r_samples_B * p_samples_B / (1.0 - p_samples_B)
 
     # Compute variance only for requested LVR/aux families.
     compute_var = include_lvr or include_aux

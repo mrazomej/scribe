@@ -158,9 +158,11 @@ def normalize_counts_from_map(
             if verbose:
                 print(
                     "normalize_counts_from_map: using gene-specific p-based "
-                    "mu = r * (1 - p) / p normalization."
+                    "mu = r * p / (1 - p) normalization."
                 )
-            mu_effective = r_map * (1.0 - p_map) / p_map
+            # Keep this reconstruction aligned with canonical MAP extraction
+            # (mu from r,p) used across SVI/MCMC utilities.
+            mu_effective = r_map * p_map / (1.0 - p_map)
         else:
             if verbose:
                 print(

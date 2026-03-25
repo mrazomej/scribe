@@ -13,8 +13,8 @@ The BNB arises by placing a Beta prior on the NB success probability:
 
 which marginally gives X ~ BetaNegativeBinomial(alpha, kappa, r).
 A mean-preserving parameterisation ensures that the BNB mean equals
-the NB mean (r * p / (1 - p) under numpyro's failure-probability
-convention), so compositional normalisation and differential expression
+the NB mean (r * p / (1 - p) under SCRIBE's canonical mapping), so
+compositional normalisation and differential expression
 remain valid.
 
 Classes
@@ -76,14 +76,15 @@ def build_bnb_dist(
     Converts the learnable excess-dispersion fraction ``omega_g`` into
     the BNB concentration ``kappa_g`` and the first Beta shape ``alpha``
     such that E[X] = r * p / (1 - p), matching the NB mean under
-    numpyro's failure-probability convention.
+    SCRIBE's canonical ``(r, p) -> mu`` mapping.
 
     Parameters
     ----------
     r : jnp.ndarray
-        NB dispersion (number of failures, >0).
+        NB dispersion (``total_count``, >0).
     p : jnp.ndarray
-        Failure probability, clamped to (eps, 1-eps).
+        ``NegativeBinomialProbs`` probability parameter, clamped to
+        ``(eps, 1-eps)``.
     omega : jnp.ndarray
         Per-gene excess-dispersion fraction (>0).
 
@@ -121,7 +122,8 @@ def build_count_dist(
     r : jnp.ndarray
         NB dispersion (>0).
     p : jnp.ndarray
-        Failure probability, clamped to (eps, 1-eps).
+        ``NegativeBinomialProbs`` probability parameter, clamped to
+        ``(eps, 1-eps)``.
     bnb_concentration : jnp.ndarray, optional
         Per-gene excess-dispersion fraction.  When ``None`` an
         ordinary ``NegativeBinomialProbs`` is returned.

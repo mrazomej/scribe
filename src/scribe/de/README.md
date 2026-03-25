@@ -638,12 +638,14 @@ and uses the most numerically stable computation path:
 |---|---|---|---|
 | `mean_odds` | Sampled directly | `1 / phi` (no subtraction) | `mu * (1 + phi)` |
 | `mean_prob` | Sampled directly | `p / (1 - p)` | `mu / p` |
-| `canonical` | `r * (1 - p) / p` | `p / (1 - p)` | `mu / p` |
+| `canonical` | `r * p / (1 - p)` | `p / (1 - p)` | `mu / p` |
 
 The `mean_odds` path is the most stable: it avoids the catastrophic `1 - p`
 subtraction when `p -> 1` (near-zero expression), since `beta = 1/phi` never
 involves a difference.  When using results objects, the pipeline auto-extracts
 `mu` and `phi` from `posterior_samples` and selects the best path.
+This follows the same canonical `(r, p) -> mu` convention documented in
+`src/scribe/svi/README.md`.
 
 ### Quick start
 
