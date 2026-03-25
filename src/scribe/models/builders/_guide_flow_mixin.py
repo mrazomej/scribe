@@ -3,9 +3,10 @@
 This module registers multipledispatch overloads for
 ``NormalizingFlowGuide`` — the per-parameter normalizing-flow
 variational family.  Each overload wraps a ``FlowChain`` in a
-``FlowDistribution`` and then applies the appropriate parameter
-transform (ExpTransform for LogNormal, spec.transform for
-NormalWithTransformSpec subclasses).
+``FlowDistribution`` and then applies the appropriate constraint
+transform.  For ``LogNormalSpec`` the transform is resolved from
+``model_config.positive_transform`` (``SoftplusTransform`` by default);
+for ``NormalWithTransformSpec`` subclasses it uses ``spec.transform``.
 
 When a parameter has leading batch axes (``is_mixture=True`` and / or
 ``is_dataset=True``), the flow is wrapped in a
@@ -42,6 +43,19 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Low-level helpers
 # ---------------------------------------------------------------------------
+
+
+def _resolve_positive_transform(model_config) -> dist.transforms.Transform:
+    """Return the positive-constraint transform from ``model_config``.
+
+    Reads ``model_config.positive_transform`` (``"softplus"`` or ``"exp"``)
+    and returns the matching NumPyro transform.  Defaults to SoftplusTransform
+    when the attribute is missing.
+    """
+    _pt = getattr(model_config, "positive_transform", "softplus")
+    if _pt == "softplus":
+        return dist.transforms.SoftplusTransform()
+    return dist.transforms.ExpTransform()
 
 
 def _build_flow_chain(
@@ -82,8 +96,7 @@ def _build_flow_chain(
 def _build_flow_distribution(
     flow_fn,
     base: dist.Distribution,
-    spec,
-    is_log_normal: bool,
+    transform: dist.transforms.Transform,
     n_batch_dims: int,
 ) -> dist.Distribution:
     """Create a ``TransformedDistribution`` wrapping a ``FlowDistribution``.
@@ -94,10 +107,9 @@ def _build_flow_distribution(
         Registered ``flax_module`` callable ``(x, reverse=bool) -> (y, log_det)``.
     base : dist.Distribution
         Base distribution (typically diagonal Normal).
-    spec : ParamSpec
-        Parameter specification carrying the constraint transform.
-    is_log_normal : bool
-        If True, apply ``ExpTransform`` (for ``LogNormalSpec``).
+    transform : dist.transforms.Transform
+        Constraint transform mapping unconstrained flow output to the
+        parameter's support (e.g. ``SoftplusTransform``, ``SigmoidTransform``).
     n_batch_dims : int
         Number of leading batch dimensions to promote to event dims.
 
@@ -109,11 +121,6 @@ def _build_flow_distribution(
     flow_dist = FlowDistribution(flow_fn, base)
     if n_batch_dims > 0:
         flow_dist = flow_dist.to_event(n_batch_dims)
-
-    if is_log_normal:
-        transform = dist.transforms.ExpTransform()
-    else:
-        transform = spec.transform
 
     return dist.TransformedDistribution(flow_dist, transform)
 
@@ -318,8 +325,9 @@ def setup_guide(
     """NormalizingFlow guide for LogNormal parameters.
 
     Registers a ``FlowChain`` via ``flax_module`` and wraps it in a
-    ``FlowDistribution`` + ``ExpTransform``.  The flow operates in
-    unconstrained space with a standard Normal(0, 1) base.
+    ``FlowDistribution`` + the positive-constraint transform resolved from
+    ``model_config.positive_transform`` (``SoftplusTransform`` by default).
+    The flow operates in unconstrained space with a standard Normal(0, 1) base.
 
     For mixture / multi-dataset parameters the flow is expanded into
     a ``ComponentFlowDistribution`` according to ``guide.mixture_strategy``.
@@ -333,13 +341,15 @@ def setup_guide(
     dims : Dict[str, int]
         Dimension sizes (must contain keys referenced by ``spec.shape_dims``).
     model_config : ModelConfig
-        Model configuration.
+        Model configuration (``positive_transform`` controls the constraint).
 
     Returns
     -------
     jnp.ndarray
         Sampled parameter value in constrained (positive) space.
     """
+    pos_transform = _resolve_positive_transform(model_config)
+
     resolved_shape = resolve_shape(
         spec.shape_dims,
         dims,
@@ -355,9 +365,7 @@ def setup_guide(
             guide, spec, G, batch_shape, axis_names,
             name_prefix=f"flow_{spec.name}",
         )
-        transformed = dist.TransformedDistribution(
-            flow_dist, dist.transforms.ExpTransform()
-        )
+        transformed = dist.TransformedDistribution(flow_dist, pos_transform)
         return numpyro.sample(spec.name, transformed)
 
     # --- Standard (no batch axes) ---
@@ -366,7 +374,7 @@ def setup_guide(
     flow_fn = flax_module(f"flow_{spec.name}", flow_chain, input_shape=(G,))
     base = dist.Normal(jnp.zeros(G), jnp.ones(G)).to_event(1)
     transformed = _build_flow_distribution(
-        flow_fn, base, spec, is_log_normal=True, n_batch_dims=n_batch_dims,
+        flow_fn, base, pos_transform, n_batch_dims=n_batch_dims,
     )
     return numpyro.sample(spec.name, transformed)
 
@@ -436,6 +444,6 @@ def setup_guide(
     flow_fn = flax_module(f"flow_{spec.name}", flow_chain, input_shape=(G,))
     base = dist.Normal(jnp.zeros(G), jnp.ones(G)).to_event(1)
     transformed = _build_flow_distribution(
-        flow_fn, base, spec, is_log_normal=False, n_batch_dims=n_batch_dims,
+        flow_fn, base, spec.transform, n_batch_dims=n_batch_dims,
     )
     return numpyro.sample(spec.constrained_name, transformed)
