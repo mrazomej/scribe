@@ -4983,6 +4983,119 @@ class TestFlowGuidePosteriorIntegration:
             restored.guide_families.get("r"), NormalizingFlowGuide
         )
 
+    # ---- Nondense param detection in dense_params config ------------------
+
+    def test_nondense_flow_param_detected_by_flow_guided_names(self):
+        """_flow_guided_param_names detects nondense joint flow params."""
+        from scribe.models.builders.posterior import _flow_guided_param_names
+
+        # Simulate params for dense_params=["r"], joint_param=[r, p]:
+        # r is dense (has $params), p is nondense (has _loc/_raw_diag)
+        params = {
+            "joint_flow_joint_r$params": jnp.zeros(5),
+            "joint_flow_joint_p_loc": jnp.zeros(10),
+            "joint_flow_joint_p_raw_diag": -3.0 * jnp.ones(10),
+            "joint_flow_joint_p_alpha_r": jnp.zeros(10),
+            "logit_p_loc_loc": jnp.zeros(1),
+            "logit_p_loc_scale": jnp.ones(1),
+        }
+        names = _flow_guided_param_names(params)
+        assert "r" in names, "Dense param r should be detected via $params"
+        assert "p" in names, "Nondense param p should be detected via _loc/_raw_diag"
+
+    def test_nondense_flow_param_not_detected_without_raw_diag(self):
+        """_flow_guided_param_names ignores _loc keys with no _raw_diag companion."""
+        from scribe.models.builders.posterior import _flow_guided_param_names
+
+        # A stray _loc key without _raw_diag should not trigger detection
+        params = {
+            "joint_flow_joint_r$params": jnp.zeros(5),
+            "joint_flow_joint_p_loc": jnp.zeros(10),
+        }
+        names = _flow_guided_param_names(params)
+        assert "r" in names
+        assert "p" not in names, "p should not be detected without _raw_diag"
+
+    def test_nondense_posterior_has_conditional_and_sigmoid(self):
+        """Nondense p in joint flow gets conditional=True and SigmoidTransform.
+
+        Directly constructs a params dict that mimics the output from
+        SVI with dense_params=["r"], joint_param=["r","p"],
+        pprior=gaussian to verify the posterior extraction pipeline.
+        """
+        import numpyro.distributions as ndist
+        from scribe.models.components import JointNormalizingFlowGuide
+        from scribe.models.config import (
+            GuideFamilyConfig,
+            ModelConfigBuilder,
+            ModelType,
+        )
+        from scribe.models.builders.posterior import get_posterior_distributions
+
+        G = 10
+        joint = JointNormalizingFlowGuide(
+            flow_type="affine_coupling",
+            num_layers=2,
+            hidden_dims=(32,),
+            group="joint",
+            dense_params=["r"],
+        )
+
+        config = (
+            ModelConfigBuilder()
+            .for_model(ModelType.NBDM)
+            .with_parameterization("canonical")
+            .unconstrained()
+            .with_hierarchical_p()
+            .build()
+            .model_copy(
+                update=dict(
+                    guide_families=GuideFamilyConfig(r=joint, p=joint),
+                    joint_params=["r", "p"],
+                    dense_params=["r"],
+                )
+            )
+        )
+
+        # Manually construct a params dict that simulates what
+        # SVI would produce for this configuration:
+        #   - r (dense): has $params key (Flax flow params)
+        #   - p (nondense): has _loc, _raw_diag, _alpha_r keys
+        #   - hypers: logit_p_loc_loc/scale, logit_p_scale_loc/scale
+        params = {
+            # Dense r flow params (Flax nested dict placeholder)
+            "joint_flow_joint_r$params": {"layer_0": {"kernel": jnp.zeros((5, 32))}},
+            # Nondense p diagonal regression params
+            "joint_flow_joint_p_loc": jnp.zeros(G),
+            "joint_flow_joint_p_raw_diag": -3.0 * jnp.ones(G),
+            "joint_flow_joint_p_alpha_r": jnp.zeros(G),
+            # Hierarchical p hyperparameters (mean-field guide)
+            "logit_p_loc_loc": jnp.array(0.0),
+            "logit_p_loc_scale": jnp.array(1.0),
+            "logit_p_scale_loc": jnp.array(0.0),
+            "logit_p_scale_scale": jnp.array(1.0),
+        }
+
+        distributions = get_posterior_distributions(params, config)
+
+        # p must have conditional=True (nondense in joint flow)
+        assert "p" in distributions, "p should be in distributions"
+        p_dist = distributions["p"]
+        assert isinstance(p_dist, dict), "p distribution should be a dict"
+        assert p_dist.get("conditional") is True, (
+            "Nondense p in a joint flow must be marked conditional=True"
+        )
+        # Correct transform for probability parameter
+        assert isinstance(
+            p_dist["transform"], ndist.transforms.SigmoidTransform
+        ), (
+            f"p should use SigmoidTransform, got {type(p_dist['transform'])}"
+        )
+
+        # Hyper-priors should also be present
+        assert "logit_p_loc" in distributions
+        assert "logit_p_scale" in distributions
+
 
 # ==============================================================================
 # FlowDistribution Convenience Method Tests
