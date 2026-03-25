@@ -306,7 +306,18 @@ def plot_mean_calibration(
     """
     console.print("[dim]Plotting mean-calibration diagnostic...[/dim]")
 
-    map_estimates = _get_map_estimates_for_plot(results, counts=counts)
+    map_estimates = _get_map_estimates_for_plot(
+        results,
+        counts=counts,
+        targets=[
+            "r",
+            "p",
+            "mixing_weights",
+            "p_capture",
+            "bnb_kappa",
+            "bnb_concentration",
+        ],
+    )
     r = map_estimates.get("r")
     p = map_estimates.get("p")
     if r is None or p is None:

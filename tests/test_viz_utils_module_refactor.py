@@ -169,6 +169,65 @@ def test_training_payload_includes_mcmc_diagnostics():
     assert payload["trace_by_chain"].shape == (2, 3)
 
 
+def test_map_dispatch_forwards_targets_for_svi():
+    """SVI map-dispatch helper should forward requested targets."""
+    from viz_utils.dispatch import _get_map_estimates_for_plot
+
+    results = ScribeSVIResults(
+        params={},
+        loss_history=jnp.array([1.0], dtype=jnp.float32),
+        n_cells=1,
+        n_genes=1,
+        model_type="nbdm",
+        model_config=ModelConfig(base_model="nbdm"),
+        prior_params={},
+    )
+    captured = {}
+
+    def _fake_get_map(**kwargs):
+        captured.update(kwargs)
+        return {"r": np.array([1.0], dtype=float)}
+
+    # Instance-level override lets the dispatch helper stay type-correct while
+    # keeping the test lightweight and focused on forwarded kwargs.
+    results.get_map = _fake_get_map
+
+    out = _get_map_estimates_for_plot(
+        results,
+        counts=np.zeros((1, 1), dtype=float),
+        use_mean=False,
+        targets=["r", "p"],
+    )
+    assert set(out.keys()) == {"r"}
+    assert captured["targets"] == ["r", "p"]
+    assert captured["use_mean"] is False
+
+
+def test_map_dispatch_ignores_targets_for_mcmc():
+    """MCMC map-dispatch helper should ignore selective targets."""
+    from viz_utils.dispatch import _get_map_estimates_for_plot
+
+    results = _make_mcmc_results_for_viz()
+    captured = {}
+
+    def _fake_get_map(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return {"r": np.array([1.0], dtype=float)}
+
+    results.get_map = _fake_get_map
+
+    out = _get_map_estimates_for_plot(
+        results,
+        counts=np.zeros((3, 2), dtype=float),
+        use_mean=False,
+        targets=["r"],
+    )
+    assert set(out.keys()) == {"r"}
+    assert captured["args"] == ()
+    assert captured["kwargs"] == {}
+
+
 def test_umap_cache_path_without_subset_uses_full_suffix():
     """Unsplit runs should use a deterministic ``_full`` cache suffix."""
     cfg = OmegaConf.create({"data": {"path": "/tmp/example_dataset.h5ad"}})
@@ -479,10 +538,17 @@ def test_plot_capture_anchor_saves_output(monkeypatch, tmp_path):
     )
 
     # Mock map extraction so the plot function receives eta values directly.
+    def _fake_get_map_estimates(_results, *, counts, use_mean=True, targets=None):
+        _ = _results
+        _ = counts
+        _ = use_mean
+        assert targets == ["eta_capture"]
+        return {"eta_capture": eta_values}
+
     monkeypatch.setattr(
         capture_anchor_module,
         "_get_map_estimates_for_plot",
-        lambda *_args, **_kwargs: {"eta_capture": eta_values},
+        _fake_get_map_estimates,
     )
     # Mock filename metadata to keep assertion stable and focused.
     monkeypatch.setattr(
@@ -548,10 +614,17 @@ def test_plot_p_capture_scaling_saves_output(monkeypatch, tmp_path):
     p_capture = np.array([0.3, 0.5, 0.4, 0.2, 0.6, 0.55], dtype=float)
 
     # Stub map extraction to provide deterministic p_capture values.
+    def _fake_get_map_estimates(_results, *, counts, use_mean=True, targets=None):
+        _ = _results
+        _ = counts
+        _ = use_mean
+        assert targets == ["p_capture"]
+        return {"p_capture": p_capture}
+
     monkeypatch.setattr(
         capture_anchor_module,
         "_get_map_estimates_for_plot",
-        lambda *_args, **_kwargs: {"p_capture": p_capture},
+        _fake_get_map_estimates,
     )
     # Stub component assignment probabilities for mixture split plotting.
     monkeypatch.setattr(
@@ -661,10 +734,17 @@ def test_plot_mu_pairwise_saves_output_for_multi_dataset(monkeypatch, tmp_path):
         ],
         dtype=float,
     )
+    def _fake_get_map_estimates(_results, *, counts, use_mean=True, targets=None):
+        _ = _results
+        _ = counts
+        _ = use_mean
+        assert targets == ["mu", "mixing_weights"]
+        return {"mu": fake_mu}
+
     monkeypatch.setattr(
         mu_pairwise_module,
         "_get_map_estimates_for_plot",
-        lambda *_args, **_kwargs: {"mu": fake_mu},
+        _fake_get_map_estimates,
     )
     monkeypatch.setattr(
         mu_pairwise_module,
@@ -689,6 +769,142 @@ def test_plot_mu_pairwise_saves_output_for_multi_dataset(monkeypatch, tmp_path):
 
     assert output_path is not None
     assert output_path.endswith("_mu_pairwise.png")
+
+
+def test_plot_mean_calibration_requests_targeted_map(monkeypatch, tmp_path):
+    """Mean calibration should request only the MAP keys it consumes."""
+    import viz_utils.mean_calibration as mean_calibration_module
+
+    class _FakeResults:
+        """Minimal result stub for mean-calibration plotting."""
+
+        model_type = "nbdm"
+        n_components = 1
+        model_config = MagicMock(n_datasets=None)
+
+    def _fake_get_map_estimates(_results, *, counts, use_mean=True, targets=None):
+        _ = _results
+        _ = counts
+        _ = use_mean
+        assert targets == [
+            "r",
+            "p",
+            "mixing_weights",
+            "p_capture",
+            "bnb_kappa",
+            "bnb_concentration",
+        ]
+        return {"r": np.array([3.0, 4.0]), "p": np.array([0.4, 0.5])}
+
+    monkeypatch.setattr(
+        mean_calibration_module,
+        "_get_map_estimates_for_plot",
+        _fake_get_map_estimates,
+    )
+    monkeypatch.setattr(
+        mean_calibration_module,
+        "_get_config_values",
+        lambda *_args, **_kwargs: {
+            "method": "svi",
+            "parameterization": "canonical",
+            "model_type": "nbdm",
+            "n_components": 1,
+            "run_size_token": "100steps",
+        },
+    )
+
+    out = mean_calibration_module.plot_mean_calibration(
+        _FakeResults(),
+        counts=np.array([[1.0, 2.0], [3.0, 1.0]], dtype=float),
+        figs_dir=str(tmp_path),
+        cfg=OmegaConf.create({}),
+        viz_cfg=OmegaConf.create({"format": "png"}),
+    )
+    assert out is not None
+    assert out.endswith("_mean_calibration.png")
+
+
+def test_select_divergent_genes_requests_dynamic_target(monkeypatch):
+    """Mixture PPC gene selection should request either ``mu`` or ``r`` only."""
+    import viz_utils.mixture_ppc as mixture_ppc_module
+
+    class _FakeResults:
+        """Minimal result stub exposing parameterization metadata."""
+
+        model_config = MagicMock(parameterization="mean_odds")
+
+    def _fake_get_map_estimates(_results, *, counts, use_mean=True, targets=None):
+        _ = _results
+        _ = counts
+        _ = use_mean
+        assert targets == ["mu"]
+        # 2 components, 3 genes
+        return {"mu": jnp.array([[2.0, 3.0, 4.0], [3.0, 2.0, 5.0]])}
+
+    monkeypatch.setattr(
+        mixture_ppc_module,
+        "_get_map_estimates_for_plot",
+        _fake_get_map_estimates,
+    )
+    selected, lfc = mixture_ppc_module._select_divergent_genes(
+        _FakeResults(),
+        counts=np.array([[1.0, 0.0, 2.0], [2.0, 1.0, 0.0]], dtype=float),
+        n_rows=1,
+        n_cols=2,
+    )
+    assert selected.shape[0] <= 2
+    assert lfc.shape[0] == selected.shape[0]
+
+
+def test_mixture_composition_requests_mixing_weights_only(monkeypatch, tmp_path):
+    """Mixture composition should request only mixing-weight MAP values."""
+    import viz_utils.mixture_ppc as mixture_ppc_module
+
+    class _FakeResults:
+        """Minimal mixture result stub."""
+
+        model_type = "nbdm"
+        n_components = 2
+        n_cells = 2
+        _dataset_indices = None
+
+    def _fake_get_map_estimates(_results, *, counts, use_mean=True, targets=None):
+        _ = _results
+        _ = counts
+        _ = use_mean
+        assert targets == ["mixing_weights"]
+        return {"mixing_weights": np.array([0.7, 0.3], dtype=float)}
+
+    monkeypatch.setattr(
+        mixture_ppc_module,
+        "_get_map_estimates_for_plot",
+        _fake_get_map_estimates,
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module,
+        "_get_config_values",
+        lambda *_args, **_kwargs: {
+            "method": "svi",
+            "parameterization": "canonical",
+            "model_type": "nbdm",
+            "n_components": 2,
+            "run_size_token": "100steps",
+        },
+    )
+
+    out = mixture_ppc_module.plot_mixture_composition(
+        _FakeResults(),
+        counts=np.array([[1.0, 0.0], [0.0, 1.0]], dtype=float),
+        figs_dir=str(tmp_path),
+        cfg=OmegaConf.create({}),
+        viz_cfg=OmegaConf.create({"format": "png"}),
+        cell_labels=None,
+    )
+    _ = out
+    assert any(
+        path.name.endswith("_mixture_composition.png")
+        for path in tmp_path.iterdir()
+    )
 
 
 def test_mixture_composition_uses_trained_label_map_before_alphabetical_fallback():
