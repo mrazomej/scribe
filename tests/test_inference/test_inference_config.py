@@ -2,7 +2,12 @@
 
 import pytest
 import numpyro
+from scribe.inference.preset_builder import build_config_from_preset
 from scribe.inference.inference_config import create_default_inference_config
+from scribe.models.components.guide_families import (
+    JointNormalizingFlowGuide,
+    NormalizingFlowGuide,
+)
 from scribe.models.config import InferenceConfig, SVIConfig, MCMCConfig
 from scribe.models.config.enums import InferenceMethod
 from scribe.inference.optimizer_factory import (
@@ -178,3 +183,40 @@ class TestSVIOptimizerConfig:
         )
         resolved = resolve_svi_optimizer(config)
         assert resolved is explicit_optimizer
+
+
+class TestFlowGuideActivationPlumbing:
+    """Test flow activation propagation through preset-builder wiring."""
+
+    def test_flow_activation_reaches_per_parameter_guide(self):
+        """Per-parameter flow guides honor guide_flow_activation."""
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="canonical",
+            inference_method="svi",
+            guide_flow="affine_coupling",
+            guide_flow_activation="gelu",
+        )
+
+        assert config.guide_families is not None
+        assert isinstance(config.guide_families.r, NormalizingFlowGuide)
+        assert config.guide_families.r.activation == "gelu"
+
+    def test_flow_activation_reaches_joint_flow_guide(self):
+        """Joint flow guides honor guide_flow_activation for all grouped params."""
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="mean_odds",
+            inference_method="svi",
+            unconstrained=True,
+            p_prior="gaussian",
+            guide_flow="spline_coupling",
+            guide_flow_activation="silu",
+            joint_params=["mu", "phi"],
+        )
+
+        assert config.guide_families is not None
+        assert isinstance(config.guide_families.mu, JointNormalizingFlowGuide)
+        assert isinstance(config.guide_families.phi, JointNormalizingFlowGuide)
+        assert config.guide_families.mu.activation == "silu"
+        assert config.guide_families.phi.activation == "silu"
