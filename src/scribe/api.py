@@ -275,6 +275,7 @@ def fit(
     guide_flow_residual: bool = True,
     guide_flow_soft_clamp: bool = True,
     guide_flow_loft: bool = True,
+    guide_flow_log_det_f64: bool = False,
     priors: Optional[Dict[str, Any]] = None,
     # VAE architecture options (when inference_method="vae")
     vae_latent_dim: int = 10,
@@ -497,6 +498,14 @@ def fit(
         after all coupling layers.  LOFT compresses extreme sample magnitudes
         logarithmically while preserving identity near zero; the final affine
         re-expands the range to match the target posterior's scale.
+
+    guide_flow_log_det_f64 : bool, default=False
+        Accumulate the log-determinant Jacobian of the flow in float64 to
+        reduce precision loss when summing many small per-layer contributions
+        in high-dimensional flows (e.g. 28K genes).  When True, ``enable_x64``
+        is automatically promoted to True.  Off by default because most
+        consumer GPUs heavily throttle float64 throughput; recommended for
+        datacenter GPUs (A100, H100, MI250X) with full-rate float64.
 
     priors : Dict[str, Any], optional
         Dictionary of prior hyperparameters keyed by parameter name. Values
@@ -1113,6 +1122,7 @@ def fit(
             guide_flow_residual=guide_flow_residual,
             guide_flow_soft_clamp=guide_flow_soft_clamp,
             guide_flow_loft=guide_flow_loft,
+            guide_flow_log_det_f64=guide_flow_log_det_f64,
             n_components=n_components,
             mixture_params=effective_mixture_params,
             priors=priors,
@@ -1330,6 +1340,11 @@ def fit(
         effective_x64 = inference_config.method == InferenceMethod.MCMC
     else:
         effective_x64 = enable_x64
+
+    # Float64 log-det accumulation in flows requires x64 support.
+    # Auto-promote so the user doesn't have to set both flags.
+    if guide_flow_log_det_f64:
+        effective_x64 = True
 
     # ==========================================================================
     # Step 6: Run inference

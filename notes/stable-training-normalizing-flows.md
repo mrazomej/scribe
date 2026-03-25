@@ -82,7 +82,7 @@ codebase:
 | **LOFT (Log Soft Extension)** | Implemented, on by default | `src/scribe/flows/base.py` (`loft_forward`, `loft_inverse`, `FlowChain.use_loft`) |
 | **Final affine layer** | Implemented (paired with LOFT) | `src/scribe/flows/base.py` (`FlowChain.final_mu`, `FlowChain.final_log_sigma`) |
 | **Best-params restoration** | Implemented as general SVI feature | `src/scribe/svi/inference_engine.py` (`restore_best` parameter) |
-| Double precision training | Not implemented (user can enable via `inference.enable_x64`) | Config-level |
+| **Float64 log-det accumulation** | Implemented, off by default | `src/scribe/flows/base.py` (`FlowChain.log_det_f64`); auto-promotes `enable_x64` |
 | Student-t base distribution | Not implemented (standard Normal used) | — |
 | Path gradients | Not implemented (NumPyro uses reparameterized gradients) | — |
 
@@ -90,4 +90,5 @@ codebase:
 
 - `guide_flow_soft_clamp: true` — asymmetric arctan clamp on affine log-scale
 - `guide_flow_loft: true` — LOFT + final affine after coupling layers
+- `guide_flow_log_det_f64: false` — float64 log-det accumulation (datacenter GPUs; auto-promotes `enable_x64`)
 - `inference.restore_best: false` — best-params restoration (general SVI)
