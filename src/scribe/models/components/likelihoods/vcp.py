@@ -139,7 +139,8 @@ class NBWithVCPLikelihood(Likelihood):
         r : jnp.ndarray
             NB dispersion (>0).
         p : jnp.ndarray
-            Failure probability, clamped to (eps, 1-eps).
+            ``NegativeBinomialProbs`` probability parameter, clamped to
+            ``(eps, 1-eps)``.
 
         Returns
         -------
@@ -161,7 +162,7 @@ class NBWithVCPLikelihood(Likelihood):
         r : jnp.ndarray
             NB dispersion (>0).
         logits : jnp.ndarray
-            Log-odds of the failure probability.
+            Log-odds of the ``NegativeBinomialLogits`` probability parameter.
 
         Returns
         -------

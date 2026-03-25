@@ -566,12 +566,16 @@ norm_post = results.normalize_counts(
 
 `normalize_counts_map(estimator="mean")` is parameterization-aware:
 
+- **Convention note**: canonical SCRIBE extraction uses
+  `mu = r * p / (1 - p)` for `(r, p)` maps. The linked inverse remains
+  `r = mu * (1 - p) / p`. This code-level `p` convention is the one used
+  throughout training and post-processing.
 - If MAP includes `mu` (for example with `mean_prob` / `mean_odds`, and
   canonical/standard after deterministic MAP conversion),
   it uses `rho = mu / sum(mu)` directly.
 - If gene-specific `p_g` or `phi_g` is detected, it applies the hierarchical
-  scaling implied by the paper derivation:
-  - `mu = r * (1 - p) / p` or equivalently `mu = r / phi`,
+  scaling implied by the model parameterization:
+  - `mu = r * p / (1 - p)` or equivalently `mu = r / phi`,
   - then `rho = mu / sum(mu)`.
 - Otherwise (shared-p Dirichlet case), it uses `rho = r / sum(r)`.
 

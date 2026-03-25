@@ -36,10 +36,9 @@ class BetaPrime(Distribution):
     Mathematically, φ has the *standard* Beta-prime with swapped parameters:
         φ ~ BetaPrime_std(β, α).
     This class accepts (α, β) at the call site and internally uses (β, α),
-    so that your models can pass (α, β) unchanged. This is necessary because the
-    NumPyro NegativeBinomial distribution expects the `probs` parameter to be
-    the *failure probability* p, so that the odds ratio φ = (1 - p) / p is
-    consistent with the parameterization of the BetaPrime distribution.
+    so that your models can pass (α, β) unchanged. This keeps the odds
+    transform ``φ = (1 - p) / p`` aligned with the model's ``p`` parameter
+    usage in SCRIBE.
 
     Density (with user parameters α, β)
     -----------------------------------
