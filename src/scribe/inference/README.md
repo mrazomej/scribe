@@ -72,7 +72,11 @@ from scribe.inference import run_scribe
 from scribe.models.config import InferenceConfig, SVIConfig
 
 # Create inference config
-svi_config = SVIConfig(n_steps=50000, batch_size=256)
+svi_config = SVIConfig(
+    n_steps=50000,
+    batch_size=256,
+    optimizer_config={"name": "adam", "step_size": 1e-3},
+)
 inference_config = InferenceConfig.from_svi(svi_config)
 
 # Run inference

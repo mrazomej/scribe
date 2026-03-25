@@ -20,6 +20,7 @@ from ..models.config import ModelConfig, SVIConfig, DataConfig
 from ..models.components.guide_families import VAELatentGuide
 from ..svi import SVIInferenceEngine
 from ..svi.vae_results import ScribeVAEResults
+from .optimizer_factory import resolve_svi_optimizer
 
 # ==============================================================================
 # VAE Inference
@@ -90,8 +91,9 @@ def _run_vae_inference(
         "stable_update": svi_config.stable_update,
         "early_stopping": svi_config.early_stopping,
     }
-    if svi_config.optimizer is not None:
-        run_kwargs["optimizer"] = svi_config.optimizer
+    resolved_optimizer = resolve_svi_optimizer(svi_config)
+    if resolved_optimizer is not None:
+        run_kwargs["optimizer"] = resolved_optimizer
     if svi_config.loss is not None:
         run_kwargs["loss"] = svi_config.loss
 

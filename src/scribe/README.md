@@ -45,6 +45,7 @@ results = scribe.fit(
     n_components=3,
     n_steps=100000,
     batch_size=512,
+    optimizer_config={"name": "clipped_adam", "step_size": 5e-4, "grad_clip_norm": 1.0},
 )
 
 # Analyze results

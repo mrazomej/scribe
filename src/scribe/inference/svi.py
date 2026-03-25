@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 from ..models.config import ModelConfig, SVIConfig, DataConfig
 from ..svi import SVIInferenceEngine, SVIResultsFactory
+from .optimizer_factory import resolve_svi_optimizer
 
 # ==============================================================================
 # SVI Inference Engine
@@ -108,7 +109,7 @@ def _run_svi_inference(
     EarlyStoppingConfig : Configuration for early stopping criteria.
     """
     # Extract parameters from SVI config
-    optimizer = svi_config.optimizer
+    optimizer = resolve_svi_optimizer(svi_config)
     loss = svi_config.loss
     n_steps = svi_config.n_steps
     batch_size = svi_config.batch_size

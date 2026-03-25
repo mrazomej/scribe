@@ -289,6 +289,7 @@ def fit(
     inference_method: str = "svi",
     n_steps: int = 50_000,
     batch_size: Optional[int] = None,
+    optimizer_config: Optional[Dict[str, Any]] = None,
     stable_update: bool = True,
     log_progress_lines: bool = False,
     n_samples: int = 2_000,
@@ -492,6 +493,16 @@ def fit(
         coerced to ``None`` (full-batch mode). Recommended for large datasets
         (>10K cells).
 
+    optimizer_config : Dict[str, Any], optional
+        Serializable optimizer specification for SVI/VAE. This is passed to
+        ``SVIConfig.optimizer_config`` and used to build a NumPyro optimizer
+        at runtime. Minimal form:
+        ``{"name": "adam", "step_size": 1e-3}``.
+        Supported names: ``"adam"``, ``"clipped_adam"``, ``"adagrad"``,
+        ``"rmsprop"``, ``"sgd"``, ``"momentum"``.
+        If ``None``, engine defaults are used unless ``inference_config``
+        provides an explicit optimizer object.
+
     stable_update : bool, default=True
         Use numerically stable parameter updates in SVI.
 
@@ -630,7 +641,8 @@ def fit(
     inference_config : InferenceConfig, optional
         Fully configured inference configuration object.
         If provided, overrides inference_method, n_steps, batch_size,
-        stable_update, log_progress_lines, n_samples, n_warmup, and n_chains.
+        optimizer_config, stable_update, log_progress_lines, n_samples,
+        n_warmup, and n_chains.
 
     Returns
     -------
@@ -1122,6 +1134,7 @@ def fit(
             svi_config = SVIConfig(
                 n_steps=n_steps,
                 batch_size=effective_batch_size,
+                optimizer_config=optimizer_config,
                 stable_update=stable_update,
                 log_progress_lines=log_progress_lines,
                 early_stopping=early_stop_config,
@@ -1131,6 +1144,12 @@ def fit(
             if early_stopping is not None:
                 warnings.warn(
                     "early_stopping is only supported for SVI and VAE "
+                    "inference methods. Ignoring for MCMC.",
+                    UserWarning,
+                )
+            if optimizer_config is not None:
+                warnings.warn(
+                    "optimizer_config is only supported for SVI and VAE "
                     "inference methods. Ignoring for MCMC.",
                     UserWarning,
                 )
@@ -1206,6 +1225,7 @@ def fit(
             svi_config = SVIConfig(
                 n_steps=n_steps,
                 batch_size=effective_batch_size,
+                optimizer_config=optimizer_config,
                 stable_update=stable_update,
                 log_progress_lines=log_progress_lines,
                 early_stopping=early_stop_config,
