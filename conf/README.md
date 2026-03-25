@@ -20,6 +20,9 @@ python infer.py model=zinb parameterization=linked n_components=3
 # Override inference parameters
 python infer.py model=nbdm inference.n_steps=100000 inference.batch_size=512
 
+# Override optimizer from CLI (SVI/VAE)
+python infer.py model=nbdm inference.optimizer_config.name=clipped_adam inference.optimizer_config.step_size=0.0005 inference.optimizer_config.grad_clip_norm=1.0
+
 # Use different datasets
 python infer.py model=zinb data=jurkat_cells
 
@@ -252,6 +255,7 @@ outputs/bleo_study01_control/nbvcp/svi/...
 method: svi
 n_steps: 50_000
 batch_size: null      # null = full batch
+optimizer_config: null  # or {name: adam, step_size: 0.001}
 stable_update: true
 ```
 

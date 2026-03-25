@@ -20,6 +20,15 @@ n_steps: 50_000
 # Set to a value (e.g., 256, 512) for large datasets
 batch_size: null
 
+# Optional serialized optimizer configuration.
+# null = use engine default (Adam step_size=0.001).
+# Example:
+# optimizer_config:
+#   name: clipped_adam
+#   step_size: 0.0005
+#   grad_clip_norm: 1.0
+optimizer_config: null
+
 # Use numerically stable parameter updates
 # When true, handles NaN/Inf gracefully
 stable_update: true

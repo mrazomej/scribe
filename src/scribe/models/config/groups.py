@@ -738,8 +738,13 @@ class SVIConfig(BaseModel):
     Parameters
     ----------
     optimizer : Any, optional
-        Optimizer for variational inference. Defaults to Adam with
-        step_size=0.001 if not specified.
+        Prebuilt NumPyro optimizer object for variational inference.
+        This is a power-user override and takes precedence over
+        ``optimizer_config``.
+    optimizer_config : OptimizerConfig, optional
+        Serializable optimizer specification (name + kwargs) for API/Hydra
+        usage. If neither ``optimizer`` nor ``optimizer_config`` is provided,
+        the inference engine uses its default optimizer (Adam, 0.001).
     loss : Any, optional
         Loss function for variational inference. Defaults to TraceMeanField_ELBO
         if not specified.
@@ -785,6 +790,107 @@ class SVIConfig(BaseModel):
     EarlyStoppingConfig : Configuration for early stopping criteria.
     """
 
+    class OptimizerConfig(BaseModel):
+        """Serializable optimizer specification for SVI/VAE training.
+
+        Parameters
+        ----------
+        name : str, default="adam"
+            Optimizer name. Supported values are ``"adam"``,
+            ``"clipped_adam"``, ``"adagrad"``, ``"rmsprop"``,
+            ``"sgd"``, and ``"momentum"``.
+        step_size : float, optional
+            Optimizer learning rate.
+        b1 : float, optional
+            First-moment coefficient for Adam-like optimizers.
+        b2 : float, optional
+            Second-moment coefficient for Adam-like optimizers.
+        eps : float, optional
+            Numerical epsilon.
+        momentum : float, optional
+            Momentum coefficient for momentum-based optimizers.
+        weight_decay : float, optional
+            Weight decay coefficient for optimizers that support it.
+        grad_clip_norm : float, optional
+            Global clipping norm. For ``clipped_adam`` this maps to
+            ``clip_norm``.
+
+        Notes
+        -----
+        Extra fields are allowed and passed through as optimizer kwargs.
+        This keeps the configuration forward-compatible with optimizer-specific
+        keyword arguments not covered by the common fields above.
+        """
+
+        model_config = ConfigDict(frozen=True, extra="allow")
+
+        name: str = Field(
+            "adam",
+            description=(
+                "Optimizer name: adam, clipped_adam, adagrad, rmsprop, "
+                "sgd, momentum"
+            ),
+        )
+        step_size: Optional[float] = Field(
+            None, gt=0, description="Optimizer learning rate"
+        )
+        b1: Optional[float] = Field(
+            None, gt=0, lt=1, description="First-moment coefficient"
+        )
+        b2: Optional[float] = Field(
+            None, gt=0, lt=1, description="Second-moment coefficient"
+        )
+        eps: Optional[float] = Field(
+            None, gt=0, description="Numerical epsilon"
+        )
+        momentum: Optional[float] = Field(
+            None,
+            ge=0,
+            lt=1,
+            description="Momentum coefficient for momentum-based optimizers",
+        )
+        weight_decay: Optional[float] = Field(
+            None, ge=0, description="Weight decay coefficient"
+        )
+        grad_clip_norm: Optional[float] = Field(
+            None,
+            gt=0,
+            description=(
+                "Global gradient clipping norm (mapped to clip_norm for "
+                "clipped_adam)"
+            ),
+        )
+
+        @field_validator("name")
+        @classmethod
+        def _normalize_name(cls, value: str) -> str:
+            """Normalize and validate optimizer names."""
+            normalized = value.strip().lower()
+            valid_names = {
+                "adam",
+                "clipped_adam",
+                "adagrad",
+                "rmsprop",
+                "sgd",
+                "momentum",
+            }
+            if normalized not in valid_names:
+                raise ValueError(
+                    f"Unsupported optimizer name {value!r}. "
+                    f"Choose one of {sorted(valid_names)}."
+                )
+            return normalized
+
+        def extra_kwargs(self) -> Dict[str, Any]:
+            """Return passthrough optimizer kwargs from extra config fields."""
+            known = set(type(self).model_fields.keys())
+            dumped = self.model_dump(exclude_none=True)
+            return {
+                key: value
+                for key, value in dumped.items()
+                if key not in known
+            }
+
     model_config = ConfigDict(
         frozen=True, arbitrary_types_allowed=True, extra="forbid"
     )
@@ -792,6 +898,13 @@ class SVIConfig(BaseModel):
     optimizer: Optional[Any] = Field(
         None,
         description="Optimizer for variational inference (defaults to Adam)",
+    )
+    optimizer_config: Optional[OptimizerConfig] = Field(
+        None,
+        description=(
+            "Serializable optimizer specification used to build a NumPyro "
+            "optimizer at runtime"
+        ),
     )
     loss: Optional[Any] = Field(
         None, description="Loss function (defaults to TraceMeanField_ELBO)"

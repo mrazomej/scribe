@@ -156,9 +156,8 @@ class TestSVIConfigWithEarlyStopping:
         import inspect
         import scribe
 
-        assert "log_progress_lines" in inspect.signature(
-            scribe.fit
-        ).parameters
+        assert "log_progress_lines" in inspect.signature(scribe.fit).parameters
+        assert "optimizer_config" in inspect.signature(scribe.fit).parameters
 
 
 class TestSVIRunResult:
@@ -386,7 +385,9 @@ class TestEarlyStoppingLogic:
                 patience_counter = 0
             else:
                 improvement = best_loss - smoothed_loss
-                improvement_pct = 100.0 * improvement / max(abs(best_loss), 1e-8)
+                improvement_pct = (
+                    100.0 * improvement / max(abs(best_loss), 1e-8)
+                )
                 if improvement_pct > early_stopping.min_delta_pct:
                     best_loss = smoothed_loss
                     patience_counter = 0
@@ -431,7 +432,9 @@ class TestSVIProgressLossAggregation:
         # Mix finite losses with NaNs to emulate unstable minibatch windows.
         losses = [10.0, float("nan"), 14.0, float("nan"), 16.0]
         # Only finite entries should contribute to the reported average.
-        assert _mean_ignoring_nans(losses) == pytest.approx((10.0 + 14.0 + 16.0) / 3.0)
+        assert _mean_ignoring_nans(losses) == pytest.approx(
+            (10.0 + 14.0 + 16.0) / 3.0
+        )
 
     def test_mean_ignoring_nans_returns_nan_for_all_non_finite(self):
         """All-non-finite windows return NaN instead of raising/warning."""
@@ -964,7 +967,9 @@ class TestCheckpointPathSanitization:
         )
 
         # Path with brackets (like Hydra generates for mixture_params=[mu,phi])
-        checkpoint_dir = str(tmp_path / "mixture_params=[mu,phi]" / "checkpoints")
+        checkpoint_dir = str(
+            tmp_path / "mixture_params=[mu,phi]" / "checkpoints"
+        )
 
         sample_optim_state = {
             "p_loc": jnp.array([0.5, 0.6, 0.7]),
@@ -993,7 +998,9 @@ class TestCheckpointPathSanitization:
         restored_optim_state, metadata, losses = result
         assert metadata.step == 100
         assert metadata.best_loss == 70.0
-        assert set(restored_optim_state.keys()) == set(sample_optim_state.keys())
+        assert set(restored_optim_state.keys()) == set(
+            sample_optim_state.keys()
+        )
 
 
 class TestCheckpointMetadata:

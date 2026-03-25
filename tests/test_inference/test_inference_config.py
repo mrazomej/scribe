@@ -1,9 +1,14 @@
 """Tests for inference_config module."""
 
 import pytest
+import numpyro
 from scribe.inference.inference_config import create_default_inference_config
 from scribe.models.config import InferenceConfig, SVIConfig, MCMCConfig
 from scribe.models.config.enums import InferenceMethod
+from scribe.inference.optimizer_factory import (
+    build_optimizer_from_config,
+    resolve_svi_optimizer,
+)
 
 
 class TestCreateDefaultInferenceConfig:
@@ -19,6 +24,7 @@ class TestCreateDefaultInferenceConfig:
         assert config.svi.n_steps == 50_000
         assert config.svi.batch_size == 512
         assert config.svi.stable_update is True
+        assert config.svi.optimizer_config is None
 
     def test_default_mcmc_config(self):
         """Test default MCMC config creation."""
@@ -117,3 +123,58 @@ class TestInferenceConfig:
                 svi=None,  # Should have mcmc, not svi
                 mcmc=None,  # Missing!
             )
+
+
+class TestSVIOptimizerConfig:
+    """Test structured SVI optimizer configuration behavior."""
+
+    def test_optimizer_config_parses_from_dict(self):
+        """SVIConfig accepts dict-based optimizer_config payloads."""
+        config = SVIConfig(
+            n_steps=100,
+            optimizer_config={"name": "adam", "step_size": 1e-3},
+        )
+        assert config.optimizer_config is not None
+        assert config.optimizer_config.name == "adam"
+        assert config.optimizer_config.step_size == 1e-3
+
+    def test_backward_compat_old_payload_without_optimizer_config(self):
+        """Old SVI payloads without optimizer fields remain valid."""
+        config = SVIConfig.model_validate(
+            {
+                "n_steps": 100,
+                "batch_size": 32,
+                "stable_update": True,
+            }
+        )
+        assert config.n_steps == 100
+        assert config.optimizer is None
+        assert config.optimizer_config is None
+
+    def test_optimizer_config_invalid_name(self):
+        """Unsupported optimizer names are rejected at validation time."""
+        with pytest.raises(ValueError, match="Unsupported optimizer name"):
+            SVIConfig(
+                n_steps=100,
+                optimizer_config={"name": "not_a_real_optimizer"},
+            )
+
+    def test_build_optimizer_from_structured_config(self):
+        """Structured optimizer configs are converted to NumPyro optimizers."""
+        spec = SVIConfig.OptimizerConfig(
+            name="adam",
+            step_size=5e-4,
+        )
+        optimizer = build_optimizer_from_config(spec)
+        assert optimizer is not None
+
+    def test_explicit_optimizer_takes_precedence(self):
+        """Explicit optimizer object overrides optimizer_config resolution."""
+        explicit_optimizer = numpyro.optim.Adam(step_size=1e-2)
+        config = SVIConfig(
+            n_steps=100,
+            optimizer=explicit_optimizer,
+            optimizer_config={"name": "adam", "step_size": 1e-4},
+        )
+        resolved = resolve_svi_optimizer(config)
+        assert resolved is explicit_optimizer
