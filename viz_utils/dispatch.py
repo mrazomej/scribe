@@ -187,18 +187,27 @@ def _get_map_like_predictive_samples_for_plot(
 
 
 @dispatch(scribe.ScribeSVIResults)
-def _get_map_estimates_for_plot(results, *, counts=None, use_mean=True):
+def _get_map_estimates_for_plot(
+    results, *, counts=None, use_mean=True, targets=None
+):
     """Get plot-ready MAP estimates from SVI results."""
     return results.get_map(
-        use_mean=use_mean, canonical=True, verbose=False, counts=counts
+        targets=targets,
+        use_mean=use_mean,
+        canonical=True,
+        verbose=False,
+        counts=counts,
     )
 
 
 @dispatch(scribe.ScribeMCMCResults)
-def _get_map_estimates_for_plot(results, *, counts=None, use_mean=True):
+def _get_map_estimates_for_plot(
+    results, *, counts=None, use_mean=True, targets=None
+):
     """Get plot-ready MAP estimates from MCMC results."""
     _ = counts
     _ = use_mean
+    _ = targets
     return results.get_map()
 
 

@@ -108,7 +108,9 @@ def plot_capture_anchor(results, counts, figs_dir, cfg, viz_cfg):
         return None
 
     # Pull MAP-like parameter estimates and ensure eta parameter is present.
-    map_estimates = _get_map_estimates_for_plot(results, counts=counts)
+    map_estimates = _get_map_estimates_for_plot(
+        results, counts=counts, targets=["eta_capture"]
+    )
     eta_capture = map_estimates.get("eta_capture")
     if eta_capture is None:
         console.print(
@@ -340,7 +342,9 @@ def plot_p_capture_scaling(
     console.print("[dim]Plotting p-capture scaling diagnostic...[/dim]")
 
     # Pull p_capture from MAP estimates and return gracefully when unavailable.
-    map_estimates = _get_map_estimates_for_plot(results, counts=counts)
+    map_estimates = _get_map_estimates_for_plot(
+        results, counts=counts, targets=["p_capture"]
+    )
     p_capture = map_estimates.get("p_capture")
     if p_capture is None:
         console.print(

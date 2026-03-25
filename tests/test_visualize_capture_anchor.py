@@ -576,6 +576,7 @@ def test_plot_p_capture_scaling_joint_gate_results_no_gate_loc_error(
     def _fake_component_probs(_results, *, counts, batch_size, use_mean):
         _ = batch_size
         map_estimates = _results.get_map(
+            targets=["gate"],
             use_mean=use_mean, canonical=True, verbose=False, counts=counts
         )
         assert "gate" in map_estimates
