@@ -43,12 +43,12 @@ def known_mean_shift():
     N, D = 500, 10
     r_A = jnp.ones((N, D)) * 5.0
     r_B = jnp.ones((N, D)) * 5.0
-    # mu = r * (1-p) / p.  Halving p doubles (1-p)/p.
-    # p_A = 0.2 → mu_A = 5*0.8/0.2 = 20
-    # p_B = 1/3  → mu_B = 5*2/3/(1/3) = 10
+    # Canonical mapping: mu = r * p / (1 - p).
+    # p_A = 0.8  -> mu_A = 5*0.8/0.2 = 20
+    # p_B = 2/3  -> mu_B = 5*(2/3)/(1/3) = 10
     # LFC = log(20/10) = log(2)
-    p_A = jnp.ones((N, D)) * 0.2
-    p_B = jnp.ones((N, D)) * (1.0 / 3.0)
+    p_A = jnp.ones((N, D)) * 0.8
+    p_B = jnp.ones((N, D)) * (2.0 / 3.0)
     return r_A, p_A, r_B, p_B
 
 
@@ -93,7 +93,7 @@ class TestIdenticalConditions:
 
 
 class TestKnownMeanShift:
-    """r_A = r_B = 5, p_A = 0.2, p_B = 1/3 → LFC = log(2)."""
+    """r_A = r_B = 5, p_A = 0.8, p_B = 2/3 -> LFC = log(2)."""
 
     def test_lfc_log2(self, known_mean_shift):
         r_A, p_A, r_B, p_B = known_mean_shift
@@ -113,10 +113,10 @@ class TestKnownMeanShift:
         assert jnp.all(result["kl_mean"] > 0)
 
     def test_variance_ratio(self, known_mean_shift):
-        """var = r*(1-p)/p^2. Check ratio is consistent with params."""
+        """var = mu / p in canonical fallback path."""
         r_A, p_A, r_B, p_B = known_mean_shift
-        # var_A = 5*0.8/0.04 = 100, var_B = 5*(2/3)/(1/9) = 30
-        expected_lvr = np.log(100.0 / 30.0)
+        # var_A = 20/0.8 = 25, var_B = 10/(2/3) = 15
+        expected_lvr = np.log(25.0 / 15.0)
         result = biological_differential_expression(r_A, r_B, p_A, p_B)
         np.testing.assert_allclose(
             result["lvr_mean"][0], expected_lvr, atol=1e-4
@@ -164,8 +164,8 @@ class TestAuxiliaryOutputs:
     def test_var_means(self, known_mean_shift):
         r_A, p_A, r_B, p_B = known_mean_shift
         result = biological_differential_expression(r_A, r_B, p_A, p_B)
-        np.testing.assert_allclose(result["var_A_mean"], 100.0, atol=1e-2)
-        np.testing.assert_allclose(result["var_B_mean"], 30.0, atol=1e-2)
+        np.testing.assert_allclose(result["var_A_mean"], 25.0, atol=1e-2)
+        np.testing.assert_allclose(result["var_B_mean"], 15.0, atol=1e-2)
 
     def test_gene_names_auto(self):
         """Auto-generated gene names when not provided."""
@@ -203,7 +203,7 @@ class TestSharedP:
         result = biological_differential_expression(
             r_A, r_B, p_shared, p_shared
         )
-        # mu = r*(1-p)/p, same p → LFC = log(r_A/r_B) = log(2)
+        # mu = r*p/(1-p), same p -> LFC = log(r_A/r_B) = log(2)
         np.testing.assert_allclose(result["lfc_mean"], np.log(2), atol=1e-4)
 
     def test_shared_p_kl(self):
