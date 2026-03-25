@@ -724,7 +724,11 @@ def test_plot_mu_pairwise_saves_output_for_multi_dataset(monkeypatch, tmp_path):
         n_components = 1
 
         def __init__(self):
-            self.model_config = MagicMock(n_datasets=2)
+            self.model_config = MagicMock(
+                n_datasets=2,
+                uses_variable_capture=False,
+                is_bnb=False,
+            )
 
     # Provide two dataset-specific mu vectors over shared genes.
     fake_mu = np.array(
@@ -734,12 +738,18 @@ def test_plot_mu_pairwise_saves_output_for_multi_dataset(monkeypatch, tmp_path):
         ],
         dtype=float,
     )
+    seen_targets = []
+
     def _fake_get_map_estimates(_results, *, counts, use_mean=True, targets=None):
         _ = _results
         _ = counts
         _ = use_mean
-        assert targets == ["mu", "mixing_weights"]
-        return {"mu": fake_mu}
+        seen_targets.append(targets)
+        if targets == ["mu"]:
+            return {"mu": fake_mu}
+        if targets == ["mixing_weights"]:
+            return {}
+        raise AssertionError(f"Unexpected targets: {targets}")
 
     monkeypatch.setattr(
         mu_pairwise_module,
@@ -769,6 +779,7 @@ def test_plot_mu_pairwise_saves_output_for_multi_dataset(monkeypatch, tmp_path):
 
     assert output_path is not None
     assert output_path.endswith("_mu_pairwise.png")
+    assert seen_targets == [["mu"], ["mixing_weights"]]
 
 
 def test_plot_mean_calibration_requests_targeted_map(monkeypatch, tmp_path):
@@ -780,21 +791,22 @@ def test_plot_mean_calibration_requests_targeted_map(monkeypatch, tmp_path):
 
         model_type = "nbdm"
         n_components = 1
-        model_config = MagicMock(n_datasets=None)
+        model_config = MagicMock(
+            n_datasets=None,
+            uses_variable_capture=False,
+            is_bnb=False,
+        )
+
+    seen_targets = []
 
     def _fake_get_map_estimates(_results, *, counts, use_mean=True, targets=None):
         _ = _results
         _ = counts
         _ = use_mean
-        assert targets == [
-            "r",
-            "p",
-            "mixing_weights",
-            "p_capture",
-            "bnb_kappa",
-            "bnb_concentration",
-        ]
-        return {"r": np.array([3.0, 4.0]), "p": np.array([0.4, 0.5])}
+        seen_targets.append(targets)
+        if targets == ["r", "p"]:
+            return {"r": np.array([3.0, 4.0]), "p": np.array([0.4, 0.5])}
+        raise AssertionError(f"Unexpected targets: {targets}")
 
     monkeypatch.setattr(
         mean_calibration_module,
@@ -822,6 +834,7 @@ def test_plot_mean_calibration_requests_targeted_map(monkeypatch, tmp_path):
     )
     assert out is not None
     assert out.endswith("_mean_calibration.png")
+    assert seen_targets == [["r", "p"]]
 
 
 def test_select_divergent_genes_requests_dynamic_target(monkeypatch):

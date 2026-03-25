@@ -7,7 +7,14 @@ from jax import random
 import jax.numpy as jnp
 import numpyro.distributions as dist
 
-from ._common import console, Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
+from ._common import (
+    console,
+    Progress,
+    SpinnerColumn,
+    BarColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 from .config import _get_config_values
 from .dispatch import (
     _get_map_estimates_for_plot,
@@ -149,10 +156,17 @@ def _get_component_ppc_samples(
     counts=None,
 ):
     """Generate PPC samples for a specific mixture component."""
+    # Require only core NB keys; fetch optional technical-noise params
+    # conditionally so non-ZI / non-VCP models continue to work.
+    component_targets = ["r", "p"]
+    if bool(getattr(results.model_config, "uses_zero_inflation", False)):
+        component_targets.append("gate")
+    if bool(getattr(results.model_config, "uses_variable_capture", False)):
+        component_targets.append("p_capture")
     map_estimates = _get_map_estimates_for_plot(
         results,
         counts=counts,
-        targets=["r", "p", "gate", "p_capture"],
+        targets=component_targets,
     )
 
     r_all = map_estimates["r"]
@@ -289,6 +303,7 @@ def _plot_ppc_figure(
 ):
     """Plot a PPC figure in the standard format."""
     import scribe
+
     if render_opts is None:
         render_opts = {
             "hist_max_bin_quantile": 0.99,
@@ -311,8 +326,7 @@ def _plot_ppc_figure(
     # subset_positions must map each gene's original index to its position in
     # selected_idx (not the old sorted-original order).
     subset_positions = {
-        int(gene_idx): pos
-        for pos, gene_idx in enumerate(selected_idx)
+        int(gene_idx): pos for pos, gene_idx in enumerate(selected_idx)
     }
 
     fig, axes = plt.subplots(
@@ -392,6 +406,7 @@ def _plot_ppc_comparison_figure(
 ):
     """Plot comparison figure with mixture and all component PPCs overlaid."""
     import scribe
+
     if render_opts is None:
         render_opts = {
             "hist_max_bin_quantile": 0.99,
@@ -403,7 +418,12 @@ def _plot_ppc_comparison_figure(
 
     if component_cmaps is None:
         component_cmaps = [
-            "Greens", "Purples", "Reds", "Oranges", "YlOrBr", "BuGn",
+            "Greens",
+            "Purples",
+            "Reds",
+            "Oranges",
+            "YlOrBr",
+            "BuGn",
         ]
 
     n_genes_selected = len(selected_idx)
@@ -420,8 +440,7 @@ def _plot_ppc_comparison_figure(
     # subset_positions must map each gene's original index to its position in
     # selected_idx (not the old sorted-original order).
     subset_positions = {
-        int(gene_idx): pos
-        for pos, gene_idx in enumerate(selected_idx)
+        int(gene_idx): pos for pos, gene_idx in enumerate(selected_idx)
     }
 
     fig, axes = plt.subplots(
@@ -839,10 +858,13 @@ def plot_mixture_composition(
         return
 
     # Extract MAP mixture weights (global composition prior at MAP).
-    map_estimates = _get_map_estimates_for_plot(
-        results, counts=counts, targets=["mixing_weights"]
-    )
-    mixing_weights = map_estimates.get("mixing_weights")
+    try:
+        map_estimates = _get_map_estimates_for_plot(
+            results, counts=counts, targets=["mixing_weights"]
+        )
+        mixing_weights = map_estimates.get("mixing_weights")
+    except ValueError:
+        mixing_weights = None
     dataset_indices = getattr(results, "_dataset_indices", None)
     weight_fractions = _resolve_weight_fractions_for_composition(
         mixing_weights=mixing_weights,
@@ -850,7 +872,9 @@ def plot_mixture_composition(
         dataset_indices=dataset_indices,
     )
 
-    fig, ax = plt.subplots(1, 1, figsize=(max(6.0, 1.1 * n_components + 2.0), 4.0))
+    fig, ax = plt.subplots(
+        1, 1, figsize=(max(6.0, 1.1 * n_components + 2.0), 4.0)
+    )
 
     if cell_labels is not None:
         # Compute assignment-based fractions per component. These reflect
@@ -862,7 +886,9 @@ def plot_mixture_composition(
             "assignment_batch_size",
             mixture_ppc_opts.get(
                 "assignment_batch_size",
-                mixture_ppc_opts.get("batch_size", ppc_opts.get("batch_size", 512)),
+                mixture_ppc_opts.get(
+                    "batch_size", ppc_opts.get("batch_size", 512)
+                ),
             ),
         )
         if assignment_batch_size is not None and assignment_batch_size <= 0:
@@ -893,7 +919,9 @@ def plot_mixture_composition(
             cell_labels=annotations,
             cfg=cfg,
         )
-        labels_by_component = sorted(label_map.keys(), key=lambda x: label_map[x])
+        labels_by_component = sorted(
+            label_map.keys(), key=lambda x: label_map[x]
+        )
         labels_by_component = [
             label
             for label in labels_by_component
@@ -977,12 +1005,17 @@ def plot_mixture_composition(
         y_max = max(
             0.12,
             float(np.max(observed_fracs)) if len(observed_fracs) else 0.0,
-            float(np.max(assigned_fracs_by_label))
-            if len(assigned_fracs_by_label)
-            else 0.0,
-            float(np.max(weight_fracs_by_label))
-            if weight_fracs_by_label is not None and len(weight_fracs_by_label)
-            else 0.0,
+            (
+                float(np.max(assigned_fracs_by_label))
+                if len(assigned_fracs_by_label)
+                else 0.0
+            ),
+            (
+                float(np.max(weight_fracs_by_label))
+                if weight_fracs_by_label is not None
+                and len(weight_fracs_by_label)
+                else 0.0
+            ),
         )
         ax.set_ylim(0.0, min(1.05, y_max + 0.15))
     else:

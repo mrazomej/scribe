@@ -154,7 +154,7 @@ def plot_mu_pairwise(
     console.print("[dim]Plotting pairwise mu dataset comparison...[/dim]")
 
     map_estimates = _get_map_estimates_for_plot(
-        results, counts=counts, targets=["mu", "mixing_weights"]
+        results, counts=counts, targets=["mu"]
     )
     mu_values = map_estimates.get("mu")
     if mu_values is None:
@@ -173,9 +173,17 @@ def plot_mu_pairwise(
         return None
 
     # Collapse optional mixture axis so we always plot one mu vector per dataset.
+    mixing_weights = None
+    try:
+        mix_map = _get_map_estimates_for_plot(
+            results, counts=counts, targets=["mixing_weights"]
+        )
+        mixing_weights = mix_map.get("mixing_weights")
+    except ValueError:
+        mixing_weights = None
     mu_dataset = _collapse_mixture_axis(
         mu_values=mu_values,
-        mixing_weights=map_estimates.get("mixing_weights"),
+        mixing_weights=mixing_weights,
     )
     if mu_dataset.ndim != 2:
         mu_dataset = np.asarray(mu_dataset, dtype=float).reshape(
