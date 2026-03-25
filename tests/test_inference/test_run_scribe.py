@@ -62,6 +62,31 @@ class TestRunScribePresetAPI:
         assert hasattr(results, "params")
         assert hasattr(results, "loss_history")
 
+    def test_svi_optimizer_config_preset(self, sample_counts, device_type):
+        """Test SVI preset API with serialized optimizer configuration."""
+        inference_config = InferenceConfig.from_svi(
+            SVIConfig(
+                n_steps=10,
+                batch_size=None,
+                optimizer_config={
+                    "name": "adam",
+                    "step_size": 5e-4,
+                },
+            )
+        )
+
+        results = run_scribe(
+            counts=sample_counts,
+            model="nbdm",
+            parameterization="canonical",
+            inference_method="svi",
+            inference_config=inference_config,
+            seed=42,
+        )
+
+        assert results is not None
+        assert hasattr(results, "params")
+
     def test_basic_mcmc_preset(self, sample_counts, device_type):
         """Test basic MCMC inference with preset API."""
         inference_config = InferenceConfig.from_mcmc(

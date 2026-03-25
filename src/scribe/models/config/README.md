@@ -305,6 +305,9 @@ VAE-specific configuration:
 SVI-specific configuration for Stochastic Variational Inference:
 
 - `optimizer`: Optimizer for variational inference (defaults to Adam)
+- `optimizer_config`: Serializable optimizer specification (name + kwargs),
+  recommended for API/Hydra usage. Example:
+  `{"name": "clipped_adam", "step_size": 5e-4, "grad_clip_norm": 1.0}`
 - `loss`: Loss function (defaults to TraceMeanField_ELBO)
 - `n_steps`: Maximum number of optimization steps (must be > 0)
 - `batch_size`: Mini-batch size (must be > 0, None uses full dataset)
@@ -331,6 +334,7 @@ from scribe.models.config import SVIConfig, EarlyStoppingConfig
 svi_config = SVIConfig(
     n_steps=100000,
     batch_size=512,
+    optimizer_config={"name": "adam", "step_size": 1e-3},
     early_stopping=EarlyStoppingConfig(
         patience=500,
         min_delta=1.0,

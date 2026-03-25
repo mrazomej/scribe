@@ -48,6 +48,7 @@ __all__ = [
     "PriorOverrides",
     "VAEConfig",
     "SVIConfig",
+    "OptimizerConfig",
     "MCMCConfig",
     "DataConfig",
     "InferenceConfig",
@@ -67,3 +68,6 @@ __all__ = [
     "validate_parameter_consistency",
     "get_parameterization_summary",
 ]
+
+# Backward-compatible alias for the nested optimizer config model.
+OptimizerConfig = SVIConfig.OptimizerConfig
