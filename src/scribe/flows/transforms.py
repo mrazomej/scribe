@@ -6,6 +6,18 @@ Durkan et al., "Neural Spline Flows" (NeurIPS 2019). The spline
 provides an expressive, analytically invertible, element-wise
 transform with cheap log-det-Jacobian computation.
 
+Numerical safety (matching the reference *nflows* implementation):
+
+* **Minimum bin width / height** — prevents any bin from collapsing
+  to near-zero, which would make the slope ``s_k = h_k / w_k``
+  explode and poison the log-det sum.
+* **Boundary pinning** — cumulative sums are explicitly pinned at
+  ``-boundary`` and ``+boundary`` so float32 drift doesn't push
+  knots outside the domain.
+* **Log-space log-det** — computes
+  ``log(deriv_num) - 2 * log(denom)`` instead of
+  ``log(deriv_num / denom²)`` to avoid intermediate overflow.
+
 Functions
 ---------
 rqs_forward
@@ -21,6 +33,8 @@ from typing import Tuple
 import jax
 import jax.numpy as jnp
 
+DEFAULT_MIN_BIN_WIDTH = 1e-3
+DEFAULT_MIN_BIN_HEIGHT = 1e-3
 DEFAULT_MIN_DERIVATIVE = 1e-3
 
 # ------------------------------------------------------------------------------
@@ -31,6 +45,8 @@ def unconstrained_to_rqs_params(
     n_bins: int,
     boundary: float = 3.0,
     min_derivative: float = DEFAULT_MIN_DERIVATIVE,
+    min_bin_width: float = DEFAULT_MIN_BIN_WIDTH,
+    min_bin_height: float = DEFAULT_MIN_BIN_HEIGHT,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Convert raw network outputs to valid spline parameters.
 
@@ -45,6 +61,11 @@ def unconstrained_to_rqs_params(
         The spline is defined on ``[-boundary, boundary]``.
     min_derivative : float
         Minimum derivative at knot points (ensures invertibility).
+    min_bin_width : float
+        Minimum proportion allocated to each bin width.  Prevents bins
+        from collapsing, which would make the bin slope diverge.
+    min_bin_height : float
+        Minimum proportion allocated to each bin height (same purpose).
 
     Returns
     -------
@@ -59,14 +80,90 @@ def unconstrained_to_rqs_params(
     raw_heights = raw_params[..., n_bins : 2 * n_bins]
     raw_derivatives = raw_params[..., 2 * n_bins :]
 
-    # Widths and heights via softmax, scaled to cover [-B, B]
-    widths = jax.nn.softmax(raw_widths, axis=-1) * (2.0 * boundary)
-    heights = jax.nn.softmax(raw_heights, axis=-1) * (2.0 * boundary)
+    # Widths: softmax → clamp minimum proportion → scale to [-B, B].
+    # After clamping, each bin keeps at least ``min_bin_width`` of the
+    # unit probability mass, so scaled width >= min_bin_width * 2B.
+    widths = jax.nn.softmax(raw_widths, axis=-1)
+    widths = min_bin_width + (1.0 - min_bin_width * n_bins) * widths
+    widths = widths * (2.0 * boundary)
+
+    heights = jax.nn.softmax(raw_heights, axis=-1)
+    heights = min_bin_height + (1.0 - min_bin_height * n_bins) * heights
+    heights = heights * (2.0 * boundary)
 
     # Derivatives via softplus + offset to ensure strict positivity
     derivatives = jax.nn.softplus(raw_derivatives) + min_derivative
 
     return widths, heights, derivatives
+
+
+# ------------------------------------------------------------------------------
+# Shared helpers for forward / inverse
+# ------------------------------------------------------------------------------
+
+
+def _build_knots(
+    widths: jnp.ndarray,
+    heights: jnp.ndarray,
+    boundary: float,
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Compute cumulative knot positions with pinned boundaries.
+
+    Returns ``(cumwidths, cumheights, widths, heights)`` where the last
+    two are recomputed from the pinned cumulative values to guarantee
+    consistency (avoids float32 cumsum drift).
+    """
+    cumwidths = jnp.concatenate(
+        [
+            jnp.full(widths.shape[:-1] + (1,), -boundary),
+            jnp.cumsum(widths, axis=-1) - boundary,
+        ],
+        axis=-1,
+    )
+    cumheights = jnp.concatenate(
+        [
+            jnp.full(heights.shape[:-1] + (1,), -boundary),
+            jnp.cumsum(heights, axis=-1) - boundary,
+        ],
+        axis=-1,
+    )
+
+    # Pin right / top boundary to exact value
+    cumwidths = cumwidths.at[..., -1].set(boundary)
+    cumheights = cumheights.at[..., -1].set(boundary)
+
+    # Recompute from pinned cumulatives so w_k, h_k, s_k are consistent
+    widths = cumwidths[..., 1:] - cumwidths[..., :-1]
+    heights = cumheights[..., 1:] - cumheights[..., :-1]
+
+    return cumwidths, cumheights, widths, heights
+
+
+def _gather(arr: jnp.ndarray, idx: jnp.ndarray) -> jnp.ndarray:
+    """Gather along last axis using idx."""
+    return jnp.take_along_axis(arr, idx[..., None], axis=-1).squeeze(-1)
+
+
+def _rqs_log_deriv(
+    s_k: jnp.ndarray,
+    d_k: jnp.ndarray,
+    d_k1: jnp.ndarray,
+    xi: jnp.ndarray,
+    xi_1mxi: jnp.ndarray,
+    denominator: jnp.ndarray,
+) -> jnp.ndarray:
+    """Log-derivative of the RQS in log-space.
+
+    Computes ``log(dy/dx)`` as ``log(num) - 2 * log(denom)`` rather than
+    ``log(num / denom²)`` to avoid float32 overflow in the intermediate
+    ratio.
+    """
+    deriv_numerator = (
+        s_k
+        * s_k
+        * (d_k1 * xi * xi + 2.0 * s_k * xi_1mxi + d_k * (1.0 - xi) * (1.0 - xi))
+    )
+    return jnp.log(deriv_numerator) - 2.0 * jnp.log(denominator)
 
 
 # ------------------------------------------------------------------------------
@@ -105,34 +202,15 @@ def rqs_forward(
     log_det : jnp.ndarray
         Log-determinant Jacobian, shape ``(...)``.
     """
-    # Compute knot positions (cumulative sums)
-    cumwidths = jnp.concatenate(
-        [
-            jnp.full(widths.shape[:-1] + (1,), -boundary),
-            jnp.cumsum(widths, axis=-1) - boundary,
-        ],
-        axis=-1,
+    cumwidths, cumheights, widths, heights = _build_knots(
+        widths, heights, boundary,
     )
-    cumheights = jnp.concatenate(
-        [
-            jnp.full(heights.shape[:-1] + (1,), -boundary),
-            jnp.cumsum(heights, axis=-1) - boundary,
-        ],
-        axis=-1,
-    )
-
     n_bins = widths.shape[-1]
 
     # Find which bin each x falls into
-    # x shape: (..., D), cumwidths shape: (..., D, n_bins+1)
     x_expanded = x[..., None]  # (..., D, 1)
     bin_idx = jnp.sum(x_expanded >= cumwidths, axis=-1) - 1  # (..., D)
     bin_idx = jnp.clip(bin_idx, 0, n_bins - 1)
-
-    # Gather parameters for the active bin
-    def _gather(arr, idx):
-        """Gather along last axis using idx."""
-        return jnp.take_along_axis(arr, idx[..., None], axis=-1).squeeze(-1)
 
     x_k = _gather(cumwidths, bin_idx)
     x_k1 = _gather(cumwidths, bin_idx + 1)
@@ -156,23 +234,15 @@ def rqs_forward(
 
     y_in = y_k + numerator / denominator
 
-    # Log-determinant: dy/dx
-    deriv_numerator = (
-        s_k
-        * s_k
-        * (d_k1 * xi * xi + 2.0 * s_k * xi_1mxi + d_k * (1.0 - xi) * (1.0 - xi))
-    )
-    deriv = deriv_numerator / (denominator * denominator)
-    log_deriv = jnp.log(deriv)
+    # Log-determinant in log-space
+    log_deriv = _rqs_log_deriv(s_k, d_k, d_k1, xi, xi_1mxi, denominator)
 
     # Identity outside boundary
     inside = (x >= -boundary) & (x <= boundary)
     y = jnp.where(inside, y_in, x)
     log_deriv = jnp.where(inside, log_deriv, 0.0)
 
-    # Sum log-det over dimensions
     log_det = jnp.sum(log_deriv, axis=-1)
-
     return y, log_det
 
 
@@ -212,30 +282,15 @@ def rqs_inverse(
         Log-determinant of the *inverse* Jacobian, shape ``(...)``.
         This equals ``-log_det_forward``.
     """
-    cumwidths = jnp.concatenate(
-        [
-            jnp.full(widths.shape[:-1] + (1,), -boundary),
-            jnp.cumsum(widths, axis=-1) - boundary,
-        ],
-        axis=-1,
+    cumwidths, cumheights, widths, heights = _build_knots(
+        widths, heights, boundary,
     )
-    cumheights = jnp.concatenate(
-        [
-            jnp.full(heights.shape[:-1] + (1,), -boundary),
-            jnp.cumsum(heights, axis=-1) - boundary,
-        ],
-        axis=-1,
-    )
-
     n_bins = widths.shape[-1]
 
     # Find which bin each y falls into (using cumheights)
     y_expanded = y[..., None]
     bin_idx = jnp.sum(y_expanded >= cumheights, axis=-1) - 1
     bin_idx = jnp.clip(bin_idx, 0, n_bins - 1)
-
-    def _gather(arr, idx):
-        return jnp.take_along_axis(arr, idx[..., None], axis=-1).squeeze(-1)
 
     x_k = _gather(cumwidths, bin_idx)
     x_k1 = _gather(cumwidths, bin_idx + 1)
@@ -262,16 +317,10 @@ def rqs_inverse(
 
     x_in = x_k + xi * w_k
 
-    # Compute log-det (same formula as forward, but negated)
+    # Log-det in log-space (same formula as forward, negated at the end)
     xi_1mxi = xi * (1.0 - xi)
     denominator = s_k + (d_k1 + d_k - 2.0 * s_k) * xi_1mxi
-    deriv_numerator = (
-        s_k
-        * s_k
-        * (d_k1 * xi * xi + 2.0 * s_k * xi_1mxi + d_k * (1.0 - xi) * (1.0 - xi))
-    )
-    deriv = deriv_numerator / (denominator * denominator)
-    log_deriv = jnp.log(deriv)
+    log_deriv = _rqs_log_deriv(s_k, d_k, d_k1, xi, xi_1mxi, denominator)
 
     # Identity outside boundary
     inside = (y >= -boundary) & (y <= boundary)
@@ -280,5 +329,4 @@ def rqs_inverse(
 
     # Inverse log-det is negative of forward
     log_det = -jnp.sum(log_deriv, axis=-1)
-
     return x, log_det
