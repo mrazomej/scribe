@@ -273,6 +273,8 @@ def fit(
     guide_flow_zero_init: bool = True,
     guide_flow_layer_norm: bool = True,
     guide_flow_residual: bool = True,
+    guide_flow_soft_clamp: bool = True,
+    guide_flow_loft: bool = True,
     priors: Optional[Dict[str, Any]] = None,
     # VAE architecture options (when inference_method="vae")
     vae_latent_dim: int = 10,
@@ -483,6 +485,17 @@ def fit(
     guide_flow_residual : bool, default=True
         Add residual (skip) connections between consecutive hidden layers of the
         same width in the conditioner MLP.
+
+    guide_flow_soft_clamp : bool, default=True
+        Use a smooth asymmetric ``arctan``-based clamp on the affine coupling
+        log-scale (Andrade 2024) instead of hard ``jnp.clip``.  Preserves
+        gradients at the boundary and tightly bounds per-layer expansion.
+
+    guide_flow_loft : bool, default=True
+        Apply a LOFT (Log Soft Extension) layer and a trainable final affine
+        after all coupling layers.  LOFT compresses extreme sample magnitudes
+        logarithmically while preserving identity near zero; the final affine
+        re-expands the range to match the target posterior's scale.
 
     priors : Dict[str, Any], optional
         Dictionary of prior hyperparameters keyed by parameter name. Values
@@ -1090,6 +1103,8 @@ def fit(
             guide_flow_zero_init=guide_flow_zero_init,
             guide_flow_layer_norm=guide_flow_layer_norm,
             guide_flow_residual=guide_flow_residual,
+            guide_flow_soft_clamp=guide_flow_soft_clamp,
+            guide_flow_loft=guide_flow_loft,
             n_components=n_components,
             mixture_params=effective_mixture_params,
             priors=priors,

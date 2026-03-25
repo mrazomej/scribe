@@ -146,6 +146,13 @@ guide_flow_mixture_strategy: "independent"
 guide_flow_zero_init: true
 guide_flow_layer_norm: true
 guide_flow_residual: true
+# Stability: smooth asymmetric arctan clamp on affine log-scale (Andrade 2024).
+# Replaces hard jnp.clip; preserves gradients at boundary, bounds per-layer expansion.
+guide_flow_soft_clamp: true
+# Stability: LOFT (log soft extension) + final affine after all coupling layers.
+# Bounds sample magnitudes logarithmically at extremes while preserving identity
+# near zero. The final affine re-expands the range to match the target posterior.
+guide_flow_loft: true
 
 # --- Priors Configuration (optional overrides) ---
 # Each prior is a list [param1, param2] for the distribution
@@ -303,3 +310,5 @@ hydra:
           - guide_flow_zero_init
           - guide_flow_layer_norm
           - guide_flow_residual
+          - guide_flow_soft_clamp
+          - guide_flow_loft

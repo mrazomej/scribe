@@ -306,6 +306,12 @@ class NormalizingFlowGuide(GuideFamily):
     use_residual : bool, default True
         Add skip connections between consecutive hidden layers of the
         same width in the conditioner MLP.  Improves gradient flow.
+    soft_clamp : bool, default True
+        Use smooth asymmetric arctan clamp on affine coupling log-scale
+        (Andrade 2024).  Bounds per-layer expansion to ~10%.
+    use_loft : bool, default True
+        Apply LOFT compression + trainable final affine after coupling
+        layers.  Bounds sample magnitudes at extremes.
 
     Advantages
     ----------
@@ -352,6 +358,8 @@ class NormalizingFlowGuide(GuideFamily):
     zero_init_output: bool = True
     use_layer_norm: bool = True
     use_residual: bool = True
+    soft_clamp: bool = True
+    use_loft: bool = True
 
     def __post_init__(self) -> None:
         if self.num_layers <= 0:
@@ -422,6 +430,12 @@ class JointNormalizingFlowGuide(GuideFamily):
     use_residual : bool, default True
         Add skip connections between consecutive hidden layers of the same width
         in the conditioner MLP.
+    soft_clamp : bool, default True
+        Use smooth asymmetric arctan clamp on affine coupling log-scale
+        (Andrade 2024).  Bounds per-layer expansion to ~10%.
+    use_loft : bool, default True
+        Apply LOFT compression + trainable final affine after coupling
+        layers.  Bounds sample magnitudes at extremes.
 
     Advantages
     ----------
@@ -461,6 +475,8 @@ class JointNormalizingFlowGuide(GuideFamily):
     zero_init_output: bool = True
     use_layer_norm: bool = True
     use_residual: bool = True
+    soft_clamp: bool = True
+    use_loft: bool = True
 
     def __post_init__(self) -> None:
         if self.num_layers <= 0:
