@@ -185,6 +185,42 @@ Via Hydra command line:
 guide_flow_zero_init=false guide_flow_layer_norm=false guide_flow_residual=false
 ```
 
+## Training Stability (Andrade 2024)
+
+Two additional features from [Andrade 2024 (arXiv:2402.16408)](https://arxiv.org/abs/2402.16408)
+bound sample magnitudes during training to prevent NaN gradients in
+high-dimensional flows.  Both are **on by default**.
+
+| Flag | Default | What it does |
+|---|---|---|
+| `soft_clamp` | `True` | Replace hard `jnp.clip(log_scale, -5, 5)` in `AffineCoupling` with a smooth asymmetric `arctan`-based clamp.  `alpha_pos=0.1` caps per-layer expansion to ~10%, while `alpha_neg=2.0` allows contraction.  Preserves gradients at the boundary (unlike hard clipping).  Only affects affine coupling — spline derivatives are already bounded by the RQS construction. |
+| `use_loft` | `True` | Append a **LOFT** (Log Soft Extension) layer and a trainable element-wise affine after all coupling layers.  For `|z| < tau` (default 100) the LOFT is identity; beyond that, growth is logarithmic.  The final affine `sigma * z + mu` re-expands the range to match the target posterior's scale. |
+
+### Forward pass with LOFT
+
+```
+z_base → [coupling layers (soft-clamped)] → LOFT → final affine → z_out
+```
+
+### Configuration
+
+At the `FlowChain` level:
+
+```python
+chain = FlowChain(
+    features=28000, num_layers=4, flow_type="affine_coupling",
+    hidden_dims=[64, 64],
+    soft_clamp=True,   # default
+    use_loft=True,     # default
+)
+```
+
+Via Hydra command line:
+
+```bash
+guide_flow_soft_clamp=false guide_flow_loft=false
+```
+
 ## Choosing a Flow
 
 - **Start with `affine_coupling`** for fast iteration and debugging.

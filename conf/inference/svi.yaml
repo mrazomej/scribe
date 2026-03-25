@@ -37,6 +37,11 @@ stable_update: true
 # When true, prints an update every max(1, n_steps // 20) steps
 log_progress_lines: false
 
+# Track the best (lowest smoothed loss) variational parameters during training
+# and restore them at the end.  Works independently of early stopping — when true
+# and no early_stopping config is active, a minimal internal loop is used.
+restore_best: false
+
 # Empirical mixing weights for mixture models
 # SVI-learned Dirichlet mixing weights are practically non-identifiable in
 # high-dimensional mixture models.  When true (default), the pipeline replaces

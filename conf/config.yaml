@@ -303,6 +303,7 @@ hydra:
           - inference.optimizer_config.grad_clip_norm
           - inference.optimizer_config.name
           - inference.n_steps
+          - inference.restore_best
           - data
           - data.subset_column
           - model

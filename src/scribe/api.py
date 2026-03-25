@@ -309,6 +309,7 @@ def fit(
     n_chains: int = 1,
     # Early stopping options (for SVI/VAE)
     early_stopping: Optional[Union[EarlyStoppingConfig, Dict[str, Any]]] = None,
+    restore_best: bool = False,
     # Data options
     cells_axis: int = 0,
     layer: Optional[str] = None,
@@ -594,6 +595,13 @@ def fit(
           smoothing_window, restore_best
         - None (default): no early stopping, runs for full n_steps
         Only applies to SVI and VAE inference methods.
+
+    restore_best : bool, default=False
+        Track the best (lowest smoothed loss) variational parameters during
+        training and restore them at the end, regardless of whether early
+        stopping is configured or triggered.  When True and no
+        ``early_stopping`` config is provided, a minimal internal config is
+        created to enable best-state tracking.
 
     cells_axis : int, default=0
         Axis for cells in count matrix. 0 means cells are rows (n_cells,
@@ -1212,6 +1220,7 @@ def fit(
                 stable_update=stable_update,
                 log_progress_lines=log_progress_lines,
                 early_stopping=early_stop_config,
+                restore_best=restore_best,
             )
             inference_config = InferenceConfig.from_svi(svi_config)
         elif method == InferenceMethod.MCMC:
@@ -1303,6 +1312,7 @@ def fit(
                 stable_update=stable_update,
                 log_progress_lines=log_progress_lines,
                 early_stopping=early_stop_config,
+                restore_best=restore_best,
             )
             inference_config = InferenceConfig.from_vae(svi_config)
         else:
