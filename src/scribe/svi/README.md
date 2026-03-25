@@ -277,6 +277,15 @@ dict format. Joint flow entries additionally include `"conditional": True` to
 indicate that they represent conditional distributions (from the chain-rule
 decomposition) and require guide execution for proper joint sampling.
 
+Nondense (non-flow) parameters in a joint flow group are also marked
+`"conditional": True`. Their stored `loc` is only a baseline; at inference time
+the actual loc includes regression on the dense flow residuals
+(`loc + alpha_r * r_residual`). Because the regression coefficients are only
+evaluated inside the guide, `get_map` routes these parameters through the
+sampling-based flow MAP path rather than reading the static `loc` directly.
+This ensures denoised counts and biological PPC plots use the correctly
+conditioned parameter values.
+
 **Mixture models and flow guides:**
 
 For mixture-aware flow parameters, `get_distributions()` returns
