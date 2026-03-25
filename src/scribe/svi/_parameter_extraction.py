@@ -5,7 +5,7 @@ This mixin provides methods for extracting parameters from variational
 distributions, including MAP estimates and canonical parameter conversions.
 """
 
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Union, List, Set
 import warnings
 
 import jax.numpy as jnp
@@ -793,6 +793,111 @@ def _flow_optimize_mode(
 
 
 # ==============================================================================
+# Targeted MAP dependency helpers
+# ==============================================================================
+
+
+def _normalize_map_targets(
+    targets: Optional[Union[str, List[str], Set[str]]],
+) -> Optional[Set[str]]:
+    """Normalize requested MAP targets to a validated set.
+
+    Parameters
+    ----------
+    targets : str or list of str or set of str, optional
+        Requested output keys for selective MAP extraction.
+
+    Returns
+    -------
+    set of str, optional
+        Normalized key set, or ``None`` when full MAP output is requested.
+
+    Raises
+    ------
+    TypeError
+        If *targets* has an unsupported type or contains non-string entries.
+    ValueError
+        If *targets* is empty.
+    """
+    if targets is None:
+        return None
+    if isinstance(targets, str):
+        normalized = {targets}
+    elif isinstance(targets, (list, set, tuple)):
+        normalized = set(targets)
+    else:
+        raise TypeError(
+            "targets must be a string, a list/set/tuple of strings, or None."
+        )
+
+    if not normalized:
+        raise ValueError("targets must contain at least one parameter name.")
+    if not all(isinstance(name, str) for name in normalized):
+        raise TypeError("All targets entries must be strings.")
+    return normalized
+
+
+def _required_map_keys_for_targets(
+    targets: Optional[Set[str]],
+) -> Optional[Set[str]]:
+    """Expand requested MAP keys with derivation dependencies.
+
+    This closure is intentionally conservative: for derived keys that can be
+    computed via more than one pathway (for example ``r`` from ``mu`` + ``p`` or
+    ``mu`` + ``phi``), all candidate parents are included. This ensures
+    selective mode has enough ingredients while still enabling flow pruning.
+
+    Parameters
+    ----------
+    targets : set of str, optional
+        Requested output keys. ``None`` means full-map mode.
+
+    Returns
+    -------
+    set of str, optional
+        Required keys for selective extraction. ``None`` in full-map mode.
+    """
+    if targets is None:
+        return None
+
+    # Dependency graph for keys derived in get_map /
+    # _compute_canonical_parameters. Values list *candidate* parents, not
+    # necessarily all required at runtime.
+    deps = {
+        "r": {"mu", "p", "phi", "r_unconstrained"},
+        "p": {"phi", "p_unconstrained"},
+        "mu": {"r", "p"},
+        "p_capture": {
+            "phi_capture",
+            "p_capture_unconstrained",
+            "eta_capture",
+        },
+        "phi_capture": {"eta_capture"},
+        "p_hat": {"p", "p_capture"},
+        "bnb_kappa": {"bnb_concentration", "r", "mu", "phi"},
+        # Horseshoe / NEG reconstructions can synthesize constrained params.
+        "bnb_concentration": {
+            "bnb_concentration_raw",
+            "bnb_concentration_tau",
+            "bnb_concentration_lambda",
+            "bnb_concentration_c_sq",
+            "bnb_concentration_loc",
+            "bnb_concentration_psi",
+        },
+    }
+
+    required = set(targets)
+    queue = list(targets)
+    while queue:
+        key = queue.pop()
+        for parent in deps.get(key, set()):
+            if parent not in required:
+                required.add(parent)
+                queue.append(parent)
+    return required
+
+
+# ==============================================================================
 # Parameter Extraction Mixin
 # ==============================================================================
 
@@ -988,6 +1093,7 @@ class ParameterExtractionMixin:
 
     def get_map(
         self,
+        targets: Optional[Union[str, List[str], Set[str]]] = None,
         use_mean: bool = False,
         canonical: bool = True,
         verbose: bool = True,
@@ -1004,6 +1110,18 @@ class ParameterExtractionMixin:
 
         Parameters
         ----------
+        targets : str or list of str, optional
+            Optional parameter key(s) to return. When provided, ``get_map``
+            computes only what is needed for these targets and returns a
+            filtered dictionary with those keys only.
+
+            Examples:
+            - ``get_map("p_capture")``
+            - ``get_map(["r", "p"])``
+
+            Backward compatibility note: passing a boolean as the first
+            positional argument is interpreted as ``use_mean`` from the
+            legacy signature.
         use_mean : bool, default=False
             If True, replaces undefined MAP values (NaN) with posterior means
         canonical : bool, default=True
@@ -1054,8 +1172,24 @@ class ParameterExtractionMixin:
         Returns
         -------
         Dict[str, jnp.ndarray]
-            Dictionary of MAP estimates for each parameter
+            Dictionary of MAP estimates. In selective mode (``targets`` set),
+            only requested keys are returned.
         """
+        # Backward compatibility shim for the legacy positional signature:
+        # get_map(True, canonical=...) where the first argument was use_mean.
+        if isinstance(targets, bool):
+            if use_mean is not False:
+                raise TypeError(
+                    "Ambiguous call: boolean first argument is interpreted as "
+                    "legacy use_mean. Please pass either targets=... or "
+                    "use_mean=..., not both."
+                )
+            use_mean = targets
+            targets = None
+
+        requested_targets = _normalize_map_targets(targets)
+        required_keys = _required_map_keys_for_targets(requested_targets)
+
         # For amortized capture, we need to compute variational parameters
         # by running the amortizer with counts, then add them to params
         params = self.params
@@ -1152,6 +1286,11 @@ class ParameterExtractionMixin:
         # Detect which parameters are flow-guided (their distributions
         # are backed by a FlowDistribution which lacks .loc / .mode).
         flow_params = _detect_flow_params(distributions)
+        flow_targets = (
+            flow_params
+            if required_keys is None
+            else flow_params.intersection(required_keys)
+        )
 
         # ----------------------------------------------------------
         # Standard MAP extraction for non-flow parameters
@@ -1238,14 +1377,14 @@ class ParameterExtractionMixin:
         # ----------------------------------------------------------
         # Flow MAP estimation via guide sampling
         # ----------------------------------------------------------
-        if flow_params:
+        if flow_targets:
             flow_estimates = _flow_map_estimates(
                 model_and_guide_fn=self._model_and_guide,
                 params=params,
                 n_cells=self.n_cells,
                 n_genes=self.n_genes,
                 model_config=self.model_config,
-                flow_params=flow_params,
+                flow_params=flow_targets,
                 method=flow_map_method,
                 n_samples=flow_n_samples,
                 optimize_steps=flow_optimize_steps,
@@ -1325,6 +1464,22 @@ class ParameterExtractionMixin:
             map_estimates = self._compute_canonical_parameters(
                 map_estimates, verbose=verbose
             )
+
+        # In selective mode, return only the requested keys with a clear error
+        # when any requested key is unavailable under the current model setup.
+        if requested_targets is not None:
+            missing = sorted(
+                key for key in requested_targets if key not in map_estimates
+            )
+            if missing:
+                available = ", ".join(sorted(map_estimates.keys()))
+                raise ValueError(
+                    "Requested MAP parameter(s) are unavailable: "
+                    f"{missing}. Available keys: [{available}]. "
+                    "If you are requesting derived canonical parameters, "
+                    "ensure canonical=True."
+                )
+            return {key: map_estimates[key] for key in requested_targets}
 
         return map_estimates
 
