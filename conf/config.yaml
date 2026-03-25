@@ -289,6 +289,9 @@ hydra:
           - inference.log_progress_lines
           - inference.batch_size
           - inference.optimizer_config
+          - inference.optimizer_config.step_size
+          - inference.optimizer_config.grad_clip_norm
+          - inference.optimizer_config.name
           - inference.n_steps
           - data
           - data.subset_column
