@@ -125,8 +125,7 @@ def plot_bio_ppc(results, counts, figs_dir, cfg, viz_cfg):
     # Build a position map: original gene index → position inside the
     # gene-subset that was passed to the biological PPC sampler.
     subset_positions = {
-        int(gene_idx): pos
-        for pos, gene_idx in enumerate(selected_idx)
+        int(gene_idx): pos for pos, gene_idx in enumerate(selected_idx)
     }
 
     # ------------------------------------------------------------------

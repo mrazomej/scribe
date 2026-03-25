@@ -382,14 +382,18 @@ def _reconstruct_neg_maps(
 
 
 def _detect_flow_params(distributions: Dict[str, Any]) -> set:
-    """Return the set of parameter names backed by a FlowDistribution.
+    """Return parameter names that require sampling-based MAP estimation.
 
-    A distribution entry is considered "flow-based" if:
+    A parameter is included when any of the following holds:
 
-    - It is a dict with a ``"base"`` whose type name contains
-      ``"FlowDistribution"`` (avoids hard import of the flows module).
-    - It is a ``TransformedDistribution`` whose ``base_dist`` is a
-      ``FlowDistribution`` (or wraps one through ``Independent``).
+    - It is backed by a ``FlowDistribution`` or
+      ``ComponentFlowDistribution`` (standard flow-guide case).
+    - Its distribution dict carries ``"conditional": True``, meaning the
+      distribution's loc depends on other flow-guided parameters at
+      inference time (nondense regression in a joint flow guide).
+      The stored loc is only a baseline; the actual conditional loc
+      includes regression terms that are only evaluated by running the
+      guide, so a sampling-based MAP strategy is required.
 
     Parameters
     ----------
@@ -406,6 +410,8 @@ def _detect_flow_params(distributions: Dict[str, Any]) -> set:
         if name.startswith("joint:"):
             continue
         if _is_flow_dist(obj):
+            flow_names.add(name)
+        elif isinstance(obj, dict) and obj.get("conditional"):
             flow_names.add(name)
     return flow_names
 
