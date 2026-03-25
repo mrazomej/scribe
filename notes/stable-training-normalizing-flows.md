@@ -68,3 +68,26 @@ For successful implementation, the coding agent must respect the following train
 
 The path gradient estimator over a batch $b$ is computed as:
 [cite_start]$\frac{1}{b}\sum_{k=1}^{b}[\frac{\partial}{\partial\eta}\log(\frac{q_{\eta}(f_{\eta}(z_{k}))}{p(f_{\eta}(z_{k}),D)}) - \frac{\partial}{\partial\eta}\log q_{\eta}(\theta)|_{\theta=f_{\eta^{*}}(z_{k})}]$ [cite: 670]
+
+---
+
+### Implementation Status in SCRIBE
+
+The following techniques from this paper have been implemented in the SCRIBE
+codebase:
+
+| Technique | Status | Location |
+|---|---|---|
+| **Asymmetric soft clamping** | Implemented, on by default | `src/scribe/flows/coupling.py` (`_soft_clamp`, `AffineCoupling.soft_clamp`) |
+| **LOFT (Log Soft Extension)** | Implemented, on by default | `src/scribe/flows/base.py` (`loft_forward`, `loft_inverse`, `FlowChain.use_loft`) |
+| **Final affine layer** | Implemented (paired with LOFT) | `src/scribe/flows/base.py` (`FlowChain.final_mu`, `FlowChain.final_log_sigma`) |
+| **Best-params restoration** | Implemented as general SVI feature | `src/scribe/svi/inference_engine.py` (`restore_best` parameter) |
+| Double precision training | Not implemented (user can enable via `inference.enable_x64`) | Config-level |
+| Student-t base distribution | Not implemented (standard Normal used) | — |
+| Path gradients | Not implemented (NumPyro uses reparameterized gradients) | — |
+
+**Configuration toggles** (all on by default):
+
+- `guide_flow_soft_clamp: true` — asymmetric arctan clamp on affine log-scale
+- `guide_flow_loft: true` — LOFT + final affine after coupling layers
+- `inference.restore_best: false` — best-params restoration (general SVI)

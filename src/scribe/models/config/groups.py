@@ -929,6 +929,17 @@ class SVIConfig(BaseModel):
         None,
         description="Early stopping configuration. If None, disabled.",
     )
+    restore_best: bool = Field(
+        False,
+        description=(
+            "Track the best (lowest smoothed loss) variational parameters "
+            "during training and restore them at the end.  Works "
+            "independently of early stopping — when True and no "
+            "early_stopping config is provided, a minimal internal "
+            "config is created to enable the custom training loop with "
+            "best-state tracking."
+        ),
+    )
 
     # --------------------------------------------------------------------------
 

@@ -27,6 +27,8 @@ from scribe.flows import (
     rqs_inverse,
     unconstrained_to_rqs_params,
 )
+from scribe.flows.coupling import _soft_clamp
+from scribe.flows.base import loft_forward, loft_inverse
 from scribe.models.components.covariate_embedding import CovariateSpec
 
 
@@ -822,3 +824,272 @@ class TestConditionerStability:
         assert (
             len(ln_keys) == 0
         ), f"Found unexpected LayerNorm params: {ln_keys}"
+
+
+# ===========================================================================
+# Soft Clamp Tests (Andrade 2024)
+# ===========================================================================
+
+
+class TestSoftClamp:
+    """Tests for the asymmetric arctan soft clamp."""
+
+    def test_output_bounded_by_alpha(self):
+        """Positive output bounded by alpha_pos, negative by alpha_neg."""
+        s = jnp.linspace(-100, 100, 1000)
+        result = _soft_clamp(s, alpha_pos=0.1, alpha_neg=2.0)
+        assert jnp.all(result <= 0.1 + 1e-6)
+        assert jnp.all(result >= -2.0 - 1e-6)
+
+    def test_smooth_at_zero(self):
+        """Function is smooth: finite gradient everywhere including at zero."""
+        grad_fn = jax.grad(lambda s: _soft_clamp(s, 0.1, 2.0))
+        g_zero = grad_fn(0.0)
+        g_pos = grad_fn(5.0)
+        g_neg = grad_fn(-5.0)
+        assert jnp.isfinite(g_zero)
+        assert jnp.isfinite(g_pos)
+        assert jnp.isfinite(g_neg)
+        # Gradient at 0 should be ~1 (slope = 2/pi * alpha / alpha = 2/pi)
+        npt.assert_allclose(g_zero, 2.0 / jnp.pi, atol=1e-5)
+
+    def test_monotonically_increasing(self):
+        """Soft clamp should be monotonically increasing."""
+        s = jnp.linspace(-50, 50, 500)
+        result = _soft_clamp(s, alpha_pos=0.1, alpha_neg=2.0)
+        diffs = jnp.diff(result)
+        assert jnp.all(diffs >= -1e-7)
+
+    def test_zero_input_gives_zero(self):
+        """f(0) should be 0 by symmetry of arctan."""
+        npt.assert_allclose(_soft_clamp(jnp.array(0.0)), 0.0, atol=1e-10)
+
+    def test_identity_near_zero(self):
+        """For small inputs the clamp should be approximately linear."""
+        s = jnp.array(0.001)
+        result = _soft_clamp(s, alpha_pos=0.1, alpha_neg=2.0)
+        # Near zero, the positive branch ≈ (2/pi) * s, so ~0.000637
+        assert jnp.abs(result - (2.0 / jnp.pi) * s) < 1e-6
+
+    def test_batched(self):
+        """Vectorized over arbitrary shapes."""
+        s = jax.random.normal(jax.random.PRNGKey(99), (5, 10))
+        result = _soft_clamp(s)
+        assert result.shape == (5, 10)
+        assert jnp.all(jnp.isfinite(result))
+
+
+# ===========================================================================
+# LOFT Tests (Andrade 2024)
+# ===========================================================================
+
+
+class TestLOFT:
+    """Tests for the LOFT (Log Soft Extension) bijection."""
+
+    def test_round_trip(self):
+        """loft_inverse(loft_forward(z)) should recover z."""
+        z = jnp.linspace(-500, 500, 200)
+        y, ld_fwd = loft_forward(z, tau=100.0)
+        z_rec, ld_inv = loft_inverse(y, tau=100.0)
+        # Float32 exp/log accumulates error at large magnitudes; 2e-3 is
+        # comfortably above observed errors (~1.6e-3 at |z|=500).
+        npt.assert_allclose(z_rec, z, atol=2e-3)
+
+    def test_round_trip_extreme(self):
+        """Round-trip at ±1000 — well into the log regime."""
+        z = jnp.array([-1000.0, -500.0, -100.0, 0.0, 100.0, 500.0, 1000.0])
+        y, _ = loft_forward(z, tau=100.0)
+        z_rec, _ = loft_inverse(y, tau=100.0)
+        npt.assert_allclose(z_rec, z, atol=1e-2)
+
+    def test_identity_region(self):
+        """For |z| < tau, LOFT should be identity."""
+        z = jnp.linspace(-99.0, 99.0, 100)
+        y, ld = loft_forward(z, tau=100.0)
+        npt.assert_allclose(y, z, atol=1e-5)
+        npt.assert_allclose(ld, 0.0, atol=1e-5)
+
+    def test_compression_beyond_tau(self):
+        """Beyond tau, output magnitude should be smaller than input magnitude."""
+        z = jnp.array([200.0, -200.0, 500.0, -500.0])
+        y, _ = loft_forward(z, tau=100.0)
+        assert jnp.all(jnp.abs(y) < jnp.abs(z))
+
+    def test_log_det_forward_finite(self):
+        z = jax.random.normal(jax.random.PRNGKey(0), (50,)) * 200
+        _, ld = loft_forward(z, tau=100.0)
+        assert jnp.isfinite(ld)
+
+    def test_log_det_consistency(self):
+        """Forward + inverse log-dets should cancel (up to float precision)."""
+        z = jnp.array([-300.0, -50.0, 0.0, 50.0, 300.0])
+        y, ld_fwd = loft_forward(z, tau=100.0)
+        _, ld_inv = loft_inverse(y, tau=100.0)
+        npt.assert_allclose(ld_fwd + ld_inv, 0.0, atol=1e-3)
+
+    def test_log_det_numerical(self):
+        """Verify log-det via finite differences on a scalar."""
+        z_scalar = jnp.array(150.0)
+        _, ld_analytic = loft_forward(z_scalar.reshape(1), tau=100.0)
+
+        def fwd_scalar(z_):
+            y, _ = loft_forward(z_.reshape(1), tau=100.0)
+            return y[0]
+
+        # log|dy/dz| via jax.grad
+        grad_val = jax.grad(fwd_scalar)(z_scalar)
+        ld_numerical = jnp.log(jnp.abs(grad_val))
+        npt.assert_allclose(ld_analytic, ld_numerical, atol=1e-4)
+
+    def test_batched_shapes(self):
+        """LOFT should handle batched inputs."""
+        z = jax.random.normal(jax.random.PRNGKey(1), (8, 20)) * 200
+        y, ld = loft_forward(z, tau=100.0)
+        assert y.shape == (8, 20)
+        assert ld.shape == (8,)
+
+
+# ===========================================================================
+# FlowChain LOFT integration
+# ===========================================================================
+
+
+class TestFlowChainLOFT:
+    """Tests for LOFT + final affine integrated into FlowChain."""
+
+    def test_chain_with_loft_forward_inverse(self, rng):
+        """FlowChain with use_loft=True should be invertible."""
+        chain = FlowChain(
+            features=6,
+            num_layers=2,
+            flow_type="affine_coupling",
+            hidden_dims=[32, 32],
+            use_loft=True,
+        )
+        params = chain.init(rng, jnp.zeros(6))
+        x = jax.random.normal(jax.random.PRNGKey(80), (4, 6))
+
+        z, ld_fwd = chain.apply(params, x, reverse=False)
+        x_rec, ld_inv = chain.apply(params, z, reverse=True)
+
+        npt.assert_allclose(x_rec, x, atol=0.05)
+        npt.assert_allclose(ld_fwd + ld_inv, jnp.zeros(4), atol=0.05)
+
+    def test_chain_without_loft_no_final_params(self, rng):
+        """When use_loft=False, no final_mu/final_log_sigma in params."""
+        chain = FlowChain(
+            features=6,
+            num_layers=2,
+            flow_type="affine_coupling",
+            hidden_dims=[16],
+            use_loft=False,
+        )
+        params = chain.init(rng, jnp.zeros(6))
+        flat = jax.tree.leaves_with_path(params)
+        final_keys = [
+            str(p) for p, _ in flat if "final_mu" in str(p) or "final_log_sigma" in str(p)
+        ]
+        assert len(final_keys) == 0, f"Unexpected final affine params: {final_keys}"
+
+    def test_chain_with_loft_has_final_params(self, rng):
+        """When use_loft=True, final_mu and final_log_sigma are present."""
+        chain = FlowChain(
+            features=6,
+            num_layers=2,
+            flow_type="affine_coupling",
+            hidden_dims=[16],
+            use_loft=True,
+        )
+        params = chain.init(rng, jnp.zeros(6))
+        flat = jax.tree.leaves_with_path(params)
+        final_keys = [
+            str(p) for p, _ in flat if "final_mu" in str(p) or "final_log_sigma" in str(p)
+        ]
+        assert len(final_keys) == 2, f"Expected 2 final affine params, got: {final_keys}"
+
+    def test_loft_chain_no_nan_high_dim(self, rng):
+        """LOFT + soft_clamp keep high-dim flow output finite."""
+        dim = 500
+        chain = FlowChain(
+            features=dim,
+            num_layers=4,
+            flow_type="affine_coupling",
+            hidden_dims=[64, 64],
+            use_loft=True,
+            soft_clamp=True,
+        )
+        x = jax.random.normal(rng, (2, dim))
+        params = chain.init(rng, x[0])
+
+        z, ld = chain.apply(params, x)
+        assert jnp.all(jnp.isfinite(z)), "LOFT chain forward NaN/Inf"
+        assert jnp.all(jnp.isfinite(ld)), "LOFT chain log_det NaN/Inf"
+
+    def test_spline_with_loft(self, rng):
+        """Spline coupling + LOFT round-trip."""
+        chain = FlowChain(
+            features=6,
+            num_layers=2,
+            flow_type="spline_coupling",
+            hidden_dims=[32, 32],
+            use_loft=True,
+        )
+        params = chain.init(rng, jnp.zeros(6))
+        x = jax.random.normal(jax.random.PRNGKey(81), (3, 6)) * 2.0
+
+        z, ld_fwd = chain.apply(params, x, reverse=False)
+        x_rec, ld_inv = chain.apply(params, z, reverse=True)
+
+        npt.assert_allclose(x_rec, x, atol=0.05)
+        assert jnp.all(jnp.isfinite(z))
+        assert jnp.all(jnp.isfinite(ld_fwd))
+
+
+# ===========================================================================
+# Soft clamp integration (AffineCoupling)
+# ===========================================================================
+
+
+class TestAffineSoftClamp:
+    """Verify soft_clamp toggle on AffineCoupling."""
+
+    def test_soft_clamp_on_forward_inverse(self, rng):
+        """Affine coupling with soft_clamp=True should be invertible."""
+        flow = AffineCoupling(
+            features=6, hidden_dims=[32, 32], soft_clamp=True
+        )
+        params = flow.init(rng, jnp.zeros(6))
+        x = jax.random.normal(jax.random.PRNGKey(90), (4, 6))
+
+        y, ld_fwd = flow.apply(params, x)
+        x_rec, ld_inv = flow.apply(params, y, reverse=True)
+        npt.assert_allclose(x_rec, x, atol=1e-5)
+        npt.assert_allclose(ld_fwd + ld_inv, jnp.zeros(4), atol=1e-5)
+
+    def test_soft_clamp_off_forward_inverse(self, rng):
+        """Affine coupling with soft_clamp=False (hard clip) should also work."""
+        flow = AffineCoupling(
+            features=6, hidden_dims=[32, 32], soft_clamp=False
+        )
+        params = flow.init(rng, jnp.zeros(6))
+        x = jax.random.normal(jax.random.PRNGKey(91), (4, 6))
+
+        y, ld_fwd = flow.apply(params, x)
+        x_rec, ld_inv = flow.apply(params, y, reverse=True)
+        npt.assert_allclose(x_rec, x, atol=1e-5)
+
+    def test_soft_clamp_identity_at_init(self, rng):
+        """With zero_init_output + soft_clamp, flow is identity at init."""
+        flow = AffineCoupling(
+            features=10,
+            hidden_dims=[32, 32],
+            zero_init_output=True,
+            soft_clamp=True,
+        )
+        x = jax.random.normal(rng, (3, 10))
+        params = flow.init(rng, x[0])
+
+        y, ld = flow.apply(params, x)
+        npt.assert_allclose(y, x, atol=1e-6)
+        npt.assert_allclose(ld, jnp.zeros(3), atol=1e-6)
