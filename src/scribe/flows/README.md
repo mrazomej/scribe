@@ -208,6 +208,19 @@ analytically invertible, element-wise monotone transform. Key parameters:
 Each spline dimension requires `3K + 1` parameters (K widths, K heights,
 K+1 derivatives), predicted by the conditioner network.
 
+### Numerical safety (matching the nflows reference)
+
+The RQS implementation in `transforms.py` includes several safeguards
+that match the reference *nflows* library (Durkan et al.):
+
+| Guard | What it prevents |
+|---|---|
+| **Minimum bin width / height** (`1e-3` proportion) | Bins collapsing → slope `s_k = h_k/w_k` diverging |
+| **Boundary pinning** | Float32 cumsum drift pushing knots outside `[-B, B]` |
+| **Width/height recomputation** | Inconsistency between cumulative positions and per-bin widths |
+| **Log-space log-det** (`log(num) - 2·log(denom)`) | Intermediate overflow in `deriv_num / denom²` |
+| **Identity-bias init** (see Conditioner Stability) | Non-zero log-det at initialization |
+
 ## FlowDistribution Convenience Methods
 
 `FlowDistribution` provides two convenience methods for point estimation:
