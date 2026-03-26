@@ -11,6 +11,11 @@ model through downstream analysis.
   data: NB base, zero inflation, variable capture, BNB overdispersion, mixture
   components, parameterizations, and hierarchical priors
 
+- [**Parameter Reference**](parameters.md) — one-stop cheatsheet mapping every
+  internal parameter name (`r`, `p`, `mu`, `phi`, `gate`, `p_capture`, ...) to
+  its symbol, equation context, biological meaning, and parameterization, with
+  color-coded likelihood equations and prior hyperparameter tables
+
 - [**Variational Guide Families**](guide-families.md) — mean-field, low-rank,
   joint low-rank, amortized, and VAE latent guides: what they capture, when to
   use each, and how to configure them
