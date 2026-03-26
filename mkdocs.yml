@@ -144,6 +144,7 @@ nav:
   - User Guide:
     - guide/index.md
     - "The scribe.fit() Interface": guide/fit.md
+    - "scribe-infer CLI": guide/cli_infer.md
     - Model Selection: guide/model-selection.md
     - Parameter Reference: guide/parameters.md
     - Variational Guide Families: guide/guide-families.md

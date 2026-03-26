@@ -33,3 +33,7 @@ model through downstream analysis.
 - [**Model Comparison**](model-comparison.md) — comparing models with WAIC and
   PSIS-LOO, stacking weights, per-gene goodness-of-fit diagnostics, and
   integration with the DE pipeline
+
+- [**`scribe-infer` CLI**](cli_infer.md) — command-line interface for
+  running reproducible inference via Hydra configs, with SLURM integration,
+  covariate-split orchestration, and reusable cluster profiles
