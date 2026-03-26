@@ -56,6 +56,8 @@ def test_initialize_conf_creates_all_managed_files(tmp_path: Path) -> None:
     assert (summary.target_root / "inference" / "mcmc.yaml").exists()
     assert (summary.target_root / "inference" / "vae.yaml").exists()
     assert (summary.target_root / "amortization" / "capture.yaml").exists()
+    assert (summary.target_root / "slurm" / "README.md").exists()
+    assert (summary.target_root / "slurm" / "default.yaml").exists()
     assert (summary.target_root / "dirname_aliases" / "default.yaml").exists()
     assert (summary.target_root / "paths" / "paths.yaml").exists()
 

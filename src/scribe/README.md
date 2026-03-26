@@ -69,6 +69,24 @@ The command auto-detects split mode from `data.<dataset>.yaml` (`split_by`) and
 dispatches to split orchestration when needed. See `docs/cli_infer.md` for full
 usage and expected `conf/` layout.
 
+For SLURM clusters, use interactive submitit launch mode:
+
+```bash
+scribe-infer --slurm --config-path ./conf data=singer
+```
+
+`--slurm` prompts for cluster-specific resources and requires partition input
+(no hardcoded partition default).
+
+For reusable cluster settings across runs, add profiles under `conf/slurm` and
+invoke:
+
+```bash
+scribe-infer --slurm --slurm-profile default --config-path ./conf data=singer
+```
+
+Per-run overrides remain available via repeated `--slurm-set key=value`.
+
 ## Architecture Overview
 
 SCRIBE is organized into specialized modules that work together seamlessly:
