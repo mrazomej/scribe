@@ -5600,6 +5600,180 @@ class TestMixtureFlowGuide:
                 break
         assert found, f"No site with shape ({K}, 20) found in trace"
 
+    def test_joint_flow_mixture_dataset_smoke(self, small_counts):
+        """Joint flow with mixture + dataset produces (K, D, G) samples."""
+        from scribe.models.components import JointNormalizingFlowGuide
+
+        K, D, G = 3, 2, 20
+        mc = self._mix_config(K=K, D=D)
+        joint_guide = JointNormalizingFlowGuide(
+            flow_type="affine_coupling",
+            num_layers=2,
+            hidden_dims=(16,),
+            group="mix",
+            mixture_strategy="independent",
+        )
+
+        # phi: non-batch scalar; r: mixture + dataset gene-specific
+        specs = [
+            PositiveNormalSpec(
+                name="phi",
+                shape_dims=(),
+                default_params=(0.0, 1.0),
+                is_gene_specific=False,
+                guide_family=joint_guide,
+                constrained_name="phi",
+            ),
+            PositiveNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                is_mixture=True,
+                is_dataset=True,
+                guide_family=joint_guide,
+                constrained_name="r",
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=G,
+                    model_config=mc,
+                    counts=small_counts,
+                )
+
+        # phi is non-batch scalar
+        assert "phi" in tr
+        assert tr["phi"]["value"].shape == ()
+
+        # r should have shape (K, D, G)
+        found = False
+        for site_name in tr:
+            val = tr[site_name]["value"]
+            if hasattr(val, "shape") and val.shape == (K, D, G):
+                found = True
+                assert jnp.isfinite(val).all()
+                break
+        assert found, f"No site with shape ({K}, {D}, {G}) found in trace"
+
+    def test_joint_flow_mixture_dataset_dense_params(self, small_counts):
+        """Joint flow with mixture + dataset and dense_params=['r'] (nondense p)."""
+        from scribe.models.components import JointNormalizingFlowGuide
+
+        K, D, G = 3, 2, 20
+        mc = self._mix_config(K=K, D=D)
+        joint_guide = JointNormalizingFlowGuide(
+            flow_type="affine_coupling",
+            num_layers=2,
+            hidden_dims=(16,),
+            group="mix",
+            mixture_strategy="independent",
+            dense_params=["r"],
+        )
+
+        # r (dense, mixture+dataset) and p (nondense, mixture+dataset)
+        specs = [
+            PositiveNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                is_mixture=True,
+                is_dataset=True,
+                guide_family=joint_guide,
+                constrained_name="r",
+            ),
+            SigmoidNormalSpec(
+                name="p",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                is_mixture=True,
+                is_dataset=True,
+                guide_family=joint_guide,
+                constrained_name="p",
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=G,
+                    model_config=mc,
+                    counts=small_counts,
+                )
+
+        # Both r and p should have shape (K, D, G)
+        for pname in ("r", "p"):
+            found = False
+            for site_name in tr:
+                val = tr[site_name]["value"]
+                if hasattr(val, "shape") and val.shape == (K, D, G):
+                    if pname in site_name or site_name == pname:
+                        found = True
+                        assert jnp.isfinite(val).all(), (
+                            f"{pname} has non-finite values"
+                        )
+                        break
+            assert found, (
+                f"No site for '{pname}' with shape ({K}, {D}, {G}) in trace"
+            )
+
+    def test_joint_flow_mixture_dataset_shared(self, small_counts):
+        """Joint flow with mixture + dataset: shared strategy multi-level one-hot."""
+        from scribe.models.components import JointNormalizingFlowGuide
+
+        K, D, G = 2, 2, 20
+        mc = self._mix_config(K=K, D=D)
+        joint_guide = JointNormalizingFlowGuide(
+            flow_type="affine_coupling",
+            num_layers=2,
+            hidden_dims=(16,),
+            group="mix",
+            mixture_strategy="shared",
+        )
+
+        specs = [
+            PositiveNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                is_mixture=True,
+                is_dataset=True,
+                guide_family=joint_guide,
+                constrained_name="r",
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=G,
+                    model_config=mc,
+                    counts=small_counts,
+                )
+
+        found = False
+        for site_name in tr:
+            val = tr[site_name]["value"]
+            if hasattr(val, "shape") and val.shape == (K, D, G):
+                found = True
+                assert jnp.isfinite(val).all()
+                break
+        assert found, f"No site with shape ({K}, {D}, {G}) found in trace"
+
     def test_preset_builder_mixture_strategy(self):
         """build_config_from_preset forwards mixture_strategy correctly."""
         from scribe.inference.preset_builder import build_config_from_preset
