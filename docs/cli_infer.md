@@ -67,7 +67,7 @@ Notes:
 You can keep reusable cluster settings in profile YAML files:
 
 ```bash
-scribe-infer --slurm --slurm-profile default --config-path ./conf data=singer
+scribe-infer --slurm-profile default --config-path ./conf data=singer
 ```
 
 Resolution rules:
@@ -76,11 +76,12 @@ Resolution rules:
 - You may also pass an explicit path to `--slurm-profile`.
 - Repeated `--slurm-set key=value` entries override profile values.
 - Missing core fields fall back to interactive prompts (or defaults where safe).
+- `--slurm-profile` and `--slurm-set` automatically enable SLURM launch mode.
 
 Example per-run override:
 
 ```bash
-scribe-infer --slurm --slurm-profile default --slurm-set partition=gpu --slurm-set timeout=0-08:00 --config-path ./conf data=singer
+scribe-infer --slurm-profile default --slurm-set partition=gpu --slurm-set timeout=0-08:00 --config-path ./conf data=singer
 ```
 
 ### Common Examples
@@ -92,8 +93,8 @@ scribe-infer --config-path ./conf data=singer model=zinb
 # Auto-dispatch to split orchestration (split_by present)
 scribe-infer --config-path ./conf data=bleo_study01 variable_capture=true
 
-# Split run on Slurm with submitit launcher
-scribe-infer --config-path ./conf data=bleo_study01 split.launcher=submitit_slurm
+# Split run on Slurm (auto split dispatch + submitit via --slurm mode)
+scribe-infer --slurm --config-path ./conf data=bleo_study01
 ```
 
 ## Config Root Expectations
