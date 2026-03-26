@@ -36,7 +36,6 @@ scribe-infer --config-path ./conf model=nbdm viz=null
 scribe-infer --config-path ./conf model=nbvcp amortization=capture
 ```
 
-> `infer.py` and `infer_split.py` are no longer the recommended interface.
 > Use `scribe-infer` for both standard and split-aware runs.
 > For full CLI usage (including `--initialize`), see `docs/cli_infer.md`.
 

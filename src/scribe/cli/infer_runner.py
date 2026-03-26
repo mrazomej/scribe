@@ -1,5 +1,5 @@
 """
-infer.py
+infer_runner.py
 
 This script serves as the primary entry point for performing probabilistic model
 inference within the SCRIBE framework. Designed for execution via Hydra—a
@@ -53,21 +53,21 @@ Detailed script explanation:
 Typical usage:
 
     # Basic model (default: mean_odds parameterization)
-    $ python infer.py data=<your_data_config>
+    $ scribe-infer --config-path ./conf data=<your_data_config>
 
     # Enable model features with intuitive flags
-    $ python infer.py data=singer variable_capture=true
-    $ python infer.py data=singer zero_inflation=true
-    $ python infer.py data=singer zero_inflation=true variable_capture=true
+    $ scribe-infer --config-path ./conf data=singer variable_capture=true
+    $ scribe-infer --config-path ./conf data=singer zero_inflation=true
+    $ scribe-infer --config-path ./conf data=singer zero_inflation=true variable_capture=true
 
     # Custom output directory
-    $ python infer.py data=singer variable_capture=true output_dir=my_experiment
+    $ scribe-infer --config-path ./conf data=singer variable_capture=true output_dir=my_experiment
 
     # Power users can still use model names directly
-    $ python infer.py data=singer model=zinbvcp
+    $ scribe-infer --config-path ./conf data=singer model=zinbvcp
 
     # Override inference parameters
-    $ python infer.py data=singer inference.n_steps=100000 inference.batch_size=512
+    $ scribe-infer --config-path ./conf data=singer inference.n_steps=100000 inference.batch_size=512
 
 This command will launch SCRIBE's probabilistic inference engine using your
 chosen configuration, automatically manage outputs, and save a binary results
@@ -623,7 +623,7 @@ def _resolve_empirical_mixing_components(
     Parameters
     ----------
     config_n_components : int or None
-        ``n_components`` value available in ``infer.py`` before calling
+        ``n_components`` value available before calling
         ``scribe.fit()``.  This can be ``None`` for annotation-driven runs.
     results : Any
         Returned object from ``scribe.fit()``.  If it exposes
@@ -636,7 +636,7 @@ def _resolve_empirical_mixing_components(
         Returns ``None`` when no valid integer component count can be resolved.
     """
     # Prefer the fitted results metadata because fit() may infer n_components
-    # internally (e.g., from annotation labels) after infer.py has built kwargs.
+    # internally (e.g., from annotation labels) after runner has built kwargs.
     candidate = getattr(results, "n_components", None)
     if candidate is None:
         candidate = config_n_components
@@ -656,7 +656,7 @@ def _resolve_empirical_mixing_components(
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(cfg: DictConfig) -> None:
     # ------------------------------------------------------------------
-    # GPU pinning (used by infer_split.py for multi-GPU parallel runs).
+    # GPU pinning (used by split orchestrator for multi-GPU parallel runs).
     # Must happen before any JAX computation so that CUDA device
     # initialisation only sees the assigned GPU.
     # ------------------------------------------------------------------

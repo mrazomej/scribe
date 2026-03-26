@@ -323,7 +323,7 @@ class TestHydraEnableX64Config:
     # ------------------------------------------------------------------
 
     def test_enable_x64_flows_through_inference_cfg(self):
-        """Simulates the kwargs.update(inference_cfg) pattern from infer.py.
+        """Simulates the kwargs.update(inference_cfg) pattern from infer runner.
 
         When ``enable_x64`` is in ``inference_cfg``, it should appear in
         the kwargs passed to ``scribe.fit()``.
@@ -358,7 +358,7 @@ class TestLoadSVIInit:
 
     def test_none_path_returns_none(self):
         """When path is None, return None without any file I/O."""
-        from infer import _load_svi_init
+        from scribe.cli.infer_runner import _load_svi_init
 
         assert _load_svi_init(None) is None
 
@@ -366,7 +366,7 @@ class TestLoadSVIInit:
 
     def test_nonexistent_path_raises(self):
         """Non-existent file path raises FileNotFoundError."""
-        from infer import _load_svi_init
+        from scribe.cli.infer_runner import _load_svi_init
 
         with patch(
             "hydra.utils.to_absolute_path", return_value="/no/such/file.pkl"
@@ -380,7 +380,7 @@ class TestLoadSVIInit:
 
     def test_wrong_type_raises(self):
         """A pickle that is not ScribeSVIResults raises TypeError."""
-        from infer import _load_svi_init
+        from scribe.cli.infer_runner import _load_svi_init
 
         with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as f:
             pickle.dump({"not": "svi_results"}, f)
@@ -406,7 +406,7 @@ class TestResolveResumeSource:
 
     def test_none_path_returns_none(self):
         """When resume path is None, resolution returns None."""
-        from infer import _resolve_resume_source
+        from scribe.cli.infer_runner import _resolve_resume_source
 
         assert _resolve_resume_source(None) is None
 
@@ -414,7 +414,7 @@ class TestResolveResumeSource:
 
     def test_run_directory_input_resolves_all_paths(self, tmp_path):
         """Run directory input resolves run, checkpoint, and results paths."""
-        from infer import _resolve_resume_source
+        from scribe.cli.infer_runner import _resolve_resume_source
 
         run_dir = tmp_path / "run"
         checkpoints_dir = run_dir / "checkpoints"
@@ -433,7 +433,7 @@ class TestResolveResumeSource:
 
     def test_checkpoint_directory_input_resolves_parent_run_dir(self, tmp_path):
         """Checkpoint directory input maps back to the containing run dir."""
-        from infer import _resolve_resume_source
+        from scribe.cli.infer_runner import _resolve_resume_source
 
         run_dir = tmp_path / "run"
         checkpoints_dir = run_dir / "checkpoints"
@@ -450,7 +450,7 @@ class TestResolveResumeSource:
 
     def test_results_file_without_checkpoint_keeps_results_only(self, tmp_path):
         """Results-file input can resolve without requiring checkpoints."""
-        from infer import _resolve_resume_source
+        from scribe.cli.infer_runner import _resolve_resume_source
 
         run_dir = tmp_path / "run"
         run_dir.mkdir(parents=True)
@@ -468,7 +468,7 @@ class TestResolveResumeSource:
 
     def test_invalid_file_name_raises_value_error(self, tmp_path):
         """Unsupported file inputs raise a clear ValueError."""
-        from infer import _resolve_resume_source
+        from scribe.cli.infer_runner import _resolve_resume_source
 
         bad_file = tmp_path / "not_results.pkl"
         bad_file.write_bytes(b"placeholder")
@@ -480,7 +480,7 @@ class TestResolveResumeSource:
 
     def test_missing_path_raises_file_not_found(self):
         """Missing resume path raises FileNotFoundError."""
-        from infer import _resolve_resume_source
+        from scribe.cli.infer_runner import _resolve_resume_source
 
         with patch(
             "hydra.utils.to_absolute_path", return_value="/no/such/resume/path"
@@ -499,7 +499,7 @@ class TestEmpiricalMixingComponentResolution:
 
     def test_prefers_results_n_components_over_config(self):
         """Use fitted results n_components when both sources are present."""
-        from infer import _resolve_empirical_mixing_components
+        from scribe.cli.infer_runner import _resolve_empirical_mixing_components
 
         resolved = _resolve_empirical_mixing_components(
             config_n_components=2,
@@ -512,7 +512,7 @@ class TestEmpiricalMixingComponentResolution:
 
     def test_falls_back_to_config_when_results_missing(self):
         """Use config n_components when results lacks the attribute."""
-        from infer import _resolve_empirical_mixing_components
+        from scribe.cli.infer_runner import _resolve_empirical_mixing_components
 
         resolved = _resolve_empirical_mixing_components(
             config_n_components=3,
@@ -525,7 +525,7 @@ class TestEmpiricalMixingComponentResolution:
 
     def test_returns_none_for_non_numeric_component_value(self):
         """Return None when neither source provides a valid integer value."""
-        from infer import _resolve_empirical_mixing_components
+        from scribe.cli.infer_runner import _resolve_empirical_mixing_components
 
         resolved = _resolve_empirical_mixing_components(
             config_n_components=None,
@@ -538,7 +538,7 @@ class TestEmpiricalMixingComponentResolution:
 
     def test_valid_svi_results_loaded(self):
         """A pickled ScribeSVIResults object is loaded successfully."""
-        from infer import _load_svi_init
+        from scribe.cli.infer_runner import _load_svi_init
 
         # Pickle a plain dict and patch ScribeSVIResults to be `dict`
         # so the isinstance check passes (MagicMock(spec=...) is not

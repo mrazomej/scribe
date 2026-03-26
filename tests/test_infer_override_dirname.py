@@ -1,6 +1,6 @@
-"""Tests for compact Hydra override dirname formatting in ``infer.py``."""
+"""Tests for compact Hydra override dirname formatting."""
 
-from infer import _compact_override_dirname
+from scribe.cli.infer_runner import _compact_override_dirname
 
 
 def test_compact_override_dirname_emits_bare_true_and_omits_false():
