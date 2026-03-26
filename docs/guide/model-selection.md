@@ -267,6 +267,9 @@ results = scribe.fit(adata, model="nbvcp", parameterization="mean_prob")
 # equivalent: parameterization="linked"
 ```
 
+For a complete mapping of every parameter name to its symbol, domain, and
+equation context, see the [Parameter Reference](parameters.md).
+
 **Constrained** (default) vs **unconstrained** (Normal + transforms; required for
 hierarchical priors and BNB):
 

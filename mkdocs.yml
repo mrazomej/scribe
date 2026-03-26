@@ -145,6 +145,7 @@ nav:
     - guide/index.md
     - "The scribe.fit() Interface": guide/fit.md
     - Model Selection: guide/model-selection.md
+    - Parameter Reference: guide/parameters.md
     - Variational Guide Families: guide/guide-families.md
     - Inference Methods: guide/inference.md
     - Results Class: guide/results.md
