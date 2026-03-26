@@ -86,4 +86,13 @@ model through downstream analysis.
 
     [`scribe-infer` CLI](cli_infer.md)
 
+-   :material-chart-box-outline:{ .lg .middle } **`scribe-visualize` CLI**
+
+    ---
+
+    Post-inference diagnostic plots: loss curves, ECDF, PPC grids, UMAP
+    overlays, heatmaps, and more --- with recursive and SLURM support
+
+    [`scribe-visualize` CLI](cli_visualize.md)
+
 </div>
