@@ -1,77 +1,23 @@
-"""
-infer_runner.py
+"""Direct inference runner used by ``scribe-infer``.
 
-This script serves as the primary entry point for performing probabilistic model
-inference within the SCRIBE framework. Designed for execution via Hydra—a
-powerful configuration management system—this script automates the loading of
-user-specified configurations, manages output organization, and launches the
-inference pipeline. It is intended for users who wish to fit probabilistic
-models on single-cell RNA-seq data (or similar), with all run settings encoded
-in easily reproducible configuration files.
+This module executes one configured SCRIBE run (non-split path). The unified
+CLI composes Hydra config, then dispatches to this runner when the selected
+dataset config does not define ``split_by``.
 
+Execution summary
+-----------------
+1. Compose and display effective Hydra configuration.
+2. Load/preprocess count data.
+3. Translate config fields into ``scribe.fit(...)`` kwargs.
+4. Run SVI/MCMC/VAE inference.
+5. Persist results to Hydra output directory.
+6. Optionally generate requested visual diagnostics.
 
-Detailed script explanation:
+Typical CLI usage:
 
-1. **Hydra-Based Orchestration**: The script is decorated with `@hydra.main`,
-   which parses the provided YAML configuration files, initializes the config
-   object (`cfg`), and sets up an output directory structure according to
-   Hydra's conventions. This ensures all runs are reproducible and output
-   files are well-organized by experiment and configuration.
-
-2. **Configuration-Driven Execution**: Users specify data sources, model
-   types, parameterizations, inference options, and other run-specific details
-   in configuration files (typically under the `conf/` directory). The script
-   receives these settings as a nested config structure (`cfg`), which it adapts
-   for internal use.
-
-3. **Data Loading**: Using the configured data path and any associated
-   preprocessing steps, the script loads the input data with SCRIBE's
-   `load_and_preprocess_anndata` routine. This function ensures data is in the
-   standardized, preprocessed format required for model fitting.
-
-4. **Argument Preparation for Model Fitting**: The configuration (`cfg`) is
-   converted to a plain dictionary for easier manipulation. The new unified
-   `model` parameter is used instead of the old boolean flags.
-
-5. **Model Inference Launch**: The core line—calling `scribe.fit()`—initiates
-   probabilistic inference using the chosen model, parameterization, inference
-   technique (SVI, MCMC, or VAE), and hyperparameters, all defined by the user
-   configuration.
-
-6. **Result Serialization**: The inference results are serialized (pickled)
-   and saved to the Hydra-created output directory. This ensures users can
-   later find results in a structured location (e.g.,
-   `outputs/<data>/<model>/<method>/<overrides>/`), supporting downstream
-   analysis or visualization.
-
-7. **Reproducibility & Standardization**: By relying on Hydra for
-   configuration and output management, the script guarantees reproducible and
-   standardized experiment handling. Every run is documented via its config,
-   and outputs do not conflict, even when multiple experiments are queued or run
-   concurrently.
-
-Typical usage:
-
-    # Basic model (default: mean_odds parameterization)
-    $ scribe-infer --config-path ./conf data=<your_data_config>
-
-    # Enable model features with intuitive flags
-    $ scribe-infer --config-path ./conf data=singer variable_capture=true
-    $ scribe-infer --config-path ./conf data=singer zero_inflation=true
-    $ scribe-infer --config-path ./conf data=singer zero_inflation=true variable_capture=true
-
-    # Custom output directory
-    $ scribe-infer --config-path ./conf data=singer variable_capture=true output_dir=my_experiment
-
-    # Power users can still use model names directly
-    $ scribe-infer --config-path ./conf data=singer model=zinbvcp
-
-    # Override inference parameters
-    $ scribe-infer --config-path ./conf data=singer inference.n_steps=100000 inference.batch_size=512
-
-This command will launch SCRIBE's probabilistic inference engine using your
-chosen configuration, automatically manage outputs, and save a binary results
-file for further diagnostic or biological interpretation.
+    scribe-infer --config-path ./conf data=<your_data_config>
+    scribe-infer --config-path ./conf data=singer variable_capture=true
+    scribe-infer --config-path ./conf data=singer model=zinbvcp
 """
 
 import hydra

@@ -1,57 +1,21 @@
-"""
-split_orchestrator.py
+"""Split-aware orchestration runner used by ``scribe-infer``.
 
-Orchestrator script for covariate-split parallel inference within the SCRIBE
-framework.  Given a data configuration that includes a ``split_by`` field,
-this script:
+This module is invoked when at least one selected data config defines
+``split_by``. It expands the dataset into split-specific temporary configs,
+launches one Hydra multirun, and routes each split job to
+``scribe.cli.infer_runner``.
 
-1. Loads the h5ad file once to discover the unique values of the covariate
-   column specified by ``split_by`` in ``adata.obs``.
-2. Generates lightweight temporary data YAML configurations---one per unique
-   covariate value---in ``conf/data/_tmp_split/``.  Each temporary config
-   points to the **same** original h5ad file but adds ``subset_column`` and
-   ``subset_value`` fields so that ``load_and_preprocess_anndata`` filters
-   the data in memory.
-3. Launches a single Hydra **multirun** (``-m``) invocation of
-   ``scribe.cli.infer_runner``
-   with the ``hydra/launcher=joblib`` backend.  This delegates all
-   parallelism to Hydra and its joblib launcher, which spawns one worker
-   process per covariate value.
-4. Assigns GPUs round-robin via the Hydra per-job ``env_set`` mechanism so
-   that each worker's ``CUDA_VISIBLE_DEVICES`` is set before JAX
-   initialises.
-5. Cleans up the temporary YAML files after the multirun completes (or on
-   failure).
+High-level flow
+---------------
+1. Parse forwarded Hydra overrides and split-specific launcher options.
+2. Discover split values from ``adata.obs``.
+3. Materialize temporary split configs under ``conf/data/_tmp_split_*``.
+4. Run Hydra multirun with joblib or submitit launcher.
+5. Clean up temporary config directory.
 
-The interface mirrors direct inference execution: all Hydra overrides are forwarded
-verbatim. This module is primarily invoked by ``scribe-infer`` when the
-selected dataset config contains ``split_by``.
+Primary user entrypoint remains:
 
-
-Data YAML requirements
-----------------------
-The data configuration YAML must include the following additional fields
-(beyond the standard ``name`` / ``path`` / ``preprocessing``):
-
-    split_by : str or list[str]
-        Column name(s) in ``adata.obs`` whose unique values (or unique
-        combinations for multiple columns) define the data subsets.
-    n_jobs : int or null, optional
-        Number of parallel joblib workers.  Defaults to the number of
-        visible CUDA GPUs, falling back to 1 if none are detected.
-
-
-Typical usage
--------------
-
-    # Usually called through the unified CLI:
-    $ scribe-infer --config-path ./conf data=bleo_study01 \\
-          variable_capture=true annotation_key=subclass-l1
-
-This produces output directories like::
-
-    outputs/bleo_study01_bleomycin/nbvcp/svi/...
-    outputs/bleo_study01_control/nbvcp/svi/...
+    scribe-infer --config-path ./conf data=<dataset_with_split_by>
 """
 
 import os
@@ -105,7 +69,7 @@ def _extract_config_options(
     Parameters
     ----------
     argv : list[str]
-        Raw command-line arguments excluding executable/script.
+        Raw command-line arguments excluding executable/module name.
 
     Returns
     -------
@@ -172,7 +136,7 @@ def _parse_args(argv: list[str]) -> tuple[list[str], dict, dict, list[str]]:
     Parameters
     ----------
     argv : list[str]
-        The raw command-line arguments (excluding the script name).
+        The raw command-line arguments (excluding the module invocation name).
 
     Returns
     -------
