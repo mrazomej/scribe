@@ -32,7 +32,7 @@ Expected configuration layout:
 Common examples:
   scribe-infer --config-path ./conf data=singer model=zinb
   scribe-infer --config-path ./conf data=bleo_study01 variable_capture=true
-  scribe-infer --config-path ./conf data=bleo_study01 split.launcher=submitit_slurm
+  scribe-infer --slurm --config-path ./conf data=bleo_study01
 
 Initialize starter configs:
   scribe-infer --initialize
@@ -41,8 +41,8 @@ Initialize starter configs:
 
 Interactive SLURM launch:
   scribe-infer --slurm --config-path ./conf data=singer
-  scribe-infer --slurm --slurm-profile default --config-path ./conf data=singer
-  scribe-infer --slurm --slurm-set partition=gpu --slurm-set timeout=0-08:00 --config-path ./conf data=singer
+  scribe-infer --slurm-profile default --config-path ./conf data=singer
+  scribe-infer --slurm-set partition=gpu --slurm-set timeout=0-08:00 --config-path ./conf data=singer
   (partition is required and has no built-in default)
 
 For a complete guide, see docs/cli_infer.md.

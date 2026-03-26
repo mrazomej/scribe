@@ -72,7 +72,8 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="PROFILE",
         help=(
             "Optional SLURM profile name (resolved under <config-path>/slurm as "
-            "<PROFILE>.yaml) or explicit YAML path."
+            "<PROFILE>.yaml) or explicit YAML path. Supplying this flag "
+            "automatically enables SLURM launch mode."
         ),
     )
     parser.add_argument(
@@ -84,7 +85,8 @@ def _build_parser() -> argparse.ArgumentParser:
             "Optional per-run SLURM override. Repeat as needed. Supports common "
             "keys (partition, account, cpus_per_task, mem_gb, timeout/timeout_min, "
             "qos, constraint, exclude, nodelist, reservation, gres, mail_user, "
-            "mail_type, job_name, submitit_folder) and launcher.<key> passthrough."
+            "mail_type, job_name, submitit_folder) and launcher.<key> passthrough. "
+            "Supplying this flag automatically enables SLURM launch mode."
         ),
     )
     return parser
@@ -167,10 +169,12 @@ def main(argv: list[str] | None = None) -> None:
         initialize_conf(known_args.initialize)
         return
 
-    if (known_args.slurm_profile or known_args.slurm_set) and not known_args.slurm:
-        raise SystemExit(
-            "--slurm-profile and --slurm-set require --slurm to be enabled."
-        )
+    # Any explicit SLURM profile/override implies SLURM launch mode.
+    slurm_requested = bool(
+        known_args.slurm
+        or known_args.slurm_profile is not None
+        or len(known_args.slurm_set) > 0
+    )
 
     _ensure_hydra_extra_installed()
 
@@ -183,7 +187,7 @@ def main(argv: list[str] | None = None) -> None:
         if split_mode
         else "scribe.cli.infer_runner"
     )
-    if known_args.slurm:
+    if slurm_requested:
         profile_values, _ = _load_slurm_profile(
             known_args.slurm_profile, config_root=config_root
         )

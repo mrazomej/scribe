@@ -267,11 +267,45 @@ def test_parse_slurm_set_entries_supports_timeout_and_launcher_passthrough() -> 
     assert launcher == {"max_num_timeout": "3"}
 
 
-def test_cli_rejects_slurm_set_without_slurm_flag() -> None:
-    """Guard against ambiguous launcher config when ``--slurm`` is absent."""
+def test_cli_slurm_set_implicitly_enables_slurm_mode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Treat ``--slurm-set`` as an implicit request for SLURM mode."""
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(
+        "scribe.cli.infer._ensure_hydra_extra_installed", lambda: None
+    )
+    monkeypatch.setattr(
+        "scribe.cli.infer.should_use_split_mode", lambda *_: False
+    )
+    monkeypatch.setattr(
+        "scribe.cli.infer.prompt_slurm_config",
+        lambda *_args, **_kwargs: SlurmPromptConfig(
+            partition="gpu",
+            account=None,
+            array_parallelism=1,
+            cpus_per_task=4,
+            mem_gb=32,
+            timeout_min=120,
+        ),
+    )
+    monkeypatch.setattr(
+        "scribe.cli.infer.subprocess.call", lambda cmd: commands.append(cmd) or 0
+    )
+
     with pytest.raises(SystemExit) as exc_info:
-        infer_cli_main(["--slurm-set", "partition=gpu", "data=singer"])
-    assert "--slurm-profile and --slurm-set require --slurm" in str(exc_info.value)
+        infer_cli_main(
+            [
+                "--config-path",
+                str(tmp_path),
+                "--slurm-set",
+                "partition=gpu",
+                "data=singer",
+            ]
+        )
+    assert exc_info.value.code == 0
+    assert "hydra/launcher=submitit_slurm" in commands[0]
 
 
 def test_cli_slurm_profile_and_set_merge_precedence(
@@ -347,3 +381,58 @@ def test_cli_slurm_profile_and_set_merge_precedence(
     assert "hydra.launcher.cpus_per_task=16" in commands[0]
     assert "hydra.launcher.max_num_timeout=2" in commands[0]
     assert "hydra.launcher.comment=nightly" in commands[0]
+
+
+def test_cli_slurm_profile_implicitly_enables_slurm_mode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Treat ``--slurm-profile`` as an implicit request for SLURM mode."""
+    commands: list[list[str]] = []
+
+    (tmp_path / "slurm").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "slurm" / "default.yaml").write_text(
+        "\n".join(
+            [
+                "partition: gpu",
+                "cpus_per_task: 8",
+                "mem_gb: 64",
+                "timeout_min: 240",
+            ]
+        )
+    )
+
+    monkeypatch.setattr(
+        "scribe.cli.infer._ensure_hydra_extra_installed", lambda: None
+    )
+    monkeypatch.setattr(
+        "scribe.cli.infer.should_use_split_mode", lambda *_: False
+    )
+    monkeypatch.setattr(
+        "scribe.cli.infer.prompt_slurm_config",
+        lambda seed_values, **_kwargs: SlurmPromptConfig(
+            partition=str(seed_values["partition"]),
+            account=seed_values.get("account"),
+            array_parallelism=int(seed_values.get("array_parallelism", 1)),
+            cpus_per_task=int(seed_values["cpus_per_task"]),
+            mem_gb=int(seed_values["mem_gb"]),
+            timeout_min=int(seed_values["timeout_min"]),
+            launcher_overrides=seed_values.get("launcher_overrides"),
+        ),
+    )
+    monkeypatch.setattr(
+        "scribe.cli.infer.subprocess.call", lambda cmd: commands.append(cmd) or 0
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        infer_cli_main(
+            [
+                "--config-path",
+                str(tmp_path),
+                "--slurm-profile",
+                "default",
+                "data=singer",
+            ]
+        )
+    assert exc_info.value.code == 0
+    assert "hydra/launcher=submitit_slurm" in commands[0]
+    assert "hydra.launcher.partition=gpu" in commands[0]

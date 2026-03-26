@@ -82,10 +82,11 @@ For reusable cluster settings across runs, add profiles under `conf/slurm` and
 invoke:
 
 ```bash
-scribe-infer --slurm --slurm-profile default --config-path ./conf data=singer
+scribe-infer --slurm-profile default --config-path ./conf data=singer
 ```
 
-Per-run overrides remain available via repeated `--slurm-set key=value`.
+Per-run overrides remain available via repeated `--slurm-set key=value`
+(and also implicitly enable SLURM mode).
 
 ## Architecture Overview
 
