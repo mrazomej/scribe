@@ -53,16 +53,16 @@ def build_config_from_preset(
     parameterization: str = "canonical",
     inference_method: str = "svi",
     unconstrained: bool = False,
-    mu_prior: str = "none",
-    p_prior: str = "none",
-    gate_prior: str = "none",
+    expression_prior: str = "none",
+    prob_prior: str = "none",
+    zero_inflation_prior: str = "none",
     n_datasets: Optional[int] = None,
     dataset_params: Optional[List[str]] = None,
     dataset_mixing: Optional[bool] = None,
-    mu_dataset_prior: str = "none",
-    p_dataset_prior: str = "none",
-    p_dataset_mode: str = "gene_specific",
-    gate_dataset_prior: str = "none",
+    expression_dataset_prior: str = "none",
+    prob_dataset_prior: str = "none",
+    prob_dataset_mode: str = "gene_specific",
+    zero_inflation_dataset_prior: str = "none",
     overdispersion_dataset_prior: str = "none",
     horseshoe_tau0: float = 1.0,
     horseshoe_slab_df: int = 4,
@@ -70,9 +70,9 @@ def build_config_from_preset(
     neg_u: float = 1.0,
     neg_a: float = 1.0,
     neg_tau: float = 1.0,
-    mu_eta_prior: str = "none",
-    mu_mean_anchor: bool = False,
-    mu_mean_anchor_sigma: float = 0.3,
+    capture_scaling_prior: str = "none",
+    expression_anchor: bool = False,
+    expression_anchor_sigma: float = 0.3,
     overdispersion: str = "none",
     overdispersion_prior: str = "horseshoe",
     guide_rank: Optional[int] = None,
@@ -253,7 +253,7 @@ def build_config_from_preset(
     ...     model="nbdm",
     ...     parameterization="mean_odds",
     ...     unconstrained=True,
-    ...     p_prior="gaussian",
+    ...     prob_prior="gaussian",
     ...     guide_flow="spline_coupling",
     ...     joint_params=["mu", "phi"],
     ... )
@@ -454,14 +454,14 @@ def build_config_from_preset(
         builder.unconstrained()
 
     # Gene-level priors
-    if mu_prior != "none":
-        builder._mu_prior = mu_prior
+    if expression_prior != "none":
+        builder._expression_prior = expression_prior
         builder._unconstrained = True
-    if p_prior != "none":
-        builder._p_prior = p_prior
+    if prob_prior != "none":
+        builder._prob_prior = prob_prior
         builder._unconstrained = True
-    if gate_prior != "none":
-        builder._gate_prior = gate_prior
+    if zero_inflation_prior != "none":
+        builder._zero_inflation_prior = zero_inflation_prior
         builder._unconstrained = True
 
     # Multi-dataset configuration: set builder fields directly
@@ -469,15 +469,15 @@ def build_config_from_preset(
         builder._n_datasets = n_datasets
         builder._dataset_params = dataset_params
         builder._dataset_mixing = dataset_mixing
-        builder._mu_dataset_prior = mu_dataset_prior
-        builder._p_dataset_prior = p_dataset_prior
-        builder._p_dataset_mode = p_dataset_mode
-        builder._gate_dataset_prior = gate_dataset_prior
+        builder._expression_dataset_prior = expression_dataset_prior
+        builder._prob_dataset_prior = prob_dataset_prior
+        builder._prob_dataset_mode = prob_dataset_mode
+        builder._zero_inflation_dataset_prior = zero_inflation_dataset_prior
         builder._overdispersion_dataset_prior = overdispersion_dataset_prior
         if (
-            mu_dataset_prior != "none"
-            or p_dataset_prior != "none"
-            or gate_dataset_prior != "none"
+            expression_dataset_prior != "none"
+            or prob_dataset_prior != "none"
+            or zero_inflation_dataset_prior != "none"
             or overdispersion_dataset_prior != "none"
         ):
             builder._unconstrained = True
@@ -496,11 +496,11 @@ def build_config_from_preset(
     builder._neg_tau = neg_tau
 
     # Hierarchical prior for per-dataset mu_eta (capture scaling)
-    builder._mu_eta_prior = mu_eta_prior
+    builder._capture_scaling_prior = capture_scaling_prior
 
     # Data-informed mean anchoring prior
-    builder._mu_mean_anchor = mu_mean_anchor
-    builder._mu_mean_anchor_sigma = mu_mean_anchor_sigma
+    builder._expression_anchor = expression_anchor
+    builder._expression_anchor_sigma = expression_anchor_sigma
 
     # Gene-specific overdispersion (e.g. BNB)
     builder._overdispersion = overdispersion

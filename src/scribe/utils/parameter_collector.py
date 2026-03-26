@@ -26,18 +26,18 @@ class ParameterCollector:
     >>> # Collect only non-None parameters
     >>> params = ParameterCollector.collect_non_none(
     ...     r_prior=(1.0, 1.0),
-    ...     p_prior=None,
-    ...     gate_prior=(2.0, 0.5)
+    ...     prob_prior=None,
+    ...     zero_inflation_prior=(2.0, 0.5)
     ... )
     >>> print(params)
-    {'r_prior': (1.0, 1.0), 'gate_prior': (2.0, 0.5)}
+    {'r_prior': (1.0, 1.0), 'zero_inflation_prior': (2.0, 0.5)}
 
     >>> # Collect and map prior parameters for standard parameterization
     >>> prior_config = ParameterCollector.collect_and_map_priors(
     ...     unconstrained=False,
     ...     parameterization="standard",
     ...     r_prior=(1.0, 1.0),
-    ...     p_prior=(2.0, 0.5)
+    ...     prob_prior=(2.0, 0.5)
     ... )
     >>> print(prior_config)
     {'r_param_prior': (1.0, 1.0), 'p_param_prior': (2.0, 0.5)}
@@ -98,11 +98,11 @@ class ParameterCollector:
         unconstrained: bool,
         parameterization: str,
         r_prior: Optional[tuple] = None,
-        p_prior: Optional[tuple] = None,
-        gate_prior: Optional[tuple] = None,
+        prob_prior: Optional[tuple] = None,
+        zero_inflation_prior: Optional[tuple] = None,
         p_capture_prior: Optional[tuple] = None,
         mixing_prior: Optional[Any] = None,
-        mu_prior: Optional[tuple] = None,
+        expression_prior: Optional[tuple] = None,
         phi_prior: Optional[tuple] = None,
         phi_capture_prior: Optional[tuple] = None,
     ) -> Dict[str, Any]:
@@ -122,15 +122,15 @@ class ParameterCollector:
             Model parameterization type ("standard", "linked", "odds_ratio")
         r_prior : Optional[tuple], default=None
             Prior parameters for dispersion parameter (r)
-        p_prior : Optional[tuple], default=None
+        prob_prior : Optional[tuple], default=None
             Prior parameters for success probability (p)
-        gate_prior : Optional[tuple], default=None
+        zero_inflation_prior : Optional[tuple], default=None
             Prior parameters for zero-inflation gate
         p_capture_prior : Optional[tuple], default=None
             Prior parameters for variable capture probability
         mixing_prior : Optional[Any], default=None
             Prior parameters for mixture components
-        mu_prior : Optional[tuple], default=None
+        expression_prior : Optional[tuple], default=None
             Prior parameters for mean parameter (used in linked/odds_ratio)
         phi_prior : Optional[tuple], default=None
             Prior parameters for odds ratio parameter (used in odds_ratio)
@@ -149,7 +149,7 @@ class ParameterCollector:
         ...     unconstrained=False,
         ...     parameterization="standard",
         ...     r_prior=(1.0, 1.0),
-        ...     p_prior=(2.0, 0.5)
+        ...     prob_prior=(2.0, 0.5)
         ... )
         >>> print(config)
         {'r_param_prior': (1.0, 1.0), 'p_param_prior': (2.0, 0.5)}
@@ -159,7 +159,7 @@ class ParameterCollector:
         ...     unconstrained=True,
         ...     parameterization="standard",
         ...     r_prior=(0.0, 1.0),
-        ...     p_prior=(0.0, 1.0)
+        ...     prob_prior=(0.0, 1.0)
         ... )
         >>> print(config)
         {
@@ -171,8 +171,8 @@ class ParameterCollector:
         >>> config = ParameterCollector.collect_and_map_priors(
         ...     unconstrained=False,
         ...     parameterization="linked",
-        ...     p_prior=(1.0, 1.0),
-        ...     mu_prior=(0.0, 1.0)
+        ...     prob_prior=(1.0, 1.0),
+        ...     expression_prior=(0.0, 1.0)
         ... )
         >>> print(config)
         {'p_param_prior': (1.0, 1.0), 'mu_param_prior': (0.0, 1.0)}
@@ -180,11 +180,11 @@ class ParameterCollector:
         # Step 1: Collect non-None priors
         user_priors = ParameterCollector.collect_non_none(
             r_prior=r_prior,
-            p_prior=p_prior,
-            gate_prior=gate_prior,
+            prob_prior=prob_prior,
+            zero_inflation_prior=zero_inflation_prior,
             p_capture_prior=p_capture_prior,
             mixing_prior=mixing_prior,
-            mu_prior=mu_prior,
+            expression_prior=expression_prior,
             phi_prior=phi_prior,
             phi_capture_prior=phi_capture_prior,
         )
@@ -193,9 +193,11 @@ class ParameterCollector:
         if unconstrained:
             # For unconstrained parameterization, use unconstrained prior names
             mapped_priors = {
-                "p_unconstrained_prior": user_priors.get("p_prior"),
+                "p_unconstrained_prior": user_priors.get("prob_prior"),
                 "r_unconstrained_prior": user_priors.get("r_prior"),
-                "gate_unconstrained_prior": user_priors.get("gate_prior"),
+                "gate_unconstrained_prior": user_priors.get(
+                    "zero_inflation_prior"
+                ),
                 "p_capture_unconstrained_prior": user_priors.get(
                     "p_capture_prior"
                 ),
@@ -208,14 +210,18 @@ class ParameterCollector:
             if parameterization in ("linked", "mean_prob"):
                 mapped_priors.update(
                     {
-                        "mu_unconstrained_prior": user_priors.get("mu_prior"),
+                        "mu_unconstrained_prior": user_priors.get(
+                            "expression_prior"
+                        ),
                     }
                 )
             elif parameterization in ("odds_ratio", "mean_odds"):
                 mapped_priors.update(
                     {
                         "phi_unconstrained_prior": user_priors.get("phi_prior"),
-                        "mu_unconstrained_prior": user_priors.get("mu_prior"),
+                        "mu_unconstrained_prior": user_priors.get(
+                            "expression_prior"
+                        ),
                         "phi_capture_unconstrained_prior": user_priors.get(
                             "phi_capture_prior"
                         ),
@@ -224,11 +230,11 @@ class ParameterCollector:
         else:
             # For constrained parameterization, use standard prior names
             mapped_priors = {
-                "p_param_prior": user_priors.get("p_prior"),
+                "p_param_prior": user_priors.get("prob_prior"),
                 "r_param_prior": user_priors.get("r_prior"),
-                "mu_param_prior": user_priors.get("mu_prior"),
+                "mu_param_prior": user_priors.get("expression_prior"),
                 "phi_param_prior": user_priors.get("phi_prior"),
-                "gate_param_prior": user_priors.get("gate_prior"),
+                "gate_param_prior": user_priors.get("zero_inflation_prior"),
                 "p_capture_param_prior": user_priors.get("p_capture_prior"),
                 "phi_capture_param_prior": user_priors.get("phi_capture_prior"),
                 "mixing_param_prior": user_priors.get("mixing_prior"),

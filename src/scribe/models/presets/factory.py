@@ -307,7 +307,8 @@ def _create_vae_model(
                 guide_families=guide_families,
                 param_strategy=param_strategy,
                 hierarchical_gate=(
-                    model_config.gate_prior != HierarchicalPriorType.NONE
+                    model_config.zero_inflation_prior
+                    != HierarchicalPriorType.NONE
                 ),
                 model_config=model_config,
                 positive_transform=_pos_transform,
@@ -583,7 +584,7 @@ def create_model(
     # Step 4.5: Apply gene-level p/phi hierarchy (Gaussian, horseshoe, or NEG)
     # ==========================================================================
     _NONE = HierarchicalPriorType.NONE
-    if model_config.p_prior != _NONE:
+    if model_config.prob_prior != _NONE:
         param_specs = _hierarchicalize_p(
             param_specs=param_specs,
             param_key=param_key,
@@ -596,7 +597,7 @@ def create_model(
     # ==========================================================================
     # Step 4.55: Apply gene-level mu hierarchy (across-component shrinkage)
     # ==========================================================================
-    if model_config.mu_prior != _NONE:
+    if model_config.expression_prior != _NONE:
         param_specs = _hierarchicalize_mu(
             param_specs=param_specs,
             param_key=param_key,
@@ -609,11 +610,11 @@ def create_model(
     # ==========================================================================
     # Step 4.57: Apply data-informed mean anchoring prior
     # ==========================================================================
-    # When mu_mean_anchor is True and anchor centers have been computed
+    # When expression_anchor is True and anchor centers have been computed
     # (stored in priors.mu_anchor_centers), replace the NormalWithTransformSpec
     # for log_mu_loc (or log_mu_dataset_loc) with an AnchoredNormalSpec that
     # uses per-gene data-derived centers.
-    if model_config.mu_mean_anchor:
+    if model_config.expression_anchor:
         _anchor_extra = (
             getattr(model_config.priors, "__pydantic_extra__", None) or {}
         )
@@ -623,7 +624,7 @@ def create_model(
                 param_specs=param_specs,
                 param_key=param_key,
                 anchor_centers=_anchor_centers,
-                anchor_sigma=model_config.mu_mean_anchor_sigma,
+                anchor_sigma=model_config.expression_anchor_sigma,
             )
 
     # ==========================================================================
@@ -636,7 +637,7 @@ def create_model(
         _sci = getattr(model_config, "shared_component_indices", None)
 
         # Hierarchical mu/r across datasets
-        if model_config.mu_dataset_prior != _NONE:
+        if model_config.expression_dataset_prior != _NONE:
             param_specs = _datasetify_mu(
                 param_specs=param_specs,
                 param_key=param_key,
@@ -647,7 +648,7 @@ def create_model(
             )
 
         # Dataset-level p/phi — resolve structural mode
-        if model_config.p_dataset_prior != _NONE:
+        if model_config.prob_dataset_prior != _NONE:
             dataset_p_mode = model_config.hierarchical_dataset_p
             if dataset_p_mode in ("scalar", "gene_specific"):
                 param_specs = _datasetify_p(
@@ -663,7 +664,7 @@ def create_model(
     # ==========================================================================
     # Step 5: Add model-specific extra parameters
     # ==========================================================================
-    effective_hierarchical_gate = model_config.gate_prior != _NONE
+    effective_hierarchical_gate = model_config.zero_inflation_prior != _NONE
     extra_param_names = list(MODEL_EXTRA_PARAMS[base_model])
     # Append BNB concentration when overdispersion is enabled
     if model_config.is_bnb:
@@ -687,7 +688,7 @@ def create_model(
     # ==========================================================================
     if (
         model_config.n_datasets is not None
-        and model_config.gate_dataset_prior != _NONE
+        and model_config.zero_inflation_dataset_prior != _NONE
     ):
         param_specs = _datasetify_gate(
             param_specs=param_specs,
@@ -701,26 +702,26 @@ def create_model(
     _HS = HierarchicalPriorType.HORSESHOE
     horseshoe_kwargs = _horseshoe_kwargs_from_config(model_config)
 
-    if model_config.mu_prior == _HS:
+    if model_config.expression_prior == _HS:
         param_specs = _horseshoe_mu(param_specs, param_key, **horseshoe_kwargs)
 
-    if model_config.p_prior == _HS:
+    if model_config.prob_prior == _HS:
         param_specs = _horseshoe_p(param_specs, param_key, **horseshoe_kwargs)
 
-    if model_config.gate_prior == _HS:
+    if model_config.zero_inflation_prior == _HS:
         param_specs = _horseshoe_gate(param_specs, **horseshoe_kwargs)
 
-    if model_config.mu_dataset_prior == _HS:
+    if model_config.expression_dataset_prior == _HS:
         param_specs = _horseshoe_dataset_mu(
             param_specs, param_key, **horseshoe_kwargs
         )
 
-    if model_config.p_dataset_prior == _HS:
+    if model_config.prob_dataset_prior == _HS:
         param_specs = _horseshoe_dataset_p(
             param_specs, param_key, **horseshoe_kwargs
         )
 
-    if model_config.gate_dataset_prior == _HS:
+    if model_config.zero_inflation_dataset_prior == _HS:
         param_specs = _horseshoe_dataset_gate(param_specs, **horseshoe_kwargs)
 
     # ==========================================================================
@@ -729,22 +730,22 @@ def create_model(
     _NEG = HierarchicalPriorType.NEG
     neg_kwargs = _neg_kwargs_from_config(model_config)
 
-    if model_config.mu_prior == _NEG:
+    if model_config.expression_prior == _NEG:
         param_specs = _neg_mu(param_specs, param_key, **neg_kwargs)
 
-    if model_config.p_prior == _NEG:
+    if model_config.prob_prior == _NEG:
         param_specs = _neg_p(param_specs, param_key, **neg_kwargs)
 
-    if model_config.gate_prior == _NEG:
+    if model_config.zero_inflation_prior == _NEG:
         param_specs = _neg_gate(param_specs, **neg_kwargs)
 
-    if model_config.mu_dataset_prior == _NEG:
+    if model_config.expression_dataset_prior == _NEG:
         param_specs = _neg_dataset_mu(param_specs, param_key, **neg_kwargs)
 
-    if model_config.p_dataset_prior == _NEG:
+    if model_config.prob_dataset_prior == _NEG:
         param_specs = _neg_dataset_p(param_specs, param_key, **neg_kwargs)
 
-    if model_config.gate_dataset_prior == _NEG:
+    if model_config.zero_inflation_dataset_prior == _NEG:
         param_specs = _neg_dataset_gate(param_specs, **neg_kwargs)
 
     # ==========================================================================
@@ -786,9 +787,8 @@ def create_model(
     # An explicit spec keeps dataset slicing/indexing metadata available in
     # downstream results (e.g., get_dataset()) and lets multi-dataset mixture
     # models promote mixing weights to shape (n_datasets, n_components).
-    if (
-        model_config.n_components is not None
-        and bool(model_config.dataset_mixing_enabled)
+    if model_config.n_components is not None and bool(
+        model_config.dataset_mixing_enabled
     ):
         has_mixing_spec = any(s.name == "mixing_weights" for s in param_specs)
         if not has_mixing_spec:
@@ -1225,9 +1225,7 @@ def _apply_mean_anchor(
 
     new_specs = []
     for spec in param_specs:
-        if spec.name in loc_names and isinstance(
-            spec, NormalWithTransformSpec
-        ):
+        if spec.name in loc_names and isinstance(spec, NormalWithTransformSpec):
             # Replace with AnchoredNormalSpec preserving other attributes.
             # anchor_centers is passed as-is (numpy array) — no tuple copy.
             anchored = AnchoredNormalSpec(

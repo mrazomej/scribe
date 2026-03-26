@@ -95,14 +95,38 @@ class ModelConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     # ------------------------------------------------------------------
-    # Pickle backward compatibility: translate old boolean flags
-    # (hierarchical_p, horseshoe_p, etc.) into the new
-    # HierarchicalPriorType enum fields.  Also backfills any fields
-    # that may be absent in very old pickle payloads.
+    # Pickle backward compatibility:
+    # - Remap pre-rename __dict__ keys (mu_prior, p_prior, gate_prior, …)
+    #   to current field names before setdefault backfills.
+    # - Translate old boolean flags (hierarchical_p, horseshoe_p, etc.)
+    #   into HierarchicalPriorType enum fields.
+    # - Backfill fields absent in very old pickle payloads.
     # ------------------------------------------------------------------
 
     def __setstate__(self, state: dict) -> None:
         d = state.get("__dict__", {})
+
+        # --- Pre-rename pickle keys → current field names ----------------
+        # Must run before setdefault backfills so values under legacy keys
+        # (mu_prior, p_prior, gate_prior, etc.) are not shadowed by defaults.
+        _legacy_config_key_map = (
+            ("mu_mean_anchor_sigma", "expression_anchor_sigma"),
+            ("mu_mean_anchor", "expression_anchor"),
+            ("mu_dataset_prior", "expression_dataset_prior"),
+            ("mu_eta_prior", "capture_scaling_prior"),
+            ("mu_prior", "expression_prior"),
+            ("p_dataset_prior", "prob_dataset_prior"),
+            ("p_dataset_mode", "prob_dataset_mode"),
+            ("p_prior", "prob_prior"),
+            ("gate_dataset_prior", "zero_inflation_dataset_prior"),
+            ("gate_prior", "zero_inflation_prior"),
+        )
+        for old_key, new_key in _legacy_config_key_map:
+            if old_key in d:
+                if new_key not in d:
+                    d[new_key] = d.pop(old_key)
+                else:
+                    d.pop(old_key, None)
 
         # --- Migrate old boolean prior flags → enum fields ---------------
         # Gene-level p/phi
@@ -110,33 +134,33 @@ class ModelConfig(BaseModel):
             hp = d.pop("hierarchical_p", False)
             hs = d.pop("horseshoe_p", False)
             if hs:
-                d.setdefault("p_prior", "horseshoe")
+                d.setdefault("prob_prior", "horseshoe")
             elif hp:
-                d.setdefault("p_prior", "gaussian")
+                d.setdefault("prob_prior", "gaussian")
             else:
-                d.setdefault("p_prior", "none")
+                d.setdefault("prob_prior", "none")
 
         # Gene-level gate
         if "hierarchical_gate" in d or "horseshoe_gate" in d:
             hg = d.pop("hierarchical_gate", False)
             hsg = d.pop("horseshoe_gate", False)
             if hsg:
-                d.setdefault("gate_prior", "horseshoe")
+                d.setdefault("zero_inflation_prior", "horseshoe")
             elif hg:
-                d.setdefault("gate_prior", "gaussian")
+                d.setdefault("zero_inflation_prior", "gaussian")
             else:
-                d.setdefault("gate_prior", "none")
+                d.setdefault("zero_inflation_prior", "none")
 
         # Dataset-level mu
         if "hierarchical_dataset_mu" in d or "horseshoe_dataset_mu" in d:
             hdm = d.pop("hierarchical_dataset_mu", False)
             hsdm = d.pop("horseshoe_dataset_mu", False)
             if hsdm:
-                d.setdefault("mu_dataset_prior", "horseshoe")
+                d.setdefault("expression_dataset_prior", "horseshoe")
             elif hdm:
-                d.setdefault("mu_dataset_prior", "gaussian")
+                d.setdefault("expression_dataset_prior", "gaussian")
             else:
-                d.setdefault("mu_dataset_prior", "none")
+                d.setdefault("expression_dataset_prior", "none")
 
         # Dataset-level p/phi: old field was a string mode
         # ("none"/"scalar"/"gene_specific"/"two_level") + boolean horseshoe
@@ -144,24 +168,24 @@ class ModelConfig(BaseModel):
             old_mode = d.pop("hierarchical_dataset_p", "none")
             hsdp = d.pop("horseshoe_dataset_p", False)
             if hsdp:
-                d.setdefault("p_dataset_prior", "horseshoe")
-                d.setdefault("p_dataset_mode", "gene_specific")
+                d.setdefault("prob_dataset_prior", "horseshoe")
+                d.setdefault("prob_dataset_mode", "gene_specific")
             elif old_mode != "none":
-                d.setdefault("p_dataset_prior", "gaussian")
-                d.setdefault("p_dataset_mode", old_mode)
+                d.setdefault("prob_dataset_prior", "gaussian")
+                d.setdefault("prob_dataset_mode", old_mode)
             else:
-                d.setdefault("p_dataset_prior", "none")
+                d.setdefault("prob_dataset_prior", "none")
 
         # Dataset-level gate
         if "hierarchical_dataset_gate" in d or "horseshoe_dataset_gate" in d:
             hdg = d.pop("hierarchical_dataset_gate", False)
             hsdg = d.pop("horseshoe_dataset_gate", False)
             if hsdg:
-                d.setdefault("gate_dataset_prior", "horseshoe")
+                d.setdefault("zero_inflation_dataset_prior", "horseshoe")
             elif hdg:
-                d.setdefault("gate_dataset_prior", "gaussian")
+                d.setdefault("zero_inflation_dataset_prior", "gaussian")
             else:
-                d.setdefault("gate_dataset_prior", "none")
+                d.setdefault("zero_inflation_dataset_prior", "none")
 
         # Remove the old hierarchical_datasets shortcut if present
         d.pop("hierarchical_datasets", None)
@@ -170,18 +194,18 @@ class ModelConfig(BaseModel):
         d.setdefault("n_datasets", None)
         d.setdefault("dataset_params", None)
         d.setdefault("dataset_mixing", None)
-        # Migrate old hierarchical_mu boolean → mu_prior enum
+        # Migrate old hierarchical_mu boolean → expression_prior enum
         if "hierarchical_mu" in d:
             old_hmu = d.pop("hierarchical_mu", False)
             if old_hmu:
-                d.setdefault("mu_prior", "gaussian")
+                d.setdefault("expression_prior", "gaussian")
             else:
-                d.setdefault("mu_prior", "none")
-        d.setdefault("mu_prior", "none")
-        # Migrate old shared_capture_scaling → mu_eta_prior
+                d.setdefault("expression_prior", "none")
+        d.setdefault("expression_prior", "none")
+        # Migrate old shared_capture_scaling → capture_scaling_prior
         if d.pop("shared_capture_scaling", False):
-            d.setdefault("mu_eta_prior", "gaussian")
-        d.setdefault("mu_eta_prior", "none")
+            d.setdefault("capture_scaling_prior", "gaussian")
+        d.setdefault("capture_scaling_prior", "none")
         d.setdefault("joint_params", None)
         d.setdefault("dense_params", None)
         # Old pickles predate the softplus default; preserve exp behavior
@@ -189,17 +213,17 @@ class ModelConfig(BaseModel):
         # Old pickles used TruncatedNormal guide for eta_capture;
         # new default is softplus_normal, so preserve old behavior.
         d.setdefault("eta_capture_guide", "truncated_normal")
-        d.setdefault("p_prior", "none")
-        d.setdefault("gate_prior", "none")
-        d.setdefault("mu_dataset_prior", "none")
-        d.setdefault("p_dataset_prior", "none")
-        d.setdefault("p_dataset_mode", "gene_specific")
-        d.setdefault("gate_dataset_prior", "none")
+        d.setdefault("prob_prior", "none")
+        d.setdefault("zero_inflation_prior", "none")
+        d.setdefault("expression_dataset_prior", "none")
+        d.setdefault("prob_dataset_prior", "none")
+        d.setdefault("prob_dataset_mode", "gene_specific")
+        d.setdefault("zero_inflation_dataset_prior", "none")
         d.setdefault("overdispersion", "none")
         d.setdefault("overdispersion_prior", "horseshoe")
         d.setdefault("overdispersion_dataset_prior", "none")
-        d.setdefault("mu_mean_anchor", False)
-        d.setdefault("mu_mean_anchor_sigma", 0.3)
+        d.setdefault("expression_anchor", False)
+        d.setdefault("expression_anchor_sigma", 0.3)
 
         # Migrate legacy top-level capture prior fields into priors dict.
         old_capture = d.pop("capture_prior", "default")
@@ -242,21 +266,21 @@ class ModelConfig(BaseModel):
 
     # Hierarchical prior type for each parameter slot.
     # Each field selects the prior family for one parameter at one level.
-    p_prior: HierarchicalPriorType = Field(
+    prob_prior: HierarchicalPriorType = Field(
         HierarchicalPriorType.NONE,
         description=(
             "Gene-level hierarchical prior for p/phi. "
             "Requires unconstrained=True for non-NONE values."
         ),
     )
-    gate_prior: HierarchicalPriorType = Field(
+    zero_inflation_prior: HierarchicalPriorType = Field(
         HierarchicalPriorType.NONE,
         description=(
             "Gene-level hierarchical prior for gate. "
             "Requires a zero-inflated model and unconstrained=True."
         ),
     )
-    mu_prior: HierarchicalPriorType = Field(
+    expression_prior: HierarchicalPriorType = Field(
         HierarchicalPriorType.NONE,
         description=(
             "Gene-level hierarchical prior for mu (or r) across mixture "
@@ -302,32 +326,32 @@ class ModelConfig(BaseModel):
         ),
     )
     # Dataset-level hierarchical prior types
-    mu_dataset_prior: HierarchicalPriorType = Field(
+    expression_dataset_prior: HierarchicalPriorType = Field(
         HierarchicalPriorType.NONE,
         description=(
             "Dataset-level hierarchical prior for mu (or r). "
             "Requires n_datasets >= 2 and unconstrained=True."
         ),
     )
-    p_dataset_prior: HierarchicalPriorType = Field(
+    prob_dataset_prior: HierarchicalPriorType = Field(
         HierarchicalPriorType.NONE,
         description=(
             "Dataset-level hierarchical prior for p/phi. "
             "Requires n_datasets >= 2 and unconstrained=True."
         ),
     )
-    p_dataset_mode: str = Field(
+    prob_dataset_mode: str = Field(
         "gene_specific",
         description=(
             "Structural mode for the dataset-level p/phi hierarchy. "
-            "Only used when p_dataset_prior is GAUSSIAN. Options: "
+            "Only used when prob_dataset_prior is GAUSSIAN. Options: "
             "'scalar' (one p per dataset, shared across genes), "
             "'gene_specific' (p_g per dataset-gene pair), "
             "'two_level' (two-level hierarchy with dataset hyperparameters). "
             "Horseshoe and NEG priors always use 'gene_specific'."
         ),
     )
-    gate_dataset_prior: HierarchicalPriorType = Field(
+    zero_inflation_dataset_prior: HierarchicalPriorType = Field(
         HierarchicalPriorType.NONE,
         description=(
             "Dataset-level hierarchical prior for gate. "
@@ -465,7 +489,7 @@ class ModelConfig(BaseModel):
     #   log(mu_g) ~ N(log(u_bar_g / nu_bar), sigma_mu^2).
     # The anchor values are computed from the data at fit time and
     # stored in priors.mu_anchor_centers (tuple of per-gene log-centers).
-    mu_mean_anchor: bool = Field(
+    expression_anchor: bool = Field(
         False,
         description=(
             "Enable data-informed anchoring prior on the biological mean "
@@ -477,7 +501,7 @@ class ModelConfig(BaseModel):
             "estimated (non-VCP models correctly use nu_bar=1)."
         ),
     )
-    mu_mean_anchor_sigma: float = Field(
+    expression_anchor_sigma: float = Field(
         0.3,
         gt=0.0,
         description=(
@@ -495,10 +519,10 @@ class ModelConfig(BaseModel):
     #   priors.organism    — shortcut to set defaults (e.g. "human")
     #   priors.eta_capture — [log_M0, sigma_M] per-cell prior
     #   priors.mu_eta      — [center, sigma_mu] shared mu_eta prior
-    # Setting mu_eta_prior to a non-NONE value activates data-driven
+    # Setting capture_scaling_prior to a non-NONE value activates data-driven
     # mode: log_M0 becomes a learned per-dataset latent with
     # hierarchical shrinkage toward a shared population mean.
-    mu_eta_prior: HierarchicalPriorType = Field(
+    capture_scaling_prior: HierarchicalPriorType = Field(
         HierarchicalPriorType.NONE,
         description=(
             "Hierarchical prior type for per-dataset mu_eta "
@@ -521,7 +545,7 @@ class ModelConfig(BaseModel):
             "parameters share a single low-rank covariance structure "
             "capturing cross-parameter correlations. Supports "
             "heterogeneous dimensions: scalar parameters (e.g. phi "
-            "when p_prior='none') can be mixed with gene-specific "
+            "when prob_prior='none') can be mixed with gene-specific "
             "parameters (e.g. mu, gate)."
         ),
     )
@@ -631,14 +655,14 @@ class ModelConfig(BaseModel):
             )
 
         # --- Mean anchoring prior -----------------------------------------------
-        if self.mu_mean_anchor and not self.unconstrained:
+        if self.expression_anchor and not self.unconstrained:
             raise ValueError(
-                "mu_mean_anchor=True requires unconstrained=True."
+                "expression_anchor=True requires unconstrained=True."
             )
 
         # VCP models need eta_capture so nu_bar can be estimated; without it
         # the anchor would silently use nu_bar=1, giving wrong mu_g values.
-        if self.mu_mean_anchor and self.uses_variable_capture:
+        if self.expression_anchor and self.uses_variable_capture:
             extra = getattr(self.priors, "__pydantic_extra__", None) or {}
             has_capture_info = (
                 extra.get("eta_capture") is not None
@@ -646,104 +670,104 @@ class ModelConfig(BaseModel):
             )
             if not has_capture_info:
                 raise ValueError(
-                    "mu_mean_anchor=True on a VCP model (variable capture) "
+                    "expression_anchor=True on a VCP model (variable capture) "
                     "requires priors.eta_capture or priors.organism to be "
                     "set so the average capture probability can be estimated. "
                     "For non-VCP models, the anchor uses nu_bar=1 by default."
                 )
 
         # --- Gene-level p/phi ------------------------------------------------
-        if self.p_prior != _NONE and not self.unconstrained:
+        if self.prob_prior != _NONE and not self.unconstrained:
             raise ValueError(
-                f"p_prior={self.p_prior.value!r} requires "
+                f"prob_prior={self.prob_prior.value!r} requires "
                 "unconstrained=True."
             )
 
         # --- Gene-level gate -------------------------------------------------
-        if self.gate_prior != _NONE:
+        if self.zero_inflation_prior != _NONE:
             if not self.is_zero_inflated:
                 raise ValueError(
-                    f"gate_prior={self.gate_prior.value!r} requires a "
+                    f"zero_inflation_prior={self.zero_inflation_prior.value!r} requires a "
                     "zero-inflated model (zinb or zinbvcp), but "
                     f"base_model={self.base_model!r}."
                 )
             if not self.unconstrained:
                 raise ValueError(
-                    f"gate_prior={self.gate_prior.value!r} requires "
+                    f"zero_inflation_prior={self.zero_inflation_prior.value!r} requires "
                     "unconstrained=True."
                 )
 
         # --- Gene-level mu (mixture components) --------------------------------
-        if self.mu_prior != _NONE:
+        if self.expression_prior != _NONE:
             if not self.unconstrained:
                 raise ValueError(
-                    f"mu_prior={self.mu_prior.value!r} requires "
+                    f"expression_prior={self.expression_prior.value!r} requires "
                     "unconstrained=True."
                 )
             if not self.is_mixture:
                 raise ValueError(
-                    f"mu_prior={self.mu_prior.value!r} requires a mixture "
+                    f"expression_prior={self.expression_prior.value!r} requires a mixture "
                     "model (n_components >= 2). The hierarchical prior on "
                     "mu provides shrinkage across mixture components."
                 )
-            if self.mu_dataset_prior != _NONE:
+            if self.expression_dataset_prior != _NONE:
                 raise ValueError(
-                    f"mu_prior={self.mu_prior.value!r} and "
-                    f"mu_dataset_prior={self.mu_dataset_prior.value!r} "
-                    "cannot be set simultaneously. mu_prior provides "
+                    f"expression_prior={self.expression_prior.value!r} and "
+                    f"expression_dataset_prior={self.expression_dataset_prior.value!r} "
+                    "cannot be set simultaneously. expression_prior provides "
                     "shrinkage across mixture components; "
-                    "mu_dataset_prior across datasets."
+                    "expression_dataset_prior across datasets."
                 )
 
-        # --- p_dataset_mode validation ---------------------------------------
+        # --- prob_dataset_mode validation ---------------------------------------
         valid_modes = {"scalar", "gene_specific", "two_level"}
-        if self.p_dataset_mode not in valid_modes:
+        if self.prob_dataset_mode not in valid_modes:
             raise ValueError(
-                f"p_dataset_mode must be one of {valid_modes}, "
-                f"got {self.p_dataset_mode!r}."
+                f"prob_dataset_mode must be one of {valid_modes}, "
+                f"got {self.prob_dataset_mode!r}."
             )
 
         # --- Dataset-level mu ------------------------------------------------
-        if self.mu_dataset_prior != _NONE:
+        if self.expression_dataset_prior != _NONE:
             if self.n_datasets is None:
                 raise ValueError(
-                    f"mu_dataset_prior={self.mu_dataset_prior.value!r} "
+                    f"expression_dataset_prior={self.expression_dataset_prior.value!r} "
                     "requires n_datasets >= 2."
                 )
             if not self.unconstrained:
                 raise ValueError(
-                    f"mu_dataset_prior={self.mu_dataset_prior.value!r} "
+                    f"expression_dataset_prior={self.expression_dataset_prior.value!r} "
                     "requires unconstrained=True."
                 )
 
         # --- Dataset-level p/phi ---------------------------------------------
-        if self.p_dataset_prior != _NONE:
+        if self.prob_dataset_prior != _NONE:
             if self.n_datasets is None:
                 raise ValueError(
-                    f"p_dataset_prior={self.p_dataset_prior.value!r} "
+                    f"prob_dataset_prior={self.prob_dataset_prior.value!r} "
                     "requires n_datasets >= 2."
                 )
             if not self.unconstrained:
                 raise ValueError(
-                    f"p_dataset_prior={self.p_dataset_prior.value!r} "
+                    f"prob_dataset_prior={self.prob_dataset_prior.value!r} "
                     "requires unconstrained=True."
                 )
 
         # --- Dataset-level gate ----------------------------------------------
-        if self.gate_dataset_prior != _NONE:
+        if self.zero_inflation_dataset_prior != _NONE:
             if self.n_datasets is None:
                 raise ValueError(
-                    f"gate_dataset_prior={self.gate_dataset_prior.value!r} "
+                    f"zero_inflation_dataset_prior={self.zero_inflation_dataset_prior.value!r} "
                     "requires n_datasets >= 2."
                 )
             if not self.unconstrained:
                 raise ValueError(
-                    f"gate_dataset_prior={self.gate_dataset_prior.value!r} "
+                    f"zero_inflation_dataset_prior={self.zero_inflation_dataset_prior.value!r} "
                     "requires unconstrained=True."
                 )
             if not self.is_zero_inflated:
                 raise ValueError(
-                    f"gate_dataset_prior={self.gate_dataset_prior.value!r} "
+                    f"zero_inflation_dataset_prior={self.zero_inflation_dataset_prior.value!r} "
                     "requires a zero-inflated model (zinb or zinbvcp), "
                     f"but base_model={self.base_model!r}."
                 )
@@ -774,18 +798,18 @@ class ModelConfig(BaseModel):
 
         # --- Cross-level conflicts -------------------------------------------
         # Gene-level p + dataset-level p are mutually exclusive
-        if self.p_prior != _NONE and self.p_dataset_prior != _NONE:
+        if self.prob_prior != _NONE and self.prob_dataset_prior != _NONE:
             raise ValueError(
-                f"p_prior={self.p_prior.value!r} and "
-                f"p_dataset_prior={self.p_dataset_prior.value!r} "
+                f"prob_prior={self.prob_prior.value!r} and "
+                f"prob_dataset_prior={self.prob_dataset_prior.value!r} "
                 "cannot be set simultaneously. The dataset-level "
                 "hierarchy subsumes gene-level."
             )
         # Gene-level gate + dataset-level gate are mutually exclusive
-        if self.gate_prior != _NONE and self.gate_dataset_prior != _NONE:
+        if self.zero_inflation_prior != _NONE and self.zero_inflation_dataset_prior != _NONE:
             raise ValueError(
-                f"gate_prior={self.gate_prior.value!r} and "
-                f"gate_dataset_prior={self.gate_dataset_prior.value!r} "
+                f"zero_inflation_prior={self.zero_inflation_prior.value!r} and "
+                f"zero_inflation_dataset_prior={self.zero_inflation_dataset_prior.value!r} "
                 "cannot be set simultaneously. The dataset-level "
                 "hierarchy subsumes gene-level."
             )
@@ -820,7 +844,7 @@ class ModelConfig(BaseModel):
         * ``priors.mu_eta``      — explicit ``[center, sigma_mu]``
 
         When any of these is present the biology-informed path activates.
-        Setting ``mu_eta_prior`` to a non-NONE value activates data-driven
+        Setting ``capture_scaling_prior`` to a non-NONE value activates data-driven
         mode with hierarchical per-dataset shrinkage.
         """
         _NONE = HierarchicalPriorType.NONE
@@ -839,7 +863,7 @@ class ModelConfig(BaseModel):
             sigma_M = org_priors["total_mrna_log_sigma"]
             eta_capture = (log_M0, sigma_M)
 
-        data_driven = self.mu_eta_prior != _NONE
+        data_driven = self.capture_scaling_prior != _NONE
         has_capture_priors = eta_capture is not None or mu_eta is not None
 
         # VCP model required for capture priors or data-driven mu_eta
@@ -848,14 +872,14 @@ class ModelConfig(BaseModel):
                 raise ValueError(
                     "Biology-informed capture priors (priors.organism, "
                     "priors.eta_capture, priors.mu_eta) or "
-                    "mu_eta_prior != 'none' requires a VCP model "
+                    "capture_scaling_prior != 'none' requires a VCP model "
                     "(nbvcp or zinbvcp)."
                 )
 
-        # mu_eta_prior requires an eta_capture anchor
+        # capture_scaling_prior requires an eta_capture anchor
         if data_driven and eta_capture is None:
             raise ValueError(
-                f"mu_eta_prior={self.mu_eta_prior.value!r} requires "
+                f"capture_scaling_prior={self.capture_scaling_prior.value!r} requires "
                 "priors.organism or priors.eta_capture to be set so "
                 "the population mean has an anchor."
             )
@@ -917,7 +941,7 @@ class ModelConfig(BaseModel):
             is_mixture,
             is_zero_inflated,
             uses_variable_capture,
-            hierarchical_mu=self.mu_prior != HierarchicalPriorType.NONE,
+            hierarchical_mu=self.expression_prior != HierarchicalPriorType.NONE,
             hierarchical_p=self.hierarchical_p,
             hierarchical_gate=self.hierarchical_gate,
         )
@@ -975,7 +999,7 @@ class ModelConfig(BaseModel):
     # Deprecated backward-compat property accessors.
     # These map old boolean flag names to the new enum fields so that
     # existing call sites, tests, and documentation continue to work.
-    # New code should use p_prior, gate_prior, etc. directly.
+    # New code should use prob_prior, zero_inflation_prior, etc. directly.
     # --------------------------------------------------------------------------
 
     @property
@@ -983,127 +1007,127 @@ class ModelConfig(BaseModel):
         """Whether gene-level mu uses any hierarchical prior.
 
         .. deprecated::
-            Use ``mu_prior`` instead.
+            Use ``expression_prior`` instead.
         """
-        return self.mu_prior != HierarchicalPriorType.NONE
+        return self.expression_prior != HierarchicalPriorType.NONE
 
     @property
     def hierarchical_p(self) -> bool:
         """Whether gene-level p/phi uses any hierarchical prior.
 
         .. deprecated::
-            Use ``p_prior`` instead.
+            Use ``prob_prior`` instead.
         """
-        return self.p_prior != HierarchicalPriorType.NONE
+        return self.prob_prior != HierarchicalPriorType.NONE
 
     @property
     def horseshoe_p(self) -> bool:
         """Whether gene-level p/phi uses the horseshoe prior.
 
         .. deprecated::
-            Use ``p_prior`` instead.
+            Use ``prob_prior`` instead.
         """
-        return self.p_prior == HierarchicalPriorType.HORSESHOE
+        return self.prob_prior == HierarchicalPriorType.HORSESHOE
 
     @property
     def hierarchical_gate(self) -> bool:
         """Whether gene-level gate uses any hierarchical prior.
 
         .. deprecated::
-            Use ``gate_prior`` instead.
+            Use ``zero_inflation_prior`` instead.
         """
-        return self.gate_prior != HierarchicalPriorType.NONE
+        return self.zero_inflation_prior != HierarchicalPriorType.NONE
 
     @property
     def horseshoe_gate(self) -> bool:
         """Whether gene-level gate uses the horseshoe prior.
 
         .. deprecated::
-            Use ``gate_prior`` instead.
+            Use ``zero_inflation_prior`` instead.
         """
-        return self.gate_prior == HierarchicalPriorType.HORSESHOE
+        return self.zero_inflation_prior == HierarchicalPriorType.HORSESHOE
 
     @property
     def hierarchical_dataset_mu(self) -> bool:
         """Whether dataset-level mu uses any hierarchical prior.
 
         .. deprecated::
-            Use ``mu_dataset_prior`` instead.
+            Use ``expression_dataset_prior`` instead.
         """
-        return self.mu_dataset_prior != HierarchicalPriorType.NONE
+        return self.expression_dataset_prior != HierarchicalPriorType.NONE
 
     @property
     def horseshoe_dataset_mu(self) -> bool:
         """Whether dataset-level mu uses the horseshoe prior.
 
         .. deprecated::
-            Use ``mu_dataset_prior`` instead.
+            Use ``expression_dataset_prior`` instead.
         """
-        return self.mu_dataset_prior == HierarchicalPriorType.HORSESHOE
+        return self.expression_dataset_prior == HierarchicalPriorType.HORSESHOE
 
     @property
     def hierarchical_dataset_p(self) -> str:
         """Dataset-level p/phi hierarchy mode string.
 
-        Returns ``"none"`` when ``p_dataset_prior`` is ``NONE``.
+        Returns ``"none"`` when ``prob_dataset_prior`` is ``NONE``.
         For horseshoe/NEG returns ``"gene_specific"``.
-        Otherwise returns ``p_dataset_mode``.
+        Otherwise returns ``prob_dataset_mode``.
 
         .. deprecated::
-            Use ``p_dataset_prior`` and ``p_dataset_mode`` instead.
+            Use ``prob_dataset_prior`` and ``prob_dataset_mode`` instead.
         """
-        if self.p_dataset_prior == HierarchicalPriorType.NONE:
+        if self.prob_dataset_prior == HierarchicalPriorType.NONE:
             return "none"
-        if self.p_dataset_prior in (
+        if self.prob_dataset_prior in (
             HierarchicalPriorType.HORSESHOE,
             HierarchicalPriorType.NEG,
         ):
             return "gene_specific"
-        return self.p_dataset_mode
+        return self.prob_dataset_mode
 
     @property
     def horseshoe_dataset_p(self) -> bool:
         """Whether dataset-level p/phi uses the horseshoe prior.
 
         .. deprecated::
-            Use ``p_dataset_prior`` instead.
+            Use ``prob_dataset_prior`` instead.
         """
-        return self.p_dataset_prior == HierarchicalPriorType.HORSESHOE
+        return self.prob_dataset_prior == HierarchicalPriorType.HORSESHOE
 
     @property
     def hierarchical_dataset_gate(self) -> bool:
         """Whether dataset-level gate uses any hierarchical prior.
 
         .. deprecated::
-            Use ``gate_dataset_prior`` instead.
+            Use ``zero_inflation_dataset_prior`` instead.
         """
-        return self.gate_dataset_prior != HierarchicalPriorType.NONE
+        return self.zero_inflation_dataset_prior != HierarchicalPriorType.NONE
 
     @property
     def horseshoe_dataset_gate(self) -> bool:
         """Whether dataset-level gate uses the horseshoe prior.
 
         .. deprecated::
-            Use ``gate_dataset_prior`` instead.
+            Use ``zero_inflation_dataset_prior`` instead.
         """
-        return self.gate_dataset_prior == HierarchicalPriorType.HORSESHOE
+        return self.zero_inflation_dataset_prior == HierarchicalPriorType.HORSESHOE
 
     @property
     def hierarchical_datasets(self) -> bool:
         """Whether any dataset-level hierarchy is active.
 
         .. deprecated::
-            Use ``mu_dataset_prior``, ``p_dataset_prior``, or
-            ``gate_dataset_prior`` instead.
+            Use ``expression_dataset_prior``, ``prob_dataset_prior``, or
+            ``zero_inflation_dataset_prior`` instead.
         """
         _NONE = HierarchicalPriorType.NONE
         return any(
             getattr(self, f)
             != _NONE
             for f in (
-                "mu_dataset_prior",
-                "p_dataset_prior",
-                "gate_dataset_prior",
+                "expression_dataset_prior",
+                "prob_dataset_prior",
+                "zero_inflation_dataset_prior",
                 "overdispersion_dataset_prior",
             )
         )
@@ -1161,9 +1185,9 @@ class ModelConfig(BaseModel):
         """
         _NONE = HierarchicalPriorType.NONE
         return (
-            self.mu_prior != _NONE
-            or self.p_prior != _NONE
-            or self.gate_prior != _NONE
+            self.expression_prior != _NONE
+            or self.prob_prior != _NONE
+            or self.zero_inflation_prior != _NONE
         )
 
     # --------------------------------------------------------------------------
@@ -1210,7 +1234,7 @@ class ModelConfig(BaseModel):
             is_mixture=self.is_mixture,
             is_zero_inflated=self.is_zero_inflated,
             uses_variable_capture=self.uses_variable_capture,
-            hierarchical_mu=self.mu_prior != HierarchicalPriorType.NONE,
+            hierarchical_mu=self.expression_prior != HierarchicalPriorType.NONE,
             hierarchical_p=self.hierarchical_p,
             hierarchical_gate=self.hierarchical_gate,
         )

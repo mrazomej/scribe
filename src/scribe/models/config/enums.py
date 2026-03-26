@@ -51,8 +51,9 @@ class Parameterization(str, Enum):
       and r
 
     Hierarchical gene-specific priors (on p/phi and gate) are controlled via
-    ``HierarchicalPriorType`` enum fields (``p_prior``, ``gate_prior``) in
-    ModelConfig rather than via separate enum values.
+    ``HierarchicalPriorType`` enum fields (``prob_prior``,
+    ``zero_inflation_prior``) in ModelConfig rather than via separate enum
+    values.
 
     The old names (STANDARD, LINKED, ODDS_RATIO) are kept for backward
     compatibility.

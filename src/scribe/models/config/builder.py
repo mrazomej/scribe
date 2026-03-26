@@ -8,7 +8,7 @@ from .groups import (
     PriorOverrides,
 )
 from .base import ModelConfig
-from .parameter_mapping import get_required_parameters
+from .parameter_mapping import get_required_parameters, normalize_prior_keys
 from ..builders.parameter_specs import ParamSpec
 from ..components.guide_families import LowRankGuide
 
@@ -83,25 +83,25 @@ class ModelConfigBuilder:
         self._parameterization: Parameterization = Parameterization.STANDARD
         self._inference_method: InferenceMethod = InferenceMethod.SVI
         self._unconstrained: bool = False
-        self._mu_prior: str = "none"
-        self._p_prior: str = "none"
-        self._gate_prior: str = "none"
+        self._expression_prior: str = "none"
+        self._prob_prior: str = "none"
+        self._zero_inflation_prior: str = "none"
         self._n_datasets: Optional[int] = None
         self._dataset_params: Optional[List[str]] = None
         self._dataset_mixing: Optional[bool] = None
-        self._mu_dataset_prior: str = "none"
-        self._p_dataset_prior: str = "none"
-        self._p_dataset_mode: str = "gene_specific"
-        self._gate_dataset_prior: str = "none"
+        self._expression_dataset_prior: str = "none"
+        self._prob_dataset_prior: str = "none"
+        self._prob_dataset_mode: str = "gene_specific"
+        self._zero_inflation_dataset_prior: str = "none"
         self._horseshoe_tau0: float = 1.0
         self._horseshoe_slab_df: int = 4
         self._horseshoe_slab_scale: float = 2.0
         self._neg_u: float = 1.0
         self._neg_a: float = 1.0
         self._neg_tau: float = 1.0
-        self._mu_eta_prior: str = "none"
-        self._mu_mean_anchor: bool = False
-        self._mu_mean_anchor_sigma: float = 0.3
+        self._capture_scaling_prior: str = "none"
+        self._expression_anchor: bool = False
+        self._expression_anchor_sigma: float = 0.3
         self._overdispersion: str = "none"
         self._overdispersion_prior: str = "horseshoe"
         self._overdispersion_dataset_prior: str = "none"
@@ -187,7 +187,7 @@ class ModelConfigBuilder:
         Automatically enables unconstrained parameterization, which is
         required for hierarchical priors.
         """
-        self._p_prior = "gaussian"
+        self._prob_prior = "gaussian"
         self._unconstrained = True
         return self
 
@@ -200,7 +200,7 @@ class ModelConfigBuilder:
         required for hierarchical priors. Only valid for zero-inflated
         models (zinb, zinbvcp).
         """
-        self._gate_prior = "gaussian"
+        self._zero_inflation_prior = "gaussian"
         self._unconstrained = True
         return self
 
@@ -215,10 +215,10 @@ class ModelConfigBuilder:
         (``n_components >= 2``).
 
         .. deprecated::
-            Use ``builder._mu_prior = "gaussian"`` (or ``"horseshoe"``
+            Use ``builder._expression_prior = "gaussian"`` (or ``"horseshoe"``
             / ``"neg"``) instead.
         """
-        self._mu_prior = "gaussian"
+        self._expression_prior = "gaussian"
         self._unconstrained = True
         return self
 
@@ -229,7 +229,7 @@ class ModelConfigBuilder:
         organism: Optional[str] = None,
         eta_capture: Optional[tuple] = None,
         mu_eta: Optional[tuple] = None,
-        mu_eta_prior: str = "none",
+        capture_scaling_prior: str = "none",
     ) -> "ModelConfigBuilder":
         """Configure the biology-informed capture probability prior.
 
@@ -246,12 +246,12 @@ class ModelConfigBuilder:
             ``(log_M0, sigma_M)`` for the per-cell prior.
         mu_eta : tuple of (float, float), optional
             ``(center, sigma_mu)`` for the population-level mu_eta prior.
-        mu_eta_prior : str
+        capture_scaling_prior : str
             Hierarchical prior type for per-dataset mu_eta.
             ``"none"`` = fixed M_0, ``"gaussian"`` / ``"horseshoe"`` /
             ``"neg"`` = learn per-dataset mu_eta with shrinkage.
         """
-        self._mu_eta_prior = mu_eta_prior
+        self._capture_scaling_prior = capture_scaling_prior
         if organism is not None:
             self._priors["organism"] = organism
         if eta_capture is not None:
@@ -281,8 +281,8 @@ class ModelConfigBuilder:
             Controls tightness: 0.1-0.2 = tight, 0.3-0.5 = moderate,
             >1.0 = weak.
         """
-        self._mu_mean_anchor = True
-        self._mu_mean_anchor_sigma = sigma
+        self._expression_anchor = True
+        self._expression_anchor_sigma = sigma
         self._unconstrained = True
         return self
 
@@ -668,12 +668,16 @@ class ModelConfigBuilder:
         # For now, pass empty list - preset factories will populate it
         param_specs: List[ParamSpec] = []
 
+        # Normalize descriptive prior key aliases (e.g. "prob" -> "p",
+        # "capture_efficiency" -> "eta_capture") before building PriorOverrides.
+        normalized_priors = normalize_prior_keys(self._priors)
+
         # Build priors from merged user + defaults (convert arrays to tuples).
         # Special capture-prior keys (organism, eta_capture, mu_eta) may be
         # strings or tuples and are passed through as-is.
         _CAPTURE_PRIOR_KEYS = {"organism", "eta_capture", "mu_eta"}
         priors_dict = {}
-        for k, v in self._priors.items():
+        for k, v in normalized_priors.items():
             if k in _CAPTURE_PRIOR_KEYS:
                 priors_dict[k] = v
             else:
@@ -686,25 +690,25 @@ class ModelConfigBuilder:
             parameterization=self._parameterization,
             inference_method=self._inference_method,
             unconstrained=self._unconstrained,
-            mu_prior=self._mu_prior,
-            p_prior=self._p_prior,
-            gate_prior=self._gate_prior,
+            expression_prior=self._expression_prior,
+            prob_prior=self._prob_prior,
+            zero_inflation_prior=self._zero_inflation_prior,
             n_datasets=self._n_datasets,
             dataset_params=self._dataset_params,
             dataset_mixing=self._dataset_mixing,
-            mu_dataset_prior=self._mu_dataset_prior,
-            p_dataset_prior=self._p_dataset_prior,
-            p_dataset_mode=self._p_dataset_mode,
-            gate_dataset_prior=self._gate_dataset_prior,
+            expression_dataset_prior=self._expression_dataset_prior,
+            prob_dataset_prior=self._prob_dataset_prior,
+            prob_dataset_mode=self._prob_dataset_mode,
+            zero_inflation_dataset_prior=self._zero_inflation_dataset_prior,
             horseshoe_tau0=self._horseshoe_tau0,
             horseshoe_slab_df=self._horseshoe_slab_df,
             horseshoe_slab_scale=self._horseshoe_slab_scale,
             neg_u=self._neg_u,
             neg_a=self._neg_a,
             neg_tau=self._neg_tau,
-            mu_eta_prior=self._mu_eta_prior,
-            mu_mean_anchor=self._mu_mean_anchor,
-            mu_mean_anchor_sigma=self._mu_mean_anchor_sigma,
+            capture_scaling_prior=self._capture_scaling_prior,
+            expression_anchor=self._expression_anchor,
+            expression_anchor_sigma=self._expression_anchor_sigma,
             overdispersion=self._overdispersion,
             overdispersion_prior=self._overdispersion_prior,
             overdispersion_dataset_prior=self._overdispersion_dataset_prior,
