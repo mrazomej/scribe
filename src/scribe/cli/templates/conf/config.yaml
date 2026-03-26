@@ -70,9 +70,9 @@ unconstrained: false
 # -----------------------------------------------------------------------------
 # Applies to gene-specific effects. Supported values:
 # - "none", "gaussian", "horseshoe", "neg"
-mu_prior: "none"
-p_prior: "none"
-gate_prior: "none"
+expression_prior: "none"
+prob_prior: "none"
+zero_inflation_prior: "none"
 
 # -----------------------------------------------------------------------------
 # Multi-dataset configuration
@@ -90,13 +90,13 @@ dataset_params: null
 dataset_mixing: null
 
 # Dataset-level priors
-mu_dataset_prior: "none"
-p_dataset_prior: "none"
-gate_dataset_prior: "none"
+expression_dataset_prior: "none"
+prob_dataset_prior: "none"
+zero_inflation_dataset_prior: "none"
 
 # Structure of dataset-level p/phi hierarchy
 # (none | scalar | gene_specific | two_level)
-p_dataset_mode: "gene_specific"
+prob_dataset_mode: "gene_specific"
 
 # -----------------------------------------------------------------------------
 # Sparsity prior hyperparameters
@@ -117,12 +117,12 @@ positive_transform: "softplus"
 # -----------------------------------------------------------------------------
 # Capture / mean anchoring priors
 # -----------------------------------------------------------------------------
-# Dataset-level shrinkage on mu_eta (capture scaling)
-mu_eta_prior: "none"
+# Dataset-level shrinkage on capture_scaling (log total-mRNA scaling)
+capture_scaling_prior: "none"
 
 # Mean anchoring resolves mu-phi identifiability in NB family models
-mu_mean_anchor: false
-mu_mean_anchor_sigma: 0.3
+expression_anchor: false
+expression_anchor_sigma: 0.3
 
 # -----------------------------------------------------------------------------
 # Mixture controls
@@ -168,11 +168,11 @@ guide_flow_log_det_f64: false
 # -----------------------------------------------------------------------------
 # Leave null to use SCRIBE defaults. Set explicit tuples/lists to override.
 priors:
-  p: null
-  r: null
-  mu: null
-  phi: null
-  gate: null
+  p: null  # alias: prob
+  r: null  # alias: dispersion
+  mu: null  # alias: expression
+  phi: null  # alias: odds
+  gate: null  # alias: zero_inflation
   p_capture: null
   phi_capture: null
   mixing: null
@@ -184,8 +184,8 @@ priors:
   # - yeast
   # - ecoli
   organism: null
-  eta_capture: null
-  mu_eta: null
+  capture_efficiency: null
+  capture_scaling: null
 
 # -----------------------------------------------------------------------------
 # Optional amortization block (mostly used in VCP models)

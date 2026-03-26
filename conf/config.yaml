@@ -53,9 +53,9 @@ unconstrained: false
 # prior type: "none" (flat), "gaussian" (Normal hierarchy), "horseshoe"
 # (regularized horseshoe), or "neg" (Normal-Exponential-Gamma).
 # All sparsity-inducing priors (horseshoe, neg) require unconstrained=true.
-mu_prior: "none"          # Gene-level prior for mu/r (mixtures only): none | gaussian | horseshoe | neg
-p_prior: "none"           # Gene-level prior for p/phi: none | gaussian | horseshoe | neg
-gate_prior: "none"        # Gene-level prior for gate (ZI only): none | gaussian | horseshoe | neg
+expression_prior: "none"          # Gene-level prior for mu/r (mixtures only): none | gaussian | horseshoe | neg
+prob_prior: "none"           # Gene-level prior for p/phi: none | gaussian | horseshoe | neg
+zero_inflation_prior: "none"        # Gene-level prior for gate (ZI only): none | gaussian | horseshoe | neg
 
 # --- Multi-Dataset Configuration ---
 # Joint modeling of multiple datasets with hierarchical priors across datasets.
@@ -65,10 +65,10 @@ n_datasets: null          # Number of datasets (null for single-dataset mode)
 dataset_key: null         # Column in adata.obs identifying dataset membership
 dataset_params: null      # Which params are per-dataset (null = default based on hierarchy flags)
 dataset_mixing: null      # null => auto (on for n_datasets>=2), false => one global mixing vector
-mu_dataset_prior: "none"  # Dataset-level mu/r prior: none | gaussian | horseshoe | neg
-p_dataset_prior: "none"   # Dataset-level p/phi prior: none | gaussian | horseshoe | neg
-p_dataset_mode: "gene_specific"  # Structural mode for dataset p: none | scalar | gene_specific | two_level
-gate_dataset_prior: "none"  # Dataset-level gate prior: none | gaussian | horseshoe | neg
+expression_dataset_prior: "none"  # Dataset-level mu/r prior: none | gaussian | horseshoe | neg
+prob_dataset_prior: "none"   # Dataset-level p/phi prior: none | gaussian | horseshoe | neg
+prob_dataset_mode: "gene_specific"  # Structural mode for dataset prob: none | scalar | gene_specific | two_level
+zero_inflation_dataset_prior: "none"  # Dataset-level gate prior: none | gaussian | horseshoe | neg
 
 # --- Sparsity Prior Hyperparameters ---
 # Horseshoe hyperparameters (used when any *_prior is "horseshoe")
@@ -88,18 +88,18 @@ positive_transform: "softplus"
 # Anchors p_capture to library size via known total mRNA per cell.
 # See paper/_capture_prior.qmd for derivation.
 # All capture-prior parameters live in the priors section below.
-# Set priors.organism (or priors.eta_capture) to activate biology-informed mode.
-# Hierarchical prior for per-dataset mu_eta (log total-mRNA scaling).
+# Set priors.organism (or priors.capture_efficiency) to activate biology-informed mode.
+# Hierarchical prior for per-dataset capture_scaling (log total-mRNA scaling).
 # "none" = fixed M_0 (no learning); "gaussian" / "horseshoe" / "neg"
-# = learn per-dataset mu_eta with shrinkage toward a shared population mean.
-mu_eta_prior: "none"
+# = learn per-dataset capture_scaling with shrinkage toward a shared population mean.
+capture_scaling_prior: "none"
 
 # --- Data-Informed Mean Anchoring Prior ---
 # Anchors mu_g to the observed sample mean scaled by capture probability.
 # Resolves the mu-phi degeneracy in the negative binomial.
 # See paper/_mean_anchoring_prior.qmd for derivation.
-mu_mean_anchor: false        # Enable data-informed anchoring on mu_g
-mu_mean_anchor_sigma: 0.3    # Log-scale sigma (0.1=tight, 0.3=moderate, 1.0=weak)
+expression_anchor: false        # Enable data-informed anchoring on mu_g
+expression_anchor_sigma: 0.3    # Log-scale sigma (0.1=tight, 0.3=moderate, 1.0=weak)
 
 # Mixture model configuration
 # Set to integer >= 2 for mixture models, null for single component.
@@ -165,11 +165,11 @@ guide_flow_log_det_f64: false
 # - LogNormal priors: [loc, scale]
 # - BetaPrime priors: [alpha, beta]
 priors:
-  p: null           # Beta(alpha, beta) for success probability
-  r: null           # LogNormal(loc, scale) for dispersion
-  mu: null          # LogNormal(loc, scale) for mean (linked/odds_ratio)
-  phi: null         # BetaPrime(alpha, beta) for odds ratio
-  gate: null        # Beta(alpha, beta) for zero-inflation gate
+  p: null  # alias: prob; Beta(alpha, beta) for success probability
+  r: null  # alias: dispersion; LogNormal(loc, scale) for dispersion
+  mu: null  # alias: expression; LogNormal(loc, scale) for mean (linked/odds_ratio)
+  phi: null  # alias: odds; BetaPrime(alpha, beta) for odds ratio
+  gate: null  # alias: zero_inflation; Beta(alpha, beta) for zero-inflation gate
   p_capture: null   # Beta(alpha, beta) for capture probability
   phi_capture: null # BetaPrime(alpha, beta) for capture odds
   mixing: null      # Dirichlet concentrations for mixture weights
@@ -197,8 +197,8 @@ priors:
   logit_gate_dataset_scale: null  # SoftplusNormal(loc, scale) for gate dataset shrinkage
   # Biology-informed capture prior (activates automatically when any is set)
   organism: null                  # "human", "mouse", "yeast", "ecoli" (resolves defaults)
-  eta_capture: null               # [log_M0, sigma_M] for per-cell TruncatedNormal+ prior
-  mu_eta: null                    # [center, sigma_mu] for shared mu_eta Normal prior
+  capture_efficiency: null        # [log_M0, sigma_M] for per-cell TruncatedNormal+ prior
+  capture_scaling: null           # [center, sigma_mu] for shared capture_scaling Normal prior
 
 # --- Amortization Configuration (for VCP models) ---
 # Amortized inference uses a neural network to predict variational parameters

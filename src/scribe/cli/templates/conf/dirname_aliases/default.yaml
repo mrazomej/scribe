@@ -48,19 +48,19 @@ dirname_aliases:
     # -------------------------------------------------------------------------
     # Prior controls
     # -------------------------------------------------------------------------
-    mu_prior: muprior
-    p_prior: pprior
-    gate_prior: gprior
-    mu_dataset_prior: mudataprior
-    p_dataset_prior: pdataprior
-    gate_dataset_prior: gdataprior
+    expression_prior: exprprior
+    prob_prior: probprior
+    zero_inflation_prior: zeroprior
+    expression_dataset_prior: exprdataprior
+    prob_dataset_prior: probdataprior
+    zero_inflation_dataset_prior: zerodataprior
     overdispersion_prior: overdispprior
     overdispersion_dataset_prior: overdispdatasetprior
     positive_transform: postransform
 
-    mu_mean_anchor: meananchor
-    mu_mean_anchor_sigma: meananchorsigma
-    priors.eta_capture: etaprior
+    expression_anchor: meananchor
+    expression_anchor_sigma: meananchorsigma
+    priors.capture_efficiency: captureprior
     priors.mixing: mixprior
 
     # -------------------------------------------------------------------------
