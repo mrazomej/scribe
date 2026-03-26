@@ -70,8 +70,9 @@ For the full mathematical derivation, see the
 - **Scalable**: From small experiments to large-scale atlases with mini-batch
   support
 - **Production-Ready CLI**: `scribe-infer` provides reproducible,
-  config-driven inference with SLURM integration and automatic
-  covariate-split orchestration
+  config-driven inference with SLURM integration and automatic covariate-split
+  orchestration; `scribe-visualize` generates diagnostic plots for any completed
+  run
 
 ## Key Features
 
@@ -394,6 +395,14 @@ gene_df = mc.gene_level_comparison("NB", "Hierarchical")
     Reproducible, config-driven inference with SLURM integration
 
     [CLI guide](guide/cli_infer.md)
+
+-   :material-chart-box-outline:{ .lg .middle } **`scribe-visualize` CLI**
+
+    ---
+
+    Post-inference diagnostic plots with recursive and SLURM support
+
+    [Visualization guide](guide/cli_visualize.md)
 
 -   :material-api:{ .lg .middle } **API Reference**
 
