@@ -1,0 +1,236 @@
+# @package _global_
+#
+# Global SCRIBE configuration template
+# ====================================
+#
+# This file controls model behavior, inference defaults, priors, and output
+# layout. Most users only need to edit a few fields and pass overrides from CLI.
+#
+# Typical usage:
+#   scribe-infer --config-path ./conf data=my_dataset
+#   scribe-infer --config-path ./conf data=my_dataset model=zinb
+#   scribe-infer --config-path ./conf data=my_dataset inference=mcmc
+
+# -----------------------------------------------------------------------------
+# Hydra composition defaults
+# -----------------------------------------------------------------------------
+# - data is required and selected at runtime (e.g., data=my_dataset)
+# - paths, inference, and dirname_aliases provide reusable config groups
+# - model is optional because feature flags can derive model behavior
+defaults:
+  - data: ???   # required: select a config in conf/data/*.yaml
+  - paths: paths
+  - inference: svi
+  - dirname_aliases: default
+  - optional model: null
+  - amortization@amortization.capture: null
+  - override optional paths: paths.local
+  - _self_
+
+# -----------------------------------------------------------------------------
+# Model feature flags
+# -----------------------------------------------------------------------------
+# The two flags below map to standard SCRIBE model families:
+# - zero_inflation=false, variable_capture=false -> nbdm
+# - zero_inflation=true,  variable_capture=false -> zinb
+# - zero_inflation=false, variable_capture=true  -> nbvcp
+# - zero_inflation=true,  variable_capture=true  -> zinbvcp
+zero_inflation: false
+variable_capture: false
+
+# -----------------------------------------------------------------------------
+# Extended likelihood settings
+# -----------------------------------------------------------------------------
+# overdispersion:
+# - "none": regular negative binomial
+# - "bnb":  beta-negative-binomial (heavier tails)
+overdispersion: "none"
+
+# Shrinkage prior used when overdispersion != "none"
+overdispersion_prior: "horseshoe"
+
+# Dataset-level hierarchy for overdispersion in multi-dataset runs
+overdispersion_dataset_prior: "none"
+
+# -----------------------------------------------------------------------------
+# Core model parameterization
+# -----------------------------------------------------------------------------
+# parameterization:
+# - canonical : sample p and r directly
+# - linked    : sample p and mu, derive r
+# - mean_odds : sample phi and mu, derive p and r
+parameterization: mean_odds
+
+# unconstrained=true allows reparameterized normal-space optimization and is
+# required by some sparsity priors.
+unconstrained: false
+
+# -----------------------------------------------------------------------------
+# Gene-level shrinkage priors
+# -----------------------------------------------------------------------------
+# Applies to gene-specific effects. Supported values:
+# - "none", "gaussian", "horseshoe", "neg"
+mu_prior: "none"
+p_prior: "none"
+gate_prior: "none"
+
+# -----------------------------------------------------------------------------
+# Multi-dataset configuration
+# -----------------------------------------------------------------------------
+# Use these when fitting multiple biological datasets jointly.
+n_datasets: null
+dataset_key: null
+
+# dataset_params can be null (auto) or explicit list of per-dataset params.
+dataset_params: null
+
+# dataset_mixing:
+# - null: auto
+# - false: one shared global mixing vector
+dataset_mixing: null
+
+# Dataset-level priors
+mu_dataset_prior: "none"
+p_dataset_prior: "none"
+gate_dataset_prior: "none"
+
+# Structure of dataset-level p/phi hierarchy
+# (none | scalar | gene_specific | two_level)
+p_dataset_mode: "gene_specific"
+
+# -----------------------------------------------------------------------------
+# Sparsity prior hyperparameters
+# -----------------------------------------------------------------------------
+# Horseshoe controls
+horseshoe_tau0: 1.0
+horseshoe_slab_df: 4
+horseshoe_slab_scale: 2.0
+
+# NEG controls
+neg_u: 1.0
+neg_a: 1.0
+neg_tau: 1.0
+
+# Transform for positive parameters in unconstrained space
+positive_transform: "softplus"
+
+# -----------------------------------------------------------------------------
+# Capture / mean anchoring priors
+# -----------------------------------------------------------------------------
+# Dataset-level shrinkage on mu_eta (capture scaling)
+mu_eta_prior: "none"
+
+# Mean anchoring resolves mu-phi identifiability in NB family models
+mu_mean_anchor: false
+mu_mean_anchor_sigma: 0.3
+
+# -----------------------------------------------------------------------------
+# Mixture controls
+# -----------------------------------------------------------------------------
+# n_components:
+# - null: single-component model
+# - >=2 : mixture model
+n_components: null
+
+# mixture_params:
+# - null: default set
+# - list: explicit component-specific parameter list
+mixture_params: null
+
+# -----------------------------------------------------------------------------
+# Variational guide controls
+# -----------------------------------------------------------------------------
+# guide_rank:
+# - null: mean-field
+# - int : low-rank guide
+guide_rank: null
+
+# joint guide controls for grouped parameter dependencies
+joint_params: null
+dense_params: null
+
+# Flow guide controls (mutually exclusive with guide_rank)
+guide_flow: null
+guide_flow_num_layers: 4
+guide_flow_hidden_dims: [64, 64]
+guide_flow_activation: relu
+guide_flow_n_bins: 8
+guide_flow_mixture_strategy: "independent"
+guide_flow_zero_init: true
+guide_flow_layer_norm: true
+guide_flow_residual: true
+guide_flow_soft_clamp: true
+guide_flow_loft: true
+guide_flow_log_det_f64: false
+
+# -----------------------------------------------------------------------------
+# Prior overrides
+# -----------------------------------------------------------------------------
+# Leave null to use SCRIBE defaults. Set explicit tuples/lists to override.
+priors:
+  p: null
+  r: null
+  mu: null
+  phi: null
+  gate: null
+  p_capture: null
+  phi_capture: null
+  mixing: null
+
+  # Biology-informed capture settings
+  # organism enables built-in defaults:
+  # - human
+  # - mouse
+  # - yeast
+  # - ecoli
+  organism: null
+  eta_capture: null
+  mu_eta: null
+
+# -----------------------------------------------------------------------------
+# Optional amortization block (mostly used in VCP models)
+# -----------------------------------------------------------------------------
+amortization:
+  capture:
+    enabled: false
+    hidden_dims: [64, 32]
+    activation: leaky_relu
+    output_transform: softplus
+    output_clamp_min: 0.1
+    output_clamp_max: 50.0
+
+# -----------------------------------------------------------------------------
+# Annotation-informed mixture priors
+# -----------------------------------------------------------------------------
+annotation_key: null
+annotation_confidence: 3.0
+annotation_component_order: null
+annotation_min_cells: null
+
+# -----------------------------------------------------------------------------
+# Resume / warm-start controls
+# -----------------------------------------------------------------------------
+# svi_init: path to previous SVI result file for MCMC initialization
+svi_init: null
+
+# resume_from: prior run dir/checkpoints/results path for continuation
+resume_from: null
+
+# -----------------------------------------------------------------------------
+# General settings
+# -----------------------------------------------------------------------------
+seed: 42
+cells_axis: 0
+layer: null
+output_dir: null
+
+# -----------------------------------------------------------------------------
+# Hydra output layout
+# -----------------------------------------------------------------------------
+hydra:
+  run:
+    dir: ${paths.outputs_dir}/${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname},${dirname_aliases.aliases}}
+  sweep:
+    dir: ${paths.outputs_dir}
+    subdir: ${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname},${dirname_aliases.aliases}}
+

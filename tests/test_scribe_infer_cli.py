@@ -119,3 +119,33 @@ def test_help_text_mentions_split_conf_and_doc_pointer() -> None:
     assert "conf/config.yaml" in help_text
     assert "docs/cli_infer.md" in help_text
     assert "pip install 'scribe[hydra]'" in help_text
+    assert "--initialize" in help_text
+
+
+def test_initialize_mode_skips_hydra_and_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Initialize mode should not run infer dispatch or Hydra checks."""
+    calls = {"initialize": 0, "hydra_check": 0, "subprocess": 0}
+
+    def _fake_initialize(arg: str | None) -> None:
+        calls["initialize"] += 1
+        assert arg == "./custom_conf"
+
+    def _fake_hydra_check() -> None:
+        calls["hydra_check"] += 1
+
+    def _fake_subprocess(_cmd: list[str]) -> int:
+        calls["subprocess"] += 1
+        return 0
+
+    monkeypatch.setattr("scribe.cli.infer.initialize_conf", _fake_initialize)
+    monkeypatch.setattr(
+        "scribe.cli.infer._ensure_hydra_extra_installed", _fake_hydra_check
+    )
+    monkeypatch.setattr("scribe.cli.infer.subprocess.call", _fake_subprocess)
+
+    infer_cli_main(["--initialize", "./custom_conf"])
+    assert calls["initialize"] == 1
+    assert calls["hydra_check"] == 0
+    assert calls["subprocess"] == 0

@@ -1,0 +1,69 @@
+# @package data
+#
+# Dataset Configuration Example
+# =============================
+#
+# Copy this file and rename it to something descriptive
+# (e.g., my_dataset.yaml). Then set at least `name` and `path`.
+#
+# Usage:
+#   scribe-infer --config-path ./conf data=my_dataset
+#
+# Required Fields
+# ---------------
+# - name : A short identifier used in output paths and job names.
+# - path : Path to count matrix (.h5ad or .csv), relative or absolute.
+#
+# Optional Fields
+# ---------------
+# - split_by  : Column in adata.obs used for automatic split orchestration.
+# - filter_obs: Observation pre-filter map before split discovery/model fit.
+# - preprocessing: Scanpy-like preprocessing pipeline.
+#
+# Notes:
+# - SCRIBE fits on count data. If preprocessing includes HVG selection,
+#   selected genes are kept but model fitting still uses counts.
+# - For `.h5ad`, counts are read from `adata.X` unless a layer is specified.
+
+# ---- Required ---------------------------------------------------------------
+
+name: "my_dataset"
+path: "data/my_experiment/counts.h5ad"
+
+# ---- Optional: layer --------------------------------------------------------
+# For h5ad only. Set when counts are in a named layer (e.g., "counts").
+# layer: "counts"
+
+# ---- Optional: split orchestration -----------------------------------------
+# If set, `scribe-infer` auto-dispatches to split mode and fits one run per
+# unique value (or value combination when split_by is a list).
+# split_by: "condition"
+
+# ---- Optional: pre-filter ---------------------------------------------------
+# Keep only rows matching allowed values before split discovery and fitting.
+# filter_obs:
+#   treatment: ["treated"]
+#   sample_id: ["sample_1", "sample_2"]
+
+# ---- Optional: preprocessing ------------------------------------------------
+# All blocks are optional. Remove any step you do not need.
+# preprocessing:
+#   filter_cells:
+#     # Minimum detected genes per cell
+#     min_genes: 200
+#     # Minimum total counts per cell
+#     min_counts: 100
+#   filter_genes:
+#     # Minimum cells where each gene must appear
+#     min_cells: 3
+#   normalize_total:
+#     # Library-size normalization target
+#     target_sum: 1e4
+#   # Log transform after normalization
+#   log1p: {}
+#   highly_variable_genes:
+#     # Keep top variable genes before model fit
+#     n_top_genes: 2000
+#     # "seurat", "cell_ranger", or "seurat_v3"
+#     flavor: "seurat"
+

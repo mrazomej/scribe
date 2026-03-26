@@ -1,0 +1,74 @@
+# @package _global_
+#
+# Output Directory Aliases
+# ========================
+#
+# SCRIBE uses Hydra override strings in output folder names. Long override keys
+# can make paths very hard to read. This file maps verbose keys to short aliases.
+#
+# Example:
+#   parameterization=mean_odds -> param=mean_odds
+#
+# You can:
+# - remove aliases you do not want,
+# - add new aliases for frequently overridden keys,
+# - keep this map consistent across projects for predictable run paths.
+
+dirname_aliases:
+  aliases:
+    # -------------------------------------------------------------------------
+    # Core controls
+    # -------------------------------------------------------------------------
+    parameterization: param
+    guide_rank: rank
+    model: model
+    data: data
+
+    # -------------------------------------------------------------------------
+    # Mixture and annotation controls
+    # -------------------------------------------------------------------------
+    mixture_params: mixparam
+    joint_params: jointparam
+    dense_params: denseparam
+    annotation_key: annkey
+    annotation_confidence: annconf
+    annotation_min_cells: annmin
+    dataset_mixing: datamix
+
+    # -------------------------------------------------------------------------
+    # Flow-guide controls
+    # -------------------------------------------------------------------------
+    guide_flow: gflow
+    guide_flow_num_layers: gflowlayers
+    guide_flow_hidden_dims: gflowhidden
+    guide_flow_activation: gflowact
+    guide_flow_n_bins: gflowbins
+    guide_flow_mixture_strategy: gflowmix
+
+    # -------------------------------------------------------------------------
+    # Prior controls
+    # -------------------------------------------------------------------------
+    mu_prior: muprior
+    p_prior: pprior
+    gate_prior: gprior
+    mu_dataset_prior: mudataprior
+    p_dataset_prior: pdataprior
+    gate_dataset_prior: gdataprior
+    overdispersion_prior: overdispprior
+    overdispersion_dataset_prior: overdispdatasetprior
+    positive_transform: postransform
+
+    mu_mean_anchor: meananchor
+    mu_mean_anchor_sigma: meananchorsigma
+    priors.eta_capture: etaprior
+    priors.mixing: mixprior
+
+    # -------------------------------------------------------------------------
+    # Inference controls
+    # -------------------------------------------------------------------------
+    inference.batch_size: bsize
+    inference.n_steps: nsteps
+    inference.n_samples: nsamples
+    inference.n_warmup: nwarmup
+    inference.method: method
+

@@ -1,0 +1,27 @@
+# @package inference
+#
+# MCMC Inference Configuration
+# ============================
+#
+# MCMC (NUTS) is slower than SVI but gives high-quality posterior uncertainty.
+
+method: mcmc
+
+# -----------------------------------------------------------------------------
+# Sampling controls
+# -----------------------------------------------------------------------------
+# Number of post-warmup samples retained for inference summaries.
+n_samples: 2_000
+
+# Number of warmup/adaptation steps before sampling.
+n_warmup: 1_000
+
+# Parallel chains. Increase for stronger convergence diagnostics.
+n_chains: 1
+
+# -----------------------------------------------------------------------------
+# Precision
+# -----------------------------------------------------------------------------
+# NUTS generally benefits from float64 due to Hamiltonian dynamics sensitivity.
+enable_x64: true
+

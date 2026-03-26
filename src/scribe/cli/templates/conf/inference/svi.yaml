@@ -1,0 +1,88 @@
+# @package inference
+#
+# SVI Inference Configuration
+# ===========================
+#
+# SVI (stochastic variational inference) is the default and fastest
+# inference method. Start here for large datasets and model iteration.
+
+method: svi
+
+# -----------------------------------------------------------------------------
+# Precision and runtime
+# -----------------------------------------------------------------------------
+# enable_x64:
+# - null  : use method default (false for SVI)
+# - true  : force float64 for difficult numerical regimes
+# - false : force float32
+enable_x64: null
+
+# Maximum optimization iterations.
+n_steps: 50_000
+
+# Mini-batch size:
+# - null: full-batch updates
+# - int : stochastic mini-batching
+batch_size: null
+
+# -----------------------------------------------------------------------------
+# Optimizer selection
+# -----------------------------------------------------------------------------
+# Leave null for engine defaults.
+# Example override:
+# optimizer_config:
+#   name: clipped_adam
+#   step_size: 0.0005
+#   grad_clip_norm: 1.0
+optimizer_config: null
+
+# stable_update guards against numerical instability in update steps.
+stable_update: true
+
+# log_progress_lines is useful in non-interactive logs (e.g., SLURM).
+log_progress_lines: false
+
+# restore_best tracks and restores best-smoothed-loss parameters.
+restore_best: false
+
+# -----------------------------------------------------------------------------
+# Mixture-model postprocessing
+# -----------------------------------------------------------------------------
+# For mixture models, SVI mixing weights can be weakly identified.
+# empirical_mixing=true replaces them with data-driven posterior estimates.
+empirical_mixing: true
+
+# -----------------------------------------------------------------------------
+# Early stopping
+# -----------------------------------------------------------------------------
+# Enabled mode monitors a smoothed loss and stops when progress stalls.
+early_stopping:
+  enabled: false
+
+  # Number of checks without sufficient improvement before stopping.
+  patience: 500
+
+  # Absolute minimum improvement threshold.
+  min_delta: 1.0
+
+  # Relative improvement threshold (%) (takes precedence over min_delta).
+  min_delta_pct: null
+
+  # Evaluate stopping criteria every N steps.
+  check_every: 100
+
+  # Initial burn-in period before checks begin.
+  warmup: 5000
+
+  # Moving-average window length for smoothed loss.
+  smoothing_window: 100
+
+  # Save checkpoint when improvement occurs and interval is met.
+  checkpoint_every: 2500
+
+  # Restore best checkpoint instead of final-step weights.
+  restore_best: true
+
+  # Resume from prior checkpoint if available.
+  resume: true
+
