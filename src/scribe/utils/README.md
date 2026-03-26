@@ -45,7 +45,7 @@ prior_config = ParameterCollector.collect_and_map_priors(
     unconstrained=False,
     parameterization="standard",
     r_prior=(1.0, 1.0),
-    p_prior=(2.0, 0.5)
+    prob_prior=(2.0, 0.5)
 )
 # Result: {'r_param_prior': (1.0, 1.0), 'p_param_prior': (2.0, 0.5)}
 
@@ -54,7 +54,7 @@ prior_config = ParameterCollector.collect_and_map_priors(
     unconstrained=True,
     parameterization="standard",
     r_prior=(0.0, 1.0),
-    p_prior=(0.0, 1.0)
+    prob_prior=(0.0, 1.0)
 )
 # Result: {'r_unconstrained_prior': (0.0, 1.0), 'p_unconstrained_prior': (0.0, 1.0)}
 ```
@@ -149,8 +149,8 @@ repetitive if-statement parameter collection:
 user_priors = {}
 if r_prior is not None:
     user_priors["r_prior"] = r_prior
-if p_prior is not None:
-    user_priors["p_prior"] = p_prior
+if prob_prior is not None:
+    user_priors["prob_prior"] = prob_prior
 # ... 8 more similar statements
 
 # After (clean utility approach)
@@ -158,7 +158,7 @@ prior_config = ParameterCollector.collect_and_map_priors(
     unconstrained=unconstrained,
     parameterization=parameterization,
     r_prior=r_prior,
-    p_prior=p_prior,
+    prob_prior=prob_prior,
     # ... all parameters
 )
 ```

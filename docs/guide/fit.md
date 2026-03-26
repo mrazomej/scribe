@@ -105,9 +105,10 @@ results = scribe.fit(adata, model="nbdm", unconstrained=True)
 
 !!! info "When to use `unconstrained=True`"
     You **must** set `unconstrained=True` when using any of the following:
-    hierarchical priors (`mu_prior`, `p_prior`, `gate_prior`), mean anchoring
-    (`mu_mean_anchor`), BNB overdispersion (`overdispersion="bnb"`), or
-    dataset-level priors. SCRIBE will raise a `ValueError` if you forget.
+    hierarchical priors (`expression_prior`, `prob_prior`,
+    `zero_inflation_prior`), mean anchoring (`expression_anchor`), BNB
+    overdispersion (`overdispersion="bnb"`), or dataset-level priors. SCRIBE
+    will raise a `ValueError` if you forget.
 
 **Full guide:** [Model Selection > Parameterizations](model-selection.md#parameterizations) |
 **Parameter cheatsheet:** [Parameter Reference](parameters.md#parameterization-mappings)
@@ -308,16 +309,16 @@ results = scribe.fit(
 ## 7. Hierarchical priors (gene-level)
 
 Hierarchical priors provide **adaptive shrinkage** across mixture components
-(for `mu_prior`) or across genes (for `p_prior`, `gate_prior`). They share
-statistical strength so that most parameters stay close to a population
-center while allowing true outliers to deviate. All require
-`unconstrained=True`.
+(for `expression_prior`) or across genes (for `prob_prior`,
+`zero_inflation_prior`). They share statistical strength so that most parameters
+stay close to a population center while allowing true outliers to deviate. All
+require `unconstrained=True`.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `mu_prior` | `"none"` | Hierarchical prior on \(\mu\) (or \(r\)) **across mixture components**. Requires `n_components >= 2` |
-| `p_prior` | `"none"` | Hierarchical prior on \(p\) (or \(\phi\)) **across genes** |
-| `gate_prior` | `"none"` | Hierarchical prior on zero-inflation gate **across genes**. Only for ZI models |
+| `expression_prior` | `"none"` | Hierarchical prior on \(\mu\) (or \(r\)) **across mixture components**. Requires `n_components >= 2` |
+| `prob_prior` | `"none"` | Hierarchical prior on \(p\) (or \(\phi\)) **across genes** |
+| `zero_inflation_prior` | `"none"` | Hierarchical prior on zero-inflation gate **across genes**. Only for ZI models |
 
 All three accept: `"none"`, `"gaussian"`, `"horseshoe"`, or `"neg"`.
 
@@ -335,7 +336,7 @@ results = scribe.fit(
     model="nbvcp",
     unconstrained=True,
     n_components=5,
-    mu_prior="horseshoe",
+    expression_prior="horseshoe",
 )
 
 # Gaussian prior on gene-specific p
@@ -343,7 +344,7 @@ results = scribe.fit(
     adata,
     model="nbdm",
     unconstrained=True,
-    p_prior="gaussian",
+    prob_prior="gaussian",
 )
 
 # NEG prior on zero-inflation gate
@@ -351,7 +352,7 @@ results = scribe.fit(
     adata,
     model="zinb",
     unconstrained=True,
-    gate_prior="neg",
+    zero_inflation_prior="neg",
 )
 ```
 
@@ -375,7 +376,7 @@ results = scribe.fit(
     model="nbvcp",
     unconstrained=True,
     n_components=4,
-    mu_prior="horseshoe",
+    expression_prior="horseshoe",
     horseshoe_tau0=0.5,
     horseshoe_slab_scale=1.0,
 )
@@ -393,8 +394,8 @@ sample mean, adjusted for average capture efficiency.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `mu_mean_anchor` | `False` | Enable data-informed anchoring. Automatically sets `unconstrained=True` |
-| `mu_mean_anchor_sigma` | `0.3` | Log-scale standard deviation. `0.1`--`0.2` = tight, `0.3`--`0.5` = recommended, `> 1` = weak |
+| `expression_anchor` | `False` | Enable data-informed anchoring. Automatically sets `unconstrained=True` |
+| `expression_anchor_sigma` | `0.3` | Log-scale standard deviation. `0.1`--`0.2` = tight, `0.3`--`0.5` = recommended, `> 1` = weak |
 
 For VCP models, SCRIBE needs to estimate the average capture probability
 from data. Provide biology-informed capture information via the `priors`
@@ -405,8 +406,8 @@ dictionary:
 results = scribe.fit(
     adata,
     model="nbvcp",
-    mu_mean_anchor=True,
-    mu_mean_anchor_sigma=0.3,
+    expression_anchor=True,
+    expression_anchor_sigma=0.3,
     priors={"organism": "human"},
     amortize_capture=True,
 )
@@ -415,8 +416,8 @@ results = scribe.fit(
 results = scribe.fit(
     adata,
     model="nbvcp",
-    mu_mean_anchor=True,
-    priors={"eta_capture": (10.0, 1e5)},
+    expression_anchor=True,
+    priors={"capture_efficiency": (10.0, 1e5)},
 )
 ```
 
@@ -554,12 +555,12 @@ allowed.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `mu_dataset_prior` | `"none"` | Prior on \(\mu\) across datasets: `"none"`, `"gaussian"`, `"horseshoe"`, `"neg"` |
-| `p_dataset_prior` | `"none"` | Prior on \(p\) across datasets |
-| `p_dataset_mode` | `"gene_specific"` | How \(p\) varies: `"scalar"`, `"gene_specific"`, or `"two_level"` |
-| `gate_dataset_prior` | `"none"` | Prior on zero-inflation gate across datasets |
+| `expression_dataset_prior` | `"none"` | Prior on \(\mu\) across datasets: `"none"`, `"gaussian"`, `"horseshoe"`, `"neg"` |
+| `prob_dataset_prior` | `"none"` | Prior on \(p\) across datasets |
+| `prob_dataset_mode` | `"gene_specific"` | How \(p\) varies: `"scalar"`, `"gene_specific"`, or `"two_level"` |
+| `zero_inflation_dataset_prior` | `"none"` | Prior on zero-inflation gate across datasets |
 | `overdispersion_dataset_prior` | `"none"` | Prior on BNB \(\kappa\) across datasets. Requires `overdispersion="bnb"` |
-| `mu_eta_prior` | `"none"` | Prior on per-dataset capture scaling \(\eta_d\). For VCP models |
+| `capture_scaling_prior` | `"none"` | Prior on per-dataset capture scaling \(\eta_d\). For VCP models |
 
 ```python
 # Two-dataset comparison with horseshoe shrinkage on mu
@@ -568,8 +569,8 @@ results = scribe.fit(
     model="nbvcp",
     unconstrained=True,
     dataset_key="batch",
-    mu_dataset_prior="horseshoe",
-    p_dataset_prior="gaussian",
+    expression_dataset_prior="horseshoe",
+    prob_dataset_prior="gaussian",
     amortize_capture=True,
 )
 ```
@@ -683,17 +684,17 @@ corresponding keyword arguments.
 
 ```python
 from scribe.models.config import ModelConfigBuilder
-from scribe.inference import InferenceConfig
 
-# Build a model config step by step
-model_cfg = (
+# Build a model config step by step (horseshoe shrinkage on per-component means)
+builder = (
     ModelConfigBuilder()
-    .set_model("nbvcp")
-    .set_parameterization("mean_odds")
-    .set_unconstrained(True)
-    .set_mu_prior("horseshoe")
-    .build()
+    .for_model("nbvcp")
+    .with_parameterization("mean_odds")
+    .unconstrained()
+    .as_mixture(n_components=5)
 )
+builder._expression_prior = "horseshoe"
+model_cfg = builder.build()
 
 results = scribe.fit(adata, model_config=model_cfg)
 ```
@@ -744,8 +745,8 @@ results = scribe.fit(
     model="nbvcp",
     unconstrained=True,
     dataset_key="batch",
-    mu_dataset_prior="horseshoe",
-    p_dataset_prior="gaussian",
+    expression_dataset_prior="horseshoe",
+    prob_dataset_prior="gaussian",
     amortize_capture=True,
     n_steps=200_000,
 )
@@ -796,11 +797,11 @@ results = scribe.fit(
     adata,
     model="nbvcp",
     unconstrained=True,
-    mu_mean_anchor=True,
-    mu_mean_anchor_sigma=0.3,
+    expression_anchor=True,
+    expression_anchor_sigma=0.3,
     priors={"organism": "human"},
     overdispersion="bnb",
-    p_prior="gaussian",
+    prob_prior="gaussian",
     amortize_capture=True,
     n_steps=300_000,
     batch_size=512,
@@ -855,9 +856,9 @@ All `scribe.fit()` parameters at a glance, grouped by function:
 
     | Parameter | Default | Type |
     |-----------|---------|------|
-    | `mu_prior` | `"none"` | `str` |
-    | `p_prior` | `"none"` | `str` |
-    | `gate_prior` | `"none"` | `str` |
+    | `expression_prior` | `"none"` | `str` |
+    | `prob_prior` | `"none"` | `str` |
+    | `zero_inflation_prior` | `"none"` | `str` |
 
     **Prior hyperparameters**
 
@@ -874,8 +875,8 @@ All `scribe.fit()` parameters at a glance, grouped by function:
 
     | Parameter | Default | Type |
     |-----------|---------|------|
-    | `mu_mean_anchor` | `False` | `bool` |
-    | `mu_mean_anchor_sigma` | `0.3` | `float` |
+    | `expression_anchor` | `False` | `bool` |
+    | `expression_anchor_sigma` | `0.3` | `float` |
 
     **Overdispersion**
 
@@ -908,12 +909,12 @@ All `scribe.fit()` parameters at a glance, grouped by function:
     | `n_datasets` | `None` | `int` |
     | `dataset_params` | `None` | `list[str]` |
     | `dataset_mixing` | `None` | `bool` |
-    | `mu_dataset_prior` | `"none"` | `str` |
-    | `p_dataset_prior` | `"none"` | `str` |
-    | `p_dataset_mode` | `"gene_specific"` | `str` |
-    | `gate_dataset_prior` | `"none"` | `str` |
+    | `expression_dataset_prior` | `"none"` | `str` |
+    | `prob_dataset_prior` | `"none"` | `str` |
+    | `prob_dataset_mode` | `"gene_specific"` | `str` |
+    | `zero_inflation_dataset_prior` | `"none"` | `str` |
     | `overdispersion_dataset_prior` | `"none"` | `str` |
-    | `mu_eta_prior` | `"none"` | `str` |
+    | `capture_scaling_prior` | `"none"` | `str` |
     | `auto_downgrade_single_dataset_hierarchy` | `True` | `bool` |
 
     **Guide (Gaussian)**

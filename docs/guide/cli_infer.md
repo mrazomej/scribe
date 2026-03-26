@@ -119,7 +119,7 @@ scribe-infer --config-path ./conf data=singer \
     variable_capture=true \
     parameterization=mean_odds \
     unconstrained=true \
-    p_prior=neg \
+    prob_prior=neg \
     guide_rank=8 \
     inference.n_steps=100000
 ```
@@ -138,13 +138,13 @@ layout. Key sections:
 | **Model flags** | `zero_inflation`, `variable_capture` | Toggle model components. Maps to `nbdm` / `zinb` / `nbvcp` / `zinbvcp` |
 | **Overdispersion** | `overdispersion`, `overdispersion_prior` | `"none"` or `"bnb"` with horseshoe/NEG prior |
 | **Parameterization** | `parameterization`, `unconstrained` | `canonical`, `linked` (mean_prob), or `mean_odds` |
-| **Gene-level priors** | `mu_prior`, `p_prior`, `gate_prior` | `"none"`, `"gaussian"`, `"horseshoe"`, `"neg"` |
-| **Multi-dataset** | `dataset_key`, `n_datasets`, `mu_dataset_prior`, ... | Joint multi-dataset fitting |
+| **Gene-level priors** | `expression_prior`, `prob_prior`, `zero_inflation_prior` | `"none"`, `"gaussian"`, `"horseshoe"`, `"neg"` |
+| **Multi-dataset** | `dataset_key`, `n_datasets`, `expression_dataset_prior`, ... | Joint multi-dataset fitting |
 | **Guide** | `guide_rank`, `joint_params`, `dense_params` | Low-rank / joint low-rank guide |
 | **Flow guide** | `guide_flow`, `guide_flow_num_layers`, ... | Normalizing flow guide (mutually exclusive with `guide_rank`) |
 | **Mixture** | `n_components`, `mixture_params` | Mixture model components |
 | **Priors** | `priors.organism`, `priors.eta_capture`, ... | Biology-informed and base distribution priors |
-| **Anchoring** | `mu_mean_anchor`, `mu_mean_anchor_sigma` | Mean anchoring prior |
+| **Anchoring** | `expression_anchor`, `expression_anchor_sigma` | Mean anchoring prior |
 | **Amortization** | `amortization.capture.*` | Amortized capture inference |
 | **Annotations** | `annotation_key`, `annotation_confidence` | Annotation-informed mixture priors |
 
