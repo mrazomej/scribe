@@ -16,7 +16,9 @@ for your own project.
 - `inference/svi.yaml`: stochastic variational inference defaults.
 - `inference/mcmc.yaml`: MCMC defaults.
 - `inference/vae.yaml`: VAE defaults (inherits SVI settings).
+- `viz/default.yaml`: visualization defaults for `scribe-visualize`.
 - `amortization/capture.yaml`: optional capture amortization preset.
+- `slurm/default.yaml`: reusable SLURM profile for CLI launchers.
 - `dirname_aliases/default.yaml`: path aliasing for compact output directories.
 - `paths/paths.yaml`: default outputs path (`outputs/`).
 - `paths/paths.local.yaml.example`: machine-local override example.

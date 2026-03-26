@@ -1,0 +1,170 @@
+# @package _global_
+#
+# SCRIBE Visualization Configuration Template
+# ==========================================
+#
+# This file controls post-inference plotting used by:
+#   - scribe-visualize (CLI)
+#   - internal visualization helpers in SCRIBE workflows
+#
+# Typical usage:
+#   scribe-visualize outputs/my_run --all
+#   scribe-visualize outputs/ --recursive --umap --heatmap
+#   scribe-visualize --slurm-profile default outputs/ --recursive --all
+#
+# Design notes:
+# - Keep expensive plots disabled by default.
+# - Enable only what you need from CLI flags or by editing this file.
+# - Most options here are safe defaults for medium-scale datasets.
+
+viz:
+  # ---------------------------------------------------------------------------
+  # Core dispatch settings
+  # ---------------------------------------------------------------------------
+  # Path to a Hydra run directory containing:
+  #   - scribe_results.pkl
+  #   - .hydra/config.yaml
+  #
+  # Use ??? to let CLI/runtime infer run location from command context.
+  run_dir: ???
+
+  # Output format for generated figures:
+  #   png | pdf | svg | eps
+  format: png
+
+  # ---------------------------------------------------------------------------
+  # Plot switches (booleans)
+  # ---------------------------------------------------------------------------
+  # Fast defaults:
+  # - loss is enabled by default.
+  # - most heavier diagnostics start disabled.
+  loss: true
+  ecdf: false
+  ppc: false
+  bio_ppc: false           # NB(r,p) bands + denoised data histograms
+  umap: false              # Can be expensive on large datasets
+  heatmap: false           # Requires posterior sampling for correlations
+  mixture_ppc: false       # Mixture-only diagnostic
+  mixture_composition: false  # Mixture-only MAP composition barplot
+  annotation_ppc: false    # Needs annotation_key in config
+  capture_anchor: false    # Biology-informed capture prior only
+  p_capture_scaling: false # VCP models only
+  mean_calibration: false  # Observed vs predicted gene means (log-log)
+  mu_pairwise: false       # Multi-dataset runs only
+
+  # ---------------------------------------------------------------------------
+  # ECDF options
+  # ---------------------------------------------------------------------------
+  ecdf_opts:
+    # Number of genes displayed in ECDF panel selection.
+    n_genes: 25
+
+  # ---------------------------------------------------------------------------
+  # Posterior predictive check (PPC) options
+  # ---------------------------------------------------------------------------
+  ppc_opts:
+    # Expression bins are selected on a log-scale.
+    n_rows: 5
+    # Number of genes per expression bin.
+    n_cols: 5
+    # Number of posterior predictive draws used for histogram envelopes.
+    n_samples: 512
+
+    # Adaptive histogram rendering controls.
+    hist_max_bin_quantile: 0.99
+    hist_max_bin_floor: 10
+
+    # When bin count is high, switch to line/fill mode for speed/readability.
+    render_auto_line_bin_threshold: 1000
+    render_line_target_points: 200
+    render_line_interpolate: true
+
+  # ---------------------------------------------------------------------------
+  # Biological PPC options
+  # ---------------------------------------------------------------------------
+  bio_ppc_opts:
+    # Batch denoising by cells to reduce peak memory.
+    denoise_cell_batch_size: 256
+
+  # ---------------------------------------------------------------------------
+  # UMAP options
+  # ---------------------------------------------------------------------------
+  umap_opts:
+    n_neighbors: 15
+    min_dist: 0.1
+    n_components: 2
+    random_state: 42
+
+    # Preprocessing controls used before embedding.
+    target_sum: 1e4
+    gene_filter_min_cells: 3
+    use_hvg: true
+    hvg_n_top_genes: 4000
+    hvg_flavor: "seurat"
+    use_pca: true
+    pca_n_comps: 50
+
+    # PPC overlay controls.
+    batch_size: 1000
+    n_ppc_samples: 1
+    data_color: "dark_blue"
+    synthetic_color: "dark_red"
+
+    # Reuse fitted embedding when possible.
+    cache_umap: true
+
+  # ---------------------------------------------------------------------------
+  # Correlation heatmap options
+  # ---------------------------------------------------------------------------
+  heatmap_opts:
+    n_genes: 200
+    n_samples: 1024
+    figsize: 12
+    cmap: "RdBu_r"
+
+  # ---------------------------------------------------------------------------
+  # Mixture-model PPC options
+  # ---------------------------------------------------------------------------
+  mixture_ppc_opts:
+    n_rows: 5
+    n_cols: 5
+    n_samples: 512
+
+  # ---------------------------------------------------------------------------
+  # Mixture composition options
+  # ---------------------------------------------------------------------------
+  mixture_composition_opts:
+    assignment_batch_size: 512
+
+  # ---------------------------------------------------------------------------
+  # Annotation PPC options
+  # ---------------------------------------------------------------------------
+  annotation_ppc_opts:
+    n_rows: 5
+    n_cols: 5
+    n_samples: 512
+
+  # ---------------------------------------------------------------------------
+  # Capture-anchor options
+  # ---------------------------------------------------------------------------
+  capture_anchor_opts:
+    n_bins: 50
+    scatter_size: 6
+    scatter_alpha: 0.35
+
+  # ---------------------------------------------------------------------------
+  # p_capture scaling options
+  # ---------------------------------------------------------------------------
+  p_capture_scaling_opts:
+    n_bins: 30
+    min_cells_per_bin: 5
+    assignment_batch_size: 512
+
+  # ---------------------------------------------------------------------------
+  # Dataset-level mu pairwise options
+  # ---------------------------------------------------------------------------
+  mu_pairwise_opts:
+    hist_bins: 40
+    point_alpha: 0.25
+    point_size: 5.0
+    pseudocount: 1.0

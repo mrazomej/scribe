@@ -70,6 +70,8 @@ conf/
 │   ├── svi.yaml                         # SVI defaults (optimizer, early stopping, etc.)
 │   ├── mcmc.yaml                        # MCMC defaults (samples, warmup, chains)
 │   └── vae.yaml                         # VAE defaults (inherits SVI + architecture)
+├── viz/
+│   └── default.yaml                     # Visualization defaults for scribe-visualize
 ├── amortization/
 │   └── capture.yaml                     # Capture amortization preset
 ├── dirname_aliases/
