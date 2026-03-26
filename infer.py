@@ -1204,3 +1204,21 @@ def main(cfg: DictConfig) -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def run_inference(cfg: DictConfig) -> None:
+    """Execute the inference workflow from a pre-composed Hydra config.
+
+    Parameters
+    ----------
+    cfg : DictConfig
+        Fully composed Hydra configuration object containing data, model,
+        inference, and visualization settings.
+
+    Returns
+    -------
+    None
+        Runs the full inference pipeline and writes outputs as configured.
+    """
+    # Reuse the undecorated implementation behind Hydra's wrapper.
+    main.__wrapped__(cfg)

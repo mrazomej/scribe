@@ -1,10 +1,13 @@
 """Tests for infer_split orchestration helpers."""
 
 from pathlib import Path
+import sys
 
 from infer_split import (
+    _build_joblib_multirun_command,
     _build_submitit_multirun_command,
     _derive_output_prefix,
+    _extract_config_options,
     _generate_tmp_yamls,
     _parse_args,
 )
@@ -69,3 +72,42 @@ def test_submitit_command_uses_nested_output_subdir_override():
         "hydra.sweep.subdir='${data.output_prefix}/${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname},${dirname_aliases.aliases}}'"
         in cmd
     )
+
+
+def test_extract_config_options_splits_cli_tokens():
+    """Separate config options from forwarded Hydra arguments."""
+    config_path, config_name, remaining = _extract_config_options(
+        [
+            "--config-path",
+            "/tmp/conf",
+            "--config-name",
+            "custom_config",
+            "data=foo",
+            "model=zinb",
+        ]
+    )
+    assert config_path == "/tmp/conf"
+    assert config_name == "custom_config"
+    assert remaining == ["data=foo", "model=zinb"]
+
+
+def test_joblib_command_includes_explicit_config_options():
+    """Child infer command should propagate config path/name explicitly."""
+    cmd = _build_joblib_multirun_command(
+        data_list="_tmp_split_x/a",
+        n_jobs=2,
+        forwarded_args=["model=nbdm"],
+        config_path="/tmp/conf",
+        config_name="custom_config",
+    )
+    assert cmd[:9] == [
+        sys.executable,
+        "-m",
+        "infer",
+        "--config-path",
+        "/tmp/conf",
+        "--config-name",
+        "custom_config",
+        "-m",
+        "data=_tmp_split_x/a",
+    ]

@@ -9,29 +9,32 @@ results.
 
 ```bash
 # Run inference with default settings (NBDM model, SVI inference)
-python infer.py
+scribe-infer --config-path ./conf
 
 # Specify model and inference method
-python infer.py model=zinb inference=svi
+scribe-infer --config-path ./conf model=zinb inference=svi
 
 # With model options
-python infer.py model=zinb parameterization=linked n_components=3
+scribe-infer --config-path ./conf model=zinb parameterization=linked n_components=3
 
 # Override inference parameters
-python infer.py model=nbdm inference.n_steps=100000 inference.batch_size=512
+scribe-infer --config-path ./conf model=nbdm inference.n_steps=100000 inference.batch_size=512
 
 # Override optimizer from CLI (SVI/VAE)
-python infer.py model=nbdm inference.optimizer_config.name=clipped_adam inference.optimizer_config.step_size=0.0005 inference.optimizer_config.grad_clip_norm=1.0
+scribe-infer --config-path ./conf model=nbdm inference.optimizer_config.name=clipped_adam inference.optimizer_config.step_size=0.0005 inference.optimizer_config.grad_clip_norm=1.0
 
 # Use different datasets
-python infer.py model=zinb data=jurkat_cells
+scribe-infer --config-path ./conf model=zinb data=jurkat_cells
 
 # Disable visualization
-python infer.py model=nbdm viz=null
+scribe-infer --config-path ./conf model=nbdm viz=null
 
 # NBVCP with amortized capture probability
-python infer.py model=nbvcp amortization=capture
+scribe-infer --config-path ./conf model=nbvcp amortization=capture
 ```
+
+> `infer.py` and `infer_split.py` are no longer the recommended interface.
+> Use `scribe-infer` for both standard and split-aware runs.
 
 ## Configuration Structure
 
@@ -215,8 +218,8 @@ preprocessing:
 ### Covariate-Split Inference (`split_by`)
 
 A data config can include optional `split_by` and `n_jobs` fields to enable
-**covariate-split parallel inference**.  When `split_by` is set, the
-`infer_split.py` orchestrator will fit a separate model for each unique value
+**covariate-split parallel inference**. When `split_by` is set, `scribe-infer`
+will fit a separate model for each unique value
 of that column in `adata.obs`, running them in parallel across GPUs.
 
 ```yaml
@@ -237,27 +240,27 @@ preprocessing:
 | `split_by` | `str`         | Column name in `adata.obs`. Each unique value defines a data subset that gets its own model fit.    |
 | `n_jobs`   | `int \| null` | Number of parallel joblib workers.  Defaults to the number of visible CUDA GPUs, falling back to 1. |
 
-**Usage** --- run `infer_split.py` instead of `infer.py` with the exact same
-Hydra overrides:
+**Usage** --- run `scribe-infer` with the exact same Hydra overrides.
+It will auto-detect `split_by` and launch split orchestration when needed:
 
 ```bash
 # Split by treatment column, auto-detect GPUs
-python infer_split.py data=bleo_study01 variable_capture=true annotation_key=subclass-l1
+scribe-infer --config-path ./conf data=bleo_study01 variable_capture=true annotation_key=subclass-l1
 
 # Explicitly set parallel workers
-python infer_split.py data=bleo_study01 data.n_jobs=4 variable_capture=true
+scribe-infer --config-path ./conf data=bleo_study01 data.n_jobs=4 variable_capture=true
 
-# All standard infer.py overrides work
-python infer_split.py data=bleo_study01 inference.n_steps=100000 inference.batch_size=512
+# All standard inference overrides work
+scribe-infer --config-path ./conf data=bleo_study01 inference.n_steps=100000 inference.batch_size=512
 ```
 
-Under the hood, `infer_split.py`:
+Under the hood, split-aware `scribe-infer`:
 
 1. Loads the h5ad to discover the unique values of the `split_by` column.
 2. Generates lightweight temporary data YAMLs in `conf/data/_tmp_split/`,
    each pointing to the **same** original h5ad but with `subset_column` /
    `subset_value` fields for in-memory filtering.
-3. Launches `python infer.py -m data=_tmp_split/v1,_tmp_split/v2,...` with
+3. Launches a Hydra multirun over temporary split configs with
    the Hydra joblib launcher for parallelism and round-robin GPU assignment.
 4. Cleans up the temporary YAMLs after completion.
 
@@ -308,14 +311,14 @@ Model preset files configure the model type and default options:
 
 ```bash
 # Use ZINB preset
-python infer.py model=zinb
+scribe-infer --config-path ./conf model=zinb
 
 # Use NBVCP preset
-python infer.py model=nbvcp
+scribe-infer --config-path ./conf model=nbvcp
 
 # Presets set: model type, parameterization, unconstrained, n_components
 # You can override any of these:
-python infer.py model=zinb parameterization=linked n_components=3
+scribe-infer --config-path ./conf model=zinb parameterization=linked n_components=3
 ```
 
 Each preset file (e.g., `model/zinb.yaml`) sets sensible defaults that can be overridden.
@@ -329,13 +332,13 @@ separate hierarchical parameterization names.
 
 ```bash
 # NBDM with hierarchical gene-specific p_g
-python infer.py model=nbdm_hierarchical
+scribe-infer --config-path ./conf model=nbdm_hierarchical
 
 # ZINB with hierarchical gene-specific p_g and gate
-python infer.py model=zinb_hierarchical
+scribe-infer --config-path ./conf model=zinb_hierarchical
 
 # Override parameterization (e.g. mean_odds) while keeping hierarchical flags
-python infer.py model=nbdm_hierarchical parameterization=mean_odds
+scribe-infer --config-path ./conf model=nbdm_hierarchical parameterization=mean_odds
 ```
 
 Both flags require `unconstrained: true`. After fitting, inspect
@@ -348,13 +351,13 @@ shared-p assumption, large values indicate gene-specific heterogeneity matters.
 
 ```bash
 # Sweep over models
-python infer.py -m model=nbdm,zinb,nbvcp,zinbvcp
+scribe-infer --config-path ./conf -m model=nbdm,zinb,nbvcp,zinbvcp
 
 # Sweep over mixture components
-python infer.py -m model=zinb n_components=2,3,5
+scribe-infer --config-path ./conf -m model=zinb n_components=2,3,5
 
 # Sweep over inference steps
-python infer.py -m inference.n_steps=25000,50000,100000
+scribe-infer --config-path ./conf -m inference.n_steps=25000,50000,100000
 ```
 
 When launching sweeps through `slurm_infer.py` with `hydra/launcher=joblib`,
@@ -368,10 +371,10 @@ is CPU-heavy.
 
 ```bash
 # Cell type discovery with ZINB mixture
-python infer.py model=zinb n_components=5 inference.n_steps=100000
+scribe-infer --config-path ./conf model=zinb n_components=5 inference.n_steps=100000
 
 # With linked parameterization for better optimization
-python infer.py model=zinb n_components=3 parameterization=linked
+scribe-infer --config-path ./conf model=zinb n_components=3 parameterization=linked
 ```
 
 ### Annotation Priors
@@ -380,13 +383,13 @@ Use cell-type annotations as soft priors on mixture component assignments:
 
 ```bash
 # Use annotation_key to bias components toward known cell types
-python infer.py model=nbvcp n_components=5 annotation_key=cell_type annotation_confidence=3.0
+scribe-infer --config-path ./conf model=nbvcp n_components=5 annotation_key=cell_type annotation_confidence=3.0
 
 # Filter rare annotations: labels with < 50 cells get zero bias (treated as unlabeled)
-python infer.py model=nbvcp annotation_key=subclass-l1 annotation_min_cells=50
+scribe-infer --config-path ./conf model=nbvcp annotation_key=subclass-l1 annotation_min_cells=50
 
 # Explicit component ordering
-python infer.py model=nbdm n_components=3 annotation_key=cell_type \
+scribe-infer --config-path ./conf model=nbdm n_components=3 annotation_key=cell_type \
   annotation_component_order='[T,B,Mono]'
 ```
 
@@ -401,17 +404,17 @@ python infer.py model=nbdm n_components=3 annotation_key=cell_type \
 
 ```bash
 # Informative priors for specific analysis
-python infer.py model=nbdm "priors.p=[2.0,2.0]" "priors.r=[1.0,0.5]"
+scribe-infer --config-path ./conf model=nbdm "priors.p=[2.0,2.0]" "priors.r=[1.0,0.5]"
 ```
 
 ### High-Performance Settings
 
 ```bash
 # Large dataset with mini-batching
-python infer.py model=zinb inference.batch_size=1024 inference.n_steps=200000
+scribe-infer --config-path ./conf model=zinb inference.batch_size=1024 inference.n_steps=200000
 
 # More MCMC samples for publication-quality inference
-python infer.py model=nbdm inference=mcmc inference.n_samples=5000 inference.n_chains=4
+scribe-infer --config-path ./conf model=nbdm inference=mcmc inference.n_samples=5000 inference.n_chains=4
 ```
 
 ### Covariate-Split Parallel Inference
@@ -421,10 +424,10 @@ parallel across GPUs:
 
 ```bash
 # Requires split_by in the data config
-python infer_split.py data=bleo_study01 variable_capture=true
+scribe-infer --config-path ./conf data=bleo_study01 variable_capture=true
 
 # Override parallelism
-python infer_split.py data=bleo_study01 data.n_jobs=2 model=nbvcp guide_rank=32
+scribe-infer --config-path ./conf data=bleo_study01 data.n_jobs=2 model=nbvcp guide_rank=32
 ```
 
 See the [Covariate-Split Inference](#covariate-split-inference-split_by)
@@ -436,13 +439,13 @@ For datasets with many cells (100K+), amortized inference reduces parameters:
 
 ```bash
 # Enable amortized capture probability
-python infer.py model=nbvcp amortization.capture.enabled=true
+scribe-infer --config-path ./conf model=nbvcp amortization.capture.enabled=true
 
 # Use the capture preset (pre-configured amortization)
-python infer.py model=nbvcp +amortization=capture
+scribe-infer --config-path ./conf model=nbvcp +amortization=capture
 
 # Custom amortizer architecture (optional: output_transform, output_clamp_*)
-python infer.py model=nbvcp \
+scribe-infer --config-path ./conf model=nbvcp \
     amortization.capture.enabled=true \
     amortization.capture.hidden_dims=[128,64,32] \
     amortization.capture.activation=gelu
@@ -495,10 +498,10 @@ viz:
 
 ```bash
 # Run inference without any plots
-python infer.py model=nbdm viz=null
+scribe-infer --config-path ./conf model=nbdm viz=null
 
 # Or disable specific plots
-python infer.py model=nbdm viz.loss=false viz.ppc=true
+scribe-infer --config-path ./conf model=nbdm viz.loss=false viz.ppc=true
 ```
 
 ## Programmatic API
@@ -508,7 +511,7 @@ The Hydra configuration maps directly to `scribe.fit()` arguments:
 ```python
 import scribe
 
-# Equivalent to: python infer.py model=zinb n_components=3 inference.n_steps=100000
+# Equivalent to: scribe-infer --config-path ./conf model=zinb n_components=3 inference.n_steps=100000
 results = scribe.fit(
     adata,
     model="zinb",
@@ -520,8 +523,8 @@ results = scribe.fit(
 results = scribe.fit(adata, model="nbdm", hierarchical_p=True)
 results = scribe.fit(adata, model="zinb", hierarchical_p=True, hierarchical_gate=True)
 
-# Equivalent to: python infer.py model=nbvcp amortization.capture.enabled=true
-# infer.py builds AmortizationConfig from YAML and passes capture_amortization=...
+# Equivalent to: scribe-infer --config-path ./conf model=nbvcp amortization.capture.enabled=true
+# The CLI-driven infer pipeline builds AmortizationConfig from YAML and passes capture_amortization=...
 from scribe.models.config import AmortizationConfig
 
 results = scribe.fit(

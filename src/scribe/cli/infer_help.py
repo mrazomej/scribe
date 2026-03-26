@@ -1,0 +1,35 @@
+"""Help text constants for ``scribe-infer``."""
+
+DETAILED_DESCRIPTION = """
+Run SCRIBE inference from Hydra configs with automatic split dispatch.
+
+The command inspects the selected ``data=<name>`` config in ``<config-path>/data``.
+If that config defines ``split_by``, ``scribe-infer`` launches split orchestration.
+Otherwise, it runs a standard single-run inference.
+"""
+
+EPILOG = """
+Install requirement:
+  pip install 'scribe[hydra]'
+
+Default config root:
+  --config-path defaults to ./conf
+
+Expected configuration layout:
+  conf/
+    config.yaml  (i.e., conf/config.yaml)
+    data/
+      <dataset>.yaml
+    inference/
+      svi.yaml
+      mcmc.yaml
+      vae.yaml
+
+Common examples:
+  scribe-infer --config-path ./conf data=singer model=zinb
+  scribe-infer --config-path ./conf data=bleo_study01 variable_capture=true
+  scribe-infer --config-path ./conf data=bleo_study01 split.launcher=submitit_slurm
+
+For a complete guide, see docs/cli_infer.md.
+"""
+

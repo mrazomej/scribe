@@ -56,6 +56,19 @@ log_likelihood = results.log_likelihood()
 scribe.viz.plot_loss_history(results.loss_history)
 ```
 
+## Unified Inference CLI
+
+For Hydra-driven experiment execution, SCRIBE provides a unified CLI:
+
+```bash
+pip install 'scribe[hydra]'
+scribe-infer --config-path ./conf data=singer model=zinb
+```
+
+The command auto-detects split mode from `data.<dataset>.yaml` (`split_by`) and
+dispatches to split orchestration when needed. See `docs/cli_infer.md` for full
+usage and expected `conf/` layout.
+
 ## Architecture Overview
 
 SCRIBE is organized into specialized modules that work together seamlessly:

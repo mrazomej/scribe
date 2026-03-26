@@ -23,8 +23,8 @@ this script:
    failure).
 
 The interface mirrors ``infer.py``: all Hydra overrides are forwarded
-verbatim, so a user can simply swap ``python infer.py`` for
-``python infer_split.py`` when their data config contains ``split_by``.
+verbatim. This module is primarily invoked by ``scribe-infer`` when the
+selected dataset config contains ``split_by``.
 
 
 Data YAML requirements
@@ -43,13 +43,9 @@ The data configuration YAML must include the following additional fields
 Typical usage
 -------------
 
-    # Split by treatment column, auto-detect GPUs for parallelism
-    $ python infer_split.py data=bleo_study01 variable_capture=true \\
-          annotation_key=subclass-l1
-
-    # Explicitly set the number of parallel workers
-    $ python infer_split.py data=bleo_study01 data.n_jobs=4 \\
-          variable_capture=true
+    # Usually called through the unified CLI:
+    $ scribe-infer --config-path ./conf data=bleo_study01 \\
+          variable_capture=true annotation_key=subclass-l1
 
 This produces output directories like::
 
@@ -75,7 +71,8 @@ from rich.table import Table
 # Constants
 # ---------------------------------------------------------------------------
 
-CONF_DATA_DIR = Path("conf") / "data"
+DEFAULT_CONFIG_DIR = Path("conf")
+CONF_DATA_DIR = DEFAULT_CONFIG_DIR / "data"
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 
@@ -98,6 +95,45 @@ def _split_data_values(raw_value: str) -> list[str]:
         Data config keys with whitespace trimmed and empty entries removed.
     """
     return [part.strip() for part in raw_value.split(",") if part.strip()]
+
+
+def _extract_config_options(
+    argv: list[str],
+) -> tuple[str, str, list[str]]:
+    """Extract top-level config options from CLI tokens.
+
+    Parameters
+    ----------
+    argv : list[str]
+        Raw command-line arguments excluding executable/script.
+
+    Returns
+    -------
+    tuple[str, str, list[str]]
+        A tuple containing:
+        - ``config_path``: config root directory (default ``"./conf"``)
+        - ``config_name``: top-level Hydra config name (default ``"config"``)
+        - ``remaining_args``: all other tokens to parse as overrides
+    """
+    config_path = str(DEFAULT_CONFIG_DIR)
+    config_name = "config"
+    remaining_args: list[str] = []
+
+    idx = 0
+    while idx < len(argv):
+        token = argv[idx]
+        if token == "--config-path" and idx + 1 < len(argv):
+            config_path = argv[idx + 1]
+            idx += 2
+            continue
+        if token == "--config-name" and idx + 1 < len(argv):
+            config_name = argv[idx + 1]
+            idx += 2
+            continue
+        remaining_args.append(token)
+        idx += 1
+
+    return config_path, config_name, remaining_args
 
 
 def _detect_gpu_ids() -> list[str]:
@@ -186,7 +222,9 @@ def _parse_args(argv: list[str]) -> tuple[list[str], dict, dict, list[str]]:
     return data_names, data_overrides, split_overrides, forwarded_args
 
 
-def _load_data_config(data_name: str) -> dict:
+def _load_data_config(
+    data_name: str, conf_data_dir: Path = CONF_DATA_DIR
+) -> dict:
     """Load a data YAML config from ``conf/data/<data_name>.yaml``.
 
     Parameters
@@ -200,15 +238,13 @@ def _load_data_config(data_name: str) -> dict:
     dict
         The parsed YAML contents.
     """
-    yaml_path = CONF_DATA_DIR / f"{data_name}.yaml"
+    yaml_path = conf_data_dir / f"{data_name}.yaml"
     if not yaml_path.exists():
         raise FileNotFoundError(
             f"Data config not found: {yaml_path}\n"
             f"Make sure conf/data/{data_name}.yaml exists."
         )
-    return OmegaConf.to_container(
-        OmegaConf.load(yaml_path), resolve=True
-    )
+    return OmegaConf.to_container(OmegaConf.load(yaml_path), resolve=True)
 
 
 def _discover_covariate_values(
@@ -245,9 +281,7 @@ def _discover_covariate_values(
     """
     # Resolve relative paths against the project root
     abs_path = (
-        data_path
-        if os.path.isabs(data_path)
-        else str(SCRIPT_DIR / data_path)
+        data_path if os.path.isabs(data_path) else str(SCRIPT_DIR / data_path)
     )
 
     adata = sc.read_h5ad(abs_path)
@@ -302,9 +336,7 @@ def _discover_covariate_values(
             )
         values = sorted(adata.obs[split_by].astype(str).unique())
         if len(values) == 0:
-            raise ValueError(
-                f"No values found in adata.obs['{split_by}']."
-            )
+            raise ValueError(f"No values found in adata.obs['{split_by}'].")
         return values
 
 
@@ -351,7 +383,7 @@ def _derive_output_prefix(data_name: str) -> str:
     return "/".join(parent_parts)
 
 
-def _make_tmp_split_dir() -> Path:
+def _make_tmp_split_dir(conf_data_dir: Path = CONF_DATA_DIR) -> Path:
     """Create a unique temporary config directory for this invocation.
 
     Returns
@@ -362,7 +394,7 @@ def _make_tmp_split_dir() -> Path:
     # A unique directory per process avoids collisions when multiple split
     # orchestrators run concurrently.
     suffix = f"{os.getpid()}_{uuid4().hex[:8]}"
-    tmp_dir = CONF_DATA_DIR / f"_tmp_split_{suffix}"
+    tmp_dir = conf_data_dir / f"_tmp_split_{suffix}"
     tmp_dir.mkdir(parents=True, exist_ok=False)
     return tmp_dir
 
@@ -456,8 +488,13 @@ def _generate_tmp_yamls(
         # config, except the split-specific keys and the keys we've
         # already set.
         skip_keys = {
-            "name", "path", "split_by", "n_jobs",
-            "subset_column", "subset_value", "gpu_id",
+            "name",
+            "path",
+            "split_by",
+            "n_jobs",
+            "subset_column",
+            "subset_value",
+            "gpu_id",
         }
         for key, val in data_cfg.items():
             if key not in skip_keys:
@@ -508,7 +545,12 @@ def _generate_passthrough_tmp_yaml(
     )
 
     tmp_file_stem = f"{source_tag}__{_sanitize_value(original_name)}"
-    tmp_cfg = {"name": original_name, "output_prefix": output_prefix, "path": abs_path, "gpu_id": gpu_id}
+    tmp_cfg = {
+        "name": original_name,
+        "output_prefix": output_prefix,
+        "path": abs_path,
+        "gpu_id": gpu_id,
+    }
     skip_keys = {"name", "path", "split_by", "n_jobs", "gpu_id"}
     for key, val in data_cfg.items():
         if key not in skip_keys:
@@ -536,7 +578,11 @@ def _cleanup_tmp_dir(tmp_dir: Path) -> None:
 
 
 def _build_joblib_multirun_command(
-    data_list: str, n_jobs: int, forwarded_args: list[str]
+    data_list: str,
+    n_jobs: int,
+    forwarded_args: list[str],
+    config_path: str = str(DEFAULT_CONFIG_DIR),
+    config_name: str = "config",
 ) -> list[str]:
     """Build Hydra multirun command using the joblib launcher.
 
@@ -556,7 +602,12 @@ def _build_joblib_multirun_command(
     """
     return [
         sys.executable,
-        str(SCRIPT_DIR / "infer.py"),
+        "-m",
+        "infer",
+        "--config-path",
+        config_path,
+        "--config-name",
+        config_name,
         "-m",
         f"data={data_list}",
         "hydra.sweep.subdir='${data.output_prefix}/${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname},${dirname_aliases.aliases}}'",
@@ -573,6 +624,8 @@ def _build_submitit_multirun_command(
     n_jobs: int,
     split_overrides: dict,
     forwarded_args: list[str],
+    config_path: str = str(DEFAULT_CONFIG_DIR),
+    config_name: str = "config",
 ) -> list[str]:
     """Build Hydra multirun command using the submitit Slurm launcher.
 
@@ -605,7 +658,12 @@ def _build_submitit_multirun_command(
 
     return [
         sys.executable,
-        str(SCRIPT_DIR / "infer.py"),
+        "-m",
+        "infer",
+        "--config-path",
+        config_path,
+        "--config-name",
+        config_name,
         "-m",
         f"data={data_list}",
         "hydra.sweep.subdir='${data.output_prefix}/${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname},${dirname_aliases.aliases}}'",
@@ -630,7 +688,7 @@ def _build_submitit_multirun_command(
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     """Entry point for the covariate-split inference orchestrator."""
     console = Console()
     console.print()
@@ -644,17 +702,22 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 1. Parse CLI arguments
     # ------------------------------------------------------------------
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    config_path, config_name, parseable_argv = _extract_config_options(raw_argv)
+    conf_data_dir = Path(config_path) / "data"
     data_names, data_overrides, split_overrides, forwarded_args = _parse_args(
-        sys.argv[1:]
+        parseable_argv
     )
-    console.print(f"[dim]Data configs:[/dim] [cyan]{', '.join(data_names)}[/cyan]")
+    console.print(
+        f"[dim]Data configs:[/dim] [cyan]{', '.join(data_names)}[/cyan]"
+    )
 
     # ------------------------------------------------------------------
     # 2. Load the data config YAML
     # ------------------------------------------------------------------
     loaded_data_cfgs: list[tuple[str, dict]] = []
     for data_name in data_names:
-        data_cfg = _load_data_config(data_name)
+        data_cfg = _load_data_config(data_name, conf_data_dir=conf_data_dir)
         for key, val in data_overrides.items():
             data_cfg[key] = val
         loaded_data_cfgs.append((data_name, data_cfg))
@@ -708,7 +771,7 @@ def main() -> None:
         )
     )
 
-    tmp_dir = _make_tmp_split_dir()
+    tmp_dir = _make_tmp_split_dir(conf_data_dir=conf_data_dir)
     tmp_names: list[str] = []
     details_table = Table(
         title="Dataset expansion",
@@ -734,7 +797,9 @@ def main() -> None:
 
         filter_obs = data_cfg.get("filter_obs")
         if filter_obs:
-            filter_parts = [f"{col} in {vals}" for col, vals in filter_obs.items()]
+            filter_parts = [
+                f"{col} in {vals}" for col, vals in filter_obs.items()
+            ]
             console.print(
                 f"[bold yellow]Pre-filter ({data_name}):[/bold yellow] "
                 f"[cyan]{', '.join(filter_parts)}[/cyan]"
@@ -798,12 +863,16 @@ def main() -> None:
             n_jobs=n_jobs,
             split_overrides=split_overrides,
             forwarded_args=forwarded_args,
+            config_path=config_path,
+            config_name=config_name,
         )
     else:
         cmd = _build_joblib_multirun_command(
             data_list=data_list,
             n_jobs=n_jobs,
             forwarded_args=forwarded_args,
+            config_path=config_path,
+            config_name=config_name,
         )
 
     console.print("[dim]Command:[/dim]")
@@ -828,9 +897,7 @@ def main() -> None:
         console.print()
         console.print("[dim]Cleaning up temporary configs...[/dim]")
         _cleanup_tmp_dir(tmp_dir)
-        console.print(
-            "[green]✓[/green] Temporary configs removed."
-        )
+        console.print("[green]✓[/green] Temporary configs removed.")
 
     # ------------------------------------------------------------------
     # Done
