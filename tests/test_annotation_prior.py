@@ -986,11 +986,11 @@ class TestSVISmoke:
         X = rng.poisson(5, (11, n_genes)).astype(np.float32)
         adata = anndata.AnnData(X=X, obs=pd.DataFrame({"ct": labels}))
 
-        # Auto-downgrade should keep the run valid by clearing mu_prior, which
+        # Auto-downgrade should keep the run valid by clearing expression_prior, which
         # requires n_components >= 2 in enum-based prior mode.
         with pytest.warns(
             UserWarning,
-            match=r"mu_prior='gaussian' -> 'none'",
+            match=r"expression_prior='gaussian' -> 'none'",
         ):
             result = scribe.fit(
                 adata,
@@ -1001,7 +1001,7 @@ class TestSVISmoke:
                 annotation_confidence=3.0,
                 annotation_min_cells=5,
                 unconstrained=True,
-                mu_prior="gaussian",
+                expression_prior="gaussian",
                 seed=42,
             )
 

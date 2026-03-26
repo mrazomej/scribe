@@ -209,7 +209,7 @@ class TestFlowGuideActivationPlumbing:
             parameterization="mean_odds",
             inference_method="svi",
             unconstrained=True,
-            p_prior="gaussian",
+            prob_prior="gaussian",
             guide_flow="spline_coupling",
             guide_flow_activation="silu",
             joint_params=["mu", "phi"],

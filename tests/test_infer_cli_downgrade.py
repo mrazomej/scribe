@@ -30,7 +30,7 @@ def _make_single_survivor_h5ad(path: Path) -> None:
 def test_infer_main_single_survivor_downgrades_component_only_prior(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """infer.py should auto-clear mu_prior after inferred mixture collapse.
+    """infer.py should auto-clear expression_prior after inferred mixture collapse.
 
     This test exercises the same code path used by Hydra/Submitit launches:
     ``infer.main`` receives a DictConfig, assembles ``scribe.fit`` kwargs,
@@ -53,7 +53,7 @@ def test_infer_main_single_survivor_downgrades_component_only_prior(
     )
 
     # Construct a minimal Hydra-like config for infer.main.__wrapped__.
-    # We set mu_prior=gaussian with unconstrained=True so the test verifies
+    # We set expression_prior=gaussian with unconstrained=True so the test verifies
     # the auto-downgrade now clears this component-only prior safely.
     cfg = OmegaConf.create(
         {
@@ -84,23 +84,23 @@ def test_infer_main_single_survivor_downgrades_component_only_prior(
             "model": "nbdm",
             "parameterization": "canonical",
             "unconstrained": True,
-            "mu_prior": "gaussian",
-            "p_prior": "none",
-            "gate_prior": "none",
+            "expression_prior": "gaussian",
+            "prob_prior": "none",
+            "zero_inflation_prior": "none",
             "n_datasets": None,
             "dataset_key": None,
             "dataset_params": None,
-            "mu_dataset_prior": "none",
-            "p_dataset_prior": "none",
-            "p_dataset_mode": "gene_specific",
-            "gate_dataset_prior": "none",
+            "expression_dataset_prior": "none",
+            "prob_dataset_prior": "none",
+            "prob_dataset_mode": "gene_specific",
+            "zero_inflation_dataset_prior": "none",
             "horseshoe_tau0": 1.0,
             "horseshoe_slab_df": 4,
             "horseshoe_slab_scale": 2.0,
             "neg_u": 1.0,
             "neg_a": 1.0,
             "neg_tau": 1.0,
-            "mu_eta_prior": "none",
+            "capture_scaling_prior": "none",
             "n_components": None,
             "mixture_params": None,
             "guide_rank": None,
@@ -124,8 +124,8 @@ def test_infer_main_single_survivor_downgrades_component_only_prior(
     )
 
     # The key assertion: infer.py path now downgrades safely instead of
-    # surfacing a ModelConfig validation error for mu_prior in non-mixture mode.
-    with pytest.warns(UserWarning, match=r"mu_prior='gaussian' -> 'none'"):
+    # surfacing a ModelConfig validation error for expression_prior in non-mixture mode.
+    with pytest.warns(UserWarning, match=r"expression_prior='gaussian' -> 'none'"):
         infer.main.__wrapped__(cfg)
 
     assert (output_dir / "scribe_results.pkl").exists()
