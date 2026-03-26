@@ -159,6 +159,7 @@ class PosteriorPredictiveSamplingMixin:
         batch_size: Optional[int] = None,
         store_samples: bool = True,
         counts: Optional[jnp.ndarray] = None,
+        descriptive_names: bool = False,
     ) -> Dict:
         """Sample parameters from the variational posterior distribution.
 
@@ -190,6 +191,11 @@ class PosteriorPredictiveSamplingMixin:
             by summing across ALL genes, so it requires the full data.
 
             For non-amortized models, this can be None. Default: None.
+        descriptive_names : bool, default=False
+            If True, rename dict keys from internal short names (``r``,
+            ``p``, ``mu``, ``phi``, ``gate``, ...) to user-friendly
+            descriptive names (``dispersion``, ``prob``, ``expression``,
+            ``odds``, ``zero_inflation``, ...).
 
         Returns
         -------
@@ -234,7 +240,9 @@ class PosteriorPredictiveSamplingMixin:
         if store_samples:
             self.posterior_samples = posterior_samples
 
-        return posterior_samples
+        from ..models.config.parameter_mapping import rename_dict_keys
+
+        return rename_dict_keys(posterior_samples, descriptive_names)
 
     def _get_posterior_samples_standard(
         self,

@@ -15,6 +15,7 @@ from jax import random
 
 from ..utils import numpyro_to_scipy
 from ..models.config.enums import HierarchicalPriorType
+from ..models.config.parameter_mapping import rename_dict_keys
 from ..models.parameterizations import (
     _align_gene_params,
     _broadcast_scalar_for_mixture,
@@ -112,7 +113,7 @@ def _reconstruct_horseshoe_maps(
 
     # Gene-level horseshoe mu (across mixture components)
     if (
-        getattr(model_config, "mu_prior", None)
+        getattr(model_config, "expression_prior", None)
         == HierarchicalPriorType.HORSESHOE
     ):
         parameterization = model_config.parameterization
@@ -251,8 +252,9 @@ def _reconstruct_neg_maps(
         psi values come from a Gamma variational posterior and are already
         in the correct (positive) space — no exp() is needed.
     model_config
-        Model configuration with p_prior, gate_prior, mu_dataset_prior,
-        p_dataset_prior, gate_dataset_prior enum fields.
+        Model configuration with prob_prior, zero_inflation_prior,
+        expression_dataset_prior, prob_dataset_prior,
+        zero_inflation_dataset_prior enum fields.
 
     Returns
     -------
@@ -262,7 +264,7 @@ def _reconstruct_neg_maps(
     configs = []
 
     # Gene-level NEG p
-    if model_config.p_prior == HierarchicalPriorType.NEG:
+    if model_config.prob_prior == HierarchicalPriorType.NEG:
         parameterization = model_config.parameterization
         if parameterization in ("mean_odds", "odds_ratio"):
             configs.append(("phi_raw", "phi", "phi", "log_phi_loc", jnp.exp))
@@ -270,11 +272,14 @@ def _reconstruct_neg_maps(
             configs.append(("p_raw", "p", "p", "logit_p_loc", sigmoid))
 
     # Gene-level NEG gate
-    if model_config.gate_prior == HierarchicalPriorType.NEG:
+    if model_config.zero_inflation_prior == HierarchicalPriorType.NEG:
         configs.append(("gate_raw", "gate", "gate", "logit_gate_loc", sigmoid))
 
     # Gene-level NEG mu (across mixture components)
-    if getattr(model_config, "mu_prior", None) == HierarchicalPriorType.NEG:
+    if (
+        getattr(model_config, "expression_prior", None)
+        == HierarchicalPriorType.NEG
+    ):
         parameterization = model_config.parameterization
         if parameterization in ("canonical", "standard"):
             configs.append(("r_raw", "r", "r", "log_r_loc", jnp.exp))
@@ -282,7 +287,7 @@ def _reconstruct_neg_maps(
             configs.append(("mu_raw", "mu", "mu", "log_mu_loc", jnp.exp))
 
     # Dataset-level NEG mu
-    if model_config.mu_dataset_prior == HierarchicalPriorType.NEG:
+    if model_config.expression_dataset_prior == HierarchicalPriorType.NEG:
         parameterization = model_config.parameterization
         if parameterization in ("canonical", "standard"):
             configs.append(
@@ -294,7 +299,7 @@ def _reconstruct_neg_maps(
             )
 
     # Dataset-level NEG p
-    if model_config.p_dataset_prior == HierarchicalPriorType.NEG:
+    if model_config.prob_dataset_prior == HierarchicalPriorType.NEG:
         parameterization = model_config.parameterization
         if parameterization in ("mean_odds", "odds_ratio"):
             configs.append(
@@ -318,7 +323,7 @@ def _reconstruct_neg_maps(
             )
 
     # Dataset-level NEG gate
-    if model_config.gate_dataset_prior == HierarchicalPriorType.NEG:
+    if model_config.zero_inflation_dataset_prior == HierarchicalPriorType.NEG:
         configs.append(
             (
                 "gate_raw_dataset",
@@ -1009,6 +1014,7 @@ class ParameterExtractionMixin:
         split: bool = False,
         counts: Optional[jnp.ndarray] = None,
         params: Optional[Dict[str, jnp.ndarray]] = None,
+        descriptive_names: bool = False,
     ) -> Dict[str, Any]:
         """
         Get the variational distributions for all parameters.
@@ -1042,6 +1048,11 @@ class ParameterExtractionMixin:
             Optional params dictionary to use instead of self.params. Used
             internally when amortized parameters need to be computed. Default:
             None (uses self.params).
+        descriptive_names : bool, default=False
+            If True, rename dict keys from internal short names (``r``,
+            ``p``, ``mu``, ``phi``, ``gate``, ...) to user-friendly
+            descriptive names (``dispersion``, ``prob``, ``expression``,
+            ``odds``, ``zero_inflation``, ...).
 
         Returns
         -------
@@ -1091,9 +1102,9 @@ class ParameterExtractionMixin:
                 else:
                     # Handle single distribution
                     scipy_distributions[name] = numpyro_to_scipy(dist_obj)
-            return scipy_distributions
+            return rename_dict_keys(scipy_distributions, descriptive_names)
 
-        return distributions
+        return rename_dict_keys(distributions, descriptive_names)
 
     # --------------------------------------------------------------------------
 
@@ -1109,6 +1120,7 @@ class ParameterExtractionMixin:
         flow_optimize_steps: int = 300,
         flow_optimize_lr: float = 1e-3,
         flow_batch_size: Optional[int] = None,
+        descriptive_names: bool = False,
     ) -> Dict[str, jnp.ndarray]:
         """
         Get the maximum a posteriori (MAP) estimates from the variational
@@ -1174,6 +1186,11 @@ class ParameterExtractionMixin:
             this avoids processing all cells on every guide call.
             ``None`` (default) processes all cells at once, which is
             fine when the guide only has gene-level flow parameters.
+        descriptive_names : bool, default=False
+            If True, rename dict keys from internal short names (``r``,
+            ``p``, ``mu``, ``phi``, ``gate``, ...) to user-friendly
+            descriptive names (``dispersion``, ``prob``, ``expression``,
+            ``odds``, ``zero_inflation``, ...).
 
         Returns
         -------
@@ -1514,9 +1531,12 @@ class ParameterExtractionMixin:
                     "If you are requesting derived canonical parameters, "
                     "ensure canonical=True."
                 )
-            return {key: map_estimates[key] for key in requested_targets}
+            return rename_dict_keys(
+                {key: map_estimates[key] for key in requested_targets},
+                descriptive_names,
+            )
 
-        return map_estimates
+        return rename_dict_keys(map_estimates, descriptive_names)
 
     # --------------------------------------------------------------------------
 

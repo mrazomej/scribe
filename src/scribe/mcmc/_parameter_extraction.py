@@ -9,6 +9,8 @@ from typing import Dict, Optional
 
 import jax.numpy as jnp
 
+from ..models.config.parameter_mapping import rename_dict_keys
+
 
 # ==============================================================================
 # Parameter Extraction Mixin
@@ -82,11 +84,17 @@ class ParameterExtractionMixin:
     # MAP estimation
     # --------------------------------------------------------------------------
 
-    def get_map(self):
+    def get_map(self, descriptive_names: bool = False):
         """Maximum a posteriori (MAP) parameter estimates.
 
         Uses the ``potential_energy`` extra field from the MCMC run when
         available; otherwise falls back to the posterior mean.
+
+        Parameters
+        ----------
+        descriptive_names : bool, default=False
+            If True, rename dict keys from internal short names to
+            user-friendly descriptive names.
 
         Returns
         -------
@@ -97,9 +105,11 @@ class ParameterExtractionMixin:
 
         try:
             potential_energy = self.get_extra_fields()["potential_energy"]
-            return _get_map_estimate(samples, potential_energy)
+            result = _get_map_estimate(samples, potential_energy)
         except Exception:
-            return _get_map_estimate(samples)
+            result = _get_map_estimate(samples)
+
+        return rename_dict_keys(result, descriptive_names)
 
 
 # ==============================================================================
