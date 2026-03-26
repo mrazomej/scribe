@@ -273,8 +273,9 @@ def build_capture_spec(
 
     When ``model_config.capture_prior`` is ``"biology_informed"``, returns a
     ``BiologyInformedCaptureSpec`` that anchors the capture probability to
-    library size via total mRNA per cell.  If ``mu_eta_prior`` is non-NONE,
-    the spec learns a per-dataset ``mu_eta`` with hierarchical shrinkage.
+    library size via total mRNA per cell.  If ``capture_scaling_prior`` is
+    non-NONE, the spec learns a per-dataset ``mu_eta`` with hierarchical
+    shrinkage.
 
     If amortization is enabled in guide_families.capture_amortization, the
     guide will use a neural network to predict variational parameters from
@@ -328,16 +329,16 @@ def build_capture_spec(
     eta_capture = priors_extra.get("eta_capture")
     mu_eta = priors_extra.get("mu_eta")
 
-    # Resolve mu_eta_prior from config (HierarchicalPriorType enum)
+    # Resolve capture_scaling_prior from config (HierarchicalPriorType enum)
     from ..config.enums import HierarchicalPriorType
 
-    mu_eta_prior_enum = getattr(
-        model_config, "mu_eta_prior", HierarchicalPriorType.NONE
+    capture_scaling_prior_enum = getattr(
+        model_config, "capture_scaling_prior", HierarchicalPriorType.NONE
     )
     mu_eta_prior_str = (
         None
-        if mu_eta_prior_enum == HierarchicalPriorType.NONE
-        else mu_eta_prior_enum.value
+        if capture_scaling_prior_enum == HierarchicalPriorType.NONE
+        else capture_scaling_prior_enum.value
     )
 
     if eta_capture is not None:
@@ -765,9 +766,7 @@ def build_extra_param_spec(
             overdispersion_prior=_bnb_prior,
             guide_families=guide_families,
             horseshoe_tau0=(
-                model_config.horseshoe_tau0
-                if model_config is not None
-                else 1.0
+                model_config.horseshoe_tau0 if model_config is not None else 1.0
             ),
             horseshoe_slab_df=(
                 model_config.horseshoe_slab_df
@@ -779,15 +778,9 @@ def build_extra_param_spec(
                 if model_config is not None
                 else 2.0
             ),
-            neg_u=(
-                model_config.neg_u if model_config is not None else 1.0
-            ),
-            neg_a=(
-                model_config.neg_a if model_config is not None else 1.0
-            ),
-            neg_tau=(
-                model_config.neg_tau if model_config is not None else 1.0
-            ),
+            neg_u=(model_config.neg_u if model_config is not None else 1.0),
+            neg_a=(model_config.neg_a if model_config is not None else 1.0),
+            neg_tau=(model_config.neg_tau if model_config is not None else 1.0),
             n_components=n_components,
             mixture_params=mixture_params,
             is_dataset=_bnb_is_dataset,

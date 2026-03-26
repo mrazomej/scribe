@@ -391,7 +391,7 @@ def _build_base_skip_set(
     # Any gene-level or dataset-level hierarchy on p/phi overrides the base
     any_p_hierarchy = getattr(model_config, "hierarchical_p", False)
     any_dataset_p_hierarchy = (
-        model_config.p_dataset_prior != HierarchicalPriorType.NONE
+        model_config.prob_dataset_prior != HierarchicalPriorType.NONE
     )
     if any_p_hierarchy or any_dataset_p_hierarchy:
         if parameterization in (
@@ -404,11 +404,11 @@ def _build_base_skip_set(
 
     # Any gene-level or dataset-level hierarchy on mu/r overrides the base
     any_mu_hierarchy = (
-        getattr(model_config, "mu_prior", HierarchicalPriorType.NONE)
+        getattr(model_config, "expression_prior", HierarchicalPriorType.NONE)
         != HierarchicalPriorType.NONE
     )
     any_dataset_mu_hierarchy = (
-        model_config.mu_dataset_prior != HierarchicalPriorType.NONE
+        model_config.expression_dataset_prior != HierarchicalPriorType.NONE
     )
     if any_mu_hierarchy or any_dataset_mu_hierarchy:
         if parameterization in (
@@ -459,14 +459,14 @@ def _flow_guided_param_names(params: Dict[str, Any]) -> set[str]:
             continue
 
         if key.startswith("flow_"):
-            inner = key[len("flow_"): -len("$params")]
+            inner = key[len("flow_") : -len("$params")]
             # Independent mixture: flow_{name}_idx{k}$params
             if "_idx" in inner:
                 inner = inner.rsplit("_idx", 1)[0]
             names.add(inner)
 
         elif key.startswith("joint_flow_"):
-            inner = key[len("joint_flow_"): -len("$params")]
+            inner = key[len("joint_flow_") : -len("$params")]
             # Independent mixture: joint_flow_{group}_{name}_idx{k}$params
             if "_idx" in inner:
                 inner = inner.rsplit("_idx", 1)[0]
@@ -481,7 +481,7 @@ def _flow_guided_param_names(params: Dict[str, Any]) -> set[str]:
             continue
         if "$params" in key or "_scalar_" in key:
             continue
-        inner = key[len("joint_flow_"): -len("_loc")]
+        inner = key[len("joint_flow_") : -len("_loc")]
         parts = inner.split("_", 1)
         if len(parts) != 2:
             continue
@@ -579,7 +579,7 @@ def _apply_gene_level_hierarchy(
     """Pass 2: override p/phi with a gene-level hierarchical prior.
 
     Active when ``hierarchical_p=True``, ``horseshoe_p=True``, or
-    ``p_prior==NEG``.  Adds hyperparameter posteriors (loc/scale of the
+    ``prob_prior==NEG``.  Adds hyperparameter posteriors (loc/scale of the
     population prior) and *replaces* the base ``"p"`` or ``"phi"`` entry
     with the gene-level distribution.
 
@@ -595,7 +595,7 @@ def _apply_gene_level_hierarchy(
     """
     hierarchical_p = model_config.hierarchical_p
     horseshoe_p = getattr(model_config, "horseshoe_p", False)
-    neg_p = model_config.p_prior == HierarchicalPriorType.NEG
+    neg_p = model_config.prob_prior == HierarchicalPriorType.NEG
     if not (hierarchical_p or horseshoe_p or neg_p):
         return
 
@@ -692,22 +692,24 @@ def _apply_gene_level_mu_hierarchy(
 ) -> None:
     """Pass 2b: override mu/r with a gene-level hierarchical prior.
 
-    Active when ``mu_prior != NONE``.  Adds population-level hyperparameter
-    posteriors (per-gene loc and scalar scale) and *replaces* the base
-    ``"mu"`` (or ``"r"``) entry with the gene-level distribution.
+    Active when ``expression_prior != NONE``.  Adds population-level
+    hyperparameter posteriors (per-gene loc and scalar scale) and *replaces* the
+    base ``"mu"`` (or ``"r"``) entry with the gene-level distribution.
 
-    Horseshoe variant: adds the horseshoe trio (tau, lambda, c_sq) and
-    the NCP raw z variable instead of the constrained parameter.
+    Horseshoe variant: adds the horseshoe trio (tau, lambda, c_sq) and the NCP
+    raw z variable instead of the constrained parameter.
 
     NEG variant: adds psi and zeta LogNormal posteriors and the NCP raw z
     variable instead of the constrained parameter.
 
-    Parameters in *flow_skip* (flow-guided params) are excluded from
-    the gene-level posterior build; their hyperparameters are still built
-    and Pass 10 handles the gene-level distribution.
+    Parameters in *flow_skip* (flow-guided params) are excluded from the
+    gene-level posterior build; their hyperparameters are still built and Pass
+    10 handles the gene-level distribution.
     """
-    mu_prior = getattr(model_config, "mu_prior", HierarchicalPriorType.NONE)
-    if mu_prior == HierarchicalPriorType.NONE:
+    expression_prior = getattr(
+        model_config, "expression_prior", HierarchicalPriorType.NONE
+    )
+    if expression_prior == HierarchicalPriorType.NONE:
         return
 
     if parameterization in (
@@ -724,7 +726,7 @@ def _apply_gene_level_mu_hierarchy(
         scale_name = "log_mu_scale"
         prefix = "mu"
 
-    if mu_prior == HierarchicalPriorType.HORSESHOE:
+    if expression_prior == HierarchicalPriorType.HORSESHOE:
         # Horseshoe NCP: hyper_loc + {tau, lambda, c_sq} + raw z variable.
         distributions.update(
             _build_hyperparameter_posteriors(params, loc_name, loc_name)
@@ -739,7 +741,7 @@ def _apply_gene_level_mu_hierarchy(
         )
         return
 
-    if mu_prior == HierarchicalPriorType.NEG:
+    if expression_prior == HierarchicalPriorType.NEG:
         # NEG NCP: hyper_loc + {psi, zeta} + raw z variable.
         distributions.update(
             _build_hyperparameter_posteriors(params, loc_name, loc_name)
@@ -800,7 +802,7 @@ def _apply_dataset_hierarchy_mu(
     """Pass 3: override mu/r with a dataset-level hierarchical prior.
 
     Active when ``hierarchical_dataset_mu=True``,
-    ``horseshoe_dataset_mu=True``, or ``mu_dataset_prior==NEG``.  Adds
+    ``horseshoe_dataset_mu=True``, or ``expression_dataset_prior==NEG``.  Adds
     dataset-level hyperparameter posteriors and *replaces* the base
     ``"mu"`` (or ``"r"``) entry.  The resulting MAP has shape
     ``(K, D, G)`` instead of ``(K, G)``.
@@ -809,7 +811,9 @@ def _apply_dataset_hierarchy_mu(
         model_config, "hierarchical_dataset_mu", False
     )
     horseshoe_dataset_mu = getattr(model_config, "horseshoe_dataset_mu", False)
-    neg_dataset_mu = model_config.mu_dataset_prior == HierarchicalPriorType.NEG
+    neg_dataset_mu = (
+        model_config.expression_dataset_prior == HierarchicalPriorType.NEG
+    )
     if not (hierarchical_dataset_mu or horseshoe_dataset_mu or neg_dataset_mu):
         return
 
@@ -936,7 +940,7 @@ def _apply_dataset_hierarchy_p(
     """Pass 4: override p/phi with a dataset-level hierarchical prior.
 
     Active when ``hierarchical_dataset_p != "none"``,
-    ``horseshoe_dataset_p=True``, or ``p_dataset_prior==NEG``.  Replaces
+    ``horseshoe_dataset_p=True``, or ``prob_dataset_prior==NEG``.  Replaces
     the ``"phi"`` (or ``"p"``) entry.  With
     ``hierarchical_dataset_p="gene_specific"`` the MAP gains shape
     ``(K, D, G)``; with ``"scalar"`` it becomes ``(K, D)``.
@@ -945,7 +949,7 @@ def _apply_dataset_hierarchy_p(
         model_config, "hierarchical_dataset_p", "none"
     )
     horseshoe_dataset_p = getattr(model_config, "horseshoe_dataset_p", False)
-    neg_dataset_p = model_config.p_dataset_prior == HierarchicalPriorType.NEG
+    neg_dataset_p = model_config.prob_dataset_prior == HierarchicalPriorType.NEG
     if not (
         hierarchical_dataset_p != "none" or horseshoe_dataset_p or neg_dataset_p
     ):
@@ -1071,7 +1075,7 @@ def _apply_dataset_hierarchy_gate(
     """Pass 5: override gate with a dataset-level hierarchical prior.
 
     Active when ``hierarchical_dataset_gate=True``,
-    ``horseshoe_dataset_gate=True``, or ``gate_dataset_prior==NEG``.
+    ``horseshoe_dataset_gate=True``, or ``zero_inflation_dataset_prior==NEG``.
     Replaces the ``"gate"`` entry (or adds ``"gate_raw_dataset"`` for the
     horseshoe/NEG NCP z variable when the parameter is *not* in a joint
     guide group).
@@ -1087,7 +1091,7 @@ def _apply_dataset_hierarchy_gate(
         model_config, "horseshoe_dataset_gate", False
     )
     neg_dataset_gate = (
-        model_config.gate_dataset_prior == HierarchicalPriorType.NEG
+        model_config.zero_inflation_dataset_prior == HierarchicalPriorType.NEG
     )
     if not (
         hierarchical_dataset_gate or horseshoe_dataset_gate or neg_dataset_gate
@@ -1212,7 +1216,7 @@ def _apply_zero_inflation_gate(
         model_config, "horseshoe_dataset_gate", False
     )
     neg_dataset_gate = (
-        model_config.gate_dataset_prior == HierarchicalPriorType.NEG
+        model_config.zero_inflation_dataset_prior == HierarchicalPriorType.NEG
     )
     if not (
         model_config.is_zero_inflated
@@ -1225,7 +1229,7 @@ def _apply_zero_inflation_gate(
         return
 
     horseshoe_gate = getattr(model_config, "horseshoe_gate", False)
-    neg_gate = model_config.gate_prior == HierarchicalPriorType.NEG
+    neg_gate = model_config.zero_inflation_prior == HierarchicalPriorType.NEG
     hierarchical_gate = model_config.hierarchical_gate
     joint_gate_prefix = _find_joint_prefix(params, "gate")
 
@@ -1307,7 +1311,9 @@ def _apply_capture(
 
     bio_capture = getattr(model_config, "uses_biology_informed_capture", False)
     mu_eta_active = (
-        getattr(model_config, "mu_eta_prior", HierarchicalPriorType.NONE)
+        getattr(
+            model_config, "capture_scaling_prior", HierarchicalPriorType.NONE
+        )
         != HierarchicalPriorType.NONE
     )
     if bio_capture or mu_eta_active:
@@ -1740,7 +1746,7 @@ def _apply_flow_posteriors(
     for key in params:
         if not key.startswith("flow_") or not key.endswith("$params"):
             continue
-        inner = key[len("flow_"):-len("$params")]
+        inner = key[len("flow_") : -len("$params")]
         # Independent mixture: flow_{name}_idx{k}$params
         if "_idx" in inner:
             base_name = inner.rsplit("_idx", 1)[0]
@@ -1757,7 +1763,11 @@ def _apply_flow_posteriors(
         if not isinstance(guide, NormalizingFlowGuide):
             continue
         comp_dist = _reconstruct_component_flow(
-            params, base_name, entries, guide, pos_transform,
+            params,
+            base_name,
+            entries,
+            guide,
+            pos_transform,
         )
         if comp_dist is not None:
             distributions[base_name] = comp_dist
@@ -1767,7 +1777,7 @@ def _apply_flow_posteriors(
     for key in params:
         if not key.startswith("flow_") or not key.endswith("$params"):
             continue
-        inner = key[len("flow_"):-len("$params")]
+        inner = key[len("flow_") : -len("$params")]
         if "_idx" in inner:
             continue
         name = inner
@@ -1787,7 +1797,12 @@ def _apply_flow_posteriors(
             and n_comps > 1
         ):
             comp_dist = _reconstruct_shared_component_flow(
-                params, key, name, guide, n_comps, pos_transform,
+                params,
+                key,
+                name,
+                guide,
+                n_comps,
+                pos_transform,
             )
             if comp_dist is not None:
                 distributions[name] = comp_dist
@@ -1810,7 +1825,7 @@ def _apply_flow_posteriors(
     for key in params:
         if not key.startswith("joint_flow_") or not key.endswith("$params"):
             continue
-        inner = key[len("joint_flow_"):-len("$params")]
+        inner = key[len("joint_flow_") : -len("$params")]
         if "_idx" not in inner:
             continue
         # Split: {group}_{name}_idx{k}
@@ -1823,9 +1838,7 @@ def _apply_flow_posteriors(
         if len(parts) != 2:
             continue
         group, name = parts
-        _joint_comp_groups.setdefault((group, name), []).append(
-            (k_idx, key)
-        )
+        _joint_comp_groups.setdefault((group, name), []).append((k_idx, key))
 
     for (group, name), entries in _joint_comp_groups.items():
         if name in distributions:
@@ -1834,7 +1847,12 @@ def _apply_flow_posteriors(
         if not isinstance(guide, JointNormalizingFlowGuide):
             continue
         comp_dist = _reconstruct_joint_component_flow(
-            params, name, group, entries, guide, pos_transform,
+            params,
+            name,
+            group,
+            entries,
+            guide,
+            pos_transform,
         )
         if comp_dist is not None:
             distributions[name] = comp_dist
@@ -1844,7 +1862,7 @@ def _apply_flow_posteriors(
     for key in params:
         if not key.startswith("joint_flow_") or not key.endswith("$params"):
             continue
-        inner = key[len("joint_flow_"):-len("$params")]
+        inner = key[len("joint_flow_") : -len("$params")]
         if "_idx" in inner:
             continue
         parts = inner.split("_", 1)
@@ -2027,7 +2045,10 @@ def _reconstruct_shared_component_flow(
 
         def _fn(x, reverse=False, _p=flax_params, _c=chain, _ctx=ctx):
             return _c.apply(
-                {"params": _p}, x, reverse=reverse, context=_ctx,
+                {"params": _p},
+                x,
+                reverse=reverse,
+                context=_ctx,
             )
 
         base = dist.Normal(jnp.zeros(features), jnp.ones(features)).to_event(1)
@@ -2195,7 +2216,7 @@ def _apply_joint_flow_nondense_fallback(
 
         # Nondense pattern: joint_flow_{group}_{name}_loc
         if key.endswith("_loc") and "_scalar_" not in key:
-            inner = key[len("joint_flow_"):-len("_loc")]
+            inner = key[len("joint_flow_") : -len("_loc")]
             parts = inner.split("_", 1)
             if len(parts) != 2:
                 continue
@@ -2208,6 +2229,7 @@ def _apply_joint_flow_nondense_fallback(
             raw_diag_key = key.replace("_loc", "_raw_diag")
             if raw_diag_key in params:
                 import jax
+
                 sigma = jnp.sqrt(jax.nn.softplus(params[raw_diag_key]) + 1e-4)
             else:
                 sigma = jnp.ones_like(loc)
@@ -2232,7 +2254,7 @@ def _apply_joint_flow_nondense_fallback(
 
         # Scalar pattern: joint_flow_{group}_{name}_scalar_loc
         if "_scalar_loc" in key and key.endswith("_scalar_loc"):
-            inner = key[len("joint_flow_"):-len("_scalar_loc")]
+            inner = key[len("joint_flow_") : -len("_scalar_loc")]
             parts = inner.split("_", 1)
             if len(parts) != 2:
                 continue
@@ -2245,6 +2267,7 @@ def _apply_joint_flow_nondense_fallback(
             raw_scale_key = key.replace("_scalar_loc", "_scalar_raw_scale")
             if raw_scale_key in params:
                 import jax
+
                 scale = jax.nn.softplus(params[raw_scale_key]) + 1e-4
             else:
                 scale = jnp.ones_like(loc)
