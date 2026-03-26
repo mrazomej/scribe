@@ -88,6 +88,23 @@ scribe-infer --slurm-profile default --config-path ./conf data=singer
 Per-run overrides remain available via repeated `--slurm-set key=value`
 (and also implicitly enable SLURM mode).
 
+## Visualization CLI
+
+SCRIBE also provides a packaged visualization CLI:
+
+```bash
+scribe-visualize outputs/my_run --all
+scribe-visualize outputs/ --recursive --umap --heatmap
+```
+
+For cluster execution of large recursive runs:
+
+```bash
+scribe-visualize --slurm-profile default outputs/ --recursive --all
+```
+
+See `docs/cli_visualize.md` for detailed usage.
+
 ## Architecture Overview
 
 SCRIBE is organized into specialized modules that work together seamlessly:

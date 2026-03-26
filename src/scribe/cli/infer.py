@@ -11,8 +11,10 @@ from .dispatch import should_use_split_mode
 from .infer_help import DETAILED_DESCRIPTION, EPILOG
 from .initialize import initialize_conf
 from .slurm import (
-    SlurmPromptConfig,
     build_slurm_command as _build_slurm_command,
+)
+from .slurm_common import (
+    SlurmPromptConfig,
     load_slurm_profile as _load_slurm_profile,
     parse_slurm_set_entries as _parse_slurm_set_entries,
     prompt_slurm_config,
