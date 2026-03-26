@@ -130,6 +130,8 @@ SCRIBE supports three inference backends, all accessed through the same
 | `stable_update` | `True` | Numerically stable parameter updates |
 | `log_progress_lines` | `False` | Emit periodic plain-text progress lines (useful for SLURM logs) |
 | `early_stopping` | `None` | Dict or `EarlyStoppingConfig` for automatic convergence detection |
+| `restore_best` | `False` | Track the best variational parameters during training and restore them at the end |
+| `optimizer_config` | `None` | Custom optimizer: `{"name": "adam", "step_size": 1e-3}`. Supports `"adam"`, `"clipped_adam"`, `"adagrad"`, `"rmsprop"`, `"sgd"`, `"momentum"` |
 
 ```python
 # SVI with mini-batching and early stopping
@@ -186,11 +188,13 @@ mcmc_results = scribe.fit(
 The guide (variational family) controls how well the approximate posterior
 can capture correlations between parameters.
 
+### Low-rank Gaussian guides
+
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `guide_rank` | `None` | Rank for low-rank guide on gene-specific parameters. `None` = mean-field (fully factorized) |
-| `joint_params` | `None` | Parameter names to model jointly (e.g. `["mu", "phi"]`). Requires `guide_rank` |
-| `dense_params` | `None` | Subset of `joint_params` that get full cross-gene low-rank coupling. Others get gene-local conditioning |
+| `joint_params` | `None` | Parameter names to model jointly (e.g. `["mu", "phi"]`). Works with `guide_rank` or `guide_flow` |
+| `dense_params` | `None` | Subset of `joint_params` that get full cross-gene coupling. Others get gene-local conditioning |
 
 ```python
 # Low-rank guide (captures gene-gene correlations)
@@ -205,19 +209,55 @@ results = scribe.fit(
     guide_rank=10,
     joint_params=["mu", "phi"],
 )
+```
 
-# Dense/sparse split --- mu gets cross-gene coupling,
-# phi and gate only couple to mu at the same gene
+### Normalizing flow guides
+
+Replaces the Gaussian variational family with a learned invertible
+transformation, enabling multimodal, skewed, and heavy-tailed posterior
+approximations. Mutually exclusive with `guide_rank`.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `guide_flow` | `None` | Flow type: `"affine_coupling"` (recommended), `"spline_coupling"`, `"maf"`, `"iaf"` |
+| `guide_flow_num_layers` | `4` | Number of coupling layers |
+| `guide_flow_hidden_dims` | `[64, 64]` | Hidden sizes in the conditioner MLP |
+| `guide_flow_activation` | `"relu"` | Activation function for conditioner MLPs |
+| `guide_flow_n_bins` | `8` | Spline bins (only for `"spline_coupling"`) |
+| `guide_flow_mixture_strategy` | `"independent"` | `"independent"` or `"shared"` for mixture/dataset components |
+| `guide_flow_zero_init` | `True` | Identity-init via zero output layer |
+| `guide_flow_layer_norm` | `True` | LayerNorm in conditioner MLP |
+| `guide_flow_residual` | `True` | Residual connections in conditioner MLP |
+| `guide_flow_soft_clamp` | `True` | Smooth arctan clamp on affine log-scale (Andrade 2024) |
+| `guide_flow_loft` | `True` | LOFT compression + trainable final affine |
+| `guide_flow_log_det_f64` | `False` | Float64 log-det accumulation (datacenter GPUs only) |
+
+```python
+# Affine coupling flow guide (recommended for high-dimensional gene params)
 results = scribe.fit(
     adata,
-    model="zinb",
+    model="nbdm",
     unconstrained=True,
-    p_prior="gaussian",
-    guide_rank=10,
-    joint_params=["mu", "phi", "gate"],
-    dense_params=["mu"],
+    guide_flow="affine_coupling",
+    guide_flow_num_layers=4,
+)
+
+# Joint flow across mu and phi
+results = scribe.fit(
+    adata,
+    model="nbdm",
+    parameterization="mean_odds",
+    unconstrained=True,
+    guide_flow="affine_coupling",
+    joint_params=["mu", "phi"],
 )
 ```
+
+!!! warning "Use `affine_coupling` for guide-level flows"
+    In scRNA-seq, gene-specific parameters live in thousands to tens of
+    thousands of dimensions. Only affine coupling layers are numerically
+    stable enough at this scale. Spline coupling and autoregressive flows
+    are better suited for low-dimensional settings like VAE latent spaces.
 
 **Full guide:** [Variational Guide Families](guide-families.md)
 
@@ -874,7 +914,7 @@ All `scribe.fit()` parameters at a glance, grouped by function:
     | `mu_eta_prior` | `"none"` | `str` |
     | `auto_downgrade_single_dataset_hierarchy` | `True` | `bool` |
 
-    **Guide**
+    **Guide (Gaussian)**
 
     | Parameter | Default | Type |
     |-----------|---------|------|
@@ -882,6 +922,23 @@ All `scribe.fit()` parameters at a glance, grouped by function:
     | `joint_params` | `None` | `list[str]` |
     | `dense_params` | `None` | `list[str]` |
     | `priors` | `None` | `dict` |
+
+    **Guide (Normalizing Flow)**
+
+    | Parameter | Default | Type |
+    |-----------|---------|------|
+    | `guide_flow` | `None` | `str` |
+    | `guide_flow_num_layers` | `4` | `int` |
+    | `guide_flow_hidden_dims` | `[64, 64]` | `list[int]` |
+    | `guide_flow_activation` | `"relu"` | `str` |
+    | `guide_flow_n_bins` | `8` | `int` |
+    | `guide_flow_mixture_strategy` | `"independent"` | `str` |
+    | `guide_flow_zero_init` | `True` | `bool` |
+    | `guide_flow_layer_norm` | `True` | `bool` |
+    | `guide_flow_residual` | `True` | `bool` |
+    | `guide_flow_soft_clamp` | `True` | `bool` |
+    | `guide_flow_loft` | `True` | `bool` |
+    | `guide_flow_log_det_f64` | `False` | `bool` |
 
     **Capture amortization**
 
@@ -902,9 +959,11 @@ All `scribe.fit()` parameters at a glance, grouped by function:
     | `inference_method` | `"svi"` | `str` |
     | `n_steps` | `50_000` | `int` |
     | `batch_size` | `None` | `int` |
+    | `optimizer_config` | `None` | `dict` |
     | `stable_update` | `True` | `bool` |
     | `log_progress_lines` | `False` | `bool` |
     | `early_stopping` | `None` | `dict` or `EarlyStoppingConfig` |
+    | `restore_best` | `False` | `bool` |
     | `n_samples` | `2_000` | `int` |
     | `n_warmup` | `1_000` | `int` |
     | `n_chains` | `1` | `int` |

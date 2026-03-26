@@ -6,10 +6,10 @@ posterior. The choice of guide family controls the trade-off between
 computational cost, posterior accuracy, and the ability to capture correlations
 between parameters.
 
-SCRIBE supports five guide families, configurable **per parameter** ---meaning
+SCRIBE supports seven guide families, configurable **per parameter** ---meaning
 different parameters in the same model can use different guide families. For
-example, gene-specific dispersion might use a low-rank guide while a scalar
-success probability uses mean-field.
+example, gene-specific dispersion might use a normalizing flow guide while a
+scalar success probability uses mean-field.
 
 ---
 
@@ -20,6 +20,8 @@ success probability uses mean-field.
 | [Mean-Field](#mean-field) | None | \(O(G)\) | Fastest | Default, most analyses |
 | [Low-Rank](#low-rank) | Within a parameter group | \(O(Gk)\) | Fast | Gene-gene correlations |
 | [Joint Low-Rank](#joint-low-rank) | Across parameter groups | \(O(Gk)\) | Moderate | Cross-parameter correlations (e.g., \(\mu\) and \(p\)) |
+| [Normalizing Flow](#normalizing-flow) | Within a parameter group (non-Gaussian) | Network size | Moderate | Multimodal, skewed, heavy-tailed posteriors |
+| [Joint Normalizing Flow](#joint-normalizing-flow) | Across parameter groups (non-Gaussian) | Network size | Slower | Non-linear cross-parameter dependencies |
 | [Amortized](#amortized) | Data-driven | Network size | Moderate | Cell-specific parameters (capture probability) |
 | [VAE Latent](#vae-latent) | Learned latent space | Network size | Slowest | Representation learning, embeddings |
 
@@ -158,6 +160,164 @@ results = scribe.fit(
 
 ---
 
+## Normalizing Flow
+
+All the Gaussian-based families above (Mean-Field, Low-Rank, Joint Low-Rank)
+share a fundamental limitation: the variational distribution is always a
+(possibly correlated) Gaussian in unconstrained space. When the true posterior
+is **multimodal, skewed, or heavy-tailed**, a Gaussian guide underestimates
+the real uncertainty. A normalizing flow guide replaces the Gaussian with a
+**learned invertible transformation** of a simple base distribution, enabling
+arbitrarily complex densities.
+
+!!! warning "Use affine coupling for scRNA-seq"
+    In the high-dimensional setting of scRNA-seq (thousands to tens of
+    thousands of genes), only **affine coupling** layers are numerically
+    stable enough for reliable training. Spline coupling and autoregressive
+    flows can produce NaN gradients at these dimensions because per-layer
+    log-determinant contributions accumulate rapidly and the conditioner
+    networks face enormous fan-in. SCRIBE recommends
+    `guide_flow="affine_coupling"` for all guide-level flow usage.
+
+    Spline coupling remains the recommended choice for **VAE-level flows**
+    (`vae_flow_type="spline_coupling"`), where the latent dimension is low
+    (typically 10--30) and the extra expressiveness per layer is beneficial.
+
+### Stability features
+
+Training coupling flows in 20,000+ dimensions is inherently challenging.
+SCRIBE implements several stabilization techniques inspired by
+[Andrade 2024 (arXiv:2402.16408)](https://arxiv.org/abs/2402.16408),
+all **enabled by default**, that make high-dimensional affine coupling flows
+practical:
+
+| Feature | What it does | Why it matters |
+|---------|-------------|----------------|
+| **Zero-init output** | Conditioner output layer is initialized to zero so the flow starts as an identity transform | Prevents log-determinant overflow at initialization when G is large |
+| **Layer normalization** | `LayerNorm` after each hidden Dense in the conditioner MLP | Stabilizes activations when fan-in is large (e.g. 20K inputs into a 64-wide bottleneck) |
+| **Residual connections** | Skip connections between hidden layers of the same width | Improves gradient flow during training |
+| **Soft clamping** | Smooth asymmetric arctan-based clamp on the affine log-scale | Replaces hard clipping; caps per-layer expansion to approximately 10% while preserving gradients at the boundary |
+| **LOFT** | Log Soft Extension layer + trainable final affine after all coupling layers | Compresses extreme sample magnitudes logarithmically, then re-expands to match the target posterior's scale |
+| **Float64 log-det** | Accumulate the log-determinant Jacobian in float64 | Prevents precision loss when summing many small per-layer contributions. Off by default; recommended only for datacenter GPUs (A100, H100) with full-rate float64 |
+
+### Usage
+
+```python
+# Per-parameter affine coupling flow
+results = scribe.fit(
+    adata,
+    model="nbdm",
+    unconstrained=True,
+    guide_flow="affine_coupling",
+    guide_flow_num_layers=4,
+    guide_flow_hidden_dims=[64, 64],
+)
+```
+
+### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `guide_flow` | `None` | Flow type: `"affine_coupling"` (recommended for guides), `"spline_coupling"`, `"maf"`, `"iaf"`. Mutually exclusive with `guide_rank` |
+| `guide_flow_num_layers` | `4` | Number of coupling layers |
+| `guide_flow_hidden_dims` | `[64, 64]` | Hidden layer sizes in the conditioner MLP |
+| `guide_flow_activation` | `"relu"` | Activation function (`"relu"`, `"gelu"`, `"silu"`, `"leaky_relu"`, ...) |
+| `guide_flow_n_bins` | `8` | Spline bins (only for `"spline_coupling"`) |
+| `guide_flow_mixture_strategy` | `"independent"` | `"independent"` (separate flow per component) or `"shared"` (one flow conditioned on one-hot index) |
+| `guide_flow_zero_init` | `True` | Zero-initialize conditioner output (identity-init) |
+| `guide_flow_layer_norm` | `True` | Apply LayerNorm in conditioner MLP |
+| `guide_flow_residual` | `True` | Residual connections in conditioner MLP |
+| `guide_flow_soft_clamp` | `True` | Smooth asymmetric arctan clamp on affine log-scale |
+| `guide_flow_loft` | `True` | LOFT compression + trainable final affine |
+| `guide_flow_log_det_f64` | `True` | Float64 log-det accumulation. Auto-promotes `enable_x64=True` |
+
+!!! tip "When to use flows vs. low-rank"
+    For **nearly Gaussian** posteriors, `LowRankGuide` is faster and equally
+    accurate---use it as your default when you need gene correlations.
+    Switch to a flow guide when diagnostics suggest the posterior is
+    substantially non-Gaussian (multimodality, skewness, heavy tails) and
+    the low-rank approximation is visibly inadequate.
+
+---
+
+## Joint Normalizing Flow
+
+Analogous to [Joint Low-Rank](#joint-low-rank) but uses normalizing flows
+instead of Gaussians. Cross-parameter dependencies are captured via a
+chain-rule decomposition:
+
+\[
+q(\theta_1, \theta_2) = q(\theta_1)\;q(\theta_2 \mid \theta_1),
+\]
+
+where each factor is a full normalizing flow. The conditional
+\(q(\theta_2 \mid \theta_1)\) is implemented by passing the unconstrained
+sample of \(\theta_1\) as a continuous **context** vector to the flow for
+\(\theta_2\). This extends naturally to three or more parameters via
+cumulative context.
+
+**Advantages:**
+
+- Captures **non-linear** cross-parameter dependencies
+- Each conditional is a full flow --- more expressive than the Woodbury
+  low-rank MVN conditionals
+- Supports `dense_params` (same semantics as Joint Low-Rank)
+
+**Limitations:**
+
+- More flow parameters than Joint Low-Rank
+- Context-conditioned flows add dimensionality to conditioner networks
+- For approximately Gaussian joint posteriors, Joint Low-Rank is more
+  parameter-efficient
+
+```python
+# Joint affine coupling flow for mu and phi
+results = scribe.fit(
+    adata,
+    model="nbdm",
+    parameterization="mean_odds",
+    unconstrained=True,
+    guide_flow="affine_coupling",
+    joint_params=["mu", "phi"],
+    guide_flow_num_layers=4,
+)
+```
+
+Scalar parameters in a joint flow group (e.g. `phi` when it is not
+gene-specific) automatically receive a context-conditioned Normal instead of
+a full flow, since coupling flows require at least two features.
+
+### Dense vs. structured params
+
+Just like Joint Low-Rank, you can designate which parameters get a full flow
+(`dense_params`) while others receive diagonal Normal treatment with learned
+regression on the dense-flow residuals:
+
+```python
+# mu gets a full flow; phi and gate regress on mu per gene
+results = scribe.fit(
+    adata,
+    model="zinb",
+    unconstrained=True,
+    guide_flow="affine_coupling",
+    joint_params=["mu", "phi", "gate"],
+    dense_params=["mu"],
+)
+```
+
+### Mixture and dataset support
+
+When a parameter has mixture components or dataset axes, the flow guide
+creates per-component or per-dataset flow instances. The behavior is
+controlled by `guide_flow_mixture_strategy`:
+
+- **`"independent"`** (default) --- a separate flow chain per component,
+  each with its own parameters. Maximum expressiveness.
+- **`"shared"`** --- a single flow chain conditioned on a one-hot component
+  index. More parameter-efficient when components share structure.
+
+---
+
 ## Amortized
 
 Instead of learning separate variational parameters for each data point, an
@@ -269,11 +429,15 @@ graph TD
     Q1 -->|Yes| VAE["VAE Latent"]
     Q1 -->|No| Q2{"Cell-specific<br/>parameters?"}
     Q2 -->|Yes| Amort["Amortized"]
-    Q2 -->|No| Q3{"Need cross-parameter<br/>correlations?"}
-    Q3 -->|Yes| Joint["Joint Low-Rank"]
-    Q3 -->|No| Q4{"Need gene-gene<br/>correlations?"}
-    Q4 -->|Yes| LR["Low-Rank"]
-    Q4 -->|No| MF["Mean-Field"]
+    Q2 -->|No| Q3{"Posterior likely<br/>non-Gaussian?"}
+    Q3 -->|Yes| Q3b{"Cross-parameter<br/>dependencies?"}
+    Q3b -->|Yes| JointFlow["Joint Normalizing Flow"]
+    Q3b -->|No| Flow["Normalizing Flow"]
+    Q3 -->|No| Q4{"Need cross-parameter<br/>correlations?"}
+    Q4 -->|Yes| Joint["Joint Low-Rank"]
+    Q4 -->|No| Q5{"Need gene-gene<br/>correlations?"}
+    Q5 -->|Yes| LR["Low-Rank"]
+    Q5 -->|No| MF["Mean-Field"]
 ```
 
 **Rules of thumb:**
@@ -285,9 +449,15 @@ graph TD
 3. **Use joint low-rank for unconstrained models** with hierarchical
    priors, where \(\mu\) and \(\phi\) (or \(p\)) are expected to
    correlate.
-4. **Use amortized for VCP models** with many cells, to avoid a
+4. **Upgrade to a normalizing flow guide** when Gaussian-based guides
+   visibly struggle (multimodality, skewness, heavy tails). Use
+   `guide_flow="affine_coupling"` for high-dimensional gene parameters.
+5. **Use joint normalizing flow** when cross-parameter relationships are
+   non-linear or the joint posterior is non-Gaussian (banana-shaped,
+   multimodal).
+6. **Use amortized for VCP models** with many cells, to avoid a
    per-cell variational parameter.
-5. **Use VAE when you also need cell embeddings** for visualization or
+7. **Use VAE when you also need cell embeddings** for visualization or
    clustering.
 
 ---
@@ -295,18 +465,21 @@ graph TD
 ## Combining guide families in one model
 
 SCRIBE's guide families are per-parameter, so a single model can use
-multiple families:
+multiple families simultaneously. Via `scribe.fit()`:
 
-```python
-# In a custom model, different parameters can have different guides:
-# - r_g: low-rank (captures gene correlations)
-# - p: mean-field (scalar, no correlations needed)
-# - p_capture: amortized (cell-specific, scales with cells)
-```
+- `guide_rank` + `joint_params` configure gene-specific parameters with
+  low-rank or joint low-rank guides
+- `guide_flow` + `joint_params` configure gene-specific parameters with
+  normalizing flow or joint normalizing flow guides
+- `amortize_capture` configures cell-specific capture probability with an
+  amortized guide
+- Parameters not covered by `joint_params` or `guide_flow`/`guide_rank`
+  default to mean-field
 
-For the built-in models via `scribe.fit()`, the `guide_rank` and
-`joint_params` arguments configure the gene-specific parameters while
-`amortize_capture` configures cell-specific parameters.
+!!! note "`guide_flow` and `guide_rank` are mutually exclusive"
+    You cannot use both in the same `scribe.fit()` call. Choose one
+    approach for gene-specific parameters: Gaussian-based (low-rank) or
+    flow-based.
 
 ---
 

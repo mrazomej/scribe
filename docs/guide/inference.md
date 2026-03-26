@@ -51,16 +51,52 @@ results = scribe.fit(
 |-----------|---------|-------------|
 | `n_steps` | 50,000 | Maximum optimization steps |
 | `batch_size` | `None` (full batch) | Mini-batch size for stochastic optimization |
+| `optimizer_config` | `None` | Custom optimizer specification (see below) |
 | `stable_update` | `True` | Numerically stable parameter updates |
+| `restore_best` | `False` | Track and restore the best variational parameters during training |
 | `early_stopping` | `None` | Automatic convergence detection (see below) |
 | `seed` | 42 | Random seed for reproducibility |
+
+### Custom optimizer
+
+By default SCRIBE uses Adam. Pass an `optimizer_config` dict to change the
+optimizer or its learning rate:
+
+```python
+results = scribe.fit(
+    adata,
+    model="nbdm",
+    optimizer_config={"name": "clipped_adam", "step_size": 5e-4},
+)
+```
+
+Supported optimizers: `"adam"`, `"clipped_adam"`, `"adagrad"`, `"rmsprop"`,
+`"sgd"`, `"momentum"`.
+
+### Best-params restoration
+
+The `restore_best` flag tracks the lowest smoothed loss during training and
+restores those parameters at the end, regardless of whether early stopping
+is configured. This is especially useful for normalizing flow guides, where
+the ELBO can fluctuate late in training:
+
+```python
+results = scribe.fit(
+    adata,
+    model="nbdm",
+    unconstrained=True,
+    guide_flow="affine_coupling",
+    restore_best=True,
+    n_steps=100_000,
+)
+```
 
 ### Guide families
 
 The variational guide controls the flexibility of the posterior approximation.
 SCRIBE supports several families---mean-field (default), low-rank,
-joint low-rank, amortized, and VAE latent---each offering different
-trade-offs between speed and the ability to capture correlations:
+joint low-rank, normalizing flow, amortized, and VAE latent---each offering
+different trade-offs between speed and the ability to capture correlations:
 
 ```python
 # Low-rank guide for gene correlations
@@ -69,6 +105,12 @@ results = scribe.fit(adata, model="nbdm", guide_rank=8)
 # Joint low-rank across parameter groups
 results = scribe.fit(
     adata, model="nbdm", guide_rank=8, joint_params=["r", "p"],
+)
+
+# Normalizing flow guide for non-Gaussian posteriors
+results = scribe.fit(
+    adata, model="nbdm", unconstrained=True,
+    guide_flow="affine_coupling",
 )
 
 # Amortized capture for VCP models
