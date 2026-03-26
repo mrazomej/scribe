@@ -94,7 +94,9 @@ SCRIBE also provides a packaged visualization CLI:
 
 ```bash
 scribe-visualize outputs/my_run --all
+scribe-visualize outputs/my_run/custom_results.pkl --all
 scribe-visualize outputs/ --recursive --umap --heatmap
+scribe-visualize outputs/ --recursive "*_results.pkl" --all
 ```
 
 For cluster execution of large recursive runs:

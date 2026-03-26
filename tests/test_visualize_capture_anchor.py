@@ -126,6 +126,68 @@ def _make_minimal_viz_cfg(
     )
 
 
+def test_resolve_results_files_accepts_explicit_pickle_path(tmp_path):
+    """Resolver should keep explicit result pickle paths unchanged.
+
+    Parameters
+    ----------
+    tmp_path : pathlib.Path
+        Temporary directory used to construct a synthetic result file.
+    """
+    run_dir = tmp_path / "run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    results_file = run_dir / "custom_results.pkl"
+    results_file.write_bytes(b"")
+
+    resolved = visualize._resolve_results_files(str(results_file))
+
+    assert resolved == [str(results_file.resolve())]
+
+
+def test_resolve_results_files_supports_directory_and_recursive_patterns(tmp_path):
+    """Resolver should support default and custom recursive filename matching.
+
+    Parameters
+    ----------
+    tmp_path : pathlib.Path
+        Temporary directory used to construct synthetic run outputs.
+    """
+    root = tmp_path / "outputs"
+    run_default = root / "a"
+    run_custom = root / "b"
+    run_other = root / "c"
+    run_default.mkdir(parents=True, exist_ok=True)
+    run_custom.mkdir(parents=True, exist_ok=True)
+    run_other.mkdir(parents=True, exist_ok=True)
+
+    (run_default / "scribe_results.pkl").write_bytes(b"")
+    (run_custom / "custom_results.pkl").write_bytes(b"")
+    (run_other / "ignore.txt").write_text("x", encoding="utf-8")
+
+    resolved_non_recursive = visualize._resolve_results_files(str(run_default))
+    resolved_recursive_default = visualize._resolve_results_files(
+        str(root),
+        recursive_pattern="scribe_results.pkl",
+    )
+    resolved_recursive_custom = visualize._resolve_results_files(
+        str(root),
+        recursive_pattern="*_results.pkl",
+    )
+
+    assert resolved_non_recursive == [
+        str((run_default / "scribe_results.pkl").resolve())
+    ]
+    assert resolved_recursive_default == [
+        str((run_default / "scribe_results.pkl").resolve())
+    ]
+    assert resolved_recursive_custom == sorted(
+        [
+            str((run_default / "scribe_results.pkl").resolve()),
+            str((run_custom / "custom_results.pkl").resolve()),
+        ]
+    )
+
+
 def test_has_biology_informed_capture_prior_detects_prior_keys():
     """Detection helper should reflect presence/absence of prior keys."""
     cfg_enabled = OmegaConf.create({"priors": {"eta_capture": [12.2, 1e-5]}})
