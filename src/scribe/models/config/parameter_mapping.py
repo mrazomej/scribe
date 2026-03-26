@@ -3,9 +3,13 @@ Parameter mapping system for SCRIBE model configurations.
 
 This module defines which parameters are active for each parameterization type,
 making the system more maintainable and less error-prone than hardcoded if-statements.
+
+It also provides the canonical mappings between internal (short/math) parameter
+names and user-friendly descriptive names, used by the ``priors`` dict alias
+system and the ``descriptive_names`` option on results objects.
 """
 
-from typing import Dict, Set, List, NamedTuple
+from typing import Any, Dict, Set, List, NamedTuple
 from dataclasses import dataclass
 from .enums import Parameterization
 
@@ -505,3 +509,193 @@ def get_parameterization_summary() -> Dict[str, Dict[str, any]]:
         }
 
     return summary
+
+
+# ==============================================================================
+# Descriptive Name Mapping (internal <-> user-friendly)
+# ==============================================================================
+
+# Maps internal (short/math) parameter names to user-friendly descriptive names.
+# Used by:
+#   - results.get_map(descriptive_names=True)
+#   - results.get_distributions(descriptive_names=True)
+#   - results.get_posterior_samples(descriptive_names=True)
+#
+# Hierarchical hyperprior keys (logit_p_loc, log_phi_scale, etc.) are NOT
+# included -- they pass through unchanged because the _loc/_scale suffixes
+# are correct Normal parameter names in unconstrained space.
+DESCRIPTIVE_NAMES: Dict[str, str] = {
+    # Core NB parameters
+    "r": "dispersion",
+    "p": "prob",
+    "mu": "expression",
+    "phi": "odds",
+    "gate": "zero_inflation",
+    # Capture parameters
+    "p_capture": "capture_prob",
+    "phi_capture": "capture_odds",
+    "eta_capture": "capture_efficiency",
+    # Already descriptive (identity)
+    "bnb_concentration": "bnb_concentration",
+    "mixing_weights": "mixing_weights",
+    "z": "latent_embedding",
+}
+
+# Inverse mapping: descriptive name -> internal name
+_DESCRIPTIVE_TO_INTERNAL: Dict[str, str] = {
+    v: k for k, v in DESCRIPTIVE_NAMES.items()
+}
+
+
+# ==============================================================================
+# Prior Key Aliases (descriptive -> internal)
+# ==============================================================================
+
+# Maps user-friendly prior dict keys to the internal keys expected by the
+# model/builder system. Both the internal key and its descriptive alias are
+# accepted in the ``priors`` dict; the normalizer resolves aliases early.
+#
+# Only core parameter priors and capture-specific keys are aliased.
+# Hierarchical hyperprior override keys (logit_p_loc, log_phi_scale, etc.)
+# are left as-is -- users who touch those already know the transform space.
+PRIOR_KEY_ALIASES: Dict[str, str] = {
+    # Core parameter priors (descriptive -> internal)
+    "prob": "p",
+    "dispersion": "r",
+    "expression": "mu",
+    "odds": "phi",
+    "zero_inflation": "gate",
+    "capture_prob": "p_capture",
+    "capture_odds": "phi_capture",
+    # Capture-specific priors
+    "capture_efficiency": "eta_capture",
+    "capture_scaling": "mu_eta",
+}
+
+# Inverse: internal -> descriptive alias (for documentation / YAML comments)
+_INTERNAL_TO_PRIOR_ALIAS: Dict[str, str] = {
+    v: k for k, v in PRIOR_KEY_ALIASES.items()
+}
+
+
+# ==============================================================================
+# fit() Keyword Argument Rename Mapping
+# ==============================================================================
+
+# Maps old (math-notation) fit() kwarg names to new (descriptive) names.
+# Used by ModelConfig.__setstate__ for pickle migration and as documentation.
+FIT_KWARG_RENAMES: Dict[str, str] = {
+    "mu_prior": "expression_prior",
+    "mu_dataset_prior": "expression_dataset_prior",
+    "mu_eta_prior": "capture_scaling_prior",
+    "mu_mean_anchor": "expression_anchor",
+    "mu_mean_anchor_sigma": "expression_anchor_sigma",
+    "p_prior": "prob_prior",
+    "p_dataset_prior": "prob_dataset_prior",
+    "p_dataset_mode": "prob_dataset_mode",
+    "gate_prior": "zero_inflation_prior",
+    "gate_dataset_prior": "zero_inflation_dataset_prior",
+}
+
+
+# ==============================================================================
+# Utility Functions
+# ==============================================================================
+
+
+def normalize_prior_keys(priors: Dict[str, Any]) -> Dict[str, Any]:
+    """Translate descriptive prior dict keys to their internal equivalents.
+
+    Accepts both internal keys (``"p"``, ``"eta_capture"``) and descriptive
+    aliases (``"prob"``, ``"capture_efficiency"``).  Raises ``ValueError`` if
+    both an alias and its internal target are present (ambiguous).
+
+    Parameters
+    ----------
+    priors : dict
+        Prior override dictionary as passed by the user.
+
+    Returns
+    -------
+    dict
+        Copy of *priors* with all alias keys replaced by internal names.
+
+    Raises
+    ------
+    ValueError
+        If a descriptive alias and its corresponding internal key are both
+        present (e.g. ``{"p": ..., "prob": ...}``).
+    """
+    if not priors:
+        return priors
+
+    result: Dict[str, Any] = {}
+    for key, value in priors.items():
+        internal_key = PRIOR_KEY_ALIASES.get(key)
+        if internal_key is not None:
+            # Key is a descriptive alias -- resolve it
+            if internal_key in priors:
+                raise ValueError(
+                    f"Ambiguous priors: both the descriptive alias "
+                    f"'{key}' and the internal key '{internal_key}' are "
+                    f"present. Use one or the other, not both."
+                )
+            result[internal_key] = value
+        else:
+            result[key] = value
+    return result
+
+
+def rename_dict_keys(
+    d: Dict[str, Any],
+    descriptive: bool = False,
+) -> Dict[str, Any]:
+    """Optionally rename internal parameter keys to descriptive names.
+
+    Handles suffixed keys such as ``r_0`` (component-indexed) and
+    ``r_dataset_0`` (dataset-indexed) by matching the base name before the
+    first ``_`` digit boundary.
+
+    Parameters
+    ----------
+    d : dict
+        Dictionary with internal parameter name keys.
+    descriptive : bool, default False
+        If True, apply the DESCRIPTIVE_NAMES mapping.  If False, return
+        *d* unchanged.
+
+    Returns
+    -------
+    dict
+        A new dictionary with renamed keys (if *descriptive* is True),
+        or the original dictionary unchanged.
+    """
+    if not descriptive:
+        return d
+
+    renamed: Dict[str, Any] = {}
+    for key, value in d.items():
+        new_key = DESCRIPTIVE_NAMES.get(key)
+        if new_key is not None:
+            renamed[new_key] = value
+        else:
+            # Try to match base_name from suffixed keys like "r_0", "gate_1"
+            renamed[_rename_suffixed_key(key)] = value
+    return renamed
+
+
+def _rename_suffixed_key(key: str) -> str:
+    """Rename a suffixed key like ``r_0`` -> ``dispersion_0``.
+
+    Tries progressively longer prefixes so that multi-part internal names
+    like ``p_capture_0`` are handled correctly (``p_capture`` is in the
+    mapping, not ``p``).
+    """
+    parts = key.split("_")
+    # Try longest prefix first (e.g. "p_capture" before "p")
+    for i in range(len(parts) - 1, 0, -1):
+        prefix = "_".join(parts[:i])
+        suffix = "_".join(parts[i:])
+        if prefix in DESCRIPTIVE_NAMES:
+            return f"{DESCRIPTIVE_NAMES[prefix]}_{suffix}"
+    return key
