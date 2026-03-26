@@ -228,18 +228,18 @@ def fit(
     # Model options
     parameterization: str = "canonical",
     unconstrained: bool = False,
-    mu_prior: str = "none",
-    p_prior: str = "none",
-    gate_prior: str = "none",
+    expression_prior: str = "none",
+    prob_prior: str = "none",
+    zero_inflation_prior: str = "none",
     # Multi-dataset hierarchy options
     n_datasets: Optional[int] = None,
     dataset_key: Optional[str] = None,
     dataset_params: Optional[List[str]] = None,
     dataset_mixing: Optional[bool] = None,
-    mu_dataset_prior: str = "none",
-    p_dataset_prior: str = "none",
-    p_dataset_mode: str = "gene_specific",
-    gate_dataset_prior: str = "none",
+    expression_dataset_prior: str = "none",
+    prob_dataset_prior: str = "none",
+    prob_dataset_mode: str = "gene_specific",
+    zero_inflation_dataset_prior: str = "none",
     overdispersion_dataset_prior: str = "none",
     auto_downgrade_single_dataset_hierarchy: bool = True,
     # Horseshoe hyperparameters
@@ -251,10 +251,10 @@ def fit(
     neg_a: float = 1.0,
     neg_tau: float = 1.0,
     # Hierarchical prior for per-dataset mu_eta (capture scaling)
-    mu_eta_prior: str = "none",
+    capture_scaling_prior: str = "none",
     # Data-informed mean anchoring prior
-    mu_mean_anchor: bool = False,
-    mu_mean_anchor_sigma: float = 0.3,
+    expression_anchor: bool = False,
+    expression_anchor_sigma: float = 0.3,
     # Gene-specific overdispersion beyond the NB family
     overdispersion: str = "none",
     overdispersion_prior: str = "horseshoe",
@@ -363,7 +363,7 @@ def fit(
         If True, use Normal+transform instead of constrained distributions.
         This can help with optimization in some cases.
 
-    mu_prior : str, default="none"
+    expression_prior : str, default="none"
         Gene-level hierarchical prior for mu (or r) across mixture
         components.  Per-component means are drawn from a shared
         gene-level population distribution per gene, providing adaptive
@@ -374,7 +374,7 @@ def fit(
         ``n_components >= 2``.  Accepted values: ``"none"``,
         ``"gaussian"``, ``"horseshoe"``, ``"neg"``.
 
-    mu_mean_anchor : bool, default=False
+    expression_anchor : bool, default=False
         Enable data-informed anchoring prior on the biological mean
         ``mu_g``.  When True, per-gene prior centers are computed from
         the observed sample means and average capture probability,
@@ -385,7 +385,7 @@ def fit(
         that ``nu_bar`` can be estimated from library sizes and
         ``M_0``.  Non-VCP models use ``nu_bar=1`` by default.
 
-    mu_mean_anchor_sigma : float, default=0.3
+    expression_anchor_sigma : float, default=0.3
         Log-scale standard deviation for the mean anchoring prior.
         Smaller values (0.1--0.2) give tight anchoring; moderate
         values (0.3--0.5) are recommended; large values (>1) give
@@ -433,7 +433,7 @@ def fit(
         JointLowRankGuide (e.g., ``["mu", "phi"]``). Parameters in this
         list share a single low-rank covariance structure that captures
         cross-parameter correlations. Requires ``guide_rank`` to be set.
-        Typically used with ``p_prior='gaussian'`` where multiple
+        Typically used with ``prob_prior='gaussian'`` where multiple
         parameters become gene-specific.
 
     dense_params : List[str], optional
@@ -623,13 +623,13 @@ def fit(
         Whether to automatically downgrade dataset-level hierarchical flags
         when ``dataset_key`` resolves to a single dataset.
         When enabled and ``n_datasets == 1``:
-        - ``mu_dataset_prior`` is downgraded to ``'none'``.
-        - ``p_dataset_prior`` with ``p_dataset_mode='scalar'`` is downgraded
+        - ``expression_dataset_prior`` is downgraded to ``'none'``.
+        - ``prob_dataset_prior`` with ``prob_dataset_mode='scalar'`` is downgraded
           to ``'none'``.
-        - ``p_dataset_prior`` with ``p_dataset_mode`` in
+        - ``prob_dataset_prior`` with ``prob_dataset_mode`` in
           ``{'gene_specific','two_level'}`` is promoted to
-          ``p_prior`` (gene-level).
-        - ``gate_dataset_prior`` is promoted to ``gate_prior``
+          ``prob_prior`` (gene-level).
+        - ``zero_inflation_dataset_prior`` is promoted to ``zero_inflation_prior``
           (gene-level).
         - ``overdispersion_dataset_prior`` is downgraded to ``'none'``
           because the dataset axis collapses in single-dataset mode.
@@ -881,33 +881,33 @@ def fit(
 
         # Dataset-level mu has no meaningful single-dataset hierarchy, so
         # disable it explicitly.
-        if mu_dataset_prior != "none":
-            mu_dataset_prior = "none"
-            downgrade_messages.append("mu_dataset_prior -> 'none'")
+        if expression_dataset_prior != "none":
+            expression_dataset_prior = "none"
+            downgrade_messages.append("expression_dataset_prior -> 'none'")
 
         # Map dataset-level p modes to their single-dataset equivalents:
         # scalar -> shared p/phi; gene_specific/two_level -> gene-level hierarchy.
-        if p_dataset_prior != "none":
-            if p_dataset_mode == "scalar":
-                p_dataset_prior = "none"
+        if prob_dataset_prior != "none":
+            if prob_dataset_mode == "scalar":
+                prob_dataset_prior = "none"
                 downgrade_messages.append(
-                    "p_dataset_prior='scalar' mode -> 'none'"
+                    "prob_dataset_prior='scalar' mode -> 'none'"
                 )
             else:
                 # gene_specific/two_level → promote to gene-level prior
-                p_prior = p_dataset_prior
-                p_dataset_prior = "none"
+                prob_prior = prob_dataset_prior
+                prob_dataset_prior = "none"
                 downgrade_messages.append(
-                    f"p_dataset_prior -> p_prior='{p_prior}'"
+                    f"prob_dataset_prior -> prob_prior='{prob_prior}'"
                 )
 
         # Dataset-level gate also collapses to the gene-level hierarchy in
         # the single-dataset setting.
-        if gate_dataset_prior != "none":
-            gate_prior = gate_dataset_prior
-            gate_dataset_prior = "none"
+        if zero_inflation_dataset_prior != "none":
+            zero_inflation_prior = zero_inflation_dataset_prior
+            zero_inflation_dataset_prior = "none"
             downgrade_messages.append(
-                f"gate_dataset_prior -> gate_prior='{gate_prior}'"
+                f"zero_inflation_dataset_prior -> zero_inflation_prior='{zero_inflation_prior}'"
             )
         # Dataset-level overdispersion has no meaningful single-dataset
         # hierarchy, so disable it explicitly.
@@ -933,16 +933,16 @@ def fit(
     # Enforce that dataset-level hierarchical options are only used when
     # explicit cell-to-dataset mapping is available for indexing.
     uses_dataset_level_hierarchy = (
-        mu_dataset_prior != "none"
-        or p_dataset_prior != "none"
-        or gate_dataset_prior != "none"
+        expression_dataset_prior != "none"
+        or prob_dataset_prior != "none"
+        or zero_inflation_dataset_prior != "none"
         or overdispersion_dataset_prior != "none"
     )
     if uses_dataset_level_hierarchy and dataset_indices is None:
         raise ValueError(
             "Dataset-level hierarchical priors "
-            "(mu_dataset_prior, p_dataset_prior, "
-            "gate_dataset_prior, overdispersion_dataset_prior) "
+            "(expression_dataset_prior, prob_dataset_prior, "
+            "zero_inflation_dataset_prior, overdispersion_dataset_prior) "
             "require dataset_key so cells can "
             "be mapped to datasets. Provide dataset_key as an adata.obs "
             "column when using dataset-level hierarchical priors."
@@ -982,19 +982,19 @@ def fit(
             # When the annotation filter leaves <=1 class, we must force
             # non-mixture mode and clear any component-only prior settings.
             # This keeps auto-downgrade behavior compatible with enum-style
-            # prior flags (e.g. mu_prior="gaussian"), which otherwise fail
+            # prior flags (e.g. expression_prior="gaussian"), which otherwise fail
             # ModelConfig validation in non-mixture mode.
             downgraded_messages = []
             n_components = None
             effective_mixture_params = None
             if (
-                _normalize_prior_type_name(mu_prior)
+                _normalize_prior_type_name(expression_prior)
                 != HierarchicalPriorType.NONE.value
             ):
-                _mu_prior_old = _normalize_prior_type_name(mu_prior)
-                mu_prior = HierarchicalPriorType.NONE.value
+                _expression_prior_old = _normalize_prior_type_name(expression_prior)
+                expression_prior = HierarchicalPriorType.NONE.value
                 downgraded_messages.append(
-                    f"mu_prior='{_mu_prior_old}' -> 'none'"
+                    f"expression_prior='{_expression_prior_old}' -> 'none'"
                 )
 
             _downgrade_suffix = (
@@ -1086,16 +1086,16 @@ def fit(
             parameterization=parameterization.lower(),
             inference_method=inference_method.lower(),
             unconstrained=unconstrained,
-            mu_prior=mu_prior,
-            p_prior=p_prior,
-            gate_prior=gate_prior,
+            expression_prior=expression_prior,
+            prob_prior=prob_prior,
+            zero_inflation_prior=zero_inflation_prior,
             n_datasets=n_datasets,
             dataset_params=dataset_params,
             dataset_mixing=dataset_mixing,
-            mu_dataset_prior=mu_dataset_prior,
-            p_dataset_prior=p_dataset_prior,
-            p_dataset_mode=p_dataset_mode,
-            gate_dataset_prior=gate_dataset_prior,
+            expression_dataset_prior=expression_dataset_prior,
+            prob_dataset_prior=prob_dataset_prior,
+            prob_dataset_mode=prob_dataset_mode,
+            zero_inflation_dataset_prior=zero_inflation_dataset_prior,
             overdispersion_dataset_prior=overdispersion_dataset_prior,
             horseshoe_tau0=horseshoe_tau0,
             horseshoe_slab_df=horseshoe_slab_df,
@@ -1103,9 +1103,9 @@ def fit(
             neg_u=neg_u,
             neg_a=neg_a,
             neg_tau=neg_tau,
-            mu_eta_prior=mu_eta_prior,
-            mu_mean_anchor=mu_mean_anchor,
-            mu_mean_anchor_sigma=mu_mean_anchor_sigma,
+            capture_scaling_prior=capture_scaling_prior,
+            expression_anchor=expression_anchor,
+            expression_anchor_sigma=expression_anchor_sigma,
             overdispersion=overdispersion,
             overdispersion_prior=overdispersion_prior,
             guide_rank=guide_rank,
@@ -1161,10 +1161,10 @@ def fit(
     # ==========================================================================
     # Step 3c: Compute data-informed mean anchor (if enabled)
     # ==========================================================================
-    # When mu_mean_anchor is True, compute per-gene log-anchor centers
+    # When expression_anchor is True, compute per-gene log-anchor centers
     # from the observed count matrix and store them in the priors dict.
     # The factory reads these to build AnchoredNormalSpec for log_mu_loc.
-    if model_config.mu_mean_anchor:
+    if model_config.expression_anchor:
         from .models.model_utils import compute_mu_anchor
 
         import numpy as _np
