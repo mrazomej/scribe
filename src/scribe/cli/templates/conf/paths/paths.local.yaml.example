@@ -1,0 +1,12 @@
+# Local Paths Override Example
+# ============================
+#
+# Copy this file to:
+#   conf/paths/paths.local.yaml
+#
+# Then customize it for your machine/workstation/cluster.
+# The local file is intended to remain untracked in your project repo.
+
+# Example absolute path for shared storage outputs.
+outputs_dir: /projects/hybrid-modeling/s3/altos-lab-hybrid-modeling/scribe/outputs
+

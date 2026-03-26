@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .dispatch import should_use_split_mode
 from .infer_help import DETAILED_DESCRIPTION, EPILOG
+from .initialize import initialize_conf
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -38,6 +39,17 @@ def _build_parser() -> argparse.ArgumentParser:
         "--config-name",
         default="config",
         help="Top-level Hydra config name (default: config).",
+    )
+    parser.add_argument(
+        "--initialize",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Initialize a starter conf directory. If PATH is omitted, the CLI "
+            "prompts in interactive mode or defaults to ./conf in non-interactive mode."
+        ),
     )
     return parser
 
@@ -106,10 +118,17 @@ def main(argv: list[str] | None = None) -> None:
     argv : list[str] or None, optional
         Optional CLI token override. When ``None``, uses process ``sys.argv``.
     """
-    _ensure_hydra_extra_installed()
-
     parser = _build_parser()
     known_args, forwarded = parser.parse_known_args(argv)
+
+    # Initialize mode is available even without hydra extras because it only
+    # writes starter YAML templates for users to edit.
+    if known_args.initialize is not None:
+        initialize_conf(known_args.initialize)
+        return
+
+    _ensure_hydra_extra_installed()
+
     config_root = Path(known_args.config_path).resolve()
 
     # Decide execution mode by inspecting the selected data config(s).

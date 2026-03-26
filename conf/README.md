@@ -8,6 +8,9 @@ results.
 ## Quick Start
 
 ```bash
+# Initialize starter config files in ./conf (or provide a path)
+scribe-infer --initialize
+
 # Run inference with default settings (NBDM model, SVI inference)
 scribe-infer --config-path ./conf
 
@@ -35,6 +38,7 @@ scribe-infer --config-path ./conf model=nbvcp amortization=capture
 
 > `infer.py` and `infer_split.py` are no longer the recommended interface.
 > Use `scribe-infer` for both standard and split-aware runs.
+> For full CLI usage (including `--initialize`), see `docs/cli_infer.md`.
 
 ## Configuration Structure
 

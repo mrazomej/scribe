@@ -1,0 +1,33 @@
+# Amortized Capture Preset
+# ========================
+#
+# This preset enables amortized inference for capture-related parameters in
+# VCP-family models (`nbvcp`, `zinbvcp`).
+#
+# Usage examples:
+#   scribe-infer --config-path ./conf data=my_data model=nbvcp +amortization=capture
+#   scribe-infer --config-path ./conf data=my_data model=zinbvcp +amortization=capture
+#
+# Interpretation:
+# - A small MLP maps cell-level summary statistics to variational parameters.
+# - This replaces per-cell free parameters with shared network weights.
+
+# Toggle amortization on/off.
+enabled: true
+
+# Hidden layer widths for the capture amortizer network.
+hidden_dims: [64, 32]
+
+# Hidden-layer activation.
+# Common choices: relu, gelu, silu, tanh, leaky_relu
+activation: leaky_relu
+
+# Output transform used to keep alpha/beta positive.
+# - softplus: stable default
+# - exp: more aggressive growth, can be numerically brittle
+output_transform: softplus
+
+# Optional numerical clamps on transformed outputs.
+output_clamp_min: 0.1
+output_clamp_max: 50.0
+

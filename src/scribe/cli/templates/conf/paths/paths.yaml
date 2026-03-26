@@ -1,0 +1,11 @@
+# Default Paths Configuration
+# ===========================
+#
+# This file defines shared output destinations for your project.
+# For machine-specific overrides, use `paths.local.yaml`.
+
+# Root directory where SCRIBE writes run outputs.
+# Relative paths are resolved from the working directory where you launch
+# `scribe-infer`. Absolute paths are also supported.
+outputs_dir: outputs
+

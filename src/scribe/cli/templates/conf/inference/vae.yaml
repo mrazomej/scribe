@@ -1,0 +1,57 @@
+# @package inference
+#
+# VAE Inference Configuration
+# ===========================
+#
+# VAE uses SVI optimization and therefore inherits SVI controls by default.
+# You can still override any inherited SVI fields (n_steps, batch_size, etc.).
+
+defaults:
+  - svi
+
+method: vae
+
+# -----------------------------------------------------------------------------
+# Core architecture
+# -----------------------------------------------------------------------------
+# Latent embedding dimensionality.
+vae_latent_dim: 10
+
+# Encoder hidden layer widths (input -> latent).
+vae_encoder_hidden_dims: [256, 128, 64]
+
+# Decoder hidden layer widths (latent -> reconstruction params).
+vae_decoder_hidden_dims: [64, 128, 256]
+
+# Activation used in encoder/decoder MLP blocks.
+vae_activation: leaky_relu
+
+# Input transform before encoding.
+# Common choices: log1p, none
+vae_input_transform: log1p
+
+# Standardize inputs before model pass.
+vae_standardize: false
+
+# -----------------------------------------------------------------------------
+# Decoder parameter transforms
+# -----------------------------------------------------------------------------
+# Optional per-parameter output transform overrides.
+# Example:
+# vae_decoder_transforms:
+#   r: exp
+vae_decoder_transforms: null
+
+# -----------------------------------------------------------------------------
+# Flow-prior controls
+# -----------------------------------------------------------------------------
+# vae_flow_type:
+# - none
+# - coupling_affine
+# - coupling_spline
+# - maf
+# - iaf
+vae_flow_type: coupling_spline
+vae_flow_num_layers: 4
+vae_flow_hidden_dims: [64, 64]
+

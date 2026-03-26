@@ -21,6 +21,32 @@ pip install 'scribe[hydra]'
 scribe-infer --config-path ./conf data=<dataset_key> [hydra_overrides...]
 ```
 
+## Initialize Starter Configs
+
+Use `--initialize` to scaffold a starter `conf/` tree with documented YAMLs:
+
+```bash
+# Interactive path selection (or defaults to ./conf in non-interactive mode)
+scribe-infer --initialize
+
+# Explicit target
+scribe-infer --initialize ./conf
+scribe-infer --initialize /path/to/conf
+```
+
+The generated tree includes:
+
+- `config.yaml`
+- `data/example.yaml`
+- `inference/{svi,mcmc,vae}.yaml`
+- `amortization/capture.yaml`
+- `dirname_aliases/default.yaml`
+- `paths/{paths.yaml,paths.local.yaml.example}`
+- `README.md`
+
+If managed files already exist, `scribe-infer` prompts before overwriting each
+file.
+
 ### Common Examples
 
 ```bash

@@ -6,6 +6,8 @@ Run SCRIBE inference from Hydra configs with automatic split dispatch.
 The command inspects the selected ``data=<name>`` config in ``<config-path>/data``.
 If that config defines ``split_by``, ``scribe-infer`` launches split orchestration.
 Otherwise, it runs a standard single-run inference.
+
+Use ``--initialize [path]`` to scaffold starter YAML configs for a new project.
 """
 
 EPILOG = """
@@ -29,6 +31,11 @@ Common examples:
   scribe-infer --config-path ./conf data=singer model=zinb
   scribe-infer --config-path ./conf data=bleo_study01 variable_capture=true
   scribe-infer --config-path ./conf data=bleo_study01 split.launcher=submitit_slurm
+
+Initialize starter configs:
+  scribe-infer --initialize
+  scribe-infer --initialize ./conf
+  scribe-infer --initialize /path/to/my_project_conf
 
 For a complete guide, see docs/cli_infer.md.
 """
