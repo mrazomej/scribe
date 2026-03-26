@@ -48,14 +48,15 @@ The primary interface for creating configurations. Provides fluent methods:
 - `.with_parameterization(param)`: Set parameterization type
 - `.with_inference(method)`: Set inference method
 - `.unconstrained()`: Use unconstrained parameterization
-- `.with_hierarchical_mu()`: Set `mu_prior="gaussian"` for gene-level mu (or r)
-  shrinkage across mixture components (requires unconstrained, mixture model).
-  For horseshoe/neg, pass `mu_prior` when constructing ModelConfig directly.
+- `.with_hierarchical_mu()`: Set `expression_prior="gaussian"` for gene-level mu
+  (or r) shrinkage across mixture components (requires unconstrained, mixture
+  model). For horseshoe/neg, pass `expression_prior` when constructing
+  ModelConfig directly.
 - `.with_hierarchical_p()`: Enable gene-specific p/phi hierarchical prior
   (requires unconstrained)
 - `.with_hierarchical_gate()`: Enable gene-specific gate hierarchical prior (ZI
   models only, requires unconstrained)
-- `.with_capture_priors(organism, eta_capture, mu_eta, mu_eta_prior)`:
+- `.with_capture_priors(organism, eta_capture, mu_eta, capture_scaling_prior)`:
   Configure biology-informed capture prior (VCP models)
 - `.as_mixture(n_components, mixture_params)`: Configure as mixture
 - `.with_guide_families(guide_families)`: Set per-parameter guide families
@@ -77,10 +78,11 @@ guide hyperparameters are stored in `param_specs` (list of `ParamSpec`); see
 
 #### Gene-Level Prior Fields
 
-- `p_prior: HierarchicalPriorType` — Gene-level prior for p/phi
-- `gate_prior: HierarchicalPriorType` — Gene-level prior for gate (ZI models)
-- `mu_prior: HierarchicalPriorType` — Gene-level prior for mu (or r) across
-  mixture components (replaces deprecated `hierarchical_mu: bool`)
+- `prob_prior: HierarchicalPriorType` — Gene-level prior for p/phi
+- `zero_inflation_prior: HierarchicalPriorType` — Gene-level prior for gate (ZI
+  models)
+- `expression_prior: HierarchicalPriorType` — Gene-level prior for mu (or r)
+  across mixture components (replaces deprecated `hierarchical_mu: bool`)
 
 #### Multi-Dataset Hierarchical Model
 
@@ -93,20 +95,20 @@ structure:
 - `dataset_mixing: Optional[bool]` — Whether mixture weights are per-dataset.
   `None` enables dataset-specific mixing automatically when `n_datasets >= 2`
   and keeps global mixing otherwise.
-- `mu_dataset_prior: str` — Prior for hierarchical mu/r across datasets:
+- `expression_dataset_prior: str` — Prior for hierarchical mu/r across datasets:
   `"none"`, `"gaussian"`, `"horseshoe"`, or `"neg"` (requires `unconstrained`)
-- `p_dataset_prior: str` — Prior for dataset-specific p: `"none"`,
+- `prob_dataset_prior: str` — Prior for dataset-specific p: `"none"`,
   `"gaussian"`, `"horseshoe"`, or `"neg"`
-- `p_dataset_mode: str` — Structural mode for dataset-level p:
+- `prob_dataset_mode: str` — Structural mode for dataset-level p:
   `"none"`, `"scalar"`, `"gene_specific"`, or `"two_level"`
-- `gate_dataset_prior: str` — Prior for dataset-specific gate: `"none"`,
-  `"gaussian"`, `"horseshoe"`, or `"neg"`.  Unlike `mu_dataset_prior` and
-  `p_dataset_prior`, this does **not** pool gates toward a shared per-gene
-  mean.  Instead, each (dataset, gene) gate is independently shrunk toward
-  zero via a scalar population location `N(-5, 0.01)` (very tight so the
-  likelihood cannot drag it positive) with per-gene adaptive shrinkage from
-  the chosen sparsity prior.  NEG auxiliary variables (psi, zeta) use a
-  Gamma variational posterior that can concentrate at zero
+- `zero_inflation_dataset_prior: str` — Prior for dataset-specific gate:
+  `"none"`, `"gaussian"`, `"horseshoe"`, or `"neg"`.  Unlike
+  `expression_dataset_prior` and `prob_dataset_prior`, this does **not** pool
+  gates toward a shared per-gene mean.  Instead, each (dataset, gene) gate is
+  independently shrunk toward zero via a scalar population location `N(-5,
+  0.01)` (very tight so the likelihood cannot drag it positive) with per-gene
+  adaptive shrinkage from the chosen sparsity prior.  NEG auxiliary variables
+  (psi, zeta) use a Gamma variational posterior that can concentrate at zero
 - `overdispersion_dataset_prior: str` — Prior for dataset-specific BNB
   concentration (`bnb_concentration`, i.e. `kappa_{d,g}`): `"none"`,
   `"gaussian"`, `"horseshoe"`, or `"neg"`. Requires
@@ -115,24 +117,24 @@ structure:
 - `dataset_mixing_enabled` (computed property) — Effective switch used by model
   builders to decide whether `mixing_weights` have shape `(K,)` or `(D, K)`.
 
-Dataset-level prior fields (`mu_dataset_prior`, `p_dataset_prior`,
-`gate_dataset_prior`) are only valid when cells can be mapped to datasets. In
-practice, that means passing `dataset_key` to `scribe.fit(...)` (so
-`n_datasets` is inferred from `adata.obs[dataset_key]`) or otherwise
-configuring explicit multi-dataset mode. Single-dataset fits should use
-`p_prior`, `gate_prior`, and/or `mu_prior` instead.
+Dataset-level prior fields (`expression_dataset_prior`, `prob_dataset_prior`,
+`zero_inflation_dataset_prior`) are only valid when cells can be mapped to
+datasets. In practice, that means passing `dataset_key` to `scribe.fit(...)` (so
+`n_datasets` is inferred from `adata.obs[dataset_key]`) or otherwise configuring
+explicit multi-dataset mode. Single-dataset fits should use `prob_prior`,
+`zero_inflation_prior`, and/or `expression_prior` instead.
 
 When using the public `scribe.fit(...)` API, single-dataset `dataset_key`
 columns can be auto-downgraded via
 `auto_downgrade_single_dataset_hierarchy=True` (default):
 
-- `mu_dataset_prior != "none"` -> `"none"`
-- `p_dataset_prior != "none"` with `p_dataset_mode='scalar'` ->
-  `p_dataset_prior='none'`
-- `p_dataset_prior != "none"` with `p_dataset_mode in {'gene_specific',
-  'two_level'}` -> `p_prior` set from `p_dataset_prior`, `p_dataset_prior='none'`
-- `gate_dataset_prior != "none"` -> `gate_prior` set from
-  `gate_dataset_prior`, `gate_dataset_prior='none'`
+- `expression_dataset_prior != "none"` -> `"none"`
+- `prob_dataset_prior != "none"` with `prob_dataset_mode='scalar'` ->
+  `prob_dataset_prior='none'`
+- `prob_dataset_prior != "none"` with `prob_dataset_mode in {'gene_specific',
+  'two_level'}` -> `prob_prior` set from `prob_dataset_prior`, `prob_dataset_prior='none'`
+- `zero_inflation_dataset_prior != "none"` -> `zero_inflation_prior` set from
+  `zero_inflation_dataset_prior`, `zero_inflation_dataset_prior='none'`
 - `overdispersion_dataset_prior != "none"` -> `overdispersion_dataset_prior='none'`
 
 `scribe.fit(...)` emits a `UserWarning` whenever one or more of these
@@ -158,8 +160,8 @@ biological knowledge about total cellular mRNA content. The biology-informed
 path activates automatically when any of `priors.organism`,
 `priors.eta_capture`, or `priors.mu_eta` is set.
 
-| `priors.eta_capture` | `mu_eta_prior` | Behavior |
-|----------------------|----------------|----------|
+| `priors.eta_capture` | `capture_scaling_prior` | Behavior |
+|----------------------|-------------------------|----------|
 | not set | `"none"` (or omitted) | Standard flat prior (no eta framework) |
 | set (directly or via `priors.organism`) | `"none"` | Fixed M_0, no shared parameter |
 | set | `"gaussian"`, `"horseshoe"`, or `"neg"` | Learn **per-dataset** `mu_eta` via hierarchical NCP prior, shrunk toward a shared population mean `mu_eta_pop`. `priors.mu_eta` controls `[center, sigma_mu]`. |
@@ -169,14 +171,14 @@ path activates automatically when any of `priors.organism`,
 - `priors.eta_capture: (float, float)` — `(log_M0, sigma_M)` for the per-cell
   TruncatedNormal+ prior on `eta_c`. Overrides organism defaults.
 - `priors.mu_eta: (float, float)` — `(center, sigma_mu)` for the population-
-  level `mu_eta_pop` Normal prior. When not set but `mu_eta_prior != "none"`,
-  defaults to `(eta_capture[0], 1.0)`.
-- `mu_eta_prior: str` — Hierarchical prior type for per-dataset `mu_eta`:
-  `"none"`, `"gaussian"`, `"horseshoe"`, or `"neg"` (uses
-  `HierarchicalPriorType`). When not `"none"`, per-dataset `mu_eta` values
-  are learned via a non-centered parameterization, shrunk toward a shared
-  `mu_eta_pop` by the chosen shrinkage prior. For single-dataset runs, a
-  scalar `mu_eta` fallback is used automatically.
+  level `mu_eta_pop` Normal prior. When not set but `capture_scaling_prior !=
+  "none"`, defaults to `(eta_capture[0], 1.0)`.
+- `capture_scaling_prior: str` — Hierarchical prior type for per-dataset
+  `mu_eta`: `"none"`, `"gaussian"`, `"horseshoe"`, or `"neg"` (uses
+  `HierarchicalPriorType`). When not `"none"`, per-dataset `mu_eta` values are
+  learned via a non-centered parameterization, shrunk toward a shared
+  `mu_eta_pop` by the chosen shrinkage prior. For single-dataset runs, a scalar
+  `mu_eta` fallback is used automatically.
 
 The biology-informed prior samples a latent variable
 `eta_c ~ TruncatedNormal+(log M_0 - log L_c, sigma_M^2, low=0)` and derives
@@ -200,8 +202,8 @@ analogous to DESeq2's dispersion shrinkage.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `mu_mean_anchor` | `bool` | `False` | Enable data-informed anchoring prior on `mu_g` |
-| `mu_mean_anchor_sigma` | `float` | `0.3` | Log-scale sigma (tightness: 0.1=tight, 0.3=moderate, 1.0=weak) |
+| `expression_anchor` | `bool` | `False` | Enable data-informed anchoring prior on `mu_g` |
+| `expression_anchor_sigma` | `float` | `0.3` | Log-scale sigma (tightness: 0.1=tight, 0.3=moderate, 1.0=weak) |
 
 When enabled, per-gene prior centers are computed at fit time from the data:
 `log(mu_g) ~ N(log(u_bar_g / nu_bar), sigma^2)`. Requires `unconstrained=True`.
@@ -224,8 +226,8 @@ config = (ModelConfigBuilder()
 # Via fit()
 results = scribe.fit(
     adata, model="nbvcp", parameterization="mean_odds",
-    mu_mean_anchor=True, mu_mean_anchor_sigma=0.3,
-    p_prior="gaussian",
+    expression_anchor=True, expression_anchor_sigma=0.3,
+    prob_prior="gaussian",
     priors={"organism": "human"},
 )
 ```
@@ -239,18 +241,19 @@ Sparsity-inducing priors are configured via enum fields. Each parameter has a
 prior type: `"none"`, `"gaussian"`, `"horseshoe"`, or `"neg"`.
 
 **Enum fields:**
-- `p_prior`, `gate_prior`, `mu_prior` — Gene-level priors for p, gate (ZI
-  models), and mu across mixture components. All accept the same
-  `HierarchicalPriorType` values: `"none"`, `"gaussian"`, `"horseshoe"`, `"neg"`.
-  `mu_prior` requires a mixture model (`n_components >= 2`) and
+- `prob_prior`, `zero_inflation_prior`, `expression_prior` — Gene-level priors
+  for p, gate (ZI models), and mu across mixture components. All accept the same
+  `HierarchicalPriorType` values: `"none"`, `"gaussian"`, `"horseshoe"`,
+  `"neg"`. `expression_prior` requires a mixture model (`n_components >= 2`) and
   `unconstrained=True`; each gene has its own hyperprior because expression
-  magnitudes vary by orders of magnitude. `mu_prior` and `mu_dataset_prior` are
-  mutually exclusive (component-level vs dataset-level shrinkage).
-- `mu_dataset_prior`, `p_dataset_prior`, `gate_dataset_prior`,
-  `overdispersion_dataset_prior` — Dataset-level priors for multi-dataset
-  hierarchical models
-- `p_dataset_mode` — Structural mode for dataset-level p:
-  `"none"`, `"scalar"`, `"gene_specific"`, or `"two_level"`
+  magnitudes vary by orders of magnitude. `expression_prior` and
+  `expression_dataset_prior` are mutually exclusive (component-level vs
+  dataset-level shrinkage).
+- `expression_dataset_prior`, `prob_dataset_prior`,
+  `zero_inflation_dataset_prior`, `overdispersion_dataset_prior` — Dataset-level
+  priors for multi-dataset hierarchical models
+- `prob_dataset_mode` — Structural mode for dataset-level p: `"none"`,
+  `"scalar"`, `"gene_specific"`, or `"two_level"`
 
 **NEG prior** (Normal-Exponential-Gamma): A Gamma-Gamma hierarchy friendlier to
 SVI than the horseshoe. Hyperparameters (defaults all 1.0):
@@ -265,7 +268,7 @@ SVI than the horseshoe. Hyperparameters (defaults all 1.0):
 
 Boolean flags like `horseshoe_p` and `hierarchical_mu` are deprecated; use the
 enum-based fields instead. The deprecated `hierarchical_mu` property is derived
-from `mu_prior` (returns `mu_prior != "none"`).
+from `expression_prior` (returns `expression_prior != "none"`).
 
 ### PriorConfig / UnconstrainedPriorConfig
 
@@ -486,23 +489,23 @@ config = (ModelConfigBuilder()
     .with_parameterization("mean_prob")
     .unconstrained()
     .as_mixture(3)
-    .with_hierarchical_mu()  # sets mu_prior="gaussian"
+    .with_hierarchical_mu()  # sets expression_prior="gaussian"
     .build())
 
-# Or set mu_prior directly for gaussian/horseshoe/neg:
+# Or set expression_prior directly for gaussian/horseshoe/neg:
 config = ModelConfig(
     base_model="nbdm",
     unconstrained=True,
     parameterization="mean_prob",
     n_components=3,
-    mu_prior="gaussian",  # or "horseshoe", "neg"
+    expression_prior="gaussian",  # or "horseshoe", "neg"
 )
 
 # NEG prior for SVI-friendly sparsity (alternative to horseshoe)
 config = ModelConfig(
     base_model="nbdm",
     unconstrained=True,
-    p_prior="neg",
+    prob_prior="neg",
     parameterization="mean_odds",
     neg_u=1.0,  # shape param (u=1 => NEG; u=0.5 => horseshoe-like)
     neg_a=1.0,  # outer Gamma shape

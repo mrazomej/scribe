@@ -347,7 +347,7 @@ When using annotation-guided mixtures via `annotation_key` with inferred
 `n_components`, SCRIBE now auto-downgrades to non-mixture mode when
 `annotation_min_cells` filtering leaves zero or one surviving annotation class.
 This avoids invalid single-component mixture construction and also clears
-component-only prior flags (for example `mu_prior`) that require
+component-only prior flags (for example `expression_prior`) that require
 `n_components >= 2`. If `n_components` is set explicitly, strict mixture
 behavior is preserved.
 
@@ -431,27 +431,27 @@ results = scribe.fit(
     priors={"organism": "human"},  # Sets M_0 = 200,000 for human cells
 )
 
-# Manual eta_capture override
+# Manual capture_efficiency override (alias for eta_capture)
 results = scribe.fit(
     adata,
     model="zinbvcp",
-    priors={"eta_capture": (11.5, 0.3)},  # Custom log_M0 and sigma_M
+    priors={"capture_efficiency": (11.5, 0.3)},  # Custom log_M0 and sigma_M
 )
 
-# Hierarchical per-dataset mu_eta (learns total-mRNA scaling across datasets)
+# Hierarchical per-dataset capture scaling (learns total-mRNA scaling)
 results = scribe.fit(
     adata,
     model="nbvcp",
-    mu_eta_prior="gaussian",
+    capture_scaling_prior="gaussian",
     priors={"organism": "mouse"},
 )
 
-# Hierarchical mu_eta with tight sigma_mu control
+# Hierarchical capture scaling with tight sigma_mu control
 results = scribe.fit(
     adata,
     model="nbvcp",
-    mu_eta_prior="gaussian",
-    priors={"organism": "human", "mu_eta": (12.2, 0.3)},
+    capture_scaling_prior="gaussian",
+    priors={"organism": "human", "capture_scaling": (12.2, 0.3)},
 )
 ```
 
@@ -463,7 +463,7 @@ from scribe.models.config import ModelConfigBuilder
 config = (ModelConfigBuilder()
     .for_model("nbvcp")
     .with_parameterization("mean_odds")
-    .with_capture_priors(organism="human", mu_eta_prior="gaussian")
+    .with_capture_priors(organism="human", capture_scaling_prior="gaussian")
     .build())
 ```
 
@@ -650,6 +650,60 @@ such as `filter_cells`. Pass `preprocessing=False` to load directly from
 - **Scanpy**: Single-cell analysis ecosystem integration
 - **Matplotlib/Seaborn**: Visualization (via viz module)
 - **scikit-learn**: Dimensionality reduction utilities
+
+## Parameter Name Migration Reference
+
+This section documents the renaming from mathematical/paper notation to
+descriptive names across the three API layers.
+
+### `scribe.fit()` Keyword Arguments
+
+| Old name               | New name                       |
+|------------------------|--------------------------------|
+| `mu_prior`             | `expression_prior`             |
+| `mu_dataset_prior`     | `expression_dataset_prior`     |
+| `mu_eta_prior`         | `capture_scaling_prior`        |
+| `mu_mean_anchor`       | `expression_anchor`            |
+| `mu_mean_anchor_sigma` | `expression_anchor_sigma`      |
+| `p_prior`              | `prob_prior`                   |
+| `p_dataset_prior`      | `prob_dataset_prior`           |
+| `p_dataset_mode`       | `prob_dataset_mode`            |
+| `gate_prior`           | `zero_inflation_prior`         |
+| `gate_dataset_prior`   | `zero_inflation_dataset_prior` |
+
+### `priors` Dict Keys (both accepted, descriptive is preferred)
+
+| Internal key    | Descriptive alias      |
+|-----------------|------------------------|
+| `p`             | `prob`                 |
+| `r`             | `dispersion`           |
+| `mu`            | `expression`           |
+| `phi`           | `odds`                 |
+| `gate`          | `zero_inflation`       |
+| `p_capture`     | `capture_prob`         |
+| `phi_capture`   | `capture_odds`         |
+| `eta_capture`   | `capture_efficiency`   |
+| `mu_eta`        | `capture_scaling`      |
+
+### Results Keys (`get_map(descriptive_names=True)`)
+
+| Internal key        | Descriptive name       |
+|---------------------|------------------------|
+| `r`                 | `dispersion`           |
+| `p`                 | `prob`                 |
+| `mu`                | `expression`           |
+| `phi`               | `odds`                 |
+| `gate`              | `zero_inflation`       |
+| `p_capture`         | `capture_prob`         |
+| `phi_capture`       | `capture_odds`         |
+| `eta_capture`       | `capture_efficiency`   |
+| `mixing_weights`    | `mixing_weights`       |
+| `bnb_concentration` | `bnb_concentration`    |
+| `z`                 | `latent_embedding`     |
+
+> **Note:** Hierarchical hyperprior keys (`logit_p_loc`, `log_phi_scale`, etc.)
+> and Hydra YAML `priors:` hyperprior overrides are unchanged. Users who
+> interact with these already understand the unconstrained transform space.
 
 ## Contributing
 

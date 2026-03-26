@@ -332,7 +332,7 @@ horseshoe config from ModelConfig.
   gene-level hierarchical mu/r to horseshoe. Replaces `log_mu_scale`
   (SoftplusNormalSpec) with horseshoe trio, and `HierarchicalPositiveNormalSpec`
   with `HorseshoeHierarchicalPositiveNormalSpec`. Dispatched when
-  `model_config.mu_prior == HORSESHOE`.
+  `model_config.expression_prior == HORSESHOE`.
 
 **NEG:** Gene-level: `_neg_p`, `_neg_gate`, `_neg_mu`. Dataset-level:
 `_neg_dataset_mu`, `_neg_dataset_p`, `_neg_dataset_gate`. Helper
@@ -342,11 +342,11 @@ extracts NEG config from ModelConfig.
 - `_neg_mu(param_specs, param_key, u, a, tau)`: Upgrades gene-level
   hierarchical mu/r to NEG. Replaces `log_mu_scale` with zeta/psi pair, and
   `HierarchicalPositiveNormalSpec` with `NEGHierarchicalPositiveNormalSpec`.
-  Dispatched when `model_config.mu_prior == NEG`.
+  Dispatched when `model_config.expression_prior == NEG`.
 
 Both `_horseshoe_mu` and `_neg_mu` are applied only when
-`model_config.mu_prior != _NONE` (i.e., when gene-level hierarchical mu is
-enabled).
+`model_config.expression_prior != _NONE` (i.e., when gene-level hierarchical mu
+is enabled).
 
 ## Multi-Dataset Mixture Hierarchy
 
@@ -361,7 +361,7 @@ near-zero scale). The factory reads `model_config.shared_component_indices`,
 populated at runtime by `fit()` when `annotation_key` and `dataset_key` are both
 provided, and threads this through to the datasetify helpers.
 
-### Dataset-Level Gate (`gate_dataset_prior`)
+### Dataset-Level Gate (`zero_inflation_dataset_prior`)
 
 Unlike mu/p, `_datasetify_gate()` produces **independent** per-dataset gates
 pushed toward zero, not a pooling hierarchy. The population location

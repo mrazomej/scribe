@@ -106,7 +106,7 @@ heterogeneity.
 
 ### Data-Informed Mean Anchoring
 
-When `ModelConfig.mu_mean_anchor=True`, the factory computes per-gene prior
+When `ModelConfig.expression_anchor=True`, the factory computes per-gene prior
 centers from observed sample means and replaces the flat `log_mu_loc` (or
 `log_mu_dataset_loc`) hyperprior with an `AnchoredNormalSpec`. This resolves
 the mu-phi likelihood ridge that makes the mean_odds and mean_prob

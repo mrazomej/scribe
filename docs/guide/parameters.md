@@ -272,8 +272,8 @@ the multiplicative degeneracy between expression and capture:
 
 | `scribe.fit()` parameter | Symbol | Default | Role |
 |---------------------------|--------|---------|------|
-| `mu_mean_anchor` | --- | `False` | Enable mean anchoring |
-| `mu_mean_anchor_sigma` | \(\sigma_\mu\) | `0.3` | Width of the anchor. Smaller = tighter regularization toward data mean |
+| `expression_anchor` | --- | `False` | Enable mean anchoring |
+| `expression_anchor_sigma` | \(\sigma_\mu\) | `0.3` | Width of the anchor. Smaller = tighter regularization toward data mean |
 
 See [Theory: Anchoring Priors](../theory/anchoring-priors.md).
 
@@ -290,7 +290,7 @@ content:
 | `scribe.fit()` parameter | Symbol | Default | Role |
 |---------------------------|--------|---------|------|
 | `priors={"organism": "human"}` | \(M_0\) | --- | Sets organism-specific expected total mRNA (e.g., 200,000 for human/mouse) |
-| `priors={"eta_capture": (log_M0, sigma_M)}` | \(\log M_0, \sigma_M\) | --- | Direct specification of capture prior parameters |
+| `priors={"capture_efficiency": (log_M0, sigma_M)}` | \(\log M_0, \sigma_M\) | --- | Direct specification of capture prior parameters |
 
 See [Theory: Anchoring Priors](../theory/anchoring-priors.md).
 
@@ -303,13 +303,13 @@ targets a specific parameter at a specific level:
 
 | `scribe.fit()` argument | Target parameter | Level | Accepted values | Requires |
 |--------------------------|-----------------|-------|-----------------|----------|
-| `p_prior` | \(p_g\) (gene-specific) | Gene | `"gaussian"`, `"horseshoe"`, `"neg"` | --- |
-| `mu_prior` | \(\mu_g^{(k)}\) (across components) | Gene x component | `"gaussian"`, `"horseshoe"`, `"neg"` | `n_components >= 2`, `unconstrained=True` |
-| `gate_prior` | \(\pi_g\) | Gene | `"gaussian"`, `"horseshoe"`, `"neg"` | ZI model |
+| `prob_prior` | \(p_g\) (gene-specific) | Gene | `"gaussian"`, `"horseshoe"`, `"neg"` | --- |
+| `expression_prior` | \(\mu_g^{(k)}\) (across components) | Gene x component | `"gaussian"`, `"horseshoe"`, `"neg"` | `n_components >= 2`, `unconstrained=True` |
+| `zero_inflation_prior` | \(\pi_g\) | Gene | `"gaussian"`, `"horseshoe"`, `"neg"` | ZI model |
 | `overdispersion_prior` | \(\kappa_g\) (via \(\omega_g\)) | Gene | `"horseshoe"`, `"neg"` | `overdispersion="bnb"` |
-| `mu_dataset_prior` | \(\mu_g^{(d)}\) | Gene x dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key` |
-| `p_dataset_prior` | \(p^{(d)}\) or \(p_g^{(d)}\) | Dataset (or gene x dataset) | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key` |
-| `gate_dataset_prior` | \(\pi_g^{(d)}\) | Gene x dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key`, ZI model |
+| `expression_dataset_prior` | \(\mu_g^{(d)}\) | Gene x dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key` |
+| `prob_dataset_prior` | \(p^{(d)}\) or \(p_g^{(d)}\) | Dataset (or gene x dataset) | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key` |
+| `zero_inflation_dataset_prior` | \(\pi_g^{(d)}\) | Gene x dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key`, ZI model |
 | `overdispersion_dataset_prior` | \(\kappa_g^{(d)}\) | Gene x dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `overdispersion="bnb"`, `dataset_key` |
 
 ---
@@ -321,13 +321,13 @@ parameters gain a **dataset axis**. The naming convention follows:
 
 | Single-dataset | Multi-dataset | Hierarchy argument |
 |----------------|---------------|--------------------|
-| \(\mu_g\) | \(\mu_g^{(d)}\) | `mu_dataset_prior` |
-| \(p\) or \(p_g\) | \(p^{(d)}\) or \(p_g^{(d)}\) | `p_dataset_prior` + `p_dataset_mode` |
-| \(\pi_g\) | \(\pi_g^{(d)}\) | `gate_dataset_prior` |
+| \(\mu_g\) | \(\mu_g^{(d)}\) | `expression_dataset_prior` |
+| \(p\) or \(p_g\) | \(p^{(d)}\) or \(p_g^{(d)}\) | `prob_dataset_prior` + `prob_dataset_mode` |
+| \(\pi_g\) | \(\pi_g^{(d)}\) | `zero_inflation_dataset_prior` |
 | \(\kappa_g\) | \(\kappa_g^{(d)}\) | `overdispersion_dataset_prior` |
-| \(\log M_0\) | \(\log M_0^{(d)}\) | `mu_eta_prior` (captures dataset-level total mRNA scaling) |
+| \(\log M_0\) | \(\log M_0^{(d)}\) | `capture_scaling_prior` (captures dataset-level total mRNA scaling) |
 
-The `p_dataset_mode` argument controls the granularity of the
+The `prob_dataset_mode` argument controls the granularity of the
 dataset-specific \(p\):
 
 | Mode | Meaning |

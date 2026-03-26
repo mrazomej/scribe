@@ -148,7 +148,7 @@ Fields: `anchor_centers` (tuple of per-gene log-space centers, output of
 `compute_mu_anchor`), `anchor_sigma` (log-scale std-dev, default 0.3).
 
 The spec is created by the factory's `_apply_mean_anchor` helper when
-`ModelConfig.mu_mean_anchor=True` and anchor centers have been computed. It
+`ModelConfig.expression_anchor=True` and anchor centers have been computed. It
 replaces the flat `NormalWithTransformSpec` for `log_mu_loc` (or
 `log_mu_dataset_loc`). The guide side works identically to a standard
 `NormalWithTransformSpec`—only the prior uses per-gene centers.
@@ -500,8 +500,8 @@ config = build_config_from_preset(
     parameterization="mean_odds",
     unconstrained=True,
     n_datasets=2,
-    mu_dataset_prior="gaussian",
-    p_dataset_prior="none",
+    expression_dataset_prior="gaussian",
+    prob_dataset_prior="none",
     n_components=3,
     mixture_params=["phi", "mu"],
     guide_rank=3,
