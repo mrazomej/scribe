@@ -37,8 +37,8 @@ class TestParameterCollector:
             unconstrained=False,
             parameterization="standard",
             r_prior=(1.0, 1.0),
-            p_prior=(2.0, 0.5),
-            gate_prior=(1.5, 0.8),
+            prob_prior=(2.0, 0.5),
+            zero_inflation_prior=(1.5, 0.8),
         )
         expected = {
             "r_param_prior": (1.0, 1.0),
@@ -52,9 +52,9 @@ class TestParameterCollector:
         result = ParameterCollector.collect_and_map_priors(
             unconstrained=False,
             parameterization="linked",
-            p_prior=(1.0, 1.0),
-            mu_prior=(0.0, 1.0),
-            gate_prior=(1.5, 0.8),
+            prob_prior=(1.0, 1.0),
+            expression_prior=(0.0, 1.0),
+            zero_inflation_prior=(1.5, 0.8),
         )
         expected = {
             "p_param_prior": (1.0, 1.0),
@@ -69,7 +69,7 @@ class TestParameterCollector:
             unconstrained=False,
             parameterization="odds_ratio",
             phi_prior=(1.0, 1.0),
-            mu_prior=(0.0, 1.0),
+            expression_prior=(0.0, 1.0),
             phi_capture_prior=(0.5, 0.5),
         )
         expected = {
@@ -85,8 +85,8 @@ class TestParameterCollector:
             unconstrained=True,
             parameterization="standard",
             r_prior=(0.0, 1.0),
-            p_prior=(0.0, 1.0),
-            gate_prior=(0.0, 1.0),
+            prob_prior=(0.0, 1.0),
+            zero_inflation_prior=(0.0, 1.0),
         )
         expected = {
             "r_unconstrained_prior": (0.0, 1.0),
@@ -100,9 +100,9 @@ class TestParameterCollector:
         result = ParameterCollector.collect_and_map_priors(
             unconstrained=True,
             parameterization="linked",
-            p_prior=(0.0, 1.0),
-            mu_prior=(0.0, 1.0),
-            gate_prior=(0.0, 1.0),
+            prob_prior=(0.0, 1.0),
+            expression_prior=(0.0, 1.0),
+            zero_inflation_prior=(0.0, 1.0),
         )
         expected = {
             "p_unconstrained_prior": (0.0, 1.0),
@@ -117,7 +117,7 @@ class TestParameterCollector:
             unconstrained=True,
             parameterization="odds_ratio",
             phi_prior=(0.0, 1.0),
-            mu_prior=(0.0, 1.0),
+            expression_prior=(0.0, 1.0),
             phi_capture_prior=(0.0, 1.0),
         )
         expected = {
@@ -133,8 +133,8 @@ class TestParameterCollector:
             unconstrained=False,
             parameterization="standard",
             r_prior=(1.0, 1.0),
-            p_prior=None,  # Should be filtered out
-            gate_prior=(1.5, 0.8),
+            prob_prior=None,  # Should be filtered out
+            zero_inflation_prior=(1.5, 0.8),
         )
         expected = {
             "r_param_prior": (1.0, 1.0),
@@ -148,8 +148,8 @@ class TestParameterCollector:
             unconstrained=False,
             parameterization="standard",
             r_prior=None,
-            p_prior=None,
-            gate_prior=None,
+            prob_prior=None,
+            zero_inflation_prior=None,
         )
         assert result == {}
 
@@ -234,12 +234,12 @@ class TestParameterCollector:
         assert result == expected
 
     def test_parameterization_specific_priors_linked(self):
-        """Test that linked parameterization only includes mu_prior."""
+        """Test that linked parameterization only includes expression_prior."""
         result = ParameterCollector.collect_and_map_priors(
             unconstrained=True,
             parameterization="linked",
-            p_prior=(0.0, 1.0),
-            mu_prior=(0.0, 1.0),
+            prob_prior=(0.0, 1.0),
+            expression_prior=(0.0, 1.0),
             phi_prior=(0.0, 1.0),  # Should not be included for linked
         )
         expected = {
@@ -254,7 +254,7 @@ class TestParameterCollector:
             unconstrained=True,
             parameterization="odds_ratio",
             phi_prior=(0.0, 1.0),
-            mu_prior=(0.0, 1.0),
+            expression_prior=(0.0, 1.0),
             phi_capture_prior=(0.0, 1.0),
         )
         expected = {
@@ -269,9 +269,9 @@ class TestParameterCollector:
         result = ParameterCollector.collect_and_map_priors(
             unconstrained=True,
             parameterization="standard",
-            p_prior=(0.0, 1.0),
+            prob_prior=(0.0, 1.0),
             r_prior=(0.0, 1.0),
-            mu_prior=(0.0, 1.0),  # Should not be included for standard
+            expression_prior=(0.0, 1.0),  # Should not be included for standard
             phi_prior=(0.0, 1.0),  # Should not be included for standard
         )
         expected = {

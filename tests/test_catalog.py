@@ -115,10 +115,10 @@ def test_parse_override_dirname_supports_leading_bare_boolean_tokens():
     # Use __new__ to bypass filesystem scanning in ExperimentCatalog.__init__.
     catalog = ExperimentCatalog.__new__(ExperimentCatalog)
     parsed = catalog._parse_override_dirname(
-        "mu_dataset_prior=gaussian,guide_rank=256,mixture_params=phi,mu,gate"
+        "expression_dataset_prior=gaussian,guide_rank=256,mixture_params=phi,mu,gate"
     )
 
-    assert parsed["mu_dataset_prior"] == "gaussian"
+    assert parsed["expression_dataset_prior"] == "gaussian"
     assert parsed["guide_rank"] == 256
     assert parsed["mixture_params"] == "phi,mu,gate"
 

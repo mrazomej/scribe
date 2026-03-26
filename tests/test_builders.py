@@ -1750,7 +1750,7 @@ class TestJointLowRankIntegration:
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            p_prior="gaussian",
+            prob_prior="gaussian",
             guide_rank=5,
             joint_params=["mu", "phi"],
         )
@@ -1772,7 +1772,7 @@ class TestJointLowRankIntegration:
                 model="nbdm",
                 parameterization="mean_odds",
                 unconstrained=True,
-                p_prior="gaussian",
+                prob_prior="gaussian",
                 joint_params=["mu", "phi"],
             )
 
@@ -1786,7 +1786,7 @@ class TestJointLowRankIntegration:
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            p_prior="gaussian",
+            prob_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi"],
         )
@@ -1832,7 +1832,7 @@ class TestJointLowRankIntegration:
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            p_prior="gaussian",
+            prob_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi"],
         )
@@ -1877,7 +1877,7 @@ class TestJointLowRankIntegration:
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            p_prior="gaussian",
+            prob_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi"],
         )
@@ -1933,10 +1933,10 @@ class TestJointLowRankIntegration:
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            p_prior="gaussian",
+            prob_prior="gaussian",
             n_datasets=n_datasets,
-            mu_dataset_prior="gaussian",
-            p_dataset_prior="none",
+            expression_dataset_prior="gaussian",
+            prob_dataset_prior="none",
             n_components=n_components,
             mixture_params=["phi", "mu"],
             guide_rank=3,
@@ -1993,7 +1993,7 @@ class TestJointLowRankIntegration:
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            p_prior="gaussian",
+            prob_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi"],
         )
@@ -2056,8 +2056,8 @@ class TestJointLowRankIntegration:
             model="zinbvcp",
             parameterization="mean_odds",
             unconstrained=True,
-            p_prior="gaussian",
-            gate_prior="gaussian",
+            prob_prior="gaussian",
+            zero_inflation_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi", "gate"],
             priors={"eta_capture": (11.51, 0.01)},
@@ -2097,8 +2097,8 @@ class TestJointLowRankIntegration:
             model="zinbvcp",
             parameterization="mean_odds",
             unconstrained=True,
-            p_prior="gaussian",
-            gate_prior="gaussian",
+            prob_prior="gaussian",
+            zero_inflation_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi", "gate"],
             priors={"eta_capture": (11.51, 0.01)},
@@ -2152,8 +2152,8 @@ class TestJointLowRankIntegration:
             model="zinbvcp",
             parameterization="mean_odds",
             unconstrained=True,
-            p_prior="gaussian",
-            gate_prior="horseshoe",
+            prob_prior="gaussian",
+            zero_inflation_prior="horseshoe",
             guide_rank=3,
             joint_params=["mu", "phi", "gate"],
             priors={"eta_capture": (11.51, 0.01)},
@@ -2207,9 +2207,9 @@ class TestJointLowRankIntegration:
             model="zinbvcp",
             parameterization="mean_odds",
             unconstrained=True,
-            p_prior="gaussian",
-            mu_prior="gaussian",
-            gate_prior="horseshoe",
+            prob_prior="gaussian",
+            expression_prior="gaussian",
+            zero_inflation_prior="horseshoe",
             guide_rank=3,
             n_components=3,
             mixture_params=["phi", "mu", "gate"],
@@ -2243,7 +2243,7 @@ class TestJointLowRankIntegration:
             model="nbdm",
             parameterization="mean_prob",
             unconstrained=True,
-            p_prior="gaussian",
+            prob_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "p"],
         )
@@ -2280,7 +2280,7 @@ class TestJointLowRankIntegration:
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            p_prior="gaussian",
+            prob_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi"],
         )
@@ -2356,7 +2356,7 @@ class TestJointLowRankIntegration:
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            p_prior="gaussian",
+            prob_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi"],
             n_components=n_components,
@@ -2448,7 +2448,7 @@ class TestJointLowRankIntegration:
         key = random.PRNGKey(0)
         counts = random.poisson(key, lam=5.0, shape=(n_cells, n_genes))
 
-        # p_prior='none' makes phi scalar; mixture_params includes phi
+        # prob_prior='none' makes phi scalar; mixture_params includes phi
         config = build_config_from_preset(
             model="nbdm",
             parameterization="mean_odds",
@@ -2666,32 +2666,32 @@ class TestPosteriorContractExtraction:
             is_mixture=False,
             is_zero_inflated=False,
             uses_variable_capture=False,
-            mu_prior="none",
-            p_prior="none",
-            gate_prior="none",
-            mu_dataset_prior="none",
-            p_dataset_prior="none",
-            p_dataset_mode="gene_specific",
-            gate_dataset_prior="none",
+            expression_prior="none",
+            prob_prior="none",
+            zero_inflation_prior="none",
+            expression_dataset_prior="none",
+            prob_dataset_prior="none",
+            prob_dataset_mode="gene_specific",
+            zero_inflation_dataset_prior="none",
             uses_biology_informed_capture=False,
-            mu_eta_prior="none",
+            capture_scaling_prior="none",
             joint_params=None,
         )
         defaults.update(overrides)
         ns = SimpleNamespace(**defaults)
         # Derive deprecated attrs for backward compat with get_posterior_distributions
-        ns.hierarchical_p = ns.p_prior != "none"
-        ns.horseshoe_p = ns.p_prior == "horseshoe"
-        ns.hierarchical_gate = ns.gate_prior != "none"
-        ns.horseshoe_gate = ns.gate_prior == "horseshoe"
-        ns.hierarchical_dataset_mu = ns.mu_dataset_prior != "none"
-        ns.horseshoe_dataset_mu = ns.mu_dataset_prior == "horseshoe"
+        ns.hierarchical_p = ns.prob_prior != "none"
+        ns.horseshoe_p = ns.prob_prior == "horseshoe"
+        ns.hierarchical_gate = ns.zero_inflation_prior != "none"
+        ns.horseshoe_gate = ns.zero_inflation_prior == "horseshoe"
+        ns.hierarchical_dataset_mu = ns.expression_dataset_prior != "none"
+        ns.horseshoe_dataset_mu = ns.expression_dataset_prior == "horseshoe"
         ns.hierarchical_dataset_p = (
-            "none" if ns.p_dataset_prior == "none" else ns.p_dataset_mode
+            "none" if ns.prob_dataset_prior == "none" else ns.prob_dataset_mode
         )
-        ns.horseshoe_dataset_p = ns.p_dataset_prior == "horseshoe"
-        ns.hierarchical_dataset_gate = ns.gate_dataset_prior != "none"
-        ns.horseshoe_dataset_gate = ns.gate_dataset_prior == "horseshoe"
+        ns.horseshoe_dataset_p = ns.prob_dataset_prior == "horseshoe"
+        ns.hierarchical_dataset_gate = ns.zero_inflation_dataset_prior != "none"
+        ns.horseshoe_dataset_gate = ns.zero_inflation_dataset_prior == "horseshoe"
         return ns
 
     @staticmethod
@@ -2786,7 +2786,7 @@ class TestPosteriorContractExtraction:
                 _make_config.__func__(
                     parameterization=ParameterizationEnum.MEAN_ODDS,
                     unconstrained=True,
-                    p_prior="horseshoe",
+                    prob_prior="horseshoe",
                 ),
                 {
                     "mu_loc": jnp.zeros((4,)),
@@ -2832,9 +2832,9 @@ class TestPosteriorContractExtraction:
                 _make_config.__func__(
                     parameterization=ParameterizationEnum.MEAN_ODDS,
                     unconstrained=True,
-                    mu_dataset_prior="gaussian",
-                    p_dataset_prior="gaussian",
-                    p_dataset_mode="gene_specific",
+                    expression_dataset_prior="gaussian",
+                    prob_dataset_prior="gaussian",
+                    prob_dataset_mode="gene_specific",
                     joint_params=["mu", "phi"],
                 ),
                 {
@@ -2887,7 +2887,7 @@ class TestPosteriorContractExtraction:
                     parameterization=ParameterizationEnum.MEAN_ODDS,
                     unconstrained=True,
                     is_zero_inflated=True,
-                    gate_dataset_prior="horseshoe",
+                    zero_inflation_dataset_prior="horseshoe",
                     joint_params=["gate"],
                 ),
                 {
@@ -3006,7 +3006,7 @@ class TestPosteriorContractExtraction:
                     parameterization=ParameterizationEnum.MEAN_ODDS,
                     unconstrained=True,
                     is_mixture=True,
-                    mu_prior="gaussian",
+                    expression_prior="gaussian",
                 ),
                 {
                     "phi_loc": jnp.array(0.0),
@@ -3049,7 +3049,7 @@ class TestPosteriorContractExtraction:
                 _make_config.__func__(
                     parameterization=ParameterizationEnum.MEAN_ODDS,
                     unconstrained=True,
-                    p_prior="gaussian",
+                    prob_prior="gaussian",
                 ),
                 {
                     # phi uses low-rank (W + raw_diag), no phi_scale
@@ -3133,32 +3133,32 @@ class TestPosteriorPositiveTransform:
             is_mixture=False,
             is_zero_inflated=False,
             uses_variable_capture=False,
-            mu_prior="none",
-            p_prior="none",
-            gate_prior="none",
-            mu_dataset_prior="none",
-            p_dataset_prior="none",
-            p_dataset_mode="gene_specific",
-            gate_dataset_prior="none",
+            expression_prior="none",
+            prob_prior="none",
+            zero_inflation_prior="none",
+            expression_dataset_prior="none",
+            prob_dataset_prior="none",
+            prob_dataset_mode="gene_specific",
+            zero_inflation_dataset_prior="none",
             uses_biology_informed_capture=False,
-            mu_eta_prior="none",
+            capture_scaling_prior="none",
             joint_params=None,
             positive_transform="softplus",
         )
         defaults.update(overrides)
         ns = SimpleNamespace(**defaults)
-        ns.hierarchical_p = ns.p_prior != "none"
-        ns.horseshoe_p = ns.p_prior == "horseshoe"
-        ns.hierarchical_gate = ns.gate_prior != "none"
-        ns.horseshoe_gate = ns.gate_prior == "horseshoe"
-        ns.hierarchical_dataset_mu = ns.mu_dataset_prior != "none"
-        ns.horseshoe_dataset_mu = ns.mu_dataset_prior == "horseshoe"
+        ns.hierarchical_p = ns.prob_prior != "none"
+        ns.horseshoe_p = ns.prob_prior == "horseshoe"
+        ns.hierarchical_gate = ns.zero_inflation_prior != "none"
+        ns.horseshoe_gate = ns.zero_inflation_prior == "horseshoe"
+        ns.hierarchical_dataset_mu = ns.expression_dataset_prior != "none"
+        ns.horseshoe_dataset_mu = ns.expression_dataset_prior == "horseshoe"
         ns.hierarchical_dataset_p = (
-            "none" if ns.p_dataset_prior == "none" else ns.p_dataset_mode
+            "none" if ns.prob_dataset_prior == "none" else ns.prob_dataset_mode
         )
-        ns.horseshoe_dataset_p = ns.p_dataset_prior == "horseshoe"
-        ns.hierarchical_dataset_gate = ns.gate_dataset_prior != "none"
-        ns.horseshoe_dataset_gate = ns.gate_dataset_prior == "horseshoe"
+        ns.horseshoe_dataset_p = ns.prob_dataset_prior == "horseshoe"
+        ns.hierarchical_dataset_gate = ns.zero_inflation_dataset_prior != "none"
+        ns.horseshoe_dataset_gate = ns.zero_inflation_dataset_prior == "horseshoe"
         return ns
 
     def test_softplus_transform_on_phi_and_mu(self):
@@ -3476,7 +3476,7 @@ class TestStructuredJointGuide:
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            p_prior="gaussian",
+            prob_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi"],
             dense_params=["mu", "phi"],
@@ -3504,7 +3504,7 @@ class TestStructuredJointGuide:
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            p_prior="gaussian",
+            prob_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi"],
             dense_params=["mu"],
@@ -3543,7 +3543,7 @@ class TestStructuredJointGuide:
             model="nbdm",
             parameterization="canonical",
             unconstrained=True,
-            p_prior="gaussian",
+            prob_prior="gaussian",
             guide_rank=3,
             joint_params=["r", "p"],
             dense_params=["r"],
@@ -3575,7 +3575,7 @@ class TestStructuredJointGuide:
             model="nbdm",
             parameterization="mean_prob",
             unconstrained=True,
-            p_prior="gaussian",
+            prob_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "p"],
             dense_params=["mu"],
@@ -3607,7 +3607,7 @@ class TestStructuredJointGuide:
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            p_prior="gaussian",
+            prob_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi"],
             dense_params=["phi"],
@@ -3645,7 +3645,7 @@ class TestStructuredJointGuide:
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            p_prior="gaussian",
+            prob_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi"],
             dense_params=["mu"],
@@ -3683,8 +3683,8 @@ class TestStructuredJointGuide:
             model="zinb",
             parameterization="mean_odds",
             unconstrained=True,
-            p_prior="gaussian",
-            gate_prior="gaussian",
+            prob_prior="gaussian",
+            zero_inflation_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi", "gate"],
             dense_params=["mu"],
@@ -3723,8 +3723,8 @@ class TestStructuredJointGuide:
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            p_prior="gaussian",
-            mu_dataset_prior="gaussian",
+            prob_prior="gaussian",
+            expression_dataset_prior="gaussian",
             n_datasets=2,
             guide_rank=3,
             joint_params=["mu", "phi"],
@@ -3761,7 +3761,7 @@ class TestStructuredJointGuide:
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            p_prior="gaussian",
+            prob_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi"],
             dense_params=["mu"],
@@ -3819,7 +3819,7 @@ class TestStructuredJointGuide:
             model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            p_prior="gaussian",
+            prob_prior="gaussian",
             guide_rank=3,
             joint_params=["mu", "phi"],
             dense_params=["mu", "phi"],

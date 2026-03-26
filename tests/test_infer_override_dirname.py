@@ -14,13 +14,13 @@ def test_compact_override_dirname_emits_bare_true_and_omits_false():
         non-boolean key-value entries.
     """
     compact = _compact_override_dirname(
-        "mu_dataset_prior=gaussian,gate_dataset_prior=none,"
+        "expression_dataset_prior=gaussian,zero_inflation_dataset_prior=none,"
         "parameterization=mean_odds"
     )
 
     assert (
         compact
-        == "mu_dataset_prior=gaussian,parameterization=mean_odds"
+        == "expression_dataset_prior=gaussian,parameterization=mean_odds"
     )
 
 
@@ -56,13 +56,13 @@ def test_compact_override_dirname_normalizes_bracket_lists_and_ordering():
         parser compatibility with comma-delimited value entries.
     """
     compact = _compact_override_dirname(
-        "guide_rank=256,mu_dataset_prior=gaussian,"
+        "guide_rank=256,expression_dataset_prior=gaussian,"
         "mixture_params=[phi, mu, gate]"
     )
 
     assert (
         compact
-        == "guide_rank=256,mu_dataset_prior=gaussian,mixture_params=phi,mu,gate"
+        == "guide_rank=256,expression_dataset_prior=gaussian,mixture_params=phi,mu,gate"
     )
 
 
@@ -76,10 +76,10 @@ def test_compact_override_dirname_applies_key_aliases():
         existing compact formatting rules.
     """
     compact = _compact_override_dirname(
-        "mixture_params=[phi, mu, gate],mu_dataset_prior=gaussian",
+        "mixture_params=[phi, mu, gate],expression_dataset_prior=gaussian",
         aliases={
             "mixture_params": "mixpar",
-            "mu_dataset_prior": "mdp",
+            "expression_dataset_prior": "mdp",
         },
     )
 

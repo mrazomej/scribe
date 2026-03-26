@@ -829,7 +829,7 @@ class TestFlowGeneSubsettingOriginalParams:
 class TestHierarchicalFlowSkip:
     """Verify that flow-guided params with hierarchical priors don't crash.
 
-    When ``p_prior=gaussian`` and ``p`` is flow-guided, Pass 2
+    When ``prob_prior=gaussian`` and ``p`` is flow-guided, Pass 2
     (_apply_gene_level_hierarchy) must still build the hyperparameter
     posteriors (logit_p_loc, logit_p_scale) but skip the gene-level
     ``p`` posterior, deferring it to Pass 10.
@@ -852,7 +852,7 @@ class TestHierarchicalFlowSkip:
             base_model="nbdm",
             parameterization="canonical",
             unconstrained=True,
-            p_prior="gaussian",
+            prob_prior="gaussian",
             guide_families=GuideFamilyConfig(r=guide, p=guide),
         )
 
@@ -895,7 +895,7 @@ class TestHierarchicalFlowSkip:
             base_model="nbdm",
             parameterization="canonical",
             unconstrained=True,
-            mu_prior="gaussian",
+            expression_prior="gaussian",
             n_components=2,
             guide_families=GuideFamilyConfig(r=guide),
         )

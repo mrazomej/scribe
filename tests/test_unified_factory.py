@@ -1529,13 +1529,13 @@ class TestPositiveTransformFactory:
 
     The factory reads positive_transform from ModelConfig and passes the
     corresponding numpyro transform (SoftplusTransform or ExpTransform)
-    into hierarchical parameter specs (e.g. phi in mean_odds with p_prior).
+    into hierarchical parameter specs (e.g. phi in mean_odds with prob_prior).
     """
 
     def test_positive_transform_softplus_default(self):
         """Default positive_transform='softplus' produces SoftplusTransform specs.
 
-        When using hierarchical prior (p_prior='gaussian') with mean_odds
+        When using hierarchical prior (prob_prior='gaussian') with mean_odds
         parameterization, the phi spec should use SoftplusTransform for
         numerical stability.
         """
@@ -1548,7 +1548,7 @@ class TestPositiveTransformFactory:
             base_model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            p_prior="gaussian",
+            prob_prior="gaussian",
         )
         _, _, param_specs = create_model(config, validate=False)
         # Locate the phi spec (HierarchicalPositiveNormalSpec) from the triplet
@@ -1570,7 +1570,7 @@ class TestPositiveTransformFactory:
             base_model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            p_prior="gaussian",
+            prob_prior="gaussian",
             positive_transform="exp",
         )
         _, _, param_specs = create_model(config, validate=False)
@@ -1623,7 +1623,7 @@ class TestPositiveTransformFactory:
 
 
 class TestMeanAnchor:
-    """Tests for the mu_mean_anchor data-informed prior."""
+    """Tests for the expression_anchor data-informed prior."""
 
     def test_compute_mu_anchor_basic(self):
         """Test compute_mu_anchor returns correct shape and reasonable values."""
@@ -1689,92 +1689,92 @@ class TestMeanAnchor:
         expected = np.log(1e-3)
         np.testing.assert_allclose(log_anchors, expected)
 
-    def test_config_mu_mean_anchor_requires_unconstrained(self):
-        """Test that mu_mean_anchor=True requires unconstrained=True."""
+    def test_config_expression_anchor_requires_unconstrained(self):
+        """Test that expression_anchor=True requires unconstrained=True."""
         from scribe.models.config import ModelConfig
 
-        with pytest.raises(ValueError, match="mu_mean_anchor.*unconstrained"):
+        with pytest.raises(ValueError, match="expression_anchor.*unconstrained"):
             ModelConfig(
                 base_model="nbdm",
-                mu_mean_anchor=True,
+                expression_anchor=True,
                 unconstrained=False,
             )
 
-    def test_config_mu_mean_anchor_vcp_requires_eta_capture(self):
-        """VCP + mu_mean_anchor without eta_capture must raise."""
+    def test_config_expression_anchor_vcp_requires_eta_capture(self):
+        """VCP + expression_anchor without eta_capture must raise."""
         from scribe.models.config import ModelConfig
 
         with pytest.raises(ValueError, match="VCP.*eta_capture.*organism"):
             ModelConfig(
                 base_model="nbvcp",
-                mu_mean_anchor=True,
+                expression_anchor=True,
                 unconstrained=True,
             )
 
-    def test_config_mu_mean_anchor_vcp_with_eta_capture(self):
-        """VCP + mu_mean_anchor + eta_capture should succeed."""
+    def test_config_expression_anchor_vcp_with_eta_capture(self):
+        """VCP + expression_anchor + eta_capture should succeed."""
         from scribe.models.config import ModelConfig
         from scribe.models.config.groups import PriorOverrides
 
         priors = PriorOverrides(eta_capture=(12.59, 0.01))
         config = ModelConfig(
             base_model="nbvcp",
-            mu_mean_anchor=True,
+            expression_anchor=True,
             unconstrained=True,
             priors=priors,
         )
-        assert config.mu_mean_anchor is True
+        assert config.expression_anchor is True
         assert config.uses_variable_capture is True
 
-    def test_config_mu_mean_anchor_vcp_with_organism(self):
-        """VCP + mu_mean_anchor + organism shortcut should succeed."""
+    def test_config_expression_anchor_vcp_with_organism(self):
+        """VCP + expression_anchor + organism shortcut should succeed."""
         from scribe.models.config import ModelConfig
         from scribe.models.config.groups import PriorOverrides
 
         priors = PriorOverrides(organism="human")
         config = ModelConfig(
             base_model="nbvcp",
-            mu_mean_anchor=True,
+            expression_anchor=True,
             unconstrained=True,
             priors=priors,
         )
-        assert config.mu_mean_anchor is True
+        assert config.expression_anchor is True
 
-    def test_config_mu_mean_anchor_nonvcp_no_eta_capture_ok(self):
-        """Non-VCP + mu_mean_anchor without eta_capture is allowed."""
+    def test_config_expression_anchor_nonvcp_no_eta_capture_ok(self):
+        """Non-VCP + expression_anchor without eta_capture is allowed."""
         from scribe.models.config import ModelConfig
 
         config = ModelConfig(
             base_model="nbdm",
-            mu_mean_anchor=True,
+            expression_anchor=True,
             unconstrained=True,
         )
-        assert config.mu_mean_anchor is True
+        assert config.expression_anchor is True
         assert not config.uses_variable_capture
 
-    def test_config_mu_mean_anchor_with_unconstrained(self):
-        """Test mu_mean_anchor=True works with unconstrained=True."""
+    def test_config_expression_anchor_with_unconstrained(self):
+        """Test expression_anchor=True works with unconstrained=True."""
         from scribe.models.config import ModelConfig
 
         config = ModelConfig(
             base_model="nbdm",
-            mu_mean_anchor=True,
+            expression_anchor=True,
             unconstrained=True,
         )
-        assert config.mu_mean_anchor is True
-        assert config.mu_mean_anchor_sigma == 0.3
+        assert config.expression_anchor is True
+        assert config.expression_anchor_sigma == 0.3
 
-    def test_config_mu_mean_anchor_custom_sigma(self):
-        """Test mu_mean_anchor_sigma can be customized."""
+    def test_config_expression_anchor_custom_sigma(self):
+        """Test expression_anchor_sigma can be customized."""
         from scribe.models.config import ModelConfig
 
         config = ModelConfig(
             base_model="nbdm",
-            mu_mean_anchor=True,
-            mu_mean_anchor_sigma=0.5,
+            expression_anchor=True,
+            expression_anchor_sigma=0.5,
             unconstrained=True,
         )
-        assert config.mu_mean_anchor_sigma == 0.5
+        assert config.expression_anchor_sigma == 0.5
 
     def test_builder_with_mean_anchor(self):
         """Test ModelConfigBuilder.with_mean_anchor() fluent API."""
@@ -1785,8 +1785,8 @@ class TestMeanAnchor:
             .with_mean_anchor(sigma=0.2)
             .build()
         )
-        assert config.mu_mean_anchor is True
-        assert config.mu_mean_anchor_sigma == 0.2
+        assert config.expression_anchor is True
+        assert config.expression_anchor_sigma == 0.2
         assert config.unconstrained is True
 
     def test_factory_with_anchor_replaces_hyper_loc(self):
@@ -1806,9 +1806,9 @@ class TestMeanAnchor:
             base_model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            mu_mean_anchor=True,
-            mu_mean_anchor_sigma=0.3,
-            mu_prior="gaussian",
+            expression_anchor=True,
+            expression_anchor_sigma=0.3,
+            expression_prior="gaussian",
             n_components=2,
             priors=priors,
         )
@@ -1837,8 +1837,8 @@ class TestMeanAnchor:
             base_model="nbdm",
             parameterization="mean_odds",
             unconstrained=True,
-            mu_mean_anchor=False,
-            mu_prior="gaussian",
+            expression_anchor=False,
+            expression_prior="gaussian",
             n_components=2,
         )
 
@@ -1854,7 +1854,7 @@ class TestMeanAnchor:
         assert isinstance(spec, NormalWithTransformSpec)
 
     def test_backward_compat_pickle_defaults(self):
-        """Test old pickles without mu_mean_anchor get correct defaults."""
+        """Test old pickles without expression_anchor get correct defaults."""
         from scribe.models.config import ModelConfig
 
         state = {
@@ -1863,5 +1863,5 @@ class TestMeanAnchor:
         }
         config = ModelConfig.__new__(ModelConfig)
         config.__setstate__(state)
-        assert config.mu_mean_anchor is False
-        assert config.mu_mean_anchor_sigma == 0.3
+        assert config.expression_anchor is False
+        assert config.expression_anchor_sigma == 0.3

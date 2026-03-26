@@ -1,7 +1,7 @@
 """Tests for biology-informed capture probability prior.
 
 Tests organism prior resolution, BiologyInformedCaptureSpec creation,
-ModelConfig validation, mu_eta_prior, TruncatedNormal enforcement,
+ModelConfig validation, capture_scaling_prior, TruncatedNormal enforcement,
 and model dry-run with the biology-informed capture prior.
 
 The capture prior is configured entirely through the ``priors`` dict:
@@ -130,16 +130,16 @@ class TestModelConfigCapturePrior:
         # Explicit eta_capture wins
         assert extra["eta_capture"] == (10.0, 0.2)
 
-    def test_mu_eta_prior_with_organism(self):
-        """mu_eta_prior='gaussian' + organism resolves mu_eta defaults."""
+    def test_capture_scaling_prior_with_organism(self):
+        """capture_scaling_prior='gaussian' + organism resolves mu_eta defaults."""
         config = (
             ModelConfigBuilder()
             .for_model("nbvcp")
             .with_parameterization("mean_odds")
-            .with_capture_priors(organism="human", mu_eta_prior="gaussian")
+            .with_capture_priors(organism="human", capture_scaling_prior="gaussian")
             .build()
         )
-        assert config.mu_eta_prior.value == "gaussian"
+        assert config.capture_scaling_prior.value == "gaussian"
         extra = getattr(config.priors, "__pydantic_extra__", {})
         mu_eta = extra.get("mu_eta")
         assert mu_eta is not None
@@ -147,7 +147,7 @@ class TestModelConfigCapturePrior:
         assert mu_eta[0] == pytest.approx(math.log(200_000))
         assert mu_eta[1] == pytest.approx(1.0)
 
-    def test_mu_eta_prior_explicit_mu_eta(self):
+    def test_capture_scaling_prior_explicit_mu_eta(self):
         """Explicit priors.mu_eta overrides defaults."""
         config = (
             ModelConfigBuilder()
@@ -156,21 +156,21 @@ class TestModelConfigCapturePrior:
             .with_capture_priors(
                 organism="human",
                 mu_eta=(11.5, 0.5),
-                mu_eta_prior="gaussian",
+                capture_scaling_prior="gaussian",
             )
             .build()
         )
         extra = getattr(config.priors, "__pydantic_extra__", {})
         assert extra["mu_eta"] == (11.5, 0.5)
 
-    def test_mu_eta_prior_requires_vcp(self):
-        """mu_eta_prior with non-VCP model should raise."""
+    def test_capture_scaling_prior_requires_vcp(self):
+        """capture_scaling_prior with non-VCP model should raise."""
         with pytest.raises(ValueError, match="VCP"):
             (
                 ModelConfigBuilder()
                 .for_model("nbdm")
                 .with_capture_priors(
-                    organism="human", mu_eta_prior="gaussian"
+                    organism="human", capture_scaling_prior="gaussian"
                 )
                 .build()
             )
@@ -186,13 +186,13 @@ class TestModelConfigCapturePrior:
             )
 
     def test_sigma_mu_default_anchored(self):
-        """When mu_eta_prior + anchor, sigma_mu defaults to 1.0."""
+        """When capture_scaling_prior + anchor, sigma_mu defaults to 1.0."""
         config = (
             ModelConfigBuilder()
             .for_model("nbvcp")
             .with_parameterization("mean_odds")
             .with_capture_priors(
-                eta_capture=(11.5, 0.5), mu_eta_prior="gaussian"
+                eta_capture=(11.5, 0.5), capture_scaling_prior="gaussian"
             )
             .build()
         )
@@ -260,7 +260,7 @@ class TestBiologyInformedCaptureSpec:
         assert spec.use_phi_capture is False
 
     def test_data_driven_spec(self):
-        """Data-driven spec with learned mu_eta (mu_eta_prior='gaussian')."""
+        """Data-driven spec with learned mu_eta (capture_scaling_prior='gaussian')."""
         spec = BiologyInformedCaptureSpec(
             name="phi_capture",
             shape_dims=("n_cells",),
@@ -329,13 +329,13 @@ class TestBuildCaptureSpec:
         assert spec.use_phi_capture is True
         assert spec.log_M0 == pytest.approx(math.log(200_000))
 
-    def test_mu_eta_prior_returns_data_driven(self):
-        """mu_eta_prior='gaussian' + organism should produce data_driven spec."""
+    def test_capture_scaling_prior_returns_data_driven(self):
+        """capture_scaling_prior='gaussian' + organism should produce data_driven spec."""
         config = (
             ModelConfigBuilder()
             .for_model("nbvcp")
             .with_parameterization("mean_odds")
-            .with_capture_priors(organism="mouse", mu_eta_prior="gaussian")
+            .with_capture_priors(organism="mouse", capture_scaling_prior="gaussian")
             .build()
         )
         from scribe.models.parameterizations import PARAMETERIZATIONS
@@ -359,7 +359,7 @@ class TestBuildCaptureSpec:
             .with_capture_priors(
                 organism="human",
                 mu_eta=(math.log(200_000), 0.5),
-                mu_eta_prior="gaussian",
+                capture_scaling_prior="gaussian",
             )
             .build()
         )
@@ -429,8 +429,8 @@ class TestModelDryRun:
         assert bio_specs[0].use_phi_capture is False
         assert bio_specs[0].log_M0 == pytest.approx(math.log(60_000))
 
-    def test_nbvcp_mu_eta_prior(self):
-        """NBVCP with mu_eta_prior='gaussian' should create data_driven spec."""
+    def test_nbvcp_capture_scaling_prior(self):
+        """NBVCP with capture_scaling_prior='gaussian' should create data_driven spec."""
         from scribe.models.presets.factory import create_model
 
         config = (
@@ -438,7 +438,7 @@ class TestModelDryRun:
             .for_model("nbvcp")
             .with_parameterization("mean_odds")
             .unconstrained()
-            .with_capture_priors(organism="human", mu_eta_prior="gaussian")
+            .with_capture_priors(organism="human", capture_scaling_prior="gaussian")
             .build()
         )
 
@@ -451,7 +451,7 @@ class TestModelDryRun:
         assert len(bio_specs) == 1
         assert bio_specs[0].data_driven is True
 
-    def test_mu_eta_prior_with_explicit_eta_and_mu(self):
+    def test_capture_scaling_prior_with_explicit_eta_and_mu(self):
         """Explicit eta_capture + mu_eta should propagate to spec."""
         from scribe.models.presets.factory import create_model
 
@@ -463,7 +463,7 @@ class TestModelDryRun:
             .with_capture_priors(
                 eta_capture=(11.5, 0.3),
                 mu_eta=(11.5, 0.5),
-                mu_eta_prior="gaussian",
+                capture_scaling_prior="gaussian",
             )
             .build()
         )
@@ -901,12 +901,12 @@ class TestGuideMuEtaHierarchy:
 class TestHierarchicalMuEtaPosterior:
     """Test _build_biology_informed_capture_posterior with hierarchical params."""
 
-    def _make_config(self, mu_eta_prior="gaussian"):
+    def _make_config(self, capture_scaling_prior="gaussian"):
         return (
             ModelConfigBuilder()
             .for_model("nbvcp")
             .with_parameterization("mean_odds")
-            .with_capture_priors(organism="human", mu_eta_prior=mu_eta_prior)
+            .with_capture_priors(organism="human", capture_scaling_prior=capture_scaling_prior)
             .build()
         )
 
@@ -1071,22 +1071,22 @@ class TestSharedCaptureScalingRemoved:
             )
 
     def test_pickle_compat_migrates_shared_capture(self):
-        """Old pickles with shared_capture_scaling=True migrate to mu_eta_prior."""
+        """Old pickles with shared_capture_scaling=True migrate to capture_scaling_prior."""
         import pickle
 
         config = ModelConfig(
             base_model="nbvcp",
             parameterization="mean_odds",
-            mu_eta_prior="none",
+            capture_scaling_prior="none",
         )
         state = config.__getstate__()
         state["__dict__"]["shared_capture_scaling"] = True
-        state["__dict__"].pop("mu_eta_prior", None)
+        state["__dict__"].pop("capture_scaling_prior", None)
         restored = pickle.loads(pickle.dumps(config))
         restored.__setstate__(state)
         # After __setstate__ the field is a raw string (not yet re-validated);
         # it migrates to "gaussian" which is the enum's value.
-        mu_eta_val = restored.__dict__.get("mu_eta_prior", None)
+        mu_eta_val = restored.__dict__.get("capture_scaling_prior", None)
         if hasattr(mu_eta_val, "value"):
             assert mu_eta_val.value == "gaussian"
         else:
