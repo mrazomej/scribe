@@ -460,7 +460,7 @@ def plot_p_capture_scaling(
             ax_comp.legend(fontsize=8)
         panel_idx += 1
 
-    # Dataset panel: use dataset key coding prepared in visualize.py.
+    # Dataset panel: use dataset key coding prepared in packaged viz pipeline.
     if (
         is_multi_dataset
         and dataset_codes is not None

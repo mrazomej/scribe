@@ -1,4 +1,4 @@
-"""Tests for capture-anchor wiring in ``visualize.py``.
+"""Tests for capture-anchor wiring in ``scribe.viz.pipeline``.
 
 These tests focus on config detection and branch gating so they remain
 lightweight and deterministic without running full plotting pipelines.
@@ -14,12 +14,12 @@ from jax import random
 from numpyro.infer import SVI, Trace_ELBO
 from numpyro.optim import Adam
 
-import visualize
+from scribe.viz import pipeline as visualize
 from scribe.inference.preset_builder import build_config_from_preset
 from scribe.models import get_model_and_guide
 from scribe.svi.results import ScribeSVIResults
-from viz_utils.capture_anchor import plot_p_capture_scaling
-from viz_utils.mean_calibration import _compute_per_dataset_means
+from scribe.viz.capture_anchor import plot_p_capture_scaling
+from scribe.viz.mean_calibration import _compute_per_dataset_means
 
 
 class _DummyResults:
@@ -583,7 +583,7 @@ def test_plot_p_capture_scaling_joint_gate_results_no_gate_loc_error(
         return np.tile(np.array([[0.6, 0.4]], dtype=float), (counts.shape[0], 1))
 
     monkeypatch.setattr(
-        "viz_utils.capture_anchor._get_cell_assignment_probabilities_for_plot",
+        "scribe.viz.capture_anchor._get_cell_assignment_probabilities_for_plot",
         _fake_component_probs,
     )
 

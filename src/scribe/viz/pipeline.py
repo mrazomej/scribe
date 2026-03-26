@@ -1,5 +1,5 @@
 """
-visualize.py
+scribe.viz.pipeline
 
 Visualize SCRIBE inference results from a model output directory.
 
@@ -10,22 +10,22 @@ loaded from the stored .hydra/config.yaml file in the output directory.
 
 Typical usage:
     # Basic usage - generates all default plots
-    $ python visualize.py outputs/5050mix/svi/variable_capture=true
+    $ scribe-visualize outputs/5050mix/svi/variable_capture=true
 
     # Disable specific plots
-    $ python visualize.py outputs/myrun --no-ecdf
+    $ scribe-visualize outputs/myrun --no-ecdf
 
     # Enable optional plots
-    $ python visualize.py outputs/myrun --ppc --umap --heatmap
+    $ scribe-visualize outputs/myrun --ppc --umap --heatmap
 
     # Generate all plots
-    $ python visualize.py outputs/myrun --all
+    $ scribe-visualize outputs/myrun --all
 
     # Custom PPC settings (5x5 grid with 2000 samples)
-    $ python visualize.py outputs/myrun --ppc --ppc-rows 5 --ppc-cols 5 --ppc-samples 2000
+    $ scribe-visualize outputs/myrun --ppc --ppc-rows 5 --ppc-cols 5 --ppc-samples 2000
 
     # Recursively process all model directories under a root
-    $ python visualize.py outputs/ --recursive --all
+    $ scribe-visualize outputs/ --recursive --all
 """
 
 import argparse
@@ -38,22 +38,18 @@ import warnings
 from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
-from viz_utils import (
-    plot_loss,
-    plot_ecdf,
-    plot_ppc,
-    plot_bio_ppc,
-    plot_umap,
-    plot_correlation_heatmap,
-    plot_mixture_ppc,
-    plot_mixture_composition,
-    plot_annotation_ppc,
-    plot_capture_anchor,
-    plot_p_capture_scaling,
-    plot_mean_calibration,
-    plot_mu_pairwise,
-)
-from viz_utils.memory import cleanup_plot_memory
+from .loss import plot_loss
+from .ecdf import plot_ecdf
+from .ppc import plot_ppc
+from .bio_ppc import plot_bio_ppc
+from .umap import plot_umap
+from .heatmap import plot_correlation_heatmap
+from .mixture_ppc import plot_mixture_ppc, plot_mixture_composition
+from .annotation_ppc import plot_annotation_ppc
+from .capture_anchor import plot_capture_anchor, plot_p_capture_scaling
+from .mean_calibration import plot_mean_calibration
+from .mu_pairwise import plot_mu_pairwise
+from .memory import cleanup_plot_memory
 
 console = Console()
 
@@ -64,36 +60,42 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="anndata")
 # ------------------------------------------------------------------------------
 
 
-def parse_args():
-    """Parse command line arguments."""
+def parse_args(argv: list[str] | None = None):
+    """Parse command line arguments.
+
+    Parameters
+    ----------
+    argv : list[str] or None, optional
+        Optional CLI token override. When ``None``, uses process ``sys.argv``.
+    """
     parser = argparse.ArgumentParser(
         description="Visualize SCRIBE inference results from a model output directory.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
     # Basic usage
-    python visualize.py outputs/5050mix/svi/variable_capture=true
+    scribe-visualize outputs/5050mix/svi/variable_capture=true
 
     # Disable specific plots
-    python visualize.py outputs/myrun --no-ecdf
+    scribe-visualize outputs/myrun --no-ecdf
 
     # Enable optional plots
-    python visualize.py outputs/myrun --ppc --umap --heatmap
+    scribe-visualize outputs/myrun --ppc --umap --heatmap
 
     # Generate all plots
-    python visualize.py outputs/myrun --all
+    scribe-visualize outputs/myrun --all
 
     # Custom PPC settings (5x5 grid)
-    python visualize.py outputs/myrun --ppc --ppc-rows 5 --ppc-cols 5 --ppc-samples 2000
+    scribe-visualize outputs/myrun --ppc --ppc-rows 5 --ppc-cols 5 --ppc-samples 2000
 
     # Recursively process all model directories
-    python visualize.py outputs/ --recursive --all
+    scribe-visualize outputs/ --recursive --all
 
     # Process multiple runs via wildcard pattern
-    python visualize.py "outputs/*/zinb*/*" --umap
+    scribe-visualize "outputs/*/zinb*/*" --umap
 
     # Unquoted wildcard expansion (shell expands to many paths)
-    python visualize.py outputs/bleo_study0*/zinbvcp/* --recursive --umap
+    scribe-visualize outputs/bleo_study0*/zinbvcp/* --recursive --umap
         """,
     )
 
@@ -264,7 +266,7 @@ Examples:
         help="Number of PPC samples for UMAP overlay (default: 50)",
     )
 
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 # ------------------------------------------------------------------------------
@@ -1369,8 +1371,15 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
 # ------------------------------------------------------------------------------
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    """Run packaged visualization pipeline.
+
+    Parameters
+    ----------
+    argv : list[str] or None, optional
+        Optional CLI token override. When ``None``, uses process ``sys.argv``.
+    """
+    args = parse_args(argv)
 
     console.print()
     console.print(

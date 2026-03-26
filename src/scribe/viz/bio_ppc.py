@@ -80,7 +80,8 @@ def plot_bio_ppc(results, counts, figs_dir, cfg, viz_cfg):
     # ------------------------------------------------------------------
     # Biological PPC samples (gene-subset)
     # ------------------------------------------------------------------
-    results_subset = results[selected_idx]
+    # Keep subset ordering aligned with plotting traversal and denoising logic.
+    results_subset = results[selected_idx_sorted]
 
     n_samples = viz_cfg.ppc_opts.n_samples
     rng_key = random.PRNGKey(42)
@@ -110,10 +111,8 @@ def plot_bio_ppc(results, counts, figs_dir, cfg, viz_cfg):
     denoise_cell_batch_size = int(
         viz_cfg.get("bio_ppc_opts", {}).get("denoise_cell_batch_size", 256)
     )
-    # results[selected_idx] preserves the caller-specified gene order, so
-    # denoising counts and subset_positions must use the same selected_idx
-    # order (not the old sorted-original order).
-    counts_subset = counts[:, selected_idx]
+    # Keep denoising order aligned with ``results_subset`` and plotting.
+    counts_subset = counts[:, selected_idx_sorted]
     denoised_subset = _get_denoised_counts_for_plot(
         results_subset,
         counts=counts_subset,
@@ -125,7 +124,7 @@ def plot_bio_ppc(results, counts, figs_dir, cfg, viz_cfg):
     # Build a position map: original gene index → position inside the
     # gene-subset that was passed to the biological PPC sampler.
     subset_positions = {
-        int(gene_idx): pos for pos, gene_idx in enumerate(selected_idx)
+        int(gene_idx): pos for pos, gene_idx in enumerate(selected_idx_sorted)
     }
 
     # ------------------------------------------------------------------

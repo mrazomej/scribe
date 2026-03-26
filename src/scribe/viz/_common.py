@@ -1,4 +1,4 @@
-"""Shared utilities for viz_utils package."""
+"""Shared utilities for the packaged ``scribe.viz`` module."""
 
 from rich.console import Console
 from rich.progress import (

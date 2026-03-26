@@ -44,6 +44,7 @@ hydra = [
 
 [project.scripts]
 scribe-infer = "scribe.cli.infer:main"
+scribe-visualize = "scribe.cli.visualize:main"
 
 # Development dependencies
 [dependency-groups]
@@ -93,7 +94,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src", "."]
-include = ["scribe*", "viz_utils"]
+include = ["scribe*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

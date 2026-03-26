@@ -1,4 +1,4 @@
-"""Consolidated tests for the viz_utils package refactor.
+"""Consolidated tests for the scribe.viz package refactor.
 
 This module centralizes the coverage that previously lived in separate
 viz-utils-focused test files. It validates cache helpers, dispatch helpers,
@@ -19,7 +19,7 @@ from scribe.inference.preset_builder import build_config_from_preset
 from scribe.models import get_model_and_guide
 from scribe.models.config import ModelConfig
 from scribe.svi.results import ScribeSVIResults
-from viz_utils import (
+from scribe.viz import (
     _build_umap_cache_path,
     _get_config_values,
     _get_predictive_samples_for_plot,
@@ -37,16 +37,16 @@ from viz_utils import (
     plot_ppc,
     plot_umap,
 )
-from viz_utils.ppc_rendering import (
+from scribe.viz.ppc_rendering import (
     compute_adaptive_max_bin,
     get_ppc_render_options,
     should_use_line_mode,
 )
-from viz_utils.mixture_ppc import (
+from scribe.viz.mixture_ppc import (
     _resolve_label_map_for_composition,
     _resolve_weight_fractions_for_composition,
 )
-from viz_utils.annotation_ppc import (
+from scribe.viz.annotation_ppc import (
     _resolve_label_map as _resolve_annotation_label_map,
 )
 
@@ -171,7 +171,7 @@ def test_training_payload_includes_mcmc_diagnostics():
 
 def test_map_dispatch_forwards_targets_for_svi():
     """SVI map-dispatch helper should forward requested targets."""
-    from viz_utils.dispatch import _get_map_estimates_for_plot
+    from scribe.viz.dispatch import _get_map_estimates_for_plot
 
     results = ScribeSVIResults(
         params={},
@@ -205,7 +205,7 @@ def test_map_dispatch_forwards_targets_for_svi():
 
 def test_map_dispatch_ignores_targets_for_mcmc():
     """MCMC map-dispatch helper should ignore selective targets."""
-    from viz_utils.dispatch import _get_map_estimates_for_plot
+    from scribe.viz.dispatch import _get_map_estimates_for_plot
 
     results = _make_mcmc_results_for_viz()
     captured = {}
@@ -354,7 +354,7 @@ def test_plot_bio_ppc_aligns_counts_subset_with_results_order(
     This test ensures Bio-PPC denoising receives counts in original index order
     so denoised histograms align with the biological PPC parameter subset.
     """
-    import viz_utils.bio_ppc as bio_ppc_module
+    import scribe.viz.bio_ppc as bio_ppc_module
 
     # Keep selected_idx intentionally unsorted to exercise the alignment path.
     selected_idx = np.array([4, 1, 3], dtype=int)
@@ -517,7 +517,7 @@ def test_plot_capture_anchor_saves_output(monkeypatch, tmp_path):
     This test stubs map extraction and filename metadata so it can verify
     plotting behavior without requiring a full fitted results object.
     """
-    import viz_utils.capture_anchor as capture_anchor_module
+    import scribe.viz.capture_anchor as capture_anchor_module
 
     class _FakeResults:
         """Minimal stub used to satisfy result-object access in plotting."""
@@ -592,7 +592,7 @@ def test_plot_p_capture_scaling_saves_output(monkeypatch, tmp_path):
     This test stubs MAP extraction and assignment helpers so plotting can run
     with a lightweight fake results object.
     """
-    import viz_utils.capture_anchor as capture_anchor_module
+    import scribe.viz.capture_anchor as capture_anchor_module
 
     class _FakeResults:
         """Minimal result stub used by p-capture scaling plotting."""
@@ -715,7 +715,7 @@ def test_plot_mu_pairwise_saves_output_for_multi_dataset(monkeypatch, tmp_path):
     The test stubs MAP extraction and filename metadata to keep behavior
     deterministic and independent of heavy model objects.
     """
-    import viz_utils.mu_pairwise as mu_pairwise_module
+    import scribe.viz.mu_pairwise as mu_pairwise_module
 
     class _FakeResults:
         """Minimal result stub that exposes multi-dataset model metadata."""
@@ -784,7 +784,7 @@ def test_plot_mu_pairwise_saves_output_for_multi_dataset(monkeypatch, tmp_path):
 
 def test_plot_mean_calibration_requests_targeted_map(monkeypatch, tmp_path):
     """Mean calibration should request only the MAP keys it consumes."""
-    import viz_utils.mean_calibration as mean_calibration_module
+    import scribe.viz.mean_calibration as mean_calibration_module
 
     class _FakeResults:
         """Minimal result stub for mean-calibration plotting."""
@@ -839,7 +839,7 @@ def test_plot_mean_calibration_requests_targeted_map(monkeypatch, tmp_path):
 
 def test_select_divergent_genes_requests_dynamic_target(monkeypatch):
     """Mixture PPC gene selection should request either ``mu`` or ``r`` only."""
-    import viz_utils.mixture_ppc as mixture_ppc_module
+    import scribe.viz.mixture_ppc as mixture_ppc_module
 
     class _FakeResults:
         """Minimal result stub exposing parameterization metadata."""
@@ -871,7 +871,7 @@ def test_select_divergent_genes_requests_dynamic_target(monkeypatch):
 
 def test_mixture_composition_requests_mixing_weights_only(monkeypatch, tmp_path):
     """Mixture composition should request only mixing-weight MAP values."""
-    import viz_utils.mixture_ppc as mixture_ppc_module
+    import scribe.viz.mixture_ppc as mixture_ppc_module
 
     class _FakeResults:
         """Minimal mixture result stub."""

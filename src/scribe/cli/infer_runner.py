@@ -1082,7 +1082,7 @@ def main(cfg: DictConfig) -> None:
             )
         )
 
-        from viz_utils import plot_loss, plot_ecdf, plot_ppc
+        from scribe.viz import plot_loss, plot_ecdf, plot_ppc
 
         # Check if viz=true (enables all) or viz.all=true
         enable_all = (viz_cfg is True) or viz_cfg.get("all", False)
