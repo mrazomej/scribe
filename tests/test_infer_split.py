@@ -3,7 +3,7 @@
 from pathlib import Path
 import sys
 
-from infer_split import (
+from scribe.cli.split_orchestrator import (
     _build_joblib_multirun_command,
     _build_submitit_multirun_command,
     _derive_output_prefix,
@@ -103,7 +103,7 @@ def test_joblib_command_includes_explicit_config_options():
     assert cmd[:9] == [
         sys.executable,
         "-m",
-        "infer",
+        "scribe.cli.infer_runner",
         "--config-path",
         "/tmp/conf",
         "--config-name",

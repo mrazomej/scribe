@@ -54,7 +54,7 @@ def test_build_batch_script_single_run_sets_full_thread_count():
         hydra_overrides=["data=bleo_study01_bleomycin"],
         project_dir=Path("/tmp/project"),
         is_multirun=False,
-        inference_script="infer.py",
+        inference_script="scribe.cli.infer_runner",
     )
     assert "export OMP_NUM_THREADS=32" in batch
     assert "export MKL_NUM_THREADS=32" in batch
@@ -69,7 +69,7 @@ def test_build_batch_script_does_not_enable_joblib_launcher():
         hydra_overrides=["data=bleo_study01_bleomycin"],
         project_dir=Path("/tmp/project"),
         is_multirun=False,
-        inference_script="infer.py",
+        inference_script="scribe.cli.infer_runner",
     )
     assert "hydra/launcher=joblib" not in batch
     assert "hydra.launcher.n_jobs=" not in batch
@@ -97,7 +97,7 @@ def test_build_submitit_multirun_command_enforces_one_gpu_per_job():
         slurm=slurm,
         hydra_overrides=["data=bleo_splits/bleo_study01_control"],
         project_dir=Path("/tmp/project"),
-        inference_script="infer.py",
+        inference_script="scribe.cli.infer_runner",
     )
     assert "hydra/launcher=submitit_slurm" in cmd
     assert "hydra.launcher.gpus_per_node=1" in cmd
@@ -121,7 +121,7 @@ def test_build_split_submitit_orchestrator_command_passes_split_overrides():
         hydra_overrides=["data=lung_bleo/lung_bleo_splits"],
         project_dir=Path("/tmp/project"),
     )
-    assert cmd[0:2] == ["python", "infer_split.py"]
+    assert cmd[0:3] == ["python", "-m", "scribe.cli.split_orchestrator"]
     assert "split.launcher=submitit_slurm" in cmd
     assert "data.n_jobs=6" in cmd
     assert "split.array_parallelism=6" in cmd
@@ -133,7 +133,7 @@ def test_build_split_submitit_orchestrator_command_passes_split_overrides():
 def test_resolve_inference_script_uses_split_entrypoint_when_split_by_present(
     tmp_path: Path,
 ):
-    """Select infer_split.py when data config contains split_by."""
+    """Select split orchestrator when data config contains split_by."""
     conf_data_dir = tmp_path / "conf" / "data" / "lung_bleo"
     conf_data_dir.mkdir(parents=True, exist_ok=True)
     config_path = conf_data_dir / "lung_bleo_splits.yaml"
@@ -152,13 +152,13 @@ def test_resolve_inference_script_uses_split_entrypoint_when_split_by_present(
         overrides=["data=lung_bleo/lung_bleo_splits"],
         project_dir=tmp_path,
     )
-    assert script == "infer_split.py"
+    assert script == "scribe.cli.split_orchestrator"
 
 
 def test_resolve_inference_script_falls_back_when_split_by_is_null_override(
     tmp_path: Path,
 ):
-    """Use infer.py when user explicitly disables split_by."""
+    """Use direct runner when user explicitly disables split_by."""
     conf_data_dir = tmp_path / "conf" / "data"
     conf_data_dir.mkdir(parents=True, exist_ok=True)
     config_path = conf_data_dir / "mock_data.yaml"
@@ -177,13 +177,13 @@ def test_resolve_inference_script_falls_back_when_split_by_is_null_override(
         overrides=["data=mock_data", "data.split_by=null"],
         project_dir=tmp_path,
     )
-    assert script == "infer.py"
+    assert script == "scribe.cli.infer_runner"
 
 
 def test_resolve_inference_script_uses_split_entrypoint_when_split_by_is_list(
     tmp_path: Path,
 ):
-    """Select infer_split.py when split_by is a YAML list of column names."""
+    """Select split orchestrator when split_by is a YAML list of columns."""
     conf_data_dir = tmp_path / "conf" / "data" / "batch_correction"
     conf_data_dir.mkdir(parents=True, exist_ok=True)
     config_path = conf_data_dir / "a549.yaml"
@@ -205,7 +205,7 @@ def test_resolve_inference_script_uses_split_entrypoint_when_split_by_is_list(
         overrides=["data=batch_correction/a549"],
         project_dir=tmp_path,
     )
-    assert script == "infer_split.py"
+    assert script == "scribe.cli.split_orchestrator"
 
 
 def test_get_data_config_names_parses_comma_separated_data_override():
@@ -228,7 +228,7 @@ def test_with_single_data_override_replaces_existing_data_override():
 def test_resolve_inference_script_uses_split_when_any_multidata_config_has_split(
     tmp_path: Path,
 ):
-    """Multi-data inputs should select infer_split.py if any config has split_by."""
+    """Multi-data inputs should select split orchestrator if any config has split_by."""
     conf_data_dir = tmp_path / "conf" / "data" / "panfibrosis"
     conf_data_dir.mkdir(parents=True, exist_ok=True)
     (conf_data_dir / "a.yaml").write_text(
@@ -256,4 +256,4 @@ def test_resolve_inference_script_uses_split_when_any_multidata_config_has_split
         overrides=["data=panfibrosis/a,panfibrosis/b"],
         project_dir=tmp_path,
     )
-    assert script == "infer_split.py"
+    assert script == "scribe.cli.split_orchestrator"

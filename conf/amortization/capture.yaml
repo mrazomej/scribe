@@ -4,8 +4,8 @@
 # or phi_capture for mean_odds parameterization) in VCP models.
 #
 # Usage:
-#   python infer.py model=nbvcp amortization=capture
-#   python infer.py +amortization=capture
+#   scribe-infer --config-path ./conf data=<dataset> model=nbvcp amortization=capture
+#   scribe-infer --config-path ./conf data=<dataset> model=nbvcp +amortization=capture
 #
 # The MLP architecture (constrained mode):
 #   log(1 + total_counts) → [Linear → act] × 2 → output_heads → transform → (α, β)

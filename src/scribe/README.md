@@ -536,8 +536,8 @@ gpu_results = scribe.run_scribe(
 ### Observation Pre-Filtering (`filter_obs`)
 
 Data YAML configs support an optional `filter_obs` field for declarative
-observation-level row filtering.  This is applied **before** both the
-`split_by` covariate discovery (in `infer_split.py`) and per-job subsetting,
+observation-level row filtering.  This is applied **before** both the `split_by`
+covariate discovery (in split orchestration mode) and per-job subsetting,
 ensuring that unwanted categories are excluded at the earliest stage.
 
 Keys are column names in `adata.obs`; values are lists of allowed values.

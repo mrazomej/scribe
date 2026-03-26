@@ -1,4 +1,4 @@
-"""Regression tests for infer.py downgrade behavior with Hydra-like config."""
+"""Regression tests for infer runner downgrade behavior."""
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 from omegaconf import OmegaConf
 
-import infer
+import scribe.cli.infer_runner as infer
 
 
 def _make_single_survivor_h5ad(path: Path) -> None:

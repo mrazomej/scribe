@@ -133,7 +133,11 @@ def main(argv: list[str] | None = None) -> None:
 
     # Decide execution mode by inspecting the selected data config(s).
     split_mode = should_use_split_mode(config_root, forwarded)
-    target_module = "infer_split" if split_mode else "infer"
+    target_module = (
+        "scribe.cli.split_orchestrator"
+        if split_mode
+        else "scribe.cli.infer_runner"
+    )
     command = _build_subprocess_command(
         module_name=target_module,
         config_path=str(config_root),

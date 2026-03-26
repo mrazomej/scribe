@@ -73,7 +73,7 @@ def test_cli_dispatches_to_direct_infer(
 
     assert exc_info.value.code == 0
     assert len(commands) == 1
-    assert commands[0][2] == "infer"
+    assert commands[0][2] == "scribe.cli.infer_runner"
     assert "data=direct_case" in commands[0]
 
 
@@ -107,7 +107,7 @@ def test_cli_dispatches_to_split_orchestrator(
 
     assert exc_info.value.code == 0
     assert len(commands) == 1
-    assert commands[0][2] == "infer_split"
+    assert commands[0][2] == "scribe.cli.split_orchestrator"
     assert "data=split_case" in commands[0]
 
 

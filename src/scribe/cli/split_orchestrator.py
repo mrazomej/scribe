@@ -1,5 +1,5 @@
 """
-infer_split.py
+split_orchestrator.py
 
 Orchestrator script for covariate-split parallel inference within the SCRIBE
 framework.  Given a data configuration that includes a ``split_by`` field,
@@ -12,7 +12,8 @@ this script:
    points to the **same** original h5ad file but adds ``subset_column`` and
    ``subset_value`` fields so that ``load_and_preprocess_anndata`` filters
    the data in memory.
-3. Launches a single Hydra **multirun** (``-m``) invocation of ``infer.py``
+3. Launches a single Hydra **multirun** (``-m``) invocation of
+   ``scribe.cli.infer_runner``
    with the ``hydra/launcher=joblib`` backend.  This delegates all
    parallelism to Hydra and its joblib launcher, which spawns one worker
    process per covariate value.
@@ -22,7 +23,7 @@ this script:
 5. Cleans up the temporary YAML files after the multirun completes (or on
    failure).
 
-The interface mirrors ``infer.py``: all Hydra overrides are forwarded
+The interface mirrors direct inference execution: all Hydra overrides are forwarded
 verbatim. This module is primarily invoked by ``scribe-infer`` when the
 selected dataset config contains ``split_by``.
 
@@ -73,7 +74,6 @@ from rich.table import Table
 
 DEFAULT_CONFIG_DIR = Path("conf")
 CONF_DATA_DIR = DEFAULT_CONFIG_DIR / "data"
-SCRIPT_DIR = Path(__file__).resolve().parent
 
 
 # ---------------------------------------------------------------------------
@@ -185,7 +185,7 @@ def _parse_args(argv: list[str]) -> tuple[list[str], dict, dict, list[str]]:
         Any ``split.<key>=<value>`` overrides used to control how this
         orchestrator launches child multirun jobs.
     forwarded_args : list[str]
-        All remaining arguments that should be forwarded to ``infer.py``.
+        All remaining arguments that should be forwarded to the direct runner.
     """
     data_names: list[str] | None = None
     data_overrides: dict = {}
@@ -216,7 +216,7 @@ def _parse_args(argv: list[str]) -> tuple[list[str], dict, dict, list[str]]:
     if data_names is None or not data_names:
         raise SystemExit(
             "ERROR: A data=<name> argument is required.\n"
-            "Usage: python infer_split.py data=<name> [overrides ...]"
+            "Usage: scribe-infer --config-path ./conf data=<name> [overrides ...]"
         )
 
     return data_names, data_overrides, split_overrides, forwarded_args
@@ -279,9 +279,9 @@ def _discover_covariate_values(
         Single-column: sorted unique string values.
         Multi-column: sorted unique tuples of string values, one per column.
     """
-    # Resolve relative paths against the project root
+    # Resolve relative paths against the current working directory.
     abs_path = (
-        data_path if os.path.isabs(data_path) else str(SCRIPT_DIR / data_path)
+        data_path if os.path.isabs(data_path) else os.path.abspath(data_path)
     )
 
     adata = sc.read_h5ad(abs_path)
@@ -449,7 +449,7 @@ def _generate_tmp_yamls(
     abs_path = (
         original_path
         if os.path.isabs(original_path)
-        else str(SCRIPT_DIR / original_path)
+        else os.path.abspath(original_path)
     )
 
     tmp_names: list[str] = []
@@ -541,7 +541,7 @@ def _generate_passthrough_tmp_yaml(
     abs_path = (
         original_path
         if os.path.isabs(original_path)
-        else str(SCRIPT_DIR / original_path)
+        else os.path.abspath(original_path)
     )
 
     tmp_file_stem = f"{source_tag}__{_sanitize_value(original_name)}"
@@ -593,7 +593,7 @@ def _build_joblib_multirun_command(
     n_jobs : int
         Number of joblib workers.
     forwarded_args : list[str]
-        User arguments forwarded unchanged to ``infer.py``.
+        User arguments forwarded unchanged to the direct runner.
 
     Returns
     -------
@@ -603,7 +603,7 @@ def _build_joblib_multirun_command(
     return [
         sys.executable,
         "-m",
-        "infer",
+        "scribe.cli.infer_runner",
         "--config-path",
         config_path,
         "--config-name",
@@ -613,7 +613,7 @@ def _build_joblib_multirun_command(
         "hydra.sweep.subdir='${data.output_prefix}/${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname},${dirname_aliases.aliases}}'",
         "hydra/launcher=joblib",
         f"hydra.launcher.n_jobs={n_jobs}",
-        # GPU assignment is handled inside infer.py via cfg.data.gpu_id
+        # GPU assignment is handled inside infer_runner via cfg.data.gpu_id
         # (set before JAX initialises CUDA devices).
         *forwarded_args,
     ]
@@ -638,7 +638,7 @@ def _build_submitit_multirun_command(
     split_overrides : dict
         Orchestrator ``split.*`` launch settings parsed from CLI.
     forwarded_args : list[str]
-        User arguments forwarded unchanged to ``infer.py``.
+        User arguments forwarded unchanged to the direct runner.
 
     Returns
     -------
@@ -659,7 +659,7 @@ def _build_submitit_multirun_command(
     return [
         sys.executable,
         "-m",
-        "infer",
+        "scribe.cli.infer_runner",
         "--config-path",
         config_path,
         "--config-name",
