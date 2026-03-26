@@ -644,16 +644,16 @@ def main(cfg: DictConfig) -> None:
     # Validate dataset-level hierarchical/structured priors before data
     # loading so users fail fast when dataset splitting is not configured.
     uses_dataset_level_hierarchy = (
-        cfg.get("mu_dataset_prior", "none") != "none"
-        or cfg.get("p_dataset_prior", "none") != "none"
-        or cfg.get("gate_dataset_prior", "none") != "none"
+        cfg.get("expression_dataset_prior", "none") != "none"
+        or cfg.get("prob_dataset_prior", "none") != "none"
+        or cfg.get("zero_inflation_dataset_prior", "none") != "none"
         or cfg.get("overdispersion_dataset_prior", "none") != "none"
     )
     if uses_dataset_level_hierarchy and dataset_key is None:
         raise ValueError(
             "Dataset-level hierarchical priors "
-            "(mu_dataset_prior, p_dataset_prior, "
-            "gate_dataset_prior, overdispersion_dataset_prior) "
+            "(expression_dataset_prior, prob_dataset_prior, "
+            "zero_inflation_dataset_prior, overdispersion_dataset_prior) "
             "require dataset_key so cells can "
             "be mapped to datasets. Set dataset_key to an adata.obs column "
             "when using dataset-level hierarchical priors."
@@ -824,18 +824,20 @@ def main(cfg: DictConfig) -> None:
         "model": model_type,
         "parameterization": cfg.parameterization,
         "unconstrained": cfg.unconstrained,
-        "mu_prior": cfg.get("mu_prior", "none"),
-        "p_prior": cfg.get("p_prior", "none"),
-        "gate_prior": cfg.get("gate_prior", "none"),
+        "expression_prior": cfg.get("expression_prior", "none"),
+        "prob_prior": cfg.get("prob_prior", "none"),
+        "zero_inflation_prior": cfg.get("zero_inflation_prior", "none"),
         # Multi-dataset hierarchy
         "n_datasets": cfg.get("n_datasets"),
         "dataset_key": dataset_key,
         "dataset_params": cfg.get("dataset_params"),
         "dataset_mixing": cfg.get("dataset_mixing"),
-        "mu_dataset_prior": cfg.get("mu_dataset_prior", "none"),
-        "p_dataset_prior": cfg.get("p_dataset_prior", "none"),
-        "p_dataset_mode": cfg.get("p_dataset_mode", "gene_specific"),
-        "gate_dataset_prior": cfg.get("gate_dataset_prior", "none"),
+        "expression_dataset_prior": cfg.get("expression_dataset_prior", "none"),
+        "prob_dataset_prior": cfg.get("prob_dataset_prior", "none"),
+        "prob_dataset_mode": cfg.get("prob_dataset_mode", "gene_specific"),
+        "zero_inflation_dataset_prior": cfg.get(
+            "zero_inflation_dataset_prior", "none"
+        ),
         "overdispersion_dataset_prior": cfg.get(
             "overdispersion_dataset_prior", "none"
         ),
@@ -846,10 +848,10 @@ def main(cfg: DictConfig) -> None:
         "neg_u": cfg.get("neg_u", 1.0),
         "neg_a": cfg.get("neg_a", 1.0),
         "neg_tau": cfg.get("neg_tau", 1.0),
-        "mu_eta_prior": cfg.get("mu_eta_prior", "none"),
+        "capture_scaling_prior": cfg.get("capture_scaling_prior", "none"),
         # Data-informed mean anchoring prior
-        "mu_mean_anchor": cfg.get("mu_mean_anchor", False),
-        "mu_mean_anchor_sigma": cfg.get("mu_mean_anchor_sigma", 0.3),
+        "expression_anchor": cfg.get("expression_anchor", False),
+        "expression_anchor_sigma": cfg.get("expression_anchor_sigma", 0.3),
         # Gene-specific overdispersion (e.g. BNB)
         "overdispersion": cfg.get("overdispersion", "none"),
         "overdispersion_prior": cfg.get("overdispersion_prior", "horseshoe"),
@@ -939,10 +941,10 @@ def main(cfg: DictConfig) -> None:
             f"[dim]Amortized capture:[/dim] [bold]{kwargs['capture_hidden_dims']}[/bold] "
             f"[dim]({kwargs['capture_activation']})[/dim]"
         )
-    if kwargs.get("mu_mean_anchor"):
+    if kwargs.get("expression_anchor"):
         console.print(
             f"[dim]Mean anchor:[/dim] [bold]enabled[/bold] "
-            f"[dim](sigma={kwargs['mu_mean_anchor_sigma']})[/dim]"
+            f"[dim](sigma={kwargs['expression_anchor_sigma']})[/dim]"
         )
     if kwargs.get("overdispersion", "none") != "none":
         _od_message = (

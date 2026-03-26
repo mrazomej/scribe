@@ -35,25 +35,25 @@ dirname_aliases:
     guide_flow_log_det_f64: gflowf64
 
     # Hierarchical prior type fields
-    mu_prior: muprior
-    p_prior: pprior
-    gate_prior: gprior
+    expression_prior: exprprior
+    prob_prior: probprior
+    zero_inflation_prior: zeroprior
     overdispersion_prior: overdispprior
-    mu_dataset_prior: mudataprior
-    p_dataset_prior: pdataprior
-    p_dataset_mode: pdatamode
-    gate_dataset_prior: gdataprior
+    expression_dataset_prior: exprdataprior
+    prob_dataset_prior: probdataprior
+    prob_dataset_mode: pdatamode
+    zero_inflation_dataset_prior: zerodataprior
     overdispersion_dataset_prior: overdispdatasetprior
     positive_transform: postransform
 
     # Data-informed mean anchoring prior
-    mu_mean_anchor: meananchor
-    mu_mean_anchor_sigma: meananchorsigma
+    expression_anchor: meananchor
+    expression_anchor_sigma: meananchorsigma
 
     # Frequently seen prior overrides
-    priors.eta_capture: etaprior
+    priors.capture_efficiency: captureprior
     priors.mixing: mixprior
-    priors.gate: gateprior
+    priors.gate: zeroprior
 
     # Inference knobs (often long in paths)
     inference.batch_size: bsize
@@ -63,4 +63,4 @@ dirname_aliases:
     inference.method: method
 
     # Biology-informed capture prior
-    mu_eta_prior: muetaprior
+    capture_scaling_prior: capscalingprior
