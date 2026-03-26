@@ -436,7 +436,7 @@ class ScribeMCMCResults(
     # Posterior sample access
     # -------------------------------------------------------------------------
 
-    def get_posterior_samples(self) -> Dict:
+    def get_posterior_samples(self, descriptive_names: bool = False) -> Dict:
         """Return posterior samples.
 
         MCMC samples already contain canonical parameters (``p``, ``r``,
@@ -445,12 +445,20 @@ class ScribeMCMCResults(
         specs sample via ``TransformedDistribution`` in constrained
         space.
 
+        Parameters
+        ----------
+        descriptive_names : bool, default=False
+            If True, rename dict keys from internal short names to
+            user-friendly descriptive names.
+
         Returns
         -------
         Dict
             Parameter name -> sample array.
         """
-        return self.samples
+        from ..models.config.parameter_mapping import rename_dict_keys
+
+        return rename_dict_keys(self.samples, descriptive_names)
 
     def get_samples(self, group_by_chain: bool = False) -> Dict:
         """Return samples with optional chain grouping.
