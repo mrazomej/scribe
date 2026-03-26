@@ -3,37 +3,87 @@
 This section covers the practical workflow of using SCRIBE---from selecting a
 model through downstream analysis.
 
-- [**The `scribe.fit()` Interface**](fit.md) — the single entry point for all
-  SCRIBE inference, with every parameter group explained, practical guidance,
-  code examples, and links to deeper pages
+<div class="grid cards" markdown>
 
-- [**Model Selection**](model-selection.md) — choosing the right model for your
-  data: NB base, zero inflation, variable capture, BNB overdispersion, mixture
-  components, parameterizations, and hierarchical priors
+-   :material-function-variant:{ .lg .middle } **The `scribe.fit()` Interface**
 
-- [**Parameter Reference**](parameters.md) — one-stop cheatsheet mapping every
-  internal parameter name (`r`, `p`, `mu`, `phi`, `gate`, `p_capture`, ...) to
-  its symbol, equation context, biological meaning, and parameterization, with
-  color-coded likelihood equations and prior hyperparameter tables
+    ---
 
-- [**Variational Guide Families**](guide-families.md) — mean-field, low-rank,
-  joint low-rank, amortized, and VAE latent guides: what they capture, when to
-  use each, and how to configure them
+    The single entry point for all SCRIBE inference, with every parameter group
+    explained, code examples, and links to deeper pages
 
-- [**Inference Methods**](inference.md) — choosing between SVI, MCMC, and VAE,
-  key parameters, early stopping, and the SVI-to-MCMC warm-start workflow
+    [The `scribe.fit()` Interface](fit.md)
 
-- [**Results Class**](results.md) — understanding and using the `ScribeResults`
-  object for posterior analysis, sampling, denoising, and normalization
+-   :material-view-grid:{ .lg .middle } **Model Selection**
 
-- [**Differential Expression**](differential-expression.md) — Bayesian DE with
-  three methods (parametric, empirical, shrinkage), error control via lfsr and
-  PEFP, biological-level metrics, gene masking, and pathway analysis
+    ---
 
-- [**Model Comparison**](model-comparison.md) — comparing models with WAIC and
-  PSIS-LOO, stacking weights, per-gene goodness-of-fit diagnostics, and
-  integration with the DE pipeline
+    Choosing the right model: NB base, zero inflation, variable capture, BNB
+    overdispersion, mixture components, and parameterizations
 
-- [**`scribe-infer` CLI**](cli_infer.md) — command-line interface for
-  running reproducible inference via Hydra configs, with SLURM integration,
-  covariate-split orchestration, and reusable cluster profiles
+    [Model Selection](model-selection.md)
+
+-   :material-palette-swatch:{ .lg .middle } **Parameter Reference**
+
+    ---
+
+    Color-coded cheatsheet mapping every internal parameter name to its symbol,
+    equation context, biological meaning, and parameterization
+
+    [Parameter Reference](parameters.md)
+
+-   :material-chart-bell-curve:{ .lg .middle } **Variational Guide Families**
+
+    ---
+
+    Mean-field, low-rank, joint low-rank, normalizing flows, amortized, and VAE
+    latent guides: what they capture and when to use each
+
+    [Variational Guide Families](guide-families.md)
+
+-   :material-cog-play:{ .lg .middle } **Inference Methods**
+
+    ---
+
+    Choosing between SVI, MCMC, and VAE, key parameters, early stopping, and
+    the SVI-to-MCMC warm-start workflow
+
+    [Inference Methods](inference.md)
+
+-   :material-package-variant:{ .lg .middle } **Results Class**
+
+    ---
+
+    Understanding and using `ScribeResults` for posterior analysis, sampling,
+    denoising, and normalization
+
+    [Results Class](results.md)
+
+-   :material-compare-horizontal:{ .lg .middle } **Differential Expression**
+
+    ---
+
+    Bayesian DE with three methods, error control via lfsr and PEFP,
+    biological-level metrics, gene masking, and pathway analysis
+
+    [Differential Expression](differential-expression.md)
+
+-   :material-scale-balance:{ .lg .middle } **Model Comparison**
+
+    ---
+
+    WAIC, PSIS-LOO, stacking weights, per-gene goodness-of-fit diagnostics, and
+    integration with the DE pipeline
+
+    [Model Comparison](model-comparison.md)
+
+-   :material-console:{ .lg .middle } **`scribe-infer` CLI**
+
+    ---
+
+    Reproducible, config-driven inference via Hydra with SLURM integration and
+    automatic covariate-split orchestration
+
+    [`scribe-infer` CLI](cli_infer.md)
+
+</div>
