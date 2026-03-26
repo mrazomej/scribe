@@ -1,8 +1,8 @@
 # `scribe-visualize` CLI Guide
 
 `scribe-visualize` is the post-inference visualization CLI for SCRIBE. It
-reads completed inference outputs (the `scribe_results.pkl` and
-`.hydra/config.yaml` produced by `scribe-infer`) and generates a suite of
+reads completed inference outputs (a result `*.pkl` file plus
+`.hydra/config.yaml` in the same run directory) and generates a suite of
 diagnostic plots --- from quick training summaries to detailed posterior
 predictive checks.
 
@@ -28,11 +28,17 @@ pip install 'scribe[hydra]'
 # Generate default plots (loss curve) for a single run
 scribe-visualize outputs/my_run
 
+# Use an explicit result file path (custom filename supported)
+scribe-visualize outputs/my_run/custom_results.pkl
+
 # Generate all available plots
 scribe-visualize outputs/my_run --all
 
 # Recursively visualize every run under a directory
 scribe-visualize outputs/ --recursive --all
+
+# Recursively match custom result filenames
+scribe-visualize outputs/ --recursive "*_results.pkl" --all
 ```
 
 ---
@@ -185,15 +191,22 @@ scribe-visualize outputs/my_run --ppc --umap
 
 ### Recursive search
 
-Finds every subdirectory containing `scribe_results.pkl`:
+Finds every matching result file recursively. With no pattern value,
+`--recursive` defaults to `scribe_results.pkl`:
 
 ```bash
 scribe-visualize outputs/ --recursive --all
 ```
 
+### Recursive search with custom filename pattern
+
+```bash
+scribe-visualize outputs/ --recursive "*_results.pkl" --all
+```
+
 ### Wildcard patterns
 
-Shell-style globs for selective processing:
+Shell-style globs for selective processing (directories or explicit files):
 
 ```bash
 # All ZINB runs
@@ -201,6 +214,9 @@ scribe-visualize "outputs/*/zinb*/*" --heatmap
 
 # Unquoted expansion (shell expands first)
 scribe-visualize outputs/bleo_study0*/zinbvcp/* --recursive --umap
+
+# Explicit file glob
+scribe-visualize "outputs/**/*_results.pkl" --ppc
 ```
 
 ---
@@ -233,7 +249,7 @@ same conventions as [`scribe-infer`](cli_infer.md#slurm-integration).
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `model_dir` | (required) | One or more paths to run directories or glob patterns |
+| `run_target` | (required) | One or more run targets (directories, result `.pkl` files, or glob patterns) |
 | `--all` | off | Enable all plot types |
 | `--no-loss` | off | Disable the loss curve |
 | `--no-ecdf` | off | Disable the ECDF plot |
@@ -248,7 +264,7 @@ same conventions as [`scribe-infer`](cli_infer.md#slurm-integration).
 | `--p-capture-scaling` | off | Enable capture probability vs. library size |
 | `--mean-calibration` | off | Enable mean calibration scatter |
 | `--mu-pairwise` | off | Enable dataset-level mu comparison |
-| `--recursive` | off | Recursively search for run directories |
+| `--recursive [PATTERN]` | off | Recursively search directories for result files; defaults to `scribe_results.pkl` when used without PATTERN |
 | `--overwrite` | off | Regenerate existing plots |
 | `--format` | `png` | Output format (`png`, `pdf`, `svg`, `eps`) |
 | `--slurm` | off | Launch as SLURM batch job |

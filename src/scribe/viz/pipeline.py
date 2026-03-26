@@ -29,6 +29,7 @@ Typical usage:
 """
 
 import argparse
+import fnmatch
 from omegaconf import OmegaConf
 import scribe
 import pickle
@@ -101,12 +102,10 @@ Examples:
 
     # Required argument
     parser.add_argument(
-        "model_dir",
+        "run_target",
         nargs="+",
-        help="Path to a model output directory containing scribe_results.pkl "
-        "and .hydra/config.yaml. Supports shell-style wildcards (e.g. "
-        "'outputs/*/zinb*/*'). Multiple paths are accepted. When used with "
-        "--recursive, matching paths are treated as roots to search.",
+        help="Path to a model output directory, explicit results pickle file, "
+        "or shell-style wildcard pattern. Multiple targets are accepted.",
     )
 
     # Plot toggles (default plots)
@@ -214,10 +213,15 @@ Examples:
     # Recursive mode
     parser.add_argument(
         "--recursive",
-        action="store_true",
-        help="Recursively search the given directory for model output "
-        "directories (containing scribe_results.pkl) and generate "
-        "plots for each one found",
+        nargs="?",
+        const="scribe_results.pkl",
+        default=None,
+        metavar="PATTERN",
+        help=(
+            "Recursively search each directory target for result pickle files. "
+            "With no PATTERN, defaults to 'scribe_results.pkl'. "
+            "Example: --recursive '*_results.pkl'."
+        ),
     )
 
     # Overwrite control
@@ -536,26 +540,30 @@ def _plot_exists(figs_dir, suffix, fmt):
 # ------------------------------------------------------------------------------
 
 
-def _find_model_dirs(root_dir):
+def _find_results_files(root_dir, filename_pattern="scribe_results.pkl"):
     """
-    Recursively search for directories containing ``scribe_results.pkl``.
+    Recursively search for results pickle files matching ``filename_pattern``.
 
     Parameters
     ----------
     root_dir : str
         Root directory to search from.
+    filename_pattern : str, optional
+        Basename pattern matched with ``fnmatch`` (e.g. ``"*_results.pkl"``).
 
     Returns
     -------
     list of str
-        Sorted list of absolute paths to directories that contain a
-        ``scribe_results.pkl`` file.
+        Sorted list of absolute result-file paths.
     """
-    model_dirs = []
+    results_files = []
     for dirpath, _dirnames, filenames in os.walk(root_dir):
-        if "scribe_results.pkl" in filenames:
-            model_dirs.append(os.path.abspath(dirpath))
-    return sorted(model_dirs)
+        for filename in filenames:
+            if fnmatch.fnmatch(filename, filename_pattern):
+                results_files.append(
+                    os.path.abspath(os.path.join(dirpath, filename))
+                )
+    return sorted(results_files)
 
 
 # ------------------------------------------------------------------------------
@@ -582,24 +590,23 @@ def _contains_glob_pattern(path_expr):
 # ------------------------------------------------------------------------------
 
 
-def _resolve_model_dirs(path_expr, recursive=False):
+def _resolve_results_files(path_expr, recursive_pattern=None):
     """
-    Resolve user path input to concrete model output directories.
+    Resolve user input expression to concrete result pickle files.
 
     Parameters
     ----------
     path_expr : str
-        Path to a model directory or a glob pattern.
-    recursive : bool, optional
-        When ``True``, treat resolved paths as roots and recursively discover
-        all subdirectories containing ``scribe_results.pkl``. When ``False``,
-        only directories that themselves contain ``scribe_results.pkl`` are
-        returned.
+        Path to a model directory, explicit result file, or glob pattern.
+    recursive_pattern : str or None, optional
+        If provided, recurse into directory targets and match result files by
+        basename pattern (e.g. ``"*_results.pkl"``). If ``None``, directory
+        targets only resolve ``<dir>/scribe_results.pkl``.
 
     Returns
     -------
     list of str
-        Sorted absolute model-directory paths.
+        Sorted absolute result-file paths.
     """
     if _contains_glob_pattern(path_expr):
         candidates = glob.glob(path_expr, recursive=True)
@@ -610,19 +617,28 @@ def _resolve_model_dirs(path_expr, recursive=False):
     for candidate in candidates:
         abs_candidate = os.path.abspath(candidate)
 
-        # Accept file paths by promoting to their containing directory.
         if os.path.isfile(abs_candidate):
-            abs_candidate = os.path.dirname(abs_candidate)
+            if abs_candidate.endswith(".pkl"):
+                if recursive_pattern is None or fnmatch.fnmatch(
+                    os.path.basename(abs_candidate), recursive_pattern
+                ):
+                    resolved.append(abs_candidate)
+            continue
 
         if not os.path.isdir(abs_candidate):
             continue
 
-        if recursive:
-            resolved.extend(_find_model_dirs(abs_candidate))
+        if recursive_pattern is not None:
+            resolved.extend(
+                _find_results_files(
+                    abs_candidate,
+                    filename_pattern=recursive_pattern,
+                )
+            )
         else:
             results_file = os.path.join(abs_candidate, "scribe_results.pkl")
             if os.path.exists(results_file):
-                resolved.append(abs_candidate)
+                resolved.append(results_file)
 
     return sorted(set(resolved))
 
@@ -630,9 +646,9 @@ def _resolve_model_dirs(path_expr, recursive=False):
 # ------------------------------------------------------------------------------
 
 
-def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
+def _process_single_results_file(results_file, viz_cfg, overwrite=False):
     """
-    Run the full visualization pipeline on a single model output directory.
+    Run the full visualization pipeline for one results pickle file.
 
     Loads the stored Hydra configuration, inference results, and original
     dataset from *model_dir*, then generates all diagnostic plots requested
@@ -640,9 +656,9 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
 
     Parameters
     ----------
-    model_dir : str
-        Absolute path to a model output directory that must contain
-        ``scribe_results.pkl`` and ``.hydra/config.yaml``.
+    results_file : str
+        Absolute path to a result pickle file. Its parent directory must
+        contain ``.hydra/config.yaml``.
     viz_cfg : DictConfig
         Visualization configuration built from the command-line arguments.
     overwrite : bool, optional
@@ -658,12 +674,13 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
     """
     import numpy as np
 
+    model_dir = os.path.abspath(os.path.dirname(results_file))
+    results_file = os.path.abspath(results_file)
     console.print(f"[dim]Model directory:[/dim] [cyan]{model_dir}[/cyan]")
 
     # ======================================================================
     # Validate Input Directory
     # ======================================================================
-    results_file = os.path.join(model_dir, "scribe_results.pkl")
     config_file = os.path.join(model_dir, ".hydra", "config.yaml")
 
     if not os.path.exists(results_file):
@@ -671,7 +688,7 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
         console.print(f"[red]   Missing:[/red] [cyan]{results_file}[/cyan]")
         console.print(
             "[yellow]Make sure you've run inference first and the directory "
-            "contains scribe_results.pkl[/yellow]"
+            "contains a valid result pickle file[/yellow]"
         )
         return False
 
@@ -823,7 +840,10 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
             [
                 not (
                     value is None
-                    or (isinstance(value, (float, np.floating)) and np.isnan(value))
+                    or (
+                        isinstance(value, (float, np.floating))
+                        and np.isnan(value)
+                    )
                 )
                 for value in labels_arr
             ],
@@ -957,9 +977,7 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
     # panels internally).
     # ------------------------------------------------------------------
     if viz_cfg.mean_calibration:
-        if not overwrite and _plot_exists(
-            figs_dir, "_mean_calibration", fmt
-        ):
+        if not overwrite and _plot_exists(figs_dir, "_mean_calibration", fmt):
             plots_skipped.append("mean calibration")
             console.print(
                 "[yellow]  Skipping mean calibration "
@@ -1009,8 +1027,7 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
         elif not overwrite and _plot_exists(figs_dir, "_mu_pairwise", fmt):
             plots_skipped.append("mu pairwise")
             console.print(
-                "[yellow]  Skipping mu pairwise "
-                "(already exists)[/yellow]"
+                "[yellow]  Skipping mu pairwise " "(already exists)[/yellow]"
             )
         else:
             console.print(
@@ -1032,8 +1049,7 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                     plots_skipped.append("mu pairwise")
             except Exception as e:
                 console.print(
-                    f"[red]  Failed to generate mu pairwise plot: "
-                    f"{e}[/red]"
+                    f"[red]  Failed to generate mu pairwise plot: " f"{e}[/red]"
                 )
             finally:
                 _cleanup_after_plot()
@@ -1371,6 +1387,34 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
 # ------------------------------------------------------------------------------
 
 
+def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
+    """Process one legacy directory target.
+
+    Parameters
+    ----------
+    model_dir : str
+        Directory that is expected to contain ``scribe_results.pkl``.
+    viz_cfg : DictConfig
+        Visualization configuration object.
+    overwrite : bool, optional
+        Whether to force regeneration of existing plot files.
+
+    Returns
+    -------
+    bool
+        ``True`` on successful processing, else ``False``.
+    """
+    results_file = os.path.join(model_dir, "scribe_results.pkl")
+    return _process_single_results_file(
+        results_file=results_file,
+        viz_cfg=viz_cfg,
+        overwrite=overwrite,
+    )
+
+
+# ------------------------------------------------------------------------------
+
+
 def main(argv: list[str] | None = None) -> None:
     """Run packaged visualization pipeline.
 
@@ -1429,16 +1473,20 @@ def main(argv: list[str] | None = None) -> None:
     # ======================================================================
     # Dispatch: single path, wildcard pattern, or recursive search
     # ======================================================================
-    input_exprs = args.model_dir
+    input_exprs = args.run_target
+    recursive_pattern = args.recursive
     uses_glob = any(_contains_glob_pattern(expr) for expr in input_exprs)
 
-    if args.recursive:
+    if recursive_pattern is not None:
         console.print()
         console.print(
             Panel.fit(
                 "[bold bright_cyan]RECURSIVE SEARCH[/bold bright_cyan]",
                 border_style="bright_cyan",
             )
+        )
+        console.print(
+            f"[dim]Results filename pattern:[/dim] [cyan]{recursive_pattern}[/cyan]"
         )
         if uses_glob:
             console.print(
@@ -1456,55 +1504,55 @@ def main(argv: list[str] | None = None) -> None:
             f"[cyan]{', '.join(input_exprs)}[/cyan]"
         )
 
-    model_dirs = []
+    results_files = []
     for expr in input_exprs:
-        model_dirs.extend(_resolve_model_dirs(expr, recursive=args.recursive))
-    model_dirs = sorted(set(model_dirs))
+        results_files.extend(
+            _resolve_results_files(expr, recursive_pattern=recursive_pattern)
+        )
+    results_files = sorted(set(results_files))
 
-    if not model_dirs:
+    if not results_files:
         if uses_glob:
             console.print(
-                "[bold yellow]No model directories matched the pattern "
-                "with scribe_results.pkl[/bold yellow]"
+                "[bold yellow]No result files matched the requested pattern.[/bold yellow]"
             )
-        elif args.recursive:
+        elif recursive_pattern is not None:
             console.print(
-                "[bold yellow]No model directories found containing "
-                "scribe_results.pkl[/bold yellow]"
+                "[bold yellow]No result files found during recursive search.[/bold yellow]"
             )
         else:
             missing = ", ".join(os.path.abspath(x) for x in input_exprs)
             console.print(
-                "[bold red]ERROR: Model directory does not exist or "
-                "does not contain scribe_results.pkl![/bold red]"
+                "[bold red]ERROR: Input did not resolve to valid result files.[/bold red]"
             )
             console.print(f"[red]   Input:[/red] [cyan]{missing}[/cyan]")
         return
 
-    n_dirs = len(model_dirs)
-    if n_dirs > 1 or args.recursive or uses_glob:
+    n_dirs = len(results_files)
+    if n_dirs > 1 or recursive_pattern is not None or uses_glob:
         console.print(
-            f"[green]Found {n_dirs} model "
-            f"director{'ies' if n_dirs != 1 else 'y'}[/green]"
+            f"[green]Found {n_dirs} result file{'s' if n_dirs != 1 else ''}[/green]"
         )
-        for d in model_dirs:
+        for d in results_files:
             console.print(f"[dim]  \u2022 {d}[/dim]")
 
     succeeded = 0
     failed = 0
-    for i, model_dir in enumerate(model_dirs, 1):
+    for i, results_file in enumerate(results_files, 1):
         if n_dirs > 1:
             console.print()
             console.print(
                 Panel.fit(
-                    f"[bold bright_yellow]DIRECTORY "
+                    f"[bold bright_yellow]TARGET "
                     f"{i}/{n_dirs}[/bold bright_yellow]",
                     border_style="bright_yellow",
                 )
             )
         try:
-            if _process_single_model_dir(
-                model_dir, viz_cfg, overwrite=args.overwrite
+            if _process_single_results_file(
+                results_file=results_file,
+                viz_cfg=viz_cfg,
+                overwrite=args.overwrite,
             ):
                 succeeded += 1
             else:
@@ -1515,7 +1563,7 @@ def main(argv: list[str] | None = None) -> None:
             )
             failed += 1
 
-    if n_dirs > 1 or args.recursive or uses_glob:
+    if n_dirs > 1 or recursive_pattern is not None or uses_glob:
         console.print()
         console.print(
             Panel.fit(
@@ -1523,7 +1571,7 @@ def main(argv: list[str] | None = None) -> None:
                 border_style="bright_green",
             )
         )
-        console.print(f"[dim]Directories processed:[/dim] {n_dirs}")
+        console.print(f"[dim]Targets processed:[/dim] {n_dirs}")
         console.print(f"[dim]Succeeded:[/dim] [green]{succeeded}[/green]")
         if failed > 0:
             console.print(f"[dim]Failed:[/dim] [red]{failed}[/red]")
