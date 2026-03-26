@@ -446,12 +446,21 @@ The behaviour is controlled by `guide.mixture_strategy`:
   one-hot component index.  The Flax module name stays the same as non-mixture.
 
 For joint flows, batch-rank ordering ensures non-mixture specs are sampled
-first.  Context vectors for mixture specs are built per-component by slicing
-batch-aware previous unconstrained values.
+first.  Context vectors for mixture specs are built per-leaf by indexing
+into all batch dimensions of previously sampled unconstrained values
+(`_build_leaf_contexts`).
 
 Dataset-level flows follow the same mechanism (`is_dataset=True`).  When both
-flags are set, nested `ComponentFlowDistribution` objects are created
-recursively (outer axis = component, inner axis = dataset).
+`is_mixture=True` and `is_dataset=True` are set (e.g. `batch_shape=(K, D)`),
+nested `ComponentFlowDistribution` objects are created recursively — the
+outermost wraps K inner distributions, each wrapping D leaf
+`FlowDistribution` instances.  This produces parameters with shape
+`(K, D, G)` as expected by the likelihood.  Module naming for multi-level
+independent flows uses stacked suffixes: `_idx{k}_idx{d}`.  Shared flows
+concatenate multi-axis one-hot vectors (`K + D` total context dims) for all
+batch levels.  Phase 2 (nondense block) handles multi-level batch shapes
+automatically since `resolve_shape` already produces `(K, D, G)` and
+`_reduce_dense_residual` handles batch dimension differences.
 
 ```python
 NormalizingFlowGuide(
