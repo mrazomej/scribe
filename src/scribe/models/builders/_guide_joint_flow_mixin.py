@@ -17,8 +17,12 @@ pattern in ``_guide_structured_joint_mixin``.
 non-batch specs.  The flow for that spec is expanded into a
 ``ComponentFlowDistribution`` (independent or shared, per
 ``guide.mixture_strategy``) so every component / dataset gets its own
-flow transformation.  Context vectors for these specs are built
-per-component by slicing batch-aware previous unconstrained values.
+flow transformation.  Multi-level batch axes (e.g. mixture + dataset
+producing ``(K, D, G)``) are handled via nested
+``ComponentFlowDistribution`` objects — the outermost wraps K inner
+distributions, each of which wraps D leaf ``FlowDistribution`` s.
+Context vectors are built per-leaf by indexing into all batch
+dimensions of previously sampled unconstrained values.
 """
 
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
@@ -381,20 +385,121 @@ def _build_per_component_contexts(
     return contexts
 
 
+def _build_leaf_contexts(
+    entries: List[Tuple[jnp.ndarray, Tuple[int, ...]]],
+    batch_shape: Tuple[int, ...],
+) -> List[Optional[jnp.ndarray]]:
+    """Build one context vector per leaf of the batch index space.
+
+    Generalises ``_build_per_component_contexts`` to multi-level batch
+    hierarchies.  For ``batch_shape=(K, D)`` produces ``K*D`` contexts
+    ordered by the Cartesian product ``(0,0), (0,1), ..., (K-1, D-1)``.
+
+    Each entry's unconstrained value is indexed with as many leading
+    indices as its own ``batch_shape`` depth.  Non-batch entries are
+    shared across all leaves.
+
+    Parameters
+    ----------
+    entries : list of (value, batch_shape)
+        Each entry is ``(unconstrained_value, its_batch_shape)``.
+    batch_shape : tuple of int
+        Sizes of the target batch hierarchy.
+
+    Returns
+    -------
+    list of jnp.ndarray or None
+        One context per leaf (length ``prod(batch_shape)``).
+    """
+    from itertools import product as cartesian_product
+    from math import prod
+
+    n_leaves = max(1, prod(batch_shape))
+    if not entries:
+        return [None] * n_leaves
+
+    ranges = [range(s) for s in batch_shape]
+    leaf_indices = list(cartesian_product(*ranges))
+
+    contexts: List[Optional[jnp.ndarray]] = []
+    for multi_idx in leaf_indices:
+        pieces: List[jnp.ndarray] = []
+        for value, bs in entries:
+            v = value
+            # Index into as many leading axes as the entry's batch depth
+            for level in range(len(bs)):
+                v = v[multi_idx[level]]
+            pieces.append(v)
+        contexts.append(
+            jnp.concatenate(pieces, axis=-1) if pieces else None
+        )
+    return contexts
+
+
+def _nest_component_dists(
+    flat_dists: list,
+    batch_shape: Tuple[int, ...],
+    axis_names: List[str],
+):
+    """Reshape a flat list of leaf distributions into nested hierarchy.
+
+    Given ``prod(batch_shape)`` leaf distributions, recursively wraps
+    them into ``ComponentFlowDistribution`` objects matching the
+    ``batch_shape`` nesting.
+
+    Parameters
+    ----------
+    flat_dists : list
+        Flat list of leaf distributions (length ``prod(batch_shape)``).
+    batch_shape : tuple of int
+        Target batch hierarchy sizes.
+    axis_names : list of str
+        Axis label per level.
+
+    Returns
+    -------
+    Distribution
+        Nested ``ComponentFlowDistribution`` (or single leaf dist if
+        ``batch_shape`` is empty).
+    """
+    from math import prod
+
+    if not batch_shape:
+        return flat_dists[0]
+
+    N = batch_shape[0]
+    remaining_shape = batch_shape[1:]
+    remaining_names = axis_names[1:]
+
+    inner_size = max(1, prod(remaining_shape))
+    groups = []
+    for i in range(N):
+        start = i * inner_size
+        end = start + inner_size
+        inner = _nest_component_dists(
+            flat_dists[start:end], remaining_shape, remaining_names,
+        )
+        groups.append(inner)
+
+    return ComponentFlowDistribution(groups, axis_name=axis_names[0])
+
+
 def _sample_mixture_flow_in_joint(
     spec: NormalWithTransformSpec,
     guide: JointNormalizingFlowGuide,
-    K: int,
+    batch_shape: Tuple[int, ...],
+    axis_names: List[str],
     G_i: int,
-    per_comp_contexts: List[Optional[jnp.ndarray]],
+    leaf_contexts: List[Optional[jnp.ndarray]],
     context_dim: int,
-    axis_name: str,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    """Sample a mixture gene-specific param using ComponentFlowDistribution.
+    """Sample a batch gene-specific param via nested ComponentFlowDistribution.
 
-    Creates K separate conditioned ``FlowDistribution`` instances
-    (independent or shared) and wraps them in a
-    ``ComponentFlowDistribution``.
+    Handles arbitrary depth of batch axes (e.g. ``(K,)`` for mixture-only
+    or ``(K, D)`` for mixture + dataset).  Each leaf in the Cartesian
+    product gets its own ``FlowDistribution`` (independent strategy) or
+    a shared ``FlowChain`` conditioned on multi-axis one-hot vectors
+    (shared strategy).
 
     Parameters
     ----------
@@ -402,74 +507,88 @@ def _sample_mixture_flow_in_joint(
         Parameter specification.
     guide : JointNormalizingFlowGuide
         Guide marker.
-    K : int
-        Number of mixture components (or dataset indices).
+    batch_shape : tuple of int
+        Sizes of batch axes (e.g. ``(K,)`` or ``(K, D)``).
+    axis_names : list of str
+        Labels parallel to *batch_shape* (e.g. ``["component", "dataset"]``).
     G_i : int
         Gene / trailing event dimension.
-    per_comp_contexts : list of jnp.ndarray or None
-        Per-component context vectors from previous params.
+    leaf_contexts : list of jnp.ndarray or None
+        One context vector per leaf (length ``prod(batch_shape)``).
     context_dim : int
         Expected dimensionality of each context vector.
-    axis_name : str
-        Label for the batch axis (``"component"`` or ``"dataset"``).
 
     Returns
     -------
     constrained : jnp.ndarray
-        Shape ``(K, G_i)`` in constrained space.
+        Shape ``(*batch_shape, G_i)`` in constrained space.
     unconstrained : jnp.ndarray
-        Shape ``(K, G_i)`` in unconstrained space.
+        Shape ``(*batch_shape, G_i)`` in unconstrained space.
     """
+    from itertools import product as cartesian_product
+    from math import prod
 
     def _base():
         return dist.Normal(jnp.zeros(G_i), jnp.ones(G_i)).to_event(1)
 
+    prefix = f"joint_flow_{guide.group}_{spec.name}"
+    n_leaves = max(1, prod(batch_shape))
+    ranges = [range(s) for s in batch_shape]
+    leaf_indices = list(cartesian_product(*ranges))
+
+    def _leaf_suffix(multi_idx):
+        """Module-name suffix from a multi-index, e.g. (2, 1) -> '_idx2_idx1'."""
+        return "".join(f"_idx{i}" for i in multi_idx)
+
     if guide.mixture_strategy == "independent":
-        component_dists = []
-        for k in range(K):
-            chain_k = _build_flow_chain_for_joint(
+        leaf_dists = []
+        for leaf_flat, multi_idx in enumerate(leaf_indices):
+            chain = _build_flow_chain_for_joint(
                 guide, features=G_i, context_dim=context_dim,
             )
-            mod_name = f"joint_flow_{guide.group}_{spec.name}_idx{k}"
-            fn_k = _register_flow(
-                mod_name, chain_k, features=G_i, context_dim=context_dim,
+            mod_name = f"{prefix}{_leaf_suffix(multi_idx)}"
+            fn = _register_flow(
+                mod_name, chain, features=G_i, context_dim=context_dim,
             )
 
-            ctx_k = per_comp_contexts[k]
-            if ctx_k is not None:
-                def _cond(x, reverse=False, _fn=fn_k, _ctx=ctx_k):
+            ctx = leaf_contexts[leaf_flat]
+            if ctx is not None:
+                def _cond(x, reverse=False, _fn=fn, _ctx=ctx):
                     return _fn(x, reverse=reverse, context=_ctx)
-                active = _cond
+                leaf_dists.append(FlowDistribution(_cond, _base()))
             else:
-                active = fn_k
-            component_dists.append(FlowDistribution(active, _base()))
+                leaf_dists.append(FlowDistribution(fn, _base()))
     else:
-        # Shared: one FlowChain with context_dim += K for one-hot
-        total_ctx_dim = context_dim + K
+        # Shared: one FlowChain with one-hot context for every batch axis
+        total_oh = sum(batch_shape)
+        total_ctx_dim = context_dim + total_oh
         chain = _build_flow_chain_for_joint(
             guide, features=G_i, context_dim=total_ctx_dim,
         )
-        mod_name = f"joint_flow_{guide.group}_{spec.name}"
         fn = _register_flow(
-            mod_name, chain, features=G_i, context_dim=total_ctx_dim,
+            prefix, chain, features=G_i, context_dim=total_ctx_dim,
         )
-        component_dists = []
-        for k in range(K):
-            oh_k = jax.nn.one_hot(k, K)
-            ctx_k = per_comp_contexts[k]
+
+        leaf_dists = []
+        for leaf_flat, multi_idx in enumerate(leaf_indices):
+            # Concatenate one-hot vectors for each batch level
+            oh_parts = [
+                jax.nn.one_hot(multi_idx[lvl], batch_shape[lvl])
+                for lvl in range(len(batch_shape))
+            ]
+            oh = jnp.concatenate(oh_parts)
+
+            ctx = leaf_contexts[leaf_flat]
             full_ctx = (
-                jnp.concatenate([ctx_k, oh_k])
-                if ctx_k is not None
-                else oh_k
+                jnp.concatenate([ctx, oh]) if ctx is not None else oh
             )
 
             def _cond(x, reverse=False, _fn=fn, _ctx=full_ctx):
                 return _fn(x, reverse=reverse, context=_ctx)
-            component_dists.append(FlowDistribution(_cond, _base()))
+            leaf_dists.append(FlowDistribution(_cond, _base()))
 
-    comp_dist = ComponentFlowDistribution(
-        component_dists, axis_name=axis_name,
-    )
+    # Reshape flat list into nested ComponentFlowDistribution hierarchy
+    comp_dist = _nest_component_dists(leaf_dists, batch_shape, axis_names)
 
     if _is_joint_ncp_spec(spec):
         unconstrained = numpyro.sample(spec.raw_name, comp_dist)
@@ -486,14 +605,17 @@ def _sample_mixture_flow_in_joint(
 def _sample_mixture_scalar_in_joint(
     spec: NormalWithTransformSpec,
     guide: JointNormalizingFlowGuide,
-    K: int,
-    per_comp_contexts: List[Optional[jnp.ndarray]],
+    batch_shape: Tuple[int, ...],
+    axis_names: List[str],
+    leaf_contexts: List[Optional[jnp.ndarray]],
     context_dim: int,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    """Sample a mixture scalar param using a K-dimensional Normal.
+    """Sample a batch scalar param using a Normal over all batch axes.
 
-    Each component gets its own ``(loc, scale)`` with optional linear
-    regression on its per-component context vector.
+    Generalises the old single-axis ``(K,)`` approach to arbitrary batch
+    depth (e.g. ``(K, D)``).  ``loc`` and ``scale`` have shape
+    ``batch_shape`` and an optional linear regression on per-leaf
+    context vectors is applied.
 
     Parameters
     ----------
@@ -501,36 +623,43 @@ def _sample_mixture_scalar_in_joint(
         Parameter specification.
     guide : JointNormalizingFlowGuide
         Guide marker.
-    K : int
-        Number of mixture components (or dataset indices).
-    per_comp_contexts : list of jnp.ndarray or None
-        Per-component context vectors from previous params.
+    batch_shape : tuple of int
+        Sizes of batch axes (e.g. ``(K,)`` or ``(K, D)``).
+    axis_names : list of str
+        Labels parallel to *batch_shape*.
+    leaf_contexts : list of jnp.ndarray or None
+        One context vector per leaf (length ``prod(batch_shape)``).
     context_dim : int
         Context dimensionality.
 
     Returns
     -------
     constrained : jnp.ndarray
-        Shape ``(K,)`` in constrained space.
+        Shape ``batch_shape`` in constrained space.
     unconstrained_expanded : jnp.ndarray
-        Shape ``(K, 1)`` — expanded for context concatenation.
+        Shape ``(*batch_shape, 1)`` — expanded for context concatenation.
     """
     prefix = f"joint_flow_{guide.group}_{spec.name}"
 
-    loc = numpyro.param(f"{prefix}_scalar_loc", jnp.zeros(K))
-    raw_scale = numpyro.param(f"{prefix}_scalar_raw_scale", jnp.zeros(K))
+    loc = numpyro.param(f"{prefix}_scalar_loc", jnp.zeros(batch_shape))
+    raw_scale = numpyro.param(
+        f"{prefix}_scalar_raw_scale", jnp.zeros(batch_shape),
+    )
     scale = jax.nn.softplus(raw_scale) + 1e-4
 
-    # Per-component context regression
-    if context_dim > 0 and per_comp_contexts[0] is not None:
+    # Per-leaf context regression: stack into (*batch_shape, context_dim)
+    if context_dim > 0 and leaf_contexts[0] is not None:
         alpha = numpyro.param(
             f"{prefix}_scalar_ctx_alpha",
-            jnp.zeros((K, context_dim)),
+            jnp.zeros((*batch_shape, context_dim)),
         )
-        stacked_ctx = jnp.stack(per_comp_contexts)  # (K, context_dim)
+        stacked_ctx = jnp.stack(leaf_contexts).reshape(
+            *batch_shape, context_dim,
+        )
         loc = loc + jnp.sum(alpha * stacked_ctx, axis=-1)
 
-    base_d = dist.Normal(loc, scale).to_event(1)
+    n_batch = len(batch_shape)
+    base_d = dist.Normal(loc, scale).to_event(n_batch)
 
     if _is_joint_ncp_spec(spec):
         unconstrained = numpyro.sample(spec.raw_name, base_d)
@@ -663,21 +792,21 @@ def setup_joint_flow_guide(
 
         if has_batch:
             # -----------------------------------------------------------
-            # Mixture / dataset spec: per-index flows
+            # Mixture / dataset spec: per-index flows (multi-level)
             # -----------------------------------------------------------
-            K = batch_shape[0]
-            per_comp_ctx = _build_per_component_contexts(
-                flow_unc_entries, K,
+            leaf_ctxs = _build_leaf_contexts(
+                flow_unc_entries, batch_shape,
             )
 
             if G_i <= 1:
                 constrained, unconstrained = _sample_mixture_scalar_in_joint(
-                    spec, guide, K, per_comp_ctx, context_dim,
+                    spec, guide, batch_shape, axis_names,
+                    leaf_ctxs, context_dim,
                 )
             else:
                 constrained, unconstrained = _sample_mixture_flow_in_joint(
-                    spec, guide, K, G_i, per_comp_ctx, context_dim,
-                    axis_name=axis_names[0],
+                    spec, guide, batch_shape, axis_names,
+                    G_i, leaf_ctxs, context_dim,
                 )
 
             flow_constrained[spec.name] = constrained
