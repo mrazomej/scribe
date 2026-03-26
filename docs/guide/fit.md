@@ -73,7 +73,8 @@ results = scribe.fit(adata, model="zinbvcp")
     apparent excess zeros and heavy tails in the data. See
     [Model Selection](model-selection.md) for the full decision guide.
 
-**Full guide:** [Model Selection](model-selection.md)
+**Full guide:** [Model Selection](model-selection.md) |
+**Parameter cheatsheet:** [Parameter Reference](parameters.md)
 
 ---
 
@@ -108,7 +109,8 @@ results = scribe.fit(adata, model="nbdm", unconstrained=True)
     (`mu_mean_anchor`), BNB overdispersion (`overdispersion="bnb"`), or
     dataset-level priors. SCRIBE will raise a `ValueError` if you forget.
 
-**Full guide:** [Model Selection > Parameterizations](model-selection.md#parameterizations)
+**Full guide:** [Model Selection > Parameterizations](model-selection.md#parameterizations) |
+**Parameter cheatsheet:** [Parameter Reference](parameters.md#parameterization-mappings)
 
 ---
 
