@@ -47,6 +47,42 @@ The generated tree includes:
 If managed files already exist, `scribe-infer` prompts before overwriting each
 file.
 
+## Interactive SLURM Launch
+
+Use `--slurm` to route execution through Hydra's `submitit_slurm` launcher with
+interactive prompts for cluster resources:
+
+```bash
+scribe-infer --slurm --config-path ./conf data=singer
+```
+
+Notes:
+
+- Partition is required and has no built-in default.
+- Account is optional.
+- The same command still auto-dispatches direct vs split mode.
+
+### Reusable SLURM Profiles (`conf/slurm`)
+
+You can keep reusable cluster settings in profile YAML files:
+
+```bash
+scribe-infer --slurm --slurm-profile default --config-path ./conf data=singer
+```
+
+Resolution rules:
+
+- Named profile `default` resolves to `./conf/slurm/default.yaml`.
+- You may also pass an explicit path to `--slurm-profile`.
+- Repeated `--slurm-set key=value` entries override profile values.
+- Missing core fields fall back to interactive prompts (or defaults where safe).
+
+Example per-run override:
+
+```bash
+scribe-infer --slurm --slurm-profile default --slurm-set partition=gpu --slurm-set timeout=0-08:00 --config-path ./conf data=singer
+```
+
 ### Common Examples
 
 ```bash

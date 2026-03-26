@@ -18,6 +18,8 @@ _TEMPLATE_REL_PATHS = [
     "conf/inference/mcmc.yaml",
     "conf/inference/vae.yaml",
     "conf/amortization/capture.yaml",
+    "conf/slurm/README.md",
+    "conf/slurm/default.yaml",
     "conf/dirname_aliases/default.yaml",
     "conf/paths/paths.yaml",
     "conf/paths/paths.local.yaml.example",

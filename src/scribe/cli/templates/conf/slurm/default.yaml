@@ -1,0 +1,44 @@
+# Default reusable SLURM profile for `scribe-infer --slurm`.
+#
+# This file is intentionally conservative:
+# - `partition` has no default, because cluster names are site-specific.
+# - Most fields can be overridden per run via `--slurm-set key=value`.
+# - Unknown submitit keys can go under `launcher_overrides`.
+#
+# Usage:
+#   scribe-infer --slurm --slurm-profile default --config-path ./conf data=my_dataset
+#   scribe-infer --slurm --slurm-profile default --slurm-set partition=gpu data=my_dataset
+
+# Required for non-interactive runs unless provided via --slurm-set.
+partition: null
+
+# Optional account/project string.
+account: null
+
+# Core resources and limits.
+array_parallelism: 1
+cpus_per_task: 4
+mem_gb: 64
+
+# Prefer `timeout_min` for explicit integer minutes.
+# You may alternatively use `timeout: "0-04:00"` and omit `timeout_min`.
+timeout_min: 240
+
+# Optional job metadata.
+job_name: scribe_infer
+submitit_folder: slurm_logs/submitit/%j
+
+# Common optional scheduler knobs.
+qos: null
+constraint: null
+exclude: null
+nodelist: null
+reservation: null
+gres: null
+mail_user: null
+mail_type: null
+
+# Escape hatch for cluster-specific submitit launcher keys.
+# These become `hydra.launcher.<key>=<value>` in direct mode and
+# `split.<key>=<value>` in split mode.
+launcher_overrides: {}

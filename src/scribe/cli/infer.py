@@ -10,6 +10,13 @@ from pathlib import Path
 from .dispatch import should_use_split_mode
 from .infer_help import DETAILED_DESCRIPTION, EPILOG
 from .initialize import initialize_conf
+from .slurm import (
+    SlurmPromptConfig,
+    build_slurm_command as _build_slurm_command,
+    load_slurm_profile as _load_slurm_profile,
+    parse_slurm_set_entries as _parse_slurm_set_entries,
+    prompt_slurm_config,
+)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -49,6 +56,35 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Initialize a starter conf directory. If PATH is omitted, the CLI "
             "prompts in interactive mode or defaults to ./conf in non-interactive mode."
+        ),
+    )
+    parser.add_argument(
+        "--slurm",
+        action="store_true",
+        help=(
+            "Launch via Hydra submitit_slurm with interactive resource prompts. "
+            "Partition is required and has no default."
+        ),
+    )
+    parser.add_argument(
+        "--slurm-profile",
+        default=None,
+        metavar="PROFILE",
+        help=(
+            "Optional SLURM profile name (resolved under <config-path>/slurm as "
+            "<PROFILE>.yaml) or explicit YAML path."
+        ),
+    )
+    parser.add_argument(
+        "--slurm-set",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help=(
+            "Optional per-run SLURM override. Repeat as needed. Supports common "
+            "keys (partition, account, cpus_per_task, mem_gb, timeout/timeout_min, "
+            "qos, constraint, exclude, nodelist, reservation, gres, mail_user, "
+            "mail_type, job_name, submitit_folder) and launcher.<key> passthrough."
         ),
     )
     return parser
@@ -124,8 +160,17 @@ def main(argv: list[str] | None = None) -> None:
     # Initialize mode is available even without hydra extras because it only
     # writes starter YAML templates for users to edit.
     if known_args.initialize is not None:
+        if known_args.slurm or known_args.slurm_profile or known_args.slurm_set:
+            raise SystemExit(
+                "--initialize cannot be combined with --slurm/--slurm-profile/--slurm-set."
+            )
         initialize_conf(known_args.initialize)
         return
+
+    if (known_args.slurm_profile or known_args.slurm_set) and not known_args.slurm:
+        raise SystemExit(
+            "--slurm-profile and --slurm-set require --slurm to be enabled."
+        )
 
     _ensure_hydra_extra_installed()
 
@@ -138,12 +183,31 @@ def main(argv: list[str] | None = None) -> None:
         if split_mode
         else "scribe.cli.infer_runner"
     )
-    command = _build_subprocess_command(
-        module_name=target_module,
-        config_path=str(config_root),
-        config_name=known_args.config_name,
-        forwarded_overrides=forwarded,
-    )
+    if known_args.slurm:
+        profile_values, _ = _load_slurm_profile(
+            known_args.slurm_profile, config_root=config_root
+        )
+        set_values, launcher_values = _parse_slurm_set_entries(known_args.slurm_set)
+        merged_values = {**profile_values, **set_values}
+        merged_values["launcher_overrides"] = {
+            **profile_values.get("launcher_overrides", {}),
+            **launcher_values,
+        }
+        slurm_cfg = prompt_slurm_config(merged_values, allow_interactive=True)
+        command = _build_slurm_command(
+            split_mode=split_mode,
+            config_path=str(config_root),
+            config_name=known_args.config_name,
+            forwarded_overrides=forwarded,
+            slurm_cfg=slurm_cfg,
+        )
+    else:
+        command = _build_subprocess_command(
+            module_name=target_module,
+            config_path=str(config_root),
+            config_name=known_args.config_name,
+            forwarded_overrides=forwarded,
+        )
     raise SystemExit(subprocess.call(command))
 
 
