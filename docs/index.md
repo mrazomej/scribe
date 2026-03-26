@@ -69,6 +69,9 @@ For the full mathematical derivation, see the
   [normalizing flows](https://en.wikipedia.org/wiki/Flow-based_generative_model)
 - **Scalable**: From small experiments to large-scale atlases with mini-batch
   support
+- **Production-Ready CLI**: `scribe-infer` provides reproducible,
+  config-driven inference with SLURM integration and automatic
+  covariate-split orchestration
 
 ## Key Features
 
@@ -383,6 +386,14 @@ gene_df = mc.gene_level_comparison("NB", "Hierarchical")
     Inference methods, DE, model comparison, and more
 
     [User guide](guide/index.md)
+
+-   :material-console:{ .lg .middle } **`scribe-infer` CLI**
+
+    ---
+
+    Reproducible, config-driven inference with SLURM integration
+
+    [CLI guide](guide/cli_infer.md)
 
 -   :material-api:{ .lg .middle } **API Reference**
 
