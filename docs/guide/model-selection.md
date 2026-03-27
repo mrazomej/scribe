@@ -15,18 +15,32 @@ other `scribe.fit()` arguments.
 ## Practical default: variable capture (NBVCP)
 
 In typical scRNA-seq data, **per-cell total UMI counts vary widely** across the
-experiment. When the spread is **not** very tight---for example, when the ratio
-of the largest to smallest total UMI among cells exceeds about **two-fold**---a
-model that **absorbs library-size variation into technical capture**
-(`variable_capture=True`, same as `model="nbvcp"`) is usually **essential**.
-Treating that variation as purely biological without an explicit capture channel
-can distort gene-level inference.
+experiment. A model that **absorbs library-size variation into technical
+capture** (`variable_capture=True`, same as `model="nbvcp"`) is the recommended
+starting point. Treating that variation as purely biological without an
+explicit capture channel can distort gene-level inference.
 
 ```python
-# Recommended starting point for most datasets with heterogeneous library sizes
-# (NBVCP; equivalent to model="nbvcp")
-results = scribe.fit(adata, variable_capture=True, amortize_capture=True)
+# Recommended starting point
+results = scribe.fit(
+    adata,
+    variable_capture=True,   # model cell-specific capture probability
+    guide_rank=64,            # low-rank guide captures gene-gene correlations
+)
 ```
+
+!!! note "Why `variable_capture` is not the default"
+    Empirically, we have **not yet encountered a dataset** that does not benefit
+    from variable capture. Nevertheless, we require the flag to be set
+    **explicitly** so that users are aware of the modeling assumptions they are
+    making.
+
+The `guide_rank` parameter adds a low-rank component to the variational
+posterior, giving SCRIBE a parameter-efficient way to capture **gene-gene
+correlations** that a mean-field guide would miss. A rank of 64 is a good
+initial value (you can always increase the rank or switch to a normalizing flow
+guide if you want a more expressive posterior); see [Variational Guide
+Families](guide-families.md) for details.
 
 **When NBDM is reasonable** (default likelihood; equivalent to `model="nbdm"`):
 total UMIs per cell are **very homogeneous** (e.g. max/min total UMI within

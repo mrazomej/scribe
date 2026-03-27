@@ -209,9 +209,8 @@ import scanpy as sc
 # Load your single-cell data
 adata = sc.read_h5ad("your_data.h5ad")
 
-# Typical default: variable capture when total UMIs vary across cells
-results = scribe.fit(adata, variable_capture=True, amortize_capture=True)
-# If total UMIs per cell are very homogeneous (~within 2x), the default (no variable capture) is usually enough
+# Recommended: variable capture + low-rank guide for gene-gene correlations
+results = scribe.fit(adata, variable_capture=True, guide_rank=64)
 
 # Analyze results
 posterior_samples = results.get_posterior_samples()
