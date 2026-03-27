@@ -3,9 +3,12 @@
 from pathlib import Path
 import sys
 
+import pytest
+
 from scribe.cli.split_orchestrator import (
     _build_joblib_multirun_command,
     _build_submitit_multirun_command,
+    _discover_covariate_values,
     _derive_output_prefix,
     _extract_config_options,
     _generate_tmp_yamls,
@@ -111,3 +114,18 @@ def test_joblib_command_includes_explicit_config_options():
         "-m",
         "data=_tmp_split_x/a",
     ]
+
+
+def test_discover_covariates_csv_reports_missing_column_not_format_error(
+    tmp_path: Path,
+):
+    """CSV inputs should parse and fail only on missing split_by columns."""
+    csv_path = tmp_path / "counts.csv"
+
+    # Keep CSV tiny because this test targets format routing, not model inputs.
+    csv_path.write_text("g1,g2\n1,0\n0,2\n")
+
+    with (
+        pytest.raises(ValueError, match="split_by column 'condition' not found"),
+    ):
+        _discover_covariate_values(str(csv_path), split_by="condition")
