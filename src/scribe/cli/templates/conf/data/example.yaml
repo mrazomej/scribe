@@ -12,7 +12,7 @@
 # Required Fields
 # ---------------
 # - name : A short identifier used in output paths and job names.
-# - path : Path to count matrix (.h5ad or .csv), relative or absolute.
+# - path : Path to count matrix (.h5ad, .csv, or 10x MEX), relative or absolute.
 #
 # Optional Fields
 # ---------------
@@ -24,6 +24,7 @@
 # - SCRIBE fits on count data. If preprocessing includes HVG selection,
 #   selected genes are kept but model fitting still uses counts.
 # - For `.h5ad`, counts are read from `adata.X` unless a layer is specified.
+# - For 10x MEX, set `path` to either the MEX directory or `matrix.mtx`.
 
 # ---- Required ---------------------------------------------------------------
 

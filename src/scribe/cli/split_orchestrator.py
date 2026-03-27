@@ -26,11 +26,12 @@ import subprocess
 from pathlib import Path
 from uuid import uuid4
 
-import scanpy as sc
 from omegaconf import OmegaConf
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+
+from scribe.data_loader import load_and_preprocess_anndata
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -216,7 +217,7 @@ def _discover_covariate_values(
     split_by: str | list[str],
     filter_obs: dict[str, list[str]] | None = None,
 ) -> list[str] | list[tuple[str, ...]]:
-    """Load h5ad and return unique value(s) for one or more covariate columns.
+    """Load data and return unique value(s) for one or more covariate columns.
 
     For a single column (``split_by`` is a ``str``), returns a sorted list of
     unique string values found in that column.
@@ -228,7 +229,8 @@ def _discover_covariate_values(
     Parameters
     ----------
     data_path : str
-        Path to the h5ad (or CSV) file.
+        Path to the input data source. Any format supported by
+        ``load_and_preprocess_anndata`` is accepted.
     split_by : str or list[str]
         Column name(s) in ``adata.obs``.
     filter_obs : dict[str, list[str]] or None, optional
@@ -248,7 +250,9 @@ def _discover_covariate_values(
         data_path if os.path.isabs(data_path) else os.path.abspath(data_path)
     )
 
-    adata = sc.read_h5ad(abs_path)
+    # Reuse the shared data loader so split discovery remains format-aware
+    # whenever supported input sources evolve.
+    adata = load_and_preprocess_anndata(abs_path, return_jax=False)
 
     # Apply filter_obs pre-filter so that only relevant rows participate in
     # the unique-value discovery (avoids creating split jobs for combinations

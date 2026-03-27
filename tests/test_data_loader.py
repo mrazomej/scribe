@@ -7,6 +7,8 @@ real h5ad files on disk (AnnData objects are built in-memory).
 import numpy as np
 import pandas as pd
 import pytest
+from scipy import io as scipy_io
+from scipy import sparse as scipy_sparse
 from anndata import AnnData
 
 from scribe.data_loader import load_and_preprocess_anndata
@@ -27,6 +29,42 @@ def _make_h5ad(tmp_path, obs_df: pd.DataFrame) -> str:
     path = str(tmp_path / "test.h5ad")
     adata.write_h5ad(path)
     return path
+
+
+def _make_10x_mex(tmp_path) -> str:
+    """Write a minimal 10x MEX directory and return its path.
+
+    Parameters
+    ----------
+    tmp_path : pathlib.Path
+        Temporary directory fixture path.
+
+    Returns
+    -------
+    str
+        Absolute path to a synthetic 10x MEX directory containing matrix,
+        barcodes, and genes metadata files.
+    """
+    mex_dir = tmp_path / "mex"
+    mex_dir.mkdir()
+
+    # 10x MEX stores counts as features x cells.
+    matrix = scipy_sparse.coo_matrix(
+        np.asarray(
+            [
+                [1, 0],
+                [0, 2],
+                [3, 4],
+            ],
+            dtype=np.int32,
+        )
+    )
+    scipy_io.mmwrite(str(mex_dir / "matrix.mtx"), matrix)
+    (mex_dir / "barcodes.tsv").write_text("cell0\ncell1\n")
+    (mex_dir / "genes.tsv").write_text(
+        "ENSG000001\tGENE1\nENSG000002\tGENE2\nENSG000003\tGENE3\n"
+    )
+    return str(mex_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -333,3 +371,39 @@ def test_filter_cells_raises_on_unknown_filter_key(tmp_path):
             return_jax=False,
             prep_config={"filter_cells": {"min_reads": 10}},
         )
+
+
+# ---------------------------------------------------------------------------
+# 10x MEX loading
+# ---------------------------------------------------------------------------
+
+
+def test_loads_10x_mex_from_directory_path(tmp_path):
+    """Loader should accept a directory containing 10x MEX files."""
+    mex_dir = _make_10x_mex(tmp_path)
+
+    result = load_and_preprocess_anndata(mex_dir, return_jax=False)
+
+    # read_10x_mtx returns cells x genes for standard 10x bundles.
+    assert result.shape == (2, 3)
+
+
+def test_loads_10x_mex_from_matrix_file_path(tmp_path):
+    """Loader should accept matrix.mtx path by resolving parent directory."""
+    mex_dir = _make_10x_mex(tmp_path)
+    matrix_path = f"{mex_dir}/matrix.mtx"
+
+    result = load_and_preprocess_anndata(matrix_path, return_jax=False)
+
+    assert result.shape == (2, 3)
+
+
+def test_10x_mex_missing_required_files_raises_clear_error(tmp_path):
+    """Incomplete 10x MEX directories should raise a descriptive error."""
+    bad_mex = tmp_path / "bad_mex"
+    bad_mex.mkdir()
+    (bad_mex / "matrix.mtx").write_text("%%MatrixMarket matrix coordinate integer general\n")
+    (bad_mex / "barcodes.tsv").write_text("cell0\n")
+
+    with pytest.raises(ValueError, match="10x MEX directory is missing required files"):
+        load_and_preprocess_anndata(str(bad_mex), return_jax=False)
