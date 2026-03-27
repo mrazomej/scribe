@@ -3,37 +3,31 @@
 SCRIBE provides a family of probabilistic models for scRNA-seq data, all built
 on the foundational **Negative Binomial** (NB) distribution dictated by the
 biophysics of transcription and mRNA capture. You choose a **likelihood** by
-setting **`variable_capture`** and **`zero_inflation`** on `scribe.fit()` (the
-defaults yield **NBDM**; turning on capture gives **NBVCP**, zero inflation
-gives **ZINB**, both gives **ZINBVCP**). The same four variants are still
+setting **`variable_capture`** and **`zero_inflation`** on `scribe.fit()`. The
+default model is **NBVCP** (variable capture on). Setting
+`variable_capture=False` gives **NBDM**; adding `zero_inflation=True` gives
+**ZINBVCP** (or **ZINB** when combined with `variable_capture=False`). The same four variants are still
 available as `model="nbdm"` / `"nbvcp"` / `"zinb"` / `"zinbvcp"` if you prefer a
 single string. Optional extensions (BNB overdispersion, mixture components) use
 other `scribe.fit()` arguments.
 
 ---
 
-## Practical default: variable capture (NBVCP)
+## Default: variable capture (NBVCP)
 
 In typical scRNA-seq data, **per-cell total UMI counts vary widely** across the
-experiment. A model that **absorbs library-size variation into technical
-capture** (`variable_capture=True`, same as `model="nbvcp"`) is the recommended
-starting point. Treating that variation as purely biological without an
-explicit capture channel can distort gene-level inference.
+experiment. SCRIBE defaults to **NBVCP** (`model="nbvcp"`), which absorbs
+library-size variation into a cell-specific technical capture channel.
+Empirically, we have **not yet encountered a dataset** that does not benefit
+from this extension.
 
 ```python
-# Recommended starting point
-results = scribe.fit(
-    adata,
-    variable_capture=True,   # model cell-specific capture probability
-    guide_rank=64,            # low-rank guide captures gene-gene correlations
-)
-```
+# Default: variable capture is on
+results = scribe.fit(adata)
 
-!!! note "Why `variable_capture` is not the default"
-    Empirically, we have **not yet encountered a dataset** that does not benefit
-    from variable capture. Nevertheless, we require the flag to be set
-    **explicitly** so that users are aware of the modeling assumptions they are
-    making.
+# Add a low-rank guide for gene-gene correlations
+results = scribe.fit(adata, guide_rank=64)
+```
 
 The `guide_rank` parameter adds a low-rank component to the variational
 posterior, giving SCRIBE a parameter-efficient way to capture **gene-gene
@@ -42,7 +36,7 @@ initial value (you can always increase the rank or switch to a normalizing flow
 guide if you want a more expressive posterior); see [Variational Guide
 Families](guide-families.md) for details.
 
-**When NBDM is reasonable** (default likelihood; equivalent to `model="nbdm"`):
+**When NBDM is reasonable** (`variable_capture=False`, same as `model="nbdm"`):
 total UMIs per cell are **very homogeneous** (e.g. max/min total UMI within
 roughly a factor of two, after basic QC), so a shared effective capture is a
 good approximation.
@@ -62,9 +56,9 @@ good approximation.
 
 ```mermaid
 graph TD
-    NB["Negative Binomial<br/><b>model='nbdm'</b> (default flags)<br/><i>base: r_g, p</i>"]
+    NB["Negative Binomial<br/><b>model='nbdm'</b> (variable_capture=False)<br/><i>base: r_g, p</i>"]
     ZINB["Zero-Inflated NB<br/><b>model='zinb'</b> (zero_inflation=True)<br/><i>+ gate_g</i>"]
-    NBVCP["NB + Variable Capture<br/><b>model='nbvcp'</b> (variable_capture=True)<br/><i>+ nu_c</i>"]
+    NBVCP["NB + Variable Capture<br/><b>model='nbvcp'</b> (default)<br/><i>+ nu_c</i>"]
     ZINBVCP["ZINB + Variable Capture<br/><b>model='zinbvcp'</b> (variable_capture=True, zero_inflation=True)<br/><i>+ gate_g, nu_c</i>"]
 
     NB -->|"+ zero inflation"| ZINB
@@ -83,8 +77,8 @@ graph TD
 ```mermaid
 graph TD
     Start["Assess total UMI per cell"] --> Qtot{"Max total UMI / min total UMI<br/>roughly within 2x?"}
-    Qtot -->|Yes, very tight| Base["NBDM often sufficient<br/>model='nbdm' (default flags)"]
-    Qtot -->|No, wider spread| VCP0["Prefer NBVCP<br/>model='nbvcp' (variable_capture=True)"]
+    Qtot -->|Yes, very tight| Base["NBDM may suffice<br/>model='nbdm' (variable_capture=False)"]
+    Qtot -->|No, wider spread| VCP0["Use default NBVCP<br/>model='nbvcp' (default)"]
     Base --> Qzi{"Still poor fit / excess zeros<br/>after NBDM + PPC?"}
     Qzi -->|Try VCP first| VCP0
     Qzi -->|Yes, after VCP| ZI["Consider ZINB or ZINBVCP<br/>(zero_inflation=True, ± VCP)"]
@@ -156,8 +150,8 @@ distribution factorizes into a **Negative Binomial for totals** and a
 ad-hoc library-size scaling.
 
 ```python
-# NBDM: default likelihood (equivalent to model="nbdm")
-results = scribe.fit(adata)
+# NBDM: plain NB without variable capture
+results = scribe.fit(adata, variable_capture=False)
 ```
 
 **See also:** [Theory: Dirichlet-Multinomial](../theory/dirichlet-multinomial.md).
@@ -223,7 +217,7 @@ results = scribe.fit(
     adata,
     overdispersion="bnb",
     unconstrained=True,
-    # Any likelihood: default NBDM, or e.g. variable_capture=True,
+    # Any likelihood: default NBVCP, or e.g. variable_capture=False,
     # zero_inflation=True, or both (same as model="nbdm" / "nbvcp" / …).
 )
 ```
@@ -267,8 +261,8 @@ results = scribe.fit(
 
 | Model | Zero Inflated | Variable Capture | BNB | Mixture | Best For |
 |-------|:---:|:---:|:---:|:---:|----------|
-| `"nbdm"` (default; omit both flags) | -- | -- | opt. | opt. | **Tight** total-UMI distribution (~within 2x) |
-| `"nbvcp"` (`variable_capture=True`) | -- | Yes | opt. | opt. | **Typical** data; heterogeneous library sizes |
+| `"nbdm"` (`variable_capture=False`) | -- | -- | opt. | opt. | **Tight** total-UMI distribution (~within 2x) |
+| `"nbvcp"` (**default**) | -- | Yes | opt. | opt. | **Typical** data; heterogeneous library sizes |
 | `"zinb"` (`zero_inflation=True`) | Yes | -- | opt. | opt. | Excess zeros **after** VCP ruled out / no VCP |
 | `"zinbvcp"` (`variable_capture=True`, `zero_inflation=True`) | Yes | Yes | opt. | opt. | Strong evidence for **both** ZI and VCP |
 

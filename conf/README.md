@@ -11,7 +11,7 @@ results.
 # Initialize starter config files in ./conf (or provide a path)
 scribe-infer --initialize
 
-# Run inference with default settings (NBDM model, SVI inference)
+# Run inference with default settings (NBVCP model, SVI inference)
 scribe-infer --config-path ./conf
 
 # Specify model and inference method

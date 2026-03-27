@@ -267,7 +267,7 @@ The `ScribeResults` class works with all model types supported by SCRIBE. Each
 model type has specific parameters available in the `params` dictionary based
 on the distributions used.
 
-=== "NBDM (default)"
+=== "NBDM (variable_capture=False)"
 
     ```python
     nbdm_results = scribe.fit(adata, model="nbdm")

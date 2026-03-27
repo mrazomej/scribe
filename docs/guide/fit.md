@@ -9,15 +9,11 @@ to the deeper guides and theory pages for full details.
 ```python
 import scribe
 
-# Minimal call --- sensible defaults (plain Negative Binomial, `model="nbdm"`)
+# Sensible defaults --- variable capture is on by default
 results = scribe.fit(adata)
 
-# Recommended starting point for most datasets
-results = scribe.fit(
-    adata,
-    variable_capture=True,   # model cell-specific capture probability
-    guide_rank=64,            # low-rank guide captures gene-gene correlations
-)
+# Add a low-rank guide for gene-gene correlations
+results = scribe.fit(adata, guide_rank=64)
 ```
 
 !!! tip "Read order"
@@ -32,12 +28,12 @@ results = scribe.fit(
     accepted for backward compatibility but the descriptive forms are
     recommended.
 
-**Model composition (recommended).** Prefer boolean flags **`variable_capture`**
-and **`zero_inflation`** to choose the likelihood family: each flag turns on
-one extension on top of the Negative Binomial core. The **`model`** keyword
-still accepts `"nbdm"`, `"nbvcp"`, `"zinb"`, and `"zinbvcp"` for the same four
-combinations. See [Model selection](#2-model-selection) for examples and the
-resolution table.
+**Variable capture is on by default.** The default model is `"nbvcp"`, which
+includes cell-specific capture probability. Use **`variable_capture=False`**
+to disable it, or **`zero_inflation=True`** to add a zero-inflation gate.
+The **`model`** keyword still accepts `"nbdm"`, `"nbvcp"`, `"zinb"`, and
+`"zinbvcp"` for the same four combinations. See
+[Model selection](#2-model-selection) for the full resolution table.
 
 ---
 
@@ -69,52 +65,51 @@ results = scribe.fit(adata, layer="raw_counts")
 
 ## 2. Model selection
 
-All four likelihoods share the same Negative Binomial core. **Prefer
-`variable_capture` and `zero_inflation`** to compose the model: each boolean
-adds one mechanism. Alternatively, set **`model`** to a single string
-(`"nbdm"`, `"nbvcp"`, `"zinb"`, `"zinbvcp"`); string forms remain fully
-supported. If you pass both flags and `model=`, they must agree or SCRIBE
-raises an error.
+All four likelihoods share the same Negative Binomial core. The default
+includes **variable capture** (`model="nbvcp"`), which models cell-specific
+library-size variation---the right choice for the vast majority of scRNA-seq
+datasets. Use **`variable_capture`** and **`zero_inflation`** to compose the
+model explicitly, or set **`model`** to a single string. If you pass both
+flags and `model=`, they must agree or SCRIBE raises an error.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `variable_capture` | `None` | `True` adds cell-specific capture probability (NBVCP / ZINBVCP). `None` means “not specified here”—use `model` or defaults |
-| `zero_inflation` | `None` | `True` adds a per-gene zero-inflation gate (ZINB / ZINBVCP). `None` means “not specified here” |
-| `model` | `"nbdm"` | Likelihood short name. Default is plain NB. Still accepted; flags are often clearer in new code |
+| `variable_capture` | `None` | `True` adds cell-specific capture probability. `False` removes it. `None` defers to `model` |
+| `zero_inflation` | `None` | `True` adds a per-gene zero-inflation gate. `None` defers to `model` |
+| `model` | `"nbvcp"` | Likelihood short name. Default includes variable capture. Flags override this when set |
 
 | What you pass | Same as `model=` |
 |---------------|------------------|
-| Default (no flags; default `model`) | `"nbdm"` |
-| `variable_capture=True` | `"nbvcp"` |
-| `zero_inflation=True` | `"zinb"` |
-| `variable_capture=True, zero_inflation=True` | `"zinbvcp"` |
+| Default (nothing) | `"nbvcp"` |
+| `variable_capture=False` | `"nbdm"` |
+| `zero_inflation=True` | `"zinbvcp"` |
+| `variable_capture=False, zero_inflation=True` | `"zinb"` |
 
 ```python
-# Variable capture --- recommended default for heterogeneous library sizes
-results = scribe.fit(adata, variable_capture=True)
+# Default: variable capture is already on
+results = scribe.fit(adata)
 
-# Zero-inflated NB (no variable capture)
+# Disable variable capture (plain NB) --- only when library sizes are very tight
+results = scribe.fit(adata, variable_capture=False)
+
+# Add zero inflation on top of the default variable capture
 results = scribe.fit(adata, zero_inflation=True)
 
-# Zero inflation + variable capture --- both mechanisms
-results = scribe.fit(adata, variable_capture=True, zero_inflation=True)
-
-# String form is still supported (here: same as variable_capture=True)
-results = scribe.fit(adata, model="nbvcp")
+# String form is still supported
+results = scribe.fit(adata, model="zinbvcp")
 ```
 
-!!! tip "Start with variable capture + low-rank guide"
-    Begin with `variable_capture=True, guide_rank=64`. Variable capture
-    explains much of the apparent excess zeros and heavy tails in the data, and
-    the low-rank guide adds a parameter-efficient way to capture gene-gene
-    correlations that a mean-field posterior would miss. See
+!!! tip "Add a low-rank guide"
+    Adding `guide_rank=64` gives SCRIBE a parameter-efficient way to capture
+    gene-gene correlations that a mean-field posterior would miss. See
     [Model Selection](model-selection.md) for the full decision guide.
 
-!!! note "Why `variable_capture` is not the default"
+!!! note "Why variable capture is on by default"
     Empirically, we have **not yet encountered a dataset** that does not
-    benefit from variable capture. We nonetheless require the flag to be set
-    explicitly so that users are aware of the modeling assumptions they are
-    making.
+    benefit from variable capture. Cell-specific capture probability accounts
+    for library-size heterogeneity that is ubiquitous in scRNA-seq protocols.
+    Set `variable_capture=False` if your library sizes are tightly controlled
+    (less than 2x variation between cells).
 
 **Full guide:** [Model Selection](model-selection.md) |
 **Parameter cheatsheet:** [Parameter Reference](parameters.md)
@@ -895,7 +890,7 @@ All `scribe.fit()` parameters at a glance, grouped by function:
     |-----------|---------|------|
     | `variable_capture` | `None` | `bool` |
     | `zero_inflation` | `None` | `bool` |
-    | `model` | `"nbdm"` | `str` (still accepted; flags preferred for clarity) |
+    | `model` | `"nbvcp"` | `str` |
     | `parameterization` | `"canonical"` | `str` |
     | `unconstrained` | `False` | `bool` |
 

@@ -101,7 +101,7 @@ so any config field can be changed from the command line.
 ### Common examples
 
 ```bash
-# Standard single-run inference with default model (NBDM)
+# Standard single-run inference with default model (NBVCP)
 scribe-infer --config-path ./conf data=singer
 
 # Override model to ZINB

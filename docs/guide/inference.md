@@ -32,7 +32,7 @@ inference method.
 ```python
 import scribe
 
-# Default SVI inference (NBDM is the default)
+# Default SVI inference (NBVCP model)
 results = scribe.fit(adata)
 
 # With custom parameters
