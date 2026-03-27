@@ -10,6 +10,13 @@ For guidance on *choosing* a model, see [Model Selection](model-selection.md).
 For the `scribe.fit()` keyword arguments that configure these parameters, see
 [The `scribe.fit()` Interface](fit.md).
 
+!!! tip "Descriptive parameter names"
+    When inspecting results, pass `descriptive_names=True` to `get_map()`,
+    `get_distributions()`, or `get_posterior_samples()` to get self-documenting
+    keys (e.g., `dispersion` instead of `r`, `capture_prob` instead of
+    `p_capture`). See the [Results Class](results.md#descriptive-parameter-names)
+    for the full mapping.
+
 ---
 
 ## Color legend

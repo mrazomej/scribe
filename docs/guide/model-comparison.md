@@ -21,8 +21,8 @@ weights and per-gene goodness-of-fit diagnostics.
 from scribe.mc import compare_models
 
 # Fit two models on the same data
-results_nbdm = scribe.fit(adata, model="nbdm")
-results_zinb = scribe.fit(adata, model="zinb")
+results_nbdm = scribe.fit(adata)
+results_zinb = scribe.fit(adata, zero_inflation=True)
 
 # Compare
 mc = compare_models(

@@ -150,7 +150,7 @@ couple locally:
 # mu gets cross-gene correlations; phi and gate only couple to mu per gene
 results = scribe.fit(
     adata,
-    model="zinb",
+    zero_inflation=True,
     unconstrained=True,
     guide_rank=10,
     joint_params=["mu", "phi", "gate"],
@@ -297,7 +297,7 @@ regression on the dense-flow residuals:
 # mu gets a full flow; phi and gate regress on mu per gene
 results = scribe.fit(
     adata,
-    model="zinb",
+    zero_inflation=True,
     unconstrained=True,
     guide_flow="affine_coupling",
     joint_params=["mu", "phi", "gate"],
@@ -345,7 +345,7 @@ VCP models:
 # Amortized inference for capture probability
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     amortize_capture=True,
     capture_hidden_dims=[128, 64],
     capture_activation="leaky_relu",

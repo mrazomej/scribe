@@ -9,17 +9,35 @@ to the deeper guides and theory pages for full details.
 ```python
 import scribe
 
-# Minimal call --- sensible defaults for everything
+# Minimal call --- sensible defaults (plain Negative Binomial, `model="nbdm"`)
 results = scribe.fit(adata)
 
-# Recommended starting point for most datasets
-results = scribe.fit(adata, model="nbvcp", amortize_capture=True)
+# Recommended starting point for most datasets: variable capture + amortization
+results = scribe.fit(
+    adata,
+    variable_capture=True,
+    amortize_capture=True,
+)
 ```
 
 !!! tip "Read order"
     If you are new to SCRIBE, read sections 1--4 below and the
     [Model Selection](model-selection.md) page. The remaining sections cover
     progressively more advanced features that you can explore as needed.
+
+!!! info "Naming convention"
+    Parameters use descriptive names (`expression_prior`, `prob_prior`,
+    `zero_inflation_prior`, etc.) rather than single-letter math notation.
+    Legacy shorthand (`mu_prior`, `p_prior`, `gate_prior`, ...) is still
+    accepted for backward compatibility but the descriptive forms are
+    recommended.
+
+**Model composition (recommended).** Prefer boolean flags **`variable_capture`**
+and **`zero_inflation`** to choose the likelihood family: each flag turns on
+one extension on top of the Negative Binomial core. The **`model`** keyword
+still accepts `"nbdm"`, `"nbvcp"`, `"zinb"`, and `"zinbvcp"` for the same four
+combinations. See [Model selection](#2-model-selection) for examples and the
+resolution table.
 
 ---
 
@@ -51,27 +69,46 @@ results = scribe.fit(adata, layer="raw_counts")
 
 ## 2. Model selection
 
-The `model` parameter picks which **likelihood** to use. All four models
-share the same Negative Binomial core; the extensions add variable capture
-and/or zero inflation.
+All four likelihoods share the same Negative Binomial core. **Prefer
+`variable_capture` and `zero_inflation`** to compose the model: each boolean
+adds one mechanism. Alternatively, set **`model`** to a single string
+(`"nbdm"`, `"nbvcp"`, `"zinb"`, `"zinbvcp"`); string forms remain fully
+supported. If you pass both flags and `model=`, they must agree or SCRIBE
+raises an error.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `model` | `"nbdm"` | Likelihood family: `"nbdm"`, `"nbvcp"`, `"zinb"`, or `"zinbvcp"` |
+| `variable_capture` | `None` | `True` adds cell-specific capture probability (NBVCP / ZINBVCP). `None` means “not specified here”—use `model` or defaults |
+| `zero_inflation` | `None` | `True` adds a per-gene zero-inflation gate (ZINB / ZINBVCP). `None` means “not specified here” |
+| `model` | `"nbdm"` | Likelihood short name. Default is plain NB. Still accepted; flags are often clearer in new code |
+
+| What you pass | Same as `model=` |
+|---------------|------------------|
+| Default (no flags; default `model`) | `"nbdm"` |
+| `variable_capture=True` | `"nbvcp"` |
+| `zero_inflation=True` | `"zinb"` |
+| `variable_capture=True, zero_inflation=True` | `"zinbvcp"` |
 
 ```python
 # Variable capture --- recommended default for heterogeneous library sizes
-results = scribe.fit(adata, model="nbvcp")
+results = scribe.fit(adata, variable_capture=True)
 
-# Zero-inflated NB with variable capture --- both mechanisms
-results = scribe.fit(adata, model="zinbvcp")
+# Zero-inflated NB (no variable capture)
+results = scribe.fit(adata, zero_inflation=True)
+
+# Zero inflation + variable capture --- both mechanisms
+results = scribe.fit(adata, variable_capture=True, zero_inflation=True)
+
+# String form is still supported (here: same as variable_capture=True)
+results = scribe.fit(adata, model="nbvcp")
 ```
 
-!!! tip "Start with NBVCP"
+!!! tip "Start with variable capture"
     Unless total UMI counts are very homogeneous (within roughly a factor of
-    two), begin with `model="nbvcp"`. Variable capture explains much of the
-    apparent excess zeros and heavy tails in the data. See
-    [Model Selection](model-selection.md) for the full decision guide.
+    two), begin with `variable_capture=True` (same model as `model="nbvcp"`).
+    Variable capture explains much of the apparent excess zeros and heavy tails
+    in the data. See [Model Selection](model-selection.md) for the full
+    decision guide.
 
 **Full guide:** [Model Selection](model-selection.md) |
 **Parameter cheatsheet:** [Parameter Reference](parameters.md)
@@ -82,7 +119,9 @@ results = scribe.fit(adata, model="zinbvcp")
 
 How the Negative Binomial parameters are represented internally. The choice
 affects optimization speed, numerical stability, and which downstream
-analyses are available.
+analyses are available. This is independent of whether you select the
+likelihood with **`variable_capture` / `zero_inflation`** or with a **`model=`**
+string (both remain valid; see [Model selection](#2-model-selection)).
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -97,7 +136,7 @@ analyses are available.
 
 ```python
 # Mean odds parameterization (often converges faster)
-results = scribe.fit(adata, model="nbvcp", parameterization="mean_odds")
+results = scribe.fit(adata, variable_capture=True, parameterization="mean_odds")
 
 # Unconstrained mode --- needed for hierarchical priors and BNB
 results = scribe.fit(adata, model="nbdm", unconstrained=True)
@@ -140,7 +179,7 @@ SCRIBE supports three inference backends, all accessed through the same
 # SVI with mini-batching and early stopping
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     n_steps=200_000,
     batch_size=512,
     early_stopping={
@@ -268,7 +307,7 @@ results = scribe.fit(
 
 ## 6. Capture amortization (VCP models)
 
-For VCP models (`nbvcp`, `zinbvcp`), each cell has its own capture
+When `variable_capture=True` (NBVCP and ZINBVCP), each cell has its own capture
 probability. Amortization replaces per-cell variational parameters with a
 small neural network that predicts them from total UMI count, reducing the
 parameter count from \(O(N_{\text{cells}})\) to the network weights.
@@ -285,12 +324,12 @@ parameter count from \(O(N_{\text{cells}})\) to the network weights.
 
 ```python
 # Amortized capture with defaults --- recommended for large datasets
-results = scribe.fit(adata, model="nbvcp", amortize_capture=True)
+results = scribe.fit(adata, variable_capture=True, amortize_capture=True)
 
 # Custom amortizer architecture
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     amortize_capture=True,
     capture_hidden_dims=[128, 64, 32],
     capture_activation="gelu",
@@ -333,7 +372,7 @@ All three accept: `"none"`, `"gaussian"`, `"horseshoe"`, or `"neg"`.
 # Horseshoe shrinkage on mu across cell types
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     unconstrained=True,
     n_components=5,
     expression_prior="horseshoe",
@@ -350,7 +389,7 @@ results = scribe.fit(
 # NEG prior on zero-inflation gate
 results = scribe.fit(
     adata,
-    model="zinb",
+    zero_inflation=True,
     unconstrained=True,
     zero_inflation_prior="neg",
 )
@@ -373,7 +412,7 @@ Fine-tune the behavior of Horseshoe and NEG priors:
 # Horseshoe with tighter global shrinkage
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     unconstrained=True,
     n_components=4,
     expression_prior="horseshoe",
@@ -405,7 +444,7 @@ dictionary:
 # Mean anchoring with organism-informed capture
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     expression_anchor=True,
     expression_anchor_sigma=0.3,
     priors={"organism": "human"},
@@ -415,14 +454,14 @@ results = scribe.fit(
 # Mean anchoring with explicit capture efficiency
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     expression_anchor=True,
     priors={"capture_efficiency": (10.0, 1e5)},
 )
 ```
 
 !!! note
-    For non-VCP models (`nbdm`, `zinb`), the anchor uses the implicit
+    Without variable capture (`nbdm`, `zinb`), the anchor uses the implicit
     capture \(\bar{\nu} = 1\), so no extra `priors` are needed.
 
 **Full guide:** [Theory: Anchoring Priors](../theory/anchoring-priors.md)
@@ -443,7 +482,7 @@ can be combined with any model.
 ```python
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     overdispersion="bnb",
     unconstrained=True,
     amortize_capture=True,
@@ -476,7 +515,7 @@ gene-specific parameters. Each cell is softly assigned to a component.
 # Discover 5 cell types
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     n_components=5,
     n_steps=150_000,
     amortize_capture=True,
@@ -503,7 +542,7 @@ assignments.
 # Use existing annotations as soft priors
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     n_components=5,
     annotation_key="cell_type",
     annotation_confidence=3.0,
@@ -513,7 +552,7 @@ results = scribe.fit(
 # Composite labels from two columns (e.g. cell_type x treatment)
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     annotation_key=["cell_type", "treatment"],
     annotation_confidence=5.0,
     annotation_min_cells=20,
@@ -566,7 +605,7 @@ allowed.
 # Two-dataset comparison with horseshoe shrinkage on mu
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     unconstrained=True,
     dataset_key="batch",
     expression_dataset_prior="horseshoe",
@@ -609,7 +648,7 @@ results = scribe.fit(
 # Symmetric Dirichlet for mixture weights (scalar is broadcast)
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     n_components=4,
     priors={"mixing": 5.0},  # equivalent to (5.0, 5.0, 5.0, 5.0)
 )
@@ -617,7 +656,7 @@ results = scribe.fit(
 # Biology-informed capture prior
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     priors={"organism": "human"},
 )
 ```
@@ -679,7 +718,7 @@ corresponding keyword arguments.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `model_config` | `None` | `ModelConfig` object. Overrides `model`, `parameterization`, `unconstrained`, `n_components`, `mixture_params`, `guide_rank`, and `priors` |
+| `model_config` | `None` | `ModelConfig` object. Overrides flat `model`, `variable_capture`, `zero_inflation`, `parameterization`, `unconstrained`, `n_components`, `mixture_params`, `guide_rank`, and `priors` |
 | `inference_config` | `None` | `InferenceConfig` object. Overrides `inference_method`, `n_steps`, `batch_size`, `stable_update`, `log_progress_lines`, `n_samples`, `n_warmup`, and `n_chains` |
 
 ```python
@@ -727,7 +766,7 @@ predictive checks, Bayesian denoising, and log-likelihood computation.
 # NBVCP with amortized capture and early stopping
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     parameterization="mean_odds",
     n_steps=100_000,
     batch_size=512,
@@ -742,7 +781,7 @@ results = scribe.fit(
 # Share strength across batches
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     unconstrained=True,
     dataset_key="batch",
     expression_dataset_prior="horseshoe",
@@ -758,7 +797,7 @@ results = scribe.fit(
 # 8 cell types, guided by partial annotations
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     n_components=8,
     annotation_key="cell_type",
     annotation_confidence=3.0,
@@ -795,7 +834,7 @@ mcmc_results = scribe.fit(
 # Everything turned on: VCP, anchoring, horseshoe, BNB
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     unconstrained=True,
     expression_anchor=True,
     expression_anchor_sigma=0.3,
@@ -848,7 +887,9 @@ All `scribe.fit()` parameters at a glance, grouped by function:
 
     | Parameter | Default | Type |
     |-----------|---------|------|
-    | `model` | `"nbdm"` | `str` |
+    | `variable_capture` | `None` | `bool` |
+    | `zero_inflation` | `None` | `bool` |
+    | `model` | `"nbdm"` | `str` (still accepted; flags preferred for clarity) |
     | `parameterization` | `"canonical"` | `str` |
     | `unconstrained` | `False` | `bool` |
 

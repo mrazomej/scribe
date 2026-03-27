@@ -163,8 +163,7 @@ population mean.
 # Gene-specific p with NEG prior
 results = scribe.fit(
     adata,
-    model="nbdm",
-    p_prior="neg",
+    prob_prior="neg",
 )
 ```
 
@@ -193,17 +192,17 @@ magnitude across genes.
 # Mixture model with hierarchical mu (NEG) and p (Gaussian)
 results = scribe.fit(
     adata,
-    model="zinb",
+    zero_inflation=True,
     n_components=3,
     unconstrained=True,
-    mu_prior="neg",
-    p_prior="gaussian",
+    expression_prior="neg",
+    prob_prior="gaussian",
 )
 ```
 
 | Parameter | Description |
 |-----------|-------------|
-| `mu_prior` | Prior family for mu across components: `"gaussian"`, `"horseshoe"`, `"neg"` |
+| `expression_prior` | Prior family for mu across components: `"gaussian"`, `"horseshoe"`, `"neg"` |
 | Requires | `n_components >= 2`, `unconstrained=True` |
 
 ### Hierarchical zero-inflation gate
@@ -265,8 +264,8 @@ uses only the \(r_g\) and \(p_g\) parameters.
 # ZINB with hierarchical gate (NEG) -- automatic NB recovery if ZI not needed
 results = scribe.fit(
     adata,
-    model="zinb",
-    gate_prior="neg",
+    zero_inflation=True,
+    zero_inflation_prior="neg",
 )
 ```
 
@@ -289,7 +288,6 @@ the full derivation.
 # BNB with horseshoe prior on kappa_g
 results = scribe.fit(
     adata,
-    model="nbdm",
     parameterization="canonical",
     overdispersion="bnb",
     overdispersion_prior="horseshoe",   # or "neg"
@@ -415,12 +413,12 @@ import scribe
 # ZINB mixture model with hierarchical priors on mu, p, and gate
 results = scribe.fit(
     adata,
-    model="zinb",
+    zero_inflation=True,
     n_components=3,
     unconstrained=True,
-    mu_prior="neg",        # across mixture components
-    p_prior="gaussian",    # gene-specific p
-    gate_prior="neg",      # gene-specific ZI gate
+    expression_prior="neg",        # across mixture components
+    prob_prior="gaussian",         # gene-specific p
+    zero_inflation_prior="neg",    # gene-specific ZI gate
 )
 ```
 
@@ -430,12 +428,13 @@ results = scribe.fit(
 # Joint model across datasets with hierarchical linking
 results = scribe.fit(
     adata,
-    model="zinbvcp",
+    variable_capture=True,
+    zero_inflation=True,
     dataset_key="batch",
     priors={"organism": "human"},
-    mu_dataset_prior="horseshoe",   # dataset-specific mu
-    p_dataset_prior="gaussian",     # dataset-specific p (gene-specific mode)
-    gate_dataset_prior="neg",       # dataset-specific gate
+    expression_dataset_prior="horseshoe",       # dataset-specific mu
+    prob_dataset_prior="gaussian",              # dataset-specific p (gene-specific mode)
+    zero_inflation_dataset_prior="neg",         # dataset-specific gate
 )
 ```
 
@@ -443,13 +442,13 @@ results = scribe.fit(
 
 | Parameter | Level | Accepted values | Requires |
 |-----------|-------|-----------------|----------|
-| `mu_prior` | Gene (across components) | `"gaussian"`, `"horseshoe"`, `"neg"` | `n_components >= 2`, `unconstrained=True` |
-| `p_prior` | Gene | `"gaussian"`, `"horseshoe"`, `"neg"` | -- |
-| `gate_prior` | Gene | `"gaussian"`, `"horseshoe"`, `"neg"` | ZI model (zinb/zinbvcp) |
-| `mu_dataset_prior` | Dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key` |
-| `p_dataset_prior` | Dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key` |
-| `p_dataset_mode` | -- | `"scalar"`, `"gene_specific"`, `"two_level"` | `p_dataset_prior` set |
-| `gate_dataset_prior` | Dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key`, ZI model |
+| `expression_prior` | Gene (across components) | `"gaussian"`, `"horseshoe"`, `"neg"` | `n_components >= 2`, `unconstrained=True` |
+| `prob_prior` | Gene | `"gaussian"`, `"horseshoe"`, `"neg"` | -- |
+| `zero_inflation_prior` | Gene | `"gaussian"`, `"horseshoe"`, `"neg"` | ZI model (zinb/zinbvcp) |
+| `expression_dataset_prior` | Dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key` |
+| `prob_dataset_prior` | Dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key` |
+| `prob_dataset_mode` | -- | `"scalar"`, `"gene_specific"`, `"two_level"` | `prob_dataset_prior` set |
+| `zero_inflation_dataset_prior` | Dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key`, ZI model |
 | `overdispersion` | -- | `"none"`, `"bnb"` | -- |
 | `overdispersion_prior` | Gene | `"horseshoe"`, `"neg"` | `overdispersion="bnb"` |
 | `overdispersion_dataset_prior` | Dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `overdispersion="bnb"`, `dataset_key` |
