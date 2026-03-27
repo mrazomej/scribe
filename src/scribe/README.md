@@ -571,6 +571,11 @@ gpu_results = scribe.run_scribe(
 
 ## Data Configuration
 
+`load_and_preprocess_anndata()` accepts `.h5ad`, `.csv`, and 10x Matrix
+Exchange (MEX) inputs. For MEX data, set `data.path` to either the directory
+containing `matrix.mtx`/`barcodes.tsv`/`features.tsv` (`genes.tsv` also
+supported) or directly to `matrix.mtx`.
+
 ### Observation Pre-Filtering (`filter_obs`)
 
 Data YAML configs support an optional `filter_obs` field for declarative

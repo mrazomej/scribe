@@ -7,11 +7,110 @@ from anndata import AnnData
 from omegaconf import DictConfig
 from typing import Optional, Union
 import os
+from pathlib import Path
 from omegaconf import OmegaConf, ListConfig
 
 # ==============================================================================
 # Data Loader
 # ==============================================================================
+
+
+def _load_10x_mex_directory(path: str) -> AnnData:
+    """Load a 10x Matrix Exchange (MEX) dataset from a directory.
+
+    Parameters
+    ----------
+    path : str
+        Path to a directory containing a 10x MEX bundle. The directory must
+        include:
+
+        - ``matrix.mtx`` or ``matrix.mtx.gz``
+        - ``barcodes.tsv`` or ``barcodes.tsv.gz``
+        - ``features.tsv`` / ``features.tsv.gz`` **or**
+          ``genes.tsv`` / ``genes.tsv.gz``
+
+    Returns
+    -------
+    AnnData
+        AnnData object with cells as rows and genes as columns.
+
+    Raises
+    ------
+    ValueError
+        If the directory is missing one or more required MEX files.
+    """
+    mex_dir = Path(path)
+
+    # Validate expected 10x MEX files explicitly so users get actionable
+    # errors instead of a generic parser failure from scanpy internals.
+    matrix_candidates = ("matrix.mtx", "matrix.mtx.gz")
+    barcode_candidates = ("barcodes.tsv", "barcodes.tsv.gz")
+    feature_candidates = (
+        "features.tsv",
+        "features.tsv.gz",
+        "genes.tsv",
+        "genes.tsv.gz",
+    )
+    has_matrix = any((mex_dir / name).exists() for name in matrix_candidates)
+    has_barcodes = any((mex_dir / name).exists() for name in barcode_candidates)
+    has_features = any((mex_dir / name).exists() for name in feature_candidates)
+    if not (has_matrix and has_barcodes and has_features):
+        raise ValueError(
+            "10x MEX directory is missing required files. Expected "
+            "matrix.mtx(.gz), barcodes.tsv(.gz), and features.tsv(.gz) or "
+            f"genes.tsv(.gz). Got directory: {path}"
+        )
+
+    return sc.read_10x_mtx(str(mex_dir))
+
+
+def _load_counts_as_anndata(path: str) -> AnnData:
+    """Load supported count matrix inputs into ``AnnData``.
+
+    Parameters
+    ----------
+    path : str
+        Path to one of the supported input formats:
+
+        - ``.h5ad``
+        - ``.csv`` (cells as rows, genes as columns)
+        - 10x MEX directory (contains ``matrix.mtx`` and companion files)
+        - ``matrix.mtx`` / ``matrix.mtx.gz`` file within a 10x MEX directory
+
+    Returns
+    -------
+    AnnData
+        Loaded count matrix as an ``AnnData`` object.
+
+    Raises
+    ------
+    ValueError
+        If ``path`` does not point to a supported format.
+    """
+    path_obj = Path(path)
+
+    # Handle 10x directory-style inputs first to support configs where
+    # data.path points directly at a MEX folder rather than a file.
+    if path_obj.is_dir():
+        return _load_10x_mex_directory(path)
+
+    _, extension = os.path.splitext(path)
+    if extension == ".h5ad":
+        return sc.read_h5ad(path)
+    elif extension == ".csv":
+        # Read the CSV file into a pandas DataFrame, ignoring lines starting
+        # with '#'
+        counts_df = pd.read_csv(path, comment="#")
+        # Create an AnnData object from the DataFrame values (cells x genes)
+        return AnnData(counts_df.values)
+    elif path_obj.name in {"matrix.mtx", "matrix.mtx.gz"}:
+        # Accept file-level MEX entrypoints by resolving to their parent dir.
+        return _load_10x_mex_directory(str(path_obj.parent))
+    else:
+        raise ValueError(
+            "Unsupported file format. Please use .csv, .h5ad, "
+            "a 10x MEX directory, or matrix.mtx(.gz)."
+        )
 
 
 def _apply_filter_cells_steps(
@@ -79,14 +178,17 @@ def load_and_preprocess_anndata(
     filter_obs: Optional[dict[str, list[str]]] = None,
 ) -> Union[jnp.ndarray, AnnData]:
     """
-    Load count data from a CSV or h5ad file and optionally apply scanpy
-    preprocessing steps.
+    Load count data and optionally apply scanpy preprocessing steps.
 
     Parameters
     ----------
     path : str
-        Path to the data file (CSV or h5ad). For CSV, the file should have
-        cells as rows and genes as columns.
+        Path to the data source. Supported inputs are:
+
+        - ``.h5ad`` files
+        - ``.csv`` files (cells as rows and genes as columns)
+        - 10x MEX directories
+        - ``matrix.mtx``/``matrix.mtx.gz`` files within a 10x MEX directory
     prep_config : Optional[DictConfig]
         A configuration object (e.g., OmegaConf DictConfig or dict) specifying
         preprocessing steps. Supported keys:
@@ -127,20 +229,9 @@ def load_and_preprocess_anndata(
     # Print the path from which data will be loaded
     print(f"Loading data from {path}...")
 
-    # Check file type and load accordingly
-    _, extension = os.path.splitext(path)
-    if extension == ".h5ad":
-        adata = sc.read_h5ad(path)
-    elif extension == ".csv":
-        # Read the CSV file into a pandas DataFrame, ignoring lines starting
-        # with '#'
-        counts_df = pd.read_csv(path, comment="#")
-        # Create an AnnData object from the DataFrame values (cells x genes)
-        adata = AnnData(counts_df.values)
-    else:
-        raise ValueError(
-            f"Unsupported file format: {extension}. Please use .csv or .h5ad"
-        )
+    # Centralize input-format handling so all call sites share the same set
+    # of supported dataset formats and validation behavior.
+    adata = _load_counts_as_anndata(path)
 
     # Newer anndata versions (≥0.10) may return adata.X as a lazy _CSRDataset
     # rather than a proper scipy sparse matrix, even without explicit backing
