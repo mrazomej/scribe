@@ -1,0 +1,2763 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Single-Cell RNA-Seq Inference using Bayesian Estimation — a Python package for analyzing scRNA-seq data with variational inference powered by NumPyro and JAX.">
+      
+      
+      
+      
+        <link rel="prev" href="../beta-negative-binomial/">
+      
+      
+        <link rel="next" href="../denoising/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Hierarchical Priors - SCRIBE</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#hierarchical-priors" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="SCRIBE" class="md-header__button md-logo" aria-label="SCRIBE" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            SCRIBE
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Hierarchical Priors
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/mrazomej/scribe" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mrazomej/scribe
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../getting-started/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Getting Started
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="../" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Theory
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../guide/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  User Guide
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/scribe/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../contributing/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Contributing
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="SCRIBE" class="md-nav__button md-logo" aria-label="SCRIBE" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    SCRIBE
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mrazomej/scribe" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mrazomej/scribe
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../getting-started/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quick-overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Theory
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Theory
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dirichlet-multinomial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dirichlet-Multinomial Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hierarchical-p/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hierarchical Gene-Specific p
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../anchoring-priors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Anchoring Priors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../beta-negative-binomial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Beta Negative Binomial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hierarchical Priors
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hierarchical Priors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-three-prior-families" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Three Prior Families
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The Three Prior Families">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gaussian-normal-hierarchy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gaussian (Normal hierarchy)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#horseshoe-regularized" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Horseshoe (Regularized)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#normal-exponential-gamma-neg-recommended-for-svi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Normal-Exponential-Gamma (NEG) -- recommended for SVI
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#applying-hierarchical-priors-to-model-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Applying Hierarchical Priors to Model Parameters
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Applying Hierarchical Priors to Model Parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gene-specific-p-success-probability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gene-specific p (success probability)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gene-specific-mu-across-mixture-components" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gene-specific mu (across mixture components)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hierarchical-zero-inflation-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hierarchical zero-inflation gate
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Hierarchical zero-inflation gate">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-hierarchical-gate-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The hierarchical gate model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#two-shrinkage-regimes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two shrinkage regimes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gate-and-composition-sampling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gate and composition sampling
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bnb-overdispersion-kappa_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BNB overdispersion (kappa_g)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#extension-to-multiple-datasets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extension to Multiple Datasets
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Extension to Multiple Datasets">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-parameter-degeneracy-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The parameter degeneracy problem
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-joint-model-solution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The joint model solution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dataset-specific-hierarchical-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dataset-specific hierarchical parameters
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Dataset-specific hierarchical parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#hierarchical-mu-across-datasets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hierarchical mu across datasets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dataset-specific-p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dataset-specific p
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dataset-specific-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dataset-specific gate
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shrinkage-diagnostics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shrinkage diagnostics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#paired-posterior-samples-for-cross-dataset-de" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Paired posterior samples for cross-dataset DE
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-hierarchical-priors-in-scribe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using Hierarchical Priors in SCRIBE
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Using Hierarchical Priors in SCRIBE">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gene-level-hierarchical-priors-single-dataset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gene-level hierarchical priors (single dataset)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-dataset-hierarchical-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-dataset hierarchical model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parameter-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameter reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#horseshoe-and-neg-hyperparameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Horseshoe and NEG hyperparameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../denoising/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bayesian Denoising
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../differential-expression/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differential Expression
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../goodness-of-fit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goodness-of-Fit Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../guide/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/fit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The scribe.fit() Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/cli_infer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    scribe-infer CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/cli_visualize/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    scribe-visualize CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/model-selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/guide-families/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Variational Guide Families
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/inference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Inference Methods
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results Class
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/differential-expression/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differential Expression
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/model-comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/scribe/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-three-prior-families" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Three Prior Families
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The Three Prior Families">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gaussian-normal-hierarchy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gaussian (Normal hierarchy)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#horseshoe-regularized" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Horseshoe (Regularized)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#normal-exponential-gamma-neg-recommended-for-svi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Normal-Exponential-Gamma (NEG) -- recommended for SVI
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#applying-hierarchical-priors-to-model-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Applying Hierarchical Priors to Model Parameters
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Applying Hierarchical Priors to Model Parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gene-specific-p-success-probability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gene-specific p (success probability)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gene-specific-mu-across-mixture-components" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gene-specific mu (across mixture components)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hierarchical-zero-inflation-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hierarchical zero-inflation gate
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Hierarchical zero-inflation gate">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-hierarchical-gate-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The hierarchical gate model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#two-shrinkage-regimes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two shrinkage regimes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gate-and-composition-sampling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gate and composition sampling
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bnb-overdispersion-kappa_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BNB overdispersion (kappa_g)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#extension-to-multiple-datasets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extension to Multiple Datasets
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Extension to Multiple Datasets">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-parameter-degeneracy-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The parameter degeneracy problem
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-joint-model-solution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The joint model solution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dataset-specific-hierarchical-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dataset-specific hierarchical parameters
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Dataset-specific hierarchical parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#hierarchical-mu-across-datasets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hierarchical mu across datasets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dataset-specific-p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dataset-specific p
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dataset-specific-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dataset-specific gate
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shrinkage-diagnostics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shrinkage diagnostics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#paired-posterior-samples-for-cross-dataset-de" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Paired posterior samples for cross-dataset DE
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-hierarchical-priors-in-scribe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using Hierarchical Priors in SCRIBE
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Using Hierarchical Priors in SCRIBE">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gene-level-hierarchical-priors-single-dataset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gene-level hierarchical priors (single dataset)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-dataset-hierarchical-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-dataset hierarchical model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parameter-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameter reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#horseshoe-and-neg-hyperparameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Horseshoe and NEG hyperparameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="hierarchical-priors">Hierarchical Priors<a class="headerlink" href="#hierarchical-priors" title="Permanent link">&para;</a></h1>
+<p>SCRIBE uses <strong>hierarchical priors</strong> as a unifying mechanism for sharing
+statistical strength across genes, mixture components, and datasets.
+Rather than treating each element independently, a hierarchical prior
+draws individual parameters from a shared population distribution whose
+hyperparameters are themselves learned from the data. This produces
+<strong>adaptive shrinkage</strong>: elements with limited data are regularized toward
+the population center, while elements with abundant data are free to
+deviate.</p>
+<p>The same three building-block prior families---Gaussian, Horseshoe, and
+Normal-Exponential-Gamma (NEG)---can be applied to different model
+parameters at different levels of the hierarchy. This page introduces the
+families, shows how they apply to the gene-specific success probability
+<span class="arithmatex">\(p_g\)</span> (see also the <a href="../hierarchical-p/">dedicated derivation</a>), the
+mean expression <span class="arithmatex">\(\mu_g\)</span>, and the zero-inflation gate <span class="arithmatex">\(\pi_g\)</span>, and
+then extends the framework to multi-dataset models.</p>
+<hr />
+<h2 id="the-three-prior-families">The Three Prior Families<a class="headerlink" href="#the-three-prior-families" title="Permanent link">&para;</a></h2>
+<p>All three families operate in an <strong>unconstrained space</strong> (logit for
+parameters bounded in <span class="arithmatex">\((0,1)\)</span>, log for positive parameters). They
+share a common template: a population center plus a per-element scale
+that controls how far each element can deviate.</p>
+<h3 id="gaussian-normal-hierarchy">Gaussian (Normal hierarchy)<a class="headerlink" href="#gaussian-normal-hierarchy" title="Permanent link">&para;</a></h3>
+<p>The simplest hierarchy assigns a single global scale to all elements:</p>
+<div class="arithmatex">\[
+\mu_{\text{pop}} \;\sim\; \pi(\mu_{\text{pop}}), \qquad
+\sigma \;\sim\; \text{Softplus}(\mathcal{N}(\mu_\sigma, s_\sigma)),
+\]</div>
+<div class="arithmatex">\[
+\theta_g \;\sim\; \mathcal{N}(\mu_{\text{pop}},\; \sigma),
+\quad g = 1, \ldots, G.
+\]</div>
+<p>Every element shares the same scale <span class="arithmatex">\(\sigma\)</span>, so all elements
+experience the same degree of shrinkage toward the population mean. This
+is effective when the signal is relatively homogeneous, but suffers from
+the <strong>scale contamination problem</strong>: if even a small fraction of elements
+have genuinely different values, the posterior of <span class="arithmatex">\(\sigma\)</span> inflates to
+accommodate them, loosening the constraint on <em>all</em> elements---including
+those that truly are identical.</p>
+<h3 id="horseshoe-regularized">Horseshoe (Regularized)<a class="headerlink" href="#horseshoe-regularized" title="Permanent link">&para;</a></h3>
+<p>The horseshoe prior addresses scale contamination by giving each element
+its own <strong>local scale</strong> <span class="arithmatex">\(\lambda_g\)</span>:</p>
+<div class="arithmatex">\[
+\tau \;\sim\; \text{Half-Cauchy}(\tau_0), \qquad
+\lambda_g \;\sim\; \text{Half-Cauchy}(1), \qquad
+c^2 \;\sim\; \text{Inv-Gamma}\!\left(\tfrac{\nu}{2},\;
+\tfrac{\nu s^2}{2}\right),
+\]</div>
+<div class="arithmatex">\[
+\tilde{\lambda}_g = \frac{c\,\lambda_g}{\sqrt{c^2 + \tau^2
+\lambda_g^2}}, \qquad
+\theta_g \;\sim\; \mathcal{N}(\mu_{\text{pop}},\;
+\tau \cdot \tilde{\lambda}_g).
+\]</div>
+<p>Most <span class="arithmatex">\(\lambda_g\)</span> values cluster near zero (strong shrinkage), while a
+few can be very large (escape shrinkage). The global <span class="arithmatex">\(\tau\)</span> controls
+the overall fraction of elements that are shrunk, and the slab
+<span class="arithmatex">\(c^2\)</span> bounds the maximum effective scale for numerical stability. The
+regularized local scale <span class="arithmatex">\(\tilde{\lambda}_g\)</span> behaves like the standard
+horseshoe when <span class="arithmatex">\(\tau \lambda_g \ll c\)</span> and saturates at <span class="arithmatex">\(c/\tau\)</span> for
+large signals.</p>
+<p><strong>The challenge under SVI.</strong> The horseshoe density has an <strong>infinite
+spike</strong> (a pole) at zero, corresponding to Half-Cauchy local scales.
+This creates a difficult gradient landscape: under mean-field or
+low-rank variational families, the infinite pole often leads to
+exploding gradients or variational collapse.</p>
+<h3 id="normal-exponential-gamma-neg-recommended-for-svi">Normal-Exponential-Gamma (NEG) -- recommended for SVI<a class="headerlink" href="#normal-exponential-gamma-neg-recommended-for-svi" title="Permanent link">&para;</a></h3>
+<p>The NEG prior is a member of the <strong>Three Parameter Beta Normal (TPBN)</strong>
+mixture family, which also includes the horseshoe. The key difference is
+a single index change that replaces the infinite spike with a finite
+peak.</p>
+<p>The TPBN family admits a <strong>Gamma-Gamma hierarchical representation</strong>:</p>
+<div class="arithmatex">\[
+\zeta_g \;\sim\; \text{Gamma}(a,\; \tau), \qquad
+\psi_g \mid \zeta_g \;\sim\; \text{Gamma}(u,\; \zeta_g),
+\]</div>
+<div class="arithmatex">\[
+\theta_g \;\sim\; \mathcal{N}(\mu_{\text{pop}},\; \sqrt{\psi_g}).
+\]</div>
+<p>Different choices of <span class="arithmatex">\(u\)</span> and <span class="arithmatex">\(a\)</span> recover different priors:</p>
+<table>
+<thead>
+<tr>
+<th>Prior</th>
+<th><span class="arithmatex">\(u\)</span></th>
+<th><span class="arithmatex">\(a\)</span></th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Horseshoe</td>
+<td>1/2</td>
+<td>1/2</td>
+<td>Infinite spike at zero; heaviest tails</td>
+</tr>
+<tr>
+<td>Strawderman-Berger</td>
+<td>1/2</td>
+<td>1</td>
+<td>Infinite spike; lighter tails</td>
+</tr>
+<tr>
+<td><strong>NEG</strong></td>
+<td><strong>1</strong></td>
+<td><span class="arithmatex">\(a &gt; 0\)</span></td>
+<td><strong>Finite</strong> peak; heavy tails</td>
+</tr>
+</tbody>
+</table>
+<p>Setting <span class="arithmatex">\(u = 1\)</span> makes the inner Gamma an <strong>Exponential</strong> distribution.
+This single change replaces the infinite pole at zero with a finite peak:
+the density still concentrates aggressively near zero to shrink
+irrelevant elements, but the gradient landscape is smooth and
+well-behaved.</p>
+<p><strong>Why the NEG is SVI-friendly.</strong> Every latent variable in the Gamma-Gamma
+hierarchy is either Gamma-distributed (with efficient implicit
+reparameterization gradients) or Normal (trivially reparameterizable
+under NCP). By contrast, the Half-Cauchy local scales in the horseshoe
+lack efficient reparameterization.</p>
+<p><strong>Non-centered parameterization (NCP).</strong> In practice, all three families
+use a non-centered form to avoid the funnel geometry that arises when the
+scale is small:</p>
+<div class="arithmatex">\[
+z_g \;\sim\; \mathcal{N}(0, 1), \qquad
+\theta_g = \mu_{\text{pop}} + \sigma_g \cdot z_g,
+\]</div>
+<p>where <span class="arithmatex">\(\sigma_g\)</span> is the family-specific scale (<span class="arithmatex">\(\sigma\)</span> for
+Gaussian, <span class="arithmatex">\(\tau \tilde{\lambda}_g\)</span> for horseshoe, <span class="arithmatex">\(\sqrt{\psi_g}\)</span>
+for NEG). The variational guide always targets a unit normal for
+<span class="arithmatex">\(z_g\)</span>---a well-scaled problem regardless of the effective scale.</p>
+<hr />
+<h2 id="applying-hierarchical-priors-to-model-parameters">Applying Hierarchical Priors to Model Parameters<a class="headerlink" href="#applying-hierarchical-priors-to-model-parameters" title="Permanent link">&para;</a></h2>
+<h3 id="gene-specific-p-success-probability">Gene-specific <em>p</em> (success probability)<a class="headerlink" href="#gene-specific-p-success-probability" title="Permanent link">&para;</a></h3>
+<p>The foundational application is the gene-specific success probability
+<span class="arithmatex">\(p_g\)</span>, derived in detail on the
+<a href="../hierarchical-p/">Hierarchical Gene-Specific p</a> page. In brief:</p>
+<div class="arithmatex">\[
+\text{logit}(p_g) \;\sim\; \mathcal{N}(\mu_p,\; \sigma_p),
+\quad g = 1, \ldots, G,
+\]</div>
+<p>where <span class="arithmatex">\(\mu_p\)</span> and <span class="arithmatex">\(\sigma_p\)</span> are learned hyperparameters. The
+posterior of <span class="arithmatex">\(\sigma_p\)</span> serves as a diagnostic: when it is near zero,
+the data are consistent with a shared <span class="arithmatex">\(p\)</span>, and the model effectively
+recovers the standard NBDM; when it is large, gene-to-gene variation is
+supported.</p>
+<p>Any of the three prior families can replace the Gaussian hierarchy above.
+With the horseshoe or NEG, each gene receives a local scale that allows
+a few genes to deviate strongly while the majority are shrunk to the
+population mean.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Gene-specific p with NEG prior</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">,</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">p_prior</span><span class="o">=</span><span class="s2">&quot;neg&quot;</span><span class="p">,</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="gene-specific-mu-across-mixture-components">Gene-specific mu (across mixture components)<a class="headerlink" href="#gene-specific-mu-across-mixture-components" title="Permanent link">&para;</a></h3>
+<p>For mixture models with <span class="arithmatex">\(K \geq 2\)</span> components, SCRIBE can place a
+hierarchical prior on the mean expression <span class="arithmatex">\(\mu_g\)</span> (or dispersion
+<span class="arithmatex">\(r_g\)</span> in the canonical parameterization) across components. Each gene
+has its own population center and the per-component means are drawn from
+it:</p>
+<div class="arithmatex">\[
+\mu_g^{\text{pop}} \;\sim\; \pi(\mu_g), \qquad
+\log(\mu_g^{(k)}) \;\sim\; \mathcal{N}(\log(\mu_g^{\text{pop}}),\;
+\sigma_g),
+\quad k = 1, \ldots, K,
+\]</div>
+<p>where <span class="arithmatex">\(\sigma_g\)</span> is the family-specific scale (Gaussian, horseshoe, or
+NEG). This encodes the biological prior that <strong>most genes have similar
+expression across cell types</strong>, with only a subset deviating. Each gene
+has its own hyperprior because expression magnitudes vary by orders of
+magnitude across genes.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Mixture model with hierarchical mu (NEG) and p (Gaussian)</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;zinb&quot;</span><span class="p">,</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">n_components</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">unconstrained</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="n">mu_prior</span><span class="o">=</span><span class="s2">&quot;neg&quot;</span><span class="p">,</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="n">p_prior</span><span class="o">=</span><span class="s2">&quot;gaussian&quot;</span><span class="p">,</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="p">)</span>
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mu_prior</code></td>
+<td>Prior family for mu across components: <code>"gaussian"</code>, <code>"horseshoe"</code>, <code>"neg"</code></td>
+</tr>
+<tr>
+<td>Requires</td>
+<td><code>n_components &gt;= 2</code>, <code>unconstrained=True</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="hierarchical-zero-inflation-gate">Hierarchical zero-inflation gate<a class="headerlink" href="#hierarchical-zero-inflation-gate" title="Permanent link">&para;</a></h3>
+<p>Zero-inflated models (ZINB, ZINBVCP) introduce a per-gene gate
+<span class="arithmatex">\(\pi_g \in (0,1)\)</span> that mixes a point mass at zero with the count
+distribution. In practice, model comparison reveals a characteristic
+pattern: the NB model is preferred for the vast majority of genes, but a
+small subset strongly favors zero inflation. A flat gate prior either
+"distracts" the majority of genes or starves the few that genuinely need
+it.</p>
+<h4 id="the-hierarchical-gate-model">The hierarchical gate model<a class="headerlink" href="#the-hierarchical-gate-model" title="Permanent link">&para;</a></h4>
+<p>The hierarchical gate resolves this dilemma with the same logit-normal
+structure, but with a <strong>"default off" center</strong>:</p>
+<div class="arithmatex">\[
+\mu_\pi \;\sim\; \mathcal{N}(-5,\; 1), \qquad
+\sigma_\pi \;\sim\; \text{Softplus}(\mathcal{N}(-2,\; 0.5)),
+\]</div>
+<div class="arithmatex">\[
+\text{logit}(\pi_g) \;\sim\; \mathcal{N}(\mu_\pi,\; \sigma_\pi),
+\quad g = 1, \ldots, G.
+\]</div>
+<p>The population mean <span class="arithmatex">\(\mu_\pi = -5\)</span> places the typical gate at
+<span class="arithmatex">\(\sigma(-5) \approx 0.7\%\)</span>: in the absence of evidence, genes are
+strongly regularized toward the NB model. Even one standard deviation
+above the mean (<span class="arithmatex">\(\mu_\pi = -4\)</span>) yields a gate of only 1.8%.</p>
+<h4 id="two-shrinkage-regimes">Two shrinkage regimes<a class="headerlink" href="#two-shrinkage-regimes" title="Permanent link">&para;</a></h4>
+<ul>
+<li><strong>When <span class="arithmatex">\(\sigma_\pi\)</span> is near zero:</strong> all gates collapse to
+  <span class="arithmatex">\(\sigma(\mu_\pi) \approx 0\)</span>, and the zero-inflated model
+  <strong>automatically recovers the standard NB model</strong>.</li>
+<li><strong>When <span class="arithmatex">\(\sigma_\pi\)</span> is large:</strong> individual genes can deviate
+  substantially. Genes with many structural zeros (e.g., cell-type
+  markers) escape the prior; genes without structural zeros remain near
+  zero.</li>
+</ul>
+<p>The posterior of <span class="arithmatex">\(\sigma_\pi\)</span> serves as a <strong>data-driven diagnostic</strong>:
+it tells you whether gene-to-gene variation in zero-inflation probability
+is supported by the data, eliminating the need for a separate NB vs ZINB
+model comparison step.</p>
+<h4 id="gate-and-composition-sampling">Gate and composition sampling<a class="headerlink" href="#gate-and-composition-sampling" title="Permanent link">&para;</a></h4>
+<p>An important practical point: the gate <strong>does not enter the standard
+composition formula</strong>. Compositions represent the fractional abundance
+of each gene conditional on it being expressed. The gate modifies the
+observed count distribution but not the relative expression levels. For
+differential expression, the composition sampling procedure from the
+<a href="../hierarchical-p/#composition-sampling-with-gene-specific-p_g">Hierarchical p page</a>
+uses only the <span class="arithmatex">\(r_g\)</span> and <span class="arithmatex">\(p_g\)</span> parameters.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># ZINB with hierarchical gate (NEG) -- automatic NB recovery if ZI not needed</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;zinb&quot;</span><span class="p">,</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">gate_prior</span><span class="o">=</span><span class="s2">&quot;neg&quot;</span><span class="p">,</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="bnb-overdispersion-kappa_g">BNB overdispersion (kappa_g)<a class="headerlink" href="#bnb-overdispersion-kappa_g" title="Permanent link">&para;</a></h3>
+<p>The <a href="../beta-negative-binomial/">Beta Negative Binomial</a> extension adds a
+per-gene concentration parameter <span class="arithmatex">\(\kappa_g\)</span> that allows heavier-than-NB
+tails. Since most genes are adequately described by the NB, the
+hierarchical prior on <span class="arithmatex">\(\kappa_g\)</span> must default to NB behaviour while
+allowing a sparse subset of genes to escape.</p>
+<p>The concentration is reparameterized as the excess dispersion fraction
+<span class="arithmatex">\(\omega_g = (r_g + 1) / (\kappa_g - 2)\)</span>, and the horseshoe or NEG
+prior is applied to <span class="arithmatex">\(\omega_g\)</span> so that most genes are shrunk toward
+<span class="arithmatex">\(\omega_g = 0\)</span> (the NB limit). See the
+<a href="../beta-negative-binomial/#hierarchical-prior-on-kappa_g">BNB page</a> for
+the full derivation.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># BNB with horseshoe prior on kappa_g</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">,</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">parameterization</span><span class="o">=</span><span class="s2">&quot;canonical&quot;</span><span class="p">,</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">overdispersion</span><span class="o">=</span><span class="s2">&quot;bnb&quot;</span><span class="p">,</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">overdispersion_prior</span><span class="o">=</span><span class="s2">&quot;horseshoe&quot;</span><span class="p">,</span>   <span class="c1"># or &quot;neg&quot;</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="p">)</span>
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>overdispersion</code></td>
+<td><code>"none"</code> (default) or <code>"bnb"</code> to enable the BNB</td>
+</tr>
+<tr>
+<td><code>overdispersion_prior</code></td>
+<td>Prior on <span class="arithmatex">\(\kappa_g\)</span>: <code>"horseshoe"</code> (default) or <code>"neg"</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="extension-to-multiple-datasets">Extension to Multiple Datasets<a class="headerlink" href="#extension-to-multiple-datasets" title="Permanent link">&para;</a></h2>
+<h3 id="the-parameter-degeneracy-problem">The parameter degeneracy problem<a class="headerlink" href="#the-parameter-degeneracy-problem" title="Permanent link">&para;</a></h3>
+<p>When fitting separate models to multiple datasets (e.g., same cell line
+processed with different library kits), the model has no way to
+distinguish "Kit 2 captures more molecules" from "Kit 2 cells express
+more." The gene-specific parameters can absorb systematic technical
+differences, producing different biological parameter estimates despite
+identical underlying biology.</p>
+<p>More precisely, the expected count
+<span class="arithmatex">\(\langle u_{gc} \rangle = \mu_g \cdot (1+\phi)^{-1} \cdot \nu_c\)</span> is a
+product of multiple terms. The data constrain only the product, not the
+individual factors. This degeneracy propagates to denoised counts and
+differential expression, partially or fully preserving the batch effect.</p>
+<h3 id="the-joint-model-solution">The joint model solution<a class="headerlink" href="#the-joint-model-solution" title="Permanent link">&para;</a></h3>
+<p>The solution is to fit all datasets <strong>jointly</strong> in a single model, with a
+hierarchical prior linking dataset-specific parameters to a shared
+population level. Biological parameters are constrained to be shared (or
+nearly shared) across datasets, forcing systematic differences into the
+technical parameters where they belong.</p>
+<h3 id="dataset-specific-hierarchical-parameters">Dataset-specific hierarchical parameters<a class="headerlink" href="#dataset-specific-hierarchical-parameters" title="Permanent link">&para;</a></h3>
+<h4 id="hierarchical-mu-across-datasets">Hierarchical mu across datasets<a class="headerlink" href="#hierarchical-mu-across-datasets" title="Permanent link">&para;</a></h4>
+<p>For each gene, the dataset-specific mean is drawn from a population
+distribution centered on the shared biological mean:</p>
+<div class="arithmatex">\[
+\log(\mu_g^{(d)}) \;\sim\; \mathcal{N}(\log(\mu_g),\; \tau_\mu),
+\quad d = 1, \ldots, D,
+\]</div>
+<p>where <span class="arithmatex">\(\tau_\mu\)</span> governs the magnitude of dataset-to-dataset variation
+in log space. The NCP form samples
+<span class="arithmatex">\(\epsilon_{g,d}\)</span> from <span class="arithmatex">\(\mathcal{N}(0,1)\)</span> and computes
+<span class="arithmatex">\(\log(\mu_g^{(d)}) = \log(\mu_g) + \tau_\mu \cdot \epsilon_{g,d}\)</span>.</p>
+<p>When <span class="arithmatex">\(\tau_\mu\)</span> is near zero, all dataset-specific means collapse to
+the shared value and the model reduces to a single-dataset fit. When
+<span class="arithmatex">\(\tau_\mu\)</span> is large, datasets are essentially independent.</p>
+<p>The Gaussian hierarchy uses a single <span class="arithmatex">\(\tau_\mu\)</span> for all genes. If a
+small fraction of genes have genuinely different expression across
+datasets, this inflates <span class="arithmatex">\(\tau_\mu\)</span> for all genes (the scale
+contamination problem). The <strong>horseshoe</strong> and <strong>NEG</strong> variants replace
+the single scale with per-gene local scales, protecting the majority from
+contamination.</p>
+<h4 id="dataset-specific-p">Dataset-specific <em>p</em><a class="headerlink" href="#dataset-specific-p" title="Permanent link">&para;</a></h4>
+<p>A scalar dataset-specific <span class="arithmatex">\(p^{(d)}\)</span> accounts for systematic technical
+differences between datasets (e.g., different kits producing different
+dropout rates), while remaining shared across genes within each dataset:</p>
+<div class="arithmatex">\[
+\text{logit}(p^{(d)}) \;\sim\; \mathcal{N}(\mu_p,\; \sigma_p),
+\quad d = 1, \ldots, D.
+\]</div>
+<p>For finer control, SCRIBE also supports <strong>gene-specific</strong> <span class="arithmatex">\(p_g^{(d)}\)</span>
+in two modes:</p>
+<ul>
+<li><strong>Single-level:</strong> all (gene, dataset) pairs share one
+  <span class="arithmatex">\((\mu_p, \sigma_p)\)</span>.</li>
+<li><strong>Two-level:</strong> each dataset draws its own <span class="arithmatex">\((\mu_p^{(d)},
+  \sigma_p^{(d)})\)</span> from a population distribution, then each gene draws
+  from its dataset's distribution.</li>
+</ul>
+<h4 id="dataset-specific-gate">Dataset-specific gate<a class="headerlink" href="#dataset-specific-gate" title="Permanent link">&para;</a></h4>
+<p>For zero-inflated models, each (dataset, gene) pair gets its own gate,
+independently drawn from the shared population distribution. Gates are
+<strong>not pooled</strong> across datasets---each dataset's likelihood independently
+updates each gene's gate. The "default off" property still applies: most
+gates are near zero unless the data demand otherwise.</p>
+<h3 id="shrinkage-diagnostics">Shrinkage diagnostics<a class="headerlink" href="#shrinkage-diagnostics" title="Permanent link">&para;</a></h3>
+<p>The posterior of each scale parameter serves as a diagnostic:</p>
+<table>
+<thead>
+<tr>
+<th>Diagnostic</th>
+<th>Near zero</th>
+<th>Large</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="arithmatex">\(\tau_\mu\)</span></td>
+<td>Identical biology across datasets</td>
+<td>Genuine biological differences</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(\sigma_p\)</span></td>
+<td>Same technical characteristics</td>
+<td>Different kit/sequencing profiles</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(\sigma_\pi\)</span></td>
+<td>No gene needs ZI in any dataset</td>
+<td>Gene-specific ZI heterogeneity</td>
+</tr>
+</tbody>
+</table>
+<h3 id="paired-posterior-samples-for-cross-dataset-de">Paired posterior samples for cross-dataset DE<a class="headerlink" href="#paired-posterior-samples-for-cross-dataset-de" title="Permanent link">&para;</a></h3>
+<p>A key property of the joint model is that each posterior sample provides
+parameters for <strong>all datasets simultaneously</strong>. Parameters at the same
+sample index are correlated through the shared population-level
+variables. This enables <strong>paired</strong> CLR-difference differential expression
+between datasets, where the comparison accounts for the posterior
+correlation introduced by the shared hierarchy.</p>
+<hr />
+<h2 id="using-hierarchical-priors-in-scribe">Using Hierarchical Priors in SCRIBE<a class="headerlink" href="#using-hierarchical-priors-in-scribe" title="Permanent link">&para;</a></h2>
+<h3 id="gene-level-hierarchical-priors-single-dataset">Gene-level hierarchical priors (single dataset)<a class="headerlink" href="#gene-level-hierarchical-priors-single-dataset" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">scribe</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="c1"># ZINB mixture model with hierarchical priors on mu, p, and gate</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;zinb&quot;</span><span class="p">,</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">n_components</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="n">unconstrained</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    <span class="n">mu_prior</span><span class="o">=</span><span class="s2">&quot;neg&quot;</span><span class="p">,</span>        <span class="c1"># across mixture components</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    <span class="n">p_prior</span><span class="o">=</span><span class="s2">&quot;gaussian&quot;</span><span class="p">,</span>    <span class="c1"># gene-specific p</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="n">gate_prior</span><span class="o">=</span><span class="s2">&quot;neg&quot;</span><span class="p">,</span>      <span class="c1"># gene-specific ZI gate</span>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="multi-dataset-hierarchical-model">Multi-dataset hierarchical model<a class="headerlink" href="#multi-dataset-hierarchical-model" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># Joint model across datasets with hierarchical linking</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;zinbvcp&quot;</span><span class="p">,</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="n">dataset_key</span><span class="o">=</span><span class="s2">&quot;batch&quot;</span><span class="p">,</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="n">priors</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;organism&quot;</span><span class="p">:</span> <span class="s2">&quot;human&quot;</span><span class="p">},</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="n">mu_dataset_prior</span><span class="o">=</span><span class="s2">&quot;horseshoe&quot;</span><span class="p">,</span>   <span class="c1"># dataset-specific mu</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>    <span class="n">p_dataset_prior</span><span class="o">=</span><span class="s2">&quot;gaussian&quot;</span><span class="p">,</span>     <span class="c1"># dataset-specific p (gene-specific mode)</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>    <span class="n">gate_dataset_prior</span><span class="o">=</span><span class="s2">&quot;neg&quot;</span><span class="p">,</span>       <span class="c1"># dataset-specific gate</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="parameter-reference">Parameter reference<a class="headerlink" href="#parameter-reference" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Level</th>
+<th>Accepted values</th>
+<th>Requires</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mu_prior</code></td>
+<td>Gene (across components)</td>
+<td><code>"gaussian"</code>, <code>"horseshoe"</code>, <code>"neg"</code></td>
+<td><code>n_components &gt;= 2</code>, <code>unconstrained=True</code></td>
+</tr>
+<tr>
+<td><code>p_prior</code></td>
+<td>Gene</td>
+<td><code>"gaussian"</code>, <code>"horseshoe"</code>, <code>"neg"</code></td>
+<td>--</td>
+</tr>
+<tr>
+<td><code>gate_prior</code></td>
+<td>Gene</td>
+<td><code>"gaussian"</code>, <code>"horseshoe"</code>, <code>"neg"</code></td>
+<td>ZI model (zinb/zinbvcp)</td>
+</tr>
+<tr>
+<td><code>mu_dataset_prior</code></td>
+<td>Dataset</td>
+<td><code>"gaussian"</code>, <code>"horseshoe"</code>, <code>"neg"</code></td>
+<td><code>dataset_key</code></td>
+</tr>
+<tr>
+<td><code>p_dataset_prior</code></td>
+<td>Dataset</td>
+<td><code>"gaussian"</code>, <code>"horseshoe"</code>, <code>"neg"</code></td>
+<td><code>dataset_key</code></td>
+</tr>
+<tr>
+<td><code>p_dataset_mode</code></td>
+<td>--</td>
+<td><code>"scalar"</code>, <code>"gene_specific"</code>, <code>"two_level"</code></td>
+<td><code>p_dataset_prior</code> set</td>
+</tr>
+<tr>
+<td><code>gate_dataset_prior</code></td>
+<td>Dataset</td>
+<td><code>"gaussian"</code>, <code>"horseshoe"</code>, <code>"neg"</code></td>
+<td><code>dataset_key</code>, ZI model</td>
+</tr>
+<tr>
+<td><code>overdispersion</code></td>
+<td>--</td>
+<td><code>"none"</code>, <code>"bnb"</code></td>
+<td>--</td>
+</tr>
+<tr>
+<td><code>overdispersion_prior</code></td>
+<td>Gene</td>
+<td><code>"horseshoe"</code>, <code>"neg"</code></td>
+<td><code>overdispersion="bnb"</code></td>
+</tr>
+<tr>
+<td><code>overdispersion_dataset_prior</code></td>
+<td>Dataset</td>
+<td><code>"gaussian"</code>, <code>"horseshoe"</code>, <code>"neg"</code></td>
+<td><code>overdispersion="bnb"</code>, <code>dataset_key</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="horseshoe-and-neg-hyperparameters">Horseshoe and NEG hyperparameters<a class="headerlink" href="#horseshoe-and-neg-hyperparameters" title="Permanent link">&para;</a></h3>
+<p>These are shared across all parameters that use the corresponding prior:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>horseshoe_tau0</code></td>
+<td>1.0</td>
+<td>Global shrinkage scale</td>
+</tr>
+<tr>
+<td><code>horseshoe_slab_df</code></td>
+<td>4</td>
+<td>Slab tail weight (degrees of freedom)</td>
+</tr>
+<tr>
+<td><code>horseshoe_slab_scale</code></td>
+<td>2.0</td>
+<td>Slab location scale</td>
+</tr>
+<tr>
+<td><code>neg_u</code></td>
+<td>1.0</td>
+<td>Inner Gamma shape (1 = NEG, 0.5 = horseshoe)</td>
+</tr>
+<tr>
+<td><code>neg_a</code></td>
+<td>1.0</td>
+<td>Outer Gamma shape (controls concentration near zero)</td>
+</tr>
+<tr>
+<td><code>neg_tau</code></td>
+<td>1.0</td>
+<td>Global rate for the outer Gamma</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition tip">
+<p class="admonition-title">Choosing a prior family</p>
+<ul>
+<li><strong>Start with <code>"gaussian"</code></strong> for well-behaved problems with few
+  outliers (e.g., technical replicates).</li>
+<li><strong>Use <code>"neg"</code></strong> (recommended default) when you expect most elements
+  to be similar but a few to differ strongly---the typical case for
+  gene-specific parameters. NEG provides horseshoe-like shrinkage with
+  stable SVI optimization.</li>
+<li><strong>Use <code>"horseshoe"</code></strong> when running MCMC, or when you specifically
+  need the stronger pole at zero.</li>
+</ul>
+</div>
+<p>For the full API details, see the <a href="../reference/scribe/api/">API Reference</a>.</p>
+<hr />
+<div class="admonition tip">
+<p class="admonition-title">Next steps</p>
+<ul>
+<li>See <a href="../hierarchical-p/">Hierarchical Gene-Specific <span class="arithmatex">\(p\)</span></a> for the
+  foundational derivation of gene-specific success probabilities, the
+  primary application of these prior families.</li>
+<li>See <a href="../anchoring-priors/">Anchoring Priors</a> for the complementary
+  regularization layers — anchors constrain the mean and capture
+  probability while hierarchical priors shrink the overdispersion.</li>
+<li>See <a href="../beta-negative-binomial/">Beta Negative Binomial</a> for how the
+  Horseshoe and NEG priors are applied to the BNB concentration parameter
+  <span class="arithmatex">\(\kappa_g\)</span> to enforce sparsity in extra overdispersion.</li>
+<li>See <a href="../differential-expression/">Differential Expression</a> to see how
+  joint multi-dataset hierarchical models enable paired CLR-difference DE
+  that accounts for posterior correlation across datasets.</li>
+<li>See the <a href="../../guide/inference/">Inference Methods guide</a> for practical
+  guidance on choosing SVI vs MCMC, directly relevant to the Horseshoe vs
+  NEG recommendation.</li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.indexes", "navigation.top", "content.code.copy", "content.code.annotate", "search.highlight", "search.suggest", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>

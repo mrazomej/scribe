@@ -1,0 +1,2894 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Single-Cell RNA-Seq Inference using Bayesian Estimation — a Python package for analyzing scRNA-seq data with variational inference powered by NumPyro and JAX.">
+      
+      
+      
+      
+        <link rel="prev" href="../model-selection/">
+      
+      
+        <link rel="next" href="../guide-families/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Parameter Reference - SCRIBE</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#parameter-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="SCRIBE" class="md-header__button md-logo" aria-label="SCRIBE" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            SCRIBE
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Parameter Reference
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/mrazomej/scribe" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mrazomej/scribe
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../getting-started/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Getting Started
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../theory/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Theory
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="../" class="md-tabs__link">
+        
+  
+  
+    
+  
+  User Guide
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/scribe/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../contributing/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Contributing
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="SCRIBE" class="md-nav__button md-logo" aria-label="SCRIBE" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    SCRIBE
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mrazomej/scribe" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mrazomej/scribe
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../getting-started/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quick-overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../theory/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Theory
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Theory
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/dirichlet-multinomial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dirichlet-Multinomial Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/hierarchical-p/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hierarchical Gene-Specific p
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/anchoring-priors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Anchoring Priors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/beta-negative-binomial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Beta Negative Binomial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/hierarchical-priors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hierarchical Priors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/denoising/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bayesian Denoising
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/differential-expression/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differential Expression
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/model-comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/goodness-of-fit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goodness-of-Fit Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The scribe.fit() Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli_infer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    scribe-infer CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli_visualize/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    scribe-visualize CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter Reference
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#color-legend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Color legend
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#core-likelihood-equations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core likelihood equations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core likelihood equations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nbdm-base-negative-binomial" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NBDM (base Negative Binomial)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nbvcp-variable-capture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NBVCP (+ variable capture)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#zinb-zinbvcp-zero-inflation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ZINB / ZINBVCP (+ zero inflation)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bnb-overdispersion-any-model-overdispersionbnb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BNB overdispersion (any model + overdispersion="bnb")
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mixture-models-any-model-n_componentsk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mixture models (any model + n_components=K)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#parameterization-mappings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameterization mappings
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Parameterization mappings">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#conversion-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conversion table
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#conversion-diagram" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conversion diagram
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-capture-parameters-change-with-parameterization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How capture parameters change with parameterization
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#master-parameter-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Master parameter table
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Master parameter table">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#derived-quantities-not-directly-sampled" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Derived quantities (not directly sampled)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#constrained-vs-unconstrained-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Constrained vs. unconstrained mode
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hierarchical-prior-hyperparameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hierarchical prior hyperparameters
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Hierarchical prior hyperparameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gaussian-hierarchy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gaussian hierarchy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#regularized-horseshoe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Regularized Horseshoe
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#normal-exponential-gamma-neg" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Normal-Exponential-Gamma (NEG)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mean-anchoring-prior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mean anchoring prior
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#biology-informed-capture-prior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Biology-informed capture prior
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#which-prior-applies-where" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which prior applies where
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dataset-level-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dataset-level parameters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quick-look-matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick-look matrix
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide-families/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Variational Guide Families
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../inference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Inference Methods
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results Class
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../differential-expression/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differential Expression
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/scribe/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#color-legend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Color legend
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#core-likelihood-equations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core likelihood equations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core likelihood equations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nbdm-base-negative-binomial" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NBDM (base Negative Binomial)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nbvcp-variable-capture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NBVCP (+ variable capture)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#zinb-zinbvcp-zero-inflation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ZINB / ZINBVCP (+ zero inflation)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bnb-overdispersion-any-model-overdispersionbnb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BNB overdispersion (any model + overdispersion="bnb")
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mixture-models-any-model-n_componentsk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mixture models (any model + n_components=K)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#parameterization-mappings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameterization mappings
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Parameterization mappings">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#conversion-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conversion table
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#conversion-diagram" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conversion diagram
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-capture-parameters-change-with-parameterization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How capture parameters change with parameterization
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#master-parameter-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Master parameter table
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Master parameter table">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#derived-quantities-not-directly-sampled" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Derived quantities (not directly sampled)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#constrained-vs-unconstrained-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Constrained vs. unconstrained mode
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hierarchical-prior-hyperparameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hierarchical prior hyperparameters
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Hierarchical prior hyperparameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gaussian-hierarchy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gaussian hierarchy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#regularized-horseshoe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Regularized Horseshoe
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#normal-exponential-gamma-neg" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Normal-Exponential-Gamma (NEG)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mean-anchoring-prior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mean anchoring prior
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#biology-informed-capture-prior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Biology-informed capture prior
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#which-prior-applies-where" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which prior applies where
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dataset-level-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dataset-level parameters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quick-look-matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick-look matrix
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="parameter-reference">Parameter Reference<a class="headerlink" href="#parameter-reference" title="Permanent link">&para;</a></h1>
+<p>This page is a one-stop cheatsheet mapping every internal parameter name in
+SCRIBE's generative model to its mathematical symbol, its role in the likelihood
+equations, the parameterization(s) it belongs to, and its biological
+interpretation. Prior hyperparameters and dataset-level extensions are covered
+at the end.</p>
+<p>For guidance on <em>choosing</em> a model, see <a href="../model-selection/">Model Selection</a>.
+For the <code>scribe.fit()</code> keyword arguments that configure these parameters, see
+<a href="../fit/">The <code>scribe.fit()</code> Interface</a>.</p>
+<hr />
+<h2 id="color-legend">Color legend<a class="headerlink" href="#color-legend" title="Permanent link">&para;</a></h2>
+<p>The equations below use a consistent color code so you can track each
+parameter across model variants.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">Color</th>
+<th>Parameter</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;"><span class="arithmatex">\(\color{#e07a5f}{r_g}\)</span></td>
+<td><code>r</code></td>
+<td>Gene-specific dispersion (burst rate)</td>
+</tr>
+<tr>
+<td style="text-align: center;"><span class="arithmatex">\(\color{#3d85c6}{p}\)</span></td>
+<td><code>p</code></td>
+<td>Success probability</td>
+</tr>
+<tr>
+<td style="text-align: center;"><span class="arithmatex">\(\color{#81b29a}{\mu_g}\)</span></td>
+<td><code>mu</code></td>
+<td>Biological mean expression</td>
+</tr>
+<tr>
+<td style="text-align: center;"><span class="arithmatex">\(\color{#f2cc8f}{\phi}\)</span></td>
+<td><code>phi</code></td>
+<td>Odds <span class="arithmatex">\((1-p)/p\)</span></td>
+</tr>
+<tr>
+<td style="text-align: center;"><span class="arithmatex">\(\color{#9b59b6}{\nu^{(c)}}\)</span></td>
+<td><code>p_capture</code></td>
+<td>Cell-specific capture probability</td>
+</tr>
+<tr>
+<td style="text-align: center;"><span class="arithmatex">\(\color{#e74c3c}{\pi_g}\)</span></td>
+<td><code>gate</code></td>
+<td>Per-gene zero-inflation probability</td>
+</tr>
+<tr>
+<td style="text-align: center;"><span class="arithmatex">\(\color{#f39c12}{\kappa_g}\)</span></td>
+<td><code>bnb_concentration</code></td>
+<td>BNB concentration (tail heaviness)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="core-likelihood-equations">Core likelihood equations<a class="headerlink" href="#core-likelihood-equations" title="Permanent link">&para;</a></h2>
+<p>Each model variant adds one structural layer. The equations below highlight
+exactly where each parameter sits.</p>
+<h3 id="nbdm-base-negative-binomial">NBDM (base Negative Binomial)<a class="headerlink" href="#nbdm-base-negative-binomial" title="Permanent link">&para;</a></h3>
+<div class="arithmatex">\[
+u_g \;\sim\; \text{NB}\!\bigl(\color{#e07a5f}{r_g},\;\color{#3d85c6}{p}\bigr)
+\]</div>
+<p>Gene-specific dispersion <span class="arithmatex">\(\color{#e07a5f}{r_g}\)</span> controls per-gene
+overdispersion; a single success probability <span class="arithmatex">\(\color{#3d85c6}{p}\)</span> is shared
+across genes. The joint distribution across genes factorizes into a Negative
+Binomial for totals and a Dirichlet-Multinomial for compositions (see
+<a href="../../theory/dirichlet-multinomial/">Theory</a>).</p>
+<h3 id="nbvcp-variable-capture">NBVCP (+ variable capture)<a class="headerlink" href="#nbvcp-variable-capture" title="Permanent link">&para;</a></h3>
+<div class="arithmatex">\[
+\hat{p}^{(c)} = \frac{\color{#3d85c6}{p}\;\color{#9b59b6}{\nu^{(c)}}}{1 - \color{#3d85c6}{p}\,(1 - \color{#9b59b6}{\nu^{(c)}})},
+\qquad
+u_g^{(c)} \;\sim\; \text{NB}\!\bigl(\color{#e07a5f}{r_g},\;\hat{p}^{(c)}\bigr)
+\]</div>
+<p>The cell-specific capture probability
+<span class="arithmatex">\(\color{#9b59b6}{\nu^{(c)}}\)</span> absorbs library-size variation. Genes are
+modelled independently given <span class="arithmatex">\(\color{#9b59b6}{\nu^{(c)}}\)</span>.</p>
+<h3 id="zinb-zinbvcp-zero-inflation">ZINB / ZINBVCP (+ zero inflation)<a class="headerlink" href="#zinb-zinbvcp-zero-inflation" title="Permanent link">&para;</a></h3>
+<div class="arithmatex">\[
+u_g^{(c)} \;\sim\;
+\color{#e74c3c}{\pi_g}\;\delta_0
+\;+\;
+(1 - \color{#e74c3c}{\pi_g})\;\text{NB}\!\bigl(\color{#e07a5f}{r_g},\;\hat{p}^{(c)}\bigr)
+\]</div>
+<p>The per-gene gate <span class="arithmatex">\(\color{#e74c3c}{\pi_g}\)</span> mixes a point mass at zero
+(technical dropout) with the NB (or NBVCP) count distribution. In ZINBVCP,
+<span class="arithmatex">\(\hat{p}^{(c)}\)</span> includes the capture factor as above; in ZINB,
+<span class="arithmatex">\(\hat{p}^{(c)} = \color{#3d85c6}{p}\)</span>.</p>
+<h3 id="bnb-overdispersion-any-model-overdispersionbnb">BNB overdispersion (any model + <code>overdispersion="bnb"</code>)<a class="headerlink" href="#bnb-overdispersion-any-model-overdispersionbnb" title="Permanent link">&para;</a></h3>
+<div class="arithmatex">\[
+\tilde{p} \;\sim\; \text{Beta}\!\bigl(\alpha_{gc},\;\color{#f39c12}{\kappa_g}\bigr),
+\qquad
+u_g^{(c)} \;\sim\; \text{NB}\!\bigl(\color{#e07a5f}{r_g},\;\tilde{p}\bigr)
+\]</div>
+<p>where <span class="arithmatex">\(\alpha_{gc}\)</span> is set to preserve the NB mean:
+<span class="arithmatex">\(\alpha_{gc} = \hat{p}^{(c)} \cdot \color{#f39c12}{\kappa_g}\,/\,(1 - \hat{p}^{(c)})\)</span>.
+As <span class="arithmatex">\(\color{#f39c12}{\kappa_g} \to \infty\)</span> the Beta concentrates at
+<span class="arithmatex">\(\hat{p}^{(c)}\)</span> and the BNB recovers the NB.</p>
+<h3 id="mixture-models-any-model-n_componentsk">Mixture models (any model + <code>n_components=K</code>)<a class="headerlink" href="#mixture-models-any-model-n_componentsk" title="Permanent link">&para;</a></h3>
+<p>With <span class="arithmatex">\(K\)</span> components, gene-specific parameters gain a component axis. Each
+cell's count is drawn from a mixture:</p>
+<div class="arithmatex">\[
+u_g^{(c)} \;\sim\; \sum_{k=1}^{K} w_k \;\cdot\; f_k\!\bigl(u_g^{(c)} \;\mid\; \theta_g^{(k)}\bigr),
+\]</div>
+<p>where <span class="arithmatex">\(w_k\)</span> are the mixing weights and <span class="arithmatex">\(\theta_g^{(k)}\)</span> includes the
+component-specific gene parameters. The <code>mixture_params</code> argument controls
+which parameters vary by component (default: <code>r</code> and <code>gate</code> if applicable).</p>
+<hr />
+<h2 id="parameterization-mappings">Parameterization mappings<a class="headerlink" href="#parameterization-mappings" title="Permanent link">&para;</a></h2>
+<p>The NB distribution can be parameterized in three equivalent ways. The
+<code>parameterization</code> argument to <code>scribe.fit()</code> controls which variables are
+<strong>sampled</strong> (free parameters the optimizer targets) and which are <strong>derived</strong>
+(deterministic functions of the sampled parameters).</p>
+<h3 id="conversion-table">Conversion table<a class="headerlink" href="#conversion-table" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameterization</th>
+<th><code>parameterization=</code></th>
+<th>Sampled</th>
+<th>Derived</th>
+<th>Conversion</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Canonical</strong></td>
+<td><code>"canonical"</code> (alias <code>"standard"</code>)</td>
+<td><span class="arithmatex">\(\color{#e07a5f}{r_g}\)</span>, <span class="arithmatex">\(\color{#3d85c6}{p}\)</span></td>
+<td>---</td>
+<td>---</td>
+</tr>
+<tr>
+<td><strong>Mean probs</strong></td>
+<td><code>"mean_prob"</code> (alias <code>"linked"</code>)</td>
+<td><span class="arithmatex">\(\color{#81b29a}{\mu_g}\)</span>, <span class="arithmatex">\(\color{#3d85c6}{p}\)</span></td>
+<td><span class="arithmatex">\(\color{#e07a5f}{r_g}\)</span></td>
+<td><span class="arithmatex">\(r_g = \mu_g\,(1-p)\,/\,p\)</span></td>
+</tr>
+<tr>
+<td><strong>Mean odds</strong></td>
+<td><code>"mean_odds"</code> (alias <code>"odds_ratio"</code>)</td>
+<td><span class="arithmatex">\(\color{#81b29a}{\mu_g}\)</span>, <span class="arithmatex">\(\color{#f2cc8f}{\phi}\)</span></td>
+<td><span class="arithmatex">\(\color{#3d85c6}{p}\)</span>, <span class="arithmatex">\(\color{#e07a5f}{r_g}\)</span></td>
+<td><span class="arithmatex">\(p = 1/(1+\phi)\)</span>, <span class="arithmatex">\(r_g = \mu_g \cdot \phi\)</span></td>
+</tr>
+</tbody>
+</table>
+<p>All three produce the <strong>same NB distribution</strong> for any given
+<span class="arithmatex">\((\mu_g, r_g, p)\)</span> triple --- they differ only in which quantities the
+optimizer directly targets.</p>
+<h3 id="conversion-diagram">Conversion diagram<a class="headerlink" href="#conversion-diagram" title="Permanent link">&para;</a></h3>
+<pre class="mermaid"><code>graph LR
+    Canon["Canonical&lt;br/&gt;r_g, p"] --&gt;|"mu_g = r_g * p / (1-p)"| MeanP["Mean probs&lt;br/&gt;mu_g, p"]
+    MeanP --&gt;|"r_g = mu_g * (1-p) / p"| Canon
+    MeanP --&gt;|"phi = (1-p) / p"| MeanO["Mean odds&lt;br/&gt;mu_g, phi"]
+    MeanO --&gt;|"p = 1 / (1+phi)"| MeanP
+    Canon --&gt;|"phi = (1-p)/p&lt;br/&gt;mu_g = r_g / phi"| MeanO
+    MeanO --&gt;|"r_g = mu_g * phi"| Canon</code></pre>
+<h3 id="how-capture-parameters-change-with-parameterization">How capture parameters change with parameterization<a class="headerlink" href="#how-capture-parameters-change-with-parameterization" title="Permanent link">&para;</a></h3>
+<p>The VCP capture parameter name depends on the parameterization:</p>
+<table>
+<thead>
+<tr>
+<th>Parameterization</th>
+<th>Capture parameter</th>
+<th>Symbol</th>
+<th>Domain</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Canonical, Mean probs</td>
+<td><code>p_capture</code></td>
+<td><span class="arithmatex">\(\nu^{(c)}\)</span></td>
+<td><span class="arithmatex">\((0, 1)\)</span></td>
+</tr>
+<tr>
+<td>Mean odds</td>
+<td><code>phi_capture</code></td>
+<td><span class="arithmatex">\(\phi^{(c)}_{\text{cap}}\)</span></td>
+<td><span class="arithmatex">\((0, \infty)\)</span></td>
+</tr>
+<tr>
+<td>Biology-informed (any)</td>
+<td><code>eta_capture</code></td>
+<td><span class="arithmatex">\(\eta_c = \log(M_c / L_c)\)</span></td>
+<td><span class="arithmatex">\((0, \infty)\)</span></td>
+</tr>
+</tbody>
+</table>
+<p>Exact relationships:</p>
+<div class="arithmatex">\[
+\nu^{(c)} = \exp(-\eta_c), \qquad
+\phi^{(c)}_{\text{cap}} = \exp(\eta_c) - 1.
+\]</div>
+<p>When the <strong>biology-informed capture prior</strong> is enabled (via
+<code>priors={"organism": "human"}</code>), <code>eta_capture</code> is the sampled site and
+<code>p_capture</code> or <code>phi_capture</code> is registered as a deterministic.</p>
+<hr />
+<h2 id="master-parameter-table">Master parameter table<a class="headerlink" href="#master-parameter-table" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Parameter name</th>
+<th>Symbol</th>
+<th>Role</th>
+<th>Domain</th>
+<th>Models</th>
+<th>Parameterization</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>r</code></td>
+<td><span class="arithmatex">\(\color{#e07a5f}{r_g}\)</span></td>
+<td>Gene-specific NB dispersion (burst rate). Higher <span class="arithmatex">\(r_g\)</span> means less overdispersion</td>
+<td><span class="arithmatex">\(\mathbb{R}^+\)</span></td>
+<td>All</td>
+<td>Sampled in canonical; derived in mean_prob and mean_odds</td>
+</tr>
+<tr>
+<td><code>p</code></td>
+<td><span class="arithmatex">\(\color{#3d85c6}{p}\)</span></td>
+<td>NB success probability. Shared across genes in NBDM; gene-specific <span class="arithmatex">\(p_g\)</span> when hierarchical</td>
+<td><span class="arithmatex">\((0, 1)\)</span></td>
+<td>All</td>
+<td>Sampled in canonical and mean_prob; derived in mean_odds</td>
+</tr>
+<tr>
+<td><code>mu</code></td>
+<td><span class="arithmatex">\(\color{#81b29a}{\mu_g}\)</span></td>
+<td>Biological mean expression per gene (before capture)</td>
+<td><span class="arithmatex">\(\mathbb{R}^+\)</span></td>
+<td>All</td>
+<td>Sampled in mean_prob and mean_odds; not directly in canonical</td>
+</tr>
+<tr>
+<td><code>phi</code></td>
+<td><span class="arithmatex">\(\color{#f2cc8f}{\phi}\)</span></td>
+<td>Odds of success probability: <span class="arithmatex">\(\phi = (1-p)/p\)</span></td>
+<td><span class="arithmatex">\(\mathbb{R}^+\)</span></td>
+<td>All</td>
+<td>Sampled only in mean_odds</td>
+</tr>
+<tr>
+<td><code>gate</code></td>
+<td><span class="arithmatex">\(\color{#e74c3c}{\pi_g}\)</span></td>
+<td>Per-gene zero-inflation probability (technical dropout)</td>
+<td><span class="arithmatex">\((0, 1)\)</span></td>
+<td>ZINB, ZINBVCP</td>
+<td>All parameterizations</td>
+</tr>
+<tr>
+<td><code>p_capture</code></td>
+<td><span class="arithmatex">\(\color{#9b59b6}{\nu^{(c)}}\)</span></td>
+<td>Cell-specific capture probability (library-size factor)</td>
+<td><span class="arithmatex">\((0, 1)\)</span></td>
+<td>NBVCP, ZINBVCP</td>
+<td>Canonical, mean_prob</td>
+</tr>
+<tr>
+<td><code>phi_capture</code></td>
+<td><span class="arithmatex">\(\phi^{(c)}_{\text{cap}}\)</span></td>
+<td>Cell-specific capture odds</td>
+<td><span class="arithmatex">\(\mathbb{R}^+\)</span></td>
+<td>NBVCP, ZINBVCP</td>
+<td>Mean odds only</td>
+</tr>
+<tr>
+<td><code>eta_capture</code></td>
+<td><span class="arithmatex">\(\eta_c\)</span></td>
+<td>Latent log-ratio <span class="arithmatex">\(\log(M_c / L_c)\)</span> under biology-informed prior</td>
+<td><span class="arithmatex">\(\mathbb{R}^+\)</span></td>
+<td>NBVCP, ZINBVCP</td>
+<td>Any (when biology-informed prior is active)</td>
+</tr>
+<tr>
+<td><code>bnb_concentration</code></td>
+<td><span class="arithmatex">\(\color{#f39c12}{\kappa_g}\)</span></td>
+<td>Beta concentration controlling BNB tail heaviness. <span class="arithmatex">\(\kappa_g \to \infty\)</span> recovers NB</td>
+<td><span class="arithmatex">\((2, \infty)\)</span></td>
+<td>Any + <code>overdispersion="bnb"</code></td>
+<td>All parameterizations</td>
+</tr>
+<tr>
+<td><code>mixing_weights</code></td>
+<td><span class="arithmatex">\(w_k\)</span></td>
+<td>Dirichlet-distributed component probabilities</td>
+<td>Simplex</td>
+<td>Any + <code>n_components &gt;= 2</code></td>
+<td>All parameterizations</td>
+</tr>
+<tr>
+<td><code>z</code></td>
+<td><span class="arithmatex">\(\underline{z}^{(c)}\)</span></td>
+<td>Per-cell latent embedding (VAE only)</td>
+<td><span class="arithmatex">\(\mathbb{R}^d\)</span></td>
+<td>Any + <code>inference_method="vae"</code></td>
+<td>All parameterizations</td>
+</tr>
+</tbody>
+</table>
+<h3 id="derived-quantities-not-directly-sampled">Derived quantities (not directly sampled)<a class="headerlink" href="#derived-quantities-not-directly-sampled" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Quantity</th>
+<th>Formula</th>
+<th>Appears in</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="arithmatex">\(\hat{p}^{(c)}\)</span></td>
+<td><span class="arithmatex">\(\dfrac{p \cdot \nu^{(c)}}{1 - p\,(1 - \nu^{(c)})}\)</span></td>
+<td>NBVCP / ZINBVCP effective success probability</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(\omega_g\)</span></td>
+<td><span class="arithmatex">\(\dfrac{r_g + 1}{\kappa_g - 2}\)</span></td>
+<td>BNB excess dispersion fraction (prior applied to this)</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(\alpha_{gc}\)</span></td>
+<td><span class="arithmatex">\(\dfrac{\hat{p}^{(c)} \cdot \kappa_g}{1 - \hat{p}^{(c)}}\)</span></td>
+<td>BNB Beta shape (mean-preserving)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="constrained-vs-unconstrained-mode">Constrained vs. unconstrained mode<a class="headerlink" href="#constrained-vs-unconstrained-mode" title="Permanent link">&para;</a></h2>
+<p>By default, parameters are sampled in their <strong>constrained</strong> domain (e.g.,
+<span class="arithmatex">\(p \in (0,1)\)</span> via a Beta distribution). With <code>unconstrained=True</code>, all
+parameters are lifted to <span class="arithmatex">\(\mathbb{R}\)</span> via standard transforms and sampled
+as Normals:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Transform</th>
+<th>Unconstrained name</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="arithmatex">\(p \in (0,1)\)</span></td>
+<td>logit</td>
+<td><code>p_unconstrained</code></td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(\mu \in \mathbb{R}^+\)</span></td>
+<td>log</td>
+<td><code>mu_unconstrained</code></td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(\phi \in \mathbb{R}^+\)</span></td>
+<td>log</td>
+<td><code>phi_unconstrained</code></td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(r \in \mathbb{R}^+\)</span></td>
+<td>log</td>
+<td><code>r_unconstrained</code></td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(\pi_g \in (0,1)\)</span></td>
+<td>logit</td>
+<td><code>gate_unconstrained</code></td>
+</tr>
+</tbody>
+</table>
+<p>Unconstrained mode is <strong>required</strong> for hierarchical priors and BNB
+overdispersion, and is the natural setting for
+<a href="../guide-families/#normalizing-flow">normalizing flow guides</a>.</p>
+<hr />
+<h2 id="hierarchical-prior-hyperparameters">Hierarchical prior hyperparameters<a class="headerlink" href="#hierarchical-prior-hyperparameters" title="Permanent link">&para;</a></h2>
+<p>Hierarchical priors operate on the <strong>unconstrained</strong> transforms of gene-level
+parameters (logit for probabilities, log for positive quantities). All three
+prior families share the same template:</p>
+<div class="arithmatex">\[
+\theta_g = \mu_{\text{pop}} + \sigma_g \cdot z_g,
+\qquad z_g \sim \mathcal{N}(0, 1),
+\]</div>
+<p>where <span class="arithmatex">\(\sigma_g\)</span> is the family-specific per-element scale.</p>
+<h3 id="gaussian-hierarchy">Gaussian hierarchy<a class="headerlink" href="#gaussian-hierarchy" title="Permanent link">&para;</a></h3>
+<p>A single shared scale for all genes:</p>
+<div class="arithmatex">\[
+\sigma_g = \sigma \quad \forall\, g,
+\qquad \sigma \sim \text{Softplus}(\mathcal{N}(\mu_\sigma, s_\sigma)).
+\]</div>
+<p>No user-configurable hyperparameters beyond the choice <code>"gaussian"</code> itself.</p>
+<h3 id="regularized-horseshoe">Regularized Horseshoe<a class="headerlink" href="#regularized-horseshoe" title="Permanent link">&para;</a></h3>
+<p>Per-gene local scales plus a global scale and regularization slab:</p>
+<div class="arithmatex">\[
+\theta_g = \mu_{\text{pop}} + \color{#3d85c6}{\tau} \cdot \tilde{\lambda}_g \cdot z_g,
+\qquad
+\tilde{\lambda}_g = \frac{\color{#81b29a}{c}\,\lambda_g}{\sqrt{\color{#81b29a}{c}^2 + \color{#3d85c6}{\tau}^2 \lambda_g^2}}
+\]</div>
+<table>
+<thead>
+<tr>
+<th><code>scribe.fit()</code> parameter</th>
+<th>Symbol</th>
+<th>Default</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>horseshoe_tau0</code></td>
+<td><span class="arithmatex">\(\color{#3d85c6}{\tau_0}\)</span></td>
+<td><code>1.0</code></td>
+<td>Scale of Half-Cauchy prior on global <span class="arithmatex">\(\tau\)</span>. Controls overall sparsity level</td>
+</tr>
+<tr>
+<td><code>horseshoe_slab_df</code></td>
+<td><span class="arithmatex">\(\nu\)</span></td>
+<td><code>4</code></td>
+<td>Degrees of freedom for Inv-Gamma slab on <span class="arithmatex">\(c^2\)</span>. Lower = heavier tails</td>
+</tr>
+<tr>
+<td><code>horseshoe_slab_scale</code></td>
+<td><span class="arithmatex">\(s\)</span></td>
+<td><code>2.0</code></td>
+<td>Scale of the slab. Bounds the maximum effective local scale</td>
+</tr>
+</tbody>
+</table>
+<h3 id="normal-exponential-gamma-neg">Normal-Exponential-Gamma (NEG)<a class="headerlink" href="#normal-exponential-gamma-neg" title="Permanent link">&para;</a></h3>
+<p>Gamma-Gamma hierarchy with a finite peak at zero (SVI-friendly):</p>
+<div class="arithmatex">\[
+\zeta_g \sim \text{Gamma}(\color{#f2cc8f}{a},\; \color{#e07a5f}{\tau}),
+\qquad
+\psi_g \mid \zeta_g \sim \text{Gamma}(\color{#81b29a}{u},\; \zeta_g),
+\qquad
+\theta_g \sim \mathcal{N}(\mu_{\text{pop}},\; \sqrt{\psi_g}).
+\]</div>
+<table>
+<thead>
+<tr>
+<th><code>scribe.fit()</code> parameter</th>
+<th>Symbol</th>
+<th>Default</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>neg_u</code></td>
+<td><span class="arithmatex">\(\color{#81b29a}{u}\)</span></td>
+<td><code>1.0</code></td>
+<td>Inner Gamma shape. <span class="arithmatex">\(u=1\)</span> gives NEG (finite peak); <span class="arithmatex">\(u=0.5\)</span> recovers horseshoe (infinite spike)</td>
+</tr>
+<tr>
+<td><code>neg_a</code></td>
+<td><span class="arithmatex">\(\color{#f2cc8f}{a}\)</span></td>
+<td><code>1.0</code></td>
+<td>Outer Gamma shape. Controls concentration near zero</td>
+</tr>
+<tr>
+<td><code>neg_tau</code></td>
+<td><span class="arithmatex">\(\color{#e07a5f}{\tau}\)</span></td>
+<td><code>1.0</code></td>
+<td>Global rate for the outer Gamma. Higher = stronger global shrinkage</td>
+</tr>
+</tbody>
+</table>
+<h3 id="mean-anchoring-prior">Mean anchoring prior<a class="headerlink" href="#mean-anchoring-prior" title="Permanent link">&para;</a></h3>
+<p>Anchors the gene mean <span class="arithmatex">\(\mu_g\)</span> to a data-implied value to resolve
+the multiplicative degeneracy between expression and capture:</p>
+<div class="arithmatex">\[
+\hat{\mu}_g = \frac{\bar{u}_g + \epsilon}{\bar{\nu}},
+\qquad
+\log(\mu_g) \sim \mathcal{N}(\log(\hat{\mu}_g),\; \sigma_\mu^2).
+\]</div>
+<table>
+<thead>
+<tr>
+<th><code>scribe.fit()</code> parameter</th>
+<th>Symbol</th>
+<th>Default</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mu_mean_anchor</code></td>
+<td>---</td>
+<td><code>False</code></td>
+<td>Enable mean anchoring</td>
+</tr>
+<tr>
+<td><code>mu_mean_anchor_sigma</code></td>
+<td><span class="arithmatex">\(\sigma_\mu\)</span></td>
+<td><code>0.3</code></td>
+<td>Width of the anchor. Smaller = tighter regularization toward data mean</td>
+</tr>
+</tbody>
+</table>
+<p>See <a href="../../theory/anchoring-priors/">Theory: Anchoring Priors</a>.</p>
+<h3 id="biology-informed-capture-prior">Biology-informed capture prior<a class="headerlink" href="#biology-informed-capture-prior" title="Permanent link">&para;</a></h3>
+<p>Anchors the capture probability to the ratio of library size to total mRNA
+content:</p>
+<div class="arithmatex">\[
+\eta_c \sim \mathcal{N}^{+}\!\bigl(\log M_0 - \log L_c,\; \sigma_M^2\bigr),
+\qquad \nu_c = \exp(-\eta_c).
+\]</div>
+<table>
+<thead>
+<tr>
+<th><code>scribe.fit()</code> parameter</th>
+<th>Symbol</th>
+<th>Default</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>priors={"organism": "human"}</code></td>
+<td><span class="arithmatex">\(M_0\)</span></td>
+<td>---</td>
+<td>Sets organism-specific expected total mRNA (e.g., 200,000 for human/mouse)</td>
+</tr>
+<tr>
+<td><code>priors={"eta_capture": (log_M0, sigma_M)}</code></td>
+<td><span class="arithmatex">\(\log M_0, \sigma_M\)</span></td>
+<td>---</td>
+<td>Direct specification of capture prior parameters</td>
+</tr>
+</tbody>
+</table>
+<p>See <a href="../../theory/anchoring-priors/">Theory: Anchoring Priors</a>.</p>
+<hr />
+<h2 id="which-prior-applies-where">Which prior applies where<a class="headerlink" href="#which-prior-applies-where" title="Permanent link">&para;</a></h2>
+<p>Hierarchical priors are selected via the <code>*_prior</code> arguments. Each argument
+targets a specific parameter at a specific level:</p>
+<table>
+<thead>
+<tr>
+<th><code>scribe.fit()</code> argument</th>
+<th>Target parameter</th>
+<th>Level</th>
+<th>Accepted values</th>
+<th>Requires</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>p_prior</code></td>
+<td><span class="arithmatex">\(p_g\)</span> (gene-specific)</td>
+<td>Gene</td>
+<td><code>"gaussian"</code>, <code>"horseshoe"</code>, <code>"neg"</code></td>
+<td>---</td>
+</tr>
+<tr>
+<td><code>mu_prior</code></td>
+<td><span class="arithmatex">\(\mu_g^{(k)}\)</span> (across components)</td>
+<td>Gene x component</td>
+<td><code>"gaussian"</code>, <code>"horseshoe"</code>, <code>"neg"</code></td>
+<td><code>n_components &gt;= 2</code>, <code>unconstrained=True</code></td>
+</tr>
+<tr>
+<td><code>gate_prior</code></td>
+<td><span class="arithmatex">\(\pi_g\)</span></td>
+<td>Gene</td>
+<td><code>"gaussian"</code>, <code>"horseshoe"</code>, <code>"neg"</code></td>
+<td>ZI model</td>
+</tr>
+<tr>
+<td><code>overdispersion_prior</code></td>
+<td><span class="arithmatex">\(\kappa_g\)</span> (via <span class="arithmatex">\(\omega_g\)</span>)</td>
+<td>Gene</td>
+<td><code>"horseshoe"</code>, <code>"neg"</code></td>
+<td><code>overdispersion="bnb"</code></td>
+</tr>
+<tr>
+<td><code>mu_dataset_prior</code></td>
+<td><span class="arithmatex">\(\mu_g^{(d)}\)</span></td>
+<td>Gene x dataset</td>
+<td><code>"gaussian"</code>, <code>"horseshoe"</code>, <code>"neg"</code></td>
+<td><code>dataset_key</code></td>
+</tr>
+<tr>
+<td><code>p_dataset_prior</code></td>
+<td><span class="arithmatex">\(p^{(d)}\)</span> or <span class="arithmatex">\(p_g^{(d)}\)</span></td>
+<td>Dataset (or gene x dataset)</td>
+<td><code>"gaussian"</code>, <code>"horseshoe"</code>, <code>"neg"</code></td>
+<td><code>dataset_key</code></td>
+</tr>
+<tr>
+<td><code>gate_dataset_prior</code></td>
+<td><span class="arithmatex">\(\pi_g^{(d)}\)</span></td>
+<td>Gene x dataset</td>
+<td><code>"gaussian"</code>, <code>"horseshoe"</code>, <code>"neg"</code></td>
+<td><code>dataset_key</code>, ZI model</td>
+</tr>
+<tr>
+<td><code>overdispersion_dataset_prior</code></td>
+<td><span class="arithmatex">\(\kappa_g^{(d)}\)</span></td>
+<td>Gene x dataset</td>
+<td><code>"gaussian"</code>, <code>"horseshoe"</code>, <code>"neg"</code></td>
+<td><code>overdispersion="bnb"</code>, <code>dataset_key</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="dataset-level-parameters">Dataset-level parameters<a class="headerlink" href="#dataset-level-parameters" title="Permanent link">&para;</a></h2>
+<p>When fitting multiple datasets jointly (<code>dataset_key="batch"</code>), single-dataset
+parameters gain a <strong>dataset axis</strong>. The naming convention follows:</p>
+<table>
+<thead>
+<tr>
+<th>Single-dataset</th>
+<th>Multi-dataset</th>
+<th>Hierarchy argument</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="arithmatex">\(\mu_g\)</span></td>
+<td><span class="arithmatex">\(\mu_g^{(d)}\)</span></td>
+<td><code>mu_dataset_prior</code></td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(p\)</span> or <span class="arithmatex">\(p_g\)</span></td>
+<td><span class="arithmatex">\(p^{(d)}\)</span> or <span class="arithmatex">\(p_g^{(d)}\)</span></td>
+<td><code>p_dataset_prior</code> + <code>p_dataset_mode</code></td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(\pi_g\)</span></td>
+<td><span class="arithmatex">\(\pi_g^{(d)}\)</span></td>
+<td><code>gate_dataset_prior</code></td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(\kappa_g\)</span></td>
+<td><span class="arithmatex">\(\kappa_g^{(d)}\)</span></td>
+<td><code>overdispersion_dataset_prior</code></td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(\log M_0\)</span></td>
+<td><span class="arithmatex">\(\log M_0^{(d)}\)</span></td>
+<td><code>mu_eta_prior</code> (captures dataset-level total mRNA scaling)</td>
+</tr>
+</tbody>
+</table>
+<p>The <code>p_dataset_mode</code> argument controls the granularity of the
+dataset-specific <span class="arithmatex">\(p\)</span>:</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>"scalar"</code></td>
+<td>One <span class="arithmatex">\(p^{(d)}\)</span> per dataset, shared across genes</td>
+</tr>
+<tr>
+<td><code>"gene_specific"</code> (default)</td>
+<td>Independent <span class="arithmatex">\(p_g^{(d)}\)</span> per gene per dataset</td>
+</tr>
+<tr>
+<td><code>"two_level"</code></td>
+<td>Each dataset has its own <span class="arithmatex">\((\mu_p^{(d)}, \sigma_p^{(d)})\)</span>, from which gene-level <span class="arithmatex">\(p_g^{(d)}\)</span> are drawn</td>
+</tr>
+</tbody>
+</table>
+<p>See <a href="../../theory/hierarchical-priors/#extension-to-multiple-datasets">Theory: Hierarchical Priors --- Multi-dataset</a>.</p>
+<hr />
+<h2 id="quick-look-matrix">Quick-look matrix<a class="headerlink" href="#quick-look-matrix" title="Permanent link">&para;</a></h2>
+<p>Which parameters appear in which model configuration:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th style="text-align: center;">NBDM</th>
+<th style="text-align: center;">NBVCP</th>
+<th style="text-align: center;">ZINB</th>
+<th style="text-align: center;">ZINBVCP</th>
+<th style="text-align: center;">+ BNB</th>
+<th style="text-align: center;">+ Mixture</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>r</code> / <code>r_g</code></td>
+<td style="text-align: center;">yes</td>
+<td style="text-align: center;">yes</td>
+<td style="text-align: center;">yes</td>
+<td style="text-align: center;">yes</td>
+<td style="text-align: center;">yes</td>
+<td style="text-align: center;">per-component</td>
+</tr>
+<tr>
+<td><code>p</code></td>
+<td style="text-align: center;">yes</td>
+<td style="text-align: center;">yes</td>
+<td style="text-align: center;">yes</td>
+<td style="text-align: center;">yes</td>
+<td style="text-align: center;">yes</td>
+<td style="text-align: center;">yes</td>
+</tr>
+<tr>
+<td><code>mu</code></td>
+<td style="text-align: center;">MP/MO</td>
+<td style="text-align: center;">MP/MO</td>
+<td style="text-align: center;">MP/MO</td>
+<td style="text-align: center;">MP/MO</td>
+<td style="text-align: center;">MP/MO</td>
+<td style="text-align: center;">per-component</td>
+</tr>
+<tr>
+<td><code>phi</code></td>
+<td style="text-align: center;">MO</td>
+<td style="text-align: center;">MO</td>
+<td style="text-align: center;">MO</td>
+<td style="text-align: center;">MO</td>
+<td style="text-align: center;">MO</td>
+<td style="text-align: center;">MO</td>
+</tr>
+<tr>
+<td><code>gate</code></td>
+<td style="text-align: center;">---</td>
+<td style="text-align: center;">---</td>
+<td style="text-align: center;">yes</td>
+<td style="text-align: center;">yes</td>
+<td style="text-align: center;">yes</td>
+<td style="text-align: center;">per-component</td>
+</tr>
+<tr>
+<td><code>p_capture</code> / <code>phi_capture</code></td>
+<td style="text-align: center;">---</td>
+<td style="text-align: center;">yes</td>
+<td style="text-align: center;">---</td>
+<td style="text-align: center;">yes</td>
+<td style="text-align: center;">yes</td>
+<td style="text-align: center;">yes</td>
+</tr>
+<tr>
+<td><code>eta_capture</code></td>
+<td style="text-align: center;">---</td>
+<td style="text-align: center;">opt</td>
+<td style="text-align: center;">---</td>
+<td style="text-align: center;">opt</td>
+<td style="text-align: center;">opt</td>
+<td style="text-align: center;">opt</td>
+</tr>
+<tr>
+<td><code>bnb_concentration</code></td>
+<td style="text-align: center;">---</td>
+<td style="text-align: center;">---</td>
+<td style="text-align: center;">---</td>
+<td style="text-align: center;">---</td>
+<td style="text-align: center;">yes</td>
+<td style="text-align: center;">per-component</td>
+</tr>
+<tr>
+<td><code>mixing_weights</code></td>
+<td style="text-align: center;">---</td>
+<td style="text-align: center;">---</td>
+<td style="text-align: center;">---</td>
+<td style="text-align: center;">---</td>
+<td style="text-align: center;">---</td>
+<td style="text-align: center;">yes</td>
+</tr>
+<tr>
+<td><code>z</code> (VAE latent)</td>
+<td style="text-align: center;">VAE</td>
+<td style="text-align: center;">VAE</td>
+<td style="text-align: center;">VAE</td>
+<td style="text-align: center;">VAE</td>
+<td style="text-align: center;">VAE</td>
+<td style="text-align: center;">VAE</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Legend:</strong> "yes" = always present; "MP/MO" = only with mean_prob or mean_odds
+parameterization; "MO" = only with mean_odds; "opt" = optional (biology-informed
+prior); "VAE" = only with <code>inference_method="vae"</code>; "per-component" = one per
+mixture component.</p>
+<hr />
+<p>For the full derivations behind these equations, see the
+<a href="../../theory/">Theory section</a>. For practical guidance on configuring
+these parameters via <code>scribe.fit()</code>, see
+<a href="../fit/">The <code>scribe.fit()</code> Interface</a>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.indexes", "navigation.top", "content.code.copy", "content.code.annotate", "search.highlight", "search.suggest", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>
