@@ -35,7 +35,7 @@ import scanpy as sc
 # Load your single-cell data
 adata = sc.read_h5ad("your_data.h5ad")
 
-# Run SCRIBE with default settings (SVI inference, NBDM model)
+# Run SCRIBE with default settings (SVI inference, NBVCP model)
 results = scribe.fit(adata, model="nbdm")
 
 # With customization

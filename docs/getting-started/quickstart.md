@@ -14,7 +14,7 @@ import anndata as ad
 # Load your scRNA-seq data
 adata = ad.read_h5ad("data.h5ad")
 
-# Run inference with the default NBDM model
+# Run inference (default: NBVCP with variable capture)
 results = scribe.fit(adata, n_steps=100_000)
 
 # Inspect convergence

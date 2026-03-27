@@ -13,8 +13,8 @@ Examples
 --------
 >>> import scribe
 >>>
->>> # Simplest usage - just data and model name
->>> results = scribe.fit(adata, model="nbdm")
+>>> # Simplest usage - default model is NBVCP (variable capture on)
+>>> results = scribe.fit(adata)
 >>>
 >>> # With customization via flat kwargs
 >>> results = scribe.fit(
@@ -224,7 +224,7 @@ def _normalize_prior_type_name(prior: Any) -> str:
 
 def fit(
     counts: Union[jnp.ndarray, "AnnData"],
-    model: str = "nbdm",
+    model: str = "nbvcp",
     # Compositional model flags (override model when set)
     variable_capture: Optional[bool] = None,
     zero_inflation: Optional[bool] = None,
@@ -344,20 +344,24 @@ def fit(
         Count matrix or AnnData object containing single-cell RNA-seq counts.
         Shape should be (n_cells, n_genes) if cells_axis=0.
 
-    model : str, default="nbdm"
-        Model type to use.  In most cases it is simpler to leave this at
-        the default and control composition with ``variable_capture`` and
-        ``zero_inflation`` instead.  Direct model strings are still
-        accepted for power users:
+    model : str, default="nbvcp"
+        Model type to use.  The default ``"nbvcp"`` includes
+        cell-specific capture probability, which is appropriate for the
+        vast majority of scRNA-seq datasets.  In most cases it is
+        simpler to control composition with ``variable_capture`` and
+        ``zero_inflation`` instead of setting this directly.  Accepted
+        strings:
 
-            - ``"nbdm"``: Negative Binomial (base)
+            - ``"nbdm"``: Negative Binomial (base, no capture channel)
             - ``"zinb"``: Zero-Inflated NB
             - ``"nbvcp"``: NB with Variable Capture Probability
             - ``"zinbvcp"``: ZINB with Variable Capture Probability
 
     variable_capture : bool or None, default=None
         Add cell-specific capture probability to the model.  When set,
-        the ``model`` string is derived automatically:
+        the ``model`` string is derived automatically (``True`` is
+        implied when neither flag nor ``model`` is specified, since the
+        default model is ``"nbvcp"``):
 
             - ``variable_capture=False, zero_inflation=False`` -> ``"nbdm"``
             - ``variable_capture=True, zero_inflation=False`` -> ``"nbvcp"``
@@ -764,15 +768,15 @@ def fit(
 
     Examples
     --------
-    Basic usage with NBDM model:
+    Basic usage (default model is NBVCP with variable capture):
 
-    >>> results = scribe.fit(adata, model="nbdm")
+    >>> results = scribe.fit(adata)
 
     Zero-inflated model with mixture components:
 
     >>> results = scribe.fit(
     ...     adata,
-    ...     model="zinb",
+    ...     zero_inflation=True,
     ...     n_components=3,
     ...     n_steps=100000,
     ... )
@@ -817,11 +821,13 @@ def fit(
     # Step 0: Resolve model from boolean feature flags
     # ==========================================================================
     # When variable_capture or zero_inflation is explicitly set, derive the
-    # model string from the flags. An explicit model= that conflicts with the
-    # flags raises an error.
+    # model string from the flags.  An explicit model= that conflicts with
+    # the flags raises an error.  When neither flag is set, the model=
+    # default ("nbvcp") is used as-is.
+    _default_model = "nbvcp"
     if variable_capture is not None or zero_inflation is not None:
         _zi = zero_inflation if zero_inflation is not None else False
-        _vc = variable_capture if variable_capture is not None else False
+        _vc = variable_capture if variable_capture is not None else True
         _resolved = (
             "zinbvcp" if _zi and _vc
             else "zinb" if _zi
@@ -829,7 +835,7 @@ def fit(
             else "nbdm"
         )
         # If the user also passed an explicit model= that differs, raise.
-        if model.lower() != "nbdm" and model.lower() != _resolved:
+        if model.lower() != _default_model and model.lower() != _resolved:
             raise ValueError(
                 f"model='{model}' conflicts with the feature flags "
                 f"(zero_inflation={zero_inflation}, "

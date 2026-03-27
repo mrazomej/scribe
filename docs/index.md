@@ -209,8 +209,8 @@ import scanpy as sc
 # Load your single-cell data
 adata = sc.read_h5ad("your_data.h5ad")
 
-# Recommended: variable capture + low-rank guide for gene-gene correlations
-results = scribe.fit(adata, variable_capture=True, guide_rank=64)
+# Default model includes variable capture; add low-rank guide for gene-gene correlations
+results = scribe.fit(adata, guide_rank=64)
 
 # Analyze results
 posterior_samples = results.get_posterior_samples()
