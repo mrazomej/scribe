@@ -12,11 +12,11 @@ import scribe
 # Minimal call --- sensible defaults (plain Negative Binomial, `model="nbdm"`)
 results = scribe.fit(adata)
 
-# Recommended starting point for most datasets: variable capture + amortization
+# Recommended starting point for most datasets
 results = scribe.fit(
     adata,
-    variable_capture=True,
-    amortize_capture=True,
+    variable_capture=True,   # model cell-specific capture probability
+    guide_rank=64,            # low-rank guide captures gene-gene correlations
 )
 ```
 
@@ -103,12 +103,18 @@ results = scribe.fit(adata, variable_capture=True, zero_inflation=True)
 results = scribe.fit(adata, model="nbvcp")
 ```
 
-!!! tip "Start with variable capture"
-    Unless total UMI counts are very homogeneous (within roughly a factor of
-    two), begin with `variable_capture=True` (same model as `model="nbvcp"`).
-    Variable capture explains much of the apparent excess zeros and heavy tails
-    in the data. See [Model Selection](model-selection.md) for the full
-    decision guide.
+!!! tip "Start with variable capture + low-rank guide"
+    Begin with `variable_capture=True, guide_rank=64`. Variable capture
+    explains much of the apparent excess zeros and heavy tails in the data, and
+    the low-rank guide adds a parameter-efficient way to capture gene-gene
+    correlations that a mean-field posterior would miss. See
+    [Model Selection](model-selection.md) for the full decision guide.
+
+!!! note "Why `variable_capture` is not the default"
+    Empirically, we have **not yet encountered a dataset** that does not
+    benefit from variable capture. We nonetheless require the flag to be set
+    explicitly so that users are aware of the modeling assumptions they are
+    making.
 
 **Full guide:** [Model Selection](model-selection.md) |
 **Parameter cheatsheet:** [Parameter Reference](parameters.md)
@@ -323,7 +329,7 @@ parameter count from \(O(N_{\text{cells}})\) to the network weights.
 | `capture_amortization` | `None` | `AmortizationConfig` or dict that overrides all six parameters above |
 
 ```python
-# Amortized capture with defaults --- recommended for large datasets
+# Amortized capture with defaults --- useful for very large datasets
 results = scribe.fit(adata, variable_capture=True, amortize_capture=True)
 
 # Custom amortizer architecture
