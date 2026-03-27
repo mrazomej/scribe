@@ -225,6 +225,9 @@ def _normalize_prior_type_name(prior: Any) -> str:
 def fit(
     counts: Union[jnp.ndarray, "AnnData"],
     model: str = "nbdm",
+    # Compositional model flags (override model when set)
+    variable_capture: Optional[bool] = None,
+    zero_inflation: Optional[bool] = None,
     # Model options
     parameterization: str = "canonical",
     unconstrained: bool = False,
@@ -342,13 +345,31 @@ def fit(
         Shape should be (n_cells, n_genes) if cells_axis=0.
 
     model : str, default="nbdm"
-        Model type to use:
-            - "nbdm": Negative Binomial Dropout Model (simplest)
-            - "zinb": Zero-Inflated Negative Binomial (handles excess zeros)
-            - "nbvcp": NB with Variable Capture Probability (models technical
-              dropout)
-            - "zinbvcp": ZINB with Variable Capture Probability (most
-              comprehensive)
+        Model type to use.  In most cases it is simpler to leave this at
+        the default and control composition with ``variable_capture`` and
+        ``zero_inflation`` instead.  Direct model strings are still
+        accepted for power users:
+
+            - ``"nbdm"``: Negative Binomial (base)
+            - ``"zinb"``: Zero-Inflated NB
+            - ``"nbvcp"``: NB with Variable Capture Probability
+            - ``"zinbvcp"``: ZINB with Variable Capture Probability
+
+    variable_capture : bool or None, default=None
+        Add cell-specific capture probability to the model.  When set,
+        the ``model`` string is derived automatically:
+
+            - ``variable_capture=False, zero_inflation=False`` -> ``"nbdm"``
+            - ``variable_capture=True, zero_inflation=False`` -> ``"nbvcp"``
+            - ``variable_capture=False, zero_inflation=True`` -> ``"zinb"``
+            - ``variable_capture=True, zero_inflation=True`` -> ``"zinbvcp"``
+
+        An explicit ``model=`` that conflicts with the flags raises
+        ``ValueError``.
+
+    zero_inflation : bool or None, default=None
+        Add a per-gene zero-inflation gate to the model.  See
+        ``variable_capture`` for the resolution table.
 
     parameterization : str, default="canonical"
         Parameterization scheme:
@@ -792,6 +813,31 @@ def fit(
     ModelConfigBuilder : Builder for creating ModelConfig objects.
     InferenceConfig : Unified inference configuration class.
     """
+    # ==========================================================================
+    # Step 0: Resolve model from boolean feature flags
+    # ==========================================================================
+    # When variable_capture or zero_inflation is explicitly set, derive the
+    # model string from the flags. An explicit model= that conflicts with the
+    # flags raises an error.
+    if variable_capture is not None or zero_inflation is not None:
+        _zi = zero_inflation if zero_inflation is not None else False
+        _vc = variable_capture if variable_capture is not None else False
+        _resolved = (
+            "zinbvcp" if _zi and _vc
+            else "zinb" if _zi
+            else "nbvcp" if _vc
+            else "nbdm"
+        )
+        # If the user also passed an explicit model= that differs, raise.
+        if model.lower() != "nbdm" and model.lower() != _resolved:
+            raise ValueError(
+                f"model='{model}' conflicts with the feature flags "
+                f"(zero_inflation={zero_inflation}, "
+                f"variable_capture={variable_capture}) which resolve to "
+                f"'{_resolved}'. Use one or the other, not both."
+            )
+        model = _resolved
+
     # ==========================================================================
     # Step 1: Validate inputs
     # ==========================================================================

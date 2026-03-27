@@ -250,7 +250,7 @@ import scribe
 # Using organism shortcut (resolves M_0 and sigma_M automatically)
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     priors={"organism": "human"},
 )
 
@@ -258,7 +258,7 @@ results = scribe.fit(
 import math
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     priors={"eta_capture": (math.log(200_000), 0.5)},
 )
 ```
@@ -272,29 +272,29 @@ other organisms, pass `priors["eta_capture"]` directly as a tuple of
 |-----------|-------------|
 | `priors["organism"]` | Shortcut: `"human"` (\(M_0=200{,}000\)), `"mouse"`, `"yeast"` (\(60{,}000\)), `"ecoli"` (\(3{,}000\)) |
 | `priors["eta_capture"]` | Explicit `(log_M_0, sigma_M)` tuple |
-| `mu_eta_prior` | Data-driven shared scaling across datasets: `"none"`, `"gaussian"`, `"horseshoe"`, `"neg"` |
+| `capture_scaling_prior` | Data-driven shared scaling across datasets: `"none"`, `"gaussian"`, `"horseshoe"`, `"neg"` |
 
 ### Mean anchoring prior (Layer 2)
 
-Enable the data-informed mean anchor with the `mu_mean_anchor` flag:
+Enable the data-informed mean anchor with the `expression_anchor` flag:
 
 ```python
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     priors={"organism": "human"},
-    mu_mean_anchor=True,
-    mu_mean_anchor_sigma=0.3,
+    expression_anchor=True,
+    expression_anchor_sigma=0.3,
 )
 ```
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `mu_mean_anchor` | `False` | Enable data-informed anchoring prior on \(\mu_g\) |
-| `mu_mean_anchor_sigma` | 0.3 | Log-scale standard deviation (smaller = tighter anchor) |
+| `expression_anchor` | `False` | Enable data-informed anchoring prior on \(\mu_g\) |
+| `expression_anchor_sigma` | 0.3 | Log-scale standard deviation (smaller = tighter anchor) |
 
 !!! note
-    Enabling `mu_mean_anchor` automatically sets `unconstrained=True`. For
+    Enabling `expression_anchor` automatically sets `unconstrained=True`. For
     VCP models, `priors["organism"]` or `priors["eta_capture"]` must also be
     set so that \(\bar{\nu}\) can be estimated from library sizes and \(M_0\).
     For non-VCP models, \(\bar{\nu} = 1\) is used by default.
@@ -306,11 +306,11 @@ For the best results with variable capture models, enable both layers:
 ```python
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     parameterization="mean_odds",
     priors={"organism": "human"},
-    mu_mean_anchor=True,
-    mu_mean_anchor_sigma=0.3,
+    expression_anchor=True,
+    expression_anchor_sigma=0.3,
 )
 ```
 

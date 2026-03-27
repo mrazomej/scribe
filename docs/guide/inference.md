@@ -32,13 +32,13 @@ inference method.
 ```python
 import scribe
 
-# Default SVI inference
-results = scribe.fit(adata, model="nbdm")
+# Default SVI inference (NBDM is the default)
+results = scribe.fit(adata)
 
 # With custom parameters
 results = scribe.fit(
     adata,
-    model="zinb",
+    zero_inflation=True,
     n_steps=100_000,
     batch_size=512,
     seed=0,
@@ -65,7 +65,6 @@ optimizer or its learning rate:
 ```python
 results = scribe.fit(
     adata,
-    model="nbdm",
     optimizer_config={"name": "clipped_adam", "step_size": 5e-4},
 )
 ```
@@ -83,7 +82,6 @@ the ELBO can fluctuate late in training:
 ```python
 results = scribe.fit(
     adata,
-    model="nbdm",
     unconstrained=True,
     guide_flow="affine_coupling",
     restore_best=True,
@@ -100,21 +98,21 @@ different trade-offs between speed and the ability to capture correlations:
 
 ```python
 # Low-rank guide for gene correlations
-results = scribe.fit(adata, model="nbdm", guide_rank=8)
+results = scribe.fit(adata, guide_rank=8)
 
 # Joint low-rank across parameter groups
 results = scribe.fit(
-    adata, model="nbdm", guide_rank=8, joint_params=["r", "p"],
+    adata, guide_rank=8, joint_params=["r", "p"],
 )
 
 # Normalizing flow guide for non-Gaussian posteriors
 results = scribe.fit(
-    adata, model="nbdm", unconstrained=True,
+    adata, unconstrained=True,
     guide_flow="affine_coupling",
 )
 
 # Amortized capture for VCP models
-results = scribe.fit(adata, model="nbvcp", amortize_capture=True)
+results = scribe.fit(adata, variable_capture=True, amortize_capture=True)
 ```
 
 **Full guide:** [Variational guide families](guide-families.md)
@@ -126,7 +124,6 @@ SVI supports automatic convergence detection to avoid wasting computation:
 ```python
 results = scribe.fit(
     adata,
-    model="nbdm",
     n_steps=200_000,
     early_stopping={
         "patience": 500,
@@ -165,7 +162,6 @@ import scribe
 
 results = scribe.fit(
     adata,
-    model="nbdm",
     inference_method="mcmc",
     n_samples=2_000,
     n_warmup=1_000,
@@ -196,12 +192,11 @@ using the SVI result as initialization. This dramatically reduces warmup time:
 import scribe
 
 # Step 1: fast SVI exploration
-svi_results = scribe.fit(adata, model="nbdm", n_steps=50_000)
+svi_results = scribe.fit(adata, n_steps=50_000)
 
 # Step 2: refine with MCMC, initialized from SVI
 mcmc_results = scribe.fit(
     adata,
-    model="nbdm",
     inference_method="mcmc",
     svi_init=svi_results,
     n_samples=2_000,
@@ -242,7 +237,6 @@ import scribe
 
 results = scribe.fit(
     adata,
-    model="nbdm",
     inference_method="vae",
     vae_latent_dim=10,
     n_steps=100_000,
@@ -276,7 +270,6 @@ VAE prior:
 ```python
 results = scribe.fit(
     adata,
-    model="nbdm",
     inference_method="vae",
     vae_latent_dim=10,
     vae_flow_type="spline_coupling",

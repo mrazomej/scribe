@@ -22,7 +22,7 @@ After running inference with `scribe.fit()`, you'll get a results object:
 ```python
 import scribe
 
-results = scribe.fit(adata, model="nbdm", n_steps=10_000)
+results = scribe.fit(adata, n_steps=10_000)
 ```
 
 The results object contains several key attributes:
@@ -58,6 +58,46 @@ distributions_numpyro = results.get_distributions(backend="numpyro")
 # Get maximum a posteriori (MAP) estimates
 map_estimates = results.get_map()
 ```
+
+### Descriptive parameter names
+
+By default, SCRIBE's internal parameter keys use compact math-style names
+(`r`, `p`, `mu`, `phi`, `gate`, `p_capture`, etc.). For more readable output,
+pass `descriptive_names=True` to any parameter-access method. This renames the
+keys to self-documenting equivalents:
+
+| Internal key | Descriptive name |
+|-------------|-----------------|
+| `r` | `dispersion` |
+| `p` | `prob` |
+| `mu` | `expression` |
+| `phi` | `odds` |
+| `gate` | `zero_inflation` |
+| `p_capture` | `capture_prob` |
+| `phi_capture` | `capture_odds` |
+| `eta_capture` | `capture_efficiency` |
+| `mu_eta` | `capture_scaling` |
+
+Suffixed keys are handled automatically (e.g., `r_0` becomes `dispersion_0`).
+
+```python
+# Default internal names
+map_estimates = results.get_map()
+# >>> dict_keys(['r', 'p', 'p_capture', ...])
+
+# Human-readable names
+map_estimates = results.get_map(descriptive_names=True)
+# >>> dict_keys(['dispersion', 'prob', 'capture_prob', ...])
+```
+
+The `descriptive_names` option is supported by `get_map()`,
+`get_distributions()`, `get_posterior_samples()`, and
+`sample_posterior_parameters()`.
+
+!!! tip
+    Use `descriptive_names=True` in notebooks and exploratory analysis for
+    clarity. Stick with the default internal names when passing parameters to
+    other SCRIBE functions that expect them.
 
 ### Subsetting Genes
 
@@ -227,7 +267,7 @@ The `ScribeResults` class works with all model types supported by SCRIBE. Each
 model type has specific parameters available in the `params` dictionary based
 on the distributions used.
 
-=== "NBDM"
+=== "NBDM (default)"
 
     ```python
     nbdm_results = scribe.fit(adata, model="nbdm")
@@ -245,7 +285,7 @@ on the distributions used.
     p_concentration0 = nbdm_results.params["p_concentration0"]  # Beta
     ```
 
-=== "ZINB"
+=== "ZINB (zero_inflation=True)"
 
     ```python
     zinb_results = scribe.fit(adata, model="zinb")
@@ -255,7 +295,7 @@ on the distributions used.
     gate_concentration0 = zinb_results.params["gate_concentration0"]
     ```
 
-=== "NBVCP"
+=== "NBVCP (variable_capture=True)"
 
     ```python
     nbvcp_results = scribe.fit(adata, model="nbvcp")
@@ -265,7 +305,7 @@ on the distributions used.
     p_capture_concentration0 = nbvcp_results.params["p_capture_concentration0"]
     ```
 
-=== "ZINBVCP"
+=== "ZINBVCP (variable_capture=True, zero_inflation=True)"
 
     ```python
     zinbvcp_results = scribe.fit(adata, model="zinbvcp")
@@ -298,8 +338,8 @@ To compare models, you can use the model comparison utilities:
 from scribe import compare_models
 
 # Fit multiple models
-nbdm_results = scribe.fit(adata, model="nbdm")
-zinb_results = scribe.fit(adata, model="zinb")
+nbdm_results = scribe.fit(adata)
+zinb_results = scribe.fit(adata, zero_inflation=True)
 
 # Compare models
 mc = compare_models(

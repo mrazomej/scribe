@@ -378,8 +378,8 @@ from scribe.de import compare
 import jax.numpy as jnp
 
 # Fit models for two conditions
-results_A = scribe.fit(adata_treatment, model="nbdm")
-results_B = scribe.fit(adata_control, model="nbdm")
+results_A = scribe.fit(adata_treatment)
+results_B = scribe.fit(adata_control)
 
 # Empirical DE (recommended)
 de = compare(

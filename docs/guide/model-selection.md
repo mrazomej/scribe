@@ -2,9 +2,13 @@
 
 SCRIBE provides a family of probabilistic models for scRNA-seq data, all built
 on the foundational **Negative Binomial** (NB) distribution dictated by the
-biophysics of transcription and mRNA capture. You choose a **likelihood**
-(`nbdm`, `nbvcp`, `zinb`, `zinbvcp`) and optional extensions (BNB
-overdispersion, mixture components) via `scribe.fit()`.
+biophysics of transcription and mRNA capture. You choose a **likelihood** by
+setting **`variable_capture`** and **`zero_inflation`** on `scribe.fit()` (the
+defaults yield **NBDM**; turning on capture gives **NBVCP**, zero inflation
+gives **ZINB**, both gives **ZINBVCP**). The same four variants are still
+available as `model="nbdm"` / `"nbvcp"` / `"zinb"` / `"zinbvcp"` if you prefer a
+single string. Optional extensions (BNB overdispersion, mixture components) use
+other `scribe.fit()` arguments.
 
 ---
 
@@ -14,23 +18,27 @@ In typical scRNA-seq data, **per-cell total UMI counts vary widely** across the
 experiment. When the spread is **not** very tight---for example, when the ratio
 of the largest to smallest total UMI among cells exceeds about **two-fold**---a
 model that **absorbs library-size variation into technical capture**
-(`model="nbvcp"`) is usually **essential**. Treating that variation as purely
-biological without an explicit capture channel can distort gene-level inference.
+(`variable_capture=True`, same as `model="nbvcp"`) is usually **essential**.
+Treating that variation as purely biological without an explicit capture channel
+can distort gene-level inference.
 
 ```python
 # Recommended starting point for most datasets with heterogeneous library sizes
-results = scribe.fit(adata, model="nbvcp", amortize_capture=True)
+# (NBVCP; equivalent to model="nbvcp")
+results = scribe.fit(adata, variable_capture=True, amortize_capture=True)
 ```
 
-**When NBDM (`model="nbdm"`) is reasonable:** total UMIs per cell are **very
-homogeneous** (e.g. max/min total UMI within roughly a factor of two, after
-basic QC), so a shared effective capture is a good approximation.
+**When NBDM is reasonable** (default likelihood; equivalent to `model="nbdm"`):
+total UMIs per cell are **very homogeneous** (e.g. max/min total UMI within
+roughly a factor of two, after basic QC), so a shared effective capture is a
+good approximation.
 
 !!! tip "Zero inflation is often optional"
-    **Explicit zero inflation (`zinb` / `zinbvcp`) is not always necessary.**
-    Apparent "excess zeros" frequently arise because **low capture cells**
-    produce many zeros across genes. Fitting **variable capture first**
-    (`nbvcp`) often explains those zeros without a separate dropout layer. Add
+    **Explicit zero inflation** (`zero_inflation=True`; **ZINB** / **ZINBVCP**,
+    or `model="zinb"` / `"zinbvcp"`) is not always necessary. Apparent "excess
+    zeros" frequently arise because **low capture cells** produce many zeros
+    across genes. Fitting **variable capture first** (`variable_capture=True`;
+    **NBVCP**) often explains those zeros without a separate dropout layer. Add
     zero inflation only when diagnostics and **model comparison** show a clear
     gain after a good VCP fit.
 
@@ -40,10 +48,10 @@ basic QC), so a shared effective capture is a good approximation.
 
 ```mermaid
 graph TD
-    NB["Negative Binomial<br/><b>model='nbdm'</b><br/><i>base: r_g, p</i>"]
-    ZINB["Zero-Inflated NB<br/><b>model='zinb'</b><br/><i>+ gate_g</i>"]
-    NBVCP["NB + Variable Capture<br/><b>model='nbvcp'</b><br/><i>+ nu_c</i>"]
-    ZINBVCP["ZINB + Variable Capture<br/><b>model='zinbvcp'</b><br/><i>+ gate_g, nu_c</i>"]
+    NB["Negative Binomial<br/><b>model='nbdm'</b> (default flags)<br/><i>base: r_g, p</i>"]
+    ZINB["Zero-Inflated NB<br/><b>model='zinb'</b> (zero_inflation=True)<br/><i>+ gate_g</i>"]
+    NBVCP["NB + Variable Capture<br/><b>model='nbvcp'</b> (variable_capture=True)<br/><i>+ nu_c</i>"]
+    ZINBVCP["ZINB + Variable Capture<br/><b>model='zinbvcp'</b> (variable_capture=True, zero_inflation=True)<br/><i>+ gate_g, nu_c</i>"]
 
     NB -->|"+ zero inflation"| ZINB
     NB -->|"+ variable capture"| NBVCP
@@ -61,14 +69,14 @@ graph TD
 ```mermaid
 graph TD
     Start["Assess total UMI per cell"] --> Qtot{"Max total UMI / min total UMI<br/>roughly within 2x?"}
-    Qtot -->|Yes, very tight| Base["NBDM often sufficient<br/>model='nbdm'"]
-    Qtot -->|No, wider spread| VCP0["Prefer NBVCP<br/>model='nbvcp'"]
+    Qtot -->|Yes, very tight| Base["NBDM often sufficient<br/>model='nbdm' (default flags)"]
+    Qtot -->|No, wider spread| VCP0["Prefer NBVCP<br/>model='nbvcp' (variable_capture=True)"]
     Base --> Qzi{"Still poor fit / excess zeros<br/>after NBDM + PPC?"}
     Qzi -->|Try VCP first| VCP0
-    Qzi -->|Yes, after VCP| ZI["Consider ZINB or ZINBVCP"]
+    Qzi -->|Yes, after VCP| ZI["Consider ZINB or ZINBVCP<br/>(zero_inflation=True, ± VCP)"]
     VCP0 --> Qzi2{"Excess zeros remain<br/>after good VCP fit?"}
     Qzi2 -->|No| Qtail{"Heavy tails remain<br/>in PPC after VCP?"}
-    Qzi2 -->|Yes| ZINBV["ZINBVCP<br/>model='zinbvcp'"]
+    Qzi2 -->|Yes| ZINBV["ZINBVCP<br/>model='zinbvcp' (variable_capture=True, zero_inflation=True)"]
     ZINBV --> Qtail
     Qtail -->|Yes| BNB["Add BNB overdispersion<br/>overdispersion='bnb'"]
     Qtail -->|No| Qmix{"Multiple cell<br/>populations?"}
@@ -102,13 +110,14 @@ Genes are modelled independently given \(\nu^{(c)}\) (no Dirichlet-Multinomial
 factorization in this likelihood).
 
 ```python
-results = scribe.fit(adata, model="nbvcp")
+# NBVCP; equivalent to model="nbvcp"
+results = scribe.fit(adata, variable_capture=True)
 ```
 
 For many cells, **amortized** capture inference scales better:
 
 ```python
-results = scribe.fit(adata, model="nbvcp", amortize_capture=True)
+results = scribe.fit(adata, variable_capture=True, amortize_capture=True)
 ```
 
 **See also:** [Theory: Anchoring priors](../theory/anchoring-priors.md) (capture
@@ -133,7 +142,8 @@ distribution factorizes into a **Negative Binomial for totals** and a
 ad-hoc library-size scaling.
 
 ```python
-results = scribe.fit(adata, model="nbdm")
+# NBDM: default likelihood (equivalent to model="nbdm")
+results = scribe.fit(adata)
 ```
 
 **See also:** [Theory: Dirichlet-Multinomial](../theory/dirichlet-multinomial.md).
@@ -150,12 +160,13 @@ u_g \mid \pi_g, r_g, \hat{p}
 \pi_g\,\delta_0 + (1 - \pi_g)\,\text{NB}(r_g, \hat{p}).
 \]
 
-Prefer trying **`nbvcp` first** when library sizes vary; add `zinb` or
-`zinbvcp` only when the data still need an explicit dropout layer after a
-strong VCP fit.
+Prefer **`variable_capture=True` first** when library sizes vary; add
+`zero_inflation=True` (ZINB or ZINBVCP, or `model="zinb"` / `"zinbvcp"`) only
+when the data still need an explicit dropout layer after a strong VCP fit.
 
 ```python
-results = scribe.fit(adata, model="zinb")
+# ZINB; equivalent to model="zinb"
+results = scribe.fit(adata, zero_inflation=True)
 ```
 
 ---
@@ -174,7 +185,8 @@ Highest flexibility and cost; use when both mechanisms are supported by
 diagnostics.
 
 ```python
-results = scribe.fit(adata, model="zinbvcp")
+# ZINBVCP; equivalent to model="zinbvcp"
+results = scribe.fit(adata, variable_capture=True, zero_inflation=True)
 ```
 
 ---
@@ -195,9 +207,10 @@ success probability and an extra \(\kappa_g\). Requires `unconstrained=True`.
 ```python
 results = scribe.fit(
     adata,
-    model="nbdm",         # or nbvcp / zinb / zinbvcp
     overdispersion="bnb",
     unconstrained=True,
+    # Any likelihood: default NBDM, or e.g. variable_capture=True,
+    # zero_inflation=True, or both (same as model="nbdm" / "nbvcp" / …).
 )
 ```
 
@@ -215,7 +228,7 @@ in the base construction.
 ```python
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     n_components=3,
     n_steps=150_000,
 )
@@ -226,7 +239,7 @@ assignments = results.cell_type_assignments(counts=adata.X)
 ```python
 results = scribe.fit(
     adata,
-    model="zinb",
+    zero_inflation=True,
     n_components=3,
     mixture_params=["r"],
 )
@@ -240,10 +253,10 @@ results = scribe.fit(
 
 | Model | Zero Inflated | Variable Capture | BNB | Mixture | Best For |
 |-------|:---:|:---:|:---:|:---:|----------|
-| `"nbdm"` | -- | -- | opt. | opt. | **Tight** total-UMI distribution (~within 2x) |
-| `"nbvcp"` | -- | Yes | opt. | opt. | **Typical** data; heterogeneous library sizes |
-| `"zinb"` | Yes | -- | opt. | opt. | Excess zeros **after** VCP ruled out / no VCP |
-| `"zinbvcp"` | Yes | Yes | opt. | opt. | Strong evidence for **both** ZI and VCP |
+| `"nbdm"` (default; omit both flags) | -- | -- | opt. | opt. | **Tight** total-UMI distribution (~within 2x) |
+| `"nbvcp"` (`variable_capture=True`) | -- | Yes | opt. | opt. | **Typical** data; heterogeneous library sizes |
+| `"zinb"` (`zero_inflation=True`) | Yes | -- | opt. | opt. | Excess zeros **after** VCP ruled out / no VCP |
+| `"zinbvcp"` (`variable_capture=True`, `zero_inflation=True`) | Yes | Yes | opt. | opt. | Strong evidence for **both** ZI and VCP |
 
 "opt." = add `overdispersion="bnb"` or `n_components=K`.
 
@@ -263,7 +276,11 @@ parentheses).
 | **Mean odds** | `"mean_odds"` (alias `"odds_ratio"`) | \(\phi, \mu\) | \(p = 1/(1+\phi)\), \(r = \mu\phi\) | Stable when \(p\) is near 1 |
 
 ```python
-results = scribe.fit(adata, model="nbvcp", parameterization="mean_prob")
+results = scribe.fit(
+    adata,
+    variable_capture=True,
+    parameterization="mean_prob",
+)
 # equivalent: parameterization="linked"
 ```
 
@@ -274,7 +291,7 @@ equation context, see the [Parameter Reference](parameters.md).
 hierarchical priors and BNB):
 
 ```python
-results = scribe.fit(adata, model="nbdm", unconstrained=True)
+results = scribe.fit(adata, unconstrained=True)
 ```
 
 ---
@@ -287,10 +304,9 @@ parameters (\(\mu\), \(p\), gate, overdispersion):
 ```python
 results = scribe.fit(
     adata,
-    model="nbdm",
     unconstrained=True,
-    mu_prior="horseshoe",
-    p_prior="gaussian",
+    expression_prior="horseshoe",
+    prob_prior="gaussian",
 )
 ```
 

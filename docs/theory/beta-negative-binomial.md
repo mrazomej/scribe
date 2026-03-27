@@ -452,7 +452,6 @@ import scribe
 # Enable BNB overdispersion with horseshoe prior
 results = scribe.fit(
     adata,
-    model="nbdm",
     parameterization="canonical",
     overdispersion="bnb",
     overdispersion_prior="horseshoe",   # or "neg"
@@ -465,7 +464,7 @@ results = scribe.fit(
 # BNB with dataset-level hierarchical prior
 results = scribe.fit(
     adata,
-    model="nbvcp",
+    variable_capture=True,
     parameterization="canonical",
     dataset_key="batch",
     overdispersion="bnb",

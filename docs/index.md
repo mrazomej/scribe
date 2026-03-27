@@ -210,8 +210,8 @@ import scanpy as sc
 adata = sc.read_h5ad("your_data.h5ad")
 
 # Typical default: variable capture when total UMIs vary across cells
-results = scribe.fit(adata, model="nbvcp", amortize_capture=True)
-# If total UMIs per cell are very homogeneous (~within 2x), try model="nbdm"
+results = scribe.fit(adata, variable_capture=True, amortize_capture=True)
+# If total UMIs per cell are very homogeneous (~within 2x), the default (no variable capture) is usually enough
 
 # Analyze results
 posterior_samples = results.get_posterior_samples()
@@ -223,7 +223,7 @@ posterior_samples = results.get_posterior_samples()
 # Zero-inflated model with more optimization steps
 results = scribe.fit(
     adata,
-    model="zinb",
+    zero_inflation=True,
     n_steps=100_000,
     batch_size=512,
 )
@@ -239,7 +239,7 @@ results = scribe.fit(
 # Mixture model for cell type discovery
 results = scribe.fit(
     adata,
-    model="zinb",
+    zero_inflation=True,
     n_components=3,
     n_steps=150_000,
 )
@@ -255,7 +255,7 @@ results = scribe.fit(
 
 ```python
 # Fast exploration with SVI (default)
-svi_results = scribe.fit(adata, model="zinb", n_steps=75_000)
+svi_results = scribe.fit(adata, zero_inflation=True, n_steps=75_000)
 
 # Exact inference with MCMC
 mcmc_results = scribe.fit(
@@ -292,9 +292,9 @@ uncertainty.
 import jax.numpy as jnp
 from scribe import compare
 
-# Fit two conditions
-results_ctrl = scribe.fit(adata_ctrl, model="nbdm", n_components=3)
-results_treat = scribe.fit(adata_treat, model="nbdm", n_components=3)
+# Fit two conditions (default likelihood; 3-component mixture)
+results_ctrl = scribe.fit(adata_ctrl, n_components=3)
+results_treat = scribe.fit(adata_treat, n_components=3)
 
 # Empirical DE between component 0 across conditions
 de = compare(

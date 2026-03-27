@@ -314,8 +314,8 @@ predict equally well.
 from scribe.mc import compare_models
 
 # Fit two models on the same data
-results_nbdm = scribe.fit(adata, model="nbdm")
-results_hier = scribe.fit(adata, model="nbdm", p_prior="horseshoe")
+results_nbdm = scribe.fit(adata)
+results_hier = scribe.fit(adata, prob_prior="horseshoe")
 
 # Compare
 mc = compare_models(
