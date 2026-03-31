@@ -15,14 +15,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-def get_ppc_render_options(viz_cfg):
+def get_ppc_render_options(viz_cfg=None):
     """Extract PPC rendering-performance options from visualization config.
 
     Parameters
     ----------
-    viz_cfg : OmegaConf or mapping-like
+    viz_cfg : OmegaConf or mapping-like or None
         Visualization configuration object expected to contain ``ppc_opts``.
-        Missing keys are filled with stable defaults.
+        Missing keys are filled with stable defaults.  When ``None``, all
+        defaults are used.
 
     Returns
     -------
@@ -42,9 +43,11 @@ def get_ppc_render_options(viz_cfg):
             Whether to interpolate to target x-points (``True``) or select
             nearest source points (``False``).
     """
-    ppc_opts = viz_cfg.get("ppc_opts", {})
+    ppc_opts = viz_cfg.get("ppc_opts", {}) if viz_cfg is not None else {}
     return {
-        "hist_max_bin_quantile": float(ppc_opts.get("hist_max_bin_quantile", 0.99)),
+        "hist_max_bin_quantile": float(
+            ppc_opts.get("hist_max_bin_quantile", 0.99)
+        ),
         "hist_max_bin_floor": int(ppc_opts.get("hist_max_bin_floor", 10)),
         "render_auto_line_bin_threshold": int(
             ppc_opts.get("render_auto_line_bin_threshold", 1000)
@@ -171,7 +174,9 @@ def plot_histogram_credible_regions_adaptive(
         )
         return {"mode": "stairs", "x_target": None, "line_interpolate": None}
 
-    x_source = np.asarray(hist_results["bin_edges"][:-1], dtype=float)[:n_plot_bins]
+    x_source = np.asarray(hist_results["bin_edges"][:-1], dtype=float)[
+        :n_plot_bins
+    ]
     target_points = max(2, int(render_opts["render_line_target_points"]))
     line_interpolate = bool(render_opts["render_line_interpolate"])
     x_target = _build_target_x(x_source, target_points, line_interpolate)
@@ -192,9 +197,9 @@ def plot_histogram_credible_regions_adaptive(
         upper_ds = _resample_y(x_source, upper, x_target, line_interpolate)
         ax.fill_between(x_target, lower_ds, upper_ds, color=color, alpha=alpha)
 
-    median = np.asarray(hist_results["regions"][cr_values[0]]["median"], dtype=float)[
-        :n_plot_bins
-    ]
+    median = np.asarray(
+        hist_results["regions"][cr_values[0]]["median"], dtype=float
+    )[:n_plot_bins]
     median_ds = _resample_y(x_source, median, x_target, line_interpolate)
     ax.plot(x_target, median_ds, color="black", alpha=0.2, linewidth=1.5)
 

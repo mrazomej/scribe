@@ -3,8 +3,22 @@
 import numpy as np
 
 
+def _coerce_counts(counts):
+    """Coerce counts to a dense 2-D numpy array.
+
+    Handles AnnData objects (extracts ``.X``), scipy sparse matrices
+    (``.toarray()``), and JAX arrays transparently.
+    """
+    if hasattr(counts, "X"):
+        counts = counts.X
+    if hasattr(counts, "toarray"):
+        counts = counts.toarray()
+    return np.asarray(counts)
+
+
 def _select_genes_simple(counts, n_genes):
     """Simple gene selection for ECDF plots (linear spacing)."""
+    counts = _coerce_counts(counts)
     mean_counts = np.median(counts, axis=0)
     nonzero_idx = np.where(mean_counts > 0)[0]
     sorted_idx = nonzero_idx[np.argsort(mean_counts[nonzero_idx])]
@@ -15,6 +29,7 @@ def _select_genes_simple(counts, n_genes):
 
 def _select_genes(counts, n_rows, n_cols):
     """Select genes for plotting using log-spaced binning."""
+    counts = _coerce_counts(counts)
     mean_counts = np.median(counts, axis=0)
     nonzero_idx = np.where(mean_counts > 0)[0]
 

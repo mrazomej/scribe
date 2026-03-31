@@ -82,10 +82,15 @@ result = scribe.viz.plot_loss(
 fig, ax = plt.subplots(1, 1, figsize=(4, 3))
 result = scribe.viz.plot_ecdf(
     counts=counts_array,
-    viz_cfg=viz_cfg,
     ax=ax,
     save=False,
 )
+
+# PPC-family functions expose n_rows, n_cols, n_genes, n_samples as
+# direct keyword arguments — no viz_cfg needed for interactive use.
+result = scribe.viz.plot_ppc(results, counts)           # sensible defaults
+result = scribe.viz.plot_ppc(results, counts, n_genes=16, n_rows=4)
+result = scribe.viz.plot_ppc(results, counts, n_rows=3, n_cols=3, n_samples=256)
 
 # For library / extension authors: PlotContext encapsulates the
 # save/show/close policy and filename construction boilerplate.

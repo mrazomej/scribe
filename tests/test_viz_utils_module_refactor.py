@@ -1367,7 +1367,10 @@ def test_prepare_ppc_data_returns_sorted_genes_and_positions(monkeypatch):
             "ppc_opts": {"n_rows": 1, "n_cols": 3, "n_samples": 2},
         }
     )
-    data = _prepare_ppc_data(_FakeResults(), np.zeros((5, 6)), viz_cfg)
+    data = _prepare_ppc_data(
+        _FakeResults(), np.zeros((5, 6)), viz_cfg,
+        n_rows=1, n_cols=3, n_samples=2,
+    )
     assert data is not None
     assert data["n_rows"] == 1
     assert data["n_cols"] == 3
@@ -1640,4 +1643,151 @@ def test_plot_function_decorator_extra_dict_overrides_suffix():
 
     result = _demo(save=False)
     assert isinstance(result, PlotResult)
+    plt.close(result.fig)
+
+
+# -----------------------------------------------------------------------
+# _resolve_ppc_grid tests
+# -----------------------------------------------------------------------
+
+
+def test_resolve_ppc_grid_defaults_without_viz_cfg():
+    """_resolve_ppc_grid should return built-in defaults when viz_cfg=None."""
+    from scribe.viz._interactive import _resolve_ppc_grid
+
+    grid = _resolve_ppc_grid()
+    assert grid == {"n_rows": 5, "n_cols": 5, "n_samples": 512}
+
+
+def test_resolve_ppc_grid_explicit_kwargs_override_defaults():
+    """Explicit keyword arguments should take priority over defaults."""
+    from scribe.viz._interactive import _resolve_ppc_grid
+
+    grid = _resolve_ppc_grid(n_rows=3, n_cols=4, n_samples=100)
+    assert grid == {"n_rows": 3, "n_cols": 4, "n_samples": 100}
+
+
+def test_resolve_ppc_grid_viz_cfg_fallback():
+    """When viz_cfg is provided, values should be read from opts_key."""
+    from scribe.viz._interactive import _resolve_ppc_grid
+
+    viz_cfg = OmegaConf.create(
+        {"ppc_opts": {"n_rows": 7, "n_cols": 8, "n_samples": 256}}
+    )
+    grid = _resolve_ppc_grid(viz_cfg=viz_cfg)
+    assert grid == {"n_rows": 7, "n_cols": 8, "n_samples": 256}
+
+
+def test_resolve_ppc_grid_explicit_overrides_viz_cfg():
+    """Explicit kwargs should win over viz_cfg values."""
+    from scribe.viz._interactive import _resolve_ppc_grid
+
+    viz_cfg = OmegaConf.create(
+        {"ppc_opts": {"n_rows": 7, "n_cols": 8, "n_samples": 256}}
+    )
+    grid = _resolve_ppc_grid(n_rows=3, viz_cfg=viz_cfg)
+    assert grid["n_rows"] == 3
+    assert grid["n_cols"] == 8
+    assert grid["n_samples"] == 256
+
+
+def test_resolve_ppc_grid_n_genes_derives_n_cols():
+    """n_genes should derive n_cols = ceil(n_genes / n_rows)."""
+    from scribe.viz._interactive import _resolve_ppc_grid
+
+    grid = _resolve_ppc_grid(n_genes=16, n_rows=4)
+    assert grid["n_cols"] == 4
+
+    # Non-even division: ceil(15 / 4) = 4
+    grid2 = _resolve_ppc_grid(n_genes=15, n_rows=4)
+    assert grid2["n_cols"] == 4
+
+
+def test_resolve_ppc_grid_n_genes_conflict_raises():
+    """Inconsistent n_genes and n_cols should raise ValueError."""
+    from scribe.viz._interactive import _resolve_ppc_grid
+    import pytest
+
+    with pytest.raises(ValueError, match="n_genes=16.*n_cols=4.*n_cols=3"):
+        _resolve_ppc_grid(n_genes=16, n_rows=4, n_cols=3)
+
+
+def test_resolve_ppc_grid_custom_opts_key():
+    """Custom opts_key should read from the specified section."""
+    from scribe.viz._interactive import _resolve_ppc_grid
+
+    viz_cfg = OmegaConf.create(
+        {"mixture_ppc_opts": {"n_rows": 10, "n_cols": 2, "n_samples": 50}}
+    )
+    grid = _resolve_ppc_grid(viz_cfg=viz_cfg, opts_key="mixture_ppc_opts")
+    assert grid == {"n_rows": 10, "n_cols": 2, "n_samples": 50}
+
+
+def test_resolve_ppc_grid_default_samples_override():
+    """Per-call default_samples should override the built-in 512 default."""
+    from scribe.viz._interactive import _resolve_ppc_grid
+
+    grid = _resolve_ppc_grid(default_samples=1500)
+    assert grid["n_samples"] == 1500
+
+
+# -----------------------------------------------------------------------
+# get_ppc_render_options viz_cfg=None safety
+# -----------------------------------------------------------------------
+
+
+def test_get_ppc_render_options_none_safety():
+    """get_ppc_render_options(None) should return stable defaults."""
+    from scribe.viz.ppc_rendering import get_ppc_render_options
+
+    opts = get_ppc_render_options(None)
+    assert isinstance(opts, dict)
+    assert opts["hist_max_bin_quantile"] == 0.99
+    assert opts["hist_max_bin_floor"] == 10
+
+
+# -----------------------------------------------------------------------
+# plot_ecdf n_genes kwarg and viz_cfg=None safety
+# -----------------------------------------------------------------------
+
+
+def test_plot_ecdf_n_genes_kwarg(monkeypatch):
+    """plot_ecdf should honour n_genes kwarg without viz_cfg."""
+    import scribe.viz.ecdf as ecdf_module
+    from scribe.viz.ecdf import plot_ecdf
+
+    # Capture what n_genes is passed to _select_genes_simple
+    captured = {}
+
+    def _fake_select(counts, n_genes):
+        captured["n_genes"] = n_genes
+        idx = np.arange(min(n_genes, counts.shape[1]))
+        return idx, np.mean(counts, axis=0)
+
+    monkeypatch.setattr(ecdf_module, "_select_genes_simple", _fake_select)
+
+    counts = np.random.default_rng(0).poisson(5, size=(20, 30))
+    result = plot_ecdf(counts, n_genes=10, save=False)
+    assert captured["n_genes"] == 10
+    assert isinstance(result, PlotResult)
+    plt.close(result.fig)
+
+
+def test_plot_ecdf_viz_cfg_none_uses_default(monkeypatch):
+    """plot_ecdf with viz_cfg=None should use 25 as default n_genes."""
+    import scribe.viz.ecdf as ecdf_module
+    from scribe.viz.ecdf import plot_ecdf
+
+    captured = {}
+
+    def _fake_select(counts, n_genes):
+        captured["n_genes"] = n_genes
+        idx = np.arange(min(n_genes, counts.shape[1]))
+        return idx, np.mean(counts, axis=0)
+
+    monkeypatch.setattr(ecdf_module, "_select_genes_simple", _fake_select)
+
+    counts = np.random.default_rng(0).poisson(5, size=(20, 30))
+    result = plot_ecdf(counts, save=False)
+    assert captured["n_genes"] == 25
     plt.close(result.fig)

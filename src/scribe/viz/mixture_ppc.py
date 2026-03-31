@@ -21,6 +21,7 @@ from ._interactive import (
     _create_or_validate_grid_axes,
     _create_or_validate_single_axis,
     _finalize_figure,
+    _resolve_ppc_grid,
     plot_function,
 )
 from .config import _get_config_values
@@ -29,6 +30,7 @@ from .dispatch import (
     _get_map_like_predictive_samples_for_plot,
     _get_cell_assignment_probabilities_for_plot,
 )
+from .gene_selection import _coerce_counts
 from .ppc_rendering import (
     compute_adaptive_max_bin,
     get_ppc_render_options,
@@ -39,6 +41,7 @@ from .ppc_rendering import (
 
 def _select_divergent_genes(results, counts, n_rows, n_cols):
     """Select genes with highest divergence across components, binned by expression."""
+    counts = _coerce_counts(counts)
     parameterization = results.model_config.parameterization
     if parameterization in ["linked", "mean_prob", "odds_ratio", "mean_odds"]:
         param_name = "mu"
@@ -564,7 +567,9 @@ def _plot_ppc_comparison_figure(
     )
 
 
-def _prepare_mixture_ppc_data(results, counts, viz_cfg):
+def _prepare_mixture_ppc_data(
+    results, counts, viz_cfg, *, n_rows, n_cols, n_samples
+):
     """Prepare data for mixture PPC visualization.
 
     Selects high-CV genes, generates mixture and per-component PPC
@@ -577,9 +582,14 @@ def _prepare_mixture_ppc_data(results, counts, viz_cfg):
         Fitted model results.
     counts : array-like
         Observed count matrix ``(n_cells, n_genes)``.
-    viz_cfg : object
-        Visualization configuration with ``ppc_opts`` and
-        ``mixture_ppc_opts``.
+    viz_cfg : OmegaConf or None
+        Visualization configuration (used for render and batch options).
+    n_rows : int
+        Number of grid rows (already resolved).
+    n_cols : int
+        Number of grid columns (already resolved).
+    n_samples : int
+        Number of posterior predictive samples (already resolved).
 
     Returns
     -------
@@ -606,12 +616,9 @@ def _prepare_mixture_ppc_data(results, counts, viz_cfg):
         return None
 
     render_opts = get_ppc_render_options(viz_cfg)
-    ppc_opts = viz_cfg.get("ppc_opts", {})
-    mixture_ppc_opts = viz_cfg.get("mixture_ppc_opts", {})
-    n_rows = mixture_ppc_opts.get("n_rows", ppc_opts.get("n_rows", 5))
-    n_cols = mixture_ppc_opts.get("n_cols", ppc_opts.get("n_cols", 5))
-    n_samples = mixture_ppc_opts.get(
-        "n_samples", ppc_opts.get("n_samples", 1500)
+    ppc_opts = viz_cfg.get("ppc_opts", {}) if viz_cfg is not None else {}
+    mixture_ppc_opts = (
+        viz_cfg.get("mixture_ppc_opts", {}) if viz_cfg is not None else {}
     )
     # Use explicit assignment batching when provided to avoid OOM in
     # cell-to-component probability computation on large datasets.
@@ -710,6 +717,10 @@ def plot_mixture_ppc(
     cfg=None,
     viz_cfg=None,
     *,
+    n_rows=None,
+    n_cols=None,
+    n_genes=None,
+    n_samples=None,
     fig=None,
     axes=None,
     ax=None,
@@ -717,12 +728,35 @@ def plot_mixture_ppc(
     show=None,
     close=None,
 ):
-    """Plot PPC for mixture models showing genes with highest divergence across
-    components.
+    """Plot PPC for mixture models showing genes with highest divergence.
+
+    Parameters
+    ----------
+    results : object
+        Fitted model results.
+    counts : array-like
+        Observed count matrix ``(n_cells, n_genes)``.
+    figs_dir : str, optional
+        Output directory used when ``save`` resolves to ``True``.
+    cfg : OmegaConf, optional
+        Run configuration for filename generation.
+    viz_cfg : OmegaConf or None
+        Visualization config.  Optional in interactive sessions —
+        built-in defaults are used when ``None``.
+    n_rows : int, optional
+        Number of grid rows.  Overrides ``viz_cfg.mixture_ppc_opts.n_rows``.
+    n_cols : int, optional
+        Number of grid columns.  Overrides ``viz_cfg.mixture_ppc_opts.n_cols``.
+    n_genes : int, optional
+        Total number of genes to display.  When given without ``n_cols``,
+        derives ``n_cols = ceil(n_genes / n_rows)``.
+    n_samples : int, optional
+        Number of posterior predictive samples.  Overrides
+        ``viz_cfg.mixture_ppc_opts.n_samples``.
 
     Returns
     -------
-    PlotResult or None
+    PlotResultCollection or None
         Wrapped result containing figure payloads.
     """
     console.print(
@@ -744,7 +778,28 @@ def plot_mixture_ppc(
         close=close,
     )
 
-    prepared = _prepare_mixture_ppc_data(results, counts, viz_cfg)
+    counts = _coerce_counts(counts)
+
+    # Resolve grid dimensions: explicit kwargs > viz_cfg > defaults
+    # Mixture PPC defaults to 1500 samples (heavier computation).
+    grid = _resolve_ppc_grid(
+        n_rows=n_rows,
+        n_cols=n_cols,
+        n_genes=n_genes,
+        n_samples=n_samples,
+        viz_cfg=viz_cfg,
+        opts_key="mixture_ppc_opts",
+        default_samples=1500,
+    )
+
+    prepared = _prepare_mixture_ppc_data(
+        results,
+        counts,
+        viz_cfg,
+        n_rows=grid["n_rows"],
+        n_cols=grid["n_cols"],
+        n_samples=grid["n_samples"],
+    )
     if prepared is None:
         return
 
@@ -756,7 +811,9 @@ def plot_mixture_ppc(
     assignments = prepared["assignments"]
     component_samples_list = prepared["component_samples_list"]
     render_opts = prepared["render_opts"]
-    mixture_ppc_opts = viz_cfg.get("mixture_ppc_opts", {})
+    mixture_ppc_opts = (
+        viz_cfg.get("mixture_ppc_opts", {}) if viz_cfg is not None else {}
+    )
 
     if ctx.save:
         config_vals = _get_config_values(cfg, results=results)
@@ -989,7 +1046,9 @@ def _resolve_label_map_for_composition(results, cell_labels, cfg):
     )
 
 
-def _prepare_mixture_composition_data(results, counts, cfg, viz_cfg, cell_labels=None):
+def _prepare_mixture_composition_data(
+    results, counts, cfg, viz_cfg, cell_labels=None
+):
     """Prepare composition data for mixture component visualization.
 
     Resolves mixing weights, assignment probabilities, and (optionally)
@@ -1048,9 +1107,15 @@ def _prepare_mixture_composition_data(results, counts, cfg, viz_cfg, cell_labels
     )
 
     if cell_labels is not None:
-        ppc_opts = viz_cfg.get("ppc_opts", {})
-        mixture_ppc_opts = viz_cfg.get("mixture_ppc_opts", {})
-        composition_opts = viz_cfg.get("mixture_composition_opts", {})
+        ppc_opts = viz_cfg.get("ppc_opts", {}) if viz_cfg is not None else {}
+        mixture_ppc_opts = (
+            viz_cfg.get("mixture_ppc_opts", {}) if viz_cfg is not None else {}
+        )
+        composition_opts = (
+            viz_cfg.get("mixture_composition_opts", {})
+            if viz_cfg is not None
+            else {}
+        )
         assignment_batch_size = composition_opts.get(
             "assignment_batch_size",
             mixture_ppc_opts.get(
@@ -1126,9 +1191,15 @@ def _prepare_mixture_composition_data(results, counts, cfg, viz_cfg, cell_labels
             component_fractions * int(results.n_cells)
         ).astype(int)
     else:
-        ppc_opts = viz_cfg.get("ppc_opts", {})
-        mixture_ppc_opts = viz_cfg.get("mixture_ppc_opts", {})
-        composition_opts = viz_cfg.get("mixture_composition_opts", {})
+        ppc_opts = viz_cfg.get("ppc_opts", {}) if viz_cfg is not None else {}
+        mixture_ppc_opts = (
+            viz_cfg.get("mixture_ppc_opts", {}) if viz_cfg is not None else {}
+        )
+        composition_opts = (
+            viz_cfg.get("mixture_composition_opts", {})
+            if viz_cfg is not None
+            else {}
+        )
         assignment_batch_size = composition_opts.get(
             "assignment_batch_size",
             mixture_ppc_opts.get(

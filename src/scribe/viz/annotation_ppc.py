@@ -4,10 +4,10 @@ import numpy as np
 from jax import random
 
 from ._common import console
-from ._interactive import PlotResultCollection, plot_function
+from ._interactive import PlotResultCollection, _resolve_ppc_grid, plot_function
 from .config import _get_config_values
 from .dispatch import _get_map_like_predictive_samples_for_plot
-from .gene_selection import _select_genes
+from .gene_selection import _coerce_counts, _select_genes
 from .mixture_ppc import _plot_ppc_figure
 from .ppc_rendering import get_ppc_render_options
 
@@ -70,6 +70,10 @@ def plot_annotation_ppc(
     *,
     ctx,
     viz_cfg=None,
+    n_rows=None,
+    n_cols=None,
+    n_genes=None,
+    n_samples=None,
     fig=None,
     axes=None,
     ax=None,
@@ -81,10 +85,31 @@ def plot_annotation_ppc(
     against the posterior predictive distribution of the corresponding mixture
     component.
 
+    Parameters
+    ----------
+    results : object
+        Fitted model results.
+    counts : array-like
+        Observed count matrix ``(n_cells, n_genes)``.
+    cell_labels : array-like
+        Per-cell annotation labels.
+    viz_cfg : OmegaConf or None
+        Visualization config.  Optional in interactive sessions.
+    n_rows : int, optional
+        Number of grid rows.  Overrides ``viz_cfg.annotation_ppc_opts.n_rows``.
+    n_cols : int, optional
+        Number of grid columns.  Overrides ``viz_cfg.annotation_ppc_opts.n_cols``.
+    n_genes : int, optional
+        Total number of genes to display.  When given without ``n_cols``,
+        derives ``n_cols = ceil(n_genes / n_rows)``.
+    n_samples : int, optional
+        Number of posterior predictive samples.  Overrides
+        ``viz_cfg.annotation_ppc_opts.n_samples``.
+
     Returns
     -------
-    PlotResult or None
-        Wrapped result from the first annotation PPC figure.
+    PlotResultCollection or None
+        Wrapped result from annotation PPC figures.
     """
     import pandas as pd
 
@@ -93,6 +118,7 @@ def plot_annotation_ppc(
         raise ValueError(
             "Annotation PPC requires multiple axes; provide `fig` or `axes`."
         )
+    counts = _coerce_counts(counts)
     render_opts = get_ppc_render_options(viz_cfg)
 
     n_components = results.n_components
@@ -103,11 +129,20 @@ def plot_annotation_ppc(
         )
         return
 
-    ppc_opts = viz_cfg.get("ppc_opts", {})
-    ann_opts = viz_cfg.get("annotation_ppc_opts", {})
-    n_rows = ann_opts.get("n_rows", ppc_opts.get("n_rows", 5))
-    n_cols = ann_opts.get("n_cols", ppc_opts.get("n_cols", 5))
-    n_samples = ann_opts.get("n_samples", ppc_opts.get("n_samples", 1500))
+    # Resolve grid dimensions: explicit kwargs > viz_cfg > defaults
+    # Annotation PPC defaults to 1500 samples (same as mixture PPC).
+    grid = _resolve_ppc_grid(
+        n_rows=n_rows,
+        n_cols=n_cols,
+        n_genes=n_genes,
+        n_samples=n_samples,
+        viz_cfg=viz_cfg,
+        opts_key="annotation_ppc_opts",
+        default_samples=1500,
+    )
+    n_rows = grid["n_rows"]
+    n_cols = grid["n_cols"]
+    n_samples = grid["n_samples"]
 
     component_order = (
         ctx.cfg.get("annotation_component_order", None) if ctx.cfg else None
