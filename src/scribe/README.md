@@ -60,9 +60,10 @@ scribe.viz.plot_loss(
     viz_cfg=viz_cfg,
 )
 
-# Visualize interactively in notebooks/scripts
+# Visualize interactively in notebooks/scripts.
 # All plot functions return a PlotResult which renders a single image
 # via _repr_png_ / _repr_html_ — no duplicate display in notebooks.
+# figs_dir, cfg, and viz_cfg are always optional.
 result = scribe.viz.plot_loss(results=results)
 result.fig      # underlying matplotlib Figure
 result.axes     # tuple of Axes used
@@ -85,6 +86,48 @@ result = scribe.viz.plot_ecdf(
     ax=ax,
     save=False,
 )
+
+# For library / extension authors: PlotContext encapsulates the
+# save/show/close policy and filename construction boilerplate.
+from scribe.viz import PlotContext
+ctx = PlotContext.from_kwargs(
+    figs_dir="figs", cfg=cfg, viz_cfg=viz_cfg,
+    fig=None, ax=None, axes=None,
+    save=None, show=None, close=None,
+)
+ctx.save           # resolved boolean
+ctx.output_format  # e.g. "png"
+ctx.build_filename("my_suffix", results=results)  # standardized name
+ctx.finalize(fig, [ax], 1, filename=..., save_label="my plot")
+
+# Multi-figure functions (mixture PPC, annotation PPC, correlation
+# heatmap) return a PlotResultCollection. It renders all figures
+# inline in notebooks and supports indexing/iteration.
+collection = scribe.viz.plot_mixture_ppc(results=results, counts=counts)
+len(collection)          # number of figures
+collection[0].fig        # first figure
+collection.output_paths  # list of saved paths (or Nones)
+for result in collection:
+    display(result)      # render each figure individually
+
+# For new plot functions, use the @plot_function decorator to
+# eliminate boilerplate. The decorator handles PlotContext creation,
+# filename construction, saving, and finalization automatically.
+from scribe.viz import plot_function
+from scribe.viz._interactive import _create_or_validate_single_axis
+
+@plot_function(suffix="my_diag", save_label="custom diagnostic",
+               save_kwargs={"bbox_inches": "tight"})
+def plot_custom(results, counts, *, ctx, viz_cfg=None,
+                fig=None, ax=None, axes=None):
+    fig, ax = _create_or_validate_single_axis(
+        fig=fig, ax=ax, axes=axes, figsize=(6, 4),
+    )
+    ax.scatter(counts.mean(axis=0), results.some_metric)
+    return fig, [ax], 1
+
+# External callers see the standard API (figs_dir, cfg, etc.):
+result = plot_custom(results, counts, figs_dir="figs", cfg=cfg)
 ```
 
 ## Unified Inference CLI

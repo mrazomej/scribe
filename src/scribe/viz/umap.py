@@ -9,29 +9,28 @@ import scribe
 
 from ._common import console
 from .cache import _build_umap_cache_path
-from .config import _get_config_values
 from .dispatch import _get_predictive_samples_for_plot
 from ._interactive import (
     _create_or_validate_single_axis,
-    _finalize_figure,
-    _resolve_render_flags,
+    plot_function,
 )
 
 
+@plot_function(
+    suffix="umap",
+    save_label="UMAP plot",
+    save_kwargs={"bbox_inches": "tight"},
+)
 def plot_umap(
     results,
     counts,
-    figs_dir=None,
-    cfg=None,
+    *,
+    ctx,
     viz_cfg=None,
     force_refit=False,
-    *,
     fig=None,
-    ax=None,
     axes=None,
-    save=None,
-    show=None,
-    close=None,
+    ax=None,
 ):
     """Plot UMAP projection of experimental and synthetic data.
 
@@ -44,14 +43,7 @@ def plot_umap(
     PlotResult
         Wrapped result containing the figure, axes, and metadata.
     """
-    _fig_owned = fig is None and ax is None and axes is None
     console.print("[dim]Plotting UMAP projection...[/dim]")
-    save, show, close = _resolve_render_flags(
-        figs_dir=figs_dir,
-        save=save,
-        show=show,
-        close=close,
-    )
 
     umap_opts = viz_cfg.get("umap_opts", {})
 
@@ -62,7 +54,7 @@ def plot_umap(
             "[bold red]❌ ERROR:[/bold red] [red]umap-learn is not installed.[/red]"
             " [yellow]Install it with: pip install umap-learn[/yellow]"
         )
-        return
+        return None
 
     n_neighbors = umap_opts.get("n_neighbors", 15)
     min_dist = umap_opts.get("min_dist", 0.1)
@@ -124,8 +116,8 @@ def plot_umap(
     except (AttributeError, ImportError):
         pass
 
-    cache_path = _build_umap_cache_path(cfg, cache_umap)
-    data_cfg = cfg.data if hasattr(cfg, "data") else None
+    cache_path = _build_umap_cache_path(ctx.cfg, cache_umap)
+    data_cfg = ctx.cfg.data if hasattr(ctx.cfg, "data") else None
     subset_column = data_cfg.get("subset_column", None) if data_cfg else None
     subset_value = data_cfg.get("subset_value", None) if data_cfg else None
 
@@ -398,27 +390,4 @@ def plot_umap(
 
     fig.tight_layout()
 
-    if save:
-        output_format = viz_cfg.get("format", "png")
-        config_vals = _get_config_values(cfg, results=results)
-        fname = (
-            f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
-            f"{config_vals['model_type'].replace('_', '-')}_"
-            f"{config_vals['n_components']:02d}components_"
-            f"{config_vals['run_size_token']}_umap.{output_format}"
-        )
-    else:
-        fname = None
-    return _finalize_figure(
-        fig=fig,
-        axes=[ax],
-        n_panels=1,
-        save=save,
-        show=show,
-        close=close,
-        figs_dir=figs_dir,
-        filename=fname,
-        save_kwargs={"bbox_inches": "tight"},
-        save_label="UMAP plot",
-        _fig_owned=_fig_owned,
-    )
+    return fig, [ax], 1

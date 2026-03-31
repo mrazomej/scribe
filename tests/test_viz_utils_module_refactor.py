@@ -20,6 +20,7 @@ from scribe.inference.preset_builder import build_config_from_preset
 from scribe.models import get_model_and_guide
 from scribe.models.config import ModelConfig
 from scribe.svi.results import ScribeSVIResults
+import scribe.viz.config as viz_config
 from scribe.viz import (
     PlotResult,
     _build_umap_cache_path,
@@ -555,8 +556,10 @@ def test_plot_capture_anchor_saves_output(monkeypatch, tmp_path):
         _fake_get_map_estimates,
     )
     # Mock filename metadata to keep assertion stable and focused.
+    import scribe.viz.config as viz_config_module
+
     monkeypatch.setattr(
-        capture_anchor_module,
+        viz_config_module,
         "_get_config_values",
         lambda *_args, **_kwargs: {
             "method": "svi",
@@ -649,8 +652,10 @@ def test_plot_p_capture_scaling_saves_output(monkeypatch, tmp_path):
         ),
     )
     # Stub filename config to keep assertion stable.
+    import scribe.viz.config as viz_config_module
+
     monkeypatch.setattr(
-        capture_anchor_module,
+        viz_config_module,
         "_get_config_values",
         lambda *_args, **_kwargs: {
             "method": "svi",
@@ -767,7 +772,7 @@ def test_plot_mu_pairwise_saves_output_for_multi_dataset(monkeypatch, tmp_path):
         _fake_get_map_estimates,
     )
     monkeypatch.setattr(
-        mu_pairwise_module,
+        viz_config,
         "_get_config_values",
         lambda *_args, **_kwargs: {
             "method": "svi",
@@ -827,7 +832,7 @@ def test_plot_mean_calibration_requests_targeted_map(monkeypatch, tmp_path):
         _fake_get_map_estimates,
     )
     monkeypatch.setattr(
-        mean_calibration_module,
+        viz_config,
         "_get_config_values",
         lambda *_args, **_kwargs: {
             "method": "svi",
@@ -1059,9 +1064,11 @@ def test_plot_ecdf_accepts_single_axis_interactive_and_optional_show(
             np.mean(counts, axis=0),
         ),
     )
+    import scribe.viz._interactive as _int_mod
+
     show_calls = {"count": 0}
     monkeypatch.setattr(
-        ecdf_module.plt,
+        _int_mod.plt,
         "show",
         lambda: show_calls.__setitem__("count", show_calls["count"] + 1),
     )
@@ -1194,3 +1201,443 @@ def test_resolve_render_flags_enables_save_when_figs_dir_set():
     assert show is False
     # close defaults to match save
     assert close is True
+
+
+def test_prepare_capture_anchor_data_returns_computed_quantities(monkeypatch):
+    """_prepare_capture_anchor_data should compute eta + log(L) quantities."""
+    from scribe.viz.capture_anchor import _prepare_capture_anchor_data
+    import scribe.viz.capture_anchor as ca_module
+
+    # Stub MAP extraction
+    eta = np.array([0.1, 0.3, 0.5], dtype=float)
+    monkeypatch.setattr(
+        ca_module,
+        "_get_map_estimates_for_plot",
+        lambda *_a, **_kw: {"eta_capture": eta},
+    )
+    counts = np.array([[10, 5], [20, 10], [5, 2]], dtype=float)
+    cfg = OmegaConf.create({"priors": {"eta_capture": [12.0, 0.1]}})
+    viz_cfg = OmegaConf.create({"capture_anchor_opts": {"n_bins": 20}})
+
+    data = _prepare_capture_anchor_data(object(), counts, cfg, viz_cfg)
+    assert data is not None
+    assert data["expected_log_m0"] == 12.0
+    np.testing.assert_array_equal(data["eta_capture"], eta)
+    assert data["n_bins"] == 20
+    assert data["log_library_size"].shape == (3,)
+    np.testing.assert_allclose(
+        data["eta_plus_log_lib"],
+        eta + np.log(np.maximum(counts.sum(axis=1), 1.0)),
+    )
+
+
+def test_prepare_capture_anchor_data_returns_none_without_prior(monkeypatch):
+    """_prepare_capture_anchor_data returns None when anchor is unresolvable."""
+    from scribe.viz.capture_anchor import _prepare_capture_anchor_data
+
+    cfg = OmegaConf.create({})
+    viz_cfg = OmegaConf.create({})
+    result = _prepare_capture_anchor_data(
+        object(), np.zeros((2, 2)), cfg, viz_cfg
+    )
+    assert result is None
+
+
+def test_prepare_p_capture_data_returns_none_without_p_capture(monkeypatch):
+    """_prepare_p_capture_data returns None when p_capture is missing from MAP."""
+    from scribe.viz.capture_anchor import _prepare_p_capture_data
+    import scribe.viz.capture_anchor as ca_module
+
+    monkeypatch.setattr(
+        ca_module,
+        "_get_map_estimates_for_plot",
+        lambda *_a, **_kw: {},
+    )
+    viz_cfg = OmegaConf.create({})
+    data = _prepare_p_capture_data(object(), np.zeros((3, 2)), viz_cfg)
+    assert data is None
+
+
+def test_prepare_p_capture_data_builds_panel_specs(monkeypatch):
+    """_prepare_p_capture_data should build correct panel specs for mixture + multi-dataset."""
+    from scribe.viz.capture_anchor import _prepare_p_capture_data
+    import scribe.viz.capture_anchor as ca_module
+
+    p_cap = np.array([0.3, 0.4, 0.5, 0.6], dtype=float)
+    monkeypatch.setattr(
+        ca_module,
+        "_get_map_estimates_for_plot",
+        lambda *_a, **_kw: {"p_capture": p_cap},
+    )
+    # Stub assignment probabilities for mixture panel
+    monkeypatch.setattr(
+        ca_module,
+        "_get_cell_assignment_probabilities_for_plot",
+        lambda *_a, **_kw: np.array(
+            [[0.8, 0.2], [0.7, 0.3], [0.3, 0.7], [0.1, 0.9]]
+        ),
+    )
+
+    viz_cfg = OmegaConf.create({"p_capture_scaling_opts": {"n_bins": 5}})
+    data = _prepare_p_capture_data(
+        object(),
+        np.ones((4, 2)),
+        viz_cfg,
+        is_mixture=True,
+        is_multi_dataset=True,
+        dataset_codes=np.array([0, 0, 1, 1]),
+        dataset_names=["A", "B"],
+    )
+    assert data is not None
+    # global + component + dataset = 3 panels
+    assert len(data["panel_specs"]) == 3
+    np.testing.assert_array_equal(data["p_capture"], p_cap)
+    assert "component_ids" in data
+
+
+def test_prepare_calibration_data_single_dataset(monkeypatch):
+    """_prepare_calibration_data returns obs/pred means for single-dataset mode."""
+    from scribe.viz.mean_calibration import _prepare_calibration_data
+    import scribe.viz.mean_calibration as mc_module
+
+    class _Fake:
+        model_config = MagicMock(uses_variable_capture=False, is_bnb=False)
+
+    monkeypatch.setattr(
+        mc_module,
+        "_get_map_estimates_for_plot",
+        lambda *_a, **_kw: {
+            "r": np.array([3.0, 4.0]),
+            "p": np.array([0.4, 0.5]),
+        },
+    )
+
+    counts = np.array([[2.0, 3.0], [4.0, 1.0]], dtype=float)
+    data = _prepare_calibration_data(_Fake(), counts)
+    assert data is not None
+    assert data["mode"] == "single"
+    assert data["obs_mean"].shape == (2,)
+    assert data["pred_mean"].shape == (2,)
+
+
+def test_prepare_calibration_data_returns_none_when_r_missing(monkeypatch):
+    """_prepare_calibration_data returns None when MAP r is unavailable."""
+    from scribe.viz.mean_calibration import _prepare_calibration_data
+    import scribe.viz.mean_calibration as mc_module
+
+    class _Fake:
+        model_config = MagicMock(uses_variable_capture=False)
+
+    monkeypatch.setattr(
+        mc_module,
+        "_get_map_estimates_for_plot",
+        lambda *_a, **_kw: {"p": np.array([0.5])},
+    )
+
+    data = _prepare_calibration_data(_Fake(), np.ones((2, 1)))
+    assert data is None
+
+
+def test_prepare_ppc_data_returns_sorted_genes_and_positions(monkeypatch):
+    """_prepare_ppc_data should return sorted gene indices and position mapping."""
+    from scribe.viz.ppc import _prepare_ppc_data
+    import scribe.viz.ppc as ppc_module
+
+    selected = np.array([3, 1, 4], dtype=int)
+    monkeypatch.setattr(
+        ppc_module,
+        "_select_genes",
+        lambda _c, _r, _co: (selected, np.mean(np.zeros((5, 6)), axis=0)),
+    )
+    # Stub predictive sampling
+    monkeypatch.setattr(
+        ppc_module,
+        "_get_predictive_samples_for_plot",
+        lambda *_a, **_kw: np.zeros((2, 5, 3)),
+    )
+
+    class _FakeResults:
+        predictive_samples = np.zeros((2, 5, 3))
+
+        def __getitem__(self, idx):
+            return self
+
+    viz_cfg = OmegaConf.create(
+        {
+            "ppc_opts": {"n_rows": 1, "n_cols": 3, "n_samples": 2},
+        }
+    )
+    data = _prepare_ppc_data(_FakeResults(), np.zeros((5, 6)), viz_cfg)
+    assert data is not None
+    assert data["n_rows"] == 1
+    assert data["n_cols"] == 3
+    assert data["n_genes_selected"] == 3
+    # subset_positions maps original gene index -> position in selected_idx
+    for gene_idx in selected:
+        assert int(gene_idx) in data["subset_positions"]
+
+
+def test_prepare_mixture_composition_data_global_mode(monkeypatch):
+    """_prepare_mixture_composition_data returns global fractions without labels."""
+    from scribe.viz.mixture_ppc import _prepare_mixture_composition_data
+    import scribe.viz.mixture_ppc as mp_module
+
+    class _Fake:
+        n_components = 2
+        n_cells = 4
+        _dataset_indices = None
+
+    monkeypatch.setattr(
+        mp_module,
+        "_get_map_estimates_for_plot",
+        lambda *_a, **_kw: {"mixing_weights": np.array([0.6, 0.4])},
+    )
+
+    data = _prepare_mixture_composition_data(
+        _Fake(),
+        np.ones((4, 2)),
+        cfg=OmegaConf.create({}),
+        viz_cfg=OmegaConf.create({}),
+        cell_labels=None,
+    )
+    assert data is not None
+    assert data["mode"] == "global"
+    assert data["n_components"] == 2
+    np.testing.assert_allclose(data["component_fractions"], [0.6, 0.4])
+
+
+def test_prepare_mixture_composition_data_returns_none_for_single_component():
+    """_prepare_mixture_composition_data returns None for non-mixture models."""
+    from scribe.viz.mixture_ppc import _prepare_mixture_composition_data
+
+    class _Fake:
+        n_components = 1
+
+    data = _prepare_mixture_composition_data(
+        _Fake(),
+        np.ones((2, 2)),
+        cfg=OmegaConf.create({}),
+        viz_cfg=OmegaConf.create({}),
+    )
+    assert data is None
+
+
+# ---------------------------------------------------------------------------
+# PlotResultCollection tests
+# ---------------------------------------------------------------------------
+
+
+def _make_plot_result(label="test", output_path=None):
+    """Helper: create a PlotResult with a tiny figure for testing."""
+    import matplotlib.pyplot as plt
+    from scribe.viz._interactive import PlotResult
+
+    fig, ax = plt.subplots(1, 1, figsize=(2, 2))
+    ax.set_title(label)
+    plt.close(fig)
+    return PlotResult(fig=fig, axes=(ax,), n_panels=1, output_path=output_path)
+
+
+def test_plot_result_collection_length_and_indexing():
+    """PlotResultCollection supports len(), indexing, and iteration."""
+    from scribe.viz._interactive import PlotResultCollection
+
+    r1 = _make_plot_result("a", "/tmp/a.png")
+    r2 = _make_plot_result("b", "/tmp/b.png")
+    coll = PlotResultCollection([r1, r2])
+
+    assert len(coll) == 2
+    assert coll[0] is r1
+    assert coll[1] is r2
+    assert list(coll) == [r1, r2]
+
+
+def test_plot_result_collection_first_result_convenience_accessors():
+    """Collection forwards .fig/.axes/.output_path to first result."""
+    from scribe.viz._interactive import PlotResultCollection
+
+    r1 = _make_plot_result("first", "/tmp/first.png")
+    r2 = _make_plot_result("second", "/tmp/second.png")
+    coll = PlotResultCollection([r1, r2])
+
+    assert coll.fig is r1.fig
+    assert coll.axes is r1.axes
+    assert coll.n_panels == r1.n_panels
+    assert coll.output_path == "/tmp/first.png"
+    assert coll.output_paths == ["/tmp/first.png", "/tmp/second.png"]
+
+
+def test_plot_result_collection_repr_html_includes_all_figures():
+    """_repr_html_ should contain one <img> tag per result."""
+    from scribe.viz._interactive import PlotResultCollection
+
+    r1 = _make_plot_result("a")
+    r2 = _make_plot_result("b")
+    r3 = _make_plot_result("c")
+    coll = PlotResultCollection([r1, r2, r3])
+
+    html = coll._repr_html_()
+    assert html.count("<img") == 3
+    assert "data:image/png;base64," in html
+
+
+def test_plot_result_collection_repr_png_returns_first_figure():
+    """_repr_png_ should return PNG bytes for the first result."""
+    from scribe.viz._interactive import PlotResultCollection
+
+    r1 = _make_plot_result("a")
+    r2 = _make_plot_result("b")
+    coll = PlotResultCollection([r1, r2])
+
+    png = coll._repr_png_()
+    # PNG magic bytes
+    assert png[:4] == b"\x89PNG"
+    assert png == r1._repr_png_()
+
+
+def test_plot_result_collection_repr_string():
+    """__repr__ should mention figure count and saved paths."""
+    from scribe.viz._interactive import PlotResultCollection
+
+    r1 = _make_plot_result("a", "/tmp/a.png")
+    r2 = _make_plot_result("b")
+    coll = PlotResultCollection([r1, r2])
+
+    s = repr(coll)
+    assert "n_figures=2" in s
+    assert "/tmp/a.png" in s
+
+
+def test_plot_result_collection_rejects_empty_list():
+    """PlotResultCollection should raise on empty input."""
+    from scribe.viz._interactive import PlotResultCollection
+    import pytest
+
+    with pytest.raises(ValueError, match="at least one"):
+        PlotResultCollection([])
+
+
+def test_plot_result_collection_pipeline_compat_with_none_paths():
+    """Collection works when no result has an output_path (interactive mode)."""
+    from scribe.viz._interactive import PlotResultCollection
+
+    r1 = _make_plot_result("a")
+    r2 = _make_plot_result("b")
+    coll = PlotResultCollection([r1, r2])
+
+    assert coll.output_path is None
+    assert coll.output_paths == [None, None]
+
+
+# ---------------------------------------------------------------------------
+# @plot_function decorator tests
+# ---------------------------------------------------------------------------
+
+
+def test_plot_function_decorator_builds_correct_public_signature():
+    """Decorated function should expose figs_dir/cfg/viz_cfg/save/show/close."""
+    import inspect
+    from scribe.viz._interactive import (
+        _create_or_validate_single_axis,
+        plot_function,
+    )
+
+    @plot_function(suffix="test_sig")
+    def _demo(x, *, ctx, viz_cfg=None, fig=None, ax=None, axes=None):
+        pass
+
+    sig = inspect.signature(_demo)
+    param_names = list(sig.parameters.keys())
+    # Domain arg preserved, render args injected
+    assert param_names == [
+        "x",
+        "figs_dir",
+        "cfg",
+        "viz_cfg",
+        "fig",
+        "ax",
+        "axes",
+        "save",
+        "show",
+        "close",
+    ]
+    # figs_dir/cfg/viz_cfg are positional-or-keyword
+    for name in ("figs_dir", "cfg", "viz_cfg"):
+        assert (
+            sig.parameters[name].kind == inspect.Parameter.POSITIONAL_OR_KEYWORD
+        )
+    # save/show/close are keyword-only
+    for name in ("save", "show", "close"):
+        assert sig.parameters[name].kind == inspect.Parameter.KEYWORD_ONLY
+
+
+def test_plot_function_decorator_auto_finalizes_tuple_return():
+    """Decorated function returning (fig, axes, n) should yield PlotResult."""
+    from scribe.viz._interactive import plot_function
+
+    @plot_function(suffix="demo")
+    def _demo(*, ctx, fig=None, ax=None, axes=None, viz_cfg=None):
+        fig, ax = plt.subplots(1, 1, figsize=(2, 2))
+        ax.plot([0, 1], [0, 1])
+        return fig, [ax], 1
+
+    result = _demo(save=False)
+    assert isinstance(result, PlotResult)
+    assert result.n_panels == 1
+    assert result.output_path is None
+    plt.close(result.fig)
+
+
+def test_plot_function_decorator_passes_through_none():
+    """Decorated function returning None should propagate None."""
+    from scribe.viz._interactive import plot_function
+
+    @plot_function(suffix="skip")
+    def _demo(*, ctx, viz_cfg=None, fig=None, ax=None, axes=None):
+        return None
+
+    assert _demo(save=False) is None
+
+
+def test_plot_function_decorator_passes_through_plot_result_collection():
+    """Decorated function returning PlotResultCollection is not finalized."""
+    from scribe.viz._interactive import plot_function, PlotResultCollection
+
+    @plot_function()
+    def _demo(*, ctx, viz_cfg=None, fig=None, ax=None, axes=None):
+        r1 = _make_plot_result("a")
+        r2 = _make_plot_result("b")
+        return PlotResultCollection([r1, r2])
+
+    result = _demo(save=False)
+    assert isinstance(result, PlotResultCollection)
+    assert len(result) == 2
+
+
+def test_plot_function_decorator_handles_positional_calls():
+    """Positional figs_dir/cfg/viz_cfg should be intercepted correctly."""
+    from scribe.viz._interactive import plot_function
+
+    @plot_function(suffix="pos")
+    def _demo(data, *, ctx, viz_cfg=None, fig=None, ax=None, axes=None):
+        fig, ax = plt.subplots(1, 1, figsize=(2, 2))
+        return fig, [ax], 1
+
+    # Positional call like the pipeline: _demo(data, figs_dir, cfg, viz_cfg)
+    result = _demo([1, 2, 3], None, None, None, save=False)
+    assert isinstance(result, PlotResult)
+    plt.close(result.fig)
+
+
+def test_plot_function_decorator_extra_dict_overrides_suffix():
+    """Return tuple with extra dict should override default suffix."""
+    from scribe.viz._interactive import plot_function
+
+    @plot_function(suffix="default", save_label="default label")
+    def _demo(*, ctx, viz_cfg=None, fig=None, ax=None, axes=None):
+        fig, ax = plt.subplots(1, 1, figsize=(2, 2))
+        return fig, [ax], 1, {"suffix": "override", "save_label": "custom"}
+
+    result = _demo(save=False)
+    assert isinstance(result, PlotResult)
+    plt.close(result.fig)

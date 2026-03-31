@@ -22,10 +22,8 @@ from scribe.models.config.organism_priors import resolve_organism_priors
 from ._common import console
 from ._interactive import (
     _create_or_validate_grid_axes,
-    _finalize_figure,
-    _resolve_render_flags,
+    plot_function,
 )
-from .config import _get_config_values
 from .dispatch import (
     _get_map_estimates_for_plot,
     _get_cell_assignment_probabilities_for_plot,
@@ -70,19 +68,85 @@ def _resolve_expected_log_m0(cfg):
     return None
 
 
+def _prepare_capture_anchor_data(results, counts, cfg, viz_cfg):
+    """Prepare data for capture-anchor diagnostic.
+
+    Resolves the expected anchor, extracts MAP eta values, and computes
+    derived quantities for the diagnostic panels.
+
+    Parameters
+    ----------
+    results : object
+        Fitted model results.
+    counts : array-like
+        Observed UMI count matrix ``(n_cells, n_genes)``.
+    cfg : object
+        Run configuration.
+    viz_cfg : object
+        Visualization configuration.
+
+    Returns
+    -------
+    dict or None
+        Dictionary with keys ``expected_log_m0``, ``eta_capture``,
+        ``log_library_size``, ``eta_plus_log_lib``, ``n_bins``,
+        ``scatter_size``, ``scatter_alpha``.  Returns ``None`` when
+        the anchor or eta values are unavailable.
+    """
+    expected_log_m0 = _resolve_expected_log_m0(cfg)
+    if expected_log_m0 is None:
+        console.print(
+            "[yellow]Skipping capture-anchor plot: could not infer "
+            r"$\log(M_0)$ from priors.eta_capture or priors.organism.[/yellow]"
+        )
+        return None
+
+    map_estimates = _get_map_estimates_for_plot(
+        results, counts=counts, targets=["eta_capture"]
+    )
+    eta_capture = map_estimates.get("eta_capture")
+    if eta_capture is None:
+        console.print(
+            "[yellow]Skipping capture-anchor plot: eta_capture is unavailable "
+            "in MAP estimates.[/yellow]"
+        )
+        return None
+    eta_capture = np.asarray(eta_capture, dtype=float).reshape(-1)
+
+    library_size = np.asarray(counts.sum(axis=1), dtype=float).reshape(-1)
+    log_library_size = np.log(np.maximum(library_size, 1.0))
+    eta_plus_log_lib = eta_capture + log_library_size
+
+    opts = viz_cfg.get("capture_anchor_opts", {})
+    n_bins = int(opts.get("n_bins", 50))
+    scatter_size = float(opts.get("scatter_size", 6.0))
+    scatter_alpha = float(opts.get("scatter_alpha", 0.35))
+
+    return {
+        "expected_log_m0": expected_log_m0,
+        "eta_capture": eta_capture,
+        "log_library_size": log_library_size,
+        "eta_plus_log_lib": eta_plus_log_lib,
+        "n_bins": n_bins,
+        "scatter_size": scatter_size,
+        "scatter_alpha": scatter_alpha,
+    }
+
+
+@plot_function(
+    suffix="capture_anchor",
+    save_label="capture-anchor plot",
+    save_kwargs={"bbox_inches": "tight"},
+)
 def plot_capture_anchor(
     results,
     counts,
-    figs_dir=None,
-    cfg=None,
-    viz_cfg=None,
     *,
+    ctx,
+    viz_cfg=None,
     fig=None,
     axes=None,
     ax=None,
-    save=None,
-    show=None,
-    close=None,
 ):
     r"""Plot and save eta capture-anchor diagnostics.
 
@@ -114,51 +178,22 @@ def plot_capture_anchor(
         Wrapped result containing the figure, axes, and metadata, or
         ``None`` when required inputs for the diagnostic are unavailable.
     """
-    _fig_owned = fig is None and axes is None
     console.print("[dim]Plotting capture-anchor diagnostic...[/dim]")
     if ax is not None:
         raise ValueError(
             "Capture-anchor uses 2 panels; provide `fig` or 2 `axes`."
         )
-    save, show, close = _resolve_render_flags(
-        figs_dir=figs_dir,
-        save=save,
-        show=show,
-        close=close,
-    )
-
-    # Resolve expected anchor from configuration and bail out cleanly if absent.
-    expected_log_m0 = _resolve_expected_log_m0(cfg)
-    if expected_log_m0 is None:
-        console.print(
-            "[yellow]Skipping capture-anchor plot: could not infer "
-            r"$\log(M_0)$ from priors.eta_capture or priors.organism.[/yellow]"
-        )
+    data = _prepare_capture_anchor_data(results, counts, ctx.cfg, viz_cfg)
+    if data is None:
         return None
 
-    # Pull MAP-like parameter estimates and ensure eta parameter is present.
-    map_estimates = _get_map_estimates_for_plot(
-        results, counts=counts, targets=["eta_capture"]
-    )
-    eta_capture = map_estimates.get("eta_capture")
-    if eta_capture is None:
-        console.print(
-            "[yellow]Skipping capture-anchor plot: eta_capture is unavailable "
-            "in MAP estimates.[/yellow]"
-        )
-        return None
-    eta_capture = np.asarray(eta_capture, dtype=float).reshape(-1)
-
-    # Compute per-cell library size and the diagnostic transformed quantity.
-    library_size = np.asarray(counts.sum(axis=1), dtype=float).reshape(-1)
-    log_library_size = np.log(np.maximum(library_size, 1.0))
-    eta_plus_log_lib = eta_capture + log_library_size
-
-    # Read plot options with conservative defaults when absent.
-    opts = viz_cfg.get("capture_anchor_opts", {})
-    n_bins = int(opts.get("n_bins", 50))
-    scatter_size = float(opts.get("scatter_size", 6.0))
-    scatter_alpha = float(opts.get("scatter_alpha", 0.35))
+    expected_log_m0 = data["expected_log_m0"]
+    eta_capture = data["eta_capture"]
+    log_library_size = data["log_library_size"]
+    eta_plus_log_lib = data["eta_plus_log_lib"]
+    n_bins = data["n_bins"]
+    scatter_size = data["scatter_size"]
+    scatter_alpha = data["scatter_alpha"]
 
     # Create side-by-side diagnostic figure.
     fig, _, flat_axes = _create_or_validate_grid_axes(
@@ -197,30 +232,7 @@ def plot_capture_anchor(
 
     fig.tight_layout()
 
-    if save:
-        output_format = viz_cfg.get("format", "png")
-        config_vals = _get_config_values(cfg, results=results)
-        fname = (
-            f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
-            f"{config_vals['model_type'].replace('_', '-')}_"
-            f"{config_vals['n_components']:02d}components_"
-            f"{config_vals['run_size_token']}_capture_anchor.{output_format}"
-        )
-    else:
-        fname = None
-    return _finalize_figure(
-        fig=fig,
-        axes=flat_axes,
-        n_panels=2,
-        save=save,
-        show=show,
-        close=close,
-        figs_dir=figs_dir,
-        filename=fname,
-        save_kwargs={"bbox_inches": "tight"},
-        save_label="capture-anchor plot",
-        _fig_owned=_fig_owned,
-    )
+    return fig, flat_axes, 2
 
 
 def _compute_binned_trend(x, y, n_bins=30, min_cells_per_bin=5):
@@ -334,13 +346,124 @@ def _set_dynamic_y_limits(ax, y_values, pad_fraction=0.15):
     ax.set_ylim(lower, upper)
 
 
+def _prepare_p_capture_data(
+    results,
+    counts,
+    viz_cfg,
+    *,
+    is_mixture=False,
+    is_multi_dataset=False,
+    dataset_codes=None,
+    dataset_names=None,
+):
+    """Prepare data for p-capture scaling diagnostic.
+
+    Extracts MAP capture probabilities, computes library sizes,
+    and resolves component/dataset splits.
+
+    Parameters
+    ----------
+    results : object
+        Fitted model results.
+    counts : array-like
+        Observed count matrix.
+    viz_cfg : object
+        Visualization configuration.
+    is_mixture : bool
+        Whether the model uses more than one component.
+    is_multi_dataset : bool
+        Whether the run includes multiple datasets.
+    dataset_codes : ndarray or None
+        Integer dataset code per cell.
+    dataset_names : sequence of str or None
+        Category names for dataset codes.
+
+    Returns
+    -------
+    dict or None
+        Dictionary with keys ``p_capture``, ``library_size``,
+        ``n_bins``, ``min_cells_per_bin``, ``panel_specs``,
+        and optionally ``component_ids``, ``component_probs``.
+        Returns ``None`` when p_capture is unavailable.
+    """
+    map_estimates = _get_map_estimates_for_plot(
+        results, counts=counts, targets=["p_capture"]
+    )
+    p_capture = map_estimates.get("p_capture")
+    if p_capture is None:
+        console.print(
+            "[yellow]Skipping p-capture scaling: p_capture is unavailable "
+            "in MAP estimates.[/yellow]"
+        )
+        return None
+    p_capture = np.asarray(p_capture, dtype=float).reshape(-1)
+
+    library_size = np.asarray(counts.sum(axis=1), dtype=float).reshape(-1)
+
+    opts = viz_cfg.get("p_capture_scaling_opts", {})
+    n_bins = int(opts.get("n_bins", 30))
+    min_cells_per_bin = int(opts.get("min_cells_per_bin", 5))
+    assignment_batch_size = int(opts.get("assignment_batch_size", 512))
+
+    panel_specs = [("global", None)]
+    if is_mixture:
+        panel_specs.append(("component", None))
+    if is_multi_dataset:
+        panel_specs.append(("dataset", None))
+
+    out = {
+        "p_capture": p_capture,
+        "library_size": library_size,
+        "n_bins": n_bins,
+        "min_cells_per_bin": min_cells_per_bin,
+        "panel_specs": panel_specs,
+    }
+
+    if is_mixture:
+        if (
+            is_multi_dataset
+            and dataset_codes is not None
+            and hasattr(results, "get_dataset")
+        ):
+            _ds_codes = np.asarray(dataset_codes, dtype=int).reshape(-1)
+            _unique_ds = np.unique(_ds_codes)
+            _per_ds_probs = []
+            for _d in _unique_ds:
+                _mask = _ds_codes == _d
+                _ds_results = results.get_dataset(int(_d))
+                _ds_probs = _get_cell_assignment_probabilities_for_plot(
+                    _ds_results,
+                    counts=counts[_mask],
+                    batch_size=assignment_batch_size,
+                    use_mean=False,
+                )
+                _per_ds_probs.append(np.asarray(_ds_probs))
+            component_probs = np.concatenate(_per_ds_probs, axis=0)
+        else:
+            component_probs = _get_cell_assignment_probabilities_for_plot(
+                results,
+                counts=counts,
+                batch_size=assignment_batch_size,
+                use_mean=False,
+            )
+        component_ids = np.argmax(np.asarray(component_probs), axis=1)
+        out["component_ids"] = component_ids
+        out["component_probs"] = component_probs
+
+    return out
+
+
+@plot_function(
+    suffix="p_capture_scaling",
+    save_label="p-capture scaling plot",
+    save_kwargs={"bbox_inches": "tight"},
+)
 def plot_p_capture_scaling(
     results,
     counts,
-    figs_dir,
-    cfg,
-    viz_cfg,
     *,
+    ctx,
+    viz_cfg=None,
     is_mixture=False,
     is_multi_dataset=False,
     dataset_codes=None,
@@ -348,9 +471,6 @@ def plot_p_capture_scaling(
     fig=None,
     axes=None,
     ax=None,
-    save=None,
-    show=None,
-    close=None,
 ):
     r"""Plot ``p_capture`` versus library-size scaling diagnostics.
 
@@ -388,46 +508,28 @@ def plot_p_capture_scaling(
         Wrapped result on success, or ``None`` when ``p_capture`` is
         unavailable.
     """
-    _fig_owned = fig is None and axes is None
     console.print("[dim]Plotting p-capture scaling diagnostic...[/dim]")
     if ax is not None:
         raise ValueError(
             "p-capture scaling may use multiple panels; provide `fig` or `axes`."
         )
-    save, show, close = _resolve_render_flags(
-        figs_dir=figs_dir,
-        save=save,
-        show=show,
-        close=close,
+    data = _prepare_p_capture_data(
+        results,
+        counts,
+        viz_cfg,
+        is_mixture=is_mixture,
+        is_multi_dataset=is_multi_dataset,
+        dataset_codes=dataset_codes,
+        dataset_names=dataset_names,
     )
-
-    # Pull p_capture from MAP estimates and return gracefully when unavailable.
-    map_estimates = _get_map_estimates_for_plot(
-        results, counts=counts, targets=["p_capture"]
-    )
-    p_capture = map_estimates.get("p_capture")
-    if p_capture is None:
-        console.print(
-            "[yellow]Skipping p-capture scaling: p_capture is unavailable "
-            "in MAP estimates.[/yellow]"
-        )
+    if data is None:
         return None
-    p_capture = np.asarray(p_capture, dtype=float).reshape(-1)
 
-    # Build per-cell library size on original count scale to match the EDA plot.
-    library_size = np.asarray(counts.sum(axis=1), dtype=float).reshape(-1)
-
-    # Read options with conservative defaults for robust behavior on small data.
-    opts = viz_cfg.get("p_capture_scaling_opts", {})
-    n_bins = int(opts.get("n_bins", 30))
-    min_cells_per_bin = int(opts.get("min_cells_per_bin", 5))
-    assignment_batch_size = int(opts.get("assignment_batch_size", 512))
-
-    panel_specs = [("global", None)]
-    if is_mixture:
-        panel_specs.append(("component", None))
-    if is_multi_dataset:
-        panel_specs.append(("dataset", None))
+    p_capture = data["p_capture"]
+    library_size = data["library_size"]
+    n_bins = data["n_bins"]
+    min_cells_per_bin = data["min_cells_per_bin"]
+    panel_specs = data["panel_specs"]
 
     fig, _, axes_flat = _create_or_validate_grid_axes(
         n_rows=1,
@@ -458,36 +560,7 @@ def plot_p_capture_scaling(
 
     # Component panel: derive hard MAP assignments from assignment probabilities.
     if is_mixture:
-        # Multi-dataset models: MAP params contain a D dimension that the
-        # per-cell log-likelihood function cannot broadcast.  Compute
-        # component probabilities per-dataset and concatenate instead.
-        if (
-            is_multi_dataset
-            and dataset_codes is not None
-            and hasattr(results, "get_dataset")
-        ):
-            _ds_codes = np.asarray(dataset_codes, dtype=int).reshape(-1)
-            _unique_ds = np.unique(_ds_codes)
-            _per_ds_probs = []
-            for _d in _unique_ds:
-                _mask = _ds_codes == _d
-                _ds_results = results.get_dataset(int(_d))
-                _ds_probs = _get_cell_assignment_probabilities_for_plot(
-                    _ds_results,
-                    counts=counts[_mask],
-                    batch_size=assignment_batch_size,
-                    use_mean=False,
-                )
-                _per_ds_probs.append(np.asarray(_ds_probs))
-            component_probs = np.concatenate(_per_ds_probs, axis=0)
-        else:
-            component_probs = _get_cell_assignment_probabilities_for_plot(
-                results,
-                counts=counts,
-                batch_size=assignment_batch_size,
-                use_mean=False,
-            )
-        component_ids = np.argmax(np.asarray(component_probs), axis=1)
+        component_ids = data["component_ids"]
         unique_components = np.unique(component_ids)
         colors = plt.cm.tab10(np.linspace(0, 1, unique_components.size))
         # Track values that were actually plotted to derive faithful y-limits.
@@ -564,27 +637,4 @@ def plot_p_capture_scaling(
 
     fig.tight_layout()
 
-    if save:
-        output_format = viz_cfg.get("format", "png")
-        config_vals = _get_config_values(cfg, results=results)
-        fname = (
-            f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
-            f"{config_vals['model_type'].replace('_', '-')}_"
-            f"{config_vals['n_components']:02d}components_"
-            f"{config_vals['run_size_token']}_p_capture_scaling.{output_format}"
-        )
-    else:
-        fname = None
-    return _finalize_figure(
-        fig=fig,
-        axes=axes_flat,
-        n_panels=len(panel_specs),
-        save=save,
-        show=show,
-        close=close,
-        figs_dir=figs_dir,
-        filename=fname,
-        save_kwargs={"bbox_inches": "tight"},
-        save_label="p-capture scaling plot",
-        _fig_owned=_fig_owned,
-    )
+    return fig, axes_flat, len(panel_specs)

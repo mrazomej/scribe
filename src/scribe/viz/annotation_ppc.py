@@ -4,7 +4,7 @@ import numpy as np
 from jax import random
 
 from ._common import console
-from ._interactive import _finalize_figure, _resolve_render_flags
+from ._interactive import PlotResultCollection, plot_function
 from .config import _get_config_values
 from .dispatch import _get_map_like_predictive_samples_for_plot
 from .gene_selection import _select_genes
@@ -62,20 +62,17 @@ def _resolve_label_map(results, cell_labels, component_order=None):
     return _reconstruct_label_map(cell_labels, component_order)
 
 
+@plot_function()
 def plot_annotation_ppc(
     results,
     counts,
     cell_labels,
-    figs_dir=None,
-    cfg=None,
-    viz_cfg=None,
     *,
+    ctx,
+    viz_cfg=None,
     fig=None,
     axes=None,
     ax=None,
-    save=None,
-    show=None,
-    close=None,
 ):
     """Plot per-annotation posterior predictive checks.
 
@@ -96,12 +93,6 @@ def plot_annotation_ppc(
         raise ValueError(
             "Annotation PPC requires multiple axes; provide `fig` or `axes`."
         )
-    save, show, close = _resolve_render_flags(
-        figs_dir=figs_dir,
-        save=save,
-        show=show,
-        close=close,
-    )
     render_opts = get_ppc_render_options(viz_cfg)
 
     n_components = results.n_components
@@ -118,7 +109,9 @@ def plot_annotation_ppc(
     n_cols = ann_opts.get("n_cols", ppc_opts.get("n_cols", 5))
     n_samples = ann_opts.get("n_samples", ppc_opts.get("n_samples", 1500))
 
-    component_order = cfg.get("annotation_component_order", None)
+    component_order = (
+        ctx.cfg.get("annotation_component_order", None) if ctx.cfg else None
+    )
     label_map = _resolve_label_map(results, cell_labels, component_order)
 
     annotations = pd.Series(np.asarray(cell_labels, dtype=object))
@@ -141,9 +134,8 @@ def plot_annotation_ppc(
         f"expression bins[/dim]"
     )
 
-    if save:
-        output_format = viz_cfg.get("format", "png")
-        config_vals = _get_config_values(cfg, results=results)
+    if ctx.save:
+        config_vals = _get_config_values(ctx.cfg, results=results)
         base_fname = (
             f"{config_vals['method']}_"
             f"{config_vals['parameterization'].replace('-', '_')}_"
@@ -152,8 +144,8 @@ def plot_annotation_ppc(
             f"{config_vals['run_size_token']}"
         )
     else:
-        output_format = "png"
         base_fname = "annotation_ppc"
+    output_format = ctx.output_format
 
     component_cmaps = [
         "Blues",
@@ -218,16 +210,16 @@ def plot_annotation_ppc(
                 f"(Component {component_idx}, "
                 f"{n_cells_label} cells)"
             ),
-            figs_dir=figs_dir,
+            figs_dir=ctx.figs_dir,
             fname=f"{base_fname}_annotation_ppc_{safe_label}",
             output_format=output_format,
             cmap=cmap,
             render_opts=render_opts,
             fig=fig,
             axes=axes,
-            save=save,
-            show=show,
-            close=close,
+            save=ctx.save,
+            show=ctx.show,
+            close=ctx.close,
         )
         figure_payloads.append(fig_payload)
 
@@ -237,9 +229,6 @@ def plot_annotation_ppc(
         f"[green]✓[/green] [dim]Generated {len(label_map)} annotation "
         f"PPC plots[/dim]"
     )
-    # Return the first figure payload (already a PlotResult from
-    # _plot_ppc_figure); callers that need all figures can iterate
-    # via figure_payloads.
     if figure_payloads:
-        return figure_payloads[0]
+        return PlotResultCollection(figure_payloads)
     return None

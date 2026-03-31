@@ -6,8 +6,11 @@ visualization entry points so CLI and notebook usage stay consistent.
 
 from __future__ import annotations
 
+import functools
+import inspect
 import os
-from typing import Iterable
+from dataclasses import dataclass, field
+from typing import Any, Iterable
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -66,6 +69,89 @@ class PlotResult:
         n = self.n_panels or 0
         saved = f", saved='{self.output_path}'" if self.output_path else ""
         return f"PlotResult(n_panels={n}{saved})"
+
+
+class PlotResultCollection:
+    """Container for multiple ``PlotResult`` objects from one call.
+
+    Multi-figure plot functions (e.g. ``plot_mixture_ppc``,
+    ``plot_correlation_heatmap``) produce several independent figures.
+    Wrapping them in a collection allows notebook rich-display to
+    render *all* figures inline, while pipeline code that only inspects
+    ``.fig`` or ``.output_path`` sees the first result transparently.
+
+    Parameters
+    ----------
+    results : list of PlotResult
+        Individual plot results comprising the collection.
+    """
+
+    def __init__(self, results):
+        if not results:
+            raise ValueError("PlotResultCollection requires at least one PlotResult.")
+        self._results = list(results)
+
+    # ---- Sequence protocol ----
+
+    def __len__(self):
+        return len(self._results)
+
+    def __iter__(self):
+        return iter(self._results)
+
+    def __getitem__(self, idx):
+        return self._results[idx]
+
+    # ---- Forward first-result attributes for backward compat ----
+
+    @property
+    def fig(self):
+        """Figure from the first result (convenience accessor)."""
+        return self._results[0].fig
+
+    @property
+    def axes(self):
+        """Axes from the first result (convenience accessor)."""
+        return self._results[0].axes
+
+    @property
+    def n_panels(self):
+        """Panel count from the first result."""
+        return self._results[0].n_panels
+
+    @property
+    def output_path(self):
+        """Output path from the first result."""
+        return self._results[0].output_path
+
+    @property
+    def output_paths(self):
+        """List of output paths from all results."""
+        return [r.output_path for r in self._results]
+
+    # ---- Rich display ----
+
+    def _repr_html_(self):
+        """Render all figures inline as sequential ``<img>`` tags."""
+        import base64
+
+        parts = []
+        for r in self._results:
+            png = r._repr_png_()
+            b64 = base64.b64encode(png).decode("ascii")
+            parts.append(f'<img src="data:image/png;base64,{b64}" '
+                         f'style="display:block;margin:8px 0"/>')
+        return "\n".join(parts)
+
+    def _repr_png_(self):
+        """PNG bytes of the first figure (fallback for plain PNG renderers)."""
+        return self._results[0]._repr_png_()
+
+    def __repr__(self):
+        n = len(self._results)
+        paths = [r.output_path for r in self._results if r.output_path]
+        suffix = f", saved={paths}" if paths else ""
+        return f"PlotResultCollection(n_figures={n}{suffix})"
 
 
 def _resolve_bool_default(value, default):
@@ -139,6 +225,186 @@ def _resolve_render_flags(figs_dir, save, show, close):
     show_final = _resolve_bool_default(show, False)
     close_final = _resolve_bool_default(close, save_final)
     return save_final, show_final, close_final
+
+
+@dataclass
+class PlotContext:
+    """Centralizes save/show/close policy and filename construction.
+
+    Created via the ``from_kwargs`` classmethod, which resolves render
+    flags and ownership tracking so individual plot functions need only
+    two lines of boilerplate::
+
+        ctx = PlotContext.from_kwargs(
+            figs_dir=figs_dir, cfg=cfg, viz_cfg=viz_cfg,
+            fig=fig, ax=ax, axes=axes,
+            save=save, show=show, close=close,
+        )
+        # ... draw on fig / axes ...
+        return ctx.finalize(fig, axes_flat, n_panels,
+                            filename=ctx.build_filename("loss", results=results))
+
+    Parameters
+    ----------
+    figs_dir : str or None
+        Target directory for file output.
+    cfg : Any
+        Run configuration (OmegaConf or dict) used for filenames.
+    viz_cfg : Any
+        Visualization configuration carrying format / option keys.
+    save : bool
+        Whether saving to disk is enabled.
+    show : bool
+        Whether ``plt.show()`` should be called.
+    close : bool
+        Whether the figure is explicitly closed after rendering.
+    output_format : str
+        File extension (``"png"``, ``"pdf"``, ...).
+    fig_owned : bool
+        ``True`` when the figure was created internally (not injected
+        by the caller).
+    """
+
+    figs_dir: str | None
+    cfg: Any
+    viz_cfg: Any
+    save: bool
+    show: bool
+    close: bool
+    output_format: str = field(default="png")
+    fig_owned: bool = field(default=True)
+
+    @classmethod
+    def from_kwargs(
+        cls,
+        *,
+        figs_dir=None,
+        cfg=None,
+        viz_cfg=None,
+        fig=None,
+        ax=None,
+        axes=None,
+        save=None,
+        show=None,
+        close=None,
+    ):
+        """Build a context from the standard plot-function keyword set.
+
+        Parameters
+        ----------
+        figs_dir : str or None
+            Output directory.
+        cfg, viz_cfg : object or None
+            Configuration objects forwarded through for filename
+            construction.
+        fig, ax, axes : matplotlib objects or None
+            Caller-injected figure / axes.  Used only to determine
+            ``fig_owned``.
+        save, show, close : bool or None
+            Explicit user overrides resolved by
+            ``_resolve_render_flags``.
+
+        Returns
+        -------
+        PlotContext
+        """
+        save_f, show_f, close_f = _resolve_render_flags(
+            figs_dir, save, show, close,
+        )
+        fig_owned = fig is None and ax is None and axes is None
+        fmt = "png"
+        if save_f and viz_cfg is not None:
+            fmt = (
+                viz_cfg.get("format", "png")
+                if hasattr(viz_cfg, "get")
+                else getattr(viz_cfg, "format", "png")
+            )
+        return cls(
+            figs_dir=figs_dir,
+            cfg=cfg,
+            viz_cfg=viz_cfg,
+            save=save_f,
+            show=show_f,
+            close=close_f,
+            output_format=fmt,
+            fig_owned=fig_owned,
+        )
+
+    def build_filename(self, suffix, *, results=None):
+        """Build the standardized output filename.
+
+        Parameters
+        ----------
+        suffix : str
+            Plot-type suffix appended to the base name
+            (e.g. ``"loss"``, ``"ppc"``).
+        results : object, optional
+            Fitted results object forwarded to ``_get_config_values``
+            for ``n_components`` resolution.
+
+        Returns
+        -------
+        str or None
+            Full filename when saving is enabled, ``None`` otherwise.
+        """
+        if not self.save:
+            return None
+        from .config import _get_config_values
+
+        config_vals = _get_config_values(self.cfg, results=results)
+        base = (
+            f"{config_vals['method']}_"
+            f"{config_vals['parameterization'].replace('-', '_')}_"
+            f"{config_vals['model_type'].replace('_', '-')}_"
+            f"{config_vals['n_components']:02d}components_"
+            f"{config_vals['run_size_token']}"
+        )
+        return f"{base}_{suffix}.{self.output_format}"
+
+    def finalize(
+        self,
+        fig,
+        axes,
+        n_panels,
+        *,
+        filename=None,
+        save_kwargs=None,
+        save_label=None,
+    ):
+        """Delegate to ``_finalize_figure`` using the stored policy.
+
+        Parameters
+        ----------
+        fig : matplotlib.figure.Figure
+            Figure to finalize.
+        axes : list of matplotlib.axes.Axes
+            Axes used by the plot.
+        n_panels : int
+            Number of logical panels.
+        filename : str, optional
+            Output filename (typically from ``build_filename``).
+        save_kwargs : dict, optional
+            Extra keyword arguments for ``fig.savefig``.
+        save_label : str, optional
+            Human-readable label for console output.
+
+        Returns
+        -------
+        PlotResult
+        """
+        return _finalize_figure(
+            fig=fig,
+            axes=axes,
+            n_panels=n_panels,
+            save=self.save,
+            show=self.show,
+            close=self.close,
+            figs_dir=self.figs_dir,
+            filename=filename,
+            save_kwargs=save_kwargs,
+            save_label=save_label,
+            _fig_owned=self.fig_owned,
+        )
 
 
 def _flatten_axes(axes):
@@ -352,3 +618,201 @@ def _finalize_figure(
         n_panels=n_panels,
         output_path=output_path,
     )
+
+
+# ---------------------------------------------------------------------------
+# @plot_function decorator
+# ---------------------------------------------------------------------------
+
+# Kwargs consumed by the decorator (not forwarded to the inner function).
+_RENDER_KWARGS = frozenset({"figs_dir", "cfg", "save", "show", "close"})
+
+
+def _build_public_params(inner_params):
+    """Construct a public-API parameter list from the inner function's params.
+
+    The transformation:
+
+    1. Positional params from the inner function are preserved.
+    2. ``figs_dir=None`` and ``cfg=None`` are inserted as positional-or-
+       keyword after the domain positional params.
+    3. ``viz_cfg`` (if present as keyword-only in the inner function) is
+       promoted to positional-or-keyword and placed right after ``cfg``.
+    4. ``ctx`` is removed (injected by the wrapper at call time).
+    5. ``save=None``, ``show=None``, ``close=None`` are appended as
+       keyword-only.
+    """
+    pos_params = []
+    kw_params = []
+
+    for p in inner_params:
+        if p.name == "ctx":
+            continue
+        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
+            pos_params.append(p)
+        elif p.kind == p.KEYWORD_ONLY:
+            kw_params.append(p)
+
+    # Promote viz_cfg from keyword-only → positional-or-keyword so that
+    # callers can keep passing it positionally alongside figs_dir / cfg.
+    viz_cfg_param = None
+    kw_filtered = []
+    for p in kw_params:
+        if p.name == "viz_cfg":
+            viz_cfg_param = p.replace(
+                kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+        else:
+            kw_filtered.append(p)
+
+    injected_pos = [
+        inspect.Parameter(
+            "figs_dir",
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            default=None,
+        ),
+        inspect.Parameter(
+            "cfg",
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            default=None,
+        ),
+    ]
+    if viz_cfg_param is not None:
+        injected_pos.append(viz_cfg_param)
+
+    all_pos = pos_params + injected_pos
+
+    render_kw = [
+        inspect.Parameter("save", inspect.Parameter.KEYWORD_ONLY, default=None),
+        inspect.Parameter("show", inspect.Parameter.KEYWORD_ONLY, default=None),
+        inspect.Parameter(
+            "close", inspect.Parameter.KEYWORD_ONLY, default=None
+        ),
+    ]
+
+    return all_pos + kw_filtered + render_kw
+
+
+def plot_function(*, suffix=None, save_label=None, save_kwargs=None):
+    """Decorator that automates ``PlotContext`` boilerplate.
+
+    The decorated function's *public* signature preserves the standard
+    ``(…, figs_dir=, cfg=, viz_cfg=, *, …, save=, show=, close=)``
+    layout so that CLI pipelines and notebooks keep working unchanged.
+    Internally the function receives a ``ctx`` keyword argument
+    (``PlotContext``) instead and returns one of:
+
+    * ``None`` — propagated as-is (early-exit).
+    * ``PlotResult`` or ``PlotResultCollection`` — returned unchanged.
+    * ``(fig, axes_list, n_panels)`` — decorator calls
+      ``ctx.finalize(…)``.
+    * ``(fig, axes_list, n_panels, extra)`` — *extra* ``dict`` is
+      merged into the ``ctx.finalize(…)`` call.  Recognised keys:
+      ``suffix``, ``save_label``, ``save_kwargs``, ``filename``.
+
+    Parameters
+    ----------
+    suffix : str, optional
+        Default filename suffix passed to ``ctx.build_filename``.
+    save_label : str, optional
+        Default human-readable label for console save messages.
+    save_kwargs : dict, optional
+        Default keyword arguments forwarded to ``fig.savefig``.
+
+    Examples
+    --------
+    >>> @plot_function(suffix="ecdf", save_label="ECDF plot",
+    ...               save_kwargs={"bbox_inches": "tight"})
+    ... def plot_ecdf(counts, *, ctx, viz_cfg=None,
+    ...               fig=None, ax=None, axes=None):
+    ...     fig, ax = _create_or_validate_single_axis(
+    ...         fig=fig, ax=ax, axes=axes, figsize=(3.5, 3.0),
+    ...     )
+    ...     # … drawing …
+    ...     return fig, [ax], 1
+    """
+    _default_save_kwargs = dict(save_kwargs) if save_kwargs else {}
+
+    def decorator(fn):
+        inner_sig = inspect.signature(fn)
+        public_params = _build_public_params(
+            list(inner_sig.parameters.values()),
+        )
+        public_sig = inspect.Signature(
+            public_params,
+            return_annotation=inner_sig.return_annotation,
+        )
+
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            # Bind against the public signature so that positional calls
+            # from the CLI pipeline are resolved correctly.
+            bound = public_sig.bind(*args, **kwargs)
+            bound.apply_defaults()
+            all_args = dict(bound.arguments)
+
+            # Extract render kwargs consumed by the decorator.
+            figs_dir = all_args.pop("figs_dir", None)
+            cfg = all_args.pop("cfg", None)
+            save_val = all_args.pop("save", None)
+            show_val = all_args.pop("show", None)
+            close_val = all_args.pop("close", None)
+
+            ctx = PlotContext.from_kwargs(
+                figs_dir=figs_dir,
+                cfg=cfg,
+                viz_cfg=all_args.get("viz_cfg"),
+                fig=all_args.get("fig"),
+                ax=all_args.get("ax"),
+                axes=all_args.get("axes"),
+                save=save_val,
+                show=show_val,
+                close=close_val,
+            )
+            all_args["ctx"] = ctx
+
+            result = fn(**all_args)
+
+            # --- pass-through cases ---
+            if result is None:
+                return None
+            if isinstance(result, (PlotResult, PlotResultCollection)):
+                return result
+
+            # --- auto-finalize from tuple return ---
+            if not isinstance(result, tuple) or len(result) < 3:
+                raise TypeError(
+                    f"@plot_function-decorated '{fn.__name__}' must return "
+                    f"None, PlotResult, PlotResultCollection, or "
+                    f"(fig, axes_list, n_panels[, extra_dict])."
+                )
+
+            fig_out, axes_out, n_panels = result[0], result[1], result[2]
+            extra = dict(result[3]) if len(result) > 3 else {}
+
+            # Resolve filename: extra["filename"] > extra["suffix"] > default suffix
+            fname = extra.pop("filename", None)
+            if fname is None:
+                resolved_suffix = extra.pop("suffix", suffix)
+                if resolved_suffix:
+                    results_obj = all_args.get("results")
+                    fname = ctx.build_filename(
+                        resolved_suffix, results=results_obj,
+                    )
+
+            merged_kw = dict(_default_save_kwargs)
+            merged_kw.update(extra.pop("save_kwargs", {}))
+
+            return ctx.finalize(
+                fig_out,
+                axes_out,
+                n_panels,
+                filename=fname,
+                save_kwargs=merged_kw or None,
+                save_label=extra.pop("save_label", save_label),
+            )
+
+        wrapper.__signature__ = public_sig
+        return wrapper
+
+    return decorator

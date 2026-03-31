@@ -7,25 +7,20 @@ import matplotlib.pyplot as plt
 from ._common import console
 from ._interactive import (
     _create_or_validate_grid_axes,
-    _finalize_figure,
-    _resolve_render_flags,
+    plot_function,
 )
-from .config import _get_config_values
 from .dispatch import _get_training_diagnostic_payload
 
 
+@plot_function(save_kwargs={"bbox_inches": "tight"})
 def plot_loss(
     results,
-    figs_dir=None,
-    cfg=None,
-    viz_cfg=None,
     *,
+    ctx,
+    viz_cfg=None,
     fig=None,
-    ax=None,
     axes=None,
-    save=None,
-    show=None,
-    close=None,
+    ax=None,
 ):
     """Plot optimization loss or MCMC diagnostics.
 
@@ -58,14 +53,7 @@ def plot_loss(
     PlotResult
         Wrapped result containing the figure, axes, and metadata.
     """
-    _fig_owned = fig is None and axes is None
     payload = _get_training_diagnostic_payload(results)
-    save, show, close = _resolve_render_flags(
-        figs_dir=figs_dir,
-        save=save,
-        show=show,
-        close=close,
-    )
 
     if payload["plot_kind"] == "loss":
         console.print("[dim]Plotting loss history...[/dim]")
@@ -172,29 +160,8 @@ def plot_loss(
         n_panels = 3
         used_axes = [ax_energy, ax_div, ax_trace]
 
-    if save:
-        output_format = viz_cfg.get("format", "png")
-        config_vals = _get_config_values(cfg, results=results)
-        fname = (
-            f"{config_vals['method']}_"
-            f"{config_vals['parameterization'].replace('-', '_')}_"
-            f"{config_vals['model_type'].replace('_', '-')}_"
-            f"{config_vals['n_components']:02d}components_"
-            f"{config_vals['run_size_token']}_{plot_suffix}.{output_format}"
-        )
-    else:
-        fname = None
     fig.tight_layout()
-    return _finalize_figure(
-        fig=fig,
-        axes=used_axes,
-        n_panels=n_panels,
-        save=save,
-        show=show,
-        close=close,
-        figs_dir=figs_dir,
-        filename=fname,
-        save_kwargs={"bbox_inches": "tight"},
-        save_label=save_label,
-        _fig_owned=_fig_owned,
-    )
+    return fig, used_axes, n_panels, {
+        "suffix": plot_suffix,
+        "save_label": save_label,
+    }

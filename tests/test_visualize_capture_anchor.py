@@ -649,7 +649,7 @@ def test_plot_p_capture_scaling_joint_gate_results_no_gate_loc_error(
         _fake_component_probs,
     )
 
-    output_path = plot_p_capture_scaling(
+    result = plot_p_capture_scaling(
         results=results,
         counts=counts,
         figs_dir=str(tmp_path),
@@ -659,5 +659,6 @@ def test_plot_p_capture_scaling_joint_gate_results_no_gate_loc_error(
         is_multi_dataset=False,
     )
 
-    assert output_path is not None
-    assert output_path.endswith("_p_capture_scaling.png")
+    assert result is not None
+    assert result.output_path is not None
+    assert result.output_path.endswith("_p_capture_scaling.png")
