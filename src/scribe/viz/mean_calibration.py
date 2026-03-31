@@ -31,6 +31,7 @@ from ._interactive import (
     plot_function,
 )
 from .dispatch import _get_map_estimates_for_plot
+from .gene_selection import _coerce_counts
 
 
 # =========================================================================
@@ -128,6 +129,7 @@ def _compute_per_dataset_means(
     list of dict
         Each dict has keys ``name``, ``obs_mean``, ``pred_mean``.
     """
+    counts = _coerce_counts(counts)
     ds_codes = np.asarray(dataset_codes, dtype=int).ravel()
     unique_ds = np.unique(ds_codes)
     _n_ds = n_datasets if n_datasets is not None else len(unique_ds)
@@ -318,6 +320,7 @@ def _prepare_calibration_data(
         - ``annotations``: list of annotation strings
         Returns ``None`` when r/p are unavailable.
     """
+    counts = _coerce_counts(counts)
     # Request only required keys up front so this diagnostic works for
     # non-mixture and non-BNB models without forcing optional parameters.
     required_targets = ["r", "p"]

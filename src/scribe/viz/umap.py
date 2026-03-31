@@ -14,6 +14,7 @@ from ._interactive import (
     _create_or_validate_single_axis,
     plot_function,
 )
+from .gene_selection import _coerce_counts
 
 
 @plot_function(
@@ -201,7 +202,7 @@ def plot_umap(
         console.print(
             "[dim]Preparing experimental data with Scanpy-style preprocessing...[/dim]"
         )
-        counts_np = np.array(counts, dtype=np.float64)
+        counts_np = np.asarray(_coerce_counts(counts), dtype=np.float64)
 
         detected_cells_per_gene = np.sum(counts_np > 0, axis=0)
         gene_mask = detected_cells_per_gene >= gene_filter_min_cells
