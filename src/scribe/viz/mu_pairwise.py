@@ -19,10 +19,8 @@ import numpy as np
 from ._common import console
 from ._interactive import (
     _create_or_validate_grid_axes,
-    _finalize_figure,
-    _resolve_render_flags,
+    plot_function,
 )
-from .config import _get_config_values
 from .dispatch import _get_map_estimates_for_plot
 
 
@@ -124,20 +122,21 @@ def _resolve_dataset_names(dataset_names, n_datasets):
     return names[:n_datasets]
 
 
+@plot_function(
+    suffix="mu_pairwise",
+    save_label="mu pairwise plot",
+    save_kwargs={"bbox_inches": "tight", "dpi": 150},
+)
 def plot_mu_pairwise(
     results,
     counts,
-    figs_dir,
-    cfg,
-    viz_cfg,
     *,
+    ctx,
+    viz_cfg=None,
     dataset_names=None,
     fig=None,
     axes=None,
     ax=None,
-    save=None,
-    show=None,
-    close=None,
 ):
     """Render pairwise dataset ``mu`` comparisons as a corner plot.
 
@@ -162,19 +161,11 @@ def plot_mu_pairwise(
     PlotResult or None
         Wrapped result, or ``None`` when the plot is skipped.
     """
-    _fig_owned = fig is None and axes is None
     console.print("[dim]Plotting pairwise mu dataset comparison...[/dim]")
     if ax is not None:
         raise ValueError(
             "Mu pairwise is a multi-panel corner plot; provide `fig` or `axes`."
         )
-    save, show, close = _resolve_render_flags(
-        figs_dir=figs_dir,
-        save=save,
-        show=show,
-        close=close,
-    )
-
     map_estimates = _get_map_estimates_for_plot(
         results, counts=counts, targets=["mu"]
     )
@@ -345,27 +336,4 @@ def plot_mu_pairwise(
         hspace=0.03,
     )
 
-    if save:
-        output_format = viz_cfg.get("format", "png")
-        config_vals = _get_config_values(cfg, results=results)
-        filename = (
-            f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
-            f"{config_vals['model_type'].replace('_', '-')}_"
-            f"{config_vals['n_components']:02d}components_"
-            f"{config_vals['run_size_token']}_mu_pairwise.{output_format}"
-        )
-    else:
-        filename = None
-    return _finalize_figure(
-        fig=fig,
-        axes=axes_flat,
-        n_panels=n_datasets * n_datasets,
-        save=save,
-        show=show,
-        close=close,
-        figs_dir=figs_dir,
-        filename=filename,
-        save_kwargs={"bbox_inches": "tight", "dpi": 150},
-        save_label="mu pairwise plot",
-        _fig_owned=_fig_owned,
-    )
+    return fig, axes_flat, n_datasets * n_datasets

@@ -28,10 +28,8 @@ from ._common import console
 from ._interactive import (
     _create_or_validate_grid_axes,
     _create_or_validate_single_axis,
-    _finalize_figure,
-    _resolve_render_flags,
+    plot_function,
 )
-from .config import _get_config_values
 from .dispatch import _get_map_estimates_for_plot
 
 
@@ -280,76 +278,46 @@ def _scatter_panel(
 # =========================================================================
 
 
-def plot_mean_calibration(
+def _prepare_calibration_data(
     results,
     counts,
-    figs_dir,
-    cfg,
-    viz_cfg,
     *,
     is_mixture=False,
     is_multi_dataset=False,
     dataset_codes=None,
     dataset_names=None,
-    fig=None,
-    axes=None,
-    ax=None,
-    save=None,
-    show=None,
-    close=None,
 ):
-    r"""Log-log scatter of observed vs predicted per-gene mean counts.
+    """Prepare observed and predicted means for calibration plotting.
 
-    The predicted mean is derived from the MAP estimates of the
-    canonical parameters :math:`r_g` and :math:`p_g`:
-
-    .. math::
-
-        \langle u_g \rangle_{\text{pred}}
-        = \bar{\nu} \sum_k w_k \frac{r_{kg}\,p_{kg}}{1 - p_{kg}}
-
-    where the mixture weights :math:`w_k` and capture probability
-    :math:`\bar{\nu}` default to 1 for non-mixture / non-VCP models.
+    Extracts MAP parameters, computes predicted gene means, and
+    optionally splits by dataset.
 
     Parameters
     ----------
-    results : ScribeSVIResults or ScribeMCMCResults
-        Fitted model results object.
+    results : object
+        Fitted model results.
     counts : array-like
-        Observed UMI count matrix ``(n_cells, n_genes)``.
-    figs_dir : str
-        Directory where output figure is saved.
-    cfg : OmegaConf
-        Hydra run configuration loaded from ``.hydra/config.yaml``.
-    viz_cfg : OmegaConf
-        Visualization config.
-    is_mixture : bool, optional
+        Observed count matrix ``(n_cells, n_genes)``.
+    is_mixture : bool
         Whether the model uses more than one component.
-    is_multi_dataset : bool, optional
+    is_multi_dataset : bool
         Whether the run includes multiple datasets.
-    dataset_codes : ndarray, optional
+    dataset_codes : ndarray or None
         Integer dataset code per cell.
-    dataset_names : sequence of str, optional
-        Category names for each dataset code.
+    dataset_names : sequence of str or None
+        Category names for dataset codes.
 
     Returns
     -------
-    PlotResult or None
-        Wrapped result containing the figure, axes, and metadata.
+    dict or None
+        Dictionary with keys:
+        - ``mode``: ``"multi_dataset"`` or ``"single"``
+        - ``ds_results``: list of dicts (multi-dataset) or None
+        - ``obs_mean``, ``pred_mean``: arrays (single-dataset)
+        - ``is_mixture``: bool
+        - ``annotations``: list of annotation strings
+        Returns ``None`` when r/p are unavailable.
     """
-    _fig_owned = fig is None and axes is None and ax is None
-    console.print("[dim]Plotting mean-calibration diagnostic...[/dim]")
-    if ax is not None and is_multi_dataset:
-        raise ValueError(
-            "Multi-dataset mean calibration requires `fig` or `axes`, not `ax`."
-        )
-    save, show, close = _resolve_render_flags(
-        figs_dir=figs_dir,
-        save=save,
-        show=show,
-        close=close,
-    )
-
     # Request only required keys up front so this diagnostic works for
     # non-mixture and non-BNB models without forcing optional parameters.
     required_targets = ["r", "p"]
@@ -411,7 +379,6 @@ def plot_mean_calibration(
         mean_nu = float(np.mean(np.asarray(p_capture, dtype=float)))
         _annotations.append(f"$\\bar{{\\nu}} = {mean_nu:.4f}$")
 
-    # ---- Multi-dataset: per-dataset panels ----------------------------------
     if (
         is_multi_dataset
         and dataset_codes is not None
@@ -430,6 +397,106 @@ def plot_mean_calibration(
             p_capture=p_capture,
             n_datasets=n_ds_cfg,
         )
+        return {
+            "mode": "multi_dataset",
+            "ds_results": ds_results,
+            "obs_mean": None,
+            "pred_mean": None,
+            "is_mixture": is_mixture,
+            "annotations": _annotations,
+        }
+
+    obs_mean = np.mean(np.asarray(counts, dtype=float), axis=0)
+    pred_mean = _compute_predicted_mean(r, p, mixing_weights, p_capture)
+    return {
+        "mode": "single",
+        "ds_results": None,
+        "obs_mean": obs_mean,
+        "pred_mean": pred_mean,
+        "is_mixture": is_mixture,
+        "annotations": _annotations,
+    }
+
+
+@plot_function(
+    suffix="mean_calibration",
+    save_label="mean-calibration plot",
+    save_kwargs={"bbox_inches": "tight", "dpi": 150},
+)
+def plot_mean_calibration(
+    results,
+    counts,
+    *,
+    ctx,
+    viz_cfg=None,
+    is_mixture=False,
+    is_multi_dataset=False,
+    dataset_codes=None,
+    dataset_names=None,
+    fig=None,
+    axes=None,
+    ax=None,
+):
+    r"""Log-log scatter of observed vs predicted per-gene mean counts.
+
+    The predicted mean is derived from the MAP estimates of the
+    canonical parameters :math:`r_g` and :math:`p_g`:
+
+    .. math::
+
+        \langle u_g \rangle_{\text{pred}}
+        = \bar{\nu} \sum_k w_k \frac{r_{kg}\,p_{kg}}{1 - p_{kg}}
+
+    where the mixture weights :math:`w_k` and capture probability
+    :math:`\bar{\nu}` default to 1 for non-mixture / non-VCP models.
+
+    Parameters
+    ----------
+    results : ScribeSVIResults or ScribeMCMCResults
+        Fitted model results object.
+    counts : array-like
+        Observed UMI count matrix ``(n_cells, n_genes)``.
+    figs_dir : str
+        Directory where output figure is saved.
+    cfg : OmegaConf
+        Hydra run configuration loaded from ``.hydra/config.yaml``.
+    viz_cfg : OmegaConf
+        Visualization config.
+    is_mixture : bool, optional
+        Whether the model uses more than one component.
+    is_multi_dataset : bool, optional
+        Whether the run includes multiple datasets.
+    dataset_codes : ndarray, optional
+        Integer dataset code per cell.
+    dataset_names : sequence of str, optional
+        Category names for each dataset code.
+
+    Returns
+    -------
+    PlotResult or None
+        Wrapped result containing the figure, axes, and metadata.
+    """
+    console.print("[dim]Plotting mean-calibration diagnostic...[/dim]")
+    if ax is not None and is_multi_dataset:
+        raise ValueError(
+            "Multi-dataset mean calibration requires `fig` or `axes`, not `ax`."
+        )
+    prep = _prepare_calibration_data(
+        results,
+        counts,
+        is_mixture=is_mixture,
+        is_multi_dataset=is_multi_dataset,
+        dataset_codes=dataset_codes,
+        dataset_names=dataset_names,
+    )
+    if prep is None:
+        return None
+
+    _annotations = prep["annotations"]
+
+    # ---- Multi-dataset: per-dataset panels ----------------------------------
+    if prep["mode"] == "multi_dataset":
+        ds_results = prep["ds_results"]
         n_panels = len(ds_results)
         fig, _, axes_flat = _create_or_validate_grid_axes(
             n_rows=1,
@@ -452,8 +519,8 @@ def plot_mean_calibration(
 
     # ---- Single-dataset (with or without mixture) ---------------------------
     else:
-        obs_mean = np.mean(np.asarray(counts, dtype=float), axis=0)
-        pred_mean = _compute_predicted_mean(r, p, mixing_weights, p_capture)
+        obs_mean = prep["obs_mean"]
+        pred_mean = prep["pred_mean"]
 
         fig, ax = _create_or_validate_single_axis(
             fig=fig,
@@ -468,7 +535,7 @@ def plot_mean_calibration(
 
     # Suptitle with model annotations
     title = "Mean Calibration"
-    if is_mixture:
+    if prep["is_mixture"]:
         n_comp = getattr(results, "n_components", None)
         if n_comp:
             title += f" ({n_comp}-component mixture, weighted)"
@@ -478,28 +545,4 @@ def plot_mean_calibration(
 
     fig.tight_layout()
 
-    # Save
-    if save:
-        output_format = viz_cfg.get("format", "png")
-        config_vals = _get_config_values(cfg, results=results)
-        fname = (
-            f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
-            f"{config_vals['model_type'].replace('_', '-')}_"
-            f"{config_vals['n_components']:02d}components_"
-            f"{config_vals['run_size_token']}_mean_calibration.{output_format}"
-        )
-    else:
-        fname = None
-    return _finalize_figure(
-        fig=fig,
-        axes=axes_flat,
-        n_panels=len(axes_flat),
-        save=save,
-        show=show,
-        close=close,
-        figs_dir=figs_dir,
-        filename=fname,
-        save_kwargs={"bbox_inches": "tight", "dpi": 150},
-        save_label="mean-calibration plot",
-        _fig_owned=_fig_owned,
-    )
+    return fig, axes_flat, len(axes_flat)

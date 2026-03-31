@@ -946,7 +946,7 @@ def _process_single_results_file(results_file, viz_cfg, overwrite=False):
                 "[dim]Generating p-capture scaling diagnostic...[/dim]"
             )
             try:
-                output_path = plot_p_capture_scaling(
+                result = plot_p_capture_scaling(
                     results=results,
                     counts=counts,
                     figs_dir=figs_dir,
@@ -957,7 +957,7 @@ def _process_single_results_file(results_file, viz_cfg, overwrite=False):
                     dataset_codes=dataset_codes if is_multi_dataset else None,
                     dataset_names=dataset_names if is_multi_dataset else None,
                 )
-                if output_path is not None:
+                if result is not None:
                     plots_generated.append("p-capture scaling")
                     console.print(
                         "[green]  p-capture scaling plot saved[/green]"
@@ -988,7 +988,7 @@ def _process_single_results_file(results_file, viz_cfg, overwrite=False):
                 "[dim]Generating mean-calibration diagnostic...[/dim]"
             )
             try:
-                output_path = plot_mean_calibration(
+                result = plot_mean_calibration(
                     results=results,
                     counts=counts,
                     figs_dir=figs_dir,
@@ -999,7 +999,7 @@ def _process_single_results_file(results_file, viz_cfg, overwrite=False):
                     dataset_codes=dataset_codes if is_multi_dataset else None,
                     dataset_names=dataset_names if is_multi_dataset else None,
                 )
-                if output_path is not None:
+                if result is not None:
                     plots_generated.append("mean calibration")
                     console.print(
                         "[green]  Mean-calibration plot saved[/green]"
@@ -1034,7 +1034,7 @@ def _process_single_results_file(results_file, viz_cfg, overwrite=False):
                 "[dim]Generating pairwise dataset mu diagnostic...[/dim]"
             )
             try:
-                output_path = plot_mu_pairwise(
+                result = plot_mu_pairwise(
                     results=results,
                     counts=counts,
                     figs_dir=figs_dir,
@@ -1042,7 +1042,7 @@ def _process_single_results_file(results_file, viz_cfg, overwrite=False):
                     viz_cfg=viz_cfg,
                     dataset_names=dataset_names if is_multi_dataset else None,
                 )
-                if output_path is not None:
+                if result is not None:
                     plots_generated.append("mu pairwise")
                     console.print("[green]  Mu pairwise plot saved[/green]")
                 else:
@@ -1351,10 +1351,10 @@ def _process_single_results_file(results_file, viz_cfg, overwrite=False):
                     "[dim]Generating capture-anchor diagnostic...[/dim]"
                 )
                 try:
-                    output_path = plot_capture_anchor(
+                    result = plot_capture_anchor(
                         ds_results, ds_counts, ds_figs_dir, orig_cfg, viz_cfg
                     )
-                    if output_path is not None:
+                    if result is not None:
                         plots_generated.append(f"capture-anchor{ds_label}")
                         console.print(
                             "[green]  Capture-anchor plot saved[/green]"

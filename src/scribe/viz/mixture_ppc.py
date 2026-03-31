@@ -16,10 +16,12 @@ from ._common import (
     TimeElapsedColumn,
 )
 from ._interactive import (
+    PlotContext,
+    PlotResultCollection,
     _create_or_validate_grid_axes,
     _create_or_validate_single_axis,
     _finalize_figure,
-    _resolve_render_flags,
+    plot_function,
 )
 from .config import _get_config_values
 from .dispatch import (
@@ -562,50 +564,48 @@ def _plot_ppc_comparison_figure(
     )
 
 
-def plot_mixture_ppc(
-    results,
-    counts,
-    figs_dir=None,
-    cfg=None,
-    viz_cfg=None,
-    *,
-    fig=None,
-    axes=None,
-    ax=None,
-    save=None,
-    show=None,
-    close=None,
-):
-    """Plot PPC for mixture models showing genes with highest divergence across
-    components.
+def _prepare_mixture_ppc_data(results, counts, viz_cfg):
+    """Prepare data for mixture PPC visualization.
+
+    Selects high-CV genes, generates mixture and per-component PPC
+    samples, and computes MAP cell-to-component assignments.  All
+    computation is backend-agnostic (no matplotlib).
+
+    Parameters
+    ----------
+    results : object
+        Fitted model results.
+    counts : array-like
+        Observed count matrix ``(n_cells, n_genes)``.
+    viz_cfg : object
+        Visualization configuration with ``ppc_opts`` and
+        ``mixture_ppc_opts``.
 
     Returns
     -------
-    PlotResult or None
-        Wrapped result containing figure payloads.
+    dict or None
+        Dictionary with keys:
+        - ``n_components``: int
+        - ``n_rows``, ``n_cols``: grid dimensions
+        - ``n_samples``: sample count
+        - ``top_gene_indices``: selected gene indices
+        - ``top_lfc``: log-fold-changes
+        - ``mixture_samples_np``: mixture PPC samples array
+        - ``assignments``: MAP cell-to-component assignments
+        - ``component_samples_list``: list of per-component sample arrays
+        - ``render_opts``: PPC rendering options
+        Returns ``None`` when the model is not a mixture.
     """
-    console.print(
-        "[dim]Plotting mixture model PPC (genes with highest CV across components)...[/dim]"
-    )
-    if ax is not None:
-        raise ValueError(
-            "Mixture PPC requires multiple axes; provide `fig` or `axes`."
-        )
-    save, show, close = _resolve_render_flags(
-        figs_dir=figs_dir,
-        save=save,
-        show=show,
-        close=close,
-    )
-    render_opts = get_ppc_render_options(viz_cfg)
+    from jax import random
 
     n_components = results.n_components
     if n_components is None or n_components <= 1:
         console.print(
             "[yellow]Not a mixture model, skipping mixture PPC plot...[/yellow]"
         )
-        return
+        return None
 
+    render_opts = get_ppc_render_options(viz_cfg)
     ppc_opts = viz_cfg.get("ppc_opts", {})
     mixture_ppc_opts = viz_cfg.get("mixture_ppc_opts", {})
     n_rows = mixture_ppc_opts.get("n_rows", ppc_opts.get("n_rows", 5))
@@ -639,19 +639,6 @@ def plot_mixture_ppc(
 
     results_subset = results[top_gene_indices]
 
-    if save:
-        output_format = viz_cfg.get("format", "png")
-        config_vals = _get_config_values(cfg, results=results)
-        base_fname = (
-            f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
-            f"{config_vals['model_type'].replace('_', '-')}_"
-            f"{config_vals['n_components']:02d}components_"
-            f"{config_vals['run_size_token']}"
-        )
-    else:
-        output_format = "png"
-        base_fname = "mixture"
-
     rng_key = random.PRNGKey(42)
 
     console.print(
@@ -669,34 +656,7 @@ def plot_mixture_ppc(
     )
 
     mixture_samples_np = np.array(mixture_samples)
-
-    figure_payloads = []
-
-    fig_payload = _plot_ppc_figure(
-        predictive_samples=mixture_samples_np,
-        counts=counts,
-        selected_idx=top_gene_indices,
-        n_rows=n_rows,
-        n_cols=n_cols,
-        title="Mixture PPC (High CV Genes)",
-        figs_dir=figs_dir,
-        fname=f"{base_fname}_mixture_ppc",
-        output_format=output_format,
-        render_opts=render_opts,
-        fig=fig,
-        axes=axes,
-        save=save,
-        show=show,
-        close=close,
-    )
-    figure_payloads.append(fig_payload)
-
     del mixture_samples
-
-    component_cmaps = ["Greens", "Purples", "Reds", "Oranges", "YlOrBr", "BuGn"]
-    min_cells_for_info = mixture_ppc_opts.get("min_cells_for_info", 20)
-    all_component_samples = []
-    counts_np = np.array(counts)
 
     console.print("[dim]Computing MAP cell-to-component assignments...[/dim]")
     if assignment_batch_size is not None:
@@ -708,6 +668,7 @@ def plot_mixture_ppc(
     )
     assignments = np.argmax(assignment_probs, axis=1)
 
+    component_samples_list = []
     for k in range(n_components):
         console.print(
             f"[dim]Generating Component {k+1} PPC samples ({n_samples} samples)...[/dim]"
@@ -725,7 +686,118 @@ def plot_mixture_ppc(
         )
 
         component_samples_np = np.array(component_samples)
-        all_component_samples.append(component_samples_np)
+        component_samples_list.append(component_samples_np)
+        del component_samples
+
+    return {
+        "n_components": n_components,
+        "n_rows": n_rows,
+        "n_cols": n_cols,
+        "n_samples": n_samples,
+        "top_gene_indices": top_gene_indices,
+        "top_lfc": top_lfc,
+        "mixture_samples_np": mixture_samples_np,
+        "assignments": assignments,
+        "component_samples_list": component_samples_list,
+        "render_opts": render_opts,
+    }
+
+
+def plot_mixture_ppc(
+    results,
+    counts,
+    figs_dir=None,
+    cfg=None,
+    viz_cfg=None,
+    *,
+    fig=None,
+    axes=None,
+    ax=None,
+    save=None,
+    show=None,
+    close=None,
+):
+    """Plot PPC for mixture models showing genes with highest divergence across
+    components.
+
+    Returns
+    -------
+    PlotResult or None
+        Wrapped result containing figure payloads.
+    """
+    console.print(
+        "[dim]Plotting mixture model PPC (genes with highest CV across components)...[/dim]"
+    )
+    if ax is not None:
+        raise ValueError(
+            "Mixture PPC requires multiple axes; provide `fig` or `axes`."
+        )
+    ctx = PlotContext.from_kwargs(
+        figs_dir=figs_dir,
+        cfg=cfg,
+        viz_cfg=viz_cfg,
+        fig=fig,
+        ax=ax,
+        axes=axes,
+        save=save,
+        show=show,
+        close=close,
+    )
+
+    prepared = _prepare_mixture_ppc_data(results, counts, viz_cfg)
+    if prepared is None:
+        return
+
+    n_components = prepared["n_components"]
+    n_rows = prepared["n_rows"]
+    n_cols = prepared["n_cols"]
+    top_gene_indices = prepared["top_gene_indices"]
+    mixture_samples_np = prepared["mixture_samples_np"]
+    assignments = prepared["assignments"]
+    component_samples_list = prepared["component_samples_list"]
+    render_opts = prepared["render_opts"]
+    mixture_ppc_opts = viz_cfg.get("mixture_ppc_opts", {})
+
+    if ctx.save:
+        config_vals = _get_config_values(cfg, results=results)
+        base_fname = (
+            f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
+            f"{config_vals['model_type'].replace('_', '-')}_"
+            f"{config_vals['n_components']:02d}components_"
+            f"{config_vals['run_size_token']}"
+        )
+    else:
+        base_fname = "mixture"
+    output_format = ctx.output_format
+
+    figure_payloads = []
+
+    fig_payload = _plot_ppc_figure(
+        predictive_samples=mixture_samples_np,
+        counts=counts,
+        selected_idx=top_gene_indices,
+        n_rows=n_rows,
+        n_cols=n_cols,
+        title="Mixture PPC (High CV Genes)",
+        figs_dir=figs_dir,
+        fname=f"{base_fname}_mixture_ppc",
+        output_format=output_format,
+        render_opts=render_opts,
+        fig=fig,
+        axes=axes,
+        save=ctx.save,
+        show=ctx.show,
+        close=ctx.close,
+    )
+    figure_payloads.append(fig_payload)
+
+    component_cmaps = ["Greens", "Purples", "Reds", "Oranges", "YlOrBr", "BuGn"]
+    min_cells_for_info = mixture_ppc_opts.get("min_cells_for_info", 20)
+    all_component_samples = component_samples_list
+    counts_np = np.array(counts)
+
+    for k in range(n_components):
+        component_samples_np = component_samples_list[k]
 
         cell_mask_k = assignments == k
         n_cells_component = int(np.sum(cell_mask_k))
@@ -761,13 +833,11 @@ def plot_mixture_ppc(
             output_format=output_format,
             cmap=cmap,
             render_opts=render_opts,
-            save=save,
-            show=show,
-            close=close,
+            save=ctx.save,
+            show=ctx.show,
+            close=ctx.close,
         )
         figure_payloads.append(fig_payload)
-
-        del component_samples
 
     if n_components <= 2:
         console.print("[dim]Generating combined comparison plot...[/dim]")
@@ -783,9 +853,9 @@ def plot_mixture_ppc(
             output_format=output_format,
             component_cmaps=component_cmaps,
             render_opts=render_opts,
-            save=save,
-            show=show,
-            close=close,
+            save=ctx.save,
+            show=ctx.show,
+            close=ctx.close,
         )
         figure_payloads.append(fig_payload)
         n_plots = 2 + n_components
@@ -801,12 +871,8 @@ def plot_mixture_ppc(
     console.print(
         f"[green]✓[/green] [dim]Generated {n_plots} mixture PPC plots[/dim]"
     )
-
-    del results_subset
-    # Return the first figure payload as the primary result; all payloads
-    # are already PlotResult objects from _plot_ppc_figure.
     if figure_payloads:
-        return figure_payloads[0]
+        return PlotResultCollection(figure_payloads)
     return None
 
 
@@ -923,54 +989,50 @@ def _resolve_label_map_for_composition(results, cell_labels, cfg):
     )
 
 
-def plot_mixture_composition(
-    results,
-    counts,
-    figs_dir=None,
-    cfg=None,
-    viz_cfg=None,
-    cell_labels=None,
-    *,
-    fig=None,
-    ax=None,
-    axes=None,
-    save=None,
-    show=None,
-    close=None,
-):
-    """Plot MAP component composition for mixture models.
+def _prepare_mixture_composition_data(results, counts, cfg, viz_cfg, cell_labels=None):
+    """Prepare composition data for mixture component visualization.
 
-    This figure summarizes each component's composition as the fraction of cells
-    assigned to that component under MAP-like assignment probabilities.
+    Resolves mixing weights, assignment probabilities, and (optionally)
+    per-label observed vs predicted fractions.  All computation is
+    backend-agnostic.
 
-    When ``cell_labels`` are provided, this plot switches to a side-by-side
-    comparison per label:
-
-    - observed fraction of each label in the dataset
-    - predicted fraction from model assignments mapped to that label's component
+    Parameters
+    ----------
+    results : object
+        Fitted model results.
+    counts : array-like
+        Observed count matrix.
+    cfg : object
+        Run configuration.
+    viz_cfg : object
+        Visualization configuration.
+    cell_labels : array-like or None
+        Per-cell annotation labels.
 
     Returns
     -------
-    PlotResult or None
-        Wrapped result containing the figure, axes, and metadata.
+    dict or None
+        When ``cell_labels`` is provided, returns:
+        - ``mode``: ``"labeled"``
+        - ``labels_by_component``: list of label strings
+        - ``observed_fracs``: array of observed fractions
+        - ``assigned_fracs_by_label``: array of assignment fractions
+        - ``weight_fracs_by_label``: array or None
+        - ``n_components``: int
+        When ``cell_labels`` is None, returns:
+        - ``mode``: ``"global"``
+        - ``component_fractions``: array
+        - ``hard_counts``: array
+        - ``n_components``: int
+        Returns ``None`` when the model is not a mixture.
     """
-    _fig_owned = fig is None and ax is None and axes is None
-    console.print("[dim]Plotting mixture component composition...[/dim]")
-    save, show, close = _resolve_render_flags(
-        figs_dir=figs_dir,
-        save=save,
-        show=show,
-        close=close,
-    )
-
     n_components = results.n_components
     if n_components is None or n_components <= 1:
         console.print(
             "[yellow]Not a mixture model, skipping composition plot...[/yellow]"
         )
-        return
+        return None
 
-    # Extract MAP mixture weights (global composition prior at MAP).
     try:
         map_estimates = _get_map_estimates_for_plot(
             results, counts=counts, targets=["mixing_weights"]
@@ -985,16 +1047,7 @@ def plot_mixture_composition(
         dataset_indices=dataset_indices,
     )
 
-    fig, ax = _create_or_validate_single_axis(
-        fig=fig,
-        ax=ax,
-        axes=axes,
-        figsize=(max(6.0, 1.1 * n_components + 2.0), 4.0),
-    )
-
     if cell_labels is not None:
-        # Compute assignment-based fractions per component. These reflect
-        # p(z_i | x_i, theta_map) and are the natural model-predicted label mix.
         ppc_opts = viz_cfg.get("ppc_opts", {})
         mixture_ppc_opts = viz_cfg.get("mixture_ppc_opts", {})
         composition_opts = viz_cfg.get("mixture_composition_opts", {})
@@ -1025,10 +1078,6 @@ def plot_mixture_composition(
             1, int(np.sum(assignment_counts))
         )
 
-        # Compare observed annotation proportions against model-predicted
-        # proportions by mapping each annotation to its configured component.
-        # Keep raw annotation values so missing labels stay missing instead of
-        # becoming the literal string "nan" during visualization.
         annotations = np.asarray(cell_labels, dtype=object)
         label_map = _resolve_label_map_for_composition(
             results=results,
@@ -1061,6 +1110,113 @@ def plot_mixture_composition(
                     for label in labels_by_component
                 ]
             )
+
+        return {
+            "mode": "labeled",
+            "labels_by_component": labels_by_component,
+            "observed_fracs": observed_fracs,
+            "assigned_fracs_by_label": assigned_fracs_by_label,
+            "weight_fracs_by_label": weight_fracs_by_label,
+            "n_components": n_components,
+        }
+
+    if weight_fractions is not None:
+        component_fractions = weight_fractions
+        hard_counts = np.rint(
+            component_fractions * int(results.n_cells)
+        ).astype(int)
+    else:
+        ppc_opts = viz_cfg.get("ppc_opts", {})
+        mixture_ppc_opts = viz_cfg.get("mixture_ppc_opts", {})
+        composition_opts = viz_cfg.get("mixture_composition_opts", {})
+        assignment_batch_size = composition_opts.get(
+            "assignment_batch_size",
+            mixture_ppc_opts.get(
+                "assignment_batch_size",
+                mixture_ppc_opts.get(
+                    "batch_size", ppc_opts.get("batch_size", 512)
+                ),
+            ),
+        )
+        if assignment_batch_size is not None and assignment_batch_size <= 0:
+            assignment_batch_size = None
+        if assignment_batch_size is not None:
+            console.print(
+                f"[yellow]mixing_weights missing; using assignment "
+                f"batch_size={assignment_batch_size} fallback[/yellow]"
+            )
+        assignment_probs = _get_cell_assignment_probabilities_for_plot(
+            results,
+            counts=counts,
+            batch_size=assignment_batch_size,
+            use_mean=False,
+        )
+        assignments = np.argmax(assignment_probs, axis=1)
+        hard_counts = np.bincount(assignments, minlength=n_components)
+        component_fractions = hard_counts / max(1, int(np.sum(hard_counts)))
+
+    return {
+        "mode": "global",
+        "component_fractions": component_fractions,
+        "hard_counts": hard_counts,
+        "n_components": n_components,
+    }
+
+
+@plot_function(
+    suffix="mixture_composition",
+    save_label="mixture composition",
+    save_kwargs={"bbox_inches": "tight"},
+)
+def plot_mixture_composition(
+    results,
+    counts,
+    *,
+    ctx,
+    viz_cfg=None,
+    cell_labels=None,
+    fig=None,
+    axes=None,
+    ax=None,
+):
+    """Plot MAP component composition for mixture models.
+
+    This figure summarizes each component's composition as the fraction of cells
+    assigned to that component under MAP-like assignment probabilities.
+
+    When ``cell_labels`` are provided, this plot switches to a side-by-side
+    comparison per label:
+
+    - observed fraction of each label in the dataset
+    - predicted fraction from model assignments mapped to that label's component
+
+    Returns
+    -------
+    PlotResult or None
+        Wrapped result containing the figure, axes, and metadata.
+    """
+    console.print("[dim]Plotting mixture component composition...[/dim]")
+
+    prepared = _prepare_mixture_composition_data(
+        results, counts, ctx.cfg, viz_cfg, cell_labels=cell_labels
+    )
+    if prepared is None:
+        return None
+
+    n_components = prepared["n_components"]
+
+    fig, ax = _create_or_validate_single_axis(
+        fig=fig,
+        ax=ax,
+        axes=axes,
+        figsize=(max(6.0, 1.1 * n_components + 2.0), 4.0),
+    )
+
+    if prepared["mode"] == "labeled":
+        labels_by_component = prepared["labels_by_component"]
+        observed_fracs = prepared["observed_fracs"]
+        assigned_fracs_by_label = prepared["assigned_fracs_by_label"]
+        weight_fracs_by_label = prepared["weight_fracs_by_label"]
 
         x = np.arange(len(labels_by_component))
         width = 0.25
@@ -1135,42 +1291,8 @@ def plot_mixture_composition(
         )
         ax.set_ylim(0.0, min(1.05, y_max + 0.15))
     else:
-        # Global component-only view: prefer MAP weights and fall back to
-        # assignment fractions if weights are unavailable.
-        if weight_fractions is not None:
-            component_fractions = weight_fractions
-            hard_counts = np.rint(
-                component_fractions * int(results.n_cells)
-            ).astype(int)
-        else:
-            ppc_opts = viz_cfg.get("ppc_opts", {})
-            mixture_ppc_opts = viz_cfg.get("mixture_ppc_opts", {})
-            composition_opts = viz_cfg.get("mixture_composition_opts", {})
-            assignment_batch_size = composition_opts.get(
-                "assignment_batch_size",
-                mixture_ppc_opts.get(
-                    "assignment_batch_size",
-                    mixture_ppc_opts.get(
-                        "batch_size", ppc_opts.get("batch_size", 512)
-                    ),
-                ),
-            )
-            if assignment_batch_size is not None and assignment_batch_size <= 0:
-                assignment_batch_size = None
-            if assignment_batch_size is not None:
-                console.print(
-                    f"[yellow]mixing_weights missing; using assignment "
-                    f"batch_size={assignment_batch_size} fallback[/yellow]"
-                )
-            assignment_probs = _get_cell_assignment_probabilities_for_plot(
-                results,
-                counts=counts,
-                batch_size=assignment_batch_size,
-                use_mean=False,
-            )
-            assignments = np.argmax(assignment_probs, axis=1)
-            hard_counts = np.bincount(assignments, minlength=n_components)
-            component_fractions = hard_counts / max(1, int(np.sum(hard_counts)))
+        component_fractions = prepared["component_fractions"]
+        hard_counts = prepared["hard_counts"]
 
         component_ids = np.arange(1, n_components + 1)
         bars = ax.bar(
@@ -1202,28 +1324,4 @@ def plot_mixture_composition(
 
     ax.set_ylabel("Cell fraction")
 
-    if save:
-        output_format = viz_cfg.get("format", "png")
-        config_vals = _get_config_values(cfg, results=results)
-        base_fname = (
-            f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
-            f"{config_vals['model_type'].replace('_', '-')}_"
-            f"{config_vals['n_components']:02d}components_"
-            f"{config_vals['run_size_token']}"
-        )
-    else:
-        output_format = "png"
-        base_fname = "mixture"
-    return _finalize_figure(
-        fig=fig,
-        axes=[ax],
-        n_panels=1,
-        save=save,
-        show=show,
-        close=close,
-        figs_dir=figs_dir,
-        filename=f"{base_fname}_mixture_composition.{output_format}",
-        save_kwargs={"bbox_inches": "tight"},
-        save_label="mixture composition",
-        _fig_owned=_fig_owned,
-    )
+    return fig, [ax], 1

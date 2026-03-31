@@ -21,10 +21,8 @@ from ._common import (
 )
 from ._interactive import (
     _create_or_validate_grid_axes,
-    _finalize_figure,
-    _resolve_render_flags,
+    plot_function,
 )
-from .config import _get_config_values
 from .dispatch import (
     _get_biological_ppc_samples_for_plot,
     _get_denoised_counts_for_plot,
@@ -38,19 +36,20 @@ from .ppc_rendering import (
 )
 
 
+@plot_function(
+    suffix="bio_ppc",
+    save_label="bio-PPC plot",
+    save_kwargs={"bbox_inches": "tight"},
+)
 def plot_bio_ppc(
     results,
     counts,
-    figs_dir=None,
-    cfg=None,
-    viz_cfg=None,
     *,
+    ctx,
+    viz_cfg=None,
     fig=None,
     axes=None,
     ax=None,
-    save=None,
-    show=None,
-    close=None,
 ):
     """Plot biological posterior predictive checks with denoised data.
 
@@ -77,13 +76,6 @@ def plot_bio_ppc(
     PlotResult
         Wrapped result containing the figure, axes, and metadata.
     """
-    _fig_owned = fig is None and axes is None
-    save, show, close = _resolve_render_flags(
-        figs_dir=figs_dir,
-        save=save,
-        show=show,
-        close=close,
-    )
     if ax is not None:
         raise ValueError(
             "Biological PPC requires multiple axes; provide `fig` or `axes`."
@@ -242,28 +234,5 @@ def plot_bio_ppc(
     # ------------------------------------------------------------------
     # Save
     # ------------------------------------------------------------------
-    if save:
-        output_format = viz_cfg.get("format", "png")
-        config_vals = _get_config_values(cfg, results=results)
-        fname = (
-            f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
-            f"{config_vals['model_type'].replace('_', '-')}_"
-            f"{config_vals['n_components']:02d}components_"
-            f"{config_vals['run_size_token']}_bio_ppc.{output_format}"
-        )
-    else:
-        fname = None
     del results_subset, counts_subset, denoised_subset, bio_predictive_samples
-    return _finalize_figure(
-        fig=fig,
-        axes=axes_flat,
-        n_panels=n_rows * n_cols,
-        save=save,
-        show=show,
-        close=close,
-        figs_dir=figs_dir,
-        filename=fname,
-        save_kwargs={"bbox_inches": "tight"},
-        save_label="bio-PPC plot",
-        _fig_owned=_fig_owned,
-    )
+    return fig, axes_flat, n_rows * n_cols

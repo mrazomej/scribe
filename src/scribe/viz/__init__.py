@@ -9,7 +9,10 @@ from __future__ import annotations
 from .style import matplotlib_style, colors, Colors
 
 _LAZY_EXPORTS = {
+    "PlotContext": ("scribe.viz._interactive", "PlotContext"),
     "PlotResult": ("scribe.viz._interactive", "PlotResult"),
+    "PlotResultCollection": ("scribe.viz._interactive", "PlotResultCollection"),
+    "plot_function": ("scribe.viz._interactive", "plot_function"),
     "plot_posterior": ("scribe.viz.style", "plot_posterior"),
     "plot_histogram_credible_regions": (
         "scribe.viz.style",

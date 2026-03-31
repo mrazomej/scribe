@@ -8,8 +8,7 @@ from jax import random
 import jax.numpy as jnp
 
 from ._common import console
-from ._interactive import _finalize_figure, _resolve_render_flags
-from .config import _get_config_values
+from ._interactive import PlotResultCollection, plot_function
 
 
 def _compute_correlation_matrix(samples, n_samples):
@@ -24,19 +23,16 @@ def _compute_correlation_matrix(samples, n_samples):
     return correlation_matrix
 
 
+@plot_function()
 def plot_correlation_heatmap(
     results,
     counts,
-    figs_dir=None,
-    cfg=None,
-    viz_cfg=None,
     *,
+    ctx,
+    viz_cfg=None,
     fig=None,
-    ax=None,
     axes=None,
-    save=None,
-    show=None,
-    close=None,
+    ax=None,
 ):
     """Plot clustered correlation heatmap of gene parameters from posterior samples.
 
@@ -48,12 +44,6 @@ def plot_correlation_heatmap(
         Wrapped result containing the figure, axes, and metadata.
     """
     console.print("[dim]Plotting correlation heatmap...[/dim]")
-    save, show, close = _resolve_render_flags(
-        figs_dir=figs_dir,
-        save=save,
-        show=show,
-        close=close,
-    )
     # Seaborn clustermap owns its own figure/axes objects, so custom axis
     # injection is intentionally unsupported for this entry point.
     if fig is not None or ax is not None or axes is not None:
@@ -106,19 +96,12 @@ def plot_correlation_heatmap(
     samples = results.posterior_samples[param_name]
     console.print(f"[dim]Sample shape:[/dim] {samples.shape}")
 
-    if save:
-        output_format = viz_cfg.get("format", "png")
-        config_vals = _get_config_values(cfg, results=results)
-        base_fname = (
-            f"{config_vals['method']}_"
-            f"{config_vals['parameterization'].replace('-', '_')}_"
-            f"{config_vals['model_type'].replace('_', '-')}_"
-            f"{config_vals['n_components']:02d}components_"
-            f"{config_vals['run_size_token']}"
-        )
-    else:
-        output_format = "png"
-        base_fname = "correlation"
+    base_fname = "correlation"
+    if ctx.save:
+        _fname_prefix = ctx.build_filename("correlation_heatmap", results=results)
+        # Strip the suffix that build_filename adds so we can append component suffixes
+        base_fname = _fname_prefix.rsplit("_correlation_heatmap.", 1)[0]
+    output_format = ctx.output_format
 
     if samples.ndim == 3:
         n_components = samples.shape[1]
@@ -160,6 +143,7 @@ def plot_correlation_heatmap(
             f"{len(selected_genes)} unique genes[/dim]"
         )
 
+        component_results = []
         for k in range(n_components):
             corr_subset_np = np.array(
                 correlation_matrices[k][
@@ -200,21 +184,14 @@ def plot_correlation_heatmap(
                 f"{base_fname}_correlation_heatmap_"
                 f"component{k + 1}.{output_format}"
             )
-            # Seaborn clustermap creates its own figure so it is always
-            # "owned" internally for pyplot-detach purposes.
-            return _finalize_figure(
-                fig=fig.fig,
-                axes=list(fig.fig.axes),
-                n_panels=1,
-                save=save,
-                show=show,
-                close=close,
-                figs_dir=figs_dir,
-                filename=fname,
+            result = ctx.finalize(
+                fig.fig, list(fig.fig.axes), 1,
+                filename=fname if ctx.save else None,
                 save_kwargs={"bbox_inches": "tight"},
                 save_label=f"component {k + 1} heatmap",
-                _fig_owned=True,
             )
+            component_results.append(result)
+        return PlotResultCollection(component_results) if component_results else None
 
     else:
         n_genes = samples.shape[1]
@@ -287,16 +264,9 @@ def plot_correlation_heatmap(
         )
 
         fname = f"{base_fname}_correlation_heatmap.{output_format}"
-        return _finalize_figure(
-            fig=fig.fig,
-            axes=list(fig.fig.axes),
-            n_panels=1,
-            save=save,
-            show=show,
-            close=close,
-            figs_dir=figs_dir,
-            filename=fname,
+        return ctx.finalize(
+            fig.fig, list(fig.fig.axes), 1,
+            filename=fname if ctx.save else None,
             save_kwargs={"bbox_inches": "tight"},
             save_label="correlation heatmap",
-            _fig_owned=True,
         )

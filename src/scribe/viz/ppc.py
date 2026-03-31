@@ -16,10 +16,8 @@ from ._common import (
 )
 from ._interactive import (
     _create_or_validate_grid_axes,
-    _finalize_figure,
-    _resolve_render_flags,
+    plot_function,
 )
-from .config import _get_config_values
 from .dispatch import _get_predictive_samples_for_plot
 from .gene_selection import _select_genes
 from .ppc_rendering import (
@@ -30,60 +28,29 @@ from .ppc_rendering import (
 )
 
 
-def plot_ppc(
-    results,
-    counts,
-    figs_dir=None,
-    cfg=None,
-    viz_cfg=None,
-    *,
-    fig=None,
-    axes=None,
-    ax=None,
-    save=None,
-    show=None,
-    close=None,
-):
-    """Plot posterior predictive checks for selected genes.
+def _prepare_ppc_data(results, counts, viz_cfg):
+    """Prepare gene selection and predictive samples for PPC plotting.
+
+    Selects genes across expression bins, generates posterior
+    predictive samples, and builds the gene-position mapping needed
+    for histogram rendering.
 
     Parameters
     ----------
     results : object
-        Fitted result object exposing predictive sampling.
+        Fitted model results exposing predictive sampling.
     counts : array-like
         Observed count matrix ``(n_cells, n_genes)``.
-    figs_dir : str, optional
-        Output directory used when ``save`` resolves to ``True``.
-    cfg : OmegaConf, optional
-        Run configuration used for filename generation.
-    viz_cfg : OmegaConf
-        Visualization config containing ``ppc_opts``.
-    fig : matplotlib.figure.Figure, optional
-        Figure used to create/host the PPC grid.
-    axes : array-like of matplotlib.axes.Axes, optional
-        Explicit axis collection with exactly ``n_rows * n_cols`` axes.
-    ax : matplotlib.axes.Axes, optional
-        Unsupported for this multi-panel plot. Use ``fig`` or ``axes``.
-    save, show, close : bool, optional
-        Rendering controls for dual-mode usage.
+    viz_cfg : object
+        Visualization configuration with ``ppc_opts``.
 
     Returns
     -------
-    PlotResult
-        Wrapped result containing the figure, axes, and metadata.
+    dict
+        Dictionary with keys ``n_rows``, ``n_cols``,
+        ``selected_idx_sorted``, ``subset_positions``,
+        ``n_genes_selected``, ``render_opts``, ``results_subset``.
     """
-    _fig_owned = fig is None and axes is None
-    console.print("[dim]Plotting PPC...[/dim]")
-    if ax is not None:
-        raise ValueError(
-            "PPC requires multiple axes; provide `fig` or `axes` instead of `ax`."
-        )
-    save, show, close = _resolve_render_flags(
-        figs_dir=figs_dir,
-        save=save,
-        show=show,
-        close=close,
-    )
     render_opts = get_ppc_render_options(viz_cfg)
 
     n_rows = viz_cfg.ppc_opts.n_rows
@@ -122,6 +89,74 @@ def plot_ppc(
     subset_positions = {
         int(gene_idx): pos for pos, gene_idx in enumerate(selected_idx)
     }
+
+    return {
+        "n_rows": n_rows,
+        "n_cols": n_cols,
+        "selected_idx_sorted": selected_idx_sorted,
+        "subset_positions": subset_positions,
+        "n_genes_selected": n_genes_selected,
+        "render_opts": render_opts,
+        "results_subset": results_subset,
+    }
+
+
+@plot_function(
+    suffix="ppc",
+    save_label="PPC plot",
+    save_kwargs={"bbox_inches": "tight"},
+)
+def plot_ppc(
+    results,
+    counts,
+    *,
+    ctx,
+    viz_cfg=None,
+    fig=None,
+    axes=None,
+    ax=None,
+):
+    """Plot posterior predictive checks for selected genes.
+
+    Parameters
+    ----------
+    results : object
+        Fitted result object exposing predictive sampling.
+    counts : array-like
+        Observed count matrix ``(n_cells, n_genes)``.
+    figs_dir : str, optional
+        Output directory used when ``save`` resolves to ``True``.
+    cfg : OmegaConf, optional
+        Run configuration used for filename generation.
+    viz_cfg : OmegaConf
+        Visualization config containing ``ppc_opts``.
+    fig : matplotlib.figure.Figure, optional
+        Figure used to create/host the PPC grid.
+    axes : array-like of matplotlib.axes.Axes, optional
+        Explicit axis collection with exactly ``n_rows * n_cols`` axes.
+    ax : matplotlib.axes.Axes, optional
+        Unsupported for this multi-panel plot. Use ``fig`` or ``axes``.
+    save, show, close : bool, optional
+        Rendering controls for dual-mode usage.
+
+    Returns
+    -------
+    PlotResult
+        Wrapped result containing the figure, axes, and metadata.
+    """
+    console.print("[dim]Plotting PPC...[/dim]")
+    if ax is not None:
+        raise ValueError(
+            "PPC requires multiple axes; provide `fig` or `axes` instead of `ax`."
+        )
+    prep = _prepare_ppc_data(results, counts, viz_cfg)
+    n_rows = prep["n_rows"]
+    n_cols = prep["n_cols"]
+    selected_idx_sorted = prep["selected_idx_sorted"]
+    subset_positions = prep["subset_positions"]
+    n_genes_selected = prep["n_genes_selected"]
+    render_opts = prep["render_opts"]
+    results_subset = prep["results_subset"]
 
     fig, _, axes_flat = _create_or_validate_grid_axes(
         n_rows=n_rows,
@@ -195,29 +230,5 @@ def plot_ppc(
     fig.tight_layout()
     fig.suptitle("Example PPC", y=1.02)
 
-    if save:
-        output_format = viz_cfg.get("format", "png")
-        config_vals = _get_config_values(cfg, results=results)
-        fname = (
-            f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
-            f"{config_vals['model_type'].replace('_', '-')}_"
-            f"{config_vals['n_components']:02d}components_"
-            f"{config_vals['run_size_token']}_ppc.{output_format}"
-        )
-    else:
-        fname = None
-
     del results_subset
-    return _finalize_figure(
-        fig=fig,
-        axes=axes_flat,
-        n_panels=n_rows * n_cols,
-        save=save,
-        show=show,
-        close=close,
-        figs_dir=figs_dir,
-        filename=fname,
-        save_kwargs={"bbox_inches": "tight"},
-        save_label="PPC plot",
-        _fig_owned=_fig_owned,
-    )
+    return fig, axes_flat, n_rows * n_cols
