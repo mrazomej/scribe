@@ -207,16 +207,11 @@ def plot_mu_pairwise(
     mu_dataset = mu_dataset[:n_datasets]
     labels = _resolve_dataset_names(dataset_names, n_datasets)
 
-    pseudocount = float(
-        viz_cfg.get("mu_pairwise_opts", {}).get("pseudocount", 1.0)
-    )
-    n_bins = int(viz_cfg.get("mu_pairwise_opts", {}).get("hist_bins", 40))
-    point_alpha = float(
-        viz_cfg.get("mu_pairwise_opts", {}).get("point_alpha", 0.25)
-    )
-    point_size = float(
-        viz_cfg.get("mu_pairwise_opts", {}).get("point_size", 5.0)
-    )
+    _mu_opts = viz_cfg.get("mu_pairwise_opts", {}) if viz_cfg is not None else {}
+    pseudocount = float(_mu_opts.get("pseudocount", 1.0))
+    n_bins = int(_mu_opts.get("hist_bins", 40))
+    point_alpha = float(_mu_opts.get("point_alpha", 0.25))
+    point_size = float(_mu_opts.get("point_size", 5.0))
 
     mu_log = np.log10(np.clip(mu_dataset, a_min=0.0, a_max=None) + pseudocount)
     # Pre-compute per-dataset axis limits so all panels in a column/row align.

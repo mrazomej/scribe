@@ -52,7 +52,7 @@ def plot_correlation_heatmap(
             "`fig`/`ax`/`axes`. Call without axes."
         )
 
-    heatmap_opts = viz_cfg.get("heatmap_opts", {})
+    heatmap_opts = viz_cfg.get("heatmap_opts", {}) if viz_cfg is not None else {}
     n_genes_to_plot = heatmap_opts.get("n_genes", 1500)
     n_samples = heatmap_opts.get("n_samples", 512)
     figsize = heatmap_opts.get("figsize", 12)
