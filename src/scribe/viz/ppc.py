@@ -20,7 +20,7 @@ from ._interactive import (
     plot_function,
 )
 from .dispatch import _get_predictive_samples_for_plot
-from .gene_selection import _coerce_counts, _select_genes
+from .gene_selection import _coerce_counts, _get_gene_names, _select_genes
 from .ppc_rendering import (
     compute_adaptive_max_bin,
     get_ppc_render_options,
@@ -186,6 +186,7 @@ def plot_ppc(
     n_genes_selected = prep["n_genes_selected"]
     render_opts = prep["render_opts"]
     results_subset = prep["results_subset"]
+    gene_names = _get_gene_names(results)
 
     fig, _, axes_flat = _create_or_validate_grid_axes(
         n_rows=n_rows,
@@ -249,10 +250,10 @@ def plot_ppc(
             panel_ax.set_ylabel("frequency")
             actual_mean_expr = np.mean(counts[:, gene_idx])
             mean_expr_formatted = f"{actual_mean_expr:.2f}"
-            panel_ax.set_title(
-                f"$\\langle U \\rangle = {mean_expr_formatted}$",
-                fontsize=8,
-            )
+            title = f"$\\langle U \\rangle = {mean_expr_formatted}$"
+            if gene_names is not None:
+                title = f"{gene_names[gene_idx]}\n{title}"
+            panel_ax.set_title(title, fontsize=8)
 
             progress.update(task, advance=1)
 
