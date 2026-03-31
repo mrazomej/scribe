@@ -46,7 +46,7 @@ def plot_umap(
     """
     console.print("[dim]Plotting UMAP projection...[/dim]")
 
-    umap_opts = viz_cfg.get("umap_opts", {})
+    umap_opts = viz_cfg.get("umap_opts", {}) if viz_cfg is not None else {}
 
     try:
         import umap

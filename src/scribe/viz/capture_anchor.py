@@ -119,7 +119,7 @@ def _prepare_capture_anchor_data(results, counts, cfg, viz_cfg):
     log_library_size = np.log(np.maximum(library_size, 1.0))
     eta_plus_log_lib = eta_capture + log_library_size
 
-    opts = viz_cfg.get("capture_anchor_opts", {})
+    opts = viz_cfg.get("capture_anchor_opts", {}) if viz_cfg is not None else {}
     n_bins = int(opts.get("n_bins", 50))
     scatter_size = float(opts.get("scatter_size", 6.0))
     scatter_alpha = float(opts.get("scatter_alpha", 0.35))
@@ -403,7 +403,7 @@ def _prepare_p_capture_data(
 
     library_size = np.asarray(counts.sum(axis=1), dtype=float).reshape(-1)
 
-    opts = viz_cfg.get("p_capture_scaling_opts", {})
+    opts = viz_cfg.get("p_capture_scaling_opts", {}) if viz_cfg is not None else {}
     n_bins = int(opts.get("n_bins", 30))
     min_cells_per_bin = int(opts.get("min_cells_per_bin", 5))
     assignment_batch_size = int(opts.get("assignment_batch_size", 512))
@@ -542,22 +542,20 @@ def plot_p_capture_scaling(
         figsize=(6.0 * len(panel_specs), 5.0),
     )
 
-    # Global panel: one trend using all cells.
+    # Global panel: scatter only (no trend line or legend).
     ax_global = axes_flat[0]
-    _plot_trend_line(
-        ax_global,
+    ax_global.scatter(
         library_size,
         p_capture,
-        label=r"all cells",
+        s=4.0,
+        alpha=0.15,
         color="black",
-        n_bins=n_bins,
-        min_cells_per_bin=min_cells_per_bin,
+        linewidths=0.0,
     )
-    ax_global.set_xlabel(r"$L_c$")
-    ax_global.set_ylabel(r"$\hat{p}_{\mathrm{capture},c}^{\mathrm{MAP}}$")
+    ax_global.set_xlabel(r"Cell library size ($L_c$)")
+    ax_global.set_ylabel(r"mRNA capture probability ($\hat{p}_{\mathrm{capture},c}$)")
     ax_global.set_title(r"Global $p_{\mathrm{capture}}$ scaling")
     _set_dynamic_y_limits(ax_global, p_capture)
-    ax_global.legend(fontsize=8)
 
     panel_idx = 1
 
@@ -584,8 +582,8 @@ def plot_p_capture_scaling(
                 min_cells_per_bin=min_cells_per_bin,
             )
             component_values.append(p_capture[in_comp])
-        ax_comp.set_xlabel(r"$L_c$")
-        ax_comp.set_ylabel(r"$\hat{p}_{\mathrm{capture},c}^{\mathrm{MAP}}$")
+        ax_comp.set_xlabel(r"Cell library size ($L_c$)")
+        ax_comp.set_ylabel(r"mRNA capture probability ($\hat{p}_{\mathrm{capture},c}$)")
         ax_comp.set_title(r"Split by component")
         if component_values:
             _set_dynamic_y_limits(ax_comp, np.concatenate(component_values))
@@ -627,8 +625,8 @@ def plot_p_capture_scaling(
                 min_cells_per_bin=min_cells_per_bin,
             )
             dataset_values.append(p_capture[in_ds])
-        ax_ds.set_xlabel(r"$L_c$")
-        ax_ds.set_ylabel(r"$\hat{p}_{\mathrm{capture},c}^{\mathrm{MAP}}$")
+        ax_ds.set_xlabel(r"Cell library size ($L_c$)")
+        ax_ds.set_ylabel(r"mRNA capture probability ($\hat{p}_{\mathrm{capture},c}$)")
         ax_ds.set_title(r"Split by dataset")
         if dataset_values:
             _set_dynamic_y_limits(ax_ds, np.concatenate(dataset_values))
