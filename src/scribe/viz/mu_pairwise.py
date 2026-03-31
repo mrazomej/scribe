@@ -134,6 +134,7 @@ def plot_mu_pairwise(
     ctx,
     viz_cfg=None,
     dataset_names=None,
+    figsize=None,
     fig=None,
     axes=None,
     ax=None,
@@ -232,7 +233,7 @@ def plot_mu_pairwise(
         n_cols=n_datasets,
         fig=fig,
         axes=axes,
-        figsize=(2.8 * n_datasets, 2.8 * n_datasets),
+        figsize=figsize or (2.8 * n_datasets, 2.8 * n_datasets),
     )
 
     # Populate a corner-style layout:

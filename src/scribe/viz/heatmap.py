@@ -30,6 +30,7 @@ def plot_correlation_heatmap(
     *,
     ctx,
     viz_cfg=None,
+    figsize=None,
     fig=None,
     axes=None,
     ax=None,
@@ -55,7 +56,10 @@ def plot_correlation_heatmap(
     heatmap_opts = viz_cfg.get("heatmap_opts", {}) if viz_cfg is not None else {}
     n_genes_to_plot = heatmap_opts.get("n_genes", 1500)
     n_samples = heatmap_opts.get("n_samples", 512)
-    figsize = heatmap_opts.get("figsize", 12)
+    # figsize kwarg takes priority; fall back to config, then default (12, 12).
+    _cfg_figsize = heatmap_opts.get("figsize", 12)
+    if figsize is None:
+        figsize = (_cfg_figsize, _cfg_figsize)
     cmap = heatmap_opts.get("cmap", "RdBu_r")
 
     parameterization = results.model_config.parameterization
@@ -161,7 +165,7 @@ def plot_correlation_heatmap(
                 center=0,
                 vmin=-1,
                 vmax=1,
-                figsize=(figsize, figsize),
+                figsize=figsize,
                 dendrogram_ratio=0.15,
                 cbar_pos=(0.02, 0.83, 0.03, 0.15),
                 linewidths=0,
@@ -246,7 +250,7 @@ def plot_correlation_heatmap(
             center=0,
             vmin=-1,
             vmax=1,
-            figsize=(figsize, figsize),
+            figsize=figsize,
             dendrogram_ratio=0.15,
             cbar_pos=(0.02, 0.83, 0.03, 0.15),
             linewidths=0,

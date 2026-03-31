@@ -436,6 +436,7 @@ def plot_mean_calibration(
     is_multi_dataset=False,
     dataset_codes=None,
     dataset_names=None,
+    figsize=None,
     fig=None,
     axes=None,
     ax=None,
@@ -506,7 +507,7 @@ def plot_mean_calibration(
             n_cols=n_panels,
             fig=fig,
             axes=axes,
-            figsize=(5.5 * n_panels, 5.0),
+            figsize=figsize or (5.5 * n_panels, 5.0),
         )
         colors = plt.cm.Set2(np.linspace(0, 1, max(n_panels, 2)))
         for i, ds in enumerate(ds_results):
@@ -529,7 +530,7 @@ def plot_mean_calibration(
             fig=fig,
             ax=ax,
             axes=axes,
-            figsize=(5.5, 5.0),
+            figsize=figsize or (5.5, 5.0),
         )
         _scatter_panel(ax, obs_mean, pred_mean, color="steelblue")
         ax.set_xlabel(r"$\log_{10}(\bar{u}_g^{\mathrm{obs}} + 1)$")

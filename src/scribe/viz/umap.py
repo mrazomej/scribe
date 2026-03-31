@@ -29,6 +29,7 @@ def plot_umap(
     ctx,
     viz_cfg=None,
     force_refit=False,
+    figsize=None,
     fig=None,
     axes=None,
     ax=None,
@@ -363,7 +364,7 @@ def plot_umap(
         fig=fig,
         ax=ax,
         axes=axes,
-        figsize=(6.0, 6.0),
+        figsize=figsize or (6.0, 6.0),
     )
 
     ax.scatter(

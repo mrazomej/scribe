@@ -25,6 +25,7 @@ def plot_ecdf(
     ctx,
     viz_cfg=None,
     n_genes=None,
+    figsize=None,
     fig=None,
     axes=None,
     ax=None,
@@ -79,7 +80,7 @@ def plot_ecdf(
         fig=fig,
         ax=ax,
         axes=axes,
-        figsize=(3.5, 3.0),
+        figsize=figsize or (3.5, 3.0),
     )
     for i, idx in enumerate(selected_idx):
         sns.ecdfplot(
