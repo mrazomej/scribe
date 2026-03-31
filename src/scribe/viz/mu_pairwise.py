@@ -17,6 +17,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from ._common import console
+from ._interactive import (
+    _create_or_validate_grid_axes,
+    _finalize_figure,
+    _resolve_render_flags,
+)
 from .config import _get_config_values
 from .dispatch import _get_map_estimates_for_plot
 
@@ -127,6 +132,12 @@ def plot_mu_pairwise(
     viz_cfg,
     *,
     dataset_names=None,
+    fig=None,
+    axes=None,
+    ax=None,
+    save=None,
+    show=None,
+    close=None,
 ):
     """Render pairwise dataset ``mu`` comparisons as a corner plot.
 
@@ -148,10 +159,21 @@ def plot_mu_pairwise(
 
     Returns
     -------
-    str or None
-        Path to the saved figure, or ``None`` when the plot is skipped.
+    PlotResult or None
+        Wrapped result, or ``None`` when the plot is skipped.
     """
+    _fig_owned = fig is None and axes is None
     console.print("[dim]Plotting pairwise mu dataset comparison...[/dim]")
+    if ax is not None:
+        raise ValueError(
+            "Mu pairwise is a multi-panel corner plot; provide `fig` or `axes`."
+        )
+    save, show, close = _resolve_render_flags(
+        figs_dir=figs_dir,
+        save=save,
+        show=show,
+        close=close,
+    )
 
     map_estimates = _get_map_estimates_for_plot(
         results, counts=counts, targets=["mu"]
@@ -219,11 +241,12 @@ def plot_mu_pairwise(
             margin = 0.5
         axis_limits.append((lo - margin, hi + margin))
 
-    fig, axes = plt.subplots(
-        n_datasets,
-        n_datasets,
+    fig, axes_grid, axes_flat = _create_or_validate_grid_axes(
+        n_rows=n_datasets,
+        n_cols=n_datasets,
+        fig=fig,
+        axes=axes,
         figsize=(2.8 * n_datasets, 2.8 * n_datasets),
-        squeeze=False,
     )
 
     # Populate a corner-style layout:
@@ -232,7 +255,7 @@ def plot_mu_pairwise(
     # - upper triangle: hidden
     for row_idx in range(n_datasets):
         for col_idx in range(n_datasets):
-            axis = axes[row_idx, col_idx]
+            axis = axes_grid[row_idx, col_idx]
             x_values = mu_log[col_idx]
             y_values = mu_log[row_idx]
 
@@ -322,19 +345,27 @@ def plot_mu_pairwise(
         hspace=0.03,
     )
 
-    output_format = viz_cfg.get("format", "png")
-    config_vals = _get_config_values(cfg, results=results)
-    filename = (
-        f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
-        f"{config_vals['model_type'].replace('_', '-')}_"
-        f"{config_vals['n_components']:02d}components_"
-        f"{config_vals['run_size_token']}_mu_pairwise.{output_format}"
+    if save:
+        output_format = viz_cfg.get("format", "png")
+        config_vals = _get_config_values(cfg, results=results)
+        filename = (
+            f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
+            f"{config_vals['model_type'].replace('_', '-')}_"
+            f"{config_vals['n_components']:02d}components_"
+            f"{config_vals['run_size_token']}_mu_pairwise.{output_format}"
+        )
+    else:
+        filename = None
+    return _finalize_figure(
+        fig=fig,
+        axes=axes_flat,
+        n_panels=n_datasets * n_datasets,
+        save=save,
+        show=show,
+        close=close,
+        figs_dir=figs_dir,
+        filename=filename,
+        save_kwargs={"bbox_inches": "tight", "dpi": 150},
+        save_label="mu pairwise plot",
+        _fig_owned=_fig_owned,
     )
-    output_path = os.path.join(figs_dir, filename)
-    fig.savefig(output_path, bbox_inches="tight", dpi=150)
-    plt.close(fig)
-    console.print(
-        "[green]✓[/green] [dim]Saved mu pairwise plot to[/dim] "
-        f"[cyan]{output_path}[/cyan]"
-    )
-    return output_path

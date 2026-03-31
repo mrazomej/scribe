@@ -25,6 +25,12 @@ import numpy as np
 from scipy import stats as sp_stats
 
 from ._common import console
+from ._interactive import (
+    _create_or_validate_grid_axes,
+    _create_or_validate_single_axis,
+    _finalize_figure,
+    _resolve_render_flags,
+)
 from .config import _get_config_values
 from .dispatch import _get_map_estimates_for_plot
 
@@ -285,6 +291,12 @@ def plot_mean_calibration(
     is_multi_dataset=False,
     dataset_codes=None,
     dataset_names=None,
+    fig=None,
+    axes=None,
+    ax=None,
+    save=None,
+    show=None,
+    close=None,
 ):
     r"""Log-log scatter of observed vs predicted per-gene mean counts.
 
@@ -322,10 +334,21 @@ def plot_mean_calibration(
 
     Returns
     -------
-    str
-        Output file path.
+    PlotResult or None
+        Wrapped result containing the figure, axes, and metadata.
     """
+    _fig_owned = fig is None and axes is None and ax is None
     console.print("[dim]Plotting mean-calibration diagnostic...[/dim]")
+    if ax is not None and is_multi_dataset:
+        raise ValueError(
+            "Multi-dataset mean calibration requires `fig` or `axes`, not `ax`."
+        )
+    save, show, close = _resolve_render_flags(
+        figs_dir=figs_dir,
+        save=save,
+        show=show,
+        close=close,
+    )
 
     # Request only required keys up front so this diagnostic works for
     # non-mixture and non-BNB models without forcing optional parameters.
@@ -408,34 +431,40 @@ def plot_mean_calibration(
             n_datasets=n_ds_cfg,
         )
         n_panels = len(ds_results)
-        fig, axes = plt.subplots(
-            1,
-            n_panels,
+        fig, _, axes_flat = _create_or_validate_grid_axes(
+            n_rows=1,
+            n_cols=n_panels,
+            fig=fig,
+            axes=axes,
             figsize=(5.5 * n_panels, 5.0),
-            squeeze=False,
         )
-        axes = axes.flatten()
         colors = plt.cm.Set2(np.linspace(0, 1, max(n_panels, 2)))
         for i, ds in enumerate(ds_results):
             _scatter_panel(
-                axes[i],
+                axes_flat[i],
                 ds["obs_mean"],
                 ds["pred_mean"],
                 color=colors[i],
             )
-            axes[i].set_xlabel(r"$\log_{10}(\bar{u}_g^{\mathrm{obs}} + 1)$")
-            axes[i].set_ylabel(r"$\log_{10}(\bar{u}_g^{\mathrm{pred}} + 1)$")
-            axes[i].set_title(ds["name"], fontsize=10)
+            axes_flat[i].set_xlabel(r"$\log_{10}(\bar{u}_g^{\mathrm{obs}} + 1)$")
+            axes_flat[i].set_ylabel(r"$\log_{10}(\bar{u}_g^{\mathrm{pred}} + 1)$")
+            axes_flat[i].set_title(ds["name"], fontsize=10)
 
     # ---- Single-dataset (with or without mixture) ---------------------------
     else:
         obs_mean = np.mean(np.asarray(counts, dtype=float), axis=0)
         pred_mean = _compute_predicted_mean(r, p, mixing_weights, p_capture)
 
-        fig, ax = plt.subplots(1, 1, figsize=(5.5, 5.0))
+        fig, ax = _create_or_validate_single_axis(
+            fig=fig,
+            ax=ax,
+            axes=axes,
+            figsize=(5.5, 5.0),
+        )
         _scatter_panel(ax, obs_mean, pred_mean, color="steelblue")
         ax.set_xlabel(r"$\log_{10}(\bar{u}_g^{\mathrm{obs}} + 1)$")
         ax.set_ylabel(r"$\log_{10}(\bar{u}_g^{\mathrm{pred}} + 1)$")
+        axes_flat = [ax]
 
     # Suptitle with model annotations
     title = "Mean Calibration"
@@ -447,22 +476,30 @@ def plot_mean_calibration(
         title += "\n" + ", ".join(_annotations)
     fig.suptitle(title, fontsize=11, y=1.02)
 
-    plt.tight_layout()
+    fig.tight_layout()
 
     # Save
-    output_format = viz_cfg.get("format", "png")
-    config_vals = _get_config_values(cfg, results=results)
-    fname = (
-        f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
-        f"{config_vals['model_type'].replace('_', '-')}_"
-        f"{config_vals['n_components']:02d}components_"
-        f"{config_vals['run_size_token']}_mean_calibration.{output_format}"
+    if save:
+        output_format = viz_cfg.get("format", "png")
+        config_vals = _get_config_values(cfg, results=results)
+        fname = (
+            f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
+            f"{config_vals['model_type'].replace('_', '-')}_"
+            f"{config_vals['n_components']:02d}components_"
+            f"{config_vals['run_size_token']}_mean_calibration.{output_format}"
+        )
+    else:
+        fname = None
+    return _finalize_figure(
+        fig=fig,
+        axes=axes_flat,
+        n_panels=len(axes_flat),
+        save=save,
+        show=show,
+        close=close,
+        figs_dir=figs_dir,
+        filename=fname,
+        save_kwargs={"bbox_inches": "tight", "dpi": 150},
+        save_label="mean-calibration plot",
+        _fig_owned=_fig_owned,
     )
-    output_path = os.path.join(figs_dir, fname)
-    fig.savefig(output_path, bbox_inches="tight", dpi=150)
-    console.print(
-        "[green]\u2713[/green] [dim]Saved mean-calibration plot to[/dim] "
-        f"[cyan]{output_path}[/cyan]"
-    )
-    plt.close(fig)
-    return output_path

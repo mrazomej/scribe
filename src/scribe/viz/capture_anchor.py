@@ -20,6 +20,11 @@ import numpy as np
 from scribe.models.config.organism_priors import resolve_organism_priors
 
 from ._common import console
+from ._interactive import (
+    _create_or_validate_grid_axes,
+    _finalize_figure,
+    _resolve_render_flags,
+)
 from .config import _get_config_values
 from .dispatch import (
     _get_map_estimates_for_plot,
@@ -65,7 +70,20 @@ def _resolve_expected_log_m0(cfg):
     return None
 
 
-def plot_capture_anchor(results, counts, figs_dir, cfg, viz_cfg):
+def plot_capture_anchor(
+    results,
+    counts,
+    figs_dir=None,
+    cfg=None,
+    viz_cfg=None,
+    *,
+    fig=None,
+    axes=None,
+    ax=None,
+    save=None,
+    show=None,
+    close=None,
+):
     r"""Plot and save eta capture-anchor diagnostics.
 
     The figure contains two panels:
@@ -92,11 +110,22 @@ def plot_capture_anchor(results, counts, figs_dir, cfg, viz_cfg):
 
     Returns
     -------
-    str or None
-        Saved output path when successful; ``None`` when required inputs for
-        the diagnostic are unavailable.
+    PlotResult or None
+        Wrapped result containing the figure, axes, and metadata, or
+        ``None`` when required inputs for the diagnostic are unavailable.
     """
+    _fig_owned = fig is None and axes is None
     console.print("[dim]Plotting capture-anchor diagnostic...[/dim]")
+    if ax is not None:
+        raise ValueError(
+            "Capture-anchor uses 2 panels; provide `fig` or 2 `axes`."
+        )
+    save, show, close = _resolve_render_flags(
+        figs_dir=figs_dir,
+        save=save,
+        show=show,
+        close=close,
+    )
 
     # Resolve expected anchor from configuration and bail out cleanly if absent.
     expected_log_m0 = _resolve_expected_log_m0(cfg)
@@ -132,7 +161,14 @@ def plot_capture_anchor(results, counts, figs_dir, cfg, viz_cfg):
     scatter_alpha = float(opts.get("scatter_alpha", 0.35))
 
     # Create side-by-side diagnostic figure.
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.5))
+    fig, _, flat_axes = _create_or_validate_grid_axes(
+        n_rows=1,
+        n_cols=2,
+        fig=fig,
+        axes=axes,
+        figsize=(12.0, 4.5),
+    )
+    ax1, ax2 = flat_axes
 
     ax1.scatter(
         log_library_size,
@@ -159,25 +195,32 @@ def plot_capture_anchor(results, counts, figs_dir, cfg, viz_cfg):
     ax2.set_xlabel(r"$\eta_c + \log(L_c)$")
     ax2.set_title(r"Distribution of $\eta_c + \log(L_c)$")
 
-    plt.tight_layout()
+    fig.tight_layout()
 
-    output_format = viz_cfg.get("format", "png")
-    config_vals = _get_config_values(cfg, results=results)
-    fname = (
-        f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
-        f"{config_vals['model_type'].replace('_', '-')}_"
-        f"{config_vals['n_components']:02d}components_"
-        f"{config_vals['run_size_token']}_capture_anchor.{output_format}"
+    if save:
+        output_format = viz_cfg.get("format", "png")
+        config_vals = _get_config_values(cfg, results=results)
+        fname = (
+            f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
+            f"{config_vals['model_type'].replace('_', '-')}_"
+            f"{config_vals['n_components']:02d}components_"
+            f"{config_vals['run_size_token']}_capture_anchor.{output_format}"
+        )
+    else:
+        fname = None
+    return _finalize_figure(
+        fig=fig,
+        axes=flat_axes,
+        n_panels=2,
+        save=save,
+        show=show,
+        close=close,
+        figs_dir=figs_dir,
+        filename=fname,
+        save_kwargs={"bbox_inches": "tight"},
+        save_label="capture-anchor plot",
+        _fig_owned=_fig_owned,
     )
-    output_path = os.path.join(figs_dir, fname)
-    fig.savefig(output_path, bbox_inches="tight")
-    console.print(
-        "[green]✓[/green] [dim]Saved capture-anchor plot to[/dim] "
-        f"[cyan]{output_path}[/cyan]"
-    )
-    plt.close(fig)
-
-    return output_path
 
 
 def _compute_binned_trend(x, y, n_bins=30, min_cells_per_bin=5):
@@ -302,6 +345,12 @@ def plot_p_capture_scaling(
     is_multi_dataset=False,
     dataset_codes=None,
     dataset_names=None,
+    fig=None,
+    axes=None,
+    ax=None,
+    save=None,
+    show=None,
+    close=None,
 ):
     r"""Plot ``p_capture`` versus library-size scaling diagnostics.
 
@@ -335,11 +384,22 @@ def plot_p_capture_scaling(
 
     Returns
     -------
-    str or None
-        Output file path on success, else ``None`` when ``p_capture`` is
+    PlotResult or None
+        Wrapped result on success, or ``None`` when ``p_capture`` is
         unavailable.
     """
+    _fig_owned = fig is None and axes is None
     console.print("[dim]Plotting p-capture scaling diagnostic...[/dim]")
+    if ax is not None:
+        raise ValueError(
+            "p-capture scaling may use multiple panels; provide `fig` or `axes`."
+        )
+    save, show, close = _resolve_render_flags(
+        figs_dir=figs_dir,
+        save=save,
+        show=show,
+        close=close,
+    )
 
     # Pull p_capture from MAP estimates and return gracefully when unavailable.
     map_estimates = _get_map_estimates_for_plot(
@@ -369,16 +429,16 @@ def plot_p_capture_scaling(
     if is_multi_dataset:
         panel_specs.append(("dataset", None))
 
-    fig, axes = plt.subplots(
-        1,
-        len(panel_specs),
+    fig, _, axes_flat = _create_or_validate_grid_axes(
+        n_rows=1,
+        n_cols=len(panel_specs),
+        fig=fig,
+        axes=axes,
         figsize=(6.0 * len(panel_specs), 5.0),
-        squeeze=False,
     )
-    axes = axes.flatten()
 
     # Global panel: one trend using all cells.
-    ax_global = axes[0]
+    ax_global = axes_flat[0]
     _plot_trend_line(
         ax_global,
         library_size,
@@ -433,7 +493,7 @@ def plot_p_capture_scaling(
         # Track values that were actually plotted to derive faithful y-limits.
         component_values = []
 
-        ax_comp = axes[panel_idx]
+        ax_comp = axes_flat[panel_idx]
         for comp_color, comp_id in zip(colors, unique_components):
             in_comp = component_ids == comp_id
             if np.count_nonzero(in_comp) < max(min_cells_per_bin, 10):
@@ -472,7 +532,7 @@ def plot_p_capture_scaling(
         # Track values that were actually plotted to derive faithful y-limits.
         dataset_values = []
 
-        ax_ds = axes[panel_idx]
+        ax_ds = axes_flat[panel_idx]
         for ds_color, ds_code in zip(colors, unique_datasets):
             in_ds = dataset_codes == ds_code
             if np.count_nonzero(in_ds) < max(min_cells_per_bin, 10):
@@ -502,21 +562,29 @@ def plot_p_capture_scaling(
         if handles:
             ax_ds.legend(fontsize=8)
 
-    plt.tight_layout()
+    fig.tight_layout()
 
-    output_format = viz_cfg.get("format", "png")
-    config_vals = _get_config_values(cfg, results=results)
-    fname = (
-        f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
-        f"{config_vals['model_type'].replace('_', '-')}_"
-        f"{config_vals['n_components']:02d}components_"
-        f"{config_vals['run_size_token']}_p_capture_scaling.{output_format}"
+    if save:
+        output_format = viz_cfg.get("format", "png")
+        config_vals = _get_config_values(cfg, results=results)
+        fname = (
+            f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
+            f"{config_vals['model_type'].replace('_', '-')}_"
+            f"{config_vals['n_components']:02d}components_"
+            f"{config_vals['run_size_token']}_p_capture_scaling.{output_format}"
+        )
+    else:
+        fname = None
+    return _finalize_figure(
+        fig=fig,
+        axes=axes_flat,
+        n_panels=len(panel_specs),
+        save=save,
+        show=show,
+        close=close,
+        figs_dir=figs_dir,
+        filename=fname,
+        save_kwargs={"bbox_inches": "tight"},
+        save_label="p-capture scaling plot",
+        _fig_owned=_fig_owned,
     )
-    output_path = os.path.join(figs_dir, fname)
-    fig.savefig(output_path, bbox_inches="tight")
-    console.print(
-        "[green]✓[/green] [dim]Saved p-capture scaling plot to[/dim] "
-        f"[cyan]{output_path}[/cyan]"
-    )
-    plt.close(fig)
-    return output_path

@@ -4,6 +4,7 @@ import numpy as np
 from jax import random
 
 from ._common import console
+from ._interactive import _finalize_figure, _resolve_render_flags
 from .config import _get_config_values
 from .dispatch import _get_map_like_predictive_samples_for_plot
 from .gene_selection import _select_genes
@@ -26,14 +27,11 @@ def _reconstruct_label_map(cell_labels, component_order=None):
 
     if component_order is not None:
         label_map = {
-            str(label): idx
-            for idx, label in enumerate(component_order)
+            str(label): idx for idx, label in enumerate(component_order)
         }
     else:
         unique_sorted = sorted(str(l) for l in labels.unique())
-        label_map = {
-            label: idx for idx, label in enumerate(unique_sorted)
-        }
+        label_map = {label: idx for idx, label in enumerate(unique_sorted)}
     return label_map
 
 
@@ -64,18 +62,46 @@ def _resolve_label_map(results, cell_labels, component_order=None):
     return _reconstruct_label_map(cell_labels, component_order)
 
 
-def plot_annotation_ppc(results, counts, cell_labels, figs_dir, cfg, viz_cfg):
-    """
-    Plot per-annotation posterior predictive checks.
+def plot_annotation_ppc(
+    results,
+    counts,
+    cell_labels,
+    figs_dir=None,
+    cfg=None,
+    viz_cfg=None,
+    *,
+    fig=None,
+    axes=None,
+    ax=None,
+    save=None,
+    show=None,
+    close=None,
+):
+    """Plot per-annotation posterior predictive checks.
 
     For each unique annotation label, a PPC figure is generated that compares
     the observed count distribution of cells belonging to that annotation
     against the posterior predictive distribution of the corresponding mixture
     component.
+
+    Returns
+    -------
+    PlotResult or None
+        Wrapped result from the first annotation PPC figure.
     """
     import pandas as pd
 
     console.print("[dim]Plotting annotation PPC...[/dim]")
+    if ax is not None:
+        raise ValueError(
+            "Annotation PPC requires multiple axes; provide `fig` or `axes`."
+        )
+    save, show, close = _resolve_render_flags(
+        figs_dir=figs_dir,
+        save=save,
+        show=show,
+        close=close,
+    )
     render_opts = get_ppc_render_options(viz_cfg)
 
     n_components = results.n_components
@@ -115,21 +141,32 @@ def plot_annotation_ppc(results, counts, cell_labels, figs_dir, cfg, viz_cfg):
         f"expression bins[/dim]"
     )
 
-    output_format = viz_cfg.get("format", "png")
-    config_vals = _get_config_values(cfg, results=results)
-    base_fname = (
-        f"{config_vals['method']}_"
-        f"{config_vals['parameterization'].replace('-', '_')}_"
-        f"{config_vals['model_type'].replace('_', '-')}_"
-        f"{config_vals['n_components']:02d}components_"
-        f"{config_vals['run_size_token']}"
-    )
+    if save:
+        output_format = viz_cfg.get("format", "png")
+        config_vals = _get_config_values(cfg, results=results)
+        base_fname = (
+            f"{config_vals['method']}_"
+            f"{config_vals['parameterization'].replace('-', '_')}_"
+            f"{config_vals['model_type'].replace('_', '-')}_"
+            f"{config_vals['n_components']:02d}components_"
+            f"{config_vals['run_size_token']}"
+        )
+    else:
+        output_format = "png"
+        base_fname = "annotation_ppc"
 
     component_cmaps = [
-        "Blues", "Greens", "Purples", "Reds", "Oranges", "YlOrBr", "BuGn",
+        "Blues",
+        "Greens",
+        "Purples",
+        "Reds",
+        "Oranges",
+        "YlOrBr",
+        "BuGn",
     ]
     rng_key = random.PRNGKey(42)
 
+    figure_payloads = []
     for label, component_idx in label_map.items():
         console.print(
             f"[dim]Processing annotation '{label}' "
@@ -139,9 +176,7 @@ def plot_annotation_ppc(results, counts, cell_labels, figs_dir, cfg, viz_cfg):
         cell_mask = np.array(annotations.eq(label))
         n_cells_label = int(cell_mask.sum())
         if n_cells_label == 0:
-            console.print(
-                f"[yellow]  Skipping '{label}' (no cells)[/yellow]"
-            )
+            console.print(f"[yellow]  Skipping '{label}' (no cells)[/yellow]")
             continue
 
         console.print(
@@ -152,9 +187,7 @@ def plot_annotation_ppc(results, counts, cell_labels, figs_dir, cfg, viz_cfg):
         component_subset = component_results[selected_idx]
 
         rng_key, subkey = random.split(rng_key)
-        console.print(
-            f"[dim]  Generating {n_samples} PPC samples...[/dim]"
-        )
+        console.print(f"[dim]  Generating {n_samples} PPC samples...[/dim]")
         component_samples = _get_map_like_predictive_samples_for_plot(
             component_subset,
             rng_key=subkey,
@@ -165,21 +198,16 @@ def plot_annotation_ppc(results, counts, cell_labels, figs_dir, cfg, viz_cfg):
             counts=counts,
         )
 
-        component_samples_np = np.array(
-            component_samples[:, cell_mask, :]
-        )
+        component_samples_np = np.array(component_samples[:, cell_mask, :])
         counts_label = counts[cell_mask, :]
 
         safe_label = (
-            str(label)
-            .replace(" ", "_")
-            .replace("/", "-")
-            .replace("\\", "-")
+            str(label).replace(" ", "_").replace("/", "-").replace("\\", "-")
         )
 
         cmap = component_cmaps[component_idx % len(component_cmaps)]
 
-        _plot_ppc_figure(
+        fig_payload = _plot_ppc_figure(
             predictive_samples=component_samples_np,
             counts=counts_label,
             selected_idx=selected_idx,
@@ -195,7 +223,13 @@ def plot_annotation_ppc(results, counts, cell_labels, figs_dir, cfg, viz_cfg):
             output_format=output_format,
             cmap=cmap,
             render_opts=render_opts,
+            fig=fig,
+            axes=axes,
+            save=save,
+            show=show,
+            close=close,
         )
+        figure_payloads.append(fig_payload)
 
         del component_samples, component_samples_np
 
@@ -203,3 +237,9 @@ def plot_annotation_ppc(results, counts, cell_labels, figs_dir, cfg, viz_cfg):
         f"[green]✓[/green] [dim]Generated {len(label_map)} annotation "
         f"PPC plots[/dim]"
     )
+    # Return the first figure payload (already a PlotResult from
+    # _plot_ppc_figure); callers that need all figures can iterate
+    # via figure_payloads.
+    if figure_payloads:
+        return figure_payloads[0]
+    return None
