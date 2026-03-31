@@ -8,6 +8,7 @@ from jax import random
 import jax.numpy as jnp
 
 from ._common import console
+from ._interactive import _finalize_figure, _resolve_render_flags
 from .config import _get_config_values
 
 
@@ -23,13 +24,43 @@ def _compute_correlation_matrix(samples, n_samples):
     return correlation_matrix
 
 
-def plot_correlation_heatmap(results, counts, figs_dir, cfg, viz_cfg):
-    """
-    Plot clustered correlation heatmap of gene parameters from posterior samples.
+def plot_correlation_heatmap(
+    results,
+    counts,
+    figs_dir=None,
+    cfg=None,
+    viz_cfg=None,
+    *,
+    fig=None,
+    ax=None,
+    axes=None,
+    save=None,
+    show=None,
+    close=None,
+):
+    """Plot clustered correlation heatmap of gene parameters from posterior samples.
 
     For mixture models, a separate heatmap is produced for every component.
+
+    Returns
+    -------
+    PlotResult
+        Wrapped result containing the figure, axes, and metadata.
     """
     console.print("[dim]Plotting correlation heatmap...[/dim]")
+    save, show, close = _resolve_render_flags(
+        figs_dir=figs_dir,
+        save=save,
+        show=show,
+        close=close,
+    )
+    # Seaborn clustermap owns its own figure/axes objects, so custom axis
+    # injection is intentionally unsupported for this entry point.
+    if fig is not None or ax is not None or axes is not None:
+        raise ValueError(
+            "Correlation heatmap uses seaborn.clustermap and does not accept "
+            "`fig`/`ax`/`axes`. Call without axes."
+        )
 
     heatmap_opts = viz_cfg.get("heatmap_opts", {})
     n_genes_to_plot = heatmap_opts.get("n_genes", 1500)
@@ -75,15 +106,19 @@ def plot_correlation_heatmap(results, counts, figs_dir, cfg, viz_cfg):
     samples = results.posterior_samples[param_name]
     console.print(f"[dim]Sample shape:[/dim] {samples.shape}")
 
-    output_format = viz_cfg.get("format", "png")
-    config_vals = _get_config_values(cfg, results=results)
-    base_fname = (
-        f"{config_vals['method']}_"
-        f"{config_vals['parameterization'].replace('-', '_')}_"
-        f"{config_vals['model_type'].replace('_', '-')}_"
-        f"{config_vals['n_components']:02d}components_"
-        f"{config_vals['run_size_token']}"
-    )
+    if save:
+        output_format = viz_cfg.get("format", "png")
+        config_vals = _get_config_values(cfg, results=results)
+        base_fname = (
+            f"{config_vals['method']}_"
+            f"{config_vals['parameterization'].replace('-', '_')}_"
+            f"{config_vals['model_type'].replace('_', '-')}_"
+            f"{config_vals['n_components']:02d}components_"
+            f"{config_vals['run_size_token']}"
+        )
+    else:
+        output_format = "png"
+        base_fname = "correlation"
 
     if samples.ndim == 3:
         n_components = samples.shape[1]
@@ -165,13 +200,21 @@ def plot_correlation_heatmap(results, counts, figs_dir, cfg, viz_cfg):
                 f"{base_fname}_correlation_heatmap_"
                 f"component{k + 1}.{output_format}"
             )
-            output_path = os.path.join(figs_dir, fname)
-            fig.savefig(output_path, bbox_inches="tight")
-            console.print(
-                f"[green]✓[/green] [dim]Saved component {k + 1} heatmap "
-                f"to[/dim] [cyan]{output_path}[/cyan]"
+            # Seaborn clustermap creates its own figure so it is always
+            # "owned" internally for pyplot-detach purposes.
+            return _finalize_figure(
+                fig=fig.fig,
+                axes=list(fig.fig.axes),
+                n_panels=1,
+                save=save,
+                show=show,
+                close=close,
+                figs_dir=figs_dir,
+                filename=fname,
+                save_kwargs={"bbox_inches": "tight"},
+                save_label=f"component {k + 1} heatmap",
+                _fig_owned=True,
             )
-            plt.close(fig.fig)
 
     else:
         n_genes = samples.shape[1]
@@ -244,10 +287,16 @@ def plot_correlation_heatmap(results, counts, figs_dir, cfg, viz_cfg):
         )
 
         fname = f"{base_fname}_correlation_heatmap.{output_format}"
-        output_path = os.path.join(figs_dir, fname)
-        fig.savefig(output_path, bbox_inches="tight")
-        console.print(
-            f"[green]✓[/green] [dim]Saved correlation heatmap to[/dim] "
-            f"[cyan]{output_path}[/cyan]"
+        return _finalize_figure(
+            fig=fig.fig,
+            axes=list(fig.fig.axes),
+            n_panels=1,
+            save=save,
+            show=show,
+            close=close,
+            figs_dir=figs_dir,
+            filename=fname,
+            save_kwargs={"bbox_inches": "tight"},
+            save_label="correlation heatmap",
+            _fig_owned=True,
         )
-        plt.close(fig.fig)

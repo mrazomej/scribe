@@ -11,17 +11,47 @@ from ._common import console
 from .cache import _build_umap_cache_path
 from .config import _get_config_values
 from .dispatch import _get_predictive_samples_for_plot
+from ._interactive import (
+    _create_or_validate_single_axis,
+    _finalize_figure,
+    _resolve_render_flags,
+)
 
 
-def plot_umap(results, counts, figs_dir, cfg, viz_cfg, force_refit=False):
-    """
-    Plot UMAP projection of experimental and synthetic data.
+def plot_umap(
+    results,
+    counts,
+    figs_dir=None,
+    cfg=None,
+    viz_cfg=None,
+    force_refit=False,
+    *,
+    fig=None,
+    ax=None,
+    axes=None,
+    save=None,
+    show=None,
+    close=None,
+):
+    """Plot UMAP projection of experimental and synthetic data.
 
     The embedding follows a Scanpy-style preprocessing workflow before fitting
     UMAP. The same learned preprocessing is applied to synthetic counts before
     projection.
+
+    Returns
+    -------
+    PlotResult
+        Wrapped result containing the figure, axes, and metadata.
     """
+    _fig_owned = fig is None and ax is None and axes is None
     console.print("[dim]Plotting UMAP projection...[/dim]")
+    save, show, close = _resolve_render_flags(
+        figs_dir=figs_dir,
+        save=save,
+        show=show,
+        close=close,
+    )
 
     umap_opts = viz_cfg.get("umap_opts", {})
 
@@ -336,7 +366,12 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg, force_refit=False):
     synth_alpha = 0.6 if n_ppc_samples == 1 else max(0.05, 0.6 / n_ppc_samples)
     synth_size = 1 if n_ppc_samples == 1 else max(0.2, 1.0 / np.sqrt(n_ppc_samples))
 
-    fig, ax = plt.subplots(figsize=(6, 6))
+    fig, ax = _create_or_validate_single_axis(
+        fig=fig,
+        ax=ax,
+        axes=axes,
+        figsize=(6.0, 6.0),
+    )
 
     ax.scatter(
         umap_embedding[:, 0],
@@ -361,20 +396,29 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg, force_refit=False):
     ax.set_title("UMAP Projection: Experimental vs Synthetic Data")
     ax.legend(loc="best")
 
-    plt.tight_layout()
+    fig.tight_layout()
 
-    output_format = viz_cfg.get("format", "png")
-    config_vals = _get_config_values(cfg, results=results)
-    fname = (
-        f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
-        f"{config_vals['model_type'].replace('_', '-')}_"
-        f"{config_vals['n_components']:02d}components_"
-        f"{config_vals['run_size_token']}_umap.{output_format}"
+    if save:
+        output_format = viz_cfg.get("format", "png")
+        config_vals = _get_config_values(cfg, results=results)
+        fname = (
+            f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
+            f"{config_vals['model_type'].replace('_', '-')}_"
+            f"{config_vals['n_components']:02d}components_"
+            f"{config_vals['run_size_token']}_umap.{output_format}"
+        )
+    else:
+        fname = None
+    return _finalize_figure(
+        fig=fig,
+        axes=[ax],
+        n_panels=1,
+        save=save,
+        show=show,
+        close=close,
+        figs_dir=figs_dir,
+        filename=fname,
+        save_kwargs={"bbox_inches": "tight"},
+        save_label="UMAP plot",
+        _fig_owned=_fig_owned,
     )
-
-    output_path = os.path.join(figs_dir, fname)
-    fig.savefig(output_path, bbox_inches="tight")
-    console.print(
-        f"[green]✓[/green] [dim]Saved UMAP plot to[/dim] [cyan]{output_path}[/cyan]"
-    )
-    plt.close(fig)

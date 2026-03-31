@@ -52,8 +52,39 @@ results = scribe.fit(
 posterior_samples = results.get_posterior_samples()
 log_likelihood = results.log_likelihood()
 
-# Visualize
-scribe.viz.plot_loss_history(results.loss_history)
+# Visualize (CLI-style save to disk)
+scribe.viz.plot_loss(
+    results=results,
+    figs_dir="figs",
+    cfg=cfg,
+    viz_cfg=viz_cfg,
+)
+
+# Visualize interactively in notebooks/scripts
+# All plot functions return a PlotResult which renders a single image
+# via _repr_png_ / _repr_html_ — no duplicate display in notebooks.
+result = scribe.viz.plot_loss(results=results)
+result.fig      # underlying matplotlib Figure
+result.axes     # tuple of Axes used
+result.n_panels # number of logical panels
+
+# Pre-build a figure and pass it in
+import matplotlib.pyplot as plt
+fig = plt.figure(figsize=(7, 3))
+result = scribe.viz.plot_loss(
+    results=results,
+    fig=fig,      # multi-panel functions prefer `fig`
+    save=False,   # do not write files
+)
+
+# Single-panel functions can accept ax=
+fig, ax = plt.subplots(1, 1, figsize=(4, 3))
+result = scribe.viz.plot_ecdf(
+    counts=counts_array,
+    viz_cfg=viz_cfg,
+    ax=ax,
+    save=False,
+)
 ```
 
 ## Unified Inference CLI

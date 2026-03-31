@@ -19,6 +19,11 @@ from ._common import (
     TextColumn,
     TimeElapsedColumn,
 )
+from ._interactive import (
+    _create_or_validate_grid_axes,
+    _finalize_figure,
+    _resolve_render_flags,
+)
 from .config import _get_config_values
 from .dispatch import (
     _get_biological_ppc_samples_for_plot,
@@ -33,7 +38,20 @@ from .ppc_rendering import (
 )
 
 
-def plot_bio_ppc(results, counts, figs_dir, cfg, viz_cfg):
+def plot_bio_ppc(
+    results,
+    counts,
+    figs_dir=None,
+    cfg=None,
+    viz_cfg=None,
+    *,
+    fig=None,
+    axes=None,
+    ax=None,
+    save=None,
+    show=None,
+    close=None,
+):
     """Plot biological posterior predictive checks with denoised data.
 
     Uses the same gene-selection logic as :func:`plot_ppc` (log-spaced
@@ -53,7 +71,23 @@ def plot_bio_ppc(results, counts, figs_dir, cfg, viz_cfg):
         Hydra run configuration.
     viz_cfg : OmegaConf
         Visualization configuration (must contain ``ppc_opts``).
+
+    Returns
+    -------
+    PlotResult
+        Wrapped result containing the figure, axes, and metadata.
     """
+    _fig_owned = fig is None and axes is None
+    save, show, close = _resolve_render_flags(
+        figs_dir=figs_dir,
+        save=save,
+        show=show,
+        close=close,
+    )
+    if ax is not None:
+        raise ValueError(
+            "Biological PPC requires multiple axes; provide `fig` or `axes`."
+        )
     console.print("[dim]Plotting biological PPC (denoised)...[/dim]")
     render_opts = get_ppc_render_options(viz_cfg)
 
@@ -130,10 +164,13 @@ def plot_bio_ppc(results, counts, figs_dir, cfg, viz_cfg):
     # ------------------------------------------------------------------
     # Plotting
     # ------------------------------------------------------------------
-    fig, axes = plt.subplots(
-        n_rows, n_cols, figsize=(2.5 * n_cols, 2.5 * n_rows)
+    fig, _, axes_flat = _create_or_validate_grid_axes(
+        n_rows=n_rows,
+        n_cols=n_cols,
+        fig=fig,
+        axes=axes,
+        figsize=(2.5 * n_cols, 2.5 * n_rows),
     )
-    axes = axes.flatten()
 
     with Progress(
         SpinnerColumn(),
@@ -147,9 +184,9 @@ def plot_bio_ppc(results, counts, figs_dir, cfg, viz_cfg):
             "[cyan]Plotting bio-PPC panels...", total=n_genes_selected
         )
 
-        for i, ax in enumerate(axes):
+        for i, panel_ax in enumerate(axes_flat):
             if i >= n_genes_selected:
-                ax.axis("off")
+                panel_ax.axis("off")
                 continue
 
             gene_idx = selected_idx_sorted[i]
@@ -173,7 +210,7 @@ def plot_bio_ppc(results, counts, figs_dir, cfg, viz_cfg):
             # Bio PPC credible-region bands use the same adaptive style as
             # standard PPC so very large count ranges remain fast to render.
             render_meta = plot_histogram_credible_regions_adaptive(
-                ax,
+                panel_ax,
                 credible_regions,
                 cmap="Greens",
                 alpha=0.5,
@@ -181,7 +218,7 @@ def plot_bio_ppc(results, counts, figs_dir, cfg, viz_cfg):
                 render_opts=render_opts,
             )
             plot_observed_histogram_adaptive(
-                ax,
+                panel_ax,
                 hist_results,
                 max_bin=max_bin,
                 render_meta=render_meta,
@@ -189,37 +226,44 @@ def plot_bio_ppc(results, counts, figs_dir, cfg, viz_cfg):
                 color="black",
             )
 
-            ax.set_xlabel("counts")
-            ax.set_ylabel("frequency")
+            panel_ax.set_xlabel("counts")
+            panel_ax.set_ylabel("frequency")
             denoised_mean = np.mean(denoised_gene)
-            ax.set_title(
+            panel_ax.set_title(
                 rf"$\langle \hat{{X}} \rangle = {denoised_mean:.2f}$",
                 fontsize=8,
             )
 
             progress.update(task, advance=1)
 
-    plt.tight_layout()
+    fig.tight_layout()
     fig.suptitle("Biological PPC (denoised)", y=1.02)
 
     # ------------------------------------------------------------------
     # Save
     # ------------------------------------------------------------------
-    output_format = viz_cfg.get("format", "png")
-    config_vals = _get_config_values(cfg, results=results)
-    fname = (
-        f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
-        f"{config_vals['model_type'].replace('_', '-')}_"
-        f"{config_vals['n_components']:02d}components_"
-        f"{config_vals['run_size_token']}_bio_ppc.{output_format}"
-    )
-
-    output_path = os.path.join(figs_dir, fname)
-    fig.savefig(output_path, bbox_inches="tight")
-    console.print(
-        f"[green]✓[/green] [dim]Saved bio-PPC plot to[/dim] "
-        f"[cyan]{output_path}[/cyan]"
-    )
-    plt.close(fig)
-
+    if save:
+        output_format = viz_cfg.get("format", "png")
+        config_vals = _get_config_values(cfg, results=results)
+        fname = (
+            f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
+            f"{config_vals['model_type'].replace('_', '-')}_"
+            f"{config_vals['n_components']:02d}components_"
+            f"{config_vals['run_size_token']}_bio_ppc.{output_format}"
+        )
+    else:
+        fname = None
     del results_subset, counts_subset, denoised_subset, bio_predictive_samples
+    return _finalize_figure(
+        fig=fig,
+        axes=axes_flat,
+        n_panels=n_rows * n_cols,
+        save=save,
+        show=show,
+        close=close,
+        figs_dir=figs_dir,
+        filename=fname,
+        save_kwargs={"bbox_inches": "tight"},
+        save_label="bio-PPC plot",
+        _fig_owned=_fig_owned,
+    )

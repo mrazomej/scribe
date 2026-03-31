@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 import jax.numpy as jnp
 from jax import random
+import matplotlib.pyplot as plt
 import numpy as np
 from omegaconf import OmegaConf
 from numpyro.infer import SVI, Trace_ELBO
@@ -20,6 +21,7 @@ from scribe.models import get_model_and_guide
 from scribe.models.config import ModelConfig
 from scribe.svi.results import ScribeSVIResults
 from scribe.viz import (
+    PlotResult,
     _build_umap_cache_path,
     _get_config_values,
     _get_predictive_samples_for_plot,
@@ -538,7 +540,9 @@ def test_plot_capture_anchor_saves_output(monkeypatch, tmp_path):
     )
 
     # Mock map extraction so the plot function receives eta values directly.
-    def _fake_get_map_estimates(_results, *, counts, use_mean=True, targets=None):
+    def _fake_get_map_estimates(
+        _results, *, counts, use_mean=True, targets=None
+    ):
         _ = _results
         _ = counts
         _ = use_mean
@@ -575,15 +579,16 @@ def test_plot_capture_anchor_saves_output(monkeypatch, tmp_path):
         }
     )
 
-    output_path = plot_capture_anchor(
+    result = plot_capture_anchor(
         _FakeResults(),
         counts=counts,
         figs_dir=str(tmp_path),
         cfg=cfg,
         viz_cfg=viz_cfg,
     )
-    assert output_path is not None
-    assert output_path.endswith("_capture_anchor.png")
+    assert isinstance(result, PlotResult)
+    assert result.output_path is not None
+    assert result.output_path.endswith("_capture_anchor.png")
 
 
 def test_plot_p_capture_scaling_saves_output(monkeypatch, tmp_path):
@@ -614,7 +619,9 @@ def test_plot_p_capture_scaling_saves_output(monkeypatch, tmp_path):
     p_capture = np.array([0.3, 0.5, 0.4, 0.2, 0.6, 0.55], dtype=float)
 
     # Stub map extraction to provide deterministic p_capture values.
-    def _fake_get_map_estimates(_results, *, counts, use_mean=True, targets=None):
+    def _fake_get_map_estimates(
+        _results, *, counts, use_mean=True, targets=None
+    ):
         _ = _results
         _ = counts
         _ = use_mean
@@ -666,7 +673,7 @@ def test_plot_p_capture_scaling_saves_output(monkeypatch, tmp_path):
         }
     )
 
-    output_path = plot_p_capture_scaling(
+    result = plot_p_capture_scaling(
         _FakeResults(),
         counts=counts,
         figs_dir=str(tmp_path),
@@ -677,8 +684,9 @@ def test_plot_p_capture_scaling_saves_output(monkeypatch, tmp_path):
         dataset_codes=np.array([0, 0, 1, 1, 0, 1]),
         dataset_names=["A", "B"],
     )
-    assert output_path is not None
-    assert output_path.endswith("_p_capture_scaling.png")
+    assert isinstance(result, PlotResult)
+    assert result.output_path is not None
+    assert result.output_path.endswith("_p_capture_scaling.png")
 
 
 def test_ppc_render_options_defaults_are_stable():
@@ -740,7 +748,9 @@ def test_plot_mu_pairwise_saves_output_for_multi_dataset(monkeypatch, tmp_path):
     )
     seen_targets = []
 
-    def _fake_get_map_estimates(_results, *, counts, use_mean=True, targets=None):
+    def _fake_get_map_estimates(
+        _results, *, counts, use_mean=True, targets=None
+    ):
         _ = _results
         _ = counts
         _ = use_mean
@@ -768,7 +778,7 @@ def test_plot_mu_pairwise_saves_output_for_multi_dataset(monkeypatch, tmp_path):
         },
     )
 
-    output_path = plot_mu_pairwise(
+    result = plot_mu_pairwise(
         results=_FakeResults(),
         counts=np.zeros((5, 4), dtype=float),
         figs_dir=str(tmp_path),
@@ -777,8 +787,9 @@ def test_plot_mu_pairwise_saves_output_for_multi_dataset(monkeypatch, tmp_path):
         dataset_names=["A", "B"],
     )
 
-    assert output_path is not None
-    assert output_path.endswith("_mu_pairwise.png")
+    assert isinstance(result, PlotResult)
+    assert result.output_path is not None
+    assert result.output_path.endswith("_mu_pairwise.png")
     assert seen_targets == [["mu"], ["mixing_weights"]]
 
 
@@ -799,7 +810,9 @@ def test_plot_mean_calibration_requests_targeted_map(monkeypatch, tmp_path):
 
     seen_targets = []
 
-    def _fake_get_map_estimates(_results, *, counts, use_mean=True, targets=None):
+    def _fake_get_map_estimates(
+        _results, *, counts, use_mean=True, targets=None
+    ):
         _ = _results
         _ = counts
         _ = use_mean
@@ -825,15 +838,16 @@ def test_plot_mean_calibration_requests_targeted_map(monkeypatch, tmp_path):
         },
     )
 
-    out = mean_calibration_module.plot_mean_calibration(
+    result = mean_calibration_module.plot_mean_calibration(
         _FakeResults(),
         counts=np.array([[1.0, 2.0], [3.0, 1.0]], dtype=float),
         figs_dir=str(tmp_path),
         cfg=OmegaConf.create({}),
         viz_cfg=OmegaConf.create({"format": "png"}),
     )
-    assert out is not None
-    assert out.endswith("_mean_calibration.png")
+    assert isinstance(result, PlotResult)
+    assert result.output_path is not None
+    assert result.output_path.endswith("_mean_calibration.png")
     assert seen_targets == [["r", "p"]]
 
 
@@ -846,7 +860,9 @@ def test_select_divergent_genes_requests_dynamic_target(monkeypatch):
 
         model_config = MagicMock(parameterization="mean_odds")
 
-    def _fake_get_map_estimates(_results, *, counts, use_mean=True, targets=None):
+    def _fake_get_map_estimates(
+        _results, *, counts, use_mean=True, targets=None
+    ):
         _ = _results
         _ = counts
         _ = use_mean
@@ -869,7 +885,9 @@ def test_select_divergent_genes_requests_dynamic_target(monkeypatch):
     assert lfc.shape[0] == selected.shape[0]
 
 
-def test_mixture_composition_requests_mixing_weights_only(monkeypatch, tmp_path):
+def test_mixture_composition_requests_mixing_weights_only(
+    monkeypatch, tmp_path
+):
     """Mixture composition should request only mixing-weight MAP values."""
     import scribe.viz.mixture_ppc as mixture_ppc_module
 
@@ -881,7 +899,9 @@ def test_mixture_composition_requests_mixing_weights_only(monkeypatch, tmp_path)
         n_cells = 2
         _dataset_indices = None
 
-    def _fake_get_map_estimates(_results, *, counts, use_mean=True, targets=None):
+    def _fake_get_map_estimates(
+        _results, *, counts, use_mean=True, targets=None
+    ):
         _ = _results
         _ = counts
         _ = use_mean
@@ -990,3 +1010,187 @@ def test_annotation_ppc_uses_trained_label_map_before_fallback():
     )
     assert resolved["Endothelial"] == 0
     assert resolved["Epithelial"] == 1
+
+
+def test_plot_loss_interactive_with_fig_returns_plot_result(monkeypatch):
+    """Loss plotting should return a PlotResult with 2-panel layout when ``fig`` is provided."""
+    import scribe.viz.loss as loss_module
+
+    # Patch dispatch to avoid constructing heavyweight result objects.
+    monkeypatch.setattr(
+        loss_module,
+        "_get_training_diagnostic_payload",
+        lambda _results: {
+            "plot_kind": "loss",
+            "loss_history": np.array([3.0, 2.0, 1.0]),
+        },
+    )
+
+    fig = plt.figure(figsize=(7.0, 3.0))
+    result = loss_module.plot_loss(
+        results=object(),
+        figs_dir=None,
+        cfg=None,
+        viz_cfg=OmegaConf.create({"format": "png"}),
+        fig=fig,
+        save=False,
+    )
+
+    assert isinstance(result, PlotResult)
+    assert result.fig is fig
+    assert result.n_panels == 2
+    assert len(result.axes) == 2
+    assert result.output_path is None
+    plt.close(fig)
+
+
+def test_plot_ecdf_accepts_single_axis_interactive_and_optional_show(
+    monkeypatch,
+):
+    """ECDF should render on caller axis and return a PlotResult."""
+    import scribe.viz.ecdf as ecdf_module
+
+    # Keep gene selection deterministic so axis assertions stay stable.
+    monkeypatch.setattr(
+        ecdf_module,
+        "_select_genes_simple",
+        lambda counts, n_genes: (
+            np.array([0], dtype=int),
+            np.mean(counts, axis=0),
+        ),
+    )
+    show_calls = {"count": 0}
+    monkeypatch.setattr(
+        ecdf_module.plt,
+        "show",
+        lambda: show_calls.__setitem__("count", show_calls["count"] + 1),
+    )
+
+    fig, ax = plt.subplots(1, 1, figsize=(3.5, 3.0))
+    result = ecdf_module.plot_ecdf(
+        counts=np.array([[1.0, 0.0], [2.0, 1.0], [4.0, 0.0]], dtype=float),
+        figs_dir=None,
+        cfg=None,
+        viz_cfg=OmegaConf.create(
+            {"ecdf_opts": {"n_genes": 1}, "format": "png"}
+        ),
+        ax=ax,
+        save=False,
+        show=True,
+    )
+
+    assert isinstance(result, PlotResult)
+    assert result.fig is fig
+    assert result.axes == (ax,)
+    assert result.output_path is None
+    assert show_calls["count"] == 1
+    plt.close(fig)
+
+
+def test_plot_ppc_rejects_single_axis_for_multi_panel_layout():
+    """PPC should fail fast when callers pass a single axis."""
+    fig, ax = plt.subplots(1, 1, figsize=(4.0, 3.0))
+    with np.testing.assert_raises(ValueError):
+        plot_ppc(
+            results=object(),
+            counts=np.array([[1.0]], dtype=float),
+            figs_dir=None,
+            cfg=None,
+            viz_cfg=OmegaConf.create(
+                {"ppc_opts": {"n_rows": 1, "n_cols": 1, "n_samples": 1}}
+            ),
+            ax=ax,
+            save=False,
+        )
+    plt.close(fig)
+
+
+def test_plot_capture_anchor_validates_axis_count(monkeypatch):
+    """Capture-anchor should explain required panel count for explicit axes."""
+    import scribe.viz.capture_anchor as capture_anchor_module
+
+    monkeypatch.setattr(
+        capture_anchor_module,
+        "_resolve_expected_log_m0",
+        lambda _cfg: 12.0,
+    )
+    monkeypatch.setattr(
+        capture_anchor_module,
+        "_get_map_estimates_for_plot",
+        lambda *_args, **_kwargs: {
+            "eta_capture": np.array([0.2, 0.4], dtype=float)
+        },
+    )
+
+    fig, ax = plt.subplots(1, 1, figsize=(4.0, 3.0))
+    with np.testing.assert_raises(ValueError):
+        plot_capture_anchor(
+            results=object(),
+            counts=np.array([[1.0, 0.0], [2.0, 1.0]], dtype=float),
+            figs_dir=None,
+            cfg=OmegaConf.create({"priors": {"eta_capture": [12.0, 0.1]}}),
+            viz_cfg=OmegaConf.create({"format": "png"}),
+            axes=[ax],
+            save=False,
+        )
+    plt.close(fig)
+
+
+def test_finalize_figure_calls_plt_show_when_requested(monkeypatch):
+    """_finalize_figure should invoke plt.show() when show=True."""
+    import scribe.viz._interactive as interactive_module
+
+    fig, ax = plt.subplots(1, 1, figsize=(3.0, 2.0))
+    shown = {"count": 0}
+
+    monkeypatch.setattr(
+        interactive_module.plt,
+        "show",
+        lambda: shown.__setitem__("count", shown["count"] + 1),
+    )
+
+    result = interactive_module._finalize_figure(
+        fig=fig,
+        axes=[ax],
+        n_panels=1,
+        save=False,
+        show=True,
+        close=True,
+        _fig_owned=False,
+    )
+
+    assert isinstance(result, PlotResult)
+    assert shown["count"] == 1
+
+
+def test_resolve_render_flags_defaults_show_false():
+    """Show should default to False (display is handled by PlotResult repr)."""
+    import scribe.viz._interactive as interactive_module
+
+    save, show, close = interactive_module._resolve_render_flags(
+        figs_dir=None,
+        save=None,
+        show=None,
+        close=None,
+    )
+
+    assert save is False
+    assert show is False
+    assert close is False
+
+
+def test_resolve_render_flags_enables_save_when_figs_dir_set():
+    """Save should auto-enable when figs_dir is provided."""
+    import scribe.viz._interactive as interactive_module
+
+    save, show, close = interactive_module._resolve_render_flags(
+        figs_dir="/tmp/figs",
+        save=None,
+        show=None,
+        close=None,
+    )
+
+    assert save is True
+    assert show is False
+    # close defaults to match save
+    assert close is True
