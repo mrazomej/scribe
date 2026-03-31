@@ -92,6 +92,12 @@ result = scribe.viz.plot_ppc(results, counts)           # sensible defaults
 result = scribe.viz.plot_ppc(results, counts, n_genes=16, n_rows=4)
 result = scribe.viz.plot_ppc(results, counts, n_rows=3, n_cols=3, n_samples=256)
 
+# All plot functions accept figsize=(width, height) to override the default
+# figure dimensions. Useful in interactive sessions to control display size.
+result = scribe.viz.plot_ppc(results, counts, n_genes=9, figsize=(12, 12))
+result = scribe.viz.plot_ecdf(counts=counts_array, figsize=(5, 4))
+result = scribe.viz.plot_loss(results=results, figsize=(10, 4))
+
 # For library / extension authors: PlotContext encapsulates the
 # save/show/close policy and filename construction boilerplate.
 from scribe.viz import PlotContext

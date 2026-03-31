@@ -146,6 +146,7 @@ def plot_capture_anchor(
     *,
     ctx,
     viz_cfg=None,
+    figsize=None,
     fig=None,
     axes=None,
     ax=None,
@@ -203,7 +204,7 @@ def plot_capture_anchor(
         n_cols=2,
         fig=fig,
         axes=axes,
-        figsize=(12.0, 4.5),
+        figsize=figsize or (12.0, 4.5),
     )
     ax1, ax2 = flat_axes
 
@@ -471,6 +472,7 @@ def plot_p_capture_scaling(
     is_multi_dataset=False,
     dataset_codes=None,
     dataset_names=None,
+    figsize=None,
     fig=None,
     axes=None,
     ax=None,
@@ -539,7 +541,7 @@ def plot_p_capture_scaling(
         n_cols=len(panel_specs),
         fig=fig,
         axes=axes,
-        figsize=(6.0 * len(panel_specs), 5.0),
+        figsize=figsize or (6.0 * len(panel_specs), 5.0),
     )
 
     # Global panel: scatter only (no trend line or legend).

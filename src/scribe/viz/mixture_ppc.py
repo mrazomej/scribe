@@ -311,6 +311,7 @@ def _plot_ppc_figure(
     output_format="png",
     cmap="Blues",
     render_opts=None,
+    figsize=None,
     fig=None,
     axes=None,
     save=True,
@@ -351,7 +352,7 @@ def _plot_ppc_figure(
         n_cols=n_cols,
         fig=fig,
         axes=axes,
-        figsize=(2.5 * n_cols, 2.5 * n_rows),
+        figsize=figsize or (2.5 * n_cols, 2.5 * n_rows),
     )
 
     for i, ax in enumerate(axes_flat):
@@ -431,6 +432,7 @@ def _plot_ppc_comparison_figure(
     output_format="png",
     component_cmaps=None,
     render_opts=None,
+    figsize=None,
     fig=None,
     axes=None,
     save=True,
@@ -482,7 +484,7 @@ def _plot_ppc_comparison_figure(
         n_cols=n_cols,
         fig=fig,
         axes=axes,
-        figsize=(2.5 * n_cols, 2.5 * n_rows),
+        figsize=figsize or (2.5 * n_cols, 2.5 * n_rows),
     )
 
     for i, ax in enumerate(axes_flat):
@@ -723,6 +725,7 @@ def plot_mixture_ppc(
     n_cols=None,
     n_genes=None,
     n_samples=None,
+    figsize=None,
     fig=None,
     axes=None,
     ax=None,
@@ -843,6 +846,7 @@ def plot_mixture_ppc(
         fname=f"{base_fname}_mixture_ppc",
         output_format=output_format,
         render_opts=render_opts,
+        figsize=figsize,
         fig=fig,
         axes=axes,
         save=ctx.save,
@@ -894,6 +898,7 @@ def plot_mixture_ppc(
             output_format=output_format,
             cmap=cmap,
             render_opts=render_opts,
+            figsize=figsize,
             save=ctx.save,
             show=ctx.show,
             close=ctx.close,
@@ -915,6 +920,7 @@ def plot_mixture_ppc(
             output_format=output_format,
             component_cmaps=component_cmaps,
             render_opts=render_opts,
+            figsize=figsize,
             save=ctx.save,
             show=ctx.show,
             close=ctx.close,
@@ -1252,6 +1258,7 @@ def plot_mixture_composition(
     ctx,
     viz_cfg=None,
     cell_labels=None,
+    figsize=None,
     fig=None,
     axes=None,
     ax=None,
@@ -1286,7 +1293,7 @@ def plot_mixture_composition(
         fig=fig,
         ax=ax,
         axes=axes,
-        figsize=(max(6.0, 1.1 * n_components + 2.0), 4.0),
+        figsize=figsize or (max(6.0, 1.1 * n_components + 2.0), 4.0),
     )
 
     if prepared["mode"] == "labeled":

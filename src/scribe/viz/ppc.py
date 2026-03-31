@@ -120,6 +120,7 @@ def plot_ppc(
     n_cols=None,
     n_genes=None,
     n_samples=None,
+    figsize=None,
     fig=None,
     axes=None,
     ax=None,
@@ -193,7 +194,7 @@ def plot_ppc(
         n_cols=n_cols,
         fig=fig,
         axes=axes,
-        figsize=(2.5 * n_cols, 2.5 * n_rows),
+        figsize=figsize or (2.5 * n_cols, 2.5 * n_rows),
     )
 
     with Progress(

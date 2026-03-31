@@ -18,6 +18,7 @@ def plot_loss(
     *,
     ctx,
     viz_cfg=None,
+    figsize=None,
     fig=None,
     axes=None,
     ax=None,
@@ -66,7 +67,7 @@ def plot_loss(
             n_cols=2,
             fig=fig,
             axes=axes,
-            figsize=(7.0, 3.0),
+            figsize=figsize or (7.0, 3.0),
         )
         ax_log, ax_linear = flat_axes
         ax_log.plot(payload["loss_history"])
@@ -91,7 +92,7 @@ def plot_loss(
             n_cols=3,
             fig=fig,
             axes=axes,
-            figsize=(11.0, 3.2),
+            figsize=figsize or (11.0, 3.2),
         )
         ax_energy, ax_div, ax_trace = flat_axes
 
