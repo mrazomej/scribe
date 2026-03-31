@@ -16,10 +16,11 @@ from ._common import (
 )
 from ._interactive import (
     _create_or_validate_grid_axes,
+    _resolve_ppc_grid,
     plot_function,
 )
 from .dispatch import _get_predictive_samples_for_plot
-from .gene_selection import _select_genes
+from .gene_selection import _coerce_counts, _select_genes
 from .ppc_rendering import (
     compute_adaptive_max_bin,
     get_ppc_render_options,
@@ -28,7 +29,7 @@ from .ppc_rendering import (
 )
 
 
-def _prepare_ppc_data(results, counts, viz_cfg):
+def _prepare_ppc_data(results, counts, viz_cfg, *, n_rows, n_cols, n_samples):
     """Prepare gene selection and predictive samples for PPC plotting.
 
     Selects genes across expression bins, generates posterior
@@ -41,8 +42,14 @@ def _prepare_ppc_data(results, counts, viz_cfg):
         Fitted model results exposing predictive sampling.
     counts : array-like
         Observed count matrix ``(n_cells, n_genes)``.
-    viz_cfg : object
-        Visualization configuration with ``ppc_opts``.
+    viz_cfg : OmegaConf or None
+        Visualization configuration (used only for render options).
+    n_rows : int
+        Number of grid rows (already resolved).
+    n_cols : int
+        Number of grid columns (already resolved).
+    n_samples : int
+        Number of posterior predictive samples (already resolved).
 
     Returns
     -------
@@ -53,8 +60,6 @@ def _prepare_ppc_data(results, counts, viz_cfg):
     """
     render_opts = get_ppc_render_options(viz_cfg)
 
-    n_rows = viz_cfg.ppc_opts.n_rows
-    n_cols = viz_cfg.ppc_opts.n_cols
     console.print(
         f"[dim]Using n_rows={n_rows}, n_cols={n_cols} for PPC plot (log-spaced binning)[/dim]"
     )
@@ -70,7 +75,6 @@ def _prepare_ppc_data(results, counts, viz_cfg):
 
     results_subset = results[selected_idx]
 
-    n_samples = viz_cfg.ppc_opts.n_samples
     console.print(
         f"[dim]Generating {n_samples} posterior predictive samples...[/dim]"
     )
@@ -83,9 +87,9 @@ def _prepare_ppc_data(results, counts, viz_cfg):
         store_samples=True,
     )
 
-    # results[selected_idx] now preserves the caller-specified gene order, so
-    # subset_positions must map each gene's original index to its position in
-    # selected_idx (not in the old sorted-original order).
+    # results[selected_idx] preserves the caller-specified gene order, so
+    # subset_positions maps each gene's original index to its position in
+    # selected_idx (not the old sorted-original order).
     subset_positions = {
         int(gene_idx): pos for pos, gene_idx in enumerate(selected_idx)
     }
@@ -112,6 +116,10 @@ def plot_ppc(
     *,
     ctx,
     viz_cfg=None,
+    n_rows=None,
+    n_cols=None,
+    n_genes=None,
+    n_samples=None,
     fig=None,
     axes=None,
     ax=None,
@@ -128,8 +136,19 @@ def plot_ppc(
         Output directory used when ``save`` resolves to ``True``.
     cfg : OmegaConf, optional
         Run configuration used for filename generation.
-    viz_cfg : OmegaConf
-        Visualization config containing ``ppc_opts``.
+    viz_cfg : OmegaConf or None
+        Visualization config containing ``ppc_opts``.  Optional in
+        interactive sessions — built-in defaults are used when ``None``.
+    n_rows : int, optional
+        Number of grid rows.  Overrides ``viz_cfg.ppc_opts.n_rows``.
+    n_cols : int, optional
+        Number of grid columns.  Overrides ``viz_cfg.ppc_opts.n_cols``.
+    n_genes : int, optional
+        Total number of genes to display.  When given without ``n_cols``,
+        derives ``n_cols = ceil(n_genes / n_rows)``.
+    n_samples : int, optional
+        Number of posterior predictive samples.  Overrides
+        ``viz_cfg.ppc_opts.n_samples``.
     fig : matplotlib.figure.Figure, optional
         Figure used to create/host the PPC grid.
     axes : array-like of matplotlib.axes.Axes, optional
@@ -145,11 +164,21 @@ def plot_ppc(
         Wrapped result containing the figure, axes, and metadata.
     """
     console.print("[dim]Plotting PPC...[/dim]")
+    counts = _coerce_counts(counts)
     if ax is not None:
         raise ValueError(
             "PPC requires multiple axes; provide `fig` or `axes` instead of `ax`."
         )
-    prep = _prepare_ppc_data(results, counts, viz_cfg)
+    # Resolve grid dimensions: explicit kwargs > viz_cfg > defaults
+    grid = _resolve_ppc_grid(
+        n_rows=n_rows, n_cols=n_cols, n_genes=n_genes,
+        n_samples=n_samples, viz_cfg=viz_cfg,
+    )
+    prep = _prepare_ppc_data(
+        results, counts, viz_cfg,
+        n_rows=grid["n_rows"], n_cols=grid["n_cols"],
+        n_samples=grid["n_samples"],
+    )
     n_rows = prep["n_rows"]
     n_cols = prep["n_cols"]
     selected_idx_sorted = prep["selected_idx_sorted"]

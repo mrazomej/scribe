@@ -21,13 +21,14 @@ from ._common import (
 )
 from ._interactive import (
     _create_or_validate_grid_axes,
+    _resolve_ppc_grid,
     plot_function,
 )
 from .dispatch import (
     _get_biological_ppc_samples_for_plot,
     _get_denoised_counts_for_plot,
 )
-from .gene_selection import _select_genes
+from .gene_selection import _coerce_counts, _select_genes
 from .ppc_rendering import (
     compute_adaptive_max_bin,
     get_ppc_render_options,
@@ -47,6 +48,10 @@ def plot_bio_ppc(
     *,
     ctx,
     viz_cfg=None,
+    n_rows=None,
+    n_cols=None,
+    n_genes=None,
+    n_samples=None,
     fig=None,
     axes=None,
     ax=None,
@@ -64,12 +69,23 @@ def plot_bio_ppc(
         Fitted model results.
     counts : array-like
         Observed UMI count matrix ``(n_cells, n_genes)``.
-    figs_dir : str
+    figs_dir : str, optional
         Directory to save the output figure.
-    cfg : OmegaConf
+    cfg : OmegaConf, optional
         Hydra run configuration.
-    viz_cfg : OmegaConf
-        Visualization configuration (must contain ``ppc_opts``).
+    viz_cfg : OmegaConf or None
+        Visualization configuration.  Optional in interactive sessions —
+        built-in defaults are used when ``None``.
+    n_rows : int, optional
+        Number of grid rows.  Overrides ``viz_cfg.ppc_opts.n_rows``.
+    n_cols : int, optional
+        Number of grid columns.  Overrides ``viz_cfg.ppc_opts.n_cols``.
+    n_genes : int, optional
+        Total number of genes to display.  When given without ``n_cols``,
+        derives ``n_cols = ceil(n_genes / n_rows)``.
+    n_samples : int, optional
+        Number of posterior predictive samples.  Overrides
+        ``viz_cfg.ppc_opts.n_samples``.
 
     Returns
     -------
@@ -81,13 +97,21 @@ def plot_bio_ppc(
             "Biological PPC requires multiple axes; provide `fig` or `axes`."
         )
     console.print("[dim]Plotting biological PPC (denoised)...[/dim]")
+    counts = _coerce_counts(counts)
     render_opts = get_ppc_render_options(viz_cfg)
+
+    # Resolve grid dimensions: explicit kwargs > viz_cfg > defaults
+    grid = _resolve_ppc_grid(
+        n_rows=n_rows, n_cols=n_cols, n_genes=n_genes,
+        n_samples=n_samples, viz_cfg=viz_cfg,
+    )
+    n_rows = grid["n_rows"]
+    n_cols = grid["n_cols"]
+    n_samples = grid["n_samples"]
 
     # ------------------------------------------------------------------
     # Gene selection (identical to standard PPC)
     # ------------------------------------------------------------------
-    n_rows = viz_cfg.ppc_opts.n_rows
-    n_cols = viz_cfg.ppc_opts.n_cols
     console.print(
         f"[dim]Using n_rows={n_rows}, n_cols={n_cols} "
         "for bio-PPC plot (log-spaced binning)[/dim]"
@@ -109,7 +133,6 @@ def plot_bio_ppc(
     # Keep subset ordering aligned with plotting traversal and denoising logic.
     results_subset = results[selected_idx_sorted]
 
-    n_samples = viz_cfg.ppc_opts.n_samples
     rng_key = random.PRNGKey(42)
 
     console.print(
@@ -134,8 +157,9 @@ def plot_bio_ppc(
     console.print("[dim]Denoising observed counts (MAP, sample)...[/dim]")
     key_denoise = random.PRNGKey(99)
     # Denoising only selected genes significantly reduces peak device memory.
+    _bio_opts = viz_cfg.get("bio_ppc_opts", {}) if viz_cfg is not None else {}
     denoise_cell_batch_size = int(
-        viz_cfg.get("bio_ppc_opts", {}).get("denoise_cell_batch_size", 256)
+        _bio_opts.get("denoise_cell_batch_size", 256) if hasattr(_bio_opts, "get") else 256
     )
     # Keep denoising order aligned with ``results_subset`` and plotting.
     counts_subset = counts[:, selected_idx_sorted]

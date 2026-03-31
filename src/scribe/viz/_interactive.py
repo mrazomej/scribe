@@ -88,7 +88,9 @@ class PlotResultCollection:
 
     def __init__(self, results):
         if not results:
-            raise ValueError("PlotResultCollection requires at least one PlotResult.")
+            raise ValueError(
+                "PlotResultCollection requires at least one PlotResult."
+            )
         self._results = list(results)
 
     # ---- Sequence protocol ----
@@ -139,8 +141,10 @@ class PlotResultCollection:
         for r in self._results:
             png = r._repr_png_()
             b64 = base64.b64encode(png).decode("ascii")
-            parts.append(f'<img src="data:image/png;base64,{b64}" '
-                         f'style="display:block;margin:8px 0"/>')
+            parts.append(
+                f'<img src="data:image/png;base64,{b64}" '
+                f'style="display:block;margin:8px 0"/>'
+            )
         return "\n".join(parts)
 
     def _repr_png_(self):
@@ -309,7 +313,10 @@ class PlotContext:
         PlotContext
         """
         save_f, show_f, close_f = _resolve_render_flags(
-            figs_dir, save, show, close,
+            figs_dir,
+            save,
+            show,
+            close,
         )
         fig_owned = fig is None and ax is None and axes is None
         fmt = "png"
@@ -621,6 +628,110 @@ def _finalize_figure(
 
 
 # ---------------------------------------------------------------------------
+# PPC grid resolution
+# ---------------------------------------------------------------------------
+
+# Built-in defaults matching conf/viz/default.yaml so that
+# viz_cfg=None works out of the box in interactive sessions.
+_PPC_DEFAULTS = {
+    "n_rows": 5,
+    "n_cols": 5,
+    "n_samples": 512,
+}
+
+
+def _resolve_ppc_grid(
+    *,
+    n_rows=None,
+    n_cols=None,
+    n_genes=None,
+    n_samples=None,
+    viz_cfg=None,
+    opts_key="ppc_opts",
+    default_rows=None,
+    default_cols=None,
+    default_samples=None,
+):
+    """Resolve PPC grid dimensions from explicit kwargs > viz_cfg > defaults.
+
+    Priority order for each value:
+
+    1. Explicit keyword argument (``n_rows=4``).
+    2. ``viz_cfg.<opts_key>.<key>`` when ``viz_cfg`` is provided.
+    3. Built-in default.
+
+    When ``n_genes`` is given **without** ``n_cols``, the column count is
+    derived as ``ceil(n_genes / n_rows)`` so that the grid has at least
+    ``n_genes`` panels.
+
+    Parameters
+    ----------
+    n_rows, n_cols, n_genes, n_samples : int or None
+        Explicit overrides.
+    viz_cfg : OmegaConf or mapping-like or None
+        Visualization configuration.
+    opts_key : str
+        Key under ``viz_cfg`` holding the options dict
+        (``"ppc_opts"``, ``"mixture_ppc_opts"``, …).
+    default_rows, default_cols, default_samples : int or None
+        Per-call overrides for the built-in defaults.  ``None`` falls
+        through to ``_PPC_DEFAULTS``.
+
+    Returns
+    -------
+    dict
+        ``{"n_rows": int, "n_cols": int, "n_samples": int}``.
+
+    Raises
+    ------
+    ValueError
+        If both ``n_genes`` and ``n_cols`` are given and are inconsistent.
+    """
+    d_rows = (
+        default_rows if default_rows is not None else _PPC_DEFAULTS["n_rows"]
+    )
+    d_cols = (
+        default_cols if default_cols is not None else _PPC_DEFAULTS["n_cols"]
+    )
+    d_samples = (
+        default_samples
+        if default_samples is not None
+        else _PPC_DEFAULTS["n_samples"]
+    )
+
+    # Read from viz_cfg when available
+    def _cfg_get(key, default):
+        if viz_cfg is None:
+            return default
+        opts = viz_cfg.get(opts_key, {}) if hasattr(viz_cfg, "get") else {}
+        return opts.get(key, default) if hasattr(opts, "get") else default
+
+    rows = n_rows if n_rows is not None else int(_cfg_get("n_rows", d_rows))
+    cols = n_cols if n_cols is not None else None
+    samples = (
+        n_samples
+        if n_samples is not None
+        else int(_cfg_get("n_samples", d_samples))
+    )
+
+    import math
+
+    if n_genes is not None:
+        derived_cols = math.ceil(int(n_genes) / rows)
+        if cols is not None and cols != derived_cols:
+            raise ValueError(
+                f"n_genes={n_genes} with n_rows={rows} requires "
+                f"n_cols={derived_cols}, but n_cols={cols} was also given."
+            )
+        cols = derived_cols
+
+    if cols is None:
+        cols = int(_cfg_get("n_cols", d_cols))
+
+    return {"n_rows": int(rows), "n_cols": int(cols), "n_samples": int(samples)}
+
+
+# ---------------------------------------------------------------------------
 # @plot_function decorator
 # ---------------------------------------------------------------------------
 
@@ -797,7 +908,8 @@ def plot_function(*, suffix=None, save_label=None, save_kwargs=None):
                 if resolved_suffix:
                     results_obj = all_args.get("results")
                     fname = ctx.build_filename(
-                        resolved_suffix, results=results_obj,
+                        resolved_suffix,
+                        results=results_obj,
                     )
 
             merged_kw = dict(_default_save_kwargs)
