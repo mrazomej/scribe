@@ -7,7 +7,7 @@ from ._common import console
 from ._interactive import PlotResultCollection, _resolve_ppc_grid, plot_function
 from .config import _get_config_values
 from .dispatch import _get_map_like_predictive_samples_for_plot
-from .gene_selection import _coerce_counts, _select_genes
+from .gene_selection import _coerce_counts, _get_gene_names, _select_genes
 from .mixture_ppc import _plot_ppc_figure
 from .ppc_rendering import get_ppc_render_options
 
@@ -162,6 +162,7 @@ def plot_annotation_ppc(
             f"({n_cells_label} cells)[/dim]"
         )
 
+    gene_names = _get_gene_names(results)
     selected_idx, _mean_counts = _select_genes(counts, n_rows, n_cols)
     n_genes_selected = len(selected_idx)
     console.print(
@@ -255,6 +256,7 @@ def plot_annotation_ppc(
             save=ctx.save,
             show=ctx.show,
             close=ctx.close,
+            gene_names=gene_names,
         )
         figure_payloads.append(fig_payload)
 

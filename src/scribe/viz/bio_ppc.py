@@ -28,7 +28,7 @@ from .dispatch import (
     _get_biological_ppc_samples_for_plot,
     _get_denoised_counts_for_plot,
 )
-from .gene_selection import _coerce_counts, _select_genes
+from .gene_selection import _coerce_counts, _get_gene_names, _select_genes
 from .ppc_rendering import (
     compute_adaptive_max_bin,
     get_ppc_render_options,
@@ -126,6 +126,8 @@ def plot_bio_ppc(
         f"[dim]Selected {n_genes_selected} genes across "
         f"{n_rows} expression bins[/dim]"
     )
+
+    gene_names = _get_gene_names(results)
 
     # ------------------------------------------------------------------
     # Biological PPC samples (gene-subset)
@@ -245,10 +247,10 @@ def plot_bio_ppc(
             panel_ax.set_xlabel("counts")
             panel_ax.set_ylabel("frequency")
             denoised_mean = np.mean(denoised_gene)
-            panel_ax.set_title(
-                rf"$\langle \hat{{X}} \rangle = {denoised_mean:.2f}$",
-                fontsize=8,
-            )
+            title = rf"$\langle \hat{{X}} \rangle = {denoised_mean:.2f}$"
+            if gene_names is not None:
+                title = f"{gene_names[gene_idx]}\n{title}"
+            panel_ax.set_title(title, fontsize=8)
 
             progress.update(task, advance=1)
 

@@ -30,7 +30,7 @@ from .dispatch import (
     _get_map_like_predictive_samples_for_plot,
     _get_cell_assignment_probabilities_for_plot,
 )
-from .gene_selection import _coerce_counts
+from .gene_selection import _coerce_counts, _get_gene_names
 from .ppc_rendering import (
     compute_adaptive_max_bin,
     get_ppc_render_options,
@@ -316,6 +316,7 @@ def _plot_ppc_figure(
     save=True,
     show=None,
     close=True,
+    gene_names=None,
 ):
     """Plot a PPC figure in the standard format."""
     import scribe
@@ -394,10 +395,10 @@ def _plot_ppc_figure(
         ax.set_ylabel("frequency")
         actual_mean_expr = np.mean(counts_np[:, gene_idx])
         mean_expr_formatted = f"{actual_mean_expr:.2f}"
-        ax.set_title(
-            f"$\\langle U \\rangle = {mean_expr_formatted}$",
-            fontsize=8,
-        )
+        panel_title = f"$\\langle U \\rangle = {mean_expr_formatted}$"
+        if gene_names is not None:
+            panel_title = f"{gene_names[gene_idx]}\n{panel_title}"
+        ax.set_title(panel_title, fontsize=8)
 
     fig.tight_layout()
     fig.suptitle(title, y=1.02)
@@ -435,6 +436,7 @@ def _plot_ppc_comparison_figure(
     save=True,
     show=False,
     close=True,
+    gene_names=None,
 ):
     """Plot comparison figure with mixture and all component PPCs overlaid."""
     import scribe
@@ -544,10 +546,10 @@ def _plot_ppc_comparison_figure(
         ax.set_ylabel("frequency")
         actual_mean_expr = np.mean(counts_np[:, gene_idx])
         mean_expr_formatted = f"{actual_mean_expr:.2f}"
-        ax.set_title(
-            f"$\\langle U \\rangle = {mean_expr_formatted}$",
-            fontsize=8,
-        )
+        panel_title = f"$\\langle U \\rangle = {mean_expr_formatted}$"
+        if gene_names is not None:
+            panel_title = f"{gene_names[gene_idx]}\n{panel_title}"
+        ax.set_title(panel_title, fontsize=8)
 
     fig.tight_layout()
     fig.suptitle("PPC Comparison: Mixture vs Components", y=1.02)
@@ -811,6 +813,7 @@ def plot_mixture_ppc(
     assignments = prepared["assignments"]
     component_samples_list = prepared["component_samples_list"]
     render_opts = prepared["render_opts"]
+    gene_names = _get_gene_names(results)
     mixture_ppc_opts = (
         viz_cfg.get("mixture_ppc_opts", {}) if viz_cfg is not None else {}
     )
@@ -845,6 +848,7 @@ def plot_mixture_ppc(
         save=ctx.save,
         show=ctx.show,
         close=ctx.close,
+        gene_names=gene_names,
     )
     figure_payloads.append(fig_payload)
 
@@ -893,6 +897,7 @@ def plot_mixture_ppc(
             save=ctx.save,
             show=ctx.show,
             close=ctx.close,
+            gene_names=gene_names,
         )
         figure_payloads.append(fig_payload)
 
@@ -913,6 +918,7 @@ def plot_mixture_ppc(
             save=ctx.save,
             show=ctx.show,
             close=ctx.close,
+            gene_names=gene_names,
         )
         figure_payloads.append(fig_payload)
         n_plots = 2 + n_components

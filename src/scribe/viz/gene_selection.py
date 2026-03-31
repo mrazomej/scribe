@@ -3,6 +3,26 @@
 import numpy as np
 
 
+def _get_gene_names(results):
+    """Extract gene names from a results object when available.
+
+    Parameters
+    ----------
+    results : object
+        Fitted model results.  Gene names are read from
+        ``results.var.index`` when the ``var`` DataFrame is present.
+
+    Returns
+    -------
+    pandas.Index or None
+        Gene names index, or ``None`` when unavailable.
+    """
+    var = getattr(results, "var", None)
+    if var is not None and hasattr(var, "index"):
+        return var.index
+    return None
+
+
 def _coerce_counts(counts):
     """Coerce counts to a dense 2-D numpy array.
 
