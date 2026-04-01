@@ -426,6 +426,7 @@ def _plot_ppc_comparison_figure(
     mixture_samples,
     component_samples_list,
     counts,
+    assignments,
     selected_idx,
     n_rows,
     n_cols,
@@ -441,8 +442,24 @@ def _plot_ppc_comparison_figure(
     show=False,
     close=True,
     gene_names=None,
+    show_component_observed=True,
+    show_mixture_overlay=False,
 ):
-    """Plot comparison figure with mixture and all component PPCs overlaid."""
+    """Plot comparison figure with mixture and component PPC overlays.
+
+    Parameters
+    ----------
+    assignments : array-like or None
+        MAP component assignment per cell. When provided and
+        ``show_component_observed`` is ``True``, per-component observed
+        histograms are overlaid with colors matching component PPC bands.
+    show_component_observed : bool, optional
+        Whether to draw assignment-filtered observed histograms for each
+        component.
+    show_mixture_overlay : bool, optional
+        Whether to draw the mixture-level PPC credible regions and global
+        observed histogram overlay (blue + black). Defaults to ``False``.
+    """
     import scribe
 
     if render_opts is None:
@@ -466,8 +483,16 @@ def _plot_ppc_comparison_figure(
 
     n_genes_selected = len(selected_idx)
     n_components = len(component_samples_list)
+    if show_mixture_overlay and mixture_samples is None:
+        raise ValueError(
+            "Comparison mixture overlay requested but `mixture_samples` is "
+            "missing."
+        )
 
     counts_np = np.array(counts)
+    assignments_np = (
+        np.asarray(assignments, dtype=int) if assignments is not None else None
+    )
     selected_means = np.array(
         [np.mean(counts_np[:, idx]) for idx in selected_idx]
     )
@@ -503,12 +528,16 @@ def _plot_ppc_comparison_figure(
         hist_results = np.histogram(true_counts, bins=obs_bins, density=True)
         y_max = np.max(hist_results[0]) * 1.1
 
-        mixture_cr = scribe.stats.compute_histogram_credible_regions(
-            mixture_samples[:, :, subset_pos],
-            credible_regions=[95, 68, 50],
-            max_bin=x_max,
-        )
+        if show_mixture_overlay:
+            mixture_cr = scribe.stats.compute_histogram_credible_regions(
+                mixture_samples[:, :, subset_pos],
+                credible_regions=[95, 68, 50],
+                max_bin=x_max,
+            )
+        else:
+            mixture_cr = None
 
+        render_meta = None
         for k, comp_samples in enumerate(component_samples_list):
             comp_cr = scribe.stats.compute_histogram_credible_regions(
                 comp_samples[:, :, subset_pos],
@@ -516,7 +545,7 @@ def _plot_ppc_comparison_figure(
                 max_bin=x_max,
             )
             cmap = component_cmaps[k % len(component_cmaps)]
-            plot_histogram_credible_regions_adaptive(
+            comp_render_meta = plot_histogram_credible_regions_adaptive(
                 ax,
                 comp_cr,
                 cmap=cmap,
@@ -524,24 +553,54 @@ def _plot_ppc_comparison_figure(
                 max_bin=x_max,
                 render_opts=render_opts,
             )
+            if render_meta is None:
+                # Reuse first component render metadata for observed overlays.
+                render_meta = comp_render_meta
 
-        render_meta = plot_histogram_credible_regions_adaptive(
-            ax,
-            mixture_cr,
-            cmap="Blues",
-            alpha=0.3,
-            max_bin=x_max,
-            render_opts=render_opts,
-        )
-        plot_observed_histogram_adaptive(
-            ax,
-            hist_results,
-            max_bin=x_max,
-            render_meta=render_meta,
-            label="data",
-            color="black",
-            linewidth=1.5,
-        )
+        if show_mixture_overlay and mixture_cr is not None:
+            render_meta = plot_histogram_credible_regions_adaptive(
+                ax,
+                mixture_cr,
+                cmap="Blues",
+                alpha=0.3,
+                max_bin=x_max,
+                render_opts=render_opts,
+            )
+        elif render_meta is None:
+            # Safe fallback for pathological cases with no PPC metadata.
+            render_meta = {"mode": "stairs"}
+
+        if show_component_observed and assignments_np is not None:
+            for k in range(n_components):
+                cell_mask_k = assignments_np == k
+                if not np.any(cell_mask_k):
+                    continue
+                component_true_counts = counts_np[cell_mask_k, gene_idx]
+                component_hist = np.histogram(
+                    component_true_counts, bins=obs_bins, density=True
+                )
+                y_max = max(y_max, float(np.max(component_hist[0])) * 1.1)
+                cmap = plt.get_cmap(component_cmaps[k % len(component_cmaps)])
+                component_color = cmap(0.8)
+                plot_observed_histogram_adaptive(
+                    ax,
+                    component_hist,
+                    max_bin=x_max,
+                    render_meta=render_meta,
+                    label=f"data comp{k+1}",
+                    color=component_color,
+                    linewidth=1.2,
+                )
+        if show_mixture_overlay:
+            plot_observed_histogram_adaptive(
+                ax,
+                hist_results,
+                max_bin=x_max,
+                render_meta=render_meta,
+                label="data",
+                color="black",
+                linewidth=1.5,
+            )
 
         ax.set_xlim(0, x_max)
         ax.set_ylim(0, y_max)
@@ -581,6 +640,7 @@ def _prepare_mixture_ppc_data(
     n_rows,
     n_cols,
     n_samples,
+    need_mixture_samples,
     need_component_samples,
     need_assignments,
 ):
@@ -604,6 +664,8 @@ def _prepare_mixture_ppc_data(
         Number of grid columns (already resolved).
     n_samples : int
         Number of posterior predictive samples (already resolved).
+    need_mixture_samples : bool
+        Whether mixture-level PPC samples are required for selected outputs.
     need_component_samples : bool
         Whether per-component PPC samples are required for selected outputs.
     need_assignments : bool
@@ -619,7 +681,7 @@ def _prepare_mixture_ppc_data(
         - ``n_samples``: sample count
         - ``top_gene_indices``: selected gene indices
         - ``top_lfc``: log-fold-changes
-        - ``mixture_samples_np``: mixture PPC samples array
+        - ``mixture_samples_np``: mixture PPC samples array or ``None``
         - ``assignments``: MAP cell-to-component assignments or ``None``
         - ``component_samples_list``: list of per-component sample arrays
         - ``render_opts``: PPC rendering options
@@ -667,22 +729,24 @@ def _prepare_mixture_ppc_data(
 
     rng_key = random.PRNGKey(42)
 
-    console.print(
-        f"[dim]Generating mixture PPC samples ({n_samples} samples)...[/dim]"
-    )
-    rng_key, subkey = random.split(rng_key)
-    mixture_samples = _get_map_like_predictive_samples_for_plot(
-        results_subset,
-        rng_key=subkey,
-        n_samples=n_samples,
-        cell_batch_size=500,
-        store_samples=False,
-        verbose=True,
-        counts=counts,
-    )
-
-    mixture_samples_np = np.array(mixture_samples)
-    del mixture_samples
+    if need_mixture_samples:
+        console.print(
+            f"[dim]Generating mixture PPC samples ({n_samples} samples)...[/dim]"
+        )
+        rng_key, subkey = random.split(rng_key)
+        mixture_samples = _get_map_like_predictive_samples_for_plot(
+            results_subset,
+            rng_key=subkey,
+            n_samples=n_samples,
+            cell_batch_size=500,
+            store_samples=False,
+            verbose=True,
+            counts=counts,
+        )
+        mixture_samples_np = np.array(mixture_samples)
+        del mixture_samples
+    else:
+        mixture_samples_np = None
 
     component_samples_list = []
     if need_assignments:
@@ -929,6 +993,7 @@ def plot_mixture_ppc(
     show=None,
     close=None,
     plots=None,
+    comparison_include_mixture_overlay=None,
 ):
     """Plot PPC for mixture models showing genes with highest divergence.
 
@@ -967,6 +1032,11 @@ def plot_mixture_ppc(
         When ``None``, defaults are context-aware:
         interactive sessions render ``"mixture"`` only, while save mode and
         non-interactive sessions render ``"all"``.
+    comparison_include_mixture_overlay : bool or None, optional
+        Controls whether comparison plots include the mixture overlay
+        (blue credible region + black observed histogram). Defaults to
+        ``False`` when not specified. When ``None``, falls back to
+        ``viz_cfg.mixture_ppc_opts.comparison_include_mixture_overlay``.
 
     Returns
     -------
@@ -1021,8 +1091,27 @@ def plot_mixture_ppc(
     selected_component_indices = set(selection["include_component_indices"])
     include_mixture = selection["include_mixture"]
     include_comparison = selection["include_comparison"]
+    mixture_ppc_opts = (
+        viz_cfg.get("mixture_ppc_opts", {}) if viz_cfg is not None else {}
+    )
+    show_component_observed_in_comparison = bool(
+        mixture_ppc_opts.get("comparison_show_component_observed", True)
+    )
+    if comparison_include_mixture_overlay is None:
+        show_mixture_overlay_in_comparison = bool(
+            mixture_ppc_opts.get("comparison_include_mixture_overlay", False)
+        )
+    else:
+        show_mixture_overlay_in_comparison = bool(
+            comparison_include_mixture_overlay
+        )
     need_component_samples = bool(selected_component_indices) or include_comparison
-    need_assignments = bool(selected_component_indices)
+    need_assignments = bool(selected_component_indices) or (
+        include_comparison and show_component_observed_in_comparison
+    )
+    need_mixture_samples = include_mixture or (
+        include_comparison and show_mixture_overlay_in_comparison
+    )
 
     prepared = _prepare_mixture_ppc_data(
         results,
@@ -1031,6 +1120,7 @@ def plot_mixture_ppc(
         n_rows=grid["n_rows"],
         n_cols=grid["n_cols"],
         n_samples=grid["n_samples"],
+        need_mixture_samples=need_mixture_samples,
         need_component_samples=need_component_samples,
         need_assignments=need_assignments,
     )
@@ -1046,9 +1136,6 @@ def plot_mixture_ppc(
     component_samples_list = prepared["component_samples_list"]
     render_opts = prepared["render_opts"]
     gene_names = _get_gene_names(results)
-    mixture_ppc_opts = (
-        viz_cfg.get("mixture_ppc_opts", {}) if viz_cfg is not None else {}
-    )
 
     if ctx.save:
         config_vals = _get_config_values(cfg, results=results)
@@ -1159,6 +1246,7 @@ def plot_mixture_ppc(
             mixture_samples=mixture_samples_np,
             component_samples_list=all_component_samples,
             counts=counts,
+            assignments=assignments,
             selected_idx=top_gene_indices,
             n_rows=n_rows,
             n_cols=n_cols,
@@ -1174,6 +1262,8 @@ def plot_mixture_ppc(
             show=ctx.show,
             close=ctx.close,
             gene_names=gene_names,
+            show_component_observed=show_component_observed_in_comparison,
+            show_mixture_overlay=show_mixture_overlay_in_comparison,
         )
         figure_payloads.append(fig_payload)
     elif include_comparison and n_components > 2:

@@ -1104,6 +1104,261 @@ def test_mixture_ppc_wrappers_forward_expected_plots(monkeypatch):
     assert seen == ["mixture", ["component:1", "component:3"], "comparison"]
 
 
+def test_plot_mixture_ppc_comparison_requests_assignments_by_default(
+    monkeypatch,
+):
+    """Comparison mode should request assignments for observed overlays."""
+    import scribe.viz.mixture_ppc as mixture_ppc_module
+
+    class _FakeResults:
+        """Minimal mixture result stub for comparison wiring tests."""
+
+        n_components = 2
+
+    prepared_kwargs = {}
+    comparison_kwargs = {}
+
+    def _fake_prepare(*_args, **kwargs):
+        prepared_kwargs.update(kwargs)
+        return {
+            "n_components": 2,
+            "n_rows": 1,
+            "n_cols": 1,
+            "n_samples": 8,
+            "top_gene_indices": np.array([0], dtype=int),
+            "top_lfc": np.array([1.0], dtype=float),
+            "mixture_samples_np": np.ones((2, 2, 1), dtype=float),
+            "assignments": np.array([0, 1], dtype=int),
+            "component_samples_list": [
+                np.ones((2, 2, 1), dtype=float),
+                np.ones((2, 2, 1), dtype=float),
+            ],
+            "render_opts": {},
+        }
+
+    def _fake_plot_comparison(**kwargs):
+        comparison_kwargs.update(kwargs)
+        fig, ax = plt.subplots(1, 1)
+        return PlotResult(fig=fig, axes=(ax,), n_panels=1, output_path=None)
+
+    monkeypatch.setattr(
+        mixture_ppc_module, "_prepare_mixture_ppc_data", _fake_prepare
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module,
+        "_plot_ppc_comparison_figure",
+        _fake_plot_comparison,
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module, "_get_gene_names", lambda _results: ["g0"]
+    )
+
+    out = mixture_ppc_module.plot_mixture_ppc(
+        _FakeResults(),
+        counts=np.array([[1.0], [2.0]], dtype=float),
+        viz_cfg=None,
+        plots="comparison",
+    )
+
+    assert len(out) == 1
+    assert prepared_kwargs["need_assignments"] is True
+    assert prepared_kwargs["need_mixture_samples"] is False
+    assert comparison_kwargs["show_component_observed"] is True
+    assert comparison_kwargs["show_mixture_overlay"] is False
+    assert comparison_kwargs["assignments"] is not None
+
+
+def test_plot_mixture_ppc_comparison_can_disable_component_observed_overlay(
+    monkeypatch,
+):
+    """Comparison overlay toggle should disable assignment dependency."""
+    import scribe.viz.mixture_ppc as mixture_ppc_module
+
+    class _FakeResults:
+        """Minimal mixture result stub for comparison wiring tests."""
+
+        n_components = 2
+
+    prepared_kwargs = {}
+    comparison_kwargs = {}
+
+    def _fake_prepare(*_args, **kwargs):
+        prepared_kwargs.update(kwargs)
+        return {
+            "n_components": 2,
+            "n_rows": 1,
+            "n_cols": 1,
+            "n_samples": 8,
+            "top_gene_indices": np.array([0], dtype=int),
+            "top_lfc": np.array([1.0], dtype=float),
+            "mixture_samples_np": np.ones((2, 2, 1), dtype=float),
+            "assignments": None,
+            "component_samples_list": [
+                np.ones((2, 2, 1), dtype=float),
+                np.ones((2, 2, 1), dtype=float),
+            ],
+            "render_opts": {},
+        }
+
+    def _fake_plot_comparison(**kwargs):
+        comparison_kwargs.update(kwargs)
+        fig, ax = plt.subplots(1, 1)
+        return PlotResult(fig=fig, axes=(ax,), n_panels=1, output_path=None)
+
+    monkeypatch.setattr(
+        mixture_ppc_module, "_prepare_mixture_ppc_data", _fake_prepare
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module,
+        "_plot_ppc_comparison_figure",
+        _fake_plot_comparison,
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module, "_get_gene_names", lambda _results: ["g0"]
+    )
+
+    out = mixture_ppc_module.plot_mixture_ppc(
+        _FakeResults(),
+        counts=np.array([[1.0], [2.0]], dtype=float),
+        viz_cfg=OmegaConf.create(
+            {"mixture_ppc_opts": {"comparison_show_component_observed": False}}
+        ),
+        plots="comparison",
+    )
+
+    assert len(out) == 1
+    assert prepared_kwargs["need_assignments"] is False
+    assert prepared_kwargs["need_mixture_samples"] is False
+    assert comparison_kwargs["show_component_observed"] is False
+    assert comparison_kwargs["show_mixture_overlay"] is False
+    assert comparison_kwargs["assignments"] is None
+
+
+def test_plot_mixture_ppc_comparison_can_enable_mixture_overlay(monkeypatch):
+    """Comparison overlay flag should request and forward mixture samples."""
+    import scribe.viz.mixture_ppc as mixture_ppc_module
+
+    class _FakeResults:
+        """Minimal mixture result stub for comparison wiring tests."""
+
+        n_components = 2
+
+    prepared_kwargs = {}
+    comparison_kwargs = {}
+
+    def _fake_prepare(*_args, **kwargs):
+        prepared_kwargs.update(kwargs)
+        return {
+            "n_components": 2,
+            "n_rows": 1,
+            "n_cols": 1,
+            "n_samples": 8,
+            "top_gene_indices": np.array([0], dtype=int),
+            "top_lfc": np.array([1.0], dtype=float),
+            "mixture_samples_np": np.ones((2, 2, 1), dtype=float),
+            "assignments": np.array([0, 1], dtype=int),
+            "component_samples_list": [
+                np.ones((2, 2, 1), dtype=float),
+                np.ones((2, 2, 1), dtype=float),
+            ],
+            "render_opts": {},
+        }
+
+    def _fake_plot_comparison(**kwargs):
+        comparison_kwargs.update(kwargs)
+        fig, ax = plt.subplots(1, 1)
+        return PlotResult(fig=fig, axes=(ax,), n_panels=1, output_path=None)
+
+    monkeypatch.setattr(
+        mixture_ppc_module, "_prepare_mixture_ppc_data", _fake_prepare
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module,
+        "_plot_ppc_comparison_figure",
+        _fake_plot_comparison,
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module, "_get_gene_names", lambda _results: ["g0"]
+    )
+
+    out = mixture_ppc_module.plot_mixture_ppc(
+        _FakeResults(),
+        counts=np.array([[1.0], [2.0]], dtype=float),
+        viz_cfg=OmegaConf.create(
+            {"mixture_ppc_opts": {"comparison_include_mixture_overlay": True}}
+        ),
+        plots="comparison",
+    )
+
+    assert len(out) == 1
+    assert prepared_kwargs["need_mixture_samples"] is True
+    assert comparison_kwargs["show_mixture_overlay"] is True
+
+
+def test_plot_mixture_ppc_comparison_overlay_kwarg_overrides_config(
+    monkeypatch,
+):
+    """Direct kwarg should override config for comparison mixture overlay."""
+    import scribe.viz.mixture_ppc as mixture_ppc_module
+
+    class _FakeResults:
+        """Minimal mixture result stub for comparison wiring tests."""
+
+        n_components = 2
+
+    prepared_kwargs = {}
+    comparison_kwargs = {}
+
+    def _fake_prepare(*_args, **kwargs):
+        prepared_kwargs.update(kwargs)
+        return {
+            "n_components": 2,
+            "n_rows": 1,
+            "n_cols": 1,
+            "n_samples": 8,
+            "top_gene_indices": np.array([0], dtype=int),
+            "top_lfc": np.array([1.0], dtype=float),
+            "mixture_samples_np": np.ones((2, 2, 1), dtype=float),
+            "assignments": np.array([0, 1], dtype=int),
+            "component_samples_list": [
+                np.ones((2, 2, 1), dtype=float),
+                np.ones((2, 2, 1), dtype=float),
+            ],
+            "render_opts": {},
+        }
+
+    def _fake_plot_comparison(**kwargs):
+        comparison_kwargs.update(kwargs)
+        fig, ax = plt.subplots(1, 1)
+        return PlotResult(fig=fig, axes=(ax,), n_panels=1, output_path=None)
+
+    monkeypatch.setattr(
+        mixture_ppc_module, "_prepare_mixture_ppc_data", _fake_prepare
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module,
+        "_plot_ppc_comparison_figure",
+        _fake_plot_comparison,
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module, "_get_gene_names", lambda _results: ["g0"]
+    )
+
+    out = mixture_ppc_module.plot_mixture_ppc(
+        _FakeResults(),
+        counts=np.array([[1.0], [2.0]], dtype=float),
+        viz_cfg=OmegaConf.create(
+            {"mixture_ppc_opts": {"comparison_include_mixture_overlay": False}}
+        ),
+        plots="comparison",
+        comparison_include_mixture_overlay=True,
+    )
+
+    assert len(out) == 1
+    assert prepared_kwargs["need_mixture_samples"] is True
+    assert comparison_kwargs["show_mixture_overlay"] is True
+
+
 def test_prepare_mixture_ppc_data_skips_unneeded_heavy_steps(monkeypatch):
     """Overview-only prep should skip assignments and component sampling."""
     import scribe.viz.mixture_ppc as mixture_ppc_module
@@ -1154,12 +1409,72 @@ def test_prepare_mixture_ppc_data_skips_unneeded_heavy_steps(monkeypatch):
         n_rows=1,
         n_cols=1,
         n_samples=2,
+        need_mixture_samples=True,
         need_component_samples=False,
         need_assignments=False,
     )
 
     assert out["assignments"] is None
     assert out["component_samples_list"] == []
+
+
+def test_prepare_mixture_ppc_data_skips_mixture_samples_for_components_only(
+    monkeypatch,
+):
+    """Component-only prep should skip mixture-level predictive sampling."""
+    import scribe.viz.mixture_ppc as mixture_ppc_module
+
+    class _FakeResults:
+        """Minimal result stub supporting gene-subset indexing."""
+
+        n_components = 2
+        n_cells = 3
+        model_config = MagicMock()
+
+        def __getitem__(self, _idx):
+            return self
+
+    def _fake_select_divergent(*_args, **_kwargs):
+        return np.array([0], dtype=int), np.array([1.0], dtype=float)
+
+    monkeypatch.setattr(
+        mixture_ppc_module, "_select_divergent_genes", _fake_select_divergent
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module,
+        "_get_map_like_predictive_samples_for_plot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("Mixture samples should not be computed.")
+        ),
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module,
+        "_get_cell_assignment_probabilities_for_plot",
+        lambda *_args, **_kwargs: np.array(
+            [[0.9, 0.1], [0.1, 0.9], [0.6, 0.4]], dtype=float
+        ),
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module,
+        "_get_component_ppc_samples",
+        lambda *_args, **_kwargs: np.ones((2, 3, 1), dtype=float),
+    )
+
+    out = mixture_ppc_module._prepare_mixture_ppc_data(
+        _FakeResults(),
+        counts=np.array([[1.0], [2.0], [3.0]], dtype=float),
+        viz_cfg=None,
+        n_rows=1,
+        n_cols=1,
+        n_samples=2,
+        need_mixture_samples=False,
+        need_component_samples=True,
+        need_assignments=True,
+    )
+
+    assert out["mixture_samples_np"] is None
+    assert out["assignments"] is not None
+    assert len(out["component_samples_list"]) == 2
 
 
 def test_mixture_composition_requests_mixing_weights_only(
