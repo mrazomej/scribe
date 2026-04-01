@@ -121,6 +121,26 @@ collection.output_paths  # list of saved paths (or Nones)
 for result in collection:
     display(result)      # render each figure individually
 
+# Mixture PPC plot selection:
+# - Interactive default now renders only the overview figure.
+# - Use `plots="all"` to recover full legacy output.
+overview = scribe.viz.plot_mixture_ppc(results=results, counts=counts)
+all_plots = scribe.viz.plot_mixture_ppc(
+    results=results, counts=counts, plots="all"
+)
+component2 = scribe.viz.plot_mixture_ppc(
+    results=results, counts=counts, plots="component:2"
+)
+
+# Convenience wrappers for targeted interactive workflows.
+overview = scribe.viz.plot_mixture_ppc_overview(results=results, counts=counts)
+components = scribe.viz.plot_mixture_ppc_components(
+    results=results, counts=counts, component_indices=[1, 2]
+)
+comparison = scribe.viz.plot_mixture_ppc_comparison(
+    results=results, counts=counts
+)
+
 # For new plot functions, use the @plot_function decorator to
 # eliminate boilerplate. The decorator handles PlotContext creation,
 # filename construction, saving, and finalization automatically.

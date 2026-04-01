@@ -36,6 +36,9 @@ from scribe.viz import (
     plot_loss,
     plot_mixture_composition,
     plot_mixture_ppc,
+    plot_mixture_ppc_comparison,
+    plot_mixture_ppc_components,
+    plot_mixture_ppc_overview,
     plot_mu_pairwise,
     plot_ppc,
     plot_umap,
@@ -87,6 +90,9 @@ def test_package_root_exports_expected_symbols():
     assert callable(plot_umap)
     assert callable(plot_correlation_heatmap)
     assert callable(plot_mixture_ppc)
+    assert callable(plot_mixture_ppc_overview)
+    assert callable(plot_mixture_ppc_components)
+    assert callable(plot_mixture_ppc_comparison)
     assert callable(plot_mixture_composition)
     assert callable(plot_annotation_ppc)
     assert callable(plot_capture_anchor)
@@ -888,6 +894,214 @@ def test_select_divergent_genes_requests_dynamic_target(monkeypatch):
     )
     assert selected.shape[0] <= 2
     assert lfc.shape[0] == selected.shape[0]
+
+
+def test_plot_mixture_ppc_interactive_default_renders_overview_only(
+    monkeypatch,
+):
+    """Interactive default should emit only the overview figure."""
+    import scribe.viz.mixture_ppc as mixture_ppc_module
+
+    class _FakeResults:
+        """Minimal mixture result stub for figure selection tests."""
+
+        n_components = 2
+
+    def _fake_prepare(*_args, **_kwargs):
+        return {
+            "n_components": 2,
+            "n_rows": 1,
+            "n_cols": 1,
+            "n_samples": 8,
+            "top_gene_indices": np.array([0], dtype=int),
+            "top_lfc": np.array([1.0], dtype=float),
+            "mixture_samples_np": np.ones((2, 2, 1), dtype=float),
+            "assignments": np.array([0, 1], dtype=int),
+            "component_samples_list": [
+                np.ones((2, 2, 1), dtype=float),
+                np.ones((2, 2, 1), dtype=float),
+            ],
+            "render_opts": {},
+        }
+
+    calls = []
+
+    def _fake_plot_ppc_figure(**kwargs):
+        calls.append(kwargs["title"])
+        fig, ax = plt.subplots(1, 1)
+        return PlotResult(fig=fig, axes=(ax,), n_panels=1, output_path=None)
+
+    def _fake_plot_comparison(**_kwargs):
+        fig, ax = plt.subplots(1, 1)
+        return PlotResult(fig=fig, axes=(ax,), n_panels=1, output_path=None)
+
+    monkeypatch.setattr(mixture_ppc_module, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr(
+        mixture_ppc_module, "_prepare_mixture_ppc_data", _fake_prepare
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module, "_plot_ppc_figure", _fake_plot_ppc_figure
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module, "_plot_ppc_comparison_figure", _fake_plot_comparison
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module, "_get_gene_names", lambda _results: ["g0"]
+    )
+
+    out = mixture_ppc_module.plot_mixture_ppc(
+        _FakeResults(),
+        counts=np.array([[1.0], [2.0]], dtype=float),
+        viz_cfg=None,
+    )
+
+    assert len(out) == 1
+    assert calls == ["Mixture PPC (High CV Genes)"]
+
+
+def test_plot_mixture_ppc_explicit_all_keeps_full_output(monkeypatch):
+    """Explicit ``plots='all'`` should preserve legacy full output."""
+    import scribe.viz.mixture_ppc as mixture_ppc_module
+
+    class _FakeResults:
+        """Minimal mixture result stub for figure selection tests."""
+
+        n_components = 2
+
+    def _fake_prepare(*_args, **_kwargs):
+        return {
+            "n_components": 2,
+            "n_rows": 1,
+            "n_cols": 1,
+            "n_samples": 8,
+            "top_gene_indices": np.array([0], dtype=int),
+            "top_lfc": np.array([1.0], dtype=float),
+            "mixture_samples_np": np.ones((2, 2, 1), dtype=float),
+            "assignments": np.array([0, 1], dtype=int),
+            "component_samples_list": [
+                np.ones((2, 2, 1), dtype=float),
+                np.ones((2, 2, 1), dtype=float),
+            ],
+            "render_opts": {},
+        }
+
+    ppc_calls = []
+    comparison_calls = []
+
+    def _fake_plot_ppc_figure(**kwargs):
+        ppc_calls.append(kwargs["title"])
+        fig, ax = plt.subplots(1, 1)
+        return PlotResult(fig=fig, axes=(ax,), n_panels=1, output_path=None)
+
+    def _fake_plot_comparison(**_kwargs):
+        comparison_calls.append("comparison")
+        fig, ax = plt.subplots(1, 1)
+        return PlotResult(fig=fig, axes=(ax,), n_panels=1, output_path=None)
+
+    monkeypatch.setattr(mixture_ppc_module, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr(
+        mixture_ppc_module, "_prepare_mixture_ppc_data", _fake_prepare
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module, "_plot_ppc_figure", _fake_plot_ppc_figure
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module, "_plot_ppc_comparison_figure", _fake_plot_comparison
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module, "_get_gene_names", lambda _results: ["g0"]
+    )
+
+    out = mixture_ppc_module.plot_mixture_ppc(
+        _FakeResults(),
+        counts=np.array([[1.0], [2.0]], dtype=float),
+        viz_cfg=None,
+        plots="all",
+    )
+
+    assert len(out) == 4
+    assert len(ppc_calls) == 3
+    assert len(comparison_calls) == 1
+
+
+def test_plot_mixture_ppc_supports_component_subset_selection(monkeypatch):
+    """Component selectors should render only requested component plots."""
+    import scribe.viz.mixture_ppc as mixture_ppc_module
+
+    class _FakeResults:
+        """Minimal mixture result stub for figure selection tests."""
+
+        n_components = 3
+
+    def _fake_prepare(*_args, **_kwargs):
+        return {
+            "n_components": 3,
+            "n_rows": 1,
+            "n_cols": 1,
+            "n_samples": 8,
+            "top_gene_indices": np.array([0], dtype=int),
+            "top_lfc": np.array([1.0], dtype=float),
+            "mixture_samples_np": np.ones((2, 3, 1), dtype=float),
+            "assignments": np.array([0, 1, 2], dtype=int),
+            "component_samples_list": [
+                np.ones((2, 3, 1), dtype=float),
+                np.ones((2, 3, 1), dtype=float),
+                np.ones((2, 3, 1), dtype=float),
+            ],
+            "render_opts": {},
+        }
+
+    titles = []
+
+    def _fake_plot_ppc_figure(**kwargs):
+        titles.append(kwargs["title"])
+        fig, ax = plt.subplots(1, 1)
+        return PlotResult(fig=fig, axes=(ax,), n_panels=1, output_path=None)
+
+    monkeypatch.setattr(mixture_ppc_module, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr(
+        mixture_ppc_module, "_prepare_mixture_ppc_data", _fake_prepare
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module, "_plot_ppc_figure", _fake_plot_ppc_figure
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module, "_plot_ppc_comparison_figure", lambda **_kwargs: None
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module, "_get_gene_names", lambda _results: ["g0"]
+    )
+
+    out = mixture_ppc_module.plot_mixture_ppc(
+        _FakeResults(),
+        counts=np.array([[1.0], [2.0], [3.0]], dtype=float),
+        viz_cfg=None,
+        plots=["component:2"],
+    )
+
+    assert len(out) == 1
+    assert titles[0].startswith("Component 2 PPC")
+
+
+def test_mixture_ppc_wrappers_forward_expected_plots(monkeypatch):
+    """Convenience wrappers should forward stable selector values."""
+    import scribe.viz.mixture_ppc as mixture_ppc_module
+
+    seen = []
+
+    def _fake_plot_mixture_ppc(*_args, **kwargs):
+        seen.append(kwargs.get("plots"))
+        return "ok"
+
+    monkeypatch.setattr(mixture_ppc_module, "plot_mixture_ppc", _fake_plot_mixture_ppc)
+
+    _ = mixture_ppc_module.plot_mixture_ppc_overview("r", "c")
+    _ = mixture_ppc_module.plot_mixture_ppc_components(
+        "r", "c", component_indices=[1, 3]
+    )
+    _ = mixture_ppc_module.plot_mixture_ppc_comparison("r", "c")
+
+    assert seen == ["mixture", ["component:1", "component:3"], "comparison"]
 
 
 def test_mixture_composition_requests_mixing_weights_only(
