@@ -1104,6 +1104,64 @@ def test_mixture_ppc_wrappers_forward_expected_plots(monkeypatch):
     assert seen == ["mixture", ["component:1", "component:3"], "comparison"]
 
 
+def test_prepare_mixture_ppc_data_skips_unneeded_heavy_steps(monkeypatch):
+    """Overview-only prep should skip assignments and component sampling."""
+    import scribe.viz.mixture_ppc as mixture_ppc_module
+
+    class _FakeResults:
+        """Minimal result stub supporting gene-subset indexing."""
+
+        n_components = 2
+        n_cells = 3
+        model_config = MagicMock()
+
+        def __getitem__(self, _idx):
+            return self
+
+    def _fake_select_divergent(*_args, **_kwargs):
+        return np.array([0], dtype=int), np.array([1.0], dtype=float)
+
+    def _fake_predictive(*_args, **_kwargs):
+        return np.ones((2, 3, 1), dtype=float)
+
+    monkeypatch.setattr(
+        mixture_ppc_module, "_select_divergent_genes", _fake_select_divergent
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module,
+        "_get_map_like_predictive_samples_for_plot",
+        _fake_predictive,
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module,
+        "_get_cell_assignment_probabilities_for_plot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("Assignments should not be computed.")
+        ),
+    )
+    monkeypatch.setattr(
+        mixture_ppc_module,
+        "_get_component_ppc_samples",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("Component samples should not be computed.")
+        ),
+    )
+
+    out = mixture_ppc_module._prepare_mixture_ppc_data(
+        _FakeResults(),
+        counts=np.array([[1.0], [2.0], [3.0]], dtype=float),
+        viz_cfg=None,
+        n_rows=1,
+        n_cols=1,
+        n_samples=2,
+        need_component_samples=False,
+        need_assignments=False,
+    )
+
+    assert out["assignments"] is None
+    assert out["component_samples_list"] == []
+
+
 def test_mixture_composition_requests_mixing_weights_only(
     monkeypatch, tmp_path
 ):
