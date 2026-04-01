@@ -1378,6 +1378,7 @@ class ModelConfig(BaseModel):
                 "uses_biology_informed_capture",
                 "is_hierarchical",
                 "is_multi_dataset",
+                "dataset_mixing_enabled",
                 "active_parameters",
             },
         )
