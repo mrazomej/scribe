@@ -100,6 +100,11 @@ result = scribe.viz.plot_ppc(results, counts)           # sensible defaults
 result = scribe.viz.plot_ppc(results, counts, n_genes=16, n_rows=4)
 result = scribe.viz.plot_ppc(results, counts, n_rows=3, n_cols=3, n_samples=256)
 
+# UMAP overlay uses the same detected+HVG feature space for both fitting and
+# synthetic PPC projection, so runtime scales with `hvg_n_top_genes` instead
+# of all detected genes.
+result = scribe.viz.plot_umap(results, counts)
+
 # All plot functions accept figsize=(width, height) to override the default
 # figure dimensions. Useful in interactive sessions to control display size.
 result = scribe.viz.plot_ppc(results, counts, n_genes=9, figsize=(12, 12))
