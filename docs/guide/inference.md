@@ -102,7 +102,7 @@ results = scribe.fit(adata, guide_rank=8)
 
 # Joint low-rank across parameter groups
 results = scribe.fit(
-    adata, guide_rank=8, joint_params=["r", "p"],
+    adata, guide_rank=8, joint_params="biological",
 )
 
 # Normalizing flow guide for non-Gaussian posteriors

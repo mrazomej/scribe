@@ -36,7 +36,8 @@ model, guide = create_model_from_params(
         p_capture=MeanFieldGuide(),       # or AmortizedGuide(amortizer=...)
     ),
     n_components=None,                    # int for mixture models
-    mixture_params=None,                  # Which params are mixture-specific
+    mixture_params="all",                 # "all", "biological", "mean", "prob",
+                                          # "gate", or explicit list
     priors=None,                          # e.g. {"p": (1,1), "mu": (0,1)}
     guides=None,                          # Guide hyperparameters
 )

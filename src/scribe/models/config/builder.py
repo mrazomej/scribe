@@ -291,7 +291,7 @@ class ModelConfigBuilder:
     def as_mixture(
         self,
         n_components: int,
-        mixture_params: Optional[List[str]] = None,
+        mixture_params: Optional[Union[str, List[str]]] = None,
     ) -> "ModelConfigBuilder":
         """Configure as mixture model.
 
@@ -299,10 +299,12 @@ class ModelConfigBuilder:
         ----------
         n_components : int
             Number of mixture components (must be >= 2)
-        mixture_params : List[str], optional
-            List of parameter names that should be mixture-specific.
-            If None, all sampled core parameters for the selected
-            parameterization will be mixture-specific by default.
+        mixture_params : str or List[str], optional
+            Parameter names that should be mixture-specific, or a
+            semantic shorthand (``"all"``, ``"biological"``, ``"mean"``,
+            ``"prob"``, ``"gate"``).  If None, all sampled core
+            parameters for the selected parameterization will be
+            mixture-specific by default.
         """
         if n_components < 2:
             raise ValueError("n_components must be >= 2 for mixture models")
@@ -313,16 +315,16 @@ class ModelConfigBuilder:
     # --------------------------------------------------------------------------
 
     def with_joint_params(
-        self, joint_params: List[str]
+        self, joint_params: Union[str, List[str]]
     ) -> "ModelConfigBuilder":
         """Specify gene-specific parameters to model jointly.
 
         Parameters
         ----------
-        joint_params : List[str]
+        joint_params : str or List[str]
             Parameter names to group into a JointLowRankGuide
-            (e.g. ``["mu", "phi"]``). Requires ``guide_rank`` to be
-            set so the rank is known.
+            (e.g. ``["mu", "phi"]`` or ``"biological"``).  Requires
+            ``guide_rank`` to be set so the rank is known.
         """
         self._joint_params = joint_params
         return self
@@ -330,16 +332,16 @@ class ModelConfigBuilder:
     # --------------------------------------------------------------------------
 
     def with_dense_params(
-        self, dense_params: List[str]
+        self, dense_params: Union[str, List[str]]
     ) -> "ModelConfigBuilder":
         """Specify which joint params get full cross-gene low-rank coupling.
 
         Parameters
         ----------
-        dense_params : List[str]
+        dense_params : str or List[str]
             Subset of ``joint_params`` that receive full cross-gene
-            low-rank factors. Non-dense joint params get gene-local
-            conditioning only.
+            low-rank factors (e.g. ``["mu"]`` or ``"mean"``).  Non-dense
+            joint params get gene-local conditioning only.
         """
         self._dense_params = dense_params
         return self

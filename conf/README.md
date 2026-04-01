@@ -96,7 +96,7 @@ hierarchical_gate: false # Gene-specific gate hierarchical prior (ZI models only
 
 # Mixture model configuration
 n_components: null    # null = single component, int >= 2 for mixture
-mixture_params: null  # which params are component-specific
+mixture_params: "all" # "all", "biological", "mean", "prob", "gate", or explicit list
 
 # Guide configuration
 guide_rank: null      # null = mean-field, int = low-rank (mutually exclusive with guide_flow)

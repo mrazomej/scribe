@@ -699,3 +699,119 @@ def _rename_suffixed_key(key: str) -> str:
         if prefix in DESCRIPTIVE_NAMES:
             return f"{DESCRIPTIVE_NAMES[prefix]}_{suffix}"
     return key
+
+
+# ==============================================================================
+# Parameter Shorthand Resolution
+# ==============================================================================
+
+# Recognised string shorthands for mixture_params, joint_params, dense_params.
+# These resolve to concrete ``List[str]`` (or ``None``) based on the chosen
+# parameterization and model type, so users never need to memorise which
+# Greek-letter names belong to which parameterization.
+PARAM_SHORTHANDS = frozenset({"all", "biological", "mean", "prob", "gate"})
+
+
+def resolve_param_shorthand(
+    value: "Union[str, List[str], None]",
+    param_strategy: "Parameterization",
+    base_model: str,
+) -> "Optional[List[str]]":
+    """Resolve a parameter shorthand to a concrete list of internal names.
+
+    Accepts the semantic shorthands ``"all"``, ``"biological"``, ``"mean"``,
+    ``"prob"``, and ``"gate"`` and expands them using the parameterization
+    strategy's ``core_parameters`` and ``gene_param_name``.  Explicit
+    ``List[str]`` values pass through with descriptive-name aliases resolved
+    (e.g. ``"expression"`` -> ``"mu"``).
+
+    Parameters
+    ----------
+    value : str, List[str], or None
+        The user-provided value.  ``None`` passes through unchanged.
+    param_strategy : Parameterization
+        The active parameterization strategy instance (provides
+        ``core_parameters`` and ``gene_param_name``).
+    base_model : str
+        The base model type (``"nbdm"``, ``"zinb"``, ``"nbvcp"``,
+        ``"zinbvcp"``).  Needed to determine whether ``"gate"`` is valid.
+
+    Returns
+    -------
+    Optional[List[str]]
+        Resolved list of internal parameter names, or ``None`` when the
+        shorthand ``"all"`` is used (the existing factory logic already
+        treats ``None`` as "all parameters are mixture/joint-specific").
+
+    Raises
+    ------
+    ValueError
+        If a shorthand references an unavailable parameter (e.g.
+        ``"gate"`` for a non-ZINB model) or if a list element is not a
+        recognised internal or descriptive name.
+
+    Examples
+    --------
+    >>> from scribe.models.parameterizations import PARAMETERIZATIONS
+    >>> strat = PARAMETERIZATIONS["mean_odds"]
+    >>> resolve_param_shorthand("biological", strat, "zinb")
+    ['phi', 'mu']
+    >>> resolve_param_shorthand("mean", strat, "zinb")
+    ['mu']
+    >>> resolve_param_shorthand("all", strat, "zinb")  # returns None
+    >>> resolve_param_shorthand(["expression", "odds"], strat, "zinb")
+    ['mu', 'phi']
+    """
+    if value is None:
+        return None
+
+    # --- String shorthand resolution ---
+    if isinstance(value, str):
+        shorthand = value.lower()
+        core = list(param_strategy.core_parameters)
+        gene_param = param_strategy.gene_param_name
+        is_zinb = base_model in ("zinb", "zinbvcp")
+
+        # Derive the "prob" parameter: the core param that is NOT the
+        # gene-level (mean/dispersion) parameter.
+        prob_param = [p for p in core if p != gene_param]
+
+        if shorthand == "all":
+            # None signals "everything" to the existing factory logic
+            # (build_param_specs defaults to all core, build_gate_spec
+            # defaults to is_mixture=True, etc.)
+            return None
+
+        if shorthand == "biological":
+            return core
+
+        if shorthand == "mean":
+            return [gene_param]
+
+        if shorthand == "prob":
+            return prob_param
+
+        if shorthand == "gate":
+            if not is_zinb:
+                raise ValueError(
+                    f"Shorthand 'gate' is only valid for ZINB models "
+                    f"(zinb, zinbvcp), but the current model is "
+                    f"'{base_model}'."
+                )
+            return ["gate"]
+
+        raise ValueError(
+            f"Unknown parameter shorthand '{value}'. "
+            f"Valid shorthands are: {sorted(PARAM_SHORTHANDS)}. "
+            f"You can also pass an explicit list of parameter names."
+        )
+
+    # --- Explicit list: resolve descriptive aliases ---
+    resolved: "List[str]" = []
+    for name in value:
+        internal = _DESCRIPTIVE_TO_INTERNAL.get(name)
+        if internal is not None:
+            resolved.append(internal)
+        else:
+            resolved.append(name)
+    return resolved

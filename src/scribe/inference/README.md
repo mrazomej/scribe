@@ -189,21 +189,24 @@ Build ModelConfig from preset parameters.
   These three flags stabilize the conditioner MLP at initialization for
   high-dimensional flows (e.g. 28K genes). Disable with `false` for full manual
   control. See the [flows README](../flows/README.md#conditioner-stability-high-dimensional-inputs).
-- `joint_params`: Optional list of gene-specific parameter names. When set, the
-  listed parameters share a single JointLowRankGuide (with `guide_rank`) or
-  JointNormalizingFlowGuide (with `guide_flow`) that captures cross-parameter
-  correlations. Requires `guide_rank` or `guide_flow` to be set.
+- `joint_params`: Gene-specific parameter names to model jointly. Accepts
+  shorthands (`"all"`, `"biological"`, `"mean"`, `"prob"`, `"gate"`) or an
+  explicit list. When set, the listed parameters share a single
+  JointLowRankGuide (with `guide_rank`) or JointNormalizingFlowGuide (with
+  `guide_flow`) that captures cross-parameter correlations. Requires
+  `guide_rank` or `guide_flow` to be set.
   Example: `["mu", "phi"]`
   - For horseshoe-enabled parameters (for example `gate` with
     `horseshoe_gate=True`), joint modeling is applied to the corresponding
     NCP raw latent (for example `gate_raw`) so model/guide sample sites remain
     consistent.
-- `dense_params`: Optional subset of `joint_params`. When set, dense params get
-  full cross-gene low-rank coupling (low-rank) or full flow treatment (flow);
+- `dense_params`: Subset of `joint_params` for full cross-gene coupling.
+  Accepts same shorthands as `joint_params`. When set, dense params get full
+  cross-gene low-rank coupling (low-rank) or full flow treatment (flow);
   non-dense params get per-gene regression on dense params plus per-gene
   Cholesky (low-rank) or context-conditioned Normal (flow). When `None` or
   equal to `joint_params`, the standard fully-joint guide is used. Example:
-  `joint_params=["mu", "phi", "gate"], dense_params=["mu"]`.
+  `joint_params="all", dense_params="mean"`.
 - `n_components`: Number of mixture components
 - `priors`: Dictionary of prior parameters
 - `capture_amortization`: Optional `AmortizationConfig` or dict. When provided,

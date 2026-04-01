@@ -133,9 +133,11 @@ expression_anchor_sigma: 0.3
 n_components: null
 
 # mixture_params:
-# - null: default set
-# - list: explicit component-specific parameter list
-mixture_params: null
+# - "all": every param incl. gate (default)
+# - "biological": core NB params only (excl. gate)
+# - "mean" / "prob" / "gate": single-parameter shorthands
+# - list: explicit parameter names, e.g. [mu, phi]
+mixture_params: "all"
 
 # -----------------------------------------------------------------------------
 # Variational guide controls
@@ -145,7 +147,8 @@ mixture_params: null
 # - int : low-rank guide
 guide_rank: null
 
-# joint guide controls for grouped parameter dependencies
+# joint guide controls for grouped parameter dependencies.
+# Accepts same shorthands as mixture_params, or an explicit list.
 joint_params: null
 dense_params: null
 

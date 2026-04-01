@@ -249,7 +249,7 @@ results = scribe.fit(
     adata,
     zero_inflation=True,
     n_components=3,
-    mixture_params=["r"],
+    mixture_params="mean",  # only expression-level param varies by component
 )
 ```
 

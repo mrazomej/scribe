@@ -58,12 +58,15 @@ The primary interface for creating configurations. Provides fluent methods:
   models only, requires unconstrained)
 - `.with_capture_priors(organism, eta_capture, mu_eta, capture_scaling_prior)`:
   Configure biology-informed capture prior (VCP models)
-- `.as_mixture(n_components, mixture_params)`: Configure as mixture
+- `.as_mixture(n_components, mixture_params)`: Configure as mixture.
+  `mixture_params` accepts shorthands (`"all"`, `"biological"`, `"mean"`,
+  `"prob"`, `"gate"`) or an explicit list
 - `.with_guide_families(guide_families)`: Set per-parameter guide families
 - `.with_joint_params(joint_params)`: Specify parameters to model jointly via
-  JointLowRankGuide
+  JointLowRankGuide. Accepts same shorthands as `mixture_params`
 - `.with_dense_params(dense_params)`: Subset of `joint_params` for full
-  cross-gene coupling (structured joint guide); non-dense params stay gene-local
+  cross-gene coupling (structured joint guide); non-dense params stay gene-local.
+  Accepts same shorthands
 - `.with_priors(**priors)`: Set prior parameters
 - `.with_guides(**guides)`: Set guide parameters
 - `.with_vae(**vae_params)`: Configure VAE parameters

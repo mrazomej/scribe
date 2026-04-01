@@ -107,23 +107,29 @@ expression_anchor_sigma: 0.3    # Log-scale sigma (0.1=tight, 0.3=moderate, 1.0=
 # of components is automatically inferred from the unique labels.
 n_components: null
 
-# Which parameters should be component-specific in mixture models
-# null = default (all sampled core params), or explicit list like ["r", "gate"]
-mixture_params: null
+# Which parameters should be component-specific in mixture models.
+# Accepts a shorthand string or an explicit list of internal parameter names.
+# Shorthands: "all" (every param incl. gate), "biological" (core NB params
+# only), "mean" (expression-level param), "prob" (probability/odds param),
+# "gate" (zero-inflation only, ZINB models).
+# Explicit list example: [mu, phi]
+mixture_params: "all"
 
 # Guide configuration
 # null = mean-field, integer = low-rank with that rank
 guide_rank: null
 
 # Joint low-rank guide: model listed gene-specific parameters jointly,
-# capturing cross-parameter correlations (e.g. mu-phi).
-# Requires guide_rank to be set. Example: [mu, phi]
+# capturing cross-parameter correlations.
+# Accepts the same shorthands as mixture_params, or an explicit list.
+# Requires guide_rank to be set. Example: "biological" or [mu, phi]
 joint_params: null
 
 # Structured joint guide: subset of joint_params that get full cross-gene
 # low-rank coupling. Non-dense params get only gene-local conditioning.
+# Accepts the same shorthands as mixture_params, or an explicit list.
 # null = all joint_params are dense (standard JointLowRankGuide).
-# Example: dense_params: [mu] with joint_params: [mu, phi, gate]
+# Example: dense_params: "mean" with joint_params: "biological"
 dense_params: null
 
 # Flow-based guide (mutually exclusive with guide_rank)

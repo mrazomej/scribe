@@ -236,8 +236,8 @@ can capture correlations between parameters.
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `guide_rank` | `None` | Rank for low-rank guide on gene-specific parameters. `None` = mean-field (fully factorized) |
-| `joint_params` | `None` | Parameter names to model jointly (e.g. `["mu", "phi"]`). Works with `guide_rank` or `guide_flow` |
-| `dense_params` | `None` | Subset of `joint_params` that get full cross-gene coupling. Others get gene-local conditioning |
+| `joint_params` | `None` | Parameter names to model jointly. Accepts shorthands (`"all"`, `"biological"`, `"mean"`, `"prob"`, `"gate"`) or an explicit list (e.g. `["mu", "phi"]`). Works with `guide_rank` or `guide_flow` |
+| `dense_params` | `None` | Subset of `joint_params` that get full cross-gene coupling. Accepts same shorthands or explicit list. Others get gene-local conditioning |
 
 ```python
 # Low-rank guide (captures gene-gene correlations)
@@ -510,7 +510,7 @@ gene-specific parameters. Each cell is softly assigned to a component.
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `n_components` | `None` | Number of mixture components. `None` = single component (no mixture). Must be >= 2 if set |
-| `mixture_params` | `None` | Which parameters are component-specific. `None` = all core parameters. Example: `["r"]` makes only \(r\) component-specific |
+| `mixture_params` | `"all"` | Which parameters are component-specific. Accepts shorthands: `"all"` (every param incl. gate), `"biological"` (core NB params only), `"mean"`, `"prob"`, `"gate"`, or an explicit list like `["r"]` |
 
 ```python
 # Discover 5 cell types
@@ -719,7 +719,7 @@ corresponding keyword arguments.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `model_config` | `None` | `ModelConfig` object. Overrides flat `model`, `variable_capture`, `zero_inflation`, `parameterization`, `unconstrained`, `n_components`, `mixture_params`, `guide_rank`, and `priors` |
+| `model_config` | `None` | `ModelConfig` object. Overrides flat `model`, `variable_capture`, `zero_inflation`, `parameterization`, `unconstrained`, `n_components`, `mixture_params`, `joint_params`, `dense_params`, `guide_rank`, and `priors` |
 | `inference_config` | `None` | `InferenceConfig` object. Overrides `inference_method`, `n_steps`, `batch_size`, `stable_update`, `log_progress_lines`, `n_samples`, `n_warmup`, and `n_chains` |
 
 ```python
@@ -932,7 +932,7 @@ All `scribe.fit()` parameters at a glance, grouped by function:
     | Parameter | Default | Type |
     |-----------|---------|------|
     | `n_components` | `None` | `int` |
-    | `mixture_params` | `None` | `list[str]` |
+    | `mixture_params` | `"all"` | `str` or `list[str]` |
 
     **Annotation priors**
 
@@ -964,8 +964,8 @@ All `scribe.fit()` parameters at a glance, grouped by function:
     | Parameter | Default | Type |
     |-----------|---------|------|
     | `guide_rank` | `None` | `int` |
-    | `joint_params` | `None` | `list[str]` |
-    | `dense_params` | `None` | `list[str]` |
+    | `joint_params` | `None` | `str` or `list[str]` |
+    | `dense_params` | `None` | `str` or `list[str]` |
     | `priors` | `None` | `dict` |
 
     **Guide (Normalizing Flow)**
