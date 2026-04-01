@@ -262,10 +262,10 @@ def fit(
     overdispersion: str = "none",
     overdispersion_prior: str = "horseshoe",
     n_components: Optional[int] = None,
-    mixture_params: Optional[List[str]] = None,
+    mixture_params: Optional[Union[str, List[str]]] = "all",
     guide_rank: Optional[int] = None,
-    joint_params: Optional[List[str]] = None,
-    dense_params: Optional[List[str]] = None,
+    joint_params: Optional[Union[str, List[str]]] = None,
+    dense_params: Optional[Union[str, List[str]]] = None,
     # Flow-based guide (mutually exclusive with guide_rank)
     guide_flow: Optional[str] = None,
     guide_flow_num_layers: int = 4,
@@ -442,34 +442,76 @@ def fit(
         automatically inferred from the number of unique non-null
         annotation labels.
 
-    mixture_params : List[str], optional
-        Which parameters should be component-specific in mixture models. If None
-        and n_components is set, defaults to all sampled core parameters for
-        the chosen parameterization.
-        Example: ["r"] makes only r component-specific while p is shared.
+    mixture_params : str or List[str], default="all"
+        Which parameters should vary across mixture components. Accepts
+        either a **semantic shorthand** string or an explicit list of
+        internal parameter names.
+
+        **Semantic shorthands** (resolved automatically based on the
+        chosen ``parameterization`` and ``model``):
+
+        - ``"all"`` (default) -- every parameter becomes
+          component-specific, including the zero-inflation gate for
+          ZINB models.  This is the most common setting.
+        - ``"biological"`` -- only the core negative-binomial
+          parameters vary across components (e.g. ``["p", "r"]`` for
+          canonical, ``["phi", "mu"]`` for mean_odds).  The gate is
+          shared across components, which is useful when zero-inflation
+          is a technical artifact rather than biologically meaningful.
+        - ``"mean"`` -- only the expression-level parameter varies
+          (``"mu"`` for mean_prob/mean_odds, ``"r"`` for canonical).
+        - ``"prob"`` -- only the probability/odds parameter varies
+          (``"p"`` for canonical/mean_prob, ``"phi"`` for mean_odds).
+        - ``"gate"`` -- only the zero-inflation gate varies (ZINB
+          models only).
+
+        **Explicit list** (power-user interface): pass a list of
+        internal names like ``["mu", "phi"]``.  Descriptive aliases are
+        also accepted (e.g. ``["expression", "odds"]``).
+
+        Set to ``None`` to disable mixture behaviour even when
+        ``n_components`` is set (all parameters shared).
 
     guide_rank : int, optional
         Rank for low-rank variational guide on gene-specific parameters. If None
         (default), uses mean-field guide (fully factorized). Low-rank guides can
         capture gene correlations but use more memory.
 
-    joint_params : List[str], optional
-        List of gene-specific parameter names to model jointly via a
-        JointLowRankGuide (e.g., ``["mu", "phi"]``). Parameters in this
-        list share a single low-rank covariance structure that captures
-        cross-parameter correlations. Requires ``guide_rank`` to be set.
-        Typically used with ``prob_prior='gaussian'`` where multiple
-        parameters become gene-specific.
+    joint_params : str or List[str], optional
+        Gene-specific parameters to model jointly via a single low-rank
+        covariance structure that captures cross-parameter correlations.
+        Requires ``guide_rank`` (or ``guide_flow``) to be set.
 
-    dense_params : List[str], optional
+        Accepts the same **semantic shorthands** as ``mixture_params``:
+
+        - ``"all"`` -- all core parameters plus gate (if ZINB).
+        - ``"biological"`` -- core parameters only, excluding gate.
+        - ``"mean"`` -- only the expression-level parameter.
+        - ``"prob"`` -- only the probability/odds parameter.
+        - ``"gate"`` -- only the zero-inflation gate (ZINB only).
+
+        Or pass an explicit list (e.g. ``["mu", "phi"]``).  Descriptive
+        aliases like ``"expression"`` are also accepted in lists.
+
+        Default is ``None`` (no joint modelling; each parameter gets an
+        independent guide).
+
+    dense_params : str or List[str], optional
         Subset of ``joint_params`` that receive full cross-gene low-rank
-        coupling. Non-dense joint params get only gene-local conditioning
-        on dense params (per-gene regression + per-gene Cholesky among
-        non-dense params). When ``None`` or equal to ``joint_params``,
-        the standard fully-dense JointLowRankGuide is used.
-        Example: ``joint_params=["mu", "phi", "gate"],
-        dense_params=["mu"]`` gives ``mu`` cross-gene correlations while
-        ``phi`` and ``gate`` only couple to ``mu`` at the same gene.
+        coupling.  Non-dense joint params get only gene-local
+        conditioning (per-gene regression + per-gene Cholesky among
+        non-dense params).
+
+        Accepts the same **semantic shorthands** as ``mixture_params``
+        (``"all"``, ``"biological"``, ``"mean"``, ``"prob"``,
+        ``"gate"``), or an explicit list.
+
+        When ``None`` (default) or equal to ``joint_params``, the
+        standard fully-dense JointLowRankGuide is used.
+
+        Example: ``joint_params="all", dense_params="mean"`` gives the
+        expression parameter cross-gene correlations while the
+        probability and gate parameters only couple to it locally.
 
     guide_flow : str, optional
         Normalizing-flow type for the variational guide. Mutually exclusive

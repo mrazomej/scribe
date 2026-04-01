@@ -40,6 +40,7 @@ from ..models.config import (
     ModelConfig,
     ModelConfigBuilder,
 )
+from ..models.config.parameter_mapping import resolve_param_shorthand
 from ..models.parameterizations import PARAMETERIZATIONS
 
 
@@ -76,8 +77,8 @@ def build_config_from_preset(
     overdispersion: str = "none",
     overdispersion_prior: str = "horseshoe",
     guide_rank: Optional[int] = None,
-    joint_params: Optional[List[str]] = None,
-    dense_params: Optional[List[str]] = None,
+    joint_params: Optional[Union[str, List[str]]] = None,
+    dense_params: Optional[Union[str, List[str]]] = None,
     # Flow-based guide (mutually exclusive with guide_rank)
     guide_flow: Optional[str] = None,
     guide_flow_num_layers: int = 4,
@@ -92,7 +93,7 @@ def build_config_from_preset(
     guide_flow_loft: bool = True,
     guide_flow_log_det_f64: bool = False,
     n_components: Optional[int] = None,
-    mixture_params: Optional[List[str]] = None,
+    mixture_params: Optional[Union[str, List[str]]] = "all",
     priors: Optional[Dict[str, Any]] = None,
     # VAE architecture options (when inference_method="vae")
     vae_latent_dim: int = 10,
@@ -305,6 +306,15 @@ def build_config_from_preset(
     param_strategy = PARAMETERIZATIONS[parameterization]
     gene_param_name = param_strategy.gene_param_name  # "r" or "mu"
 
+    # Resolve semantic shorthands ("all", "biological", "mean", etc.) to
+    # concrete lists of internal parameter names before they are consumed
+    # by the guide-family and builder logic below.
+    mixture_params = resolve_param_shorthand(
+        mixture_params, param_strategy, model
+    )
+    joint_params = resolve_param_shorthand(joint_params, param_strategy, model)
+    dense_params = resolve_param_shorthand(dense_params, param_strategy, model)
+
     # Handle low-rank guide for parameters.  joint_params may include
     # both gene-specific and scalar parameters (heterogeneous dims).
     if guide_rank is not None:
@@ -317,9 +327,8 @@ def build_config_from_preset(
             # structured block where only dense params get cross-gene
             # low-rank factors and non-dense params get gene-local coupling.
             _effective_dense = dense_params
-            if (
-                dense_params is not None
-                and set(dense_params) == set(joint_params)
+            if dense_params is not None and set(dense_params) == set(
+                joint_params
             ):
                 _effective_dense = None
             joint_guide = JointLowRankGuide(
@@ -336,9 +345,7 @@ def build_config_from_preset(
                     rank=guide_rank
                 )
         else:
-            guide_family_kwargs[gene_param_name] = LowRankGuide(
-                rank=guide_rank
-            )
+            guide_family_kwargs[gene_param_name] = LowRankGuide(rank=guide_rank)
 
     # Handle normalizing-flow guide (parallels the low-rank block above)
     if guide_flow is not None:
@@ -364,9 +371,8 @@ def build_config_from_preset(
 
         if joint_params is not None:
             _effective_dense = dense_params
-            if (
-                dense_params is not None
-                and set(dense_params) == set(joint_params)
+            if dense_params is not None and set(dense_params) == set(
+                joint_params
             ):
                 _effective_dense = None
             joint_guide = JointNormalizingFlowGuide(
@@ -379,8 +385,8 @@ def build_config_from_preset(
             # If the gene param is not in joint_params, give it an
             # individual NormalizingFlowGuide
             if gene_param_name not in joint_params:
-                guide_family_kwargs[gene_param_name] = (
-                    NormalizingFlowGuide(**flow_kwargs)
+                guide_family_kwargs[gene_param_name] = NormalizingFlowGuide(
+                    **flow_kwargs
                 )
         else:
             guide_family_kwargs[gene_param_name] = NormalizingFlowGuide(

@@ -136,7 +136,7 @@ results = scribe.fit(
     parameterization="mean_odds",  # alias: "odds_ratio"
     unconstrained=True,
     guide_rank=10,
-    joint_params=["mu", "phi"],
+    joint_params="biological",  # resolves to ["phi", "mu"] for mean_odds
 )
 ```
 
@@ -144,7 +144,9 @@ results = scribe.fit(
 
 For models with many parameter groups, you can designate which parameters
 get full cross-gene low-rank coupling (`dense_params`) while others only
-couple locally:
+couple locally. Both `joint_params` and `dense_params` accept semantic
+shorthands (`"all"`, `"biological"`, `"mean"`, `"prob"`, `"gate"`) or
+explicit lists:
 
 ```python
 # mu gets cross-gene correlations; phi and gate only couple to mu per gene
@@ -153,8 +155,8 @@ results = scribe.fit(
     zero_inflation=True,
     unconstrained=True,
     guide_rank=10,
-    joint_params=["mu", "phi", "gate"],
-    dense_params=["mu"],
+    joint_params="all",            # ["phi", "mu", "gate"] for mean_odds ZINB
+    dense_params="mean",           # ["mu"] — only mu gets cross-gene coupling
 )
 ```
 
@@ -278,7 +280,7 @@ results = scribe.fit(
     parameterization="mean_odds",
     unconstrained=True,
     guide_flow="affine_coupling",
-    joint_params=["mu", "phi"],
+    joint_params="biological",     # ["phi", "mu"] for mean_odds
     guide_flow_num_layers=4,
 )
 ```
@@ -291,7 +293,7 @@ a full flow, since coupling flows require at least two features.
 
 Just like Joint Low-Rank, you can designate which parameters get a full flow
 (`dense_params`) while others receive diagonal Normal treatment with learned
-regression on the dense-flow residuals:
+regression on the dense-flow residuals. The same shorthands apply:
 
 ```python
 # mu gets a full flow; phi and gate regress on mu per gene
@@ -300,8 +302,8 @@ results = scribe.fit(
     zero_inflation=True,
     unconstrained=True,
     guide_flow="affine_coupling",
-    joint_params=["mu", "phi", "gate"],
-    dense_params=["mu"],
+    joint_params="all",            # ["phi", "mu", "gate"] for mean_odds ZINB
+    dense_params="mean",           # only mu gets full flow
 )
 ```
 

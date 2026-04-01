@@ -140,9 +140,9 @@ layout. Key sections:
 | **Parameterization** | `parameterization`, `unconstrained` | `canonical`, `linked` (mean_prob), or `mean_odds` |
 | **Gene-level priors** | `expression_prior`, `prob_prior`, `zero_inflation_prior` | `"none"`, `"gaussian"`, `"horseshoe"`, `"neg"` |
 | **Multi-dataset** | `dataset_key`, `n_datasets`, `expression_dataset_prior`, ... | Joint multi-dataset fitting |
-| **Guide** | `guide_rank`, `joint_params`, `dense_params` | Low-rank / joint low-rank guide |
+| **Guide** | `guide_rank`, `joint_params`, `dense_params` | Low-rank / joint low-rank guide. `joint_params`/`dense_params` accept shorthands (`"all"`, `"biological"`, `"mean"`, `"prob"`, `"gate"`) or explicit lists |
 | **Flow guide** | `guide_flow`, `guide_flow_num_layers`, ... | Normalizing flow guide (mutually exclusive with `guide_rank`) |
-| **Mixture** | `n_components`, `mixture_params` | Mixture model components |
+| **Mixture** | `n_components`, `mixture_params` | Mixture model components. `mixture_params` defaults to `"all"` and accepts shorthands or explicit lists |
 | **Priors** | `priors.organism`, `priors.eta_capture`, ... | Biology-informed and base distribution priors |
 | **Anchoring** | `expression_anchor`, `expression_anchor_sigma` | Mean anchoring prior |
 | **Amortization** | `amortization.capture.*` | Amortized capture inference |

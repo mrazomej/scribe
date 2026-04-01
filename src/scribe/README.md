@@ -795,6 +795,31 @@ descriptive names across the three API layers.
 > and Hydra YAML `priors:` hyperprior overrides are unchanged. Users who
 > interact with these already understand the unconstrained transform space.
 
+### Parameter Shorthands for `mixture_params`, `joint_params`, `dense_params`
+
+These three arguments now accept **semantic string shorthands** in addition
+to explicit `List[str]` values. The shorthand is resolved automatically
+based on the chosen `parameterization` and `model`:
+
+| Shorthand      | Meaning                                                   |
+|----------------|-----------------------------------------------------------|
+| `"all"`        | All core params + gate (if ZINB). Default for `mixture_params`. |
+| `"biological"` | Core NB params only (e.g. `["p", "r"]`, `["phi", "mu"]`). Excludes gate. |
+| `"mean"`       | Expression-level param only (`"mu"` or `"r"` depending on parameterization). |
+| `"prob"`       | Probability/odds param only (`"p"` or `"phi"`).           |
+| `"gate"`       | Zero-inflation gate only (ZINB models).                   |
+
+Explicit lists still work and now also accept **descriptive aliases** (e.g.
+`["expression", "odds"]` resolves to `["mu", "phi"]`).
+
+**Resolution per parameterization:**
+
+| Parameterization | `"biological"` | `"mean"` | `"prob"` |
+|------------------|----------------|----------|----------|
+| canonical        | `["p", "r"]`   | `["r"]`  | `["p"]`  |
+| mean_prob        | `["p", "mu"]`  | `["mu"]` | `["p"]`  |
+| mean_odds        | `["phi", "mu"]`| `["mu"]` | `["phi"]`|
+
 ## Contributing
 
 SCRIBE is actively developed and welcomes contributions. See the main repository

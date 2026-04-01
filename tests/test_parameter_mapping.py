@@ -7,10 +7,13 @@ from src.scribe.models.config.parameter_mapping import (
     get_parameterization_mapping,
     validate_parameter_consistency,
     get_parameterization_summary,
+    resolve_param_shorthand,
     PARAMETERIZATION_MAPPINGS,
+    PARAM_SHORTHANDS,
     ParameterizationMapping,
 )
 from src.scribe.models.config.enums import Parameterization
+from src.scribe.models.parameterizations import PARAMETERIZATIONS
 
 
 class TestParameterMapping:
@@ -418,3 +421,165 @@ class TestParameterMappingIntegration:
             for param_name in mapping.get_all_parameters():
                 assert param_name in mapping.parameter_descriptions
                 assert mapping.parameter_descriptions[param_name]  # Not empty
+
+
+# ==========================================================================
+# Tests for resolve_param_shorthand
+# ==========================================================================
+
+
+class TestResolveParamShorthand:
+    """Test semantic shorthand resolution for mixture/joint/dense params."""
+
+    # ------------------------------------------------------------------
+    # None passthrough
+    # ------------------------------------------------------------------
+
+    def test_none_returns_none(self):
+        """None input passes through unchanged."""
+        strat = PARAMETERIZATIONS["canonical"]
+        assert resolve_param_shorthand(None, strat, "nbdm") is None
+
+    # ------------------------------------------------------------------
+    # "all" shorthand -> None (factory sentinel for "everything")
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize("param_name", ["canonical", "mean_prob", "mean_odds"])
+    def test_all_returns_none_for_any_parameterization(self, param_name):
+        """'all' resolves to None, letting the factory default to all params."""
+        strat = PARAMETERIZATIONS[param_name]
+        assert resolve_param_shorthand("all", strat, "zinb") is None
+
+    def test_all_case_insensitive(self):
+        """Shorthand strings are case-insensitive."""
+        strat = PARAMETERIZATIONS["canonical"]
+        assert resolve_param_shorthand("All", strat, "nbdm") is None
+        assert resolve_param_shorthand("ALL", strat, "nbdm") is None
+
+    # ------------------------------------------------------------------
+    # "biological" shorthand -> core params only
+    # ------------------------------------------------------------------
+
+    def test_biological_canonical(self):
+        """'biological' for canonical returns ['p', 'r']."""
+        strat = PARAMETERIZATIONS["canonical"]
+        result = resolve_param_shorthand("biological", strat, "nbdm")
+        assert set(result) == {"p", "r"}
+
+    def test_biological_mean_prob(self):
+        """'biological' for mean_prob returns ['p', 'mu']."""
+        strat = PARAMETERIZATIONS["mean_prob"]
+        result = resolve_param_shorthand("biological", strat, "zinb")
+        assert set(result) == {"p", "mu"}
+
+    def test_biological_mean_odds(self):
+        """'biological' for mean_odds returns ['phi', 'mu']."""
+        strat = PARAMETERIZATIONS["mean_odds"]
+        result = resolve_param_shorthand("biological", strat, "zinb")
+        assert set(result) == {"phi", "mu"}
+
+    def test_biological_excludes_gate(self):
+        """'biological' never includes 'gate', even for ZINB models."""
+        strat = PARAMETERIZATIONS["mean_odds"]
+        result = resolve_param_shorthand("biological", strat, "zinb")
+        assert "gate" not in result
+
+    # ------------------------------------------------------------------
+    # "mean" shorthand -> gene-level param only
+    # ------------------------------------------------------------------
+
+    def test_mean_canonical(self):
+        """'mean' for canonical returns ['r'] (the gene-level param)."""
+        strat = PARAMETERIZATIONS["canonical"]
+        assert resolve_param_shorthand("mean", strat, "nbdm") == ["r"]
+
+    def test_mean_mean_prob(self):
+        """'mean' for mean_prob returns ['mu']."""
+        strat = PARAMETERIZATIONS["mean_prob"]
+        assert resolve_param_shorthand("mean", strat, "nbdm") == ["mu"]
+
+    def test_mean_mean_odds(self):
+        """'mean' for mean_odds returns ['mu']."""
+        strat = PARAMETERIZATIONS["mean_odds"]
+        assert resolve_param_shorthand("mean", strat, "nbdm") == ["mu"]
+
+    # ------------------------------------------------------------------
+    # "prob" shorthand -> probability/odds param only
+    # ------------------------------------------------------------------
+
+    def test_prob_canonical(self):
+        """'prob' for canonical returns ['p']."""
+        strat = PARAMETERIZATIONS["canonical"]
+        assert resolve_param_shorthand("prob", strat, "nbdm") == ["p"]
+
+    def test_prob_mean_prob(self):
+        """'prob' for mean_prob returns ['p']."""
+        strat = PARAMETERIZATIONS["mean_prob"]
+        assert resolve_param_shorthand("prob", strat, "nbdm") == ["p"]
+
+    def test_prob_mean_odds(self):
+        """'prob' for mean_odds returns ['phi']."""
+        strat = PARAMETERIZATIONS["mean_odds"]
+        assert resolve_param_shorthand("prob", strat, "nbdm") == ["phi"]
+
+    # ------------------------------------------------------------------
+    # "gate" shorthand
+    # ------------------------------------------------------------------
+
+    def test_gate_zinb(self):
+        """'gate' for a ZINB model returns ['gate']."""
+        strat = PARAMETERIZATIONS["canonical"]
+        assert resolve_param_shorthand("gate", strat, "zinb") == ["gate"]
+
+    def test_gate_zinbvcp(self):
+        """'gate' also works for zinbvcp."""
+        strat = PARAMETERIZATIONS["mean_odds"]
+        assert resolve_param_shorthand("gate", strat, "zinbvcp") == ["gate"]
+
+    def test_gate_non_zinb_raises(self):
+        """'gate' for a non-ZINB model raises ValueError."""
+        strat = PARAMETERIZATIONS["canonical"]
+        with pytest.raises(ValueError, match="only valid for ZINB"):
+            resolve_param_shorthand("gate", strat, "nbdm")
+
+    # ------------------------------------------------------------------
+    # Unknown shorthand
+    # ------------------------------------------------------------------
+
+    def test_unknown_shorthand_raises(self):
+        """An unrecognised string raises ValueError."""
+        strat = PARAMETERIZATIONS["canonical"]
+        with pytest.raises(ValueError, match="Unknown parameter shorthand"):
+            resolve_param_shorthand("invalid", strat, "nbdm")
+
+    # ------------------------------------------------------------------
+    # Explicit list passthrough with alias resolution
+    # ------------------------------------------------------------------
+
+    def test_explicit_list_passes_through(self):
+        """A plain list of internal names passes through unchanged."""
+        strat = PARAMETERIZATIONS["mean_odds"]
+        result = resolve_param_shorthand(["phi", "mu"], strat, "zinb")
+        assert result == ["phi", "mu"]
+
+    def test_descriptive_aliases_resolved_in_list(self):
+        """Descriptive names in a list are resolved to internal names."""
+        strat = PARAMETERIZATIONS["mean_odds"]
+        result = resolve_param_shorthand(
+            ["expression", "odds"], strat, "zinb"
+        )
+        assert result == ["mu", "phi"]
+
+    def test_mixed_internal_and_descriptive_in_list(self):
+        """Lists can mix internal and descriptive names."""
+        strat = PARAMETERIZATIONS["mean_prob"]
+        result = resolve_param_shorthand(["p", "expression"], strat, "zinb")
+        assert result == ["p", "mu"]
+
+    def test_gate_alias_in_list(self):
+        """'zero_inflation' resolves to 'gate' in a list."""
+        strat = PARAMETERIZATIONS["canonical"]
+        result = resolve_param_shorthand(
+            ["r", "zero_inflation"], strat, "zinb"
+        )
+        assert result == ["r", "gate"]

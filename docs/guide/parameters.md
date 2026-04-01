@@ -103,7 +103,10 @@ u_g^{(c)} \;\sim\; \sum_{k=1}^{K} w_k \;\cdot\; f_k\!\bigl(u_g^{(c)} \;\mid\; \t
 
 where \(w_k\) are the mixing weights and \(\theta_g^{(k)}\) includes the
 component-specific gene parameters. The `mixture_params` argument controls
-which parameters vary by component (default: `r` and `gate` if applicable).
+which parameters vary by component (default: `"all"` — every parameter
+including gate). Accepts semantic shorthands: `"all"`, `"biological"`
+(core NB params only, excluding gate), `"mean"`, `"prob"`, `"gate"`,
+or an explicit list of internal parameter names.
 
 ---
 

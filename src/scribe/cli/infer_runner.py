@@ -856,7 +856,7 @@ def main(cfg: DictConfig) -> None:
         "overdispersion": cfg.get("overdispersion", "none"),
         "overdispersion_prior": cfg.get("overdispersion_prior", "horseshoe"),
         "n_components": n_components,
-        "mixture_params": cfg.get("mixture_params"),
+        "mixture_params": cfg.get("mixture_params", "all"),
         "guide_rank": cfg.guide_rank,
         "joint_params": cfg.get("joint_params"),
         "dense_params": cfg.get("dense_params"),

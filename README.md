@@ -286,7 +286,7 @@ For SVI and VAE inference, SCRIBE offers several variational guide families:
 | ------------------ | ---------------- | ---------------------------------------------- |
 | **Mean-field**     | *(default)*      | Fully factorized; fast, memory-efficient       |
 | **Low-rank**       | `guide_rank=k`   | Captures gene correlations via rank-k covariance |
-| **Joint low-rank** | `joint_params=[...]` | Shared low-rank covariance across parameter groups |
+| **Joint low-rank** | `joint_params="biological"` | Shared low-rank covariance across parameter groups |
 | **Amortized**      | `amortize_capture=True` | Neural net predicts capture variational params from UMI counts |
 
 ```python
@@ -306,7 +306,7 @@ results = scribe.fit(
     unconstrained=True,
     hierarchical_p=True,
     guide_rank=10,
-    joint_params=["mu", "phi"],
+    joint_params="biological",  # resolves to ["phi", "mu"] for mean_odds
 )
 ```
 
