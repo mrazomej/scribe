@@ -450,7 +450,7 @@ class TestSVIProgressBackends:
 
     def test_auto_prefers_tqdm_in_marimo(self, monkeypatch):
         """Auto mode uses tqdm in marimo sessions when available."""
-        from scribe.svi import progress_backend as pb
+        from scribe.svi import _progress_backend as pb
 
         # Force a marimo-like interactive signal and available tqdm import.
         monkeypatch.setattr(pb, "_is_marimo_notebook", lambda: True)
@@ -462,7 +462,7 @@ class TestSVIProgressBackends:
 
     def test_auto_keeps_rich_in_tty(self, monkeypatch):
         """Auto mode keeps rich progress in interactive terminals."""
-        from scribe.svi import progress_backend as pb
+        from scribe.svi import _progress_backend as pb
 
         # Simulate a terminal session without notebook signals.
         monkeypatch.setattr(pb, "_is_marimo_notebook", lambda: False)
@@ -474,7 +474,7 @@ class TestSVIProgressBackends:
 
     def test_auto_falls_back_to_none_without_tqdm(self, monkeypatch):
         """Auto mode disables bar rendering in notebooks without tqdm."""
-        from scribe.svi import progress_backend as pb
+        from scribe.svi import _progress_backend as pb
 
         # Simulate notebook context where tqdm import is unavailable.
         monkeypatch.setattr(pb, "_is_marimo_notebook", lambda: False)
@@ -486,7 +486,7 @@ class TestSVIProgressBackends:
 
     def test_explicit_tqdm_without_dependency_returns_none(self, monkeypatch):
         """Explicit tqdm override degrades to no-op when tqdm is unavailable."""
-        from scribe.svi import progress_backend as pb
+        from scribe.svi import _progress_backend as pb
 
         # This protects environments where tqdm is optional.
         monkeypatch.setattr(pb, "_tqdm_available", lambda: False)
