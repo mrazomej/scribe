@@ -574,7 +574,15 @@ def _plot_ppc_comparison_figure(
 
 
 def _prepare_mixture_ppc_data(
-    results, counts, viz_cfg, *, n_rows, n_cols, n_samples
+    results,
+    counts,
+    viz_cfg,
+    *,
+    n_rows,
+    n_cols,
+    n_samples,
+    need_component_samples,
+    need_assignments,
 ):
     """Prepare data for mixture PPC visualization.
 
@@ -596,6 +604,11 @@ def _prepare_mixture_ppc_data(
         Number of grid columns (already resolved).
     n_samples : int
         Number of posterior predictive samples (already resolved).
+    need_component_samples : bool
+        Whether per-component PPC samples are required for selected outputs.
+    need_assignments : bool
+        Whether MAP cell-to-component assignments are required for selected
+        outputs.
 
     Returns
     -------
@@ -607,7 +620,7 @@ def _prepare_mixture_ppc_data(
         - ``top_gene_indices``: selected gene indices
         - ``top_lfc``: log-fold-changes
         - ``mixture_samples_np``: mixture PPC samples array
-        - ``assignments``: MAP cell-to-component assignments
+        - ``assignments``: MAP cell-to-component assignments or ``None``
         - ``component_samples_list``: list of per-component sample arrays
         - ``render_opts``: PPC rendering options
         Returns ``None`` when the model is not a mixture.
@@ -671,36 +684,40 @@ def _prepare_mixture_ppc_data(
     mixture_samples_np = np.array(mixture_samples)
     del mixture_samples
 
-    console.print("[dim]Computing MAP cell-to-component assignments...[/dim]")
-    if assignment_batch_size is not None:
-        console.print(
-            f"[dim]Using assignment batch_size={assignment_batch_size}[/dim]"
-        )
-    assignment_probs = _get_cell_assignment_probabilities_for_plot(
-        results, counts=counts, batch_size=assignment_batch_size
-    )
-    assignments = np.argmax(assignment_probs, axis=1)
-
     component_samples_list = []
-    for k in range(n_components):
-        console.print(
-            f"[dim]Generating Component {k+1} PPC samples ({n_samples} samples)...[/dim]"
+    if need_assignments:
+        console.print("[dim]Computing MAP cell-to-component assignments...[/dim]")
+        if assignment_batch_size is not None:
+            console.print(
+                f"[dim]Using assignment batch_size={assignment_batch_size}[/dim]"
+            )
+        assignment_probs = _get_cell_assignment_probabilities_for_plot(
+            results, counts=counts, batch_size=assignment_batch_size
         )
-        rng_key, subkey = random.split(rng_key)
+        assignments = np.argmax(assignment_probs, axis=1)
+    else:
+        assignments = None
 
-        component_samples = _get_component_ppc_samples(
-            results_subset,
-            component_idx=k,
-            n_samples=n_samples,
-            rng_key=subkey,
-            cell_batch_size=500,
-            verbose=True,
-            counts=counts,
-        )
+    if need_component_samples:
+        for k in range(n_components):
+            console.print(
+                f"[dim]Generating Component {k+1} PPC samples ({n_samples} samples)...[/dim]"
+            )
+            rng_key, subkey = random.split(rng_key)
 
-        component_samples_np = np.array(component_samples)
-        component_samples_list.append(component_samples_np)
-        del component_samples
+            component_samples = _get_component_ppc_samples(
+                results_subset,
+                component_idx=k,
+                n_samples=n_samples,
+                rng_key=subkey,
+                cell_batch_size=500,
+                verbose=True,
+                counts=counts,
+            )
+
+            component_samples_np = np.array(component_samples)
+            component_samples_list.append(component_samples_np)
+            del component_samples
 
     return {
         "n_components": n_components,
@@ -989,6 +1006,24 @@ def plot_mixture_ppc(
         default_samples=1500,
     )
 
+    n_components = results.n_components
+    if n_components is None or n_components <= 1:
+        console.print(
+            "[yellow]Not a mixture model, skipping mixture PPC plot...[/yellow]"
+        )
+        return
+
+    selection = _resolve_mixture_ppc_plot_selection(
+        plots=plots,
+        n_components=n_components,
+        save=ctx.save,
+    )
+    selected_component_indices = set(selection["include_component_indices"])
+    include_mixture = selection["include_mixture"]
+    include_comparison = selection["include_comparison"]
+    need_component_samples = bool(selected_component_indices) or include_comparison
+    need_assignments = bool(selected_component_indices)
+
     prepared = _prepare_mixture_ppc_data(
         results,
         counts,
@@ -996,6 +1031,8 @@ def plot_mixture_ppc(
         n_rows=grid["n_rows"],
         n_cols=grid["n_cols"],
         n_samples=grid["n_samples"],
+        need_component_samples=need_component_samples,
+        need_assignments=need_assignments,
     )
     if prepared is None:
         return
@@ -1012,11 +1049,6 @@ def plot_mixture_ppc(
     mixture_ppc_opts = (
         viz_cfg.get("mixture_ppc_opts", {}) if viz_cfg is not None else {}
     )
-    selection = _resolve_mixture_ppc_plot_selection(
-        plots=plots,
-        n_components=n_components,
-        save=ctx.save,
-    )
 
     if ctx.save:
         config_vals = _get_config_values(cfg, results=results)
@@ -1031,9 +1063,6 @@ def plot_mixture_ppc(
     output_format = ctx.output_format
 
     figure_payloads = []
-    selected_component_indices = set(selection["include_component_indices"])
-    include_mixture = selection["include_mixture"]
-    include_comparison = selection["include_comparison"]
 
     # Reuse caller-injected figure/axes for the first generated figure only.
     # Subsequent figures must allocate fresh canvases.
