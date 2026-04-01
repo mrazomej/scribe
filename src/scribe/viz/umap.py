@@ -68,11 +68,11 @@ def plot_umap(
     target_sum = umap_opts.get("target_sum", 1e4)
     gene_filter_min_cells = int(umap_opts.get("gene_filter_min_cells", 3))
     use_hvg = bool(umap_opts.get("use_hvg", True))
-    hvg_n_top_genes = int(umap_opts.get("hvg_n_top_genes", 2000))
+    hvg_n_top_genes = int(umap_opts.get("hvg_n_top_genes", 4000))
     hvg_flavor = umap_opts.get("hvg_flavor", "seurat")
     use_pca = bool(umap_opts.get("use_pca", True))
     pca_n_comps = int(umap_opts.get("pca_n_comps", 50))
-    n_ppc_samples = int(umap_opts.get("n_ppc_samples", 50))
+    n_ppc_samples = int(umap_opts.get("n_ppc_samples", 1))
 
     if force_refit:
         console.print(
@@ -82,6 +82,7 @@ def plot_umap(
     try:
         import scanpy as sc
         import anndata as ad
+
         has_scanpy = True
     except ImportError:
         has_scanpy = False
@@ -94,6 +95,7 @@ def plot_umap(
 
     try:
         from sklearn.decomposition import PCA
+
         has_sklearn = True
     except ImportError:
         has_sklearn = False
@@ -268,9 +270,7 @@ def plot_umap(
                 console.print(
                     f"[dim]Running PCA before UMAP (n_components={max_pcs})...[/dim]"
                 )
-                pca_model = PCA(
-                    n_components=max_pcs, random_state=random_state
-                )
+                pca_model = PCA(n_components=max_pcs, random_state=random_state)
                 embedding_input = pca_model.fit_transform(counts_embed)
             else:
                 console.print(
@@ -358,7 +358,9 @@ def plot_umap(
     console.print("[dim]Creating overlay plot...[/dim]")
 
     synth_alpha = 0.6 if n_ppc_samples == 1 else max(0.05, 0.6 / n_ppc_samples)
-    synth_size = 1 if n_ppc_samples == 1 else max(0.2, 1.0 / np.sqrt(n_ppc_samples))
+    synth_size = (
+        1 if n_ppc_samples == 1 else max(0.2, 1.0 / np.sqrt(n_ppc_samples))
+    )
 
     fig, ax = _create_or_validate_single_axis(
         fig=fig,
