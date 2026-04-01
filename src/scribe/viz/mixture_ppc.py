@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from jax import random
 import jax.numpy as jnp
 import numpyro.distributions as dist
+from typing import Iterable
 
 from ._common import (
     console,
@@ -18,6 +19,7 @@ from ._common import (
 from ._interactive import (
     PlotContext,
     PlotResultCollection,
+    _is_interactive_session,
     _create_or_validate_grid_axes,
     _create_or_validate_single_axis,
     _finalize_figure,
@@ -714,6 +716,183 @@ def _prepare_mixture_ppc_data(
     }
 
 
+def _parse_component_selector_token(token):
+    """Parse one component selector token into a zero-based index.
+
+    Parameters
+    ----------
+    token : str
+        Selector token with expected format ``"component:<k>"`` where ``k`` is
+        a 1-based component index.
+
+    Returns
+    -------
+    int or None
+        Parsed zero-based component index, or ``None`` when ``token`` does not
+        match the component selector format.
+
+    Raises
+    ------
+    ValueError
+        Raised when the selector prefix is valid but the component index is
+        missing or not a positive integer.
+    """
+    token_norm = str(token).strip().lower()
+    if not token_norm.startswith("component:"):
+        return None
+
+    raw_index = token_norm.split(":", maxsplit=1)[1].strip()
+    if raw_index == "":
+        raise ValueError(
+            "Invalid selector 'component:'. Provide a 1-based index, e.g. "
+            "'component:1'."
+        )
+    try:
+        component_idx_1based = int(raw_index)
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid component selector '{token}'. Expected "
+            "'component:<positive-int>'."
+        ) from exc
+    if component_idx_1based <= 0:
+        raise ValueError(
+            f"Invalid component selector '{token}'. Component indices are "
+            "1-based and must be positive."
+        )
+    return component_idx_1based - 1
+
+
+def _resolve_mixture_ppc_plot_selection(plots, *, n_components, save):
+    """Normalize mixture PPC selection into explicit render instructions.
+
+    Parameters
+    ----------
+    plots : str, int, iterable, or None
+        Plot selector. Supported values:
+        - ``"all"``: mixture + all components + comparison (if available)
+        - ``"mixture"`` or ``"overview"``: mixture overview only
+        - ``"components"`` or ``"component"``: all component plots
+        - ``"comparison"``: combined comparison plot (when ``n_components <= 2``)
+        - ``"component:<k>"``: one specific 1-based component index
+        - integer ``k``: shorthand for ``"component:<k>"``
+        Iterables can combine selectors (e.g.,
+        ``["mixture", "component:2", "comparison"]``).
+    n_components : int
+        Number of mixture components in the fitted model.
+    save : bool
+        Whether plotting is running in save-to-disk mode.
+
+    Returns
+    -------
+    dict
+        Dictionary with normalized selection:
+        - ``include_mixture``: bool
+        - ``include_component_indices``: list[int] (zero-based)
+        - ``include_comparison``: bool
+        - ``source_default``: str describing default source
+
+    Raises
+    ------
+    ValueError
+        Raised when selectors are unknown, component indices are invalid, or
+        the normalized selection is empty.
+    """
+    # Resolve behavior defaults: save-mode keeps full legacy output, while
+    # interactive notebook sessions default to just the overview figure.
+    if plots is None:
+        if save:
+            resolved = ["all"]
+            source_default = "save_mode_default_all"
+        elif _is_interactive_session():
+            resolved = ["mixture"]
+            source_default = "interactive_default_mixture"
+        else:
+            resolved = ["all"]
+            source_default = "noninteractive_default_all"
+    elif isinstance(plots, (str, int, np.integer)):
+        resolved = [plots]
+        source_default = "explicit"
+    elif isinstance(plots, Iterable):
+        resolved = list(plots)
+        source_default = "explicit"
+    else:
+        raise ValueError(
+            "Invalid `plots` value. Use a string, integer, iterable of "
+            "selectors, or None."
+        )
+
+    include_mixture = False
+    include_comparison = False
+    include_all_components = False
+    component_idx_set = set()
+
+    for entry in resolved:
+        if isinstance(entry, (int, np.integer)):
+            component_idx_1based = int(entry)
+            if component_idx_1based <= 0:
+                raise ValueError(
+                    f"Invalid component index '{entry}'. Component indices "
+                    "are 1-based and must be positive."
+                )
+            component_idx_set.add(component_idx_1based - 1)
+            continue
+
+        token = str(entry).strip().lower().replace("_", "-")
+        component_idx = _parse_component_selector_token(token)
+        if component_idx is not None:
+            component_idx_set.add(component_idx)
+            continue
+
+        if token in {"all", "*"}:
+            include_mixture = True
+            include_comparison = True
+            include_all_components = True
+            continue
+        if token in {"mixture", "overview"}:
+            include_mixture = True
+            continue
+        if token in {"components", "component"}:
+            include_all_components = True
+            continue
+        if token in {"comparison", "compare"}:
+            include_comparison = True
+            continue
+        raise ValueError(
+            f"Unknown `plots` selector '{entry}'. Supported selectors: "
+            "'all', 'mixture', 'overview', 'components', 'comparison', "
+            "'component:<k>', or integer k."
+        )
+
+    if include_all_components:
+        component_idx_set = set(range(int(n_components)))
+
+    invalid_indices = [
+        idx for idx in sorted(component_idx_set) if idx >= int(n_components)
+    ]
+    if invalid_indices:
+        requested = ", ".join(str(i + 1) for i in invalid_indices)
+        raise ValueError(
+            "Requested component indices are out of range for "
+            f"n_components={n_components}: {requested}"
+        )
+
+    if (
+        not include_mixture
+        and not include_comparison
+        and len(component_idx_set) == 0
+    ):
+        raise ValueError(
+            "No plots selected. Provide at least one valid selector."
+        )
+
+    return {
+        "include_mixture": include_mixture,
+        "include_component_indices": sorted(component_idx_set),
+        "include_comparison": include_comparison,
+        "source_default": source_default,
+    }
+
+
 def plot_mixture_ppc(
     results,
     counts,
@@ -732,6 +911,7 @@ def plot_mixture_ppc(
     save=None,
     show=None,
     close=None,
+    plots=None,
 ):
     """Plot PPC for mixture models showing genes with highest divergence.
 
@@ -758,6 +938,18 @@ def plot_mixture_ppc(
     n_samples : int, optional
         Number of posterior predictive samples.  Overrides
         ``viz_cfg.mixture_ppc_opts.n_samples``.
+    plots : str, int, iterable, or None, optional
+        Select which mixture PPC figure groups to render.
+        Supported selectors are:
+        - ``"all"``
+        - ``"mixture"`` / ``"overview"``
+        - ``"components"`` / ``"component"``
+        - ``"comparison"``
+        - ``"component:<k>"`` for one specific 1-based component index
+        - integer ``k`` as shorthand for ``"component:<k>"``
+        When ``None``, defaults are context-aware:
+        interactive sessions render ``"mixture"`` only, while save mode and
+        non-interactive sessions render ``"all"``.
 
     Returns
     -------
@@ -820,6 +1012,11 @@ def plot_mixture_ppc(
     mixture_ppc_opts = (
         viz_cfg.get("mixture_ppc_opts", {}) if viz_cfg is not None else {}
     )
+    selection = _resolve_mixture_ppc_plot_selection(
+        plots=plots,
+        n_components=n_components,
+        save=ctx.save,
+    )
 
     if ctx.save:
         config_vals = _get_config_values(cfg, results=results)
@@ -834,27 +1031,43 @@ def plot_mixture_ppc(
     output_format = ctx.output_format
 
     figure_payloads = []
+    selected_component_indices = set(selection["include_component_indices"])
+    include_mixture = selection["include_mixture"]
+    include_comparison = selection["include_comparison"]
 
-    fig_payload = _plot_ppc_figure(
-        predictive_samples=mixture_samples_np,
-        counts=counts,
-        selected_idx=top_gene_indices,
-        n_rows=n_rows,
-        n_cols=n_cols,
-        title="Mixture PPC (High CV Genes)",
-        figs_dir=figs_dir,
-        fname=f"{base_fname}_mixture_ppc",
-        output_format=output_format,
-        render_opts=render_opts,
-        figsize=figsize,
-        fig=fig,
-        axes=axes,
-        save=ctx.save,
-        show=ctx.show,
-        close=ctx.close,
-        gene_names=gene_names,
-    )
-    figure_payloads.append(fig_payload)
+    # Reuse caller-injected figure/axes for the first generated figure only.
+    # Subsequent figures must allocate fresh canvases.
+    first_fig = fig
+    first_axes = axes
+
+    def _consume_first_figure():
+        nonlocal first_fig, first_axes
+        fig_ref, axes_ref = first_fig, first_axes
+        first_fig, first_axes = None, None
+        return fig_ref, axes_ref
+
+    if include_mixture:
+        fig_ref, axes_ref = _consume_first_figure()
+        fig_payload = _plot_ppc_figure(
+            predictive_samples=mixture_samples_np,
+            counts=counts,
+            selected_idx=top_gene_indices,
+            n_rows=n_rows,
+            n_cols=n_cols,
+            title="Mixture PPC (High CV Genes)",
+            figs_dir=figs_dir,
+            fname=f"{base_fname}_mixture_ppc",
+            output_format=output_format,
+            render_opts=render_opts,
+            figsize=figsize,
+            fig=fig_ref,
+            axes=axes_ref,
+            save=ctx.save,
+            show=ctx.show,
+            close=ctx.close,
+            gene_names=gene_names,
+        )
+        figure_payloads.append(fig_payload)
 
     component_cmaps = ["Greens", "Purples", "Reds", "Oranges", "YlOrBr", "BuGn"]
     min_cells_for_info = mixture_ppc_opts.get("min_cells_for_info", 20)
@@ -862,6 +1075,8 @@ def plot_mixture_ppc(
     counts_np = np.array(counts)
 
     for k in range(n_components):
+        if k not in selected_component_indices:
+            continue
         component_samples_np = component_samples_list[k]
 
         cell_mask_k = assignments == k
@@ -870,7 +1085,6 @@ def plot_mixture_ppc(
             console.print(
                 f"[yellow]Skipping Component {k+1} PPC (no assigned cells)[/yellow]"
             )
-            del component_samples
             continue
         if n_cells_component < min_cells_for_info:
             console.print(
@@ -882,6 +1096,7 @@ def plot_mixture_ppc(
         counts_component = counts_np[cell_mask_k, :]
 
         cmap = component_cmaps[k % len(component_cmaps)]
+        fig_ref, axes_ref = _consume_first_figure()
 
         fig_payload = _plot_ppc_figure(
             predictive_samples=component_samples_subset,
@@ -899,6 +1114,8 @@ def plot_mixture_ppc(
             cmap=cmap,
             render_opts=render_opts,
             figsize=figsize,
+            fig=fig_ref,
+            axes=axes_ref,
             save=ctx.save,
             show=ctx.show,
             close=ctx.close,
@@ -906,8 +1123,9 @@ def plot_mixture_ppc(
         )
         figure_payloads.append(fig_payload)
 
-    if n_components <= 2:
+    if include_comparison and n_components <= 2:
         console.print("[dim]Generating combined comparison plot...[/dim]")
+        fig_ref, axes_ref = _consume_first_figure()
         fig_payload = _plot_ppc_comparison_figure(
             mixture_samples=mixture_samples_np,
             component_samples_list=all_component_samples,
@@ -921,19 +1139,32 @@ def plot_mixture_ppc(
             component_cmaps=component_cmaps,
             render_opts=render_opts,
             figsize=figsize,
+            fig=fig_ref,
+            axes=axes_ref,
             save=ctx.save,
             show=ctx.show,
             close=ctx.close,
             gene_names=gene_names,
         )
         figure_payloads.append(fig_payload)
-        n_plots = 2 + n_components
-    else:
+    elif include_comparison and n_components > 2:
         console.print(
             f"[yellow]Skipping comparison plot ({n_components} components "
             f"> 2; per-component plots are generated instead)[/yellow]"
         )
-        n_plots = 1 + n_components
+
+    n_plots = len(figure_payloads)
+
+    if (
+        plots is None
+        and selection["source_default"] == "interactive_default_mixture"
+    ):
+        console.print(
+            "[dim]Interactive default applied: rendering mixture overview "
+            "only (set plots='all' for full output).[/dim]"
+        )
+    else:
+        console.print(f"[dim]Applied `plots` selection: {plots}[/dim]")
 
     del mixture_samples_np, all_component_samples
 
@@ -943,6 +1174,80 @@ def plot_mixture_ppc(
     if figure_payloads:
         return PlotResultCollection(figure_payloads)
     return None
+
+
+def plot_mixture_ppc_overview(*args, **kwargs):
+    """Render only the mixture overview PPC figure.
+
+    Parameters
+    ----------
+    *args, **kwargs
+        Positional and keyword arguments accepted by :func:`plot_mixture_ppc`.
+        Any explicit ``plots`` keyword is overridden to ``"mixture"`` so this
+        wrapper has a stable single-purpose behavior.
+
+    Returns
+    -------
+    PlotResultCollection or None
+        Collection containing the mixture overview figure when available.
+    """
+    kwargs = dict(kwargs)
+    kwargs["plots"] = "mixture"
+    return plot_mixture_ppc(*args, **kwargs)
+
+
+def plot_mixture_ppc_components(
+    *args, component_indices=None, **kwargs
+):
+    """Render one or more component-specific mixture PPC figures.
+
+    Parameters
+    ----------
+    *args, **kwargs
+        Positional and keyword arguments accepted by :func:`plot_mixture_ppc`.
+    component_indices : int or iterable of int, optional
+        1-based component indices to render. When ``None``, renders all
+        components. Component values are validated by
+        :func:`plot_mixture_ppc`.
+
+    Returns
+    -------
+    PlotResultCollection or None
+        Collection containing requested component PPC figures.
+    """
+    kwargs = dict(kwargs)
+
+    # Translate wrapper-friendly indices into explicit selector tokens so all
+    # validation remains centralized in ``plot_mixture_ppc``.
+    if component_indices is None:
+        kwargs["plots"] = "components"
+    elif isinstance(component_indices, (int, np.integer)):
+        kwargs["plots"] = [f"component:{int(component_indices)}"]
+    else:
+        kwargs["plots"] = [
+            f"component:{int(idx)}" for idx in component_indices
+        ]
+    return plot_mixture_ppc(*args, **kwargs)
+
+
+def plot_mixture_ppc_comparison(*args, **kwargs):
+    """Render only the combined mixture/component comparison PPC figure.
+
+    Parameters
+    ----------
+    *args, **kwargs
+        Positional and keyword arguments accepted by :func:`plot_mixture_ppc`.
+        Any explicit ``plots`` keyword is overridden to ``"comparison"`` so
+        this wrapper keeps a consistent purpose.
+
+    Returns
+    -------
+    PlotResultCollection or None
+        Collection containing the comparison figure when available.
+    """
+    kwargs = dict(kwargs)
+    kwargs["plots"] = "comparison"
+    return plot_mixture_ppc(*args, **kwargs)
 
 
 def _resolve_weight_fractions_for_composition(

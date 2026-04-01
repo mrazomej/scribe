@@ -46,6 +46,18 @@ _LAZY_EXPORTS = {
         "plot_correlation_heatmap",
     ),
     "plot_mixture_ppc": ("scribe.viz.mixture_ppc", "plot_mixture_ppc"),
+    "plot_mixture_ppc_overview": (
+        "scribe.viz.mixture_ppc",
+        "plot_mixture_ppc_overview",
+    ),
+    "plot_mixture_ppc_components": (
+        "scribe.viz.mixture_ppc",
+        "plot_mixture_ppc_components",
+    ),
+    "plot_mixture_ppc_comparison": (
+        "scribe.viz.mixture_ppc",
+        "plot_mixture_ppc_comparison",
+    ),
     "plot_mixture_composition": (
         "scribe.viz.mixture_ppc",
         "plot_mixture_composition",
