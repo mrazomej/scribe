@@ -321,12 +321,18 @@ def plot_umap(
     )
 
     batch_size = umap_opts.get("batch_size", None)
-    gene_mask_indices = np.where(gene_mask)[0]
-    results_sub = results[gene_mask_indices]
+
+    # Use the exact same feature space for synthetic PPC generation as for
+    # UMAP fitting: detected genes followed by optional HVG selection.
+    # This avoids sampling thousands of genes that are later discarded before
+    # projection and keeps runtime aligned with `hvg_n_top_genes`.
+    detected_gene_indices = np.where(gene_mask)[0]
+    umap_gene_indices = detected_gene_indices[np.asarray(hvg_mask, dtype=bool)]
+    results_sub = results[umap_gene_indices]
 
     console.print(
-        f"[dim]Gene-subsetted results to {int(gene_mask.sum())} detected "
-        f"genes (out of {len(gene_mask)})[/dim]"
+        f"[dim]Gene-subsetted results to {len(umap_gene_indices)} UMAP genes "
+        f"(detected={int(gene_mask.sum())}, total={len(gene_mask)})[/dim]"
     )
 
     all_umap_synthetic = []
@@ -342,7 +348,8 @@ def plot_umap(
 
         synth_i = np.array(sample_arr[0, :, :], dtype=np.float64)
         synth_norm = _normalize_log1p(synth_i)
-        synth_embed = synth_norm[:, hvg_mask]
+        # Results were already subset to UMAP feature genes above.
+        synth_embed = synth_norm
         if pca_model is not None:
             synth_embed = pca_model.transform(synth_embed)
 
