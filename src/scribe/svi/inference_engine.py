@@ -16,17 +16,12 @@ import jax.numpy as jnp
 from jax import random, jit
 import numpyro
 from numpyro.infer import SVI, TraceMeanField_ELBO
-from rich.progress import (
-    Progress,
-    TextColumn,
-    BarColumn,
-    TaskProgressColumn,
-    TimeRemainingColumn,
-    MofNCompleteColumn,
-)
-from rich import print as rich_print
 from ..models.model_registry import get_model_and_guide
 from ..models.config import ModelConfig, EarlyStoppingConfig
+from .progress_backend import (
+    ProgressBackendName,
+    build_progress_reporter,
+)
 from .checkpoint import (
     checkpoint_exists,
     save_svi_checkpoint,
@@ -151,6 +146,7 @@ def _run_with_early_stopping(
     early_stopping: EarlyStoppingConfig,
     stable_update: bool = True,
     progress: bool = True,
+    progress_backend: ProgressBackendName = "auto",
     log_progress_lines: bool = False,
     model_config: Optional[ModelConfig] = None,
 ) -> SVIRunResult:
@@ -186,6 +182,10 @@ def _run_with_early_stopping(
         Whether to use numerically stable updates.
     progress : bool, default=True
         Whether to show progress bar.
+    progress_backend : {"auto", "rich", "tqdm", "none"}, default="auto"
+        Backend policy for rendering interactive progress updates. ``"auto"``
+        keeps Rich for TTY terminals and uses a notebook-friendly fallback in
+        marimo/Jupyter sessions.
     log_progress_lines : bool, default=False
         Whether to emit periodic plain-text progress lines. When enabled,
         one log line is emitted every ``max(1, n_steps // 20)`` steps
@@ -216,6 +216,7 @@ def _run_with_early_stopping(
     best_loss = float("inf")
     patience_counter = 0
     resumed = False
+    resume_message: Optional[str] = None
     # Step index from checkpoint metadata (set only after a successful load).
     restored_checkpoint_step: Optional[int] = None
 
@@ -254,9 +255,9 @@ def _run_with_early_stopping(
                 best_loss_str = (
                     f"{best_loss:.4f}" if np.isfinite(best_loss) else "N/A"
                 )
-                rich_print(
-                    f"[bold cyan]Resumed from checkpoint at step {start_step}"
-                    f"[/bold cyan] (best_loss: {best_loss_str})"
+                resume_message = (
+                    f"Resumed from checkpoint at step {start_step} "
+                    f"(best_loss: {best_loss_str})"
                 )
 
     # Track best state in memory
@@ -304,28 +305,25 @@ def _run_with_early_stopping(
             model_config=model_config,
         )
 
-    # Progress bar setup - matches NumPyro's format showing loss range
-    progress_ctx = Progress(
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        MofNCompleteColumn(),
-        TimeRemainingColumn(),
-        TextColumn("{task.fields[loss_info]}"),
-        disable=not progress,
+    # Build progress reporter dynamically so notebooks can use a backend that
+    # supports live updates while terminals keep the existing rich UX.
+    progress_reporter = build_progress_reporter(
+        progress=progress,
+        progress_backend=progress_backend,
     )
-
-    with progress_ctx as pbar:
+    with progress_reporter as reporter:
         # Track initial loss for display (like NumPyro)
         init_loss = losses[0] if losses else 0.0
         loss_display_interval = _progress_display_interval(n_steps)
 
-        task = pbar.add_task(
-            "SVI optimization" + (" (resumed)" if resumed else ""),
+        reporter.start(
+            description="SVI optimization" + (" (resumed)" if resumed else ""),
             total=n_steps,
             completed=start_step,
             loss_info=f"init loss: {init_loss:.4e}",
         )
+        if resume_message is not None:
+            reporter.print_message(resume_message)
 
         eps = 1e-8  # Small constant to avoid division by zero
 
@@ -372,7 +370,7 @@ def _run_with_early_stopping(
                     f"init loss: {init_loss:.4e}, "
                     f"avg. loss [{batch_start + 1}-{batch_end}]: {avg_loss:.4e}"
                 )
-                pbar.update(task, advance=1, loss_info=loss_info)
+                reporter.update(advance=1, loss_info=loss_info)
                 if log_progress_lines:
                     print(
                         "SVI progress "
@@ -382,7 +380,7 @@ def _run_with_early_stopping(
                         f"{avg_loss:.4e}"
                     )
             else:
-                pbar.update(task, advance=1)
+                reporter.update(advance=1)
 
             # Periodically monitor loss and save checkpoints.
             # This runs regardless of early_stopping.enabled so that
@@ -476,9 +474,8 @@ def _run_with_early_stopping(
                     and patience_counter >= early_stopping.patience
                 ):
                     early_stopped = True
-                    pbar.console.print(
-                        f"[bold green]Early stopping triggered at step "
-                        f"{step + 1}[/bold green] "
+                    reporter.print_message(
+                        f"Early stopping triggered at step {step + 1} "
                         f"(no improvement for {patience_counter} steps, "
                         f"best loss: {best_loss:.4e} at step {best_step + 1})"
                     )

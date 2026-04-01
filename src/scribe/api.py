@@ -653,7 +653,6 @@ def fit(
         inference. When enabled, the SVI engine logs approximately 20 updates
         over a run (every ``max(1, n_steps // 20)`` steps). This is useful for
         non-interactive logs such as SLURM ``.out`` files.
-
     n_samples : int, default=2_000
         Number of MCMC samples to draw (only for inference_method="mcmc").
 
