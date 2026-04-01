@@ -48,6 +48,14 @@ results = scribe.fit(
     optimizer_config={"name": "clipped_adam", "step_size": 5e-4, "grad_clip_norm": 1.0},
 )
 
+# Set log_progress_lines=True for periodic plain-text updates in batch logs.
+results = scribe.fit(
+    adata,
+    n_steps=50000,
+    log_progress_lines=True,
+    early_stopping={"enabled": True, "patience": 1000},
+)
+
 # Analyze results
 posterior_samples = results.get_posterior_samples()
 log_likelihood = results.log_likelihood()

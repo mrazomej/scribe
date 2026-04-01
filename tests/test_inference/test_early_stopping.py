@@ -445,6 +445,54 @@ class TestSVIProgressLossAggregation:
         assert np.isnan(_mean_ignoring_nans(losses))
 
 
+class TestSVIProgressBackends:
+    """Test adaptive progress backend selection helpers."""
+
+    def test_auto_prefers_tqdm_in_marimo(self, monkeypatch):
+        """Auto mode uses tqdm in marimo sessions when available."""
+        from scribe.svi import progress_backend as pb
+
+        # Force a marimo-like interactive signal and available tqdm import.
+        monkeypatch.setattr(pb, "_is_marimo_notebook", lambda: True)
+        monkeypatch.setattr(pb, "_is_ipython_notebook", lambda: False)
+        monkeypatch.setattr(pb, "_is_tty_stdout", lambda: True)
+        monkeypatch.setattr(pb, "_tqdm_available", lambda: True)
+
+        assert pb.resolve_progress_backend("auto") == "tqdm"
+
+    def test_auto_keeps_rich_in_tty(self, monkeypatch):
+        """Auto mode keeps rich progress in interactive terminals."""
+        from scribe.svi import progress_backend as pb
+
+        # Simulate a terminal session without notebook signals.
+        monkeypatch.setattr(pb, "_is_marimo_notebook", lambda: False)
+        monkeypatch.setattr(pb, "_is_ipython_notebook", lambda: False)
+        monkeypatch.setattr(pb, "_is_tty_stdout", lambda: True)
+        monkeypatch.setattr(pb, "_tqdm_available", lambda: True)
+
+        assert pb.resolve_progress_backend("auto") == "rich"
+
+    def test_auto_falls_back_to_none_without_tqdm(self, monkeypatch):
+        """Auto mode disables bar rendering in notebooks without tqdm."""
+        from scribe.svi import progress_backend as pb
+
+        # Simulate notebook context where tqdm import is unavailable.
+        monkeypatch.setattr(pb, "_is_marimo_notebook", lambda: False)
+        monkeypatch.setattr(pb, "_is_ipython_notebook", lambda: True)
+        monkeypatch.setattr(pb, "_is_tty_stdout", lambda: False)
+        monkeypatch.setattr(pb, "_tqdm_available", lambda: False)
+
+        assert pb.resolve_progress_backend("auto") == "none"
+
+    def test_explicit_tqdm_without_dependency_returns_none(self, monkeypatch):
+        """Explicit tqdm override degrades to no-op when tqdm is unavailable."""
+        from scribe.svi import progress_backend as pb
+
+        # This protects environments where tqdm is optional.
+        monkeypatch.setattr(pb, "_tqdm_available", lambda: False)
+        assert pb.resolve_progress_backend("tqdm") == "none"
+
+
 # =============================================================================
 # Integration Tests - Actual SVI Runs (Slow, skipped by default)
 # =============================================================================
