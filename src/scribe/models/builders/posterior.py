@@ -2419,7 +2419,9 @@ def _build_canonical_posteriors(
                 params, "p", is_scalar=True, is_mixture=False, split=split
             )
         if "r" not in skip:
-            if "r_W" in params:
+            # Constrained low-rank guides store log-space MVN params
+            # (e.g., log_r_W), while unconstrained guides use r_W.
+            if "r_W" in params or "log_r_W" in params:
                 distributions["r"] = _build_low_rank_lognormal_posterior(
                     params, "r", is_mixture, split
                 )
@@ -2484,7 +2486,9 @@ def _build_mean_prob_posteriors(
                 params, "p", is_scalar=True, is_mixture=False, split=split
             )
         if "mu" not in skip:
-            if "mu_W" in params:
+            # Constrained low-rank guides store log-space MVN params
+            # (e.g., log_mu_W), while unconstrained guides use mu_W.
+            if "mu_W" in params or "log_mu_W" in params:
                 distributions["mu"] = _build_low_rank_lognormal_posterior(
                     params, "mu", is_mixture, split
                 )
@@ -2564,7 +2568,9 @@ def _build_mean_odds_posteriors(
                 params, "phi", is_scalar=True, is_mixture=False, split=split
             )
         if "mu" not in skip:
-            if "mu_W" in params:
+            # Constrained low-rank guides store log-space MVN params
+            # (e.g., log_mu_W), while unconstrained guides use mu_W.
+            if "mu_W" in params or "log_mu_W" in params:
                 distributions["mu"] = _build_low_rank_lognormal_posterior(
                     params, "mu", is_mixture, split
                 )
