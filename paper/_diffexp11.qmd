@@ -402,6 +402,276 @@ providing a non-compositional check that is especially valuable for lowly
 expressed genes where the CLR transform amplifies noise.
 
 
+### Robustness of CLR inference to capture probability misspecification {#sec-diffexp-bio-robustness}
+
+The recommended workflow above places the CLR difference as the primary screen
+for differential expression, with the biological-level metrics serving a
+validation role. A natural concern is: **what happens to CLR-based inference when
+the capture probability $\nu_c$ is not estimated correctly?** As discussed in
+@sec-cap-identifiability, the observed library size constrains only the product
+$\nu_c \cdot \mu_T$, and resolving this degeneracy requires external information
+(the biology-informed prior on total mRNA, @sec-capture-prior). If that anchor is
+imperfect---for instance, because the true total mRNA content $M_c$ differs from
+the assumed $M_0$---one might worry that all downstream inferences are
+compromised.
+
+In this section, we show that CLR-based differential expression enjoys a
+remarkable **cancellation property** that makes it robust to such
+misspecification. The argument proceeds in three steps: (1) a wrong capture
+probability produces a uniform scaling of the Dirichlet parameters; (2) CLR
+means are exactly invariant to such scaling; and (3) CLR variances are only
+mildly affected in the large-concentration regime typical of scRNA-seq data. In
+contrast, the biological-level metrics developed earlier in this section absorb
+the scaling error directly and lose their absolute interpretation.
+
+#### Step 1: From misspecified $\nu_c$ to uniformly scaled Dirichlet parameters
+
+Suppose the true capture probability is $\nu_c$ but the model infers a
+misspecified value $\tilde{\nu}_c \neq \nu_c$. We analyze the consequences under
+the mean-odds parameterization, where the biological parameters are $\mu_g$ (the
+mean expression of gene $g$) and $\phi$ (the shared odds ratio controlling
+overdispersion), with negative binomial parameters $r_g = \mu_g \cdot \phi$ and
+$p = 1 / (1 + \phi)$ (see @eq-mean-nb-params).
+
+Recall from @sec-cap-identifiability that the expected library size is
+$\langle L_c \rangle = \nu_c \cdot \mu_T$ (@eq-cap-expected-lib), so the data
+constrain the product $\nu_c \cdot \mu_T$ but not each factor individually. When
+the model adopts $\tilde{\nu}_c$ instead of the true $\nu_c$, it must compensate
+to fit the same observed counts. Define the misspecification ratio
+
+$$
+\kappa = \frac{\nu_c}{\tilde{\nu}_c}.
+$${#eq-diffexp-rob-kappa}
+
+Since the observed library size is fixed, the constraint
+$\tilde{\nu}_c \cdot \tilde{\mu}_T = \nu_c \cdot \mu_T$ forces the model to
+adopt a rescaled total biological expression:
+
+$$
+\tilde{\mu}_T = \kappa \cdot \mu_T.
+$${#eq-diffexp-rob-mu-total}
+
+Under the shared-$\phi$ assumption, this rescaling is distributed uniformly
+across all genes. The effective $\hat{p}$ in the likelihood (see
+@eq-cap-phat-reminder) adjusts to absorb the capture probability change, which
+in the mean-odds parameterization translates to a rescaled $\phi$:
+
+$$
+\tilde{\phi} = \kappa \cdot \phi.
+$${#eq-diffexp-rob-phi-tilde}
+
+Since $r_g = \mu_g \cdot \phi$, the Dirichlet parameters that govern normalized
+expression (@eq-norm-dirichlet-conditional) are uniformly rescaled:
+
+$$
+\tilde{r}_g = \tilde{\mu}_g \cdot \tilde{\phi} = \kappa \cdot \mu_g \cdot \kappa \cdot \phi = \kappa^2 \cdot r_g, \quad \text{for all } g.
+$${#eq-diffexp-rob-r-scaled}
+
+The essential point is that this rescaling is **gene-independent**: every
+$r_g$ is multiplied by the same constant $\kappa^2$. This uniformity is a
+direct consequence of the shared-$p$ (or shared-$\phi$) structure of the model.
+
+#### Step 2: CLR means are exactly invariant to uniform scaling
+
+We now show that the CLR transformation annihilates any uniform multiplicative
+factor on the Dirichlet parameters. Let $c > 0$ be an arbitrary positive
+constant (in our case, $c = \kappa^2$), and define $\tilde{r}_g = c \cdot r_g$
+for all $g = 1, \ldots, D$.
+
+The Dirichlet mean proportions (@eq-norm-dirichlet-mean) are
+
+$$
+\tilde{\rho}_g = \frac{\tilde{r}_g}{\tilde{r}_T}
+= \frac{c \cdot r_g}{c \cdot r_T}
+= \frac{r_g}{r_T}
+= \rho_g,
+$${#eq-diffexp-rob-rho-invariant}
+
+where $\tilde{r}_T = \sum_j \tilde{r}_j = c \cdot r_T$. The proportions are
+completely unchanged. Therefore, the CLR coordinates
+(@eq-diffexp-clr-definition) applied to the Dirichlet mean are identical under
+the true and misspecified models.
+
+To see the cancellation explicitly at the CLR level, consider applying the CLR
+transformation directly to the Dirichlet parameters (rather than to the
+proportions). The CLR coordinate for gene $g$ evaluated on
+$\log \underline{\tilde{r}}$ is
+
+$$
+\widetilde{z}_{\text{CLR},g}
+= \log(\tilde{r}_g) - \frac{1}{D} \sum_{j=1}^{D} \log(\tilde{r}_j)
+= \log(c \cdot r_g) - \frac{1}{D} \sum_{j=1}^{D} \log(c \cdot r_j).
+$${#eq-diffexp-rob-clr-expand}
+
+Expanding each logarithm:
+
+$$
+\widetilde{z}_{\text{CLR},g}
+= \log c + \log r_g - \frac{1}{D} \sum_{j=1}^{D} (\log c + \log r_j)
+= \log c + \log r_g - \log c - \frac{1}{D} \sum_{j=1}^{D} \log r_j.
+$${#eq-diffexp-rob-clr-cancel}
+
+The $\log c$ terms cancel exactly, leaving
+
+$$
+\widetilde{z}_{\text{CLR},g} = \log r_g - \frac{1}{D} \sum_{j=1}^{D} \log r_j = z_{\text{CLR},g}.
+$${#eq-diffexp-rob-clr-invariant}
+
+This is a direct consequence of the centering matrix $\underline{\underline{C}}$
+annihilating the constant vector $\underline{1}$
+(@eq-diffexp-centering-orthogonal): the uniform shift $\log c \cdot
+\underline{1}$ lies in the null space of $\underline{\underline{C}}$ and is
+projected away.
+
+**For CLR-based differential expression, the implication is immediate.** The CLR
+difference between two conditions,
+
+$$
+\Delta_g = z_{\text{CLR},g}^A - z_{\text{CLR},g}^B,
+$${#eq-diffexp-rob-delta}
+
+depends only on the ratios of the Dirichlet parameters within each condition.
+Any gene-independent scaling error in $\nu_c$ cancels out of $\Delta_g$
+entirely. The posterior mean of $\Delta_g$---and hence the sign, ranking, and
+relative magnitudes of all gene-level CLR effects---is **exactly preserved**
+under capture probability misspecification.
+
+#### Step 3: CLR variances are mildly affected (second order)
+
+While the CLR *means* are exactly invariant, the CLR *variances* do depend on
+the absolute scale of the Dirichlet parameters through the concentration
+parameter $r_T = \sum_g r_g$.
+
+Recall from @eq-norm-dirichlet-variance that the variance of the Dirichlet
+marginal is
+
+$$
+\text{Var}(\rho_g \mid \underline{r}) = \frac{r_g(r_T - r_g)}{r_T^2(r_T + 1)}.
+$${#eq-diffexp-rob-dir-var-recall}
+
+Under the rescaling $\tilde{r}_g = c \cdot r_g$ (with $\tilde{r}_T = c \cdot r_T$),
+this becomes
+
+$$
+\text{Var}(\tilde{\rho}_g \mid \underline{\tilde{r}})
+= \frac{(c \cdot r_g)(c \cdot r_T - c \cdot r_g)}{(c \cdot r_T)^2(c \cdot r_T + 1)}
+= \frac{c^2 \cdot r_g(r_T - r_g)}{c^2 \cdot r_T^2 \cdot (c \cdot r_T + 1)}.
+$${#eq-diffexp-rob-dir-var-scaled-step}
+
+Simplifying:
+
+$$
+\text{Var}(\tilde{\rho}_g \mid \underline{\tilde{r}})
+= \frac{r_g(r_T - r_g)}{r_T^2(c \cdot r_T + 1)}
+= \text{Var}(\rho_g \mid \underline{r}) \cdot \frac{r_T + 1}{c \cdot r_T + 1}.
+$${#eq-diffexp-rob-dir-var-ratio}
+
+The ratio of the true variance to the misspecified variance is therefore
+
+$$
+\frac{\text{Var}(\tilde{\rho}_g)}{\text{Var}(\rho_g)}
+= \frac{r_T + 1}{c \cdot r_T + 1}.
+$${#eq-diffexp-rob-var-ratio}
+
+For $c > 1$ (the model overestimates total expression, i.e., underestimates
+$\nu_c$), the variance decreases; for $c < 1$, the variance increases. However,
+in the large-concentration regime $r_T \gg 1$ that is typical of scRNA-seq data
+(where $r_T = \sum_g r_g$ sums over tens of thousands of genes), this ratio
+satisfies
+
+$$
+\frac{r_T + 1}{c \cdot r_T + 1}
+= \frac{1}{c} \cdot \frac{1 + 1/r_T}{1 + 1/(c \cdot r_T)}
+\approx \frac{1}{c}\left(1 + \frac{c - 1}{c \cdot r_T}\right)
+= \frac{1}{c} + O\!\left(\frac{1}{r_T}\right).
+$${#eq-diffexp-rob-var-asymptotic}
+
+The leading-order effect is a gene-independent scaling by $1/c$, which shifts all
+CLR variances by the same multiplicative factor. This uniform shift does **not**
+change the relative ranking of genes by their z-scores or lfsr values: if gene
+$g$ has a larger $|\Delta_g| / \text{sd}_g$ than gene $h$ under the true model,
+it will still have a larger ratio under the misspecified model (since both
+standard deviations are scaled by the same factor $1/\sqrt{c}$). The $O(1/r_T)$
+correction is the only gene-specific perturbation, and it vanishes as
+$r_T \to \infty$.
+
+In summary: **the CLR mean differences are exactly invariant, and the CLR
+z-score rankings are preserved up to a negligible $O(1/r_T)$ correction.** The
+lfsr values and PEFP thresholds computed from CLR coordinates are therefore
+robust to moderate errors in the capture probability scaling.
+
+#### Contrast with biological-level metrics
+
+The cancellation that protects CLR inference does **not** extend to the
+biological-level metrics developed earlier in this section.
+
+**Biological LFC** (@eq-diffexp-bio-lfc). The biological log-fold change is
+$\text{LFC}_g = \log(\mu_g^A / \mu_g^B)$. Under misspecification with
+condition-specific ratios $\kappa^A$ and $\kappa^B$, the inferred means become
+$\tilde{\mu}_g^A = \kappa^A \cdot \mu_g^A$ and
+$\tilde{\mu}_g^B = \kappa^B \cdot \mu_g^B$, giving
+
+$$
+\widetilde{\text{LFC}}_g = \log\!\left(\frac{\kappa^A \cdot \mu_g^A}
+{\kappa^B \cdot \mu_g^B}\right)
+= \text{LFC}_g + \log\!\left(\frac{\kappa^A}{\kappa^B}\right).
+$${#eq-diffexp-rob-lfc-bias}
+
+Every gene's LFC is shifted by the same additive offset
+$\log(\kappa^A / \kappa^B)$. The *sign* and *ranking* of LFC values are
+preserved (since the offset is gene-independent), but the *absolute magnitudes*
+are biased. This means that practical significance thresholds
+$|\text{LFC}_g| > \tau$ will include or exclude different genes depending on the
+direction and size of the offset.
+
+**Log-variance ratio** (@eq-diffexp-bio-lvr). The LVR inherits the same
+additive bias as the LFC and picks up an additional term from the change in
+$\phi$. Both are gene-independent, so rankings are again preserved but absolute
+values are shifted.
+
+**Jeffreys divergence** (@eq-diffexp-bio-jeffreys). The Gamma rate parameter
+$\beta_g = 1/\phi_g$ absorbs the capture scaling nonlinearly. While the
+divergence is not simply shifted by an additive offset, it is systematically
+inflated or deflated for all genes, again distorting absolute magnitudes without
+necessarily changing rankings.
+
+This contrast reinforces the decision framework in @sec-diffexp-bio-decision:
+**use CLR as the primary screen** (where inference is robust to capture
+misspecification), then **validate with biological metrics** (where absolute
+values should be interpreted cautiously when the capture model is uncertain).
+
+#### The mixture model case
+
+A particularly important setting is a **mixture model** where different cell
+types (components) are jointly modeled. Different cell types may have genuinely
+different total mRNA contents $M_c$, so a single $M_0$ cannot accurately anchor
+all components simultaneously. In practice, this manifests as different mixture
+components converging to different effective capture probability scalings.
+
+The cancellation argument above applies **per-component**: within each mixture
+component $k$, the capture misspecification ratio $\kappa^{(k)}$ is absorbed
+into a uniform rescaling of that component's Dirichlet parameters, and the CLR
+coordinates within component $k$ are exactly invariant. The CLR difference
+between conditions A and B within the same component,
+
+$$
+\Delta_g^{(k)} = z_{\text{CLR},g}^{A,(k)} - z_{\text{CLR},g}^{B,(k)},
+$${#eq-diffexp-rob-mixture-delta}
+
+is therefore robust even when different components learn different $\kappa^{(k)}$
+values. The key requirement is that the scaling be uniform *within* each
+component---which is guaranteed by the shared-$\phi$ model structure---not that
+it be the same *across* components.
+
+This property is especially reassuring for mixture models where the
+biology-informed prior on $M_0$ may conflict with the true total mRNA of one or
+more cell types. Even if the $M_0$ anchor is imperfect and the model compensates
+by adjusting the effective capture scaling differently for each component, the
+CLR-based differential expression analysis within each component remains valid.
+The biological-level metrics, by contrast, would reflect the component-specific
+scaling errors and require careful interpretation.
+
+
 ### Caveat: the NB parameter-space boundary {#sec-diffexp-bio-caveat}
 
 While the biological metrics are free of compositional closure, they have their
