@@ -620,7 +620,7 @@ class EarlyStoppingConfig(BaseModel):
         description="Steps without improvement before stopping",
     )
     min_delta: float = Field(
-        100.0,
+        1.0,
         ge=0,
         description=(
             "Minimum absolute improvement in loss to qualify as progress. "
@@ -637,7 +637,7 @@ class EarlyStoppingConfig(BaseModel):
         ),
     )
     check_every: int = Field(
-        10,
+        100,
         gt=0,
         description="Check convergence every N steps",
     )
@@ -651,7 +651,7 @@ class EarlyStoppingConfig(BaseModel):
         ),
     )
     smoothing_window: int = Field(
-        50,
+        100,
         gt=0,
         description="Window size for loss smoothing (moving average)",
     )
@@ -886,9 +886,7 @@ class SVIConfig(BaseModel):
             known = set(type(self).model_fields.keys())
             dumped = self.model_dump(exclude_none=True)
             return {
-                key: value
-                for key, value in dumped.items()
-                if key not in known
+                key: value for key, value in dumped.items() if key not in known
             }
 
     model_config = ConfigDict(
