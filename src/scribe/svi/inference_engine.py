@@ -18,7 +18,7 @@ import numpyro
 from numpyro.infer import SVI, TraceMeanField_ELBO
 from ..models.model_registry import get_model_and_guide
 from ..models.config import ModelConfig, EarlyStoppingConfig
-from .progress_backend import (
+from ._progress_backend import (
     ProgressBackendName,
     build_progress_reporter,
 )

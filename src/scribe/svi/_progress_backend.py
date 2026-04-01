@@ -32,7 +32,7 @@ class ProgressReporter(Protocol):
     Protocol for progress reporter implementations.
 
     Implementations expose a minimal, backend-agnostic API consumed by the SVI
-    loop.  Keeping this contract small avoids leaking backend-specific concepts
+    loop. Keeping this contract small avoids leaking backend-specific concepts
     (for example Rich task IDs) into inference code.
     """
 
