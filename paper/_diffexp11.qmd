@@ -614,6 +614,142 @@ as the Dirichlet special case, because the mechanism is the same in both:
 capture probability is a cell-level quantity that scales all genes uniformly, and
 normalization to proportions annihilates any uniform multiplicative factor.
 
+#### Why the capture degeneracy cannot affect compositions {#sec-diffexp-rob-degeneracy}
+
+The preceding subsections established the invariance result through the
+Poisson--Gamma representation. A natural concern remains: the variable capture
+model has a well-known identifiability issue (see @sec-cap-identifiability),
+where the observed library size constrains only the product $\nu_c \cdot \mu_T$
+and cannot separately determine the capture probability $\nu_c$ and the
+biological total $\mu_T$. If the model has a genuine degeneracy, how can we
+claim that anything---even compositions---is immune to it? The answer is that the
+degeneracy lives in a subspace of the parameter space that is structurally
+orthogonal to the compositional distribution. This subsection makes this
+statement precise.
+
+##### What the data identify without ambiguity
+
+Consider first the canonical NB parameterization, where the parameters are the
+shape $r_g$ and the success probability $p$ (or $p_g$ in the gene-specific
+model). After capture thinning, the observed counts for gene $g$ in cell $c$
+follow $u_{gc} \sim \text{NB}(r_g, \hat{p}_c)$, where $\hat{p}_c$ is the
+effective success probability that absorbs the capture efficiency. The
+log-likelihood of a single observation $k$ from $\text{NB}(r, \hat{p})$ is
+
+$$
+\ell(r, \hat{p}; k) = \log\Gamma(k + r) - \log\Gamma(r) - \log k!
++ r \log \hat{p} + k \log(1 - \hat{p}).
+$${#eq-diffexp-rob-nb-loglik}
+
+The shape $r$ enters through the $\log\Gamma(k + r) - \log\Gamma(r)$ terms,
+which control the overdispersion structure of the count distribution. The
+effective success probability $\hat{p}$ enters through $r \log \hat{p} +
+k \log(1 - \hat{p})$, which controls the mean-to-variance ratio. These two
+parameters affect the likelihood in fundamentally different ways: given
+sufficient data, both $r_g$ and $\hat{p}_c$ are **uniquely identified**. The
+variance-to-mean ratio of the observed counts determines $\hat{p}_c$ (since
+$\text{Var}(u_{gc}) / \langle u_{gc} \rangle = 1/\hat{p}_c$), and the mean
+then pins down $r_g$ (since $\langle u_{gc} \rangle = r_g(1 -
+\hat{p}_c)/\hat{p}_c$). There is no degeneracy in the pair $(r_g, \hat{p}_c)$.
+
+##### Where the degeneracy lives
+
+The degeneracy appears only when one attempts to decompose the effective
+parameters into their biological and technical components. The effective success
+probability is a function of the biological $p$ (or $p_g$) and the capture
+probability $\nu_c$:
+
+$$
+\hat{p}_c = \frac{p}{p + \nu_c(1 - p)},
+$${#eq-diffexp-rob-phat-decomposition}
+
+or equivalently, in terms of the odds $\theta = p/(1-p)$:
+
+$$
+\hat{\theta}_c = \frac{\theta}{\nu_c}.
+$${#eq-diffexp-rob-thetahat-decomposition}
+
+Many pairs $(\theta, \nu_c)$ produce the same effective odds $\hat{\theta}_c$.
+This is the $\nu_c$-$\mu_T$ degeneracy: a one-dimensional curve in the
+$(\theta, \nu_c)$ plane along which the observed data are identical. In the
+gene-specific model, the same structure holds gene by gene: the data identify
+$\hat{\theta}_{gc} = \theta_g / \nu_c$ for each gene, but the decomposition of
+$\hat{\theta}_{gc}$ into $\theta_g$ and $\nu_c$ is degenerate.
+
+The crucial structural observation is that **this degeneracy is always a uniform
+rescaling across genes**. Because $\nu_c$ is a cell-level parameter---it
+describes the efficiency of mRNA capture for the entire cell, not for individual
+genes---the degenerate direction takes the form
+
+$$
+\theta_g \to \alpha \, \theta_g, \quad
+\nu_c \to \alpha \, \nu_c, \quad
+\text{for all } g \text{ simultaneously},
+$${#eq-diffexp-rob-degen-direction}
+
+where $\alpha > 0$ is a single scalar that shifts all genes by the same
+multiplicative factor. A gene-specific rescaling $\theta_g \to \alpha_g \,
+\theta_g$ (with $\alpha_g$ varying across genes) would change the effective odds
+$\hat{\theta}_{gc}$ for that gene, contradicting what the data require.
+
+##### Why uniform degeneracies are invisible to compositions
+
+Compositions are defined as ratios of contributions:
+
+$$
+\rho_g = \frac{\gamma_g / \theta_g}{\sum_{j} \gamma_j / \theta_j},
+$${#eq-diffexp-rob-comp-ratio}
+
+where $\gamma_g \sim \text{Gamma}(r_g, 1)$ are independent draws. If the model
+sits at a different point on the degenerate manifold---with $\tilde{\theta}_g =
+\alpha\,\theta_g$ for all $g$---the composition becomes
+
+$$
+\tilde{\rho}_g = \frac{\gamma_g / (\alpha\,\theta_g)}{\sum_{j}
+\gamma_j / (\alpha\,\theta_j)} = \frac{\gamma_g / \theta_g}{\sum_{j}
+\gamma_j / \theta_j} = \rho_g.
+$${#eq-diffexp-rob-uniform-cancel}
+
+The uniform factor $1/\alpha$ appears in every term of both the numerator and
+denominator and cancels identically. This is not an approximation---it is an
+algebraic identity. Compositions are, by construction, insensitive to the
+overall scale of the rate parameters. Since the capture degeneracy can only move
+the model along a direction that rescales all $\theta_g$ uniformly, and since
+compositions annihilate uniform rescalings, the degeneracy is structurally
+invisible to the compositional distribution.
+
+##### The complete picture
+
+Putting the pieces together:
+
+1. **Shape parameters $r_g$**: uniquely identified by the data. No degeneracy,
+   no ambiguity. These are directly constrained by the overdispersion structure
+   of the observed counts through the NB likelihood
+   (@eq-diffexp-rob-nb-loglik).
+
+2. **Effective success probabilities $\hat{p}_c$ (or $\hat{\theta}_{gc}$)**:
+   uniquely identified by the data. These determine the mean-to-variance ratio
+   of the observed counts.
+
+3. **Decomposition $(\theta_g, \nu_c)$**: degenerate. The data constrain only
+   the ratio $\hat{\theta}_{gc} = \theta_g / \nu_c$. But the degenerate
+   direction is always a uniform rescaling across genes
+   (@eq-diffexp-rob-degen-direction), because $\nu_c$ is a cell-level quantity.
+
+4. **Compositions**: depend on $\underline{r}$ (no degeneracy) and on the
+   $\theta_g$ values only through ratios that cancel uniform scalings
+   (@eq-diffexp-rob-uniform-cancel). The degenerate subspace is therefore
+   orthogonal to the compositional distribution.
+
+The robustness of CLR inference does not require the capture degeneracy to be
+resolved. The biology-informed prior on total mRNA (@sec-capture-prior) is
+valuable for anchoring the biological-level parameters $\mu_g$ and $\phi$ (or
+$p_g$), and hence for the biological metrics discussed later. But for
+compositional inference, the CLR results are **exact regardless of where the
+posterior sits on the degenerate manifold**. This is what makes the robustness
+result a structural property of the model rather than a consequence of having a
+good prior.
+
 #### Consequences for CLR-based differential expression
 
 The invariance of the compositional distribution---whether Dirichlet under the
