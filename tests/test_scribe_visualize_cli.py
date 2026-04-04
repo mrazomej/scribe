@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from scribe.cli.slurm_common import SlurmPromptConfig
+from scribe.cli.slurm_visualize import _build_batch_script
 from scribe.cli.visualize import main as visualize_cli_main
 
 
@@ -174,3 +175,22 @@ def test_visualize_cli_slurm_keeps_recursive_pattern_and_file_input(
         "--recursive",
         "*_results.pkl",
     ]
+
+
+def test_visualize_slurm_batch_script_includes_gres_when_configured(
+    tmp_path: Path,
+) -> None:
+    """Raw ``sbatch`` script must emit ``--gres`` when ``SlurmPromptConfig`` sets it."""
+    cfg = SlurmPromptConfig(
+        partition="base",
+        account=None,
+        array_parallelism=1,
+        cpus_per_task=4,
+        mem_gb=64,
+        timeout_min=60,
+        gres="gpu:1",
+        job_name="my_viz",
+    )
+    script = _build_batch_script(cfg, project_dir=tmp_path, forwarded_args=["out", "--all"])
+    assert "#SBATCH --gres=gpu:1" in script
+    assert "#SBATCH --job-name=my_viz" in script
