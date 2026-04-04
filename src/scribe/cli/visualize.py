@@ -89,7 +89,12 @@ def main(argv: list[str] | None = None) -> None:
         **profile_values.get("launcher_overrides", {}),
         **launcher_values,
     }
-    slurm_cfg = prompt_slurm_config(merged_values, allow_interactive=True)
+    slurm_cfg = prompt_slurm_config(
+        merged_values,
+        allow_interactive=True,
+        default_job_name="scribe-visualize",
+        prompt_for_gres=True,
+    )
 
     submission_args = _strip_slurm_tokens(raw_argv)
     project_dir = Path(__file__).resolve().parents[3]
