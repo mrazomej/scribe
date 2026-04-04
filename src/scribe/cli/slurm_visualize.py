@@ -23,7 +23,7 @@ def _build_batch_script(
     """Build a SLURM batch script for recursive visualization jobs."""
     quoted_args = " ".join(shlex.quote(token) for token in forwarded_args)
     timeout = _minutes_to_slurm_time(slurm_cfg.timeout_min)
-    job_name = slurm_cfg.job_name or "scribe_visualize"
+    job_name = slurm_cfg.job_name or "scribe-visualize"
     log_dir = "slurm_logs"
     script_lines = [
         "#!/bin/bash",

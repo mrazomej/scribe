@@ -257,7 +257,7 @@ scribe-infer --slurm-profile default \
 | `mem_gb` | `64` | Memory in GB |
 | `timeout_min` | `240` | Wall-time limit in minutes |
 | `array_parallelism` | `1` | Max concurrent array jobs (split mode) |
-| `job_name` | `scribe_infer` | SLURM job name |
+| `job_name` | `scribe-infer` | SLURM job name |
 | `submitit_folder` | `slurm_logs/submitit/%j` | Log directory |
 | `gres` | `null` | Generic resources (e.g., `gpu:1`) |
 | `launcher_overrides` | `{}` | Escape hatch for cluster-specific submitit keys |

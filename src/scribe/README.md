@@ -194,7 +194,8 @@ scribe-infer --slurm --config-path ./conf data=singer
 ```
 
 `--slurm` prompts for cluster-specific resources and requires partition input
-(no hardcoded partition default).
+(no hardcoded partition default). It also prompts for an optional SLURM job name,
+defaulting to `scribe-infer`.
 
 For reusable cluster settings across runs, add profiles under `conf/slurm` and
 invoke:
@@ -222,6 +223,11 @@ For cluster execution of large recursive runs:
 ```bash
 scribe-visualize --slurm-profile default outputs/ --recursive --all
 ```
+
+`scribe-visualize --slurm` uses the same prompt flow (with job name defaulting
+to `scribe-visualize`) and additionally asks for a GPU count when generic
+resources are not already set in the profile or `--slurm-set`, emitting SLURM
+`gres=gpu:N` for the batch script.
 
 See `docs/cli_visualize.md` for detailed usage.
 

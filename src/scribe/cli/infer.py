@@ -199,7 +199,12 @@ def main(argv: list[str] | None = None) -> None:
             **profile_values.get("launcher_overrides", {}),
             **launcher_values,
         }
-        slurm_cfg = prompt_slurm_config(merged_values, allow_interactive=True)
+        slurm_cfg = prompt_slurm_config(
+            merged_values,
+            allow_interactive=True,
+            default_job_name="scribe-infer",
+            prompt_for_gres=False,
+        )
         command = _build_slurm_command(
             split_mode=split_mode,
             config_path=str(config_root),
