@@ -48,12 +48,18 @@ repository](https://github.com/mrazomej/scribe)
 <!-- Extension: hierarchical zero-inflation gate -->
 {{< include _hierarchical_gate.qmd >}}
 
+<!-- Extension: Beta Negative Binomial for heavier tails -->
+{{< include _beta_negative_binomial.qmd >}}
+
 <!-- ============================================================ -->
-<!-- Block 2: Model Comparison -->
+<!-- Block 2: Model Comparison & Diagnostics -->
 <!-- ============================================================ -->
 
 <!-- Bayesian model comparison (WAIC, PSIS-LOO) -->
 {{< include _model_comparison.qmd >}}
+
+<!-- Per-gene goodness-of-fit via randomized quantile residuals -->
+{{< include _goodness_of_fit.qmd >}}
 
 <!-- ============================================================ -->
 <!-- Block 3: Inference Methodology -->
@@ -65,18 +71,34 @@ repository](https://github.com/mrazomej/scribe)
 <!-- Reparameterization for VI guides -->
 {{< include _guide_reparam.qmd >}}
 
+<!-- Joint low-rank guide for cross-parameter correlations -->
+{{< include _joint_low_rank_guide.qmd >}}
+
 <!-- Mixture weight identifiability in SVI -->
 {{< include _mixture_weights_svi.qmd >}}
 
 <!-- ============================================================ -->
-<!-- Block 4: Denoising -->
+<!-- Block 4: Denoising & Priors -->
 <!-- ============================================================ -->
 
 <!-- Bayesian denoising of transcriptional profiles -->
 {{< include _denoising.qmd >}}
 
+<!-- Biology-informed prior for the capture probability -->
+{{< include _capture_prior.qmd >}}
+
+<!-- Data-informed prior for biological mean expression -->
+{{< include _mean_anchoring_prior.qmd >}}
+
 <!-- ============================================================ -->
-<!-- Block 5: Normalization & Differential Expression -->
+<!-- Block 5: Multi-Dataset Hierarchical Models -->
+<!-- ============================================================ -->
+
+<!-- Extension of the framework to multiple related datasets -->
+{{< include _hierarchical_datasets.qmd >}}
+
+<!-- ============================================================ -->
+<!-- Block 6: Normalization & Differential Expression -->
 <!-- ============================================================ -->
 
 <!-- Low-rank logistic-normal approximation for normalized expression -->
@@ -111,6 +133,9 @@ repository](https://github.com/mrazomej/scribe)
 
 <!-- Empirical Bayes shrinkage for differential expression -->
 {{< include _diffexp10.qmd >}}
+
+<!-- Biological-level differential expression -->
+{{< include _diffexp11.qmd >}}
 
 :::
 :::
