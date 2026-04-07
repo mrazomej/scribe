@@ -733,15 +733,6 @@ wheels = [
 ]
 
 [[package]]
-name = "graphviz"
-version = "0.20.3"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/fa/83/5a40d19b8347f017e417710907f824915fba411a9befd092e52746b63e9f/graphviz-0.20.3.zip", hash = "sha256:09d6bc81e6a9fa392e7ba52135a9d49f1ed62526f96499325930e87ca1b5925d", size = 256455, upload-time = "2024-03-21T07:50:45.772Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/00/be/d59db2d1d52697c6adc9eacaf50e8965b6345cc143f671e1ed068818d5cf/graphviz-0.20.3-py3-none-any.whl", hash = "sha256:81f848f2904515d8cd359cc611faba817598d2feaac4027b266aa3eda7b3dde5", size = 47126, upload-time = "2024-03-21T07:50:43.091Z" },
-]
-
-[[package]]
 name = "griffelib"
 version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3287,7 +3278,6 @@ source = { editable = "." }
 dependencies = [
     { name = "anndata" },
     { name = "flax" },
-    { name = "graphviz" },
     { name = "jax", extra = ["cuda12"] },
     { name = "matplotlib" },
     { name = "multipledispatch" },
@@ -3300,7 +3290,6 @@ dependencies = [
     { name = "scanpy" },
     { name = "scipy" },
     { name = "seaborn" },
-    { name = "statsmodels" },
 ]
 
 [package.optional-dependencies]
@@ -3348,7 +3337,6 @@ docs = [
 requires-dist = [
     { name = "anndata", specifier = ">=0.12.10" },
     { name = "flax", specifier = ">=0.12.2" },
-    { name = "graphviz", specifier = ">=0.20.3" },
     { name = "hydra-core", marker = "extra == 'hydra'", specifier = ">=1.3.2" },
     { name = "hydra-joblib-launcher", marker = "extra == 'hydra'", specifier = ">=1.2" },
     { name = "hydra-submitit-launcher", marker = "extra == 'hydra'", specifier = ">=1.2.0" },
@@ -3365,7 +3353,6 @@ requires-dist = [
     { name = "scanpy", specifier = ">=1.12" },
     { name = "scipy", specifier = ">=1.14.1" },
     { name = "seaborn", specifier = ">=0.13.2" },
-    { name = "statsmodels", specifier = ">=0.14.4" },
 ]
 provides-extras = ["hydra"]
 
