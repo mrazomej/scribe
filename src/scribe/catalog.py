@@ -9,11 +9,44 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Union, Callable
 import yaml
 from dataclasses import dataclass
-import hydra
 
 # ==============================================================================
 # ExperimentRun class
 # ==============================================================================
+
+
+def _resolve_run_data_path(run_path: str, data_path: str) -> str:
+    """Resolve a run-configured data path without requiring Hydra at import time.
+
+    Parameters
+    ----------
+    run_path : str
+        Path to the experiment run directory containing ``.hydra`` metadata.
+    data_path : str
+        Raw ``data.path`` string loaded from ``.hydra/config.yaml``.
+
+    Returns
+    -------
+    str
+        Absolute path for the data file, resolved against ``hydra.yaml``
+        runtime cwd when available, then against the current working directory.
+    """
+    candidate = Path(data_path).expanduser()
+    if candidate.is_absolute():
+        return str(candidate)
+
+    # Prefer Hydra's recorded runtime cwd so relative paths resolve exactly as
+    # they did during training, without importing hydra-core.
+    hydra_meta_path = Path(run_path) / ".hydra" / "hydra.yaml"
+    if hydra_meta_path.exists():
+        with open(hydra_meta_path, "r") as handle:
+            hydra_meta = yaml.safe_load(handle) or {}
+        runtime_cwd = hydra_meta.get("runtime", {}).get("cwd")
+        if runtime_cwd:
+            return str((Path(runtime_cwd).expanduser() / candidate).resolve())
+
+    # Fallback for runs without hydra runtime metadata.
+    return str(candidate.resolve())
 
 
 @dataclass
@@ -126,9 +159,8 @@ class ExperimentRun:
 
         data_path = data_config["path"]
 
-        # Convert to absolute path using hydra's utility
-        # The path in config might be relative to the original working directory
-        data_path = hydra.utils.to_absolute_path(data_path)
+        # Resolve relative run data paths via .hydra/hydra.yaml when present.
+        data_path = _resolve_run_data_path(self.path, data_path)
 
         # Pull the optional data-pipeline settings from the run config so data
         # loading can faithfully replay training-time filtering/subsetting.

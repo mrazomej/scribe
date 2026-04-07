@@ -5,8 +5,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from scribe.viz import pipeline
-
 from .slurm_common import (
     load_slurm_profile,
     parse_slurm_set_entries,
@@ -52,6 +50,26 @@ def _strip_slurm_tokens(argv: list[str]) -> list[str]:
     return stripped
 
 
+def _ensure_hydra_extra_installed() -> None:
+    """Check optional Hydra dependencies and fail with install guidance."""
+    try:
+        import hydra  # noqa: F401
+        import omegaconf  # noqa: F401
+    except ImportError as exc:
+        raise SystemExit(
+            "Missing optional Hydra dependencies required by scribe-visualize.\n"
+            "Install with: pip install 'scribe[hydra]'\n"
+            f"Original import error: {exc}"
+        ) from exc
+
+
+def _run_pipeline(argv: list[str]) -> None:
+    """Import and execute the visualization pipeline lazily."""
+    from scribe.viz import pipeline
+
+    pipeline.main(argv)
+
+
 def main(argv: list[str] | None = None) -> None:
     """Run visualization CLI locally or as a SLURM batch job."""
     raw_argv = list(argv or [])
@@ -68,8 +86,10 @@ def main(argv: list[str] | None = None) -> None:
         or len(known_args.slurm_set) > 0
     )
 
+    _ensure_hydra_extra_installed()
+
     if not slurm_requested:
-        pipeline.main(forwarded)
+        _run_pipeline(forwarded)
         return
 
     # Best-effort config-root resolution; visualization defaults do not require

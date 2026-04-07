@@ -211,6 +211,48 @@ def test_multi_column_subset_raises_when_no_cells_match(tmp_path):
         )
 
 
+def test_multi_column_subset_raises_on_length_mismatch(tmp_path):
+    """Mismatched subset_column/subset_value lengths should raise ValueError."""
+    obs = pd.DataFrame(
+        {
+            "treatment": ["ctrl", "drug"],
+            "kit": ["10x", "dropseq"],
+        },
+        index=["c0", "c1"],
+    )
+    path = _make_h5ad(tmp_path, obs)
+
+    with pytest.raises(ValueError, match="must have the same length"):
+        load_and_preprocess_anndata(
+            path,
+            return_jax=False,
+            subset_column=["treatment", "kit"],
+            subset_value=["ctrl"],
+        )
+
+
+def test_multi_column_subset_accepts_tuple_inputs(tmp_path):
+    """Tuple inputs should behave like list inputs for multi-column subset."""
+    obs = pd.DataFrame(
+        {
+            "treatment": ["ctrl", "ctrl", "drug", "drug"],
+            "kit": ["10x", "dropseq", "10x", "dropseq"],
+        },
+        index=[f"cell{i}" for i in range(4)],
+    )
+    path = _make_h5ad(tmp_path, obs)
+
+    result = load_and_preprocess_anndata(
+        path,
+        return_jax=False,
+        subset_column=("treatment", "kit"),
+        subset_value=("drug", "dropseq"),
+    )
+    assert result.shape[0] == 1
+    assert result.obs["treatment"].iloc[0] == "drug"
+    assert result.obs["kit"].iloc[0] == "dropseq"
+
+
 def test_no_subset_returns_all_cells(tmp_path):
     """When no subset arguments are given all cells should be returned."""
     obs = pd.DataFrame(
