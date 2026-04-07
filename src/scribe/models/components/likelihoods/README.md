@@ -141,6 +141,16 @@ The `param_specs` argument (passed from `model_config.param_specs`) enables
 this spec-aware indexing. Without it, the function falls back to the legacy
 heuristic (`shape[0] == n_datasets`).
 
+### NumPyro 0.20+ Mixture Compatibility
+
+NumPyro 0.20 introduced stricter validation in `MixtureSameFamily` requiring
+parameter-independent component supports. SCRIBE models gene dimensions as
+events (`to_event(1)`), which wraps support in `IndependentConstraint`.
+
+To keep event semantics while remaining compatible with NumPyro 0.20+, the
+likelihood implementations now build mixtures through `MixtureGeneral` from
+explicit per-component slices.
+
 When dataset-specific mixture weights are enabled, `mixing_weights` follow the
 same indexing rule and become `(batch, K)` inside the cell plate. Annotation
 logit nudging supports both global `(K,)` and batch-aligned `(batch, K)` inputs.

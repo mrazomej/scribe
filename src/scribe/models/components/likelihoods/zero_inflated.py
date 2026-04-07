@@ -14,6 +14,7 @@ import numpyro.distributions as dist
 
 from .base import (
     Likelihood,
+    build_mixture_general,
     broadcast_param_for_mixture,
     compute_cell_specific_mixing,
     index_dataset_params,
@@ -116,7 +117,7 @@ class ZeroInflatedNBLikelihood(Likelihood):
 
         if is_mixture:
             # ================================================================
-            # Mixture model: use MixtureSameFamily
+            # Mixture model: use MixtureGeneral for NumPyro>=0.20 compatibility
             # ================================================================
             mixing_weights = param_values["mixing_weights"]
             mixing_dist = dist.Categorical(probs=mixing_weights)
@@ -125,11 +126,15 @@ class ZeroInflatedNBLikelihood(Likelihood):
             p = broadcast_param_for_mixture(p, r)
             gate = broadcast_param_for_mixture(gate, r)
 
-            base_nb = self._make_count_dist(r, p)
-            zinb_base = dist.ZeroInflatedDistribution(
-                base_nb, gate=gate
-            ).to_event(1)
-            return dist.MixtureSameFamily(mixing_dist, zinb_base)
+            return build_mixture_general(
+                mixing_dist,
+                lambda comp_idx: dist.ZeroInflatedDistribution(
+                    self._make_count_dist(
+                        r[..., comp_idx, :], p[..., comp_idx, :]
+                    ),
+                    gate=gate[..., comp_idx, :],
+                ).to_event(1),
+            )
 
         base_nb = self._make_count_dist(r, p)
         return dist.ZeroInflatedDistribution(base_nb, gate=gate).to_event(1)
@@ -155,7 +160,7 @@ class ZeroInflatedNBLikelihood(Likelihood):
         Returns
         -------
         dist.Distribution
-            A ``MixtureSameFamily`` distribution with cell-specific
+            A ``MixtureGeneral`` distribution with cell-specific
             ``Categorical`` mixing.
         """
         mixing_weights = param_values["mixing_weights"]
@@ -172,11 +177,15 @@ class ZeroInflatedNBLikelihood(Likelihood):
         p = broadcast_param_for_mixture(p, r)
         gate = broadcast_param_for_mixture(gate, r)
 
-        base_nb = self._make_count_dist(r, p)
-        zinb_base = dist.ZeroInflatedDistribution(base_nb, gate=gate).to_event(
-            1
+        return build_mixture_general(
+            mixing_dist,
+            lambda comp_idx: dist.ZeroInflatedDistribution(
+                self._make_count_dist(
+                    r[..., comp_idx, :], p[..., comp_idx, :]
+                ),
+                gate=gate[..., comp_idx, :],
+            ).to_event(1),
         )
-        return dist.MixtureSameFamily(mixing_dist, zinb_base)
 
     # --------------------------------------------------------------------------
 
