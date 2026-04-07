@@ -299,11 +299,11 @@ def test_experiment_run_load_data_replays_pipeline_by_default(monkeypatch):
         }
     }
 
-    # Avoid touching real Hydra working directory state in the unit test.
+    # Avoid filesystem-dependent path resolution in the unit test.
     monkeypatch.setattr(run, "load_config", lambda: mock_config)
     monkeypatch.setattr(
-        "scribe.catalog.hydra.utils.to_absolute_path",
-        lambda p: f"/abs/{p}",
+        "scribe.catalog._resolve_run_data_path",
+        lambda _run_path, p: f"/abs/{p}",
     )
 
     # Capture loader kwargs to verify the forwarding behavior.
@@ -359,8 +359,8 @@ def test_experiment_run_load_data_skips_pipeline_when_disabled(monkeypatch):
 
     monkeypatch.setattr(run, "load_config", lambda: mock_config)
     monkeypatch.setattr(
-        "scribe.catalog.hydra.utils.to_absolute_path",
-        lambda p: f"/abs/{p}",
+        "scribe.catalog._resolve_run_data_path",
+        lambda _run_path, p: f"/abs/{p}",
     )
 
     captured: dict = {}

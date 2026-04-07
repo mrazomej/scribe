@@ -8,7 +8,10 @@ import pytest
 
 from scribe.cli.slurm_common import SlurmPromptConfig
 from scribe.cli.slurm_visualize import _build_batch_script
-from scribe.cli.visualize import main as visualize_cli_main
+from scribe.cli.visualize import (
+    _ensure_hydra_extra_installed,
+    main as visualize_cli_main,
+)
 
 
 def test_visualize_cli_delegates_to_pipeline_locally(
@@ -17,11 +20,14 @@ def test_visualize_cli_delegates_to_pipeline_locally(
     """Local mode should forward all args to packaged visualization pipeline."""
     captured: dict[str, list[str]] = {}
 
-    def _fake_pipeline_main(argv: list[str] | None = None) -> None:
+    def _fake_pipeline_main(argv: list[str]) -> None:
         captured["argv"] = list(argv or [])
 
     monkeypatch.setattr(
-        "scribe.cli.visualize.pipeline.main", _fake_pipeline_main
+        "scribe.cli.visualize._ensure_hydra_extra_installed", lambda: None
+    )
+    monkeypatch.setattr(
+        "scribe.cli.visualize._run_pipeline", _fake_pipeline_main
     )
 
     visualize_cli_main(["outputs/foo", "--recursive", "--all"])
@@ -34,11 +40,14 @@ def test_visualize_cli_forwards_recursive_pattern_and_explicit_file(
     """Local mode should preserve optional recursive pattern tokens."""
     captured: dict[str, list[str]] = {}
 
-    def _fake_pipeline_main(argv: list[str] | None = None) -> None:
+    def _fake_pipeline_main(argv: list[str]) -> None:
         captured["argv"] = list(argv or [])
 
     monkeypatch.setattr(
-        "scribe.cli.visualize.pipeline.main", _fake_pipeline_main
+        "scribe.cli.visualize._ensure_hydra_extra_installed", lambda: None
+    )
+    monkeypatch.setattr(
+        "scribe.cli.visualize._run_pipeline", _fake_pipeline_main
     )
 
     visualize_cli_main(
@@ -99,6 +108,9 @@ def test_visualize_cli_profile_implies_slurm_submission(
         "scribe.cli.visualize.submit_visualize_slurm_job",
         _fake_submit,
     )
+    monkeypatch.setattr(
+        "scribe.cli.visualize._ensure_hydra_extra_installed", lambda: None
+    )
 
     with pytest.raises(SystemExit) as exc_info:
         visualize_cli_main(
@@ -157,6 +169,9 @@ def test_visualize_cli_slurm_keeps_recursive_pattern_and_file_input(
         "scribe.cli.visualize.submit_visualize_slurm_job",
         _fake_submit,
     )
+    monkeypatch.setattr(
+        "scribe.cli.visualize._ensure_hydra_extra_installed", lambda: None
+    )
 
     with pytest.raises(SystemExit) as exc_info:
         visualize_cli_main(
@@ -194,3 +209,23 @@ def test_visualize_slurm_batch_script_includes_gres_when_configured(
     script = _build_batch_script(cfg, project_dir=tmp_path, forwarded_args=["out", "--all"])
     assert "#SBATCH --gres=gpu:1" in script
     assert "#SBATCH --job-name=my_viz" in script
+
+
+def test_visualize_cli_hydra_guard_reports_missing_extra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hydra guard should surface install hint when optional deps are missing."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    # Block optional CLI deps to validate the user-facing error message.
+    def _guarded_import(name, *args, **kwargs):
+        if name in {"hydra", "omegaconf"}:
+            raise ModuleNotFoundError(f"No module named '{name}'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _guarded_import)
+
+    with pytest.raises(SystemExit, match="pip install 'scribe\\[hydra\\]'"):
+        _ensure_hydra_extra_installed()

@@ -4,15 +4,60 @@ import scipy.sparse as sp
 import jax.numpy as jnp
 import scanpy as sc
 from anndata import AnnData
-from omegaconf import DictConfig
-from typing import Optional, Union
+from collections.abc import Mapping, Sequence
+from typing import Any, Optional, Union
 import os
 from pathlib import Path
-from omegaconf import OmegaConf, ListConfig
 
 # ==============================================================================
 # Data Loader
 # ==============================================================================
+
+
+def _is_non_string_sequence(value: object) -> bool:
+    """Return whether ``value`` is a sequence that is not string-like.
+
+    Parameters
+    ----------
+    value : object
+        Candidate object to inspect.
+
+    Returns
+    -------
+    bool
+        ``True`` when ``value`` is list-like (including optional config
+        containers) and should be treated as an iterable of items.
+    """
+    return isinstance(value, Sequence) and not isinstance(
+        value, (str, bytes, bytearray)
+    )
+
+
+def _to_plain_python(value: object) -> Any:
+    """Recursively normalize config-like containers to builtin Python types.
+
+    Parameters
+    ----------
+    value : object
+        Arbitrary value that may contain mapping/sequence containers from
+        optional configuration libraries.
+
+    Returns
+    -------
+    Any
+        The same structure represented with builtin ``dict``/``list`` types.
+    """
+    # Convert mapping-like containers (including DictConfig-style objects) into
+    # plain dicts so downstream logic can stay dependency-free.
+    if isinstance(value, Mapping):
+        return {str(k): _to_plain_python(v) for k, v in value.items()}
+
+    # Convert non-string sequences (including ListConfig-style objects) into
+    # lists while preserving scalar string semantics.
+    if _is_non_string_sequence(value):
+        return [_to_plain_python(v) for v in value]
+
+    return value
 
 
 def _load_10x_mex_directory(path: str) -> AnnData:
@@ -114,7 +159,7 @@ def _load_counts_as_anndata(path: str) -> AnnData:
 
 
 def _apply_filter_cells_steps(
-    adata: AnnData, filter_cells_cfg: DictConfig | dict
+    adata: AnnData, filter_cells_cfg: Mapping[str, Any] | dict[str, Any]
 ) -> None:
     """Apply ``scanpy.pp.filter_cells`` criteria sequentially.
 
@@ -126,7 +171,7 @@ def _apply_filter_cells_steps(
     ----------
     adata : AnnData
         AnnData object to filter in place.
-    filter_cells_cfg : DictConfig or dict
+    filter_cells_cfg : Mapping[str, Any] or dict[str, Any]
         ``preprocessing.filter_cells`` configuration.
 
     Raises
@@ -134,12 +179,9 @@ def _apply_filter_cells_steps(
     ValueError
         Raised when unsupported keys are provided under ``filter_cells``.
     """
-    # Normalize OmegaConf containers into plain Python mappings so we can
+    # Normalize config-like containers into plain Python mappings so we can
     # validate keys and iterate in a deterministic order.
-    if isinstance(filter_cells_cfg, DictConfig):
-        filter_cells_cfg = OmegaConf.to_container(
-            filter_cells_cfg, resolve=True
-        )
+    filter_cells_cfg = _to_plain_python(filter_cells_cfg)
 
     if not isinstance(filter_cells_cfg, dict):
         raise ValueError(
@@ -171,11 +213,11 @@ def _apply_filter_cells_steps(
 
 def load_and_preprocess_anndata(
     path: str,
-    prep_config: Optional[DictConfig] = None,
+    prep_config: Optional[Mapping[str, Any]] = None,
     return_jax: bool = True,
-    subset_column: Optional[Union[str, list[str]]] = None,
-    subset_value: Optional[Union[str, list[str]]] = None,
-    filter_obs: Optional[dict[str, list[str]]] = None,
+    subset_column: Optional[Union[str, Sequence[str]]] = None,
+    subset_value: Optional[Union[str, Sequence[str]]] = None,
+    filter_obs: Optional[Mapping[str, Sequence[str]]] = None,
 ) -> Union[jnp.ndarray, AnnData]:
     """
     Load count data and optionally apply scanpy preprocessing steps.
@@ -189,8 +231,8 @@ def load_and_preprocess_anndata(
         - ``.csv`` files (cells as rows and genes as columns)
         - 10x MEX directories
         - ``matrix.mtx``/``matrix.mtx.gz`` files within a 10x MEX directory
-    prep_config : Optional[DictConfig]
-        A configuration object (e.g., OmegaConf DictConfig or dict) specifying
+    prep_config : Optional[Mapping[str, Any]]
+        A configuration object (for example, a plain ``dict``) specifying
         preprocessing steps. Supported keys:
             - "filter_cells": dict of arguments for scanpy.pp.filter_cells
             - "filter_genes": dict of arguments for scanpy.pp.filter_genes
@@ -247,9 +289,13 @@ def load_and_preprocess_anndata(
     # Each key in filter_obs is a column name and each value is a list of
     # allowed values; rows not matching ANY column are dropped.
     if filter_obs is not None:
-        # Normalise OmegaConf containers to plain Python types
-        if isinstance(filter_obs, DictConfig):
-            filter_obs = OmegaConf.to_container(filter_obs, resolve=True)
+        # Normalize config-style containers to plain Python types before
+        # iterating so optional config libraries remain truly optional.
+        filter_obs = _to_plain_python(filter_obs)
+        if not isinstance(filter_obs, dict):
+            raise ValueError(
+                "filter_obs must be a mapping of obs columns to allowed values."
+            )
 
         for col, allowed in filter_obs.items():
             if col not in adata.obs.columns:
@@ -257,9 +303,12 @@ def load_and_preprocess_anndata(
                     f"filter_obs column '{col}' not found in adata.obs. "
                     f"Available columns: {list(adata.obs.columns)}"
                 )
-            # Normalise ListConfig values to plain lists
-            if isinstance(allowed, ListConfig):
+            # Normalize allowed values to a list while accepting either scalar
+            # values or sequence-like config containers.
+            if _is_non_string_sequence(allowed):
                 allowed = list(allowed)
+            else:
+                allowed = [allowed]
             allowed_str = [str(v) for v in allowed]
             mask = adata.obs[col].astype(str).isin(allowed_str)
             n_before = adata.shape[0]
@@ -279,16 +328,25 @@ def load_and_preprocess_anndata(
     # Both single-column (str) and multi-column (list[str]) are supported;
     # multi-column subsets AND all per-column masks together.
     if subset_column is not None and subset_value is not None:
-        # Normalise OmegaConf ListConfig → plain list so isinstance checks work
-        if isinstance(subset_column, ListConfig):
-            subset_column = list(subset_column)
-        if isinstance(subset_value, ListConfig):
-            subset_value = list(subset_value)
+        # Normalize config-like sequence containers once so list/scalar checks
+        # and error messages are deterministic.
+        subset_column = _to_plain_python(subset_column)
+        subset_value = _to_plain_python(subset_value)
 
-        if isinstance(subset_column, list):
+        if _is_non_string_sequence(subset_column):
             # Multi-column path: use the DataFrame to AND masks per column
-            columns = subset_column
+            columns = list(subset_column)
+            if not _is_non_string_sequence(subset_value):
+                raise ValueError(
+                    "subset_value must be a sequence when subset_column is a "
+                    "sequence."
+                )
             values = list(subset_value)
+            if len(columns) != len(values):
+                raise ValueError(
+                    "subset_column and subset_value must have the same length "
+                    "for multi-column subsetting."
+                )
             missing = [c for c in columns if c not in adata.obs.columns]
             if missing:
                 raise ValueError(
@@ -335,22 +393,31 @@ def load_and_preprocess_anndata(
 
     # If a preprocessing configuration is provided, apply the specified steps
     if prep_config:
-        # Normalize plain dict preprocessing configs so downstream attribute
-        # access (e.g., prep_config.filter_genes) works consistently.
-        if isinstance(prep_config, dict):
-            prep_config = OmegaConf.create(prep_config)
+        # Normalize config-like containers once, then use dict-style access to
+        # avoid optional config dependencies in core library code.
+        prep_config = _to_plain_python(prep_config)
+        if not isinstance(prep_config, dict):
+            raise ValueError(
+                "prep_config must be a mapping of preprocessing settings."
+            )
         print("Applying preprocessing steps...")
         # If cell filtering is specified, apply scanpy's filter_cells
         if "filter_cells" in prep_config:
             # Apply one threshold per Scanpy call so combined criteria such as
             # min_counts + min_genes can be configured safely.
-            _apply_filter_cells_steps(adata, prep_config.filter_cells)
+            _apply_filter_cells_steps(adata, prep_config["filter_cells"])
             print(f"Shape after filtering cells: {adata.shape}")
 
         # If gene filtering is specified, apply scanpy's filter_genes
         if "filter_genes" in prep_config:
-            print(f"Filtering genes with {prep_config.filter_genes}")
-            sc.pp.filter_genes(adata, **prep_config.filter_genes)
+            filter_genes_cfg = _to_plain_python(prep_config["filter_genes"])
+            if not isinstance(filter_genes_cfg, dict):
+                raise ValueError(
+                    "preprocessing.filter_genes must be a mapping of keyword "
+                    "arguments."
+                )
+            print(f"Filtering genes with {filter_genes_cfg}")
+            sc.pp.filter_genes(adata, **filter_genes_cfg)
             print(f"Shape after filtering genes: {adata.shape}")
 
         # If highly variable gene selection is specified, apply the steps
@@ -359,14 +426,13 @@ def load_and_preprocess_anndata(
 
             # Make a copy to avoid modifying the original data during HVG selection
             adata_hvg = adata.copy()
-            hvg_config = prep_config.highly_variable_genes
-
-            # OmegaConf DictConfig needs to be converted to a regular dict for modification
-            hvg_config_dict = (
-                OmegaConf.to_container(hvg_config, resolve=True)
-                if isinstance(hvg_config, DictConfig)
-                else dict(hvg_config)
-            )
+            hvg_config = _to_plain_python(prep_config["highly_variable_genes"])
+            if not isinstance(hvg_config, dict):
+                raise ValueError(
+                    "preprocessing.highly_variable_genes must be a mapping of "
+                    "keyword arguments."
+                )
+            hvg_config_dict = dict(hvg_config)
 
             flavor = hvg_config_dict.get("flavor", "seurat")
 
@@ -377,16 +443,32 @@ def load_and_preprocess_anndata(
                     f"Flavor '{flavor}' expects log-normalized data. Preprocessing a copy..."
                 )
                 if "normalize_total" in prep_config:
+                    normalize_total_cfg = _to_plain_python(
+                        prep_config["normalize_total"]
+                    )
+                    if normalize_total_cfg is None:
+                        normalize_total_cfg = {}
+                    if not isinstance(normalize_total_cfg, dict):
+                        raise ValueError(
+                            "preprocessing.normalize_total must be a mapping "
+                            "when provided."
+                        )
                     print(
-                        f"Normalizing total with {prep_config.normalize_total}"
+                        f"Normalizing total with {normalize_total_cfg}"
                     )
                     sc.pp.normalize_total(
-                        adata_hvg, **prep_config.normalize_total
+                        adata_hvg, **normalize_total_cfg
                     )
 
                 if "log1p" in prep_config:
+                    log1p_cfg = prep_config["log1p"]
                     print("Applying log1p transformation")
-                    sc.pp.log1p(adata_hvg)
+                    if isinstance(log1p_cfg, Mapping):
+                        sc.pp.log1p(
+                            adata_hvg, **_to_plain_python(log1p_cfg)
+                        )
+                    else:
+                        sc.pp.log1p(adata_hvg)
             else:
                 print(
                     f"Flavor '{flavor}' expects raw counts. Skipping normalization."

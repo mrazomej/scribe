@@ -183,6 +183,9 @@ pip install 'scribe[hydra]'
 scribe-infer --config-path ./conf data=singer model=zinb
 ```
 
+Core library installs are Hydra-free (`pip install scribe`); install the
+`hydra` extra whenever you use packaged CLI workflows.
+
 The command auto-detects split mode from `data.<dataset>.yaml` (`split_by`) and
 dispatches to split orchestration when needed. See `docs/cli_infer.md` for full
 usage and expected `conf/` layout.

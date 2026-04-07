@@ -6,6 +6,7 @@ from single-cell RNA-sequencing data.
 """
 
 # Suppress known warnings from dependencies BEFORE any imports
+import importlib
 import warnings
 
 # Suppress FutureWarnings from scanpy/anndata about deprecated __version__ usage
@@ -36,8 +37,6 @@ from .models.config import (
 from . import viz
 from . import utils
 from . import stats
-from . import data_loader
-from .catalog import ExperimentCatalog
 
 # ------------------------------------------------------------------------------
 # Register KL with NumPyro on import (idempotent)
@@ -95,6 +94,25 @@ except Exception as _e:
     )
 
 # ------------------------------------------------------------------------------
+
+# Keep optional-heavy surfaces lazy so base `import scribe` remains usable
+# without CLI/Hydra extras.
+_LAZY_EXPORTS = {
+    "data_loader": ("scribe.data_loader", None),
+    "ExperimentCatalog": ("scribe.catalog", "ExperimentCatalog"),
+}
+
+
+def __getattr__(name: str):
+    """Resolve optional exports lazily on first access."""
+    if name in _LAZY_EXPORTS:
+        module_name, attr_name = _LAZY_EXPORTS[name]
+        module = importlib.import_module(module_name)
+        value = module if attr_name is None else getattr(module, attr_name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module 'scribe' has no attribute '{name}'")
+
 
 # Import configuration classes
 # Import main inference function
