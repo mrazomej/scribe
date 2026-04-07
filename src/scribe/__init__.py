@@ -99,6 +99,7 @@ except Exception as _e:
 # without CLI/Hydra extras.
 _LAZY_EXPORTS = {
     "data_loader": ("scribe.data_loader", None),
+    "catalog": ("scribe.catalog", None),
     "ExperimentCatalog": ("scribe.catalog", "ExperimentCatalog"),
 }
 
@@ -155,6 +156,7 @@ __all__ = [
     "mc",
     # Experiment management
     "ExperimentCatalog",
+    "catalog",
     # Other modules
     "viz",
     "utils",
