@@ -168,9 +168,7 @@ def _sample_hierarchical_mu_eta_gaussian(
         Per-dataset mu_eta values, shape ``(D,)``.
     """
     # Population mean: broad prior allows exploration
-    mu_eta_pop = numpyro.sample(
-        "mu_eta_pop", dist.Normal(log_M0, sigma_mu)
-    )
+    mu_eta_pop = numpyro.sample("mu_eta_pop", dist.Normal(log_M0, sigma_mu))
     # Inter-dataset spread: Softplus-transformed Normal, initialized small
     # so that datasets start nearly identical
     tau_eta = numpyro.sample(
@@ -185,9 +183,7 @@ def _sample_hierarchical_mu_eta_gaussian(
         "mu_eta_raw",
         dist.Normal(0.0, 1.0).expand([n_datasets]).to_event(1),
     )
-    mu_eta = numpyro.deterministic(
-        "mu_eta", mu_eta_pop + tau_eta * mu_eta_raw
-    )
+    mu_eta = numpyro.deterministic("mu_eta", mu_eta_pop + tau_eta * mu_eta_raw)
     return mu_eta
 
 
@@ -225,13 +221,9 @@ def _sample_hierarchical_mu_eta_horseshoe(
     jnp.ndarray
         Per-dataset mu_eta values, shape ``(D,)``.
     """
-    mu_eta_pop = numpyro.sample(
-        "mu_eta_pop", dist.Normal(log_M0, sigma_mu)
-    )
+    mu_eta_pop = numpyro.sample("mu_eta_pop", dist.Normal(log_M0, sigma_mu))
     # Global shrinkage
-    tau_mu_eta = numpyro.sample(
-        "tau_mu_eta", dist.HalfCauchy(tau0)
-    )
+    tau_mu_eta = numpyro.sample("tau_mu_eta", dist.HalfCauchy(tau0))
     # Per-dataset local shrinkage
     lambda_mu_eta = numpyro.sample(
         "lambda_mu_eta",
@@ -300,9 +292,7 @@ def _sample_hierarchical_mu_eta_neg(
     jnp.ndarray
         Per-dataset mu_eta values, shape ``(D,)``.
     """
-    mu_eta_pop = numpyro.sample(
-        "mu_eta_pop", dist.Normal(log_M0, sigma_mu)
-    )
+    mu_eta_pop = numpyro.sample("mu_eta_pop", dist.Normal(log_M0, sigma_mu))
     # Outer Gamma: per-dataset rate parameters
     zeta_mu_eta = numpyro.sample(
         "zeta_mu_eta",
@@ -500,6 +490,47 @@ def compute_cell_specific_mixing(
 
 
 # ==============================================================================
+# Helper for NumPyro>=0.20 mixture compatibility
+# ==============================================================================
+
+
+def build_mixture_general(
+    mixing_dist: dist.Categorical,
+    component_builder: Callable[[int], dist.Distribution],
+) -> dist.MixtureGeneral:
+    """
+    Build a mixture distribution via ``MixtureGeneral`` from component slices.
+
+    NumPyro 0.20 added stricter validation in ``MixtureSameFamily`` that rejects
+    component distributions whose support is wrapped as
+    ``IndependentConstraint`` (for example, after ``.to_event(1)``). SCRIBE's
+    count likelihoods model genes as event dimensions, so this helper
+    constructs an equivalent mixture using ``MixtureGeneral`` by materializing
+    per-component distributions.
+
+    Parameters
+    ----------
+    mixing_dist : dist.Categorical
+        Mixture weights distribution with final dimension ``K`` components.
+    component_builder : Callable[[int], dist.Distribution]
+        Callback returning the component distribution for a component index.
+
+    Returns
+    -------
+    dist.MixtureGeneral
+        Mixture distribution compatible with NumPyro >=0.20 support checks.
+    """
+    # The number of mixture components is static from the categorical
+    # parameter shape and is used to build one distribution per component.
+    n_components = int(mixing_dist.probs.shape[-1])
+    component_distributions = [
+        component_builder(component_idx)
+        for component_idx in range(n_components)
+    ]
+    return dist.MixtureGeneral(mixing_dist, component_distributions)
+
+
+# ==============================================================================
 # Helper: index per-dataset parameters by cell dataset assignment
 # ==============================================================================
 
@@ -559,7 +590,9 @@ def index_dataset_params(
                 # Shape (K, D, ...) — dataset axis is 1.
                 # Index axis 1 then move component axis after batch so the
                 # result is (batch, K, ...) for MixtureSameFamily compat.
-                result = jnp.take(val, dataset_indices, axis=1)  # (K, batch, ...)
+                result = jnp.take(
+                    val, dataset_indices, axis=1
+                )  # (K, batch, ...)
                 result = jnp.moveaxis(result, 0, 1)  # (batch, K, ...)
                 indexed[name] = result
             else:
