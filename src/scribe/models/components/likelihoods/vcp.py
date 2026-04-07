@@ -20,6 +20,7 @@ import numpyro.distributions as dist
 
 from .base import (
     Likelihood,
+    build_mixture_general,
     broadcast_param_for_mixture,
     compute_cell_specific_mixing,
     index_dataset_params,
@@ -417,11 +418,14 @@ class NBWithVCPLikelihood(Likelihood):
                         mixing_dist = dist.Categorical(probs=cell_mixing)
                     else:
                         mixing_dist = dist.Categorical(probs=mixing_weights)
-                    base_dist = self._make_count_dist_logits(
-                        r, logits
-                    ).to_event(1)
-                    mixture_dist = dist.MixtureSameFamily(
-                        mixing_dist, base_dist
+                    # Build mixture from explicit component slices to avoid
+                    # NumPyro>=0.20 MixtureSameFamily support restrictions
+                    # when using to_event(1) for gene-level events.
+                    mixture_dist = build_mixture_general(
+                        mixing_dist,
+                        lambda comp_idx: self._make_count_dist_logits(
+                            r[..., comp_idx, :], logits[..., comp_idx, :]
+                        ).to_event(1),
                     )
                     numpyro.sample("counts", mixture_dist, obs=obs)
                 else:
@@ -478,9 +482,14 @@ class NBWithVCPLikelihood(Likelihood):
                         mixing_dist = dist.Categorical(probs=cell_mixing)
                     else:
                         mixing_dist = dist.Categorical(probs=mixing_weights)
-                    base_dist = self._make_count_dist(r, p_hat).to_event(1)
-                    mixture_dist = dist.MixtureSameFamily(
-                        mixing_dist, base_dist
+                    # Build mixture from explicit component slices to avoid
+                    # NumPyro>=0.20 MixtureSameFamily support restrictions
+                    # when using to_event(1) for gene-level events.
+                    mixture_dist = build_mixture_general(
+                        mixing_dist,
+                        lambda comp_idx: self._make_count_dist(
+                            r[..., comp_idx, :], p_hat[..., comp_idx, :]
+                        ).to_event(1),
                     )
                     numpyro.sample("counts", mixture_dist, obs=obs)
                 else:
@@ -822,12 +831,17 @@ class ZINBWithVCPLikelihood(Likelihood):
                         mixing_dist = dist.Categorical(probs=cell_mixing)
                     else:
                         mixing_dist = dist.Categorical(probs=mixing_weights)
-                    base_nb = self._make_count_dist_logits(r, logits)
-                    zinb_base = dist.ZeroInflatedDistribution(
-                        base_nb, gate=gate
-                    ).to_event(1)
-                    mixture_dist = dist.MixtureSameFamily(
-                        mixing_dist, zinb_base
+                    # Build mixture from explicit component slices to avoid
+                    # NumPyro>=0.20 MixtureSameFamily support restrictions
+                    # when using to_event(1) for gene-level events.
+                    mixture_dist = build_mixture_general(
+                        mixing_dist,
+                        lambda comp_idx: dist.ZeroInflatedDistribution(
+                            self._make_count_dist_logits(
+                                r[..., comp_idx, :], logits[..., comp_idx, :]
+                            ),
+                            gate=gate[..., comp_idx, :],
+                        ).to_event(1),
                     )
                     numpyro.sample("counts", mixture_dist, obs=obs)
                 else:
@@ -886,12 +900,17 @@ class ZINBWithVCPLikelihood(Likelihood):
                         mixing_dist = dist.Categorical(probs=cell_mixing)
                     else:
                         mixing_dist = dist.Categorical(probs=mixing_weights)
-                    base_nb = self._make_count_dist(r, p_hat)
-                    zinb_base = dist.ZeroInflatedDistribution(
-                        base_nb, gate=gate
-                    ).to_event(1)
-                    mixture_dist = dist.MixtureSameFamily(
-                        mixing_dist, zinb_base
+                    # Build mixture from explicit component slices to avoid
+                    # NumPyro>=0.20 MixtureSameFamily support restrictions
+                    # when using to_event(1) for gene-level events.
+                    mixture_dist = build_mixture_general(
+                        mixing_dist,
+                        lambda comp_idx: dist.ZeroInflatedDistribution(
+                            self._make_count_dist(
+                                r[..., comp_idx, :], p_hat[..., comp_idx, :]
+                            ),
+                            gate=gate[..., comp_idx, :],
+                        ).to_event(1),
                     )
                     numpyro.sample("counts", mixture_dist, obs=obs)
                 else:

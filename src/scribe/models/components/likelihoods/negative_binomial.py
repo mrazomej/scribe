@@ -13,6 +13,7 @@ import numpyro.distributions as dist
 
 from .base import (
     Likelihood,
+    build_mixture_general,
     broadcast_param_for_mixture,
     compute_cell_specific_mixing,
     index_dataset_params,
@@ -116,7 +117,7 @@ class NegativeBinomialLikelihood(Likelihood):
                 p = p[None, :]
 
         if is_mixture:
-            # Mixture model: expect mixing_weights giving Categorical mixture
+            # Mixture model: expect mixing_weights giving categorical mixture
             # probabilities.
             mixing_weights = param_values["mixing_weights"]
             mixing_dist = dist.Categorical(probs=mixing_weights)
@@ -124,9 +125,15 @@ class NegativeBinomialLikelihood(Likelihood):
             # Broadcast p to match r shape (n_components, n_genes).
             # Handles scalar, gene-specific, and mixture-specific p.
             p = broadcast_param_for_mixture(p, r)
-
-            base_dist_component = self._make_count_dist(r, p).to_event(1)
-            return dist.MixtureSameFamily(mixing_dist, base_dist_component)
+            # NumPyro>=0.20 rejects MixtureSameFamily when component support is
+            # wrapped by IndependentConstraint via to_event(1). Build an
+            # equivalent MixtureGeneral over explicit component slices instead.
+            return build_mixture_general(
+                mixing_dist,
+                lambda comp_idx: self._make_count_dist(
+                    r[..., comp_idx, :], p[..., comp_idx, :]
+                ).to_event(1),
+            )
 
         # Standard (non-mixture) path
         return self._make_count_dist(r, p).to_event(1)
@@ -152,7 +159,7 @@ class NegativeBinomialLikelihood(Likelihood):
         Returns
         -------
         dist.Distribution
-            A ``MixtureSameFamily`` distribution whose ``Categorical``
+            A ``MixtureGeneral`` distribution whose ``Categorical``
             mixing component has per-cell probabilities.
         """
         mixing_weights = param_values["mixing_weights"]
@@ -172,8 +179,14 @@ class NegativeBinomialLikelihood(Likelihood):
         # Handles scalar, gene-specific, and mixture-specific p.
         p = broadcast_param_for_mixture(p, r)
 
-        base_dist_component = self._make_count_dist(r, p).to_event(1)
-        return dist.MixtureSameFamily(mixing_dist, base_dist_component)
+        # Use MixtureGeneral for NumPyro>=0.20 compatibility when genes are
+        # represented as event dimensions.
+        return build_mixture_general(
+            mixing_dist,
+            lambda comp_idx: self._make_count_dist(
+                r[..., comp_idx, :], p[..., comp_idx, :]
+            ).to_event(1),
+        )
 
     # --------------------------------------------------------------------------
 
