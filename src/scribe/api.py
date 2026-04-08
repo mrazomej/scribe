@@ -340,6 +340,8 @@ def fit(
 
     Parameters
     ----------
+    Data input and model composition
+    --------------------------------
     counts : Union[jnp.ndarray, AnnData]
         Count matrix or AnnData object containing single-cell RNA-seq counts.
         Shape should be (n_cells, n_genes) if cells_axis=0.
@@ -375,6 +377,8 @@ def fit(
         Add a per-gene zero-inflation gate to the model.  See
         ``variable_capture`` for the resolution table.
 
+    Parameterization and core priors
+    --------------------------------
     parameterization : str, default="canonical"
         Parameterization scheme:
             - "canonical" (or "standard"): Sample p ~ Beta, r ~ LogNormal
@@ -398,6 +402,19 @@ def fit(
         magnitude across genes.  Requires ``unconstrained=True`` and
         ``n_components >= 2``.  Accepted values: ``"none"``,
         ``"gaussian"``, ``"horseshoe"``, ``"neg"``.
+
+    prob_prior : str, default="none"
+        Gene-level hierarchical prior for the probability parameter
+        (``p`` in canonical/linked parameterizations, ``phi`` in
+        mean-odds).  Provides adaptive shrinkage across genes and
+        requires ``unconstrained=True``.  Accepted values:
+        ``"none"``, ``"gaussian"``, ``"horseshoe"``, ``"neg"``.
+
+    zero_inflation_prior : str, default="none"
+        Gene-level hierarchical prior for the zero-inflation gate.
+        Only used for zero-inflated models and requires
+        ``unconstrained=True``.  Accepted values:
+        ``"none"``, ``"gaussian"``, ``"horseshoe"``, ``"neg"``.
 
     expression_anchor : bool, default=False
         Enable data-informed anchoring prior on the biological mean
@@ -427,6 +444,38 @@ def fit(
         (``kappa_g``).  Controls shrinkage toward the NB limit.
         Only used when ``overdispersion`` is not ``"none"``.
         Accepted values: ``"horseshoe"``, ``"neg"``.
+
+    Multi-dataset hierarchy
+    -----------------------
+    expression_dataset_prior : str, default="none"
+        Dataset-level hierarchical prior for expression parameters
+        (``mu`` or ``r`` depending on parameterization).  Enables
+        partial pooling across datasets in multi-dataset mode.
+        Accepted values: ``"none"``, ``"gaussian"``,
+        ``"horseshoe"``, ``"neg"``.  Requires ``dataset_key``,
+        ``n_datasets>=2``, and ``unconstrained=True``.
+
+    prob_dataset_prior : str, default="none"
+        Dataset-level hierarchical prior for the probability parameter
+        (``p`` or ``phi`` depending on parameterization).  Accepted
+        values: ``"none"``, ``"gaussian"``, ``"horseshoe"``,
+        ``"neg"``.  Requires ``dataset_key``, ``n_datasets>=2``,
+        and ``unconstrained=True``.
+
+    prob_dataset_mode : str, default="gene_specific"
+        Structure of dataset-level probability hierarchy when
+        ``prob_dataset_prior != "none"``:
+        ``"scalar"`` (one shared value per dataset),
+        ``"gene_specific"`` (one value per gene and dataset), or
+        ``"two_level"`` (dataset-level + gene-level decomposition).
+
+    zero_inflation_dataset_prior : str, default="none"
+        Dataset-level hierarchical prior for zero-inflation gate
+        parameters.  Only used for zero-inflated models.  Accepted
+        values: ``"none"``, ``"gaussian"``, ``"horseshoe"``,
+        ``"neg"``.  Requires ``dataset_key``, ``n_datasets>=2``,
+        and ``unconstrained=True``.
+
     overdispersion_dataset_prior : str, default="none"
         Dataset-level hierarchical prior for BNB concentration
         (``kappa_{d,g}``) in multi-dataset mode. Accepted values:
@@ -456,6 +505,38 @@ def fit(
         When ``None``, SCRIBE resolves dataset-parameter behavior from the
         selected dataset-level hierarchy settings.
 
+    Sparsity prior hyperparameters
+    ------------------------------
+    horseshoe_tau0 : float, default=1.0
+        Global shrinkage scale for regularized horseshoe priors.
+        Smaller values imply stronger global shrinkage.
+
+    horseshoe_slab_df : int, default=4
+        Degrees of freedom for the horseshoe slab component.
+        Controls tail heaviness of the regularizing slab.
+
+    horseshoe_slab_scale : float, default=2.0
+        Scale of the horseshoe slab component.  Larger values permit
+        larger non-zero effects before slab regularization dominates.
+
+    neg_u : float, default=1.0
+        Inner Gamma shape parameter for NEG priors.
+
+    neg_a : float, default=1.0
+        Outer Gamma shape parameter for NEG priors.
+
+    neg_tau : float, default=1.0
+        Global rate/scale parameter for NEG priors.
+
+    capture_scaling_prior : str, default="none"
+        Hierarchical prior for per-dataset capture scaling
+        (``mu_eta`` / ``capture_scaling``).  In multi-dataset VCP
+        models, this controls shrinkage of dataset-specific capture
+        scaling toward a shared population mean.  Accepted values:
+        ``"none"``, ``"gaussian"``, ``"horseshoe"``, ``"neg"``.
+
+    Mixture and variational guide configuration
+    -------------------------------------------
     n_components : int, optional
         Number of mixture components for cell type discovery.
         If None (default), uses a single-component model.
@@ -596,6 +677,8 @@ def fit(
         consumer GPUs heavily throttle float64 throughput; recommended for
         datacenter GPUs (A100, H100, MI250X) with full-rate float64.
 
+    Prior overrides and VAE architecture
+    ------------------------------------
     priors : Dict[str, Any], optional
         Dictionary of prior hyperparameters keyed by parameter name. Values
         should be tuples of prior hyperparameters. Example: {"p": (1.0, 1.0),
@@ -604,6 +687,50 @@ def fit(
         ``{"mixing": 5.0}`` is equivalent to ``{"mixing": (5.0, 5.0, 5.0)}``
         for a 3-component model.
 
+    vae_latent_dim : int, default=10
+        Latent dimensionality for VAE inference (only used when
+        ``inference_method="vae"``).
+
+    vae_encoder_hidden_dims : List[int], optional
+        Hidden layer widths for the VAE encoder network.  When ``None``,
+        SCRIBE uses the VAE engine default architecture.
+
+    vae_decoder_hidden_dims : List[int], optional
+        Hidden layer widths for the VAE decoder network.  When ``None``,
+        SCRIBE uses the VAE engine default architecture.
+
+    vae_activation : str, optional
+        Activation function used in VAE encoder/decoder MLPs.
+        Ignored for non-VAE inference methods.
+
+    vae_input_transform : str, default="log1p"
+        Input transform applied to counts before entering the VAE
+        encoder.  Supported options include ``"log1p"``, ``"log"``,
+        ``"sqrt"``, and ``"identity"``.
+
+    vae_standardize : bool, default=False
+        Whether to standardize transformed VAE inputs to zero mean and
+        unit variance.
+
+    vae_decoder_transforms : Dict[str, str], optional
+        Optional mapping from decoder output names to transform names.
+        Used to customize output constraints/parameterizations in VAE mode.
+
+    vae_flow_type : str, default="none"
+        Optional normalizing-flow prior family for VAE latent variables.
+        Supported values: ``"none"``, ``"affine_coupling"``,
+        ``"spline_coupling"``, ``"maf"``, ``"iaf"``.
+
+    vae_flow_num_layers : int, default=4
+        Number of flow layers for the VAE latent flow (when
+        ``vae_flow_type != "none"``).
+
+    vae_flow_hidden_dims : List[int], optional
+        Hidden layer widths used by VAE flow conditioners.  When
+        ``None``, SCRIBE uses VAE flow defaults.
+
+    Capture amortization and inference controls
+    -------------------------------------------
     amortize_capture : bool, default=False
         Whether to use amortized inference for capture probability. When True,
         a neural network predicts variational parameters for p_capture (or
@@ -700,6 +827,8 @@ def fit(
         ``early_stopping`` config is provided, a minimal internal config is
         created to enable best-state tracking.
 
+    Data access, annotations, and initialization
+    --------------------------------------------
     cells_axis : int, default=0
         Axis for cells in count matrix. 0 means cells are rows (n_cells,
         n_genes).
@@ -803,6 +932,8 @@ def fit(
         ``jax.enable_x64()`` context manager so it does not permanently
         alter the JAX global configuration.
 
+    Power-user config overrides
+    ---------------------------
     model_config : ModelConfig, optional
         Fully configured model configuration object.
         If provided, overrides model, parameterization, unconstrained,
