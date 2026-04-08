@@ -166,6 +166,7 @@ Optional fields:
 | Field | Description |
 |-------|-------------|
 | `layer` | AnnData layer name when counts are not in `adata.X` |
+| `dataset_key` | Column in `adata.obs` identifying dataset membership (used for dataset-level hierarchical priors); overrides global `dataset_key` when set |
 | `split_by` | Column in `adata.obs` for automatic split orchestration |
 | `filter_obs` | Pre-filter observations before fitting (dict of column → allowed values) |
 | `preprocessing` | Scanpy-like pipeline (`filter_cells`, `filter_genes`, `normalize_total`, `log1p`, `highly_variable_genes`) |
