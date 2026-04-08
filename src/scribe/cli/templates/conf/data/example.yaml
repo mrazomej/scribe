@@ -16,6 +16,8 @@
 #
 # Optional Fields
 # ---------------
+# - dataset_key: Column in adata.obs identifying dataset membership for
+#                multi-dataset hierarchy settings (e.g., "batch").
 # - split_by  : Column in adata.obs used for automatic split orchestration.
 # - filter_obs: Observation pre-filter map before split discovery/model fit.
 # - preprocessing: Scanpy-like preprocessing pipeline.
@@ -34,6 +36,12 @@ path: "data/my_experiment/counts.h5ad"
 # ---- Optional: layer --------------------------------------------------------
 # For h5ad only. Set when counts are in a named layer (e.g., "counts").
 # layer: "counts"
+
+# ---- Optional: dataset membership -------------------------------------------
+# Column in adata.obs that identifies dataset membership (e.g., "batch").
+# Use this when enabling dataset-level priors in config.yaml.
+# data.dataset_key takes precedence over global dataset_key when both are set.
+# dataset_key: "batch"
 
 # ---- Optional: split orchestration -----------------------------------------
 # If set, `scribe-infer` auto-dispatches to split mode and fits one run per

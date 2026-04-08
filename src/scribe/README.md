@@ -803,6 +803,11 @@ descriptive names across the three API layers.
 | `gate_prior`           | `zero_inflation_prior`         |
 | `gate_dataset_prior`   | `zero_inflation_dataset_prior` |
 
+For multi-dataset fitting, pass `dataset_key="<obs_column>"` to
+`scribe.fit(...)` so SCRIBE can map each cell to a dataset from
+`adata.obs[dataset_key]`. If `n_datasets` is provided explicitly, it must match
+the number of unique values in that column.
+
 ### `priors` Dict Keys (both accepted, descriptive is preferred)
 
 | Internal key    | Descriptive alias      |

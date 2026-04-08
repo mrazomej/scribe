@@ -26,6 +26,8 @@
 #
 # Optional Fields
 # ---------------
+# - dataset_key   : Column in adata.obs identifying dataset membership for
+#                   multi-dataset hierarchy settings (e.g., "batch").
 # - preprocessing : A pipeline of scanpy-style preprocessing steps applied
 #                   before model fitting. Each step is optional. If the entire
 #                   block is omitted, the raw counts are used as-is.
@@ -52,6 +54,12 @@ path: "data/my_experiment/counts.h5ad"
 # If null (default), adata.X is used.  Set this when your raw counts live in
 # a layer (e.g., "counts", "raw_counts", "spliced").
 # layer: "counts"
+
+# ---- Optional: Dataset Membership -------------------------------------------
+# Column in adata.obs that identifies dataset membership (e.g., "batch").
+# Use this when enabling dataset-level priors in config.yaml.
+# data.dataset_key takes precedence over global dataset_key when both are set.
+# dataset_key: "batch"
 
 # ---- Optional: Covariate-Split Settings -------------------------------------
 # Column in adata.obs to split on (each unique value gets its own model fit)

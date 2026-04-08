@@ -434,6 +434,28 @@ def fit(
         Requires ``dataset_key``, ``n_datasets>=2``,
         ``unconstrained=True``, and ``overdispersion="bnb"``.
 
+    n_datasets : int, optional
+        Number of datasets in multi-dataset mode.  When ``dataset_key`` is
+        provided, this value is inferred from ``adata.obs[dataset_key]`` if
+        omitted.  If provided, it must match the number of unique values in
+        ``adata.obs[dataset_key]``.
+
+    dataset_key : str, optional
+        Column name in ``adata.obs`` that identifies dataset membership for
+        each cell (for example, ``"batch"`` or ``"donor"``).  This enables
+        dataset indexing and is required for dataset-level hierarchical priors
+        (for example ``expression_dataset_prior``,
+        ``prob_dataset_prior``, ``zero_inflation_dataset_prior``, and
+        ``overdispersion_dataset_prior``).  Requires ``counts`` to be an
+        AnnData object.  In single-dataset edge cases where this column has one
+        unique value, dataset-level hierarchy options may be auto-downgraded
+        when ``auto_downgrade_single_dataset_hierarchy=True``.
+
+    dataset_params : list of str, optional
+        Explicit list of model parameters that should carry a dataset axis.
+        When ``None``, SCRIBE resolves dataset-parameter behavior from the
+        selected dataset-level hierarchy settings.
+
     n_components : int, optional
         Number of mixture components for cell type discovery.
         If None (default), uses a single-component model.
@@ -949,6 +971,13 @@ def fit(
             )
         import numpy as np
 
+        # Validate the requested dataset grouping column explicitly so users
+        # receive a clear actionable error instead of a raw pandas KeyError.
+        if dataset_key not in adata.obs.columns:
+            raise ValueError(
+                f"dataset_key '{dataset_key}' not found in adata.obs. "
+                f"Available columns: {list(adata.obs.columns)}"
+            )
         ds_col = adata.obs[dataset_key]
         # Convert to categorical integer codes
         ds_cat = ds_col.astype("category")
