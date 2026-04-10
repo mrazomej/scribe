@@ -122,9 +122,11 @@ def _resolve_dataset_names(dataset_names, n_datasets):
     return names[:n_datasets]
 
 
+# Suffix ``mean_pairwise`` avoids clashing with ``mean_calibration`` outputs
+# and matches ``--mean-pairwise`` (we do not use ``mu`` in the filename).
 @plot_function(
-    suffix="mu_pairwise",
-    save_label="mu pairwise plot",
+    suffix="mean_pairwise",
+    save_label="mean pairwise plot",
     save_kwargs={"bbox_inches": "tight", "dpi": 150},
 )
 def plot_mu_pairwise(

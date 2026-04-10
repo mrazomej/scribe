@@ -515,7 +515,7 @@ def test_p_capture_scaling_receives_both_split_groupings(monkeypatch, tmp_path):
 def test_process_single_model_dir_runs_mu_pairwise_for_multi_dataset(
     monkeypatch, tmp_path
 ):
-    """Mu pairwise branch should run only when multi-dataset is detected."""
+    """Mean pairwise (mu_pairwise cfg) branch runs when multi-dataset is detected."""
     model_dir = _make_minimal_model_dir(
         tmp_path,
         cfg_data={
@@ -546,7 +546,7 @@ def test_process_single_model_dir_runs_mu_pairwise_for_multi_dataset(
     def _fake_plot_mu_pairwise(*args, **kwargs):
         captured["count"] += 1
         captured["dataset_names"] = kwargs.get("dataset_names")
-        return str(tmp_path / "mu_pairwise.png")
+        return str(tmp_path / "mean_pairwise.png")
 
     monkeypatch.setattr(visualize, "plot_mu_pairwise", _fake_plot_mu_pairwise)
 

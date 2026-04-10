@@ -50,7 +50,8 @@ viz:
   capture_anchor: false    # Biology-informed capture prior only
   p_capture_scaling: false # VCP models only
   mean_calibration: false  # Observed vs predicted gene means (log-log)
-  mu_pairwise: false       # Multi-dataset runs only
+  # Multi-dataset only; figure suffix _mean_pairwise.
+  mu_pairwise: false
 
   # ---------------------------------------------------------------------------
   # ECDF options
