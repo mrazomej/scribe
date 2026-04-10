@@ -8,7 +8,135 @@ from pathlib import Path
 
 import pytest
 
-from scribe.catalog import ExperimentCatalog, ExperimentRun
+from scribe.catalog import (
+    ExperimentCatalog,
+    ExperimentRun,
+    _expand_catalog_root_paths,
+)
+
+
+def test_expand_catalog_root_paths_non_glob_resolves_directory(tmp_path):
+    """Literal paths resolve to a single existing directory.
+
+    Returns
+    -------
+    None
+        Asserts expander returns one resolved Path for a normal directory.
+    """
+    base = tmp_path / "only_root"
+    base.mkdir()
+
+    roots = _expand_catalog_root_paths(str(base))
+
+    assert roots == [base.resolve()]
+
+
+def test_expand_catalog_root_paths_glob_collects_multiple_directories(tmp_path):
+    """Glob patterns expand to every matching directory.
+
+    Returns
+    -------
+    None
+        Asserts metacharacters select multiple roots and skip files.
+    """
+    (tmp_path / "run_a").mkdir()
+    (tmp_path / "run_b").mkdir()
+    (tmp_path / "run_c.txt").write_text("not-a-dir", encoding="utf-8")
+
+    roots = _expand_catalog_root_paths(str(tmp_path / "run_*"))
+
+    assert [p.resolve() for p in roots] == sorted(
+        [(tmp_path / "run_a").resolve(), (tmp_path / "run_b").resolve()]
+    )
+
+
+def test_expand_catalog_root_paths_recursive_glob(tmp_path):
+    """``**`` in the pattern enables recursive directory discovery.
+
+    Returns
+    -------
+    None
+        Asserts nested directories match when the pattern uses ``**/``.
+    """
+    nested = tmp_path / "outer" / "inner" / "leaf"
+    nested.mkdir(parents=True)
+    (tmp_path / "outer" / "skip.txt").write_text("x", encoding="utf-8")
+
+    pattern = str(tmp_path / "outer" / "**" / "leaf")
+    roots = _expand_catalog_root_paths(pattern)
+
+    assert roots == [nested.resolve()]
+
+
+def test_expand_catalog_root_paths_empty_glob_raises(tmp_path):
+    """A glob that matches no directories raises FileNotFoundError.
+
+    Returns
+    -------
+    None
+        Asserts missing matches surface as a clear error.
+    """
+    (tmp_path / "nothing_here").mkdir()
+
+    with pytest.raises(FileNotFoundError, match="matched no directories"):
+        _expand_catalog_root_paths(str(tmp_path / "no_such_*"))
+
+
+def test_expand_catalog_root_paths_nonexistent_literal_raises(tmp_path):
+    """A literal path that does not exist raises FileNotFoundError.
+
+    Returns
+    -------
+    None
+        Asserts the same validation as pre-glob expansion.
+    """
+    missing = tmp_path / "missing"
+
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        _expand_catalog_root_paths(str(missing))
+
+
+def test_expand_catalog_root_paths_file_literal_raises_not_a_directory(tmp_path):
+    """A literal path that is a file raises NotADirectoryError.
+
+    Returns
+    -------
+    None
+        Asserts catalog roots must be directories.
+    """
+    file_path = tmp_path / "not_a_dir"
+    file_path.write_text("", encoding="utf-8")
+
+    with pytest.raises(NotADirectoryError, match="must be a directory"):
+        _expand_catalog_root_paths(str(file_path))
+
+
+def test_experiment_catalog_init_dedupes_glob_roots(monkeypatch, tmp_path):
+    """Overlapping glob results and list entries are only scanned once.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Used to stub scanning so the test does not require Hydra layouts.
+
+    Returns
+    -------
+    None
+        Asserts ``base_dirs`` contains unique paths when inputs overlap.
+    """
+    shared = tmp_path / "shared"
+    shared.mkdir()
+
+    monkeypatch.setattr(
+        ExperimentCatalog,
+        "_scan_experiments",
+        lambda self: [],
+    )
+
+    catalog = ExperimentCatalog([str(shared), str(tmp_path / "sha*")])
+
+    assert catalog.base_dirs == [shared.resolve()]
+    assert catalog.base_dir == shared.resolve()
 
 
 def _build_catalog_with_experiments(experiments: list[ExperimentRun]) -> ExperimentCatalog:

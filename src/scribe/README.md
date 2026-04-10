@@ -750,6 +750,11 @@ Each module has comprehensive documentation with detailed examples:
 
 ### Catalog Filtering Note
 
+Catalog roots passed to ``ExperimentCatalog`` may use shell-style glob
+patterns (for example, ``outputs/Text*`` or ``experiments/**/sweep_a``).
+Each matching directory becomes a separate scan root; patterns that match
+only files are ignored, and an error is raised if no directories match.
+
 The experiment catalog in `catalog.py` supports comma-delimited filters for
 list-like metadata fields. For example, both
 `mixture_params=["phi,mu,gate"]` and `mixture_params="phi,mu,gate"` are
