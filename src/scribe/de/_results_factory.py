@@ -4,9 +4,37 @@ from __future__ import annotations
 
 from typing import List, Optional, TYPE_CHECKING
 
+import numpy as _np
 import jax.numpy as jnp
 
 from ._extract import extract_alr_params
+
+
+def _jax_to_numpy(arr: jnp.ndarray, chunk_rows: int = 2048) -> _np.ndarray:
+    """Transfer a JAX device array to a numpy host array.
+
+    Large arrays are transferred in row-chunks so JAX never needs to
+    allocate a contiguous GPU staging buffer as large as the full array.
+
+    Parameters
+    ----------
+    arr : jnp.ndarray
+        Source array on device.
+    chunk_rows : int
+        Maximum number of rows per transfer chunk.
+
+    Returns
+    -------
+    numpy.ndarray
+        Host copy of *arr*.
+    """
+    n = arr.shape[0]
+    if n <= chunk_rows:
+        return _np.asarray(arr)
+    parts: list[_np.ndarray] = []
+    for start in range(0, n, chunk_rows):
+        parts.append(_np.asarray(arr[start : start + chunk_rows]))
+    return _np.concatenate(parts, axis=0)
 
 if TYPE_CHECKING:
     from .results import (
@@ -266,8 +294,6 @@ def _compare_parametric(
     D_user = D_full - 1 if drop_last else D_full
 
     if gene_mask is not None and gene_names is not None:
-        import numpy as _np
-
         gene_mask_arr = _np.asarray(gene_mask, dtype=bool)
         gene_names = [n for n, m in zip(gene_names, gene_mask_arr) if m]
 
@@ -315,7 +341,6 @@ def _compare_empirical(
     phi_samples_B: Optional[jnp.ndarray] = None,
 ) -> "ScribeEmpiricalDEResults":
     """Build an empirical DE comparison from posterior concentration samples."""
-    import numpy as _np
     from ._empirical import (
         _slice_component,
         compute_delta_from_simplex,
@@ -389,22 +414,33 @@ def _compare_empirical(
         simplex_A, simplex_B, gene_mask=gene_mask
     )
 
+    # Move large composition arrays to CPU so subsequent operations
+    # don't compete with them for GPU memory.  These are only stored
+    # in the result object and never need the GPU again.  Use chunked
+    # transfer to avoid a contiguous GPU staging buffer as large as the
+    # full array (which can OOM on its own).
+    simplex_A = _jax_to_numpy(simplex_A)
+    simplex_B = _jax_to_numpy(simplex_B)
+    delta_samples = _jax_to_numpy(delta_samples)
+
+    # Compute mean biological expression.  Reduce on GPU (tiny output)
+    # then transfer the (n_genes,) result vector to CPU.
     mu_map_A_vec = None
     mu_map_B_vec = None
     if mu_bio_A is not None:
         mu_map_A_vec = _np.asarray(jnp.mean(mu_bio_A, axis=0))
     elif r_bio_A is not None and p_bio_A is not None:
-        _r_mean = jnp.mean(r_bio_A, axis=0)
-        _p_mean = jnp.mean(p_bio_A, axis=0)
-        _p_mean = jnp.clip(_p_mean, 1e-7, 1.0 - 1e-7)
-        mu_map_A_vec = _np.asarray(_r_mean * _p_mean / (1.0 - _p_mean))
+        _r_mean = _np.asarray(jnp.mean(r_bio_A, axis=0))
+        _p_mean = _np.asarray(jnp.mean(p_bio_A, axis=0))
+        _p_mean = _np.clip(_p_mean, 1e-7, 1.0 - 1e-7)
+        mu_map_A_vec = _r_mean * _p_mean / (1.0 - _p_mean)
     if mu_bio_B is not None:
         mu_map_B_vec = _np.asarray(jnp.mean(mu_bio_B, axis=0))
     elif r_bio_B is not None and p_bio_B is not None:
-        _r_mean = jnp.mean(r_bio_B, axis=0)
-        _p_mean = jnp.mean(p_bio_B, axis=0)
-        _p_mean = jnp.clip(_p_mean, 1e-7, 1.0 - 1e-7)
-        mu_map_B_vec = _np.asarray(_r_mean * _p_mean / (1.0 - _p_mean))
+        _r_mean = _np.asarray(jnp.mean(r_bio_B, axis=0))
+        _p_mean = _np.asarray(jnp.mean(p_bio_B, axis=0))
+        _p_mean = _np.clip(_p_mean, 1e-7, 1.0 - 1e-7)
+        mu_map_B_vec = _r_mean * _p_mean / (1.0 - _p_mean)
 
     all_gene_names = gene_names
     kept_gene_names = gene_names
