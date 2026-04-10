@@ -284,24 +284,25 @@ class NBWithVCPLikelihood(Likelihood):
             else:
                 bio_log_M0 = bio_spec.log_M0
 
-        # Create plate context based on mode
-        if counts is None:
-            # MODE 1: Prior predictive
-            plate_context = numpyro.plate("cells", n_cells)
-            obs = None
-        elif batch_size is None:
-            # MODE 2: Full sampling
-            plate_context = numpyro.plate("cells", n_cells)
-            obs = counts
-        else:
-            # MODE 3: Batch sampling - need idx for subsampling
+        # Create plate context based on mode.
+        # batch_size takes priority: when set, always subsample so the
+        # model's cell plate matches the guide's plate (which always
+        # subsamples when batch_size is provided).  This prevents shape
+        # mismatches during batched posterior sampling where counts=None.
+        if batch_size is not None:
             plate_context = numpyro.plate(
                 "cells", n_cells, subsample_size=batch_size
             )
-            obs = None  # Will be set inside plate
+            obs = None  # Will be set inside plate if counts available
+        elif counts is None:
+            plate_context = numpyro.plate("cells", n_cells)
+            obs = None
+        else:
+            plate_context = numpyro.plate("cells", n_cells)
+            obs = counts
 
         with plate_context as idx:
-            # Get observation for batch mode
+            # Subset observations for batch mode when counts are available
             if batch_size is not None and counts is not None:
                 obs = counts[idx]
 
@@ -402,6 +403,22 @@ class NBWithVCPLikelihood(Likelihood):
                 # Clamp phi away from 0 so log(phi * ...) stays finite
                 phi = jnp.maximum(phi, _P_EPS)
 
+                # Guardrail: catch cell-axis shape desync between NB params
+                # and capture (e.g. batch_size forwarded without subsampling).
+                # Only compare shape[0] when ndim matches so that mixture
+                # models (where phi may lack the cell axis) don't false-alarm.
+                if (
+                    phi.ndim >= 2
+                    and phi.ndim == capture_reshaped.ndim
+                    and phi.shape[0] != capture_reshaped.shape[0]
+                ):
+                    raise ValueError(
+                        f"Cell-axis shape desync in VCP likelihood: "
+                        f"phi {phi.shape} vs capture {capture_reshaped.shape}. "
+                        f"batch_size may have been forwarded without "
+                        f"subsampling the cell plate."
+                    )
+
                 logits = -jnp.log(phi * (1.0 + capture_reshaped))
 
                 if is_mixture:
@@ -459,6 +476,23 @@ class NBWithVCPLikelihood(Likelihood):
                 p_for_hat = (
                     broadcast_param_for_mixture(p, r) if is_mixture else p
                 )
+
+                # Guardrail: catch cell-axis shape desync between NB params
+                # and capture (e.g. batch_size forwarded without subsampling).
+                # Only compare shape[0] when ndim matches so that mixture
+                # models (where p may lack the cell axis) don't false-alarm.
+                if (
+                    p_for_hat.ndim >= 2
+                    and p_for_hat.ndim == capture_reshaped.ndim
+                    and p_for_hat.shape[0] != capture_reshaped.shape[0]
+                ):
+                    raise ValueError(
+                        f"Cell-axis shape desync in VCP likelihood: "
+                        f"p {p_for_hat.shape} vs capture "
+                        f"{capture_reshaped.shape}. "
+                        f"batch_size may have been forwarded without "
+                        f"subsampling the cell plate."
+                    )
 
                 p_hat = (
                     p_for_hat
@@ -702,20 +736,25 @@ class ZINBWithVCPLikelihood(Likelihood):
             else:
                 bio_log_M0 = bio_spec.log_M0
 
-        # Create plate context based on mode
-        if counts is None:
-            plate_context = numpyro.plate("cells", n_cells)
-            obs = None
-        elif batch_size is None:
-            plate_context = numpyro.plate("cells", n_cells)
-            obs = counts
-        else:
+        # Create plate context based on mode.
+        # batch_size takes priority: when set, always subsample so the
+        # model's cell plate matches the guide's plate (which always
+        # subsamples when batch_size is provided).  This prevents shape
+        # mismatches during batched posterior sampling where counts=None.
+        if batch_size is not None:
             plate_context = numpyro.plate(
                 "cells", n_cells, subsample_size=batch_size
             )
+            obs = None  # Will be set inside plate if counts available
+        elif counts is None:
+            plate_context = numpyro.plate("cells", n_cells)
             obs = None
+        else:
+            plate_context = numpyro.plate("cells", n_cells)
+            obs = counts
 
         with plate_context as idx:
+            # Subset observations for batch mode when counts are available
             if batch_size is not None and counts is not None:
                 obs = counts[idx]
 
@@ -815,6 +854,22 @@ class ZINBWithVCPLikelihood(Likelihood):
                 # Clamp phi away from 0 so log(phi * ...) stays finite
                 phi = jnp.maximum(phi, _P_EPS)
 
+                # Guardrail: catch cell-axis shape desync between NB params
+                # and capture (e.g. batch_size forwarded without subsampling).
+                # Only compare shape[0] when ndim matches so that mixture
+                # models (where phi may lack the cell axis) don't false-alarm.
+                if (
+                    phi.ndim >= 2
+                    and phi.ndim == capture_reshaped.ndim
+                    and phi.shape[0] != capture_reshaped.shape[0]
+                ):
+                    raise ValueError(
+                        f"Cell-axis shape desync in ZINB-VCP likelihood: "
+                        f"phi {phi.shape} vs capture {capture_reshaped.shape}. "
+                        f"batch_size may have been forwarded without "
+                        f"subsampling the cell plate."
+                    )
+
                 logits = -jnp.log(phi * (1.0 + capture_reshaped))
 
                 if is_mixture:
@@ -877,6 +932,23 @@ class ZINBWithVCPLikelihood(Likelihood):
                 )
                 if is_mixture:
                     gate = broadcast_param_for_mixture(gate, r)
+
+                # Guardrail: catch cell-axis shape desync between NB params
+                # and capture (e.g. batch_size forwarded without subsampling).
+                # Only compare shape[0] when ndim matches so that mixture
+                # models (where p may lack the cell axis) don't false-alarm.
+                if (
+                    p_for_hat.ndim >= 2
+                    and p_for_hat.ndim == capture_reshaped.ndim
+                    and p_for_hat.shape[0] != capture_reshaped.shape[0]
+                ):
+                    raise ValueError(
+                        f"Cell-axis shape desync in ZINB-VCP likelihood: "
+                        f"p {p_for_hat.shape} vs capture "
+                        f"{capture_reshaped.shape}. "
+                        f"batch_size may have been forwarded without "
+                        f"subsampling the cell plate."
+                    )
 
                 p_hat = (
                     p_for_hat

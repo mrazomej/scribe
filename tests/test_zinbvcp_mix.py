@@ -1576,9 +1576,18 @@ def test_subset_with_posterior_samples(
                     2,
                 )
             if "p" in subset.posterior_samples:
-                assert subset.posterior_samples["p"].shape == (3,)
+                # p is per-component in canonical mixture (no gene axis)
+                assert subset.posterior_samples["p"].shape == (
+                    3,
+                    zinbvcp_mix_results.n_components,
+                )
             elif "p_unconstrained" in subset.posterior_samples:
-                assert subset.posterior_samples["p_unconstrained"].shape == (3,)
+                assert subset.posterior_samples[
+                    "p_unconstrained"
+                ].shape == (
+                    3,
+                    zinbvcp_mix_results.n_components,
+                )
             if "p_capture" in subset.posterior_samples:
                 assert subset.posterior_samples["p_capture"].shape == (
                     3,
@@ -1619,7 +1628,11 @@ def test_subset_with_posterior_samples(
                 zinbvcp_mix_results.n_components,
                 2,
             )
-            assert subset.posterior_samples["p"].shape == (3,)
+            # p is per-component in canonical mixture (no gene axis)
+            assert subset.posterior_samples["p"].shape == (
+                3,
+                zinbvcp_mix_results.n_components,
+            )
             assert subset.posterior_samples["p_capture"].shape == (
                 3,
                 zinbvcp_mix_results.n_cells,

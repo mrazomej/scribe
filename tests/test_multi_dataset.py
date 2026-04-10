@@ -8,6 +8,7 @@ Covers:
 - DatasetMixin.get_dataset and 3-axis __getitem__ on results
 - compare_datasets DE helper
 - Integration: create_model end-to-end with multi-dataset configs
+- Regression: batched posterior sampling with VCP + multi-dataset
 """
 
 import jax
@@ -3549,3 +3550,118 @@ class TestEmpiricalMixingPerDataset:
             D,
             K,
         )
+
+
+# ==============================================================================
+# Regression: batched posterior sampling with VCP + multi-dataset
+# ==============================================================================
+
+
+class TestBatchedPosteriorMultiDataset:
+    """Regression tests for batched get_posterior_samples on multi-dataset VCP.
+
+    Before the plate-creation fix, calling
+    ``result.get_posterior_samples(batch_size=...)`` on a VCP + multi-dataset
+    model raised ``ValueError: Incompatible shapes for broadcasting`` because
+    the model's cell plate was full-sized (n_cells) while the guide's plate
+    was subsampled (batch_size).  These tests exercise that exact path.
+    """
+
+    @staticmethod
+    def _make_adata():
+        """Create a tiny AnnData with two datasets for regression tests.
+
+        Returns
+        -------
+        anndata.AnnData
+            Synthetic count data (10 cells, 5 genes, 2 datasets).
+        """
+        import anndata
+        import pandas as pd
+
+        rng = np.random.default_rng(0)
+        n_cells, n_genes = 10, 5
+        x = rng.poisson(5, (n_cells, n_genes)).astype(np.float32)
+        obs = pd.DataFrame(
+            {"dataset": ["d0"] * 5 + ["d1"] * 5}
+        )
+        return anndata.AnnData(X=x, obs=obs)
+
+    def test_batched_posterior_nbvcp_multi_dataset(self):
+        """nbvcp + 2 datasets + batched posterior sampling works."""
+        import scribe
+
+        adata = self._make_adata()
+        result = scribe.fit(
+            adata,
+            model="nbvcp",
+            parameterization="mean_odds",
+            unconstrained=True,
+            dataset_key="dataset",
+            expression_dataset_prior="gaussian",
+            n_steps=2,
+            batch_size=3,
+            seed=0,
+        )
+
+        # The core regression: batched posterior sampling must not raise
+        samples = result.get_posterior_samples(
+            n_samples=2, batch_size=3, rng_key=random.PRNGKey(1)
+        )
+        assert isinstance(samples, dict)
+        assert "r" in samples or "mu" in samples
+
+    def test_batched_posterior_zinbvcp_multi_dataset(self):
+        """zinbvcp + 2 datasets + batched posterior sampling works."""
+        import scribe
+
+        adata = self._make_adata()
+        result = scribe.fit(
+            adata,
+            model="zinbvcp",
+            parameterization="mean_odds",
+            unconstrained=True,
+            dataset_key="dataset",
+            expression_dataset_prior="gaussian",
+            n_steps=2,
+            batch_size=3,
+            seed=0,
+        )
+
+        samples = result.get_posterior_samples(
+            n_samples=2, batch_size=3, rng_key=random.PRNGKey(1)
+        )
+        assert isinstance(samples, dict)
+        assert "r" in samples or "mu" in samples
+        assert "gate" in samples
+
+    def test_batched_posterior_nbvcp_mix_multi_dataset(self):
+        """nbvcp mixture + 2 datasets + batched posterior sampling works.
+
+        This exercises the VCP + mixture + dataset-indexing + batched posterior
+        combination from the original traceback.  Uses canonical
+        parameterization to avoid a separate pre-existing shape issue in
+        the mean_odds mixture + dataset hierarchy derived-param path.
+        """
+        import scribe
+
+        adata = self._make_adata()
+        result = scribe.fit(
+            adata,
+            model="nbvcp",
+            parameterization="canonical",
+            unconstrained=True,
+            n_components=2,
+            dataset_key="dataset",
+            expression_dataset_prior="gaussian",
+            n_steps=2,
+            batch_size=3,
+            seed=0,
+        )
+
+        samples = result.get_posterior_samples(
+            n_samples=2, batch_size=3, rng_key=random.PRNGKey(1)
+        )
+        assert isinstance(samples, dict)
+        assert "r" in samples or "mu" in samples
+        assert "mixing_weights" in samples or "mixing_concentrations" in samples
