@@ -638,11 +638,17 @@ class Likelihood(ABC):
     2. Cell-specific parameter sampling
     3. Observation sampling/conditioning
 
-    All subclasses must handle three plate modes:
+    All subclasses must handle three plate modes.  ``batch_size`` takes
+    priority over ``counts`` when deciding the plate shape so that the
+    model's cell plate always matches the guide's plate (which subsamples
+    whenever ``batch_size`` is set):
 
-    - **Prior predictive**: counts=None → sample counts from prior
-    - **Full sampling**: counts provided, batch_size=None → condition on all
-    - **Batch sampling**: counts provided, batch_size set → subsample cells
+    - **Batch sampling**: batch_size set → subsample cells (counts may
+      or may not be provided; obs is ``counts[idx]`` when available)
+    - **Prior predictive**: batch_size=None, counts=None → full plate,
+      sample counts from prior
+    - **Full sampling**: batch_size=None, counts provided → full plate,
+      condition on all counts
 
     Examples
     --------
