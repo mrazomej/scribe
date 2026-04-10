@@ -69,7 +69,7 @@ ECDF); the rest are opt-in via flags or `--all`.
 | **Capture anchor** | `--capture-anchor` | Eta capture-anchor diagnostic (prior vs. posterior) | Biology-informed capture prior |
 | **p_capture scaling** | `--p-capture-scaling` | Capture probability vs. library size | VCP model |
 | **Mean calibration** | `--mean-calibration` | Log-log scatter of observed vs. predicted per-gene means | --- |
-| **Mu pairwise** | `--mu-pairwise` | Pairwise dataset-level mu comparison | Multi-dataset model |
+| **Mean pairwise** | `--mean-pairwise` | Pairwise dataset-level mean comparison | Multi-dataset model |
 
 Use `--all` to enable every plot at once.
 
@@ -263,7 +263,7 @@ same conventions as [`scribe-infer`](cli_infer.md#slurm-integration).
 | `--capture-anchor` | off | Enable capture-anchor diagnostic |
 | `--p-capture-scaling` | off | Enable capture probability vs. library size |
 | `--mean-calibration` | off | Enable mean calibration scatter |
-| `--mu-pairwise` | off | Enable dataset-level mu comparison |
+| `--mean-pairwise` | off | Enable dataset-level mean comparison |
 | `--recursive [PATTERN]` | off | Recursively search directories for result files; defaults to `scribe_results.pkl` when used without PATTERN |
 | `--overwrite` | off | Regenerate existing plots |
 | `--format` | `png` | Output format (`png`, `pdf`, `svg`, `eps`) |
