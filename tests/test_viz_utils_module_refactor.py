@@ -929,7 +929,7 @@ def test_plot_mu_pairwise_saves_output_for_multi_dataset(monkeypatch, tmp_path):
 
     assert isinstance(result, PlotResult)
     assert result.output_path is not None
-    assert result.output_path.endswith("_mu_pairwise.png")
+    assert result.output_path.endswith("_mean_pairwise.png")
     assert seen_targets == [["mu"], ["mixing_weights"]]
 
 

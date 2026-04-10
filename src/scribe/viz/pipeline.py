@@ -1060,7 +1060,7 @@ def _process_single_results_file(results_file, viz_cfg, overwrite=False):
                 "[yellow]  Skipping mu pairwise "
                 "(run is not multi-dataset)[/yellow]"
             )
-        elif not overwrite and _plot_exists(figs_dir, "_mu_pairwise", fmt):
+        elif not overwrite and _plot_exists(figs_dir, "_mean_pairwise", fmt):
             plots_skipped.append("mu pairwise")
             console.print(
                 "[yellow]  Skipping mu pairwise " "(already exists)[/yellow]"
@@ -1501,7 +1501,7 @@ def main(argv: list[str] | None = None) -> None:
     if viz_cfg.mean_calibration:
         enabled_plots.append("mean calibration")
     if viz_cfg.mu_pairwise:
-        enabled_plots.append("mu pairwise")
+        enabled_plots.append("mean pairwise")
 
     console.print(f"[dim]Plots to generate:[/dim] {', '.join(enabled_plots)}")
     console.print(f"[dim]Output format:[/dim] {viz_cfg.format}")
