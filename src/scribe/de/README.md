@@ -166,6 +166,14 @@ de = compare_datasets(results, dataset_A=0, dataset_B=1)
 de = compare_datasets(results, 0, 1, component=0, method="shrinkage")
 ```
 
+> **Memory tip for large models:** When running DE on large gene spaces
+> (e.g., >20k genes with 10k posterior samples), call
+> `results.get_posterior_samples(store_on_cpu=True, ...)` **before**
+> `compare_datasets`.  This stores the posterior samples as CPU-resident
+> JAX arrays, freeing GPU memory for the DE sampling pipeline.  The
+> arrays remain `jax.Array` instances so all downstream code continues
+> to work transparently.
+
 ### Component Matching Utilities
 
 When mixture models are fit with `annotation_key`, each result stores a

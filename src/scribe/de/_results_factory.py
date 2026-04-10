@@ -9,33 +9,6 @@ import jax.numpy as jnp
 
 from ._extract import extract_alr_params
 
-
-def _jax_to_numpy(arr: jnp.ndarray, chunk_rows: int = 2048) -> _np.ndarray:
-    """Transfer a JAX device array to a numpy host array.
-
-    Large arrays are transferred in row-chunks so JAX never needs to
-    allocate a contiguous GPU staging buffer as large as the full array.
-
-    Parameters
-    ----------
-    arr : jnp.ndarray
-        Source array on device.
-    chunk_rows : int
-        Maximum number of rows per transfer chunk.
-
-    Returns
-    -------
-    numpy.ndarray
-        Host copy of *arr*.
-    """
-    n = arr.shape[0]
-    if n <= chunk_rows:
-        return _np.asarray(arr)
-    parts: list[_np.ndarray] = []
-    for start in range(0, n, chunk_rows):
-        parts.append(_np.asarray(arr[start : start + chunk_rows]))
-    return _np.concatenate(parts, axis=0)
-
 if TYPE_CHECKING:
     from .results import (
         ScribeDEResults,
@@ -397,48 +370,68 @@ def _compare_empirical(
     if phi_bio_B is not None:
         phi_bio_B = phi_bio_B[:N_bio]
 
+    # Move bio slices to CPU so the full (N, K, D) device arrays can
+    # be freed.  These are only used for small summary statistics below.
+    r_bio_A = _np.asarray(r_bio_A)
+    r_bio_B = _np.asarray(r_bio_B)
+    if p_bio_A is not None:
+        p_bio_A = _np.asarray(p_bio_A)
+    if p_bio_B is not None:
+        p_bio_B = _np.asarray(p_bio_B)
+    if mu_bio_A is not None:
+        mu_bio_A = _np.asarray(mu_bio_A)
+    if mu_bio_B is not None:
+        mu_bio_B = _np.asarray(mu_bio_B)
+    if phi_bio_A is not None:
+        phi_bio_A = _np.asarray(phi_bio_A)
+    if phi_bio_B is not None:
+        phi_bio_B = _np.asarray(phi_bio_B)
+
+    # Drop references to the full device arrays.  The bio slices above
+    # are already on CPU and contain exactly the component-sliced,
+    # truncated data that sample_compositions would recompute, so we
+    # pass them directly (with component=None since slicing is done).
+    # Releasing the locals lets Python's refcount free the GPU buffers
+    # as soon as the caller's references also go away.
+    del r_samples_A, r_samples_B, p_samples_A, p_samples_B
+    del mu_samples_A, mu_samples_B, phi_samples_A, phi_samples_B
+
     simplex_A, simplex_B = sample_compositions(
-        r_samples_A=r_samples_A,
-        r_samples_B=r_samples_B,
-        component_A=component_A,
-        component_B=component_B,
+        r_samples_A=r_bio_A,
+        r_samples_B=r_bio_B,
+        component_A=None,
+        component_B=None,
         paired=paired,
         n_samples_dirichlet=n_samples_dirichlet,
         rng_key=rng_key,
         batch_size=batch_size,
-        p_samples_A=p_samples_A,
-        p_samples_B=p_samples_B,
+        p_samples_A=p_bio_A,
+        p_samples_B=p_bio_B,
     )
 
+    # simplex_A/B and delta_samples are numpy (CPU) arrays -- the
+    # batched sampling functions transfer each chunk to host immediately,
+    # so no large GPU allocation ever occurs here.
     delta_samples = compute_delta_from_simplex(
         simplex_A, simplex_B, gene_mask=gene_mask
     )
 
-    # Move large composition arrays to CPU so subsequent operations
-    # don't compete with them for GPU memory.  These are only stored
-    # in the result object and never need the GPU again.  Use chunked
-    # transfer to avoid a contiguous GPU staging buffer as large as the
-    # full array (which can OOM on its own).
-    simplex_A = _jax_to_numpy(simplex_A)
-    simplex_B = _jax_to_numpy(simplex_B)
-    delta_samples = _jax_to_numpy(delta_samples)
-
-    # Compute mean biological expression.  Reduce on GPU (tiny output)
-    # then transfer the (n_genes,) result vector to CPU.
+    # Compute mean biological expression on CPU (bio arrays are already
+    # numpy after the transfer above).
     mu_map_A_vec = None
     mu_map_B_vec = None
     if mu_bio_A is not None:
-        mu_map_A_vec = _np.asarray(jnp.mean(mu_bio_A, axis=0))
+        mu_map_A_vec = mu_bio_A.mean(axis=0)
     elif r_bio_A is not None and p_bio_A is not None:
-        _r_mean = _np.asarray(jnp.mean(r_bio_A, axis=0))
-        _p_mean = _np.asarray(jnp.mean(p_bio_A, axis=0))
+        _r_mean = r_bio_A.mean(axis=0)
+        _p_mean = p_bio_A.mean(axis=0)
         _p_mean = _np.clip(_p_mean, 1e-7, 1.0 - 1e-7)
         mu_map_A_vec = _r_mean * _p_mean / (1.0 - _p_mean)
     if mu_bio_B is not None:
-        mu_map_B_vec = _np.asarray(jnp.mean(mu_bio_B, axis=0))
+        mu_map_B_vec = mu_bio_B.mean(axis=0)
     elif r_bio_B is not None and p_bio_B is not None:
-        _r_mean = _np.asarray(jnp.mean(r_bio_B, axis=0))
-        _p_mean = _np.asarray(jnp.mean(p_bio_B, axis=0))
+        _r_mean = r_bio_B.mean(axis=0)
+        _p_mean = p_bio_B.mean(axis=0)
         _p_mean = _np.clip(_p_mean, 1e-7, 1.0 - 1e-7)
         mu_map_B_vec = _r_mean * _p_mean / (1.0 - _p_mean)
 
