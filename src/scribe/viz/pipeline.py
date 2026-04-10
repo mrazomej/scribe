@@ -230,11 +230,11 @@ Examples:
         "observed vs predicted per-gene means).",
     )
     parser.add_argument(
-        "--mu-pairwise",
+        "--mean-pairwise",
         action="store_true",
         default=None,
         dest="mu_pairwise",
-        help="Enable pairwise dataset-level mu comparison for "
+        help="Enable pairwise dataset-level mean comparison for "
         "hierarchical multi-dataset runs.",
     )
     parser.add_argument(
@@ -243,7 +243,7 @@ Examples:
         dest="all_plots",
         help="Enable all plots (loss, ECDF, PPC, bio-PPC, UMAP, heatmap, "
         "mixture PPC, mixture composition, annotation PPC, capture-anchor, "
-        "p-capture-scaling, mean-calibration, mu-pairwise)",
+        "p-capture-scaling, mean-calibration, mean-pairwise)",
     )
 
     # Recursive mode
