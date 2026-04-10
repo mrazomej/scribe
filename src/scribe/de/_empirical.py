@@ -105,9 +105,9 @@ def _aggregate_genes(
 
 
 def _aggregate_simplex(
-    simplex: jnp.ndarray,
-    gene_mask: jnp.ndarray,
-) -> jnp.ndarray:
+    simplex: np.ndarray,
+    gene_mask: np.ndarray,
+) -> np.ndarray:
     """Pool filtered genes into a single "other" column in simplex space.
 
     This is the post-sampling counterpart to :func:`_aggregate_genes`.
@@ -119,17 +119,20 @@ def _aggregate_simplex(
     exactly because summing a subset of non-negative values that sum to 1
     still sums to 1.
 
+    Operates on CPU (numpy) arrays.  JAX inputs are converted
+    automatically.
+
     Parameters
     ----------
-    simplex : jnp.ndarray, shape ``(N, D)``
+    simplex : numpy.ndarray, shape ``(N, D)``
         Simplex samples with rows summing to 1.
-    gene_mask : jnp.ndarray, shape ``(D,)``
+    gene_mask : numpy.ndarray, shape ``(D,)``
         Boolean mask.  ``True`` = keep the gene as its own column,
         ``False`` = merge into the "other" column.
 
     Returns
     -------
-    jnp.ndarray, shape ``(N, D_kept + 1)``
+    numpy.ndarray, shape ``(N, D_kept + 1)``
         Reduced simplex where the last column holds the summed proportion
         of all filtered genes.  ``D_kept = gene_mask.sum()``.
 
@@ -138,7 +141,8 @@ def _aggregate_simplex(
     ValueError
         If ``gene_mask`` has the wrong length or keeps no genes.
     """
-    gene_mask = jnp.asarray(gene_mask, dtype=bool)
+    simplex = np.asarray(simplex)
+    gene_mask = np.asarray(gene_mask, dtype=bool)
 
     if gene_mask.ndim != 1 or gene_mask.shape[0] != simplex.shape[1]:
         raise ValueError(
@@ -153,7 +157,7 @@ def _aggregate_simplex(
     # Kept genes stay as individual columns; filtered genes are summed.
     kept = simplex[:, gene_mask]  # (N, D_kept)
     other = simplex[:, ~gene_mask].sum(axis=1, keepdims=True)  # (N, 1)
-    return jnp.concatenate([kept, other], axis=1)  # (N, D_kept + 1)
+    return np.concatenate([kept, other], axis=1)  # (N, D_kept + 1)
 
 
 # --------------------------------------------------------------------------
@@ -294,6 +298,10 @@ def sample_compositions(
     returned simplices can be stored and reused with different gene masks
     via :func:`compute_delta_from_simplex`.
 
+    Sampling is performed on GPU in small batches, but each batch is
+    transferred to CPU immediately.  The returned arrays are numpy
+    (host) arrays, so the full simplex never resides on device memory.
+
     Parameters
     ----------
     r_samples_A : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``
@@ -328,10 +336,10 @@ def sample_compositions(
 
     Returns
     -------
-    simplex_A : jnp.ndarray, shape ``(N_total, D)``
-        Full-dimensional simplex samples for condition A.
-    simplex_B : jnp.ndarray, shape ``(N_total, D)``
-        Full-dimensional simplex samples for condition B.
+    simplex_A : numpy.ndarray, shape ``(N_total, D)``
+        Full-dimensional simplex samples for condition A (on CPU).
+    simplex_B : numpy.ndarray, shape ``(N_total, D)``
+        Full-dimensional simplex samples for condition B (on CPU).
 
     Raises
     ------
@@ -399,6 +407,18 @@ def sample_compositions(
     if p_B is not None:
         p_B = p_B[:N]
 
+    # Move sliced inputs to CPU.  The full posterior-sample arrays (potentially
+    # multi-GiB each) are kept on GPU only as long as they're referenced by
+    # Python.  Converting the slices to numpy here lets JAX free the original
+    # device buffers, so the batched samplers below only put one small chunk on
+    # GPU at a time.
+    r_A = np.asarray(r_A)
+    r_B = np.asarray(r_B)
+    if p_A is not None:
+        p_A = np.asarray(p_A)
+    if p_B is not None:
+        p_B = np.asarray(p_B)
+
     # --- Composition sampling (always full-dimensional, no aggregation) ---
     if use_gamma:
         key_A, key_B = random.split(rng_key)
@@ -430,10 +450,10 @@ def sample_compositions(
 
 
 def compute_delta_from_simplex(
-    simplex_A: jnp.ndarray,
-    simplex_B: jnp.ndarray,
-    gene_mask: Optional[jnp.ndarray] = None,
-) -> jnp.ndarray:
+    simplex_A: np.ndarray,
+    simplex_B: np.ndarray,
+    gene_mask: Optional[np.ndarray] = None,
+) -> np.ndarray:
     """Aggregate, CLR-transform, and difference paired simplex samples.
 
     This is Stage 2 of the empirical DE pipeline.  Given full-dimensional
@@ -447,13 +467,16 @@ def compute_delta_from_simplex(
     CLR transform—not as a post-hoc filter on the differences.
     See :ref:`sec-diffexp-expression-mask` in the paper for details.
 
+    All computation runs on CPU (numpy).  JAX inputs are converted
+    automatically via the underlying helpers.
+
     Parameters
     ----------
-    simplex_A : jnp.ndarray, shape ``(N, D)``
+    simplex_A : numpy.ndarray, shape ``(N, D)``
         Full-dimensional simplex samples for condition A.
-    simplex_B : jnp.ndarray, shape ``(N, D)``
+    simplex_B : numpy.ndarray, shape ``(N, D)``
         Full-dimensional simplex samples for condition B.
-    gene_mask : jnp.ndarray, shape ``(D,)``, optional
+    gene_mask : numpy.ndarray, shape ``(D,)``, optional
         Boolean mask selecting genes to keep.  Genes marked ``False``
         are aggregated into a single "other" pseudo-gene via
         :func:`_aggregate_simplex` before CLR.  The "other" column is
@@ -463,7 +486,7 @@ def compute_delta_from_simplex(
 
     Returns
     -------
-    jnp.ndarray, shape ``(N, D)`` or ``(N, D_kept)``
+    numpy.ndarray, shape ``(N, D)`` or ``(N, D_kept)``
         CLR-space differences ``CLR(rho_A) - CLR(rho_B)``.
         When ``gene_mask`` is provided, ``D_kept = gene_mask.sum()``.
     """
@@ -503,7 +526,7 @@ def compute_clr_differences(
     gene_mask: Optional[jnp.ndarray] = None,
     p_samples_A: Optional[jnp.ndarray] = None,
     p_samples_B: Optional[jnp.ndarray] = None,
-) -> jnp.ndarray:
+) -> np.ndarray:
     """Compute CLR-space posterior differences from Dirichlet concentration samples.
 
     Convenience wrapper that calls :func:`sample_compositions` followed
@@ -542,8 +565,9 @@ def compute_clr_differences(
 
     Returns
     -------
-    jnp.ndarray, shape ``(N_total, D)`` or ``(N_total, D_kept)``
-        CLR-space differences.  ``N_total = N * n_samples_dirichlet``.
+    numpy.ndarray, shape ``(N_total, D)`` or ``(N_total, D_kept)``
+        CLR-space differences on CPU.
+        ``N_total = N * n_samples_dirichlet``.
         When ``gene_mask`` is provided, ``D_kept = gene_mask.sum()``.
 
     Raises
@@ -716,23 +740,27 @@ def _slice_component(
 # ------------------------------------------------------------------------------
 
 
-def _clr_transform(simplex_samples: jnp.ndarray) -> jnp.ndarray:
+def _clr_transform(simplex_samples: np.ndarray) -> np.ndarray:
     """Centered log-ratio transform on simplex samples.
+
+    Operates on CPU (numpy) arrays.  JAX inputs are converted
+    automatically.
 
     Parameters
     ----------
-    simplex_samples : jnp.ndarray, shape ``(N, D)``
+    simplex_samples : numpy.ndarray, shape ``(N, D)``
         Samples on the D-simplex (rows sum to 1).
 
     Returns
     -------
-    jnp.ndarray, shape ``(N, D)``
+    numpy.ndarray, shape ``(N, D)``
         CLR-transformed samples.
     """
+    simplex_samples = np.asarray(simplex_samples)
     # Guard against exact zeros from Dirichlet sampling
-    log_samples = jnp.log(jnp.maximum(simplex_samples, 1e-30))
+    log_samples = np.log(np.maximum(simplex_samples, 1e-30))
     # CLR: subtract the geometric mean (= arithmetic mean of logs)
-    geometric_mean = jnp.mean(log_samples, axis=-1, keepdims=True)
+    geometric_mean = np.mean(log_samples, axis=-1, keepdims=True)
     return log_samples - geometric_mean
 
 
@@ -744,12 +772,15 @@ def _batched_dirichlet(
     n_samples_dirichlet: int,
     rng_key: random.PRNGKey,
     batch_size: int,
-) -> jnp.ndarray:
+) -> np.ndarray:
     """Batched Dirichlet sampling from concentration parameters.
 
     Reuses the batching strategy from
     ``scribe.core.normalization_logistic._batched_dirichlet_sample_raw``
     but implemented locally to avoid circular imports.
+
+    Each batch is sampled on GPU and immediately transferred to CPU so
+    the full simplex array never resides on device.
 
     Parameters
     ----------
@@ -764,14 +795,19 @@ def _batched_dirichlet(
 
     Returns
     -------
-    jnp.ndarray, shape ``(N_total, D)``
-        Simplex samples.  ``N_total = N * n_samples_dirichlet``.
+    numpy.ndarray, shape ``(N_total, D)``
+        Simplex samples on CPU.  ``N_total = N * n_samples_dirichlet``.
     """
     N, D = r_samples.shape
-    chunks = []
+    chunks: list[np.ndarray] = []
 
-    for start in range(0, N, batch_size):
-        end = min(start + batch_size, N)
+    # When n_samples_dirichlet > 1, each posterior sample fans out to S
+    # output rows.  Shrink the batch size so the per-chunk GPU tensor
+    # (B * S, D) stays manageable.
+    effective_bs = max(1, batch_size // max(1, n_samples_dirichlet))
+
+    for start in range(0, N, effective_bs):
+        end = min(start + effective_bs, N)
         r_batch = r_samples[start:end]  # (B, D)
 
         # Deterministic sub-key for this batch
@@ -796,13 +832,10 @@ def _batched_dirichlet(
             # Flatten to (B * S, D)
             samples = samples.reshape(-1, D)
 
-        chunks.append(samples)
+        # Transfer to CPU immediately so the full result never lives on GPU
+        chunks.append(np.asarray(samples))
 
-    result = jnp.concatenate(chunks, axis=0)
-
-    # For n_samples_dirichlet == 1, result is (N, D) — correct.
-    # For n_samples_dirichlet > 1, result is (N * S, D) — correct.
-    return result
+    return np.concatenate(chunks, axis=0)
 
 
 # ------------------------------------------------------------------------------
@@ -814,7 +847,7 @@ def _batched_gamma_normalize(
     n_samples_dirichlet: int,
     rng_key: random.PRNGKey,
     batch_size: int,
-) -> jnp.ndarray:
+) -> np.ndarray:
     """Sample compositions via scaled Gamma variates and normalization.
 
     This generalizes Dirichlet sampling to the case where each gene has
@@ -829,6 +862,9 @@ def _batched_gamma_normalize(
     ``Dirichlet(r)``.  When ``p_g`` vary across genes, the compositions
     reflect gene-specific rate heterogeneity from the Negative Binomial
     model.
+
+    Each batch is sampled on GPU and immediately transferred to CPU so
+    the full simplex array never resides on device.
 
     Parameters
     ----------
@@ -845,8 +881,8 @@ def _batched_gamma_normalize(
 
     Returns
     -------
-    jnp.ndarray, shape ``(N_total, D)``
-        Simplex samples.  ``N_total = N * n_samples_dirichlet``.
+    numpy.ndarray, shape ``(N_total, D)``
+        Simplex samples on CPU.  ``N_total = N * n_samples_dirichlet``.
 
     Notes
     -----
@@ -856,10 +892,15 @@ def _batched_gamma_normalize(
     to get compositional proportions.
     """
     N, D = r_samples.shape
-    chunks = []
+    chunks: list[np.ndarray] = []
 
-    for start in range(0, N, batch_size):
-        end = min(start + batch_size, N)
+    # When n_samples_dirichlet > 1, each posterior sample fans out to S
+    # output rows.  Shrink the batch size so the per-chunk GPU tensor
+    # (B * S, D) stays manageable.
+    effective_bs = max(1, batch_size // max(1, n_samples_dirichlet))
+
+    for start in range(0, N, effective_bs):
+        end = min(start + effective_bs, N)
         r_batch = r_samples[start:end]  # (B, D)
         p_batch = p_samples[start:end]  # (B, D) or (B, 1)
 
@@ -894,9 +935,10 @@ def _batched_gamma_normalize(
             samples = jax.vmap(_sample_one)(keys, r_batch, p_batch)
             samples = samples.reshape(-1, D)  # (B * S, D)
 
-        chunks.append(samples)
+        # Transfer to CPU immediately so the full result never lives on GPU
+        chunks.append(np.asarray(samples))
 
-    return jnp.concatenate(chunks, axis=0)
+    return np.concatenate(chunks, axis=0)
 
 
 # ------------------------------------------------------------------------------
@@ -915,6 +957,9 @@ def _paired_dirichlet_sample(
     ensuring that the joint posterior correlation structure between
     components is preserved.
 
+    Each batch is sampled on GPU and immediately transferred to CPU so
+    the full simplex arrays never reside on device.
+
     Parameters
     ----------
     r_A : jnp.ndarray, shape ``(N, D)``
@@ -930,15 +975,20 @@ def _paired_dirichlet_sample(
 
     Returns
     -------
-    tuple of (jnp.ndarray, jnp.ndarray)
-        ``(simplex_A, simplex_B)`` each of shape ``(N_total, D)``.
+    tuple of (numpy.ndarray, numpy.ndarray)
+        ``(simplex_A, simplex_B)`` each of shape ``(N_total, D)`` on CPU.
     """
     N, D = r_A.shape
-    chunks_A = []
-    chunks_B = []
+    chunks_A: list[np.ndarray] = []
+    chunks_B: list[np.ndarray] = []
 
-    for start in range(0, N, batch_size):
-        end = min(start + batch_size, N)
+    # When n_samples_dirichlet > 1, each posterior sample fans out to S
+    # output rows (for BOTH conditions).  Shrink the batch size so the
+    # per-chunk GPU tensors stay manageable.
+    effective_bs = max(1, batch_size // max(1, n_samples_dirichlet))
+
+    for start in range(0, N, effective_bs):
+        end = min(start + effective_bs, N)
         r_batch_A = r_A[start:end]
         r_batch_B = r_B[start:end]
         B = end - start
@@ -985,7 +1035,8 @@ def _paired_dirichlet_sample(
             samples_A = samples_A.reshape(-1, D)
             samples_B = samples_B.reshape(-1, D)
 
-        chunks_A.append(samples_A)
-        chunks_B.append(samples_B)
+        # Transfer to CPU immediately so full results never live on GPU
+        chunks_A.append(np.asarray(samples_A))
+        chunks_B.append(np.asarray(samples_B))
 
-    return jnp.concatenate(chunks_A, axis=0), jnp.concatenate(chunks_B, axis=0)
+    return np.concatenate(chunks_A, axis=0), np.concatenate(chunks_B, axis=0)

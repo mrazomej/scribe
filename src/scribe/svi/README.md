@@ -347,6 +347,16 @@ posterior_samples = results.get_posterior_samples(
     seed=42
 )
 
+# For large models where downstream operations (e.g., DE comparison)
+# need GPU headroom, store posterior samples as CPU-resident JAX
+# arrays.  The arrays remain jax.Array instances so jnp/vmap/NumPyro
+# code continues to work transparently.
+posterior_samples = results.get_posterior_samples(
+    n_samples=10_000,
+    batch_size=512,
+    store_on_cpu=True,
+)
+
 # Generate predictive samples
 predictive_samples = results.get_predictive_samples(
     n_samples=500,
@@ -821,6 +831,7 @@ ScribeSVIResults
    - Purpose: Posterior and predictive sampling
    - Methods:
      - `get_posterior_samples()`: Sample from variational posterior
+       (supports `store_on_cpu=True` to keep arrays on CPU host memory)
      - `get_predictive_samples()`: Generate predictive samples
      - `get_ppc_samples()`: Posterior predictive check samples
      - `get_map_ppc_samples()`: MAP-based predictive samples with batching

@@ -129,6 +129,34 @@ def _merge_per_dataset_posterior_samples(
     return merged
 
 
+def _move_to_cpu(samples: Dict[str, Any]) -> Dict[str, Any]:
+    """Transfer all JAX arrays in a posterior-samples dict to CPU device.
+
+    Each value that is a ``jax.Array`` is placed on the first CPU device
+    via ``jax.device_put``.  The returned arrays are still ``jax.Array``
+    instances (not plain numpy), so downstream code using ``jnp``,
+    ``vmap``, or NumPyro continues to work transparently.  Non-array
+    entries (e.g., metadata) are passed through unchanged.
+
+    Parameters
+    ----------
+    samples : Dict[str, Any]
+        Posterior-samples dict as returned by NumPyro ``Predictive``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Same dict with every JAX array moved to CPU host memory.
+    """
+    import jax
+
+    cpu = jax.devices("cpu")[0]
+    return {
+        k: jax.device_put(v, cpu) if isinstance(v, jax.Array) else v
+        for k, v in samples.items()
+    }
+
+
 class PosteriorPredictiveSamplingMixin:
     """Mixin providing posterior and constrained predictive sampling methods."""
 
@@ -158,6 +186,7 @@ class PosteriorPredictiveSamplingMixin:
         n_samples: int = 100,
         batch_size: Optional[int] = None,
         store_samples: bool = True,
+        store_on_cpu: bool = False,
         counts: Optional[jnp.ndarray] = None,
         descriptive_names: bool = False,
     ) -> Dict:
@@ -180,6 +209,15 @@ class PosteriorPredictiveSamplingMixin:
             Batch size for memory-efficient sampling (default: None)
         store_samples : bool, optional
             Whether to store samples in self.posterior_samples (default: True)
+        store_on_cpu : bool, optional
+            If True, transfer all sampled arrays to CPU-resident JAX arrays
+            via ``jax.device_put`` before storing and returning.  The arrays
+            remain ``jax.Array`` instances (not plain numpy) so downstream
+            code that uses ``jnp``, ``vmap``, or NumPyro continues to work
+            transparently.  This frees GPU memory immediately after
+            sampling, which is important when downstream operations (e.g.,
+            differential expression) need GPU headroom.  Implies
+            ``store_samples=True``.  Default: False.
         counts : Optional[jnp.ndarray], optional
             Observed count matrix of shape (n_cells, n_genes). Required when
             using amortized capture probability (e.g., with
@@ -236,6 +274,12 @@ class PosteriorPredictiveSamplingMixin:
                 batch_size=batch_size,
                 counts=counts,
             )
+
+        # store_on_cpu implies store_samples — if the caller explicitly
+        # asks for CPU-resident storage, the intent is always to persist.
+        if store_on_cpu:
+            store_samples = True
+            posterior_samples = _move_to_cpu(posterior_samples)
 
         if store_samples:
             self.posterior_samples = posterior_samples
