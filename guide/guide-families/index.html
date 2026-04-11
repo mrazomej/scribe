@@ -1,0 +1,2585 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Single-Cell RNA-Seq Inference using Bayesian Estimation — a Python package for analyzing scRNA-seq data with variational inference powered by NumPyro and JAX.">
+      
+      
+      
+      
+        <link rel="prev" href="../parameters/">
+      
+      
+        <link rel="next" href="../inference/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Variational Guide Families - SCRIBE</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#variational-guide-families" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="SCRIBE" class="md-header__button md-logo" aria-label="SCRIBE" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            SCRIBE
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Variational Guide Families
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/mrazomej/scribe" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mrazomej/scribe
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../getting-started/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Getting Started
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../theory/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Theory
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="../" class="md-tabs__link">
+        
+  
+  
+    
+  
+  User Guide
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/scribe/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../contributing/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Contributing
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="SCRIBE" class="md-nav__button md-logo" aria-label="SCRIBE" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    SCRIBE
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mrazomej/scribe" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mrazomej/scribe
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../getting-started/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quick-overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../theory/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Theory
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Theory
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/dirichlet-multinomial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dirichlet-Multinomial Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/hierarchical-p/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hierarchical Gene-Specific p
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/anchoring-priors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Anchoring Priors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/beta-negative-binomial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Beta Negative Binomial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/hierarchical-priors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hierarchical Priors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/denoising/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bayesian Denoising
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/differential-expression/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differential Expression
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/model-comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/goodness-of-fit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goodness-of-Fit Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The scribe.fit() Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli_infer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    scribe-infer CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli_visualize/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    scribe-visualize CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Variational Guide Families
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Variational Guide Families
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#at-a-glance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        At a glance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mean-field" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mean-Field
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#low-rank" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Low-Rank
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#joint-low-rank" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Joint Low-Rank
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Joint Low-Rank">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dense-vs-structured-params" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dense vs. structured params
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#normalizing-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Normalizing Flow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Normalizing Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#stability-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stability features
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#joint-normalizing-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Joint Normalizing Flow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Joint Normalizing Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dense-vs-structured-params_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dense vs. structured params
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mixture-and-dataset-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mixture and dataset support
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#amortized" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Amortized
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vae-latent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VAE Latent
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="VAE Latent">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#normalizing-flow-priors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Normalizing flow priors
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-choose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to choose
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#combining-guide-families-in-one-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Combining guide families in one model
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../inference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Inference Methods
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results Class
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../differential-expression/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differential Expression
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/scribe/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#at-a-glance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        At a glance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mean-field" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mean-Field
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#low-rank" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Low-Rank
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#joint-low-rank" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Joint Low-Rank
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Joint Low-Rank">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dense-vs-structured-params" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dense vs. structured params
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#normalizing-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Normalizing Flow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Normalizing Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#stability-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stability features
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#joint-normalizing-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Joint Normalizing Flow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Joint Normalizing Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dense-vs-structured-params_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dense vs. structured params
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mixture-and-dataset-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mixture and dataset support
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#amortized" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Amortized
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vae-latent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VAE Latent
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="VAE Latent">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#normalizing-flow-priors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Normalizing flow priors
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-choose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to choose
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#combining-guide-families-in-one-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Combining guide families in one model
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="variational-guide-families">Variational Guide Families<a class="headerlink" href="#variational-guide-families" title="Permanent link">&para;</a></h1>
+<p>In variational inference, the <strong>guide</strong> (also called the variational
+distribution) is the family of distributions used to approximate the true
+posterior. The choice of guide family controls the trade-off between
+computational cost, posterior accuracy, and the ability to capture correlations
+between parameters.</p>
+<p>SCRIBE supports seven guide families, configurable <strong>per parameter</strong> ---meaning
+different parameters in the same model can use different guide families. For
+example, gene-specific dispersion might use a normalizing flow guide while a
+scalar success probability uses mean-field.</p>
+<hr />
+<h2 id="at-a-glance">At a glance<a class="headerlink" href="#at-a-glance" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Guide Family</th>
+<th>Correlations</th>
+<th>Memory</th>
+<th>Speed</th>
+<th>Best For</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="#mean-field">Mean-Field</a></td>
+<td>None</td>
+<td><span class="arithmatex">\(O(G)\)</span></td>
+<td>Fastest</td>
+<td>Default, most analyses</td>
+</tr>
+<tr>
+<td><a href="#low-rank">Low-Rank</a></td>
+<td>Within a parameter group</td>
+<td><span class="arithmatex">\(O(Gk)\)</span></td>
+<td>Fast</td>
+<td>Gene-gene correlations</td>
+</tr>
+<tr>
+<td><a href="#joint-low-rank">Joint Low-Rank</a></td>
+<td>Across parameter groups</td>
+<td><span class="arithmatex">\(O(Gk)\)</span></td>
+<td>Moderate</td>
+<td>Cross-parameter correlations (e.g., <span class="arithmatex">\(\mu\)</span> and <span class="arithmatex">\(p\)</span>)</td>
+</tr>
+<tr>
+<td><a href="#normalizing-flow">Normalizing Flow</a></td>
+<td>Within a parameter group (non-Gaussian)</td>
+<td>Network size</td>
+<td>Moderate</td>
+<td>Multimodal, skewed, heavy-tailed posteriors</td>
+</tr>
+<tr>
+<td><a href="#joint-normalizing-flow">Joint Normalizing Flow</a></td>
+<td>Across parameter groups (non-Gaussian)</td>
+<td>Network size</td>
+<td>Slower</td>
+<td>Non-linear cross-parameter dependencies</td>
+</tr>
+<tr>
+<td><a href="#amortized">Amortized</a></td>
+<td>Data-driven</td>
+<td>Network size</td>
+<td>Moderate</td>
+<td>Cell-specific parameters (capture probability)</td>
+</tr>
+<tr>
+<td><a href="#vae-latent">VAE Latent</a></td>
+<td>Learned latent space</td>
+<td>Network size</td>
+<td>Slowest</td>
+<td>Representation learning, embeddings</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="mean-field">Mean-Field<a class="headerlink" href="#mean-field" title="Permanent link">&para;</a></h2>
+<p>The simplest and fastest guide family. Each parameter has an independent
+variational distribution---no correlations are captured between parameters:</p>
+<div class="arithmatex">\[
+q(\theta_1, \theta_2, \ldots) = q(\theta_1)\,q(\theta_2)\,\cdots
+\]</div>
+<p>This is the <strong>default</strong> for all parameters when no <code>guide_rank</code> is specified.</p>
+<p><strong>Advantages:</strong></p>
+<ul>
+<li>Fast convergence, low memory</li>
+<li>Works well when parameters are approximately independent</li>
+<li>Good baseline for most analyses</li>
+</ul>
+<p><strong>Limitations:</strong></p>
+<ul>
+<li>Ignores correlations between genes or parameters</li>
+<li>Can underestimate posterior uncertainty</li>
+</ul>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Mean-field is the default --- no special arguments needed</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">When mean-field is sufficient</p>
+<p>For many scRNA-seq analyses, mean-field provides excellent results.
+Upgrade to low-rank only when downstream tasks (DE, denoising)
+benefit from capturing gene correlations.</p>
+</div>
+<hr />
+<h2 id="low-rank">Low-Rank<a class="headerlink" href="#low-rank" title="Permanent link">&para;</a></h2>
+<p>Captures correlations within a parameter group (e.g., between genes for the
+dispersion parameter <span class="arithmatex">\(r_g\)</span>) using a low-rank multivariate normal
+approximation:</p>
+<div class="arithmatex">\[
+\underline{\underline{\Sigma}} = \underline{\underline{W}}\,\underline{\underline{W}}^\top + \text{diag}(\underline{d}),
+\]</div>
+<p>where <span class="arithmatex">\(\underline{\underline{W}}\)</span> is <span class="arithmatex">\((G, k)\)</span> and <span class="arithmatex">\(\underline{d}\)</span> is the
+diagonal. The rank <span class="arithmatex">\(k\)</span> controls how many correlation modes are captured, with
+memory scaling as <span class="arithmatex">\(O(Gk)\)</span> instead of <span class="arithmatex">\(O(G^2)\)</span> for a full covariance.</p>
+<p><strong>Advantages:</strong></p>
+<ul>
+<li>Captures the top-<span class="arithmatex">\(k\)</span> correlations between genes</li>
+<li>Memory-efficient compared to full covariance</li>
+<li>Important for accurate DE and denoising (cross-gene uncertainty)</li>
+</ul>
+<p><strong>Limitations:</strong></p>
+<ul>
+<li>More parameters to optimize than mean-field</li>
+<li>May be slower to converge</li>
+</ul>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Low-rank guide with rank 8</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">,</span> <span class="n">guide_rank</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;"><code>guide_rank</code></th>
+<th>Use case</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">5--10</td>
+<td>Standard analysis, moderate gene correlations</td>
+</tr>
+<tr>
+<td style="text-align: center;">10--20</td>
+<td>DE analysis where cross-gene uncertainty matters</td>
+</tr>
+<tr>
+<td style="text-align: center;">20--50</td>
+<td>Large datasets with complex correlation structures</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="joint-low-rank">Joint Low-Rank<a class="headerlink" href="#joint-low-rank" title="Permanent link">&para;</a></h2>
+<p>Extends the low-rank guide to capture correlations <strong>across</strong> parameter groups.
+For example, the gene-specific mean <span class="arithmatex">\(\mu_g\)</span> and the success probability may be
+correlated in the posterior---a joint guide captures this structure.</p>
+<p>Internally, the joint guide uses a chain-rule decomposition via the Woodbury
+identity:</p>
+<div class="arithmatex">\[
+q(\theta_1, \theta_2) = q(\theta_1)\,q(\theta_2 \mid \theta_1),
+\]</div>
+<p>where both the marginal and the conditional are low-rank MVN of the same rank.
+This extends naturally to three or more parameter groups (e.g., <span class="arithmatex">\(\mu\)</span>, <span class="arithmatex">\(p\)</span>,
+and gate in a ZINB model).</p>
+<p><strong>Advantages:</strong></p>
+<ul>
+<li>Captures cross-parameter correlations (e.g., <span class="arithmatex">\(\mu_g\)</span> and <span class="arithmatex">\(\phi\)</span>)</li>
+<li>Supports heterogeneous dimensions (scalar + gene-specific in one group)</li>
+<li>Each conditional is itself a low-rank MVN (efficient computation)</li>
+</ul>
+<p><strong>Limitations:</strong></p>
+<ul>
+<li>At rank <span class="arithmatex">\(k\)</span>, within-group expressivity is reduced vs. separate
+  rank-<span class="arithmatex">\(k\)</span> guides</li>
+<li>More complex optimization landscape</li>
+</ul>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Joint low-rank for mu and phi</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">,</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">parameterization</span><span class="o">=</span><span class="s2">&quot;mean_odds&quot;</span><span class="p">,</span>  <span class="c1"># alias: &quot;odds_ratio&quot;</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">unconstrained</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">guide_rank</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">joint_params</span><span class="o">=</span><span class="s2">&quot;biological&quot;</span><span class="p">,</span>  <span class="c1"># resolves to [&quot;phi&quot;, &quot;mu&quot;] for mean_odds</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="dense-vs-structured-params">Dense vs. structured params<a class="headerlink" href="#dense-vs-structured-params" title="Permanent link">&para;</a></h3>
+<p>For models with many parameter groups, you can designate which parameters
+get full cross-gene low-rank coupling (<code>dense_params</code>) while others only
+couple locally. Both <code>joint_params</code> and <code>dense_params</code> accept semantic
+shorthands (<code>"all"</code>, <code>"biological"</code>, <code>"mean"</code>, <code>"prob"</code>, <code>"gate"</code>) or
+explicit lists:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># mu gets cross-gene correlations; phi and gate only couple to mu per gene</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">zero_inflation</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">unconstrained</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">guide_rank</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">joint_params</span><span class="o">=</span><span class="s2">&quot;all&quot;</span><span class="p">,</span>            <span class="c1"># [&quot;phi&quot;, &quot;mu&quot;, &quot;gate&quot;] for mean_odds ZINB</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="n">dense_params</span><span class="o">=</span><span class="s2">&quot;mean&quot;</span><span class="p">,</span>           <span class="c1"># [&quot;mu&quot;] — only mu gets cross-gene coupling</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="p">)</span>
+</span></code></pre></div>
+<hr />
+<h2 id="normalizing-flow">Normalizing Flow<a class="headerlink" href="#normalizing-flow" title="Permanent link">&para;</a></h2>
+<p>All the Gaussian-based families above (Mean-Field, Low-Rank, Joint Low-Rank)
+share a fundamental limitation: the variational distribution is always a
+(possibly correlated) Gaussian in unconstrained space. When the true posterior
+is <strong>multimodal, skewed, or heavy-tailed</strong>, a Gaussian guide underestimates
+the real uncertainty. A normalizing flow guide replaces the Gaussian with a
+<strong>learned invertible transformation</strong> of a simple base distribution, enabling
+arbitrarily complex densities.</p>
+<div class="admonition warning">
+<p class="admonition-title">Use affine coupling for scRNA-seq</p>
+<p>In the high-dimensional setting of scRNA-seq (thousands to tens of
+thousands of genes), only <strong>affine coupling</strong> layers are numerically
+stable enough for reliable training. Spline coupling and autoregressive
+flows can produce NaN gradients at these dimensions because per-layer
+log-determinant contributions accumulate rapidly and the conditioner
+networks face enormous fan-in. SCRIBE recommends
+<code>guide_flow="affine_coupling"</code> for all guide-level flow usage.</p>
+<p>Spline coupling remains the recommended choice for <strong>VAE-level flows</strong>
+(<code>vae_flow_type="spline_coupling"</code>), where the latent dimension is low
+(typically 10--30) and the extra expressiveness per layer is beneficial.</p>
+</div>
+<h3 id="stability-features">Stability features<a class="headerlink" href="#stability-features" title="Permanent link">&para;</a></h3>
+<p>Training coupling flows in 20,000+ dimensions is inherently challenging.
+SCRIBE implements several stabilization techniques inspired by
+<a href="https://arxiv.org/abs/2402.16408">Andrade 2024 (arXiv:2402.16408)</a>,
+all <strong>enabled by default</strong>, that make high-dimensional affine coupling flows
+practical:</p>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>What it does</th>
+<th>Why it matters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Zero-init output</strong></td>
+<td>Conditioner output layer is initialized to zero so the flow starts as an identity transform</td>
+<td>Prevents log-determinant overflow at initialization when G is large</td>
+</tr>
+<tr>
+<td><strong>Layer normalization</strong></td>
+<td><code>LayerNorm</code> after each hidden Dense in the conditioner MLP</td>
+<td>Stabilizes activations when fan-in is large (e.g. 20K inputs into a 64-wide bottleneck)</td>
+</tr>
+<tr>
+<td><strong>Residual connections</strong></td>
+<td>Skip connections between hidden layers of the same width</td>
+<td>Improves gradient flow during training</td>
+</tr>
+<tr>
+<td><strong>Soft clamping</strong></td>
+<td>Smooth asymmetric arctan-based clamp on the affine log-scale</td>
+<td>Replaces hard clipping; caps per-layer expansion to approximately 10% while preserving gradients at the boundary</td>
+</tr>
+<tr>
+<td><strong>LOFT</strong></td>
+<td>Log Soft Extension layer + trainable final affine after all coupling layers</td>
+<td>Compresses extreme sample magnitudes logarithmically, then re-expands to match the target posterior's scale</td>
+</tr>
+<tr>
+<td><strong>Float64 log-det</strong></td>
+<td>Accumulate the log-determinant Jacobian in float64</td>
+<td>Prevents precision loss when summing many small per-layer contributions. Off by default; recommended only for datacenter GPUs (A100, H100) with full-rate float64</td>
+</tr>
+</tbody>
+</table>
+<h3 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Per-parameter affine coupling flow</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">,</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">unconstrained</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">guide_flow</span><span class="o">=</span><span class="s2">&quot;affine_coupling&quot;</span><span class="p">,</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">guide_flow_num_layers</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="n">guide_flow_hidden_dims</span><span class="o">=</span><span class="p">[</span><span class="mi">64</span><span class="p">,</span> <span class="mi">64</span><span class="p">],</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="parameters">Parameters<a class="headerlink" href="#parameters" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>guide_flow</code></td>
+<td><code>None</code></td>
+<td>Flow type: <code>"affine_coupling"</code> (recommended for guides), <code>"spline_coupling"</code>, <code>"maf"</code>, <code>"iaf"</code>. Mutually exclusive with <code>guide_rank</code></td>
+</tr>
+<tr>
+<td><code>guide_flow_num_layers</code></td>
+<td><code>4</code></td>
+<td>Number of coupling layers</td>
+</tr>
+<tr>
+<td><code>guide_flow_hidden_dims</code></td>
+<td><code>[64, 64]</code></td>
+<td>Hidden layer sizes in the conditioner MLP</td>
+</tr>
+<tr>
+<td><code>guide_flow_activation</code></td>
+<td><code>"relu"</code></td>
+<td>Activation function (<code>"relu"</code>, <code>"gelu"</code>, <code>"silu"</code>, <code>"leaky_relu"</code>, ...)</td>
+</tr>
+<tr>
+<td><code>guide_flow_n_bins</code></td>
+<td><code>8</code></td>
+<td>Spline bins (only for <code>"spline_coupling"</code>)</td>
+</tr>
+<tr>
+<td><code>guide_flow_mixture_strategy</code></td>
+<td><code>"independent"</code></td>
+<td><code>"independent"</code> (separate flow per component) or <code>"shared"</code> (one flow conditioned on one-hot index)</td>
+</tr>
+<tr>
+<td><code>guide_flow_zero_init</code></td>
+<td><code>True</code></td>
+<td>Zero-initialize conditioner output (identity-init)</td>
+</tr>
+<tr>
+<td><code>guide_flow_layer_norm</code></td>
+<td><code>True</code></td>
+<td>Apply LayerNorm in conditioner MLP</td>
+</tr>
+<tr>
+<td><code>guide_flow_residual</code></td>
+<td><code>True</code></td>
+<td>Residual connections in conditioner MLP</td>
+</tr>
+<tr>
+<td><code>guide_flow_soft_clamp</code></td>
+<td><code>True</code></td>
+<td>Smooth asymmetric arctan clamp on affine log-scale</td>
+</tr>
+<tr>
+<td><code>guide_flow_loft</code></td>
+<td><code>True</code></td>
+<td>LOFT compression + trainable final affine</td>
+</tr>
+<tr>
+<td><code>guide_flow_log_det_f64</code></td>
+<td><code>True</code></td>
+<td>Float64 log-det accumulation. Auto-promotes <code>enable_x64=True</code></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition tip">
+<p class="admonition-title">When to use flows vs. low-rank</p>
+<p>For <strong>nearly Gaussian</strong> posteriors, <code>LowRankGuide</code> is faster and equally
+accurate---use it as your default when you need gene correlations.
+Switch to a flow guide when diagnostics suggest the posterior is
+substantially non-Gaussian (multimodality, skewness, heavy tails) and
+the low-rank approximation is visibly inadequate.</p>
+</div>
+<hr />
+<h2 id="joint-normalizing-flow">Joint Normalizing Flow<a class="headerlink" href="#joint-normalizing-flow" title="Permanent link">&para;</a></h2>
+<p>Analogous to <a href="#joint-low-rank">Joint Low-Rank</a> but uses normalizing flows
+instead of Gaussians. Cross-parameter dependencies are captured via a
+chain-rule decomposition:</p>
+<div class="arithmatex">\[
+q(\theta_1, \theta_2) = q(\theta_1)\;q(\theta_2 \mid \theta_1),
+\]</div>
+<p>where each factor is a full normalizing flow. The conditional
+<span class="arithmatex">\(q(\theta_2 \mid \theta_1)\)</span> is implemented by passing the unconstrained
+sample of <span class="arithmatex">\(\theta_1\)</span> as a continuous <strong>context</strong> vector to the flow for
+<span class="arithmatex">\(\theta_2\)</span>. This extends naturally to three or more parameters via
+cumulative context.</p>
+<p><strong>Advantages:</strong></p>
+<ul>
+<li>Captures <strong>non-linear</strong> cross-parameter dependencies</li>
+<li>Each conditional is a full flow --- more expressive than the Woodbury
+  low-rank MVN conditionals</li>
+<li>Supports <code>dense_params</code> (same semantics as Joint Low-Rank)</li>
+</ul>
+<p><strong>Limitations:</strong></p>
+<ul>
+<li>More flow parameters than Joint Low-Rank</li>
+<li>Context-conditioned flows add dimensionality to conditioner networks</li>
+<li>For approximately Gaussian joint posteriors, Joint Low-Rank is more
+  parameter-efficient</li>
+</ul>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># Joint affine coupling flow for mu and phi</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">,</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="n">parameterization</span><span class="o">=</span><span class="s2">&quot;mean_odds&quot;</span><span class="p">,</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="n">unconstrained</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="n">guide_flow</span><span class="o">=</span><span class="s2">&quot;affine_coupling&quot;</span><span class="p">,</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>    <span class="n">joint_params</span><span class="o">=</span><span class="s2">&quot;biological&quot;</span><span class="p">,</span>     <span class="c1"># [&quot;phi&quot;, &quot;mu&quot;] for mean_odds</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>    <span class="n">guide_flow_num_layers</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>Scalar parameters in a joint flow group (e.g. <code>phi</code> when it is not
+gene-specific) automatically receive a context-conditioned Normal instead of
+a full flow, since coupling flows require at least two features.</p>
+<h3 id="dense-vs-structured-params_1">Dense vs. structured params<a class="headerlink" href="#dense-vs-structured-params_1" title="Permanent link">&para;</a></h3>
+<p>Just like Joint Low-Rank, you can designate which parameters get a full flow
+(<code>dense_params</code>) while others receive diagonal Normal treatment with learned
+regression on the dense-flow residuals. The same shorthands apply:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># mu gets a full flow; phi and gate regress on mu per gene</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>    <span class="n">zero_inflation</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>    <span class="n">unconstrained</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>    <span class="n">guide_flow</span><span class="o">=</span><span class="s2">&quot;affine_coupling&quot;</span><span class="p">,</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>    <span class="n">joint_params</span><span class="o">=</span><span class="s2">&quot;all&quot;</span><span class="p">,</span>            <span class="c1"># [&quot;phi&quot;, &quot;mu&quot;, &quot;gate&quot;] for mean_odds ZINB</span>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>    <span class="n">dense_params</span><span class="o">=</span><span class="s2">&quot;mean&quot;</span><span class="p">,</span>           <span class="c1"># only mu gets full flow</span>
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="mixture-and-dataset-support">Mixture and dataset support<a class="headerlink" href="#mixture-and-dataset-support" title="Permanent link">&para;</a></h3>
+<p>When a parameter has mixture components or dataset axes, the flow guide
+creates per-component or per-dataset flow instances. The behavior is
+controlled by <code>guide_flow_mixture_strategy</code>:</p>
+<ul>
+<li><strong><code>"independent"</code></strong> (default) --- a separate flow chain per component,
+  each with its own parameters. Maximum expressiveness.</li>
+<li><strong><code>"shared"</code></strong> --- a single flow chain conditioned on a one-hot component
+  index. More parameter-efficient when components share structure.</li>
+</ul>
+<hr />
+<h2 id="amortized">Amortized<a class="headerlink" href="#amortized" title="Permanent link">&para;</a></h2>
+<p>Instead of learning separate variational parameters for each data point, an
+amortized guide uses a neural network to predict variational parameters from
+data features (sufficient statistics like total UMI count). This is particularly
+useful for cell-specific parameters where the number of variational parameters
+would otherwise scale with the number of cells.</p>
+<p><strong>Advantages:</strong></p>
+<ul>
+<li>Scales to arbitrarily many cells without per-cell parameters</li>
+<li>Shares statistical strength across similar cells</li>
+<li>Fewer total variational parameters</li>
+</ul>
+<p><strong>Limitations:</strong></p>
+<ul>
+<li>Requires choosing a network architecture</li>
+<li>May not be as flexible as per-cell optimization</li>
+<li>Training can be more sensitive to hyperparameters</li>
+</ul>
+<p>The primary use case in SCRIBE is <strong>amortized capture probability</strong> for
+VCP models:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># Amortized inference for capture probability</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="n">amortize_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>    <span class="n">capture_hidden_dims</span><span class="o">=</span><span class="p">[</span><span class="mi">128</span><span class="p">,</span> <span class="mi">64</span><span class="p">],</span>
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>    <span class="n">capture_activation</span><span class="o">=</span><span class="s2">&quot;leaky_relu&quot;</span><span class="p">,</span>
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="p">)</span>
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>amortize_capture</code></td>
+<td><code>False</code></td>
+<td>Enable amortized capture inference</td>
+</tr>
+<tr>
+<td><code>capture_hidden_dims</code></td>
+<td><code>[64, 32]</code></td>
+<td>MLP hidden layer sizes</td>
+</tr>
+<tr>
+<td><code>capture_activation</code></td>
+<td><code>"leaky_relu"</code></td>
+<td>Activation function</td>
+</tr>
+<tr>
+<td><code>capture_output_transform</code></td>
+<td><code>"softplus"</code></td>
+<td>Output transform for positive params</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="vae-latent">VAE Latent<a class="headerlink" href="#vae-latent" title="Permanent link">&para;</a></h2>
+<p>The VAE guide uses an encoder-decoder neural network architecture. The encoder
+maps each cell's counts to a low-dimensional latent representation, and the
+decoder maps back to model parameters. This provides both a variational
+approximation and a learned cell embedding.</p>
+<p><strong>Advantages:</strong></p>
+<ul>
+<li>Produces low-dimensional cell embeddings for visualization/clustering</li>
+<li>Captures complex nonlinear relationships</li>
+<li>Can be enhanced with normalizing flow priors for richer latent
+  distributions</li>
+</ul>
+<p><strong>Limitations:</strong></p>
+<ul>
+<li>Most computationally expensive guide family</li>
+<li>Requires tuning network architecture</li>
+<li>Posterior quality depends on encoder/decoder capacity</li>
+</ul>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># Standard VAE</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">,</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    <span class="n">inference_method</span><span class="o">=</span><span class="s2">&quot;vae&quot;</span><span class="p">,</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="n">vae_latent_dim</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>    <span class="n">n_steps</span><span class="o">=</span><span class="mi">100_000</span><span class="p">,</span>
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">256</span><span class="p">,</span>
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="p">)</span>
+</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>
+</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="c1"># Cell embeddings</span>
+</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="n">embeddings</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">get_latent_embeddings</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="n">adata</span><span class="o">.</span><span class="n">X</span><span class="p">,</span> <span class="n">n_samples</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="normalizing-flow-priors">Normalizing flow priors<a class="headerlink" href="#normalizing-flow-priors" title="Permanent link">&para;</a></h3>
+<p>For more expressive latent distributions, attach a normalizing flow:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">,</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>    <span class="n">inference_method</span><span class="o">=</span><span class="s2">&quot;vae&quot;</span><span class="p">,</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    <span class="n">vae_latent_dim</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    <span class="n">vae_flow_type</span><span class="o">=</span><span class="s2">&quot;spline_coupling&quot;</span><span class="p">,</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    <span class="n">vae_flow_num_layers</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    <span class="n">vae_flow_hidden_dims</span><span class="o">=</span><span class="p">[</span><span class="mi">64</span><span class="p">,</span> <span class="mi">64</span><span class="p">],</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="p">)</span>
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Flow type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>"affine_coupling"</code></td>
+<td>Fast baseline</td>
+</tr>
+<tr>
+<td><code>"spline_coupling"</code></td>
+<td>Expressive, recommended for production</td>
+</tr>
+<tr>
+<td><code>"maf"</code></td>
+<td>Fast density evaluation</td>
+</tr>
+<tr>
+<td><code>"iaf"</code></td>
+<td>Fast sampling</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="how-to-choose">How to choose<a class="headerlink" href="#how-to-choose" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>graph TD
+    Start["Start"] --&gt; Q1{"Need cell&lt;br/&gt;embeddings?"}
+    Q1 --&gt;|Yes| VAE["VAE Latent"]
+    Q1 --&gt;|No| Q2{"Cell-specific&lt;br/&gt;parameters?"}
+    Q2 --&gt;|Yes| Amort["Amortized"]
+    Q2 --&gt;|No| Q3{"Posterior likely&lt;br/&gt;non-Gaussian?"}
+    Q3 --&gt;|Yes| Q3b{"Cross-parameter&lt;br/&gt;dependencies?"}
+    Q3b --&gt;|Yes| JointFlow["Joint Normalizing Flow"]
+    Q3b --&gt;|No| Flow["Normalizing Flow"]
+    Q3 --&gt;|No| Q4{"Need cross-parameter&lt;br/&gt;correlations?"}
+    Q4 --&gt;|Yes| Joint["Joint Low-Rank"]
+    Q4 --&gt;|No| Q5{"Need gene-gene&lt;br/&gt;correlations?"}
+    Q5 --&gt;|Yes| LR["Low-Rank"]
+    Q5 --&gt;|No| MF["Mean-Field"]</code></pre>
+<p><strong>Rules of thumb:</strong></p>
+<ol>
+<li><strong>Start with mean-field.</strong> It is fast and works well for most
+   analyses.</li>
+<li><strong>Add low-rank when doing DE or denoising</strong>, where cross-gene
+   uncertainty propagation matters. Rank 8--15 is usually sufficient.</li>
+<li><strong>Use joint low-rank for unconstrained models</strong> with hierarchical
+   priors, where <span class="arithmatex">\(\mu\)</span> and <span class="arithmatex">\(\phi\)</span> (or <span class="arithmatex">\(p\)</span>) are expected to
+   correlate.</li>
+<li><strong>Upgrade to a normalizing flow guide</strong> when Gaussian-based guides
+   visibly struggle (multimodality, skewness, heavy tails). Use
+   <code>guide_flow="affine_coupling"</code> for high-dimensional gene parameters.</li>
+<li><strong>Use joint normalizing flow</strong> when cross-parameter relationships are
+   non-linear or the joint posterior is non-Gaussian (banana-shaped,
+   multimodal).</li>
+<li><strong>Use amortized for VCP models</strong> with many cells, to avoid a
+   per-cell variational parameter.</li>
+<li><strong>Use VAE when you also need cell embeddings</strong> for visualization or
+   clustering.</li>
+</ol>
+<hr />
+<h2 id="combining-guide-families-in-one-model">Combining guide families in one model<a class="headerlink" href="#combining-guide-families-in-one-model" title="Permanent link">&para;</a></h2>
+<p>SCRIBE's guide families are per-parameter, so a single model can use
+multiple families simultaneously. Via <code>scribe.fit()</code>:</p>
+<ul>
+<li><code>guide_rank</code> + <code>joint_params</code> configure gene-specific parameters with
+  low-rank or joint low-rank guides</li>
+<li><code>guide_flow</code> + <code>joint_params</code> configure gene-specific parameters with
+  normalizing flow or joint normalizing flow guides</li>
+<li><code>amortize_capture</code> configures cell-specific capture probability with an
+  amortized guide</li>
+<li>Parameters not covered by <code>joint_params</code> or <code>guide_flow</code>/<code>guide_rank</code>
+  default to mean-field</li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title"><code>guide_flow</code> and <code>guide_rank</code> are mutually exclusive</p>
+<p>You cannot use both in the same <code>scribe.fit()</code> call. Choose one
+approach for gene-specific parameters: Gaussian-based (low-rank) or
+flow-based.</p>
+</div>
+<hr />
+<p>For more on how guide families fit into the broader inference workflow,
+see the <a href="../inference/">Inference Methods</a> page.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.indexes", "navigation.top", "content.code.copy", "content.code.annotate", "search.highlight", "search.suggest", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>

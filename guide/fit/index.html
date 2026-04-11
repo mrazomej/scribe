@@ -1,0 +1,4295 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Single-Cell RNA-Seq Inference using Bayesian Estimation — a Python package for analyzing scRNA-seq data with variational inference powered by NumPyro and JAX.">
+      
+      
+      
+      
+        <link rel="prev" href="../">
+      
+      
+        <link rel="next" href="../cli_infer/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>The scribe.fit() Interface - SCRIBE</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#the-scribefit-interface" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="SCRIBE" class="md-header__button md-logo" aria-label="SCRIBE" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            SCRIBE
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              The scribe.fit() Interface
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/mrazomej/scribe" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mrazomej/scribe
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../getting-started/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Getting Started
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../theory/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Theory
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="../" class="md-tabs__link">
+        
+  
+  
+    
+  
+  User Guide
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/scribe/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../contributing/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Contributing
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="SCRIBE" class="md-nav__button md-logo" aria-label="SCRIBE" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    SCRIBE
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mrazomej/scribe" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mrazomej/scribe
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../getting-started/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quick-overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../theory/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Theory
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Theory
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/dirichlet-multinomial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dirichlet-Multinomial Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/hierarchical-p/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hierarchical Gene-Specific p
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/anchoring-priors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Anchoring Priors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/beta-negative-binomial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Beta Negative Binomial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/hierarchical-priors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hierarchical Priors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/denoising/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bayesian Denoising
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/differential-expression/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differential Expression
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/model-comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theory/goodness-of-fit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goodness-of-Fit Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The scribe.fit() Interface
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The scribe.fit() Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-data-input" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Data input
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-model-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Model selection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-parameterization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Parameterization
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-inference-method" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Inference method
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Inference method">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#svi-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SVI parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mcmc-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MCMC parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-variational-guide-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Variational guide configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Variational guide configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#low-rank-gaussian-guides" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Low-rank Gaussian guides
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#normalizing-flow-guides" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Normalizing flow guides
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-capture-amortization-vcp-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Capture amortization (VCP models)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-hierarchical-priors-gene-level" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Hierarchical priors (gene-level)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="7. Hierarchical priors (gene-level)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#hyperparameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hyperparameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-mean-anchoring-prior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Mean anchoring prior
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-bnb-overdispersion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. BNB overdispersion
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-mixture-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Mixture models
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="10. Mixture models">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#annotation-priors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Annotation priors
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-multi-dataset-hierarchy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. Multi-dataset hierarchy
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="11. Multi-dataset hierarchy">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dataset-specification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dataset specification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dataset-level-priors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dataset-level priors
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-custom-prior-hyperparameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12. Custom prior hyperparameters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#13-vae-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        13. VAE architecture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="13. VAE architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#normalizing-flow-priors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Normalizing flow priors
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#14-power-user-overrides" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        14. Power-user overrides
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#return-value" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Return value
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#common-recipes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common recipes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Common recipes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#typical-single-dataset-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Typical single-dataset analysis
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-dataset-with-hierarchical-priors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-dataset with hierarchical priors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mixture-model-with-annotations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mixture model with annotations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#svi-to-mcmc-warm-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SVI-to-MCMC warm start
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#full-hierarchical-model-with-anchoring-and-bnb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Full hierarchical model with anchoring and BNB
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vae-with-normalizing-flows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VAE with normalizing flows
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quick-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli_infer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    scribe-infer CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli_visualize/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    scribe-visualize CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide-families/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Variational Guide Families
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../inference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Inference Methods
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results Class
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../differential-expression/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differential Expression
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/scribe/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-data-input" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Data input
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-model-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Model selection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-parameterization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Parameterization
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-inference-method" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Inference method
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Inference method">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#svi-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SVI parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mcmc-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MCMC parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-variational-guide-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Variational guide configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Variational guide configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#low-rank-gaussian-guides" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Low-rank Gaussian guides
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#normalizing-flow-guides" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Normalizing flow guides
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-capture-amortization-vcp-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Capture amortization (VCP models)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-hierarchical-priors-gene-level" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Hierarchical priors (gene-level)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="7. Hierarchical priors (gene-level)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#hyperparameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hyperparameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-mean-anchoring-prior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Mean anchoring prior
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-bnb-overdispersion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. BNB overdispersion
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-mixture-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Mixture models
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="10. Mixture models">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#annotation-priors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Annotation priors
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-multi-dataset-hierarchy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. Multi-dataset hierarchy
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="11. Multi-dataset hierarchy">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dataset-specification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dataset specification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dataset-level-priors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dataset-level priors
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-custom-prior-hyperparameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12. Custom prior hyperparameters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#13-vae-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        13. VAE architecture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="13. VAE architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#normalizing-flow-priors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Normalizing flow priors
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#14-power-user-overrides" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        14. Power-user overrides
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#return-value" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Return value
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#common-recipes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common recipes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Common recipes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#typical-single-dataset-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Typical single-dataset analysis
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-dataset-with-hierarchical-priors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-dataset with hierarchical priors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mixture-model-with-annotations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mixture model with annotations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#svi-to-mcmc-warm-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SVI-to-MCMC warm start
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#full-hierarchical-model-with-anchoring-and-bnb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Full hierarchical model with anchoring and BNB
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vae-with-normalizing-flows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VAE with normalizing flows
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quick-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="the-scribefit-interface">The <code>scribe.fit()</code> Interface<a class="headerlink" href="#the-scribefit-interface" title="Permanent link">&para;</a></h1>
+<p><code>scribe.fit()</code> is the <strong>single entry point</strong> for all SCRIBE inference. Every
+model, parameterization, prior, inference engine, and guide family is
+configured through keyword arguments to this one function. This page walks
+through every parameter group, explains when and why each matters, and links
+to the deeper guides and theory pages for full details.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">scribe</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="c1"># Sensible defaults --- variable capture is on by default</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">adata</span><span class="p">)</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># Add a low-rank guide for gene-gene correlations</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">guide_rank</span><span class="o">=</span><span class="mi">64</span><span class="p">)</span>
+</span></code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">Read order</p>
+<p>If you are new to SCRIBE, read sections 1--4 below and the
+<a href="../model-selection/">Model Selection</a> page. The remaining sections cover
+progressively more advanced features that you can explore as needed.</p>
+</div>
+<div class="admonition info">
+<p class="admonition-title">Naming convention</p>
+<p>Parameters use descriptive names (<code>expression_prior</code>, <code>prob_prior</code>,
+<code>zero_inflation_prior</code>, etc.) rather than single-letter math notation.
+Legacy shorthand (<code>mu_prior</code>, <code>p_prior</code>, <code>gate_prior</code>, ...) is still
+accepted for backward compatibility but the descriptive forms are
+recommended.</p>
+</div>
+<p><strong>Variable capture is on by default.</strong> The default model is <code>"nbvcp"</code>, which
+includes cell-specific capture probability. Use <strong><code>variable_capture=False</code></strong>
+to disable it, or <strong><code>zero_inflation=True</code></strong> to add a zero-inflation gate.
+The <strong><code>model</code></strong> keyword still accepts <code>"nbdm"</code>, <code>"nbvcp"</code>, <code>"zinb"</code>, and
+<code>"zinbvcp"</code> for the same four combinations. See
+<a href="#2-model-selection">Model selection</a> for the full resolution table.</p>
+<hr />
+<h2 id="1-data-input">1. Data input<a class="headerlink" href="#1-data-input" title="Permanent link">&para;</a></h2>
+<p>These parameters control what data SCRIBE reads and how it interprets the
+count matrix.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>counts</code></td>
+<td><em>(required)</em></td>
+<td>Count matrix (<code>jnp.ndarray</code>) or <code>AnnData</code> object. Shape is <code>(n_cells, n_genes)</code> when <code>cells_axis=0</code></td>
+</tr>
+<tr>
+<td><code>cells_axis</code></td>
+<td><code>0</code></td>
+<td>Which axis represents cells. <code>0</code> = rows are cells (the standard layout)</td>
+</tr>
+<tr>
+<td><code>layer</code></td>
+<td><code>None</code></td>
+<td>AnnData layer to use for counts. <code>None</code> uses <code>.X</code></td>
+</tr>
+<tr>
+<td><code>seed</code></td>
+<td><code>42</code></td>
+<td>Random seed for reproducibility</td>
+</tr>
+</tbody>
+</table>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># From a raw JAX/NumPy array</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">counts_array</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">)</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># From AnnData, reading a specific layer</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">layer</span><span class="o">=</span><span class="s2">&quot;raw_counts&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>When you need AnnData-specific features---annotation priors, multi-dataset
+keys, or layer selection---<code>counts</code> <strong>must</strong> be an <code>AnnData</code> object.</p>
+</div>
+<hr />
+<h2 id="2-model-selection">2. Model selection<a class="headerlink" href="#2-model-selection" title="Permanent link">&para;</a></h2>
+<p>All four likelihoods share the same Negative Binomial core. The default
+includes <strong>variable capture</strong> (<code>model="nbvcp"</code>), which models cell-specific
+library-size variation---the right choice for the vast majority of scRNA-seq
+datasets. Use <strong><code>variable_capture</code></strong> and <strong><code>zero_inflation</code></strong> to compose the
+model explicitly, or set <strong><code>model</code></strong> to a single string. If you pass both
+flags and <code>model=</code>, they must agree or SCRIBE raises an error.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>variable_capture</code></td>
+<td><code>None</code></td>
+<td><code>True</code> adds cell-specific capture probability. <code>False</code> removes it. <code>None</code> defers to <code>model</code></td>
+</tr>
+<tr>
+<td><code>zero_inflation</code></td>
+<td><code>None</code></td>
+<td><code>True</code> adds a per-gene zero-inflation gate. <code>None</code> defers to <code>model</code></td>
+</tr>
+<tr>
+<td><code>model</code></td>
+<td><code>"nbvcp"</code></td>
+<td>Likelihood short name. Default includes variable capture. Flags override this when set</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>What you pass</th>
+<th>Same as <code>model=</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Default (nothing)</td>
+<td><code>"nbvcp"</code></td>
+</tr>
+<tr>
+<td><code>variable_capture=False</code></td>
+<td><code>"nbdm"</code></td>
+</tr>
+<tr>
+<td><code>zero_inflation=True</code></td>
+<td><code>"zinbvcp"</code></td>
+</tr>
+<tr>
+<td><code>variable_capture=False, zero_inflation=True</code></td>
+<td><code>"zinb"</code></td>
+</tr>
+</tbody>
+</table>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Default: variable capture is already on</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">adata</span><span class="p">)</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># Disable variable capture (plain NB) --- only when library sizes are very tight</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">variable_capture</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="c1"># Add zero inflation on top of the default variable capture</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">zero_inflation</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="c1"># String form is still supported</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="s2">&quot;zinbvcp&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">Add a low-rank guide</p>
+<p>Adding <code>guide_rank=64</code> gives SCRIBE a parameter-efficient way to capture
+gene-gene correlations that a mean-field posterior would miss. See
+<a href="../model-selection/">Model Selection</a> for the full decision guide.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Why variable capture is on by default</p>
+<p>Empirically, we have <strong>not yet encountered a dataset</strong> that does not
+benefit from variable capture. Cell-specific capture probability accounts
+for library-size heterogeneity that is ubiquitous in scRNA-seq protocols.
+Set <code>variable_capture=False</code> if your library sizes are tightly controlled
+(less than 2x variation between cells).</p>
+</div>
+<p><strong>Full guide:</strong> <a href="../model-selection/">Model Selection</a> |
+<strong>Parameter cheatsheet:</strong> <a href="../parameters/">Parameter Reference</a></p>
+<hr />
+<h2 id="3-parameterization">3. Parameterization<a class="headerlink" href="#3-parameterization" title="Permanent link">&para;</a></h2>
+<p>How the Negative Binomial parameters are represented internally. The choice
+affects optimization speed, numerical stability, and which downstream
+analyses are available. This is independent of whether you select the
+likelihood with <strong><code>variable_capture</code> / <code>zero_inflation</code></strong> or with a <strong><code>model=</code></strong>
+string (both remain valid; see <a href="#2-model-selection">Model selection</a>).</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>parameterization</code></td>
+<td><code>"canonical"</code></td>
+<td><code>"canonical"</code> (alias <code>"standard"</code>), <code>"mean_prob"</code> (alias <code>"linked"</code>), or <code>"mean_odds"</code> (alias <code>"odds_ratio"</code>)</td>
+</tr>
+<tr>
+<td><code>unconstrained</code></td>
+<td><code>False</code></td>
+<td>Use Normal + transform instead of constrained distributions. <strong>Required</strong> for hierarchical priors and BNB overdispersion</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Code</th>
+<th>Samples</th>
+<th>Derives</th>
+<th>Best for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Canonical</strong></td>
+<td><code>"canonical"</code></td>
+<td><span class="arithmatex">\(p, r\)</span></td>
+<td>---</td>
+<td>Direct interpretation</td>
+</tr>
+<tr>
+<td><strong>Mean probs</strong></td>
+<td><code>"mean_prob"</code></td>
+<td><span class="arithmatex">\(p, \mu\)</span></td>
+<td><span class="arithmatex">\(r = \mu(1-p)/p\)</span></td>
+<td>Couples mean and success probability</td>
+</tr>
+<tr>
+<td><strong>Mean odds</strong></td>
+<td><code>"mean_odds"</code></td>
+<td><span class="arithmatex">\(\phi, \mu\)</span></td>
+<td><span class="arithmatex">\(p = 1/(1+\phi)\)</span>, <span class="arithmatex">\(r = \mu\phi\)</span></td>
+<td>Stable when <span class="arithmatex">\(p\)</span> is near 1</td>
+</tr>
+</tbody>
+</table>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># Mean odds parameterization (often converges faster)</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">parameterization</span><span class="o">=</span><span class="s2">&quot;mean_odds&quot;</span><span class="p">)</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># Unconstrained mode --- needed for hierarchical priors and BNB</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">,</span> <span class="n">unconstrained</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span></code></pre></div>
+<div class="admonition info">
+<p class="admonition-title">When to use <code>unconstrained=True</code></p>
+<p>You <strong>must</strong> set <code>unconstrained=True</code> when using any of the following:
+hierarchical priors (<code>expression_prior</code>, <code>prob_prior</code>,
+<code>zero_inflation_prior</code>), mean anchoring (<code>expression_anchor</code>), BNB
+overdispersion (<code>overdispersion="bnb"</code>), or dataset-level priors. SCRIBE
+will raise a <code>ValueError</code> if you forget.</p>
+</div>
+<p><strong>Full guide:</strong> <a href="../model-selection/#parameterizations">Model Selection &gt; Parameterizations</a> |
+<strong>Parameter cheatsheet:</strong> <a href="../parameters/#parameterization-mappings">Parameter Reference</a></p>
+<hr />
+<h2 id="4-inference-method">4. Inference method<a class="headerlink" href="#4-inference-method" title="Permanent link">&para;</a></h2>
+<p>SCRIBE supports three inference backends, all accessed through the same
+<code>scribe.fit()</code> call.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>inference_method</code></td>
+<td><code>"svi"</code></td>
+<td><code>"svi"</code> (Stochastic Variational Inference), <code>"mcmc"</code> (NUTS), or <code>"vae"</code> (Variational Autoencoder)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="svi-parameters">SVI parameters<a class="headerlink" href="#svi-parameters" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>n_steps</code></td>
+<td><code>50_000</code></td>
+<td>Number of optimization steps</td>
+</tr>
+<tr>
+<td><code>batch_size</code></td>
+<td><code>None</code></td>
+<td>Mini-batch size. <code>None</code> = full-batch. Recommended for &gt; 10 K cells</td>
+</tr>
+<tr>
+<td><code>stable_update</code></td>
+<td><code>True</code></td>
+<td>Numerically stable parameter updates</td>
+</tr>
+<tr>
+<td><code>log_progress_lines</code></td>
+<td><code>False</code></td>
+<td>Emit periodic plain-text progress lines (useful for SLURM logs)</td>
+</tr>
+<tr>
+<td><code>early_stopping</code></td>
+<td><code>None</code></td>
+<td>Dict or <code>EarlyStoppingConfig</code> for automatic convergence detection</td>
+</tr>
+<tr>
+<td><code>restore_best</code></td>
+<td><code>False</code></td>
+<td>Track the best variational parameters during training and restore them at the end</td>
+</tr>
+<tr>
+<td><code>optimizer_config</code></td>
+<td><code>None</code></td>
+<td>Custom optimizer: <code>{"name": "adam", "step_size": 1e-3}</code>. Supports <code>"adam"</code>, <code>"clipped_adam"</code>, <code>"adagrad"</code>, <code>"rmsprop"</code>, <code>"sgd"</code>, <code>"momentum"</code></td>
+</tr>
+</tbody>
+</table>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># SVI with mini-batching and early stopping</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">n_steps</span><span class="o">=</span><span class="mi">200_000</span><span class="p">,</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">early_stopping</span><span class="o">=</span><span class="p">{</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>        <span class="s2">&quot;patience&quot;</span><span class="p">:</span> <span class="mi">500</span><span class="p">,</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>        <span class="s2">&quot;min_delta&quot;</span><span class="p">:</span> <span class="mf">1.0</span><span class="p">,</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>        <span class="s2">&quot;smoothing_window&quot;</span><span class="p">:</span> <span class="mi">50</span><span class="p">,</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>        <span class="s2">&quot;restore_best&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>    <span class="p">},</span>
+</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="mcmc-parameters">MCMC parameters<a class="headerlink" href="#mcmc-parameters" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>n_samples</code></td>
+<td><code>2_000</code></td>
+<td>Posterior samples per chain</td>
+</tr>
+<tr>
+<td><code>n_warmup</code></td>
+<td><code>1_000</code></td>
+<td>Warmup (burn-in) samples</td>
+</tr>
+<tr>
+<td><code>n_chains</code></td>
+<td><code>1</code></td>
+<td>Number of parallel NUTS chains</td>
+</tr>
+<tr>
+<td><code>svi_init</code></td>
+<td><code>None</code></td>
+<td><code>ScribeSVIResults</code> to warm-start MCMC (cross-parameterization supported)</td>
+</tr>
+<tr>
+<td><code>enable_x64</code></td>
+<td><code>None</code></td>
+<td>Float64 precision. Defaults to <code>True</code> for MCMC, <code>False</code> for SVI/VAE</td>
+</tr>
+</tbody>
+</table>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># MCMC warm-started from SVI</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">svi_results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">,</span> <span class="n">n_steps</span><span class="o">=</span><span class="mi">50_000</span><span class="p">)</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">mcmc_results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">,</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="n">inference_method</span><span class="o">=</span><span class="s2">&quot;mcmc&quot;</span><span class="p">,</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="n">svi_init</span><span class="o">=</span><span class="n">svi_results</span><span class="p">,</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>    <span class="n">n_samples</span><span class="o">=</span><span class="mi">2_000</span><span class="p">,</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>    <span class="n">n_warmup</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>    <span class="n">n_chains</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="p">)</span>
+</span></code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">Cross-parameterization initialization</p>
+<p>The <code>svi_init</code> parameter handles parameterization mapping automatically.
+You can run SVI with <code>parameterization="mean_prob"</code> and initialize MCMC
+with <code>parameterization="mean_odds"</code>---SCRIBE converts the MAP estimates
+internally.</p>
+</div>
+<p><strong>Full guide:</strong> <a href="../inference/">Inference Methods</a></p>
+<hr />
+<h2 id="5-variational-guide-configuration">5. Variational guide configuration<a class="headerlink" href="#5-variational-guide-configuration" title="Permanent link">&para;</a></h2>
+<p>The guide (variational family) controls how well the approximate posterior
+can capture correlations between parameters.</p>
+<h3 id="low-rank-gaussian-guides">Low-rank Gaussian guides<a class="headerlink" href="#low-rank-gaussian-guides" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>guide_rank</code></td>
+<td><code>None</code></td>
+<td>Rank for low-rank guide on gene-specific parameters. <code>None</code> = mean-field (fully factorized)</td>
+</tr>
+<tr>
+<td><code>joint_params</code></td>
+<td><code>None</code></td>
+<td>Parameter names to model jointly. Accepts shorthands (<code>"all"</code>, <code>"biological"</code>, <code>"mean"</code>, <code>"prob"</code>, <code>"gate"</code>) or an explicit list (e.g. <code>["mu", "phi"]</code>). Works with <code>guide_rank</code> or <code>guide_flow</code></td>
+</tr>
+<tr>
+<td><code>dense_params</code></td>
+<td><code>None</code></td>
+<td>Subset of <code>joint_params</code> that get full cross-gene coupling. Accepts same shorthands or explicit list. Others get gene-local conditioning</td>
+</tr>
+</tbody>
+</table>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># Low-rank guide (captures gene-gene correlations)</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">,</span> <span class="n">guide_rank</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="c1"># Joint low-rank across mu and phi</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">,</span>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>    <span class="n">parameterization</span><span class="o">=</span><span class="s2">&quot;mean_odds&quot;</span><span class="p">,</span>
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>    <span class="n">unconstrained</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>    <span class="n">guide_rank</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>    <span class="n">joint_params</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;mu&quot;</span><span class="p">,</span> <span class="s2">&quot;phi&quot;</span><span class="p">],</span>
+</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="normalizing-flow-guides">Normalizing flow guides<a class="headerlink" href="#normalizing-flow-guides" title="Permanent link">&para;</a></h3>
+<p>Replaces the Gaussian variational family with a learned invertible
+transformation, enabling multimodal, skewed, and heavy-tailed posterior
+approximations. Mutually exclusive with <code>guide_rank</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>guide_flow</code></td>
+<td><code>None</code></td>
+<td>Flow type: <code>"affine_coupling"</code> (recommended), <code>"spline_coupling"</code>, <code>"maf"</code>, <code>"iaf"</code></td>
+</tr>
+<tr>
+<td><code>guide_flow_num_layers</code></td>
+<td><code>4</code></td>
+<td>Number of coupling layers</td>
+</tr>
+<tr>
+<td><code>guide_flow_hidden_dims</code></td>
+<td><code>[64, 64]</code></td>
+<td>Hidden sizes in the conditioner MLP</td>
+</tr>
+<tr>
+<td><code>guide_flow_activation</code></td>
+<td><code>"relu"</code></td>
+<td>Activation function for conditioner MLPs</td>
+</tr>
+<tr>
+<td><code>guide_flow_n_bins</code></td>
+<td><code>8</code></td>
+<td>Spline bins (only for <code>"spline_coupling"</code>)</td>
+</tr>
+<tr>
+<td><code>guide_flow_mixture_strategy</code></td>
+<td><code>"independent"</code></td>
+<td><code>"independent"</code> or <code>"shared"</code> for mixture/dataset components</td>
+</tr>
+<tr>
+<td><code>guide_flow_zero_init</code></td>
+<td><code>True</code></td>
+<td>Identity-init via zero output layer</td>
+</tr>
+<tr>
+<td><code>guide_flow_layer_norm</code></td>
+<td><code>True</code></td>
+<td>LayerNorm in conditioner MLP</td>
+</tr>
+<tr>
+<td><code>guide_flow_residual</code></td>
+<td><code>True</code></td>
+<td>Residual connections in conditioner MLP</td>
+</tr>
+<tr>
+<td><code>guide_flow_soft_clamp</code></td>
+<td><code>True</code></td>
+<td>Smooth arctan clamp on affine log-scale (Andrade 2024)</td>
+</tr>
+<tr>
+<td><code>guide_flow_loft</code></td>
+<td><code>True</code></td>
+<td>LOFT compression + trainable final affine</td>
+</tr>
+<tr>
+<td><code>guide_flow_log_det_f64</code></td>
+<td><code>False</code></td>
+<td>Float64 log-det accumulation (datacenter GPUs only)</td>
+</tr>
+</tbody>
+</table>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># Affine coupling flow guide (recommended for high-dimensional gene params)</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">,</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="n">unconstrained</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>    <span class="n">guide_flow</span><span class="o">=</span><span class="s2">&quot;affine_coupling&quot;</span><span class="p">,</span>
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>    <span class="n">guide_flow_num_layers</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="p">)</span>
+</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>
+</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="c1"># Joint flow across mu and phi</span>
+</span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-7-12"><a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-7-13"><a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">,</span>
+</span><span id="__span-7-14"><a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a>    <span class="n">parameterization</span><span class="o">=</span><span class="s2">&quot;mean_odds&quot;</span><span class="p">,</span>
+</span><span id="__span-7-15"><a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a>    <span class="n">unconstrained</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-7-16"><a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a>    <span class="n">guide_flow</span><span class="o">=</span><span class="s2">&quot;affine_coupling&quot;</span><span class="p">,</span>
+</span><span id="__span-7-17"><a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a>    <span class="n">joint_params</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;mu&quot;</span><span class="p">,</span> <span class="s2">&quot;phi&quot;</span><span class="p">],</span>
+</span><span id="__span-7-18"><a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a><span class="p">)</span>
+</span></code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Use <code>affine_coupling</code> for guide-level flows</p>
+<p>In scRNA-seq, gene-specific parameters live in thousands to tens of
+thousands of dimensions. Only affine coupling layers are numerically
+stable enough at this scale. Spline coupling and autoregressive flows
+are better suited for low-dimensional settings like VAE latent spaces.</p>
+</div>
+<p><strong>Full guide:</strong> <a href="../guide-families/">Variational Guide Families</a></p>
+<hr />
+<h2 id="6-capture-amortization-vcp-models">6. Capture amortization (VCP models)<a class="headerlink" href="#6-capture-amortization-vcp-models" title="Permanent link">&para;</a></h2>
+<p>When <code>variable_capture=True</code> (NBVCP and ZINBVCP), each cell has its own capture
+probability. Amortization replaces per-cell variational parameters with a
+small neural network that predicts them from total UMI count, reducing the
+parameter count from <span class="arithmatex">\(O(N_{\text{cells}})\)</span> to the network weights.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>amortize_capture</code></td>
+<td><code>False</code></td>
+<td>Enable neural-network amortization of capture probability</td>
+</tr>
+<tr>
+<td><code>capture_hidden_dims</code></td>
+<td><code>[64, 32]</code></td>
+<td>Hidden layer sizes for the amortizer MLP</td>
+</tr>
+<tr>
+<td><code>capture_activation</code></td>
+<td><code>"leaky_relu"</code></td>
+<td>Activation function (<code>"relu"</code>, <code>"gelu"</code>, <code>"silu"</code>, <code>"tanh"</code>, ...)</td>
+</tr>
+<tr>
+<td><code>capture_output_transform</code></td>
+<td><code>"softplus"</code></td>
+<td>Output transform for positive parameters (<code>"softplus"</code> or <code>"exp"</code>)</td>
+</tr>
+<tr>
+<td><code>capture_clamp_min</code></td>
+<td><code>0.1</code></td>
+<td>Minimum clamp for MLP outputs. <code>None</code> to disable</td>
+</tr>
+<tr>
+<td><code>capture_clamp_max</code></td>
+<td><code>50.0</code></td>
+<td>Maximum clamp for MLP outputs. <code>None</code> to disable</td>
+</tr>
+<tr>
+<td><code>capture_amortization</code></td>
+<td><code>None</code></td>
+<td><code>AmortizationConfig</code> or dict that overrides all six parameters above</td>
+</tr>
+</tbody>
+</table>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># Amortized capture with defaults --- useful for very large datasets</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">amortize_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="c1"># Custom amortizer architecture</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>    <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>    <span class="n">amortize_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>    <span class="n">capture_hidden_dims</span><span class="o">=</span><span class="p">[</span><span class="mi">128</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">32</span><span class="p">],</span>
+</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>    <span class="n">capture_activation</span><span class="o">=</span><span class="s2">&quot;gelu&quot;</span><span class="p">,</span>
+</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="p">)</span>
+</span></code></pre></div>
+<div class="admonition info">
+<p class="admonition-title">When to amortize</p>
+<p>Amortization is most beneficial when the number of cells is so large that
+you get out-of-memory issues. For small datasets the per-cell
+parameterization is fine and avoids the neural network overhead.</p>
+</div>
+<p><strong>See also:</strong> <a href="../guide-families/#amortized">Variational Guide Families &gt; Amortized</a></p>
+<hr />
+<h2 id="7-hierarchical-priors-gene-level">7. Hierarchical priors (gene-level)<a class="headerlink" href="#7-hierarchical-priors-gene-level" title="Permanent link">&para;</a></h2>
+<p>Hierarchical priors provide <strong>adaptive shrinkage</strong> across mixture components
+(for <code>expression_prior</code>) or across genes (for <code>prob_prior</code>,
+<code>zero_inflation_prior</code>). They share statistical strength so that most parameters
+stay close to a population center while allowing true outliers to deviate. All
+require <code>unconstrained=True</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>expression_prior</code></td>
+<td><code>"none"</code></td>
+<td>Hierarchical prior on <span class="arithmatex">\(\mu\)</span> (or <span class="arithmatex">\(r\)</span>) <strong>across mixture components</strong>. Requires <code>n_components &gt;= 2</code></td>
+</tr>
+<tr>
+<td><code>prob_prior</code></td>
+<td><code>"none"</code></td>
+<td>Hierarchical prior on <span class="arithmatex">\(p\)</span> (or <span class="arithmatex">\(\phi\)</span>) <strong>across genes</strong></td>
+</tr>
+<tr>
+<td><code>zero_inflation_prior</code></td>
+<td><code>"none"</code></td>
+<td>Hierarchical prior on zero-inflation gate <strong>across genes</strong>. Only for ZI models</td>
+</tr>
+</tbody>
+</table>
+<p>All three accept: <code>"none"</code>, <code>"gaussian"</code>, <code>"horseshoe"</code>, or <code>"neg"</code>.</p>
+<ul>
+<li><strong>Gaussian</strong> --- simple Normal shrinkage. Lightest; suitable when most
+  parameters are expected to differ moderately.</li>
+<li><strong>Horseshoe</strong> --- strong shrinkage toward zero with heavy tails for true
+  outliers. Good default for sparse signals.</li>
+<li><strong>NEG</strong> (Normal-Exponential-Gamma) --- even heavier tails than Horseshoe
+  with continuous adaptive shrinkage.</li>
+</ul>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># Horseshoe shrinkage on mu across cell types</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>    <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    <span class="n">unconstrained</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    <span class="n">n_components</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    <span class="n">expression_prior</span><span class="o">=</span><span class="s2">&quot;horseshoe&quot;</span><span class="p">,</span>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="p">)</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="c1"># Gaussian prior on gene-specific p</span>
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">,</span>
+</span><span id="__span-9-14"><a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>    <span class="n">unconstrained</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-9-15"><a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a>    <span class="n">prob_prior</span><span class="o">=</span><span class="s2">&quot;gaussian&quot;</span><span class="p">,</span>
+</span><span id="__span-9-16"><a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a><span class="p">)</span>
+</span><span id="__span-9-17"><a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a>
+</span><span id="__span-9-18"><a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a><span class="c1"># NEG prior on zero-inflation gate</span>
+</span><span id="__span-9-19"><a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-9-20"><a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-9-21"><a id="__codelineno-9-21" name="__codelineno-9-21" href="#__codelineno-9-21"></a>    <span class="n">zero_inflation</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-9-22"><a id="__codelineno-9-22" name="__codelineno-9-22" href="#__codelineno-9-22"></a>    <span class="n">unconstrained</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-9-23"><a id="__codelineno-9-23" name="__codelineno-9-23" href="#__codelineno-9-23"></a>    <span class="n">zero_inflation_prior</span><span class="o">=</span><span class="s2">&quot;neg&quot;</span><span class="p">,</span>
+</span><span id="__span-9-24"><a id="__codelineno-9-24" name="__codelineno-9-24" href="#__codelineno-9-24"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="hyperparameters">Hyperparameters<a class="headerlink" href="#hyperparameters" title="Permanent link">&para;</a></h3>
+<p>Fine-tune the behavior of Horseshoe and NEG priors:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Prior</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>horseshoe_tau0</code></td>
+<td><code>1.0</code></td>
+<td>Horseshoe</td>
+<td>Global shrinkage scale. Smaller = stronger shrinkage</td>
+</tr>
+<tr>
+<td><code>horseshoe_slab_df</code></td>
+<td><code>4</code></td>
+<td>Horseshoe</td>
+<td>Degrees of freedom of the regularizing slab</td>
+</tr>
+<tr>
+<td><code>horseshoe_slab_scale</code></td>
+<td><code>2.0</code></td>
+<td>Horseshoe</td>
+<td>Scale of the regularizing slab</td>
+</tr>
+<tr>
+<td><code>neg_u</code></td>
+<td><code>1.0</code></td>
+<td>NEG</td>
+<td>Shape parameter <span class="arithmatex">\(u\)</span></td>
+</tr>
+<tr>
+<td><code>neg_a</code></td>
+<td><code>1.0</code></td>
+<td>NEG</td>
+<td>Shape parameter <span class="arithmatex">\(a\)</span></td>
+</tr>
+<tr>
+<td><code>neg_tau</code></td>
+<td><code>1.0</code></td>
+<td>NEG</td>
+<td>Scale parameter <span class="arithmatex">\(\tau\)</span></td>
+</tr>
+</tbody>
+</table>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1"># Horseshoe with tighter global shrinkage</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    <span class="n">unconstrained</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>    <span class="n">n_components</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>    <span class="n">expression_prior</span><span class="o">=</span><span class="s2">&quot;horseshoe&quot;</span><span class="p">,</span>
+</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>    <span class="n">horseshoe_tau0</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>
+</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>    <span class="n">horseshoe_slab_scale</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="p">)</span>
+</span></code></pre></div>
+<p><strong>Full guide:</strong> <a href="../../theory/hierarchical-priors/">Theory: Hierarchical Priors</a></p>
+<hr />
+<h2 id="8-mean-anchoring-prior">8. Mean anchoring prior<a class="headerlink" href="#8-mean-anchoring-prior" title="Permanent link">&para;</a></h2>
+<p>The mean anchoring prior resolves the <span class="arithmatex">\(\mu\)</span>--<span class="arithmatex">\(\phi\)</span> degeneracy in the
+Negative Binomial by centering each gene's biological mean on its observed
+sample mean, adjusted for average capture efficiency.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>expression_anchor</code></td>
+<td><code>False</code></td>
+<td>Enable data-informed anchoring. Automatically sets <code>unconstrained=True</code></td>
+</tr>
+<tr>
+<td><code>expression_anchor_sigma</code></td>
+<td><code>0.3</code></td>
+<td>Log-scale standard deviation. <code>0.1</code>--<code>0.2</code> = tight, <code>0.3</code>--<code>0.5</code> = recommended, <code>&gt; 1</code> = weak</td>
+</tr>
+</tbody>
+</table>
+<p>For VCP models, SCRIBE needs to estimate the average capture probability
+from data. Provide biology-informed capture information via the <code>priors</code>
+dictionary:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># Mean anchoring with organism-informed capture</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>    <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>    <span class="n">expression_anchor</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>    <span class="n">expression_anchor_sigma</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span>
+</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>    <span class="n">priors</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;organism&quot;</span><span class="p">:</span> <span class="s2">&quot;human&quot;</span><span class="p">},</span>
+</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>    <span class="n">amortize_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="p">)</span>
+</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>
+</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="c1"># Mean anchoring with explicit capture efficiency</span>
+</span><span id="__span-11-12"><a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-11-13"><a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-11-14"><a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a>    <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-11-15"><a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a>    <span class="n">expression_anchor</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-11-16"><a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a>    <span class="n">priors</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;capture_efficiency&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">10.0</span><span class="p">,</span> <span class="mf">1e5</span><span class="p">)},</span>
+</span><span id="__span-11-17"><a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a><span class="p">)</span>
+</span></code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Without variable capture (<code>nbdm</code>, <code>zinb</code>), the anchor uses the implicit
+capture <span class="arithmatex">\(\bar{\nu} = 1\)</span>, so no extra <code>priors</code> are needed.</p>
+</div>
+<p><strong>Full guide:</strong> <a href="../../theory/anchoring-priors/">Theory: Anchoring Priors</a></p>
+<hr />
+<h2 id="9-bnb-overdispersion">9. BNB overdispersion<a class="headerlink" href="#9-bnb-overdispersion" title="Permanent link">&para;</a></h2>
+<p>The <strong>Beta Negative Binomial</strong> extension adds a per-gene concentration
+parameter <span class="arithmatex">\(\kappa_g\)</span> that allows heavier tails than the standard NB. It
+can be combined with any model.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>overdispersion</code></td>
+<td><code>"none"</code></td>
+<td><code>"none"</code> (standard NB) or <code>"bnb"</code> (Beta Negative Binomial)</td>
+</tr>
+<tr>
+<td><code>overdispersion_prior</code></td>
+<td><code>"horseshoe"</code></td>
+<td>Hierarchical prior on <span class="arithmatex">\(\kappa_g\)</span>: <code>"horseshoe"</code> or <code>"neg"</code></td>
+</tr>
+</tbody>
+</table>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>    <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>    <span class="n">overdispersion</span><span class="o">=</span><span class="s2">&quot;bnb&quot;</span><span class="p">,</span>
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>    <span class="n">unconstrained</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>    <span class="n">amortize_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="p">)</span>
+</span></code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Fit variable capture first</p>
+<p>What appears as heavy-tailed gene expression often reflects variable
+capture efficiency rather than genuine per-gene overdispersion. Always
+fit an NBVCP model first and check the posterior predictive distribution.
+Add BNB only when excess dispersion persists after accounting for
+capture.</p>
+</div>
+<p><strong>Full guide:</strong> <a href="../../theory/beta-negative-binomial/">Theory: Beta Negative Binomial</a>
+| <a href="../model-selection/#bnb-overdispersion">Model Selection &gt; BNB</a></p>
+<hr />
+<h2 id="10-mixture-models">10. Mixture models<a class="headerlink" href="#10-mixture-models" title="Permanent link">&para;</a></h2>
+<p>Mixture models discover cell subpopulations by fitting <span class="arithmatex">\(K\)</span> sets of
+gene-specific parameters. Each cell is softly assigned to a component.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>n_components</code></td>
+<td><code>None</code></td>
+<td>Number of mixture components. <code>None</code> = single component (no mixture). Must be &gt;= 2 if set</td>
+</tr>
+<tr>
+<td><code>mixture_params</code></td>
+<td><code>"all"</code></td>
+<td>Which parameters are component-specific. Accepts shorthands: <code>"all"</code> (every param incl. gate), <code>"biological"</code> (core NB params only), <code>"mean"</code>, <code>"prob"</code>, <code>"gate"</code>, or an explicit list like <code>["r"]</code></td>
+</tr>
+</tbody>
+</table>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># Discover 5 cell types</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>    <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>    <span class="n">n_components</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>    <span class="n">n_steps</span><span class="o">=</span><span class="mi">150_000</span><span class="p">,</span>
+</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>    <span class="n">amortize_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="p">)</span>
+</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>
+</span><span id="__span-13-10"><a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="c1"># Extract assignments</span>
+</span><span id="__span-13-11"><a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="n">assignments</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">cell_type_assignments</span><span class="p">(</span><span class="n">counts</span><span class="o">=</span><span class="n">adata</span><span class="o">.</span><span class="n">X</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="annotation-priors">Annotation priors<a class="headerlink" href="#annotation-priors" title="Permanent link">&para;</a></h3>
+<p>If you have partial or complete cell-type labels, use them as <strong>soft priors</strong>
+on mixture assignments. This guides the model without forcing hard
+assignments.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>annotation_key</code></td>
+<td><code>None</code></td>
+<td>Column(s) in <code>adata.obs</code> with cell-type labels. Accepts a string or a list of strings for composite labels</td>
+</tr>
+<tr>
+<td><code>annotation_confidence</code></td>
+<td><code>3.0</code></td>
+<td>Prior strength <span class="arithmatex">\(\kappa\)</span>. <code>0</code> = ignored, <code>3</code> = ~20x boost, large = near-hard assignment</td>
+</tr>
+<tr>
+<td><code>annotation_component_order</code></td>
+<td><code>None</code></td>
+<td>Explicit label-to-component mapping. <code>None</code> sorts labels alphabetically</td>
+</tr>
+<tr>
+<td><code>annotation_min_cells</code></td>
+<td><code>None</code></td>
+<td>Minimum cells per label. Labels below this threshold are treated as unlabeled</td>
+</tr>
+</tbody>
+</table>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># Use existing annotations as soft priors</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>    <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>    <span class="n">n_components</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>    <span class="n">annotation_key</span><span class="o">=</span><span class="s2">&quot;cell_type&quot;</span><span class="p">,</span>
+</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>    <span class="n">annotation_confidence</span><span class="o">=</span><span class="mf">3.0</span><span class="p">,</span>
+</span><span id="__span-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>    <span class="n">amortize_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="p">)</span>
+</span><span id="__span-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>
+</span><span id="__span-14-11"><a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a><span class="c1"># Composite labels from two columns (e.g. cell_type x treatment)</span>
+</span><span id="__span-14-12"><a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-14-13"><a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-14-14"><a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a>    <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-14-15"><a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a>    <span class="n">annotation_key</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;cell_type&quot;</span><span class="p">,</span> <span class="s2">&quot;treatment&quot;</span><span class="p">],</span>
+</span><span id="__span-14-16"><a id="__codelineno-14-16" name="__codelineno-14-16" href="#__codelineno-14-16"></a>    <span class="n">annotation_confidence</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span>
+</span><span id="__span-14-17"><a id="__codelineno-14-17" name="__codelineno-14-17" href="#__codelineno-14-17"></a>    <span class="n">annotation_min_cells</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span>
+</span><span id="__span-14-18"><a id="__codelineno-14-18" name="__codelineno-14-18" href="#__codelineno-14-18"></a>    <span class="n">amortize_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-14-19"><a id="__codelineno-14-19" name="__codelineno-14-19" href="#__codelineno-14-19"></a><span class="p">)</span>
+</span></code></pre></div>
+<div class="admonition info">
+<p class="admonition-title">Automatic component inference</p>
+<p>When <code>annotation_key</code> is set but <code>n_components</code> is omitted, SCRIBE
+automatically infers the number of components from the unique non-null
+labels (filtered by <code>annotation_min_cells</code> if set).</p>
+</div>
+<p><strong>See also:</strong> <a href="../results/">Results Class</a> (mixture assignments and
+components)</p>
+<hr />
+<h2 id="11-multi-dataset-hierarchy">11. Multi-dataset hierarchy<a class="headerlink" href="#11-multi-dataset-hierarchy" title="Permanent link">&para;</a></h2>
+<p>When your experiment spans <strong>multiple datasets</strong> (e.g. batches, conditions,
+or labs), SCRIBE can share statistical strength across datasets via
+dataset-level hierarchical priors on gene-specific parameters.</p>
+<h3 id="dataset-specification">Dataset specification<a class="headerlink" href="#dataset-specification" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>dataset_key</code></td>
+<td><code>None</code></td>
+<td>Column in <code>adata.obs</code> identifying which dataset each cell belongs to</td>
+</tr>
+<tr>
+<td><code>n_datasets</code></td>
+<td><code>None</code></td>
+<td>Number of datasets. Auto-inferred from <code>dataset_key</code> when <code>None</code></td>
+</tr>
+<tr>
+<td><code>dataset_params</code></td>
+<td><code>None</code></td>
+<td>Which parameters become dataset-specific (auto-determined from priors when <code>None</code>)</td>
+</tr>
+<tr>
+<td><code>dataset_mixing</code></td>
+<td><code>None</code></td>
+<td>Dataset-specific mixture weights. <code>None</code> = auto (<code>True</code> when &gt;= 2 datasets)</td>
+</tr>
+<tr>
+<td><code>auto_downgrade_single_dataset_hierarchy</code></td>
+<td><code>True</code></td>
+<td>Automatically simplify hierarchy when <code>dataset_key</code> resolves to a single dataset</td>
+</tr>
+</tbody>
+</table>
+<h3 id="dataset-level-priors">Dataset-level priors<a class="headerlink" href="#dataset-level-priors" title="Permanent link">&para;</a></h3>
+<p>Each parameter that varies across genes can also vary across datasets, with a
+hierarchical prior controlling how much dataset-to-dataset variation is
+allowed.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>expression_dataset_prior</code></td>
+<td><code>"none"</code></td>
+<td>Prior on <span class="arithmatex">\(\mu\)</span> across datasets: <code>"none"</code>, <code>"gaussian"</code>, <code>"horseshoe"</code>, <code>"neg"</code></td>
+</tr>
+<tr>
+<td><code>prob_dataset_prior</code></td>
+<td><code>"none"</code></td>
+<td>Prior on <span class="arithmatex">\(p\)</span> across datasets</td>
+</tr>
+<tr>
+<td><code>prob_dataset_mode</code></td>
+<td><code>"gene_specific"</code></td>
+<td>How <span class="arithmatex">\(p\)</span> varies: <code>"scalar"</code>, <code>"gene_specific"</code>, or <code>"two_level"</code></td>
+</tr>
+<tr>
+<td><code>zero_inflation_dataset_prior</code></td>
+<td><code>"none"</code></td>
+<td>Prior on zero-inflation gate across datasets</td>
+</tr>
+<tr>
+<td><code>overdispersion_dataset_prior</code></td>
+<td><code>"none"</code></td>
+<td>Prior on BNB <span class="arithmatex">\(\kappa\)</span> across datasets. Requires <code>overdispersion="bnb"</code></td>
+</tr>
+<tr>
+<td><code>capture_scaling_prior</code></td>
+<td><code>"none"</code></td>
+<td>Prior on per-dataset capture scaling <span class="arithmatex">\(\eta_d\)</span>. For VCP models</td>
+</tr>
+</tbody>
+</table>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="c1"># Two-dataset comparison with horseshoe shrinkage on mu</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>    <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>    <span class="n">unconstrained</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>    <span class="n">dataset_key</span><span class="o">=</span><span class="s2">&quot;batch&quot;</span><span class="p">,</span>
+</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>    <span class="n">expression_dataset_prior</span><span class="o">=</span><span class="s2">&quot;horseshoe&quot;</span><span class="p">,</span>
+</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>    <span class="n">prob_dataset_prior</span><span class="o">=</span><span class="s2">&quot;gaussian&quot;</span><span class="p">,</span>
+</span><span id="__span-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>    <span class="n">amortize_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-15-10"><a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a><span class="p">)</span>
+</span></code></pre></div>
+<div class="admonition info">
+<p class="admonition-title">Single-dataset downgrade</p>
+<p>When <code>dataset_key</code> points to a column with only one unique value, SCRIBE
+automatically downgrades dataset-level priors to gene-level equivalents
+(or drops them) and emits a <code>UserWarning</code>. Disable this with
+<code>auto_downgrade_single_dataset_hierarchy=False</code>.</p>
+</div>
+<p><strong>Full guide:</strong> <a href="../../theory/hierarchical-priors/#extension-to-multiple-datasets">Theory: Hierarchical Priors &gt; Multiple datasets</a></p>
+<hr />
+<h2 id="12-custom-prior-hyperparameters">12. Custom prior hyperparameters<a class="headerlink" href="#12-custom-prior-hyperparameters" title="Permanent link">&para;</a></h2>
+<p>The <code>priors</code> dictionary lets you override default prior hyperparameters for
+any model parameter. Values are tuples of hyperparameters whose meaning
+depends on the distribution family.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>priors</code></td>
+<td><code>None</code></td>
+<td>Dict mapping parameter names to hyperparameter tuples</td>
+</tr>
+</tbody>
+</table>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c1"># Override p and r priors</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">,</span>
+</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>    <span class="n">priors</span><span class="o">=</span><span class="p">{</span>
+</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>        <span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>     <span class="c1"># Beta(1, 1) --- uniform</span>
+</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>        <span class="s2">&quot;r&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>     <span class="c1"># LogNormal(0, 1)</span>
+</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>    <span class="p">},</span>
+</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="p">)</span>
+</span><span id="__span-16-10"><a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a>
+</span><span id="__span-16-11"><a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a><span class="c1"># Symmetric Dirichlet for mixture weights (scalar is broadcast)</span>
+</span><span id="__span-16-12"><a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-16-13"><a id="__codelineno-16-13" name="__codelineno-16-13" href="#__codelineno-16-13"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-16-14"><a id="__codelineno-16-14" name="__codelineno-16-14" href="#__codelineno-16-14"></a>    <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-16-15"><a id="__codelineno-16-15" name="__codelineno-16-15" href="#__codelineno-16-15"></a>    <span class="n">n_components</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-16-16"><a id="__codelineno-16-16" name="__codelineno-16-16" href="#__codelineno-16-16"></a>    <span class="n">priors</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;mixing&quot;</span><span class="p">:</span> <span class="mf">5.0</span><span class="p">},</span>  <span class="c1"># equivalent to (5.0, 5.0, 5.0, 5.0)</span>
+</span><span id="__span-16-17"><a id="__codelineno-16-17" name="__codelineno-16-17" href="#__codelineno-16-17"></a><span class="p">)</span>
+</span><span id="__span-16-18"><a id="__codelineno-16-18" name="__codelineno-16-18" href="#__codelineno-16-18"></a>
+</span><span id="__span-16-19"><a id="__codelineno-16-19" name="__codelineno-16-19" href="#__codelineno-16-19"></a><span class="c1"># Biology-informed capture prior</span>
+</span><span id="__span-16-20"><a id="__codelineno-16-20" name="__codelineno-16-20" href="#__codelineno-16-20"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-16-21"><a id="__codelineno-16-21" name="__codelineno-16-21" href="#__codelineno-16-21"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-16-22"><a id="__codelineno-16-22" name="__codelineno-16-22" href="#__codelineno-16-22"></a>    <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-16-23"><a id="__codelineno-16-23" name="__codelineno-16-23" href="#__codelineno-16-23"></a>    <span class="n">priors</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;organism&quot;</span><span class="p">:</span> <span class="s2">&quot;human&quot;</span><span class="p">},</span>
+</span><span id="__span-16-24"><a id="__codelineno-16-24" name="__codelineno-16-24" href="#__codelineno-16-24"></a><span class="p">)</span>
+</span></code></pre></div>
+<hr />
+<h2 id="13-vae-architecture">13. VAE architecture<a class="headerlink" href="#13-vae-architecture" title="Permanent link">&para;</a></h2>
+<p>When <code>inference_method="vae"</code>, these parameters configure the encoder-decoder
+neural network architecture.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vae_latent_dim</code></td>
+<td><code>10</code></td>
+<td>Dimensionality of the latent space</td>
+</tr>
+<tr>
+<td><code>vae_encoder_hidden_dims</code></td>
+<td><code>None</code></td>
+<td>Encoder hidden layer sizes (e.g. <code>[512, 256]</code>)</td>
+</tr>
+<tr>
+<td><code>vae_decoder_hidden_dims</code></td>
+<td><code>None</code></td>
+<td>Decoder hidden layer sizes</td>
+</tr>
+<tr>
+<td><code>vae_activation</code></td>
+<td><code>None</code></td>
+<td>Activation function (<code>"relu"</code>, <code>"gelu"</code>, <code>"silu"</code>, ...)</td>
+</tr>
+<tr>
+<td><code>vae_input_transform</code></td>
+<td><code>"log1p"</code></td>
+<td>Input preprocessing: <code>"log1p"</code>, <code>"log"</code>, <code>"sqrt"</code>, <code>"identity"</code></td>
+</tr>
+<tr>
+<td><code>vae_standardize</code></td>
+<td><code>False</code></td>
+<td>Standardize transformed inputs to zero mean, unit variance</td>
+</tr>
+<tr>
+<td><code>vae_decoder_transforms</code></td>
+<td><code>None</code></td>
+<td>Per-parameter decoder output transforms</td>
+</tr>
+</tbody>
+</table>
+<h3 id="normalizing-flow-priors">Normalizing flow priors<a class="headerlink" href="#normalizing-flow-priors" title="Permanent link">&para;</a></h3>
+<p>For more expressive latent distributions, attach a normalizing flow:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vae_flow_type</code></td>
+<td><code>"none"</code></td>
+<td><code>"none"</code>, <code>"affine_coupling"</code>, <code>"spline_coupling"</code>, <code>"maf"</code>, or <code>"iaf"</code></td>
+</tr>
+<tr>
+<td><code>vae_flow_num_layers</code></td>
+<td><code>4</code></td>
+<td>Number of flow layers</td>
+</tr>
+<tr>
+<td><code>vae_flow_hidden_dims</code></td>
+<td><code>None</code></td>
+<td>Hidden dimensions in each flow layer</td>
+</tr>
+</tbody>
+</table>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># VAE with spline coupling flow</span>
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">,</span>
+</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>    <span class="n">inference_method</span><span class="o">=</span><span class="s2">&quot;vae&quot;</span><span class="p">,</span>
+</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>    <span class="n">vae_latent_dim</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span>
+</span><span id="__span-17-7"><a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a>    <span class="n">vae_encoder_hidden_dims</span><span class="o">=</span><span class="p">[</span><span class="mi">512</span><span class="p">,</span> <span class="mi">256</span><span class="p">],</span>
+</span><span id="__span-17-8"><a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a>    <span class="n">vae_flow_type</span><span class="o">=</span><span class="s2">&quot;spline_coupling&quot;</span><span class="p">,</span>
+</span><span id="__span-17-9"><a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a>    <span class="n">vae_flow_num_layers</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-17-10"><a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a>    <span class="n">n_steps</span><span class="o">=</span><span class="mi">100_000</span><span class="p">,</span>
+</span><span id="__span-17-11"><a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">256</span><span class="p">,</span>
+</span><span id="__span-17-12"><a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a><span class="p">)</span>
+</span><span id="__span-17-13"><a id="__codelineno-17-13" name="__codelineno-17-13" href="#__codelineno-17-13"></a>
+</span><span id="__span-17-14"><a id="__codelineno-17-14" name="__codelineno-17-14" href="#__codelineno-17-14"></a><span class="c1"># Cell embeddings</span>
+</span><span id="__span-17-15"><a id="__codelineno-17-15" name="__codelineno-17-15" href="#__codelineno-17-15"></a><span class="n">embeddings</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">get_latent_embeddings</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="n">adata</span><span class="o">.</span><span class="n">X</span><span class="p">,</span> <span class="n">n_samples</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span>
+</span></code></pre></div>
+<p><strong>Full guide:</strong> <a href="../inference/#variational-autoencoder-vae">Inference Methods &gt; VAE</a></p>
+<hr />
+<h2 id="14-power-user-overrides">14. Power-user overrides<a class="headerlink" href="#14-power-user-overrides" title="Permanent link">&para;</a></h2>
+<p>For maximum control, bypass the flat keyword interface and pass fully
+constructed configuration objects. When provided, these override the
+corresponding keyword arguments.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>model_config</code></td>
+<td><code>None</code></td>
+<td><code>ModelConfig</code> object. Overrides flat <code>model</code>, <code>variable_capture</code>, <code>zero_inflation</code>, <code>parameterization</code>, <code>unconstrained</code>, <code>n_components</code>, <code>mixture_params</code>, <code>joint_params</code>, <code>dense_params</code>, <code>guide_rank</code>, and <code>priors</code></td>
+</tr>
+<tr>
+<td><code>inference_config</code></td>
+<td><code>None</code></td>
+<td><code>InferenceConfig</code> object. Overrides <code>inference_method</code>, <code>n_steps</code>, <code>batch_size</code>, <code>stable_update</code>, <code>log_progress_lines</code>, <code>n_samples</code>, <code>n_warmup</code>, and <code>n_chains</code></td>
+</tr>
+</tbody>
+</table>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">scribe.models.config</span><span class="w"> </span><span class="kn">import</span> <span class="n">ModelConfigBuilder</span>
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>
+</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="c1"># Build a model config step by step (horseshoe shrinkage on per-component means)</span>
+</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="n">builder</span> <span class="o">=</span> <span class="p">(</span>
+</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>    <span class="n">ModelConfigBuilder</span><span class="p">()</span>
+</span><span id="__span-18-6"><a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>    <span class="o">.</span><span class="n">for_model</span><span class="p">(</span><span class="s2">&quot;nbvcp&quot;</span><span class="p">)</span>
+</span><span id="__span-18-7"><a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>    <span class="o">.</span><span class="n">with_parameterization</span><span class="p">(</span><span class="s2">&quot;mean_odds&quot;</span><span class="p">)</span>
+</span><span id="__span-18-8"><a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a>    <span class="o">.</span><span class="n">unconstrained</span><span class="p">()</span>
+</span><span id="__span-18-9"><a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a>    <span class="o">.</span><span class="n">as_mixture</span><span class="p">(</span><span class="n">n_components</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+</span><span id="__span-18-10"><a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a><span class="p">)</span>
+</span><span id="__span-18-11"><a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a><span class="n">builder</span><span class="o">.</span><span class="n">_expression_prior</span> <span class="o">=</span> <span class="s2">&quot;horseshoe&quot;</span>
+</span><span id="__span-18-12"><a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a><span class="n">model_cfg</span> <span class="o">=</span> <span class="n">builder</span><span class="o">.</span><span class="n">build</span><span class="p">()</span>
+</span><span id="__span-18-13"><a id="__codelineno-18-13" name="__codelineno-18-13" href="#__codelineno-18-13"></a>
+</span><span id="__span-18-14"><a id="__codelineno-18-14" name="__codelineno-18-14" href="#__codelineno-18-14"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">model_config</span><span class="o">=</span><span class="n">model_cfg</span><span class="p">)</span>
+</span></code></pre></div>
+<hr />
+<h2 id="return-value">Return value<a class="headerlink" href="#return-value" title="Permanent link">&para;</a></h2>
+<p><code>scribe.fit()</code> returns a results object whose type depends on the inference
+method:</p>
+<table>
+<thead>
+<tr>
+<th>Inference method</th>
+<th>Return type</th>
+<th>Key capabilities</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>"svi"</code></td>
+<td><code>ScribeSVIResults</code></td>
+<td>Posterior samples, loss history, PPC, denoising</td>
+</tr>
+<tr>
+<td><code>"mcmc"</code></td>
+<td><code>ScribeMCMCResults</code></td>
+<td>Chain samples, NUTS diagnostics, PPC, denoising</td>
+</tr>
+<tr>
+<td><code>"vae"</code></td>
+<td><code>ScribeVAEResults</code></td>
+<td>Latent embeddings, posterior samples, PPC, denoising</td>
+</tr>
+</tbody>
+</table>
+<p>All result types share a common analysis API: posterior sampling, posterior
+predictive checks, Bayesian denoising, and log-likelihood computation.</p>
+<p><strong>Full guide:</strong> <a href="../results/">Results Class</a></p>
+<hr />
+<h2 id="common-recipes">Common recipes<a class="headerlink" href="#common-recipes" title="Permanent link">&para;</a></h2>
+<h3 id="typical-single-dataset-analysis">Typical single-dataset analysis<a class="headerlink" href="#typical-single-dataset-analysis" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="c1"># NBVCP with amortized capture and early stopping</span>
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>    <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>    <span class="n">parameterization</span><span class="o">=</span><span class="s2">&quot;mean_odds&quot;</span><span class="p">,</span>
+</span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a>    <span class="n">n_steps</span><span class="o">=</span><span class="mi">100_000</span><span class="p">,</span>
+</span><span id="__span-19-7"><a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span>
+</span><span id="__span-19-8"><a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a>    <span class="n">amortize_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-19-9"><a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a>    <span class="n">early_stopping</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;patience&quot;</span><span class="p">:</span> <span class="mi">500</span><span class="p">,</span> <span class="s2">&quot;restore_best&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">},</span>
+</span><span id="__span-19-10"><a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="multi-dataset-with-hierarchical-priors">Multi-dataset with hierarchical priors<a class="headerlink" href="#multi-dataset-with-hierarchical-priors" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="c1"># Share strength across batches</span>
+</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>    <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>    <span class="n">unconstrained</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-20-6"><a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a>    <span class="n">dataset_key</span><span class="o">=</span><span class="s2">&quot;batch&quot;</span><span class="p">,</span>
+</span><span id="__span-20-7"><a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a>    <span class="n">expression_dataset_prior</span><span class="o">=</span><span class="s2">&quot;horseshoe&quot;</span><span class="p">,</span>
+</span><span id="__span-20-8"><a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a>    <span class="n">prob_dataset_prior</span><span class="o">=</span><span class="s2">&quot;gaussian&quot;</span><span class="p">,</span>
+</span><span id="__span-20-9"><a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a>    <span class="n">amortize_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-20-10"><a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a>    <span class="n">n_steps</span><span class="o">=</span><span class="mi">200_000</span><span class="p">,</span>
+</span><span id="__span-20-11"><a id="__codelineno-20-11" name="__codelineno-20-11" href="#__codelineno-20-11"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="mixture-model-with-annotations">Mixture model with annotations<a class="headerlink" href="#mixture-model-with-annotations" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="c1"># 8 cell types, guided by partial annotations</span>
+</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-21-4"><a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>    <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-21-5"><a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a>    <span class="n">n_components</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>
+</span><span id="__span-21-6"><a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a>    <span class="n">annotation_key</span><span class="o">=</span><span class="s2">&quot;cell_type&quot;</span><span class="p">,</span>
+</span><span id="__span-21-7"><a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a>    <span class="n">annotation_confidence</span><span class="o">=</span><span class="mf">3.0</span><span class="p">,</span>
+</span><span id="__span-21-8"><a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a>    <span class="n">annotation_min_cells</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
+</span><span id="__span-21-9"><a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a>    <span class="n">amortize_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-21-10"><a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a>    <span class="n">n_steps</span><span class="o">=</span><span class="mi">150_000</span><span class="p">,</span>
+</span><span id="__span-21-11"><a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="svi-to-mcmc-warm-start">SVI-to-MCMC warm start<a class="headerlink" href="#svi-to-mcmc-warm-start" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="c1"># Fast exploration with SVI</span>
+</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="n">svi_results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-22-3"><a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>    <span class="n">adata</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">,</span> <span class="n">parameterization</span><span class="o">=</span><span class="s2">&quot;mean_prob&quot;</span><span class="p">,</span> <span class="n">n_steps</span><span class="o">=</span><span class="mi">50_000</span><span class="p">,</span>
+</span><span id="__span-22-4"><a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="p">)</span>
+</span><span id="__span-22-5"><a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a>
+</span><span id="__span-22-6"><a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a><span class="c1"># Gold-standard posteriors with MCMC, initialized from SVI</span>
+</span><span id="__span-22-7"><a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a><span class="n">mcmc_results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-22-8"><a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-22-9"><a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">,</span>
+</span><span id="__span-22-10"><a id="__codelineno-22-10" name="__codelineno-22-10" href="#__codelineno-22-10"></a>    <span class="n">parameterization</span><span class="o">=</span><span class="s2">&quot;mean_odds&quot;</span><span class="p">,</span>
+</span><span id="__span-22-11"><a id="__codelineno-22-11" name="__codelineno-22-11" href="#__codelineno-22-11"></a>    <span class="n">inference_method</span><span class="o">=</span><span class="s2">&quot;mcmc&quot;</span><span class="p">,</span>
+</span><span id="__span-22-12"><a id="__codelineno-22-12" name="__codelineno-22-12" href="#__codelineno-22-12"></a>    <span class="n">svi_init</span><span class="o">=</span><span class="n">svi_results</span><span class="p">,</span>
+</span><span id="__span-22-13"><a id="__codelineno-22-13" name="__codelineno-22-13" href="#__codelineno-22-13"></a>    <span class="n">n_samples</span><span class="o">=</span><span class="mi">4_000</span><span class="p">,</span>
+</span><span id="__span-22-14"><a id="__codelineno-22-14" name="__codelineno-22-14" href="#__codelineno-22-14"></a>    <span class="n">n_warmup</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span>
+</span><span id="__span-22-15"><a id="__codelineno-22-15" name="__codelineno-22-15" href="#__codelineno-22-15"></a>    <span class="n">n_chains</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-22-16"><a id="__codelineno-22-16" name="__codelineno-22-16" href="#__codelineno-22-16"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="full-hierarchical-model-with-anchoring-and-bnb">Full hierarchical model with anchoring and BNB<a class="headerlink" href="#full-hierarchical-model-with-anchoring-and-bnb" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="c1"># Everything turned on: VCP, anchoring, horseshoe, BNB</span>
+</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a>    <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-23-5"><a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a>    <span class="n">unconstrained</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-23-6"><a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a>    <span class="n">expression_anchor</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-23-7"><a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a>    <span class="n">expression_anchor_sigma</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span>
+</span><span id="__span-23-8"><a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a>    <span class="n">priors</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;organism&quot;</span><span class="p">:</span> <span class="s2">&quot;human&quot;</span><span class="p">},</span>
+</span><span id="__span-23-9"><a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a>    <span class="n">overdispersion</span><span class="o">=</span><span class="s2">&quot;bnb&quot;</span><span class="p">,</span>
+</span><span id="__span-23-10"><a id="__codelineno-23-10" name="__codelineno-23-10" href="#__codelineno-23-10"></a>    <span class="n">prob_prior</span><span class="o">=</span><span class="s2">&quot;gaussian&quot;</span><span class="p">,</span>
+</span><span id="__span-23-11"><a id="__codelineno-23-11" name="__codelineno-23-11" href="#__codelineno-23-11"></a>    <span class="n">amortize_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-23-12"><a id="__codelineno-23-12" name="__codelineno-23-12" href="#__codelineno-23-12"></a>    <span class="n">n_steps</span><span class="o">=</span><span class="mi">300_000</span><span class="p">,</span>
+</span><span id="__span-23-13"><a id="__codelineno-23-13" name="__codelineno-23-13" href="#__codelineno-23-13"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span>
+</span><span id="__span-23-14"><a id="__codelineno-23-14" name="__codelineno-23-14" href="#__codelineno-23-14"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="vae-with-normalizing-flows">VAE with normalizing flows<a class="headerlink" href="#vae-with-normalizing-flows" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="c1"># Latent representation + spline flow</span>
+</span><span id="__span-24-2"><a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-24-3"><a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-24-4"><a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;nbdm&quot;</span><span class="p">,</span>
+</span><span id="__span-24-5"><a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a>    <span class="n">inference_method</span><span class="o">=</span><span class="s2">&quot;vae&quot;</span><span class="p">,</span>
+</span><span id="__span-24-6"><a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a>    <span class="n">vae_latent_dim</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span>
+</span><span id="__span-24-7"><a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a>    <span class="n">vae_encoder_hidden_dims</span><span class="o">=</span><span class="p">[</span><span class="mi">512</span><span class="p">,</span> <span class="mi">256</span><span class="p">],</span>
+</span><span id="__span-24-8"><a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a>    <span class="n">vae_flow_type</span><span class="o">=</span><span class="s2">&quot;spline_coupling&quot;</span><span class="p">,</span>
+</span><span id="__span-24-9"><a id="__codelineno-24-9" name="__codelineno-24-9" href="#__codelineno-24-9"></a>    <span class="n">n_steps</span><span class="o">=</span><span class="mi">100_000</span><span class="p">,</span>
+</span><span id="__span-24-10"><a id="__codelineno-24-10" name="__codelineno-24-10" href="#__codelineno-24-10"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">256</span><span class="p">,</span>
+</span><span id="__span-24-11"><a id="__codelineno-24-11" name="__codelineno-24-11" href="#__codelineno-24-11"></a><span class="p">)</span>
+</span><span id="__span-24-12"><a id="__codelineno-24-12" name="__codelineno-24-12" href="#__codelineno-24-12"></a>
+</span><span id="__span-24-13"><a id="__codelineno-24-13" name="__codelineno-24-13" href="#__codelineno-24-13"></a><span class="c1"># Retrieve embeddings for downstream analysis</span>
+</span><span id="__span-24-14"><a id="__codelineno-24-14" name="__codelineno-24-14" href="#__codelineno-24-14"></a><span class="n">z</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">get_latent_embeddings</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="n">adata</span><span class="o">.</span><span class="n">X</span><span class="p">,</span> <span class="n">n_samples</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span>
+</span></code></pre></div>
+<hr />
+<h2 id="quick-reference">Quick reference<a class="headerlink" href="#quick-reference" title="Permanent link">&para;</a></h2>
+<p>All <code>scribe.fit()</code> parameters at a glance, grouped by function:</p>
+<details class="info">
+<summary>Complete parameter table (click to expand)</summary>
+<p><strong>Data input</strong></p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>counts</code></td>
+<td><em>(required)</em></td>
+<td><code>ndarray</code> or <code>AnnData</code></td>
+</tr>
+<tr>
+<td><code>cells_axis</code></td>
+<td><code>0</code></td>
+<td><code>int</code></td>
+</tr>
+<tr>
+<td><code>layer</code></td>
+<td><code>None</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>seed</code></td>
+<td><code>42</code></td>
+<td><code>int</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Model</strong></p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>variable_capture</code></td>
+<td><code>None</code></td>
+<td><code>bool</code></td>
+</tr>
+<tr>
+<td><code>zero_inflation</code></td>
+<td><code>None</code></td>
+<td><code>bool</code></td>
+</tr>
+<tr>
+<td><code>model</code></td>
+<td><code>"nbvcp"</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>parameterization</code></td>
+<td><code>"canonical"</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>unconstrained</code></td>
+<td><code>False</code></td>
+<td><code>bool</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Hierarchical priors (gene-level)</strong></p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>expression_prior</code></td>
+<td><code>"none"</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>prob_prior</code></td>
+<td><code>"none"</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>zero_inflation_prior</code></td>
+<td><code>"none"</code></td>
+<td><code>str</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Prior hyperparameters</strong></p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>horseshoe_tau0</code></td>
+<td><code>1.0</code></td>
+<td><code>float</code></td>
+</tr>
+<tr>
+<td><code>horseshoe_slab_df</code></td>
+<td><code>4</code></td>
+<td><code>int</code></td>
+</tr>
+<tr>
+<td><code>horseshoe_slab_scale</code></td>
+<td><code>2.0</code></td>
+<td><code>float</code></td>
+</tr>
+<tr>
+<td><code>neg_u</code></td>
+<td><code>1.0</code></td>
+<td><code>float</code></td>
+</tr>
+<tr>
+<td><code>neg_a</code></td>
+<td><code>1.0</code></td>
+<td><code>float</code></td>
+</tr>
+<tr>
+<td><code>neg_tau</code></td>
+<td><code>1.0</code></td>
+<td><code>float</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Mean anchoring</strong></p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>expression_anchor</code></td>
+<td><code>False</code></td>
+<td><code>bool</code></td>
+</tr>
+<tr>
+<td><code>expression_anchor_sigma</code></td>
+<td><code>0.3</code></td>
+<td><code>float</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Overdispersion</strong></p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>overdispersion</code></td>
+<td><code>"none"</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>overdispersion_prior</code></td>
+<td><code>"horseshoe"</code></td>
+<td><code>str</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Mixture</strong></p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>n_components</code></td>
+<td><code>None</code></td>
+<td><code>int</code></td>
+</tr>
+<tr>
+<td><code>mixture_params</code></td>
+<td><code>"all"</code></td>
+<td><code>str</code> or <code>list[str]</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Annotation priors</strong></p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>annotation_key</code></td>
+<td><code>None</code></td>
+<td><code>str</code> or <code>list[str]</code></td>
+</tr>
+<tr>
+<td><code>annotation_confidence</code></td>
+<td><code>3.0</code></td>
+<td><code>float</code></td>
+</tr>
+<tr>
+<td><code>annotation_component_order</code></td>
+<td><code>None</code></td>
+<td><code>list[str]</code></td>
+</tr>
+<tr>
+<td><code>annotation_min_cells</code></td>
+<td><code>None</code></td>
+<td><code>int</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Multi-dataset</strong></p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>dataset_key</code></td>
+<td><code>None</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>n_datasets</code></td>
+<td><code>None</code></td>
+<td><code>int</code></td>
+</tr>
+<tr>
+<td><code>dataset_params</code></td>
+<td><code>None</code></td>
+<td><code>list[str]</code></td>
+</tr>
+<tr>
+<td><code>dataset_mixing</code></td>
+<td><code>None</code></td>
+<td><code>bool</code></td>
+</tr>
+<tr>
+<td><code>expression_dataset_prior</code></td>
+<td><code>"none"</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>prob_dataset_prior</code></td>
+<td><code>"none"</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>prob_dataset_mode</code></td>
+<td><code>"gene_specific"</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>zero_inflation_dataset_prior</code></td>
+<td><code>"none"</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>overdispersion_dataset_prior</code></td>
+<td><code>"none"</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>capture_scaling_prior</code></td>
+<td><code>"none"</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>auto_downgrade_single_dataset_hierarchy</code></td>
+<td><code>True</code></td>
+<td><code>bool</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Guide (Gaussian)</strong></p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>guide_rank</code></td>
+<td><code>None</code></td>
+<td><code>int</code></td>
+</tr>
+<tr>
+<td><code>joint_params</code></td>
+<td><code>None</code></td>
+<td><code>str</code> or <code>list[str]</code></td>
+</tr>
+<tr>
+<td><code>dense_params</code></td>
+<td><code>None</code></td>
+<td><code>str</code> or <code>list[str]</code></td>
+</tr>
+<tr>
+<td><code>priors</code></td>
+<td><code>None</code></td>
+<td><code>dict</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Guide (Normalizing Flow)</strong></p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>guide_flow</code></td>
+<td><code>None</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>guide_flow_num_layers</code></td>
+<td><code>4</code></td>
+<td><code>int</code></td>
+</tr>
+<tr>
+<td><code>guide_flow_hidden_dims</code></td>
+<td><code>[64, 64]</code></td>
+<td><code>list[int]</code></td>
+</tr>
+<tr>
+<td><code>guide_flow_activation</code></td>
+<td><code>"relu"</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>guide_flow_n_bins</code></td>
+<td><code>8</code></td>
+<td><code>int</code></td>
+</tr>
+<tr>
+<td><code>guide_flow_mixture_strategy</code></td>
+<td><code>"independent"</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>guide_flow_zero_init</code></td>
+<td><code>True</code></td>
+<td><code>bool</code></td>
+</tr>
+<tr>
+<td><code>guide_flow_layer_norm</code></td>
+<td><code>True</code></td>
+<td><code>bool</code></td>
+</tr>
+<tr>
+<td><code>guide_flow_residual</code></td>
+<td><code>True</code></td>
+<td><code>bool</code></td>
+</tr>
+<tr>
+<td><code>guide_flow_soft_clamp</code></td>
+<td><code>True</code></td>
+<td><code>bool</code></td>
+</tr>
+<tr>
+<td><code>guide_flow_loft</code></td>
+<td><code>True</code></td>
+<td><code>bool</code></td>
+</tr>
+<tr>
+<td><code>guide_flow_log_det_f64</code></td>
+<td><code>False</code></td>
+<td><code>bool</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Capture amortization</strong></p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>amortize_capture</code></td>
+<td><code>False</code></td>
+<td><code>bool</code></td>
+</tr>
+<tr>
+<td><code>capture_hidden_dims</code></td>
+<td><code>[64, 32]</code></td>
+<td><code>list[int]</code></td>
+</tr>
+<tr>
+<td><code>capture_activation</code></td>
+<td><code>"leaky_relu"</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>capture_output_transform</code></td>
+<td><code>"softplus"</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>capture_clamp_min</code></td>
+<td><code>0.1</code></td>
+<td><code>float</code></td>
+</tr>
+<tr>
+<td><code>capture_clamp_max</code></td>
+<td><code>50.0</code></td>
+<td><code>float</code></td>
+</tr>
+<tr>
+<td><code>capture_amortization</code></td>
+<td><code>None</code></td>
+<td><code>AmortizationConfig</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Inference</strong></p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>inference_method</code></td>
+<td><code>"svi"</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>n_steps</code></td>
+<td><code>50_000</code></td>
+<td><code>int</code></td>
+</tr>
+<tr>
+<td><code>batch_size</code></td>
+<td><code>None</code></td>
+<td><code>int</code></td>
+</tr>
+<tr>
+<td><code>optimizer_config</code></td>
+<td><code>None</code></td>
+<td><code>dict</code></td>
+</tr>
+<tr>
+<td><code>stable_update</code></td>
+<td><code>True</code></td>
+<td><code>bool</code></td>
+</tr>
+<tr>
+<td><code>log_progress_lines</code></td>
+<td><code>False</code></td>
+<td><code>bool</code></td>
+</tr>
+<tr>
+<td><code>early_stopping</code></td>
+<td><code>None</code></td>
+<td><code>dict</code> or <code>EarlyStoppingConfig</code></td>
+</tr>
+<tr>
+<td><code>restore_best</code></td>
+<td><code>False</code></td>
+<td><code>bool</code></td>
+</tr>
+<tr>
+<td><code>n_samples</code></td>
+<td><code>2_000</code></td>
+<td><code>int</code></td>
+</tr>
+<tr>
+<td><code>n_warmup</code></td>
+<td><code>1_000</code></td>
+<td><code>int</code></td>
+</tr>
+<tr>
+<td><code>n_chains</code></td>
+<td><code>1</code></td>
+<td><code>int</code></td>
+</tr>
+<tr>
+<td><code>svi_init</code></td>
+<td><code>None</code></td>
+<td><code>ScribeSVIResults</code></td>
+</tr>
+<tr>
+<td><code>enable_x64</code></td>
+<td><code>None</code></td>
+<td><code>bool</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>VAE</strong></p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vae_latent_dim</code></td>
+<td><code>10</code></td>
+<td><code>int</code></td>
+</tr>
+<tr>
+<td><code>vae_encoder_hidden_dims</code></td>
+<td><code>None</code></td>
+<td><code>list[int]</code></td>
+</tr>
+<tr>
+<td><code>vae_decoder_hidden_dims</code></td>
+<td><code>None</code></td>
+<td><code>list[int]</code></td>
+</tr>
+<tr>
+<td><code>vae_activation</code></td>
+<td><code>None</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>vae_input_transform</code></td>
+<td><code>"log1p"</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>vae_standardize</code></td>
+<td><code>False</code></td>
+<td><code>bool</code></td>
+</tr>
+<tr>
+<td><code>vae_decoder_transforms</code></td>
+<td><code>None</code></td>
+<td><code>dict</code></td>
+</tr>
+<tr>
+<td><code>vae_flow_type</code></td>
+<td><code>"none"</code></td>
+<td><code>str</code></td>
+</tr>
+<tr>
+<td><code>vae_flow_num_layers</code></td>
+<td><code>4</code></td>
+<td><code>int</code></td>
+</tr>
+<tr>
+<td><code>vae_flow_hidden_dims</code></td>
+<td><code>None</code></td>
+<td><code>list[int]</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Power-user overrides</strong></p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>model_config</code></td>
+<td><code>None</code></td>
+<td><code>ModelConfig</code></td>
+</tr>
+<tr>
+<td><code>inference_config</code></td>
+<td><code>None</code></td>
+<td><code>InferenceConfig</code></td>
+</tr>
+</tbody>
+</table>
+</details>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.indexes", "navigation.top", "content.code.copy", "content.code.annotate", "search.highlight", "search.suggest", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>

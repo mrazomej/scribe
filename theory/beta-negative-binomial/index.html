@@ -1,0 +1,2863 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Single-Cell RNA-Seq Inference using Bayesian Estimation — a Python package for analyzing scRNA-seq data with variational inference powered by NumPyro and JAX.">
+      
+      
+      
+      
+        <link rel="prev" href="../anchoring-priors/">
+      
+      
+        <link rel="next" href="../hierarchical-priors/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Beta Negative Binomial - SCRIBE</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#beta-negative-binomial" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="SCRIBE" class="md-header__button md-logo" aria-label="SCRIBE" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            SCRIBE
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Beta Negative Binomial
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/mrazomej/scribe" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mrazomej/scribe
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../getting-started/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Getting Started
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="../" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Theory
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../guide/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  User Guide
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/scribe/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../contributing/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Contributing
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="SCRIBE" class="md-nav__button md-logo" aria-label="SCRIBE" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    SCRIBE
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mrazomej/scribe" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mrazomej/scribe
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../getting-started/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quick-overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Theory
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Theory
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dirichlet-multinomial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dirichlet-Multinomial Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hierarchical-p/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hierarchical Gene-Specific p
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../anchoring-priors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Anchoring Priors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Beta Negative Binomial
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Beta Negative Binomial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-bnb-as-an-nb-beta-compound" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The BNB as an NB-Beta compound
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The BNB as an NB-Beta compound">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#definition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Definition
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#moments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Moments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tail-behaviour" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tail behaviour
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reduction-to-the-nb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reduction to the NB
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mean-preserving-parameterization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mean-preserving parameterization
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Mean-preserving parameterization">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-it-matters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why it matters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-mean-matching-condition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The mean-matching condition
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#variance-inflation-factor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Variance inflation factor
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#biophysical-interpretation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Biophysical interpretation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Biophysical interpretation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#two-routes-to-the-nb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two routes to the NB
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#from-variable-burst-size-to-the-bnb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        From variable burst size to the BNB
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-this-is-biological-not-technical" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why this is biological, not technical
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hierarchical-prior-on-kappa_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hierarchical prior on kappa_g
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Hierarchical prior on kappa_g">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#design-principle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design principle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reparameterization-via-excess-dispersion-fraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reparameterization via excess dispersion fraction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#horseshoe-and-neg-priors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Horseshoe and NEG priors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nb-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NB recovery
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#interactions-with-other-model-components" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Interactions with other model components
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Interactions with other model components">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#zero-inflation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Zero inflation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#variable-capture-probability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Variable capture probability
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#composition-sampling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Composition sampling
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#parameterization-recommendation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameterization recommendation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Parameterization recommendation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#canonical-parameterization-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Canonical parameterization (recommended)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-mean-odds-can-be-limiting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why mean-odds can be limiting
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bnb-denoising" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BNB denoising
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="BNB denoising">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#key-insight-conditional-nb-denoising" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key insight: conditional NB denoising
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#marginal-posterior-mean" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Marginal posterior mean
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sampling-from-the-denoising-posterior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sampling from the denoising posterior
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nb-recovery_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NB recovery
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-the-bnb-in-scribe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using the BNB in SCRIBE
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Using the BNB in SCRIBE">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#single-dataset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Single dataset
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-dataset-with-hierarchical-prior-on-kappa_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-dataset with hierarchical prior on kappa_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parameter-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameter reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hierarchical-priors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hierarchical Priors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../denoising/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bayesian Denoising
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../differential-expression/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differential Expression
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../goodness-of-fit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goodness-of-Fit Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../guide/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/fit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The scribe.fit() Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/cli_infer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    scribe-infer CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/cli_visualize/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    scribe-visualize CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/model-selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/guide-families/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Variational Guide Families
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/inference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Inference Methods
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results Class
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/differential-expression/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differential Expression
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/model-comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/scribe/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-bnb-as-an-nb-beta-compound" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The BNB as an NB-Beta compound
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The BNB as an NB-Beta compound">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#definition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Definition
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#moments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Moments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tail-behaviour" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tail behaviour
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reduction-to-the-nb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reduction to the NB
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mean-preserving-parameterization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mean-preserving parameterization
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Mean-preserving parameterization">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-it-matters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why it matters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-mean-matching-condition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The mean-matching condition
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#variance-inflation-factor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Variance inflation factor
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#biophysical-interpretation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Biophysical interpretation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Biophysical interpretation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#two-routes-to-the-nb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two routes to the NB
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#from-variable-burst-size-to-the-bnb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        From variable burst size to the BNB
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-this-is-biological-not-technical" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why this is biological, not technical
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hierarchical-prior-on-kappa_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hierarchical prior on kappa_g
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Hierarchical prior on kappa_g">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#design-principle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design principle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reparameterization-via-excess-dispersion-fraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reparameterization via excess dispersion fraction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#horseshoe-and-neg-priors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Horseshoe and NEG priors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nb-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NB recovery
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#interactions-with-other-model-components" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Interactions with other model components
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Interactions with other model components">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#zero-inflation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Zero inflation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#variable-capture-probability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Variable capture probability
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#composition-sampling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Composition sampling
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#parameterization-recommendation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameterization recommendation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Parameterization recommendation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#canonical-parameterization-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Canonical parameterization (recommended)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-mean-odds-can-be-limiting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why mean-odds can be limiting
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bnb-denoising" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BNB denoising
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="BNB denoising">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#key-insight-conditional-nb-denoising" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key insight: conditional NB denoising
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#marginal-posterior-mean" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Marginal posterior mean
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sampling-from-the-denoising-posterior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sampling from the denoising posterior
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nb-recovery_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NB recovery
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-the-bnb-in-scribe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using the BNB in SCRIBE
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Using the BNB in SCRIBE">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#single-dataset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Single dataset
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-dataset-with-hierarchical-prior-on-kappa_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-dataset with hierarchical prior on kappa_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parameter-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameter reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="beta-negative-binomial">Beta Negative Binomial<a class="headerlink" href="#beta-negative-binomial" title="Permanent link">&para;</a></h1>
+<p>Despite the flexibility afforded by gene-specific parameters <span class="arithmatex">\(r_g\)</span> and
+<span class="arithmatex">\(p_g\)</span>, the negative binomial (NB) constrains every gene to the same
+parametric <em>shape</em>. For many datasets this is adequate, but posterior
+predictive checks (PPCs) can reveal systematic misfit: excess probability
+mass at zero or heavy right tails that no NB---regardless of
+parameterization---can accommodate.</p>
+<p>The <strong>Beta Negative Binomial (BNB)</strong> distribution extends the NB by
+allowing per-gene heavier tails while preserving the mean structure that
+the entire normalization and compositional pipeline depends on. The BNB
+is a strict generalization: it recovers the NB when the concentration
+parameter <span class="arithmatex">\(\kappa_g \to \infty\)</span>, so enabling it never removes
+modelling capacity.</p>
+<hr />
+<h2 id="the-bnb-as-an-nb-beta-compound">The BNB as an NB-Beta compound<a class="headerlink" href="#the-bnb-as-an-nb-beta-compound" title="Permanent link">&para;</a></h2>
+<h3 id="definition">Definition<a class="headerlink" href="#definition" title="Permanent link">&para;</a></h3>
+<p>The BNB arises by placing a Beta prior on the success probability of a
+negative binomial. Let</p>
+<div class="arithmatex">\[
+X \mid p \;\sim\; \text{NB}(r, p), \qquad
+p \;\sim\; \text{Beta}(\alpha, \kappa).
+\]</div>
+<p>Marginalizing over <span class="arithmatex">\(p\)</span> yields the BNB distribution
+<span class="arithmatex">\(X \;\sim\; \text{BNB}(r, \alpha, \kappa)\)</span> with probability mass
+function</p>
+<div class="arithmatex">\[
+\pi(k \mid r, \alpha, \kappa) =
+\frac{\Gamma(r + k)}{k!\;\Gamma(r)}
+\frac{B(\alpha + k,\; \kappa + r)}{B(\alpha, \kappa)},
+\qquad k = 0, 1, 2, \ldots
+\]</div>
+<p>where <span class="arithmatex">\(B(\cdot, \cdot)\)</span> is the Beta function.</p>
+<h3 id="moments">Moments<a class="headerlink" href="#moments" title="Permanent link">&para;</a></h3>
+<p>The BNB has the following moments (when they exist):</p>
+<div class="arithmatex">\[
+\langle X \rangle = \frac{r\,\alpha}{\kappa - 1},
+\qquad \kappa &gt; 1,
+\]</div>
+<div class="arithmatex">\[
+\text{Var}(X) =
+\frac{r\,\alpha\,(r + \kappa - 1)\,(\alpha + \kappa - 1)}
+{(\kappa - 1)^2\,(\kappa - 2)},
+\qquad \kappa &gt; 2.
+\]</div>
+<p>The mean requires <span class="arithmatex">\(\kappa &gt; 1\)</span> and the variance requires
+<span class="arithmatex">\(\kappa &gt; 2\)</span>---mild constraints enforced by the parameterization below.</p>
+<h3 id="tail-behaviour">Tail behaviour<a class="headerlink" href="#tail-behaviour" title="Permanent link">&para;</a></h3>
+<p>For large <span class="arithmatex">\(k\)</span>, the BNB PMF decays as a <strong>power law</strong>:</p>
+<div class="arithmatex">\[
+\pi(k \mid r, \alpha, \kappa)
+\;\propto\; k^{-(1 + \kappa)},
+\qquad k \to \infty.
+\]</div>
+<p>This is qualitatively different from the NB, whose PMF decays
+geometrically (exponentially). The power-law tail means the BNB can
+accommodate occasional very large counts that no NB can fit.</p>
+<h3 id="reduction-to-the-nb">Reduction to the NB<a class="headerlink" href="#reduction-to-the-nb" title="Permanent link">&para;</a></h3>
+<p>As the Beta prior concentrates around a point
+<span class="arithmatex">\(p_0\)</span>---parameterize <span class="arithmatex">\(\alpha = \kappa p_0\)</span> and take
+<span class="arithmatex">\(\kappa \to \infty\)</span>---the BNB converges to <span class="arithmatex">\(\text{NB}(r, p_0)\)</span>.
+Every NB distribution is a special case of the BNB.</p>
+<hr />
+<h2 id="mean-preserving-parameterization">Mean-preserving parameterization<a class="headerlink" href="#mean-preserving-parameterization" title="Permanent link">&para;</a></h2>
+<h3 id="why-it-matters">Why it matters<a class="headerlink" href="#why-it-matters" title="Permanent link">&para;</a></h3>
+<p>The normalization and compositional analysis framework relies on the mean
+of the count distribution factoring as (gene-specific) x (cell-specific):</p>
+<div class="arithmatex">\[
+\langle u_{gc} \rangle =
+\underbrace{\frac{r_g(1 - p_g)}{p_g}}_{\text{gene-specific}}
+\;\times\;
+\underbrace{\nu_c}_{\text{cell-specific}}.
+\]</div>
+<p>To preserve this structure, the BNB's mean must match the NB's mean
+exactly.</p>
+<h3 id="the-mean-matching-condition">The mean-matching condition<a class="headerlink" href="#the-mean-matching-condition" title="Permanent link">&para;</a></h3>
+<p>Setting the BNB mean equal to the NB mean and solving for the first Beta
+parameter:</p>
+<div class="arithmatex">\[
+\boxed{
+\alpha_{gc} =
+\frac{(1 - \hat{p}_{gc})\,(\kappa_g - 1)}{\hat{p}_{gc}},
+}
+\]</div>
+<p>where <span class="arithmatex">\(\hat{p}_{gc}\)</span> is the effective success probability incorporating
+capture (from the
+<a href="../dirichlet-multinomial/">Dirichlet-Multinomial</a> derivation). The only
+new per-gene parameter is <span class="arithmatex">\(\kappa_g &gt; 2\)</span>.</p>
+<h3 id="verification">Verification<a class="headerlink" href="#verification" title="Permanent link">&para;</a></h3>
+<p>Substituting back:</p>
+<div class="arithmatex">\[
+\langle u_{gc} \rangle_{\text{BNB}}
+= \frac{r_g\,\alpha_{gc}}{\kappa_g - 1}
+= \frac{r_g(1 - p_g)}{p_g} \cdot \nu_c
+= \langle u_{gc} \rangle_{\text{NB}}.
+\]</div>
+<p>The gene x cell mean factorization is intact. <strong>All compositional
+quantities---the Gamma-based composition sampling, CLR coordinates,
+and differential expression---carry through unchanged.</strong></p>
+<h3 id="variance-inflation-factor">Variance inflation factor<a class="headerlink" href="#variance-inflation-factor" title="Permanent link">&para;</a></h3>
+<p>Under this parameterization, the BNB variance becomes</p>
+<div class="arithmatex">\[
+\text{Var}(u_{gc})_{\text{BNB}} =
+\underbrace{
+\frac{r_g(1 - \hat{p}_{gc})}{\hat{p}_{gc}^2}
+}_{\text{NB variance}}
+\;\times\;
+\underbrace{
+\frac{r_g + \kappa_g - 1}{\kappa_g - 2}
+}_{\text{inflation factor}}.
+\]</div>
+<p>The inflation factor satisfies:</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;"><span class="arithmatex">\(\kappa_g\)</span></th>
+<th style="text-align: center;">Inflation factor (<span class="arithmatex">\(r_g = 5\)</span>)</th>
+<th style="text-align: left;">Regime</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;"><span class="arithmatex">\(\infty\)</span></td>
+<td style="text-align: center;">1</td>
+<td style="text-align: left;">Pure NB</td>
+</tr>
+<tr>
+<td style="text-align: center;">100</td>
+<td style="text-align: center;">1.06</td>
+<td style="text-align: left;">Nearly NB</td>
+</tr>
+<tr>
+<td style="text-align: center;">10</td>
+<td style="text-align: center;">1.75</td>
+<td style="text-align: left;">Moderate extra dispersion</td>
+</tr>
+<tr>
+<td style="text-align: center;">5</td>
+<td style="text-align: center;">3.0</td>
+<td style="text-align: left;">Heavy extra dispersion</td>
+</tr>
+<tr>
+<td style="text-align: center;">3</td>
+<td style="text-align: center;">7.0</td>
+<td style="text-align: left;">Very heavy</td>
+</tr>
+</tbody>
+</table>
+<p>As <span class="arithmatex">\(\kappa_g \to \infty\)</span> the factor converges to 1 (NB variance);
+as <span class="arithmatex">\(\kappa_g \to 2^+\)</span> it diverges (arbitrarily large overdispersion).</p>
+<hr />
+<h2 id="biophysical-interpretation">Biophysical interpretation<a class="headerlink" href="#biophysical-interpretation" title="Permanent link">&para;</a></h2>
+<h3 id="two-routes-to-the-nb">Two routes to the NB<a class="headerlink" href="#two-routes-to-the-nb" title="Permanent link">&para;</a></h3>
+<p>Two distinct biophysical models lead to the NB as a steady-state mRNA
+distribution:</p>
+<p><strong>Route A -- one-state bursty promoter (exact).</strong> A constitutive
+promoter initiates transcription bursts at rate <span class="arithmatex">\(k_i\)</span>, each producing
+a geometrically distributed number of mRNAs with mean burst size <span class="arithmatex">\(b\)</span>.
+The chemical master equation yields the NB <strong>exactly</strong>:</p>
+<div class="arithmatex">\[
+r_g = \frac{k_i}{\gamma}, \qquad
+p_g = \frac{1}{1 + b},
+\]</div>
+<p>where <span class="arithmatex">\(\gamma\)</span> is the mRNA degradation rate.</p>
+<p><strong>Route B -- two-state promoter (bursty limit).</strong> A two-state promoter
+switches between OFF and ON states. In the bursty limit
+(<span class="arithmatex">\(k^- \gg \gamma\)</span>), the distribution reduces to the NB with
+<span class="arithmatex">\(r_g = k^+/\gamma\)</span> and <span class="arithmatex">\(b = r_m/k^-\)</span>.</p>
+<p>Both routes produce the same NB, which encodes the <strong>intrinsic noise</strong> of
+gene expression: the irreducible stochastic fluctuations when all kinetic
+rates are fixed across cells.</p>
+<h3 id="from-variable-burst-size-to-the-bnb">From variable burst size to the BNB<a class="headerlink" href="#from-variable-burst-size-to-the-bnb" title="Permanent link">&para;</a></h3>
+<p>In practice, kinetic rates vary from cell to cell (<strong>extrinsic noise</strong>):
+fluctuating transcription-factor concentrations, varying chromatin
+accessibility, cell-cycle effects. If the NB success probability <span class="arithmatex">\(p_g\)</span>
+varies across cells according to a Beta distribution centered on the
+population value, marginalizing out this cell-to-cell variation yields
+exactly the BNB.</p>
+<p>The concentration parameter <span class="arithmatex">\(\kappa_g\)</span> therefore measures the magnitude
+of <strong>extrinsic noise in burst size</strong> for gene <span class="arithmatex">\(g\)</span>:</p>
+<ul>
+<li><strong>Large <span class="arithmatex">\(\kappa_g\)</span></strong> (tight Beta): burst size is nearly constant
+  across cells; the gene behaves as a standard NB.</li>
+<li><strong>Small <span class="arithmatex">\(\kappa_g\)</span></strong> (diffuse Beta): substantial cell-to-cell
+  heterogeneity in burst kinetics; heavier tails than any NB can
+  accommodate.</li>
+</ul>
+<h3 id="why-this-is-biological-not-technical">Why this is biological, not technical<a class="headerlink" href="#why-this-is-biological-not-technical" title="Permanent link">&para;</a></h3>
+<p>Three considerations argue that <span class="arithmatex">\(\kappa_g\)</span> reflects genuine biology
+rather than technical artifacts:</p>
+<ol>
+<li><strong>UMIs remove technical heavy tails.</strong> PCR amplification bias---the
+   most common source of technical overdispersion---is collapsed by UMI
+   deduplication.</li>
+<li><strong>Variable capture already handles technical scaling.</strong> The
+   cell-specific <span class="arithmatex">\(\nu_c\)</span> absorbs variations in sequencing depth and
+   droplet capture efficiency.</li>
+<li><strong>Gene-specific hyper-variability is a biological signature.</strong> Genes
+   requiring finite <span class="arithmatex">\(\kappa_g\)</span> are typically those with complex
+   regulation: stress-response genes, cell-cycle-dependent genes, or
+   genes sensitive to fluctuating transcription-factor gradients.</li>
+</ol>
+<hr />
+<h2 id="hierarchical-prior-on-kappa_g">Hierarchical prior on kappa_g<a class="headerlink" href="#hierarchical-prior-on-kappa_g" title="Permanent link">&para;</a></h2>
+<h3 id="design-principle">Design principle<a class="headerlink" href="#design-principle" title="Permanent link">&para;</a></h3>
+<p>The BNB introduces one new parameter per gene. Since most genes are
+adequately described by the NB, the prior must:</p>
+<ol>
+<li><strong>Default to NB</strong>: concentrate mass at <span class="arithmatex">\(\kappa_g = \infty\)</span>
+   (equivalently <span class="arithmatex">\(\omega_g = 0\)</span>).</li>
+<li><strong>Allow escape</strong>: genes with strong evidence for extra overdispersion
+   can have finite <span class="arithmatex">\(\kappa_g\)</span>.</li>
+<li><strong>Be sparse</strong>: only a data-driven subset of genes should deviate.</li>
+</ol>
+<p>This is the same design principle used for the
+<a href="../hierarchical-priors/#hierarchical-zero-inflation-gate">hierarchical gate</a>
+and <a href="../hierarchical-p/">gene-specific p</a>.</p>
+<h3 id="reparameterization-via-excess-dispersion-fraction">Reparameterization via excess dispersion fraction<a class="headerlink" href="#reparameterization-via-excess-dispersion-fraction" title="Permanent link">&para;</a></h3>
+<p>To apply sparsity-inducing priors, the concentration is
+reparameterized as the <strong>excess dispersion fraction</strong>:</p>
+<div class="arithmatex">\[
+\omega_g = \frac{r_g + 1}{\kappa_g - 2},
+\qquad \kappa_g &gt; 2.
+\]</div>
+<p>Key properties:</p>
+<ul>
+<li><span class="arithmatex">\(\omega_g = 0 \Leftrightarrow \kappa_g = \infty\)</span>: no
+  overdispersion (NB limit).</li>
+<li><span class="arithmatex">\(\omega_g &gt; 0\)</span>: positive overdispersion; the variance inflation
+  factor is <span class="arithmatex">\(1 + \omega_g\)</span>.</li>
+<li><span class="arithmatex">\(\omega_g \to \infty\)</span>: <span class="arithmatex">\(\kappa_g \to 2^+\)</span>, maximum
+  overdispersion.</li>
+</ul>
+<h3 id="horseshoe-and-neg-priors">Horseshoe and NEG priors<a class="headerlink" href="#horseshoe-and-neg-priors" title="Permanent link">&para;</a></h3>
+<p>Both the <strong>regularized horseshoe</strong> and the <strong>NEG</strong> prior (see
+<a href="../hierarchical-priors/">Hierarchical Priors</a> for the general theory)
+can be applied to <span class="arithmatex">\(\omega_g\)</span>. In either case, the NCP form is:</p>
+<div class="arithmatex">\[
+z_g \;\sim\; \mathcal{N}(0, 1), \qquad
+\omega_g = \text{softplus}(\mu_\omega + \sigma_g \cdot z_g),
+\]</div>
+<p>where <span class="arithmatex">\(\sigma_g\)</span> is the family-specific per-gene scale
+(<span class="arithmatex">\(\tau \tilde{\lambda}_g\)</span> for horseshoe, <span class="arithmatex">\(\sqrt{\psi_g}\)</span> for NEG)
+and <span class="arithmatex">\(\mu_\omega\)</span> defaults to a large negative value pushing
+<span class="arithmatex">\(\omega_g \approx 0\)</span>.</p>
+<p>The posterior of <span class="arithmatex">\(\omega_g\)</span> serves as a <strong>per-gene diagnostic</strong> for
+the presence of extra overdispersion beyond what the NB can accommodate.</p>
+<h3 id="nb-recovery">NB recovery<a class="headerlink" href="#nb-recovery" title="Permanent link">&para;</a></h3>
+<p>When the prior shrinks <span class="arithmatex">\(\omega_g \to 0\)</span> for all genes:</p>
+<div class="arithmatex">\[
+\kappa_g \to \infty, \qquad
+\text{BNB}(r_g, \alpha_{gc}, \kappa_g) \to \text{NB}(r_g, \hat{p}_{gc}),
+\]</div>
+<p>recovering the standard NB model.</p>
+<hr />
+<h2 id="interactions-with-other-model-components">Interactions with other model components<a class="headerlink" href="#interactions-with-other-model-components" title="Permanent link">&para;</a></h2>
+<h3 id="zero-inflation">Zero inflation<a class="headerlink" href="#zero-inflation" title="Permanent link">&para;</a></h3>
+<p>The BNB composes with the zero-inflation gate in the same way as the NB:</p>
+<div class="arithmatex">\[
+u_{gc} \;\sim\;
+\begin{cases}
+0 &amp; \text{with probability } \pi_g, \\
+\text{BNB}(r_g, \alpha_{gc}, \kappa_g) &amp; \text{with probability }
+1 - \pi_g.
+\end{cases}
+\]</div>
+<p>The <a href="../hierarchical-priors/#hierarchical-zero-inflation-gate">hierarchical gate</a>
+applies unchanged. The BNB's heavier tails may reduce the need for zero
+inflation by better fitting the body and tail, potentially leading to
+smaller inferred <span class="arithmatex">\(\pi_g\)</span> values. If adding the BNB shifts probability
+mass from <span class="arithmatex">\(\pi_g\)</span> to the count distribution, the BNB is capturing
+real signal that was previously mis-attributed to zero inflation.</p>
+<h3 id="variable-capture-probability">Variable capture probability<a class="headerlink" href="#variable-capture-probability" title="Permanent link">&para;</a></h3>
+<p>The VCP enters through <span class="arithmatex">\(\hat{p}_{gc}\)</span>, which is a function of the
+gene-level <span class="arithmatex">\(p_g\)</span> and the cell-level <span class="arithmatex">\(\nu_c\)</span>. Since <span class="arithmatex">\(\alpha_{gc}\)</span>
+is determined by <span class="arithmatex">\(\hat{p}_{gc}\)</span> via the mean-matching condition, the
+VCP framework integrates seamlessly.</p>
+<h3 id="composition-sampling">Composition sampling<a class="headerlink" href="#composition-sampling" title="Permanent link">&para;</a></h3>
+<p>The Gamma-based composition sampling relies on the mean of the count
+distribution. Since the BNB mean is identical to the NB mean,
+composition sampling is unchanged:</p>
+<div class="arithmatex">\[
+\rho_g =
+\frac{\gamma_g \cdot (1 - p_g) / p_g}
+{\sum_{j=1}^G \gamma_j \cdot (1 - p_j) / p_j},
+\qquad
+\gamma_g \;\sim\; \text{Gamma}(r_g, 1).
+\]</div>
+<p>This is independent of <span class="arithmatex">\(\kappa_g\)</span>. The BNB does not alter the
+compositional analysis or differential expression pipeline.</p>
+<hr />
+<h2 id="parameterization-recommendation">Parameterization recommendation<a class="headerlink" href="#parameterization-recommendation" title="Permanent link">&para;</a></h2>
+<p>The BNB can only add variance on top of an already correct mean
+structure---the mean-matching condition is a <strong>hard constraint</strong>, not a
+soft penalty. This means the BNB's effectiveness critically depends on
+the underlying NB's ability to calibrate gene-level means.</p>
+<h3 id="canonical-parameterization-recommended">Canonical parameterization (recommended)<a class="headerlink" href="#canonical-parameterization-recommended" title="Permanent link">&para;</a></h3>
+<p>In the <strong>canonical</strong> parameterization, <span class="arithmatex">\(r_g\)</span> and <span class="arithmatex">\(p_g\)</span> are
+independent, each with its own prior:</p>
+<div class="arithmatex">\[
+\log r_g \;\sim\; \mathcal{N}(r_0, \sigma_r^2), \qquad
+\text{logit}(p_g) \;\sim\; \mathcal{N}(p_0, \sigma_p^2).
+\]</div>
+<p>There is no coupling between the two. The logit space easily
+accommodates the full dynamic range of single-cell expression
+(from <span class="arithmatex">\(p_g \approx 0.005\)</span> to <span class="arithmatex">\(p_g \approx 0.9998\)</span>), allowing the
+NB to correctly capture each gene's mean. The BNB then adds value in its
+intended role: modelling genuine excess variance from extrinsic noise.</p>
+<h3 id="why-mean-odds-can-be-limiting">Why mean-odds can be limiting<a class="headerlink" href="#why-mean-odds-can-be-limiting" title="Permanent link">&para;</a></h3>
+<p>In the <strong>mean-odds</strong> parameterization, <span class="arithmatex">\(r_g = \mu_g \cdot \phi_g\)</span> and
+<span class="arithmatex">\(p_g = 1/(1 + \phi_g)\)</span>. The hierarchical prior on <span class="arithmatex">\(\log \phi_g\)</span>
+would need to span roughly 13 orders of magnitude in <span class="arithmatex">\(\phi_g\)</span> to
+cover the full expression range, providing negligible shrinkage. In
+practice, the prior settles on a moderate width that prevents <span class="arithmatex">\(p_g\)</span>
+from reaching extreme values, producing systematic mean miscalibration
+for high-expression genes. Because the mean-matching constraint is hard,
+<span class="arithmatex">\(\kappa_g\)</span> cannot shift the distribution's center---only its spread.</p>
+<div class="admonition warning">
+<p class="admonition-title">Parameterization matters</p>
+<p>When using the BNB, the <strong>canonical parameterization</strong> is recommended.
+Mean-coupled parameterizations (mean-odds, mean-probability) can
+restrict the NB's dynamic range and produce mean miscalibration that
+<span class="arithmatex">\(\kappa_g\)</span> cannot remedy.</p>
+</div>
+<hr />
+<h2 id="bnb-denoising">BNB denoising<a class="headerlink" href="#bnb-denoising" title="Permanent link">&para;</a></h2>
+<p>The <a href="../denoising/">Bayesian denoising</a> framework extends to the BNB,
+though the clean closed-form NB result is replaced by a tractable
+one-dimensional integral.</p>
+<h3 id="key-insight-conditional-nb-denoising">Key insight: conditional NB denoising<a class="headerlink" href="#key-insight-conditional-nb-denoising" title="Permanent link">&para;</a></h3>
+<p>Conditional on the latent Beta mixing variable <span class="arithmatex">\(p_g\)</span>, the BNB reduces
+to an NB. All NB denoising machinery therefore applies exactly:</p>
+<div class="arithmatex">\[
+d_g \mid u_g, p_g \;\sim\;
+\text{NB}(r_g + u_g, \;\; \nu_c + p_g(1 - \nu_c)).
+\]</div>
+<h3 id="marginal-posterior-mean">Marginal posterior mean<a class="headerlink" href="#marginal-posterior-mean" title="Permanent link">&para;</a></h3>
+<p>The marginal posterior mean of the denoised count is obtained by
+averaging the conditional NB result over the posterior of <span class="arithmatex">\(p_g\)</span>:</p>
+<div class="arithmatex">\[
+\langle m_g \mid u_g \rangle
+= u_g + (r_g + u_g) \cdot
+\frac{\displaystyle\int_0^1 f(p)\;\tilde{\pi}(p \mid u_g)\,dp}
+{\displaystyle\int_0^1 \tilde{\pi}(p \mid u_g)\,dp},
+\]</div>
+<p>where <span class="arithmatex">\(f(p) = (1 - \nu_c)(1 - p) / [\nu_c + p(1 - \nu_c)]\)</span> and</p>
+<div class="arithmatex">\[
+\tilde{\pi}(p \mid u_g) \propto
+\frac{p^{r_g + \alpha_g - 1}\;(1 - p)^{u_g + \kappa_g - 1}}
+{[\nu_c + p(1 - \nu_c)]^{r_g + u_g}}
+\]</div>
+<p>is the unnormalized posterior of the latent mixing variable. Both
+integrals are one-dimensional and smooth on <span class="arithmatex">\([0, 1]\)</span>, making them
+ideally suited to <strong>Gauss-Legendre quadrature</strong> with 32-64 nodes.</p>
+<h3 id="sampling-from-the-denoising-posterior">Sampling from the denoising posterior<a class="headerlink" href="#sampling-from-the-denoising-posterior" title="Permanent link">&para;</a></h3>
+<p>For fully Bayesian denoising (preserving cross-gene correlations):</p>
+<ol>
+<li><strong>Draw</strong> <span class="arithmatex">\(p_g^{(s)}\)</span> from <span class="arithmatex">\(\pi(p_g \mid u_g)\)</span> via grid-based
+   inverse CDF sampling on <span class="arithmatex">\([0, 1]\)</span>.</li>
+<li><strong>Sample</strong> <span class="arithmatex">\(d_g^{(s)}\)</span> from the conditional NB:
+   <span class="arithmatex">\(\text{NB}(r_g + u_g, \;\nu_c + p_g^{(s)}(1 - \nu_c))\)</span>.</li>
+<li><strong>Compute</strong> <span class="arithmatex">\(m_g^{(s)} = u_g + d_g^{(s)}\)</span>.</li>
+</ol>
+<h3 id="nb-recovery_1">NB recovery<a class="headerlink" href="#nb-recovery_1" title="Permanent link">&para;</a></h3>
+<p>When <span class="arithmatex">\(\kappa_g \to \infty\)</span>, the Beta posterior collapses to a point
+mass, the integral reduces to the integrand evaluated at a single point,
+and the closed-form NB denoising formula is recovered exactly.</p>
+<hr />
+<h2 id="using-the-bnb-in-scribe">Using the BNB in SCRIBE<a class="headerlink" href="#using-the-bnb-in-scribe" title="Permanent link">&para;</a></h2>
+<h3 id="single-dataset">Single dataset<a class="headerlink" href="#single-dataset" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">scribe</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="c1"># Enable BNB overdispersion with horseshoe prior</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">parameterization</span><span class="o">=</span><span class="s2">&quot;canonical&quot;</span><span class="p">,</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">overdispersion</span><span class="o">=</span><span class="s2">&quot;bnb&quot;</span><span class="p">,</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">overdispersion_prior</span><span class="o">=</span><span class="s2">&quot;horseshoe&quot;</span><span class="p">,</span>   <span class="c1"># or &quot;neg&quot;</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="multi-dataset-with-hierarchical-prior-on-kappa_g">Multi-dataset with hierarchical prior on kappa_g<a class="headerlink" href="#multi-dataset-with-hierarchical-prior-on-kappa_g" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># BNB with dataset-level hierarchical prior</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">adata</span><span class="p">,</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">parameterization</span><span class="o">=</span><span class="s2">&quot;canonical&quot;</span><span class="p">,</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">dataset_key</span><span class="o">=</span><span class="s2">&quot;batch&quot;</span><span class="p">,</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="n">overdispersion</span><span class="o">=</span><span class="s2">&quot;bnb&quot;</span><span class="p">,</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="n">overdispersion_prior</span><span class="o">=</span><span class="s2">&quot;horseshoe&quot;</span><span class="p">,</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    <span class="n">overdispersion_dataset_prior</span><span class="o">=</span><span class="s2">&quot;neg&quot;</span><span class="p">,</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>    <span class="n">priors</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;organism&quot;</span><span class="p">:</span> <span class="s2">&quot;human&quot;</span><span class="p">},</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="parameter-reference">Parameter reference<a class="headerlink" href="#parameter-reference" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>overdispersion</code></td>
+<td><code>"none"</code></td>
+<td>Set to <code>"bnb"</code> to enable the BNB extension</td>
+</tr>
+<tr>
+<td><code>overdispersion_prior</code></td>
+<td><code>"horseshoe"</code></td>
+<td>Gene-level prior on <span class="arithmatex">\(\kappa_g\)</span>: <code>"horseshoe"</code> or <code>"neg"</code></td>
+</tr>
+<tr>
+<td><code>overdispersion_dataset_prior</code></td>
+<td><code>"none"</code></td>
+<td>Dataset-level: <code>"gaussian"</code>, <code>"horseshoe"</code>, <code>"neg"</code> (requires <code>dataset_key</code>)</td>
+</tr>
+<tr>
+<td><code>parameterization</code></td>
+<td><code>"canonical"</code></td>
+<td><code>"canonical"</code> recommended with BNB</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition tip">
+<p class="admonition-title">When to use the BNB</p>
+<p>Enable the BNB when PPCs reveal systematic right-tail misfit or
+excess zeros for a subset of genes. The hierarchical prior ensures
+that most genes default to NB behaviour, so enabling the BNB is
+low-risk: genes that do not need it are automatically shrunk back
+to the standard NB.</p>
+</div>
+<p>For the full API details, see the <a href="../reference/scribe/api/">API Reference</a>.</p>
+<hr />
+<div class="admonition tip">
+<p class="admonition-title">Next steps</p>
+<ul>
+<li>See <a href="../hierarchical-priors/">Hierarchical Priors</a> for the full theory of
+  the Horseshoe and NEG prior families applied to the BNB concentration
+  parameter <span class="arithmatex">\(\kappa_g\)</span>.</li>
+<li>See <a href="../anchoring-priors/">Anchoring Priors</a> for why the NB mean must be
+  correctly anchored before the BNB extension is effective — the
+  mean-matching constraint is a hard dependency.</li>
+<li>See <a href="../denoising/">Bayesian Denoising</a> for the NB denoising result on
+  which BNB denoising (conditional NB plus Beta integral) is built.</li>
+<li>See the <a href="../../guide/model-selection/#bnb-overdispersion">Model Selection</a>
+  guide for practical usage of the <code>overdispersion</code> parameter.</li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.indexes", "navigation.top", "content.code.copy", "content.code.annotate", "search.highlight", "search.suggest", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>
