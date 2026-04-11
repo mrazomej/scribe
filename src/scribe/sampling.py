@@ -119,30 +119,32 @@ def generate_predictive_samples(
     posterior_samples: Dict,
     model_args: Dict,
     rng_key: random.PRNGKey,
-    batch_size: Optional[int] = None,
 ) -> jnp.ndarray:
-    """
-    Generate predictive samples using posterior parameter samples.
+    """Generate predictive samples using posterior parameter samples.
+
+    NumPyro's ``Predictive`` vectorises over the posterior-sample
+    dimension automatically (controlled by its ``parallel`` flag).
+    Cell-level batching is intentionally absent here: posterior samples
+    are drawn at full-cell resolution, and the predictive model must
+    replay with the same cell dimension.
 
     Parameters
     ----------
     model : Callable
-        Model function
+        Model function.
     posterior_samples : Dict
-        Dictionary containing samples from the variational posterior
+        Dictionary containing samples from the variational posterior.
     model_args : Dict
-        Dictionary containing model arguments. For standard models, this is
-        just the number of cells and genes. For mixture models, this is the
-        number of cells, genes, and components.
+        Dictionary containing model arguments (n_cells, n_genes,
+        model_config, etc.).  Passed as keyword arguments to the model
+        via ``Predictive``.
     rng_key : random.PRNGKey
-        JAX random number generator key
-    batch_size : int, optional
-        Batch size for generating samples. If None, uses full dataset.
+        JAX random number generator key.
 
     Returns
     -------
     jnp.ndarray
-        Array of predictive samples
+        Array of predictive count samples.
     """
     # Find the first array value to get num_samples
     # Skip nested dicts from flax_module parameters (e.g., "amortizer$params")
@@ -163,14 +165,14 @@ def generate_predictive_samples(
         model,
         posterior_samples,
         num_samples=num_samples,
-        # Include deterministic parameters in the predictive distribution
         exclude_deterministic=False,
     )
 
-    # Generate predictive samples
-    predictive_samples = predictive(
-        rng_key, **model_args, batch_size=batch_size
-    )
+    # NumPyro's Predictive.__call__ passes **kwargs directly to the
+    # model.  We must NOT add extra kwargs (like batch_size) here --
+    # they would leak into the model as cell-plate subsample_size and
+    # create a shape mismatch with the full-cell posterior samples.
+    predictive_samples = predictive(rng_key, **model_args)
 
     return predictive_samples["counts"]
 
@@ -185,41 +187,34 @@ def generate_ppc_samples(
     model_args: Dict,
     rng_key: random.PRNGKey,
     n_samples: int = 100,
-    batch_size: Optional[int] = None,
     counts: Optional[jnp.ndarray] = None,
 ) -> Dict:
-    """
-    Generate posterior predictive check samples.
+    """Generate posterior predictive check samples.
 
     Parameters
     ----------
     model : Callable
-        Model function
+        Model function.
     guide : Callable
-        Guide function
+        Guide function.
     params : Dict
-        Dictionary containing optimized variational parameters
+        Dictionary containing optimized variational parameters.
     model_args : Dict
-        Dictionary containing model arguments. For standard models, this is
-        just the number of cells and genes. For mixture models, this is the
-        number of cells, genes, and components.
+        Dictionary containing model arguments (n_cells, n_genes,
+        model_config, etc.).
     rng_key : random.PRNGKey
-        JAX random number generator key
+        JAX random number generator key.
     n_samples : int, optional
-        Number of posterior samples to generate (default: 100)
-    batch_size : int, optional
-        Batch size for generating samples. If None, uses full dataset.
+        Number of posterior samples to generate (default: 100).
     counts : Optional[jnp.ndarray], optional
-        Observed count matrix of shape (n_cells, n_genes). Required when using
-        amortized capture probability (e.g., with amortization.capture.enabled=true).
-        For non-amortized models, this can be None. Default: None.
+        Observed count matrix of shape (n_cells, n_genes).  Required
+        when using amortized capture probability.  Default: None.
 
     Returns
     -------
     Dict
-        Dictionary containing: - 'parameter_samples': Samples from the
-        variational posterior - 'predictive_samples': Samples from the
-        predictive distribution
+        Dictionary with keys ``parameter_samples`` and
+        ``predictive_samples``.
     """
     # Split RNG key for parameter sampling and predictive sampling
     key_params, key_pred = random.split(rng_key)
@@ -235,7 +230,6 @@ def generate_ppc_samples(
         posterior_param_samples,
         model_args,
         key_pred,
-        batch_size,
     )
 
     return {

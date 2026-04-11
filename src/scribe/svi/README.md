@@ -357,11 +357,8 @@ posterior_samples = results.get_posterior_samples(
     store_on_cpu=True,
 )
 
-# Generate predictive samples
-predictive_samples = results.get_predictive_samples(
-    n_samples=500,
-    seed=42
-)
+# Generate predictive samples (uses stored posterior samples)
+predictive_samples = results.get_predictive_samples()
 
 # Posterior predictive checks
 ppc_samples = results.get_ppc_samples(
