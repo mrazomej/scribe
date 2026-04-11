@@ -83,7 +83,6 @@ def _prepare_ppc_data(results, counts, viz_cfg, *, n_rows, n_cols, n_samples):
         rng_key=random.PRNGKey(42),
         n_samples=n_samples,
         counts=counts,
-        batch_size=None,
         store_samples=True,
     )
 
