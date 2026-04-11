@@ -73,7 +73,7 @@ def _get_inference_metadata_for_filenames(results, cfg):
 
 @dispatch(scribe.ScribeSVIResults)
 def _get_predictive_samples_for_plot(
-    results, *, rng_key, n_samples, counts, batch_size=None, store_samples=True
+    results, *, rng_key, n_samples, counts, store_samples=True
 ):
     """Get PPC samples for plotting from SVI results."""
     # Generate posterior draws explicitly for this plotting call so we can run
@@ -94,7 +94,6 @@ def _get_predictive_samples_for_plot(
         results.posterior_samples = posterior_samples
         predictive_samples = results.get_predictive_samples(
             rng_key=rng_key,
-            batch_size=batch_size,
             store_samples=False,
         )
     finally:
@@ -111,13 +110,12 @@ def _get_predictive_samples_for_plot(
 
 @dispatch(scribe.ScribeMCMCResults)
 def _get_predictive_samples_for_plot(
-    results, *, rng_key, n_samples, counts, batch_size=None, store_samples=True
+    results, *, rng_key, n_samples, counts, store_samples=True
 ):
     """Get PPC samples for plotting from MCMC results."""
     _ = counts
     predictive_samples = results.get_ppc_samples(
         rng_key=rng_key,
-        batch_size=batch_size,
         store_samples=store_samples,
     )
     predictive_np = np.array(predictive_samples)
@@ -166,7 +164,7 @@ def _get_map_like_predictive_samples_for_plot(
     *,
     rng_key,
     n_samples,
-    cell_batch_size,
+    cell_batch_size=None,
     use_mean=True,
     store_samples=False,
     verbose=True,
@@ -177,7 +175,6 @@ def _get_map_like_predictive_samples_for_plot(
         results.get_map_ppc_samples(
             rng_key=rng_key,
             n_samples=n_samples,
-            cell_batch_size=cell_batch_size,
             use_mean=use_mean,
             store_samples=store_samples,
             verbose=verbose,

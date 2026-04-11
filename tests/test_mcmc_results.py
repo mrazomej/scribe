@@ -382,10 +382,8 @@ class TestMapPPCSampling:
             n_genes,
             model_config,
             rng_key=None,
-            batch_size=None,
         ):
             captured["samples"] = samples
-            captured["batch_size"] = batch_size
             return jnp.zeros((3, n_cells, n_genes), dtype=jnp.int32)
 
         monkeypatch.setattr(
@@ -395,7 +393,6 @@ class TestMapPPCSampling:
 
         generated = standard_results.get_map_ppc_samples(
             n_samples=3,
-            cell_batch_size=4,
             store_samples=True,
             verbose=False,
         )
@@ -408,7 +405,6 @@ class TestMapPPCSampling:
         assert standard_results.predictive_samples.shape == generated.shape
         assert captured["samples"]["p"].shape[0] == 3
         assert captured["samples"]["r"].shape[0] == 3
-        assert captured["batch_size"] == 4
 
     def test_get_map_ppc_samples_validates_positive_sample_count(
         self, standard_results

@@ -320,8 +320,6 @@ def plot_umap(
         f"synthetic dataset...[/dim]"
     )
 
-    batch_size = umap_opts.get("batch_size", None)
-
     # Use the exact same feature space for synthetic PPC generation as for
     # UMAP fitting: detected genes followed by optional HVG selection.
     # This avoids sampling thousands of genes that are later discarded before
@@ -341,7 +339,6 @@ def plot_umap(
             results_sub,
             rng_key=random.PRNGKey(42 + i),
             n_samples=1,
-            batch_size=batch_size or 1000,
             store_samples=False,
             counts=counts,
         )

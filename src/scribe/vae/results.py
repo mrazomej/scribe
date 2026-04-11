@@ -945,7 +945,6 @@ class ScribeVAEResults(ScribeSVIResults):
     def get_predictive_samples(
         self,
         rng_key: Optional[random.PRNGKey] = None,
-        batch_size: Optional[int] = None,
         store_samples: bool = True,
     ) -> jnp.ndarray:
         """Generate predictive samples using posterior parameter samples."""
@@ -977,7 +976,6 @@ class ScribeVAEResults(ScribeSVIResults):
             self.posterior_samples,
             model_args,
             rng_key=rng_key,
-            batch_size=batch_size,
         )
 
         # Store samples if requested

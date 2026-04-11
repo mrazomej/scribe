@@ -412,7 +412,6 @@ class PosteriorPredictiveSamplingMixin:
     def get_predictive_samples(
         self,
         rng_key: Optional[random.PRNGKey] = None,
-        batch_size: Optional[int] = None,
         store_samples: bool = True,
     ) -> jnp.ndarray:
         """Generate predictive samples using posterior parameter samples."""
@@ -461,7 +460,6 @@ class PosteriorPredictiveSamplingMixin:
             self.posterior_samples,
             model_args,
             rng_key=rng_key,
-            batch_size=batch_size,
         )
 
         # Store samples if requested
@@ -543,7 +541,6 @@ class PosteriorPredictiveSamplingMixin:
 
         self.get_predictive_samples(
             rng_key=key_pred,
-            batch_size=batch_size,
             store_samples=store_samples,
         )
 
