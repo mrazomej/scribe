@@ -482,6 +482,26 @@ def test_plot_umap_subsets_ppc_to_hvg_genes(monkeypatch):
     plt.close(result.fig)
 
 
+def test_apply_scale_to_synth_scanpy_matches_manual():
+    """Synthetic rows should match Scanpy-style (x - mean) / std clipping."""
+    import scribe.viz.umap as umap_module
+
+    rng = np.random.default_rng(0)
+    synth_norm = rng.random(size=(4, 3))
+    mean = np.array([0.1, 0.2, 0.3])
+    std = np.array([0.5, 1.0, 2.0])
+    scale_meta = {
+        "kind": "scanpy",
+        "mean": mean,
+        "std": std,
+        "max_value": 10.0,
+    }
+    out = umap_module._apply_scale_to_synth(synth_norm, scale_meta)
+    expected = (synth_norm - mean) / std
+    expected = np.clip(expected, -10.0, 10.0)
+    np.testing.assert_allclose(out, expected)
+
+
 def test_plot_bio_ppc_aligns_counts_subset_with_results_order(
     monkeypatch, tmp_path
 ):

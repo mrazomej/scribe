@@ -102,7 +102,12 @@ result = scribe.viz.plot_ppc(results, counts, n_rows=3, n_cols=3, n_samples=256)
 
 # UMAP overlay uses the same detected+HVG feature space for both fitting and
 # synthetic PPC projection, so runtime scales with `hvg_n_top_genes` instead
-# of all detected genes.
+# of all detected genes. When Scanpy is installed, the experimental embedding
+# follows `pp.scale` (z-score per gene, default clip at 10), `pp.pca`,
+# `pp.neighbors`, and `tl.umap` on the neighborhood graph; synthetic cells are
+# scaled with the same gene-wise statistics and placed with `tl.ingest`. Without
+# Scanpy, scikit-learn scaling/PCA and `umap-learn` on PCs are used instead.
+# Tune `umap_opts` (e.g. `spread`, `use_scale`, `scale_max_value`) as needed.
 result = scribe.viz.plot_umap(results, counts)
 
 # All plot functions accept figsize=(width, height) to override the default
