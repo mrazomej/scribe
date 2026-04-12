@@ -1,952 +1,519 @@
 ---
 editor:
     render-on-save: true
+bibliography: references.bib
 csl: ieee.csl
-format:
-  html:
-    filters: [tikz.lua, strip-yaml-frontmatter.lua, maintext-filter.lua, sitext-filter.lua]
 ---
 
-## Empirical Bayes Shrinkage for Differential Expression {#sec-diffexp-eb}
+## Transforming Gaussian Parameters Between Coordinate Systems {#sec-diffexp-gaussian-transforms}
 
-The empirical differential expression framework developed in
-@sec-diffexp-nonparametric treats each gene as an isolated inference problem.
-For each gene $g$, we obtain a posterior mean effect $\hat{\Delta}_g$ and a
-posterior standard deviation $s_g$ from the $N$ Monte Carlo samples of the CLR
-difference. The local false sign rate is computed from gene $g$'s samples alone,
-without any reference to the behaviour of the remaining $D - 1$ genes.
+This section develops the mathematical machinery for the parametric differential
+expression path. When the Gaussianity diagnostics from the preceding section
+confirm that the posterior CLR marginals are well-approximated by Gaussians, the
+low-rank logistic-normal model fitted in @sec-normalization can be transformed
+analytically between coordinate systems. The formulas derived here---for mean
+vectors, covariance matrices, and their low-rank components---enable the
+closed-form gene-level and gene-set inference developed in the sections that
+follow.
 
-In this section, we develop an **empirical Bayes shrinkage** layer that uses the
-joint distribution of effects across all $D$ genes to improve per-gene
-inference. The key idea is simple: if we know (or can estimate) the
-*population-level* distribution of true effects---how many genes are null, how
-large the non-null effects tend to be---then we can feed this global information
-back into each gene's posterior, obtaining sharper and better-calibrated
-estimates.
-
-### Motivation: from per-gene to genome-wide inference {#sec-diffexp-eb-motivation}
-
-After running the empirical pipeline from @sec-diffexp-nonparametric, we have,
-for each gene $g = 1, 2, \ldots, D$:
-
-- A posterior mean CLR difference
-  $\hat{\Delta}_g = \frac{1}{N}\sum_{s=1}^{N} \Delta_g^{(s)}$.
-- A posterior standard deviation
-  $s_g = \sqrt{\frac{1}{N-1}\sum_{s=1}^{N}(\Delta_g^{(s)} - \hat{\Delta}_g)^2}$.
-
-These are the sufficient statistics for gene $g$'s effect. The empirical lfsr
-(@eq-diffexp-np-lfsr) is computed from the $N$ samples $\Delta_g^{(1)}, \ldots,
-\Delta_g^{(N)}$ by counting the fraction with the minority sign.
-
-Consider now the collection of all $D$ pairs
-$\{(\hat{\Delta}_1, s_1), (\hat{\Delta}_2, s_2), \ldots,
-(\hat{\Delta}_D, s_D)\}$. In a typical differential expression analysis, the
-vast majority of genes are not differentially expressed: their true CLR effects
-are zero or negligibly small. Only a small fraction exhibit genuine biological
-differences between conditions. This global structure is visible in the
-histogram of $\hat{\Delta}_g$ values, which typically shows a large central peak
-(the null genes) with sparse tails (the truly DE genes).
-
-The per-gene empirical lfsr does not exploit this structure. A gene with
-$\hat{\Delta}_g = 0.15$ and $s_g = 0.10$ (a z-score of 1.5) receives the same
-lfsr regardless of whether 2% or 50% of all genes are DE. Yet the two scenarios
-carry very different implications for how sceptical we should be about a modest
-effect: in a mostly-null genome, the prior odds heavily favour the null
-hypothesis.
-
-The empirical Bayes approach developed below remedies this by learning the
-population-level effect-size distribution $\pi(\beta)$ from all $D$ genes
-simultaneously, and then updating each gene's posterior in light of this learned
-distribution. The result is **shrinkage**: noisy effect estimates are pulled
-toward zero, with the degree of shrinkage determined by the data themselves.
-
-### The two-level observation model {#sec-diffexp-eb-model}
-
-We formalize the above intuition with a two-level hierarchical model.
-
-**Level 1: the observation model.** For each gene $g$, the posterior mean CLR
-difference $\hat{\Delta}_g$ is treated as a noisy observation of the true
-(unknown) effect $\beta_g$:
+In @sec-normalization, we showed that the posterior predictive distribution of
+normalized gene expression can be approximated by a low-rank Gaussian
+distribution in ALR space:
 
 $$
-\hat{\Delta}_g \mid \beta_g \sim \mathcal{N}(\beta_g, s_g^2),
-\quad g = 1, 2, \ldots, D.
-$${#eq-diffexp-eb-observation}
+\underline{z}_{\text{ALR}} \sim \mathcal{N}(\underline{\mu}_{\text{ALR}}, 
+\underline{\underline{\Sigma}}_{\text{ALR}}),
+$${#eq-diffexp-alr-gaussian}
 
-Here $\beta_g$ is the true CLR log-fold-change for gene $g$---the quantity we
-ultimately wish to estimate---and $s_g$ is the known posterior standard
-deviation from the upstream empirical pipeline. The Gaussian observation model
-is justified by the approximate Gaussianity of the upstream posterior: for
-each gene $g$, the posterior distribution of the CLR difference is
-well-approximated by $\mathcal{N}(\hat{\Delta}_g, s_g^2)$, either by
-Bernstein--von Mises arguments or simply because the Dirichlet-Multinomial
-posterior concentrates in the large-count regime. Given this approximate
-Gaussian posterior, the pair $(\hat{\Delta}_g, s_g^2)$ serves as a sufficient
-statistic, and we can equivalently encode it as a Gaussian pseudo-likelihood
-$\hat{\Delta}_g \mid \beta_g \sim \mathcal{N}(\beta_g, s_g^2)$ with a flat
-prior on $\beta_g$. The empirical Bayes layer then replaces this flat prior
-with the learned mixture prior $\pi(\beta \mid \underline{w})$.
-
-**Level 2: the prior on true effects.** Rather than treating each $\beta_g$ as
-a completely free parameter, we assume that all $D$ true effects are drawn
-independently from a common *population-level* distribution:
+where
 
 $$
-\beta_g \sim \pi(\beta),
-\quad g = 1, 2, \ldots, D,
-$${#eq-diffexp-eb-prior}
+\underline{\underline{\Sigma}}_{\text{ALR}} =
+\underline{\underline{W}}_{\text{ALR}}
+\underline{\underline{W}}_{\text{ALR}}^{\top} +
+\text{diag}(\underline{d}_{\text{ALR}}). $${#eq-diffexp-alr-covariance}
 
-where $\pi(\beta)$ is a distribution over true effect sizes that is shared
-across all genes. This distribution encodes the global structure of differential
-expression: how many genes are null, and how large the non-null effects tend to
-be.
+For differential expression analysis, we require Gaussian distributions in CLR
+and ILR spaces. In this section, we derive explicit formulas for transforming
+the mean vector and covariance matrix from ALR space to these alternative
+coordinate systems. A critical result is the exact computation of the CLR
+covariance diagonal in $O(D)$ time—essential for accurate gene-level posterior
+inference.
 
-**The full joint model.** Combining the two levels, the joint distribution of
-the observed effects and the true effects is
+### From ALR to CLR Space
 
-$$
-\pi(\hat{\Delta}_1, \ldots, \hat{\Delta}_D, \beta_1, \ldots, \beta_D \mid
-\pi) = \prod_{g=1}^{D} \mathcal{N}(\hat{\Delta}_g \mid \beta_g, s_g^2)
-\cdot \pi(\beta_g).
-$${#eq-diffexp-eb-joint}
+#### Transformation of the mean vector
 
-Note that the genes are conditionally independent given their true effects
-$\beta_g$, and the true effects are independently drawn from the shared
-prior $\pi$. The dependence between genes enters only through the shared
-prior, which is what enables information sharing across the genome.
-
-**Graphical model.** The hierarchical structure is summarized in the following
-plate diagram. The distribution $\pi$ (with its parameters $\underline{w}$) sits
-at the top of the hierarchy. Each gene draws a true effect $\beta_g$ from $\pi$,
-and the observed effect $\hat{\Delta}_g$ is generated from $\beta_g$ with known
-variance $s_g^2$.
-
-```{.tikz caption="Graphical model for the empirical Bayes shrinkage. White nodes are latent, gray nodes are observed. The plate replicates across $D$ genes. The prior $\\pi$ (parameterized by $\\underline{w}$) is shared across all genes and estimated from the data." label="fig-eb-graphical-model" additionalPackages="\\usetikzlibrary{positioning,fit,backgrounds}"}
-\begin{tikzpicture}[
-  >=stealth,
-  node distance=10mm and 12mm,
-  latent/.style={circle, draw, minimum size=8mm, inner sep=1pt},
-  obs/.style={circle, draw, fill=gray!20, minimum size=8mm, inner sep=1pt},
-  plate/.style={draw, rounded corners, inner sep=4mm}
-]
-  % Hyperparameters
-  \node[latent] (w) {$\underline{w}$};
-
-  % Gene-level latent
-  \node[latent, below=of w] (beta) {$\beta_g$};
-
-  % Known standard error
-  \node[obs, right=15mm of beta] (sg) {$s_g$};
-
-  % Observed effect
-  \node[obs, below=of beta] (delta) {$\hat{\Delta}_g$};
-
-  % Edges
-  \draw[->] (w) -- (beta);
-  \draw[->] (beta) -- (delta);
-  \draw[->] (sg) -- (delta);
-
-  % Gene plate
-  \begin{scope}[on background layer]
-    \node[plate, fit=(beta)(delta)(sg), label={[yshift=1mm]north east:$g=1,\ldots,D$}] (geneplate) {};
-  \end{scope}
-\end{tikzpicture}
-```
-
-### The scale mixture of normals prior {#sec-diffexp-eb-prior}
-
-The prior $\pi(\beta)$ must satisfy two desiderata: (i) it should be
-concentrated at or near zero, reflecting the belief that most genes are not DE,
-and (ii) it should have flexible tails to accommodate the range of non-null
-effect sizes. A natural choice that satisfies both requirements is a **scale
-mixture of zero-centred Gaussians**:
+The transformation of the mean vector from ALR to CLR space follows directly
+from the relationship @eq-diffexp-alr-to-clr-claim. We first embed the
+$(D-1)$-dimensional ALR mean into $\mathbb{R}^{D}$ by appending a zero:
 
 $$
-\pi(\beta \mid \underline{w}) = \sum_{k=0}^{K} w_k \,
-\mathcal{N}(\beta \mid 0, \sigma_k^2),
-$${#eq-diffexp-eb-scale-mixture}
+\underline{\mu}_{\text{full}} = \begin{bmatrix}
+\underline{\mu}_{\text{ALR}} \\
+0
+\end{bmatrix} \in \mathbb{R}^{D}.
+$${#eq-diffexp-mean-embed}
 
-where:
-
-- $\sigma_0, \sigma_1, \ldots, \sigma_K$ is a **fixed grid** of scale
-  parameters with $\sigma_0 \approx 0 < \sigma_1 < \sigma_2 < \cdots <
-  \sigma_K$.
-- $\underline{w} = (w_0, w_1, \ldots, w_K)$ is a vector of **mixture
-  weights** satisfying $w_k \geq 0$ and $\sum_{k=0}^{K} w_k = 1$.
-- The component $k = 0$ with $\sigma_0 \approx 0$ approximates a point mass at
-  zero: $\mathcal{N}(\beta \mid 0, \sigma_0^2) \approx \delta_0(\beta)$. This
-  is the **null component** representing genes with no differential expression.
-
-The grid of scales $\sigma_0, \ldots, \sigma_K$ is fixed in advance (we
-describe the default construction in @sec-diffexp-eb-complexity). Only the
-weights $\underline{w}$ are estimated from the data. The weight $w_0$ on the
-null component is of particular scientific interest: it estimates the fraction
-of genes that are truly non-DE.
-
-This prior family has three important properties. First, it is **unimodal at
-zero**, encoding the symmetry assumption that up-regulation and down-regulation
-are equally likely a priori. Second, it is **conjugate** with the Gaussian
-observation model (@eq-diffexp-eb-observation), which means all posterior
-computations have closed-form solutions (as we will derive below). Third, it is
-**flexible**: by using a fine grid of scales, any unimodal symmetric
-distribution can be approximated to arbitrary accuracy.
-
-#### Marginal density of the observed effect
-
-The marginal density of the observed effect $\hat{\Delta}_g$ is obtained by
-integrating out the true effect $\beta_g$ over the prior. Starting from the
-joint model,
+Then we apply the centering matrix:
 
 $$
-f(\hat{\Delta}_g \mid \underline{w}) = \int_{-\infty}^{\infty}
-\mathcal{N}(\hat{\Delta}_g \mid \beta_g, s_g^2) \cdot
-\pi(\beta_g \mid \underline{w}) \, d\beta_g.
-$${#eq-diffexp-eb-marginal-integral}
+\underline{\mu}_{\text{CLR}} = \underline{\underline{C}}
+\underline{\mu}_{\text{full}}. $${#eq-diffexp-mean-clr}
 
-Substituting the scale mixture prior from @eq-diffexp-eb-scale-mixture, we can
-exchange the sum and the integral (since the sum is finite):
+Expanding this using the definition of $\underline{\underline{C}}$:
 
 $$
-f(\hat{\Delta}_g \mid \underline{w}) = \sum_{k=0}^{K} w_k
-\int_{-\infty}^{\infty} \mathcal{N}(\hat{\Delta}_g \mid \beta_g, s_g^2)
-\cdot \mathcal{N}(\beta_g \mid 0, \sigma_k^2) \, d\beta_g.
-$${#eq-diffexp-eb-marginal-sum-integral}
+\mu_{\text{CLR},g} = \left(1 - \frac{1}{D}\right) \mu_{\text{full},g} - 
+\frac{1}{D} \sum_{j \neq g} \mu_{\text{full},j}.
+$${#eq-diffexp-mean-clr-component}
 
-The integral inside the sum is the convolution of two Gaussian densities. We now
-derive this convolution explicitly. Writing out both Gaussian densities:
+For $g < D$, we have $\mu_{\text{full},g} = \mu_{\text{ALR},g}$, giving
 
 $$
-\mathcal{N}(\hat{\Delta}_g \mid \beta_g, s_g^2) =
-\frac{1}{\sqrt{2\pi s_g^2}}
-\exp\left(-\frac{(\hat{\Delta}_g - \beta_g)^2}{2 s_g^2}\right),
-$${#eq-diffexp-eb-gaussian-likelihood}
+\mu_{\text{CLR},g} = \left(1 - \frac{1}{D}\right) \mu_{\text{ALR},g} -
+\frac{1}{D} \sum_{j=1, j \neq g}^{D-1} \mu_{\text{ALR},j}, \quad g < D.
+$${#eq-diffexp-mean-clr-component-g}
+
+For $g = D$, we have $\mu_{\text{full},D} = 0$, giving
 
 $$
-\mathcal{N}(\beta_g \mid 0, \sigma_k^2) =
-\frac{1}{\sqrt{2\pi \sigma_k^2}}
-\exp\left(-\frac{\beta_g^2}{2 \sigma_k^2}\right).
-$${#eq-diffexp-eb-gaussian-prior}
+\mu_{\text{CLR},D} = -\frac{1}{D} \sum_{j=1}^{D-1} \mu_{\text{ALR},j}.
+$${#eq-diffexp-mean-clr-component-D}
 
-Their product is proportional to a Gaussian in $\beta_g$. To see this, we
-collect the terms in the exponent:
+This transformation requires $O(D)$ operations.
 
-$$
--\frac{(\hat{\Delta}_g - \beta_g)^2}{2 s_g^2}
--\frac{\beta_g^2}{2 \sigma_k^2}
-= -\frac{1}{2}\left[
-\frac{\beta_g^2 - 2 \hat{\Delta}_g \beta_g + \hat{\Delta}_g^2}{s_g^2}
-+ \frac{\beta_g^2}{\sigma_k^2}
-\right].
-$${#eq-diffexp-eb-exponent-expanded}
+#### Transformation of the covariance matrix
 
-Grouping by powers of $\beta_g$:
+The transformation of the covariance matrix is more involved. We begin by
+embedding the $(D-1) \times (D-1)$ ALR covariance into $\mathbb{R}^{D \times
+D}$:
 
 $$
-= -\frac{1}{2}\left[
-\beta_g^2 \left(\frac{1}{s_g^2} + \frac{1}{\sigma_k^2}\right)
-- 2 \beta_g \frac{\hat{\Delta}_g}{s_g^2}
-+ \frac{\hat{\Delta}_g^2}{s_g^2}
-\right].
-$${#eq-diffexp-eb-exponent-grouped}
+\underline{\underline{\Sigma}}_{\text{full}} = \begin{bmatrix}
+\underline{\underline{\Sigma}}_{\text{ALR}} & \underline{0} \\
+\underline{0}^{\top} & 0 \end{bmatrix} \in \mathbb{R}^{D \times D}.
+$${#eq-diffexp-cov-embed}
 
-Define the **precision** (inverse variance) of the posterior:
-
-$$
-\tau_{gk} = \frac{1}{s_g^2} + \frac{1}{\sigma_k^2}
-= \frac{\sigma_k^2 + s_g^2}{\sigma_k^2 \, s_g^2}.
-$${#eq-diffexp-eb-precision}
-
-The posterior variance is the reciprocal:
+The CLR covariance is then obtained by a similarity transformation with the
+centering matrix:
 
 $$
-v_{gk} = \frac{1}{\tau_{gk}} =
-\frac{\sigma_k^2 \, s_g^2}{\sigma_k^2 + s_g^2}.
-$${#eq-diffexp-eb-posterior-variance}
+\underline{\underline{\Sigma}}_{\text{CLR}} = 
+\underline{\underline{C}} \underline{\underline{\Sigma}}_{\text{full}} 
+\underline{\underline{C}}^{\top}.
+$${#eq-diffexp-cov-clr}
 
-The posterior mean is obtained by completing the square in the exponent. The
-coefficient of $\beta_g$ in @eq-diffexp-eb-exponent-grouped is
-$\hat{\Delta}_g / s_g^2$. Dividing by the coefficient of $\beta_g^2$ (which is
-$\tau_{gk}$) gives the posterior mean:
-
-$$
-m_{gk} = \frac{\hat{\Delta}_g / s_g^2}{\tau_{gk}}
-= \hat{\Delta}_g \cdot \frac{\sigma_k^2}{\sigma_k^2 + s_g^2}.
-$${#eq-diffexp-eb-posterior-mean}
-
-The completed-square form of the exponent is
+Since $\underline{\underline{C}}$ is symmetric
+($\underline{\underline{C}}^{\top} = \underline{\underline{C}}$), we can write
 
 $$
--\frac{1}{2}\left[
-\tau_{gk} (\beta_g - m_{gk})^2
-+ \hat{\Delta}_g^2 \left(
-    \frac{1}{s_g^2} - \frac{1}{s_g^2} \cdot \frac{\sigma_k^2}{\sigma_k^2 + s_g^2}
-\right)
-\right].
-$${#eq-diffexp-eb-completed-square}
+\underline{\underline{\Sigma}}_{\text{CLR}} = \underline{\underline{C}}
+\underline{\underline{\Sigma}}_{\text{full}} \underline{\underline{C}}.
+$${#eq-diffexp-cov-clr-symmetric}
 
-To verify the residual term, note that
+#### Transformation of the low-rank component
 
-$$
-\frac{1}{s_g^2} - \frac{1}{s_g^2} \cdot
-\frac{\sigma_k^2}{\sigma_k^2 + s_g^2}
-= \frac{1}{s_g^2} \cdot \frac{s_g^2}{\sigma_k^2 + s_g^2}
-= \frac{1}{\sigma_k^2 + s_g^2}.
-$${#eq-diffexp-eb-residual}
-
-Therefore the exponent becomes
+The low-rank component of the ALR covariance is
+$\underline{\underline{W}}_{\text{ALR}}
+\underline{\underline{W}}_{\text{ALR}}^{\top}$, where
+$\underline{\underline{W}}_{\text{ALR}} \in \mathbb{R}^{(D-1) \times k}$. We
+embed this into $\mathbb{R}^{D \times k}$ by appending a row of zeros:
 
 $$
--\frac{1}{2}\left[
-\tau_{gk} (\beta_g - m_{gk})^2
-+ \frac{\hat{\Delta}_g^2}{\sigma_k^2 + s_g^2}
-\right].
-$${#eq-diffexp-eb-exponent-final}
+\underline{\underline{W}}_{\text{full}} = \begin{bmatrix}
+\underline{\underline{W}}_{\text{ALR}} \\
+\underline{0}^{\top}
+\end{bmatrix} \in \mathbb{R}^{D \times k}.
+$${#eq-diffexp-w-embed}
 
-The first term, $\tau_{gk}(\beta_g - m_{gk})^2$, is the kernel of a Gaussian in
-$\beta_g$ with mean $m_{gk}$ and variance $v_{gk}$. The second term,
-$\hat{\Delta}_g^2 / (\sigma_k^2 + s_g^2)$, does not depend on $\beta_g$ and
-therefore factors out of the integral.
-
-Integrating over $\beta_g$, the Gaussian kernel contributes
-$\sqrt{2\pi v_{gk}}$, and the prefactors from
-@eq-diffexp-eb-gaussian-likelihood and @eq-diffexp-eb-gaussian-prior contribute
-$(2\pi s_g^2)^{-1/2} (2\pi \sigma_k^2)^{-1/2}$. Combining:
+The CLR low-rank factor is then
 
 $$
-\int_{-\infty}^{\infty}
-\mathcal{N}(\hat{\Delta}_g \mid \beta_g, s_g^2) \cdot
-\mathcal{N}(\beta_g \mid 0, \sigma_k^2) \, d\beta_g
-= \frac{1}{\sqrt{2\pi(\sigma_k^2 + s_g^2)}}
-\exp\left(-\frac{\hat{\Delta}_g^2}{2(\sigma_k^2 + s_g^2)}\right).
-$${#eq-diffexp-eb-convolution-result}
+\underline{\underline{W}}_{\text{CLR}} = \underline{\underline{C}}
+\underline{\underline{W}}_{\text{full}}. $${#eq-diffexp-w-clr}
 
-The right-hand side is exactly $\mathcal{N}(\hat{\Delta}_g \mid 0,
-\sigma_k^2 + s_g^2)$: a zero-centred Gaussian with variance equal to the sum
-of the prior variance and the observation variance. This is the standard
-Gaussian convolution identity: the convolution of
-$\mathcal{N}(0, \sigma_k^2)$ and $\mathcal{N}(0, s_g^2)$ is
-$\mathcal{N}(0, \sigma_k^2 + s_g^2)$.
-
-Substituting @eq-diffexp-eb-convolution-result back into
-@eq-diffexp-eb-marginal-sum-integral, the marginal density of $\hat{\Delta}_g$
-under the scale mixture prior is
+To see that this gives the correct low-rank component, observe that
 
 $$
-\boxed{
-f(\hat{\Delta}_g \mid \underline{w}) = \sum_{k=0}^{K} w_k \,
-\mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_k^2 + s_g^2).
-}
-$${#eq-diffexp-eb-marginal-density}
+\underline{\underline{W}}_{\text{CLR}} 
+\underline{\underline{W}}_{\text{CLR}}^{\top} = 
+\underline{\underline{C}} \underline{\underline{W}}_{\text{full}} 
+\underline{\underline{W}}_{\text{full}}^{\top} \underline{\underline{C}}^{\top}.
+$${#eq-diffexp-w-clr-product-step1}
 
-This is itself a mixture of Gaussians, but with **gene-specific variances**
-$\sigma_k^2 + s_g^2$. The observation noise $s_g^2$ "inflates" each prior
-component by a gene-specific amount, reflecting the fact that noisier genes
-produce more dispersed marginal distributions.
-
-### Maximum marginal likelihood via EM {#sec-diffexp-eb-em}
-
-The mixture weights $\underline{w}$ are the only free parameters in our model
-(the grid $\sigma_0, \ldots, \sigma_K$ is fixed). We estimate $\underline{w}$
-by maximizing the **marginal log-likelihood** across all $D$ genes:
+Since
 
 $$
-\mathcal{L}(\underline{w}) = \sum_{g=1}^{D}
-\log f(\hat{\Delta}_g \mid \underline{w})
-= \sum_{g=1}^{D} \log \left[
-\sum_{k=0}^{K} w_k \,
-\mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_k^2 + s_g^2)
-\right].
-$${#eq-diffexp-eb-log-likelihood}
+\underline{\underline{W}}_{\text{full}}
+\underline{\underline{W}}_{\text{full}}^{\top} = \begin{bmatrix}
+\underline{\underline{W}}_{\text{ALR}}
+\underline{\underline{W}}_{\text{ALR}}^{\top} & \underline{0} \\
+\underline{0}^{\top} & 0 \end{bmatrix}, $${#eq-diffexp-w-full-product}
 
-Direct maximization of @eq-diffexp-eb-log-likelihood is complicated by the
-logarithm of a sum. The standard approach is to use the
-**expectation-maximization (EM) algorithm**, which introduces latent
-component-indicator variables and iteratively maximizes a lower bound on the
-log-likelihood.
-
-#### Latent variable formulation
-
-For each gene $g$, introduce a latent indicator $c_g \in \{0, 1, \ldots, K\}$
-that specifies which mixture component generated gene $g$'s true effect. The
-complete-data generative model is:
+we have
 
 $$
-c_g \sim \text{Categorical}(\underline{w}),
-$${#eq-diffexp-eb-latent-indicator}
+\underline{\underline{W}}_{\text{CLR}} 
+\underline{\underline{W}}_{\text{CLR}}^{\top} = 
+\underline{\underline{C}} \begin{bmatrix}
+\underline{\underline{W}}_{\text{ALR}} 
+\underline{\underline{W}}_{\text{ALR}}^{\top} & \underline{0} \\
+\underline{0}^{\top} & 0
+\end{bmatrix} \underline{\underline{C}},
+$${#eq-diffexp-w-clr-product-step2}
+
+which is the low-rank part of $\underline{\underline{C}}
+\underline{\underline{\Sigma}}_{\text{full}} \underline{\underline{C}}$.
+
+Computing $\underline{\underline{W}}_{\text{CLR}}$ requires $O(kD)$ operations:
+for each of the $k$ columns, we apply the centering matrix to a $D$-dimensional
+vector.
+
+#### Transformation of the diagonal component: the critical result
+
+The diagonal component of the ALR covariance is $\text{diag}(\underline{d}_{\text{ALR}})$, where $\underline{d}_{\text{ALR}} \in \mathbb{R}^{D-1}$. Embedding into $\mathbb{R}^{D}$:
 
 $$
-\beta_g \mid c_g = k \sim \mathcal{N}(0, \sigma_k^2),
-$${#eq-diffexp-eb-conditional-prior}
+\underline{d}_{\text{full}} = \begin{bmatrix} \underline{d}_{\text{ALR}} \\
+0 \end{bmatrix} \in \mathbb{R}^{D}. $${#eq-diffexp-d-embed}
+
+The diagonal part of the CLR covariance is
 
 $$
-\hat{\Delta}_g \mid \beta_g \sim \mathcal{N}(\beta_g, s_g^2).
-$${#eq-diffexp-eb-conditional-observation}
+\text{diag}(\underline{d}_{\text{CLR}}) = 
+\text{diag}\left(\underline{\underline{C}} 
+\text{diag}(\underline{d}_{\text{full}}) \underline{\underline{C}}\right).
+$${#eq-diffexp-d-clr-matrix}
 
-Marginalizing over $\beta_g$, the conditional density of $\hat{\Delta}_g$ given
-$c_g = k$ is
-
-$$
-f(\hat{\Delta}_g \mid c_g = k) =
-\mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_k^2 + s_g^2),
-$${#eq-diffexp-eb-conditional-marginal}
-
-which follows directly from the convolution result in
-@eq-diffexp-eb-convolution-result.
-
-The complete-data log-likelihood (if we observed both $\hat{\Delta}_g$ and
-$c_g$) is
+**Naïve approach and its pitfall.** A naïve approach might assume that
 
 $$
-\mathcal{L}_{\text{complete}}(\underline{w}) = \sum_{g=1}^{D}
-\left[
-\log w_{c_g} +
-\log \mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_{c_g}^2 + s_g^2)
-\right].
-$${#eq-diffexp-eb-complete-loglik}
+\underline{d}_{\text{CLR}} \stackrel{?}{=} \underline{\underline{C}}
+\underline{d}_{\text{full}}. $${#eq-diffexp-d-naive}
 
-Since we do not observe the $c_g$, the EM algorithm proceeds by iterating
-between an E-step (computing the expected value of
-@eq-diffexp-eb-complete-loglik given the current weights) and an M-step
-(maximizing this expected value to obtain updated weights).
+This is **incorrect** because the diagonal of a matrix product
+$\underline{\underline{C}} \text{diag}(\underline{d}_{\text{full}})
+\underline{\underline{C}}$ is not generally equal to $\underline{\underline{C}}
+\underline{d}_{\text{full}}$. The centering matrix introduces off-diagonal terms
+that contribute to the diagonal of the transformed covariance.
 
-#### E-step: posterior component probabilities
-
-Given the current estimate of the weights $\underline{w}^{(t)}$ at iteration
-$t$, we compute the posterior probability that gene $g$ was generated by
-component $k$. By Bayes' theorem:
+**Exact computation.** To compute the diagonal correctly, we expand the matrix
+product explicitly. The $(g,g)$-th entry of $\underline{\underline{C}}
+\text{diag}(\underline{d}_{\text{full}}) \underline{\underline{C}}$ is
 
 $$
-\gamma_{gk}^{(t)} = P(c_g = k \mid \hat{\Delta}_g, \underline{w}^{(t)})
-= \frac{P(\hat{\Delta}_g \mid c_g = k) \cdot P(c_g = k \mid
-\underline{w}^{(t)})}
-{P(\hat{\Delta}_g \mid \underline{w}^{(t)})}.
-$${#eq-diffexp-eb-estep-bayes}
+\left[\underline{\underline{C}} \text{diag}(\underline{d}_{\text{full}}) 
+\underline{\underline{C}}\right]_{gg} = 
+\sum_{i=1}^{D} \sum_{j=1}^{D} C_{gi} \delta_{ij} d_{\text{full},j} C_{gj},
+$${#eq-diffexp-d-exact-step1}
 
-The numerator is the product of the conditional marginal
-(@eq-diffexp-eb-conditional-marginal) and the prior weight:
-
-$$
-P(\hat{\Delta}_g \mid c_g = k) \cdot P(c_g = k \mid \underline{w}^{(t)})
-= w_k^{(t)} \cdot
-\mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_k^2 + s_g^2).
-$${#eq-diffexp-eb-estep-numerator}
-
-The denominator is the marginal density from @eq-diffexp-eb-marginal-density:
+where $\delta_{ij}$ is the Kronecker delta. Since $\delta_{ij} = 1$ only when
+$i = j$, this simplifies to
 
 $$
-P(\hat{\Delta}_g \mid \underline{w}^{(t)}) =
-f(\hat{\Delta}_g \mid \underline{w}^{(t)}) =
-\sum_{j=0}^{K} w_j^{(t)} \cdot
-\mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_j^2 + s_g^2).
-$${#eq-diffexp-eb-estep-denominator}
+\left[\underline{\underline{C}} \text{diag}(\underline{d}_{\text{full}})
+\underline{\underline{C}}\right]_{gg} = \sum_{j=1}^{D} C_{gj}^2
+d_{\text{full},j}. $${#eq-diffexp-d-exact-step2}
 
-Substituting @eq-diffexp-eb-estep-numerator and
-@eq-diffexp-eb-estep-denominator into @eq-diffexp-eb-estep-bayes:
+Substituting the entries of $\underline{\underline{C}}$ from
+@eq-diffexp-centering-matrix-entries:
 
 $$
-\boxed{
-\gamma_{gk}^{(t)} = \frac{
-w_k^{(t)} \cdot
-\mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_k^2 + s_g^2)
-}{
-\sum_{j=0}^{K} w_j^{(t)} \cdot
-\mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_j^2 + s_g^2)
-}.
-}
-$${#eq-diffexp-eb-estep-result}
+d_{\text{CLR},g} = \left(1 - \frac{1}{D}\right)^2 d_{\text{full},g} + 
+\sum_{j \neq g} \left(-\frac{1}{D}\right)^2 d_{\text{full},j}.
+$${#eq-diffexp-d-exact-step3}
 
-The matrix $\underline{\underline{\gamma}}^{(t)} \in \mathbb{R}^{D \times
-(K+1)}$ with entries $\gamma_{gk}^{(t)}$ is the **responsibility matrix**: it
-quantifies how much each component is "responsible" for each gene. By
-construction, $\gamma_{gk}^{(t)} \geq 0$ and $\sum_{k=0}^{K}
-\gamma_{gk}^{(t)} = 1$ for each $g$.
-
-#### M-step: updating the mixture weights
-
-Given the responsibilities $\gamma_{gk}^{(t)}$, we maximize the expected
-complete-data log-likelihood with respect to $\underline{w}$, subject to the
-simplex constraint $\sum_{k=0}^{K} w_k = 1$, $w_k \geq 0$.
-
-The expected complete-data log-likelihood is
+Expanding:
 
 $$
-Q(\underline{w} \mid \underline{w}^{(t)}) =
-\sum_{g=1}^{D} \sum_{k=0}^{K} \gamma_{gk}^{(t)}
-\left[
-\log w_k + \log \mathcal{N}(\hat{\Delta}_g \mid 0,
-\sigma_k^2 + s_g^2)
-\right].
-$${#eq-diffexp-eb-Q-function}
+d_{\text{CLR},g} = \left(1 - \frac{2}{D} + \frac{1}{D^2}\right)
+d_{\text{full},g} + \frac{1}{D^2} \sum_{j \neq g} d_{\text{full},j}.
+$${#eq-diffexp-d-exact-step4}
 
-The second term inside the brackets does not depend on $\underline{w}$, so
-maximizing $Q$ over $\underline{w}$ is equivalent to maximizing
+We can rewrite the sum over $j \neq g$ as
 
 $$
-\sum_{g=1}^{D} \sum_{k=0}^{K} \gamma_{gk}^{(t)} \log w_k
-= \sum_{k=0}^{K} \left(\sum_{g=1}^{D} \gamma_{gk}^{(t)}\right) \log w_k
-= \sum_{k=0}^{K} N_k^{(t)} \log w_k,
-$${#eq-diffexp-eb-mstep-objective}
+\sum_{j \neq g} d_{\text{full},j} = \sum_{j=1}^{D} d_{\text{full},j} - 
+d_{\text{full},g}.
+$${#eq-diffexp-d-exact-step5}
 
-where $N_k^{(t)} = \sum_{g=1}^{D} \gamma_{gk}^{(t)}$ is the effective number
-of genes assigned to component $k$. Note that $\sum_{k=0}^{K} N_k^{(t)} = D$.
-
-We introduce a Lagrange multiplier $\lambda$ to enforce $\sum_k w_k = 1$ and
-form the Lagrangian:
+Substituting this into @eq-diffexp-d-exact-step4:
 
 $$
-\mathcal{J}(\underline{w}, \lambda) =
-\sum_{k=0}^{K} N_k^{(t)} \log w_k -
-\lambda \left(\sum_{k=0}^{K} w_k - 1\right).
-$${#eq-diffexp-eb-lagrangian}
+d_{\text{CLR},g} = \left(1 - \frac{2}{D} + \frac{1}{D^2}\right)
+d_{\text{full},g} + \frac{1}{D^2} \left(\sum_{j=1}^{D} d_{\text{full},j} -
+d_{\text{full},g}\right). $${#eq-diffexp-d-exact-step6}
 
-Taking the partial derivative with respect to $w_k$ and setting it to zero:
-
-$$
-\frac{\partial \mathcal{J}}{\partial w_k} =
-\frac{N_k^{(t)}}{w_k} - \lambda = 0
-\quad \implies \quad
-w_k = \frac{N_k^{(t)}}{\lambda}.
-$${#eq-diffexp-eb-lagrange-derivative}
-
-Summing over $k$ and using the constraint $\sum_k w_k = 1$:
+Collecting terms with $d_{\text{full},g}$:
 
 $$
-\sum_{k=0}^{K} w_k = \frac{1}{\lambda} \sum_{k=0}^{K} N_k^{(t)}
-= \frac{D}{\lambda} = 1
-\quad \implies \quad
-\lambda = D.
-$${#eq-diffexp-eb-lagrange-multiplier}
+d_{\text{CLR},g} = \left(1 - \frac{2}{D} + \frac{1}{D^2} - \frac{1}{D^2}\right) 
+d_{\text{full},g} + \frac{1}{D^2} \sum_{j=1}^{D} d_{\text{full},j}.
+$${#eq-diffexp-d-exact-step7}
 
-Substituting back:
+Simplifying the coefficient of $d_{\text{full},g}$:
 
 $$
-\boxed{
-w_k^{(t+1)} = \frac{N_k^{(t)}}{D}
-= \frac{1}{D} \sum_{g=1}^{D} \gamma_{gk}^{(t)}.
-}
-$${#eq-diffexp-eb-mstep-result}
+1 - \frac{2}{D} + \frac{1}{D^2} - \frac{1}{D^2} = 1 - \frac{2}{D}.
+$${#eq-diffexp-d-exact-coeff}
 
-The updated weight for component $k$ is simply the average responsibility of
-component $k$ across all genes. This is intuitive: if component $k$ is
-responsible for a large fraction of genes, it should receive a large weight.
-
-#### Convergence
-
-The EM algorithm alternates between the E-step
-(@eq-diffexp-eb-estep-result) and the M-step (@eq-diffexp-eb-mstep-result)
-until the change in the log-likelihood
-$|\mathcal{L}(\underline{w}^{(t+1)}) - \mathcal{L}(\underline{w}^{(t)})|$
-falls below a tolerance $\varepsilon$, or a maximum number of iterations is
-reached.
-
-A classical result in the EM literature guarantees that the marginal
-log-likelihood $\mathcal{L}(\underline{w}^{(t)})$ is **non-decreasing** at each
-iteration: $\mathcal{L}(\underline{w}^{(t+1)}) \geq
-\mathcal{L}(\underline{w}^{(t)})$. This follows from Jensen's inequality
-applied to the concavity of the logarithm. Since $\mathcal{L}$ is also bounded
-above (being a log-likelihood of a normalized density), the sequence
-$\{\mathcal{L}(\underline{w}^{(t)})\}$ converges. In practice, convergence is
-typically rapid: 20--100 iterations suffice for most genomic datasets.
-
-### The shrinkage posterior {#sec-diffexp-eb-posterior}
-
-Having estimated the mixture weights $\underline{w}^*$ via EM, we now derive
-the posterior distribution of each gene's true effect $\beta_g$ given its
-observed effect $\hat{\Delta}_g$.
-
-By Bayes' theorem, the posterior is
+Therefore, we obtain the exact formula:
 
 $$
-\pi(\beta_g \mid \hat{\Delta}_g, \underline{w}^*) =
-\frac{
-\mathcal{N}(\hat{\Delta}_g \mid \beta_g, s_g^2) \cdot
-\pi(\beta_g \mid \underline{w}^*)
-}{
-f(\hat{\Delta}_g \mid \underline{w}^*)
-}.
-$${#eq-diffexp-eb-posterior-bayes}
+d_{\text{CLR},g} = d_{\text{full},g}\left(1 - \frac{2}{D}\right) + 
+\frac{1}{D^2} \sum_{j=1}^{D} d_{\text{full},j}.
+$${#eq-diffexp-d-exact-final}
 
-Substituting the scale mixture prior (@eq-diffexp-eb-scale-mixture) for
-$\pi(\beta_g \mid \underline{w}^*)$ and using the marginal density
-(@eq-diffexp-eb-marginal-density) for the denominator:
+This is a remarkable result: the diagonal entries of the CLR covariance are a
+simple linear combination of the diagonal entries of the embedded ALR
+covariance, with a gene-specific term and a term that is constant across all
+genes.
 
-$$
-\pi(\beta_g \mid \hat{\Delta}_g, \underline{w}^*) =
-\frac{
-\mathcal{N}(\hat{\Delta}_g \mid \beta_g, s_g^2) \cdot
-\sum_{k=0}^{K} w_k^* \, \mathcal{N}(\beta_g \mid 0, \sigma_k^2)
-}{
-\sum_{j=0}^{K} w_j^* \,
-\mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_j^2 + s_g^2)
-}.
-$${#eq-diffexp-eb-posterior-expanded}
+**Computational complexity.** Computing all $D$ diagonal entries using
+@eq-diffexp-d-exact-final requires:
 
-We can bring the sum over $k$ in the numerator outside the ratio:
+1. Computing the sum $\sum_{j=1}^{D} d_{\text{full},j}$ once: $O(D)$ time.
+2. For each gene $g$, computing $d_{\text{CLR},g}$ using the formula: $O(1)$
+per gene, hence $O(D)$ total.
 
-$$
-\pi(\beta_g \mid \hat{\Delta}_g, \underline{w}^*) =
-\sum_{k=0}^{K}
-\underbrace{
-\frac{
-w_k^* \, \mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_k^2 + s_g^2)
-}{
-\sum_{j=0}^{K} w_j^* \,
-\mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_j^2 + s_g^2)
-}
-}_{\gamma_{gk}^*}
-\cdot
-\underbrace{
-\frac{
-\mathcal{N}(\hat{\Delta}_g \mid \beta_g, s_g^2) \cdot
-\mathcal{N}(\beta_g \mid 0, \sigma_k^2)
-}{
-\mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_k^2 + s_g^2)
-}
-}_{\mathcal{N}(\beta_g \mid m_{gk}, v_{gk})}.
-$${#eq-diffexp-eb-posterior-mixture}
+The total complexity is $O(D)$, which is optimal. In contrast, materializing
+the full matrix $\underline{\underline{C}} \text{diag}(\underline{d}_{\text{full}})
+\underline{\underline{C}}$ would require $O(D^2)$ operations.
 
-The first factor is the posterior component probability $\gamma_{gk}^*$ from the
-E-step (@eq-diffexp-eb-estep-result), evaluated at the converged weights
-$\underline{w}^*$. The second factor is the posterior of $\beta_g$
-*within component $k$*: a Gaussian with mean $m_{gk}$ and variance $v_{gk}$
-as derived in @eq-diffexp-eb-posterior-mean and @eq-diffexp-eb-posterior-variance.
-To verify, recall that the product of the two Gaussians in the numerator of the
-second factor integrates to
-$\mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_k^2 + s_g^2)$ (the convolution
-result from @eq-diffexp-eb-convolution-result), which is exactly the
-denominator. Therefore the ratio is a proper density in $\beta_g$, and by the
-completing-the-square derivation, it is
-$\mathcal{N}(\beta_g \mid m_{gk}, v_{gk})$.
+**Why this matters for accurate posteriors.** The exact diagonal formula
+@eq-diffexp-d-exact-final is critical for gene-level differential expression
+analysis. The diagonal entries $d_{\text{CLR},g}$ determine the posterior
+variance of each gene's log-fold-change. Using an incorrect approximation such
+as @eq-diffexp-d-naive would systematically bias the posterior variances,
+leading to incorrect confidence intervals, tail probabilities, and ultimately
+erroneous differential expression calls. For datasets with $D \approx 30{,}000$
+genes, even small relative errors in individual variances can accumulate to
+substantial errors in multiple testing procedures.
 
-The posterior is therefore a **mixture of Gaussians**:
+### From CLR to ILR Space
+
+Once we have transformed from ALR to CLR space, the further transformation to
+ILR space is straightforward, as it involves a simple linear transformation by
+the orthonormal matrix $\underline{\underline{V}}$.
+
+#### Transformation of the mean vector
+
+The ILR mean is obtained by applying the ILR basis matrix:
 
 $$
-\boxed{
-\pi(\beta_g \mid \hat{\Delta}_g, \underline{w}^*) =
-\sum_{k=0}^{K} \gamma_{gk}^* \,
-\mathcal{N}(\beta_g \mid m_{gk}, v_{gk}),
-}
-$${#eq-diffexp-eb-posterior-final}
+\underline{\mu}_{\text{ILR}} = \underline{\underline{V}}
+\underline{\mu}_{\text{CLR}}. $${#eq-diffexp-mean-ilr}
 
-where the component parameters are
+This is a matrix-vector multiplication requiring $O((D-1) \cdot D) = O(D^2)$
+operations for a dense matrix $\underline{\underline{V}}$. However, for the
+Helmert basis @eq-diffexp-helmert-formula, the sparsity pattern allows
+computation in $O(D)$ time through a recursive algorithm.
 
-$$
-m_{gk} = \hat{\Delta}_g \cdot \frac{\sigma_k^2}{\sigma_k^2 + s_g^2},
-\qquad
-v_{gk} = \frac{\sigma_k^2 \, s_g^2}{\sigma_k^2 + s_g^2}.
-$${#eq-diffexp-eb-component-params}
+#### Transformation of the covariance matrix
 
-#### Shrinkage interpretation
-
-The posterior mean within component $k$, given by @eq-diffexp-eb-posterior-mean,
-has a revealing structure. Define the **shrinkage factor** for component $k$:
+The ILR covariance is obtained by a similarity transformation:
 
 $$
-\alpha_{gk} = \frac{\sigma_k^2}{\sigma_k^2 + s_g^2} \in [0, 1].
-$${#eq-diffexp-eb-shrinkage-factor}
+\underline{\underline{\Sigma}}_{\text{ILR}} = \underline{\underline{V}} 
+\underline{\underline{\Sigma}}_{\text{CLR}} \underline{\underline{V}}^{\top}.
+$${#eq-diffexp-cov-ilr}
 
-Then $m_{gk} = \alpha_{gk} \cdot \hat{\Delta}_g$. This factor interpolates
-between two extremes:
-
-- **Null component** ($\sigma_k \approx 0$): $\alpha_{gk} \approx 0$, so
-  $m_{gk} \approx 0$. The posterior mean is shrunk all the way to zero. Gene
-  $g$'s observed effect is entirely attributed to noise.
-
-- **Large-scale component** ($\sigma_k \gg s_g$): $\alpha_{gk} \approx 1$, so
-  $m_{gk} \approx \hat{\Delta}_g$. The posterior mean equals the observed
-  effect. Gene $g$'s observation is trusted as-is.
-
-The overall posterior mean is a weighted combination of these shrinkage levels:
+Since $\underline{\underline{V}}$ is orthonormal
+($\underline{\underline{V}} \underline{\underline{V}}^{\top} =
+\underline{\underline{I}}_{D-1}$), we can verify that the inverse
+transformation is
 
 $$
-\langle \beta_g \mid \hat{\Delta}_g, \underline{w}^* \rangle =
-\sum_{k=0}^{K} \gamma_{gk}^* \, m_{gk} =
-\hat{\Delta}_g \sum_{k=0}^{K} \gamma_{gk}^* \, \alpha_{gk}.
-$${#eq-diffexp-eb-shrunk-mean}
+\underline{\underline{\Sigma}}_{\text{CLR}} = \underline{\underline{V}}^{\top}
+\underline{\underline{\Sigma}}_{\text{ILR}} \underline{\underline{V}}.
+$${#eq-diffexp-cov-clr-from-ilr}
 
-The effective shrinkage applied to gene $g$ is therefore
-$\bar{\alpha}_g = \sum_k \gamma_{gk}^* \alpha_{gk}$, which is a
-responsibility-weighted average of the component-specific shrinkage factors.
-Genes with strong evidence of being DE (large $|\hat{\Delta}_g| / s_g$) will
-have most of their responsibility assigned to large-scale components, resulting
-in $\bar{\alpha}_g \approx 1$ (little shrinkage). Genes with weak evidence will
-have most responsibility on the null component, resulting in
-$\bar{\alpha}_g \approx 0$ (strong shrinkage toward zero).
+#### Transformation of the low-rank component
 
-#### Marginal posterior variance
-
-The posterior variance is computed using the **law of total variance** for
-mixture distributions. For a mixture $\sum_k \gamma_k p_k(\beta)$ with
-component means $m_k$ and component variances $v_k$:
+The ILR low-rank factor is
 
 $$
-\text{Var}[\beta \mid \text{data}] =
-\underbrace{\sum_{k} \gamma_k \, v_k}_{\text{within-component variance}}
-+ \underbrace{\sum_{k} \gamma_k \, m_k^2
-- \left(\sum_{k} \gamma_k \, m_k\right)^2}_{\text{between-component variance}}.
-$${#eq-diffexp-eb-law-total-variance}
+\underline{\underline{W}}_{\text{ILR}} = \underline{\underline{V}} 
+\underline{\underline{W}}_{\text{CLR}}.
+$${#eq-diffexp-w-ilr}
 
-For our specific posterior, this becomes
+This is a matrix-matrix multiplication of a $(D-1) \times D$ matrix with a $D
+\times k$ matrix, requiring $O(kD^2)$ operations in general, or $O(kD)$
+operations if the sparsity of $\underline{\underline{V}}$ is exploited.
 
-$$
-\text{Var}[\beta_g \mid \hat{\Delta}_g, \underline{w}^*] =
-\sum_{k=0}^{K} \gamma_{gk}^* \, v_{gk}
-+ \sum_{k=0}^{K} \gamma_{gk}^* \, m_{gk}^2
-- \left(\sum_{k=0}^{K} \gamma_{gk}^* \, m_{gk}\right)^2.
-$${#eq-diffexp-eb-posterior-total-variance}
-
-The first term is the average within-component uncertainty. The second and third
-terms together form the between-component variance, which captures the
-additional uncertainty from not knowing which mixture component gene $g$ belongs
-to. When a single component dominates (one $\gamma_{gk}^* \approx 1$), the
-between-component variance vanishes and the posterior variance reduces to the
-within-component variance $v_{gk}$ of the dominant component.
-
-The posterior standard deviation is
+To verify that this gives the correct low-rank component:
 
 $$
-\text{sd}[\beta_g \mid \hat{\Delta}_g, \underline{w}^*] =
-\sqrt{\text{Var}[\beta_g \mid \hat{\Delta}_g, \underline{w}^*]}.
-$${#eq-diffexp-eb-posterior-sd}
+\underline{\underline{W}}_{\text{ILR}}
+\underline{\underline{W}}_{\text{ILR}}^{\top} = \underline{\underline{V}}
+\underline{\underline{W}}_{\text{CLR}}
+\underline{\underline{W}}_{\text{CLR}}^{\top} \underline{\underline{V}}^{\top},
+$${#eq-diffexp-w-ilr-product}
 
-### Shrunk lfsr and practical significance {#sec-diffexp-eb-lfsr}
+which is the low-rank part of $\underline{\underline{V}}
+\underline{\underline{\Sigma}}_{\text{CLR}} \underline{\underline{V}}^{\top}$.
 
-The shrinkage posterior (@eq-diffexp-eb-posterior-final) allows us to compute
-refined versions of all the gene-level DE statistics from
-@sec-diffexp-nonparametric. The most important is the **shrunk local false sign
-rate**.
+#### Transformation of the diagonal component
 
-#### Posterior probability of positive effect
-
-The posterior probability that the true effect $\beta_g$ is positive is
-
-$$
-P(\beta_g > 0 \mid \hat{\Delta}_g, \underline{w}^*) =
-\int_0^{\infty} \pi(\beta_g \mid \hat{\Delta}_g, \underline{w}^*) \, d\beta_g.
-$${#eq-diffexp-eb-prob-positive-integral}
-
-Substituting the mixture posterior from @eq-diffexp-eb-posterior-final and using
-the linearity of integration:
+The diagonal component of the ILR covariance cannot be computed as simply as the
+CLR diagonal because $\underline{\underline{V}}$ is not a diagonal matrix.
+Instead, we must compute
 
 $$
-P(\beta_g > 0 \mid \hat{\Delta}_g, \underline{w}^*) =
-\sum_{k=0}^{K} \gamma_{gk}^*
-\int_0^{\infty} \mathcal{N}(\beta_g \mid m_{gk}, v_{gk}) \, d\beta_g.
-$${#eq-diffexp-eb-prob-positive-sum}
+d_{\text{ILR},i} = \left[\underline{\underline{V}} 
+\text{diag}(\underline{d}_{\text{CLR}}) \underline{\underline{V}}^{\top}\right]_{ii}.
+$${#eq-diffexp-d-ilr-matrix}
 
-The integral $\int_0^{\infty} \mathcal{N}(\beta_g \mid m, v) \, d\beta_g$ is
-the probability that a $\mathcal{N}(m, v)$ random variable exceeds zero, which
-is
+Expanding the matrix product:
 
 $$
-\int_0^{\infty} \mathcal{N}(\beta_g \mid m, v) \, d\beta_g =
-\Phi\!\left(\frac{m}{\sqrt{v}}\right),
-$${#eq-diffexp-eb-gaussian-cdf}
+d_{\text{ILR},i} = \sum_{j=1}^{D} \sum_{\ell=1}^{D} V_{ij} \delta_{j\ell}
+d_{\text{CLR},\ell} V_{i\ell} = \sum_{j=1}^{D} V_{ij}^2 d_{\text{CLR},j}.
+$${#eq-diffexp-d-ilr-exact}
 
-where $\Phi(\cdot)$ is the standard normal cumulative distribution function.
-This follows from the substitution $z = (\beta_g - m) / \sqrt{v}$, which gives
-$\int_0^{\infty} \mathcal{N}(\beta_g \mid m, v) \, d\beta_g =
-\int_{-m/\sqrt{v}}^{\infty} \phi(z) \, dz = 1 - \Phi(-m/\sqrt{v}) =
-\Phi(m/\sqrt{v})$.
+This formula shows that each ILR diagonal entry is a weighted sum of the CLR
+diagonal entries, with weights given by the squared entries of the $i$-th row of
+$\underline{\underline{V}}$. Since each row of $\underline{\underline{V}}$ is
+sparse (for the Helmert basis), this computation can be performed efficiently.
 
-Substituting @eq-diffexp-eb-gaussian-cdf into @eq-diffexp-eb-prob-positive-sum:
+For the full diagonal vector, the computational cost is $O(D^2)$ in general, or
+$O(D)$ if the sparsity of $\underline{\underline{V}}$ is exploited.
 
-$$
-\boxed{
-P(\beta_g > 0 \mid \hat{\Delta}_g, \underline{w}^*) =
-\sum_{k=0}^{K} \gamma_{gk}^* \,
-\Phi\!\left(\frac{m_{gk}}{\sqrt{v_{gk}}}\right).
-}
-$${#eq-diffexp-eb-prob-positive}
+### Efficient Implementation via Woodbury Identity
 
-#### Shrunk lfsr
+Throughout this section, we have emphasized computational efficiency, ensuring
+that all operations scale linearly or near-linearly with the number of genes
+$D$. A key tool for achieving this efficiency when working with low-rank plus
+diagonal covariance matrices is the *Woodbury matrix identity*, also known as
+the matrix inversion lemma.
 
-The shrunk local false sign rate is defined exactly as in
-@eq-diffexp-np-lfsr---the posterior probability of the minority sign---but
-computed from the shrinkage posterior rather than by empirical counting:
+#### Statement of the Woodbury identity
 
-$$
-\text{lfsr}_g^{\text{shrunk}} = \min\!\left(
-P(\beta_g > 0 \mid \hat{\Delta}_g, \underline{w}^*), \;
-1 - P(\beta_g > 0 \mid \hat{\Delta}_g, \underline{w}^*)
-\right).
-$${#eq-diffexp-eb-lfsr}
-
-Since the posterior has been updated with the global effect-size distribution,
-the shrunk lfsr accounts for the base rate of true effects across the genome.
-When the null proportion $w_0^*$ is large, the posterior is pulled toward zero,
-increasing the lfsr relative to the raw empirical estimate. When $w_0^*$ is
-small, the shrinkage is minimal and the shrunk lfsr is close to the raw
-estimate.
-
-#### Practical significance with threshold $\tau$
-
-For a practical significance threshold $\tau \geq 0$, the shrunk probabilities
-of upward and downward practical effects are
+Let $\underline{\underline{A}} \in \mathbb{R}^{D \times D}$ be an invertible
+matrix, $\underline{\underline{U}} \in \mathbb{R}^{D \times k}$,
+$\underline{\underline{C}} \in \mathbb{R}^{k \times k}$ be an invertible matrix,
+and $\underline{\underline{V}} \in \mathbb{R}^{k \times D}$. The Woodbury
+identity states that
 
 $$
-P(\beta_g > \tau \mid \hat{\Delta}_g, \underline{w}^*) =
-\sum_{k=0}^{K} \gamma_{gk}^* \,
-\Phi\!\left(\frac{m_{gk} - \tau}{\sqrt{v_{gk}}}\right),
-$${#eq-diffexp-eb-prob-above-tau}
+\left(\underline{\underline{A}} + \underline{\underline{U}} 
+\underline{\underline{C}} \underline{\underline{V}}\right)^{-1} = 
+\underline{\underline{A}}^{-1} - \underline{\underline{A}}^{-1} 
+\underline{\underline{U}} \left(\underline{\underline{C}}^{-1} + 
+\underline{\underline{V}} \underline{\underline{A}}^{-1} 
+\underline{\underline{U}}\right)^{-1} \underline{\underline{V}} 
+\underline{\underline{A}}^{-1}.
+$${#eq-diffexp-woodbury}
+
+This identity is a standard result in matrix analysis and is derived in
+@golub2013.
+
+#### Application to low-rank plus diagonal matrices
+
+For our covariance structure $\underline{\underline{\Sigma}} =
+\underline{\underline{W}} \underline{\underline{W}}^{\top} +
+\text{diag}(\underline{d})$, we set
 
 $$
-P(\beta_g < -\tau \mid \hat{\Delta}_g, \underline{w}^*) =
-\sum_{k=0}^{K} \gamma_{gk}^* \,
-\Phi\!\left(\frac{-(m_{gk} + \tau)}{\sqrt{v_{gk}}}\right),
-$${#eq-diffexp-eb-prob-below-tau}
+\underline{\underline{A}} = \text{diag}(\underline{d}), \quad
+\underline{\underline{U}} = \underline{\underline{W}}, \quad
+\underline{\underline{C}} = \underline{\underline{I}}_k, \quad
+\underline{\underline{V}} = \underline{\underline{W}}^{\top}.
+$${#eq-diffexp-woodbury-params}
 
-and the shrunk practical-significance lfsr is
-
-$$
-\text{lfsr}_g^{\text{shrunk}}(\tau) = 1 - \max\!\left(
-P(\beta_g > \tau \mid \hat{\Delta}_g, \underline{w}^*), \;
-P(\beta_g < -\tau \mid \hat{\Delta}_g, \underline{w}^*)
-\right).
-$${#eq-diffexp-eb-lfsr-tau}
-
-When $\tau = 0$, this reduces to @eq-diffexp-eb-lfsr.
-
-### Compatibility with the existing framework {#sec-diffexp-eb-compatibility}
-
-The shrunk lfsr values from @eq-diffexp-eb-lfsr have exactly the same
-mathematical properties as the raw empirical lfsr values from
-@eq-diffexp-np-lfsr: they are numbers in $[0, 1/2]$ representing the posterior
-probability of the minority sign. The PEFP error control machinery developed in
-Section 6 operates exclusively on these numerical values---it does not depend on
-how they were computed. Therefore:
-
-- The PEFP formula $\text{PEFP}(S) = \frac{1}{|S|}\sum_{g \in S}
-  \text{lfsr}_g$ applies directly to shrunk lfsr values.
-- The threshold-finding algorithm (sorting lfsr values and computing the
-  cumulative mean) works identically.
-- The monotonicity proof carries over unchanged.
-
-This means the same ``call_de_genes``, ``compute_pefp``, and
-``find_lfsr_threshold`` functions can be used with shrunk lfsr values with no
-modification whatsoever.
-
-#### Backward compatibility
-
-When the estimated null proportion $w_0^*$ is very small---that is, the data
-suggest that nearly all genes are DE---the prior places negligible mass on the
-null component. In this regime, $\gamma_{g0}^* \approx 0$ for all genes, so the
-dominant components are the large-scale ones with
-$\alpha_{gk} \approx 1$. The shrunk posterior mean
-$\langle \beta_g \mid \hat{\Delta}_g \rangle \approx \hat{\Delta}_g$, and the
-shrunk lfsr converges to the raw empirical lfsr. The shrinkage layer becomes
-a no-op, ensuring backward compatibility.
-
-#### Diagnostic: the null proportion
-
-The estimated weight $w_0^*$ on the null component is a data-driven estimate of
-the fraction of genes that are truly non-DE. This quantity is scientifically
-interpretable and provides a global summary of the strength of the treatment
-effect:
-
-- $w_0^* \approx 1$: the treatment has negligible genome-wide effect (almost all
-  genes are null).
-- $w_0^* \approx 0$: the treatment has pervasive effects (most genes respond).
-- Intermediate values provide a nuanced summary that is directly comparable
-  across experiments.
-
-### Computational complexity {#sec-diffexp-eb-complexity}
-
-The empirical Bayes shrinkage layer is computationally lightweight relative to
-the upstream model fitting and Dirichlet sampling steps.
-
-**Default scale grid construction.** Given the vector of observed standard errors
-$s_1, s_2, \ldots, s_D$, a default grid of $K + 1$ scales is constructed as a
-geometric sequence:
+Since $\underline{\underline{A}}$ is diagonal, its inverse is
 
 $$
-\sigma_k = \sigma_{\min} \cdot \left(\frac{\sigma_{\max}}{\sigma_{\min}}\right)^{k/K},
-\quad k = 0, 1, \ldots, K,
-$${#eq-diffexp-eb-grid}
+\underline{\underline{A}}^{-1} = 
+\text{diag}\left(\frac{1}{d_1}, \frac{1}{d_2}, \ldots, \frac{1}{d_D}\right).
+$${#eq-diffexp-diagonal-inverse}
 
-where $\sigma_{\min}$ is a small value (e.g., $10^{-6}$) approximating the null
-point mass and $\sigma_{\max}$ is several times the maximum observed
-$|\hat{\Delta}_g|$. Typical values are $K = 20$--$30$ grid points.
-
-**Per-iteration cost.** Each EM iteration requires:
-
-1. Computing the $(D \times (K+1))$ matrix of Gaussian log-densities
-   $\log \mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_k^2 + s_g^2)$: $O(D(K+1))$.
-2. Normalizing to obtain responsibilities $\gamma_{gk}$: $O(D(K+1))$.
-3. Summing responsibilities to update weights: $O(D(K+1))$.
-
-Total per iteration: $O(D(K+1))$.
-
-**Overall cost.**
-
-| **Operation**              | **Cost**              | **Typical values**                       |
-| -------------------------- | --------------------- | ---------------------------------------- |
-| EM (T iterations)          | $O(TD(K+1))$         | $T \leq 100$, $K = 20$, $D = 20{,}000$  |
-| Posterior computation      | $O(D(K+1))$          | One-time after EM converges              |
-| Shrunk lfsr (CDF evals)    | $O(D(K+1))$          | $K + 1$ CDF calls per gene              |
-| **Total**                  | $O(TD(K+1))$         | $\approx 4 \times 10^7$ operations      |
-
-For comparison, the upstream Dirichlet sampling in the empirical DE pipeline
-costs $O(ND)$ where $N$ is the number of posterior samples (typically
-$N = 10{,}000$), giving $\approx 2 \times 10^8$ operations. The shrinkage
-layer is therefore approximately one order of magnitude cheaper than the
-sampling step that produces its input, and adds negligible wall-clock time.
-
-All operations are fully vectorized across the gene dimension and execute as
-matrix operations on GPU hardware.
-
-### Summary {#sec-diffexp-eb-summary}
-
-We collect the key results of this section for reference.
-
-**Observation model.** The observed posterior mean CLR difference for gene $g$
-is modelled as
+Applying the Woodbury identity:
 
 $$
-\hat{\Delta}_g \mid \beta_g \sim \mathcal{N}(\beta_g, s_g^2),
-$${#eq-diffexp-eb-summary-obs}
+\underline{\underline{\Sigma}}^{-1} = \text{diag}(\underline{d})^{-1} -
+\text{diag}(\underline{d})^{-1} \underline{\underline{W}}
+\left(\underline{\underline{I}}_k + \underline{\underline{W}}^{\top}
+\text{diag}(\underline{d})^{-1} \underline{\underline{W}}\right)^{-1}
+\underline{\underline{W}}^{\top} \text{diag}(\underline{d})^{-1}.
+$${#eq-diffexp-woodbury-sigma-inverse}
 
-where $\beta_g$ is the true effect and $s_g$ is the known posterior standard
-deviation.
+The key computational advantage is that the matrix to be inverted,
+$\underline{\underline{I}}_k + \underline{\underline{W}}^{\top}
+\text{diag}(\underline{d})^{-1} \underline{\underline{W}}$, has dimension $k
+\times k$ rather than $D \times D$. Since $k \ll D$ (typically $k \approx 50$
+and $D \approx 30{,}000$), inverting this smaller matrix requires $O(k^3)$
+operations, which is negligible compared to the $O(D^3)$ cost of directly
+inverting $\underline{\underline{\Sigma}}$.
 
-**Scale mixture prior.** The true effects are drawn from a shared prior
-
-$$
-\beta_g \sim \pi(\beta \mid \underline{w}) =
-\sum_{k=0}^{K} w_k \, \mathcal{N}(0, \sigma_k^2),
-$${#eq-diffexp-eb-summary-prior}
-
-with fixed grid $\sigma_0 \approx 0 < \sigma_1 < \cdots < \sigma_K$ and
-learned weights $\underline{w}$.
-
-**EM updates.** E-step: $\gamma_{gk} = w_k \mathcal{N}(\hat{\Delta}_g \mid 0,
-\sigma_k^2 + s_g^2) \big/ \sum_j w_j \mathcal{N}(\hat{\Delta}_g \mid 0,
-\sigma_j^2 + s_g^2)$. M-step: $w_k \leftarrow \frac{1}{D}\sum_g \gamma_{gk}$.
-
-**Shrinkage posterior.** A mixture of Gaussians:
+Moreover, for applications requiring only quadratic forms $\underline{v}^{\top}
+\underline{\underline{\Sigma}}^{-1} \underline{v}$ rather than the full inverse
+matrix, we can compute
 
 $$
-\pi(\beta_g \mid \hat{\Delta}_g, \underline{w}^*) =
-\sum_{k=0}^{K} \gamma_{gk}^* \, \mathcal{N}(\beta_g \mid m_{gk}, v_{gk}),
-$${#eq-diffexp-eb-summary-posterior}
+\underline{v}^{\top} \underline{\underline{\Sigma}}^{-1} \underline{v} = 
+\underline{v}^{\top} \text{diag}(\underline{d})^{-1} \underline{v} - 
+\underline{w}^{\top} \left(\underline{\underline{I}}_k + 
+\underline{\underline{W}}^{\top} \text{diag}(\underline{d})^{-1} 
+\underline{\underline{W}}\right)^{-1} \underline{w},
+$${#eq-diffexp-woodbury-quadratic}
 
-with $m_{gk} = \hat{\Delta}_g \sigma_k^2 / (\sigma_k^2 + s_g^2)$ and
-$v_{gk} = \sigma_k^2 s_g^2 / (\sigma_k^2 + s_g^2)$.
+where $\underline{w} = \underline{\underline{W}}^{\top}
+\text{diag}(\underline{d})^{-1} \underline{v}$. This requires $O(kD)$
+operations and is the computational workhorse for many differential expression
+calculations.
 
-**Shrunk lfsr.**
+#### Matrix determinant lemma
+
+A companion result to the Woodbury identity is the *matrix determinant lemma*,
+which provides an efficient formula for the determinant of a low-rank update to
+a diagonal matrix:
 
 $$
-\text{lfsr}_g^{\text{shrunk}} = \min\!\left(
-\sum_k \gamma_{gk}^* \Phi\!\left(\frac{m_{gk}}{\sqrt{v_{gk}}}\right), \;
-1 - \sum_k \gamma_{gk}^* \Phi\!\left(\frac{m_{gk}}{\sqrt{v_{gk}}}\right)
-\right).
-$${#eq-diffexp-eb-summary-lfsr}
+\det\left(\underline{\underline{A}} + \underline{\underline{U}}
+\underline{\underline{C}} \underline{\underline{V}}\right) =
+\det(\underline{\underline{C}}) \det(\underline{\underline{A}})
+\det\left(\underline{\underline{C}}^{-1} + \underline{\underline{V}}
+\underline{\underline{A}}^{-1} \underline{\underline{U}}\right).
+$${#eq-diffexp-det-lemma}
 
-| **Quantity** | **Raw empirical** | **With shrinkage** |
-| --- | --- | --- |
-| Effect estimate | $\hat{\Delta}_g$ | $\sum_k \gamma_{gk}^* m_{gk}$ |
-| Standard deviation | $s_g$ | Law of total variance (mixture) |
-| lfsr | Counting over $N$ samples | Mixture CDF evaluation |
-| PEFP compatibility | Yes | Yes (identical machinery) |
-| Distributional assumption | None on $\Delta_g^{(s)}$ | Gaussian on $\hat{\Delta}_g$ (CLT) |
-| Information shared | None across genes | Global effect-size distribution |
+For our covariance structure with the same parameter settings as before, this
+becomes
+
+$$
+\det(\underline{\underline{\Sigma}}) = 
+\det(\text{diag}(\underline{d})) \cdot 
+\det\left(\underline{\underline{I}}_k + \underline{\underline{W}}^{\top} 
+\text{diag}(\underline{d})^{-1} \underline{\underline{W}}\right).
+$${#eq-diffexp-det-sigma}
+
+Since $\det(\text{diag}(\underline{d})) = \prod_{i=1}^{D} d_i$, we can compute
+
+$$
+\log \det(\underline{\underline{\Sigma}}) = \sum_{i=1}^{D} \log d_i + \log
+\det\left(\underline{\underline{I}}_k + \underline{\underline{W}}^{\top}
+\text{diag}(\underline{d})^{-1} \underline{\underline{W}}\right).
+$${#eq-diffexp-logdet-sigma}
+
+This formula enables $O(k^2 D)$ computation of the log-determinant, which
+appears in the multivariate Gaussian density and in information-theoretic
+divergences such as the Kullback-Leibler divergence.
+
+#### Computational complexity summary
+
+The Woodbury identity and matrix determinant lemma ensure that all operations on
+low-rank plus diagonal covariance matrices have complexity $O(k^2 D)$ rather
+than $O(D^3)$:
+
+| **Operation**                                                                         | **Naïve Complexity** | **Low-Rank Complexity** |
+| ------------------------------------------------------------------------------------- | -------------------- | ----------------------- |
+| Matrix inversion                                                                      | $O(D^3)$             | $O(k^2 D)$              |
+| Determinant                                                                           | $O(D^3)$             | $O(k^2 D)$              |
+| Quadratic form $\underline{v}^{\top}\underline{\underline{\Sigma}}^{-1}\underline{v}$ | $O(D^2)$             | $O(kD)$                 |
+| Sampling                                                                              | $O(D^2)$             | $O(kD)$                 |
+
+For typical single-cell datasets with $D = 30{,}000$ and $k = 50$, the speedup
+factor is $(D/k)^2 = 360{,}000$, making the difference between intractable and
+nearly instantaneous computation.
+

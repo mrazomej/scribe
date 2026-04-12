@@ -104,38 +104,47 @@ repository](https://github.com/mrazomej/scribe)
 <!-- Low-rank logistic-normal approximation for normalized expression -->
 {{< include _normalization.qmd >}}
 
-<!-- Bayesian differential expression framework -->
+<!-- Bayesian differential expression framework — chapter introduction -->
 {{< include _diffexp01.qmd >}}
 
-<!-- Log-ratio coordinate systems (CLR, ILR) -->
+<!-- Log-ratio coordinate systems (CLR, ILR) — shared foundation -->
 {{< include _diffexp02.qmd >}}
 
-<!-- Transforming Gaussian parameters between coordinate systems -->
+<!-- Empirical CLR differential expression — the primary DE method -->
 {{< include _diffexp03.qmd >}}
 
-<!-- Gene-level differential expression -->
+<!-- Bayesian error control (PEFP) -->
 {{< include _diffexp04.qmd >}}
 
-<!-- Gene-set and pathway analysis -->
+<!-- Empirical pathway enrichment via ILR balances -->
 {{< include _diffexp05.qmd >}}
 
-<!-- Bayesian error control -->
+<!-- Robustness of CLR inference to capture probability misspecification -->
 {{< include _diffexp06.qmd >}}
 
-<!-- Computational considerations -->
+<!-- Biological-level differential expression (complementary metrics) -->
 {{< include _diffexp07.qmd >}}
 
-<!-- Summary and conclusions of the DE framework -->
+<!-- Empirical Bayes shrinkage (optional enhancement) -->
 {{< include _diffexp08.qmd >}}
 
-<!-- Gaussianity diagnostics & non-parametric DE -->
+<!-- Gaussianity diagnostics — bridge to the analytical alternative -->
 {{< include _diffexp09.qmd >}}
 
-<!-- Empirical Bayes shrinkage for differential expression -->
+<!-- Transforming Gaussian parameters between coordinate systems -->
 {{< include _diffexp10.qmd >}}
 
-<!-- Biological-level differential expression -->
+<!-- Analytical gene-level differential expression -->
 {{< include _diffexp11.qmd >}}
+
+<!-- Analytical gene-set and pathway analysis -->
+{{< include _diffexp12.qmd >}}
+
+<!-- Computational considerations -->
+{{< include _diffexp13.qmd >}}
+
+<!-- Summary and conclusions of the DE framework -->
+{{< include _diffexp14.qmd >}}
 
 :::
 :::

@@ -86,8 +86,8 @@ normalized gene expression. Our approach rests on three key principles:
 
 **Principle 1: Work in appropriate coordinate systems.** Rather than analyzing
 proportions directly on the simplex, we transform to log-ratio coordinate
-systems where standard multivariate Gaussian methods apply. We employ two
-complementary systems:
+systems where standard statistical methods apply. We employ two complementary
+systems:
 
 - The *centered log-ratio* (CLR) transformation provides a reference-free
 representation suitable for gene-level inference, where each coordinate has a
@@ -97,11 +97,14 @@ natural interpretation as a log-ratio relative to the geometric mean.
 orthonormal basis suitable for gene-set and pathway analysis, where each
 coordinate represents a compositional *balance* between groups of genes.
 
-**Principle 2: Propagate parameter uncertainty.** Having fitted low-rank
-Gaussian models in ALR space, we transform these models to CLR and ILR spaces,
-carefully tracking how the mean vectors and covariance matrices change under
-these transformations. This ensures that posterior uncertainty is correctly
-propagated through all downstream analyses.
+**Principle 2: Use assumption-free posterior inference as the primary tool.**
+The model produces posterior samples of the Dirichlet concentration parameters
+for each condition. By drawing Dirichlet compositions from these posterior
+samples and transforming to CLR coordinates, we compute all differential
+expression statistics—posterior means, standard deviations, tail probabilities,
+and local false sign rates—by direct Monte Carlo counting. This empirical
+approach requires no distributional assumptions on the shape of the posterior
+predictive distribution and is the recommended default for all analyses.
 
 **Principle 3: Use Bayesian error control.** Rather than relying on p-values
 and false discovery rate (FDR) control from frequentist hypothesis testing, we
@@ -113,42 +116,66 @@ discovery proportion* (PEFP) provides a Bayesian analog of the FDR.
 ### Preview of key results
 
 In the sections that follow, we develop the complete mathematical theory for
-Bayesian differential expression on compositional data. The main results are:
+Bayesian differential expression on compositional data. The development is
+organized to present the primary empirical approach first, followed by
+supporting theory and complementary methods.
 
-**Log-ratio coordinate systems** (Section 2): We provide a rigorous treatment of
-the CLR and ILR transformations, including a full constructive derivation of
-the Helmert basis for the ILR transform. We show how these coordinate systems
-preserve the essential compositional structure while enabling standard
-multivariate analysis.
+**Log-ratio coordinate systems** (@sec-diffexp-clr-ilr): We provide a rigorous
+treatment of the CLR and ILR transformations, including a full constructive
+derivation of the Helmert basis for the ILR transform. These coordinate systems
+are the shared mathematical foundation for all subsequent analyses.
 
-**Transformation of Gaussian parameters** (Section 3): Given a low-rank
-Gaussian model in ALR space, we derive explicit formulas for transforming the
-mean vector and covariance matrix to CLR and ILR spaces. A critical result is
-the exact computation of the CLR covariance diagonal in $O(D)$ time, which is
-essential for accurate gene-level posterior inference.
+**Empirical CLR differential expression** (@sec-diffexp-empirical): The
+primary DE method. Given posterior samples of the Dirichlet concentration
+parameters, we draw compositions on the simplex, transform to CLR coordinates,
+and compute all gene-level statistics by direct counting—requiring no
+distributional assumptions. We prove that index-pairing of independent posterior
+samples yields valid posterior estimates of the difference distribution, and
+develop the theory of expression masking for controlling the CLR reference
+composition.
 
-**Gene-level differential expression** (Section 4): We show that when two
-conditions have independent Gaussian models, the difference distribution is also
-Gaussian with parameters that preserve the low-rank structure. This enables
-efficient computation of per-gene posterior means, standard deviations, tail
-probabilities, and local false sign rates.
+**Bayesian error control** (@sec-diffexp-pefp): We introduce the posterior
+expected false discovery proportion (PEFP) and derive an $O(D \log D)$ algorithm
+for finding lfsr thresholds that control PEFP at a specified level. The PEFP
+machinery operates on numerical lfsr values regardless of how they were
+computed, providing a unified error control framework for both empirical and
+parametric analyses.
 
-**Gene-set and pathway analysis** (Section 5): We develop methods for testing
-linear contrasts in CLR space and balances in ILR space, enabling inference on
-coordinated changes in gene modules. The orthonormality of the ILR basis
-provides computational and interpretational advantages for pathway enrichment
-analysis.
+**Empirical pathway enrichment** (@sec-diffexp-empirical-pathway): We extend
+the empirical framework to gene sets and pathways using ILR balances, including
+a multivariate within-pathway perturbation test that detects coordinated
+compositional rearrangement even when the net pathway balance is near zero.
 
-**Bayesian error control** (Section 6): We introduce the posterior expected
-false discovery proportion (PEFP) and derive an algorithm for finding lfsr
-thresholds that control PEFP at a specified level. This provides a principled
-approach to multiple testing correction that accounts for the uncertainty in
-each gene's differential expression status.
+**Robustness of CLR inference** (@sec-diffexp-robustness): A key theoretical
+result. We prove that CLR-based differential expression is **exactly invariant**
+to capture probability misspecification—a structural property of the model that
+holds under both the shared-$p$ and gene-specific $p_g$ parameterizations. The
+argument rests on the thinning-invariance of the negative binomial shape
+parameter and the uniform cancellation of capture probability in compositional
+ratios.
 
-**Computational efficiency** (Section 7): All methods are designed to operate in
-$O(k^2 D)$ time, where $k \ll D$ is the rank of the low-rank covariance
-approximation and $D$ is the number of genes. This ensures scalability to
-single-cell datasets with tens of thousands of genes.
+**Biological-level differential expression** (@sec-diffexp-biological): Three
+complementary metrics—biological log-fold change, log-variance ratio, and Gamma
+Jeffreys divergence—that quantify differential expression directly in the space
+of the denoised negative binomial distribution, bypassing the compositional
+simplex entirely. These provide non-compositional validation of CLR-based
+findings.
+
+**Empirical Bayes shrinkage** (@sec-diffexp-eb): An optional layer that uses the
+genome-wide distribution of effect sizes to refine per-gene estimates via a scale
+mixture of normals prior. While theoretically elegant, practical experience
+indicates that the unshrunk empirical lfsr often provides more sensitive gene
+calls; the shrinkage layer is therefore presented as an alternative rather than
+the default.
+
+**Gaussianity diagnostics and the analytical alternative**
+(@sec-diffexp-gaussianity): When per-gene Gaussianity diagnostics confirm that
+the posterior CLR marginals are well-approximated by Gaussians, a parametric DE
+path provides closed-form inference at $O(kD)$ cost rather than $O(ND)$. We
+develop the full analytical theory—transformation of Gaussian parameters between
+coordinate systems, gene-level inference via the difference distribution, and
+pathway analysis via linear contrasts—as an efficient complement to the empirical
+approach.
 
 Throughout our development, we maintain complete mathematical rigor, showing
 every algebraic step explicitly. For datasets with $D \approx 30{,}000$ genes,
