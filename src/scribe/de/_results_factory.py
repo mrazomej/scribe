@@ -66,7 +66,7 @@ def compare(
     gene_names: Optional[List[str]] = None,
     label_A: str = "A",
     label_B: str = "B",
-    method: str = "parametric",
+    method: str = "empirical",
     component_A: Optional[int] = None,
     component_B: Optional[int] = None,
     paired: bool = False,
@@ -79,7 +79,7 @@ def compare(
     sigma_grid: Optional[jnp.ndarray] = None,
     shrinkage_max_iter: int = 200,
     shrinkage_tol: float = 1e-8,
-    compute_biological: bool = True,
+    compute_biological: bool = False,
 ) -> "ScribeDEResults":
     """Create a DE results object from fitted models or posterior samples.
 
@@ -96,7 +96,7 @@ def compare(
         Display label for condition A.
     label_B : str, default='B'
         Display label for condition B.
-    method : {'parametric', 'empirical', 'shrinkage'}, default='parametric'
+    method : {'parametric', 'empirical', 'shrinkage'}, default='empirical'
         Differential-expression strategy.
     component_A : int, optional
         Mixture component index for condition A (empirical/shrinkage).
@@ -122,7 +122,7 @@ def compare(
         Maximum EM iterations for shrinkage.
     shrinkage_tol : float, default=1e-8
         EM convergence tolerance for shrinkage.
-    compute_biological : bool, default=True
+    compute_biological : bool, default=False
         Whether to retain samples needed for biological-level DE.
 
     Returns

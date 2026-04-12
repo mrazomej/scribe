@@ -528,12 +528,12 @@ DESCRIPTIVE_NAMES: Dict[str, str] = {
     # Core NB parameters
     "r": "dispersion",
     "p": "prob",
-    "mu": "expression",
-    "phi": "odds",
+    "mu": "mean_expression",
+    "phi": "odds_ratio",
     "gate": "zero_inflation",
     # Capture parameters
     "p_capture": "capture_prob",
-    "phi_capture": "capture_odds",
+    "phi_capture": "capture_odds_ratio",
     "eta_capture": "capture_efficiency",
     # Already descriptive (identity)
     "bnb_concentration": "bnb_concentration",
