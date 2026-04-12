@@ -17,16 +17,14 @@ classifiers = [
 # Core dependencies
 dependencies = [
     "anndata>=0.12.10",
-    "graphviz>=0.20.3",
     "matplotlib>=3.9.3",
     "numpy>=2.1.3,<2.2",
     "pandas>=2.2.3",
     "scanpy>=1.12",
     "scipy>=1.14.1",
     "seaborn>=0.13.2",
-    "statsmodels>=0.14.4",
     "jax[cuda12]>=0.9.0.1",
-    "numpyro>=0.19.0",
+    "numpyro>=0.20.1",
     "multipledispatch>=1.0.0",
     "flax>=0.12.2",
     "pydantic>=2.12.3",
@@ -35,6 +33,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# CLI/Hydra workflows are intentionally optional so base `import scribe`
+# stays dependency-light.
 hydra = [
     "hydra-core>=1.3.2",
     "hydra-joblib-launcher>=1.2",
@@ -59,19 +59,15 @@ dev = [
     "pytest-cov>=6.0.0",
     "pytest-mpl>=0.17.0",
     "umap-learn>=0.5.7",
-    "hydra-core>=1.3.2",
-    "hydra-joblib-launcher>=1.2",
-    "omegaconf>=2.3.0",
     "scikit-misc>=0.5.1",
     "bokeh>=3.8.0",
     "colorcet>=3.1.0",
     "datashader>=0.18.2",
     "holoviews>=1.21.0",
     "scikit-image>=0.25.2",
-    "marimo>=0.21.1",
+    "marimo>=0.22.0",
     "gseapy>=1.1.11",
     "matplotlib-venn>=1.1.2",
-    "hydra-submitit-launcher>=1.2.0",
     "h5py>=3.12.1",
     "anndata>=0.12.10",
 ]

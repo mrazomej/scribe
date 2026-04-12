@@ -8,6 +8,8 @@ Covers:
 - DatasetMixin.get_dataset and 3-axis __getitem__ on results
 - compare_datasets DE helper
 - Integration: create_model end-to-end with multi-dataset configs
+- Regression: batched posterior sampling with VCP + multi-dataset
+- store_on_cpu: CPU-resident JAX array storage for posterior samples
 """
 
 import jax
@@ -3549,3 +3551,262 @@ class TestEmpiricalMixingPerDataset:
             D,
             K,
         )
+
+
+# ==============================================================================
+# Regression: batched posterior sampling with VCP + multi-dataset
+# ==============================================================================
+
+
+class TestBatchedPosteriorMultiDataset:
+    """Regression tests for batched get_posterior_samples on multi-dataset VCP.
+
+    Before the plate-creation fix, calling
+    ``result.get_posterior_samples(batch_size=...)`` on a VCP + multi-dataset
+    model raised ``ValueError: Incompatible shapes for broadcasting`` because
+    the model's cell plate was full-sized (n_cells) while the guide's plate
+    was subsampled (batch_size).  These tests exercise that exact path.
+    """
+
+    @staticmethod
+    def _make_adata():
+        """Create a tiny AnnData with two datasets for regression tests.
+
+        Returns
+        -------
+        anndata.AnnData
+            Synthetic count data (10 cells, 5 genes, 2 datasets).
+        """
+        import anndata
+        import pandas as pd
+
+        rng = np.random.default_rng(0)
+        n_cells, n_genes = 10, 5
+        x = rng.poisson(5, (n_cells, n_genes)).astype(np.float32)
+        obs = pd.DataFrame(
+            {"dataset": ["d0"] * 5 + ["d1"] * 5}
+        )
+        return anndata.AnnData(X=x, obs=obs)
+
+    def test_batched_posterior_nbvcp_multi_dataset(self):
+        """nbvcp + 2 datasets + batched posterior sampling works."""
+        import scribe
+
+        adata = self._make_adata()
+        result = scribe.fit(
+            adata,
+            model="nbvcp",
+            parameterization="mean_odds",
+            unconstrained=True,
+            dataset_key="dataset",
+            expression_dataset_prior="gaussian",
+            n_steps=2,
+            batch_size=3,
+            seed=0,
+        )
+
+        # The core regression: batched posterior sampling must not raise
+        samples = result.get_posterior_samples(
+            n_samples=2, batch_size=3, rng_key=random.PRNGKey(1)
+        )
+        assert isinstance(samples, dict)
+        assert "r" in samples or "mu" in samples
+
+    def test_batched_posterior_zinbvcp_multi_dataset(self):
+        """zinbvcp + 2 datasets + batched posterior sampling works."""
+        import scribe
+
+        adata = self._make_adata()
+        result = scribe.fit(
+            adata,
+            model="zinbvcp",
+            parameterization="mean_odds",
+            unconstrained=True,
+            dataset_key="dataset",
+            expression_dataset_prior="gaussian",
+            n_steps=2,
+            batch_size=3,
+            seed=0,
+        )
+
+        samples = result.get_posterior_samples(
+            n_samples=2, batch_size=3, rng_key=random.PRNGKey(1)
+        )
+        assert isinstance(samples, dict)
+        assert "r" in samples or "mu" in samples
+        assert "gate" in samples
+
+    def test_batched_posterior_nbvcp_mix_multi_dataset(self):
+        """nbvcp mixture + 2 datasets + batched posterior sampling works.
+
+        This exercises the VCP + mixture + dataset-indexing + batched posterior
+        combination from the original traceback.  Uses canonical
+        parameterization to avoid a separate pre-existing shape issue in
+        the mean_odds mixture + dataset hierarchy derived-param path.
+        """
+        import scribe
+
+        adata = self._make_adata()
+        result = scribe.fit(
+            adata,
+            model="nbvcp",
+            parameterization="canonical",
+            unconstrained=True,
+            n_components=2,
+            dataset_key="dataset",
+            expression_dataset_prior="gaussian",
+            n_steps=2,
+            batch_size=3,
+            seed=0,
+        )
+
+        samples = result.get_posterior_samples(
+            n_samples=2, batch_size=3, rng_key=random.PRNGKey(1)
+        )
+        assert isinstance(samples, dict)
+        assert "r" in samples or "mu" in samples
+        assert "mixing_weights" in samples or "mixing_concentrations" in samples
+
+
+# ==============================================================================
+# store_on_cpu: CPU-resident JAX arrays for posterior samples
+# ==============================================================================
+
+
+class TestStoreOnCpu:
+    """Tests for the ``store_on_cpu`` parameter of ``get_posterior_samples``.
+
+    Verifies that when ``store_on_cpu=True``, all stored arrays are
+    ``jax.Array`` instances residing on a CPU device, that shapes match
+    the default (GPU) path, and that the arrays remain compatible with
+    ``jnp`` operations.
+    """
+
+    @staticmethod
+    def _make_adata():
+        """Create a tiny AnnData with two datasets.
+
+        Returns
+        -------
+        anndata.AnnData
+            Synthetic count data (10 cells, 5 genes, 2 datasets).
+        """
+        import anndata
+        import pandas as pd
+
+        rng = np.random.default_rng(0)
+        n_cells, n_genes = 10, 5
+        x = rng.poisson(5, (n_cells, n_genes)).astype(np.float32)
+        obs = pd.DataFrame({"dataset": ["d0"] * 5 + ["d1"] * 5})
+        return anndata.AnnData(X=x, obs=obs)
+
+    @staticmethod
+    def _fit_small_model(adata):
+        """Fit a minimal nbvcp model for testing.
+
+        Returns
+        -------
+        ScribeSVIResults
+            Fitted results object (2 steps, canonical parameterization).
+        """
+        import scribe
+
+        return scribe.fit(
+            adata,
+            model="nbvcp",
+            parameterization="canonical",
+            unconstrained=True,
+            dataset_key="dataset",
+            expression_dataset_prior="gaussian",
+            n_steps=2,
+            batch_size=3,
+            seed=0,
+        )
+
+    def test_store_on_cpu_produces_jax_arrays_on_cpu_device(self):
+        """All stored arrays are jax.Array on a CPU device."""
+        adata = self._make_adata()
+        result = self._fit_small_model(adata)
+
+        result.get_posterior_samples(
+            n_samples=3,
+            store_samples=True,
+            store_on_cpu=True,
+            rng_key=random.PRNGKey(0),
+        )
+
+        assert result.posterior_samples is not None
+        for key, val in result.posterior_samples.items():
+            if not hasattr(val, "devices"):
+                continue
+            # Must be a jax.Array, not a plain numpy.ndarray
+            assert isinstance(val, jax.Array), (
+                f"posterior_samples['{key}'] is {type(val).__name__}, "
+                f"expected jax.Array"
+            )
+            # All shards must be on a CPU device
+            devices = val.devices()
+            for dev in devices:
+                assert dev.platform == "cpu", (
+                    f"posterior_samples['{key}'] on {dev.platform}, "
+                    f"expected cpu"
+                )
+
+    def test_store_on_cpu_shapes_match_default(self):
+        """Shapes from store_on_cpu=True match the default (GPU) path."""
+        adata = self._make_adata()
+        result = self._fit_small_model(adata)
+        n_samples = 3
+        key = random.PRNGKey(0)
+
+        # Collect shapes from GPU path
+        gpu_samples = result.get_posterior_samples(
+            n_samples=n_samples,
+            store_samples=False,
+            store_on_cpu=False,
+            rng_key=key,
+        )
+        gpu_shapes = {
+            k: v.shape for k, v in gpu_samples.items() if hasattr(v, "shape")
+        }
+
+        # Collect shapes from CPU path (same RNG → same shapes)
+        cpu_samples = result.get_posterior_samples(
+            n_samples=n_samples,
+            store_samples=False,
+            store_on_cpu=True,
+            rng_key=key,
+        )
+        cpu_shapes = {
+            k: v.shape for k, v in cpu_samples.items() if hasattr(v, "shape")
+        }
+
+        assert gpu_shapes.keys() == cpu_shapes.keys()
+        for k in gpu_shapes:
+            assert gpu_shapes[k] == cpu_shapes[k], (
+                f"Shape mismatch for '{k}': GPU {gpu_shapes[k]} "
+                f"vs CPU {cpu_shapes[k]}"
+            )
+
+    def test_store_on_cpu_jnp_compatible(self):
+        """CPU-resident arrays work with standard jnp operations."""
+        adata = self._make_adata()
+        result = self._fit_small_model(adata)
+
+        samples = result.get_posterior_samples(
+            n_samples=3,
+            store_samples=True,
+            store_on_cpu=True,
+            rng_key=random.PRNGKey(0),
+        )
+
+        # Pick an array key that exists (r is always present)
+        r = samples["r"]
+        assert isinstance(r, jax.Array)
+
+        # Basic jnp operations should work without errors
+        mean_r = jnp.mean(r, axis=0)
+        assert mean_r.shape == r.shape[1:]
+
+        log_r = jnp.log(r + 1e-8)
+        assert log_r.shape == r.shape

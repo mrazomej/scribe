@@ -167,6 +167,14 @@ Each likelihood can be parameterized in three ways:
 pip install scribe
 ```
 
+### Optional CLI/Hydra extras
+
+Install CLI tools (`scribe-infer`, `scribe-visualize`) with Hydra support:
+
+```bash
+pip install "scribe[hydra]"
+```
+
 ### Development Installation
 
 For the latest development version:
@@ -175,6 +183,12 @@ For the latest development version:
 git clone https://github.com/mrazomej/scribe.git
 cd scribe
 pip install -e ".[dev]"
+```
+
+If you also need CLI/Hydra workflows in development:
+
+```bash
+pip install -e ".[dev,hydra]"
 ```
 
 ### Docker Installation

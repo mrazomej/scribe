@@ -5,7 +5,7 @@ bibliography: references.bib
 csl: ieee.csl
 ---
 
-## Log-Ratio Coordinate Systems
+## Log-Ratio Coordinate Systems {#sec-diffexp-clr-ilr}
 
 The simplex $\Delta^{D-1}$ is a $(D-1)$-dimensional manifold embedded in
 $\mathbb{R}^{D}$. To perform statistical inference on compositional data, we

@@ -6,6 +6,8 @@ and package-root compatibility exports.
 """
 
 from unittest.mock import MagicMock
+import sys
+import types
 
 import jax.numpy as jnp
 from jax import random
@@ -465,6 +467,153 @@ def test_umap_cache_path_multi_column_changes_across_combinations():
     assert len({path_a, path_b, path_c}) == 3
 
 
+def test_plot_umap_subsets_ppc_to_hvg_genes(monkeypatch):
+    """UMAP PPC sampling should use detected+HVG genes, not detected genes only."""
+    import scribe.viz.umap as umap_module
+
+    n_cells, n_genes = 5, 6
+    counts = np.array(
+        [
+            [1, 1, 0, 0, 1, 0],
+            [1, 0, 0, 0, 1, 0],
+            [1, 1, 1, 0, 0, 0],
+            [0, 1, 1, 0, 0, 0],
+            [0, 0, 1, 0, 1, 0],
+        ],
+        dtype=float,
+    )
+
+    # Keep test deterministic and focused on indexing semantics.
+    monkeypatch.setattr(umap_module, "_coerce_counts", lambda x: x)
+
+    class _DummyReducer:
+        def fit_transform(self, x):
+            return np.stack([x[:, 0], x[:, 1]], axis=1)
+
+        def transform(self, x):
+            return np.stack([x[:, 0], x[:, 1]], axis=1)
+
+    class _DummyUMAP:
+        def __init__(self, **kwargs):
+            _ = kwargs
+
+        def fit_transform(self, x):
+            return _DummyReducer().fit_transform(x)
+
+        def transform(self, x):
+            return _DummyReducer().transform(x)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "umap",
+        types.SimpleNamespace(UMAP=_DummyUMAP),
+    )
+
+    class _DummyAnnData:
+        def __init__(self, X):
+            self.X = X
+            self.var = {}
+
+    def _dummy_hvg(adata_hvg, n_top_genes, flavor, inplace):
+        _ = flavor, inplace
+        mask = np.zeros(adata_hvg.X.shape[1], dtype=bool)
+        mask[:n_top_genes] = True
+        adata_hvg.var["highly_variable"] = mask
+
+    monkeypatch.setitem(
+        sys.modules,
+        "anndata",
+        types.SimpleNamespace(AnnData=_DummyAnnData),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "scanpy",
+        types.SimpleNamespace(
+            pp=types.SimpleNamespace(highly_variable_genes=_dummy_hvg)
+        ),
+    )
+
+    class _DummyPCA:
+        def __init__(self, n_components, random_state):
+            self.n_components = int(n_components)
+            _ = random_state
+
+        def fit_transform(self, x):
+            return x[:, : self.n_components]
+
+        def transform(self, x):
+            return x[:, : self.n_components]
+
+    monkeypatch.setitem(
+        sys.modules,
+        "sklearn.decomposition",
+        types.SimpleNamespace(PCA=_DummyPCA),
+    )
+
+    seen = {}
+
+    def _fake_predictive(results_sub, **kwargs):
+        # Track which gene count the UMAP path asks PPC sampling to use.
+        seen["subset_n_genes"] = results_sub.n_genes
+        n_cells_local = kwargs["counts"].shape[0]
+        return np.zeros((1, n_cells_local, results_sub.n_genes), dtype=float)
+
+    monkeypatch.setattr(
+        umap_module, "_get_predictive_samples_for_plot", _fake_predictive
+    )
+
+    class _FakeResults:
+        def __init__(self, n_genes):
+            self.n_genes = int(n_genes)
+
+        def __getitem__(self, index):
+            return _FakeResults(len(index))
+
+    # Detected genes with min_cells=3: indices [0, 1, 2, 4] => 4 genes.
+    # HVG selection keeps n_top_genes=2 among detected => expected PPC subset=2.
+    result = umap_module.plot_umap(
+        _FakeResults(n_genes=n_genes),
+        counts,
+        save=False,
+        viz_cfg=OmegaConf.create(
+            {
+                "umap_opts": {
+                    "gene_filter_min_cells": 3,
+                    "hvg_n_top_genes": 2,
+                    "use_hvg": True,
+                    "use_pca": False,
+                    "cache_umap": False,
+                    "n_ppc_samples": 1,
+                }
+            }
+        ),
+    )
+
+    assert isinstance(result, PlotResult)
+    assert seen["subset_n_genes"] == 2
+    plt.close(result.fig)
+
+
+def test_apply_scale_to_synth_scanpy_matches_manual():
+    """Synthetic rows should match Scanpy-style (x - mean) / std clipping."""
+    import scribe.viz.umap as umap_module
+
+    rng = np.random.default_rng(0)
+    synth_norm = rng.random(size=(4, 3))
+    mean = np.array([0.1, 0.2, 0.3])
+    std = np.array([0.5, 1.0, 2.0])
+    scale_meta = {
+        "kind": "scanpy",
+        "mean": mean,
+        "std": std,
+        "max_value": 10.0,
+    }
+    out = umap_module._apply_scale_to_synth(synth_norm, scale_meta)
+    expected = (synth_norm - mean) / std
+    expected = np.clip(expected, -10.0, 10.0)
+    np.testing.assert_allclose(out, expected)
+
+
 def test_plot_bio_ppc_aligns_counts_subset_with_results_order(
     monkeypatch, tmp_path
 ):
@@ -912,7 +1061,7 @@ def test_plot_mu_pairwise_saves_output_for_multi_dataset(monkeypatch, tmp_path):
 
     assert isinstance(result, PlotResult)
     assert result.output_path is not None
-    assert result.output_path.endswith("_mu_pairwise.png")
+    assert result.output_path.endswith("_mean_pairwise.png")
     assert seen_targets == [["mu"], ["mixing_weights"]]
 
 

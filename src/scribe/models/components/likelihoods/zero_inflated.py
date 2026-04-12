@@ -14,6 +14,7 @@ import numpyro.distributions as dist
 
 from .base import (
     Likelihood,
+    build_mixture_general,
     broadcast_param_for_mixture,
     compute_cell_specific_mixing,
     index_dataset_params,
@@ -116,7 +117,7 @@ class ZeroInflatedNBLikelihood(Likelihood):
 
         if is_mixture:
             # ================================================================
-            # Mixture model: use MixtureSameFamily
+            # Mixture model: use MixtureGeneral for NumPyro>=0.20 compatibility
             # ================================================================
             mixing_weights = param_values["mixing_weights"]
             mixing_dist = dist.Categorical(probs=mixing_weights)
@@ -125,11 +126,15 @@ class ZeroInflatedNBLikelihood(Likelihood):
             p = broadcast_param_for_mixture(p, r)
             gate = broadcast_param_for_mixture(gate, r)
 
-            base_nb = self._make_count_dist(r, p)
-            zinb_base = dist.ZeroInflatedDistribution(
-                base_nb, gate=gate
-            ).to_event(1)
-            return dist.MixtureSameFamily(mixing_dist, zinb_base)
+            return build_mixture_general(
+                mixing_dist,
+                lambda comp_idx: dist.ZeroInflatedDistribution(
+                    self._make_count_dist(
+                        r[..., comp_idx, :], p[..., comp_idx, :]
+                    ),
+                    gate=gate[..., comp_idx, :],
+                ).to_event(1),
+            )
 
         base_nb = self._make_count_dist(r, p)
         return dist.ZeroInflatedDistribution(base_nb, gate=gate).to_event(1)
@@ -155,7 +160,7 @@ class ZeroInflatedNBLikelihood(Likelihood):
         Returns
         -------
         dist.Distribution
-            A ``MixtureSameFamily`` distribution with cell-specific
+            A ``MixtureGeneral`` distribution with cell-specific
             ``Categorical`` mixing.
         """
         mixing_weights = param_values["mixing_weights"]
@@ -172,11 +177,15 @@ class ZeroInflatedNBLikelihood(Likelihood):
         p = broadcast_param_for_mixture(p, r)
         gate = broadcast_param_for_mixture(gate, r)
 
-        base_nb = self._make_count_dist(r, p)
-        zinb_base = dist.ZeroInflatedDistribution(base_nb, gate=gate).to_event(
-            1
+        return build_mixture_general(
+            mixing_dist,
+            lambda comp_idx: dist.ZeroInflatedDistribution(
+                self._make_count_dist(
+                    r[..., comp_idx, :], p[..., comp_idx, :]
+                ),
+                gate=gate[..., comp_idx, :],
+            ).to_event(1),
         )
-        return dist.MixtureSameFamily(mixing_dist, zinb_base)
 
     # --------------------------------------------------------------------------
 
@@ -225,7 +234,30 @@ class ZeroInflatedNBLikelihood(Likelihood):
             # Multi-dataset path: per-dataset params indexed inside plate
             # ----------------------------------------------------------------
             if use_dataset_indexing:
-                if counts is None:
+                # batch_size takes priority so the model plate matches
+                # the guide plate during batched posterior sampling.
+                if batch_size is not None:
+                    # Batch mode: subsample cells and dataset_indices
+                    # together; obs may or may not exist.
+                    with numpyro.plate(
+                        "cells", n_cells, subsample_size=batch_size
+                    ) as idx:
+                        for spec in cell_specs:
+                            sample_prior(spec, dims, model_config)
+                        cell_pv = index_dataset_params(
+                            param_values,
+                            dataset_indices[idx],
+                            n_datasets,
+                            param_specs=model_config.param_specs,
+                        )
+                        obs = counts[idx] if counts is not None else None
+                        numpyro.sample(
+                            "counts",
+                            self._build_dist(cell_pv),
+                            obs=obs,
+                        )
+                elif counts is None:
+                    # Prior predictive: full plate, index all cells.
                     with numpyro.plate("cells", n_cells):
                         for spec in cell_specs:
                             sample_prior(spec, dims, model_config)
@@ -236,7 +268,8 @@ class ZeroInflatedNBLikelihood(Likelihood):
                             param_specs=model_config.param_specs,
                         )
                         numpyro.sample("counts", self._build_dist(cell_pv))
-                elif batch_size is None:
+                else:
+                    # Full dataset: observe all counts, full plate.
                     with numpyro.plate("cells", n_cells):
                         for spec in cell_specs:
                             sample_prior(spec, dims, model_config)
@@ -251,46 +284,16 @@ class ZeroInflatedNBLikelihood(Likelihood):
                             self._build_dist(cell_pv),
                             obs=counts,
                         )
-                else:
-                    with numpyro.plate(
-                        "cells", n_cells, subsample_size=batch_size
-                    ) as idx:
-                        for spec in cell_specs:
-                            sample_prior(spec, dims, model_config)
-                        cell_pv = index_dataset_params(
-                            param_values,
-                            dataset_indices[idx],
-                            n_datasets,
-                            param_specs=model_config.param_specs,
-                        )
-                        numpyro.sample(
-                            "counts",
-                            self._build_dist(cell_pv),
-                            obs=counts[idx],
-                        )
                 return
 
             # ----------------------------------------------------------------
             # Annotation prior path: must build dist inside the cell plate
             # ----------------------------------------------------------------
             if use_annotation:
-                if counts is None:
-                    with numpyro.plate("cells", n_cells):
-                        for spec in cell_specs:
-                            sample_prior(spec, dims, model_config)
-                        cell_dist = self._build_annotated_mixture_dist(
-                            param_values, annotation_prior_logits
-                        )
-                        numpyro.sample("counts", cell_dist)
-                elif batch_size is None:
-                    with numpyro.plate("cells", n_cells):
-                        for spec in cell_specs:
-                            sample_prior(spec, dims, model_config)
-                        cell_dist = self._build_annotated_mixture_dist(
-                            param_values, annotation_prior_logits
-                        )
-                        numpyro.sample("counts", cell_dist, obs=counts)
-                else:
+                # batch_size takes priority so the model plate matches
+                # the guide plate during batched posterior sampling.
+                if batch_size is not None:
+                    # Batch mode: subsample cells; obs may or may not exist.
                     with numpyro.plate(
                         "cells", n_cells, subsample_size=batch_size
                     ) as idx:
@@ -299,7 +302,26 @@ class ZeroInflatedNBLikelihood(Likelihood):
                         cell_dist = self._build_annotated_mixture_dist(
                             param_values, annotation_prior_logits[idx]
                         )
-                        numpyro.sample("counts", cell_dist, obs=counts[idx])
+                        obs = counts[idx] if counts is not None else None
+                        numpyro.sample("counts", cell_dist, obs=obs)
+                elif counts is None:
+                    # Prior predictive: sample counts from prior, full plate.
+                    with numpyro.plate("cells", n_cells):
+                        for spec in cell_specs:
+                            sample_prior(spec, dims, model_config)
+                        cell_dist = self._build_annotated_mixture_dist(
+                            param_values, annotation_prior_logits
+                        )
+                        numpyro.sample("counts", cell_dist)
+                else:
+                    # Full dataset: observe all counts, full plate.
+                    with numpyro.plate("cells", n_cells):
+                        for spec in cell_specs:
+                            sample_prior(spec, dims, model_config)
+                        cell_dist = self._build_annotated_mixture_dist(
+                            param_values, annotation_prior_logits
+                        )
+                        numpyro.sample("counts", cell_dist, obs=counts)
                 return
 
             # ----------------------------------------------------------------
@@ -307,48 +329,64 @@ class ZeroInflatedNBLikelihood(Likelihood):
             # ----------------------------------------------------------------
             base_dist = self._build_dist(param_values)
 
-            if counts is None:
-                with numpyro.plate("cells", n_cells):
-                    for spec in cell_specs:
-                        sample_prior(spec, dims, model_config)
-                    numpyro.sample("counts", base_dist)
-            elif batch_size is None:
-                with numpyro.plate("cells", n_cells):
-                    for spec in cell_specs:
-                        sample_prior(spec, dims, model_config)
-                    numpyro.sample("counts", base_dist, obs=counts)
-            else:
+            # batch_size takes priority so the model plate matches
+            # the guide plate during batched posterior sampling.
+            if batch_size is not None:
+                # Batch mode: subsample cells; obs may or may not exist.
                 with numpyro.plate(
                     "cells", n_cells, subsample_size=batch_size
                 ) as idx:
                     for spec in cell_specs:
                         sample_prior(spec, dims, model_config)
-                    numpyro.sample("counts", base_dist, obs=counts[idx])
+                    obs = counts[idx] if counts is not None else None
+                    numpyro.sample("counts", base_dist, obs=obs)
+            elif counts is None:
+                # Prior predictive: sample counts from prior, full plate.
+                with numpyro.plate("cells", n_cells):
+                    for spec in cell_specs:
+                        sample_prior(spec, dims, model_config)
+                    numpyro.sample("counts", base_dist)
+            else:
+                # Full dataset: observe all counts, full plate.
+                with numpyro.plate("cells", n_cells):
+                    for spec in cell_specs:
+                        sample_prior(spec, dims, model_config)
+                    numpyro.sample("counts", base_dist, obs=counts)
             return
 
         # === VAE path: Decoder and prior logic run inside plate, distribution
         # built per cell/batch ===
-        if counts is None:
+        # batch_size takes priority so the model plate matches the guide
+        # plate during batched posterior sampling.
+        if batch_size is not None:
+            # Batch mode: run decoder for subsampled cell indices;
+            # obs may or may not exist (counts=None during posterior sampling).
+            with numpyro.plate(
+                "cells", n_cells, subsample_size=batch_size
+            ) as idx:
+                # 1. Update param_values with decoder-driven values for batch.
+                param_values.update(vae_cell_fn(idx))
+                # 2. Sample any remaining (non-decoder) cell parameters.
+                for spec in cell_specs:
+                    sample_prior(spec, dims, model_config)
+                # 3. Observe minibatched counts when available.
+                obs = counts[idx] if counts is not None else None
+                numpyro.sample(
+                    "counts", self._build_dist(param_values), obs=obs
+                )
+        elif counts is None:
+            # Prior predictive: run decoder for all cells, sample from prior.
             with numpyro.plate("cells", n_cells):
                 param_values.update(vae_cell_fn(None))
                 for spec in cell_specs:
                     sample_prior(spec, dims, model_config)
                 numpyro.sample("counts", self._build_dist(param_values))
-        elif batch_size is None:
+        else:
+            # Full data: run decoder for all cells, observe all counts.
             with numpyro.plate("cells", n_cells):
                 param_values.update(vae_cell_fn(None))
                 for spec in cell_specs:
                     sample_prior(spec, dims, model_config)
                 numpyro.sample(
                     "counts", self._build_dist(param_values), obs=counts
-                )
-        else:
-            with numpyro.plate(
-                "cells", n_cells, subsample_size=batch_size
-            ) as idx:
-                param_values.update(vae_cell_fn(idx))
-                for spec in cell_specs:
-                    sample_prior(spec, dims, model_config)
-                numpyro.sample(
-                    "counts", self._build_dist(param_values), obs=counts[idx]
                 )

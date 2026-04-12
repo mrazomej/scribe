@@ -48,7 +48,7 @@ RUN ls -la /app && ls -la /app/src && ls -la /app/src/scribe
 # Install dependencies using uv with the system Python
 ENV PYTHONPATH=/usr/lib/python3/dist-packages
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system --break-system-packages -e ".[dev]" --group dev
+    uv pip install --system --break-system-packages -e ".[hydra]" --group dev
 
 # Set the locale for UTF-8 used for Sphinx docs
 ENV LANG=C.UTF-8

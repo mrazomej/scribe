@@ -166,6 +166,7 @@ Optional fields:
 | Field | Description |
 |-------|-------------|
 | `layer` | AnnData layer name when counts are not in `adata.X` |
+| `dataset_key` | Column in `adata.obs` identifying dataset membership (used for dataset-level hierarchical priors); overrides global `dataset_key` when set |
 | `split_by` | Column in `adata.obs` for automatic split orchestration |
 | `filter_obs` | Pre-filter observations before fitting (dict of column → allowed values) |
 | `preprocessing` | Scanpy-like pipeline (`filter_cells`, `filter_genes`, `normalize_total`, `log1p`, `highly_variable_genes`) |
@@ -257,7 +258,7 @@ scribe-infer --slurm-profile default \
 | `mem_gb` | `64` | Memory in GB |
 | `timeout_min` | `240` | Wall-time limit in minutes |
 | `array_parallelism` | `1` | Max concurrent array jobs (split mode) |
-| `job_name` | `scribe_infer` | SLURM job name |
+| `job_name` | `scribe-infer` | SLURM job name |
 | `submitit_folder` | `slurm_logs/submitit/%j` | Log directory |
 | `gres` | `null` | Generic resources (e.g., `gpu:1`) |
 | `launcher_overrides` | `{}` | Escape hatch for cluster-specific submitit keys |

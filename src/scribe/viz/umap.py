@@ -17,6 +17,73 @@ from ._interactive import (
 from .gene_selection import _coerce_counts
 
 
+def _scanpy_umap_pipeline_available(sc_module):
+    """Return True if Scanpy exposes scale, PCA, neighbors, UMAP, and ingest.
+
+    In minimal test environments, ``scanpy`` may be partially mocked; this
+    gates the full graph-based UMAP path so a sklearn + umap-learn fallback
+    remains available.
+
+    Parameters
+    ----------
+    sc_module
+        The imported ``scanpy`` module, or ``None``.
+
+    Returns
+    -------
+    bool
+        Whether the full pipeline API is present.
+    """
+    if sc_module is None:
+        return False
+    try:
+        return (
+            hasattr(sc_module.pp, "scale")
+            and hasattr(sc_module.pp, "neighbors")
+            and hasattr(sc_module.pp, "pca")
+            and hasattr(sc_module.tl, "umap")
+            and hasattr(sc_module.tl, "ingest")
+        )
+    except AttributeError:
+        return False
+
+
+def _apply_scale_to_synth(synth_norm, scale_meta):
+    """Apply the same scaling used on experimental cells to synthetic counts.
+
+    Parameters
+    ----------
+    synth_norm : ndarray
+        Log-normalized synthetic matrix ``(n_cells, n_genes)``.
+    scale_meta : dict
+        Output from the experimental scaling step (``kind`` and parameters).
+
+    Returns
+    -------
+    ndarray
+        Scaled matrix ready for PCA or UMAP projection.
+    """
+    kind = scale_meta.get("kind", "none")
+    if kind == "none":
+        return synth_norm
+    if kind == "scanpy":
+        mean = scale_meta["mean"]
+        std = scale_meta["std"]
+        max_value = scale_meta.get("max_value")
+        out = (synth_norm - mean) / std
+        if max_value is not None:
+            out = np.clip(out, -max_value, max_value)
+        return out
+    if kind == "sklearn":
+        scaler = scale_meta["scaler"]
+        max_value = scale_meta.get("max_value")
+        out = scaler.transform(synth_norm)
+        if max_value is not None:
+            out = np.clip(out, -max_value, max_value)
+        return out
+    return synth_norm
+
+
 @plot_function(
     suffix="umap",
     save_label="UMAP plot",
@@ -37,8 +104,35 @@ def plot_umap(
     """Plot UMAP projection of experimental and synthetic data.
 
     The embedding follows a Scanpy-style preprocessing workflow before fitting
-    UMAP. The same learned preprocessing is applied to synthetic counts before
-    projection.
+    UMAP: log-normalization, optional highly-variable gene selection,
+    :func:`scanpy.pp.scale` (z-score per gene with optional clipping),
+    :func:`scanpy.pp.pca`, :func:`scanpy.pp.neighbors`, and
+    :func:`scanpy.tl.umap` on the neighborhood graph. Synthetic counts use the
+    same scaling statistics and are placed in the embedding with
+    :func:`scanpy.tl.ingest`. When Scanpy is unavailable or partially mocked,
+    the code falls back to scikit-learn scaling/PCA and ``umap-learn`` on the
+    PC matrix (previous behavior, plus scaling).
+
+    Parameters
+    ----------
+    results
+        Fitted SCRIBE results object (posterior predictive sampling uses a
+        gene subset consistent with HVG selection).
+    counts
+        Observed count matrix aligned with ``results``.
+    ctx
+        Plot context (configuration paths, output dirs).
+    viz_cfg : dict-like, optional
+        May include ``umap_opts`` with keys such as ``n_neighbors``,
+        ``min_dist``, ``spread``, ``use_scale``, ``scale_max_value``,
+        ``use_pca``, ``pca_n_comps``, ``hvg_n_top_genes``, ``cache_umap``,
+        ``n_ppc_samples``, and color overrides.
+    force_refit : bool, optional
+        If True, ignore cache and recompute the embedding.
+    figsize : tuple of float, optional
+        Figure size ``(width, height)`` in inches.
+    fig, axes, ax : optional
+        Matplotlib objects for embedding the plot (see ``plot_function``).
 
     Returns
     -------
@@ -60,6 +154,7 @@ def plot_umap(
 
     n_neighbors = umap_opts.get("n_neighbors", 15)
     min_dist = umap_opts.get("min_dist", 0.1)
+    spread = umap_opts.get("spread", 1.0)
     n_components = umap_opts.get("n_components", 2)
     random_state = umap_opts.get("random_state", 42)
     data_color = umap_opts.get("data_color", "dark_blue")
@@ -73,6 +168,8 @@ def plot_umap(
     use_pca = bool(umap_opts.get("use_pca", True))
     pca_n_comps = int(umap_opts.get("pca_n_comps", 50))
     n_ppc_samples = int(umap_opts.get("n_ppc_samples", 1))
+    use_scale = bool(umap_opts.get("use_scale", True))
+    scale_max_value = umap_opts.get("scale_max_value", 10.0)
 
     if force_refit:
         console.print(
@@ -93,13 +190,17 @@ def plot_umap(
                 "[yellow]⚠️[/yellow] [yellow]scanpy/anndata not available; skipping HVG selection and using all retained genes[/yellow]"
             )
 
+    scanpy_full = _scanpy_umap_pipeline_available(sc) if has_scanpy else False
+
     try:
         from sklearn.decomposition import PCA
+        from sklearn.preprocessing import StandardScaler
 
         has_sklearn = True
     except ImportError:
         has_sklearn = False
         PCA = None
+        StandardScaler = None
         if use_pca:
             console.print(
                 "[yellow]⚠️[/yellow] [yellow]scikit-learn not available; skipping PCA and fitting UMAP directly on gene space[/yellow]"
@@ -128,6 +229,7 @@ def plot_umap(
     current_params = {
         "n_neighbors": n_neighbors,
         "min_dist": min_dist,
+        "spread": spread,
         "n_components": n_components,
         "random_state": random_state,
         "target_sum": target_sum,
@@ -137,6 +239,8 @@ def plot_umap(
         "hvg_flavor": hvg_flavor,
         "use_pca": use_pca,
         "pca_n_comps": pca_n_comps,
+        "use_scale": use_scale,
+        "scale_max_value": scale_max_value,
         "n_cells": counts.shape[0],
         "n_genes": counts.shape[1],
         "subset_column": subset_column,
@@ -148,6 +252,9 @@ def plot_umap(
     gene_mask = None
     hvg_mask = None
     pca_model = None
+    adata_ref = None
+    scale_meta = {"kind": "none"}
+    pipeline_kind = "fallback"
 
     if cache_path and os.path.exists(cache_path) and not force_refit:
         console.print(
@@ -168,6 +275,9 @@ def plot_umap(
                 gene_mask = cached_pre.get("gene_mask")
                 hvg_mask = cached_pre.get("hvg_mask")
                 pca_model = cached_pre.get("pca_model")
+                scale_meta = cached_pre.get("scale_meta", {"kind": "none"})
+                adata_ref = cached_pre.get("adata_ref")
+                pipeline_kind = cached_pre.get("pipeline_kind", "fallback")
 
                 valid_masks = (
                     gene_mask is not None
@@ -180,11 +290,23 @@ def plot_umap(
                     console.print(
                         "[yellow]⚠️[/yellow] [yellow]Cached preprocessing metadata invalid - will re-fit UMAP[/yellow]"
                     )
+                    adata_ref = None
+                elif pipeline_kind == "scanpy" and adata_ref is None:
+                    console.print(
+                        "[yellow]⚠️[/yellow] [yellow]Cached Scanpy pipeline missing reference AnnData - will re-fit UMAP[/yellow]"
+                    )
+                elif (
+                    pipeline_kind == "fallback"
+                    and cached.get("reducer") is None
+                ):
+                    console.print(
+                        "[yellow]⚠️[/yellow] [yellow]Cached fallback pipeline missing reducer - will re-fit UMAP[/yellow]"
+                    )
                 else:
                     console.print(
                         "[green]✅[/green] [dim]Cache valid - loading UMAP from cache...[/dim]"
                     )
-                    umap_reducer = cached["reducer"]
+                    umap_reducer = cached.get("reducer")
                     umap_embedding = cached["embedding"]
             elif params_match and not has_preprocessing:
                 console.print(
@@ -201,7 +323,20 @@ def plot_umap(
                 f"[yellow]⚠️[/yellow] [yellow]Failed to load cache: {e} - will re-fit UMAP[/yellow]"
             )
 
-    if umap_reducer is None:
+    # Graph-based Scanpy UMAP + ingest requires a real Scanpy install (not a stub).
+    if (
+        umap_embedding is not None
+        and pipeline_kind == "scanpy"
+        and not scanpy_full
+    ):
+        console.print(
+            "[yellow]⚠️[/yellow] [yellow]Cached graph UMAP requires full Scanpy; "
+            "will re-fit UMAP[/yellow]"
+        )
+        umap_embedding = None
+        umap_reducer = None
+
+    if umap_embedding is None:
         console.print(
             "[dim]Preparing experimental data with Scanpy-style preprocessing...[/dim]"
         )
@@ -258,37 +393,137 @@ def plot_umap(
             f"[dim]Embedding feature space: {counts_embed.shape[1]} genes[/dim]"
         )
 
-        embedding_input = counts_embed
-        pca_model = None
-        if use_pca and has_sklearn and counts_embed.shape[1] > 1:
+        # --- Per-gene scaling (Scanpy pp.scale) before PCA / neighbors ---
+        scale_meta = {"kind": "none"}
+        counts_scaled = counts_embed
+        if use_scale and has_scanpy and scanpy_full:
+            console.print(
+                f"[dim]Scaling with scanpy.pp.scale "
+                f"(max_value={scale_max_value})...[/dim]"
+            )
+            adata_scale = ad.AnnData(X=counts_embed.copy())
+            adata_scale.var_names = [
+                f"gene_{i}" for i in range(adata_scale.n_vars)
+            ]
+            sc.pp.scale(
+                adata_scale,
+                max_value=scale_max_value,
+                zero_center=True,
+            )
+            counts_scaled = np.asarray(adata_scale.X, dtype=np.float64)
+            scale_meta = {
+                "kind": "scanpy",
+                "mean": adata_scale.var["mean"].to_numpy(dtype=np.float64),
+                "std": adata_scale.var["std"].to_numpy(dtype=np.float64),
+                "max_value": scale_max_value,
+            }
+        elif use_scale and has_sklearn and StandardScaler is not None:
+            console.print(
+                f"[dim]Scaling with sklearn StandardScaler "
+                f"(clip ±{scale_max_value})...[/dim]"
+            )
+            scaler = StandardScaler(with_mean=True, with_std=True)
+            counts_scaled = scaler.fit_transform(counts_embed)
+            if scale_max_value is not None:
+                counts_scaled = np.clip(
+                    counts_scaled, -scale_max_value, scale_max_value
+                )
+            scale_meta = {
+                "kind": "sklearn",
+                "scaler": scaler,
+                "max_value": scale_max_value,
+            }
+        elif use_scale and not has_sklearn:
+            console.print(
+                "[yellow]⚠️[/yellow] [yellow]Cannot scale without scanpy or sklearn; using log-normalized matrix[/yellow]"
+            )
+
+        # --- Scanpy: PCA -> neighbors -> graph UMAP; else umap-learn on PCs ---
+        did_scanpy_graph = False
+        if scanpy_full and use_pca and has_sklearn:
             max_pcs = min(
                 pca_n_comps,
-                counts_embed.shape[1],
-                max(1, counts_embed.shape[0] - 1),
+                counts_scaled.shape[1],
+                max(1, counts_scaled.shape[0] - 1),
             )
             if max_pcs >= 2:
                 console.print(
-                    f"[dim]Running PCA before UMAP (n_components={max_pcs})...[/dim]"
+                    "[dim]Fitting Scanpy graph UMAP (scale → PCA → neighbors → "
+                    f"tl.umap; n_neighbors={n_neighbors}, min_dist={min_dist}, "
+                    f"spread={spread})...[/dim]"
                 )
-                pca_model = PCA(n_components=max_pcs, random_state=random_state)
-                embedding_input = pca_model.fit_transform(counts_embed)
+                adata_ref = ad.AnnData(X=counts_scaled.copy())
+                adata_ref.var_names = [
+                    f"gene_{i}" for i in range(adata_ref.n_vars)
+                ]
+                sc.pp.pca(
+                    adata_ref,
+                    n_comps=max_pcs,
+                    random_state=random_state,
+                )
+                sc.pp.neighbors(
+                    adata_ref,
+                    n_neighbors=n_neighbors,
+                    n_pcs=max_pcs,
+                    random_state=random_state,
+                )
+                sc.tl.umap(
+                    adata_ref,
+                    min_dist=min_dist,
+                    spread=spread,
+                    random_state=random_state,
+                )
+                umap_embedding = np.asarray(adata_ref.obsm["X_umap"])
+                pipeline_kind = "scanpy"
+                pca_model = None
+                did_scanpy_graph = True
             else:
                 console.print(
-                    "[yellow]⚠️[/yellow] [yellow]Too few components/cells for PCA; fitting UMAP directly on gene space[/yellow]"
+                    "[yellow]⚠️[/yellow] [yellow]Too few components/cells for PCA; "
+                    "using fallback UMAP on scaled gene space[/yellow]"
                 )
 
-        console.print(
-            f"[dim]Fitting UMAP on experimental data "
-            f"(n_neighbors={n_neighbors}, min_dist={min_dist})...[/dim]"
-        )
+        if not did_scanpy_graph:
+            embedding_input = counts_scaled
+            pca_model = None
+            if use_pca and has_sklearn and counts_scaled.shape[1] > 1:
+                max_pcs = min(
+                    pca_n_comps,
+                    counts_scaled.shape[1],
+                    max(1, counts_scaled.shape[0] - 1),
+                )
+                if max_pcs >= 2:
+                    console.print(
+                        f"[dim]Running PCA before UMAP (n_components={max_pcs})...[/dim]"
+                    )
+                    pca_model = PCA(
+                        n_components=max_pcs, random_state=random_state
+                    )
+                    embedding_input = pca_model.fit_transform(counts_scaled)
+                else:
+                    console.print(
+                        "[yellow]⚠️[/yellow] [yellow]Too few components/cells for PCA; fitting UMAP directly on scaled gene space[/yellow]"
+                    )
+            elif not use_pca:
+                console.print(
+                    "[dim]Skipping PCA; fitting UMAP on scaled log-expression[/dim]"
+                )
 
-        umap_reducer = umap.UMAP(
-            n_components=n_components,
-            n_neighbors=n_neighbors,
-            min_dist=min_dist,
-            random_state=random_state,
-        )
-        umap_embedding = umap_reducer.fit_transform(embedding_input)
+            console.print(
+                f"[dim]Fitting UMAP on experimental data "
+                f"(n_neighbors={n_neighbors}, min_dist={min_dist})...[/dim]"
+            )
+
+            umap_reducer = umap.UMAP(
+                n_components=n_components,
+                n_neighbors=n_neighbors,
+                min_dist=min_dist,
+                spread=spread,
+                random_state=random_state,
+            )
+            umap_embedding = umap_reducer.fit_transform(embedding_input)
+            pipeline_kind = "fallback"
+            adata_ref = None
 
         if cache_path:
             console.print(
@@ -303,6 +538,9 @@ def plot_umap(
                         "gene_mask": gene_mask,
                         "hvg_mask": hvg_mask,
                         "pca_model": pca_model,
+                        "scale_meta": scale_meta,
+                        "adata_ref": adata_ref,
+                        "pipeline_kind": pipeline_kind,
                     },
                 }
                 with open(cache_path, "wb") as f:
@@ -320,13 +558,17 @@ def plot_umap(
         f"synthetic dataset...[/dim]"
     )
 
-    batch_size = umap_opts.get("batch_size", None)
-    gene_mask_indices = np.where(gene_mask)[0]
-    results_sub = results[gene_mask_indices]
+    # Use the exact same feature space for synthetic PPC generation as for
+    # UMAP fitting: detected genes followed by optional HVG selection.
+    # This avoids sampling thousands of genes that are later discarded before
+    # projection and keeps runtime aligned with `hvg_n_top_genes`.
+    detected_gene_indices = np.where(gene_mask)[0]
+    umap_gene_indices = detected_gene_indices[np.asarray(hvg_mask, dtype=bool)]
+    results_sub = results[umap_gene_indices]
 
     console.print(
-        f"[dim]Gene-subsetted results to {int(gene_mask.sum())} detected "
-        f"genes (out of {len(gene_mask)})[/dim]"
+        f"[dim]Gene-subsetted results to {len(umap_gene_indices)} UMAP genes "
+        f"(detected={int(gene_mask.sum())}, total={len(gene_mask)})[/dim]"
     )
 
     all_umap_synthetic = []
@@ -335,18 +577,27 @@ def plot_umap(
             results_sub,
             rng_key=random.PRNGKey(42 + i),
             n_samples=1,
-            batch_size=batch_size or 1000,
             store_samples=False,
             counts=counts,
         )
 
         synth_i = np.array(sample_arr[0, :, :], dtype=np.float64)
         synth_norm = _normalize_log1p(synth_i)
-        synth_embed = synth_norm[:, hvg_mask]
-        if pca_model is not None:
-            synth_embed = pca_model.transform(synth_embed)
+        # Results were already subset to UMAP feature genes above.
+        synth_scaled = _apply_scale_to_synth(synth_norm, scale_meta)
 
-        all_umap_synthetic.append(umap_reducer.transform(synth_embed))
+        if pipeline_kind == "scanpy" and adata_ref is not None and scanpy_full:
+            adata_synth = ad.AnnData(X=synth_scaled.copy())
+            adata_synth.var_names = adata_ref.var_names.copy()
+            sc.tl.ingest(adata_synth, adata_ref, embedding_method="umap")
+            proj = np.asarray(adata_synth.obsm["X_umap"])
+        else:
+            synth_embed = synth_scaled
+            if pca_model is not None:
+                synth_embed = pca_model.transform(synth_embed)
+            proj = umap_reducer.transform(synth_embed)
+
+        all_umap_synthetic.append(proj)
 
         if (i + 1) % max(1, n_ppc_samples // 5) == 0 or i == n_ppc_samples - 1:
             console.print(
@@ -369,10 +620,13 @@ def plot_umap(
         figsize=figsize or (6.0, 6.0),
     )
 
+    # Use color= not c= so a single RGB/RGBA tuple is not mistaken for per-point
+    # values (see Matplotlib scatter UserWarning for c= with length-3/4
+    # sequences).
     ax.scatter(
         umap_embedding[:, 0],
         umap_embedding[:, 1],
-        c=data_color,
+        color=data_color,
         alpha=0.6,
         s=1,
         label="experimental data",
@@ -381,7 +635,7 @@ def plot_umap(
     ax.scatter(
         umap_synthetic[:, 0],
         umap_synthetic[:, 1],
-        c=synthetic_color,
+        color=synthetic_color,
         alpha=synth_alpha,
         s=synth_size,
         label=f"synthetic data ({n_ppc_samples} sample{'s' if n_ppc_samples > 1 else ''})",

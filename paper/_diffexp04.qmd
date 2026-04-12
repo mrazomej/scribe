@@ -5,455 +5,491 @@ bibliography: references.bib
 csl: ieee.csl
 ---
 
-## Gene-Level Differential Expression
+## Bayesian Error Control {#sec-diffexp-pefp}
 
-Having developed the machinery for transforming Gaussian distributions between
-coordinate systems, we now turn to the central question: how do we quantify
-differential expression between two experimental conditions? In this section, we
-derive the posterior distribution of gene-level differences and show how to
-compute key statistics—posterior means, standard deviations, tail probabilities,
-and the local false sign rate.
+The empirical CLR pipeline developed in the preceding section produces a local
+false sign rate (lfsr) for every gene in the genome. Each lfsr$_g$ quantifies
+the posterior probability that gene $g$'s differential expression has been
+assigned the wrong sign---a fully Bayesian measure of evidence that requires no
+distributional assumptions. With $D \approx 30{,}000$ genes, however, we need a
+principled approach to decide which genes to declare as differentially expressed
+while controlling the overall error rate.
 
-### Posterior Distribution of Differences
+In this section, we develop the posterior expected false discovery proportion
+(PEFP), a Bayesian analog of the false discovery rate, and derive an efficient
+algorithm for finding lfsr thresholds that control PEFP at a specified level.
+The PEFP framework operates exclusively on numerical lfsr values and is agnostic
+to how they were computed---whether by empirical counting over posterior
+samples, by evaluation of the Gaussian CDF in the parametric path, or by the
+empirical Bayes shrinkage layer. This modularity is a deliberate design feature:
+any method that produces valid lfsr values can feed directly into the error
+control machinery developed here.
 
-#### Setup and assumptions
+In the previous sections, we developed methods for computing local false sign
+rates (lfsr) for individual genes and gene sets. These quantities provide
+gene-specific measures of evidence for differential expression. However, in
+practice, we often wish to declare a set of genes as "significantly
+differentially expressed" and control the overall error rate across this set. In
+this section, we develop fully Bayesian methods for controlling the expected
+proportion of false discoveries.
 
-Suppose we have performed inference on two experimental conditions, A and B,
-yielding fitted logistic-normal models in ALR space:
+### Posterior Expected False Discovery Proportion
 
-$$
-\underline{z}_A \sim \mathcal{N}(\underline{\mu}_A, 
-\underline{\underline{\Sigma}}_A), \quad 
-\underline{z}_B \sim \mathcal{N}(\underline{\mu}_B, 
-\underline{\underline{\Sigma}}_B),
-$${#eq-diffexp-models-alr}
+#### The multiple testing problem
 
-where both covariance matrices have the low-rank plus diagonal structure:
+Suppose we compute lfsr values for all $D$ genes, yielding $\{\text{lfsr}_1,
+\text{lfsr}_2, \ldots, \text{lfsr}_D\}$. We wish to select a subset $S \subseteq
+\{1, 2, \ldots, D\}$ of genes to declare as differentially expressed, based on
+some criterion. A natural criterion is to threshold the lfsr: genes with
+$\text{lfsr}_g < t$ for some threshold $t$ are declared significant.
 
-$$
-\underline{\underline{\Sigma}}_A = \underline{\underline{W}}_A 
-\underline{\underline{W}}_A^{\top} + \text{diag}(\underline{d}_A), \quad 
-\underline{\underline{\Sigma}}_B = \underline{\underline{W}}_B 
-\underline{\underline{W}}_B^{\top} + \text{diag}(\underline{d}_B).
-$${#eq-diffexp-covariances-lowrank}
-
-Following the transformations developed in the previous section, we obtain CLR
-representations:
-
-$$
-\underline{z}_{A,\text{CLR}} \sim \mathcal{N}(\underline{\mu}_{A,\text{CLR}}, 
-\underline{\underline{\Sigma}}_{A,\text{CLR}}), \quad 
-\underline{z}_{B,\text{CLR}} \sim \mathcal{N}(\underline{\mu}_{B,\text{CLR}}, 
-\underline{\underline{\Sigma}}_{B,\text{CLR}}).
-$${#eq-diffexp-models-clr}
-
-We make the standard assumption that the two conditions are independent:
-$\underline{z}_A \perp \underline{z}_B$. This is justified when the two
-conditions come from independent biological replicates or non-overlapping cell
-populations.
-
-#### Distribution of the difference
-
-Define the difference in CLR coordinates as
+The key question is: how do we choose the threshold $t$ to control the error
+rate? In the frequentist framework, the false discovery rate (FDR) provides a
+widely-used error measure [@benjamini1995]. The FDR is the expected proportion
+of false discoveries among all discoveries:
 
 $$
-\underline{\Delta} = \underline{z}_{A,\text{CLR}} - 
-\underline{z}_{B,\text{CLR}}.
-$${#eq-diffexp-delta-definition}
+\text{FDR} = \langle \frac{V}{R} \rangle,
+$${#eq-diffexp-fdr-definition}
 
-Since $\underline{z}_{A,\text{CLR}}$ and $\underline{z}_{B,\text{CLR}}$ are
-independent Gaussian random vectors, their difference is also Gaussian. The mean
-and covariance of $\underline{\Delta}$ follow from standard properties of
-Gaussian distributions.
+where $V$ is the number of false discoveries and $R$ is the total number of
+discoveries, with the convention that $V/R = 0$ if $R = 0$.
 
-**Mean of the difference.** Using linearity of expectation:
+In a Bayesian framework, we replace the frequentist expectation with a posterior
+expectation, leading to the *posterior expected false discovery proportion*
+(PEFP).
 
-$$
-\langle \underline{\Delta} \rangle = \langle \underline{z}_{A,\text{CLR}} \rangle - 
-\langle \underline{z}_{B,\text{CLR}} \rangle = 
-\underline{\mu}_{A,\text{CLR}} - \underline{\mu}_{B,\text{CLR}}.
-$${#eq-diffexp-delta-mean}
+#### Definition of PEFP
 
-**Covariance of the difference.** Using the independence assumption and the
-bilinearity of covariance:
+Let $S$ denote the set of genes declared as differentially expressed. For each
+gene $g$, define the indicator
 
 $$
-\text{Cov}(\underline{\Delta}) = 
-\text{Cov}(\underline{z}_{A,\text{CLR}} - \underline{z}_{B,\text{CLR}}) = 
-\text{Cov}(\underline{z}_{A,\text{CLR}}) + \text{Cov}(\underline{z}_{B,\text{CLR}}).
-$${#eq-diffexp-delta-cov-step1}
+V_g = \begin{cases} 1 & \text{if gene } g \text{ is a false discovery}, \\
+0 & \text{if gene } g \text{ is a true discovery}. \end{cases}
+$${#eq-diffexp-indicator-v}
 
-To see why the covariances add, recall that for independent random vectors
-$\underline{X}$ and $\underline{Y}$,
+The false discovery proportion (FDP) is
 
 $$
-\text{Cov}(\underline{X} - \underline{Y}) = 
-\langle (\underline{X} - \underline{Y})(\underline{X} - \underline{Y})^{\top} \rangle - 
-\langle \underline{X} - \underline{Y} \rangle\langle \underline{X} - \underline{Y} \rangle^{\top}.
-$${#eq-diffexp-cov-expansion}
+\text{FDP}(S) = \begin{cases}
+\frac{\sum_{g \in S} V_g}{|S|} & \text{if } |S| > 0, \\
+0 & \text{if } |S| = 0.
+\end{cases}
+$${#eq-diffexp-fdp}
 
-Expanding the first term:
-
-$$
-\langle (\underline{X} - \underline{Y})(\underline{X} - \underline{Y})^{\top} \rangle = 
-\langle \underline{X}\underline{X}^{\top} \rangle - 
-\langle \underline{X}\underline{Y}^{\top} \rangle - 
-\langle \underline{Y}\underline{X}^{\top} \rangle + 
-\langle \underline{Y}\underline{Y}^{\top} \rangle.
-$${#eq-diffexp-cov-expansion-step2}
-
-By independence, $\langle \underline{X}\underline{Y}^{\top} \rangle =
-\langle \underline{X} \rangle\langle \underline{Y} \rangle^{\top}$ and
-$\langle \underline{Y}\underline{X}^{\top} \rangle =
-\langle \underline{Y} \rangle\langle \underline{X} \rangle^{\top}$. Therefore,
+In a Bayesian framework, we do not have access to the true values $V_g$, but we
+can compute their posterior expectations. The PEFP is defined as
 
 $$
-\text{Cov}(\underline{X} - \underline{Y}) = 
-\left(\langle \underline{X}\underline{X}^{\top} \rangle - 
-\langle \underline{X} \rangle\langle \underline{X} \rangle^{\top}\right) + 
-\left(\langle \underline{Y}\underline{Y}^{\top} \rangle - 
-\langle \underline{Y} \rangle\langle \underline{Y} \rangle^{\top}\right) = 
-\text{Cov}(\underline{X}) + \text{Cov}(\underline{Y}).
-$${#eq-diffexp-cov-sum}
+\text{PEFP}(S) = \langle \text{FDP}(S) \mid \text{data} \rangle = \begin{cases}
+\frac{1}{|S|} \sum_{g \in S} \langle V_g \mid \text{data} \rangle & \text{if }
+|S| > 0, \\
+0 & \text{if } |S| = 0.
+\end{cases} $${#eq-diffexp-pefp-definition}
 
-Thus,
+#### Approximating PEFP with lfsr
 
-$$
-\underline{\underline{\Sigma}}_{\Delta} = 
-\underline{\underline{\Sigma}}_{A,\text{CLR}} + 
-\underline{\underline{\Sigma}}_{B,\text{CLR}}.
-$${#eq-diffexp-delta-cov}
+To compute $\langle V_g \mid \text{data} \rangle$, we need to define what
+constitutes a "false discovery." The most natural definition in the context of
+sign testing is:
 
-Combining @eq-diffexp-delta-mean and @eq-diffexp-delta-cov, we conclude that
+**A false discovery occurs when we assign the wrong sign to a gene's
+differential expression.**
 
-$$
-\underline{\Delta} \sim \mathcal{N}(\underline{\mu}_{A,\text{CLR}} - 
-\underline{\mu}_{B,\text{CLR}}, 
-\underline{\underline{\Sigma}}_{A,\text{CLR}} + 
-\underline{\underline{\Sigma}}_{B,\text{CLR}}).
-$${#eq-diffexp-delta-distribution}
-
-#### Preservation of low-rank structure
-
-A crucial observation is that the sum of two low-rank plus diagonal covariance
-matrices retains a low-rank plus diagonal structure. We have
+Under this definition,
 
 $$
-\underline{\underline{\Sigma}}_{A,\text{CLR}} = 
-\underline{\underline{W}}_{A,\text{CLR}} 
-\underline{\underline{W}}_{A,\text{CLR}}^{\top} + 
-\text{diag}(\underline{d}_{A,\text{CLR}}),
-$${#eq-diffexp-sigma-a-structure}
+\langle V_g \mid \text{data} \rangle = P(\text{wrong sign for gene } g \mid \text{data}) = 
+\text{lfsr}_g.
+$${#eq-diffexp-ev-lfsr}
+
+To see why, recall from @eq-diffexp-lfsr-definition that
 
 $$
-\underline{\underline{\Sigma}}_{B,\text{CLR}} = 
-\underline{\underline{W}}_{B,\text{CLR}} 
-\underline{\underline{W}}_{B,\text{CLR}}^{\top} + 
-\text{diag}(\underline{d}_{B,\text{CLR}}).
-$${#eq-diffexp-sigma-b-structure}
+\text{lfsr}_g = \min\left(P(\Delta_g > 0 \mid \text{data}), P(\Delta_g < 0 \mid
+\text{data})\right). $${#eq-diffexp-lfsr-recall}
 
-Therefore,
+If we assign gene $g$ the sign of its posterior mean $\mu_{\Delta,g}$, then:
 
-$$
-\underline{\underline{\Sigma}}_{\Delta} = 
-\underline{\underline{W}}_{A,\text{CLR}} 
-\underline{\underline{W}}_{A,\text{CLR}}^{\top} + 
-\underline{\underline{W}}_{B,\text{CLR}} 
-\underline{\underline{W}}_{B,\text{CLR}}^{\top} + 
-\text{diag}(\underline{d}_{A,\text{CLR}} + \underline{d}_{B,\text{CLR}}).
-$${#eq-diffexp-sigma-delta-expanded}
+- If $\mu_{\Delta,g} > 0$, we declare the gene up-regulated. The probability of
+error is $P(\Delta_g < 0 \mid \text{data}) = \text{lfsr}_g$.
 
-We can express this in low-rank plus diagonal form by concatenating the
-low-rank factors:
+- If $\mu_{\Delta,g} < 0$, we declare the gene down-regulated. The probability
+of error is $P(\Delta_g > 0 \mid \text{data}) = \text{lfsr}_g$.
+
+- If $\mu_{\Delta,g} = 0$ (a measure-zero event), we can assign either sign with
+error probability $0.5 = \text{lfsr}_g$.
+
+Thus, the lfsr is exactly the posterior probability of making a sign error.
+
+Substituting @eq-diffexp-ev-lfsr into @eq-diffexp-pefp-definition:
 
 $$
-\underline{\underline{W}}_{\Delta} = 
-[\underline{\underline{W}}_{A,\text{CLR}} \mid 
-\underline{\underline{W}}_{B,\text{CLR}}],
-$${#eq-diffexp-w-delta}
+\text{PEFP}(S) = \frac{1}{|S|} \sum_{g \in S} \text{lfsr}_g.
+$${#eq-diffexp-pefp-lfsr}
 
-where the notation $[\cdot \mid \cdot]$ denotes horizontal concatenation. If
-$\underline{\underline{W}}_{A,\text{CLR}} \in \mathbb{R}^{D \times k_A}$ and
-$\underline{\underline{W}}_{B,\text{CLR}} \in \mathbb{R}^{D \times k_B}$, then
-$\underline{\underline{W}}_{\Delta} \in \mathbb{R}^{D \times (k_A + k_B)}$.
+This formula provides a simple and computationally efficient approximation to
+the PEFP: it is just the average lfsr over the set $S$ of discoveries.
 
-The diagonal component is simply the sum of the individual diagonals:
+#### Interpretation and justification
+
+The PEFP has a direct Bayesian interpretation:
 
 $$
-\underline{d}_{\Delta} = \underline{d}_{A,\text{CLR}} + 
-\underline{d}_{B,\text{CLR}}.
-$${#eq-diffexp-d-delta}
+\text{PEFP}(S) = \left\langle \frac{\text{number of wrong-sign genes in }
+S}{|S|} \;\Big|\; \text{data} \right\rangle.
+$${#eq-diffexp-pefp-interpretation}
 
-Thus,
+Unlike the frequentist FDR, which involves expectations over repeated sampling
+from the data-generating process, the PEFP conditions on the observed data and
+averages only over the posterior distribution of the model parameters.
 
-$$
-\underline{\underline{\Sigma}}_{\Delta} = 
-\underline{\underline{W}}_{\Delta} 
-\underline{\underline{W}}_{\Delta}^{\top} + 
-\text{diag}(\underline{d}_{\Delta}),
-$${#eq-diffexp-sigma-delta-lowrank}
+This distinction is subtle but important. The FDR answers the question: "If we
+were to repeat this experiment many times with new data sets and apply the same
+decision rule, what fraction of discoveries would be false on average?" The PEFP
+answers: "Given this specific data set, what fraction of our current discoveries
+are expected to be false?" The PEFP is thus more directly aligned with the
+practitioner's concern about *this* experiment.
 
-which has rank at most $k_A + k_B$. Typically, $k_A$ and $k_B$ are both small
-(e.g., 50), so the rank of $\underline{\underline{\Sigma}}_{\Delta}$ remains
-much smaller than $D$.
+**Relationship to Bayesian FDR.** Our PEFP is closely related to the Bayesian
+FDR (Bfdr) developed by @newton2004 and further studied by @muller2004. The key
+difference is that their Bfdr is based on posterior probabilities of null
+hypotheses (under a mixture prior including point masses at zero), whereas our
+PEFP is based on the local false sign rate, which does not require specifying a
+point null hypothesis. For continuous priors (as in our logistic-normal model),
+the lfsr-based PEFP provides a more natural error measure.
 
-### Per-Gene Marginal Distributions
+### Controlling PEFP via lfsr Thresholds
 
-The multivariate Gaussian distribution @eq-diffexp-delta-distribution for
-$\underline{\Delta}$ immediately gives us the marginal distribution for each
-gene's differential expression.
+#### Problem formulation
 
-#### Marginal mean and variance
+Our goal is to find a threshold $t^*$ such that if we declare all genes with
+$\text{lfsr}_g < t^*$ as differentially expressed, the resulting PEFP is at most
+some target level $\alpha$ (e.g., $\alpha = 0.05$).
 
-For gene $g$, the marginal distribution of $\Delta_g$ is univariate Gaussian:
-
-$$
-\Delta_g \sim \mathcal{N}(\mu_{\Delta,g}, \sigma_{\Delta,g}^2),
-$${#eq-diffexp-delta-g-distribution}
-
-where the marginal mean is
-
-$$
-\mu_{\Delta,g} = \mu_{A,\text{CLR},g} - \mu_{B,\text{CLR},g},
-$${#eq-diffexp-mu-delta-g}
-
-and the marginal variance is the $g$-th diagonal entry of
-$\underline{\underline{\Sigma}}_{\Delta}$:
+Formally, let
 
 $$
-\sigma_{\Delta,g}^2 = 
-[\underline{\underline{\Sigma}}_{\Delta}]_{gg} = 
-d_{\Delta,g} + \sum_{j=1}^{k_A + k_B} W_{\Delta,gj}^2.
-$${#eq-diffexp-sigma-delta-g}
+S(t) = \{g : \text{lfsr}_g < t\}
+$${#eq-diffexp-discovery-set}
 
-Using @eq-diffexp-d-delta, we can write
+be the set of discoveries at threshold $t$. We seek
 
 $$
-\sigma_{\Delta,g}^2 = d_{A,\text{CLR},g} + d_{B,\text{CLR},g} + 
-\sum_{j=1}^{k_A} W_{A,\text{CLR},gj}^2 + \sum_{j=1}^{k_B} W_{B,\text{CLR},gj}^2.
-$${#eq-diffexp-sigma-delta-g-expanded}
+t^* = \sup\{t : \text{PEFP}(S(t)) \leq \alpha\}.
+$${#eq-diffexp-optimal-threshold}
 
-The posterior standard deviation is
+This threshold $t^*$ is the largest threshold that controls PEFP at level
+$\alpha$, hence maximizing the number of discoveries.
 
-$$
-\sigma_{\Delta,g} = \sqrt{\sigma_{\Delta,g}^2}.
-$${#eq-diffexp-sd-delta-g}
+#### Algorithm for finding the threshold
 
-These quantities are computed in $O(1)$ time per gene once the CLR
-transformations have been performed, for a total of $O(D)$ time across all
-genes.
+We now derive an algorithm for computing $t^*$. First, we establish a key
+monotonicity property.
 
-### Gene-Level Statistics
-
-With the marginal distributions in hand, we can compute a variety of statistics
-for each gene to quantify the evidence for differential expression.
-
-#### Standardized effect size (z-score)
-
-The standardized effect size, or z-score, measures how many standard deviations
-the posterior mean is from zero:
+**Lemma (PEFP monotonicity).** For $t_1 < t_2$, if $|S(t_2)| > 0$, then
 
 $$
-z_g = \frac{\mu_{\Delta,g}}{\sigma_{\Delta,g}}.
-$${#eq-diffexp-zscore}
+\text{PEFP}(S(t_2)) \geq \text{PEFP}(S(t_1)).
+$${#eq-diffexp-pefp-monotone}
 
-Large absolute values of $z_g$ indicate strong evidence that gene $g$ is
-differentially expressed. Under the null hypothesis that gene $g$ is not
-differentially expressed (i.e., $\mu_{\Delta,g} = 0$ in the true population),
-$z_g$ would have a distribution approximately $\mathcal{N}(0, 1)$, though this
-frequentist interpretation should be treated with caution in a Bayesian
-framework.
-
-#### Tail probabilities
-
-More directly interpretable are the tail probabilities computed from the
-posterior distribution. These quantities have exact Bayesian interpretations as
-posterior probabilities.
-
-**Probability of up-regulation.** The probability that gene $g$ is
-up-regulated in condition A relative to condition B is
+*Proof.* We have $S(t_1) \subseteq S(t_2)$ since any gene with $\text{lfsr}_g <
+t_1$ also satisfies $\text{lfsr}_g < t_2$. Let $A = S(t_1)$ and $B = S(t_2)
+\setminus S(t_1)$, so $S(t_2) = A \cup B$. Then
 
 $$
-P(\Delta_g > 0 \mid \text{data}) = 
-P\left(\mathcal{N}(\mu_{\Delta,g}, \sigma_{\Delta,g}^2) > 0\right) = 
-1 - \Phi\left(\frac{-\mu_{\Delta,g}}{\sigma_{\Delta,g}}\right) = 
-\Phi\left(\frac{\mu_{\Delta,g}}{\sigma_{\Delta,g}}\right),
-$${#eq-diffexp-prob-positive}
+\text{PEFP}(S(t_2)) = \frac{1}{|A| + |B|} \left(\sum_{g \in A} \text{lfsr}_g + 
+\sum_{g \in B} \text{lfsr}_g\right). $${#eq-diffexp-pefp-monotone-proof-step1}
 
-where $\Phi(\cdot)$ denotes the standard Gaussian cumulative distribution
-function (CDF),
+For any gene $g \in B$, we have $t_1 \leq \text{lfsr}_g < t_2$. In particular,
+$\text{lfsr}_g \geq t_1$. For any gene $g' \in A$, we have $\text{lfsr}_{g'} <
+t_1$. Therefore,
 
 $$
-\Phi(x) = \int_{-\infty}^{x} \frac{1}{\sqrt{2\pi}} e^{-t^2/2} dt.
-$${#eq-diffexp-gaussian-cdf}
+\text{lfsr}_g \geq t_1 > \text{lfsr}_{g'} \quad \text{for all } g \in B, g' \in A.
+$${#eq-diffexp-pefp-monotone-proof-step2}
 
-In terms of the z-score,
-
-$$
-P(\Delta_g > 0 \mid \text{data}) = \Phi(z_g).
-$${#eq-diffexp-prob-positive-zscore}
-
-**Probability of down-regulation.** Similarly, the probability that gene $g$ is
-down-regulated is
+This implies
 
 $$
-P(\Delta_g < 0 \mid \text{data}) = \Phi\left(\frac{-\mu_{\Delta,g}}{\sigma_{\Delta,g}}\right) = 
-\Phi(-z_g) = 1 - \Phi(z_g).
-$${#eq-diffexp-prob-negative}
+\frac{1}{|B|} \sum_{g \in B} \text{lfsr}_g \geq t_1 > \frac{1}{|A|} \sum_{g' \in
+A} \text{lfsr}_{g'} = 
+\text{PEFP}(S(t_1)). $${#eq-diffexp-pefp-monotone-proof-step3}
 
-Note that these two probabilities sum to 1 (up to numerical precision), as they
-should.
+The right-hand strict inequality holds because $A$ is finite and every
+$\text{lfsr}_{g'} < t_1$, so the average of finitely many values each strictly
+less than $t_1$ is itself strictly less than $t_1$.
 
-**Probability of practical significance.** For many applications, we are
-interested not just in whether a gene is differentially expressed, but whether
-the magnitude of differential expression exceeds some threshold $\tau > 0$. This
-threshold represents the minimum log-fold-change deemed biologically meaningful.
-For example, $\tau = \log(1.1) \approx 0.095$ corresponds to a 10% fold-change
-in relative abundance.
+Now, we can write
 
-The probability that gene $g$ exhibits differential expression of magnitude at
-least $\tau$ is
+$$
+\text{PEFP}(S(t_2)) = \frac{|A|}{|A| + |B|} \text{PEFP}(S(t_1)) + 
+\frac{|B|}{|A| + |B|} \cdot \frac{1}{|B|} \sum_{g \in B} \text{lfsr}_g.
+$${#eq-diffexp-pefp-monotone-proof-step4}
+
+Since both terms on the right are at least $\text{PEFP}(S(t_1))$ (the first by
+definition, the second by @eq-diffexp-pefp-monotone-proof-step3), we have
+
+$$
+\text{PEFP}(S(t_2)) \geq \text{PEFP}(S(t_1)).
+$${#eq-diffexp-pefp-monotone-proof-conclusion}
+
+$\square$
+
+This lemma shows that as we lower the threshold $t$ (becoming more stringent),
+the PEFP decreases. Conversely, as we raise the threshold (declaring more genes
+as significant), the PEFP increases.
+
+**Algorithm.** Based on this monotonicity property, we can find $t^*$ using the
+following algorithm:
+
+1. **Sort genes by lfsr**: Arrange genes in increasing order of lfsr:
+$$
+\text{lfsr}_{(1)} \leq \text{lfsr}_{(2)} \leq \cdots \leq \text{lfsr}_{(D)}.
+$${#eq-diffexp-algorithm-step1}
+
+2. **Compute PEFP for each prefix**: For each $k = 1, 2, \ldots, D$, let
+$$
+S_k = \{g : \text{lfsr}_g \leq \text{lfsr}_{(k)}\} = \{g_{(1)}, g_{(2)}, \ldots,
+g_{(k)}\} $${#eq-diffexp-algorithm-step2-set} be the set of the $k$ genes with
+smallest lfsr. Compute
+$$
+\text{PEFP}_k = \frac{1}{k} \sum_{i=1}^{k} \text{lfsr}_{(i)}.
+$${#eq-diffexp-algorithm-step2}
+
+3. **Find largest $k^*$ with controlled PEFP**: Find
+$$
+k^* = \max\{k : \text{PEFP}_k \leq \alpha\}. $${#eq-diffexp-algorithm-step3} If
+no such $k$ exists (i.e., $\text{PEFP}_1 > \alpha$), set $k^* = 0$.
+
+4. **Set threshold**: If $k^* > 0$, set
+$$
+t^* = \text{lfsr}_{(k^*)}.
+$${#eq-diffexp-algorithm-step4}
+If $k^* = 0$, no genes can be declared significant while controlling PEFP at
+level $\alpha$.
+
+**Computational complexity.** Step 1 requires $O(D \log D)$ operations for
+sorting. Steps 2-4 require $O(D)$ operations for a single pass through the
+sorted list. The total complexity is $O(D \log D)$, dominated by the sorting
+step.
+
+**Correctness.** To verify that this algorithm finds the correct threshold,
+observe that:
+
+- For $k \leq k^*$, we have $\text{PEFP}_k \leq \text{PEFP}_{k^*} \leq \alpha$
+by the monotonicity lemma.
+
+- For $k > k^*$, we have $\text{PEFP}_k > \alpha$ by the definition of $k^*$ as
+the maximum.
+
+Therefore, $t^* = \text{lfsr}_{(k^*)}$ is indeed the largest threshold for which
+$\text{PEFP}(S(t^*)) \leq \alpha$.
+
+#### Optimality
+
+The algorithm produces the optimal threshold in the sense that it maximizes the
+number of discoveries subject to the PEFP constraint:
+
+$$
+k^* = \max\{k : \text{PEFP}(S_k) \leq \alpha\} = |S(t^*)| = \max\{|S(t)| :
+\text{PEFP}(S(t)) \leq \alpha\}. $${#eq-diffexp-optimality}
+
+In other words, among all possible threshold-based decision rules that control
+PEFP at level $\alpha$, ours declares the maximum number of genes as
+differentially expressed.
+
+### Practical Significance Thresholds
+
+#### Motivation
+
+In many applications, we are interested not only in statistical significance
+(i.e., evidence that differential expression is non-zero) but also in
+*practical* or *biological* significance (i.e., evidence that the magnitude of
+differential expression exceeds some meaningful threshold). A gene may show
+statistically significant differential expression with very small effect size,
+which may be biologically unimportant.
+
+To address this, we introduce a practical significance threshold $\tau \geq 0$
+representing the minimum absolute log-fold-change deemed biologically
+meaningful. For example:
+
+- $\tau = \log(1.1) \approx 0.095$ corresponds to a 10% fold-change in relative
+abundance.
+- $\tau = \log(1.5) \approx 0.405$ corresponds to a 50% fold-change.
+- $\tau = \log(2) \approx 0.693$ corresponds to a two-fold change.
+
+The choice of $\tau$ should be informed by domain knowledge and the specific
+biological question being addressed.
+
+#### Modified tail probabilities
+
+Given a threshold $\tau > 0$, we replace the probability of non-zero
+differential expression with the probability of practically significant
+differential expression.
+
+For gene $g$, the probability of positive practical significance is
+
+$$
+P(\Delta_g > \tau \mid \text{data}) = 
+1 - \Phi\left(\frac{\tau - \mu_{\Delta,g}}{\sigma_{\Delta,g}}\right).
+$${#eq-diffexp-prob-above-tau-recall}
+
+The probability of negative practical significance is
+
+$$
+P(\Delta_g < -\tau \mid \text{data}) = \Phi\left(\frac{-\tau -
+\mu_{\Delta,g}}{\sigma_{\Delta,g}}\right). $${#eq-diffexp-prob-below-tau-recall}
+
+The total probability of practical significance in either direction is
 
 $$
 P(|\Delta_g| > \tau \mid \text{data}) = 
 P(\Delta_g > \tau \mid \text{data}) + P(\Delta_g < -\tau \mid \text{data}).
-$${#eq-diffexp-prob-effect-sum}
+$${#eq-diffexp-prob-effect-tau}
 
-Using the Gaussian CDF:
+#### Modified local false sign rate
 
-$$
-P(\Delta_g > \tau \mid \text{data}) = 1 - \Phi\left(\frac{\tau - \mu_{\Delta,g}}{\sigma_{\Delta,g}}\right),
-$${#eq-diffexp-prob-above-tau}
-
-$$
-P(\Delta_g < -\tau \mid \text{data}) = \Phi\left(\frac{-\tau - \mu_{\Delta,g}}{\sigma_{\Delta,g}}\right).
-$${#eq-diffexp-prob-below-tau}
-
-Therefore,
+To incorporate practical significance into the lfsr framework, we define a
+modified lfsr as the posterior error probability after assigning the most
+probable practical-significance direction:
 
 $$
-P(|\Delta_g| > \tau \mid \text{data}) = 
-1 - \Phi\left(\frac{\tau - \mu_{\Delta,g}}{\sigma_{\Delta,g}}\right) + 
-\Phi\left(\frac{-\tau - \mu_{\Delta,g}}{\sigma_{\Delta,g}}\right).
-$${#eq-diffexp-prob-effect}
+\text{lfsr}_g(\tau) = 1 - \max\left(P(\Delta_g > \tau \mid \text{data}),
+P(\Delta_g < -\tau \mid \text{data})\right). $${#eq-diffexp-lfsr-tau}
 
-Using the symmetry property $\Phi(-x) = 1 - \Phi(x)$, we can also write
-
-$$
-P(|\Delta_g| > \tau \mid \text{data}) = 
-\Phi\left(\frac{\mu_{\Delta,g} - \tau}{\sigma_{\Delta,g}}\right) + 
-\Phi\left(\frac{-\mu_{\Delta,g} - \tau}{\sigma_{\Delta,g}}\right).
-$${#eq-diffexp-prob-effect-symmetric}
-
-When $\tau = 0$, this reduces to $P(|\Delta_g| > 0 \mid \text{data}) = 1$,
-which is correct since a continuous distribution assigns zero probability to any
-single point.
-
-### Local False Sign Rate
-
-#### Definition and interpretation
-
-The *local false sign rate* (lfsr) is a Bayesian measure of evidence against
-differential expression, introduced by @stephens2016. For gene $g$, the lfsr is
-defined as
+Equivalently, if we declare the direction with larger practical-significance
+posterior probability, then:
 
 $$
-\text{lfsr}_g = \min\left(P(\Delta_g > 0 \mid \text{data}), 
-P(\Delta_g < 0 \mid \text{data})\right).
-$${#eq-diffexp-lfsr-definition}
+\text{lfsr}_g(\tau)=
+\begin{cases}
+P(\Delta_g \le \tau \mid \text{data}), & \text{if } P(\Delta_g > \tau \mid \text{data}) \ge P(\Delta_g < -\tau \mid \text{data}), \\
+P(\Delta_g \ge -\tau \mid \text{data}), & \text{otherwise}.
+\end{cases}
+$${#eq-diffexp-lfsr-tau-piecewise}
 
-Using @eq-diffexp-prob-positive and @eq-diffexp-prob-negative:
+This preserves the interpretation of the lfsr as a posterior probability of an
+incorrect directional practical-significance call.
 
-$$
-\text{lfsr}_g = \min\left(\Phi(z_g), 1 - \Phi(z_g)\right) = 
-\min\left(\Phi(z_g), \Phi(-z_g)\right).
-$${#eq-diffexp-lfsr-formula}
+Note that the quantity $P(|\Delta_g| \leq \tau \mid \text{data}) = 1 -
+P(\Delta_g > \tau \mid \text{data}) - P(\Delta_g < -\tau \mid \text{data})$
+is a related but distinct measure: it gives the posterior probability that
+the gene's differential expression magnitude falls below the practical
+significance threshold. While useful, this quantity does not reduce to the
+standard lfsr when $\tau = 0$ (since $P(|\Delta_g| \leq 0) = 0$ for a
+continuous distribution), and therefore should not be conflated with the
+modified lfsr.
 
-The lfsr quantifies the posterior probability that we would make an error if we
-were to assign gene $g$ the sign corresponding to its posterior mean. More
-specifically:
-
-- If $\mu_{\Delta,g} > 0$, then $\text{lfsr}_g = P(\Delta_g < 0 \mid
-\text{data})$ is the posterior probability that the gene is actually
-down-regulated despite having a positive posterior mean.
-
-- If $\mu_{\Delta,g} < 0$, then $\text{lfsr}_g = P(\Delta_g > 0 \mid
-\text{data})$ is the posterior probability that the gene is actually
-up-regulated despite having a negative posterior mean.
-
-- If $\mu_{\Delta,g} = 0$, then $\text{lfsr}_g = 0.5$, reflecting maximal
-uncertainty about the sign.
-
-**Relationship to z-score.** For large $|z_g|$, the lfsr is approximately
+**Relationship to standard lfsr.** When $\tau = 0$, the modified lfsr reduces
+to the standard lfsr:
 
 $$
-\text{lfsr}_g \approx \Phi(-|z_g|) = 1 - \Phi(|z_g|),
-$${#eq-diffexp-lfsr-approx}
+\text{lfsr}_g(0) = 1 - \max\left(P(\Delta_g > 0 \mid \text{data}), P(\Delta_g <
+0 \mid \text{data})\right) = \min\left(P(\Delta_g > 0 \mid \text{data}),
+P(\Delta_g < 0 \mid \text{data})\right) = \text{lfsr}_g.
+$${#eq-diffexp-lfsr-tau-zero}
 
-which decreases exponentially fast as $|z_g|$ increases. Specifically, for
-$|z_g| \gg 1$, we have the asymptotic expansion
+As $\tau$ increases, both practical-significance tail probabilities decrease, so
+$\max(P(\Delta_g > \tau), P(\Delta_g < -\tau))$ decreases and
+$\text{lfsr}_g(\tau)$ increases. This makes the criterion more conservative and
+typically reduces the number of discoveries at fixed threshold $t$.
 
-$$
-\Phi(-|z_g|) \approx \frac{1}{|z_g|\sqrt{2\pi}} \exp\left(-\frac{z_g^2}{2}\right),
-$${#eq-diffexp-lfsr-asymptotic}
+#### PEFP control with practical significance
 
-showing that the lfsr is extremely small for genes with large absolute z-scores.
-
-#### Advantages for compositional data
-
-The lfsr has several advantages for differential expression analysis on
-compositional data:
-
-**Reference-free interpretation.** Because the lfsr is computed in CLR space,
-which is reference-free, it does not depend on the arbitrary choice of reference
-component used in the ALR transformation. All genes are treated symmetrically.
-
-**Robustness to compositionality.** The lfsr quantifies the probability of
-making a sign error, which is a meaningful question even when absolute
-expression levels are unmeasurable. In contrast, questions about the "magnitude"
-of differential expression must be carefully interpreted in the compositional
-context.
-
-**Direct Bayesian interpretation.** Unlike frequentist p-values, which quantify
-the probability of observing data at least as extreme as what was observed under
-a null hypothesis, the lfsr directly quantifies the posterior probability of a
-specific event (incorrect sign assignment) given the observed data. This
-interpretation requires no additional assumptions beyond the Bayesian model.
-
-#### Comparison to p-values
-
-It is instructive to contrast the lfsr with traditional two-sided p-values. A
-two-sided p-value for testing $H_0: \Delta_g = 0$ versus $H_1: \Delta_g \neq 0$
-is typically computed as
+The PEFP framework extends naturally to practical significance. We define the
+set of discoveries at threshold $t$ and practical significance level $\tau$ as
 
 $$
-p_g = 2\Phi(-|z_g|) = 2(1 - \Phi(|z_g|)).
-$${#eq-diffexp-pvalue}
+S(t, \tau) = \{g : \text{lfsr}_g(\tau) < t\}.
+$${#eq-diffexp-discovery-set-tau}
 
-This quantity represents the probability of observing a test statistic at least
-as extreme as $|z_g|$ under the null hypothesis, assuming certain regularity
-conditions.
-
-Comparing @eq-diffexp-pvalue with @eq-diffexp-lfsr-approx, we see that for
-large $|z_g|$,
+The PEFP for this set is
 
 $$
-p_g \approx 2 \cdot \text{lfsr}_g.
-$${#eq-diffexp-pvalue-lfsr-relation}
+\text{PEFP}(S(t, \tau)) = \frac{1}{|S(t, \tau)|} \sum_{g \in S(t, \tau)} 
+\text{lfsr}_g(\tau). $${#eq-diffexp-pefp-tau}
 
-Thus, the lfsr and p-value convey similar information about the strength of
-evidence against the null hypothesis, but the lfsr has the advantage of a
-direct posterior probability interpretation.
+The same algorithm described earlier can be applied with $\text{lfsr}_g(\tau)$
+in place of $\text{lfsr}_g$ to find the optimal threshold $t^*(\tau)$ that
+controls PEFP at level $\alpha$ while requiring practical significance.
 
-However, there is a fundamental conceptual difference. The p-value is computed
-under the assumption that the null hypothesis $\Delta_g = 0$ is exactly true,
-which assigns zero prior probability to the event $\Delta_g = 0$ in a continuous
-Bayesian model. The lfsr, in contrast, makes no reference to a point null
-hypothesis and instead quantifies uncertainty about the sign of $\Delta_g$ given
-the observed data and the continuous prior.
+**Effect on power.** Requiring practical significance (i.e., using $\tau > 0$)
+reduces the number of discoveries but increases the biological relevance of
+those discoveries. The choice of $\tau$ involves a tradeoff between sensitivity
+(detecting any differential expression) and specificity (detecting only
+meaningful differential expression). For exploratory analyses, $\tau = 0$ may be
+appropriate. For confirmatory analyses or when resources for follow-up
+validation are limited, $\tau > 0$ is recommended.
 
-For compositional data, where the interpretation of "zero differential
-expression" is subtle due to the relative nature of proportions, the lfsr's
-focus on the sign of differential expression (up vs. down) rather than exact
-equality to zero provides a more natural and interpretable measure of evidence.
+### Connection to Frequentist FDR Control
+
+#### Benjamini-Hochberg procedure
+
+The classic Benjamini-Hochberg (BH) procedure [@benjamini1995] for controlling
+FDR operates on p-values. Given p-values $p_1, p_2, \ldots, p_D$, the BH
+procedure:
+
+1. Sorts p-values: $p_{(1)} \leq p_{(2)} \leq \cdots \leq p_{(D)}$.
+2. Finds $k^* = \max\{k : p_{(k)} \leq \frac{k\alpha}{D}\}$.
+3. Rejects hypotheses corresponding to $p_{(1)}, \ldots, p_{(k^*)}$.
+
+Under certain conditions (e.g., independence or positive dependence of test
+statistics), this procedure controls FDR at level $\alpha$.
+
+#### Relationship to our PEFP algorithm
+
+Our PEFP algorithm has a similar structure but operates on lfsr values rather
+than p-values, and uses a different threshold formula. Specifically, the BH
+threshold for $k$ discoveries is
+
+$$
+\frac{k\alpha}{D},
+$${#eq-diffexp-bh-threshold}
+
+which increases linearly with $k$. In contrast, our PEFP threshold is
+
+$$
+\frac{1}{k} \sum_{i=1}^{k} \text{lfsr}_{(i)}, $${#eq-diffexp-pefp-threshold}
+
+which is the average lfsr over the $k$ smallest lfsr values.
+
+The key difference is that the BH procedure treats all hypotheses symmetrically
+(the threshold depends only on $k$, not on the specific p-values), whereas our
+PEFP procedure adapts to the data through the average lfsr. This adaptation can
+provide increased power when many genes have very small lfsr values, as the
+threshold can rise above the BH threshold.
+
+**Asymptotic equivalence.** In large samples where the lfsr values approach
+either 0 or 1 (strong evidence for or against differential expression), the two
+procedures become approximately equivalent. However, for finite samples with
+moderate evidence, the Bayesian PEFP procedure better accounts for uncertainty
+in each gene's status.
+
+### Summary
+
+The Bayesian error control framework developed in this section provides a
+principled approach to multiple testing in differential expression analysis:
+
+1. **Local error rates**: The lfsr quantifies the posterior probability of
+making a sign error for each gene, with a direct Bayesian interpretation.
+
+2. **Global error control**: The PEFP extends the lfsr to control the expected
+proportion of false discoveries across a set of genes.
+
+3. **Optimal thresholds**: An efficient $O(D \log D)$ algorithm finds the
+threshold that maximizes discoveries subject to PEFP control.
+
+4. **Practical significance**: The framework extends naturally to incorporate
+practical significance thresholds, enabling biologically-informed decision
+making.
+
+5. **Compositionality**: All methods work directly in CLR or ILR coordinates,
+respecting the compositional nature of normalized gene expression data.
+
+This fully Bayesian approach contrasts with frequentist FDR control in its
+conditioning on the observed data and its use of posterior probabilities rather
+than p-values. The result is a more interpretable and potentially more powerful
+approach to multiple testing correction in high-dimensional compositional data.
 
