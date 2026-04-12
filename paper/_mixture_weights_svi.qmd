@@ -273,11 +273,11 @@ Evidence Lower Bound (ELBO). For the mixture model, the ELBO takes the form
 
 $$
 \text{ELBO}(\phi) = 
-\langle 
+\left\langle 
     \sum_{c=1}^{C} \log \pi(\underline{u}_c \mid \underline{\theta}, 
     \underline{\pi})
-\right \rangle_{q_\phi(\underline{\theta}, \underline{\pi})}
-\left - 
+\right\rangle_{q_\phi(\underline{\theta}, \underline{\pi})}
+-
 \text{KL}\left(
     q_\phi(\underline{\theta}, \underline{\pi}) \,\|\, 
     \pi(\underline{\theta}, \underline{\pi})
@@ -303,11 +303,10 @@ and a KL term,
 $$
 \frac{\partial \text{ELBO}}{\partial \alpha_k} = 
 \underbrace{
-    \frac{\partial}{\partial \alpha_k} \langle 
+    \frac{\partial}{\partial \alpha_k} \left\langle 
         \sum_{c=1}^{C} \log \pi(\underline{u}_c \mid \underline{\theta}, 
         \underline{\pi})
-    \right \rangle_{q}
-    \left
+    \right\rangle_{q}
 }_{\text{likelihood gradient}} - 
 \underbrace{
     \frac{\partial}{\partial \alpha_k} 

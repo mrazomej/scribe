@@ -30,12 +30,12 @@ Typical usage:
 
 import argparse
 import fnmatch
-from omegaconf import OmegaConf
 import scribe
 import pickle
 import glob
 import os
 import warnings
+import yaml
 from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
@@ -59,6 +59,42 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="scanpy")
 warnings.filterwarnings("ignore", category=FutureWarning, module="anndata")
 
 # ------------------------------------------------------------------------------
+
+
+class _AttrDict(dict):
+    """Dictionary wrapper with attribute access for nested configuration maps."""
+
+    @classmethod
+    def from_mapping(cls, value):
+        """Recursively convert mapping/sequence values to ``_AttrDict``/list."""
+        if isinstance(value, dict):
+            return cls(
+                {
+                    str(key): cls.from_mapping(val)
+                    for key, val in value.items()
+                }
+            )
+        if isinstance(value, list):
+            return [cls.from_mapping(item) for item in value]
+        return value
+
+    def __getattr__(self, name):
+        """Provide attribute-style access for existing mapping keys."""
+        try:
+            return self[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+    def __setattr__(self, name, value):
+        """Store attribute writes back into mapping keys."""
+        self[name] = value
+
+
+def _load_yaml_config(path):
+    """Load a YAML file into nested ``_AttrDict`` containers."""
+    with open(path, "r") as handle:
+        payload = yaml.safe_load(handle) or {}
+    return _AttrDict.from_mapping(payload)
 
 
 def parse_args(argv: list[str] | None = None):
@@ -194,11 +230,11 @@ Examples:
         "observed vs predicted per-gene means).",
     )
     parser.add_argument(
-        "--mu-pairwise",
+        "--mean-pairwise",
         action="store_true",
         default=None,
         dest="mu_pairwise",
-        help="Enable pairwise dataset-level mu comparison for "
+        help="Enable pairwise dataset-level mean comparison for "
         "hierarchical multi-dataset runs.",
     )
     parser.add_argument(
@@ -207,7 +243,7 @@ Examples:
         dest="all_plots",
         help="Enable all plots (loss, ECDF, PPC, bio-PPC, UMAP, heatmap, "
         "mixture PPC, mixture composition, annotation PPC, capture-anchor, "
-        "p-capture-scaling, mean-calibration, mu-pairwise)",
+        "p-capture-scaling, mean-calibration, mean-pairwise)",
     )
 
     # Recursive mode
@@ -281,7 +317,7 @@ def _load_default_viz_config():
 
     Returns
     -------
-    DictConfig
+    dict
         Visualization config from the project defaults. If the defaults file is
         unavailable, returns a minimal fallback config with safe defaults.
     """
@@ -294,7 +330,7 @@ def _load_default_viz_config():
             "[yellow]⚠[/yellow] [yellow]Could not find conf/viz/default.yaml; "
             "using built-in defaults.[/yellow]"
         )
-        return OmegaConf.create(
+        return _AttrDict.from_mapping(
             {
                 "loss": True,
                 "ecdf": True,
@@ -376,7 +412,7 @@ def _load_default_viz_config():
             }
         )
 
-    defaults_cfg = OmegaConf.load(defaults_path)
+    defaults_cfg = _load_yaml_config(defaults_path)
     # The defaults file is packaged as:
     #   viz:
     #     ...
@@ -456,7 +492,7 @@ def _has_biology_informed_capture_prior(cfg):
 
     Parameters
     ----------
-    cfg : OmegaConf
+    cfg : Mapping-like
         Run configuration loaded from ``.hydra/config.yaml``.
 
     Returns
@@ -479,7 +515,7 @@ def _is_vcp_model(cfg, results):
 
     Parameters
     ----------
-    cfg : OmegaConf
+    cfg : Mapping-like
         Run configuration loaded from ``.hydra/config.yaml``.
     results : object
         Loaded results object that may expose ``model_config`` metadata.
@@ -707,7 +743,7 @@ def _process_single_results_file(results_file, viz_cfg, overwrite=False):
     # Load Original Configuration
     # ======================================================================
     console.print(f"[dim]Loading config from:[/dim] [cyan]{config_file}[/cyan]")
-    orig_cfg = OmegaConf.load(config_file)
+    orig_cfg = _load_yaml_config(config_file)
     console.print("[green]Configuration loaded![/green]")
 
     # Display key config info
@@ -1024,7 +1060,7 @@ def _process_single_results_file(results_file, viz_cfg, overwrite=False):
                 "[yellow]  Skipping mu pairwise "
                 "(run is not multi-dataset)[/yellow]"
             )
-        elif not overwrite and _plot_exists(figs_dir, "_mu_pairwise", fmt):
+        elif not overwrite and _plot_exists(figs_dir, "_mean_pairwise", fmt):
             plots_skipped.append("mu pairwise")
             console.print(
                 "[yellow]  Skipping mu pairwise " "(already exists)[/yellow]"
@@ -1465,7 +1501,7 @@ def main(argv: list[str] | None = None) -> None:
     if viz_cfg.mean_calibration:
         enabled_plots.append("mean calibration")
     if viz_cfg.mu_pairwise:
-        enabled_plots.append("mu pairwise")
+        enabled_plots.append("mean pairwise")
 
     console.print(f"[dim]Plots to generate:[/dim] {', '.join(enabled_plots)}")
     console.print(f"[dim]Output format:[/dim] {viz_cfg.format}")

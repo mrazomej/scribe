@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import List, Optional, TYPE_CHECKING
 
+import numpy as _np
 import jax.numpy as jnp
 
 from ._extract import extract_alr_params
@@ -65,7 +66,7 @@ def compare(
     gene_names: Optional[List[str]] = None,
     label_A: str = "A",
     label_B: str = "B",
-    method: str = "parametric",
+    method: str = "empirical",
     component_A: Optional[int] = None,
     component_B: Optional[int] = None,
     paired: bool = False,
@@ -78,7 +79,7 @@ def compare(
     sigma_grid: Optional[jnp.ndarray] = None,
     shrinkage_max_iter: int = 200,
     shrinkage_tol: float = 1e-8,
-    compute_biological: bool = True,
+    compute_biological: bool = False,
 ) -> "ScribeDEResults":
     """Create a DE results object from fitted models or posterior samples.
 
@@ -95,7 +96,7 @@ def compare(
         Display label for condition A.
     label_B : str, default='B'
         Display label for condition B.
-    method : {'parametric', 'empirical', 'shrinkage'}, default='parametric'
+    method : {'parametric', 'empirical', 'shrinkage'}, default='empirical'
         Differential-expression strategy.
     component_A : int, optional
         Mixture component index for condition A (empirical/shrinkage).
@@ -121,7 +122,7 @@ def compare(
         Maximum EM iterations for shrinkage.
     shrinkage_tol : float, default=1e-8
         EM convergence tolerance for shrinkage.
-    compute_biological : bool, default=True
+    compute_biological : bool, default=False
         Whether to retain samples needed for biological-level DE.
 
     Returns
@@ -266,8 +267,6 @@ def _compare_parametric(
     D_user = D_full - 1 if drop_last else D_full
 
     if gene_mask is not None and gene_names is not None:
-        import numpy as _np
-
         gene_mask_arr = _np.asarray(gene_mask, dtype=bool)
         gene_names = [n for n, m in zip(gene_names, gene_mask_arr) if m]
 
@@ -315,7 +314,6 @@ def _compare_empirical(
     phi_samples_B: Optional[jnp.ndarray] = None,
 ) -> "ScribeEmpiricalDEResults":
     """Build an empirical DE comparison from posterior concentration samples."""
-    import numpy as _np
     from ._empirical import (
         _slice_component,
         compute_delta_from_simplex,
@@ -372,39 +370,70 @@ def _compare_empirical(
     if phi_bio_B is not None:
         phi_bio_B = phi_bio_B[:N_bio]
 
+    # Move bio slices to CPU so the full (N, K, D) device arrays can
+    # be freed.  These are only used for small summary statistics below.
+    r_bio_A = _np.asarray(r_bio_A)
+    r_bio_B = _np.asarray(r_bio_B)
+    if p_bio_A is not None:
+        p_bio_A = _np.asarray(p_bio_A)
+    if p_bio_B is not None:
+        p_bio_B = _np.asarray(p_bio_B)
+    if mu_bio_A is not None:
+        mu_bio_A = _np.asarray(mu_bio_A)
+    if mu_bio_B is not None:
+        mu_bio_B = _np.asarray(mu_bio_B)
+    if phi_bio_A is not None:
+        phi_bio_A = _np.asarray(phi_bio_A)
+    if phi_bio_B is not None:
+        phi_bio_B = _np.asarray(phi_bio_B)
+
+    # Drop references to the full device arrays.  The bio slices above
+    # are already on CPU and contain exactly the component-sliced,
+    # truncated data that sample_compositions would recompute, so we
+    # pass them directly (with component=None since slicing is done).
+    # Releasing the locals lets Python's refcount free the GPU buffers
+    # as soon as the caller's references also go away.
+    del r_samples_A, r_samples_B, p_samples_A, p_samples_B
+    del mu_samples_A, mu_samples_B, phi_samples_A, phi_samples_B
+
     simplex_A, simplex_B = sample_compositions(
-        r_samples_A=r_samples_A,
-        r_samples_B=r_samples_B,
-        component_A=component_A,
-        component_B=component_B,
+        r_samples_A=r_bio_A,
+        r_samples_B=r_bio_B,
+        component_A=None,
+        component_B=None,
         paired=paired,
         n_samples_dirichlet=n_samples_dirichlet,
         rng_key=rng_key,
         batch_size=batch_size,
-        p_samples_A=p_samples_A,
-        p_samples_B=p_samples_B,
+        p_samples_A=p_bio_A,
+        p_samples_B=p_bio_B,
     )
 
+    # simplex_A/B and delta_samples are numpy (CPU) arrays -- the
+    # batched sampling functions transfer each chunk to host immediately,
+    # so no large GPU allocation ever occurs here.
     delta_samples = compute_delta_from_simplex(
         simplex_A, simplex_B, gene_mask=gene_mask
     )
 
+    # Compute mean biological expression on CPU (bio arrays are already
+    # numpy after the transfer above).
     mu_map_A_vec = None
     mu_map_B_vec = None
     if mu_bio_A is not None:
-        mu_map_A_vec = _np.asarray(jnp.mean(mu_bio_A, axis=0))
+        mu_map_A_vec = mu_bio_A.mean(axis=0)
     elif r_bio_A is not None and p_bio_A is not None:
-        _r_mean = jnp.mean(r_bio_A, axis=0)
-        _p_mean = jnp.mean(p_bio_A, axis=0)
-        _p_mean = jnp.clip(_p_mean, 1e-7, 1.0 - 1e-7)
-        mu_map_A_vec = _np.asarray(_r_mean * _p_mean / (1.0 - _p_mean))
+        _r_mean = r_bio_A.mean(axis=0)
+        _p_mean = p_bio_A.mean(axis=0)
+        _p_mean = _np.clip(_p_mean, 1e-7, 1.0 - 1e-7)
+        mu_map_A_vec = _r_mean * _p_mean / (1.0 - _p_mean)
     if mu_bio_B is not None:
-        mu_map_B_vec = _np.asarray(jnp.mean(mu_bio_B, axis=0))
+        mu_map_B_vec = mu_bio_B.mean(axis=0)
     elif r_bio_B is not None and p_bio_B is not None:
-        _r_mean = jnp.mean(r_bio_B, axis=0)
-        _p_mean = jnp.mean(p_bio_B, axis=0)
-        _p_mean = jnp.clip(_p_mean, 1e-7, 1.0 - 1e-7)
-        mu_map_B_vec = _np.asarray(_r_mean * _p_mean / (1.0 - _p_mean))
+        _r_mean = r_bio_B.mean(axis=0)
+        _p_mean = p_bio_B.mean(axis=0)
+        _p_mean = _np.clip(_p_mean, 1e-7, 1.0 - 1e-7)
+        mu_map_B_vec = _r_mean * _p_mean / (1.0 - _p_mean)
 
     all_gene_names = gene_names
     kept_gene_names = gene_names

@@ -16,6 +16,7 @@ from scribe.cli.infer import (
     _parse_slurm_set_entries,
     main as infer_cli_main,
 )
+from scribe.cli.slurm import prompt_slurm_config
 
 
 def test_extract_data_keys_expands_comma_delimited_values() -> None:
@@ -329,7 +330,7 @@ def test_cli_slurm_profile_and_set_merge_precedence(
         )
     )
 
-    def _fake_prompt(seed_values, *, allow_interactive):
+    def _fake_prompt(seed_values, *, allow_interactive=True, **kwargs):
         captured_seed.update(seed_values)
         return SlurmPromptConfig(
             partition=str(seed_values["partition"]),
@@ -436,3 +437,152 @@ def test_cli_slurm_profile_implicitly_enables_slurm_mode(
     assert exc_info.value.code == 0
     assert "hydra/launcher=submitit_slurm" in commands[0]
     assert "hydra.launcher.partition=gpu" in commands[0]
+
+
+def test_prompt_slurm_config_noninteractive_default_job_name_infer() -> None:
+    """Non-interactive mode should apply infer-style default job name."""
+    cfg = prompt_slurm_config(
+        {"partition": "gpu"},
+        allow_interactive=False,
+        default_job_name="scribe-infer",
+    )
+    assert cfg.job_name == "scribe-infer"
+
+
+def test_prompt_slurm_config_noninteractive_default_job_name_visualize() -> None:
+    """Non-interactive mode should apply visualize-style default job name."""
+    cfg = prompt_slurm_config(
+        {"partition": "gpu"},
+        allow_interactive=False,
+        default_job_name="scribe-visualize",
+    )
+    assert cfg.job_name == "scribe-visualize"
+
+
+def test_prompt_slurm_config_noninteractive_preserves_seeded_job_name() -> None:
+    """Profile or CLI seeds must win over default job name."""
+    cfg = prompt_slurm_config(
+        {"partition": "gpu", "job_name": "custom_job"},
+        allow_interactive=False,
+        default_job_name="scribe-infer",
+    )
+    assert cfg.job_name == "custom_job"
+
+
+def test_prompt_slurm_config_default_job_name_backward_compatible() -> None:
+    """Callers that omit ``default_job_name`` keep the historical infer default."""
+    cfg = prompt_slurm_config({"partition": "p"}, allow_interactive=False)
+    assert cfg.job_name == "scribe-infer"
+
+
+def test_prompt_slurm_config_interactive_gres_from_gpu_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With ``prompt_for_gres``, one GPU count answer should set ``gpu:N``."""
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    answers = iter(["2"])
+
+    def _fake_input(_prompt: str = "") -> str:
+        return next(answers)
+
+    monkeypatch.setattr("builtins.input", _fake_input)
+    cfg = prompt_slurm_config(
+        {
+            "partition": "base",
+            "account": None,
+            "array_parallelism": 1,
+            "cpus_per_task": 4,
+            "mem_gb": 64,
+            "timeout_min": 60,
+            "job_name": "jviz",
+        },
+        allow_interactive=True,
+        default_job_name="scribe-visualize",
+        prompt_for_gres=True,
+    )
+    assert cfg.gres == "gpu:2"
+    assert cfg.job_name == "jviz"
+
+
+def test_prompt_slurm_config_interactive_zero_gpus_omits_gres(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GPU count 0 must not set ``gres``."""
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    answers = iter(["0"])
+
+    def _fake_input(_prompt: str = "") -> str:
+        return next(answers)
+
+    monkeypatch.setattr("builtins.input", _fake_input)
+    cfg = prompt_slurm_config(
+        {
+            "partition": "base",
+            "account": None,
+            "array_parallelism": 1,
+            "cpus_per_task": 4,
+            "mem_gb": 64,
+            "timeout_min": 60,
+            "job_name": "x",
+        },
+        allow_interactive=True,
+        default_job_name="scribe-visualize",
+        prompt_for_gres=True,
+    )
+    assert cfg.gres is None
+
+
+def test_prompt_slurm_config_interactive_skips_gres_when_seeded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pre-seeded ``gres`` from profile or ``--slurm-set`` must skip the prompt."""
+
+    def _boom(_prompt: str = "") -> str:
+        raise AssertionError("unexpected input()")
+
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", _boom)
+    cfg = prompt_slurm_config(
+        {
+            "partition": "base",
+            "account": None,
+            "array_parallelism": 1,
+            "cpus_per_task": 4,
+            "mem_gb": 64,
+            "timeout_min": 60,
+            "job_name": "x",
+            "gres": "gpu:custom:2",
+        },
+        allow_interactive=True,
+        default_job_name="scribe-visualize",
+        prompt_for_gres=True,
+    )
+    assert cfg.gres == "gpu:custom:2"
+
+
+def test_prompt_slurm_config_interactive_empty_job_name_uses_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Empty job name input should fall back to CLI-specific default."""
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    answers = iter(["", "1"])
+
+    def _fake_input(_prompt: str = "") -> str:
+        return next(answers)
+
+    monkeypatch.setattr("builtins.input", _fake_input)
+    cfg = prompt_slurm_config(
+        {
+            "partition": "base",
+            "account": None,
+            "array_parallelism": 1,
+            "cpus_per_task": 4,
+            "mem_gb": 64,
+            "timeout_min": 60,
+        },
+        allow_interactive=True,
+        default_job_name="scribe-visualize",
+        prompt_for_gres=True,
+    )
+    assert cfg.job_name == "scribe-visualize"
+    assert cfg.gres == "gpu:1"

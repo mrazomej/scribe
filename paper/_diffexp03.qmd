@@ -1,525 +1,483 @@
 ---
 editor:
     render-on-save: true
-bibliography: references.bib
 csl: ieee.csl
 ---
 
-## Transforming Gaussian Parameters Between Coordinate Systems
+## Empirical CLR Differential Expression {#sec-diffexp-empirical}
 
-In @sec-normalization, we showed that the posterior predictive distribution of
-normalized gene expression can be approximated by a low-rank Gaussian
-distribution in ALR space:
+The previous section fixed a compositional coordinate system for inference:
+centered log-ratio (CLR) coordinates map simplex compositions to a Euclidean
+space where gene-level contrasts are additive and interpretable. Once expression
+is represented in CLR, the remaining question is how to summarize uncertainty
+about differences between conditions without imposing a parametric shape on the
+posterior predictive distribution.
 
-$$
-\underline{z}_{\text{ALR}} \sim \mathcal{N}(\underline{\mu}_{\text{ALR}}, 
-\underline{\underline{\Sigma}}_{\text{ALR}}),
-$${#eq-diffexp-alr-gaussian}
+We take a fully empirical route. The fitted model supplies posterior samples of
+the Dirichlet concentration parameters; for each draw we simulate a composition
+from the corresponding Dirichlet law, map it to CLR, and repeat independently
+across posterior iterations. All differential expression summaries---means,
+spreads, sign probabilities, practical-effect tail masses, and local false sign
+rates---are obtained by counting over these Monte Carlo samples. No Gaussian or
+other closed form is assumed for the predictive; the empirical histogram *is*
+the inference object.
 
-where
+This empirical CLR pipeline is the **primary and recommended** differential
+expression method in this chapter. It remains valid when the posterior
+predictive is skewed, heavy-tailed, multimodal, or otherwise far from Gaussian,
+because every quantity is defined as a posterior functional estimated by sample
+averages and indicator counts.
 
-$$
-\underline{\underline{\Sigma}}_{\text{ALR}} = 
-\underline{\underline{W}}_{\text{ALR}} 
-\underline{\underline{W}}_{\text{ALR}}^{\top} + 
-\text{diag}(\underline{d}_{\text{ALR}}).
-$${#eq-diffexp-alr-covariance}
+What follows makes this construction precise: we define paired CLR difference
+samples between conditions, derive gene-level statistics entirely from counts,
+discuss Monte Carlo resolution and standard errors, show compatibility with
+posterior expected false positive (PEFP) error control, note the option of
+multiple Dirichlet draws per posterior sample, and summarize computational cost.
+We then close with expression masking and its interaction with the CLR
+reference, which must be handled before forming CLR coordinates so that
+low-expression pooling does not distort sign probabilities.
 
-For differential expression analysis, we require Gaussian distributions in CLR
-and ILR spaces. In this section, we derive explicit formulas for transforming
-the mean vector and covariance matrix from ALR space to these alternative
-coordinate systems. A critical result is the exact computation of the CLR
-covariance diagonal in $O(D)$ time—essential for accurate gene-level posterior
-inference.
+#### From posterior samples to CLR differences
 
-### From ALR to CLR Space
-
-#### Transformation of the mean vector
-
-The transformation of the mean vector from ALR to CLR space follows directly
-from the relationship @eq-diffexp-alr-to-clr-claim. We first embed the
-$(D-1)$-dimensional ALR mean into $\mathbb{R}^{D}$ by appending a zero:
-
-$$
-\underline{\mu}_{\text{full}} = \begin{bmatrix}
-\underline{\mu}_{\text{ALR}} \\
-0
-\end{bmatrix} \in \mathbb{R}^{D}.
-$${#eq-diffexp-mean-embed}
-
-Then we apply the centering matrix:
+The starting point is the fitted Dirichlet-Multinomial model, which yields
+posterior samples of the Dirichlet concentration parameters:
 
 $$
-\underline{\mu}_{\text{CLR}} = \underline{\underline{C}} 
-\underline{\mu}_{\text{full}}.
-$${#eq-diffexp-mean-clr}
+\underline{r}^{(s)} \sim \pi(\underline{r} \mid \text{data}),
+\quad s = 1, 2, \ldots, N.
+$$ {#eq-diffexp-np-posterior-samples}
 
-Expanding this using the definition of $\underline{\underline{C}}$:
-
-$$
-\mu_{\text{CLR},g} = \left(1 - \frac{1}{D}\right) \mu_{\text{full},g} - 
-\frac{1}{D} \sum_{j \neq g} \mu_{\text{full},j}.
-$${#eq-diffexp-mean-clr-component}
-
-For $g < D$, we have $\mu_{\text{full},g} = \mu_{\text{ALR},g}$, giving
+For each posterior sample, we draw from the Dirichlet predictive distribution to
+obt ain a composition on the simplex:
 
 $$
-\mu_{\text{CLR},g} = \left(1 - \frac{1}{D}\right) \mu_{\text{ALR},g} - 
-\frac{1}{D} \sum_{j=1, j \neq g}^{D-1} \mu_{\text{ALR},j}, \quad g < D.
-$${#eq-diffexp-mean-clr-component-g}
+\underline{\rho}^{(s)} \sim \text{Dir}(\underline{r}^{(s)}),
+\quad s = 1, 2, \ldots, N,
+$$ {#eq-diffexp-np-dirichlet-draw}
 
-For $g = D$, we have $\mu_{\text{full},D} = 0$, giving
+where $\underline{\rho}^{(s)} = (\rho_1^{(s)}, \rho_2^{(s)}, \ldots,
+\rho_D^{(s)})$ lies on the $(D{-}1)$-simplex. This two-step sampling---posterior
+draw followed by predictive draw---correctly marginalizes over parameter
+uncertainty.
 
-$$
-\mu_{\text{CLR},D} = -\frac{1}{D} \sum_{j=1}^{D-1} \mu_{\text{ALR},j}.
-$${#eq-diffexp-mean-clr-component-D}
-
-This transformation requires $O(D)$ operations.
-
-#### Transformation of the covariance matrix
-
-The transformation of the covariance matrix is more involved. We begin by
-embedding the $(D-1) \times (D-1)$ ALR covariance into $\mathbb{R}^{D \times
-D}$:
+We then apply the centered log-ratio transformation to map from the simplex to
+an unconstrained space:
 
 $$
-\underline{\underline{\Sigma}}_{\text{full}} = \begin{bmatrix}
-\underline{\underline{\Sigma}}_{\text{ALR}} & \underline{0} \\
-\underline{0}^{\top} & 0
-\end{bmatrix} \in \mathbb{R}^{D \times D}.
-$${#eq-diffexp-cov-embed}
+\underline{z}_{\text{CLR}}^{(s)} = \text{CLR}(\underline{\rho}^{(s)}) =
+\log \underline{\rho}^{(s)} -
+\frac{1}{D}\sum_{g=1}^{D} \log \rho_g^{(s)} \cdot \underline{1},
+$$ {#eq-diffexp-np-clr-transform}
 
-The CLR covariance is then obtained by a similarity transformation with the
-centering matrix:
+where $\underline{1}$ is the vector of ones. The CLR coordinates sum to zero by
+construction.
 
-$$
-\underline{\underline{\Sigma}}_{\text{CLR}} = 
-\underline{\underline{C}} \underline{\underline{\Sigma}}_{\text{full}} 
-\underline{\underline{C}}^{\top}.
-$${#eq-diffexp-cov-clr}
-
-Since $\underline{\underline{C}}$ is symmetric
-($\underline{\underline{C}}^{\top} = \underline{\underline{C}}$), we can write
+For two conditions A and B with posterior samples $\underline{r}_A^{(s)}$ and
+$\underline{r}_B^{(s)}$, we form the CLR differences gene by gene:
 
 $$
-\underline{\underline{\Sigma}}_{\text{CLR}} = 
-\underline{\underline{C}} \underline{\underline{\Sigma}}_{\text{full}} 
-\underline{\underline{C}}.
-$${#eq-diffexp-cov-clr-symmetric}
+\Delta_g^{(s)} = z_{A,g,\text{CLR}}^{(s)} - z_{B,g,\text{CLR}}^{(s)},
+\quad g = 1, \ldots, D, \quad s = 1, \ldots, N.
+$$ {#eq-diffexp-np-delta-samples}
 
-#### Transformation of the low-rank component
+The matrix $\underline{\underline{\Delta}} \in \mathbb{R}^{N \times D}$ of CLR
+differences constitutes the empirical posterior of the gene-level effect. All
+subsequent DE statistics are computed from this matrix by counting.
 
-The low-rank component of the ALR covariance is
-$\underline{\underline{W}}_{\text{ALR}} 
-\underline{\underline{W}}_{\text{ALR}}^{\top}$, where
-$\underline{\underline{W}}_{\text{ALR}} \in \mathbb{R}^{(D-1) \times k}$. We
-embed this into $\mathbb{R}^{D \times k}$ by appending a row of zeros:
+#### Validity of sample pairing
 
-$$
-\underline{\underline{W}}_{\text{full}} = \begin{bmatrix}
-\underline{\underline{W}}_{\text{ALR}} \\
-\underline{0}^{\top}
-\end{bmatrix} \in \mathbb{R}^{D \times k}.
-$${#eq-diffexp-w-embed}
+A critical question is whether the index-pairing used in
+@eq-diffexp-np-delta-samples---matching sample $s$ from condition A with sample
+$s$ from condition B---is valid. We now establish this rigorously for both the
+independent-model and within-mixture settings.
 
-The CLR low-rank factor is then
+**Case 1: Independent models.** When conditions A and B have been fitted with
+independent models on independent data, the joint posterior factorizes:
 
 $$
-\underline{\underline{W}}_{\text{CLR}} = 
-\underline{\underline{C}} \underline{\underline{W}}_{\text{full}}.
-$${#eq-diffexp-w-clr}
+\pi(\underline{r}_A, \underline{r}_B \mid \text{data}_A, \text{data}_B)
+= \pi(\underline{r}_A \mid \text{data}_A)
+\cdot \pi(\underline{r}_B \mid \text{data}_B).
+$$ {#eq-diffexp-np-posterior-independence}
 
-To see that this gives the correct low-rank component, observe that
-
-$$
-\underline{\underline{W}}_{\text{CLR}} 
-\underline{\underline{W}}_{\text{CLR}}^{\top} = 
-\underline{\underline{C}} \underline{\underline{W}}_{\text{full}} 
-\underline{\underline{W}}_{\text{full}}^{\top} \underline{\underline{C}}^{\top}.
-$${#eq-diffexp-w-clr-product-step1}
-
-Since
+Let $f(\cdot)$ denote the composition of Dirichlet sampling and CLR
+transformation: $f(\underline{r}) = \text{CLR}(\text{Dir}(\underline{r}))$. The
+posterior of the difference $\Delta_g$ is defined by the induced measure:
 
 $$
-\underline{\underline{W}}_{\text{full}} 
-\underline{\underline{W}}_{\text{full}}^{\top} = \begin{bmatrix}
-\underline{\underline{W}}_{\text{ALR}} 
-\underline{\underline{W}}_{\text{ALR}}^{\top} & \underline{0} \\
-\underline{0}^{\top} & 0
-\end{bmatrix},
-$${#eq-diffexp-w-full-product}
+\pi(\Delta_g \mid \text{data}_A, \text{data}_B) =
+\int \delta\!\left(\Delta_g - [f(\underline{r}_A) -
+f(\underline{r}_B)]_g\right) \,
+\pi(\underline{r}_A \mid \text{data}_A) \,
+\pi(\underline{r}_B \mid \text{data}_B) \,
+d\underline{r}_A \, d\underline{r}_B,
+$$ {#eq-diffexp-np-delta-posterior}
 
-we have
+where $\delta(\cdot)$ is the Dirac delta. By
+@eq-diffexp-np-posterior-independence, this integral is over the product measure
+$\pi(\underline{r}_A \mid \text{data}_A) \otimes \pi(\underline{r}_B \mid
+\text{data}_B)$.
 
-$$
-\underline{\underline{W}}_{\text{CLR}} 
-\underline{\underline{W}}_{\text{CLR}}^{\top} = 
-\underline{\underline{C}} \begin{bmatrix}
-\underline{\underline{W}}_{\text{ALR}} 
-\underline{\underline{W}}_{\text{ALR}}^{\top} & \underline{0} \\
-\underline{0}^{\top} & 0
-\end{bmatrix} \underline{\underline{C}},
-$${#eq-diffexp-w-clr-product-step2}
-
-which is the low-rank part of $\underline{\underline{C}}
-\underline{\underline{\Sigma}}_{\text{full}} \underline{\underline{C}}$.
-
-Computing $\underline{\underline{W}}_{\text{CLR}}$ requires $O(kD)$ operations:
-for each of the $k$ columns, we apply the centering matrix to a $D$-dimensional
-vector.
-
-#### Transformation of the diagonal component: the critical result
-
-The diagonal component of the ALR covariance is $\text{diag}(\underline{d}_{\text{ALR}})$, where $\underline{d}_{\text{ALR}} \in \mathbb{R}^{D-1}$. Embedding into $\mathbb{R}^{D}$:
+Now, suppose we have $N$ i.i.d. samples from each marginal posterior:
+$\{\underline{r}_A^{(s)}\}_{s=1}^{N}$ and $\{\underline{r}_B^{(s)}\}_{s=1}^{N}$.
+For any permutation $\sigma$ of $\{1, \ldots, N\}$, the pairs
+$\{(\underline{r}_A^{(s)}, \underline{r}_B^{(\sigma(s))})\}_{s=1}^{N}$ are
+i.i.d. draws from the product measure, because $\underline{r}_A^{(s)}$ and
+$\underline{r}_B^{(\sigma(s))}$ are independent regardless of $\sigma$. By the
+strong law of large numbers applied to the product measure, the empirical
+distribution of
 
 $$
-\underline{d}_{\text{full}} = \begin{bmatrix}
-\underline{d}_{\text{ALR}} \\
-0
-\end{bmatrix} \in \mathbb{R}^{D}.
-$${#eq-diffexp-d-embed}
+\tilde{\Delta}_g^{(s)} = [f(\underline{r}_A^{(s)}) -
+f(\underline{r}_B^{(\sigma(s))})]_g, \quad s = 1, \ldots, N,
+$$ {#eq-diffexp-np-permuted-delta}
 
-The diagonal part of the CLR covariance is
+converges almost surely to $\pi(\Delta_g \mid \text{data}_A, \text{data}_B)$ as
+$N \to \infty$, for any fixed permutation $\sigma$.
 
-$$
-\text{diag}(\underline{d}_{\text{CLR}}) = 
-\text{diag}\left(\underline{\underline{C}} 
-\text{diag}(\underline{d}_{\text{full}}) \underline{\underline{C}}\right).
-$${#eq-diffexp-d-clr-matrix}
+In particular, the identity permutation $\sigma(s) = s$ is a valid choice.
+Index-pairing is therefore an arbitrary but correct pairing strategy for
+independent models. $\square$
 
-**Naïve approach and its pitfall.** A naïve approach might assume that
+**Case 2: Within-mixture comparisons.** When both conditions are components of a
+single mixture model, the posterior samples are drawn jointly:
 
 $$
-\underline{d}_{\text{CLR}} \stackrel{?}{=} 
-\underline{\underline{C}} \underline{d}_{\text{full}}.
-$${#eq-diffexp-d-naive}
+(\underline{r}_1^{(s)}, \underline{r}_2^{(s)}, \ldots,
+\underline{r}_K^{(s)}) \sim
+\pi(\underline{r}_1, \ldots, \underline{r}_K \mid \text{data}),
+$$ {#eq-diffexp-np-joint-posterior}
 
-This is **incorrect** because the diagonal of a matrix product
-$\underline{\underline{C}} \text{diag}(\underline{d}_{\text{full}})
-\underline{\underline{C}}$ is not generally equal to
-$\underline{\underline{C}} \underline{d}_{\text{full}}$. The centering matrix
-introduces off-diagonal terms that contribute to the diagonal of the
-transformed covariance.
+where $K$ is the number of mixture components. In this setting, the parameters
+for different components within the same posterior draw are generally **not
+independent**: they share information through the likelihood (all components
+explain the same observed cells) and through the prior.
 
-**Exact computation.** To compute the diagonal correctly, we expand the matrix
-product explicitly. The $(g,g)$-th entry of $\underline{\underline{C}}
-\text{diag}(\underline{d}_{\text{full}}) \underline{\underline{C}}$ is
+For comparing components $k$ and $k'$, we must preserve the sample-index
+pairing:
 
 $$
-\left[\underline{\underline{C}} \text{diag}(\underline{d}_{\text{full}}) 
-\underline{\underline{C}}\right]_{gg} = 
-\sum_{i=1}^{D} \sum_{j=1}^{D} C_{gi} \delta_{ij} d_{\text{full},j} C_{gj},
-$${#eq-diffexp-d-exact-step1}
+\Delta_g^{(s)} = z_{k,g,\text{CLR}}^{(s)} - z_{k',g,\text{CLR}}^{(s)},
+$$ {#eq-diffexp-np-within-mixture-delta}
 
-where $\delta_{ij}$ is the Kronecker delta. Since $\delta_{ij} = 1$ only when
-$i = j$, this simplifies to
+because the joint posterior structure between components $k$ and $k'$ is only
+correctly represented when both are drawn from the same posterior sample $s$.
+Permuting the samples would destroy the correlation structure and produce
+incorrect posterior estimates of the difference.
 
-$$
-\left[\underline{\underline{C}} \text{diag}(\underline{d}_{\text{full}}) 
-\underline{\underline{C}}\right]_{gg} = 
-\sum_{j=1}^{D} C_{gj}^2 d_{\text{full},j}.
-$${#eq-diffexp-d-exact-step2}
+In our implementation, this is enforced by the `paired=True` flag, which uses
+the same per-sample RNG sub-key for both components when drawing from the
+Dirichlet predictive, ensuring that the joint structure is preserved throughout
+the sampling pipeline.
 
-Substituting the entries of $\underline{\underline{C}}$ from
-@eq-diffexp-centering-matrix-entries:
+#### Empirical gene-level statistics
 
-$$
-d_{\text{CLR},g} = \left(1 - \frac{1}{D}\right)^2 d_{\text{full},g} + 
-\sum_{j \neq g} \left(-\frac{1}{D}\right)^2 d_{\text{full},j}.
-$${#eq-diffexp-d-exact-step3}
+Given $N$ samples $\Delta_g^{(1)}, \Delta_g^{(2)}, \ldots, \Delta_g^{(N)}$ of
+the CLR difference for gene $g$, we compute all DE statistics by direct
+counting. No distributional assumption is required.
 
-Expanding:
+**Posterior mean.** The posterior mean of the CLR difference is estimated by the
+sample mean:
 
 $$
-d_{\text{CLR},g} = \left(1 - \frac{2}{D} + \frac{1}{D^2}\right) 
-d_{\text{full},g} + \frac{1}{D^2} \sum_{j \neq g} d_{\text{full},j}.
-$${#eq-diffexp-d-exact-step4}
+\hat{\mu}_{\Delta,g} = \frac{1}{N}\sum_{s=1}^{N} \Delta_g^{(s)}.
+$$ {#eq-diffexp-np-mean}
 
-We can rewrite the sum over $j \neq g$ as
-
-$$
-\sum_{j \neq g} d_{\text{full},j} = \sum_{j=1}^{D} d_{\text{full},j} - 
-d_{\text{full},g}.
-$${#eq-diffexp-d-exact-step5}
-
-Substituting this into @eq-diffexp-d-exact-step4:
+**Posterior standard deviation.** The posterior standard deviation is estimated
+by the sample standard deviation with Bessel's correction:
 
 $$
-d_{\text{CLR},g} = \left(1 - \frac{2}{D} + \frac{1}{D^2}\right) 
-d_{\text{full},g} + \frac{1}{D^2} \left(\sum_{j=1}^{D} d_{\text{full},j} - 
-d_{\text{full},g}\right).
-$${#eq-diffexp-d-exact-step6}
+\hat{\sigma}_{\Delta,g} = \sqrt{
+\frac{1}{N-1}\sum_{s=1}^{N}
+\left(\Delta_g^{(s)} - \hat{\mu}_{\Delta,g}\right)^2
+}.
+$$ {#eq-diffexp-np-sd}
 
-Collecting terms with $d_{\text{full},g}$:
-
-$$
-d_{\text{CLR},g} = \left(1 - \frac{2}{D} + \frac{1}{D^2} - \frac{1}{D^2}\right) 
-d_{\text{full},g} + \frac{1}{D^2} \sum_{j=1}^{D} d_{\text{full},j}.
-$${#eq-diffexp-d-exact-step7}
-
-Simplifying the coefficient of $d_{\text{full},g}$:
+**Probability of positive effect.** The posterior probability that gene $g$ is
+up-regulated in condition A relative to B is estimated by the empirical
+frequency:
 
 $$
-1 - \frac{2}{D} + \frac{1}{D^2} - \frac{1}{D^2} = 1 - \frac{2}{D}.
-$${#eq-diffexp-d-exact-coeff}
+\hat{P}(\Delta_g > 0 \mid \text{data}) = \frac{1}{N}\sum_{s=1}^{N}
+\mathbf{1}\!\left[\Delta_g^{(s)} > 0\right].
+$$ {#eq-diffexp-np-prob-positive}
 
-Therefore, we obtain the exact formula:
-
-$$
-d_{\text{CLR},g} = d_{\text{full},g}\left(1 - \frac{2}{D}\right) + 
-\frac{1}{D^2} \sum_{j=1}^{D} d_{\text{full},j}.
-$${#eq-diffexp-d-exact-final}
-
-This is a remarkable result: the diagonal entries of the CLR covariance are a
-simple linear combination of the diagonal entries of the embedded ALR
-covariance, with a gene-specific term and a term that is constant across all
-genes.
-
-**Computational complexity.** Computing all $D$ diagonal entries using
-@eq-diffexp-d-exact-final requires:
-
-1. Computing the sum $\sum_{j=1}^{D} d_{\text{full},j}$ once: $O(D)$ time.
-2. For each gene $g$, computing $d_{\text{CLR},g}$ using the formula: $O(1)$
-per gene, hence $O(D)$ total.
-
-The total complexity is $O(D)$, which is optimal. In contrast, materializing
-the full matrix $\underline{\underline{C}} \text{diag}(\underline{d}_{\text{full}})
-\underline{\underline{C}}$ would require $O(D^2)$ operations.
-
-**Why this matters for accurate posteriors.** The exact diagonal formula
-@eq-diffexp-d-exact-final is critical for gene-level differential expression
-analysis. The diagonal entries $d_{\text{CLR},g}$ determine the posterior
-variance of each gene's log-fold-change. Using an incorrect approximation such
-as @eq-diffexp-d-naive would systematically bias the posterior variances,
-leading to incorrect confidence intervals, tail probabilities, and ultimately
-erroneous differential expression calls. For datasets with $D \approx 30{,}000$
-genes, even small relative errors in individual variances can accumulate to
-substantial errors in multiple testing procedures.
-
-### From CLR to ILR Space
-
-Once we have transformed from ALR to CLR space, the further transformation to
-ILR space is straightforward, as it involves a simple linear transformation by
-the orthonormal matrix $\underline{\underline{V}}$.
-
-#### Transformation of the mean vector
-
-The ILR mean is obtained by applying the ILR basis matrix:
+**Empirical local false sign rate.** The lfsr, defined in
+@eq-diffexp-lfsr-definition as the posterior probability of the minority sign,
+is estimated by
 
 $$
-\underline{\mu}_{\text{ILR}} = \underline{\underline{V}} 
-\underline{\mu}_{\text{CLR}}.
-$${#eq-diffexp-mean-ilr}
+\widehat{\text{lfsr}}_g = \min\!\left(
+\hat{P}(\Delta_g > 0 \mid \text{data}), \;
+1 - \hat{P}(\Delta_g > 0 \mid \text{data})
+\right).
+$$ {#eq-diffexp-np-lfsr}
 
-This is a matrix-vector multiplication requiring $O((D-1) \cdot D) = O(D^2)$
-operations for a dense matrix $\underline{\underline{V}}$. However, for the
-Helmert basis @eq-diffexp-helmert-formula, the sparsity pattern allows
-computation in $O(D)$ time through a recursive algorithm.
+This is precisely the smaller of the empirical probabilities of positive and
+negative effects. Note that no Gaussian CDF evaluation is involved.
 
-#### Transformation of the covariance matrix
-
-The ILR covariance is obtained by a similarity transformation:
-
-$$
-\underline{\underline{\Sigma}}_{\text{ILR}} = \underline{\underline{V}} 
-\underline{\underline{\Sigma}}_{\text{CLR}} \underline{\underline{V}}^{\top}.
-$${#eq-diffexp-cov-ilr}
-
-Since $\underline{\underline{V}}$ is orthonormal
-($\underline{\underline{V}} \underline{\underline{V}}^{\top} =
-\underline{\underline{I}}_{D-1}$), we can verify that the inverse
-transformation is
+**Probability of practical significance.** For a practical significance
+threshold $\tau \geq 0$, the probabilities of upward and downward practical
+effects are
 
 $$
-\underline{\underline{\Sigma}}_{\text{CLR}} = \underline{\underline{V}}^{\top} 
-\underline{\underline{\Sigma}}_{\text{ILR}} \underline{\underline{V}}.
-$${#eq-diffexp-cov-clr-from-ilr}
-
-#### Transformation of the low-rank component
-
-The ILR low-rank factor is
+\hat{P}(\Delta_g > \tau \mid \text{data}) = \frac{1}{N}\sum_{s=1}^{N}
+\mathbf{1}\!\left[\Delta_g^{(s)} > \tau\right],
+$$ {#eq-diffexp-np-prob-above-tau}
 
 $$
-\underline{\underline{W}}_{\text{ILR}} = \underline{\underline{V}} 
-\underline{\underline{W}}_{\text{CLR}}.
-$${#eq-diffexp-w-ilr}
+\hat{P}(\Delta_g < -\tau \mid \text{data}) = \frac{1}{N}\sum_{s=1}^{N}
+\mathbf{1}\!\left[\Delta_g^{(s)} < -\tau\right],
+$$ {#eq-diffexp-np-prob-below-tau}
 
-This is a matrix-matrix multiplication of a $(D-1) \times D$ matrix with a $D
-\times k$ matrix, requiring $O(kD^2)$ operations in general, or $O(kD)$
-operations if the sparsity of $\underline{\underline{V}}$ is exploited.
-
-To verify that this gives the correct low-rank component:
+and the total probability of practical significance is
 
 $$
-\underline{\underline{W}}_{\text{ILR}} 
-\underline{\underline{W}}_{\text{ILR}}^{\top} = 
-\underline{\underline{V}} \underline{\underline{W}}_{\text{CLR}} 
-\underline{\underline{W}}_{\text{CLR}}^{\top} \underline{\underline{V}}^{\top},
-$${#eq-diffexp-w-ilr-product}
+\hat{P}(|\Delta_g| > \tau \mid \text{data}) =
+\hat{P}(\Delta_g > \tau \mid \text{data}) +
+\hat{P}(\Delta_g < -\tau \mid \text{data}).
+$$ {#eq-diffexp-np-prob-effect}
 
-which is the low-rank part of $\underline{\underline{V}}
-\underline{\underline{\Sigma}}_{\text{CLR}} \underline{\underline{V}}^{\top}$.
-
-#### Transformation of the diagonal component
-
-The diagonal component of the ILR covariance cannot be computed as simply as
-the CLR diagonal because $\underline{\underline{V}}$ is not a diagonal matrix.
-Instead, we must compute
+**Empirical lfsr with practical significance.** Analogous to the parametric
+$\text{lfsr}_g(\tau)$ defined in @eq-diffexp-lfsr-tau, the empirical
+practical-significance lfsr is
 
 $$
-d_{\text{ILR},i} = \left[\underline{\underline{V}} 
-\text{diag}(\underline{d}_{\text{CLR}}) \underline{\underline{V}}^{\top}\right]_{ii}.
-$${#eq-diffexp-d-ilr-matrix}
+\widehat{\text{lfsr}}_g(\tau) = 1 - \max\!\left(
+\hat{P}(\Delta_g > \tau \mid \text{data}), \;
+\hat{P}(\Delta_g < -\tau \mid \text{data})
+\right).
+$$ {#eq-diffexp-np-lfsr-tau}
 
-Expanding the matrix product:
+When $\tau = 0$, this reduces to the standard empirical lfsr
+(@eq-diffexp-np-lfsr), since $\max(P(\Delta_g > 0), P(\Delta_g < 0)) = 1 -
+\text{lfsr}_g$.
 
-$$
-d_{\text{ILR},i} = \sum_{j=1}^{D} \sum_{\ell=1}^{D} V_{ij} \delta_{j\ell} 
-d_{\text{CLR},\ell} V_{i\ell} = \sum_{j=1}^{D} V_{ij}^2 d_{\text{CLR},j}.
-$${#eq-diffexp-d-ilr-exact}
+**Consistency with the parametric framework.** The empirical lfsr
+$\widehat{\text{lfsr}}_g$ estimates the same quantity as the parametric lfsr
+$\text{lfsr}_g$---namely, the posterior probability of the minority sign. When
+the Gaussian assumption holds, the two estimates converge to the same value as
+$N \to \infty$. When it does not hold, the empirical estimate is correct while
+the parametric estimate may be biased.
 
-This formula shows that each ILR diagonal entry is a weighted sum of the CLR
-diagonal entries, with weights given by the squared entries of the $i$-th row
-of $\underline{\underline{V}}$. Since each row of $\underline{\underline{V}}$
-is sparse (for the Helmert basis), this computation can be performed efficiently.
+#### Monte Carlo resolution and standard errors
 
-For the full diagonal vector, the computational cost is $O(D^2)$ in general, or
-$O(D)$ if the sparsity of $\underline{\underline{V}}$ is exploited.
+The empirical lfsr estimator $\widehat{\text{lfsr}}_g$ is a sample proportion.
+Its precision is governed by the binomial standard error.
 
-### Efficient Implementation via Woodbury Identity
-
-Throughout this section, we have emphasized computational efficiency, ensuring
-that all operations scale linearly or near-linearly with the number of genes
-$D$. A key tool for achieving this efficiency when working with low-rank plus
-diagonal covariance matrices is the *Woodbury matrix identity*, also known as
-the matrix inversion lemma.
-
-#### Statement of the Woodbury identity
-
-Let $\underline{\underline{A}} \in \mathbb{R}^{D \times D}$ be an invertible
-matrix, $\underline{\underline{U}} \in \mathbb{R}^{D \times k}$,
-$\underline{\underline{C}} \in \mathbb{R}^{k \times k}$ be an invertible matrix,
-and $\underline{\underline{V}} \in \mathbb{R}^{k \times D}$. The Woodbury
-identity states that
+**Standard error of the empirical lfsr.** Define $p_g = P(\Delta_g > 0 \mid
+\text{data})$ (the true posterior probability of positive effect). The empirical
+estimator $\hat{p}_g = \frac{1}{N}\sum_s \mathbf{1}[\Delta_g^{(s)}
+> 0]$ has variance $\text{Var}(\hat{p}_g) = p_g(1 - p_g)/N$. The lfsr is $\ell_g
+> = \min(p_g, 1 - p_g)$, and its estimator $\hat{\ell}_g = \min(\hat{p}_g, 1 -
+> \hat{p}_g)$. By the delta method (since $\ell_g$ is a differentiable function
+> of $p_g$ away from $p_g = 1/2$), the standard error of $\hat{\ell}_g$ is
 
 $$
-\left(\underline{\underline{A}} + \underline{\underline{U}} 
-\underline{\underline{C}} \underline{\underline{V}}\right)^{-1} = 
-\underline{\underline{A}}^{-1} - \underline{\underline{A}}^{-1} 
-\underline{\underline{U}} \left(\underline{\underline{C}}^{-1} + 
-\underline{\underline{V}} \underline{\underline{A}}^{-1} 
-\underline{\underline{U}}\right)^{-1} \underline{\underline{V}} 
-\underline{\underline{A}}^{-1}.
-$${#eq-diffexp-woodbury}
+\text{SE}(\widehat{\text{lfsr}}_g) \approx
+\sqrt{\frac{\ell_g (1 - \ell_g)}{N}}.
+$$ {#eq-diffexp-np-lfsr-se}
 
-This identity is a standard result in matrix analysis and is derived in
-@golub2013.
+This expression is exact for $p_g \neq 1/2$ and provides an upper bound at $p_g
+= 1/2$ (where $\ell_g = 1/2$ and $\text{SE} = 1/(2\sqrt{N})$).
 
-#### Application to low-rank plus diagonal matrices
+**Numerical examples.** For $N = 10{,}000$ posterior samples:
 
-For our covariance structure $\underline{\underline{\Sigma}} =
-\underline{\underline{W}} \underline{\underline{W}}^{\top} +
-\text{diag}(\underline{d})$, we set
+| True lfsr | SE of empirical lfsr | Relative SE |
+|-----------|----------------------|-------------|
+| 0.50      | 0.005                | 1.0%        |
+| 0.10      | 0.003                | 3.0%        |
+| 0.05      | 0.0022               | 4.3%        |
+| 0.01      | 0.001                | 10%         |
+| 0.001     | 0.0003               | 32%         |
 
-$$
-\underline{\underline{A}} = \text{diag}(\underline{d}), \quad 
-\underline{\underline{U}} = \underline{\underline{W}}, \quad 
-\underline{\underline{C}} = \underline{\underline{I}}_k, \quad 
-\underline{\underline{V}} = \underline{\underline{W}}^{\top}.
-$${#eq-diffexp-woodbury-params}
+For most practical purposes, $N = 10{,}000$ provides sufficient resolution to
+distinguish truly significant genes (lfsr $\lesssim 0.01$) from non-significant
+ones. The standard error for lfsr $= 0.01$ is approximately 0.001, which is well
+below the typical PEFP threshold of $\alpha = 0.05$.
 
-Since $\underline{\underline{A}}$ is diagonal, its inverse is
+**Minimum detectable lfsr.** The smallest non-zero empirical lfsr is $1/N$,
+achieved when all $N$ samples agree on the sign. For $N = 10{,}000$, this gives
+a resolution floor of $10^{-4}$. Genes with true lfsr smaller than $1/N$ cannot
+be distinguished from lfsr $= 0$ by the empirical method. In contrast, the
+parametric lfsr can represent arbitrarily small values via the Gaussian CDF.
+This resolution difference is the fundamental tradeoff between the parametric
+and empirical approaches.
 
-$$
-\underline{\underline{A}}^{-1} = 
-\text{diag}\left(\frac{1}{d_1}, \frac{1}{d_2}, \ldots, \frac{1}{d_D}\right).
-$${#eq-diffexp-diagonal-inverse}
-
-Applying the Woodbury identity:
-
-$$
-\underline{\underline{\Sigma}}^{-1} = \text{diag}(\underline{d})^{-1} - 
-\text{diag}(\underline{d})^{-1} \underline{\underline{W}} 
-\left(\underline{\underline{I}}_k + \underline{\underline{W}}^{\top} 
-\text{diag}(\underline{d})^{-1} \underline{\underline{W}}\right)^{-1} 
-\underline{\underline{W}}^{\top} \text{diag}(\underline{d})^{-1}.
-$${#eq-diffexp-woodbury-sigma-inverse}
-
-The key computational advantage is that the matrix to be inverted,
-$\underline{\underline{I}}_k + \underline{\underline{W}}^{\top}
-\text{diag}(\underline{d})^{-1} \underline{\underline{W}}$, has dimension $k
-\times k$ rather than $D \times D$. Since $k \ll D$ (typically $k \approx 50$
-and $D \approx 30{,}000$), inverting this smaller matrix requires $O(k^3)$
-operations, which is negligible compared to the $O(D^3)$ cost of directly
-inverting $\underline{\underline{\Sigma}}$.
-
-Moreover, for applications requiring only quadratic forms
-$\underline{v}^{\top} \underline{\underline{\Sigma}}^{-1} \underline{v}$ rather
-than the full inverse matrix, we can compute
+**Confidence interval.** Using the normal approximation to the binomial, an
+approximate $(1-\alpha)$ confidence interval for the true lfsr is
 
 $$
-\underline{v}^{\top} \underline{\underline{\Sigma}}^{-1} \underline{v} = 
-\underline{v}^{\top} \text{diag}(\underline{d})^{-1} \underline{v} - 
-\underline{w}^{\top} \left(\underline{\underline{I}}_k + 
-\underline{\underline{W}}^{\top} \text{diag}(\underline{d})^{-1} 
-\underline{\underline{W}}\right)^{-1} \underline{w},
-$${#eq-diffexp-woodbury-quadratic}
+\widehat{\text{lfsr}}_g \pm z_{\alpha/2}
+\sqrt{\frac{\widehat{\text{lfsr}}_g
+(1 - \widehat{\text{lfsr}}_g)}{N}},
+$$ {#eq-diffexp-np-lfsr-ci}
 
-where $\underline{w} = \underline{\underline{W}}^{\top}
-\text{diag}(\underline{d})^{-1} \underline{v}$. This requires $O(kD)$
-operations and is the computational workhorse for many differential expression
-calculations.
+where $z_{\alpha/2}$ is the $(1 - \alpha/2)$-quantile of the standard normal.
 
-#### Matrix determinant lemma
+#### Compatibility with PEFP error control
 
-A companion result to the Woodbury identity is the *matrix determinant lemma*,
-which provides an efficient formula for the determinant of a low-rank update to
-a diagonal matrix:
+A key design property of the empirical DE approach is that the lfsr values it
+produces are **fully compatible** with the PEFP error control machinery
+developed in @sec-diffexp-pefp. The PEFP (@eq-diffexp-pefp-lfsr) is defined as
 
 $$
-\det\left(\underline{\underline{A}} + \underline{\underline{U}} 
-\underline{\underline{C}} \underline{\underline{V}}\right) = 
-\det(\underline{\underline{C}}) \det(\underline{\underline{A}}) 
-\det\left(\underline{\underline{C}}^{-1} + \underline{\underline{V}} 
-\underline{\underline{A}}^{-1} \underline{\underline{U}}\right).
-$${#eq-diffexp-det-lemma}
+\text{PEFP}(S) = \frac{1}{|S|} \sum_{g \in S} \text{lfsr}_g,
+$$ {#eq-diffexp-np-pefp}
 
-For our covariance structure with the same parameter settings as before, this
-becomes
+which depends only on the numerical lfsr values, not on how they were computed.
+The threshold-finding algorithm (@eq-diffexp-algorithm-step1 through
+@eq-diffexp-algorithm-step4) and the monotonicity proof
+(@eq-diffexp-pefp-monotone) are purely algebraic properties of the sorted lfsr
+vector and apply identically to empirical lfsr values.
+
+Therefore, the same `call_de_genes`, `compute_pefp`, and `find_lfsr_threshold`
+functions can be used with either parametric or empirical lfsr values, with no
+modification.
+
+#### Multiple Dirichlet draws per posterior sample
+
+In certain settings, one may wish to draw multiple compositions from the
+Dirichlet predictive for each posterior sample of $\underline{r}$. If we draw
+$M$ compositions per posterior sample, the total number of CLR difference
+samples becomes $N_{\text{total}} = N \times M$, and all the statistics in this
+section are computed over the expanded sample.
+
+This strategy can improve the resolution of the empirical lfsr without requiring
+additional (computationally expensive) posterior samples. However, the $M$
+Dirichlet draws from a single posterior sample $\underline{r}^{(s)}$ are
+conditionally independent given $\underline{r}^{(s)}$ but not marginally
+independent; they share the same parameter value. As a result, the effective
+sample size for posterior uncertainty quantification remains $N$ (the number of
+distinct posterior samples), even though the nominal sample count is $NM$.
+
+The primary benefit of $M > 1$ is in resolving the Dirichlet sampling noise
+(which is distinct from posterior uncertainty). For most applications with $N
+\geq 1{,}000$, $M = 1$ provides sufficient resolution, and we recommend this as
+the default.
+
+#### Computational complexity
+
+The computational cost of the empirical DE pipeline consists of three stages:
+
+**Stage 1: Dirichlet sampling** ($O(ND)$ per batch). For each posterior sample
+$\underline{r}^{(s)} \in \mathbb{R}^D$, drawing from
+$\text{Dir}(\underline{r}^{(s)})$ requires $D$ gamma variates followed by
+normalization. With batched sampling (processing $B$ samples simultaneously),
+the memory footprint is $O(BD)$ and the total work is $O(ND)$.
+
+**Stage 2: CLR transformation** ($O(ND)$). Applying the CLR transform to the $N
+\times D$ matrix of simplex samples requires computing the geometric mean (one
+reduction per row) and subtracting it.
+
+**Stage 3: Counting statistics** ($O(ND)$). Computing means, standard
+deviations, and indicator sums over $N$ samples for $D$ genes.
+
+| **Stage**           | **Complexity** | **Memory** | **GPU-parallelizable** |
+|---------------------|----------------|------------|------------------------|
+| Dirichlet sampling  | $O(ND)$        | $O(BD)$    | Yes (batched)          |
+| CLR transformation  | $O(ND)$        | $O(ND)$    | Yes                    |
+| Counting statistics | $O(ND)$        | $O(D)$     | Yes                    |
+| **Total**           | $O(ND)$        | $O(BD)$    | Fully                  |
+
+where $B$ is the batch size for Dirichlet sampling (default: 2048).
+
+**Comparison to the parametric path.** The parametric DE requires fitting the
+logistic-normal approximation ($O(ND)$ for the SVD-based low-rank fit, done
+once) and then evaluates per-gene statistics in $O(kD)$ time, where $k$ is the
+low-rank dimension. The empirical path is $O(ND)$ throughout. For typical values
+of $N = 10{,}000$, $D = 20{,}000$, and $k = 32$:
+
+| **Method** | **One-time cost** | **Per-gene cost** | **Total for** $D$ genes | **Assumptions** |
+|--------------|--------------|--------------|----------------|--------------|
+| Parametric | $O(NDk)$ SVD fit | $O(k)$ | $O(kD) \approx 6 \times 10^5$ | Gaussian marginals |
+| Empirical | $O(ND)$ sampling | $O(N)$ | $O(ND) \approx 2 \times 10^8$ | None |
+
+The empirical approach is approximately $N/k \approx 300\times$ more expensive
+per analysis, but requires no distributional assumptions. On modern GPU
+hardware, the empirical analysis for $D = 20{,}000$ genes with $N = 10{,}000$
+samples completes in seconds, making the additional cost negligible in practice.
+
+### Expression masking and the CLR reference composition {#sec-diffexp-expression-mask}
+
+An expression mask filters low-expression genes before differential analysis,
+pooling them into a single "other" pseudo-gene to maintain compositional
+closure. Because the centered log-ratio (CLR) transform uses the geometric mean
+of all retained genes as its reference, the choice of mask directly defines the
+yardstick against which effects are measured. This section formalises the
+consequences.
+
+**Setup.** Let $\boldsymbol\rho^{(s)}$ denote a simplex sample of dimension $D$,
+partitioned into kept genes $\mathcal{K}$ ($|\mathcal{K}| = D_k$) and filtered
+genes $\mathcal{F}$. Write $\rho_{\mathrm{other}}^{(s)} =
+\sum_{g \in \mathcal{F}} \rho_g^{(s)}$ for the aggregated "other" proportion.
+The masked simplex has $D_k + 1$ components.
+
+**CLR under the mask.** The masked CLR for a kept gene $g \in \mathcal{K}$ is:
 
 $$
-\det(\underline{\underline{\Sigma}}) = 
-\det(\text{diag}(\underline{d})) \cdot 
-\det\left(\underline{\underline{I}}_k + \underline{\underline{W}}^{\top} 
-\text{diag}(\underline{d})^{-1} \underline{\underline{W}}\right).
-$${#eq-diffexp-det-sigma}
+\mathrm{CLR}_g^{\mathrm{mask},(s)} = \log \rho_g^{(s)} - \frac{1}{D_k + 1}
+\left(\sum_{j \in \mathcal{K}} \log \rho_j^{(s)} +
+\log \rho_{\mathrm{other}}^{(s)}\right),
+$$
 
-Since $\det(\text{diag}(\underline{d})) = \prod_{i=1}^{D} d_i$, we can compute
+whereas the full-gene CLR would use all $D$ individual log-proportions in the
+geometric mean. For each posterior sample, the difference between the full-gene
+CLR and the masked CLR for a kept gene is a *per-sample constant*:
 
 $$
-\log \det(\underline{\underline{\Sigma}}) = \sum_{i=1}^{D} \log d_i + 
-\log \det\left(\underline{\underline{I}}_k + \underline{\underline{W}}^{\top} 
-\text{diag}(\underline{d})^{-1} \underline{\underline{W}}\right).
-$${#eq-diffexp-logdet-sigma}
+c^{(s)} = \mathrm{CLR}_g^{\mathrm{full},(s)} -
+\mathrm{CLR}_g^{\mathrm{mask},(s)} =
+\log \bar{g}_{\mathrm{mask}}^{(s)} -
+\log \bar{g}_{\mathrm{full}}^{(s)},
+$$
 
-This formula enables $O(k^2 D)$ computation of the log-determinant, which
-appears in the multivariate Gaussian density and in information-theoretic
-divergences such as the Kullback-Leibler divergence.
+where $\bar{g}_{\mathrm{mask}}^{(s)}$ and $\bar{g}_{\mathrm{full}}^{(s)}$ are
+the geometric means of the masked and full compositions, respectively. This
+shift $c^{(s)}$ is the same for every gene $g \in \mathcal{K}$ in a given
+sample.
 
-#### Computational complexity summary
+**Why the shift matters.** Although $\text{Var}[c^{(s)}]$ is typically $O(1/D)$
+(the shift is tight across samples), its expectation $\langle c^{(s)} \rangle$
+can be large. In log-space, low-expression genes dominate the geometric mean
+because their $\log \rho_g$ values are large negative numbers. When many genes
+are low-expression (common in transcriptomics), the full-gene geometric mean is
+pulled strongly downward relative to the masked geometric mean that only
+includes expressed genes. This produces a substantial constant offset in
+$c^{(s)}$ that shifts all $\Delta_g^{(s)}$ uniformly.
 
-The Woodbury identity and matrix determinant lemma ensure that all operations
-on low-rank plus diagonal covariance matrices have complexity $O(k^2 D)$ rather
-than $O(D^3)$:
+Although the shift is constant across genes within each sample, the magnitude
+and sign of the shift vary across posterior samples, so it does not cancel when
+averaging. The resulting bias completely scrambles the local false sign rate
+(lfsr): genes that should have lfsr $\approx 0$ acquire spurious probability
+mass on the wrong sign, and vice versa. **Therefore, the expression mask must be
+applied before the CLR transform, not as a post-hoc filter on the CLR
+differences.**
 
-| **Operation**                                                                         | **Naïve Complexity** | **Low-Rank Complexity** |
-| ------------------------------------------------------------------------------------- | -------------------- | ----------------------- |
-| Matrix inversion                                                                      | $O(D^3)$             | $O(k^2 D)$              |
-| Determinant                                                                           | $O(D^3)$             | $O(k^2 D)$              |
-| Quadratic form $\underline{v}^{\top}\underline{\underline{\Sigma}}^{-1}\underline{v}$ | $O(D^2)$             | $O(kD)$                 |
-| Sampling                                                                              | $O(D^2)$             | $O(kD)$                 |
+**Dirichlet aggregation property.** Fortunately, the Dirichlet distribution has
+a closure property under aggregation: if $\boldsymbol\rho \sim
+\mathrm{Dir}(\boldsymbol\alpha)$, then the composition formed by summing any
+subset of components into a single entry is itself Dirichlet with the summed
+concentration. Formally, if we aggregate $\mathcal{F}$ into "other":
 
-For typical single-cell datasets with $D = 30{,}000$ and $k = 50$, the speedup
-factor is $(D/k)^2 = 360{,}000$, making the difference between intractable and
-nearly instantaneous computation.
+$$
+(\rho_{\mathcal{K}_1}, \ldots, \rho_{\mathcal{K}_{D_k}},
+\rho_{\mathrm{other}}) \sim
+\mathrm{Dir}(\alpha_{\mathcal{K}_1}, \ldots, \alpha_{\mathcal{K}_{D_k}},
+\alpha_{\mathrm{other}}),
+\quad
+\alpha_{\mathrm{other}} = \sum_{g \in \mathcal{F}} \alpha_g.
+$$
 
+This means we can store the full $D$-dimensional simplex samples from the
+initial Dirichlet draw and re-aggregate post-hoc for any gene mask—the result is
+*mathematically identical* to having pre-aggregated the concentration parameters
+and sampled the lower-dimensional Dirichlet. This enables interactive mask
+exploration on a single results object without re-running the expensive
+Dirichlet/Gamma sampling stage.
+
+```{=html}
+<!-- TODO: Add diagnostic figure (full-gene vs masked CLR scatter for delta_mean,
+     delta_sd, lfsr, and histogram of the constant shift) using a public dataset.
+     See altos/exploratory/panfibrosis/panfibrosis_de_eda.py for the template. -->
+```

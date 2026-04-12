@@ -528,12 +528,12 @@ DESCRIPTIVE_NAMES: Dict[str, str] = {
     # Core NB parameters
     "r": "dispersion",
     "p": "prob",
-    "mu": "expression",
-    "phi": "odds",
+    "mu": "mean_expression",
+    "phi": "odds_ratio",
     "gate": "zero_inflation",
     # Capture parameters
     "p_capture": "capture_prob",
-    "phi_capture": "capture_odds",
+    "phi_capture": "capture_odds_ratio",
     "eta_capture": "capture_efficiency",
     # Already descriptive (identity)
     "bnb_concentration": "bnb_concentration",
@@ -739,9 +739,8 @@ def resolve_param_shorthand(
     Returns
     -------
     Optional[List[str]]
-        Resolved list of internal parameter names, or ``None`` when the
-        shorthand ``"all"`` is used (the existing factory logic already
-        treats ``None`` as "all parameters are mixture/joint-specific").
+        Resolved list of internal parameter names, or ``None`` if
+        *value* was ``None``.
 
     Raises
     ------
@@ -758,7 +757,8 @@ def resolve_param_shorthand(
     ['phi', 'mu']
     >>> resolve_param_shorthand("mean", strat, "zinb")
     ['mu']
-    >>> resolve_param_shorthand("all", strat, "zinb")  # returns None
+    >>> resolve_param_shorthand("all", strat, "zinb")
+    ['phi', 'mu', 'gate']
     >>> resolve_param_shorthand(["expression", "odds"], strat, "zinb")
     ['mu', 'phi']
     """
@@ -777,10 +777,13 @@ def resolve_param_shorthand(
         prob_param = [p for p in core if p != gene_param]
 
         if shorthand == "all":
-            # None signals "everything" to the existing factory logic
-            # (build_param_specs defaults to all core, build_gate_spec
-            # defaults to is_mixture=True, etc.)
-            return None
+            # Build the explicit list: core params + gate for ZINB models.
+            # This concrete list works uniformly for mixture_params (where
+            # the factory checks membership), joint_params, and dense_params.
+            all_params = list(core)
+            if is_zinb:
+                all_params.append("gate")
+            return all_params
 
         if shorthand == "biological":
             return core

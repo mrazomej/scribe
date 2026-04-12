@@ -1,8 +1,7 @@
-"""SLURM helpers for the unified ``scribe-infer`` CLI.
+"""SLURM helpers for ``scribe-infer`` and ``scribe-visualize`` batch submit.
 
-This module centralizes all submitit/SLURM-specific parsing, profile loading,
-interactive prompting, and command construction so that ``infer.py`` stays
-focused on top-level dispatch behavior.
+This module centralizes submitit/SLURM parsing, profile loading, interactive
+prompting, and command construction so CLIs stay focused on dispatch.
 """
 
 from __future__ import annotations
@@ -17,7 +16,6 @@ _DEFAULT_CPUS_PER_TASK = 4
 _DEFAULT_MEM_GB = 64
 _DEFAULT_TIMEOUT = "0-04:00"
 _DEFAULT_TIMEOUT_MIN = 240
-_DEFAULT_JOB_NAME = "scribe_infer"
 _DEFAULT_SUBMITIT_FOLDER = "slurm_logs/submitit/%j"
 
 _CORE_SLURM_KEYS = {
@@ -47,7 +45,7 @@ _PROFILE_ALLOWED_KEYS = (
 
 @dataclass(frozen=True)
 class SlurmPromptConfig:
-    """Resolved SLURM settings for ``scribe-infer --slurm``.
+    """Resolved SLURM settings after profile, CLI overrides, and prompts.
 
     Attributes
     ----------
@@ -76,13 +74,17 @@ class SlurmPromptConfig:
     reservation : str | None
         Optional SLURM reservation name.
     gres : str | None
-        Optional generic resources request string.
+        Optional SLURM generic resources string (e.g. ``gpu:1``). Often set from
+        a profile, ``--slurm-set gres=...``, or the visualize GPU count prompt.
+        Nonstandard site syntax should use profile / ``--slurm-set`` only.
     mail_user : str | None
         Optional notification email address.
     mail_type : str | None
         Optional comma-separated mail event types.
     job_name : str | None
-        Optional submitit job name override.
+        SLURM / submitit job name. Defaults to ``scribe-infer`` or
+        ``scribe-visualize`` depending on which CLI collected the config unless
+        overridden by profile, ``--slurm-set``, or an interactive prompt.
     submitit_folder : str | None
         Optional submitit log folder override.
     launcher_overrides : dict[str, str] | None
@@ -170,6 +172,21 @@ def _prompt_positive_int(prompt: str, default: int) -> int:
         if parsed > 0:
             return parsed
         print("Value must be a positive integer.")
+
+
+def _prompt_non_negative_int(prompt: str, default: int) -> int:
+    """Prompt for a non-negative integer with default fallback."""
+    while True:
+        raw = input(f"{prompt} [{default}]: ").strip()
+        if not raw:
+            return default
+        try:
+            parsed = int(raw)
+        except ValueError:
+            parsed = -1
+        if parsed >= 0:
+            return parsed
+        print("Value must be a non-negative integer.")
 
 
 def _prompt_timeout_minutes(default: str = "0-04:00") -> int:
@@ -335,8 +352,10 @@ def prompt_slurm_config(
     seed_values: dict[str, Any] | None = None,
     *,
     allow_interactive: bool = True,
+    default_job_name: str = "scribe-infer",
+    prompt_for_gres: bool = False,
 ) -> SlurmPromptConfig:
-    """Collect/resolve SLURM settings for submitit launch mode.
+    """Collect/resolve SLURM settings for submitit or raw batch submission.
 
     Parameters
     ----------
@@ -344,11 +363,19 @@ def prompt_slurm_config(
         Pre-resolved values from profile and/or ``--slurm-set``.
     allow_interactive : bool, optional
         Whether this call may prompt for missing values.
+    default_job_name : str, optional
+        Job name used when none is supplied and as the interactive prompt
+        default. Callers should pass ``scribe-infer`` or ``scribe-visualize``.
+    prompt_for_gres : bool, optional
+        When ``True`` and stdin is a TTY, prompt for a GPU count and set
+        ``gres`` to ``gpu:<n>`` (``n=0`` omits ``gres``). Skipped if ``gres``
+        is already present in ``seed_values``. Intended for ``scribe-visualize``
+        raw ``sbatch`` scripts; infer uses submitit's ``gpus_per_node`` instead.
 
     Returns
     -------
     SlurmPromptConfig
-        Validated settings required to build submitit overrides.
+        Validated settings required to build launcher or batch script lines.
 
     Raises
     ------
@@ -386,12 +413,30 @@ def prompt_slurm_config(
             merged["timeout_min"] = _prompt_timeout_minutes(
                 default=_DEFAULT_TIMEOUT
             )
+        # Optional job name: empty input keeps CLI-specific default.
+        if "job_name" not in merged:
+            raw_job = input(f"Job name [{default_job_name}]: ").strip()
+            merged["job_name"] = raw_job or default_job_name
+        # Raw sbatch (visualize): request GPUs via --gres unless profile/set
+        # already supplied gres or user chooses 0 GPUs.
+        if prompt_for_gres and "gres" not in merged:
+            print(
+                "For nonstandard gres strings use conf/slurm profile or "
+                "--slurm-set gres=..."
+            )
+            n_gpu = _prompt_non_negative_int(
+                "GPUs per job (0 = omit --gres; many sites use SLURM gres gpu:N)",
+                default=1,
+            )
+            if n_gpu > 0:
+                merged["gres"] = f"gpu:{n_gpu}"
     else:
         merged.setdefault("account", None)
         merged.setdefault("array_parallelism", _DEFAULT_ARRAY_PARALLELISM)
         merged.setdefault("cpus_per_task", _DEFAULT_CPUS_PER_TASK)
         merged.setdefault("mem_gb", _DEFAULT_MEM_GB)
         merged.setdefault("timeout_min", _DEFAULT_TIMEOUT_MIN)
+        merged.setdefault("job_name", default_job_name)
 
     if merged.get("partition") is None:
         if not allow_interactive or not sys.stdin.isatty():
@@ -401,8 +446,8 @@ def prompt_slurm_config(
             )
         merged["partition"] = _prompt_nonempty("Partition: ")
 
-    # Keep stable defaults for optional-but-common submitit metadata.
-    merged.setdefault("job_name", _DEFAULT_JOB_NAME)
+    # Optional metadata defaults (job_name may already be set interactively).
+    merged.setdefault("job_name", default_job_name)
     merged.setdefault("submitit_folder", _DEFAULT_SUBMITIT_FOLDER)
 
     return SlurmPromptConfig(

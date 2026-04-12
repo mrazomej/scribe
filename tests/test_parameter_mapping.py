@@ -441,20 +441,31 @@ class TestResolveParamShorthand:
         assert resolve_param_shorthand(None, strat, "nbdm") is None
 
     # ------------------------------------------------------------------
-    # "all" shorthand -> None (factory sentinel for "everything")
+    # "all" shorthand -> core params + gate (if ZINB)
     # ------------------------------------------------------------------
 
-    @pytest.mark.parametrize("param_name", ["canonical", "mean_prob", "mean_odds"])
-    def test_all_returns_none_for_any_parameterization(self, param_name):
-        """'all' resolves to None, letting the factory default to all params."""
-        strat = PARAMETERIZATIONS[param_name]
-        assert resolve_param_shorthand("all", strat, "zinb") is None
+    def test_all_canonical_nbdm(self):
+        """'all' for canonical NBDM returns core params only."""
+        strat = PARAMETERIZATIONS["canonical"]
+        assert set(resolve_param_shorthand("all", strat, "nbdm")) == {"p", "r"}
+
+    def test_all_mean_odds_zinb(self):
+        """'all' for mean_odds ZINB includes gate."""
+        strat = PARAMETERIZATIONS["mean_odds"]
+        result = resolve_param_shorthand("all", strat, "zinb")
+        assert set(result) == {"phi", "mu", "gate"}
+
+    def test_all_mean_prob_zinbvcp(self):
+        """'all' for mean_prob ZINBVCP includes gate."""
+        strat = PARAMETERIZATIONS["mean_prob"]
+        result = resolve_param_shorthand("all", strat, "zinbvcp")
+        assert set(result) == {"p", "mu", "gate"}
 
     def test_all_case_insensitive(self):
         """Shorthand strings are case-insensitive."""
         strat = PARAMETERIZATIONS["canonical"]
-        assert resolve_param_shorthand("All", strat, "nbdm") is None
-        assert resolve_param_shorthand("ALL", strat, "nbdm") is None
+        assert set(resolve_param_shorthand("All", strat, "nbdm")) == {"p", "r"}
+        assert set(resolve_param_shorthand("ALL", strat, "nbdm")) == {"p", "r"}
 
     # ------------------------------------------------------------------
     # "biological" shorthand -> core params only

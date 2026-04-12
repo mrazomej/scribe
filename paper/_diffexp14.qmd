@@ -1,0 +1,232 @@
+---
+csl: ieee.csl
+---
+
+## Summary and Conclusions
+
+In this work, we have developed a comprehensive mathematical framework for
+Bayesian differential expression analysis on compositional data. Our approach
+addresses the fundamental challenges posed by the compositional nature of
+normalized gene expression while maintaining computational tractability for
+high-dimensional single-cell datasets.
+
+### Key Results
+
+**Empirical CLR differential expression** (@sec-diffexp-empirical). The primary
+DE method. Given posterior samples of the Dirichlet concentration parameters,
+Dirichlet compositions are drawn, transformed to CLR coordinates, and all
+statistics are computed by direct Monte Carlo counting. This approach:
+
+- Requires no distributional assumptions on the posterior predictive
+  distribution
+- Produces local false sign rates (lfsr) by counting the fraction of posterior
+  samples with the minority sign---no Gaussian CDF evaluation needed
+- Naturally handles skewness, heavy tails, and multimodality in the underlying
+  posteriors
+- Extends to gene-set and pathway analysis via ILR balances, including a
+  multivariate perturbation test for detecting coordinated within-pathway
+  rearrangement
+- Completes in seconds on GPU hardware for typical datasets ($D = 20{,}000$, $N
+  = 10{,}000$)
+
+**Log-ratio coordinate systems** (@sec-diffexp-clr-ilr). Rigorous treatments of
+the CLR and ILR transformations, including the Helmert basis construction. These
+coordinate systems provide the shared mathematical foundation for both the
+empirical and analytical approaches.
+
+**Bayesian error control** (@sec-diffexp-pefp). The posterior expected false
+discovery proportion (PEFP) and an optimal $O(D \log D)$ threshold-finding
+algorithm that operates on numerical lfsr values regardless of their
+provenance---empirical, parametric, or shrunk.
+
+**Robustness of CLR inference** (@sec-diffexp-robustness). A key theoretical
+result: CLR-based differential expression is **exactly invariant** to capture
+probability misspecification. This holds under both the shared-$p$ and
+gene-specific $p_g$ models, and extends to mixture models with
+component-specific capture scalings. The argument rests on the
+thinning-invariance of the NB shape parameter and the uniform cancellation of
+capture probability in compositional ratios.
+
+**Biological-level metrics** (@sec-diffexp-biological). Three complementary
+metrics---biological log-fold change, log-variance ratio, and Gamma Jeffreys
+divergence---that quantify differential expression in the denoised NB
+distribution space. These provide non-compositional validation of CLR findings,
+at the cost of sensitivity to capture misspecification.
+
+**Empirical Bayes shrinkage** (@sec-diffexp-eb). An optional layer using a scale
+mixture of normals prior to share information across genes. While theoretically
+elegant, practical experience indicates that the unshrunk empirical lfsr
+provides more sensitive gene calls; the shrinkage layer is best used for
+comparison or for estimating the genome-wide null fraction.
+
+**Analytical parametric DE** (@sec-diffexp-gaussianity through
+@sec-diffexp-analytical-pathway). When Gaussianity diagnostics confirm the
+Gaussian approximation is adequate, a parametric path provides closed-form
+inference at $O(kD)$ cost. This includes:
+
+- The exact CLR covariance diagonal formula in $O(D)$ time
+- Gene-level inference via the Gaussian difference distribution
+- Pathway analysis via linear contrasts with low-rank structure
+- Full compatibility with the empirical lfsr and PEFP framework
+
+### Comparison to Existing Approaches
+
+Our framework offers several advantages over existing differential expression
+methods:
+
+**Versus standard RNA-seq methods (DESeq2, edgeR).** These methods operate on
+count data and model absolute abundances using negative binomial distributions.
+While appropriate for unnormalized counts, they do not naturally handle the
+compositional structure of normalized proportions. Our approach explicitly works
+in compositional coordinates, ensuring that all inferences respect the
+constraint that proportions sum to unity.
+
+**Versus compositional methods (ALDEx2, ANCOM-BC).** Existing compositional
+methods typically:
+- Use Monte Carlo sampling to propagate uncertainty, requiring many samples and
+lacking closed-form inference
+- Work with centered log-ratio coordinates but do not provide low-rank
+covariance structure
+- Lack integrated frameworks for gene-set testing and error control
+
+Our approach combines:
+- Closed-form Gaussian inference with efficient low-rank representations
+- Unified treatment of gene-level and gene-set testing
+- Bayesian error control via PEFP
+
+**Versus Bayesian methods (e.g., scVI, Seurat).** Deep learning methods like
+scVI and standard Bayesian tools like Seurat often:
+- Use complex nonlinear models that are difficult to interpret
+- Require extensive computational resources for inference
+- Lack rigorous multiple testing correction
+
+Our approach provides:
+- Explicit Gaussian models with clear interpretations
+- Linear-time scalability to large datasets
+- Principled Bayesian error control
+
+### Limitations and Extensions
+
+While our framework provides a rigorous foundation for compositional
+differential expression analysis, several limitations and potential extensions
+deserve mention.
+
+**Gaussian assumption.** The parametric DE framework rests on the Gaussian
+approximation to the posterior predictive distribution of normalized expression
+when the analytical path is used. As discussed in @sec-normalization, this
+approximation is justified when concentration parameters are moderate to large,
+but may be less accurate for genes with very low expression or in settings with
+extreme sparsity. The empirical CLR approach (@sec-diffexp-empirical) addresses
+this directly as the primary method: it requires no Gaussian assumption on the
+posterior predictive distribution, with lfsr obtained by Monte Carlo counting.
+For the analytical shortcut, per-gene Gaussianity diagnostics identify genes for
+which the approximation breaks down, and a non-parametric empirical DE path
+provides assumption-free inference when needed. The two approaches can be
+combined in a hybrid workflow where each gene is analyzed by the most
+appropriate method.
+
+**Independence between conditions.** We assume that models for conditions A and
+B are independent. This is appropriate for independent biological replicates but
+may be violated in paired designs (e.g., before/after treatment on the same
+individuals) or when conditions share unmeasured confounders. Extending the
+framework to correlated conditions would require modeling the joint distribution
+$(\underline{z}_A, \underline{z}_B)$, which would complicate both the theory and
+computation.
+
+**Fixed low-rank structure.** We assume the rank $k$ is chosen in advance based
+on the initial model fitting. In principle, one could use Bayesian model
+selection to choose $k$ or even allow $k$ to vary across genes. However, the
+computational benefits of a fixed $k$ are substantial, and in practice, choosing
+$k$ to capture $\approx 80-90\%$ of variance works well across diverse datasets.
+
+**Gene-set overlap.** Our pathway enrichment methods test each pathway
+independently, ignoring the fact that many pathways share genes. More
+sophisticated approaches could model the hierarchical structure of pathway
+databases (e.g., the Gene Ontology DAG) or use Bayesian hierarchical models to
+share information across related pathways.
+
+**Temporal dynamics.** For time-series or trajectory data, differential
+expression is often a function of time or pseudotime. Extending our framework to
+functional differential expression (e.g., using Gaussian processes) would enable
+inference on temporal patterns while respecting compositionality.
+
+Despite these limitations, the framework developed here provides a solid
+foundation for compositional differential expression analysis, with rigor,
+efficiency, and interpretability as core design principles.
+
+### Software Implementation
+
+The methods described in this work are implemented in the `scribe` software
+package, available at [repository URL]. The implementation uses JAX
+[@bradbury2018] for automatic differentiation and just-in-time compilation,
+NumPyro [@phan2019] for probabilistic programming, and follows the mathematical
+specifications given in this document.
+
+Key features of the software include:
+
+- **Modular design**: Transformations, divergences, gene-level tests, gene-set
+tests, and error control are implemented as separate, composable functions
+- **Dual DE paths**: A parametric path (`ScribeParametricDEResults`) for
+Gaussian-assumption analyses and an empirical path (`ScribeEmpiricalDEResults`)
+for assumption-free Monte Carlo analyses, unified under a single `compare()`
+factory function with method selection
+- **Gaussianity diagnostics**: Automatic per-gene quality control computed
+during logistic-normal fitting, with a standalone GPU-vectorized utility
+- **Numerical stability**: All recommendations from @sec-diffexp-computational
+are incorporated, including epsilon additions, contrast validation, and
+log-space computations
+- **GPU acceleration**: All core operations---Dirichlet sampling, CLR
+transformation, counting statistics, and Gaussianity diagnostics---are fully
+vectorized and run on GPU via JAX
+- **Extensive testing**: Unit tests verify mathematical correctness against
+known analytical results and numerical accuracy across a range of problem sizes
+- **Documentation**: Functions use NumPy-style docstrings with complete
+mathematical specifications
+
+Users can perform a complete differential expression analysis with a few lines
+of code, while having full access to intermediate quantities (transformed
+parameters, contrast statistics, etc.) for custom analyses. The `compare()`
+function provides a single entry point that dispatches to either the parametric
+or empirical analysis path based on a `method` argument.
+
+### Impact and Future Directions
+
+The framework developed here addresses a long-standing challenge in single-cell
+transcriptomics: how to perform statistically rigorous differential expression
+analysis that respects the compositional nature of normalized data. By combining
+compositional data analysis, low-rank Gaussian models, and Bayesian error
+control, we provide a principled alternative to existing approaches that either
+ignore compositionality or lack computational scalability.
+
+**Immediate applications** of this work include:
+
+- **Cell-type-specific differential expression**: Comparing gene expression
+between cell types or cellular states
+- **Perturbation response analysis**: Identifying genes and pathways responding
+to experimental perturbations
+- **Developmental trajectory inference**: Testing for differential expression
+along pseudotime or lineage trajectories
+- **Spatial transcriptomics**: Analyzing spatially-resolved differential
+expression while accounting for compositional effects
+
+**Future methodological directions** include:
+
+- **Integration with causal inference**: Combining compositional differential
+expression with causal graphical models to distinguish direct from indirect
+effects
+- **Multimodal analysis**: Extending to joint analysis of transcriptomics and
+other modalities (proteomics, chromatin accessibility) while respecting their
+respective compositional structures
+- **Bayesian meta-analysis**: Combining differential expression results across
+multiple studies using hierarchical Bayesian models
+- **Nonparametric refinements**: The empirical DE approach developed in
+@sec-diffexp-empirical computes lfsr by direct counting over posterior samples.
+Future refinements could include FFT-based kernel density estimation (KDE) for
+smoother density estimates with adaptive bandwidths, which would improve lfsr
+resolution without increasing the number of posterior samples
+
+The mathematical framework developed here—combining rigorous compositional data
+analysis with efficient computational methods—provides a template for addressing
+similar challenges in other high-dimensional compositional data settings, from
+microbiome analysis to geological compositional data.
+

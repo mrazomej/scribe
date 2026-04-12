@@ -27,11 +27,13 @@ for your own project.
 
 1. Copy `data/example.yaml` to a dataset-specific name.
 2. Set `name` and `path` in your dataset file.
-3. Run:
+3. If you use dataset-level hierarchical priors, set
+   `data.dataset_key` to an `adata.obs` column (for example, `batch`).
+4. Run:
    ```bash
    scribe-infer --config-path ./conf data=<your_dataset>
    ```
-4. Optionally customize priors, model flags, and inference settings.
+5. Optionally customize priors, model flags, and inference settings.
 
 ## Local Output Paths
 

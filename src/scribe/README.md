@@ -48,6 +48,14 @@ results = scribe.fit(
     optimizer_config={"name": "clipped_adam", "step_size": 5e-4, "grad_clip_norm": 1.0},
 )
 
+# Set log_progress_lines=True for periodic plain-text updates in batch logs.
+results = scribe.fit(
+    adata,
+    n_steps=50000,
+    log_progress_lines=True,
+    early_stopping={"enabled": True, "patience": 1000},
+)
+
 # Analyze results
 posterior_samples = results.get_posterior_samples()
 log_likelihood = results.log_likelihood()
@@ -91,6 +99,16 @@ result = scribe.viz.plot_ecdf(
 result = scribe.viz.plot_ppc(results, counts)           # sensible defaults
 result = scribe.viz.plot_ppc(results, counts, n_genes=16, n_rows=4)
 result = scribe.viz.plot_ppc(results, counts, n_rows=3, n_cols=3, n_samples=256)
+
+# UMAP overlay uses the same detected+HVG feature space for both fitting and
+# synthetic PPC projection, so runtime scales with `hvg_n_top_genes` instead
+# of all detected genes. When Scanpy is installed, the experimental embedding
+# follows `pp.scale` (z-score per gene, default clip at 10), `pp.pca`,
+# `pp.neighbors`, and `tl.umap` on the neighborhood graph; synthetic cells are
+# scaled with the same gene-wise statistics and placed with `tl.ingest`. Without
+# Scanpy, scikit-learn scaling/PCA and `umap-learn` on PCs are used instead.
+# Tune `umap_opts` (e.g. `spread`, `use_scale`, `scale_max_value`) as needed.
+result = scribe.viz.plot_umap(results, counts)
 
 # All plot functions accept figsize=(width, height) to override the default
 # figure dimensions. Useful in interactive sessions to control display size.
@@ -210,6 +228,9 @@ pip install 'scribe[hydra]'
 scribe-infer --config-path ./conf data=singer model=zinb
 ```
 
+Core library installs are Hydra-free (`pip install scribe`); install the
+`hydra` extra whenever you use packaged CLI workflows.
+
 The command auto-detects split mode from `data.<dataset>.yaml` (`split_by`) and
 dispatches to split orchestration when needed. See `docs/cli_infer.md` for full
 usage and expected `conf/` layout.
@@ -221,7 +242,8 @@ scribe-infer --slurm --config-path ./conf data=singer
 ```
 
 `--slurm` prompts for cluster-specific resources and requires partition input
-(no hardcoded partition default).
+(no hardcoded partition default). It also prompts for an optional SLURM job name,
+defaulting to `scribe-infer`.
 
 For reusable cluster settings across runs, add profiles under `conf/slurm` and
 invoke:
@@ -249,6 +271,11 @@ For cluster execution of large recursive runs:
 ```bash
 scribe-visualize --slurm-profile default outputs/ --recursive --all
 ```
+
+`scribe-visualize --slurm` uses the same prompt flow (with job name defaulting
+to `scribe-visualize`) and additionally asks for a GPU count when generic
+resources are not already set in the profile or `--slurm-set`, emitting SLURM
+`gres=gpu:N` for the batch script.
 
 See `docs/cli_visualize.md` for detailed usage.
 
@@ -768,6 +795,11 @@ Each module has comprehensive documentation with detailed examples:
 
 ### Catalog Filtering Note
 
+Catalog roots passed to ``ExperimentCatalog`` may use shell-style glob
+patterns (for example, ``outputs/Text*`` or ``experiments/**/sweep_a``).
+Each matching directory becomes a separate scan root; patterns that match
+only files are ignored, and an error is raised if no directories match.
+
 The experiment catalog in `catalog.py` supports comma-delimited filters for
 list-like metadata fields. For example, both
 `mixture_params=["phi,mu,gate"]` and `mixture_params="phi,mu,gate"` are
@@ -820,6 +852,11 @@ descriptive names across the three API layers.
 | `p_dataset_mode`       | `prob_dataset_mode`            |
 | `gate_prior`           | `zero_inflation_prior`         |
 | `gate_dataset_prior`   | `zero_inflation_dataset_prior` |
+
+For multi-dataset fitting, pass `dataset_key="<obs_column>"` to
+`scribe.fit(...)` so SCRIBE can map each cell to a dataset from
+`adata.obs[dataset_key]`. If `n_datasets` is provided explicitly, it must match
+the number of unique values in that column.
 
 ### `priors` Dict Keys (both accepted, descriptive is preferred)
 

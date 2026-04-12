@@ -33,10 +33,10 @@ class OrganismPrior(TypedDict):
 
 # Lookup table keyed by lowercase organism name.
 ORGANISM_PRIORS: Dict[str, OrganismPrior] = {
-    "human": {"total_mrna_mean": 200_000, "total_mrna_log_sigma": 0.1},
-    "mouse": {"total_mrna_mean": 200_000, "total_mrna_log_sigma": 0.1},
-    "yeast": {"total_mrna_mean": 60_000, "total_mrna_log_sigma": 0.1},
-    "ecoli": {"total_mrna_mean": 3_000, "total_mrna_log_sigma": 0.1},
+    "human": {"total_mrna_mean": 200_000, "total_mrna_log_sigma": 0.3},
+    "mouse": {"total_mrna_mean": 200_000, "total_mrna_log_sigma": 0.3},
+    "yeast": {"total_mrna_mean": 60_000, "total_mrna_log_sigma": 0.3},
+    "ecoli": {"total_mrna_mean": 3_000, "total_mrna_log_sigma": 0.3},
 }
 
 # Aliases for common alternative names.

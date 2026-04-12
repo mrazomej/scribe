@@ -41,7 +41,6 @@ class SamplingMixin:
     def get_ppc_samples(
         self,
         rng_key: Optional[random.PRNGKey] = None,
-        batch_size: Optional[int] = None,
         store_samples: bool = True,
     ) -> jnp.ndarray:
         """Generate posterior predictive check (PPC) samples.
@@ -50,8 +49,6 @@ class SamplingMixin:
         ----------
         rng_key : random.PRNGKey, optional
             JAX PRNG key. Defaults to ``PRNGKey(42)``.
-        batch_size : int or None, optional
-            Batch size for sample generation.
         store_samples : bool, default=True
             Store result in ``self.predictive_samples``.
 
@@ -70,7 +67,6 @@ class SamplingMixin:
             self.n_genes,
             self.model_config,
             rng_key=rng_key,
-            batch_size=batch_size,
         )
 
         if store_samples:
@@ -82,7 +78,6 @@ class SamplingMixin:
         self,
         rng_key: Optional[random.PRNGKey] = None,
         n_samples: int = 1,
-        cell_batch_size: Optional[int] = None,
         use_mean: bool = True,
         store_samples: bool = True,
         verbose: bool = True,
@@ -102,8 +97,6 @@ class SamplingMixin:
             JAX PRNG key. Defaults to ``PRNGKey(42)``.
         n_samples : int, default=1
             Number of predictive draws to return from the MAP point.
-        cell_batch_size : int or None, optional
-            Batch size for predictive generation over cells.
         use_mean : bool, default=True
             Included for API parity with SVI. MCMC MAP extraction already
             includes a posterior-mean fallback when potential energy is
@@ -153,7 +146,6 @@ class SamplingMixin:
             self.n_genes,
             self.model_config,
             rng_key=rng_key,
-            batch_size=cell_batch_size,
         )
 
         if store_samples:
@@ -621,7 +613,6 @@ def _generate_ppc_samples(
     n_genes: int,
     model_config: ModelConfig,
     rng_key: Optional[random.PRNGKey] = None,
-    batch_size: Optional[int] = None,
 ) -> jnp.ndarray:
     """Generate predictive samples using posterior parameter samples."""
     if rng_key is None:
@@ -641,7 +632,6 @@ def _generate_ppc_samples(
         samples,
         model_args,
         rng_key=rng_key,
-        batch_size=batch_size,
     )
 
 

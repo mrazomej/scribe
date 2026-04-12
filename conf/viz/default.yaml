@@ -17,7 +17,8 @@ viz:
   capture_anchor: false  # Only runs for biology-informed capture prior runs
   p_capture_scaling: false  # Only runs for VCP models; independent of eta prior
   mean_calibration: false  # Log-log scatter of observed vs predicted per-gene means
-  mu_pairwise: false  # Pairwise dataset-level mu comparison (multi-dataset runs only)
+  # Pairwise dataset-level mean comparison (multi-dataset only); figure suffix _mean_pairwise.
+  mu_pairwise: false
   format: png  # Output format: png, pdf, svg, eps
 
   # ECDF plot options
