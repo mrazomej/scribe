@@ -1,954 +1,461 @@
 ---
 editor:
     render-on-save: true
+bibliography: references.bib
 csl: ieee.csl
-format:
-  html:
-    filters: [tikz.lua, strip-yaml-frontmatter.lua, maintext-filter.lua, sitext-filter.lua]
 ---
 
-## Biological-Level Differential Expression {#sec-diffexp-biological}
+## Analytical Gene-Level Differential Expression {#sec-diffexp-analytical-gene}
 
-The differential expression framework developed in
-@sec-diffexp-nonparametric and @sec-diffexp-eb operates entirely in the
-**compositional** (CLR) space. While this is the correct statistical object for
-testing compositional hypotheses, it inherits the well-known pathologies of
-log-ratio transformations near the simplex boundary. Genes with very low
-expression occupy a region of the simplex where even tiny absolute perturbations
-in proportion produce dramatic CLR swings, because the logarithm amplifies small
-values. As a result, genes that are barely expressed can appear as strongly
-differentially expressed in CLR space when, in fact, their biological
-distributions have hardly changed.
+When the Gaussianity diagnostics developed in @sec-diffexp-gaussianity indicate
+that the posterior CLR marginals are well-approximated by Gaussians, the
+difference distribution between two conditions is itself Gaussian with
+closed-form parameters. This enables analytical computation of all gene-level
+statistics---posterior means, standard deviations, tail probabilities, and local
+false sign rates---at $O(kD)$ cost rather than $O(ND)$. The analytical lfsr
+values produced here feed into the same PEFP error control machinery
+(@sec-diffexp-pefp) and are fully compatible with the empirical lfsr from
+@sec-diffexp-empirical, enabling a hybrid workflow where each gene is analyzed
+by the most appropriate method.
 
-In this section, we derive three complementary metrics that quantify
-differential expression directly in the space of the **biological**
-(denoised) negative binomial distribution, completely bypassing the
-compositional simplex. Because the posterior samples of the NB parameters
-$(r_g, p_g)$ are already computed during the CLR pipeline, these metrics come
-at near-zero additional computational cost.
+Having developed the machinery for transforming Gaussian distributions between
+coordinate systems, we now turn to the central question: how do we quantify
+differential expression between two experimental conditions? In this section, we
+derive the posterior distribution of gene-level differences and show how to
+compute key statistics—posterior means, standard deviations, tail probabilities,
+and the local false sign rate.
 
-### Recap: the biological distribution {#sec-diffexp-bio-recap}
+### Posterior Distribution of Differences
 
-From @sec-denoising, the model learns gene-specific NB parameters $(r_g, p_g)$
-for each condition. The true (pre-capture) transcript count for gene $g$ follows
+#### Setup and assumptions
 
-$$
-m_g \sim \text{NB}(r_g, p_g),
-$${#eq-diffexp-bio-nb}
-
-with mean and variance
+Suppose we have performed inference on two experimental conditions, A and B,
+yielding fitted logistic-normal models in ALR space:
 
 $$
-\mu_g = \frac{r_g(1 - p_g)}{p_g}, \qquad
-\text{Var}(m_g) = \frac{r_g(1 - p_g)}{p_g^2} = \frac{\mu_g}{p_g}.
-$${#eq-diffexp-bio-mean-var}
+\underline{z}_A \sim \mathcal{N}(\underline{\mu}_A, 
+\underline{\underline{\Sigma}}_A), \quad 
+\underline{z}_B \sim \mathcal{N}(\underline{\mu}_B, 
+\underline{\underline{\Sigma}}_B),
+$${#eq-diffexp-models-alr}
 
-These are the *biological* moments: they describe the true expression of gene $g$
-in a cell before any technical noise is introduced. Unlike the compositional
-proportions $\rho_g$, the means $\mu_g$ live in $\mathbb{R}_{\geq 0}$ and are
-not subject to closure.
-
-### Metric 1: Biological log-fold change {#sec-diffexp-bio-lfc}
-
-The most natural measure of mean expression change is the **biological
-log-fold change**,
+where both covariance matrices have the low-rank plus diagonal structure:
 
 $$
-\text{LFC}_g = \log\!\left(\frac{\mu_g^A}{\mu_g^B}\right)
-= \log\!\left(\frac{r_g^A (1 - p_g^A) / p_g^A}
-                     {r_g^B (1 - p_g^B) / p_g^B}\right).
-$${#eq-diffexp-bio-lfc}
+\underline{\underline{\Sigma}}_A = \underline{\underline{W}}_A
+\underline{\underline{W}}_A^{\top} + \text{diag}(\underline{d}_A), \quad
+\underline{\underline{\Sigma}}_B = \underline{\underline{W}}_B
+\underline{\underline{W}}_B^{\top} + \text{diag}(\underline{d}_B).
+$${#eq-diffexp-covariances-lowrank}
 
-This is the log-ratio of the NB means between conditions A and B. Its key
-advantage over the CLR difference $\Delta_g = \text{CLR}(\boldsymbol\rho^A)_g -
-\text{CLR}(\boldsymbol\rho^B)_g$ is that it is **free of compositional
-closure**: a gene whose mean expression does not change will have $\text{LFC}_g
-= 0$ regardless of what other genes do.
-
-#### Posterior inference
-
-We have $N$ paired posterior draws $(r_g^{A,(s)}, p_g^{A,(s)})$ and
-$(r_g^{B,(s)}, p_g^{B,(s)})$ for $s = 1, \ldots, N$. For each draw, compute
+Following the transformations developed in the previous section, we obtain CLR
+representations:
 
 $$
-\text{LFC}_g^{(s)} = \log\!\left(\frac{r_g^{A,(s)} (1 - p_g^{A,(s)}) / p_g^{A,(s)}}
-                                        {r_g^{B,(s)} (1 - p_g^{B,(s)}) / p_g^{B,(s)}}\right).
-$${#eq-diffexp-bio-lfc-samples}
+\underline{z}_{A,\text{CLR}} \sim \mathcal{N}(\underline{\mu}_{A,\text{CLR}}, 
+\underline{\underline{\Sigma}}_{A,\text{CLR}}), \quad 
+\underline{z}_{B,\text{CLR}} \sim \mathcal{N}(\underline{\mu}_{B,\text{CLR}}, 
+\underline{\underline{\Sigma}}_{B,\text{CLR}}).
+$${#eq-diffexp-models-clr}
 
-The posterior summaries then follow the same recipe as in
-@sec-diffexp-nonparametric. The posterior mean is
+We make the standard assumption that the two conditions are independent:
+$\underline{z}_A \perp \underline{z}_B$. This is justified when the two
+conditions come from independent biological replicates or non-overlapping cell
+populations.
 
-$$
-\widehat{\text{LFC}}_g = \frac{1}{N} \sum_{s=1}^N \text{LFC}_g^{(s)},
-$${#eq-diffexp-bio-lfc-mean}
+#### Distribution of the difference
 
-and the posterior standard deviation is
-
-$$
-s_g^{\text{LFC}} = \sqrt{\frac{1}{N-1} \sum_{s=1}^N
-\left(\text{LFC}_g^{(s)} - \widehat{\text{LFC}}_g\right)^2}.
-$${#eq-diffexp-bio-lfc-sd}
-
-The **local false sign rate** (lfsr) is the posterior probability that the sign
-of $\text{LFC}_g$ has been incorrectly assigned,
+Define the difference in CLR coordinates as
 
 $$
-\text{lfsr}_g^{\text{LFC}} = \min\!\left(
-  \hat{\pi}_g^+, \; 1 - \hat{\pi}_g^+
-\right),
-\qquad
-\hat{\pi}_g^+ = \frac{1}{N}\sum_{s=1}^N \mathbf{1}\!\left[\text{LFC}_g^{(s)} > 0\right].
-$${#eq-diffexp-bio-lfc-lfsr}
+\underline{\Delta} = \underline{z}_{A,\text{CLR}} -
+\underline{z}_{B,\text{CLR}}. $${#eq-diffexp-delta-definition}
 
-For practical significance with threshold $\tau_{\text{LFC}} > 0$, we define the
-directional probabilities
+Since $\underline{z}_{A,\text{CLR}}$ and $\underline{z}_{B,\text{CLR}}$ are
+independent Gaussian random vectors, their difference is also Gaussian. The mean
+and covariance of $\underline{\Delta}$ follow from standard properties of
+Gaussian distributions.
 
-$$
-P_g^{\uparrow} = \frac{1}{N}\sum_{s=1}^N \mathbf{1}\!\left[\text{LFC}_g^{(s)} > \tau_{\text{LFC}}\right],
-\qquad
-P_g^{\downarrow} = \frac{1}{N}\sum_{s=1}^N \mathbf{1}\!\left[\text{LFC}_g^{(s)} < -\tau_{\text{LFC}}\right],
-$${#eq-diffexp-bio-lfc-directional}
-
-and the probability of a practical effect
+**Mean of the difference.** Using linearity of expectation:
 
 $$
-P_g^{\text{effect}} = P_g^{\uparrow} + P_g^{\downarrow}.
-$${#eq-diffexp-bio-lfc-peffect}
+\langle \underline{\Delta} \rangle = \langle \underline{z}_{A,\text{CLR}} \rangle - 
+\langle \underline{z}_{B,\text{CLR}} \rangle = 
+\underline{\mu}_{A,\text{CLR}} - \underline{\mu}_{B,\text{CLR}}.
+$${#eq-diffexp-delta-mean}
 
-The practical-significance lfsr is
-
-$$
-\text{lfsr}_g^{\tau} = 1 - \max(P_g^{\uparrow}, P_g^{\downarrow}).
-$${#eq-diffexp-bio-lfc-lfsr-tau}
-
-
-### Metric 2: Log-variance ratio {#sec-diffexp-bio-lvr}
-
-Two conditions can have identical means yet differ in their variability.
-A gene that switches from tight regulation to bursty expression may have
-$\mu_g^A \approx \mu_g^B$ but vastly different variances. From
-@eq-diffexp-bio-mean-var, the NB variance depends on *both* $r_g$ and $p_g$.
-
-We define the **log-variance ratio**,
+**Covariance of the difference.** Using the independence assumption and the
+bilinearity of covariance:
 
 $$
-\text{LVR}_g = \log\!\left(\frac{\text{Var}^A(m_g)}{\text{Var}^B(m_g)}\right)
-= \log\!\left(\frac{r_g^A (1 - p_g^A) / (p_g^A)^2}
-                     {r_g^B (1 - p_g^B) / (p_g^B)^2}\right).
-$${#eq-diffexp-bio-lvr}
+\text{Cov}(\underline{\Delta}) = \text{Cov}(\underline{z}_{A,\text{CLR}} -
+\underline{z}_{B,\text{CLR}}) = \text{Cov}(\underline{z}_{A,\text{CLR}}) +
+\text{Cov}(\underline{z}_{B,\text{CLR}}). $${#eq-diffexp-delta-cov-step1}
 
-This can be decomposed as
-
-$$
-\text{LVR}_g = \text{LFC}_g + \log\!\left(\frac{p_g^B}{p_g^A}\right),
-$${#eq-diffexp-bio-lvr-decomp}
-
-which shows that the log-variance ratio captures *both* the mean shift and an
-additional component from the change in $p_g$.
-A gene with $\text{LFC}_g \approx 0$ but $\text{LVR}_g \neq 0$ has undergone a
-pure change in overdispersion — the "shape" of the expression distribution
-changed without its centre moving.
-
-#### Posterior inference
-
-Per-sample computation mirrors the LFC:
+To see why the covariances add, recall that for independent random vectors
+$\underline{X}$ and $\underline{Y}$,
 
 $$
-\text{LVR}_g^{(s)} = \log\!\left(\frac{r_g^{A,(s)} (1 - p_g^{A,(s)}) / (p_g^{A,(s)})^2}
-                                        {r_g^{B,(s)} (1 - p_g^{B,(s)}) / (p_g^{B,(s)})^2}\right),
-$${#eq-diffexp-bio-lvr-samples}
+\text{Cov}(\underline{X} - \underline{Y}) = 
+\langle (\underline{X} - \underline{Y})(\underline{X} - \underline{Y})^{\top} \rangle - 
+\langle \underline{X} - \underline{Y} \rangle\langle \underline{X} - \underline{Y} \rangle^{\top}.
+$${#eq-diffexp-cov-expansion}
 
-and all summary statistics — posterior mean, SD, lfsr, $P^{\uparrow}$,
-$P^{\downarrow}$, $P^{\text{effect}}$, and $\text{lfsr}_g^{\tau}$ — follow
-identically to @sec-diffexp-bio-lfc with the obvious substitutions.
-
-
-### Metric 3: Gamma Jeffreys divergence {#sec-diffexp-bio-kl}
-
-The LFC and LVR each capture one moment of the distribution. A more holistic
-measure asks: **how different are the two NB distributions in total?**
-
-#### The Poisson–Gamma representation
-
-A standard result (used extensively in @sec-dirichlet-multinomial) is that the
-negative binomial admits a **Poisson–Gamma mixture** representation. If
+Expanding the first term:
 
 $$
-\lambda_g \sim \text{Gamma}\!\left(r_g, \; \frac{p_g}{1 - p_g}\right),
-\qquad
-m_g \mid \lambda_g \sim \text{Poisson}(\lambda_g),
-$${#eq-diffexp-bio-poisson-gamma}
+\langle (\underline{X} - \underline{Y})(\underline{X} - \underline{Y})^{\top}
+\rangle = \langle \underline{X}\underline{X}^{\top} \rangle - \langle
+\underline{X}\underline{Y}^{\top} \rangle - \langle
+\underline{Y}\underline{X}^{\top} \rangle + \langle
+\underline{Y}\underline{Y}^{\top} \rangle. $${#eq-diffexp-cov-expansion-step2}
 
-then marginally $m_g \sim \text{NB}(r_g, p_g)$. Here we parameterise the Gamma
-with shape $\alpha = r_g$ and rate $\beta = p_g / (1 - p_g)$, so that
-$\langle \lambda_g \rangle = r_g (1 - p_g)/p_g = \mu_g$ and
-$\text{Var}(\lambda_g) = r_g (1 - p_g)^2 / p_g^2$.
-
-The latent rate $\lambda_g$ is a continuous relaxation of the NB: it captures
-both the mean *and* the shape of the count distribution through the Gamma
-parameters $(\alpha, \beta)$. Importantly, the **KL divergence between two
-Gamma distributions has a closed form**, whereas the KL between two Negative
-Binomials with different dispersion parameters does not.
-
-#### KL divergence between Gamma distributions
-
-Let $P = \text{Gamma}(\alpha_P, \beta_P)$ and $Q = \text{Gamma}(\alpha_Q,
-\beta_Q)$. The KL divergence from $P$ to $Q$ is
+By independence, $\langle \underline{X}\underline{Y}^{\top} \rangle = \langle
+\underline{X} \rangle\langle \underline{Y} \rangle^{\top}$ and $\langle
+\underline{Y}\underline{X}^{\top} \rangle = \langle \underline{Y} \rangle\langle
+\underline{X} \rangle^{\top}$. Therefore,
 
 $$
-\text{KL}(P \| Q) =
-  (\alpha_P - \alpha_Q)\,\psi(\alpha_P)
-  - \log\Gamma(\alpha_P)
-  + \log\Gamma(\alpha_Q)
-  + \alpha_Q\!\left(\log\beta_P - \log\beta_Q\right)
-  + \alpha_P\!\left(\frac{\beta_Q}{\beta_P} - 1\right),
-$${#eq-diffexp-bio-gamma-kl}
+\text{Cov}(\underline{X} - \underline{Y}) = 
+\left(\langle \underline{X}\underline{X}^{\top} \rangle - 
+\langle \underline{X} \rangle\langle \underline{X} \rangle^{\top}\right) + 
+\left(\langle \underline{Y}\underline{Y}^{\top} \rangle - 
+\langle \underline{Y} \rangle\langle \underline{Y} \rangle^{\top}\right) = 
+\text{Cov}(\underline{X}) + \text{Cov}(\underline{Y}).
+$${#eq-diffexp-cov-sum}
 
-where $\psi(\cdot) = \frac{d}{d\alpha}\log\Gamma(\alpha)$ is the digamma
-function. This follows from a direct computation using the Gamma density.
-
-::: {.callout-note collapse="true"}
-## Derivation of the Gamma KL divergence
-
-The Gamma density with shape $\alpha$ and rate $\beta$ is
+Thus,
 
 $$
-f(x; \alpha, \beta) = \frac{\beta^\alpha}{\Gamma(\alpha)} x^{\alpha - 1} e^{-\beta x}.
-$${#eq-diffexp-bio-gamma-density}
+\underline{\underline{\Sigma}}_{\Delta} =
+\underline{\underline{\Sigma}}_{A,\text{CLR}} +
+\underline{\underline{\Sigma}}_{B,\text{CLR}}. $${#eq-diffexp-delta-cov}
 
-The log-density is
-
-$$
-\log f(x; \alpha, \beta) = \alpha \log\beta - \log\Gamma(\alpha) + (\alpha - 1)\log x - \beta x.
-$${#eq-diffexp-bio-gamma-logdensity}
-
-The KL divergence is
+Combining @eq-diffexp-delta-mean and @eq-diffexp-delta-cov, we conclude that
 
 $$
-\text{KL}(P \| Q)
-= \langle \log f(x; \alpha_P, \beta_P) - \log f(x; \alpha_Q, \beta_Q) \rangle_P.
-$${#eq-diffexp-bio-kl-def}
+\underline{\Delta} \sim \mathcal{N}(\underline{\mu}_{A,\text{CLR}} - 
+\underline{\mu}_{B,\text{CLR}}, 
+\underline{\underline{\Sigma}}_{A,\text{CLR}} + 
+\underline{\underline{\Sigma}}_{B,\text{CLR}}).
+$${#eq-diffexp-delta-distribution}
 
-Substituting the log-densities,
+#### Preservation of low-rank structure
 
-$$
-\text{KL}(P \| Q)
-= \langle 
-  \alpha_P \log\beta_P - \log\Gamma(\alpha_P) + (\alpha_P - 1)\log x - \beta_P x
-  - \alpha_Q \log\beta_Q + \log\Gamma(\alpha_Q) - (\alpha_Q - 1)\log x + \beta_Q x
-\bigr \rangle_P\bigl.
-$$
-
-Grouping terms,
+A crucial observation is that the sum of two low-rank plus diagonal covariance
+matrices retains a low-rank plus diagonal structure. We have
 
 $$
-\text{KL}(P \| Q) =
-  \alpha_P \log\beta_P - \alpha_Q \log\beta_Q
-  - \log\Gamma(\alpha_P) + \log\Gamma(\alpha_Q)
-  + (\alpha_P - \alpha_Q)\,\langle \log x \rangle_P
-  - (\beta_P - \beta_Q)\,\langle x \rangle_P.
-$$
-
-Using the standard Gamma moment identities $\langle \log x \rangle_P =
-\psi(\alpha_P) - \log\beta_P$ and $\langle x \rangle_P = \alpha_P / \beta_P$,
+\underline{\underline{\Sigma}}_{A,\text{CLR}} =
+\underline{\underline{W}}_{A,\text{CLR}}
+\underline{\underline{W}}_{A,\text{CLR}}^{\top} +
+\text{diag}(\underline{d}_{A,\text{CLR}}), $${#eq-diffexp-sigma-a-structure}
 
 $$
-\text{KL}(P \| Q) =
-  \alpha_P \log\beta_P - \alpha_Q \log\beta_Q
-  - \log\Gamma(\alpha_P) + \log\Gamma(\alpha_Q)
-  + (\alpha_P - \alpha_Q)(\psi(\alpha_P) - \log\beta_P)
-  - (\beta_P - \beta_Q)\frac{\alpha_P}{\beta_P}.
-$$
+\underline{\underline{\Sigma}}_{B,\text{CLR}} = 
+\underline{\underline{W}}_{B,\text{CLR}} 
+\underline{\underline{W}}_{B,\text{CLR}}^{\top} + 
+\text{diag}(\underline{d}_{B,\text{CLR}}).
+$${#eq-diffexp-sigma-b-structure}
 
-Expanding,
-
-\begin{align}
-\text{KL}(P \| Q) &=
-  \alpha_P \log\beta_P - \alpha_Q \log\beta_Q
-  - \log\Gamma(\alpha_P) + \log\Gamma(\alpha_Q) \\
-  &\quad + (\alpha_P - \alpha_Q)\psi(\alpha_P)
-  - (\alpha_P - \alpha_Q)\log\beta_P \\
-  &\quad - \alpha_P + \alpha_P\frac{\beta_Q}{\beta_P}.
-\end{align}
-
-The $\alpha_P \log\beta_P$ and $-\alpha_P\log\beta_P$ cancel, and $-\alpha_Q\log\beta_Q + \alpha_Q\log\beta_P = \alpha_Q(\log\beta_P - \log\beta_Q)$. Collecting,
+Therefore,
 
 $$
-\text{KL}(P \| Q) =
-  (\alpha_P - \alpha_Q)\,\psi(\alpha_P)
-  - \log\Gamma(\alpha_P) + \log\Gamma(\alpha_Q)
-  + \alpha_Q(\log\beta_P - \log\beta_Q)
-  + \alpha_P\!\left(\frac{\beta_Q}{\beta_P} - 1\right),
-$$
+\underline{\underline{\Sigma}}_{\Delta} =
+\underline{\underline{W}}_{A,\text{CLR}}
+\underline{\underline{W}}_{A,\text{CLR}}^{\top} +
+\underline{\underline{W}}_{B,\text{CLR}}
+\underline{\underline{W}}_{B,\text{CLR}}^{\top} +
+\text{diag}(\underline{d}_{A,\text{CLR}} + \underline{d}_{B,\text{CLR}}).
+$${#eq-diffexp-sigma-delta-expanded}
 
-which is @eq-diffexp-bio-gamma-kl. $\square$
-:::
-
-
-#### Jeffreys divergence (symmetrisation)
-
-The KL divergence is asymmetric: $\text{KL}(P \| Q) \neq \text{KL}(Q \| P)$ in
-general. For a symmetric measure, we use the **Jeffreys divergence**,
+We can express this in low-rank plus diagonal form by concatenating the low-rank
+factors:
 
 $$
-J_g = \text{KL}(P_g^A \| P_g^B) + \text{KL}(P_g^B \| P_g^A),
-$${#eq-diffexp-bio-jeffreys}
+\underline{\underline{W}}_{\Delta} = 
+[\underline{\underline{W}}_{A,\text{CLR}} \mid 
+\underline{\underline{W}}_{B,\text{CLR}}],
+$${#eq-diffexp-w-delta}
 
-where $P_g^A = \text{Gamma}(r_g^A, \beta_g^A)$ and $P_g^B =
-\text{Gamma}(r_g^B, \beta_g^B)$ with $\beta_g = p_g / (1 - p_g)$.
+where the notation $[\cdot \mid \cdot]$ denotes horizontal concatenation. If
+$\underline{\underline{W}}_{A,\text{CLR}} \in \mathbb{R}^{D \times k_A}$ and
+$\underline{\underline{W}}_{B,\text{CLR}} \in \mathbb{R}^{D \times k_B}$, then
+$\underline{\underline{W}}_{\Delta} \in \mathbb{R}^{D \times (k_A + k_B)}$.
 
-The Jeffreys divergence satisfies $J_g \geq 0$ with equality if and only if
-$P_g^A = P_g^B$, and is symmetric by construction. It captures *any*
-distributional shift — changes in mean, variance, skewness, or shape — in a
-single scalar.
-
-#### Posterior inference
-
-For each posterior draw $s$, we compute
+The diagonal component is simply the sum of the individual diagonals:
 
 $$
-J_g^{(s)} = \text{KL}(\text{Gamma}(r_g^{A,(s)}, \beta_g^{A,(s)}) \|
-                       \text{Gamma}(r_g^{B,(s)}, \beta_g^{B,(s)}))
-           + \text{KL}(\text{Gamma}(r_g^{B,(s)}, \beta_g^{B,(s)}) \|
-                       \text{Gamma}(r_g^{A,(s)}, \beta_g^{A,(s)})),
-$${#eq-diffexp-bio-jeffreys-samples}
+\underline{d}_{\Delta} = \underline{d}_{A,\text{CLR}} +
+\underline{d}_{B,\text{CLR}}. $${#eq-diffexp-d-delta}
 
-where $\beta_g^{A,(s)} = p_g^{A,(s)} / (1 - p_g^{A,(s)})$, and each KL uses
-@eq-diffexp-bio-gamma-kl.
-
-Because $J_g$ is non-negative by construction, the posterior inference simplifies
-compared to the signed metrics. The posterior mean and standard deviation are
+Thus,
 
 $$
-\hat{J}_g = \frac{1}{N}\sum_{s=1}^N J_g^{(s)},
-\qquad
-s_g^J = \sqrt{\frac{1}{N-1}\sum_{s=1}^N (J_g^{(s)} - \hat{J}_g)^2}.
-$${#eq-diffexp-bio-jeffreys-summaries}
+\underline{\underline{\Sigma}}_{\Delta} = 
+\underline{\underline{W}}_{\Delta} 
+\underline{\underline{W}}_{\Delta}^{\top} + 
+\text{diag}(\underline{d}_{\Delta}),
+$${#eq-diffexp-sigma-delta-lowrank}
 
-For practical significance with threshold $\tau_J > 0$, the probability of a
-practical effect is simply
+which has rank at most $k_A + k_B$. Typically, $k_A$ and $k_B$ are both small
+(e.g., 50), so the rank of $\underline{\underline{\Sigma}}_{\Delta}$ remains
+much smaller than $D$.
 
-$$
-P_g^{\text{effect}} = \frac{1}{N}\sum_{s=1}^N
-\mathbf{1}[J_g^{(s)} > \tau_J].
-$${#eq-diffexp-bio-jeffreys-peffect}
+### Per-Gene Marginal Distributions
 
-There is no directional decomposition because $J_g$ is always non-negative.
+The multivariate Gaussian distribution @eq-diffexp-delta-distribution for
+$\underline{\Delta}$ immediately gives us the marginal distribution for each
+gene's differential expression.
 
+#### Marginal mean and variance
 
-### Why the Gamma KL and not the NB KL? {#sec-diffexp-bio-why-gamma}
-
-A natural question is: why not compute the KL divergence between the NB
-distributions directly? The NB KL divergence between $\text{NB}(r_P, p_P)$ and
-$\text{NB}(r_Q, p_Q)$ is
+For gene $g$, the marginal distribution of $\Delta_g$ is univariate Gaussian:
 
 $$
-\text{KL}(\text{NB}_{P} \| \text{NB}_{Q})
-= \sum_{k=0}^{\infty} \binom{k + r_P - 1}{k} p_P^{r_P}(1-p_P)^k
-\log\frac{\binom{k + r_P - 1}{k} p_P^{r_P}(1-p_P)^k}
-         {\binom{k + r_Q - 1}{k} p_Q^{r_Q}(1-p_Q)^k}.
-$${#eq-diffexp-bio-nb-kl}
+\Delta_g \sim \mathcal{N}(\mu_{\Delta,g}, \sigma_{\Delta,g}^2),
+$${#eq-diffexp-delta-g-distribution}
 
-When $r_P = r_Q$, the binomial coefficient ratios cancel and the sum simplifies
-to a closed form involving only $p_P$ and $p_Q$. However, when $r_P \neq r_Q$,
-the ratio of binomial coefficients $\binom{k + r_P - 1}{k} / \binom{k + r_Q -
-1}{k}$ does not telescope, and no tractable closed form is known. The sum must be
-truncated and evaluated numerically, which is expensive and introduces
-approximation error, especially for genes with large $r$.
-
-The Gamma KL, by contrast, exploits the Poisson–Gamma representation: the Gamma
-latent rate captures all of the NB's parametric structure (both its mean and its
-overdispersion), and the remaining Poisson layer is a shared observation model
-that does not vary between conditions. In this sense, the Gamma KL measures
-exactly the divergence in the *generative mechanism* that produces the counts,
-which is the quantity of biological interest.
-
-
-### Decision framework: four complementary views {#sec-diffexp-bio-decision}
-
-With the biological metrics computed, the analyst has four complementary views of
-each gene:
-
-| Metric | Space | Captures | Free of closure? |
-|--------|-------|----------|------------------|
-| CLR difference $\Delta_g$ | Compositional simplex | Relative abundance shift | No |
-| Biological LFC | Denoised count space | Mean expression shift | Yes |
-| Log-variance ratio | Denoised count space | Dispersion shift | Yes |
-| Jeffreys divergence $J_g$ | Latent Gamma rate | Full distributional shift | Yes |
-
-: Summary of the four DE metrics. {#tbl-diffexp-bio-metrics}
-
-The recommended workflow is:
-
-1. **Screen with CLR**: use the CLR-based lfsr (with or without empirical Bayes
-   shrinkage) as the primary filter, exactly as in @sec-diffexp-nonparametric and
-   @sec-diffexp-eb.
-2. **Validate with biological LFC**: for genes called as DE in CLR space,
-   check whether the biological LFC is consistent. Lowly expressed genes with
-   large CLR effects but negligible biological LFC are likely compositional
-   artefacts.
-3. **Detect variance changes**: inspect the log-variance ratio for genes with
-   small LFC but high Jeffreys divergence — these genes have undergone a change
-   in expression noise (e.g., a switch from tight regulation to bursty
-   transcription) that the mean-based metrics miss.
-4. **Flag distributional shifts**: the Jeffreys divergence serves as a catch-all
-   for any change in the NB distribution. Genes with high $J_g$ but low CLR
-   $|\Delta_g|$ are candidates for further investigation.
-
-No single metric is universally "best." The CLR metric is the only one that
-respects the compositional nature of the data, and remains the gold standard for
-testing compositional hypotheses. The biological metrics complement it by
-providing a non-compositional check that is especially valuable for lowly
-expressed genes where the CLR transform amplifies noise.
-
-
-### Robustness of CLR inference to capture probability misspecification {#sec-diffexp-bio-robustness}
-
-The recommended workflow above places the CLR difference as the primary screen
-for differential expression, with the biological-level metrics serving a
-validation role. A natural concern is: **what happens to CLR-based inference when
-the capture probability $\nu_c$ is not estimated correctly?** As discussed in
-@sec-cap-identifiability, the observed library size constrains only the product
-$\nu_c \cdot \mu_T$, and resolving this degeneracy requires external information
-(the biology-informed prior on total mRNA, @sec-capture-prior). If that anchor is
-imperfect---for instance, because the true total mRNA content $M_c$ differs from
-the assumed $M_0$---one might worry that all downstream inferences are
-compromised.
-
-In this section, we show that CLR-based differential expression is **exactly
-invariant** to capture probability misspecification. The argument rests on a
-single structural property of the generative model: binomial thinning preserves
-the shape parameter of the negative binomial distribution, and the compositional
-distribution---whether the Dirichlet conditional under the shared-$p$ model or
-the generalized Gamma-ratio distribution under the gene-specific $p_g$ model
-(@sec-hierarchical-p)---depends on these shape parameters in a way that is immune
-to the capture scaling. In contrast, the biological-level metrics developed
-earlier in this section absorb the capture scaling error directly and lose their
-absolute interpretation.
-
-#### Binomial thinning preserves the NB shape parameter
-
-Recall from @sec-dirichlet-multinomial the Poisson--Gamma mixture representation
-of the negative binomial. For each gene $g$, the true (pre-capture) transcript
-count is generated as
+where the marginal mean is
 
 $$
-\lambda_g \sim \text{Gamma}(r_g, \beta), \qquad
-m_g \mid \lambda_g \sim \text{Poisson}(\lambda_g),
-$${#eq-diffexp-rob-poisson-gamma}
+\mu_{\Delta,g} = \mu_{A,\text{CLR},g} - \mu_{B,\text{CLR},g},
+$${#eq-diffexp-mu-delta-g}
 
-where $r_g$ is the gene-specific shape (dispersion) parameter and $\beta$ is a
-rate parameter shared across genes (determined by $p$ or $\phi$). Marginally,
-$m_g \sim \text{NB}(r_g, p)$, and the conditional distribution of normalized
-expression is $\underline{\rho} \mid \underline{r} \sim
-\text{Dirichlet}(\underline{r})$ (@eq-norm-dirichlet-conditional).
-
-Under the variable capture probability model, the observed UMI count $u_g$ is
-obtained by binomially thinning $m_g$ with probability $\nu_c$:
+and the marginal variance is the $g$-th diagonal entry of
+$\underline{\underline{\Sigma}}_{\Delta}$:
 
 $$
-u_g \mid m_g, \nu_c \sim \text{Binomial}(m_g, \nu_c).
-$${#eq-diffexp-rob-thinning}
+\sigma_{\Delta,g}^2 = [\underline{\underline{\Sigma}}_{\Delta}]_{gg} =
+d_{\Delta,g} + \sum_{j=1}^{k_A + k_B} W_{\Delta,gj}^2.
+$${#eq-diffexp-sigma-delta-g}
 
-Conditional on the latent Gamma rate, this thinning simply rescales the Poisson
-mean:
-
-$$
-u_g \mid \lambda_g, \nu_c \sim \text{Poisson}(\nu_c \lambda_g).
-$${#eq-diffexp-rob-thinned-poisson}
-
-The thinned rate $\nu_c \lambda_g$ is itself Gamma-distributed, because scaling
-a Gamma random variable by a constant only changes the rate parameter, not the
-shape:
+Using @eq-diffexp-d-delta, we can write
 
 $$
-\nu_c \lambda_g \sim \text{Gamma}(r_g, \; \beta / \nu_c).
-$${#eq-diffexp-rob-thinned-gamma}
+\sigma_{\Delta,g}^2 = d_{A,\text{CLR},g} + d_{B,\text{CLR},g} + 
+\sum_{j=1}^{k_A} W_{A,\text{CLR},gj}^2 + \sum_{j=1}^{k_B} W_{B,\text{CLR},gj}^2.
+$${#eq-diffexp-sigma-delta-g-expanded}
 
-Marginalizing over the latent rate, the observed count follows
-
-$$
-u_g \sim \text{NB}(r_g, \hat{p}),
-$${#eq-diffexp-rob-effective-nb}
-
-where $\hat{p}$ is the effective success probability after capture (see
-@eq-cap-phat-reminder), which depends on both $\nu_c$ and $\beta$ (equivalently,
-on $\nu_c$ and $\phi$). The crucial observation is that **the shape parameter
-$r_g$ is unchanged by thinning**---only the rate (or equivalently, the success
-probability) is modified. This is a general property of the Poisson--Gamma
-mixture: binomial thinning acts on the Poisson layer, which rescales the Gamma
-rate but cannot alter the Gamma shape.
-
-#### Exact invariance of the Dirichlet distribution
-
-Since the effective negative binomial for the observed counts retains the
-original shape parameters $\underline{r} = (r_1, r_2, \ldots, r_D)$, the
-Dirichlet conditional for normalized expression remains
+The posterior standard deviation is
 
 $$
-\underline{\rho} \mid \underline{r} \sim
-\text{Dirichlet}(\underline{r}),
-$${#eq-diffexp-rob-dirichlet-invariant}
+\sigma_{\Delta,g} = \sqrt{\sigma_{\Delta,g}^2}. $${#eq-diffexp-sd-delta-g}
 
-regardless of the value of $\nu_c$. The capture probability enters the
-likelihood only through the effective success probability $\hat{p}$, which
-governs the *total count* distribution but not the *compositional* distribution.
+These quantities are computed in $O(1)$ time per gene once the CLR
+transformations have been performed, for a total of $O(D)$ time across all
+genes.
 
-Now consider what happens when the model adopts a misspecified capture
-probability $\tilde{\nu}_c \neq \nu_c$. The observed data constrain the
-effective NB parameters $(r_g, \hat{p}_c)$ for each gene and cell. As shown
-above, $r_g$ does not depend on $\nu_c$---it is determined entirely by the
-biological mean $\mu_g$ and the overdispersion structure. The model compensates
-for the wrong $\tilde{\nu}_c$ by adjusting $\mu_g$ and $\phi$ (or $p$) to
-maintain the same observed counts, but these adjustments are constrained to
-preserve $r_g$:
+### Gene-Level Statistics
 
-$$
-\tilde{r}_g = r_g, \quad \text{for all } g.
-$${#eq-diffexp-rob-r-invariant}
+With the marginal distributions in hand, we can compute a variety of statistics
+for each gene to quantify the evidence for differential expression.
 
-To see this explicitly, define the misspecification ratio $\kappa =
-\nu_c / \tilde{\nu}_c$. The data constrain the expected observed count
-$\langle u_{gc} \rangle = \nu_c \mu_g$, so the model must adopt
-$\tilde{\mu}_g = \kappa \mu_g$ to compensate. Similarly, the data constrain
-the effective success probability $\hat{p}_c$ (and hence the variance
-structure), which forces $\tilde{\phi}$ to adjust in the opposite direction so
-that the product entering $r_g$ remains unchanged. The details of this
-compensation depend on the NB parameterization convention, but in every case the
-$\kappa$ factors cancel:
+#### Standardized effect size (z-score)
+
+The standardized effect size, or z-score, measures how many standard deviations
+the posterior mean is from zero:
 
 $$
-\tilde{r}_g = f(\tilde{\mu}_g, \tilde{\phi})
-= f(\kappa \mu_g, \tilde{\phi}) = r_g,
-$${#eq-diffexp-rob-r-cancel}
+z_g = \frac{\mu_{\Delta,g}}{\sigma_{\Delta,g}}.
+$${#eq-diffexp-zscore}
 
-where $f(\mu, \phi)$ denotes the parameterization-specific formula relating
-$r_g$ to $\mu_g$ and $\phi$. This cancellation is not a coincidence---it is a
-necessary consequence of the thinning invariance
-@eq-diffexp-rob-thinned-gamma: the data determine $r_g$ through the likelihood,
-and no amount of $\nu_c$ misspecification can change what the data require.
+Large absolute values of $z_g$ indicate strong evidence that gene $g$ is
+differentially expressed. Under the null hypothesis that gene $g$ is not
+differentially expressed (i.e., $\mu_{\Delta,g} = 0$ in the true population),
+$z_g$ would have a distribution approximately $\mathcal{N}(0, 1)$, though this
+frequentist interpretation should be treated with caution in a Bayesian
+framework.
 
-Since the Dirichlet parameters are exactly preserved, **the entire distribution
-of normalized expression is identical** under the true and misspecified models.
-Every quantity derived from this distribution---the Dirichlet mean proportions,
-the Dirichlet variances and covariances, the logistic-normal approximation in
-ALR space, and hence the CLR coordinates, their means, and their full covariance
-structure---is exactly invariant.
+#### Tail probabilities
 
-#### Extension to gene-specific $p_g$ {#sec-diffexp-rob-hierarchical}
+More directly interpretable are the tail probabilities computed from the
+posterior distribution. These quantities have exact Bayesian interpretations as
+posterior probabilities.
 
-The preceding argument assumed the shared-$p$ model in which all genes have a
-common success probability, so the compositional distribution is exactly
-Dirichlet. Under the hierarchical model developed in @sec-hierarchical-p, each
-gene has its own success probability $p_g$, and compositions are no longer
-Dirichlet but instead follow the generalized Gamma-ratio distribution described
-in @sec-hier-gamma-sampling. A natural concern is whether the exact invariance
-result survives this generalization. It does, and the argument is
-straightforward.
-
-Recall from @eq-hier-composition-expanded that under the gene-specific model,
-compositions are generated by drawing independent Gamma variates
-$\gamma_g \sim \text{Gamma}(r_g, 1)$, scaling each by the gene-specific odds
-factor $1/\theta_g = (1 - p_g)/p_g$, and normalizing:
+**Probability of up-regulation.** The probability that gene $g$ is
+up-regulated in condition A relative to condition B is
 
 $$
-\rho_g = \frac{
-    \gamma_g / \theta_g
-}{
-    \sum_{j=1}^G \gamma_j / \theta_j
-}.
-$${#eq-diffexp-rob-hier-composition}
+P(\Delta_g > 0 \mid \text{data}) = P\left(\mathcal{N}(\mu_{\Delta,g},
+\sigma_{\Delta,g}^2) > 0\right) = 1 -
+\Phi\left(\frac{-\mu_{\Delta,g}}{\sigma_{\Delta,g}}\right) =
+\Phi\left(\frac{\mu_{\Delta,g}}{\sigma_{\Delta,g}}\right),
+$${#eq-diffexp-prob-positive}
 
-Under capture thinning with probability $\nu_c$, the Gamma rate for gene $g$
-shifts from $\theta_g$ to $\theta_g / \nu_c$ (@eq-diffexp-rob-thinned-gamma),
-while the shape $r_g$ is preserved. The effective odds factor for the thinned
-model is therefore $\nu_c / \theta_g$. Substituting into the composition
-formula:
+where $\Phi(\cdot)$ denotes the standard Gaussian cumulative distribution
+function (CDF),
 
 $$
-\rho_g^{\text{obs}} = \frac{
-    \gamma_g \cdot \nu_c / \theta_g
-}{
-    \sum_{j=1}^G \gamma_j \cdot \nu_c / \theta_j
-} = \frac{
-    \gamma_g / \theta_g
-}{
-    \sum_{j=1}^G \gamma_j / \theta_j
-} = \rho_g.
-$${#eq-diffexp-rob-hier-nuc-cancel}
+\Phi(x) = \int_{-\infty}^{x} \frac{1}{\sqrt{2\pi}} e^{-t^2/2} dt.
+$${#eq-diffexp-gaussian-cdf}
 
-The cell-level capture probability $\nu_c$ enters every gene's scaling factor
-uniformly---it is a property of the cell, not the gene---and therefore cancels
-in the ratio that defines the composition. This cancellation is exact and holds
-for arbitrary $\nu_c$.
-
-Under capture misspecification with ratio $\kappa = \nu_c / \tilde{\nu}_c$, the
-model compensates by adjusting the gene-specific odds to
-$\tilde{\theta}_g = \kappa \cdot \theta_g$ (since the data constrain the
-effective rate $\theta_g / \nu_c$, and the model interprets this as
-$\tilde{\theta}_g / \tilde{\nu}_c$). The composition under the misspecified
-model is
+In terms of the z-score,
 
 $$
-\tilde{\rho}_g = \frac{
-    \gamma_g / \tilde{\theta}_g
-}{
-    \sum_{j=1}^G \gamma_j / \tilde{\theta}_j
-} = \frac{
-    \gamma_g / (\kappa \theta_g)
-}{
-    \sum_{j=1}^G \gamma_j / (\kappa \theta_j)
-} = \frac{
-    \gamma_g / \theta_g
-}{
-    \sum_{j=1}^G \gamma_j / \theta_j
-} = \rho_g.
-$${#eq-diffexp-rob-hier-kappa-cancel}
+P(\Delta_g > 0 \mid \text{data}) = \Phi(z_g).
+$${#eq-diffexp-prob-positive-zscore}
 
-The uniform $\kappa$ factor cancels identically. Combined with the invariance of
-the shape parameters ($\tilde{r}_g = r_g$, @eq-diffexp-rob-r-invariant), this
-establishes that **the full compositional distribution is exactly invariant to
-capture probability misspecification, even under the gene-specific $p_g$ model**.
-The generalized Gamma-ratio composition inherits the same structural protection
-as the Dirichlet special case, because the mechanism is the same in both:
-capture probability is a cell-level quantity that scales all genes uniformly, and
-normalization to proportions annihilates any uniform multiplicative factor.
-
-#### Why the capture degeneracy cannot affect compositions {#sec-diffexp-rob-degeneracy}
-
-The preceding subsections established the invariance result through the
-Poisson--Gamma representation. A natural concern remains: the variable capture
-model has a well-known identifiability issue (see @sec-cap-identifiability),
-where the observed library size constrains only the product $\nu_c \cdot \mu_T$
-and cannot separately determine the capture probability $\nu_c$ and the
-biological total $\mu_T$. If the model has a genuine degeneracy, how can we
-claim that anything---even compositions---is immune to it? The answer is that the
-degeneracy lives in a subspace of the parameter space that is structurally
-orthogonal to the compositional distribution. This subsection makes this
-statement precise.
-
-##### What the data identify without ambiguity
-
-Consider first the canonical NB parameterization, where the parameters are the
-shape $r_g$ and the success probability $p$ (or $p_g$ in the gene-specific
-model). After capture thinning, the observed counts for gene $g$ in cell $c$
-follow $u_{gc} \sim \text{NB}(r_g, \hat{p}_c)$, where $\hat{p}_c$ is the
-effective success probability that absorbs the capture efficiency. The
-log-likelihood of a single observation $k$ from $\text{NB}(r, \hat{p})$ is
+**Probability of down-regulation.** Similarly, the probability that gene $g$ is
+down-regulated is
 
 $$
-\ell(r, \hat{p}; k) = \log\Gamma(k + r) - \log\Gamma(r) - \log k!
-+ r \log \hat{p} + k \log(1 - \hat{p}).
-$${#eq-diffexp-rob-nb-loglik}
+P(\Delta_g < 0 \mid \text{data}) = \Phi\left(\frac{-\mu_{\Delta,g}}{\sigma_{\Delta,g}}\right) = 
+\Phi(-z_g) = 1 - \Phi(z_g).
+$${#eq-diffexp-prob-negative}
 
-The shape $r$ enters through the $\log\Gamma(k + r) - \log\Gamma(r)$ terms,
-which control the overdispersion structure of the count distribution. The
-effective success probability $\hat{p}$ enters through $r \log \hat{p} +
-k \log(1 - \hat{p})$, which controls the mean-to-variance ratio. These two
-parameters affect the likelihood in fundamentally different ways: given
-sufficient data, both $r_g$ and $\hat{p}_c$ are **uniquely identified**. The
-variance-to-mean ratio of the observed counts determines $\hat{p}_c$ (since
-$\text{Var}(u_{gc}) / \langle u_{gc} \rangle = 1/\hat{p}_c$), and the mean
-then pins down $r_g$ (since $\langle u_{gc} \rangle = r_g(1 -
-\hat{p}_c)/\hat{p}_c$). There is no degeneracy in the pair $(r_g, \hat{p}_c)$.
+Note that these two probabilities sum to 1 (up to numerical precision), as they
+should.
 
-##### Where the degeneracy lives
+**Probability of practical significance.** For many applications, we are
+interested not just in whether a gene is differentially expressed, but whether
+the magnitude of differential expression exceeds some threshold $\tau > 0$. This
+threshold represents the minimum log-fold-change deemed biologically meaningful.
+For example, $\tau = \log(1.1) \approx 0.095$ corresponds to a 10% fold-change
+in relative abundance.
 
-The degeneracy appears only when one attempts to decompose the effective
-parameters into their biological and technical components. The effective success
-probability is a function of the biological $p$ (or $p_g$) and the capture
-probability $\nu_c$:
+The probability that gene $g$ exhibits differential expression of magnitude at
+least $\tau$ is
 
 $$
-\hat{p}_c = \frac{p}{p + \nu_c(1 - p)},
-$${#eq-diffexp-rob-phat-decomposition}
+P(|\Delta_g| > \tau \mid \text{data}) = 
+P(\Delta_g > \tau \mid \text{data}) + P(\Delta_g < -\tau \mid \text{data}).
+$${#eq-diffexp-prob-effect-sum}
 
-or equivalently, in terms of the odds $\theta = p/(1-p)$:
-
-$$
-\hat{\theta}_c = \frac{\theta}{\nu_c}.
-$${#eq-diffexp-rob-thetahat-decomposition}
-
-Many pairs $(\theta, \nu_c)$ produce the same effective odds $\hat{\theta}_c$.
-This is the $\nu_c$-$\mu_T$ degeneracy: a one-dimensional curve in the
-$(\theta, \nu_c)$ plane along which the observed data are identical. In the
-gene-specific model, the same structure holds gene by gene: the data identify
-$\hat{\theta}_{gc} = \theta_g / \nu_c$ for each gene, but the decomposition of
-$\hat{\theta}_{gc}$ into $\theta_g$ and $\nu_c$ is degenerate.
-
-The crucial structural observation is that **this degeneracy is always a uniform
-rescaling across genes**. Because $\nu_c$ is a cell-level parameter---it
-describes the efficiency of mRNA capture for the entire cell, not for individual
-genes---the degenerate direction takes the form
+Using the Gaussian CDF:
 
 $$
-\theta_g \to \alpha \, \theta_g, \quad
-\nu_c \to \alpha \, \nu_c, \quad
-\text{for all } g \text{ simultaneously},
-$${#eq-diffexp-rob-degen-direction}
-
-where $\alpha > 0$ is a single scalar that shifts all genes by the same
-multiplicative factor. A gene-specific rescaling $\theta_g \to \alpha_g \,
-\theta_g$ (with $\alpha_g$ varying across genes) would change the effective odds
-$\hat{\theta}_{gc}$ for that gene, contradicting what the data require.
-
-##### Why uniform degeneracies are invisible to compositions
-
-Compositions are defined as ratios of contributions:
+P(\Delta_g > \tau \mid \text{data}) = 1 - \Phi\left(\frac{\tau - \mu_{\Delta,g}}{\sigma_{\Delta,g}}\right),
+$${#eq-diffexp-prob-above-tau}
 
 $$
-\rho_g = \frac{\gamma_g / \theta_g}{\sum_{j} \gamma_j / \theta_j},
-$${#eq-diffexp-rob-comp-ratio}
+P(\Delta_g < -\tau \mid \text{data}) = \Phi\left(\frac{-\tau -
+\mu_{\Delta,g}}{\sigma_{\Delta,g}}\right). $${#eq-diffexp-prob-below-tau}
 
-where $\gamma_g \sim \text{Gamma}(r_g, 1)$ are independent draws. If the model
-sits at a different point on the degenerate manifold---with $\tilde{\theta}_g =
-\alpha\,\theta_g$ for all $g$---the composition becomes
+Therefore,
 
 $$
-\tilde{\rho}_g = \frac{\gamma_g / (\alpha\,\theta_g)}{\sum_{j}
-\gamma_j / (\alpha\,\theta_j)} = \frac{\gamma_g / \theta_g}{\sum_{j}
-\gamma_j / \theta_j} = \rho_g.
-$${#eq-diffexp-rob-uniform-cancel}
+P(|\Delta_g| > \tau \mid \text{data}) = 
+1 - \Phi\left(\frac{\tau - \mu_{\Delta,g}}{\sigma_{\Delta,g}}\right) + 
+\Phi\left(\frac{-\tau - \mu_{\Delta,g}}{\sigma_{\Delta,g}}\right).
+$${#eq-diffexp-prob-effect}
 
-The uniform factor $1/\alpha$ appears in every term of both the numerator and
-denominator and cancels identically. This is not an approximation---it is an
-algebraic identity. Compositions are, by construction, insensitive to the
-overall scale of the rate parameters. Since the capture degeneracy can only move
-the model along a direction that rescales all $\theta_g$ uniformly, and since
-compositions annihilate uniform rescalings, the degeneracy is structurally
-invisible to the compositional distribution.
-
-##### The complete picture
-
-Putting the pieces together:
-
-1. **Shape parameters $r_g$**: uniquely identified by the data. No degeneracy,
-   no ambiguity. These are directly constrained by the overdispersion structure
-   of the observed counts through the NB likelihood
-   (@eq-diffexp-rob-nb-loglik).
-
-2. **Effective success probabilities $\hat{p}_c$ (or $\hat{\theta}_{gc}$)**:
-   uniquely identified by the data. These determine the mean-to-variance ratio
-   of the observed counts.
-
-3. **Decomposition $(\theta_g, \nu_c)$**: degenerate. The data constrain only
-   the ratio $\hat{\theta}_{gc} = \theta_g / \nu_c$. But the degenerate
-   direction is always a uniform rescaling across genes
-   (@eq-diffexp-rob-degen-direction), because $\nu_c$ is a cell-level quantity.
-
-4. **Compositions**: depend on $\underline{r}$ (no degeneracy) and on the
-   $\theta_g$ values only through ratios that cancel uniform scalings
-   (@eq-diffexp-rob-uniform-cancel). The degenerate subspace is therefore
-   orthogonal to the compositional distribution.
-
-The robustness of CLR inference does not require the capture degeneracy to be
-resolved. The biology-informed prior on total mRNA (@sec-capture-prior) is
-valuable for anchoring the biological-level parameters $\mu_g$ and $\phi$ (or
-$p_g$), and hence for the biological metrics discussed later. But for
-compositional inference, the CLR results are **exact regardless of where the
-posterior sits on the degenerate manifold**. This is what makes the robustness
-result a structural property of the model rather than a consequence of having a
-good prior.
-
-#### Consequences for CLR-based differential expression
-
-The invariance of the compositional distribution---whether Dirichlet under the
-shared-$p$ model or the generalized Gamma-ratio under the gene-specific $p_g$
-model (@sec-diffexp-rob-hierarchical)---has immediate and powerful consequences
-for the differential expression framework developed in @sec-diffexp through
-@sec-diffexp-eb:
-
-- **CLR means**: exactly invariant, since CLR coordinates are a deterministic
-  function of the Dirichlet parameters.
-
-- **CLR covariances**: exactly invariant, since the posterior predictive
-  covariance of the logistic-normal approximation (@sec-normalization) depends
-  only on the Dirichlet parameters $\underline{r}$.
-
-- **CLR differences $\Delta_g$**: exactly invariant between conditions, since
-  each condition's CLR distribution is independently invariant.
-
-- **Per-gene z-scores, lfsr, and tail probabilities**: exactly invariant, since
-  both the means and variances of $\Delta_g$ are preserved.
-
-- **PEFP thresholds and gene rankings**: exactly invariant, since the lfsr
-  values that enter the PEFP machinery (@sec-diffexp-eb) are unchanged.
-
-- **Gene-set contrasts and ILR balances**: exactly invariant, since these are
-  linear functions of the CLR coordinates.
-
-In short, **every quantity in the compositional DE pipeline is perfectly
-robust to capture probability misspecification**. This holds under both the
-shared-$p$ model and the gene-specific $p_g$ generalization. It is not an
-approximate result that holds only for small perturbations or in the
-large-$r_T$ limit---it is an exact structural property of the model.
-
-#### Contrast with biological-level metrics
-
-The invariance that protects CLR inference does **not** extend to the
-biological-level metrics developed earlier in this section. While the shape
-parameters $r_g$ are invariant (and, in the gene-specific model, the
-$\theta_g$-dependent composition is shielded by the uniform cancellation of
-$\nu_c$), the biological parameters $\mu_g$ and $\phi$ (or $p_g$) individually
-are not: the model compensates for a wrong $\nu_c$ by shifting these parameters,
-and the biological metrics inherit those shifts.
-
-**Biological LFC** (@eq-diffexp-bio-lfc). The biological log-fold change is
-$\text{LFC}_g = \log(\mu_g^A / \mu_g^B)$. Under misspecification with
-condition-specific ratios $\kappa^A$ and $\kappa^B$, the inferred means become
-$\tilde{\mu}_g^A = \kappa^A \cdot \mu_g^A$ and
-$\tilde{\mu}_g^B = \kappa^B \cdot \mu_g^B$, giving
+Using the symmetry property $\Phi(-x) = 1 - \Phi(x)$, we can also write
 
 $$
-\widetilde{\text{LFC}}_g = \log\!\left(\frac{\kappa^A \cdot \mu_g^A}
-{\kappa^B \cdot \mu_g^B}\right)
-= \text{LFC}_g + \log\!\left(\frac{\kappa^A}{\kappa^B}\right).
-$${#eq-diffexp-rob-lfc-bias}
+P(|\Delta_g| > \tau \mid \text{data}) = 
+\Phi\left(\frac{\mu_{\Delta,g} - \tau}{\sigma_{\Delta,g}}\right) +
+\Phi\left(\frac{-\mu_{\Delta,g} - \tau}{\sigma_{\Delta,g}}\right).
+$${#eq-diffexp-prob-effect-symmetric}
 
-Every gene's LFC is shifted by the same additive offset
-$\log(\kappa^A / \kappa^B)$. The *sign* and *ranking* of LFC values are
-preserved (since the offset is gene-independent), but the *absolute magnitudes*
-are biased. This means that practical significance thresholds
-$|\text{LFC}_g| > \tau$ will include or exclude different genes depending on the
-direction and size of the offset.
+When $\tau = 0$, this reduces to $P(|\Delta_g| > 0 \mid \text{data}) = 1$,
+which is correct since a continuous distribution assigns zero probability to any
+single point.
 
-**Log-variance ratio** (@eq-diffexp-bio-lvr). The LVR inherits the same
-additive bias as the LFC and picks up an additional term from the change in
-$\phi$. Both are gene-independent, so rankings are again preserved but absolute
-values are shifted.
+### Local False Sign Rate
 
-**Jeffreys divergence** (@eq-diffexp-bio-jeffreys). The Gamma rate parameter
-$\beta_g$ absorbs the capture scaling nonlinearly. While the divergence is not
-simply shifted by an additive offset, it is systematically inflated or deflated
-for all genes, again distorting absolute magnitudes without necessarily changing
-rankings.
+#### Definition and interpretation
 
-This contrast reinforces the decision framework in @sec-diffexp-bio-decision:
-**use CLR as the primary screen** (where inference is exactly invariant to
-capture misspecification), then **validate with biological metrics** (where
-absolute values should be interpreted cautiously when the capture model is
-uncertain).
-
-#### The mixture model case
-
-A particularly important setting is a **mixture model** where different cell
-types (components) are jointly modeled. Different cell types may have genuinely
-different total mRNA contents $M_c$, so a single $M_0$ cannot accurately anchor
-all components simultaneously. In practice, this manifests as different mixture
-components converging to different effective capture probability scalings.
-
-The thinning-invariance argument applies **per-component**: within each mixture
-component $k$, the shape parameters $r_g^{(k)}$ are determined by the data and
-are invariant to the capture probability assigned to that component. The CLR
-difference between conditions A and B within the same component,
+The *local false sign rate* (lfsr) is a Bayesian measure of evidence against
+differential expression, introduced by @stephens2016. For gene $g$, the lfsr is
+defined as
 
 $$
-\Delta_g^{(k)} = z_{\text{CLR},g}^{A,(k)} - z_{\text{CLR},g}^{B,(k)},
-$${#eq-diffexp-rob-mixture-delta}
+\text{lfsr}_g = \min\left(P(\Delta_g > 0 \mid \text{data}), 
+P(\Delta_g < 0 \mid \text{data})\right).
+$${#eq-diffexp-lfsr-definition}
 
-is therefore exactly preserved even when different components learn different
-effective capture scalings. Under the shared-$p$ model, the key requirement is
-that the shared structure holds *within* each component---which is guaranteed by
-the model architecture---not that the capture scaling be the same *across*
-components. Under the gene-specific $p_g$ model, even this requirement is
-unnecessary: as shown in @sec-diffexp-rob-hierarchical, the uniform
-cancellation of $\nu_c$ in the composition ratio protects the result regardless
-of how the $p_g$ vary across genes.
+Using @eq-diffexp-prob-positive and @eq-diffexp-prob-negative:
 
-This property is especially reassuring for mixture models where the
-biology-informed prior on $M_0$ may conflict with the true total mRNA of one or
-more cell types. Even if the $M_0$ anchor is imperfect and the model compensates
-by adjusting the effective capture scaling differently for each component, the
-CLR-based differential expression analysis within each component remains
-perfectly valid. The biological-level metrics, by contrast, would reflect the
-component-specific scaling errors and require careful interpretation.
+$$
+\text{lfsr}_g = \min\left(\Phi(z_g), 1 - \Phi(z_g)\right) = \min\left(\Phi(z_g),
+\Phi(-z_g)\right). $${#eq-diffexp-lfsr-formula}
 
+The lfsr quantifies the posterior probability that we would make an error if we
+were to assign gene $g$ the sign corresponding to its posterior mean. More
+specifically:
 
-### Caveat: the NB parameter-space boundary {#sec-diffexp-bio-caveat}
+- If $\mu_{\Delta,g} > 0$, then $\text{lfsr}_g = P(\Delta_g < 0 \mid
+\text{data})$ is the posterior probability that the gene is actually
+down-regulated despite having a positive posterior mean.
 
-While the biological metrics are free of compositional closure, they have their
-own boundary artifact.  For genes with near-zero biological expression, the
-Gamma rate $\beta_g \to \infty$ regardless of parameterization.  In this regime,
-tiny and **unidentifiable** posterior fluctuations produce enormous $\beta_g$
-ratios between conditions, inflating all three biological metrics.
+- If $\mu_{\Delta,g} < 0$, then $\text{lfsr}_g = P(\Delta_g > 0 \mid
+\text{data})$ is the posterior probability that the gene is actually
+up-regulated despite having a negative posterior mean.
 
-The severity of this artifact depends on the model's parameterization:
+- If $\mu_{\Delta,g} = 0$, then $\text{lfsr}_g = 0.5$, reflecting maximal
+uncertainty about the sign.
 
-- **Canonical / mean_prob** ($p$ sampled directly): the Gamma rate is
-  $\beta_g = p_g / (1 - p_g)$.  As $p_g \to 1$, the $(1 - p_g)$ subtraction
-  suffers from catastrophic cancellation in finite-precision arithmetic (float32),
-  amplifying the instability beyond what the mathematical singularity alone would
-  produce.
-- **Mean_odds** ($\phi$ sampled directly): the Gamma rate is $\beta_g = 1/\phi_g$.
-  As $\phi_g \to 0$ the rate still diverges, but the computation $1/\phi$ is a
-  simple reciprocal with **no subtraction**, so it avoids the catastrophic
-  cancellation that plagues the $p/(1-p)$ form.
+**Relationship to z-score.** For large $|z_g|$, the lfsr is approximately
 
-The LFC similarly benefits from the `mean_odds` parameterization: since $\mu_g$
-is sampled directly, the biological LFC $\log(\mu_A / \mu_B)$ never involves
-the numerically fragile $r(1-p)/p$ reconstruction.
+$$
+\text{lfsr}_g \approx \Phi(-|z_g|) = 1 - \Phi(|z_g|),
+$${#eq-diffexp-lfsr-approx}
 
-**Recommendation:** use the `mean_odds` parameterization for models where
-biological DE metrics will be computed.  The pipeline automatically detects
-the parameterization and selects the most stable computation path.  Regardless
-of parameterization, **filter genes by minimum biological expression** before
-interpreting the results.  The `max_bio_expr` field in the output (defined as
-$\max(\hat{\mu}_g^A, \hat{\mu}_g^B)$) is provided for exactly this purpose.
-A threshold of $\mu_{\min} \approx 0.1$--$1.0$ typically suffices.
+which decreases exponentially fast as $|z_g|$ increases. Specifically, for
+$|z_g| \gg 1$, we have the asymptotic expansion
 
+$$
+\Phi(-|z_g|) \approx \frac{1}{|z_g|\sqrt{2\pi}}
+\exp\left(-\frac{z_g^2}{2}\right),
+$${#eq-diffexp-lfsr-asymptotic}
 
-### Parameterization-aware computation {#sec-diffexp-bio-param}
+showing that the lfsr is extremely small for genes with large absolute z-scores.
 
-The biological DE pipeline selects the most numerically stable formulae based
-on which posterior samples are available:
+#### Advantages for compositional data
 
-| Parameterization | $\mu_g$ | $\text{var}_g$ | $\beta_g$ (Gamma rate) |
-|---|---|---|---|
-| `mean_odds` | sampled | $\mu_g (1 + \phi_g)$ | $1 / \phi_g$ |
-| `mean_prob` | sampled | $\mu_g / p_g$ | $p_g / (1 - p_g)$ |
-| `canonical` | $r_g (1 - p_g) / p_g$ | $\mu_g / p_g$ | $p_g / (1 - p_g)$ |
+The lfsr has several advantages for differential expression analysis on
+compositional data:
 
-The three tiers are selected automatically — the user does not need to specify
-anything beyond using results objects.
+**Reference-free interpretation.** Because the lfsr is computed in CLR space,
+which is reference-free, it does not depend on the arbitrary choice of reference
+component used in the ALR transformation. All genes are treated symmetrically.
 
+**Robustness to compositionality.** The lfsr quantifies the probability of
+making a sign error, which is a meaningful question even when absolute
+expression levels are unmeasurable. In contrast, questions about the "magnitude"
+of differential expression must be carefully interpreted in the compositional
+context.
 
-### Implementation notes {#sec-diffexp-bio-implementation}
+**Direct Bayesian interpretation.** Unlike frequentist p-values, which quantify
+the probability of observing data at least as extreme as what was observed under
+a null hypothesis, the lfsr directly quantifies the posterior probability of a
+specific event (incorrect sign assignment) given the observed data. This
+interpretation requires no additional assumptions beyond the Bayesian model.
 
-All four metrics are computed by default when calling `compare()` with
-`method="empirical"` or `method="shrinkage"`. The biological metrics are
-available via the `.biological_level()` method on the results object:
+#### Comparison to p-values
 
-```python
-de = scribe.de.compare(
-    results_A, results_B,
-    method="shrinkage",
-    component_A=0, component_B=0,
-)
+It is instructive to contrast the lfsr with traditional two-sided p-values. A
+two-sided p-value for testing $H_0: \Delta_g = 0$ versus $H_1: \Delta_g \neq 0$
+is typically computed as
 
-# CLR-based DE (as before)
-clr_results = de.gene_level(tau=jnp.log(1.5))
+$$
+p_g = 2\Phi(-|z_g|) = 2(1 - \Phi(|z_g|)).
+$${#eq-diffexp-pvalue}
 
-# Biological-level DE
-bio_results = de.biological_level(
-    tau_lfc=jnp.log(1.5),
-    tau_var=jnp.log(2.0),
-    tau_kl=0.5,
-)
-```
+This quantity represents the probability of observing a test statistic at least
+as extreme as $|z_g|$ under the null hypothesis, assuming certain regularity
+conditions.
 
-When results objects are passed to `compare()`, the pipeline auto-extracts
-`mu` and `phi` samples from `posterior_samples` alongside the standard `r` and
-`p`.  These native-parameterization samples are stored in the results object
-and used by `biological_level()` to select the best computation path (see
-@sec-diffexp-bio-param). Setting `compute_biological=False` in `compare()`
-disables the storage of all these samples, saving memory when only CLR metrics
-are needed.
+Comparing @eq-diffexp-pvalue with @eq-diffexp-lfsr-approx, we see that for
+large $|z_g|$,
 
-To filter out genes with unreliable metrics (see @sec-diffexp-bio-caveat):
+$$
+p_g \approx 2 \cdot \text{lfsr}_g. $${#eq-diffexp-pvalue-lfsr-relation}
 
-```python
-# Filter genes with near-zero expression in both conditions
-reliable = bio_results["max_bio_expr"] > 0.1
-bio_lfc_filtered = bio_results["lfc_mean"][reliable]
-bio_kl_filtered = bio_results["kl_mean"][reliable]
-```
+Thus, the lfsr and p-value convey similar information about the strength of
+evidence against the null hypothesis, but the lfsr has the advantage of a direct
+posterior probability interpretation.
+
+However, there is a fundamental conceptual difference. The p-value is computed
+under the assumption that the null hypothesis $\Delta_g = 0$ is exactly true,
+which assigns zero prior probability to the event $\Delta_g = 0$ in a continuous
+Bayesian model. The lfsr, in contrast, makes no reference to a point null
+hypothesis and instead quantifies uncertainty about the sign of $\Delta_g$ given
+the observed data and the continuous prior.
+
+For compositional data, where the interpretation of "zero differential
+expression" is subtle due to the relative nature of proportions, the lfsr's
+focus on the sign of differential expression (up vs. down) rather than exact
+equality to zero provides a more natural and interpretable measure of evidence.
+

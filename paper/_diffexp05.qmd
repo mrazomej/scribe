@@ -1,474 +1,487 @@
 ---
 editor:
     render-on-save: true
-bibliography: references.bib
 csl: ieee.csl
 ---
 
-## Gene-Set and Pathway Analysis
+## Empirical Pathway Enrichment via ILR Balances {#sec-diffexp-empirical-pathway}
 
-While gene-level differential expression identifies individual genes with
-altered expression, many biological questions concern coordinated changes in
-groups of genes. Gene sets and pathways—collections of genes with related
-functions or participating in common biological processes—often exhibit
-collective behaviors that are more informative than individual gene changes. In
-this section, we develop methods for testing linear contrasts in CLR space and
-balances in ILR space, enabling rigorous statistical inference on gene sets.
+The gene-level empirical differential expression and PEFP framework from the
+preceding sections identify individual differentially expressed genes. Many
+biological questions, however, concern coordinated changes in groups of
+genes---pathways, modules, or functional categories---rather than isolated
+per-gene effects.
 
-### Linear Contrasts in CLR Space
+We now extend the empirical approach to gene sets and pathways using isometric
+log-ratio (ILR) balances. The key insight is that any deterministic linear
+functional of valid posterior samples is itself a valid posterior sample. The
+CLR difference matrix already encodes the full empirical posterior of gene-level
+effects; projecting each row onto a suitably chosen direction yields empirical
+posterior samples of set-level statistics, with no new distributional
+assumptions beyond those of the empirical gene-level pipeline.
 
-#### Motivation and setup
+The remainder of this section develops three complementary tools: a
+**single-balance test** that contrasts pathway versus complement expression; a
+**multivariate within-pathway perturbation test** that detects coordinated
+rearrangement among pathway genes; and **batch testing** of many pathways with
+PEFP error control applied to pathway-level lfsr values.
 
-A *contrast* is a linear combination of gene expression values designed to test
-a specific hypothesis about differential expression. For example, we might ask:
+#### The ILR balance for a gene set
 
-- Is the average expression of genes in a pathway higher in condition A than
-condition B?
-- Does a module of co-regulated genes show coordinated up-regulation?
-- Is there a significant difference between two functional gene groups?
+Consider a pathway $P_m \subset \{1, 2, \ldots, D\}$ with $n_+ = |P_m|$ genes
+in the pathway and $n_- = D - n_+$ genes in the complement $P_m^c$. The
+parametric analysis in @sec-diffexp-analytical-pathway uses the unnormalized CLR
+contrast $\underline{c}_m$ from @eq-diffexp-pathway-contrast-vector, whose
+entries are $1/n_+$ for pathway genes and $-1/n_-$ for complement genes. While
+this contrast correctly captures the balance, it is not normalized to unit
+length in $\mathbb{R}^D$. For the ILR framework, we require a properly
+normalized balance vector.
 
-Formally, a contrast is specified by a vector $\underline{c} \in \mathbb{R}^{D}$
-that defines a linear combination of the CLR coordinates. The contrast statistic
-is
-
-$$
-\gamma = \underline{c}^{\top} \underline{\Delta},
-$${#eq-diffexp-contrast-statistic}
-
-where $\underline{\Delta}$ is the vector of differential expression effects in
-CLR space from @eq-diffexp-delta-definition.
-
-#### The CLR constraint on contrasts
-
-For a contrast to be meaningful in CLR space, it must respect the sum-to-zero
-constraint that characterizes the CLR subspace. Specifically, we require
+We define the ILR balance vector $\underline{v}_m \in \mathbb{R}^D$ for the
+binary partition $\{P_m, P_m^c\}$ as
 
 $$
-\sum_{g=1}^{D} c_g = 0.
-$${#eq-diffexp-contrast-constraint}
+v_{m,g} = \begin{cases}
+\sqrt{\dfrac{n_-}{n_+(n_+ + n_-)}} & \text{if } g \in P_m, \\[6pt]
+-\sqrt{\dfrac{n_+}{n_-(n_+ + n_-)}} & \text{if } g \notin P_m.
+\end{cases}
+$${#eq-diffexp-np-ilr-balance}
 
-This constraint has a clear interpretation: the contrast should measure
-*differences* between genes or gene groups, not absolute levels. To see why this
-constraint is necessary, recall that CLR coordinates themselves satisfy
-$\sum_{g=1}^{D} z_{\text{CLR},g} = 0$ by @eq-diffexp-clr-sum-zero. A contrast
-that does not sum to zero would include a component along the direction
-$\underline{1}$, which is not identifiable from compositional data.
+This is the standard ILR normalization for a two-group partition
+[@egozcue2003]. We now verify that it satisfies the three properties required
+of an ILR basis vector: unit norm, sum-to-zero, and a clear compositional
+interpretation.
 
-**Automatic centering.** If a user specifies a contrast $\underline{c}'$ that
-does not satisfy @eq-diffexp-contrast-constraint, we can project it onto the CLR
-subspace by centering:
-
-$$
-\underline{c} = \underline{c}' - \bar{c}' \underline{1}, \quad 
-\text{where } \bar{c}' = \frac{1}{D} \sum_{g=1}^{D} c'_g.
-$${#eq-diffexp-contrast-centering}
-
-This ensures $\sum_{g=1}^{D} c_g = 0$ while preserving the essential structure
-of $\underline{c}'$. Equivalently, we can write
+**Verification of unit norm.** The squared norm of $\underline{v}_m$ is
 
 $$
-\underline{c} = \underline{\underline{C}} \underline{c}',
-$${#eq-diffexp-contrast-centering-matrix}
+\|\underline{v}_m\|^2 = \sum_{g \in P_m} v_{m,g}^2 + \sum_{g \notin P_m}
+v_{m,g}^2. $${#eq-diffexp-np-ilr-norm-step1}
 
-where $\underline{\underline{C}}$ is the centering matrix from
-@eq-diffexp-centering-matrix.
-
-**Guard against trivial contrasts.** After centering, we should verify that the
-contrast is not trivial (all zeros). This can occur if $\underline{c}' =
-\alpha \underline{1}$ for some scalar $\alpha$. A simple check is
+Substituting @eq-diffexp-np-ilr-balance and counting terms:
 
 $$
-\|\underline{c}\|^2 = \sum_{g=1}^{D} c_g^2 > \epsilon,
-$${#eq-diffexp-contrast-nonzero}
+\|\underline{v}_m\|^2 = n_+ \cdot \frac{n_-}{n_+(n_+ + n_-)} +
+n_- \cdot \frac{n_+}{n_-(n_+ + n_-)}.
+$${#eq-diffexp-np-ilr-norm-step2}
 
-where $\epsilon$ is a small threshold (e.g., $10^{-10}$). If this condition
-fails, the contrast carries no information and should be rejected.
-
-#### Posterior distribution of the contrast
-
-Since $\underline{\Delta} \sim \mathcal{N}(\underline{\mu}_{\Delta},
-\underline{\underline{\Sigma}}_{\Delta})$ and $\gamma =
-\underline{c}^{\top} \underline{\Delta}$ is a linear transformation, the
-posterior distribution of $\gamma$ is univariate Gaussian:
+Simplifying each term:
 
 $$
-\gamma \sim \mathcal{N}(\underline{c}^{\top} \underline{\mu}_{\Delta}, 
-\underline{c}^{\top} \underline{\underline{\Sigma}}_{\Delta} \underline{c}).
-$${#eq-diffexp-contrast-distribution}
+\|\underline{v}_m\|^2 = \frac{n_-}{n_+ + n_-} + \frac{n_+}{n_+ + n_-} =
+\frac{n_- + n_+}{n_+ + n_-} = 1. $${#eq-diffexp-np-ilr-norm-one}
 
-The posterior mean is
-
-$$
-\mu_{\gamma} = \underline{c}^{\top} \underline{\mu}_{\Delta} = 
-\sum_{g=1}^{D} c_g \mu_{\Delta,g}.
-$${#eq-diffexp-contrast-mean}
-
-The posterior variance is
+**Verification of sum-to-zero.** The sum of entries is
 
 $$
-\sigma_{\gamma}^2 = \underline{c}^{\top} 
-\underline{\underline{\Sigma}}_{\Delta} \underline{c}.
-$${#eq-diffexp-contrast-variance}
+\sum_{g=1}^{D} v_{m,g} = n_+ \sqrt{\frac{n_-}{n_+(n_+ + n_-)}} -
+n_- \sqrt{\frac{n_+}{n_-(n_+ + n_-)}}.
+$${#eq-diffexp-np-ilr-sum-step1}
 
-#### Efficient computation using low-rank structure
-
-Computing $\sigma_{\gamma}^2$ naively as a full matrix-vector-vector product
-would require $O(D^2)$ operations. However, the low-rank plus diagonal structure
-of $\underline{\underline{\Sigma}}_{\Delta}$ enables $O(kD)$ computation.
-
-Substituting the low-rank form @eq-diffexp-sigma-delta-lowrank:
+Simplifying each term:
 
 $$
-\sigma_{\gamma}^2 = \underline{c}^{\top} 
-\left(\underline{\underline{W}}_{\Delta} 
-\underline{\underline{W}}_{\Delta}^{\top} + 
-\text{diag}(\underline{d}_{\Delta})\right) \underline{c}.
-$${#eq-diffexp-contrast-variance-lowrank-step1}
-
-Expanding:
+n_+ \sqrt{\frac{n_-}{n_+(n_+ + n_-)}} = \sqrt{\frac{n_+^2 \cdot n_-} {n_+(n_+ +
+n_-)}} = \sqrt{\frac{n_+ n_-}{n_+ + n_-}}, $${#eq-diffexp-np-ilr-sum-step2a}
 
 $$
-\sigma_{\gamma}^2 = \underline{c}^{\top} \underline{\underline{W}}_{\Delta} 
-\underline{\underline{W}}_{\Delta}^{\top} \underline{c} + 
-\underline{c}^{\top} \text{diag}(\underline{d}_{\Delta}) \underline{c}.
-$${#eq-diffexp-contrast-variance-lowrank-step2}
-
-The second term is simply
-
-$$
-\underline{c}^{\top} \text{diag}(\underline{d}_{\Delta}) \underline{c} = 
-\sum_{g=1}^{D} c_g^2 d_{\Delta,g},
-$${#eq-diffexp-contrast-variance-diagonal}
-
-which requires $O(D)$ operations.
-
-For the first term, define the vector $\underline{w} \in \mathbb{R}^{k_A + k_B}$
-as
-
-$$
-\underline{w} = \underline{\underline{W}}_{\Delta}^{\top} \underline{c}.
-$${#eq-diffexp-w-definition}
-
-This vector represents the projection of the contrast onto the low-rank factors
-and requires $O((k_A + k_B) D) = O(kD)$ operations to compute. Then
-
-$$
-\underline{c}^{\top} \underline{\underline{W}}_{\Delta} 
-\underline{\underline{W}}_{\Delta}^{\top} \underline{c} = 
-\underline{w}^{\top} \underline{w} = \|\underline{w}\|^2 = 
-\sum_{j=1}^{k_A+k_B} w_j^2,
-$${#eq-diffexp-contrast-variance-lowrank}
-
-which requires $O(k)$ operations to compute once $\underline{w}$ is available.
-
-Combining @eq-diffexp-contrast-variance-diagonal and
-@eq-diffexp-contrast-variance-lowrank:
-
-$$
-\sigma_{\gamma}^2 = \sum_{j=1}^{k_A+k_B} w_j^2 + \sum_{g=1}^{D} c_g^2 d_{\Delta,g}.
-$${#eq-diffexp-contrast-variance-final}
-
-The total computational cost is $O(kD)$, which is linear in $D$ for fixed $k$.
-
-#### Tail probabilities and lfsr for contrasts
-
-With the posterior mean $\mu_{\gamma}$ and standard deviation $\sigma_{\gamma} =
-\sqrt{\sigma_{\gamma}^2}$, we can compute tail probabilities exactly as we did
-for individual genes.
-
-**Probability of positive contrast.** The probability that the contrast is
-positive is
-
-$$
-P(\gamma > 0 \mid \text{data}) = 
-\Phi\left(\frac{\mu_{\gamma}}{\sigma_{\gamma}}\right).
-$${#eq-diffexp-contrast-prob-positive}
-
-**Probability of practical significance.** Given a threshold $\tau \geq 0$, the
-probability of practical significance is
-
-$$
-P(|\gamma| > \tau \mid \text{data}) = 
-1 - \Phi\left(\frac{\tau - \mu_{\gamma}}{\sigma_{\gamma}}\right) + 
-\Phi\left(\frac{-\tau - \mu_{\gamma}}{\sigma_{\gamma}}\right).
-$${#eq-diffexp-contrast-prob-effect}
-
-**Local false sign rate.** The lfsr for the contrast is
-
-$$
-\text{lfsr}_{\gamma} = \min\left(P(\gamma > 0 \mid \text{data}), 
-P(\gamma < 0 \mid \text{data})\right).
-$${#eq-diffexp-contrast-lfsr}
-
-These quantities provide a complete Bayesian summary of the evidence for or
-against differential expression of the gene set defined by the contrast.
-
-### Balances and ILR Coordinates
-
-#### Balance definition
-
-A *balance* is a special type of contrast that compares the geometric mean
-expression of one group of genes against another. Balances have a natural
-interpretation in compositional data analysis as log-ratios between subcompositions [@egozcue2003].
-
-Given two disjoint gene sets $S_+, S_- \subset \{1, 2, \ldots, D\}$ with
-$S_+ \cap S_- = \emptyset$, the balance between these sets is the log-ratio
-
-$$
-b(S_+, S_-) = \log\left(\frac{\text{geom-mean}(\rho_g : g \in S_+)}
-{\text{geom-mean}(\rho_g : g \in S_-)}\right).
-$${#eq-diffexp-balance-definition-composition}
-
-In CLR coordinates, this becomes a linear contrast. To see this, recall that the
-geometric mean of a set of positive numbers $\{a_1, \ldots, a_m\}$ is
-
-$$
-\text{geom-mean}(a_1, \ldots, a_m) = \exp\left(\frac{1}{m} \sum_{i=1}^{m} \log a_i\right).
-$${#eq-diffexp-geometric-mean}
+n_- \sqrt{\frac{n_+}{n_-(n_+ + n_-)}} = \sqrt{\frac{n_-^2 \cdot n_+}
+{n_-(n_+ + n_-)}} = \sqrt{\frac{n_+ n_-}{n_+ + n_-}}.
+$${#eq-diffexp-np-ilr-sum-step2b}
 
 Therefore,
 
 $$
-b(S_+, S_-) = \frac{1}{|S_+|} \sum_{g \in S_+} \log(\rho_g) - 
-\frac{1}{|S_-|} \sum_{g \in S_-} \log(\rho_g).
-$${#eq-diffexp-balance-log-space}
+\sum_{g=1}^{D} v_{m,g} = \sqrt{\frac{n_+ n_-}{n_+ + n_-}} - \sqrt{\frac{n_+
+n_-}{n_+ + n_-}} = 0. $${#eq-diffexp-np-ilr-sum-zero}
 
-#### Constructing balance contrasts
+This confirms that $\underline{v}_m$ lies in the CLR subspace, i.e., it is
+orthogonal to $\underline{1}$.
 
-To express a balance as a CLR contrast, we need to account for the centering in
-the CLR transformation. Define the raw contrast vector $\underline{c}'$ as
-
-$$
-c'_g = \begin{cases}
-\frac{1}{|S_+|} & \text{if } g \in S_+, \\
--\frac{1}{|S_-|} & \text{if } g \in S_-, \\
-0 & \text{otherwise}.
-\end{cases}
-$${#eq-diffexp-balance-contrast-raw}
-
-This contrast compares the average log-expression of genes in $S_+$ against
-genes in $S_-$, ignoring genes in neither set.
-
-The sum of $\underline{c}'$ is
+**Compositional interpretation.** The inner product of $\underline{v}_m$ with a
+CLR vector $\underline{z}_{\text{CLR}}$ yields
 
 $$
-\sum_{g=1}^{D} c'_g = \frac{|S_+|}{|S_+|} - \frac{|S_-|}{|S_-|} = 1 - 1 = 0.
-$${#eq-diffexp-balance-contrast-sum-zero}
+\underline{v}_m^{\top} \underline{z}_{\text{CLR}} =
+\sqrt{\frac{n_-}{n_+(n_+ + n_-)}} \sum_{g \in P_m} z_{\text{CLR},g} -
+\sqrt{\frac{n_+}{n_-(n_+ + n_-)}} \sum_{g \notin P_m} z_{\text{CLR},g}.
+$${#eq-diffexp-np-ilr-interp-step1}
 
-Thus, balance contrasts automatically satisfy the CLR constraint
-@eq-diffexp-contrast-constraint and require no additional centering.
-
-**Example: Pathway vs. complement.** A common use case is testing whether a
-pathway $P \subset \{1, \ldots, D\}$ is differentially expressed relative to all
-other genes. Setting $S_+ = P$ and $S_- = P^c = \{1, \ldots, D\} \setminus P$,
-the balance contrast is
-
-$$
-c_g = \begin{cases}
-\frac{1}{|P|} & \text{if } g \in P, \\
--\frac{1}{D - |P|} & \text{if } g \notin P.
-\end{cases}
-$${#eq-diffexp-pathway-contrast}
-
-This contrast tests whether the geometric mean expression of pathway genes
-differs from the geometric mean expression of non-pathway genes.
-
-#### Testing in ILR space
-
-The ILR transformation provides an elegant alternative approach to gene-set
-testing. Recall from @eq-diffexp-ilr-definition that the ILR coordinates are
-defined by
+Since $z_{\text{CLR},g} = \log(\rho_g) - \frac{1}{D}\sum_j \log(\rho_j)$ and
+$\sum_g z_{\text{CLR},g} = 0$ by @eq-diffexp-clr-sum-zero, we can write
+$\sum_{g \notin P_m} z_{\text{CLR},g} = -\sum_{g \in P_m} z_{\text{CLR},g}$.
+Substituting:
 
 $$
-\underline{z}_{\text{ILR}} = \underline{\underline{V}} \underline{z}_{\text{CLR}},
-$${#eq-diffexp-ilr-recall}
+\underline{v}_m^{\top} \underline{z}_{\text{CLR}} =
+\left(\sqrt{\frac{n_-}{n_+(n_+ + n_-)}} + \sqrt{\frac{n_+}{n_-(n_+ +
+n_-)}}\right) \sum_{g \in P_m} z_{\text{CLR},g}.
+$${#eq-diffexp-np-ilr-interp-step2}
 
-where $\underline{\underline{V}}$ is an orthonormal matrix satisfying
-@eq-diffexp-helmert-properties.
-
-Each row of $\underline{\underline{V}}$ defines a pre-specified balance. For
-the Helmert basis @eq-diffexp-helmert-formula, the $i$-th row represents the
-balance between gene $i+1$ and the first $i$ genes. More generally, we can
-construct custom ILR bases where each row corresponds to a biologically
-meaningful balance.
-
-**Direct testing of ILR coordinates.** Given ILR-transformed difference
-distributions
+To simplify the coefficient, we factor out $1/\sqrt{n_+ + n_-}$:
 
 $$
-\underline{\Delta}_{\text{ILR}} = \underline{\underline{V}} \underline{\Delta},
-$${#eq-diffexp-delta-ilr}
+\sqrt{\frac{n_-}{n_+(n_+ + n_-)}} + \sqrt{\frac{n_+}{n_-(n_+ + n_-)}} =
+\frac{1}{\sqrt{n_+ + n_-}} \left(\sqrt{\frac{n_-}{n_+}} +
+\sqrt{\frac{n_+}{n_-}}\right) =
+\frac{1}{\sqrt{n_+ + n_-}} \cdot \frac{n_- + n_+}{\sqrt{n_+ n_-}}.
+$${#eq-diffexp-np-ilr-interp-step3}
 
-we can test whether the $i$-th ILR coordinate is significantly non-zero. The
-marginal distribution is
-
-$$
-\Delta_{\text{ILR},i} \sim \mathcal{N}(\mu_{\Delta,\text{ILR},i}, 
-\sigma_{\Delta,\text{ILR},i}^2),
-$${#eq-diffexp-delta-ilr-marginal}
-
-where
+Since $n_+ + n_- = D$:
 
 $$
-\mu_{\Delta,\text{ILR},i} = 
-[\underline{\underline{V}} \underline{\mu}_{\Delta}]_i = 
-\underline{v}_i^{\top} \underline{\mu}_{\Delta},
-$${#eq-diffexp-mu-delta-ilr-i}
+\frac{n_+ + n_-}{\sqrt{(n_+ + n_-) \cdot n_+ n_-}} = \sqrt{\frac{n_+ + n_-}{n_+
+n_-}}. $${#eq-diffexp-np-ilr-interp-step4}
 
-and
-
-$$
-\sigma_{\Delta,\text{ILR},i}^2 = 
-[\underline{\underline{V}} \underline{\underline{\Sigma}}_{\Delta} 
-\underline{\underline{V}}^{\top}]_{ii} = 
-\underline{v}_i^{\top} \underline{\underline{\Sigma}}_{\Delta} \underline{v}_i,
-$${#eq-diffexp-sigma-delta-ilr-i}
-
-with $\underline{v}_i$ denoting the $i$-th row of $\underline{\underline{V}}$.
-
-**Important note on correlation structure.** Although the rows of
-$\underline{\underline{V}}$ form an orthonormal set, this does *not* imply that
-the ILR coordinates are uncorrelated. The ILR covariance matrix is
+Expressing $\sum_{g \in P_m} z_{\text{CLR},g}$ in terms of the log-ratio of
+geometric means (using $z_{\text{CLR},g} = \log\rho_g - \frac{1}{D}\sum_j
+\log\rho_j$):
 
 $$
-\underline{\underline{\Sigma}}_{\Delta,\text{ILR}} = 
-\underline{\underline{V}} \underline{\underline{\Sigma}}_{\Delta} 
-\underline{\underline{V}}^{\top},
-$${#eq-diffexp-ilr-covariance}
+\sum_{g \in P_m} z_{\text{CLR},g} = \sum_{g \in P_m} \log\rho_g -
+\frac{n_+}{D} \sum_{j=1}^{D} \log\rho_j =
+n_+ \left(\frac{1}{n_+}\sum_{g \in P_m} \log\rho_g -
+\frac{1}{D}\sum_{j=1}^{D} \log\rho_j\right).
+$${#eq-diffexp-np-ilr-interp-step5}
 
-which is diagonal if and only if the rows of $\underline{\underline{V}}$ are
-eigenvectors of $\underline{\underline{\Sigma}}_{\Delta}$. For a fixed basis
-such as the Helmert basis and a general low-rank plus diagonal covariance, this
-will not hold, and the ILR coordinates will in general be correlated. The ILR
-coordinates would be uncorrelated only in the special case where
-$\underline{\underline{\Sigma}}_{\Delta}$ is proportional to the centering
-matrix $\underline{\underline{C}}$ (i.e., isotropic within the CLR subspace).
+Combining everything, we arrive at the compositional interpretation of the ILR
+balance:
 
-Nevertheless, the *marginal* distribution of each ILR coordinate remains
-correctly specified by @eq-diffexp-delta-ilr-marginal, so individual balance
-tests are valid. What changes is the joint interpretation: tests on different
-ILR coordinates are not independent, and multiple testing corrections across
-ILR coordinates should account for this dependence structure.
+$$
+\underline{v}_m^{\top} \underline{z}_{\text{CLR}} = \sqrt{\frac{n_+ n_-}{n_+ +
+n_-}} \left[ \frac{1}{n_+}\sum_{g \in P_m} \log\rho_g - \frac{1}{n_-}\sum_{g
+\notin P_m} \log\rho_g \right]. $${#eq-diffexp-np-ilr-interp}
 
-**Computational advantage.** Despite the correlations, the ILR representation
-offers a computational advantage: each balance statistic
-$\Delta_{\text{ILR},i}$ is a linear contrast of the CLR coordinates, and its
-posterior mean and variance can be computed in $O(kD)$ time using the low-rank
-structure, exactly as described for general contrasts in
-@eq-diffexp-contrast-variance-final.
+The term in brackets is the log-ratio of the geometric mean of pathway genes to
+the geometric mean of complement genes---precisely the balance $b(P_m, P_m^c)$
+from @eq-diffexp-balance-log-space. The prefactor $\sqrt{n_+ n_- / (n_+ + n_-)}$
+is the ILR normalization constant that ensures unit norm.
 
-**Interpretational advantage.** Each ILR coordinate has a direct compositional
-interpretation as a balance. Saying "$\Delta_{\text{ILR},i} > 0$" means "the
-balance $i$ has shifted toward the positive group in condition A relative to
-condition B." This provides a richer and more nuanced view of differential
-expression than simply listing individual genes.
+**Relationship to the CLR contrast.** Comparing @eq-diffexp-np-ilr-balance with
+the unnormalized CLR contrast $\underline{c}_m$ from
+@eq-diffexp-pathway-contrast-vector, we see that
 
-### Pathway Enrichment via Gene-Set Testing
+$$
+\underline{v}_m = \alpha_m \cdot \underline{c}_m, \quad \text{where} \quad
+\alpha_m = \sqrt{\frac{n_+ n_-}{n_+ + n_-}}.
+$${#eq-diffexp-np-ilr-clr-relationship}
 
-#### Setup
+Since $\alpha_m > 0$ is a positive scalar, the ILR balance
+$\underline{v}_m^{\top} \underline{\Delta}$ is a positive rescaling of the CLR
+contrast $\underline{c}_m^{\top} \underline{\Delta}$. A positive rescaling
+preserves the sign of each posterior sample, so the empirical lfsr is
+identical under either normalization. The ILR normalization is therefore a
+matter of geometric convention (unit norm on the simplex) rather than
+statistical necessity for the single-balance test.
 
-Suppose we have a collection of $M$ pathways $\{P_1, P_2, \ldots, P_M\}$, where
-each pathway $P_m \subset \{1, 2, \ldots, D\}$ is a subset of genes. Common
-sources of pathway annotations include:
+#### Empirical balance statistic
 
-- **Gene Ontology (GO)** [@ashburner2000]: hierarchically organized functional
-categories
-- **KEGG** [@kanehisa2000]: metabolic and signaling pathways
-- **Reactome** [@jassal2020]: biological pathways
-- **MSigDB** [@subramanian2005]: curated and computational gene sets
+Given the $N \times D$ matrix of CLR difference samples
+$\underline{\underline{\Delta}}$ from @eq-diffexp-np-delta-samples, we define
+the pathway balance statistic for posterior sample $s$ as
 
-For each pathway $P_m$, we construct a balance contrast as in
-@eq-diffexp-pathway-contrast and test whether this balance shows significant
+$$
+b_m^{(s)} = \underline{v}_m^{\top} \underline{\Delta}^{(s)}, \quad s = 1, 2,
+\ldots, N. $${#eq-diffexp-np-balance-statistic}
+
+Since $\underline{\Delta}^{(s)}$ is a valid posterior sample of the gene-level
+CLR difference and $\underline{v}_m^{\top}(\cdot)$ is a deterministic linear
+map, each $b_m^{(s)}$ is a valid posterior sample of the pathway balance
+difference. No additional assumptions are required beyond those already made for
+the empirical gene-level pipeline.
+
+The empirical statistics for the pathway balance follow exactly the same pattern
+as the gene-level statistics from @eq-diffexp-np-mean through
+@eq-diffexp-np-lfsr-tau, with $b_m^{(s)}$ replacing $\Delta_g^{(s)}$.
+
+**Posterior mean of the balance.**
+
+$$
+\hat{\mu}_{b_m} = \frac{1}{N}\sum_{s=1}^{N} b_m^{(s)}.
+$${#eq-diffexp-np-balance-mean}
+
+**Posterior standard deviation.**
+
+$$
+\hat{\sigma}_{b_m} = \sqrt{ \frac{1}{N-1}\sum_{s=1}^{N} \left(b_m^{(s)} -
+\hat{\mu}_{b_m}\right)^2 }. $${#eq-diffexp-np-balance-sd}
+
+**Probability of positive balance.**
+
+$$
+\hat{P}(b_m > 0 \mid \text{data}) = \frac{1}{N}\sum_{s=1}^{N}
+\mathbf{1}\!\left[b_m^{(s)} > 0\right].
+$${#eq-diffexp-np-balance-prob-positive}
+
+**Empirical lfsr of the pathway balance.**
+
+$$
+\widehat{\text{lfsr}}_m = \min\!\left( \hat{P}(b_m > 0 \mid \text{data}), \; 1 -
+\hat{P}(b_m > 0 \mid \text{data}) \right). $${#eq-diffexp-np-balance-lfsr}
+
+**Practical-significance lfsr.** For a threshold $\tau \geq 0$:
+
+$$
+\widehat{\text{lfsr}}_m(\tau) = 1 - \max\!\left(
+\hat{P}(b_m > \tau \mid \text{data}), \;
+\hat{P}(b_m < -\tau \mid \text{data})
+\right).
+$${#eq-diffexp-np-balance-lfsr-tau}
+
+**Monte Carlo standard error.** Since $\widehat{\text{lfsr}}_m$ is a sample
+proportion, its standard error follows the same binomial formula as the
+gene-level case (@eq-diffexp-np-lfsr-se):
+
+$$
+\text{SE}(\widehat{\text{lfsr}}_m) \approx \sqrt{\frac{\ell_m (1 - \ell_m)}{N}},
+$${#eq-diffexp-np-balance-lfsr-se}
+
+where $\ell_m$ denotes the true pathway-level lfsr.
+
+**PEFP compatibility.** The pathway lfsr values feed directly into the PEFP
+machinery from @sec-diffexp-pefp. Since the PEFP depends only on the numerical
+lfsr values and not on how they were computed, the threshold-finding algorithm
+applies without modification.
+
+#### Pathway-aware sequential binary partition
+
+The single-balance test answers whether the pathway as a whole shifts up or
+down. But a pathway may exhibit coordinated *internal* rearrangement---some
+genes going up and others going down---without any net shift in the average
+balance. To detect such perturbations, we need access to the within-pathway ILR
+subspace.
+
+We construct a custom $(D-1) \times D$ ILR basis where the rows are organized
+into three interpretable blocks:
+
+1. **Between-group balance** (row 1): the pathway-vs-complement balance
+$\underline{v}_m$ from @eq-diffexp-np-ilr-balance.
+
+2. **Within-pathway balances** (rows 2 through $n_+$): a Helmert basis applied
+to the $n_+$ pathway genes, yielding $n_+ - 1$ orthonormal vectors with support
+only on $P_m$.
+
+3. **Within-complement balances** (rows $n_+ + 1$ through $D - 1$): a Helmert
+basis applied to the $n_-$ complement genes, yielding $n_- - 1$ orthonormal
+vectors with support only on $P_m^c$.
+
+The total number of rows is $1 + (n_+ - 1) + (n_- - 1) = D - 1$, as required.
+
+**Construction.** Let $\underline{\underline{H}}_{n_+} \in \mathbb{R}^{(n_+-1)
+\times n_+}$ denote the Helmert basis for $n_+$ components (computed by applying
+@eq-diffexp-helmert-formula with $D$ replaced by $n_+$), and similarly
+$\underline{\underline{H}}_{n_-} \in \mathbb{R}^{(n_--1) \times n_-}$ for the
+complement. We embed these into the full $D$-dimensional space by zero-padding.
+Specifically, define the pathway-aware SBP basis
+$\underline{\underline{V}}_{\text{SBP}} \in \mathbb{R}^{(D-1) \times D}$ as
+
+$$
+\underline{\underline{V}}_{\text{SBP}} = \begin{bmatrix}
+\underline{v}_m^{\top} \\
+\underline{\underline{H}}_{n_+}^{\text{(embed)}} \\
+\underline{\underline{H}}_{n_-}^{\text{(embed)}}
+\end{bmatrix},
+$${#eq-diffexp-np-sbp-basis}
+
+where $\underline{\underline{H}}_{n_+}^{\text{(embed)}}$ is the
+$(n_+-1) \times D$ matrix obtained by placing the columns of
+$\underline{\underline{H}}_{n_+}$ at the positions corresponding to genes in
+$P_m$ and filling the remaining columns with zeros, and similarly for
+$\underline{\underline{H}}_{n_-}^{\text{(embed)}}$ at the positions
+corresponding to genes in $P_m^c$.
+
+**Orthonormality.** The three blocks are mutually orthogonal by construction,
+since they have disjoint column support: the within-pathway rows are zero
+outside $P_m$, the within-complement rows are zero outside $P_m^c$, and the
+between-group row has non-zero entries in both groups but is orthogonal to
+both within-group Helmert bases (each Helmert row sums to zero within its
+group, while the between-group vector is constant within each group). Within
+each block, orthonormality follows from the Helmert construction
+(@eq-diffexp-helmert-properties). Therefore:
+
+$$
+\underline{\underline{V}}_{\text{SBP}}\;
+\underline{\underline{V}}_{\text{SBP}}^{\top} = \underline{\underline{I}}_{D-1}.
+$${#eq-diffexp-np-sbp-orthonormality}
+
+**Sum-to-zero.** Each row sums to zero: the between-group row by
+@eq-diffexp-np-ilr-sum-zero, and each within-group row by
+@eq-diffexp-helmert-sum-zero applied within its group (with zeros elsewhere).
+
+**Subspace identification.** The $D - 1$ ILR coordinates obtained by applying
+$\underline{\underline{V}}_{\text{SBP}}$ to a CLR vector decompose the total
+variation into three orthogonal components:
+
+- Coordinate 1: **between-group** variation (pathway vs. complement shift).
+- Coordinates 2 through $n_+$: **within-pathway** variation (rearrangement among
+pathway genes).
+- Coordinates $n_+ + 1$ through $D - 1$: **within-complement** variation
+(rearrangement among non-pathway genes).
+
+This decomposition is the foundation for the multivariate perturbation test.
+
+#### Multivariate within-pathway perturbation test
+
+The single-balance test from @eq-diffexp-np-balance-lfsr detects a net
+directional shift of the pathway. However, a pathway may be *perturbed* without
+a net shift: if half the pathway genes are up-regulated and half are
+down-regulated by similar magnitudes, the average balance is near zero, yet the
+pathway is clearly affected. The multivariate perturbation test is designed to
+detect such coordinated rearrangements.
+
+**Within-pathway ILR subspace.** Let $\underline{\underline{V}}_{\text{within}}
+\in \mathbb{R}^{(n_+-1) \times D}$ denote rows 2 through $n_+$ of the
+pathway-aware SBP basis from @eq-diffexp-np-sbp-basis. For each posterior
+sample, compute the within-pathway ILR difference vector:
+
+$$
+\underline{b}_{\text{within}}^{(s)} =
+\underline{\underline{V}}_{\text{within}} \underline{\Delta}^{(s)}
+\in \mathbb{R}^{n_+-1},
+\quad s = 1, \ldots, N.
+$${#eq-diffexp-np-within-ilr}
+
+Each $\underline{b}_{\text{within}}^{(s)}$ is a valid posterior sample of the
+within-pathway ILR differences, by the same linearity argument that justified
+the single-balance statistic.
+
+**Quadratic statistic.** We define the within-pathway perturbation statistic
+for posterior sample $s$ as the squared norm of the within-pathway ILR
+difference:
+
+$$
+T_m^{(s)} = \left\|\underline{b}_{\text{within}}^{(s)}\right\|^2 =
+\sum_{i=1}^{n_+-1} \left(b_{\text{within},i}^{(s)}\right)^2.
+$${#eq-diffexp-np-perturbation-statistic}
+
+This statistic measures the total compositional variation attributable to
+within-pathway rearrangement in posterior sample $s$. A large value of
+$T_m^{(s)}$ indicates substantial coordinated change among pathway genes,
+regardless of its direction.
+
+**Posterior summary.** The posterior mean of the perturbation statistic is
+
+$$
+\bar{T}_m = \frac{1}{N}\sum_{s=1}^{N} T_m^{(s)},
+$${#eq-diffexp-np-perturbation-mean}
+
+and the posterior standard deviation is
+
+$$
+\hat{\sigma}_{T_m} = \sqrt{\frac{1}{N-1}\sum_{s=1}^{N} \left(T_m^{(s)} -
+\bar{T}_m\right)^2}. $${#eq-diffexp-np-perturbation-sd}
+
+**Null calibration.** Under the null hypothesis of no pathway-specific
+perturbation, the within-pathway ILR differences
+$\underline{b}_{\text{within}}^{(s)}$ arise purely from the global gene-level
+noise. To calibrate the observed $\bar{T}_m$ against this null, we use a
+permutation approach: for each of $R$ permutations, randomly reassign $n_+$
+genes to the "pathway" role, construct the corresponding SBP basis, compute the
+permuted perturbation statistic, and compare the observed $\bar{T}_m$ against
+the permutation distribution.
+
+Specifically, for each permutation $r = 1, \ldots, R$:
+
+1. Draw a random subset $\tilde{P}_m^{(r)} \subset \{1, \ldots, D\}$ of size
+$n_+$.
+2. Construct $\underline{\underline{V}}_{\text{within}}^{(r)}$ using
+$\tilde{P}_m^{(r)}$ as the pathway.
+3. Compute $\tilde{T}_m^{(r)} = \frac{1}{N}\sum_{s=1}^{N}
+\|\underline{\underline{V}}_{\text{within}}^{(r)} \underline{\Delta}^{(s)}\|^2$.
+
+The empirical p-value is
+
+$$
+\hat{p}_m = \frac{1}{R}\sum_{r=1}^{R}
+\mathbf{1}\!\left[\tilde{T}_m^{(r)} \geq \bar{T}_m\right].
+$${#eq-diffexp-np-perturbation-pvalue}
+
+**Complementarity with the balance test.** The single-balance test and the
+perturbation test capture different aspects of pathway involvement:
+
+- The **balance test** detects a net directional shift (the pathway moves up
+or down as a whole). It answers: *is the pathway enriched in one direction?*
+
+- The **perturbation test** detects coordinated within-pathway rearrangement
+(individual genes change in a structured way). It answers: *is the
+pathway internally reorganized?*
+
+A pathway may be significant under one test but not the other, or under both.
+Using both tests provides a more complete picture of pathway-level
 differential expression.
-
-#### Pathway-level statistics
-
-For pathway $m$, define the balance contrast $\underline{c}_m$ with
-
-$$
-c_{m,g} = \begin{cases}
-\frac{1}{|P_m|} & \text{if } g \in P_m, \\
--\frac{1}{D - |P_m|} & \text{if } g \notin P_m.
-\end{cases}
-$${#eq-diffexp-pathway-contrast-vector}
-
-The posterior distribution of the pathway balance is
-
-$$
-\gamma_m = \underline{c}_m^{\top} \underline{\Delta} \sim 
-\mathcal{N}(\mu_{\gamma_m}, \sigma_{\gamma_m}^2),
-$${#eq-diffexp-pathway-distribution}
-
-where $\mu_{\gamma_m}$ and $\sigma_{\gamma_m}^2$ are computed as in
-@eq-diffexp-contrast-mean and @eq-diffexp-contrast-variance-final.
-
-We can then compute:
-
-- **Posterior mean balance**: $\mu_{\gamma_m}$
-- **Posterior standard deviation**: $\sigma_{\gamma_m}$
-- **Probability of positive balance**: $P(\gamma_m > 0 \mid \text{data})$
-- **Probability of practical significance**: $P(|\gamma_m| > \tau \mid
-\text{data})$
-- **Local false sign rate**: $\text{lfsr}_{\gamma_m}$
 
 #### Multiple pathway testing
 
-Testing $M$ pathways raises the question of multiple testing correction. In the
-next section, we develop methods for controlling the posterior expected false
-discovery proportion (PEFP) across multiple tests. The key idea is that we can
-treat the pathway-level lfsr values $\{\text{lfsr}_{\gamma_1}, \ldots,
-\text{lfsr}_{\gamma_M}\}$ exactly as we treat gene-level lfsr values, applying
-the same threshold-finding algorithm to control PEFP at a desired level.
+For a collection of $M$ pathways $\{P_1, P_2, \ldots, P_M\}$, we compute the
+single-balance lfsr for each pathway:
 
-**Hierarchical testing.** For hierarchically organized gene sets such as the
-Gene Ontology, we can perform hierarchical testing: first test parent terms,
-then conditionally test child terms only if their parent shows evidence of
-differential expression. This approach can improve power by reducing the
-effective number of tests.
+$$
+\widehat{\text{lfsr}}_1, \widehat{\text{lfsr}}_2, \ldots,
+\widehat{\text{lfsr}}_M. $${#eq-diffexp-np-pathway-lfsr-vector}
 
-**Continuous shrinkage.** Another approach is to incorporate the pathway
-structure into the prior distribution, allowing information to be shared across
-related pathways. For example, one might use a hierarchical prior where pathways
-in the same functional category share hyperparameters. While beyond the scope of
-this work, such extensions are natural within the Bayesian framework.
+These $M$ values are treated exactly as the gene-level lfsr values in the PEFP
+framework from @sec-diffexp-pefp. The PEFP for a set $S \subseteq \{1, \ldots,
+M\}$ of called pathways is
 
-### Comparison to Gene Set Enrichment Analysis (GSEA)
+$$
+\text{PEFP}(S) = \frac{1}{|S|} \sum_{m \in S} \widehat{\text{lfsr}}_m,
+$${#eq-diffexp-np-pathway-pefp}
 
-Our approach to gene-set testing differs fundamentally from the widely-used Gene
-Set Enrichment Analysis (GSEA) method [@subramanian2005].
+and the threshold-finding algorithm (@eq-diffexp-algorithm-step1 through
+@eq-diffexp-algorithm-step4) applies without modification.
 
-**GSEA.** The GSEA approach ranks all genes by a score (e.g., log-fold-change
-or z-score) and tests whether genes in a pathway are enriched at the top or
-bottom of the ranked list using a Kolmogorov-Smirnov-type statistic. Statistical
-significance is assessed by permutation testing.
+**Non-independence of pathway tests.** Pathways may share genes, and all
+balance statistics are computed from the same posterior samples
+$\underline{\underline{\Delta}}$. The pathway lfsr values are therefore not
+independent. Crucially, the PEFP remains valid regardless of the dependence
+structure: the PEFP is defined as a *conditional expectation* given the data,
+and its control via the lfsr threshold algorithm does not require independence
+of the lfsr values across pathways. This was established in @sec-diffexp-pefp and
+applies identically here.
 
-**Our approach.** We compute a posterior distribution for a balance statistic
-(geometric mean log-ratio) and quantify evidence via Bayesian tail
-probabilities. No permutation testing is required; the posterior distribution
-provides exact inference conditional on the model.
+**Practical workflow.** For $M$ pathways, we recommend:
 
-**Advantages of the balance approach:**
+1. Compute $\widehat{\text{lfsr}}_m$ and $\widehat{\text{lfsr}}_m(\tau)$ for
+each pathway using the single-balance test.
+2. Apply the PEFP algorithm to the vector of pathway lfsr values to identify
+significantly enriched pathways at the desired error level.
+3. For pathways called as significant, optionally run the multivariate
+perturbation test to characterize the nature of the perturbation (net
+shift vs. internal rearrangement).
 
-1. **Direct compositional interpretation**: The balance has a clear meaning as a
-log-ratio between gene groups, respecting the compositional nature of the data.
+#### Computational complexity
 
-2. **Uncertainty quantification**: We obtain not just a point estimate but a
-full posterior distribution, including standard errors and tail probabilities.
+The computational costs for empirical pathway analysis are summarized below.
 
-3. **Low-rank efficiency**: The low-rank covariance structure enables exact
-computation in $O(kD)$ time per pathway, with no need for permutation
-resampling.
+**Single pathway balance.** Computing $b_m^{(s)} =
+\underline{v}_m^{\top} \underline{\Delta}^{(s)}$ for all $N$ samples requires
+an $N \times D$ matrix-vector product: $O(ND)$.
 
-4. **Bayesian error control**: We can apply posterior expected false discovery
-proportion (PEFP) control across all pathways, as developed in the next section.
+**Batch of $M$ pathways.** Stacking $M$ balance vectors into a matrix
+$\underline{\underline{V}} \in \mathbb{R}^{M \times D}$ and computing
+$\underline{\underline{V}} \underline{\underline{\Delta}}^{\top}$ via a single
+matrix multiplication: $O(NMD)$.
 
-5. **Correlation-aware**: The posterior variance $\sigma_{\gamma_m}^2$ accounts
-for correlations between genes through the low-rank covariance structure,
-providing more accurate uncertainty quantification than methods that treat genes
-independently.
+**Within-pathway perturbation.** For a single pathway: the ILR projection is
+$O(N n_+ D)$ (since $\underline{\underline{V}}_{\text{within}}$ has
+$n_+ - 1$ rows and $D$ columns, but only $n_+$ non-zero columns per row,
+reducing the effective cost to $O(N n_+^2)$), and the norm computation is
+$O(N n_+)$. With $R$ permutations for null calibration, the total cost is
+$O(R N n_+^2)$.
 
-**Complementarity.** Despite these advantages, GSEA remains valuable for certain
-purposes, particularly when ranking-based enrichment is of primary interest or
-when the data do not fit a parametric model. The two approaches provide
-complementary perspectives on gene-set differential expression.
+**Summary table.**
+
+| **Operation**                | **Complexity**    | **GPU-parallelizable** |
+| ---------------------------- | ----------------- | ---------------------- |
+| Single pathway balance       | $O(ND)$           | Yes                    |
+| $M$ pathway balances         | $O(NMD)$          | Yes (batched matmul)   |
+| Within-pathway perturbation  | $O(N n_+^2)$      | Yes                    |
+| + null calibration           | $O(R N n_+^2)$    | Yes (batched)          |
+
+**Comparison to parametric.** The parametric pathway test from @sec-diffexp-analytical-pathway
+requires $O(kD)$ per pathway, where $k$ is the low-rank dimension. The
+empirical pathway test requires $O(ND)$. The ratio $N/k$ (typically $\approx
+300$) represents the computational premium of the empirical approach, but
+as with gene-level empirical DE, this cost is negligible on GPU hardware for
+typical problem sizes.
 
