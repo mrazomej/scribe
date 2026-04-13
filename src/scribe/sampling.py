@@ -690,15 +690,15 @@ def sample_biological_nb(
     # function operates on individual draws.
     _base = {k: v.without_sample_dim() for k, v in param_layouts.items()}
     _p_has_comp = (
-        _base["p"].component_axis is not None if "p" in _base else None
+        _base["p"].component_axis is not None if "p" in _base else False
     )
     _p_has_genes = (
-        _base["p"].gene_axis is not None if "p" in _base else None
+        _base["p"].gene_axis is not None if "p" in _base else False
     )
     _bnb_comp = (
         _base["bnb_concentration"].component_axis is not None
         if "bnb_concentration" in _base
-        else None
+        else False
     )
 
     if has_sample_dim:
@@ -769,9 +769,9 @@ def _sample_biological_nb_single(
     cell_batch_size: Optional[int] = None,
     bnb_concentration: Optional[jnp.ndarray] = None,
     *,
-    p_has_components: Optional[bool] = None,
-    p_has_genes: Optional[bool] = None,
-    bnb_has_components: Optional[bool] = None,
+    p_has_components: bool = False,
+    p_has_genes: bool = False,
+    bnb_has_components: bool = False,
 ) -> jnp.ndarray:
     """Sample one realisation of biological NB counts for all cells.
 
@@ -798,15 +798,12 @@ def _sample_biological_nb_single(
         Optional cell-level batching.
     bnb_concentration : jnp.ndarray or None
         BNB concentration, ``(n_genes,)`` or ``(n_components, n_genes)``.
-    p_has_components : bool or None
-        Whether ``p`` has a component axis (from layout metadata).
-        When ``None``, falls back to ndim heuristic.
-    p_has_genes : bool or None
-        Whether ``p`` has a gene axis (from layout metadata).
-        When ``None``, falls back to ndim heuristic.
-    bnb_has_components : bool or None
-        Whether ``bnb_concentration`` has a component axis.
-        When ``None``, falls back to ndim heuristic.
+    p_has_components : bool
+        Whether ``p`` has a component axis (from AxisLayout).
+    p_has_genes : bool
+        Whether ``p`` has a gene axis (from AxisLayout).
+    bnb_has_components : bool
+        Whether ``bnb_concentration`` has a component axis (from AxisLayout).
 
     Returns
     -------
@@ -829,13 +826,8 @@ def _sample_biological_nb_single(
         rng_key, batch_key = random.split(rng_key)
 
         if is_mixture:
-            # ----------------------------------------------------------
-            # Mixture model: sample component per cell, then draw NB
-            # from that component's parameters.
-            # ----------------------------------------------------------
             comp_key, sample_key = random.split(batch_key)
 
-            # Draw component assignments: (batch_n,)
             components = dist.Categorical(probs=mixing_weights).sample(
                 comp_key, (batch_n,)
             )
@@ -843,48 +835,21 @@ def _sample_biological_nb_single(
             # Gather per-cell r values: (batch_n, n_genes)
             r_batch = r[components]
 
-            # Determine whether p is per-component from layout flag,
-            # falling back to shape heuristic only on old code paths.
-            _p_is_comp = (
-                p_has_components
-                if p_has_components is not None
-                else (p.ndim >= 1 and p.shape[0] == r.shape[0])
-            )
-            if _p_is_comp:
+            if p_has_components:
                 p_batch = p[components]
-                # When p lacks a gene axis, gathering from (K,) yields
-                # (batch_n,); expand to (batch_n, 1) for broadcasting
-                # with r_batch (batch_n, n_genes).
-                _p_no_genes = (
-                    not p_has_genes
-                    if p_has_genes is not None
-                    else (p_batch.ndim == 1)
-                )
-                if _p_no_genes:
+                # (K,) gathered → (batch_n,); expand for broadcasting
+                if not p_has_genes:
                     p_batch = p_batch[:, None]
             else:
                 p_batch = p
 
-            # Gather per-cell bnb_concentration when it varies by
-            # component, using layout flag when available.
             bnb_batch = bnb_concentration
-            _bnb_comp = (
-                bnb_has_components
-                if bnb_has_components is not None
-                else (
-                    bnb_concentration is not None
-                    and bnb_concentration.ndim == 2
-                )
-            )
-            if bnb_concentration is not None and _bnb_comp:
+            if bnb_concentration is not None and bnb_has_components:
                 bnb_batch = bnb_concentration[components]
 
             nb = build_count_dist(r_batch, p_batch, bnb_batch)
             batch_counts = nb.sample(sample_key)
         else:
-            # ----------------------------------------------------------
-            # Standard model: p is shared across all cells.
-            # ----------------------------------------------------------
             nb = build_count_dist(r, p, bnb_concentration)
             batch_counts = nb.sample(batch_key, (batch_n,))
 
@@ -1034,20 +999,20 @@ def sample_posterior_ppc(
     # operates on individual draws.
     _base = {k: v.without_sample_dim() for k, v in param_layouts.items()}
     _p_has_comp = (
-        _base["p"].component_axis is not None if "p" in _base else None
+        _base["p"].component_axis is not None if "p" in _base else False
     )
     _p_has_genes = (
-        _base["p"].gene_axis is not None if "p" in _base else None
+        _base["p"].gene_axis is not None if "p" in _base else False
     )
     _gate_comp = (
         _base["gate"].component_axis is not None
         if "gate" in _base
-        else None
+        else False
     )
     _bnb_comp = (
         _base["bnb_concentration"].component_axis is not None
         if "bnb_concentration" in _base
-        else None
+        else False
     )
 
     if has_sample_dim:
@@ -1132,10 +1097,10 @@ def _sample_posterior_ppc_single(
     cell_batch_size: Optional[int] = None,
     bnb_concentration: Optional[jnp.ndarray] = None,
     *,
-    p_has_components: Optional[bool] = None,
-    p_has_genes: Optional[bool] = None,
-    gate_has_components: Optional[bool] = None,
-    bnb_has_components: Optional[bool] = None,
+    p_has_components: bool = False,
+    p_has_genes: bool = False,
+    gate_has_components: bool = False,
+    bnb_has_components: bool = False,
 ) -> jnp.ndarray:
     """Sample one PPC realisation from the full generative model.
 
@@ -1164,14 +1129,14 @@ def _sample_posterior_ppc_single(
         Optional cell-level batching.
     bnb_concentration : jnp.ndarray or None
         BNB concentration, ``(n_genes,)`` or ``(K, n_genes)``.
-    p_has_components : bool or None
-        From layout: whether ``p`` has a component axis.
-    p_has_genes : bool or None
-        From layout: whether ``p`` has a gene axis.
-    gate_has_components : bool or None
-        From layout: whether ``gate`` has a component axis.
-    bnb_has_components : bool or None
-        From layout: whether ``bnb_concentration`` has a component axis.
+    p_has_components : bool
+        Whether ``p`` has a component axis (from AxisLayout).
+    p_has_genes : bool
+        Whether ``p`` has a gene axis (from AxisLayout).
+    gate_has_components : bool
+        Whether ``gate`` has a component axis (from AxisLayout).
+    bnb_has_components : bool
+        Whether ``bnb_concentration`` has a component axis (from AxisLayout).
 
     Returns
     -------
@@ -1196,53 +1161,26 @@ def _sample_posterior_ppc_single(
         rng_key, batch_key = random.split(rng_key)
 
         if is_mixture:
-            # -------------------------------------------------------
-            # Mixture model: sample component per cell, gather params
-            # -------------------------------------------------------
-            n_components = r.shape[0]
             comp_key, sample_key = random.split(batch_key)
 
-            # Component assignments: (batch_n,)
             components = dist.Categorical(probs=mixing_weights).sample(
                 comp_key, (batch_n,)
             )
 
-            # Gather per-cell r: (batch_n, n_genes)
             r_batch = r[components]
 
-            # Determine whether p is per-component from layout flag,
-            # falling back to shape heuristic on legacy code paths.
-            _p_is_comp = (
-                p_has_components
-                if p_has_components is not None
-                else (p.ndim >= 1 and p.shape[0] == n_components)
-            )
-            if _p_is_comp:
+            if p_has_components:
                 p_batch = p[components]
-                # When p lacks a gene axis, expand to broadcast with r
-                _p_no_genes = (
-                    not p_has_genes
-                    if p_has_genes is not None
-                    else (p_batch.ndim == 1)
-                )
-                if _p_no_genes:
+                if not p_has_genes:
                     p_batch = p_batch[:, None]
             else:
                 p_batch = p
 
-            # Gather per-cell gate when it is per-component, using
-            # layout flag when available.
             if has_gate:
-                _gate_comp = (
-                    gate_has_components
-                    if gate_has_components is not None
-                    else (gate.ndim == 2 and gate.shape[0] == n_components)
-                )
-                gate_batch = gate[components] if _gate_comp else gate
+                gate_batch = gate[components] if gate_has_components else gate
             else:
                 gate_batch = None
 
-            # VCP: compute p_effective
             if has_vcp:
                 p_cap = p_capture[start:end]
                 p_cap_exp = p_cap[:, None]
@@ -1252,25 +1190,12 @@ def _sample_posterior_ppc_single(
             else:
                 p_effective = p_batch
 
-            # Gather per-cell bnb_concentration when it varies by
-            # component, using layout flag when available.
             bnb_batch = bnb_concentration
-            _bnb_comp = (
-                bnb_has_components
-                if bnb_has_components is not None
-                else (
-                    bnb_concentration is not None
-                    and bnb_concentration.ndim == 2
-                )
-            )
-            if bnb_concentration is not None and _bnb_comp:
-                # (K, G) -> (batch_n, G)
+            if bnb_concentration is not None and bnb_has_components:
                 bnb_batch = bnb_concentration[components]
 
-            # NB distribution
             nb = build_count_dist(r_batch, p_effective, bnb_batch)
 
-            # Apply zero-inflation if present
             if gate_batch is not None:
                 sample_dist = dist.ZeroInflatedDistribution(nb, gate=gate_batch)
             else:
@@ -1695,56 +1620,33 @@ def _denoise_single(
     """
     is_mixture = mixing_weights is not None
 
-    # Layout-derived flags for the denoising dispatch.
+    # Layout-derived flags — no shape heuristics.
     _p_has_comp = (
         param_layouts["p"].component_axis is not None
-        if "p" in param_layouts
-        else None
+        if "p" in param_layouts else False
+    )
+    _p_has_genes = (
+        param_layouts["p"].gene_axis is not None
+        if "p" in param_layouts else False
     )
     _gate_has_comp = (
         param_layouts["gate"].component_axis is not None
-        if "gate" in param_layouts
-        else None
+        if "gate" in param_layouts else False
     )
 
     if is_mixture and component_assignment is not None:
-        # Gather per-cell parameters from assigned components
         r_cell = r[component_assignment]
 
-        # Determine per-component p from layout metadata.
-        _p_comp = (
-            _p_has_comp
-            if _p_has_comp is not None
-            else (p.ndim >= 1 and p.shape[0] == r.shape[0])
-        )
-        p_cell = p[component_assignment] if _p_comp else p
-        # When p was (K,) and we gathered per-cell values, the result is
-        # (n_cells,).  Reshape to (n_cells, 1) so downstream doesn't
-        # confuse it with gene-specific p.  Only expand if we actually
-        # gathered (scalar/gene-level p doesn't need expansion).
-        if _p_comp:
-            _p_has_genes = (
-                param_layouts["p"].gene_axis is not None
-                if "p" in param_layouts
-                else None
-            )
-            _needs_expand = (
-                not _p_has_genes
-                if _p_has_genes is not None
-                else (p_cell.ndim == 1
-                      and p_cell.shape[0] == counts.shape[0])
-            )
-            if _needs_expand:
-                p_cell = p_cell[:, None]
+        p_cell = p[component_assignment] if _p_has_comp else p
+        # (K,) gathered → (n_cells,); expand to (n_cells, 1) so
+        # downstream broadcasts correctly with (n_cells, n_genes).
+        if _p_has_comp and not _p_has_genes:
+            p_cell = p_cell[:, None]
 
-        # Gate: gather per-cell gate when per-component
-        _gc = (
-            _gate_has_comp
-            if _gate_has_comp is not None
-            else (gate is not None and gate.ndim == 2)
-        )
         g_cell = (
-            gate[component_assignment] if gate is not None and _gc else gate
+            gate[component_assignment]
+            if gate is not None and _gate_has_comp
+            else gate
         )
 
         return _denoise_standard(
@@ -1758,6 +1660,12 @@ def _denoise_single(
             return_variance,
             cell_batch_size,
             bnb_concentration=bnb_concentration,
+            # r and gate were gathered to per-cell via component_assignment;
+            # p was gathered + expanded to (n_cells, 1) when per-component.
+            r_is_per_cell=True,
+            p_is_per_cell=_p_has_comp,
+            gate_is_per_cell=_gate_has_comp,
+            bnb_is_per_cell=False,
         )
 
     if is_mixture and component_assignment is None:
@@ -1776,7 +1684,7 @@ def _denoise_single(
             param_layouts=param_layouts,
         )
 
-    # Standard (non-mixture) model
+    # Standard (non-mixture) model — no per-cell gathering needed.
     return _denoise_standard(
         counts,
         r,
@@ -1805,6 +1713,11 @@ def _denoise_standard(
     return_variance: bool,
     cell_batch_size: Optional[int],
     bnb_concentration: Optional[jnp.ndarray] = None,
+    *,
+    r_is_per_cell: bool = False,
+    p_is_per_cell: bool = False,
+    gate_is_per_cell: bool = False,
+    bnb_is_per_cell: bool = False,
 ) -> Union[jnp.ndarray, Dict[str, jnp.ndarray]]:
     """Denoise counts for a standard (non-mixture) model, single param set.
 
@@ -1839,6 +1752,18 @@ def _denoise_standard(
         Whether to return variance alongside denoised counts.
     cell_batch_size : int or None
         Optional cell batching.
+    r_is_per_cell : bool
+        ``True`` when ``r`` has been gathered to ``(n_cells, n_genes)``
+        via component assignment and must be sliced per batch.
+    p_is_per_cell : bool
+        ``True`` when ``p`` has been gathered/expanded to
+        ``(n_cells, ...)`` and must be sliced per batch.
+    gate_is_per_cell : bool
+        ``True`` when ``gate`` has been gathered to
+        ``(n_cells, n_genes)`` and must be sliced per batch.
+    bnb_is_per_cell : bool
+        ``True`` when ``bnb_concentration`` has been gathered to
+        ``(n_cells, n_genes)`` and must be sliced per batch.
 
     Returns
     -------
@@ -1861,28 +1786,15 @@ def _denoise_standard(
         end = min(start + cell_batch_size, n_cells)
         counts_b = counts[start:end]
 
-        # Slice cell-specific params
         pc_b = p_capture[start:end] if p_capture is not None else None
-
-        # r may be (n_genes,) or (n_cells, n_genes) [component-gathered]
-        r_b = r[start:end] if r.ndim == 2 else r
-
-        # gate may be (n_genes,) or (n_cells, n_genes)
-        gate_b = (
-            gate[start:end] if gate is not None and gate.ndim == 2 else gate
-        )
-
-        # bnb_concentration may be (n_genes,) or (n_cells, n_genes)
+        r_b = r[start:end] if r_is_per_cell else r
+        gate_b = gate[start:end] if gate is not None and gate_is_per_cell else gate
         bnb_b = (
             bnb_concentration[start:end]
-            if bnb_concentration is not None and bnb_concentration.ndim == 2
+            if bnb_concentration is not None and bnb_is_per_cell
             else bnb_concentration
         )
-
-        # After the reshape in _denoise_single, per-cell p is always 2D:
-        # (n_cells, 1) or (n_cells, n_genes).  Gene-specific p is 1D
-        # (n_genes,) and scalar p is 0D — neither should be sliced.
-        p_b = p[start:end] if p.ndim >= 2 and p.shape[0] == n_cells else p
+        p_b = p[start:end] if p_is_per_cell else p
 
         if needs_rng:
             rng_key, batch_key = random.split(rng_key)
@@ -2545,62 +2457,35 @@ def _denoise_mixture_marginal(
     jnp.ndarray or Dict[str, jnp.ndarray]
         Denoised counts (and optionally variance).
     """
-    # Extract general_method to decide marginalisation vs sampling path
     general_method = method[0] if isinstance(method, tuple) else method
 
     n_components = r.shape[0]
 
-    # Determine whether p and gate are per-component from layout metadata.
-    _p_has_comp = (
-        param_layouts["p"].component_axis is not None
-        if "p" in param_layouts
-        else None
-    )
+    # Layout-derived flags — no shape heuristics.
     p_is_comp = (
-        _p_has_comp
-        if _p_has_comp is not None
-        else (p.ndim >= 1 and p.shape[0] == n_components)
+        param_layouts["p"].component_axis is not None
+        if "p" in param_layouts else False
     )
-
-    _gate_has_comp = (
-        param_layouts["gate"].component_axis is not None
-        if "gate" in param_layouts
-        else None
-    )
-    _gc = (
-        _gate_has_comp
-        if _gate_has_comp is not None
-        else (gate is not None and gate.ndim == 2)
-    )
-
     _p_has_genes = (
         param_layouts["p"].gene_axis is not None
-        if "p" in param_layouts
-        else None
+        if "p" in param_layouts else False
+    )
+    _gate_is_comp = (
+        param_layouts["gate"].component_axis is not None
+        if "gate" in param_layouts else False
     )
 
     if general_method == "sample":
-        # Sample component per cell, gather per-cell params, then use
-        # the standard (non-mixture) path.
         key_comp, key_rest = random.split(rng_key)
         comp = dist.Categorical(probs=mixing_weights).sample(
             key_comp, (counts.shape[0],)
         )
         r_cell = r[comp]
         p_cell = p[comp] if p_is_comp else p
-        # When p was (K,) and we gathered per-cell values, the result
-        # is (n_cells,).  Expand to (n_cells, 1) so downstream doesn't
-        # confuse it with gene-specific p.  Only expand if gathered.
-        if p_is_comp:
-            _needs_expand = (
-                not _p_has_genes
-                if _p_has_genes is not None
-                else (p_cell.ndim == 1
-                      and p_cell.shape[0] == counts.shape[0])
-            )
-            if _needs_expand:
-                p_cell = p_cell[:, None]
-        g_cell = gate[comp] if gate is not None and _gc else gate
+        # (K,) gathered → (n_cells,); expand for broadcasting.
+        if p_is_comp and not _p_has_genes:
+            p_cell = p_cell[:, None]
+        g_cell = gate[comp] if gate is not None and _gate_is_comp else gate
         return _denoise_standard(
             counts,
             r_cell,
@@ -2612,6 +2497,11 @@ def _denoise_mixture_marginal(
             return_variance,
             cell_batch_size,
             bnb_concentration=bnb_concentration,
+            # r and gate gathered per-cell from component assignments.
+            r_is_per_cell=True,
+            p_is_per_cell=p_is_comp,
+            gate_is_per_cell=_gate_is_comp,
+            bnb_is_per_cell=False,
         )
 
     # Marginalise over components (mean or mode for the general path).
@@ -2624,7 +2514,7 @@ def _denoise_mixture_marginal(
     for k in range(n_components):
         r_k = r[k]
         p_k = p[k] if p_is_comp else p
-        g_k = gate[k] if gate is not None and _gc else gate
+        g_k = gate[k] if gate is not None and _gate_is_comp else gate
 
         # Split rng_key per component if the zi_zero path needs sampling
         if needs_rng:
@@ -2632,6 +2522,7 @@ def _denoise_mixture_marginal(
         else:
             comp_key = None
 
+        # Each component slice is gene-level, not per-cell.
         out_k = _denoise_standard(
             counts,
             r_k,
