@@ -78,6 +78,32 @@ def _neg_eff_scale(psi: jnp.ndarray) -> jnp.ndarray:
     return jnp.sqrt(psi)
 
 
+def _expand_to_match(arr: jnp.ndarray, ref_ndim: int) -> jnp.ndarray:
+    """Append trailing singleton dimensions until ``arr.ndim == ref_ndim``.
+
+    Used by the horseshoe/NEG NCP reconstruction helpers to promote
+    global scalars (e.g. ``loc``, ``tau``, ``c_sq``) that may acquire a
+    leading dataset dimension ``(D,)`` after multi-dataset concat so
+    they broadcast with gene-level arrays of shape ``(D, G)``.
+
+    Parameters
+    ----------
+    arr : jnp.ndarray
+        Array to expand.  If already at the reference rank or if it is
+        a true scalar (``ndim == 0``), it is returned unchanged.
+    ref_ndim : int
+        Target number of dimensions.
+
+    Returns
+    -------
+    jnp.ndarray
+        ``arr`` with trailing singleton axes appended as needed.
+    """
+    while arr.ndim > 0 and arr.ndim < ref_ndim:
+        arr = arr[..., jnp.newaxis]
+    return arr
+
+
 def _reconstruct_horseshoe_maps(
     map_estimates: Dict[str, jnp.ndarray],
     model_config,
@@ -214,12 +240,9 @@ def _reconstruct_horseshoe_maps(
             # arrays (z, lam) have shape (D, G).  Expand the
             # lower-rank tensors so everything broadcasts correctly.
             ref_ndim = z.ndim
-            if loc.ndim > 0 and loc.ndim < ref_ndim:
-                loc = loc[..., jnp.newaxis]
-            if tau.ndim > 0 and tau.ndim < ref_ndim:
-                tau = tau[..., jnp.newaxis]
-            if c_sq.ndim > 0 and c_sq.ndim < ref_ndim:
-                c_sq = c_sq[..., jnp.newaxis]
+            loc = _expand_to_match(loc, ref_ndim)
+            tau = _expand_to_match(tau, ref_ndim)
+            c_sq = _expand_to_match(c_sq, ref_ndim)
 
             eff = _horseshoe_eff_scale(tau, lam, c_sq)
             unconstrained = loc + eff * z
@@ -374,8 +397,7 @@ def _reconstruct_neg_maps(
             # loc is a global scalar that may acquire a leading dataset
             # dimension (D,) after concat.  Expand it so it broadcasts
             # with the gene-level z of shape (D, G).
-            if loc.ndim > 0 and loc.ndim < z.ndim:
-                loc = loc[..., jnp.newaxis]
+            loc = _expand_to_match(loc, z.ndim)
 
             eff_scale = _neg_eff_scale(psi)
             unconstrained = loc + eff_scale * z
