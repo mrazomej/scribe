@@ -7,9 +7,8 @@ This module handles the packaging of SVI results into ScribeSVIResults objects.
 from typing import Optional, Dict, Any
 import jax.numpy as jnp
 from ..svi.results import ScribeSVIResults
-from ..svi._gene_subsetting import build_gene_axis_by_key
 from ..models.config import ModelConfig
-from ..core.axis_layout import build_param_layouts
+from ..core.axis_layout import build_param_layouts, gene_axes_from_layouts
 
 
 class SVIResultsFactory:
@@ -60,14 +59,15 @@ class SVIResultsFactory:
         param_layouts = None
         specs = getattr(model_config, "param_specs", None)
         if specs:
-            gene_axis_by_key = build_gene_axis_by_key(
-                specs,
-                svi_results.params,
-                n_genes,
-            )
             # Build semantic axis layouts from the full ParamSpec list
             param_layouts = build_param_layouts(
                 specs, svi_results.params, has_sample_dim=False
+            )
+            # Forward path: gene axes from ``AxisLayout`` (SVI ``layouts`` /
+            # ``reconstruct_param_layouts`` stay consistent).  Legacy pickles
+            # without ``param_layouts`` still rely on stored ``_gene_axis_by_key``.
+            gene_axis_by_key = (
+                gene_axes_from_layouts(param_layouts) or None
             )
 
         if adata is not None:

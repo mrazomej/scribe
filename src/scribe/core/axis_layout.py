@@ -324,8 +324,25 @@ def _strip_param_key(key: str) -> str:
         return key
 
     name = key
-    # Strip common suffixes (longer first to avoid partial matches)
-    for suffix in ("_base_loc", "_base_scale", "_loc", "_scale"):
+
+    # Strip joint-guide prefix: "joint_{group}_" → keep the remainder
+    if name.startswith("joint_"):
+        rest = name[len("joint_") :]
+        _, sep, remainder = rest.partition("_")
+        if sep and remainder:
+            name = remainder
+
+    # Strip common suffixes (longer first to avoid partial matches).  ``_W`` and
+    # ``_raw_diag`` appear in structured-guide / low-rank factor names so the
+    # base name matches ``ParamSpec.name``.
+    for suffix in (
+        "_base_loc",
+        "_base_scale",
+        "_loc",
+        "_scale",
+        "_W",
+        "_raw_diag",
+    ):
         if name.endswith(suffix):
             name = name[: -len(suffix)]
             break
@@ -372,7 +389,7 @@ def infer_layout(
     key: str,
     value: jnp.ndarray,
     *,
-    n_genes: int,
+    n_genes: Optional[int] = None,
     n_cells: Optional[int] = None,
     n_components: Optional[int] = None,
     n_datasets: Optional[int] = None,
@@ -395,8 +412,10 @@ def infer_layout(
         Variational-parameter key (e.g. ``"r_loc"``, ``"p_capture_loc"``).
     value : jnp.ndarray
         The tensor whose layout we are inferring.
-    n_genes : int
-        Number of genes in the model.
+    n_genes : int or None, optional
+        Number of genes in the model.  ``None`` skips gene-axis matching,
+        which is useful when the caller only needs component/dataset axes (the gene axis is not matched by size in that
+        case).
     n_cells : int, optional
         Number of cells (needed to identify cell-specific params).
     n_components : int, optional
@@ -569,6 +588,119 @@ def build_param_layouts(
         else:
             layouts[key] = AxisLayout(axes=(), has_sample_dim=has_sample_dim)
     return layouts
+
+
+# Posterior ``samples`` dicts often include derived keys (e.g. ``"p"``) that are
+# not in ``param_specs``.  This builder uses ``layout_from_param_spec`` when a
+# spec matches and :func:`infer_layout` otherwise, unlike
+# :func:`build_param_layouts` which leaves unknown keys empty.
+def build_sample_layouts(
+    param_specs: List["ParamSpec"],
+    samples: Dict[str, Any],
+    *,
+    n_genes: Optional[int] = None,
+    n_cells: Optional[int] = None,
+    n_components: Optional[int] = None,
+    n_datasets: Optional[int] = None,
+    mixture_params: Optional[List[str]] = None,
+    dataset_params: Optional[List[str]] = None,
+    has_sample_dim: bool = False,
+) -> Dict[str, AxisLayout]:
+    """Build layouts for a samples dict, using specs where possible.
+
+    Unlike :func:`build_param_layouts` which gives empty layouts for
+    unrecognised keys, this function falls back to :func:`infer_layout`
+    for keys that do not match any ``ParamSpec``.  This is necessary for
+    posterior-sample dictionaries that contain derived quantities
+    (e.g. ``"p"``, ``"gate"``) not described by ``param_specs``.
+
+    Parameters
+    ----------
+    param_specs : list of ParamSpec
+        Specifications from ``model_config.param_specs``.
+    samples : dict
+        Sample dictionary (e.g. ``results.posterior_samples``).
+    n_genes : int or None, optional
+        Number of genes (passed through to :func:`infer_layout` for keys
+        without a matching spec).  ``None`` skips gene-axis matching.
+    n_cells : int, optional
+        Number of cells.
+    n_components : int, optional
+        Number of mixture components.
+    n_datasets : int, optional
+        Number of datasets.
+    mixture_params : list of str, optional
+        Which parameters are mixture-specific (``None`` = all).
+    dataset_params : list of str, optional
+        Which parameters are dataset-specific.
+    has_sample_dim : bool, default False
+        Whether tensors carry a leading sample dimension.
+
+    Returns
+    -------
+    dict of str to AxisLayout
+    """
+    spec_by_name: Dict[str, "ParamSpec"] = {}
+    for spec in param_specs or []:
+        if spec.name not in spec_by_name:
+            spec_by_name[spec.name] = spec
+
+    layouts: Dict[str, AxisLayout] = {}
+    for key, value in samples.items():
+        if "$" in key or not hasattr(value, "shape"):
+            continue
+        base = _strip_param_key(key)
+        spec = spec_by_name.get(base)
+        if spec is not None:
+            layouts[key] = layout_from_param_spec(
+                spec, has_sample_dim=has_sample_dim
+            )
+        else:
+            # Derived / canonical keys not described by specs — use
+            # shape-based heuristics so component / gene axes are still
+            # detected correctly.
+            layouts[key] = infer_layout(
+                key,
+                value,
+                n_genes=n_genes,
+                n_cells=n_cells,
+                n_components=n_components,
+                n_datasets=n_datasets,
+                mixture_params=mixture_params,
+                dataset_params=dataset_params,
+                has_sample_dim=has_sample_dim,
+            )
+    return layouts
+
+
+# Thin adapter: callers that already computed ``AxisLayout`` objects should use
+# this instead of re-deriving gene axes from ``ParamSpec`` lists alone.
+def gene_axes_from_layouts(
+    layouts: Dict[str, AxisLayout],
+) -> Dict[str, int]:
+    """Extract a ``{key: gene_axis}`` mapping from a layouts dict.
+
+    This is a convenience wrapper that replaces the role of
+    ``build_gene_axis_by_key`` in call sites that already have layouts.
+
+    Parameters
+    ----------
+    layouts : dict of str to AxisLayout
+        Layouts produced by :func:`build_param_layouts`,
+        :func:`build_sample_layouts`, or the ``layouts`` property on
+        results objects.
+
+    Returns
+    -------
+    dict of str to int
+        Mapping from parameter key to its gene-axis index.  Keys without
+        a gene axis are omitted.
+    """
+    return {
+        key: layout.gene_axis
+        for key, layout in layouts.items()
+        if layout.gene_axis is not None
+    }
 
 
 def reconstruct_param_layouts(

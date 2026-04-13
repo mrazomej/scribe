@@ -20,7 +20,6 @@ import pandas as pd
 from ..models.config import ModelConfig
 from ..core.serialization import make_model_config_pickle_safe
 from ._dataset import _build_cell_specific_keys
-from ..svi._gene_subsetting import build_gene_axis_by_key
 
 # Mixin imports
 from ._parameter_extraction import ParameterExtractionMixin
@@ -142,28 +141,44 @@ class ScribeMCMCResults(
     def layouts(self) -> Dict[str, "AxisLayout"]:
         """Semantic axis layouts for every parameter key.
 
-        Returns the stored ``param_layouts`` when available (new results),
-        or reconstructs them from ``model_config`` metadata and tensor
-        shapes (backward compatibility with old pickles).
+        Returns the stored ``param_layouts`` when available.  Otherwise
+        reconstructs from tensor shapes, enriched with any metadata
+        extractable from ``param_specs``.
 
         Returns
         -------
         dict of str to AxisLayout
         """
+        # Cached layouts from inference; otherwise rebuild from ``samples`` shapes.
         if self.param_layouts is not None:
             return self.param_layouts
 
         from ..core.axis_layout import reconstruct_param_layouts
 
         mc = self.model_config
+        specs = getattr(mc, "param_specs", None)
+
+        # When ``ModelConfig`` omits explicit lists, derive mixture/dataset
+        # parameter names from ``ParamSpec`` flags so axis detection survives
+        # subsetting that changes tensor ranks.
+        dataset_params = getattr(mc, "dataset_params", None)
+        if dataset_params is None and specs:
+            ds = [s.name for s in specs if getattr(s, "is_dataset", False)]
+            dataset_params = ds or None
+
+        mixture_params = getattr(mc, "mixture_params", None)
+        if mixture_params is None and specs:
+            mx = [s.name for s in specs if getattr(s, "is_mixture", False)]
+            mixture_params = mx or None
+
         return reconstruct_param_layouts(
             self.samples,
             n_genes=self.n_genes,
             n_cells=self.n_cells,
             n_components=getattr(mc, "n_components", None),
             n_datasets=getattr(mc, "n_datasets", None),
-            mixture_params=getattr(mc, "mixture_params", None),
-            dataset_params=getattr(mc, "dataset_params", None),
+            mixture_params=mixture_params,
+            dataset_params=dataset_params,
             has_sample_dim=True,
         )
 
@@ -299,10 +314,7 @@ class ScribeMCMCResults(
             ]
         )
         dataset_indices = _concat_dataset_indices(
-            [
-                getattr(res, "_dataset_indices", None)
-                for res in aligned_results
-            ]
+            [getattr(res, "_dataset_indices", None) for res in aligned_results]
         )
 
         # When all inputs are single-dataset and we are combining more than
@@ -697,32 +709,12 @@ def _reorder_mcmc_result_genes(
 
 
 def _mcmc_sample_gene_axes(result: ScribeMCMCResults) -> Dict[str, int]:
-    """Infer gene-axis mapping for MCMC samples from ParamSpec metadata."""
-    specs = result.model_config.param_specs or []
-    if specs:
-        spec_axes: Dict[str, int] = {}
-        for spec in specs:
-            is_gene_specific = getattr(spec, "is_gene_specific", False) or (
-                "n_genes" in getattr(spec, "shape_dims", ())
-            )
-            if not is_gene_specific or "n_genes" not in getattr(
-                spec, "shape_dims", ()
-            ):
-                continue
-            axis_without_sample = list(spec.shape_dims).index("n_genes")
-            axis_with_sample = axis_without_sample + 1
-            for key in result.samples:
-                if key == spec.name and hasattr(result.samples[key], "ndim"):
-                    if result.samples[key].ndim > axis_with_sample:
-                        spec_axes[key] = axis_with_sample
+    """Build a ``{key: gene_axis}`` mapping for MCMC posterior samples."""
+    # Single source of truth: same ``AxisLayout`` objects as ``result.layouts``
+    # (posterior tensors use ``has_sample_dim=True``).
+    from ..core.axis_layout import gene_axes_from_layouts
 
-        if spec_axes:
-            return spec_axes
-
-    fallback = (
-        build_gene_axis_by_key(specs, result.samples, result.n_genes) or {}
-    )
-    return fallback
+    return gene_axes_from_layouts(result.layouts)
 
 
 def _validate_equal_mcmc_sample_sizes(

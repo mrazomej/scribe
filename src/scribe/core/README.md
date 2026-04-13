@@ -849,8 +849,28 @@ and tensor shapes.
 | `layout_from_param_spec` | Build layout from a `ParamSpec` (exact path) |
 | `infer_layout` | Reconstruct layout from tensor shape + config metadata |
 | `build_param_layouts` | Bulk builder from `param_specs` + parameter dict |
+| `build_sample_layouts` | Hybrid builder using specs where available, heuristic fallback for derived keys |
+| `gene_axes_from_layouts` | Extract `{key: gene_axis}` mapping from a layouts dict |
 | `reconstruct_param_layouts` | Bulk backward-compat builder (no specs needed) |
 | `align_to_layout` | Insert singletons for broadcasting between layouts |
+
+**Layout-based axis lookups (Phase A):** The following subsetting methods now
+prefer `AxisLayout`-based axis detection over the legacy shape heuristics, with
+automatic fallback when layouts are unavailable:
+
+- `svi/_dataset.py`: `_subset_params_by_dataset` and
+  `_subset_posterior_by_dataset` use `layout.dataset_axis` instead of
+  `_infer_dataset_axis` / `_infer_dataset_axis_posterior`.
+- `svi/_component.py`: `_subset_posterior_samples_by_component` and
+  `_subset_posterior_samples_by_components` use `layout.component_axis` (via
+  `build_sample_layouts`) instead of `_infer_component_axis`.
+- `svi/results.py`: `_svi_param_gene_axes` uses `gene_axes_from_layouts` instead
+  of `build_gene_axis_by_key`.
+- `svi/results_factory.py`: derives `gene_axis_by_key` from `param_layouts`
+  instead of calling `build_gene_axis_by_key`.
+- `mcmc/results.py`: `_mcmc_sample_gene_axes` uses `gene_axes_from_layouts`.
+- `mcmc/_gene_subsetting.py`: `_subset_posterior_samples` uses
+  `gene_axes_from_layouts` as the primary source.
 
 ## Integration with Other Modules
 
