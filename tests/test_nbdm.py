@@ -734,3 +734,26 @@ def test_low_rank_covariance_structure(
                 f"DEBUG: Covariance matrix shape: {cov_matrix.shape}, "
                 f"mean abs value: {jnp.mean(jnp.abs(cov_matrix)):.6f}"
             )
+
+
+# ==============================================================================
+# AxisLayout integration
+# ==============================================================================
+
+
+def test_layouts_populated(nbdm_results, inference_method):
+    """After inference, results.layouts should return a non-empty dict."""
+    layouts = nbdm_results.layouts
+    assert isinstance(layouts, dict)
+    assert len(layouts) > 0
+
+
+def test_gene_param_has_gene_axis(nbdm_results, inference_method, parameterization):
+    """The gene-specific parameter should have a gene axis in its layout."""
+    layouts = nbdm_results.layouts
+    if parameterization == "standard":
+        gene_key = "r_loc" if inference_method == "svi" else "r"
+    else:
+        gene_key = "mu_loc" if inference_method == "svi" else "mu"
+    if gene_key in layouts:
+        assert layouts[gene_key].gene_axis is not None

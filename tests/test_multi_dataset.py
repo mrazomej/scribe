@@ -3810,3 +3810,115 @@ class TestStoreOnCpu:
 
         log_r = jnp.log(r + 1e-8)
         assert log_r.shape == r.shape
+
+
+# ==============================================================================
+# AxisLayout dataset-axis equivalence
+# ==============================================================================
+
+from scribe.core.axis_layout import (
+    AxisLayout,
+    layout_from_param_spec,
+    infer_layout,
+    COMPONENTS,
+    DATASETS,
+    GENES,
+)
+
+
+class TestAxisLayoutDatasetAxis:
+    """Verify layout.dataset_axis correctly identifies the dataset dimension."""
+
+    def test_dataset_gene_from_spec(self):
+        """Dataset + gene-specific spec: dataset_axis=0, gene_axis=1."""
+        # Use a simple PositiveNormalSpec with is_dataset=True to avoid
+        # hierarchical-spec required fields.
+        spec = PositiveNormalSpec(
+            name="mu",
+            shape_dims=("n_genes",),
+            default_params=(0.0, 1.0),
+            is_gene_specific=True,
+            is_dataset=True,
+        )
+        layout = layout_from_param_spec(spec)
+        assert layout.dataset_axis == 0
+        assert layout.gene_axis == 1
+        assert layout.axes == (DATASETS, GENES)
+
+    def test_dataset_scalar_from_spec(self):
+        """Dataset scalar spec: only datasets axis."""
+        spec = SigmoidNormalSpec(
+            name="p",
+            shape_dims=(),
+            default_params=(0.0, 1.0),
+            is_dataset=True,
+        )
+        layout = layout_from_param_spec(spec)
+        assert layout.dataset_axis == 0
+        assert layout.gene_axis is None
+        assert layout.axes == (DATASETS,)
+
+    def test_mixture_dataset_gene_from_spec(self):
+        """Mixture + dataset + gene spec: (components, datasets, genes)."""
+        spec = PositiveNormalSpec(
+            name="r",
+            shape_dims=("n_genes",),
+            default_params=(0.0, 1.0),
+            is_gene_specific=True,
+            is_mixture=True,
+            is_dataset=True,
+        )
+        layout = layout_from_param_spec(spec)
+        assert layout.component_axis == 0
+        assert layout.dataset_axis == 1
+        assert layout.gene_axis == 2
+
+    def test_infer_layout_dataset_gene(self):
+        """Infer layout for (D, G) tensor when dataset_params includes key."""
+        layout = infer_layout(
+            "mu_loc",
+            jnp.ones((2, 100)),
+            n_genes=100,
+            n_datasets=2,
+            dataset_params=["mu"],
+        )
+        assert layout.dataset_axis == 0
+        assert layout.gene_axis == 1
+
+    def test_infer_layout_mixture_dataset_gene(self):
+        """Infer layout for (K, D, G) tensor."""
+        layout = infer_layout(
+            "r_loc",
+            jnp.ones((3, 2, 100)),
+            n_genes=100,
+            n_components=3,
+            n_datasets=2,
+            dataset_params=["r"],
+        )
+        assert layout.component_axis == 0
+        assert layout.dataset_axis == 1
+        assert layout.gene_axis == 2
+
+    def test_non_dataset_param_has_no_dataset_axis(self):
+        """A param not in dataset_params should not have a dataset axis."""
+        spec = PositiveNormalSpec(
+            name="r",
+            shape_dims=("n_genes",),
+            default_params=(0.0, 1.0),
+            is_gene_specific=True,
+        )
+        layout = layout_from_param_spec(spec)
+        assert layout.dataset_axis is None
+
+    def test_dataset_axis_with_sample_dim(self):
+        """Posterior dataset param: sample dim shifts dataset_axis by 1."""
+        spec = PositiveNormalSpec(
+            name="mu",
+            shape_dims=("n_genes",),
+            default_params=(0.0, 1.0),
+            is_gene_specific=True,
+            is_dataset=True,
+        )
+        layout = layout_from_param_spec(spec, has_sample_dim=True)
+        assert layout.dataset_axis == 1
+        assert layout.gene_axis == 2

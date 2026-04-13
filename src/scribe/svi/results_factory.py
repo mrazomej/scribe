@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from ..svi.results import ScribeSVIResults
 from ..svi._gene_subsetting import build_gene_axis_by_key
 from ..models.config import ModelConfig
+from ..core.axis_layout import build_param_layouts
 
 
 class SVIResultsFactory:
@@ -56,11 +57,17 @@ class SVIResultsFactory:
             Packaged results object
         """
         gene_axis_by_key = None
-        if getattr(model_config, "param_specs", None):
+        param_layouts = None
+        specs = getattr(model_config, "param_specs", None)
+        if specs:
             gene_axis_by_key = build_gene_axis_by_key(
-                model_config.param_specs,
+                specs,
                 svi_results.params,
                 n_genes,
+            )
+            # Build semantic axis layouts from the full ParamSpec list
+            param_layouts = build_param_layouts(
+                specs, svi_results.params, has_sample_dim=False
             )
 
         if adata is not None:
@@ -73,6 +80,7 @@ class SVIResultsFactory:
                 n_components=n_components,
                 prior_params=prior_params,
                 _gene_axis_by_key=gene_axis_by_key,
+                param_layouts=param_layouts,
             )
         else:
             results = ScribeSVIResults(
@@ -85,6 +93,7 @@ class SVIResultsFactory:
                 n_components=n_components,
                 prior_params=prior_params,
                 _gene_axis_by_key=gene_axis_by_key,
+                param_layouts=param_layouts,
             )
 
         return results

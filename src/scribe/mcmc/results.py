@@ -6,8 +6,13 @@ and composes analysis functionality from mixins, mirroring the SVI results
 architecture.
 """
 
-from typing import Any, Dict, Optional, List
+from __future__ import annotations
+
+from typing import Any, Dict, Optional, List, TYPE_CHECKING
 from dataclasses import dataclass, field
+
+if TYPE_CHECKING:
+    from ..core.axis_layout import AxisLayout
 
 import jax.numpy as jnp
 import pandas as pd
@@ -127,6 +132,40 @@ class ScribeMCMCResults(
 
     # -- wrapped MCMC object (None on subsets) -------------------------------
     _mcmc: Optional[Any] = field(default=None, repr=False)
+
+    # Semantic axis metadata for each parameter key.  Built from
+    # ``param_specs`` at inference time.  ``None`` on old pickles;
+    # the ``layouts`` property reconstructs them lazily.
+    param_layouts: Optional[Dict[str, "AxisLayout"]] = None
+
+    @property
+    def layouts(self) -> Dict[str, "AxisLayout"]:
+        """Semantic axis layouts for every parameter key.
+
+        Returns the stored ``param_layouts`` when available (new results),
+        or reconstructs them from ``model_config`` metadata and tensor
+        shapes (backward compatibility with old pickles).
+
+        Returns
+        -------
+        dict of str to AxisLayout
+        """
+        if self.param_layouts is not None:
+            return self.param_layouts
+
+        from ..core.axis_layout import reconstruct_param_layouts
+
+        mc = self.model_config
+        return reconstruct_param_layouts(
+            self.samples,
+            n_genes=self.n_genes,
+            n_cells=self.n_cells,
+            n_components=getattr(mc, "n_components", None),
+            n_datasets=getattr(mc, "n_datasets", None),
+            mixture_params=getattr(mc, "mixture_params", None),
+            dataset_params=getattr(mc, "dataset_params", None),
+            has_sample_dim=True,
+        )
 
     @classmethod
     def concat(

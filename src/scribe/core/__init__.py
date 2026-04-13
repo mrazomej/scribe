@@ -12,6 +12,14 @@ from .annotation_prior import (
     validate_annotation_prior_logits,
 )
 from .serialization import make_model_config_pickle_safe
+from .axis_layout import (
+    AxisLayout,
+    layout_from_param_spec,
+    infer_layout,
+    build_param_layouts,
+    reconstruct_param_layouts,
+    align_to_layout,
+)
 
 # Differential expression module has moved to scribe.de (top-level)
 
@@ -31,6 +39,12 @@ __all__ = [
     "build_annotation_prior_logits",
     "validate_annotation_prior_logits",
     "make_model_config_pickle_safe",
+    "AxisLayout",
+    "layout_from_param_spec",
+    "infer_layout",
+    "build_param_layouts",
+    "reconstruct_param_layouts",
+    "align_to_layout",
     # "de" has moved to scribe.de (top-level)
     "compute_cell_type_probabilities",
     "compute_cell_type_probabilities_map",
