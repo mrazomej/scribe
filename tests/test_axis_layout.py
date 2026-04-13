@@ -14,6 +14,8 @@ from scribe.core.axis_layout import (
     layout_from_param_spec,
     infer_layout,
     build_param_layouts,
+    build_sample_layouts,
+    gene_axes_from_layouts,
     reconstruct_param_layouts,
     align_to_layout,
     _strip_param_key,
@@ -686,3 +688,119 @@ class TestReconstructParamLayouts:
         layouts = reconstruct_param_layouts(params, n_genes=100)
         assert "metadata" not in layouts
         assert "r_loc" in layouts
+
+
+# ========================================================================
+# Tests for build_sample_layouts
+# ========================================================================
+
+
+class TestBuildSampleLayouts:
+    """``build_sample_layouts``: spec-backed keys vs ``infer_layout`` fallback.
+
+    Covers the hybrid path used by SVI dataset/component subsetting when
+    posterior dicts mix declared parameters with derived tensors.
+    """
+
+    def test_spec_matched_keys_use_spec(self):
+        """Keys matching a ParamSpec get their layout from the spec."""
+        spec = LogNormalSpec(
+            name="r", shape_dims=("n_genes",),
+            default_params=(0.0, 1.0), is_mixture=True,
+        )
+        samples = {
+            "r": jnp.ones((10, 3, 100)),
+        }
+        layouts = build_sample_layouts(
+            [spec], samples,
+            n_genes=100, n_components=3,
+            has_sample_dim=True,
+        )
+        assert "r" in layouts
+        assert layouts["r"].axes == ("components", "genes")
+        assert layouts["r"].gene_axis == 2
+        assert layouts["r"].component_axis == 1
+
+    def test_unrecognised_keys_use_heuristic(self):
+        """Derived keys not in specs fall back to infer_layout."""
+        spec = LogNormalSpec(
+            name="phi", shape_dims=("n_genes",),
+            default_params=(0.0, 1.0), is_mixture=True,
+        )
+        samples = {
+            "phi": jnp.ones((10, 3, 100)),
+            "p": jnp.ones((10, 3, 100)),
+        }
+        layouts = build_sample_layouts(
+            [spec], samples,
+            n_genes=100, n_components=3,
+            has_sample_dim=True,
+        )
+        assert layouts["phi"].axes == ("components", "genes")
+        # "p" is not in specs -> infer_layout recognises it as a known
+        # gene param and infers components + genes from shape.
+        assert "p" in layouts
+        assert layouts["p"].component_axis is not None
+        assert layouts["p"].gene_axis is not None
+
+    def test_empty_specs_all_heuristic(self):
+        """When param_specs is empty, every key gets infer_layout."""
+        samples = {
+            "r": jnp.ones((10, 3, 100)),
+        }
+        layouts = build_sample_layouts(
+            [], samples,
+            n_genes=100, n_components=3,
+            has_sample_dim=True,
+        )
+        assert "r" in layouts
+        assert layouts["r"].component_axis is not None
+
+    def test_skips_non_array_and_flow_keys(self):
+        samples = {
+            "r": jnp.ones((10, 100)),
+            "flow_p$params": {"nested": True},
+            "metadata": "text",
+        }
+        layouts = build_sample_layouts(
+            [], samples, n_genes=100, has_sample_dim=True,
+        )
+        assert "r" in layouts
+        assert "flow_p$params" not in layouts
+        assert "metadata" not in layouts
+
+
+# ========================================================================
+# Tests for gene_axes_from_layouts
+# ========================================================================
+
+
+class TestGeneAxesFromLayouts:
+    """``gene_axes_from_layouts``: dict comprehension over ``layout.gene_axis``."""
+
+    def test_extracts_gene_axes(self):
+        layouts = {
+            "r_loc": AxisLayout(("components", "genes")),
+            "mixing_weights_loc": AxisLayout(("components",)),
+            "p_capture_loc": AxisLayout(("cells",)),
+        }
+        result = gene_axes_from_layouts(layouts)
+        assert result == {"r_loc": 1}
+
+    def test_empty_when_no_gene_axes(self):
+        layouts = {
+            "mixing_weights_loc": AxisLayout(("components",)),
+        }
+        result = gene_axes_from_layouts(layouts)
+        assert result == {}
+
+    def test_with_sample_dim(self):
+        layouts = {
+            "r": AxisLayout(("components", "genes"), has_sample_dim=True),
+            "scalar": AxisLayout((), has_sample_dim=True),
+        }
+        result = gene_axes_from_layouts(layouts)
+        assert result == {"r": 2}
+
+    def test_empty_dict_input(self):
+        assert gene_axes_from_layouts({}) == {}

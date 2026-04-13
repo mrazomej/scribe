@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Dict, Optional
 import jax.numpy as jnp
 import numpy as np
 
-from ..svi._gene_subsetting import build_gene_axis_by_key
 
 if TYPE_CHECKING:
     from .results import ScribeMCMCResults
@@ -66,7 +65,9 @@ class GeneSubsettingMixin:
             gene_subset = self[gene_indexer]
 
             # Apply component selection (skip if slice(None))
-            if isinstance(component_indexer, slice) and component_indexer == slice(None):
+            if isinstance(
+                component_indexer, slice
+            ) and component_indexer == slice(None):
                 result = gene_subset
             else:
                 result = gene_subset.get_component(component_indexer)
@@ -118,31 +119,35 @@ class GeneSubsettingMixin:
     def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
         """Subset a samples dictionary along the gene axis.
 
-        When ``model_config.param_specs`` is available, uses metadata-driven
-        axis detection; otherwise falls back to last-axis heuristic.
+        Notes
+        -----
+        Per-key gene axes come from :meth:`scribe.mcmc.results.ScribeMCMCResults.layouts`
+        via :func:`~scribe.core.axis_layout.gene_axes_from_layouts`.  Keys with
+        no annotated gene axis fall back to slicing the trailing dimension when
+        its length matches ``n_genes`` (legacy compatibility).
         """
         if samples is None:
             return None
 
-        new_samples = {}
-        original_n_genes = self.n_genes
-        gene_axis_by_key: Optional[Dict[str, int]] = None
-        if getattr(self.model_config, "param_specs", None):
-            gene_axis_by_key = build_gene_axis_by_key(
-                self.model_config.param_specs, samples, original_n_genes
-            )
+        from ..core.axis_layout import gene_axes_from_layouts
 
+        gene_axis_by_key = gene_axes_from_layouts(self.layouts)
+        original_n_genes = self.n_genes
+
+        new_samples = {}
         for key, value in samples.items():
+            # Skip non-array entries (e.g. metadata scalars).
             if not hasattr(value, "ndim"):
                 new_samples[key] = value
                 continue
-            if gene_axis_by_key is not None and key in gene_axis_by_key:
-                gene_axis = gene_axis_by_key[key]
+            # Primary: slice along the layout-derived gene axis.
+            if key in gene_axis_by_key:
                 slicer = [slice(None)] * value.ndim
-                slicer[gene_axis] = index
+                slicer[gene_axis_by_key[key]] = index
                 new_samples[key] = value[tuple(slicer)]
-                continue
-            if value.ndim > 0 and value.shape[-1] == original_n_genes:
+            # Fallback: trailing axis matches n_genes (covers keys without
+            # a layout, e.g. deterministic quantities or ad-hoc samples).
+            elif value.ndim > 0 and value.shape[-1] == original_n_genes:
                 new_samples[key] = value[..., index]
             else:
                 new_samples[key] = value

@@ -12,11 +12,15 @@ from .annotation_prior import (
     validate_annotation_prior_logits,
 )
 from .serialization import make_model_config_pickle_safe
+# AxisLayout helpers: ``build_sample_layouts`` / ``gene_axes_from_layouts`` support
+# posterior-sample dicts and gene-axis maps alongside ``build_param_layouts``.
 from .axis_layout import (
     AxisLayout,
     layout_from_param_spec,
     infer_layout,
     build_param_layouts,
+    build_sample_layouts,
+    gene_axes_from_layouts,
     reconstruct_param_layouts,
     align_to_layout,
 )
@@ -43,6 +47,8 @@ __all__ = [
     "layout_from_param_spec",
     "infer_layout",
     "build_param_layouts",
+    "build_sample_layouts",
+    "gene_axes_from_layouts",
     "reconstruct_param_layouts",
     "align_to_layout",
     # "de" has moved to scribe.de (top-level)

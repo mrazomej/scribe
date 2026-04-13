@@ -27,7 +27,6 @@ import pandas as pd
 from ..models.config import ModelConfig
 from ..core.serialization import make_model_config_pickle_safe
 from ._dataset import _build_cell_specific_keys
-from ._gene_subsetting import build_gene_axis_by_key
 
 try:
     from anndata import AnnData
@@ -182,28 +181,47 @@ class ScribeSVIResults(
     def layouts(self) -> Dict[str, "AxisLayout"]:
         """Semantic axis layouts for every parameter key.
 
-        Returns the stored ``param_layouts`` when available (new results),
-        or reconstructs them from ``model_config`` metadata and tensor
-        shapes (backward compatibility with old pickles).
+        Returns the stored ``param_layouts`` when available.  Otherwise
+        reconstructs from tensor shapes, enriched with any metadata
+        extractable from ``param_specs`` (``dataset_params``,
+        ``mixture_params``).
 
         Returns
         -------
         dict of str to AxisLayout
         """
+        # New results (created via SVIResultsFactory) carry pre-built layouts.
         if self.param_layouts is not None:
             return self.param_layouts
 
+        # Backward compatibility: old pickles or manually constructed results
+        # lack param_layouts.  Reconstruct from tensor shapes, enriched with
+        # semantic hints derived from param_specs when available.
         from ..core.axis_layout import reconstruct_param_layouts
 
         mc = self.model_config
+        specs = getattr(mc, "param_specs", None)
+
+        # Fill ``dataset_params`` / ``mixture_params`` from ``ParamSpec`` flags
+        # when ``ModelConfig`` does not store explicit lists.
+        dataset_params = getattr(mc, "dataset_params", None)
+        if dataset_params is None and specs:
+            ds = [s.name for s in specs if getattr(s, "is_dataset", False)]
+            dataset_params = ds or None
+
+        mixture_params = getattr(mc, "mixture_params", None)
+        if mixture_params is None and specs:
+            mx = [s.name for s in specs if getattr(s, "is_mixture", False)]
+            mixture_params = mx or None
+
         return reconstruct_param_layouts(
             self.params,
             n_genes=self.n_genes,
             n_cells=self.n_cells,
             n_components=getattr(mc, "n_components", None),
             n_datasets=getattr(mc, "n_datasets", None),
-            mixture_params=getattr(mc, "mixture_params", None),
-            dataset_params=getattr(mc, "dataset_params", None),
+            mixture_params=mixture_params,
+            dataset_params=dataset_params,
             gene_axis_by_key=getattr(self, "_gene_axis_by_key", None),
             has_sample_dim=False,
         )
@@ -551,26 +569,26 @@ def _reorder_svi_result_genes(
 
 
 def _svi_param_gene_axes(result: ScribeSVIResults) -> Dict[str, int]:
-    """Infer gene-axis mapping for SVI params using stored metadata when possible."""
-    existing = getattr(result, "_gene_axis_by_key", None)
-    inferred = (
-        build_gene_axis_by_key(
-            result.model_config.param_specs or [],
-            result.params,
-            result.n_genes,
-        )
-        or {}
-    )
-    if existing is None:
-        return inferred
+    """Build a ``{key: gene_axis}`` mapping for SVI variational params.
 
-    # Keep stored metadata as source-of-truth but augment with any newly
-    # inferable keys (e.g., joint-guide keys added after older pickles were
-    # created with partial mappings).
-    merged = dict(existing)
-    for key, axis in inferred.items():
-        merged.setdefault(key, axis)
-    return merged
+    Uses :func:`gene_axes_from_layouts` as the primary source, augmented
+    with the stored ``_gene_axis_by_key`` field to cover keys that
+    layouts may not describe (e.g. low-rank guide covariance factors).
+    """
+    from ..core.axis_layout import gene_axes_from_layouts
+
+    layout_axes = gene_axes_from_layouts(result.layouts)
+
+    # Pickle-time ``_gene_axis_by_key`` (e.g. low-rank factors) fills gaps;
+    # layout-derived axes take precedence via ``setdefault``.
+    existing = getattr(result, "_gene_axis_by_key", None)
+    if existing:
+        merged = dict(layout_axes)
+        for key, axis in existing.items():
+            merged.setdefault(key, axis)
+        return merged
+
+    return layout_axes
 
 
 def _reorder_dict_by_gene_axis(

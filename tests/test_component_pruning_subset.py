@@ -30,18 +30,40 @@ class _DummyComponentResult(ComponentMixin):
     """
 
     def __init__(
-        self, n_components: int = 4, include_reference_specs: bool = True
+        self,
+        n_components: int = 4,
+        n_genes: int = 5,
+        include_reference_specs: bool = True,
     ):
         self.n_components = n_components
-        # Canonical keys such as `p`/`r` may be absent from param_specs.
-        # Include non-canonical reference specs (`phi`, `mu`) so fallback logic
-        # can infer whether canonical tensors are truly mixture-specific.
-        _param_specs = [SimpleNamespace(name="mixing_weights", is_mixture=True)]
+        self.n_genes = n_genes
+        # Minimal ``ParamSpec``-like objects: ``shape_dims`` feeds
+        # ``layout_from_param_spec`` / ``infer_layout`` inside
+        # ``build_sample_layouts`` so mixture and gene axes resolve like
+        # production configs.
+        _param_specs = [
+            SimpleNamespace(
+                name="mixing_weights",
+                is_mixture=True,
+                is_dataset=False,
+                shape_dims=("n_components",),
+            )
+        ]
         if include_reference_specs:
             _param_specs.extend(
                 [
-                    SimpleNamespace(name="phi", is_mixture=True),
-                    SimpleNamespace(name="mu", is_mixture=True),
+                    SimpleNamespace(
+                        name="phi",
+                        is_mixture=True,
+                        is_dataset=False,
+                        shape_dims=("n_components",),
+                    ),
+                    SimpleNamespace(
+                        name="mu",
+                        is_mixture=True,
+                        is_dataset=False,
+                        shape_dims=("n_components", "n_genes"),
+                    ),
                 ]
             )
         self.model_config = SimpleNamespace(param_specs=_param_specs)

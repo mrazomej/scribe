@@ -44,9 +44,7 @@ def _key_matches_spec(key: str, spec) -> bool:
         True if *key* matches the spec's name or any alias.
     """
     # Collect the canonical name plus any reparameterisation aliases
-    names_to_check = [spec.name] + list(
-        getattr(spec, "alias_names", [])
-    )
+    names_to_check = [spec.name] + list(getattr(spec, "alias_names", []))
     if spec.name == "mixing_weights":
         # Dirichlet mixture weights use specialized variational parameter names.
         names_to_check.extend(
@@ -75,49 +73,9 @@ def _key_matches_spec(key: str, spec) -> bool:
     return False
 
 
-def _build_dataset_keys(
-    param_specs: list, params: Dict[str, jnp.ndarray], n_datasets: int
-) -> Set[str]:
-    """Identify variational-parameter keys that carry a dataset axis.
-
-    A key is dataset-specific if its ``ParamSpec`` has ``is_dataset=True``
-    *or* its leading dimension equals ``n_datasets`` and its spec (matched
-    by longest-name-wins) declares a dataset role.
-
-    Parameters
-    ----------
-    param_specs : list
-        Full parameter specifications from ``model_config.param_specs``.
-    params : Dict[str, jnp.ndarray]
-        Flat variational-parameter dictionary.
-    n_datasets : int
-        Number of datasets in the model.
-
-    Returns
-    -------
-    Set[str]
-        Keys in ``params`` that carry a dataset axis.
-    """
-    if not param_specs:
-        return set()
-
-    sorted_specs = sorted(param_specs, key=lambda s: len(s.name), reverse=True)
-    dataset_keys: Set[str] = set()
-
-    for key in params:
-        if "$" in key:
-            continue
-        for spec in sorted_specs:
-            if _key_matches_spec(key, spec):
-                if getattr(spec, "is_dataset", False):
-                    dataset_keys.add(key)
-                break
-
-    return dataset_keys
-
-
 def _build_cell_specific_keys(
-    param_specs: list, params: Dict[str, jnp.ndarray],
+    param_specs: list,
+    params: Dict[str, jnp.ndarray],
 ) -> Set[str]:
     """Identify variational-parameter keys that are cell-specific.
 
@@ -153,133 +111,6 @@ def _build_cell_specific_keys(
                 break
 
     return cell_keys
-
-
-def _match_spec_for_key(key: str, param_specs: list) -> Optional[object]:
-    """Find the ParamSpec that governs a variational-parameter key.
-
-    Uses longest-name-wins matching to handle derived keys like
-    ``log_r_loc``, ``logit_p_scale``, etc.
-
-    Parameters
-    ----------
-    key : str
-        Variational parameter name.
-    param_specs : list
-        Full parameter specifications.
-
-    Returns
-    -------
-    Optional[ParamSpec]
-        Matched spec, or ``None``.
-    """
-    if not param_specs:
-        return None
-    sorted_specs = sorted(param_specs, key=lambda s: len(s.name), reverse=True)
-    for spec in sorted_specs:
-        if _key_matches_spec(key, spec):
-            return spec
-    return None
-
-
-def _infer_dataset_axis(
-    value: Any,
-    n_datasets: Optional[int],
-    is_mixture: bool = False,
-    n_components: Optional[int] = None,
-) -> Optional[int]:
-    """Infer the dataset axis for a variational-parameter tensor.
-
-    For variational parameters (no sample axis):
-    - Non-mixture dataset params have shape ``(D, ...)``, dataset axis 0.
-    - Mixture+dataset params have shape ``(K, D, ...)``, dataset axis 1.
-
-    When ``is_mixture`` metadata is available, the axis is determined
-    deterministically.  Otherwise, falls back to shape heuristics.
-
-    Parameters
-    ----------
-    value : Any
-        Tensor-like entry.
-    n_datasets : Optional[int]
-        Number of datasets.
-    is_mixture : bool
-        Whether this parameter also carries a component dimension.
-    n_components : Optional[int]
-        Number of mixture components (used for disambiguation).
-
-    Returns
-    -------
-    Optional[int]
-        Axis index for the dataset dimension, or ``None``.
-    """
-    if n_datasets is None or not hasattr(value, "ndim") or value.ndim <= 0:
-        return None
-
-    if is_mixture and n_components is not None:
-        # Shape (K, D, ...) — dataset axis is 1
-        if value.ndim >= 2 and value.shape[1] == n_datasets:
-            return 1
-        # Fallback: search remaining axes
-        candidates = [
-            ax for ax in range(value.ndim) if value.shape[ax] == n_datasets
-        ]
-        return candidates[0] if candidates else None
-
-    # Non-mixture: dataset axis is 0
-    if value.ndim >= 1 and value.shape[0] == n_datasets:
-        return 0
-    return None
-
-
-def _infer_dataset_axis_posterior(
-    value: Any,
-    n_datasets: Optional[int],
-    is_mixture: bool = False,
-    n_components: Optional[int] = None,
-) -> Optional[int]:
-    """Infer the dataset axis in posterior samples (axis 0 = samples).
-
-    For posterior samples:
-    - Non-mixture dataset params: ``(S, D, ...)``, dataset axis 1.
-    - Mixture+dataset params: ``(S, K, D, ...)``, dataset axis 2.
-
-    Parameters
-    ----------
-    value : Any
-        Posterior sample tensor.
-    n_datasets : Optional[int]
-        Number of datasets.
-    is_mixture : bool
-        Whether this parameter also carries a component dimension.
-    n_components : Optional[int]
-        Number of mixture components (used for disambiguation).
-
-    Returns
-    -------
-    Optional[int]
-        Dataset axis index, or ``None``.
-    """
-    if n_datasets is None or not hasattr(value, "ndim") or value.ndim <= 1:
-        return None
-
-    if is_mixture and n_components is not None:
-        # Shape (S, K, D, ...) — dataset axis is 2
-        if value.ndim >= 3 and value.shape[2] == n_datasets:
-            return 2
-        # Fallback: search axes 1..ndim-1 (skip sample axis 0)
-        candidates = [
-            ax for ax in range(1, value.ndim) if value.shape[ax] == n_datasets
-        ]
-        return candidates[0] if candidates else None
-
-    # Non-mixture: (S, D, ...) — dataset axis is 1
-    if value.shape[1] == n_datasets:
-        return 1
-    candidates = [
-        ax for ax in range(1, value.ndim) if value.shape[ax] == n_datasets
-    ]
-    return candidates[0] if candidates else None
 
 
 # ==============================================================================
@@ -350,9 +181,7 @@ class DatasetMixin:
         # Resolve per-dataset cell count if available
         per_ds = getattr(self, "_n_cells_per_dataset", None)
         ds_n_cells = (
-            int(per_ds[dataset_index])
-            if per_ds is not None
-            else self.n_cells
+            int(per_ds[dataset_index]) if per_ds is not None else self.n_cells
         )
 
         return type(self)(
@@ -386,9 +215,6 @@ class DatasetMixin:
     ) -> Dict[str, jnp.ndarray]:
         """Slice variational params for a single dataset.
 
-        Uses ``ParamSpec`` metadata to correctly handle parameters that
-        are both mixture- and dataset-specific (axis 1 instead of 0).
-
         Parameters
         ----------
         dataset_index : int
@@ -401,36 +227,28 @@ class DatasetMixin:
         Dict[str, jnp.ndarray]
             Params with dataset axis removed for per-dataset keys.
         """
-        dataset_keys = _build_dataset_keys(
-            self.model_config.param_specs, self.params, n_datasets
-        )
-        # Keys promoted during concat (stacked at axis 0 for params).
+        # ``promoted`` keys from ``concat()`` use a fixed axis-0 dataset slice;
+        # all other dataset-specific tensors use ``AxisLayout.dataset_axis``.
         promoted = getattr(self, "_promoted_dataset_keys", None) or set()
-        n_components = getattr(self.model_config, "n_components", None)
+        param_layouts = self.layouts
 
         new_params: Dict[str, jnp.ndarray] = {}
         for key, value in self.params.items():
-            # Promoted keys always have the dataset axis at position 0.
+            # Promoted keys (stacked by concat) always have dataset at axis 0.
             if key in promoted and hasattr(value, "ndim") and value.ndim >= 1:
                 new_params[key] = value[dataset_index]
-                continue
-            if key in dataset_keys and hasattr(value, "ndim"):
-                spec = _match_spec_for_key(
-                    key, self.model_config.param_specs or []
-                )
-                is_mix = spec is not None and getattr(
-                    spec, "is_mixture", False
-                )
-                ax = _infer_dataset_axis(
-                    value, n_datasets,
-                    is_mixture=is_mix, n_components=n_components,
-                )
-                if ax is not None:
-                    slicer = [slice(None)] * value.ndim
-                    slicer[ax] = dataset_index
-                    new_params[key] = value[tuple(slicer)]
-                    continue
-            new_params[key] = value
+            # Layout tells us the exact dataset axis position (handles the
+            # mixture+dataset case where the axis is 1 instead of 0).
+            elif (
+                param_layouts.get(key) is not None
+                and param_layouts[key].dataset_axis is not None
+            ):
+                slicer = [slice(None)] * value.ndim
+                slicer[param_layouts[key].dataset_axis] = dataset_index
+                new_params[key] = value[tuple(slicer)]
+            # Non-dataset keys pass through unchanged.
+            else:
+                new_params[key] = value
         return new_params
 
     def _subset_cell_specific_params(
@@ -485,10 +303,6 @@ class DatasetMixin:
     ) -> Dict[str, jnp.ndarray]:
         """Slice posterior samples for a single dataset.
 
-        Uses ``ParamSpec`` metadata to correctly handle parameters that
-        are both mixture- and dataset-specific (axis 2 instead of 1 for
-        posterior samples with shape ``(S, K, D, ...)``).
-
         Parameters
         ----------
         samples : Dict[str, jnp.ndarray]
@@ -507,31 +321,44 @@ class DatasetMixin:
         if samples is None:
             return None
 
-        specs_by_name = {
-            s.name: s for s in (self.model_config.param_specs or [])
-        }
-        # Promoted keys have the dataset axis at position 1 (after sample axis).
+        # Same promotion rule as params: axis 1 after the leading draw dimension
+        # ``S`` for keys stacked during multi-result concat.
         promoted = getattr(self, "_promoted_dataset_keys", None) or set()
-        n_components = getattr(self.model_config, "n_components", None)
-        new_samples: Dict[str, jnp.ndarray] = {}
 
+        # Hybrid layouts so derived posterior keys (not in specs) still get a
+        # correct ``dataset_axis`` when shapes and config metadata allow it.
+        from ..core.axis_layout import build_sample_layouts
+
+        mc = self.model_config
+        sample_layouts = build_sample_layouts(
+            list(mc.param_specs or []),
+            samples,
+            n_genes=self.n_genes,
+            n_cells=self.n_cells,
+            n_components=getattr(mc, "n_components", None),
+            n_datasets=getattr(mc, "n_datasets", None),
+            mixture_params=getattr(mc, "mixture_params", None),
+            has_sample_dim=True,
+        )
+
+        new_samples: Dict[str, jnp.ndarray] = {}
         for key, value in samples.items():
+            # If the key is in the set of promoted dataset keys, and its value
+            # is at least 2-dimensional, slice at axis=1 (the dataset axis for
+            # promoted keys)
             if key in promoted and hasattr(value, "ndim") and value.ndim >= 2:
                 new_samples[key] = value[:, dataset_index]
-                continue
-            spec = specs_by_name.get(key)
-            is_ds = spec is not None and getattr(spec, "is_dataset", False)
-            is_mix = spec is not None and getattr(spec, "is_mixture", False)
-            if is_ds and hasattr(value, "ndim") and value.ndim > 1:
-                ax = _infer_dataset_axis_posterior(
-                    value, n_datasets,
-                    is_mixture=is_mix, n_components=n_components,
-                )
-                if ax is not None:
-                    slicer = [slice(None)] * value.ndim
-                    slicer[ax] = dataset_index
-                    new_samples[key] = value[tuple(slicer)]
-                    continue
-            new_samples[key] = value
+            # Layout-driven slicing: handles (S, D, G) and (S, K, D, G) shapes
+            # transparently since the layout already encodes the correct axis.
+            elif (
+                sample_layouts.get(key) is not None
+                and sample_layouts[key].dataset_axis is not None
+            ):
+                slicer = [slice(None)] * value.ndim
+                slicer[sample_layouts[key].dataset_axis] = dataset_index
+                new_samples[key] = value[tuple(slicer)]
+            # Non-dataset keys (population-level hyperparams, etc.) pass through.
+            else:
+                new_samples[key] = value
 
         return new_samples
