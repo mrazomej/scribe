@@ -7,6 +7,7 @@ helpers, and the bulk builders.
 """
 
 import pytest
+import numpy as np
 import jax.numpy as jnp
 
 from scribe.core.axis_layout import (
@@ -984,3 +985,128 @@ class TestBroadcastParamToLayout:
         )
         # (K,) -> (K, 1), no leading batch dim
         assert result.shape == (3, 1)
+
+
+# ==============================================================================
+# Tests for _slice_gene_axis (sampling helper)
+# ==============================================================================
+
+
+class TestSliceGeneAxis:
+    """Tests for ``_slice_gene_axis`` — subsets the gene dimension of a tensor
+    using a known axis index from an ``AxisLayout``.
+    """
+
+    def test_slices_standard_gene_array(self):
+        """Standard r of shape (S, G) should be sliced on axis=1."""
+        from scribe.sampling import _slice_gene_axis
+
+        r = jnp.arange(60).reshape(3, 20)
+        gene_idx = jnp.array([0, 5, 10])
+        result = _slice_gene_axis(r, gene_axis=1, gene_indices=gene_idx)
+        assert result.shape == (3, 3)
+        # Verify correct values were selected
+        np.testing.assert_array_equal(result, r[:, gene_idx])
+
+    def test_slices_mixture_gene_array(self):
+        """Mixture r of shape (S, K, G) should be sliced on axis=2."""
+        from scribe.sampling import _slice_gene_axis
+
+        r = jnp.arange(180).reshape(3, 3, 20)
+        gene_idx = jnp.array([1, 2, 3])
+        result = _slice_gene_axis(r, gene_axis=2, gene_indices=gene_idx)
+        assert result.shape == (3, 3, 3)
+        np.testing.assert_array_equal(result, r[:, :, gene_idx])
+
+    def test_none_array_passes_through(self):
+        """None input should be returned as None."""
+        from scribe.sampling import _slice_gene_axis
+
+        result = _slice_gene_axis(None, gene_axis=1, gene_indices=jnp.array([0]))
+        assert result is None
+
+    def test_none_gene_axis_passes_through(self):
+        """When gene_axis is None the array should be returned unchanged."""
+        from scribe.sampling import _slice_gene_axis
+
+        arr = jnp.ones((5,))
+        result = _slice_gene_axis(arr, gene_axis=None, gene_indices=jnp.array([0]))
+        assert result is arr
+
+
+class TestSubsetGeneDimSamplesWithLayouts:
+    """Tests for layout-enhanced ``_subset_gene_dim_samples`` which
+    uses ``AxisLayout.gene_axis`` when layouts are available and falls
+    back to shape scanning otherwise.
+    """
+
+    def test_layout_path_selects_correct_axis(self):
+        """Gene axis from layout should be used for slicing."""
+        from scribe.svi._sampling_posterior_predictive import (
+            _subset_gene_dim_samples,
+        )
+
+        n_genes = 20
+        samples = {
+            # (S, G) — gene axis is 1 with sample dim
+            "r": jnp.arange(60).reshape(3, n_genes),
+            # scalar per sample — no gene axis
+            "p": jnp.ones((3,)),
+        }
+        layouts = {
+            "r": AxisLayout((GENES,), has_sample_dim=True),
+            "p": AxisLayout((), has_sample_dim=True),
+        }
+        gene_idx = np.array([0, 5, 10])
+
+        result = _subset_gene_dim_samples(
+            samples, gene_idx, n_genes, layouts=layouts,
+        )
+
+        # r should be sliced on axis 1 (gene axis with sample offset)
+        assert result["r"].shape == (3, 3)
+        np.testing.assert_array_equal(result["r"], samples["r"][:, gene_idx])
+        # p has no gene axis — should pass through unchanged
+        assert result["p"].shape == (3,)
+
+    def test_fallback_when_no_layouts(self):
+        """Without layouts, shape-scanning fallback should work."""
+        from scribe.svi._sampling_posterior_predictive import (
+            _subset_gene_dim_samples,
+        )
+
+        n_genes = 20
+        samples = {"r": jnp.ones((3, n_genes)), "p": jnp.array(0.5)}
+        gene_idx = np.array([0, 5])
+
+        result = _subset_gene_dim_samples(
+            samples, gene_idx, n_genes, layouts=None,
+        )
+
+        assert result["r"].shape == (3, 2)
+        assert result["p"].shape == ()
+
+    def test_unknown_key_falls_back_to_shape_scan(self):
+        """Keys not in layouts should fall back to shape scanning."""
+        from scribe.svi._sampling_posterior_predictive import (
+            _subset_gene_dim_samples,
+        )
+
+        n_genes = 20
+        samples = {
+            "r": jnp.ones((3, n_genes)),
+            # key not in layouts — should fall back to shape scan
+            "some_flow_param": jnp.ones((3, n_genes)),
+        }
+        layouts = {
+            "r": AxisLayout((GENES,), has_sample_dim=True),
+        }
+        gene_idx = np.array([0, 5])
+
+        result = _subset_gene_dim_samples(
+            samples, gene_idx, n_genes, layouts=layouts,
+        )
+
+        # Both should be sliced correctly
+        assert result["r"].shape == (3, 2)
+        assert result["some_flow_param"].shape == (3, 2)

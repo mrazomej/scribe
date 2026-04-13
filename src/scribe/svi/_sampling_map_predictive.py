@@ -7,7 +7,7 @@ from typing import Optional
 import jax.numpy as jnp
 from jax import random
 
-from ..sampling import sample_posterior_ppc
+from ..sampling import sample_posterior_ppc, _slice_gene_axis
 
 
 def _coerce_map_capture_vector(
@@ -530,36 +530,44 @@ class MapPredictiveSamplingMixin:
             )
 
         # ---- 3. Slice gene dimension if requested ----
-        # Parameters that may carry a gene axis: r, p (hierarchical),
-        # gate, bnb_concentration.  p_capture is cell-indexed, not gene-indexed.
+        # Use semantic AxisLayout lookups (via self.layouts) to find each
+        # parameter's gene axis, eliminating ndim/shape heuristics.
+        # Parameters that carry genes: r, p (hierarchical), gate,
+        # bnb_concentration.  p_capture is cell-indexed, not gene-indexed.
         if gene_indices is not None:
-            n_genes = r.shape[-1]
-            if is_mixture:
-                # r: (S, K, G) -> (S, K, G_batch)
-                r = r[:, :, gene_indices]
-                if gate is not None and gate.ndim == 3:
-                    gate = gate[:, :, gene_indices]
-                # p may be (S, K, G) for hierarchical mixtures
-                if p.ndim == 3 and p.shape[-1] == n_genes:
-                    p = p[:, :, gene_indices]
-                if (
-                    bnb_concentration is not None
-                    and bnb_concentration.shape[-1] == n_genes
-                ):
-                    bnb_concentration = bnb_concentration[..., gene_indices]
-            else:
-                # r: (S, G) -> (S, G_batch)
-                r = r[:, gene_indices]
-                if gate is not None and gate.ndim == 2:
-                    gate = gate[:, gene_indices]
-                # p may be (S, G) for hierarchical (per-gene p) models
-                if p.ndim == 2 and p.shape[-1] == n_genes:
-                    p = p[:, gene_indices]
-                if (
-                    bnb_concentration is not None
-                    and bnb_concentration.shape[-1] == n_genes
-                ):
-                    bnb_concentration = bnb_concentration[..., gene_indices]
+            # Posterior samples carry a leading sample dimension; the
+            # layouts on the results object reflect MAP-level shapes, so
+            # we add 1 to each gene_axis to account for the sample dim.
+            layouts = self.layouts
+            _offset = 1  # leading posterior-sample dimension
+
+            r_ga = layouts["r"].gene_axis
+            r = _slice_gene_axis(
+                r, r_ga + _offset if r_ga is not None else None,
+                gene_indices,
+            )
+
+            p_ga = layouts.get("p", None)
+            p_ga = p_ga.gene_axis if p_ga is not None else None
+            p = _slice_gene_axis(
+                p, p_ga + _offset if p_ga is not None else None,
+                gene_indices,
+            )
+
+            gate_ga = layouts.get("gate", None)
+            gate_ga = gate_ga.gene_axis if gate_ga is not None else None
+            gate = _slice_gene_axis(
+                gate, gate_ga + _offset if gate_ga is not None else None,
+                gene_indices,
+            )
+
+            bnb_ga = layouts.get("bnb_concentration", None)
+            bnb_ga = bnb_ga.gene_axis if bnb_ga is not None else None
+            bnb_concentration = _slice_gene_axis(
+                bnb_concentration,
+                bnb_ga + _offset if bnb_ga is not None else None,
+                gene_indices,
+            )
 
         # ---- 4. Sample via the full-model helper ----
         _, key_ppc = random.split(rng_key)
