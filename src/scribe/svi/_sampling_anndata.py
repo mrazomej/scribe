@@ -9,7 +9,11 @@ import jax.numpy as jnp
 import numpy as np
 from jax import random
 
-from ..sampling import denoise_counts, _slice_posterior_draw
+from ..sampling import (
+    denoise_counts,
+    _slice_posterior_draw,
+    _build_canonical_layouts,
+)
 from ._sampling_denoising import _denoise_per_dataset
 
 try:
@@ -152,9 +156,7 @@ class DenoisedAnnDataMixin:
         # --- Dataset 1 from MAP (only when preserve_correlations=False) ---
         if map_first:
             if verbose:
-                print(
-                    f"Generating denoised dataset 1/{n_datasets} (MAP)..."
-                )
+                print(f"Generating denoised dataset 1/{n_datasets} (MAP)...")
             rng_key, map_key = random.split(rng_key)
             denoised_map = self.denoise_counts_map(
                 counts=counts,
@@ -208,16 +210,23 @@ class DenoisedAnnDataMixin:
             p_post = self.posterior_samples["p"]
             pc_post = self.posterior_samples.get("p_capture")
             gate_post = self.posterior_samples.get("gate")
-            is_mix = (
-                self.n_components is not None and self.n_components > 1
-            )
+            is_mix = self.n_components is not None and self.n_components > 1
             mw_post = (
-                self.posterior_samples.get("mixing_weights")
-                if is_mix
-                else None
+                self.posterior_samples.get("mixing_weights") if is_mix else None
             )
 
             n_available = r_post.shape[0]
+
+            # Build posterior-level canonical layouts (keyed by "r", "p",
+            # etc.) using actual posterior tensor shapes and model metadata.
+            _post_layouts = _build_canonical_layouts(
+                self.posterior_samples,
+                self.model_config,
+                n_genes=self.n_genes,
+                n_cells=self.n_cells,
+                n_components=self.n_components,
+                has_sample_dim=True,
+            )
 
             # Offset for dataset numbering: when MAP is first, posterior
             # datasets start at index 1; otherwise they start at 0.
@@ -234,7 +243,8 @@ class DenoisedAnnDataMixin:
                     )
 
                 # Extract parameters for this single posterior draw,
-                # stripping the leading sample dimension where present.
+                # using layout metadata to decide which arrays carry a
+                # sample axis.
                 draw = _slice_posterior_draw(
                     idx,
                     r=r_post,
@@ -242,8 +252,7 @@ class DenoisedAnnDataMixin:
                     p_capture=pc_post,
                     gate=gate_post,
                     mixing_weights=mw_post,
-                    n_samples=n_available,
-                    is_mixture=is_mix,
+                    param_layouts=_post_layouts,
                 )
 
                 rng_key, sample_key = random.split(rng_key)
@@ -252,6 +261,16 @@ class DenoisedAnnDataMixin:
                 # per-dataset params still have shape (n_datasets, ...).
                 # Denoise each dataset's cells separately.
                 if n_ds is not None and ds_idx is not None:
+                    # After slicing the sample dim, each draw is
+                    # MAP-level; build MAP-level canonical layouts.
+                    _draw_layouts = _build_canonical_layouts(
+                        draw,
+                        self.model_config,
+                        n_genes=self.n_genes,
+                        n_cells=self.n_cells,
+                        n_components=self.n_components,
+                        has_sample_dim=False,
+                    )
                     denoised_s = _denoise_per_dataset(
                         counts=counts,
                         r=draw["r"],
@@ -265,8 +284,19 @@ class DenoisedAnnDataMixin:
                         return_variance=False,
                         mixing_weights=draw["mixing_weights"],
                         cell_batch_size=cell_batch_size,
+                        param_layouts=_draw_layouts,
                     )
                 else:
+                    # Single-dataset draw: build MAP-level layouts
+                    # from the sliced draw (sample dim removed).
+                    _draw_layouts = _build_canonical_layouts(
+                        draw,
+                        self.model_config,
+                        n_genes=self.n_genes,
+                        n_cells=self.n_cells,
+                        n_components=self.n_components,
+                        has_sample_dim=False,
+                    )
                     denoised_s = denoise_counts(
                         counts=counts,
                         r=draw["r"],
@@ -277,6 +307,7 @@ class DenoisedAnnDataMixin:
                         rng_key=sample_key,
                         mixing_weights=draw["mixing_weights"],
                         cell_batch_size=cell_batch_size,
+                        param_layouts=_draw_layouts,
                     )
 
                 results.append(

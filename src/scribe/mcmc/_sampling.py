@@ -19,6 +19,7 @@ from ..sampling import (
     sample_biological_nb,
     denoise_counts as _denoise_counts_util,
     _slice_posterior_draw,
+    _build_canonical_layouts,
 )
 
 try:
@@ -197,6 +198,16 @@ class SamplingMixin:
 
         samples = self.get_posterior_samples()
 
+        # Build posterior-level canonical layouts from MCMC samples.
+        _post_layouts = _build_canonical_layouts(
+            samples,
+            self.model_config,
+            n_genes=self.n_genes,
+            n_cells=self.n_cells,
+            n_components=self.n_components,
+            has_sample_dim=True,
+        )
+
         bio_samples = sample_biological_nb(
             r=samples["r"],
             p=samples["p"],
@@ -204,6 +215,7 @@ class SamplingMixin:
             rng_key=rng_key,
             mixing_weights=samples.get("mixing_weights"),
             cell_batch_size=cell_batch_size,
+            param_layouts=_post_layouts,
         )
 
         if store_samples:
@@ -281,6 +293,17 @@ class SamplingMixin:
                 f" ({self.model_type}){extra_str}, method='{method}'..."
             )
 
+        # Build posterior-level canonical layouts (keyed by canonical
+        # param names) from the actual MCMC posterior tensor shapes.
+        _post_layouts = _build_canonical_layouts(
+            samples,
+            self.model_config,
+            n_genes=self.n_genes,
+            n_cells=self.n_cells,
+            n_components=self.n_components,
+            has_sample_dim=True,
+        )
+
         result = _denoise_counts_util(
             counts=counts,
             r=r,
@@ -292,6 +315,7 @@ class SamplingMixin:
             return_variance=return_variance,
             mixing_weights=mixing_weights,
             cell_batch_size=cell_batch_size,
+            param_layouts=_post_layouts,
         )
 
         if verbose:
@@ -456,6 +480,20 @@ class SamplingMixin:
                 else None
             )
 
+            # Build MAP-level layouts from the mean parameters (no sample dim).
+            _mean_params = {
+                "r": r_mean, "p": p_mean, "p_capture": pc_mean,
+                "gate": gate_mean, "mixing_weights": mw_mean,
+            }
+            _mean_layouts = _build_canonical_layouts(
+                {k: v for k, v in _mean_params.items() if v is not None},
+                self.model_config,
+                n_genes=self.n_genes,
+                n_cells=self.n_cells,
+                n_components=self.n_components,
+                has_sample_dim=False,
+            )
+
             rng_key, map_key = random.split(rng_key)
             denoised_mean = _denoise_counts_util(
                 counts=counts,
@@ -467,6 +505,7 @@ class SamplingMixin:
                 rng_key=map_key,
                 mixing_weights=mw_mean,
                 cell_batch_size=cell_batch_size,
+                param_layouts=_mean_layouts,
             )
 
             results.append(
@@ -486,6 +525,17 @@ class SamplingMixin:
         # --- Datasets from individual MCMC draws ---
         offset = 1 if mean_first else 0
 
+        # Build posterior-level canonical layouts (keyed by "r", "p", etc.)
+        # using the actual posterior tensor shapes and model metadata.
+        _post_layouts = _build_canonical_layouts(
+            samples,
+            self.model_config,
+            n_genes=self.n_genes,
+            n_cells=self.n_cells,
+            n_components=self.n_components,
+            has_sample_dim=True,
+        )
+
         for i in range(n_draw_datasets):
             idx = i % n_mcmc
             ds_num = i + offset
@@ -496,8 +546,8 @@ class SamplingMixin:
                     f"(MCMC sample {idx})..."
                 )
 
-            # Extract parameters for this single MCMC draw, stripping the
-            # leading sample dimension where present.
+            # Extract parameters for this single MCMC draw, using layout
+            # metadata to decide which arrays carry a sample axis.
             draw = _slice_posterior_draw(
                 idx,
                 r=r_all,
@@ -505,8 +555,18 @@ class SamplingMixin:
                 p_capture=pc_all,
                 gate=gate_all,
                 mixing_weights=mw_all,
-                n_samples=n_mcmc,
-                is_mixture=is_mix,
+                param_layouts=_post_layouts,
+            )
+
+            # Build MAP-level layouts from the sliced draw (sample dim
+            # already removed by _slice_posterior_draw).
+            _draw_layouts = _build_canonical_layouts(
+                {k: v for k, v in draw.items() if v is not None},
+                self.model_config,
+                n_genes=self.n_genes,
+                n_cells=self.n_cells,
+                n_components=self.n_components,
+                has_sample_dim=False,
             )
 
             rng_key, sample_key = random.split(rng_key)
@@ -520,6 +580,7 @@ class SamplingMixin:
                 rng_key=sample_key,
                 mixing_weights=draw["mixing_weights"],
                 cell_batch_size=cell_batch_size,
+                param_layouts=_draw_layouts,
             )
 
             results.append(
