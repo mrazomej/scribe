@@ -18,6 +18,7 @@ from ..sampling import (
     generate_prior_predictive_samples,
     sample_biological_nb,
     denoise_counts as _denoise_counts_util,
+    _slice_posterior_draw,
 )
 
 try:
@@ -495,39 +496,29 @@ class SamplingMixin:
                     f"(MCMC sample {idx})..."
                 )
 
-            r_s = r_all[idx]
-            p_s = (
-                p_all[idx]
-                if p_all.ndim >= 1 and p_all.shape[0] == n_mcmc
-                else p_all
-            )
-            pc_s = (
-                pc_all[idx]
-                if pc_all is not None and pc_all.ndim == 2
-                else pc_all
-            )
-            g_s = (
-                gate_all[idx]
-                if gate_all is not None
-                and gate_all.ndim > (1 if not is_mix else 2)
-                else gate_all
-            )
-            mw_s = (
-                mw_all[idx]
-                if mw_all is not None and mw_all.ndim == 2
-                else mw_all
+            # Extract parameters for this single MCMC draw, stripping the
+            # leading sample dimension where present.
+            draw = _slice_posterior_draw(
+                idx,
+                r=r_all,
+                p=p_all,
+                p_capture=pc_all,
+                gate=gate_all,
+                mixing_weights=mw_all,
+                n_samples=n_mcmc,
+                is_mixture=is_mix,
             )
 
             rng_key, sample_key = random.split(rng_key)
             denoised_s = _denoise_counts_util(
                 counts=counts,
-                r=r_s,
-                p=p_s,
-                p_capture=pc_s,
-                gate=g_s,
+                r=draw["r"],
+                p=draw["p"],
+                p_capture=draw["p_capture"],
+                gate=draw["gate"],
                 method=method,
                 rng_key=sample_key,
-                mixing_weights=mw_s,
+                mixing_weights=draw["mixing_weights"],
                 cell_batch_size=cell_batch_size,
             )
 
