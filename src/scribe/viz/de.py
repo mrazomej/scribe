@@ -424,7 +424,7 @@ def plot_de_mean_expression(
         # Identity line helps compare agreement between condition means.
         xlim = panel_ax.get_xlim()
         ylim = panel_ax.get_ylim()
-        line_min = max(min(xlim[0], ylim[0]), 1e-12)
+        line_min = min(xlim[0], ylim[0])
         line_max = max(xlim[1], ylim[1])
         panel_ax.plot(
             [line_min, line_max], [line_min, line_max], "k--", linewidth=1.0
