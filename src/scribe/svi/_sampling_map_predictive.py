@@ -7,254 +7,55 @@ from typing import Optional
 import jax.numpy as jnp
 from jax import random
 
-from ..sampling import sample_posterior_ppc, _slice_gene_axis
+from ..sampling import (
+    sample_posterior_ppc,
+    _slice_gene_axis,
+    _build_canonical_layouts,
+)
 
 
-def _coerce_map_capture_vector(
-    p_capture: jnp.ndarray, n_cells: int
-) -> jnp.ndarray:
-    """Normalize MAP capture probabilities to a 1-D cell vector.
-
-    Parameters
-    ----------
-    p_capture : jnp.ndarray
-        Capture probability candidate from MAP estimates.
-    n_cells : int
-        Expected number of cells.
-
-    Returns
-    -------
-    jnp.ndarray
-        Capture probabilities with shape ``(n_cells,)``.
-
-    Raises
-    ------
-    ValueError
-        If the value cannot be interpreted as per-cell capture probabilities.
-    """
-    # Convert to an array and collapse singleton axes to tolerate shape
-    # artifacts from upstream subsetting.
-    p_capture = jnp.asarray(p_capture)
-    p_capture = jnp.squeeze(p_capture)
-
-    # Scalar capture probability is valid; broadcast to all cells.
-    if p_capture.ndim == 0:
-        return jnp.full((n_cells,), p_capture)
-
-    # A vector must match the model's cell axis exactly.
-    if p_capture.ndim == 1 and p_capture.shape[0] == n_cells:
-        return p_capture
-
-    raise ValueError(
-        "Invalid MAP p_capture shape. Expected scalar or "
-        f"(n_cells,) with n_cells={n_cells}, got shape {p_capture.shape}."
-    )
-
-
-def _normalize_map_standard_inputs(
+def _ensure_map_arrays(
     r: jnp.ndarray,
     p: jnp.ndarray,
     gate: Optional[jnp.ndarray],
     p_capture: Optional[jnp.ndarray],
-    n_cells: int,
-) -> tuple[jnp.ndarray, jnp.ndarray, Optional[jnp.ndarray], Optional[jnp.ndarray]]:
-    """Normalize MAP inputs for non-mixture models.
+    mixing_weights: Optional[jnp.ndarray] = None,
+) -> tuple:
+    """Convert MAP estimate tensors to JAX arrays.
+
+    A minimal helper that replaces the old ``_normalize_map_standard_inputs``,
+    ``_normalize_map_mixture_inputs``, and ``_coerce_map_capture_vector``.
+    All semantic shape interpretation is now handled by ``AxisLayout`` flags
+    propagated into the sampling / denoising functions, so no squeeze / ndim
+    coercion is necessary here.
 
     Parameters
     ----------
     r : jnp.ndarray
-        Dispersion candidate from MAP estimates.
+        Dispersion from MAP estimates.
     p : jnp.ndarray
-        Success probability candidate from MAP estimates.
-    gate : Optional[jnp.ndarray]
-        Optional zero-inflation gate candidate.
-    p_capture : Optional[jnp.ndarray]
-        Optional per-cell capture probability candidate.
-    n_cells : int
-        Number of cells in the current results view.
+        Success probability from MAP estimates.
+    gate : jnp.ndarray or None
+        Optional zero-inflation gate.
+    p_capture : jnp.ndarray or None
+        Optional per-cell capture probability.
+    mixing_weights : jnp.ndarray or None
+        Optional component mixing weights.
 
     Returns
     -------
-    tuple[jnp.ndarray, jnp.ndarray, Optional[jnp.ndarray], Optional[jnp.ndarray]]
-        Normalized ``(r, p, gate, p_capture)`` for standard-model PPC.
-
-    Raises
-    ------
-    ValueError
-        If any input has incompatible dimensions.
+    tuple
+        ``(r, p, gate, p_capture, mixing_weights)`` — each converted
+        to a JAX array (or ``None`` left as ``None``).
     """
-    # Ensure r always exposes a gene axis; singleton genes become length-1
-    # vectors instead of rank-0 scalars.
-    r = jnp.atleast_1d(jnp.asarray(r))
-    if r.ndim != 1:
-        r = jnp.squeeze(r)
-        r = jnp.atleast_1d(r)
-    if r.ndim != 1:
-        raise ValueError(
-            "Invalid MAP r shape for non-mixture model. Expected "
-            f"(n_genes,), got {r.shape}."
-        )
-    n_genes = int(r.shape[0])
-
-    # p can be scalar or per-gene; convert singleton vectors to scalar.
-    p = jnp.asarray(p)
-    p = jnp.squeeze(p)
-    if p.ndim == 0:
-        pass
-    elif p.ndim == 1:
-        if p.shape[0] == 1:
-            p = p[0]
-        elif p.shape[0] != n_genes:
-            raise ValueError(
-                "Invalid MAP p shape for non-mixture model. Expected scalar "
-                f"or (n_genes,) with n_genes={n_genes}, got {p.shape}."
-            )
-    else:
-        raise ValueError(
-            "Invalid MAP p rank for non-mixture model. Expected scalar or "
-            f"vector, got shape {p.shape}."
-        )
-
-    # gate can be absent, scalar, or per-gene; normalize to per-gene when set.
-    if gate is not None:
-        gate = jnp.asarray(gate)
-        gate = jnp.squeeze(gate)
-        if gate.ndim == 0:
-            gate = jnp.full((n_genes,), gate)
-        elif gate.ndim == 1 and gate.shape[0] == n_genes:
-            pass
-        else:
-            raise ValueError(
-                "Invalid MAP gate shape for non-mixture model. Expected scalar "
-                f"or (n_genes,) with n_genes={n_genes}, got {gate.shape}."
-            )
-
-    # p_capture can be absent, scalar, or per-cell; normalize to per-cell.
-    if p_capture is not None:
-        p_capture = _coerce_map_capture_vector(p_capture, n_cells=n_cells)
-
-    return r, p, gate, p_capture
-
-
-def _normalize_map_mixture_inputs(
-    r: jnp.ndarray,
-    p: jnp.ndarray,
-    gate: Optional[jnp.ndarray],
-    p_capture: Optional[jnp.ndarray],
-    mixing_weights: Optional[jnp.ndarray],
-    n_cells: int,
-    n_components: int,
-) -> tuple[jnp.ndarray, jnp.ndarray, Optional[jnp.ndarray], Optional[jnp.ndarray], jnp.ndarray]:
-    """Normalize MAP inputs for mixture models.
-
-    Parameters
-    ----------
-    r : jnp.ndarray
-        Dispersion candidate from MAP estimates.
-    p : jnp.ndarray
-        Success probability candidate from MAP estimates.
-    gate : Optional[jnp.ndarray]
-        Optional zero-inflation gate candidate.
-    p_capture : Optional[jnp.ndarray]
-        Optional per-cell capture probability candidate.
-    mixing_weights : Optional[jnp.ndarray]
-        Component weights from MAP estimates.
-    n_cells : int
-        Number of cells in the current results view.
-    n_components : int
-        Expected number of mixture components.
-
-    Returns
-    -------
-    tuple[jnp.ndarray, jnp.ndarray, Optional[jnp.ndarray], Optional[jnp.ndarray], jnp.ndarray]
-        Normalized ``(r, p, gate, p_capture, mixing_weights)`` for mixture PPC.
-
-    Raises
-    ------
-    ValueError
-        If any input has incompatible dimensions.
-    """
-    # Mixture r must be (K, G); tolerate squeezed singleton component axes.
     r = jnp.asarray(r)
-    r = jnp.squeeze(r)
-    if r.ndim == 1 and n_components == 1:
-        r = r[None, :]
-    if r.ndim != 2 or r.shape[0] != n_components:
-        raise ValueError(
-            "Invalid MAP r shape for mixture model. Expected (n_components, n_genes) "
-            f"with n_components={n_components}, got {r.shape}."
-        )
-    n_genes = int(r.shape[1])
-
-    # p may be scalar, (K,), (G,), or (K, G). Reject incompatible shapes.
     p = jnp.asarray(p)
-    p = jnp.squeeze(p)
-    if p.ndim == 0:
-        pass
-    elif p.ndim == 1:
-        if p.shape[0] in (1, n_components, n_genes):
-            if p.shape[0] == 1:
-                p = p[0]
-        else:
-            raise ValueError(
-                "Invalid MAP p shape for mixture model. Expected scalar, "
-                f"(n_components,), (n_genes,), or (n_components, n_genes); got {p.shape}."
-            )
-    elif p.ndim == 2:
-        if p.shape != (n_components, n_genes):
-            raise ValueError(
-                "Invalid MAP p matrix shape for mixture model. Expected "
-                f"(n_components, n_genes)=({n_components}, {n_genes}), got {p.shape}."
-            )
-    else:
-        raise ValueError(
-            "Invalid MAP p rank for mixture model. Expected scalar, vector, "
-            f"or matrix, got shape {p.shape}."
-        )
-
-    # gate may be absent, scalar, shared per-gene (G,), or per-component (K, G).
     if gate is not None:
         gate = jnp.asarray(gate)
-        gate = jnp.squeeze(gate)
-        if gate.ndim == 0:
-            gate = jnp.full((n_genes,), gate)
-        elif gate.ndim == 1:
-            if gate.shape[0] != n_genes:
-                raise ValueError(
-                    "Invalid MAP gate vector shape for mixture model. Expected "
-                    f"(n_genes,) with n_genes={n_genes}, got {gate.shape}."
-                )
-        elif gate.ndim == 2:
-            if gate.shape != (n_components, n_genes):
-                raise ValueError(
-                    "Invalid MAP gate matrix shape for mixture model. Expected "
-                    f"(n_components, n_genes)=({n_components}, {n_genes}), got {gate.shape}."
-                )
-        else:
-            raise ValueError(
-                "Invalid MAP gate rank for mixture model. Expected scalar, "
-                f"vector, or matrix, got shape {gate.shape}."
-            )
-
-    # p_capture can be absent, scalar, or per-cell; normalize to per-cell.
     if p_capture is not None:
-        p_capture = _coerce_map_capture_vector(p_capture, n_cells=n_cells)
-
-    # Mixture weights are required; normalize to a 1-D (K,) vector.
-    if mixing_weights is None:
-        raise ValueError(
-            "MAP mixture sampling requires mixing_weights in MAP estimates."
-        )
-    mixing_weights = jnp.asarray(mixing_weights)
-    mixing_weights = jnp.squeeze(mixing_weights)
-    if mixing_weights.ndim == 0 and n_components == 1:
-        mixing_weights = jnp.array([mixing_weights])
-    if mixing_weights.ndim != 1 or mixing_weights.shape[0] != n_components:
-        raise ValueError(
-            "Invalid MAP mixing_weights shape. Expected "
-            f"(n_components,) with n_components={n_components}, got {mixing_weights.shape}."
-        )
-
+        p_capture = jnp.asarray(p_capture)
+    if mixing_weights is not None:
+        mixing_weights = jnp.asarray(mixing_weights)
     return r, p, gate, p_capture, mixing_weights
 
 
@@ -367,31 +168,36 @@ class MapPredictiveSamplingMixin:
         if cell_batch_size is None:
             cell_batch_size = self.n_cells
 
-        # Normalize MAP tensors to stable rank/shape contracts before sampling.
-        # This avoids scalar-shape failures after singleton subsetting.
-        if is_mixture:
-            r, p, gate, p_capture, mixing_weights = _normalize_map_mixture_inputs(
-                r=r,
-                p=p,
-                gate=gate,
-                p_capture=p_capture,
-                mixing_weights=mixing_weights,
-                n_cells=self.n_cells,
-                n_components=int(self.n_components),
-            )
-            n_genes = int(r.shape[1])
-        else:
-            r, p, gate, p_capture = _normalize_map_standard_inputs(
-                r=r,
-                p=p,
-                gate=gate,
-                p_capture=p_capture,
-                n_cells=self.n_cells,
-            )
-            n_genes = int(r.shape[0])
+        # Ensure all MAP tensors are JAX arrays.  Semantic shape
+        # interpretation is now handled by AxisLayout flags inside the
+        # sampling functions, so no squeeze/coerce normalization is needed.
+        r, p, gate, p_capture, mixing_weights = _ensure_map_arrays(
+            r, p, gate, p_capture, mixing_weights
+        )
 
-        # Generate MAP PPC samples through the full-model helper so shape
-        # handling is consistent with posterior PPC paths.
+        # Build MAP-level canonical layouts (keyed by "r", "p", etc.)
+        # for the canonical parameter dict.
+        _map_layouts = _build_canonical_layouts(
+            map_estimates,
+            self.model_config,
+            n_genes=self.n_genes,
+            n_cells=self.n_cells,
+            n_components=self.n_components,
+            has_sample_dim=False,
+        )
+
+        # Infer n_genes from layout (gene axis is the last semantic axis
+        # for r); the layout knows where it is.
+        _r_layout = _map_layouts.get("r")
+        if _r_layout is not None and _r_layout.gene_axis is not None:
+            n_genes = int(r.shape[_r_layout.gene_axis])
+        else:
+            # Fallback: last axis is genes for both standard (G,) and
+            # mixture (K, G) models.
+            n_genes = int(r.shape[-1])
+
+        # Generate MAP PPC samples through the full-model helper.
+        # MAP estimates have no sample dim; pass canonical layouts.
         samples = sample_posterior_ppc(
             r=r,
             p=p,
@@ -403,6 +209,7 @@ class MapPredictiveSamplingMixin:
             mixing_weights=mixing_weights if is_mixture else None,
             cell_batch_size=cell_batch_size,
             bnb_concentration=map_estimates.get("bnb_concentration"),
+            param_layouts=_map_layouts,
         )
 
         if verbose:
@@ -530,16 +337,21 @@ class MapPredictiveSamplingMixin:
             )
 
         # ---- 3. Slice gene dimension if requested ----
-        # Use semantic AxisLayout lookups (via self.layouts) to find each
-        # parameter's gene axis, eliminating ndim/shape heuristics.
-        # Parameters that carry genes: r, p (hierarchical), gate,
-        # bnb_concentration.  p_capture is cell-indexed, not gene-indexed.
+        # Use semantic AxisLayout lookups to find each parameter's gene
+        # axis, eliminating ndim/shape heuristics.  Build posterior-level
+        # canonical layouts so gene_axis already accounts for the leading
+        # sample dimension.
         if gene_indices is not None:
-            # Posterior samples carry a leading sample dimension; the
-            # layouts on the results object reflect MAP-level shapes, so
-            # we add 1 to each gene_axis to account for the sample dim.
-            layouts = self.layouts
-            _offset = 1  # leading posterior-sample dimension
+            # Posterior-level canonical layouts (with sample dim).
+            layouts = _build_canonical_layouts(
+                self.posterior_samples,
+                self.model_config,
+                n_genes=self.n_genes,
+                n_cells=self.n_cells,
+                n_components=self.n_components,
+                has_sample_dim=True,
+            )
+            _offset = 0  # gene_axis already includes sample dim offset
 
             r_ga = layouts["r"].gene_axis
             r = _slice_gene_axis(
@@ -570,6 +382,16 @@ class MapPredictiveSamplingMixin:
             )
 
         # ---- 4. Sample via the full-model helper ----
+        # Build posterior-level canonical layouts (keyed by "r", "p", etc.)
+        # using actual posterior tensor shapes and model metadata.
+        _post_layouts = _build_canonical_layouts(
+            self.posterior_samples,
+            self.model_config,
+            n_genes=self.n_genes,
+            n_cells=self.n_cells,
+            n_components=self.n_components,
+            has_sample_dim=True,
+        )
         _, key_ppc = random.split(rng_key)
         samples = sample_posterior_ppc(
             r=r,
@@ -581,6 +403,7 @@ class MapPredictiveSamplingMixin:
             mixing_weights=mixing_weights,
             cell_batch_size=cell_batch_size,
             bnb_concentration=bnb_concentration,
+            param_layouts=_post_layouts,
         )
 
         if verbose:

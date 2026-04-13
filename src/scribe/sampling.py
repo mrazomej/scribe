@@ -42,30 +42,170 @@ from numpyro.handlers import block
 # ==============================================================================
 
 
-def _has_sample_dim(r: jnp.ndarray, is_mixture: bool) -> bool:
-    """Determine whether ``r`` has a leading posterior-sample dimension.
+def _build_canonical_layouts(
+    samples: Dict[str, "jnp.ndarray"],
+    model_config,
+    *,
+    n_genes: int,
+    n_cells: Optional[int] = None,
+    n_components: Optional[int] = None,
+    has_sample_dim: bool = False,
+) -> Dict[str, "AxisLayout"]:
+    """Build semantic layouts keyed by canonical parameter names.
 
-    The convention is:
+    The returned dict maps canonical keys (``"r"``, ``"p"``, ``"gate"``,
+    ``"mixing_weights"``, ``"p_capture"``, ``"bnb_concentration"``, …)
+    to their :class:`AxisLayout` descriptors.
 
-    * **Standard model MAP**: ``r.ndim == 1``  (``n_genes``,)
-    * **Standard model posterior**: ``r.ndim == 2``  (``n_samples, n_genes``)
-    * **Mixture model MAP**: ``r.ndim == 2``  (``n_components, n_genes``)
-    * **Mixture model posterior**: ``r.ndim == 3``  (``n_samples, n_components, n_genes``)
+    Internally delegates to :func:`build_sample_layouts` which uses
+    ``param_specs`` where available and falls back to shape-based
+    inference for derived/canonical keys.
 
     Parameters
     ----------
-    r : jnp.ndarray
-        The NB dispersion tensor ``r``.
-    is_mixture : bool
-        Whether the model is a mixture model (i.e. ``mixing_weights`` is
-        not ``None``).
+    samples : dict of str to jnp.ndarray
+        Parameter arrays keyed by *canonical* names.  May be MAP
+        estimates or posterior draws — ``has_sample_dim`` controls
+        whether a leading sample axis is expected.
+    model_config
+        Model configuration object (supplies ``param_specs``,
+        ``n_components``, ``n_datasets``, ``mixture_params``, etc.).
+    n_genes : int
+        Number of genes in the data.
+    n_cells : int, optional
+        Number of cells.
+    n_components : int, optional
+        Mixture components.  Falls back to ``model_config.n_components``.
+    has_sample_dim : bool, default False
+        Whether tensors in *samples* carry a leading posterior-draw axis.
+
+    Returns
+    -------
+    dict of str to AxisLayout
+        Layouts keyed by canonical parameter names, with
+        ``has_sample_dim`` set appropriately.
+    """
+    # Lazy imports to avoid circular dependency (sampling.py is
+    # imported by svi/mcmc modules that also import from it).
+    from .core.axis_layout import build_sample_layouts
+    from .models.config import HierarchicalPriorType
+
+    specs = getattr(model_config, "param_specs", None) or []
+
+    # Derive dataset_params from hierarchical-prior flags when not
+    # explicitly set (mirrors _derive_dataset_params in
+    # svi/_parameter_extraction.py but inlined here to avoid
+    # importing from the svi subpackage).
+    _n_ds = getattr(model_config, "n_datasets", None)
+    ds_params = getattr(model_config, "dataset_params", None)
+    if ds_params is None:
+        _NONE = HierarchicalPriorType.NONE
+        ds: list = []
+        param = getattr(model_config, "parameterization", "linked")
+        if getattr(model_config, "expression_dataset_prior", _NONE) != _NONE:
+            ds.append("r" if param in ("canonical", "standard") else "mu")
+        if getattr(model_config, "prob_dataset_prior", _NONE) != _NONE:
+            ds.append("phi" if param in ("mean_odds", "odds_ratio") else "p")
+        if (
+            getattr(model_config, "zero_inflation_dataset_prior", _NONE)
+            != _NONE
+        ):
+            ds.append("gate")
+        if (
+            getattr(model_config, "overdispersion_dataset_prior", _NONE)
+            != _NONE
+        ):
+            ds.append("bnb_concentration")
+
+        # Concatenated multi-dataset results: n_datasets >= 2 but no
+        # hierarchical priors were set (original fits were single-dataset).
+        # The concat path promotes ALL non-cell canonical params to
+        # dataset-specific, so treat every key in *samples* that has a
+        # leading dimension equal to n_datasets as dataset-specific.
+        if not ds and _n_ds is not None and _n_ds >= 2:
+            from .core.axis_layout import _KNOWN_CELL_PARAMS
+
+            _offset = 1 if has_sample_dim else 0
+            for key, arr in samples.items():
+                if not hasattr(arr, "shape"):
+                    continue
+                base = key.split("_loc")[0].split("_scale")[0]
+                if base in _KNOWN_CELL_PARAMS:
+                    continue
+                if arr.ndim > _offset and arr.shape[_offset] == _n_ds:
+                    ds.append(key)
+
+        ds_params = ds if ds else None
+
+    _nc = (
+        n_components
+        if n_components is not None
+        else getattr(model_config, "n_components", None)
+    )
+
+    return build_sample_layouts(
+        specs,
+        samples,
+        n_genes=n_genes,
+        n_cells=n_cells,
+        n_components=_nc,
+        n_datasets=getattr(model_config, "n_datasets", None),
+        mixture_params=getattr(model_config, "mixture_params", None),
+        dataset_params=ds_params,
+        has_sample_dim=has_sample_dim,
+    )
+
+
+def _has_sample_dim(
+    param_layouts: Dict[str, "AxisLayout"],
+) -> bool:
+    """Determine whether ``r`` has a leading posterior-sample dimension.
+
+    Reads the answer directly from the ``AxisLayout`` metadata stored
+    in ``param_layouts["r"]`` — no shape or ``ndim`` inspection needed.
+
+    Parameters
+    ----------
+    param_layouts : dict of str to AxisLayout
+        Semantic axis layouts keyed by canonical parameter name.
+        Must contain an ``"r"`` entry.
 
     Returns
     -------
     bool
         ``True`` when ``r`` carries a leading sample axis.
     """
-    return (is_mixture and r.ndim == 3) or (not is_mixture and r.ndim == 2)
+    return param_layouts["r"].has_sample_dim
+
+
+def _slice_draw(
+    arr: Optional[jnp.ndarray],
+    layout: Optional["AxisLayout"],
+    idx: int,
+) -> Optional[jnp.ndarray]:
+    """Slice the sample dimension of a single parameter at index ``idx``.
+
+    When ``layout.has_sample_dim`` is ``True``, returns ``arr[idx]``.
+    Otherwise returns ``arr`` unchanged.  ``None`` arrays pass through.
+
+    Parameters
+    ----------
+    arr : jnp.ndarray or None
+        Parameter array, possibly with a leading sample axis.
+    layout : AxisLayout or None
+        Semantic layout for this parameter.  ``None`` means no layout
+        information is available (should not happen in normal flow).
+    idx : int
+        Index of the posterior draw to extract.
+
+    Returns
+    -------
+    jnp.ndarray or None
+        The parameter for a single draw.
+    """
+    if arr is None or layout is None:
+        return arr
+    return arr[idx] if layout.has_sample_dim else arr
 
 
 def _slice_posterior_draw(
@@ -76,41 +216,34 @@ def _slice_posterior_draw(
     p_capture: Optional[jnp.ndarray],
     gate: Optional[jnp.ndarray],
     mixing_weights: Optional[jnp.ndarray],
-    n_samples: int,
-    is_mixture: bool,
+    param_layouts: Dict[str, "AxisLayout"],
     bnb_concentration: Optional[jnp.ndarray] = None,
 ) -> dict:
     """Extract parameter values for a single posterior draw.
 
-    Each parameter may or may not carry a leading sample dimension.
-    This helper uses the same ``ndim``-based rules that were historically
-    copy-pasted in ``denoise_counts``, the SVI AnnData mixin, and the
-    MCMC AnnData mixin.  Centralising the logic here ensures the rules
-    stay consistent.
+    Uses ``AxisLayout.has_sample_dim`` per parameter to decide whether
+    to index into the leading axis — no ``ndim`` / ``is_mixture``
+    heuristics are needed.
 
     Parameters
     ----------
     idx : int
         Index of the posterior draw to extract.
     r : jnp.ndarray
-        NB dispersion array with a leading sample axis.
+        NB dispersion array, with a leading sample axis.
     p : jnp.ndarray
-        Success probability — may or may not have a sample axis.
+        Success probability, possibly with a leading sample axis.
     p_capture : jnp.ndarray or None
-        Capture probability — ``(n_samples, n_cells)`` or ``(n_cells,)``
-        or ``None``.
+        Capture probability, or ``None``.
     gate : jnp.ndarray or None
-        Zero-inflation gate — expected ``ndim`` depends on whether the
-        model is a mixture.
+        Zero-inflation gate, or ``None``.
     mixing_weights : jnp.ndarray or None
-        Component mixing weights — ``(n_samples, K)`` or ``(K,)`` or
-        ``None``.
-    n_samples : int
-        Number of posterior draws (i.e. ``r.shape[0]``).
-    is_mixture : bool
-        Whether the model is a mixture model.
+        Component mixing weights, or ``None``.
+    param_layouts : dict of str to AxisLayout
+        Semantic axis layouts at the posterior level.  Used to determine
+        which arrays carry a sample dimension that needs slicing.
     bnb_concentration : jnp.ndarray or None
-        Optional BNB excess-dispersion concentration.
+        Optional BNB concentration.
 
     Returns
     -------
@@ -118,51 +251,19 @@ def _slice_posterior_draw(
         Keys: ``r``, ``p``, ``p_capture``, ``gate``, ``mixing_weights``,
         ``bnb_concentration`` — each sliced to remove the sample axis.
     """
-    # r always has the leading sample axis — index directly
-    r_s = r[idx]
-
-    # p may or may not have a sample axis; check leading dim size
-    p_s = p[idx] if p.ndim >= 1 and p.shape[0] == n_samples else p
-
-    # p_capture has a sample axis when it is 2-D: (n_samples, n_cells)
-    pc_s = (
-        p_capture[idx]
-        if p_capture is not None and p_capture.ndim == 2
-        else p_capture
-    )
-
-    # gate has a sample axis when its ndim exceeds the "MAP ndim"
-    # (standard MAP gate is 1-D; mixture MAP gate is 2-D)
-    map_gate_ndim = 2 if is_mixture else 1
-    g_s = (
-        gate[idx]
-        if gate is not None and gate.ndim > map_gate_ndim
-        else gate
-    )
-
-    # mixing_weights has a sample axis when it is 2-D: (n_samples, K)
-    mw_s = (
-        mixing_weights[idx]
-        if mixing_weights is not None and mixing_weights.ndim == 2
-        else mixing_weights
-    )
-
-    # bnb_concentration follows the same rule as gate
-    map_bnb_ndim = 2 if is_mixture else 1
-    bnb_s = (
-        bnb_concentration[idx]
-        if bnb_concentration is not None
-        and bnb_concentration.ndim > map_bnb_ndim
-        else bnb_concentration
-    )
-
     return {
-        "r": r_s,
-        "p": p_s,
-        "p_capture": pc_s,
-        "gate": g_s,
-        "mixing_weights": mw_s,
-        "bnb_concentration": bnb_s,
+        "r": _slice_draw(r, param_layouts.get("r"), idx),
+        "p": _slice_draw(p, param_layouts.get("p"), idx),
+        "p_capture": _slice_draw(
+            p_capture, param_layouts.get("p_capture"), idx
+        ),
+        "gate": _slice_draw(gate, param_layouts.get("gate"), idx),
+        "mixing_weights": _slice_draw(
+            mixing_weights, param_layouts.get("mixing_weights"), idx
+        ),
+        "bnb_concentration": _slice_draw(
+            bnb_concentration, param_layouts.get("bnb_concentration"), idx
+        ),
     }
 
 
@@ -464,6 +565,7 @@ def sample_biological_nb(
     mixing_weights: Optional[jnp.ndarray] = None,
     cell_batch_size: Optional[int] = None,
     bnb_concentration: Optional[jnp.ndarray] = None,
+    param_layouts: Optional[Dict[str, "AxisLayout"]] = None,
 ) -> jnp.ndarray:
     """Sample from the base Negative Binomial, stripping technical noise.
 
@@ -557,8 +659,47 @@ def sample_biological_nb(
     """
     is_mixture = mixing_weights is not None
 
+    # When called without explicit layouts, infer from tensor shapes.
+    # The sample-dim detection replicates the old ndim heuristic:
+    # r has a sample dim when its rank exceeds the expected MAP rank.
+    if param_layouts is None:
+        from .core.axis_layout import infer_layout
+
+        _expected_r_rank = 2 if is_mixture else 1
+        _has_sd = r.ndim > _expected_r_rank
+        _n_comp = r.shape[-2] if is_mixture and r.ndim >= 2 else None
+        _params: Dict[str, jnp.ndarray] = {"r": r, "p": p}
+        if mixing_weights is not None:
+            _params["mixing_weights"] = mixing_weights
+        if bnb_concentration is not None:
+            _params["bnb_concentration"] = bnb_concentration
+        param_layouts = {
+            k: infer_layout(k, v, n_genes=int(r.shape[-1]),
+                            n_cells=n_cells, n_components=_n_comp,
+                            has_sample_dim=_has_sd)
+            for k, v in _params.items()
+        }
+
     # Detect whether r carries a leading posterior-sample dimension
-    has_sample_dim = _has_sample_dim(r, is_mixture)
+    # purely from AxisLayout metadata — no ndim heuristics.
+    has_sample_dim = _has_sample_dim(param_layouts)
+
+    # Pre-compute layout-derived boolean flags at Python (trace) time.
+    # These are static and safe to close over inside vmap.
+    # Use MAP-level layouts (without sample dim) since vmap / the inner
+    # function operates on individual draws.
+    _base = {k: v.without_sample_dim() for k, v in param_layouts.items()}
+    _p_has_comp = (
+        _base["p"].component_axis is not None if "p" in _base else None
+    )
+    _p_has_genes = (
+        _base["p"].gene_axis is not None if "p" in _base else None
+    )
+    _bnb_comp = (
+        _base["bnb_concentration"].component_axis is not None
+        if "bnb_concentration" in _base
+        else None
+    )
 
     if has_sample_dim:
         # Infer n_samples from the leading dimension of r
@@ -579,6 +720,9 @@ def sample_biological_nb(
                 mixing_weights=mw_i if _is_mixture else None,
                 cell_batch_size=cell_batch_size,
                 bnb_concentration=bnb_i if _has_bnb else None,
+                p_has_components=_p_has_comp,
+                p_has_genes=_p_has_genes,
+                bnb_has_components=_bnb_comp,
             )
 
         # vmap requires concrete arrays for every argument, so we
@@ -604,6 +748,9 @@ def sample_biological_nb(
                 mixing_weights=mixing_weights,
                 cell_batch_size=cell_batch_size,
                 bnb_concentration=bnb_concentration,
+                p_has_components=_p_has_comp,
+                p_has_genes=_p_has_genes,
+                bnb_has_components=_bnb_comp,
             )
             all_samples.append(sample_i)
         # Stack along a new leading sample axis → (n_samples, n_cells, n_genes)
@@ -621,6 +768,10 @@ def _sample_biological_nb_single(
     mixing_weights: Optional[jnp.ndarray] = None,
     cell_batch_size: Optional[int] = None,
     bnb_concentration: Optional[jnp.ndarray] = None,
+    *,
+    p_has_components: Optional[bool] = None,
+    p_has_genes: Optional[bool] = None,
+    bnb_has_components: Optional[bool] = None,
 ) -> jnp.ndarray:
     """Sample one realisation of biological NB counts for all cells.
 
@@ -645,6 +796,17 @@ def _sample_biological_nb_single(
         Component weights ``(n_components,)`` for mixture models.
     cell_batch_size : int or None
         Optional cell-level batching.
+    bnb_concentration : jnp.ndarray or None
+        BNB concentration, ``(n_genes,)`` or ``(n_components, n_genes)``.
+    p_has_components : bool or None
+        Whether ``p`` has a component axis (from layout metadata).
+        When ``None``, falls back to ndim heuristic.
+    p_has_genes : bool or None
+        Whether ``p`` has a gene axis (from layout metadata).
+        When ``None``, falls back to ndim heuristic.
+    bnb_has_components : bool or None
+        Whether ``bnb_concentration`` has a component axis.
+        When ``None``, falls back to ndim heuristic.
 
     Returns
     -------
@@ -681,35 +843,50 @@ def _sample_biological_nb_single(
             # Gather per-cell r values: (batch_n, n_genes)
             r_batch = r[components]
 
-            # Gather per-cell p values
-            p_is_component_specific = p.ndim >= 1 and p.shape[0] == r.shape[0]
-            if p_is_component_specific:
+            # Determine whether p is per-component from layout flag,
+            # falling back to shape heuristic only on old code paths.
+            _p_is_comp = (
+                p_has_components
+                if p_has_components is not None
+                else (p.ndim >= 1 and p.shape[0] == r.shape[0])
+            )
+            if _p_is_comp:
                 p_batch = p[components]
-                # When p is (n_components,), indexing yields (batch_n,) and
-                # we need (batch_n, 1) to broadcast with r_batch
-                # (batch_n, n_genes).  When p is (n_components, n_genes)
-                # (hierarchical), indexing already yields (batch_n, n_genes).
-                if p_batch.ndim == 1:
+                # When p lacks a gene axis, gathering from (K,) yields
+                # (batch_n,); expand to (batch_n, 1) for broadcasting
+                # with r_batch (batch_n, n_genes).
+                _p_no_genes = (
+                    not p_has_genes
+                    if p_has_genes is not None
+                    else (p_batch.ndim == 1)
+                )
+                if _p_no_genes:
                     p_batch = p_batch[:, None]
             else:
                 p_batch = p
 
-            # Gather per-cell bnb_concentration when it varies by component.
+            # Gather per-cell bnb_concentration when it varies by
+            # component, using layout flag when available.
             bnb_batch = bnb_concentration
-            if bnb_concentration is not None and bnb_concentration.ndim == 2:
-                # (K, G) -> (batch_n, G)
+            _bnb_comp = (
+                bnb_has_components
+                if bnb_has_components is not None
+                else (
+                    bnb_concentration is not None
+                    and bnb_concentration.ndim == 2
+                )
+            )
+            if bnb_concentration is not None and _bnb_comp:
                 bnb_batch = bnb_concentration[components]
 
             nb = build_count_dist(r_batch, p_batch, bnb_batch)
-            batch_counts = nb.sample(sample_key)  # (batch_n, n_genes)
+            batch_counts = nb.sample(sample_key)
         else:
             # ----------------------------------------------------------
             # Standard model: p is shared across all cells.
             # ----------------------------------------------------------
             nb = build_count_dist(r, p, bnb_concentration)
-            batch_counts = nb.sample(
-                batch_key, (batch_n,)
-            )  # (batch_n, n_genes)
+            batch_counts = nb.sample(batch_key, (batch_n,))
 
         batch_results.append(batch_counts)
 
@@ -732,6 +909,7 @@ def sample_posterior_ppc(
     mixing_weights: Optional[jnp.ndarray] = None,
     cell_batch_size: Optional[int] = None,
     bnb_concentration: Optional[jnp.ndarray] = None,
+    param_layouts: Optional[Dict[str, "AxisLayout"]] = None,
 ) -> jnp.ndarray:
     """Sample from the full generative model using posterior parameters.
 
@@ -821,8 +999,56 @@ def sample_posterior_ppc(
     """
     is_mixture = mixing_weights is not None
 
+    # When called without explicit layouts, infer from tensor shapes.
+    # The sample-dim detection replicates the old ndim heuristic:
+    # r has a sample dim when its rank exceeds the expected MAP rank.
+    if param_layouts is None:
+        from .core.axis_layout import infer_layout
+
+        _expected_r_rank = 2 if is_mixture else 1
+        _has_sd = r.ndim > _expected_r_rank
+        _n_comp = r.shape[-2] if is_mixture and r.ndim >= 2 else None
+        _params: Dict[str, jnp.ndarray] = {"r": r, "p": p}
+        if gate is not None:
+            _params["gate"] = gate
+        if p_capture is not None:
+            _params["p_capture"] = p_capture
+        if mixing_weights is not None:
+            _params["mixing_weights"] = mixing_weights
+        if bnb_concentration is not None:
+            _params["bnb_concentration"] = bnb_concentration
+        param_layouts = {
+            k: infer_layout(k, v, n_genes=int(r.shape[-1]),
+                            n_cells=n_cells, n_components=_n_comp,
+                            has_sample_dim=_has_sd)
+            for k, v in _params.items()
+        }
+
     # Detect whether r carries a leading posterior-sample dimension
-    has_sample_dim = _has_sample_dim(r, is_mixture)
+    # purely from AxisLayout metadata — no ndim heuristics.
+    has_sample_dim = _has_sample_dim(param_layouts)
+
+    # Pre-compute layout-derived boolean flags at Python (trace) time.
+    # These are static and safe to close over inside vmap.
+    # Use MAP-level layouts (without sample dim) since the inner function
+    # operates on individual draws.
+    _base = {k: v.without_sample_dim() for k, v in param_layouts.items()}
+    _p_has_comp = (
+        _base["p"].component_axis is not None if "p" in _base else None
+    )
+    _p_has_genes = (
+        _base["p"].gene_axis is not None if "p" in _base else None
+    )
+    _gate_comp = (
+        _base["gate"].component_axis is not None
+        if "gate" in _base
+        else None
+    )
+    _bnb_comp = (
+        _base["bnb_concentration"].component_axis is not None
+        if "bnb_concentration" in _base
+        else None
+    )
 
     if has_sample_dim:
         actual_n_samples = r.shape[0]
@@ -862,6 +1088,10 @@ def sample_posterior_ppc(
                 mixing_weights=mw_i if _is_mixture else None,
                 cell_batch_size=cell_batch_size,
                 bnb_concentration=bnb_i if _has_bnb else None,
+                p_has_components=_p_has_comp,
+                p_has_genes=_p_has_genes,
+                gate_has_components=_gate_comp,
+                bnb_has_components=_bnb_comp,
             )
 
         return vmap(_sample_one)(
@@ -882,6 +1112,10 @@ def sample_posterior_ppc(
                 mixing_weights=mixing_weights,
                 cell_batch_size=cell_batch_size,
                 bnb_concentration=bnb_concentration,
+                p_has_components=_p_has_comp,
+                p_has_genes=_p_has_genes,
+                gate_has_components=_gate_comp,
+                bnb_has_components=_bnb_comp,
             )
             all_samples.append(sample_i)
         return jnp.stack(all_samples, axis=0)
@@ -897,6 +1131,11 @@ def _sample_posterior_ppc_single(
     mixing_weights: Optional[jnp.ndarray] = None,
     cell_batch_size: Optional[int] = None,
     bnb_concentration: Optional[jnp.ndarray] = None,
+    *,
+    p_has_components: Optional[bool] = None,
+    p_has_genes: Optional[bool] = None,
+    gate_has_components: Optional[bool] = None,
+    bnb_has_components: Optional[bool] = None,
 ) -> jnp.ndarray:
     """Sample one PPC realisation from the full generative model.
 
@@ -907,23 +1146,32 @@ def _sample_posterior_ppc_single(
     Parameters
     ----------
     r : jnp.ndarray
-        Dispersion.  ``(n_genes,)`` for standard, ``(n_components,
-        n_genes)`` for mixture.
+        Dispersion.  ``(n_genes,)`` for standard, ``(K, n_genes)``
+        for mixture.
     p : jnp.ndarray
-        Success probability.  Scalar or ``(n_components,)`` for mixture.
+        Success probability.  Scalar or ``(K,)`` for mixture.
     n_cells : int
         Number of cells.
     rng_key : random.PRNGKey
         PRNG key.
     gate : jnp.ndarray or None
-        Zero-inflation gate.  ``(n_genes,)`` or ``(n_components,
-        n_genes)`` for per-component gates.
+        Zero-inflation gate.  ``(n_genes,)`` or ``(K, n_genes)``.
     p_capture : jnp.ndarray or None
         Per-cell capture probability ``(n_cells,)``.
     mixing_weights : jnp.ndarray or None
-        Component weights ``(n_components,)`` for mixture models.
+        Component weights ``(K,)`` for mixture models.
     cell_batch_size : int or None
         Optional cell-level batching.
+    bnb_concentration : jnp.ndarray or None
+        BNB concentration, ``(n_genes,)`` or ``(K, n_genes)``.
+    p_has_components : bool or None
+        From layout: whether ``p`` has a component axis.
+    p_has_genes : bool or None
+        From layout: whether ``p`` has a gene axis.
+    gate_has_components : bool or None
+        From layout: whether ``gate`` has a component axis.
+    bnb_has_components : bool or None
+        From layout: whether ``bnb_concentration`` has a component axis.
 
     Returns
     -------
@@ -952,7 +1200,6 @@ def _sample_posterior_ppc_single(
             # Mixture model: sample component per cell, gather params
             # -------------------------------------------------------
             n_components = r.shape[0]
-            n_genes = r.shape[1]
             comp_key, sample_key = random.split(batch_key)
 
             # Component assignments: (batch_n,)
@@ -963,37 +1210,60 @@ def _sample_posterior_ppc_single(
             # Gather per-cell r: (batch_n, n_genes)
             r_batch = r[components]
 
-            # Gather per-cell p
-            p_is_component_specific = p.ndim >= 1 and p.shape[0] == n_components
-            if p_is_component_specific:
+            # Determine whether p is per-component from layout flag,
+            # falling back to shape heuristic on legacy code paths.
+            _p_is_comp = (
+                p_has_components
+                if p_has_components is not None
+                else (p.ndim >= 1 and p.shape[0] == n_components)
+            )
+            if _p_is_comp:
                 p_batch = p[components]
-                if p_batch.ndim == 1:
+                # When p lacks a gene axis, expand to broadcast with r
+                _p_no_genes = (
+                    not p_has_genes
+                    if p_has_genes is not None
+                    else (p_batch.ndim == 1)
+                )
+                if _p_no_genes:
                     p_batch = p_batch[:, None]
             else:
                 p_batch = p
 
-            # Gather per-cell gate
+            # Gather per-cell gate when it is per-component, using
+            # layout flag when available.
             if has_gate:
-                if gate.ndim == 2 and gate.shape[0] == n_components:
-                    gate_batch = gate[components]
-                else:
-                    gate_batch = gate
+                _gate_comp = (
+                    gate_has_components
+                    if gate_has_components is not None
+                    else (gate.ndim == 2 and gate.shape[0] == n_components)
+                )
+                gate_batch = gate[components] if _gate_comp else gate
             else:
                 gate_batch = None
 
             # VCP: compute p_effective
             if has_vcp:
-                p_cap = p_capture[start:end]  # (batch_n,)
-                p_cap_exp = p_cap[:, None]  # (batch_n, 1)
+                p_cap = p_capture[start:end]
+                p_cap_exp = p_cap[:, None]
                 p_effective = (
                     p_batch * p_cap_exp / (1 - p_batch * (1 - p_cap_exp))
                 )
             else:
                 p_effective = p_batch
 
-            # Gather per-cell bnb_concentration when it varies by component.
+            # Gather per-cell bnb_concentration when it varies by
+            # component, using layout flag when available.
             bnb_batch = bnb_concentration
-            if bnb_concentration is not None and bnb_concentration.ndim == 2:
+            _bnb_comp = (
+                bnb_has_components
+                if bnb_has_components is not None
+                else (
+                    bnb_concentration is not None
+                    and bnb_concentration.ndim == 2
+                )
+            )
+            if bnb_concentration is not None and _bnb_comp:
                 # (K, G) -> (batch_n, G)
                 bnb_batch = bnb_concentration[components]
 
@@ -1110,6 +1380,7 @@ def denoise_counts(
     component_assignment: Optional[jnp.ndarray] = None,
     cell_batch_size: Optional[int] = None,
     bnb_concentration: Optional[jnp.ndarray] = None,
+    param_layouts: Optional[Dict[str, "AxisLayout"]] = None,
 ) -> Union[jnp.ndarray, Dict[str, jnp.ndarray]]:
     """Denoise observed counts using the Bayesian posterior of true transcripts.
 
@@ -1243,8 +1514,47 @@ def denoise_counts(
 
     is_mixture = mixing_weights is not None
 
+    # When called without explicit layouts (e.g. directly from user code
+    # with raw tensors), infer layouts from the parameter shapes.
+    # The sample-dim detection replicates the old ndim heuristic as a
+    # one-time compatibility shim: r has a sample dim when its rank
+    # exceeds the expected MAP rank.
+    if param_layouts is None:
+        _expected_r_rank = 2 if is_mixture else 1
+        _has_sd = r.ndim > _expected_r_rank
+        _params: Dict[str, jnp.ndarray] = {"r": r, "p": p}
+        if p_capture is not None:
+            _params["p_capture"] = p_capture
+        if gate is not None:
+            _params["gate"] = gate
+        if mixing_weights is not None:
+            _params["mixing_weights"] = mixing_weights
+        if bnb_concentration is not None:
+            _params["bnb_concentration"] = bnb_concentration
+        from .core.axis_layout import infer_layout
+
+        param_layouts = {
+            k: infer_layout(
+                k, v,
+                n_genes=counts.shape[-1],
+                n_cells=counts.shape[0],
+                n_components=(
+                    r.shape[-2] if is_mixture and r.ndim >= 2 else None
+                ),
+                has_sample_dim=_has_sd,
+            )
+            for k, v in _params.items()
+        }
+
     # Detect whether r carries a leading posterior-sample dimension
-    has_sample_dim = _has_sample_dim(r, is_mixture)
+    # purely from AxisLayout metadata — no ndim heuristics.
+    has_sample_dim = _has_sample_dim(param_layouts)
+
+    # Derive MAP-level layouts (no sample dim) for the denoising functions,
+    # since the sample dimension is handled by the outer loop.
+    _base_layouts = {
+        k: v.without_sample_dim() for k, v in param_layouts.items()
+    }
 
     if not has_sample_dim:
         return _denoise_single(
@@ -1260,6 +1570,7 @@ def denoise_counts(
             component_assignment=component_assignment,
             cell_batch_size=cell_batch_size,
             bnb_concentration=bnb_concentration,
+            param_layouts=_base_layouts,
         )
 
     # Multi-sample path: iterate over posterior draws
@@ -1274,8 +1585,8 @@ def denoise_counts(
     var_list: List[jnp.ndarray] = []
 
     for s in range(n_samples):
-        # Extract parameters for this single posterior draw, stripping
-        # the leading sample dimension where present
+        # Extract parameters for this single posterior draw, using
+        # layout metadata to decide which arrays carry a sample axis.
         draw = _slice_posterior_draw(
             s,
             r=r,
@@ -1283,11 +1594,12 @@ def denoise_counts(
             p_capture=p_capture,
             gate=gate,
             mixing_weights=mixing_weights,
-            n_samples=n_samples,
-            is_mixture=is_mixture,
+            param_layouts=param_layouts,
             bnb_concentration=bnb_concentration,
         )
 
+        # After slicing, the draw parameters are MAP-level (no sample dim);
+        # pass _base_layouts for layout-driven flag computation.
         out = _denoise_single(
             counts=counts,
             r=draw["r"],
@@ -1301,6 +1613,7 @@ def denoise_counts(
             component_assignment=component_assignment,
             cell_batch_size=cell_batch_size,
             bnb_concentration=draw["bnb_concentration"],
+            param_layouts=_base_layouts,
         )
 
         if return_variance:
@@ -1334,6 +1647,8 @@ def _denoise_single(
     component_assignment: Optional[jnp.ndarray],
     cell_batch_size: Optional[int],
     bnb_concentration: Optional[jnp.ndarray] = None,
+    *,
+    param_layouts: Dict[str, "AxisLayout"],
 ) -> Union[jnp.ndarray, Dict[str, jnp.ndarray]]:
     """Dispatch denoising for a single set of parameters.
 
@@ -1356,18 +1671,22 @@ def _denoise_single(
         Gate probability.  ``(n_genes,)`` or ``(n_components, n_genes)`` or
         ``None``.
     method : str or tuple of (str, str)
-        Denoising method.  A single string or ``(general, zi_zeros)``
-        tuple; see :func:`denoise_counts`.
+        Denoising method.
     rng_key : random.PRNGKey or None
-        PRNG key (needed when any element of ``method`` is ``'sample'``).
+        PRNG key.
     return_variance : bool
         Whether to include variance in the output.
     mixing_weights : jnp.ndarray or None
         Component weights ``(n_components,)`` for mixture models.
     component_assignment : jnp.ndarray or None
-        Per-cell component indices ``(n_cells,)`` for mixture models.
+        Per-cell component indices ``(n_cells,)``.
     cell_batch_size : int or None
         Batch cells to limit memory.
+    bnb_concentration : jnp.ndarray or None
+        Optional BNB concentration.
+    param_layouts : dict of str to AxisLayout
+        MAP-level semantic layouts used to derive boolean flags that
+        replace ``ndim``/``shape`` heuristics.
 
     Returns
     -------
@@ -1376,21 +1695,58 @@ def _denoise_single(
     """
     is_mixture = mixing_weights is not None
 
+    # Layout-derived flags for the denoising dispatch.
+    _p_has_comp = (
+        param_layouts["p"].component_axis is not None
+        if "p" in param_layouts
+        else None
+    )
+    _gate_has_comp = (
+        param_layouts["gate"].component_axis is not None
+        if "gate" in param_layouts
+        else None
+    )
+
     if is_mixture and component_assignment is not None:
         # Gather per-cell parameters from assigned components
-        r_cell = r[component_assignment]  # (n_cells, n_genes)
-        p_is_comp = p.ndim >= 1 and p.shape[0] == r.shape[0]
-        p_cell = p[component_assignment] if p_is_comp else p
-        # When p was (n_components,), gathering yields (n_cells,).
-        # Reshape to (n_cells, 1) to disambiguate from gene-specific
-        # p of shape (n_genes,) in downstream broadcasting.
-        if p_cell.ndim == 1 and p_cell.shape[0] == counts.shape[0]:
-            p_cell = p_cell[:, None]
-        g_cell = (
-            gate[component_assignment]
-            if gate is not None and gate.ndim == 2
-            else gate
+        r_cell = r[component_assignment]
+
+        # Determine per-component p from layout metadata.
+        _p_comp = (
+            _p_has_comp
+            if _p_has_comp is not None
+            else (p.ndim >= 1 and p.shape[0] == r.shape[0])
         )
+        p_cell = p[component_assignment] if _p_comp else p
+        # When p was (K,) and we gathered per-cell values, the result is
+        # (n_cells,).  Reshape to (n_cells, 1) so downstream doesn't
+        # confuse it with gene-specific p.  Only expand if we actually
+        # gathered (scalar/gene-level p doesn't need expansion).
+        if _p_comp:
+            _p_has_genes = (
+                param_layouts["p"].gene_axis is not None
+                if "p" in param_layouts
+                else None
+            )
+            _needs_expand = (
+                not _p_has_genes
+                if _p_has_genes is not None
+                else (p_cell.ndim == 1
+                      and p_cell.shape[0] == counts.shape[0])
+            )
+            if _needs_expand:
+                p_cell = p_cell[:, None]
+
+        # Gate: gather per-cell gate when per-component
+        _gc = (
+            _gate_has_comp
+            if _gate_has_comp is not None
+            else (gate is not None and gate.ndim == 2)
+        )
+        g_cell = (
+            gate[component_assignment] if gate is not None and _gc else gate
+        )
+
         return _denoise_standard(
             counts,
             r_cell,
@@ -1417,6 +1773,7 @@ def _denoise_single(
             mixing_weights,
             cell_batch_size,
             bnb_concentration=bnb_concentration,
+            param_layouts=param_layouts,
         )
 
     # Standard (non-mixture) model
@@ -2140,6 +2497,8 @@ def _denoise_mixture_marginal(
     mixing_weights: jnp.ndarray,
     cell_batch_size: Optional[int],
     bnb_concentration: Optional[jnp.ndarray] = None,
+    *,
+    param_layouts: Dict[str, "AxisLayout"],
 ) -> Union[jnp.ndarray, Dict[str, jnp.ndarray]]:
     """Denoise by marginalising over mixture components.
 
@@ -2167,17 +2526,19 @@ def _denoise_mixture_marginal(
     gate : jnp.ndarray or None
         Gate ``(n_genes,)`` or ``(n_components, n_genes)`` or ``None``.
     method : str or tuple of (str, str)
-        Denoising method.  A single string or ``(general, zi_zeros)``
-        tuple; see :func:`denoise_counts`.  The general_method controls
-        whether components are sampled or marginalised.
+        Denoising method.
     rng_key : random.PRNGKey or None
-        PRNG key (needed when any element of ``method`` is ``'sample'``).
+        PRNG key.
     return_variance : bool
         Whether to return variance.
     mixing_weights : jnp.ndarray
         Component weights ``(n_components,)``.
     cell_batch_size : int or None
         Cell batching.
+    bnb_concentration : jnp.ndarray or None
+        Optional BNB concentration.
+    param_layouts : dict of str to AxisLayout
+        MAP-level semantic layouts for layout-driven flag computation.
 
     Returns
     -------
@@ -2188,7 +2549,35 @@ def _denoise_mixture_marginal(
     general_method = method[0] if isinstance(method, tuple) else method
 
     n_components = r.shape[0]
-    p_is_comp = p.ndim >= 1 and p.shape[0] == n_components
+
+    # Determine whether p and gate are per-component from layout metadata.
+    _p_has_comp = (
+        param_layouts["p"].component_axis is not None
+        if "p" in param_layouts
+        else None
+    )
+    p_is_comp = (
+        _p_has_comp
+        if _p_has_comp is not None
+        else (p.ndim >= 1 and p.shape[0] == n_components)
+    )
+
+    _gate_has_comp = (
+        param_layouts["gate"].component_axis is not None
+        if "gate" in param_layouts
+        else None
+    )
+    _gc = (
+        _gate_has_comp
+        if _gate_has_comp is not None
+        else (gate is not None and gate.ndim == 2)
+    )
+
+    _p_has_genes = (
+        param_layouts["p"].gene_axis is not None
+        if "p" in param_layouts
+        else None
+    )
 
     if general_method == "sample":
         # Sample component per cell, gather per-cell params, then use
@@ -2197,12 +2586,21 @@ def _denoise_mixture_marginal(
         comp = dist.Categorical(probs=mixing_weights).sample(
             key_comp, (counts.shape[0],)
         )
-        r_cell = r[comp]  # (n_cells, n_genes)
+        r_cell = r[comp]
         p_cell = p[comp] if p_is_comp else p
-        # Disambiguate per-cell p from gene-specific p (see _denoise_single)
-        if p_cell.ndim == 1 and p_cell.shape[0] == counts.shape[0]:
-            p_cell = p_cell[:, None]
-        g_cell = gate[comp] if gate is not None and gate.ndim == 2 else gate
+        # When p was (K,) and we gathered per-cell values, the result
+        # is (n_cells,).  Expand to (n_cells, 1) so downstream doesn't
+        # confuse it with gene-specific p.  Only expand if gathered.
+        if p_is_comp:
+            _needs_expand = (
+                not _p_has_genes
+                if _p_has_genes is not None
+                else (p_cell.ndim == 1
+                      and p_cell.shape[0] == counts.shape[0])
+            )
+            if _needs_expand:
+                p_cell = p_cell[:, None]
+        g_cell = gate[comp] if gate is not None and _gc else gate
         return _denoise_standard(
             counts,
             r_cell,
@@ -2226,7 +2624,7 @@ def _denoise_mixture_marginal(
     for k in range(n_components):
         r_k = r[k]
         p_k = p[k] if p_is_comp else p
-        g_k = gate[k] if gate is not None and gate.ndim == 2 else gate
+        g_k = gate[k] if gate is not None and _gc else gate
 
         # Split rng_key per component if the zi_zero path needs sampling
         if needs_rng:

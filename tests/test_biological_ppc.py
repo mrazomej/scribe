@@ -376,43 +376,57 @@ class TestNBDMEquivalence:
 
 
 class TestHasSampleDim:
-    """Tests for ``_has_sample_dim`` — detects a leading posterior-sample axis
-    on the ``r`` tensor based on its ndim and whether the model is a mixture.
+    """Tests for ``_has_sample_dim`` — reads ``has_sample_dim`` directly
+    from the ``param_layouts["r"]`` AxisLayout metadata.
     """
 
-    def test_standard_map_no_sample_dim(self):
-        """Standard model MAP r with shape (G,) should not have a sample dim."""
+    def test_no_sample_dim(self):
+        """Layout with has_sample_dim=False returns False."""
         from scribe.sampling import _has_sample_dim
+        from scribe.core.axis_layout import AxisLayout
 
-        r = jnp.ones((20,))
-        assert _has_sample_dim(r, is_mixture=False) is False
+        layouts = {"r": AxisLayout(("genes",), has_sample_dim=False)}
+        assert _has_sample_dim(layouts) is False
 
-    def test_standard_posterior_has_sample_dim(self):
-        """Standard model posterior r with shape (S, G) has a sample dim."""
+    def test_has_sample_dim(self):
+        """Layout with has_sample_dim=True returns True."""
         from scribe.sampling import _has_sample_dim
+        from scribe.core.axis_layout import AxisLayout
 
-        r = jnp.ones((50, 20))
-        assert _has_sample_dim(r, is_mixture=False) is True
+        layouts = {"r": AxisLayout(("genes",), has_sample_dim=True)}
+        assert _has_sample_dim(layouts) is True
 
-    def test_mixture_map_no_sample_dim(self):
-        """Mixture model MAP r with shape (K, G) should not have a sample dim."""
+    def test_mixture_no_sample_dim(self):
+        """Mixture layout without sample dim returns False."""
         from scribe.sampling import _has_sample_dim
+        from scribe.core.axis_layout import AxisLayout
 
-        r = jnp.ones((3, 20))
-        assert _has_sample_dim(r, is_mixture=True) is False
+        layouts = {"r": AxisLayout(("components", "genes"), has_sample_dim=False)}
+        assert _has_sample_dim(layouts) is False
 
-    def test_mixture_posterior_has_sample_dim(self):
-        """Mixture model posterior r with shape (S, K, G) has a sample dim."""
+    def test_mixture_has_sample_dim(self):
+        """Mixture layout with sample dim returns True."""
         from scribe.sampling import _has_sample_dim
+        from scribe.core.axis_layout import AxisLayout
 
-        r = jnp.ones((50, 3, 20))
-        assert _has_sample_dim(r, is_mixture=True) is True
+        layouts = {"r": AxisLayout(("components", "genes"), has_sample_dim=True)}
+        assert _has_sample_dim(layouts) is True
 
 
 class TestSlicePosteriorDraw:
     """Tests for ``_slice_posterior_draw`` — extracts parameter values for a
-    single posterior draw, stripping the leading sample axis where present.
+    single posterior draw using AxisLayout metadata to determine which
+    parameters carry a leading sample axis.
     """
+
+    def _make_layouts(self, axes_map, has_sample=True):
+        """Helper to build a param_layouts dict from a simple axes mapping."""
+        from scribe.core.axis_layout import AxisLayout
+
+        return {
+            k: AxisLayout(axes=v, has_sample_dim=has_sample)
+            for k, v in axes_map.items()
+        }
 
     def test_standard_model_slices_all_params(self):
         """All params with a sample axis should be sliced at the given index."""
@@ -425,21 +439,24 @@ class TestSlicePosteriorDraw:
         p_capture = jnp.ones((n_samples, n_cells)) * 0.9
         gate = jnp.ones((n_samples, n_genes)) * 0.1
 
+        # Build posterior-level layouts (has_sample_dim=True)
+        layouts = self._make_layouts({
+            "r": ("genes",),
+            "p": (),
+            "p_capture": ("cells",),
+            "gate": ("genes",),
+        })
+
         draw = _slice_posterior_draw(
             3,
             r=r, p=p, p_capture=p_capture, gate=gate,
-            mixing_weights=None, n_samples=n_samples, is_mixture=False,
+            mixing_weights=None, param_layouts=layouts,
         )
 
-        # r should be sliced to (n_genes,)
         assert draw["r"].shape == (n_genes,)
-        # p should be sliced to scalar
         assert draw["p"].shape == ()
-        # p_capture should be sliced to (n_cells,)
         assert draw["p_capture"].shape == (n_cells,)
-        # gate should be sliced to (n_genes,)
         assert draw["gate"].shape == (n_genes,)
-        # mixing_weights and bnb_concentration should remain None
         assert draw["mixing_weights"] is None
         assert draw["bnb_concentration"] is None
 
@@ -454,41 +471,52 @@ class TestSlicePosteriorDraw:
         gate = jnp.ones((n_samples, K, n_genes)) * 0.1
         mw = jnp.ones((n_samples, K)) / K
 
+        layouts = self._make_layouts({
+            "r": ("components", "genes"),
+            "p": (),
+            "gate": ("components", "genes"),
+            "mixing_weights": ("components",),
+        })
+
         draw = _slice_posterior_draw(
             5,
             r=r, p=p, p_capture=None, gate=gate,
-            mixing_weights=mw, n_samples=n_samples, is_mixture=True,
+            mixing_weights=mw, param_layouts=layouts,
         )
 
-        # r should be sliced to (K, n_genes)
         assert draw["r"].shape == (K, n_genes)
-        # p is scalar-like per sample — should be sliced to scalar
         assert draw["p"].shape == ()
-        # gate is (S, K, G) -> (K, G)
         assert draw["gate"].shape == (K, n_genes)
-        # mixing_weights is (S, K) -> (K,)
         assert draw["mixing_weights"].shape == (K,)
 
     def test_shared_params_not_sliced(self):
-        """Params without a sample dim (shared across draws) pass through."""
+        """Params whose layout says has_sample_dim=False pass through."""
         from scribe.sampling import _slice_posterior_draw
 
         n_samples, n_genes = 10, 20
 
-        # r has sample dim, but p and gate do not
         r = jnp.ones((n_samples, n_genes))
         p_shared = jnp.array(0.3)
         gate_shared = jnp.ones((n_genes,)) * 0.1
 
+        # r has sample dim; p and gate do not
+        layouts = self._make_layouts({"r": ("genes",)}, has_sample=True)
+        layouts["p"] = __import__(
+            "scribe.core.axis_layout", fromlist=["AxisLayout"]
+        ).AxisLayout(axes=(), has_sample_dim=False)
+        layouts["gate"] = __import__(
+            "scribe.core.axis_layout", fromlist=["AxisLayout"]
+        ).AxisLayout(axes=("genes",), has_sample_dim=False)
+
         draw = _slice_posterior_draw(
             0,
             r=r, p=p_shared, p_capture=None, gate=gate_shared,
-            mixing_weights=None, n_samples=n_samples, is_mixture=False,
+            mixing_weights=None, param_layouts=layouts,
         )
 
-        # p is scalar (no sample dim) — should pass through unchanged
+        # p is not sliced (no sample dim per layout)
         assert draw["p"].shape == ()
-        # gate is 1-D (MAP ndim for standard) — should pass through
+        # gate is not sliced (no sample dim per layout)
         assert draw["gate"].shape == (n_genes,)
 
     def test_bnb_concentration_sliced_when_has_sample_dim(self):
@@ -499,17 +527,21 @@ class TestSlicePosteriorDraw:
 
         r = jnp.ones((n_samples, n_genes))
         p = jnp.ones((n_samples,)) * 0.3
-        # bnb_concentration with sample dim: (S, G)
         bnb = jnp.ones((n_samples, n_genes)) * 0.5
+
+        layouts = self._make_layouts({
+            "r": ("genes",),
+            "p": (),
+            "bnb_concentration": ("genes",),
+        })
 
         draw = _slice_posterior_draw(
             7,
             r=r, p=p, p_capture=None, gate=None,
-            mixing_weights=None, n_samples=n_samples, is_mixture=False,
+            mixing_weights=None, param_layouts=layouts,
             bnb_concentration=bnb,
         )
 
-        # bnb_concentration should be sliced to (n_genes,)
         assert draw["bnb_concentration"].shape == (n_genes,)
 
     def test_bnb_concentration_mixture_sliced(self):
@@ -521,15 +553,20 @@ class TestSlicePosteriorDraw:
         r = jnp.ones((n_samples, K, n_genes))
         p = jnp.ones((n_samples,)) * 0.3
         mw = jnp.ones((n_samples, K)) / K
-        # bnb_concentration with sample dim: (S, K, G)
         bnb = jnp.ones((n_samples, K, n_genes)) * 0.5
+
+        layouts = self._make_layouts({
+            "r": ("components", "genes"),
+            "p": (),
+            "mixing_weights": ("components",),
+            "bnb_concentration": ("components", "genes"),
+        })
 
         draw = _slice_posterior_draw(
             2,
             r=r, p=p, p_capture=None, gate=None,
-            mixing_weights=mw, n_samples=n_samples, is_mixture=True,
+            mixing_weights=mw, param_layouts=layouts,
             bnb_concentration=bnb,
         )
 
-        # bnb_concentration should be sliced to (K, n_genes)
         assert draw["bnb_concentration"].shape == (K, n_genes)

@@ -1046,6 +1046,25 @@ def _build_map_layouts(
     # populating the dataset_params list.
     ds_params = _derive_dataset_params(model_config)
 
+    # Concatenated multi-dataset results: n_datasets >= 2 but no
+    # hierarchical priors are active (original fits were single-dataset
+    # and the dataset axis was injected by ScribeSVIResults.concat).
+    # Detect which canonical params carry a leading dataset dimension
+    # so that infer_layout can assign the "datasets" axis correctly.
+    _n_ds = getattr(model_config, "n_datasets", None)
+    if not ds_params and _n_ds is not None and _n_ds >= 2:
+        from ..core.axis_layout import _KNOWN_CELL_PARAMS
+
+        _inferred_ds: List[str] = []
+        for key, val in map_estimates.items():
+            if not hasattr(val, "shape") or not hasattr(val, "ndim"):
+                continue
+            if key in _KNOWN_CELL_PARAMS:
+                continue
+            if val.ndim >= 1 and val.shape[0] == _n_ds:
+                _inferred_ds.append(key)
+        ds_params = _inferred_ds if _inferred_ds else None
+
     # Use the explicit n_components if provided, otherwise fall back to
     # the value on model_config.
     _n_components = (
@@ -1060,7 +1079,7 @@ def _build_map_layouts(
         n_genes=n_genes,
         n_cells=n_cells,
         n_components=_n_components,
-        n_datasets=getattr(model_config, "n_datasets", None),
+        n_datasets=_n_ds,
         mixture_params=getattr(model_config, "mixture_params", None),
         dataset_params=ds_params,
     )

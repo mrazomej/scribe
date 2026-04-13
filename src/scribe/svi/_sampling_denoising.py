@@ -2,28 +2,29 @@
 Denoising mixin and helpers for SVI sampling results.
 """
 
+from __future__ import annotations
+
 from typing import Dict, Optional, Union
 
 import jax.numpy as jnp
 from jax import random
 
-from ..sampling import denoise_counts
+from ..core.axis_layout import AxisLayout
+from ..sampling import denoise_counts, _build_canonical_layouts
 
 
 def _slice_param_for_dataset(
     param: Optional[jnp.ndarray],
     dataset_idx: int,
     n_datasets: int,
+    layout: Optional["AxisLayout"] = None,
 ) -> Optional[jnp.ndarray]:
     """Extract a single dataset's slice from a per-dataset parameter.
 
-    If the parameter's leading axis matches ``n_datasets``, returns
-    ``param[dataset_idx]``; otherwise returns the parameter unchanged
-    (it is shared across datasets).
-
-    Handles both gene-specific per-dataset params with shape
-    ``(n_datasets, n_genes)`` and scalar per-dataset params with
-    shape ``(n_datasets,)``.
+    Uses ``layout.dataset_axis`` to decide whether (and along which
+    axis) to index.  When ``layout`` is ``None`` the parameter is
+    returned unchanged — callers are responsible for always providing a
+    layout.
 
     Parameters
     ----------
@@ -33,7 +34,11 @@ def _slice_param_for_dataset(
     dataset_idx : int
         Which dataset to select.
     n_datasets : int
-        Total number of datasets (used to detect the dataset axis).
+        Total number of datasets (unused when layout is provided,
+        retained for signature stability).
+    layout : AxisLayout or None, optional
+        Semantic axis layout for this parameter.  The ``dataset_axis``
+        property determines whether the parameter is dataset-specific.
 
     Returns
     -------
@@ -42,11 +47,16 @@ def _slice_param_for_dataset(
     """
     if param is None:
         return None
-    # Matches both 2D gene-specific per-dataset params (n_datasets, n_genes)
-    # and 1D scalar per-dataset params (n_datasets,).  Safe because
-    # n_datasets << n_genes in any realistic single-cell dataset.
-    if param.ndim >= 1 and param.shape[0] == n_datasets:
-        return param[dataset_idx]
+
+    # Layout-driven path: authoritative answer from semantic metadata.
+    if layout is not None:
+        ds_ax = layout.dataset_axis
+        if ds_ax is not None:
+            return jnp.take(param, dataset_idx, axis=ds_ax)
+        return param
+
+    # No layout — return unchanged (should only happen for params
+    # that are genuinely not in the layout dict, e.g. p_capture).
     return param
 
 
@@ -64,6 +74,8 @@ def _denoise_per_dataset(
     mixing_weights: Optional[jnp.ndarray],
     cell_batch_size: Optional[int],
     bnb_concentration: Optional[jnp.ndarray] = None,
+    *,
+    param_layouts: Dict[str, "AxisLayout"],
 ) -> "Union[jnp.ndarray, Dict[str, jnp.ndarray]]":
     """Denoise a multi-dataset model by processing each dataset separately.
 
@@ -124,11 +136,29 @@ def _denoise_per_dataset(
             continue
 
         counts_d = counts[idx]
-        r_d = _slice_param_for_dataset(r, d, n_datasets)
-        p_d = _slice_param_for_dataset(p, d, n_datasets)
-        gate_d = _slice_param_for_dataset(gate, d, n_datasets)
+        # Use layout metadata for dataset-axis detection.
+        _lo = param_layouts or {}
+        r_d = _slice_param_for_dataset(r, d, n_datasets, _lo.get("r"))
+        p_d = _slice_param_for_dataset(p, d, n_datasets, _lo.get("p"))
+        gate_d = _slice_param_for_dataset(gate, d, n_datasets, _lo.get("gate"))
         pc_d = p_capture[idx] if p_capture is not None else None
-        bnb_d = _slice_param_for_dataset(bnb_concentration, d, n_datasets)
+        bnb_d = _slice_param_for_dataset(
+            bnb_concentration, d, n_datasets, _lo.get("bnb_concentration")
+        )
+
+        # After slicing the dataset axis, each parameter is
+        # single-dataset MAP-level.  Strip the "datasets" axis from
+        # layouts so downstream code sees the correct rank.
+        _ds_layouts: Dict[str, "AxisLayout"] = {}
+        for key, lo in _lo.items():
+            if lo.dataset_axis is not None:
+                # Remove the "datasets" entry from the axes tuple.
+                _ds_layouts[key] = AxisLayout(
+                    tuple(a for a in lo.axes if a != "datasets"),
+                    has_sample_dim=lo.has_sample_dim,
+                )
+            else:
+                _ds_layouts[key] = lo
 
         if rng_key is not None:
             rng_key, d_key = random.split(rng_key)
@@ -147,6 +177,7 @@ def _denoise_per_dataset(
             mixing_weights=mixing_weights,
             cell_batch_size=cell_batch_size,
             bnb_concentration=bnb_d,
+            param_layouts=_ds_layouts,
         )
 
         if return_variance:
@@ -254,6 +285,17 @@ class DenoisingSamplingMixin:
         )
         bnb_concentration = map_estimates.get("bnb_concentration")
 
+        # Build MAP-level canonical layouts (keyed by "r", "p", etc.)
+        # for layout-driven detection inside denoise_counts.
+        _map_layouts = _build_canonical_layouts(
+            map_estimates,
+            self.model_config,
+            n_genes=self.n_genes,
+            n_cells=self.n_cells,
+            n_components=self.n_components,
+            has_sample_dim=False,
+        )
+
         if verbose:
             model_desc = (
                 f"mixture ({self.n_components} components)"
@@ -292,8 +334,11 @@ class DenoisingSamplingMixin:
                 mixing_weights=mixing_weights,
                 cell_batch_size=cell_batch_size,
                 bnb_concentration=bnb_concentration,
+                param_layouts=_map_layouts,
             )
         else:
+            # MAP estimates have no sample dim; pass canonical layouts
+            # for layout-driven sample-dimension detection.
             result = denoise_counts(
                 counts=counts,
                 r=r,
@@ -306,6 +351,7 @@ class DenoisingSamplingMixin:
                 mixing_weights=mixing_weights,
                 cell_batch_size=cell_batch_size,
                 bnb_concentration=bnb_concentration,
+                param_layouts=_map_layouts,
             )
 
         if verbose:
@@ -419,6 +465,17 @@ class DenoisingSamplingMixin:
                 f" ({self.model_type}){extra_str}, method='{method}'..."
             )
 
+        # Build posterior-level canonical layouts (keyed by "r", "p", etc.)
+        # using the actual posterior tensor shapes and model metadata.
+        _post_layouts = _build_canonical_layouts(
+            self.posterior_samples,
+            self.model_config,
+            n_genes=self.n_genes,
+            n_cells=self.n_cells,
+            n_components=self.n_components,
+            has_sample_dim=True,
+        )
+
         _, key_denoise = random.split(rng_key)
         result = denoise_counts(
             counts=counts,
@@ -432,6 +489,7 @@ class DenoisingSamplingMixin:
             mixing_weights=mixing_weights,
             cell_batch_size=cell_batch_size,
             bnb_concentration=bnb_concentration,
+            param_layouts=_post_layouts,
         )
 
         if verbose:

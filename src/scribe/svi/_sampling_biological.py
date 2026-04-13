@@ -7,7 +7,7 @@ from typing import Dict, Optional
 import jax.numpy as jnp
 from jax import random
 
-from ..sampling import sample_biological_nb
+from ..sampling import sample_biological_nb, _build_canonical_layouts
 
 
 class BiologicalSamplingMixin:
@@ -107,6 +107,17 @@ class BiologicalSamplingMixin:
         mixing_weights = self.posterior_samples.get("mixing_weights", None)
         bnb_concentration = self.posterior_samples.get("bnb_concentration")
 
+        # Build posterior-level canonical layouts (keyed by "r", "p", etc.)
+        # using the actual posterior tensor shapes and model metadata.
+        _layouts = _build_canonical_layouts(
+            self.posterior_samples,
+            self.model_config,
+            n_genes=self.n_genes,
+            n_cells=self.n_cells,
+            n_components=self.n_components,
+            has_sample_dim=True,
+        )
+
         # Generate biological (denoised) count samples, processing cells in
         # batches when cell_batch_size is set to avoid GPU OOM on large datasets.
         _, key_bio = random.split(rng_key)
@@ -118,6 +129,7 @@ class BiologicalSamplingMixin:
             mixing_weights=mixing_weights,
             bnb_concentration=bnb_concentration,
             cell_batch_size=cell_batch_size,
+            param_layouts=_layouts,
         )
 
         if store_samples:
@@ -218,13 +230,26 @@ class BiologicalSamplingMixin:
                 f"({self.model_type})..."
             )
 
-        # Sample from the base NB(r, p) only - no capture, no gate
+        # Build MAP-level canonical layouts (keyed by "r", "p", etc.)
+        # for the canonical parameter dict.
+        _map_layouts = _build_canonical_layouts(
+            map_estimates,
+            self.model_config,
+            n_genes=self.n_genes,
+            n_cells=self.n_cells,
+            n_components=self.n_components,
+            has_sample_dim=False,
+        )
+
+        # Sample from the base NB(r, p) only - no capture, no gate.
+        # MAP estimates have no sample dim; pass canonical layouts.
         samples = sample_biological_nb(
             r=r,
             p=p,
             n_cells=self.n_cells,
             rng_key=rng_key,
             n_samples=n_samples,
+            param_layouts=_map_layouts,
             mixing_weights=mixing_weights,
             cell_batch_size=cell_batch_size,
             bnb_concentration=bnb_concentration,
