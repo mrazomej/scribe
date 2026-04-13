@@ -29,10 +29,7 @@ from scribe.models.builders.parameter_specs import (
     resolve_shape,
 )
 from scribe.models.config import ModelConfig, ModelConfigBuilder
-from scribe.models.components.likelihoods.base import (
-    broadcast_param_for_mixture,
-    index_dataset_params,
-)
+from scribe.models.components.likelihoods.base import index_dataset_params
 from scribe.models.presets.factory import create_model
 
 
@@ -583,13 +580,16 @@ class TestCanonicalParamsScalarDataset:
     for correct broadcasting with (n_datasets, n_genes) mu.
     """
 
-    def _make_results(self, *, parameterization, n_datasets, n_genes):
+    def _make_results(
+        self, *, parameterization, n_datasets, n_genes, n_components=None
+    ):
         """Create a minimal ScribeSVIResults for canonical param testing."""
         from scribe.svi.results import ScribeSVIResults
 
         config = ModelConfig(
             base_model="nbdm",
             n_datasets=n_datasets,
+            n_components=n_components,
             parameterization=parameterization,
             unconstrained=True,
             expression_dataset_prior="gaussian",
@@ -606,6 +606,7 @@ class TestCanonicalParamsScalarDataset:
             loss_history=jnp.array([1.0]),
             n_cells=50,
             n_genes=n_genes,
+            n_components=n_components,
             model_type="nbdm",
             model_config=config,
             prior_params={},
@@ -686,7 +687,8 @@ class TestCanonicalParamsScalarDataset:
         """mu broadcasting supports p=(K,D) with r=(K,D,G)."""
         n_ds, n_genes, n_components = 2, 5, 3
         results = self._make_results(
-            parameterization="canonical", n_datasets=n_ds, n_genes=n_genes
+            parameterization="canonical", n_datasets=n_ds, n_genes=n_genes,
+            n_components=n_components,
         )
         p = jnp.array(
             [
@@ -708,7 +710,8 @@ class TestCanonicalParamsScalarDataset:
         """mu broadcasting supports p=(D,G) with r=(K,D,G)."""
         n_ds, n_genes, n_components = 3, 4, 2
         results = self._make_results(
-            parameterization="canonical", n_datasets=n_ds, n_genes=n_genes
+            parameterization="canonical", n_datasets=n_ds, n_genes=n_genes,
+            n_components=n_components,
         )
         p = jnp.array(
             [
@@ -1004,54 +1007,6 @@ class TestMixtureDatasetComposition:
         np.testing.assert_array_equal(result["r"][0], param_values["r"][1])
         # phi: (G,) unchanged
         assert result["phi"].shape == (G,)
-
-    # ------------------------------------------------------------------
-    # broadcast_param_for_mixture with batch dim
-    # ------------------------------------------------------------------
-
-    def test_broadcast_p_batch_with_3d_r(self):
-        """p: (batch, G), r: (batch, K, G) -> (batch, 1, G)."""
-        batch, K, G = 4, 3, 5
-        p = jnp.ones((batch, G))
-        r = jnp.ones((batch, K, G))
-
-        result = broadcast_param_for_mixture(p, r)
-        assert result.shape == (batch, 1, G)
-
-    def test_broadcast_p_1d_gene_specific_with_3d_r(self):
-        """p: (G,), r: (batch, K, G) -> (1, 1, G)."""
-        batch, K, G = 4, 3, 5
-        p = jnp.ones(G)
-        r = jnp.ones((batch, K, G))
-
-        result = broadcast_param_for_mixture(p, r)
-        assert result.shape == (1, 1, G)
-
-    def test_broadcast_p_scalar_with_3d_r(self):
-        """p: (), r: (batch, K, G) -> (1, 1, 1)."""
-        p = jnp.array(0.5)
-        r = jnp.ones((4, 3, 5))
-
-        result = broadcast_param_for_mixture(p, r)
-        assert result.shape == (1, 1, 1)
-
-    def test_broadcast_p_3d_passthrough(self):
-        """p: (batch, K, G) -> unchanged."""
-        batch, K, G = 4, 3, 5
-        p = jnp.ones((batch, K, G))
-        r = jnp.ones((batch, K, G))
-
-        result = broadcast_param_for_mixture(p, r)
-        assert result.shape == (batch, K, G)
-
-    def test_broadcast_p_existing_2d_behaviour(self):
-        """p: (K, G), r: (K, G) -> (K, G) unchanged (existing behaviour)."""
-        K, G = 3, 5
-        p = jnp.ones((K, G))
-        r = jnp.ones((K, G))
-
-        result = broadcast_param_for_mixture(p, r)
-        assert result.shape == (K, G)
 
     # ------------------------------------------------------------------
     # ModelConfig: prob_prior + prob_dataset_prior conflict
@@ -3288,7 +3243,7 @@ class TestMixtureDatasetHierarchyFactory:
     def test_svi_init_vcp_mixture_gene_prob_prior_dataset_mu_gate(self):
         """SVI init succeeds when phi has gene-level hierarchy only.
 
-        Regression test for broadcast_param_for_mixture handling the case
+        Regression test for layout-aware broadcasting handling the case
         where phi is (K, G) (gene-level hierarchy, no dataset indexing)
         while r is (batch, K, G) (mu has dataset hierarchy).  Only phi
         and mu are mixture params; gate is gene-specific with a dataset

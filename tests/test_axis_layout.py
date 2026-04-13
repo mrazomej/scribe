@@ -18,6 +18,8 @@ from scribe.core.axis_layout import (
     gene_axes_from_layouts,
     reconstruct_param_layouts,
     align_to_layout,
+    merge_layouts,
+    broadcast_param_to_layout,
     _strip_param_key,
     GENES,
     COMPONENTS,
@@ -804,3 +806,181 @@ class TestGeneAxesFromLayouts:
 
     def test_empty_dict_input(self):
         assert gene_axes_from_layouts({}) == {}
+
+
+# ========================================================================
+# Tests for merge_layouts
+# ========================================================================
+
+
+class TestMergeLayouts:
+    """``merge_layouts``: union of axes in canonical order."""
+
+    def test_identical_layouts_unchanged(self):
+        """Merging identical layouts returns the same axes."""
+        a = AxisLayout((COMPONENTS, GENES))
+        result = merge_layouts(a, a)
+        assert result.axes == (COMPONENTS, GENES)
+
+    def test_subset_to_superset(self):
+        """Merging a subset with its superset returns the superset."""
+        a = AxisLayout((COMPONENTS,))
+        b = AxisLayout((COMPONENTS, GENES))
+        result = merge_layouts(a, b)
+        assert result.axes == (COMPONENTS, GENES)
+
+    def test_disjoint_axes(self):
+        """Merging layouts with no common axes returns all axes ordered."""
+        a = AxisLayout((GENES,))
+        b = AxisLayout((COMPONENTS,))
+        result = merge_layouts(a, b)
+        assert result.axes == (COMPONENTS, GENES)
+
+    def test_three_layouts_full_union(self):
+        """Merging three layouts returns all distinct axes."""
+        a = AxisLayout((GENES,))
+        b = AxisLayout((COMPONENTS,))
+        c = AxisLayout((DATASETS,))
+        result = merge_layouts(a, b, c)
+        assert result.axes == (COMPONENTS, DATASETS, GENES)
+
+    def test_component_gene_and_dataset_gene(self):
+        """(K,G) merged with (D,G) => (K,D,G)."""
+        a = AxisLayout((COMPONENTS, GENES))
+        b = AxisLayout((DATASETS, GENES))
+        result = merge_layouts(a, b)
+        assert result.axes == (COMPONENTS, DATASETS, GENES)
+
+    def test_scalar_layout_with_full(self):
+        """Merging scalar layout with full layout returns the full."""
+        a = AxisLayout(())
+        b = AxisLayout((COMPONENTS, DATASETS, GENES))
+        result = merge_layouts(a, b)
+        assert result.axes == (COMPONENTS, DATASETS, GENES)
+
+    def test_single_layout_returns_copy(self):
+        """Merging a single layout returns an equivalent layout."""
+        a = AxisLayout((GENES,))
+        result = merge_layouts(a)
+        assert result.axes == (GENES,)
+
+
+# ========================================================================
+# Tests for broadcast_param_to_layout
+# ========================================================================
+
+
+class TestBroadcastParamToLayout:
+    """``broadcast_param_to_layout``: batch-aware broadcasting."""
+
+    # ------------------------------------------------------------------
+    # Non-batched cases (should match align_to_layout)
+    # ------------------------------------------------------------------
+
+    def test_scalar_to_component_gene(self):
+        """Scalar p -> (1, 1) when target is (K, G)."""
+        p = jnp.array(0.5)
+        result = broadcast_param_to_layout(
+            p, AxisLayout(()), AxisLayout((COMPONENTS, GENES))
+        )
+        assert result.shape == (1, 1)
+
+    def test_component_to_component_gene(self):
+        """(K,) p -> (K, 1) when target is (K, G)."""
+        p = jnp.ones(3)
+        result = broadcast_param_to_layout(
+            p, AxisLayout((COMPONENTS,)), AxisLayout((COMPONENTS, GENES))
+        )
+        assert result.shape == (3, 1)
+
+    def test_gene_to_component_gene(self):
+        """(G,) p -> (1, G) when target is (K, G)."""
+        p = jnp.ones(100)
+        result = broadcast_param_to_layout(
+            p, AxisLayout((GENES,)), AxisLayout((COMPONENTS, GENES))
+        )
+        assert result.shape == (1, 100)
+
+    def test_identity_no_change(self):
+        """(K, G) -> (K, G) when layouts already match."""
+        p = jnp.ones((3, 100))
+        result = broadcast_param_to_layout(
+            p,
+            AxisLayout((COMPONENTS, GENES)),
+            AxisLayout((COMPONENTS, GENES)),
+        )
+        assert result.shape == (3, 100)
+
+    def test_dataset_gene_to_component_dataset_gene(self):
+        """(D, G) -> (1, D, G) when target is (K, D, G)."""
+        mu = jnp.ones((2, 100))
+        result = broadcast_param_to_layout(
+            mu,
+            AxisLayout((DATASETS, GENES)),
+            AxisLayout((COMPONENTS, DATASETS, GENES)),
+        )
+        assert result.shape == (1, 2, 100)
+
+    def test_component_gene_to_component_dataset_gene(self):
+        """(K, G) -> (K, 1, G) when target is (K, D, G)."""
+        r = jnp.ones((3, 100))
+        result = broadcast_param_to_layout(
+            r,
+            AxisLayout((COMPONENTS, GENES)),
+            AxisLayout((COMPONENTS, DATASETS, GENES)),
+        )
+        assert result.shape == (3, 1, 100)
+
+    # ------------------------------------------------------------------
+    # Batched cases (leading cell/batch dim not in layout)
+    # ------------------------------------------------------------------
+
+    def test_batched_gene_to_component_gene(self):
+        """(batch, G) -> (batch, 1, G) when target is (K, G)."""
+        p = jnp.ones((32, 100))
+        result = broadcast_param_to_layout(
+            p, AxisLayout((GENES,)), AxisLayout((COMPONENTS, GENES))
+        )
+        assert result.shape == (32, 1, 100)
+
+    def test_batched_scalar_to_component_gene(self):
+        """(batch,) -> (batch, 1, 1) when target is (K, G).
+
+        A scalar param that picked up a batch dim after dataset indexing.
+        """
+        p = jnp.ones(32)
+        result = broadcast_param_to_layout(
+            p, AxisLayout(()), AxisLayout((COMPONENTS, GENES))
+        )
+        assert result.shape == (32, 1, 1)
+
+    def test_batched_component_gene_to_component_gene(self):
+        """(batch, K, G) -> (batch, K, G) — already matching."""
+        p = jnp.ones((32, 3, 100))
+        result = broadcast_param_to_layout(
+            p,
+            AxisLayout((COMPONENTS, GENES)),
+            AxisLayout((COMPONENTS, GENES)),
+        )
+        assert result.shape == (32, 3, 100)
+
+    def test_batched_component_to_component_gene(self):
+        """(batch, K) -> (batch, K, 1) when target is (K, G)."""
+        p = jnp.ones((32, 3))
+        result = broadcast_param_to_layout(
+            p,
+            AxisLayout((COMPONENTS,)),
+            AxisLayout((COMPONENTS, GENES)),
+        )
+        assert result.shape == (32, 3, 1)
+
+    def test_non_batched_stays_non_batched(self):
+        """Confirm that no spurious batch dim is introduced."""
+        p = jnp.ones(3)
+        result = broadcast_param_to_layout(
+            p,
+            AxisLayout((COMPONENTS,)),
+            AxisLayout((COMPONENTS, GENES)),
+        )
+        # (K,) -> (K, 1), no leading batch dim
+        assert result.shape == (3, 1)

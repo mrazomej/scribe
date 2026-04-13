@@ -63,37 +63,25 @@ likelihood = NegativeBinomialLikelihood()
 builder.with_likelihood(likelihood)
 ```
 
-## Gene-Specific p Broadcasting
+## Layout-Aware Parameter Broadcasting
 
 When using hierarchical parameterizations, `p` (or `phi`) becomes gene-specific
-with shape `(n_genes,)` instead of a scalar. In mixture models this creates an
-ambiguity: a 1D array could be `(n_components,)` or `(n_genes,)`. The helper
-function `broadcast_param_for_mixture(p, r)` in `base.py` resolves this by checking
-the shape against `r` and reshaping accordingly:
+with shape `(n_genes,)` instead of a scalar. In mixture models, parameters may
+also carry component and dataset axes. The `AxisLayout` system from
+`scribe.core.axis_layout` provides semantic axis metadata that eliminates
+shape-based ambiguity.
 
-- Scalar `p` -> `(1, 1)` for broadcasting with `(n_components, n_genes)`
-- 1D `p` matching `r.shape[-1]` (n_genes) -> `(1, n_genes)`
-- 1D `p` matching `r.shape[0]` (n_components) -> `(n_components, 1)`
-- 2D `p` -> passed through unchanged
+Each likelihood's `sample()` method builds `param_layouts` from `ParamSpec`
+metadata via `build_param_layouts(specs, param_values)`. When building mixture
+distributions, `broadcast_param_to_layout(param, param_layout, target_layout)`
+aligns parameters by inserting singleton dimensions where semantic axes are
+missing — no shape heuristics needed.
 
-All four likelihood classes use this helper for correct broadcasting when
-building mixture distributions.
-
-## Gene-Specific p Broadcasting
-
-When using hierarchical parameterizations, `p` (or `phi`) becomes gene-specific
-with shape `(n_genes,)` instead of a scalar. In mixture models this creates an
-ambiguity: a 1D array could be `(n_components,)` or `(n_genes,)`. The helper
-function `broadcast_param_for_mixture(p, r)` in `base.py` resolves this by checking
-the shape against `r` and reshaping accordingly:
-
-- Scalar `p` to `(1, 1)` for broadcasting with `(n_components, n_genes)`
-- 1D `p` matching `r.shape[-1]` (n_genes) to `(1, n_genes)`
-- 1D `p` matching `r.shape[0]` (n_components) to `(n_components, 1)`
-- 2D `p` passed through unchanged
-
-All four likelihood classes use this helper for correct broadcasting when
-building mixture distributions.
+For multi-dataset models, after `index_dataset_params` collapses the dataset
+dimension, the helper `_drop_dataset_axis(param_layouts)` (defined in each
+likelihood module) removes the `"datasets"` axis from layouts so that
+`broadcast_param_to_layout` correctly treats the new leading dimension as a
+batch (cells) dimension rather than a semantic axis.
 
 ## Per-Dataset Parameter Indexing
 
@@ -155,9 +143,10 @@ When dataset-specific mixture weights are enabled, `mixing_weights` follow the
 same indexing rule and become `(batch, K)` inside the cell plate. Annotation
 logit nudging supports both global `(K,)` and batch-aligned `(batch, K)` inputs.
 
-`broadcast_param_for_mixture()` also handles the extra batch dimension: when `p`
-is 2-D `(batch, G)` and `r` is 3-D `(batch, K, G)`, it inserts a component
-singleton to produce `(batch, 1, G)` for correct broadcasting.
+`broadcast_param_to_layout()` also handles the extra batch dimension: when `p`
+has a leading batch/cell dimension beyond what its layout describes, the
+convenience wrapper detects this and adjusts `has_sample_dim` so that
+`align_to_layout` inserts singletons in the correct positions.
 
 ### Dataset-Level Hierarchical Gate
 

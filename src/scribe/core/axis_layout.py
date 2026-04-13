@@ -34,6 +34,12 @@ reconstruct_param_layouts
     config metadata and tensor shapes (no ``param_specs`` required).
 align_to_layout
     Insert singleton dimensions so that a tensor broadcasts to a target layout.
+merge_layouts
+    Compute the union of several layouts (all axes from all inputs, in
+    canonical order).
+broadcast_param_to_layout
+    Like ``align_to_layout`` but auto-detects a leading batch/cell
+    dimension that is not described by the layout.
 """
 
 from __future__ import annotations
@@ -651,15 +657,24 @@ def build_sample_layouts(
             continue
         base = _strip_param_key(key)
         spec = spec_by_name.get(base)
+
+        # Use the spec when the spec-based layout rank matches the
+        # tensor's actual ndim.  After subsetting (e.g. get_component),
+        # a tensor may have fewer dimensions than the spec declares
+        # (is_mixture=True but component axis was indexed out).  In
+        # that case, fall through to heuristic inference.
         if spec is not None:
-            layouts[key] = layout_from_param_spec(
+            candidate = layout_from_param_spec(
                 spec, has_sample_dim=has_sample_dim
             )
-        else:
-            # Derived / canonical keys not described by specs — use
-            # shape-based heuristics so component / gene axes are still
-            # detected correctly.
-            layouts[key] = infer_layout(
+            if candidate.rank == value.ndim:
+                layouts[key] = candidate
+                continue
+
+        # Derived / canonical keys not described by specs, or spec whose
+        # rank doesn't match the tensor (post-subsetting) — use
+        # shape-based heuristics so axes are still detected correctly.
+        layouts[key] = infer_layout(
                 key,
                 value,
                 n_genes=n_genes,
@@ -812,3 +827,131 @@ def align_to_layout(
     """
     idx = source.broadcast_to(target)
     return tensor[idx]
+
+
+# =========================================================================
+# Layout merging
+# =========================================================================
+
+
+def merge_layouts(*layouts: AxisLayout) -> AxisLayout:
+    """Compute the union of several layouts in canonical axis order.
+
+    Returns a new :class:`AxisLayout` whose ``axes`` contain every axis
+    that appears in *any* of the input layouts, sorted according to
+    ``_AXIS_ORDER`` (components > datasets > genes/cells).
+
+    This is useful when computing a derived parameter whose layout is the
+    superset of its inputs.  For example, multiplying ``p`` with layout
+    ``("components",)`` by ``mu`` with layout ``("components", "genes")``
+    produces a result whose layout is ``("components", "genes")``.
+
+    Parameters
+    ----------
+    *layouts : AxisLayout
+        One or more layouts to merge.
+
+    Returns
+    -------
+    AxisLayout
+        Layout containing all axes from all inputs.
+
+    Examples
+    --------
+    >>> merge_layouts(
+    ...     AxisLayout(("components",)),
+    ...     AxisLayout(("components", "genes")),
+    ... )
+    AxisLayout(axes=('components', 'genes'))
+
+    >>> merge_layouts(
+    ...     AxisLayout(("genes",)),
+    ...     AxisLayout(("components", "datasets", "genes")),
+    ... )
+    AxisLayout(axes=('components', 'datasets', 'genes'))
+    """
+    # Collect all unique axis names from every input layout.
+    all_axes: set[str] = set()
+    for layout in layouts:
+        all_axes.update(layout.axes)
+
+    # Sort the axes using the canonical ordering defined in _AXIS_ORDER.
+    # Axes not in _AXIS_ORDER (unlikely, but defensive) sort last.
+    sorted_axes = tuple(
+        sorted(all_axes, key=lambda a: _AXIS_ORDER.get(a, 99))
+    )
+    return AxisLayout(axes=sorted_axes)
+
+
+# =========================================================================
+# Batch-aware broadcasting helper
+# =========================================================================
+
+
+def broadcast_param_to_layout(
+    param: jnp.ndarray,
+    param_layout: AxisLayout,
+    target_layout: AxisLayout,
+) -> jnp.ndarray:
+    """Broadcast *param* so it is compatible with *target_layout*.
+
+    Works like :func:`align_to_layout` but also handles a leading
+    **batch / cell** dimension that is not described by either layout.
+    During likelihood evaluation, tensors may acquire a leading cells
+    axis after dataset indexing.  This helper detects that extra
+    dimension automatically and preserves it while inserting singletons
+    for the semantic axes that are missing in *param_layout*.
+
+    Parameters
+    ----------
+    param : jnp.ndarray
+        Array to broadcast.
+    param_layout : AxisLayout
+        Semantic layout of *param* (excluding the batch dimension).
+    target_layout : AxisLayout
+        Layout to broadcast towards (excluding the batch dimension).
+
+    Returns
+    -------
+    jnp.ndarray
+        *param* with singleton dimensions inserted so that it broadcasts
+        correctly against a tensor with *target_layout*.
+
+    Examples
+    --------
+    Non-batched: gene-specific ``p`` aligned to ``(K, G)``
+
+    >>> p = jnp.ones(100)
+    >>> broadcast_param_to_layout(
+    ...     p,
+    ...     AxisLayout(("genes",)),
+    ...     AxisLayout(("components", "genes")),
+    ... ).shape
+    (1, 100)
+
+    Batched: after dataset indexing, ``p`` is ``(batch, G)`` and ``r``
+    is ``(batch, K, G)``.  The batch dimension is preserved.
+
+    >>> p_batch = jnp.ones((32, 100))
+    >>> broadcast_param_to_layout(
+    ...     p_batch,
+    ...     AxisLayout(("genes",)),
+    ...     AxisLayout(("components", "genes")),
+    ... ).shape
+    (32, 1, 100)
+    """
+    # Check whether the tensor has more dimensions than the layout
+    # describes.  The extra leading dimension(s) come from the cells
+    # plate / dataset indexing and are not part of the semantic layout.
+    has_batch = param.ndim > param_layout.rank
+
+    if has_batch:
+        # Temporarily mark both layouts as having a sample dim so that
+        # broadcast_to prepends a slice(None) for the batch axis.
+        src = param_layout.with_sample_dim()
+        tgt = target_layout.with_sample_dim()
+    else:
+        src = param_layout
+        tgt = target_layout
+
+    return align_to_layout(param, src, tgt)

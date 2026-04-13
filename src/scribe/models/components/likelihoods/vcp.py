@@ -21,7 +21,6 @@ import numpyro.distributions as dist
 from .base import (
     Likelihood,
     build_mixture_general,
-    broadcast_param_for_mixture,
     compute_cell_specific_mixing,
     index_dataset_params,
     _sample_phi_capture_constrained,
@@ -31,8 +30,15 @@ from .base import (
     _sample_capture_biology_informed,
     _sample_hierarchical_mu_eta,
 )
+from ....core.axis_layout import (
+    AxisLayout,
+    build_param_layouts,
+    broadcast_param_to_layout,
+    DATASETS,
+)
 
 if TYPE_CHECKING:
+    from ....core.axis_layout import AxisLayout  # noqa: F811
     from ...builders.parameter_specs import ParamSpec
     from ...config import ModelConfig
 
@@ -41,6 +47,38 @@ if TYPE_CHECKING:
 # computation) and p_hat to (eps, 1-eps) (prevents NaN in NB log-prob).
 # Mirrors the p_floor default in post-hoc log-likelihood evaluation.
 _P_EPS = 1e-6
+
+
+def _drop_dataset_axis(
+    param_layouts: Optional[Dict[str, "AxisLayout"]],
+) -> Optional[Dict[str, "AxisLayout"]]:
+    """Return a copy of *param_layouts* with the ``"datasets"`` axis removed.
+
+    After ``index_dataset_params`` collapses the dataset dimension,
+    layouts that carried a ``"datasets"`` axis need to be updated so
+    that :func:`broadcast_param_to_layout` correctly treats the new
+    leading dimension as a batch (cells) dim rather than a semantic axis.
+
+    Parameters
+    ----------
+    param_layouts : dict or None
+        Original layouts built from ``param_specs``.
+
+    Returns
+    -------
+    dict or None
+        Updated layouts with ``"datasets"`` removed where present.
+    """
+    if param_layouts is None:
+        return None
+    out: Dict[str, "AxisLayout"] = {}
+    for key, layout in param_layouts.items():
+        if DATASETS in layout.axes:
+            out[key] = layout.subset_axis(DATASETS)
+        else:
+            out[key] = layout
+    return out
+
 
 # ==============================================================================
 # Negative Binomial with Variable Capture Probability Likelihood
@@ -213,11 +251,51 @@ class NBWithVCPLikelihood(Likelihood):
         ] = None,
         annotation_prior_logits: Optional[jnp.ndarray] = None,
         dataset_indices: Optional[jnp.ndarray] = None,
+        param_layouts: Optional[Dict[str, "AxisLayout"]] = None,
     ) -> None:
         """Sample from NB likelihood with variable capture probability.
 
+        Draws per-cell capture values (unless provided in ``param_values``),
+        combines them with ``p``/``phi`` and ``r`` under the cell plate, and
+        emits ``counts`` from the resulting NB or mixture-of-NBs.
+
+        Mixture models align ``p`` or ``phi`` to ``r`` using
+        :class:`AxisLayout` metadata from ``model_config.param_specs`` when
+        available; otherwise empty layouts fall back to prior broadcasting
+        behavior.
+
         When ``annotation_prior_logits`` is provided and this is a mixture
         model, per-cell mixing weights are computed inside the cell plate.
+
+        Parameters
+        ----------
+        param_values : dict
+            Global and/or cell-level parameter arrays (``"p"`` or ``"phi"``,
+            ``"r"``, optional ``"mixing_weights"``, capture keys, etc.).
+        cell_specs : list of ParamSpec
+            Declarations for cell-plate parameters (used for capture
+            auto-detection and prior sampling).
+        counts : ndarray or None
+            Observed counts when conditioning; ``None`` for prior predictive.
+        dims : dict
+            Must include ``"n_cells"``.
+        batch_size : int or None
+            When set, the cell plate uses ``subsample_size=batch_size``.
+        model_config : ModelConfig
+            Provides ``param_specs``, ``n_datasets``, and related metadata.
+        vae_cell_fn : callable or None
+            When set, decoder outputs are merged into ``param_values`` inside
+            the cell plate.
+        annotation_prior_logits : ndarray or None
+            Per-cell annotation logits for mixture annotation path.
+        dataset_indices : ndarray or None
+            Per-cell dataset ids when ``model_config.n_datasets`` is set.
+
+        Notes
+        -----
+        After ``index_dataset_params``, dataset-axis layouts are stripped via
+        :func:`_drop_dataset_axis` so :func:`broadcast_param_to_layout` matches
+        collapsed array ranks.
         """
         n_cells = dims["n_cells"]
 
@@ -225,6 +303,17 @@ class NBWithVCPLikelihood(Likelihood):
         n_datasets = getattr(model_config, "n_datasets", None)
         use_dataset_indexing = (
             n_datasets is not None and dataset_indices is not None
+        )
+
+        # Use externally-provided layouts (from model builder) when
+        # available.  Fall back to building from model_config.param_specs
+        # for legacy callers that don't pass param_layouts.
+        if param_layouts is None:
+            specs = getattr(model_config, "param_specs", None) or []
+            if specs:
+                param_layouts = build_param_layouts(specs, param_values)
+        ds_layouts = (
+            _drop_dataset_axis(param_layouts) if use_dataset_indexing else None
         )
 
         # When vae_cell_fn is set, r (and possibly p) come from the decoder
@@ -396,9 +485,15 @@ class NBWithVCPLikelihood(Likelihood):
                 else:
                     capture_reshaped = capture_value[:, None]
 
-                # Broadcast phi to match r for mixture models
+                # Broadcast phi to match r for mixture models using semantic
+                # layouts (post-index path uses layouts with "datasets" dropped).
                 if is_mixture:
-                    phi = broadcast_param_for_mixture(phi, r)
+                    active_layouts = (
+                        ds_layouts if use_dataset_indexing else param_layouts
+                    )
+                    r_layout = (active_layouts or {}).get("r", AxisLayout(()))
+                    phi_layout = (active_layouts or {}).get("phi", AxisLayout(()))
+                    phi = broadcast_param_to_layout(phi, phi_layout, r_layout)
 
                 # Clamp phi away from 0 so log(phi * ...) stays finite
                 phi = jnp.maximum(phi, _P_EPS)
@@ -472,10 +567,17 @@ class NBWithVCPLikelihood(Likelihood):
                 else:
                     capture_reshaped = capture_value[:, None]
 
-                # Broadcast p for mixture models (handles gene-specific p)
-                p_for_hat = (
-                    broadcast_param_for_mixture(p, r) if is_mixture else p
-                )
+                # Broadcast p for mixture models (handles gene-specific p) using
+                # semantic layouts relative to r.
+                if is_mixture:
+                    active_layouts = (
+                        ds_layouts if use_dataset_indexing else param_layouts
+                    )
+                    r_layout = (active_layouts or {}).get("r", AxisLayout(()))
+                    p_layout = (active_layouts or {}).get("p", AxisLayout(()))
+                    p_for_hat = broadcast_param_to_layout(p, p_layout, r_layout)
+                else:
+                    p_for_hat = p
 
                 # Guardrail: catch cell-axis shape desync between NB params
                 # and capture (e.g. batch_size forwarded without subsampling).
@@ -667,11 +769,49 @@ class ZINBWithVCPLikelihood(Likelihood):
         ] = None,
         annotation_prior_logits: Optional[jnp.ndarray] = None,
         dataset_indices: Optional[jnp.ndarray] = None,
+        param_layouts: Optional[Dict[str, "AxisLayout"]] = None,
     ) -> None:
         """Sample from ZINB likelihood with variable capture probability.
 
+        Draws per-cell capture values when needed, applies the VCP link to
+        obtain ``p_hat`` (canonical path) or logits (``phi`` path),         wraps the base NB in ``ZeroInflatedDistribution``, and samples
+        ``counts`` under the cell plate.
+
+        For mixture models, ``p``, ``phi``, and ``gate`` are aligned to ``r``
+        via :func:`broadcast_param_to_layout` when ``param_specs`` supply
+        :class:`AxisLayout` metadata; after multi-dataset indexing, the
+        ``"datasets"`` axis is removed from those layouts first.
+
         When ``annotation_prior_logits`` is provided and this is a mixture
         model, per-cell mixing weights are computed inside the cell plate.
+
+        Parameters
+        ----------
+        param_values : dict
+            Arrays for ``"p"`` or ``"phi"``, ``"r"``, ``"gate"``, optional
+            ``"mixing_weights"``, capture parameters, etc.
+        cell_specs : list of ParamSpec
+            Cell-plate parameter specs (capture auto-detection).
+        counts : ndarray or None
+            Observed counts or ``None`` for prior predictive.
+        dims : dict
+            Must include ``"n_cells"``.
+        batch_size : int or None
+            Subsample size for the cell plate when not ``None``.
+        model_config : ModelConfig
+            ``param_specs``, ``n_datasets``, and related configuration.
+        vae_cell_fn : callable or None
+            Decoder hook that updates ``param_values`` inside the plate.
+        annotation_prior_logits : ndarray or None
+            Annotation logits for the mixture annotation path.
+        dataset_indices : ndarray or None
+            Per-cell dataset indices for multi-dataset models.
+
+        Notes
+        -----
+        Layout-aware broadcasting mirrors
+        :class:`ZeroInflatedNBLikelihood` while preserving VCP-specific
+        capture reshaping and clamping.
         """
         n_cells = dims["n_cells"]
 
@@ -679,6 +819,17 @@ class ZINBWithVCPLikelihood(Likelihood):
         n_datasets = getattr(model_config, "n_datasets", None)
         use_dataset_indexing = (
             n_datasets is not None and dataset_indices is not None
+        )
+
+        # Use externally-provided layouts (from model builder) when
+        # available.  Fall back to building from model_config.param_specs
+        # for legacy callers that don't pass param_layouts.
+        if param_layouts is None:
+            specs = getattr(model_config, "param_specs", None) or []
+            if specs:
+                param_layouts = build_param_layouts(specs, param_values)
+        ds_layouts = (
+            _drop_dataset_axis(param_layouts) if use_dataset_indexing else None
         )
 
         # When vae_cell_fn is set, r/gate (and possibly p) come from the decoder
@@ -846,10 +997,21 @@ class ZINBWithVCPLikelihood(Likelihood):
                 else:
                     capture_reshaped = capture_value[:, None]
 
-                # Broadcast phi and gate for mixture models
+                # Broadcast phi and gate to r for mixture models using semantic
+                # layouts (datasets axis stripped after per-cell indexing).
                 if is_mixture:
-                    phi = broadcast_param_for_mixture(phi, r)
-                    gate = broadcast_param_for_mixture(gate, r)
+                    active_layouts = (
+                        ds_layouts if use_dataset_indexing else param_layouts
+                    )
+                    r_layout = (active_layouts or {}).get("r", AxisLayout(()))
+                    phi_layout = (active_layouts or {}).get("phi", AxisLayout(()))
+                    gate_layout = (active_layouts or {}).get(
+                        "gate", AxisLayout(())
+                    )
+                    phi = broadcast_param_to_layout(phi, phi_layout, r_layout)
+                    gate = broadcast_param_to_layout(
+                        gate, gate_layout, r_layout
+                    )
 
                 # Clamp phi away from 0 so log(phi * ...) stays finite
                 phi = jnp.maximum(phi, _P_EPS)
@@ -926,12 +1088,25 @@ class ZINBWithVCPLikelihood(Likelihood):
                 else:
                     capture_reshaped = capture_value[:, None]
 
-                # Broadcast p and gate for mixture models
-                p_for_hat = (
-                    broadcast_param_for_mixture(p, r) if is_mixture else p
-                )
+                # Broadcast p and gate to r for mixture models using semantic
+                # layouts.
                 if is_mixture:
-                    gate = broadcast_param_for_mixture(gate, r)
+                    active_layouts = (
+                        ds_layouts if use_dataset_indexing else param_layouts
+                    )
+                    r_layout = (active_layouts or {}).get("r", AxisLayout(()))
+                    p_layout = (active_layouts or {}).get("p", AxisLayout(()))
+                    gate_layout = (active_layouts or {}).get(
+                        "gate", AxisLayout(())
+                    )
+                    p_for_hat = broadcast_param_to_layout(
+                        p, p_layout, r_layout
+                    )
+                    gate = broadcast_param_to_layout(
+                        gate, gate_layout, r_layout
+                    )
+                else:
+                    p_for_hat = p
 
                 # Guardrail: catch cell-axis shape desync between NB params
                 # and capture (e.g. batch_size forwarded without subsampling).

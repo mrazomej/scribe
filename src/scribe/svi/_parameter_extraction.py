@@ -16,9 +16,14 @@ from jax import random
 from ..utils import numpyro_to_scipy
 from ..models.config.enums import HierarchicalPriorType
 from ..models.config.parameter_mapping import rename_dict_keys
-from ..models.parameterizations import (
-    _align_gene_params,
-    _broadcast_scalar_for_mixture,
+from ..core.axis_layout import (
+    AxisLayout,
+    align_to_layout,
+    build_sample_layouts,
+    merge_layouts,
+    GENES,
+    COMPONENTS,
+    CELLS,
 )
 from ..flows import ComponentFlowDistribution, FlowDistribution
 
@@ -909,6 +914,137 @@ def _required_map_keys_for_targets(
 
 
 # ==============================================================================
+# Layout helpers for MAP estimate dicts
+# ==============================================================================
+
+
+def _derive_dataset_params(model_config) -> Optional[List[str]]:
+    """Derive ``dataset_params`` from config hierarchical-prior flags.
+
+    When ``model_config.dataset_params`` is already set, returns it as-is.
+    Otherwise, inspects ``expression_dataset_prior``,
+    ``prob_dataset_prior``, ``zero_inflation_dataset_prior``, and
+    ``overdispersion_dataset_prior`` to infer which canonical parameter
+    names carry a dataset axis.  This ensures correct layout inference
+    even for configs that don't explicitly set ``dataset_params``
+    (common in older code paths and test harnesses).
+
+    Parameters
+    ----------
+    model_config
+        Model configuration object.
+
+    Returns
+    -------
+    list of str or None
+        Derived list of dataset parameter names, or ``None`` if no
+        dataset hierarchy is active.
+    """
+    # If explicitly set, trust it.
+    explicit = getattr(model_config, "dataset_params", None)
+    if explicit is not None:
+        return explicit
+
+    _NONE = HierarchicalPriorType.NONE
+    ds: List[str] = []
+
+    # expression_dataset_prior → mu (or r for canonical/standard)
+    if getattr(model_config, "expression_dataset_prior", _NONE) != _NONE:
+        param = getattr(model_config, "parameterization", "linked")
+        if param in ("canonical", "standard"):
+            ds.append("r")
+        else:
+            ds.append("mu")
+
+    # prob_dataset_prior → p (or phi for mean_odds/odds_ratio)
+    if getattr(model_config, "prob_dataset_prior", _NONE) != _NONE:
+        param = getattr(model_config, "parameterization", "linked")
+        if param in ("mean_odds", "odds_ratio"):
+            ds.append("phi")
+        else:
+            ds.append("p")
+
+    # zero_inflation_dataset_prior → gate
+    if getattr(model_config, "zero_inflation_dataset_prior", _NONE) != _NONE:
+        ds.append("gate")
+
+    # overdispersion_dataset_prior → bnb_concentration
+    if getattr(model_config, "overdispersion_dataset_prior", _NONE) != _NONE:
+        ds.append("bnb_concentration")
+
+    return ds if ds else None
+
+
+def _build_map_layouts(
+    map_estimates: Dict[str, Any],
+    model_config,
+    *,
+    n_genes: Optional[int] = None,
+    n_cells: Optional[int] = None,
+    n_components: Optional[int] = None,
+) -> Dict[str, AxisLayout]:
+    """Build semantic layouts for a MAP-estimates dictionary.
+
+    Uses ``param_specs`` from *model_config* when available (exact path),
+    falling back to shape-based inference for derived keys like ``"r"``
+    or ``"mu"`` that may not have a direct spec.  When
+    ``model_config.dataset_params`` is ``None``, dataset-specific
+    parameters are inferred from the hierarchical-prior flags on the
+    config (``expression_dataset_prior``, ``prob_dataset_prior``, etc.).
+
+    Parameters
+    ----------
+    map_estimates : dict
+        Dictionary of MAP estimate arrays keyed by canonical names
+        (``"p"``, ``"r"``, ``"mu"``, ``"phi"``, etc.).
+    model_config
+        Model configuration object.  Uses ``param_specs``,
+        ``n_components``, ``n_datasets``, ``mixture_params``, and
+        ``dataset_params`` when present.
+    n_genes : int, optional
+        Number of genes.  Passed separately because ``ModelConfig``
+        typically does not carry ``n_genes``; the results object does.
+    n_cells : int, optional
+        Number of cells.
+    n_components : int, optional
+        Number of mixture components.  Falls back to
+        ``model_config.n_components`` when not provided.
+
+    Returns
+    -------
+    dict of str to AxisLayout
+        Semantic layout for every key in *map_estimates* that has a
+        ``shape`` attribute.
+    """
+    specs = getattr(model_config, "param_specs", None) or []
+
+    # Derive dataset_params from config flags when not explicitly set.
+    # This ensures correct layout inference even for configs that only
+    # set expression_dataset_prior / prob_dataset_prior without
+    # populating the dataset_params list.
+    ds_params = _derive_dataset_params(model_config)
+
+    # Use the explicit n_components if provided, otherwise fall back to
+    # the value on model_config.
+    _n_components = (
+        n_components
+        if n_components is not None
+        else getattr(model_config, "n_components", None)
+    )
+
+    return build_sample_layouts(
+        specs,
+        map_estimates,
+        n_genes=n_genes,
+        n_cells=n_cells,
+        n_components=_n_components,
+        n_datasets=getattr(model_config, "n_datasets", None),
+        mixture_params=getattr(model_config, "mixture_params", None),
+        dataset_params=ds_params,
+    )
+
+
+# ==============================================================================
 # Parameter Extraction Mixin
 # ==============================================================================
 
@@ -1502,11 +1638,26 @@ class ParameterExtractionMixin:
                     r_for_kappa = mu * phi
             if r_for_kappa is not None:
                 omega_safe = jnp.clip(omega, 1e-6, None)
-                # omega is (…, G) but r may have extra axes such as a
-                # mixture-component dimension (…, K, G).  Expand omega
-                # so that it broadcasts correctly.
-                while omega_safe.ndim < r_for_kappa.ndim:
-                    omega_safe = jnp.expand_dims(omega_safe, axis=-2)
+                # Use layout-based broadcasting to align omega with r.
+                # omega is typically (G,) while r may be (K, G) or
+                # (K, D, G).  align_to_layout inserts singletons for
+                # the missing component / dataset axes.
+                _map_layouts = _build_map_layouts(
+                    map_estimates, self.model_config,
+                    n_genes=self.n_genes, n_cells=self.n_cells,
+                    n_components=self.n_components,
+                )
+                _omega_layout = _map_layouts.get(
+                    "bnb_concentration", AxisLayout(())
+                )
+                _r_layout = _map_layouts.get("r", AxisLayout(()))
+                _kappa_target = merge_layouts(_omega_layout, _r_layout)
+                omega_safe = align_to_layout(
+                    omega_safe, _omega_layout, _kappa_target
+                )
+                r_for_kappa = align_to_layout(
+                    r_for_kappa, _r_layout, _kappa_target
+                )
                 map_estimates["bnb_kappa"] = (
                     2.0 + (r_for_kappa + 1.0) / omega_safe
                 )
@@ -1543,16 +1694,22 @@ class ParameterExtractionMixin:
     def _compute_canonical_parameters(
         self, map_estimates: Dict, verbose: bool = True
     ) -> Dict:
-        """
-        Compute canonical parameters from other parameters for different
-        parameterizations.
+        """Compute canonical parameters from MAP estimates.
+
+        Derives missing canonical quantities (``r``, ``mu``, ``p``,
+        ``p_hat``, etc.) depending on the model's parameterization.
+        Broadcasting between parameters of different shapes is handled
+        entirely through :class:`AxisLayout` lookups via
+        :func:`align_to_layout` and :func:`merge_layouts`, removing the
+        need for manual ``ndim`` / ``shape`` heuristics.
 
         Parameters
         ----------
         map_estimates : Dict
-            Dictionary containing MAP estimates
+            Dictionary containing MAP estimates keyed by canonical
+            parameter names (``"p"``, ``"r"``, ``"mu"``, ``"phi"``, …).
         verbose : bool, default=True
-            If True, prints information about parameter computation
+            If True, prints information about parameter computation.
 
         Returns
         -------
@@ -1565,77 +1722,46 @@ class ParameterExtractionMixin:
         parameterization = self.model_config.parameterization
         unconstrained = self.model_config.unconstrained
 
-        # Handle linked / mean_prob parameterization
-        if parameterization in (
-            "linked",
-            "mean_prob",
-        ):
+        # Build semantic layouts for every key in the MAP dict.  This
+        # uses param_specs when available (exact path) and falls back to
+        # shape-based inference for derived / old-pickle keys.
+        layouts = _build_map_layouts(
+            estimates, self.model_config,
+            n_genes=self.n_genes, n_cells=self.n_cells,
+            n_components=self.n_components,
+        )
+
+        # ------------------------------------------------------------------
+        # Linked / mean_prob: compute r = mu * (1 - p) / p
+        # ------------------------------------------------------------------
+        if parameterization in ("linked", "mean_prob"):
             if "mu" in estimates and "p" in estimates and "r" not in estimates:
                 if verbose:
                     print(
                         "Computing r from mu and p for "
                         f"{parameterization} parameterization"
                     )
-                # r = mu * (1 - p) / p
-                p = estimates["p"]
-                # For standard (non-hierarchical) mixture models, p is
-                # (n_components,) and needs reshaping to broadcast with
-                # mu of shape (n_components, n_genes).  For hierarchical
-                # models, p is already (n_genes,) or (n_components,
-                # n_genes) and broadcasts element-wise with mu.
-                # NOTE: mixture_params=None means *all* params are
-                # mixture-specific (the default), so we treat None the
-                # same as the param being listed explicitly.
-                _mp = self.model_config.mixture_params
-                _p_is_mixture = _mp is None or "p" in _mp
-                if (
-                    self.n_components is not None
-                    and _p_is_mixture
-                    and p.ndim == 1
-                    and p.shape[0] == self.n_components
-                ):
-                    # Mixture model: mu has shape (n_components, n_genes)
-                    # p has shape (n_components,). Reshape for broadcasting.
-                    p_reshaped = p[:, None]
-                else:
-                    p_reshaped = p
+                # Determine the target layout that can hold both p and mu
+                # axes (the union), then align both tensors to it.
+                p_layout = layouts.get("p", AxisLayout(()))
+                mu_layout = layouts.get("mu", AxisLayout(()))
+                target = merge_layouts(p_layout, mu_layout)
 
-                # Scalar-per-dataset p has shape (n_datasets,) while mu
-                # is (n_datasets, n_genes).  Reshape to (n_datasets, 1)
-                # so the trailing dimension broadcasts against n_genes.
-                _n_ds = getattr(self.model_config, "n_datasets", None)
-                if (
-                    _n_ds is not None
-                    and p_reshaped.ndim == 1
-                    and p_reshaped.shape[0] == _n_ds
-                    and estimates["mu"].ndim >= 2
-                ):
-                    p_reshaped = p_reshaped[:, None]
-
-                # Mixture+dataset scalar p: shape (K, D) while mu is
-                # (K, D, G).  Add trailing singleton for broadcasting.
-                mu_shape = estimates["mu"]
-                if (
-                    p_reshaped.ndim >= 1
-                    and mu_shape.ndim > p_reshaped.ndim
-                    and mu_shape.shape[: p_reshaped.ndim] == p_reshaped.shape
-                ):
-                    p_reshaped = p_reshaped[..., None]
-
-                # Align intermediate dims when p and mu are both
-                # gene-specific but differ in dataset dimension, e.g.
-                # p=(K, G) vs mu=(K, D, G).
-                p_reshaped, mu_aligned = _align_gene_params(
-                    p_reshaped, estimates["mu"]
+                p_aligned = align_to_layout(estimates["p"], p_layout, target)
+                mu_aligned = align_to_layout(
+                    estimates["mu"], mu_layout, target
                 )
-                estimates["r"] = mu_aligned * (1 - p_reshaped) / p_reshaped
 
-        # Handle odds_ratio / mean_odds parameterization
-        elif parameterization in (
-            "odds_ratio",
-            "mean_odds",
-        ):
-            # Convert phi to p if needed
+                estimates["r"] = mu_aligned * (1 - p_aligned) / p_aligned
+                # Derived r inherits the merged layout of its inputs.
+                layouts["r"] = target
+
+        # ------------------------------------------------------------------
+        # Odds_ratio / mean_odds: phi → p, then r = mu * phi
+        # ------------------------------------------------------------------
+        elif parameterization in ("odds_ratio", "mean_odds"):
+            # Convert phi to p if needed (element-wise, no broadcast).
+            # p inherits the layout of phi since it's a monotone transform.
             if "phi" in estimates and "p" not in estimates:
                 if verbose:
                     print(
@@ -1643,6 +1769,7 @@ class ParameterExtractionMixin:
                         f"{parameterization} parameterization"
                     )
                 estimates["p"] = 1.0 / (1.0 + estimates["phi"])
+                layouts["p"] = layouts.get("phi", AxisLayout(()))
 
             # Convert phi and mu to r if needed
             if (
@@ -1655,57 +1782,26 @@ class ParameterExtractionMixin:
                         "Computing r from phi and mu for "
                         f"{parameterization} parameterization"
                     )
-                # For standard (non-hierarchical) mixture models, phi is
-                # (n_components,) and needs reshaping.  For hierarchical
-                # models, phi is already (n_genes,) or (n_components,
-                # n_genes) and broadcasts element-wise with mu.
-                # NOTE: mixture_params=None means *all* params are
-                # mixture-specific (see note above for p).
-                _mp = self.model_config.mixture_params
-                _phi_is_mixture = _mp is None or "phi" in _mp
-                if (
-                    self.n_components is not None
-                    and _phi_is_mixture
-                    and estimates["phi"].ndim == 1
-                    and estimates["phi"].shape[0] == self.n_components
-                ):
-                    # Mixture model: mu has shape (n_components, n_genes)
-                    phi_reshaped = estimates["phi"][:, None]
-                else:
-                    phi_reshaped = estimates["phi"]
+                # Use the union layout of phi and mu as the broadcast
+                # target so both tensors align correctly regardless of
+                # whether phi is scalar, per-component, or gene-specific.
+                phi_layout = layouts.get("phi", AxisLayout(()))
+                mu_layout = layouts.get("mu", AxisLayout(()))
+                target = merge_layouts(phi_layout, mu_layout)
 
-                # Scalar-per-dataset phi has shape (n_datasets,) while mu
-                # is (n_datasets, n_genes).  Reshape to (n_datasets, 1)
-                # so the trailing dimension broadcasts against n_genes.
-                _n_ds = getattr(self.model_config, "n_datasets", None)
-                if (
-                    _n_ds is not None
-                    and phi_reshaped.ndim == 1
-                    and phi_reshaped.shape[0] == _n_ds
-                    and estimates["mu"].ndim >= 2
-                ):
-                    phi_reshaped = phi_reshaped[:, None]
-
-                # Mixture+dataset scalar phi: shape (K, D) while mu is
-                # (K, D, G).  Add trailing singleton for broadcasting.
-                mu_shape = estimates["mu"]
-                if (
-                    phi_reshaped.ndim >= 1
-                    and mu_shape.ndim > phi_reshaped.ndim
-                    and mu_shape.shape[: phi_reshaped.ndim]
-                    == phi_reshaped.shape
-                ):
-                    phi_reshaped = phi_reshaped[..., None]
-
-                # Align intermediate dims when phi and mu are both
-                # gene-specific but differ in dataset dimension, e.g.
-                # phi=(K, G) vs mu=(K, D, G).
-                phi_reshaped, mu_aligned = _align_gene_params(
-                    phi_reshaped, estimates["mu"]
+                phi_aligned = align_to_layout(
+                    estimates["phi"], phi_layout, target
                 )
-                estimates["r"] = mu_aligned * phi_reshaped
+                mu_aligned = align_to_layout(
+                    estimates["mu"], mu_layout, target
+                )
 
-            # Handle VCP capture probability conversion
+                estimates["r"] = mu_aligned * phi_aligned
+                # Derived r inherits the merged layout of its inputs.
+                layouts["r"] = target
+
+            # Handle VCP capture probability conversion.
+            # p_capture inherits the layout of phi_capture.
             if "phi_capture" in estimates and "p_capture" not in estimates:
                 if verbose:
                     print(
@@ -1713,10 +1809,15 @@ class ParameterExtractionMixin:
                         f"{parameterization} parameterization"
                     )
                 estimates["p_capture"] = 1.0 / (1.0 + estimates["phi_capture"])
+                layouts["p_capture"] = layouts.get(
+                    "phi_capture", AxisLayout(())
+                )
 
-        # Handle unconstrained parameterization
+        # ------------------------------------------------------------------
+        # Unconstrained transforms: exp / sigmoid / softmax
+        # Each derived key inherits its source's layout.
+        # ------------------------------------------------------------------
         if unconstrained:
-            # Convert r_unconstrained to r if needed
             if "r_unconstrained" in estimates and "r" not in estimates:
                 if verbose:
                     print(
@@ -1724,8 +1825,10 @@ class ParameterExtractionMixin:
                         "unconstrained parameterization"
                     )
                 estimates["r"] = jnp.exp(estimates["r_unconstrained"])
+                layouts["r"] = layouts.get(
+                    "r_unconstrained", AxisLayout(())
+                )
 
-            # Convert p_unconstrained to p if needed
             if "p_unconstrained" in estimates and "p" not in estimates:
                 if verbose:
                     print(
@@ -1733,8 +1836,10 @@ class ParameterExtractionMixin:
                         "unconstrained parameterization"
                     )
                 estimates["p"] = sigmoid(estimates["p_unconstrained"])
+                layouts["p"] = layouts.get(
+                    "p_unconstrained", AxisLayout(())
+                )
 
-            # Convert gate_unconstrained to gate if needed
             if "gate_unconstrained" in estimates and "gate" not in estimates:
                 if verbose:
                     print(
@@ -1742,8 +1847,10 @@ class ParameterExtractionMixin:
                         "unconstrained parameterization"
                     )
                 estimates["gate"] = sigmoid(estimates["gate_unconstrained"])
+                layouts["gate"] = layouts.get(
+                    "gate_unconstrained", AxisLayout(())
+                )
 
-            # Handle VCP capture probability conversion
             if (
                 "p_capture_unconstrained" in estimates
                 and "p_capture" not in estimates
@@ -1756,20 +1863,24 @@ class ParameterExtractionMixin:
                 estimates["p_capture"] = sigmoid(
                     estimates["p_capture_unconstrained"]
                 )
-            # Handle mixing weights computation for mixture models
+                layouts["p_capture"] = layouts.get(
+                    "p_capture_unconstrained", AxisLayout(())
+                )
+
             if (
                 "mixing_logits_unconstrained" in estimates
                 and "mixing_weights" not in estimates
             ):
-                # Compute mixing weights from mixing_logits_unconstrained using
-                # softmax
                 estimates["mixing_weights"] = softmax(
                     estimates["mixing_logits_unconstrained"], axis=-1
                 )
+                layouts["mixing_weights"] = layouts.get(
+                    "mixing_logits_unconstrained", AxisLayout(())
+                )
 
-        # Canonical/standard parameterization may only have p and r in the MAP.
-        # Add deterministic mu so downstream code can rely on a mean parameter
-        # regardless of the sampling parameterization.
+        # ------------------------------------------------------------------
+        # Canonical / standard: derive mu = r * p / (1 - p)
+        # ------------------------------------------------------------------
         if (
             parameterization in ("canonical", "standard")
             and "r" in estimates
@@ -1781,56 +1892,63 @@ class ParameterExtractionMixin:
                     "Computing mu from r and p for "
                     f"{parameterization} parameterization"
                 )
-            # Reuse shared broadcasting/alignment helpers to support
-            # scalar/per-component/per-dataset and gene-specific layouts.
-            p_for_mu = _broadcast_scalar_for_mixture(
-                estimates["p"], estimates["r"]
-            )
-            # Special-case dataset+gene p against mixture+dataset+gene r:
-            # p=(D,G), r=(K,D,G) should become p=(1,D,G) so broadcasting
-            # happens across components.  Generic gene-axis alignment inserts
-            # singleton dims before the gene axis, which would yield (D,1,G).
-            if (
-                p_for_mu.ndim + 1 == estimates["r"].ndim
-                and p_for_mu.shape == estimates["r"].shape[1:]
-            ):
-                p_for_mu = jnp.expand_dims(p_for_mu, axis=0)
-            p_for_mu, r_aligned = _align_gene_params(p_for_mu, estimates["r"])
-            # Guard against numerical blow-ups when p is very close to 1.
-            one_minus_p = jnp.clip(1.0 - p_for_mu, 1e-8, None)
-            estimates["mu"] = r_aligned * p_for_mu / one_minus_p
+            p_layout = layouts.get("p", AxisLayout(()))
+            r_layout = layouts.get("r", AxisLayout(()))
+            target = merge_layouts(p_layout, r_layout)
 
-        # Convert eta_capture to capture parameter (biology-informed prior)
+            p_aligned = align_to_layout(estimates["p"], p_layout, target)
+            r_aligned = align_to_layout(estimates["r"], r_layout, target)
+
+            # Guard against numerical blow-ups when p is very close to 1.
+            one_minus_p = jnp.clip(1.0 - p_aligned, 1e-8, None)
+            estimates["mu"] = r_aligned * p_aligned / one_minus_p
+            layouts["mu"] = target
+
+        # ------------------------------------------------------------------
+        # eta_capture → phi_capture, p_capture (biology-informed prior)
+        # ------------------------------------------------------------------
         if "eta_capture" in estimates:
             eta = estimates["eta_capture"]
+            eta_layout = layouts.get("eta_capture", AxisLayout(()))
             if "phi_capture" not in estimates:
                 estimates["phi_capture"] = jnp.exp(eta) - 1.0
+                layouts["phi_capture"] = eta_layout
             if "p_capture" not in estimates:
                 estimates["p_capture"] = jnp.exp(-eta)
+                layouts["p_capture"] = eta_layout
             if verbose:
                 print(
                     "Computing p_capture and phi_capture from eta_capture "
                     "(biology-informed prior)"
                 )
 
-        # Compute p_hat for NBVCP and ZINBVCP models if needed (applies to all
-        # parameterizations)
+        # ------------------------------------------------------------------
+        # p_hat for NBVCP / ZINBVCP models
+        #
+        # This block combines a gene-specific p with a cell-specific
+        # p_capture — a cross-product of fundamentally different axis
+        # types (cells × genes) that doesn't fit the standard layout
+        # alignment model.  We use layout metadata for the skip
+        # condition but keep manual reshaping for the actual broadcast.
+        # ------------------------------------------------------------------
         if (
             "p" in estimates
             and "p_capture" in estimates
             and "p_hat" not in estimates
         ):
             p_val = estimates["p"]
+            p_layout = layouts.get("p", AxisLayout(()))
 
-            # For hierarchical models p has shape (n_components, n_genes)
-            # or (K, D, G) for multi-dataset hierarchical models.
-            # Pre-computing p_hat would require a huge per-cell tensor —
-            # too large to materialise here.  The cell-batched sampling
-            # code handles the broadcast per-batch instead, so we skip.
-            # Guard: skip whenever p has >=2 dimensions with all sizes >1,
-            # since broadcasting with per-cell p_capture would either fail
-            # or produce a massive intermediate tensor.
-            p_is_high_dim = p_val.ndim >= 2 and all(s > 1 for s in p_val.shape)
+            # Skip precomputation when p is gene-specific (has "genes"
+            # axis) *and* carries additional axes (components / datasets).
+            # Broadcasting with per-cell p_capture would create a huge
+            # intermediate tensor.  The cell-batched sampling code
+            # handles the broadcast per-batch instead.
+            p_has_genes = GENES in p_layout.axes
+            p_has_extra = (
+                COMPONENTS in p_layout.axes or len(p_layout.axes) > 1
+            )
+            p_is_high_dim = p_has_genes and p_has_extra
 
             if p_is_high_dim:
                 if verbose:
@@ -1843,8 +1961,9 @@ class ParameterExtractionMixin:
                     print("Computing p_hat from p and p_capture")
 
                 # p_capture is (n_cells,); reshape to (n_cells, 1) for
-                # broadcasting against p which may be scalar, (n_genes,),
-                # or (n_components,).
+                # broadcasting against p which may be scalar, (G,), or
+                # (K,).  Cells × genes is a cross-product, not a layout
+                # alignment, so we reshape manually.
                 p_capture_reshaped = estimates["p_capture"][:, None]
 
                 # p_hat = p * p_capture / (1 - p * (1 - p_capture))
@@ -1854,14 +1973,8 @@ class ParameterExtractionMixin:
                     / (1 - p_val * (1 - p_capture_reshaped))
                 )
 
-                # When p is scalar or per-component (not gene-specific),
-                # p_hat is per-cell only → flatten to (n_cells,).
-                # When p is gene-specific, p_hat is (n_cells, n_genes).
-                if p_val.ndim == 0 or (
-                    p_val.ndim == 1
-                    and self.n_components is not None
-                    and p_val.shape[0] == self.n_components
-                ):
+                # When p has no gene axis, p_hat is per-cell only — flatten.
+                if not p_has_genes:
                     estimates["p_hat"] = p_hat_raw.flatten()
                 else:
                     estimates["p_hat"] = p_hat_raw

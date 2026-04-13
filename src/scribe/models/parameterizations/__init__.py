@@ -497,115 +497,34 @@ class MeanOddsParameterization(Parameterization):
 # ==============================================================================
 
 # ==============================================================================
-# Helper Functions for Derived Parameters
+# Derived Parameter Compute Functions
 # ==============================================================================
-
-
-def _broadcast_scalar_for_mixture(
-    scalar_param: jnp.ndarray, gene_param: jnp.ndarray
-) -> jnp.ndarray:
-    """Expand a non-gene parameter for broadcasting with a gene-specific one.
-
-    Handles both single-dataset and multi-dataset layouts:
-
-    - ``(K,)``    + ``(K, G)``    -> ``(K, 1)``
-    - ``(K, D)``  + ``(K, D, G)`` -> ``(K, D, 1)``
-    - ``(D,)``    + ``(D, G)``    -> ``(D, 1)``
-
-    The general rule: when ``scalar_param`` has exactly one fewer
-    dimension than ``gene_param`` and all leading dimensions agree,
-    append a trailing singleton for the gene axis.
-
-    Parameters
-    ----------
-    scalar_param : jnp.ndarray
-        Parameter that may need expansion.  Shape can be ``()``,
-        ``(K,)``, ``(K, D)``, etc.
-    gene_param : jnp.ndarray
-        Gene-specific parameter with one extra trailing dimension
-        (the gene axis).
-
-    Returns
-    -------
-    jnp.ndarray
-        ``scalar_param`` with a trailing singleton added when needed.
-    """
-    if (
-        scalar_param.ndim >= 1
-        and scalar_param.ndim == gene_param.ndim - 1
-        and scalar_param.shape == gene_param.shape[:-1]
-    ):
-        return scalar_param[..., None]
-    return scalar_param
-
-
-def _align_gene_params(
-    a: jnp.ndarray, b: jnp.ndarray
-) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    """Align two gene-specific arrays for broadcasting.
-
-    Both arrays share genes as the last dimension but may differ in
-    intermediate dimensions (e.g. dataset D).  Singleton dims are
-    inserted just before the gene axis in the lower-rank array so
-    that standard broadcasting works.
-
-    Examples:
-
-    - ``(K, G)`` + ``(K, D, G)`` -> ``(K, 1, G)`` + ``(K, D, G)``
-    - ``(G,)``   + ``(K, D, G)`` -> ``(1, 1, G)`` + ``(K, D, G)``
-    - ``(K, G)`` + ``(K, G)``    -> unchanged
-
-    Parameters
-    ----------
-    a : jnp.ndarray
-        First gene-specific array.
-    b : jnp.ndarray
-        Second gene-specific array.
-
-    Returns
-    -------
-    Tuple[jnp.ndarray, jnp.ndarray]
-        ``(a, b)`` with singletons inserted in the lower-rank array.
-    """
-    if a.ndim == b.ndim or a.ndim == 0 or b.ndim == 0:
-        return a, b
-    # Insert singletons just before the gene (last) axis in the
-    # lower-rank operand.  Using ``ndim - 1`` as the axis avoids
-    # negative-index edge cases with JAX tracing.
-    if a.ndim < b.ndim:
-        while a.ndim < b.ndim:
-            a = jnp.expand_dims(a, axis=a.ndim - 1)
-        return a, b
-    else:
-        while b.ndim < a.ndim:
-            b = jnp.expand_dims(b, axis=b.ndim - 1)
-        return a, b
-
-
-# ------------------------------------------------------------------------------
+#
+# These functions contain *only* pure math.  Shape alignment across
+# different axis layouts (e.g. mu with a dataset axis vs. phi without)
+# is handled by the call site in ``ModelBuilder`` using
+# ``merge_layouts`` / ``align_to_layout`` before invoking these.
 
 
 def _compute_r_from_mu_phi(phi: jnp.ndarray, mu: jnp.ndarray) -> jnp.ndarray:
-    """Compute r = mu * phi with proper broadcasting.
+    """Compute the dispersion parameter ``r = mu * phi``.
 
-    Handles shape mismatches when mu and phi have different intermediate
-    dimensions (e.g. mu is ``(K, D, G)`` from dataset hierarchy while
-    phi is ``(K, G)`` from gene-level hierarchy only).
+    Inputs are expected to be pre-aligned by the caller (i.e. already
+    broadcast-compatible).  The model builder uses ``AxisLayout`` metadata
+    to insert singleton dimensions where axes differ before calling this.
 
     Parameters
     ----------
     phi : jnp.ndarray
-        Odds ratio parameter.
+        Odds ratio parameter (pre-aligned).
     mu : jnp.ndarray
-        Mean parameter.
+        Mean parameter (pre-aligned).
 
     Returns
     -------
     jnp.ndarray
-        Dispersion parameter r = mu * phi.
+        Dispersion parameter ``r = mu * phi``.
     """
-    phi = _broadcast_scalar_for_mixture(phi, mu)
-    phi, mu = _align_gene_params(phi, mu)
     return mu * phi
 
 
@@ -613,26 +532,24 @@ def _compute_r_from_mu_phi(phi: jnp.ndarray, mu: jnp.ndarray) -> jnp.ndarray:
 
 
 def _compute_r_from_mu_p(p: jnp.ndarray, mu: jnp.ndarray) -> jnp.ndarray:
-    """Compute r = mu * (1 - p) / p with proper broadcasting.
+    """Compute the dispersion parameter ``r = mu * (1 - p) / p``.
 
-    Handles shape mismatches when mu and p have different intermediate
-    dimensions (e.g. mu is ``(K, D, G)`` from dataset hierarchy while
-    p is ``(K, G)`` from gene-level hierarchy only).
+    Inputs are expected to be pre-aligned by the caller (i.e. already
+    broadcast-compatible).  The model builder uses ``AxisLayout`` metadata
+    to insert singleton dimensions where axes differ before calling this.
 
     Parameters
     ----------
     p : jnp.ndarray
-        Success probability parameter.
+        Success probability parameter (pre-aligned).
     mu : jnp.ndarray
-        Mean parameter.
+        Mean parameter (pre-aligned).
 
     Returns
     -------
     jnp.ndarray
-        Dispersion parameter r = mu * (1 - p) / p.
+        Dispersion parameter ``r = mu * (1 - p) / p``.
     """
-    p = _broadcast_scalar_for_mixture(p, mu)
-    p, mu = _align_gene_params(p, mu)
     return mu * (1 - p) / p
 
 
@@ -665,9 +582,7 @@ __all__ = [
     "MeanProbParameterization",
     "MeanOddsParameterization",
     "PARAMETERIZATIONS",
-    # Helper functions for derived parameter broadcasting
-    "_broadcast_scalar_for_mixture",
-    "_align_gene_params",
+    # Derived parameter compute functions (pure math, alignment-free)
     "_compute_r_from_mu_phi",
     "_compute_r_from_mu_p",
 ]

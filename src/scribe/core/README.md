@@ -853,6 +853,8 @@ and tensor shapes.
 | `gene_axes_from_layouts` | Extract `{key: gene_axis}` mapping from a layouts dict |
 | `reconstruct_param_layouts` | Bulk backward-compat builder (no specs needed) |
 | `align_to_layout` | Insert singletons for broadcasting between layouts |
+| `merge_layouts` | Compute the union of two or more layouts in canonical axis order |
+| `broadcast_param_to_layout` | Convenience wrapper around `align_to_layout` that auto-detects a leading batch/cell dimension |
 
 **Layout-based axis lookups (Phase A):** The following subsetting methods now
 prefer `AxisLayout`-based axis detection over the legacy shape heuristics, with

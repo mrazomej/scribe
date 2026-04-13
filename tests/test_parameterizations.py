@@ -12,7 +12,6 @@ from scribe.models.parameterizations import (
     CanonicalParameterization,
     MeanOddsParameterization,
     MeanProbParameterization,
-    _broadcast_scalar_for_mixture,
     _compute_r_from_mu_p,
     _compute_r_from_mu_phi,
 )
@@ -54,52 +53,6 @@ class TestParameterizationRegistry:
 
 
 # ==============================================================================
-# Test Broadcasting Helper
-# ==============================================================================
-
-
-class TestBroadcastScalarForMixture:
-    """Test the _broadcast_scalar_for_mixture helper function."""
-
-    def test_scalar_no_expansion(self):
-        """Test scalar param is not expanded."""
-        scalar = jnp.array(0.5)
-        gene = jnp.array([1.0, 2.0, 3.0])
-        result = _broadcast_scalar_for_mixture(scalar, gene)
-        assert result.shape == ()
-
-    def test_1d_with_1d_no_expansion(self):
-        """Test 1D params don't expand when gene param is also 1D."""
-        scalar = jnp.array([0.5, 0.6])
-        gene = jnp.array([1.0, 2.0, 3.0])
-        result = _broadcast_scalar_for_mixture(scalar, gene)
-        assert result.shape == (2,)
-
-    def test_mixture_expansion(self):
-        """Test mixture param is expanded for broadcasting with gene param."""
-        # scalar: (n_components,) = (2,)
-        # gene: (n_components, n_genes) = (2, 5)
-        scalar = jnp.array([0.5, 0.6])
-        gene = jnp.ones((2, 5))
-        result = _broadcast_scalar_for_mixture(scalar, gene)
-        assert result.shape == (2, 1)
-
-    def test_already_2d_no_expansion(self):
-        """Test 2D param is not further expanded."""
-        scalar = jnp.ones((2, 5))
-        gene = jnp.ones((2, 5))
-        result = _broadcast_scalar_for_mixture(scalar, gene)
-        assert result.shape == (2, 5)
-
-    def test_mismatched_components_no_expansion(self):
-        """Test no expansion when component counts don't match."""
-        scalar = jnp.array([0.5, 0.6, 0.7])  # 3 components
-        gene = jnp.ones((2, 5))  # 2 components
-        result = _broadcast_scalar_for_mixture(scalar, gene)
-        assert result.shape == (3,)  # No expansion
-
-
-# ==============================================================================
 # Test Mean Odds Derived Parameters
 # ==============================================================================
 
@@ -118,11 +71,12 @@ class TestMeanOddsDerivedParams:
     def test_mixture_phi_gene_mu(self):
         """Test r = mu * phi with mixture-specific phi and gene-specific mu.
 
-        This is the case that previously failed with broadcasting error.
-        phi: (n_components,) = (2,)
-        mu: (n_components, n_genes) = (2, 3)
+        The compute function expects pre-aligned inputs (alignment is
+        handled by the model builder via AxisLayout).  We pass phi as
+        ``(K, 1)`` so it broadcasts with ``(K, G)`` mu.
         """
-        phi = jnp.array([2.0, 3.0])  # 2 components
+        # phi pre-aligned to (K, 1) by the model builder
+        phi = jnp.array([[2.0], [3.0]])  # (2, 1)
         mu = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])  # (2, 3)
         r = _compute_r_from_mu_phi(phi, mu)
 
@@ -174,11 +128,12 @@ class TestMeanProbDerivedParams:
     def test_mixture_p_gene_mu(self):
         """Test r = mu * (1-p) / p with mixture-specific p and gene-specific mu.
 
-        This is the case that previously failed with broadcasting error.
-        p: (n_components,) = (2,)
-        mu: (n_components, n_genes) = (2, 3)
+        The compute function expects pre-aligned inputs (alignment is
+        handled by the model builder via AxisLayout).  We pass p as
+        ``(K, 1)`` so it broadcasts with ``(K, G)`` mu.
         """
-        p = jnp.array([0.5, 0.25])  # 2 components
+        # p pre-aligned to (K, 1) by the model builder
+        p = jnp.array([[0.5], [0.25]])  # (2, 1)
         mu = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])  # (2, 3)
         r = _compute_r_from_mu_p(p, mu)
 
