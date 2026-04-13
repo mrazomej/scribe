@@ -772,16 +772,16 @@ ScribeSVIResults
        `mu = r * p / (1 - p)` with shape-aware broadcasting across component,
        dataset, and gene axes)
      - `_convert_to_canonical()`: Deprecated conversion method
-     - `_reconstruct_horseshoe_maps()`: Reconstruct constrained MAP from NCP
-       z components for horseshoe priors. Handles gene-level p/gate, dataset-
-       level entries, and gene-level mu/r when `model_config.expression_prior ==
-       HORSESHOE`: `mu = exp(log_mu_loc + eff_scale * mu_raw)` (or `r` for
-       canonical param).
+     - `_reconstruct_ncp_maps()`: Iterate over `model_config.param_specs` and
+       dispatch to per-spec helpers for all NCP parameters (horseshoe and NEG).
+       Replaces the old `_reconstruct_horseshoe_maps` / `_reconstruct_neg_maps`.
+     - `_reconstruct_from_horseshoe_spec()`: Reconstruct one constrained MAP
+       parameter from its horseshoe NCP `ParamSpec` fields (`raw_name`,
+       `tau_name`, `lambda_name`, `c_sq_name`, `hyper_loc_name`, `transform`).
+     - `_reconstruct_from_neg_spec()`: Reconstruct one constrained MAP
+       parameter from its NEG NCP `ParamSpec` fields (`raw_name`, `psi_name`,
+       `hyper_loc_name`, `transform`).
      - `_horseshoe_eff_scale()`: Compute regularized horseshoe effective scale
-     - `_reconstruct_neg_maps()`: Reconstruct constrained MAP from NCP z
-       components for NEG priors. Handles gene-level p/gate, dataset-level
-       entries, and gene-level mu/r when `model_config.expression_prior == NEG`:
-       `mu = exp(log_mu_loc + sqrt(psi) * mu_raw)` (or `r` for canonical param).
      - `_neg_eff_scale()`: Compute NEG effective scale as sqrt(psi)
    - Dependencies: Uses `ModelHelpersMixin` methods
 

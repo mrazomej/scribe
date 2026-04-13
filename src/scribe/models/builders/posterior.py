@@ -615,7 +615,7 @@ def _apply_gene_level_hierarchy(
 
     if horseshoe_p:
         # Horseshoe NCP: hyper_loc + {tau, lambda, c_sq} + raw z variable.
-        # The constrained param is reconstructed in _reconstruct_horseshoe_maps.
+        # The constrained param is reconstructed in _reconstruct_ncp_maps.
         distributions.update(
             _build_hyperparameter_posteriors(params, loc_name, loc_name)
         )
@@ -631,7 +631,7 @@ def _apply_gene_level_hierarchy(
 
     if neg_p:
         # NEG NCP: hyper_loc + {psi, zeta} + raw z variable.
-        # The constrained param is reconstructed in _reconstruct_neg_maps.
+        # The constrained param is reconstructed in _reconstruct_ncp_maps.
         distributions.update(
             _build_hyperparameter_posteriors(params, loc_name, loc_name)
         )
@@ -1359,7 +1359,7 @@ def _apply_bnb_concentration(
       location (``bnb_concentration_loc``), auxiliary sites (tau, lambda,
       c_sq for horseshoe; psi, zeta for NEG), and the NCP raw z variable.
       The constrained ``bnb_concentration`` is later reconstructed in
-      ``_reconstruct_horseshoe_maps`` / ``_reconstruct_neg_maps``.
+      ``_reconstruct_ncp_maps``.
     * **Gaussian** (hierarchical Normal): adds the hyper-location
       (``bnb_omega_hyper_loc``), hyper-scale (``bnb_omega_hyper_scale``),
       and the per-gene ``bnb_concentration`` directly as a

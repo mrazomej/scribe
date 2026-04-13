@@ -29,7 +29,7 @@ from ..flows import ComponentFlowDistribution, FlowDistribution
 
 
 # ==============================================================================
-# Horseshoe NCP MAP Reconstruction
+# NCP MAP Reconstruction (Horseshoe / NEG)
 # ==============================================================================
 
 
@@ -81,10 +81,10 @@ def _neg_eff_scale(psi: jnp.ndarray) -> jnp.ndarray:
 def _expand_to_match(arr: jnp.ndarray, ref_ndim: int) -> jnp.ndarray:
     """Append trailing singleton dimensions until ``arr.ndim == ref_ndim``.
 
-    Used by the horseshoe/NEG NCP reconstruction helpers to promote
-    global scalars (e.g. ``loc``, ``tau``, ``c_sq``) that may acquire a
-    leading dataset dimension ``(D,)`` after multi-dataset concat so
-    they broadcast with gene-level arrays of shape ``(D, G)``.
+    Used by the NCP reconstruction helpers to promote global scalars
+    (e.g. ``loc``, ``tau``, ``c_sq``) that may acquire a leading
+    dataset dimension ``(D,)`` after multi-dataset concat so they
+    broadcast with gene-level arrays of shape ``(D, G)``.
 
     Parameters
     ----------
@@ -104,305 +104,146 @@ def _expand_to_match(arr: jnp.ndarray, ref_ndim: int) -> jnp.ndarray:
     return arr
 
 
-def _reconstruct_horseshoe_maps(
+def _reconstruct_from_horseshoe_spec(
+    spec,
+    map_estimates: Dict[str, jnp.ndarray],
+    expand_rank: bool = False,
+) -> None:
+    """Reconstruct one constrained parameter from its horseshoe NCP spec.
+
+    Reads ``z``, ``tau``, ``lambda``, ``c_sq``, and ``loc`` from
+    *map_estimates* using the field names stored on *spec*, then
+    computes ``constrained = spec.transform(loc + eff_scale * z)``
+    and injects the result back into *map_estimates*.
+
+    Parameters
+    ----------
+    spec
+        A horseshoe ``ParamSpec`` with ``raw_name``, ``tau_name``,
+        ``lambda_name``, ``c_sq_name``, ``hyper_loc_name``,
+        ``constrained_name``, and ``transform`` fields.
+    map_estimates : Dict[str, jnp.ndarray]
+        Mutable MAP dict.  Modified in-place.
+    expand_rank : bool, default False
+        When ``True``, promotes lower-rank arrays (``loc``, ``tau``,
+        ``c_sq``) to match ``z.ndim`` via :func:`_expand_to_match`.
+        Needed for BNB concentration after multi-dataset concat.
+    """
+    z = map_estimates.get(spec.raw_name)
+    tau = map_estimates.get(spec.tau_name)
+    lam = map_estimates.get(spec.lambda_name)
+    c_sq = map_estimates.get(spec.c_sq_name)
+    loc = map_estimates.get(spec.hyper_loc_name)
+
+    # Silently skip if any required component is missing (matches
+    # the old ``continue`` behaviour when keys were absent).
+    if any(v is None for v in (z, tau, lam, c_sq, loc)):
+        return
+
+    # BNB concentration scalars may need rank expansion after concat.
+    if expand_rank:
+        ref_ndim = z.ndim
+        loc = _expand_to_match(loc, ref_ndim)
+        tau = _expand_to_match(tau, ref_ndim)
+        c_sq = _expand_to_match(c_sq, ref_ndim)
+
+    eff = _horseshoe_eff_scale(tau, lam, c_sq)
+    map_estimates[spec.constrained_name] = spec.transform(loc + eff * z)
+
+
+def _reconstruct_from_neg_spec(
+    spec,
+    map_estimates: Dict[str, jnp.ndarray],
+    expand_rank: bool = False,
+) -> None:
+    """Reconstruct one constrained parameter from its NEG NCP spec.
+
+    Reads ``z``, ``psi``, and ``loc`` from *map_estimates* using the
+    field names stored on *spec*, then computes
+    ``constrained = spec.transform(loc + sqrt(psi) * z)``
+    and injects the result back into *map_estimates*.
+
+    Parameters
+    ----------
+    spec
+        An NEG ``ParamSpec`` with ``raw_name``, ``psi_name``,
+        ``hyper_loc_name``, ``constrained_name``, and ``transform``
+        fields.
+    map_estimates : Dict[str, jnp.ndarray]
+        Mutable MAP dict.  Modified in-place.
+    expand_rank : bool, default False
+        When ``True``, promotes ``loc`` to match ``z.ndim`` via
+        :func:`_expand_to_match`.  Needed for BNB concentration
+        after multi-dataset concat.
+    """
+    z = map_estimates.get(spec.raw_name)
+    psi = map_estimates.get(spec.psi_name)
+    loc = map_estimates.get(spec.hyper_loc_name)
+
+    if any(v is None for v in (z, psi, loc)):
+        return
+
+    if expand_rank:
+        loc = _expand_to_match(loc, z.ndim)
+
+    eff = _neg_eff_scale(psi)
+    map_estimates[spec.constrained_name] = spec.transform(loc + eff * z)
+
+
+def _reconstruct_ncp_maps(
     map_estimates: Dict[str, jnp.ndarray],
     model_config,
 ) -> Dict[str, jnp.ndarray]:
-    """Reconstruct constrained MAP estimates from NCP horseshoe components.
+    """Reconstruct constrained MAP estimates from all NCP ``ParamSpec`` entries.
 
-    When a horseshoe prior with NCP is used, the MAP contains entries for
-    ``{raw_name}`` (z), ``tau_{prefix}``, ``lambda_{prefix}``, and
-    ``c_sq_{prefix}`` instead of the constrained parameter.  This function
-    computes ``constrained = transform(hyper_loc + eff_scale * z)`` and
-    injects it into the MAP dict.
+    Iterates over ``model_config.param_specs`` and dispatches to the
+    horseshoe or NEG reconstruction helper for every spec that uses a
+    non-centered parameterization (``uses_ncp=True``).
+
+    This replaces the old ``_reconstruct_horseshoe_maps`` and
+    ``_reconstruct_neg_maps`` functions, which manually rebuilt the
+    naming / transform mapping from ``model_config`` boolean flags.
+    All that metadata is now read directly from the spec's own fields
+    (``raw_name``, ``tau_name``/``psi_name``, ``hyper_loc_name``,
+    ``constrained_name``, ``transform``).
 
     Parameters
     ----------
     map_estimates : Dict[str, jnp.ndarray]
-        MAP estimates including raw z and horseshoe hyperparameters.
+        MAP estimates including raw NCP components and hyperparameters.
+        Modified in-place: constrained parameters are added.
     model_config
-        Model configuration with horseshoe flags.
+        Model configuration carrying ``param_specs``.
 
     Returns
     -------
     Dict[str, jnp.ndarray]
-        Updated MAP with constrained parameters added.
+        The same *map_estimates* dict, now augmented with any
+        reconstructed constrained parameters.
     """
-    configs = []
-
-    # Gene-level horseshoe p
-    if getattr(model_config, "horseshoe_p", False):
-        parameterization = model_config.parameterization
-        if parameterization in ("mean_odds", "odds_ratio"):
-            configs.append(("phi_raw", "phi", "phi", "log_phi_loc", jnp.exp))
-        else:
-            configs.append(("p_raw", "p", "p", "logit_p_loc", sigmoid))
-
-    # Gene-level horseshoe gate
-    if getattr(model_config, "horseshoe_gate", False):
-        configs.append(("gate_raw", "gate", "gate", "logit_gate_loc", sigmoid))
-
-    # Gene-level horseshoe mu (across mixture components)
-    if (
-        getattr(model_config, "expression_prior", None)
-        == HierarchicalPriorType.HORSESHOE
-    ):
-        parameterization = model_config.parameterization
-        if parameterization in ("canonical", "standard"):
-            configs.append(("r_raw", "r", "r", "log_r_loc", jnp.exp))
-        else:
-            configs.append(("mu_raw", "mu", "mu", "log_mu_loc", jnp.exp))
-
-    # Dataset-level horseshoe mu
-    if getattr(model_config, "horseshoe_dataset_mu", False):
-        parameterization = model_config.parameterization
-        if parameterization in ("canonical", "standard"):
-            configs.append(
-                ("r_raw", "r", "r_dataset", "log_r_dataset_loc", jnp.exp)
-            )
-        else:
-            configs.append(
-                ("mu_raw", "mu", "mu_dataset", "log_mu_dataset_loc", jnp.exp)
-            )
-
-    # Dataset-level horseshoe p
-    if getattr(model_config, "horseshoe_dataset_p", False):
-        parameterization = model_config.parameterization
-        if parameterization in ("mean_odds", "odds_ratio"):
-            configs.append(
-                (
-                    "phi_raw_dataset",
-                    "phi",
-                    "phi_dataset",
-                    "log_phi_dataset_loc",
-                    jnp.exp,
-                )
-            )
-        else:
-            configs.append(
-                (
-                    "p_raw_dataset",
-                    "p",
-                    "p_dataset",
-                    "logit_p_dataset_loc",
-                    sigmoid,
-                )
-            )
-
-    # Dataset-level horseshoe gate
-    if getattr(model_config, "horseshoe_dataset_gate", False):
-        configs.append(
-            (
-                "gate_raw_dataset",
-                "gate",
-                "gate_dataset",
-                "logit_gate_dataset_loc",
-                sigmoid,
-            )
-        )
-
-    for raw_name, target_name, hs_prefix, loc_name, transform in configs:
-        if raw_name not in map_estimates:
+    for spec in getattr(model_config, "param_specs", None) or []:
+        if not getattr(spec, "uses_ncp", False):
             continue
 
-        z = map_estimates[raw_name]
-        tau = map_estimates.get(f"tau_{hs_prefix}")
-        lam = map_estimates.get(f"lambda_{hs_prefix}")
-        c_sq = map_estimates.get(f"c_sq_{hs_prefix}")
-        loc = map_estimates.get(loc_name)
+        # BNB concentration may need rank expansion because global
+        # scalars (loc, tau, c_sq) can acquire a leading dataset
+        # dimension after multi-dataset concat while gene-level
+        # arrays (z, lam) have shape (D, G).
+        is_bnb = getattr(spec, "name", "") == "bnb_concentration"
 
-        if any(v is None for v in (tau, lam, c_sq, loc)):
-            continue
-
-        eff = _horseshoe_eff_scale(tau, lam, c_sq)
-        unconstrained = loc + eff * z
-        map_estimates[target_name] = transform(unconstrained)
-
-    # BNB concentration uses a different naming convention
-    # (bnb_concentration_tau, not tau_bnb_concentration).
-    if (
-        getattr(model_config, "is_bnb", False)
-        and getattr(model_config, "overdispersion_prior", None)
-        == HierarchicalPriorType.HORSESHOE
-        and "bnb_concentration_raw" in map_estimates
-    ):
-        z = map_estimates["bnb_concentration_raw"]
-        tau = map_estimates.get("bnb_concentration_tau")
-        lam = map_estimates.get("bnb_concentration_lambda")
-        c_sq = map_estimates.get("bnb_concentration_c_sq")
-        loc = map_estimates.get("bnb_concentration_loc")
-
-        if all(v is not None for v in (tau, lam, c_sq, loc)):
-            from numpyro.distributions.transforms import SoftplusTransform
-
-            # Global scalars (loc, tau, c_sq) may acquire a leading
-            # dataset dimension (D,) after concat while gene-level
-            # arrays (z, lam) have shape (D, G).  Expand the
-            # lower-rank tensors so everything broadcasts correctly.
-            ref_ndim = z.ndim
-            loc = _expand_to_match(loc, ref_ndim)
-            tau = _expand_to_match(tau, ref_ndim)
-            c_sq = _expand_to_match(c_sq, ref_ndim)
-
-            eff = _horseshoe_eff_scale(tau, lam, c_sq)
-            unconstrained = loc + eff * z
-            map_estimates["bnb_concentration"] = SoftplusTransform()(
-                unconstrained
+        # Dispatch based on which hyperparameter fields the spec has:
+        # horseshoe specs carry tau_name; NEG specs carry psi_name.
+        if hasattr(spec, "tau_name"):
+            _reconstruct_from_horseshoe_spec(
+                spec,
+                map_estimates,
+                expand_rank=is_bnb,
             )
-
-    return map_estimates
-
-
-# ==============================================================================
-# NEG NCP MAP Reconstruction
-# ==============================================================================
-
-
-def _reconstruct_neg_maps(
-    map_estimates: Dict[str, jnp.ndarray],
-    model_config,
-) -> Dict[str, jnp.ndarray]:
-    """Reconstruct constrained MAP estimates from NCP NEG components.
-
-    When an NEG prior with NCP is used, the MAP contains entries for
-    ``{raw_name}`` (z) and ``psi_{prefix}`` instead of the constrained
-    parameter.  This function computes ``constrained = transform(loc +
-    eff_scale * z)`` where ``eff_scale = sqrt(psi)``, and injects it into
-    the MAP dict.
-
-    The NEG effective scale is simpler than the horseshoe: it is just
-    sqrt(psi), with no tau/lambda/c_sq combination.
-
-    Parameters
-    ----------
-    map_estimates : Dict[str, jnp.ndarray]
-        MAP estimates including raw z and NEG psi hyperparameters.
-        psi values come from a Gamma variational posterior and are already
-        in the correct (positive) space — no exp() is needed.
-    model_config
-        Model configuration with prob_prior, zero_inflation_prior,
-        expression_dataset_prior, prob_dataset_prior,
-        zero_inflation_dataset_prior enum fields.
-
-    Returns
-    -------
-    Dict[str, jnp.ndarray]
-        Updated MAP with constrained parameters added.
-    """
-    configs = []
-
-    # Gene-level NEG p
-    if model_config.prob_prior == HierarchicalPriorType.NEG:
-        parameterization = model_config.parameterization
-        if parameterization in ("mean_odds", "odds_ratio"):
-            configs.append(("phi_raw", "phi", "phi", "log_phi_loc", jnp.exp))
-        else:
-            configs.append(("p_raw", "p", "p", "logit_p_loc", sigmoid))
-
-    # Gene-level NEG gate
-    if model_config.zero_inflation_prior == HierarchicalPriorType.NEG:
-        configs.append(("gate_raw", "gate", "gate", "logit_gate_loc", sigmoid))
-
-    # Gene-level NEG mu (across mixture components)
-    if (
-        getattr(model_config, "expression_prior", None)
-        == HierarchicalPriorType.NEG
-    ):
-        parameterization = model_config.parameterization
-        if parameterization in ("canonical", "standard"):
-            configs.append(("r_raw", "r", "r", "log_r_loc", jnp.exp))
-        else:
-            configs.append(("mu_raw", "mu", "mu", "log_mu_loc", jnp.exp))
-
-    # Dataset-level NEG mu
-    if model_config.expression_dataset_prior == HierarchicalPriorType.NEG:
-        parameterization = model_config.parameterization
-        if parameterization in ("canonical", "standard"):
-            configs.append(
-                ("r_raw", "r", "r_dataset", "log_r_dataset_loc", jnp.exp)
-            )
-        else:
-            configs.append(
-                ("mu_raw", "mu", "mu_dataset", "log_mu_dataset_loc", jnp.exp)
-            )
-
-    # Dataset-level NEG p
-    if model_config.prob_dataset_prior == HierarchicalPriorType.NEG:
-        parameterization = model_config.parameterization
-        if parameterization in ("mean_odds", "odds_ratio"):
-            configs.append(
-                (
-                    "phi_raw_dataset",
-                    "phi",
-                    "phi_dataset",
-                    "log_phi_dataset_loc",
-                    jnp.exp,
-                )
-            )
-        else:
-            configs.append(
-                (
-                    "p_raw_dataset",
-                    "p",
-                    "p_dataset",
-                    "logit_p_dataset_loc",
-                    sigmoid,
-                )
-            )
-
-    # Dataset-level NEG gate
-    if model_config.zero_inflation_dataset_prior == HierarchicalPriorType.NEG:
-        configs.append(
-            (
-                "gate_raw_dataset",
-                "gate",
-                "gate_dataset",
-                "logit_gate_dataset_loc",
-                sigmoid,
-            )
-        )
-
-    for raw_name, target_name, neg_prefix, loc_name, transform in configs:
-        if raw_name not in map_estimates:
-            continue
-
-        z = map_estimates[raw_name]
-        psi = map_estimates.get(f"psi_{neg_prefix}")
-        loc = map_estimates.get(loc_name)
-
-        if psi is None or loc is None:
-            continue
-
-        # psi from Gamma variational posterior — already positive-valued;
-        # MAP estimate is concentration/rate (the Gamma mean).
-        eff_scale = _neg_eff_scale(psi)
-        unconstrained = loc + eff_scale * z
-        map_estimates[target_name] = transform(unconstrained)
-
-    # BNB concentration uses a different naming convention
-    # (bnb_concentration_psi, not psi_bnb_concentration).
-    if (
-        getattr(model_config, "is_bnb", False)
-        and getattr(model_config, "overdispersion_prior", None)
-        == HierarchicalPriorType.NEG
-        and "bnb_concentration_raw" in map_estimates
-    ):
-        z = map_estimates["bnb_concentration_raw"]
-        psi = map_estimates.get("bnb_concentration_psi")
-        loc = map_estimates.get("bnb_concentration_loc")
-
-        if psi is not None and loc is not None:
-            from numpyro.distributions.transforms import SoftplusTransform
-
-            # loc is a global scalar that may acquire a leading dataset
-            # dimension (D,) after concat.  Expand it so it broadcasts
-            # with the gene-level z of shape (D, G).
-            loc = _expand_to_match(loc, z.ndim)
-
-            eff_scale = _neg_eff_scale(psi)
-            unconstrained = loc + eff_scale * z
-            map_estimates["bnb_concentration"] = SoftplusTransform()(
-                unconstrained
+        elif hasattr(spec, "psi_name"):
+            _reconstruct_from_neg_spec(
+                spec,
+                map_estimates,
+                expand_rank=is_bnb,
             )
 
     return map_estimates
@@ -1621,7 +1462,9 @@ class ParameterExtractionMixin:
                 # Use MAP-level layouts (no sample dim) for gene-axis
                 # lookup; flow_estimates are point estimates.
                 flow_estimates = _subset_gene_dim_samples(
-                    flow_estimates, _gene_idx, _orig_ng,
+                    flow_estimates,
+                    _gene_idx,
+                    _orig_ng,
                     layouts=self.layouts,
                 )
 
@@ -1661,13 +1504,10 @@ class ParameterExtractionMixin:
                     UserWarning,
                 )
 
-        # Reconstruct constrained parameters from NCP horseshoe if applicable
-        map_estimates = _reconstruct_horseshoe_maps(
-            map_estimates, self.model_config
-        )
-
-        # Reconstruct constrained parameters from NCP NEG if applicable
-        map_estimates = _reconstruct_neg_maps(map_estimates, self.model_config)
+        # Reconstruct constrained parameters from all NCP specs (horseshoe
+        # and NEG) by iterating over model_config.param_specs and dispatching
+        # to the appropriate per-spec helper.
+        map_estimates = _reconstruct_ncp_maps(map_estimates, self.model_config)
 
         # Derive kappa_g from omega_g (bnb_concentration) when available.
         # kappa_g = 2 + (r + 1) / omega_g, matching build_bnb_dist.
@@ -1687,8 +1527,10 @@ class ParameterExtractionMixin:
                 # (K, D, G).  align_to_layout inserts singletons for
                 # the missing component / dataset axes.
                 _map_layouts = _build_map_layouts(
-                    map_estimates, self.model_config,
-                    n_genes=self.n_genes, n_cells=self.n_cells,
+                    map_estimates,
+                    self.model_config,
+                    n_genes=self.n_genes,
+                    n_cells=self.n_cells,
                     n_components=self.n_components,
                 )
                 _omega_layout = _map_layouts.get(
@@ -1770,8 +1612,10 @@ class ParameterExtractionMixin:
         # uses param_specs when available (exact path) and falls back to
         # shape-based inference for derived / old-pickle keys.
         layouts = _build_map_layouts(
-            estimates, self.model_config,
-            n_genes=self.n_genes, n_cells=self.n_cells,
+            estimates,
+            self.model_config,
+            n_genes=self.n_genes,
+            n_cells=self.n_cells,
             n_components=self.n_components,
         )
 
@@ -1792,9 +1636,7 @@ class ParameterExtractionMixin:
                 target = merge_layouts(p_layout, mu_layout)
 
                 p_aligned = align_to_layout(estimates["p"], p_layout, target)
-                mu_aligned = align_to_layout(
-                    estimates["mu"], mu_layout, target
-                )
+                mu_aligned = align_to_layout(estimates["mu"], mu_layout, target)
 
                 estimates["r"] = mu_aligned * (1 - p_aligned) / p_aligned
                 # Derived r inherits the merged layout of its inputs.
@@ -1836,9 +1678,7 @@ class ParameterExtractionMixin:
                 phi_aligned = align_to_layout(
                     estimates["phi"], phi_layout, target
                 )
-                mu_aligned = align_to_layout(
-                    estimates["mu"], mu_layout, target
-                )
+                mu_aligned = align_to_layout(estimates["mu"], mu_layout, target)
 
                 estimates["r"] = mu_aligned * phi_aligned
                 # Derived r inherits the merged layout of its inputs.
@@ -1869,9 +1709,7 @@ class ParameterExtractionMixin:
                         "unconstrained parameterization"
                     )
                 estimates["r"] = jnp.exp(estimates["r_unconstrained"])
-                layouts["r"] = layouts.get(
-                    "r_unconstrained", AxisLayout(())
-                )
+                layouts["r"] = layouts.get("r_unconstrained", AxisLayout(()))
 
             if "p_unconstrained" in estimates and "p" not in estimates:
                 if verbose:
@@ -1880,9 +1718,7 @@ class ParameterExtractionMixin:
                         "unconstrained parameterization"
                     )
                 estimates["p"] = sigmoid(estimates["p_unconstrained"])
-                layouts["p"] = layouts.get(
-                    "p_unconstrained", AxisLayout(())
-                )
+                layouts["p"] = layouts.get("p_unconstrained", AxisLayout(()))
 
             if "gate_unconstrained" in estimates and "gate" not in estimates:
                 if verbose:
@@ -1989,9 +1825,7 @@ class ParameterExtractionMixin:
             # intermediate tensor.  The cell-batched sampling code
             # handles the broadcast per-batch instead.
             p_has_genes = GENES in p_layout.axes
-            p_has_extra = (
-                COMPONENTS in p_layout.axes or len(p_layout.axes) > 1
-            )
+            p_has_extra = COMPONENTS in p_layout.axes or len(p_layout.axes) > 1
             p_is_high_dim = p_has_genes and p_has_extra
 
             if p_is_high_dim:

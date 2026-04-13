@@ -468,80 +468,91 @@ class TestBNBFactory:
 
 
 class TestMapReconstruction:
-    """Verify _reconstruct_horseshoe_maps and _reconstruct_neg_maps
-    correctly produce bnb_concentration, and that get_map derives bnb_kappa."""
+    """Verify _reconstruct_ncp_maps (and its per-spec helpers) correctly
+    produce bnb_concentration, and that get_map derives bnb_kappa."""
+
+    @staticmethod
+    def _bnb_horseshoe_specs():
+        """Build a list of BNB horseshoe ParamSpecs for testing."""
+        from scribe.models.config import GuideFamilyConfig
+        from scribe.models.presets.registry import (
+            build_bnb_concentration_spec,
+        )
+        return build_bnb_concentration_spec(
+            overdispersion_prior="horseshoe",
+            guide_families=GuideFamilyConfig(),
+        )
+
+    @staticmethod
+    def _bnb_neg_specs():
+        """Build a list of BNB NEG ParamSpecs for testing."""
+        from scribe.models.config import GuideFamilyConfig
+        from scribe.models.presets.registry import (
+            build_bnb_concentration_spec,
+        )
+        return build_bnb_concentration_spec(
+            overdispersion_prior="neg",
+            guide_families=GuideFamilyConfig(),
+        )
 
     def test_horseshoe_bnb_reconstruction(self):
         """Horseshoe NCP components yield bnb_concentration via softplus."""
-        from scribe.svi._parameter_extraction import _reconstruct_horseshoe_maps
-        from scribe.models.config import ModelConfig
-
-        cfg = ModelConfig(
-            base_model="nbdm",
-            parameterization="mean_odds",
-            inference_method="svi",
-            unconstrained=True,
-            overdispersion="bnb",
-            overdispersion_prior="horseshoe",
+        from scribe.svi._parameter_extraction import (
+            _reconstruct_from_horseshoe_spec,
         )
+
+        # Find the main horseshoe BNB spec (uses_ncp=True, name=bnb_concentration)
+        specs = self._bnb_horseshoe_specs()
+        bnb_spec = [
+            s for s in specs
+            if getattr(s, "uses_ncp", False)
+            and getattr(s, "name", "") == "bnb_concentration"
+        ][0]
 
         # Simulate MAP entries produced by a horseshoe NCP guide.
         fake_map = {
-            "bnb_concentration_raw": jnp.ones(5) * 0.5,
-            "bnb_concentration_tau": jnp.array(0.1),
-            "bnb_concentration_lambda": jnp.ones(5) * 0.3,
-            "bnb_concentration_c_sq": jnp.array(4.0),
-            "bnb_concentration_loc": jnp.array(-1.0),
+            bnb_spec.raw_name: jnp.ones(5) * 0.5,
+            bnb_spec.tau_name: jnp.array(0.1),
+            bnb_spec.lambda_name: jnp.ones(5) * 0.3,
+            bnb_spec.c_sq_name: jnp.array(4.0),
+            bnb_spec.hyper_loc_name: jnp.array(-1.0),
         }
 
-        result = _reconstruct_horseshoe_maps(fake_map, cfg)
-        assert "bnb_concentration" in result
-        omega = result["bnb_concentration"]
+        _reconstruct_from_horseshoe_spec(bnb_spec, fake_map, expand_rank=True)
+        assert "bnb_concentration" in fake_map
+        omega = fake_map["bnb_concentration"]
         # softplus output is always positive
         assert jnp.all(omega > 0)
         assert omega.shape == (5,)
 
     def test_neg_bnb_reconstruction(self):
         """NEG NCP components yield bnb_concentration via softplus."""
-        from scribe.svi._parameter_extraction import _reconstruct_neg_maps
-        from scribe.models.config import ModelConfig
-
-        cfg = ModelConfig(
-            base_model="nbdm",
-            parameterization="mean_odds",
-            inference_method="svi",
-            unconstrained=True,
-            overdispersion="bnb",
-            overdispersion_prior="neg",
+        from scribe.svi._parameter_extraction import (
+            _reconstruct_from_neg_spec,
         )
 
+        specs = self._bnb_neg_specs()
+        bnb_spec = [
+            s for s in specs
+            if getattr(s, "uses_ncp", False)
+            and getattr(s, "name", "") == "bnb_concentration"
+        ][0]
+
         fake_map = {
-            "bnb_concentration_raw": jnp.zeros(5),
-            "bnb_concentration_psi": jnp.ones(5) * 0.5,
-            "bnb_concentration_loc": jnp.array(0.0),
+            bnb_spec.raw_name: jnp.zeros(5),
+            bnb_spec.psi_name: jnp.ones(5) * 0.5,
+            bnb_spec.hyper_loc_name: jnp.array(0.0),
         }
 
-        result = _reconstruct_neg_maps(fake_map, cfg)
-        assert "bnb_concentration" in result
-        omega = result["bnb_concentration"]
+        _reconstruct_from_neg_spec(bnb_spec, fake_map, expand_rank=True)
+        assert "bnb_concentration" in fake_map
+        omega = fake_map["bnb_concentration"]
         assert jnp.all(omega > 0)
         assert omega.shape == (5,)
 
     def test_kappa_derived_in_get_map_context(self):
         """After reconstruction, kappa_g = 2 + (r + 1) / omega_g."""
-        from scribe.svi._parameter_extraction import _reconstruct_neg_maps
-        from scribe.models.config import ModelConfig
-
-        cfg = ModelConfig(
-            base_model="nbdm",
-            parameterization="mean_odds",
-            inference_method="svi",
-            unconstrained=True,
-            overdispersion="bnb",
-            overdispersion_prior="neg",
-        )
-
-        # Manually build omega that would come from reconstruction
+        # Pure arithmetic check — no config needed.
         omega = jnp.array([0.1, 0.5, 1.0, 2.0, 10.0])
         r = jnp.array([5.0, 10.0, 20.0, 1.0, 3.0])
         kappa = 2.0 + (r + 1.0) / omega
@@ -550,55 +561,94 @@ class TestMapReconstruction:
 
     def test_neg_reconstruction_broadcasts_loc_with_dataset_dim(self):
         """loc (D,) broadcasts correctly with z (D, G) after concat."""
-        from scribe.svi._parameter_extraction import _reconstruct_neg_maps
-        from scribe.models.config import ModelConfig
-
-        cfg = ModelConfig(
-            base_model="nbdm",
-            parameterization="mean_odds",
-            inference_method="svi",
-            unconstrained=True,
-            overdispersion="bnb",
-            overdispersion_prior="neg",
+        from scribe.svi._parameter_extraction import (
+            _reconstruct_from_neg_spec,
         )
+
+        specs = self._bnb_neg_specs()
+        bnb_spec = [
+            s for s in specs
+            if getattr(s, "uses_ncp", False)
+            and getattr(s, "name", "") == "bnb_concentration"
+        ][0]
 
         D, G = 2, 10
         fake_map = {
-            "bnb_concentration_raw": jnp.zeros((D, G)),
-            "bnb_concentration_psi": jnp.ones((D, G)) * 0.5,
-            "bnb_concentration_loc": jnp.array([-1.0, -2.0]),
+            bnb_spec.raw_name: jnp.zeros((D, G)),
+            bnb_spec.psi_name: jnp.ones((D, G)) * 0.5,
+            bnb_spec.hyper_loc_name: jnp.array([-1.0, -2.0]),
         }
 
-        result = _reconstruct_neg_maps(fake_map, cfg)
-        assert "bnb_concentration" in result
-        assert result["bnb_concentration"].shape == (D, G)
+        # expand_rank=True handles the (D,) -> (D, 1) promotion of loc
+        _reconstruct_from_neg_spec(bnb_spec, fake_map, expand_rank=True)
+        assert "bnb_concentration" in fake_map
+        assert fake_map["bnb_concentration"].shape == (D, G)
 
     def test_horseshoe_reconstruction_broadcasts_loc_with_dataset_dim(self):
         """loc (D,) broadcasts correctly with z (D, G) for horseshoe."""
-        from scribe.svi._parameter_extraction import _reconstruct_horseshoe_maps
-        from scribe.models.config import ModelConfig
-
-        cfg = ModelConfig(
-            base_model="nbdm",
-            parameterization="mean_odds",
-            inference_method="svi",
-            unconstrained=True,
-            overdispersion="bnb",
-            overdispersion_prior="horseshoe",
+        from scribe.svi._parameter_extraction import (
+            _reconstruct_from_horseshoe_spec,
         )
+
+        specs = self._bnb_horseshoe_specs()
+        bnb_spec = [
+            s for s in specs
+            if getattr(s, "uses_ncp", False)
+            and getattr(s, "name", "") == "bnb_concentration"
+        ][0]
 
         D, G = 3, 8
         fake_map = {
-            "bnb_concentration_raw": jnp.ones((D, G)) * 0.5,
-            "bnb_concentration_tau": jnp.array([0.1, 0.2, 0.3]),
-            "bnb_concentration_lambda": jnp.ones((D, G)) * 0.3,
-            "bnb_concentration_c_sq": jnp.array([4.0, 4.0, 4.0]),
-            "bnb_concentration_loc": jnp.array([-1.0, -1.5, -2.0]),
+            bnb_spec.raw_name: jnp.ones((D, G)) * 0.5,
+            bnb_spec.tau_name: jnp.array([0.1, 0.2, 0.3]),
+            bnb_spec.lambda_name: jnp.ones((D, G)) * 0.3,
+            bnb_spec.c_sq_name: jnp.array([4.0, 4.0, 4.0]),
+            bnb_spec.hyper_loc_name: jnp.array([-1.0, -1.5, -2.0]),
         }
 
-        result = _reconstruct_horseshoe_maps(fake_map, cfg)
+        _reconstruct_from_horseshoe_spec(bnb_spec, fake_map, expand_rank=True)
+        assert "bnb_concentration" in fake_map
+        assert fake_map["bnb_concentration"].shape == (D, G)
+
+    def test_reconstruct_ncp_maps_dispatches_horseshoe(self):
+        """_reconstruct_ncp_maps correctly dispatches to horseshoe helper."""
+        from types import SimpleNamespace
+        from scribe.svi._parameter_extraction import _reconstruct_ncp_maps
+
+        # Use a lightweight namespace instead of a full ModelConfig to
+        # avoid Pydantic validation constraints on param_specs contents.
+        cfg = SimpleNamespace(param_specs=self._bnb_horseshoe_specs())
+
+        fake_map = {
+            "bnb_concentration_raw": jnp.ones(5) * 0.5,
+            "bnb_concentration_tau": jnp.array(0.1),
+            "bnb_concentration_lambda": jnp.ones(5) * 0.3,
+            "bnb_concentration_c_sq": jnp.array(4.0),
+            "bnb_concentration_loc": jnp.array(-1.0),
+        }
+
+        result = _reconstruct_ncp_maps(fake_map, cfg)
         assert "bnb_concentration" in result
-        assert result["bnb_concentration"].shape == (D, G)
+        assert jnp.all(result["bnb_concentration"] > 0)
+        assert result["bnb_concentration"].shape == (5,)
+
+    def test_reconstruct_ncp_maps_dispatches_neg(self):
+        """_reconstruct_ncp_maps correctly dispatches to NEG helper."""
+        from types import SimpleNamespace
+        from scribe.svi._parameter_extraction import _reconstruct_ncp_maps
+
+        cfg = SimpleNamespace(param_specs=self._bnb_neg_specs())
+
+        fake_map = {
+            "bnb_concentration_raw": jnp.zeros(5),
+            "bnb_concentration_psi": jnp.ones(5) * 0.5,
+            "bnb_concentration_loc": jnp.array(0.0),
+        }
+
+        result = _reconstruct_ncp_maps(fake_map, cfg)
+        assert "bnb_concentration" in result
+        assert jnp.all(result["bnb_concentration"] > 0)
+        assert result["bnb_concentration"].shape == (5,)
 
 
 # ============================================================================
@@ -1051,7 +1101,7 @@ class TestBNBGaussianPosterior:
         assert "bnb_concentration_psi" in dists
         assert "bnb_concentration_raw" in dists
         # Direct bnb_concentration should NOT be present (it's reconstructed
-        # later in get_map via _reconstruct_neg_maps)
+        # later in get_map via _reconstruct_ncp_maps)
         assert "bnb_concentration" not in dists
 
 
