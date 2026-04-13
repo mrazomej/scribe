@@ -101,9 +101,7 @@ def build_bnb_dist(
     # Mean-preserving: NB mean = r*p/(1-p) = BNB mean = r*alpha/(kappa-1)
     alpha = p * (kappa - 1.0) / (1.0 - p)
 
-    return BetaNegativeBinomial(
-        concentration1=alpha, concentration0=kappa, n=r
-    )
+    return BetaNegativeBinomial(concentration1=alpha, concentration0=kappa, n=r)
 
 
 def build_count_dist(
@@ -156,20 +154,21 @@ class BetaNegativeBinomialLikelihood(NegativeBinomialLikelihood):
     """
 
     def _build_dist(
-        self, param_values: Dict[str, jnp.ndarray]
+        self, param_values: Dict[str, jnp.ndarray], **kwargs
     ) -> dist.Distribution:
         # Stash omega_g so the overridden _make_count_dist can use it.
         self._bnb_concentration = param_values["bnb_concentration"]
-        return super()._build_dist(param_values)
+        return super()._build_dist(param_values, **kwargs)
 
     def _build_annotated_mixture_dist(
         self,
         param_values: Dict[str, jnp.ndarray],
         annotation_logits_batch: jnp.ndarray,
+        **kwargs,
     ) -> dist.Distribution:
         self._bnb_concentration = param_values["bnb_concentration"]
         return super()._build_annotated_mixture_dist(
-            param_values, annotation_logits_batch
+            param_values, annotation_logits_batch, **kwargs
         )
 
     def _make_count_dist(
@@ -191,19 +190,20 @@ class ZeroInflatedBNBLikelihood(ZeroInflatedNBLikelihood):
     """
 
     def _build_dist(
-        self, param_values: Dict[str, jnp.ndarray]
+        self, param_values: Dict[str, jnp.ndarray], **kwargs
     ) -> dist.Distribution:
         self._bnb_concentration = param_values["bnb_concentration"]
-        return super()._build_dist(param_values)
+        return super()._build_dist(param_values, **kwargs)
 
     def _build_annotated_mixture_dist(
         self,
         param_values: Dict[str, jnp.ndarray],
         annotation_logits_batch: jnp.ndarray,
+        **kwargs,
     ) -> dist.Distribution:
         self._bnb_concentration = param_values["bnb_concentration"]
         return super()._build_annotated_mixture_dist(
-            param_values, annotation_logits_batch
+            param_values, annotation_logits_batch, **kwargs
         )
 
     def _make_count_dist(

@@ -16,6 +16,7 @@ import numpyro.distributions as dist
 from scribe.stats.distributions import BetaPrime
 
 if TYPE_CHECKING:
+    from ....core.axis_layout import AxisLayout
     from ...builders.parameter_specs import (
         BiologyInformedCaptureSpec,
         ParamSpec,
@@ -359,85 +360,6 @@ def _sample_hierarchical_mu_eta(
 
 
 # ==============================================================================
-# Helper for broadcasting scalar/gene-specific p in mixture models
-# ==============================================================================
-
-
-def broadcast_param_for_mixture(
-    param: jnp.ndarray, reference: jnp.ndarray
-) -> jnp.ndarray:
-    """Broadcast a parameter to match a reference tensor's mixture shape.
-
-    Handles all combinations of scalar, gene-specific, and mixture-specific
-    shapes.  Hierarchical parameterizations produce gene-specific parameters
-    (shape ``(n_genes,)``), which must be expanded to ``(1, n_genes)`` for
-    broadcasting with per-component tensors of shape
-    ``(n_components, n_genes)``.
-
-    After dataset indexing, parameters may carry a leading batch dimension
-    (e.g., ``(batch, n_genes)``).  When ``reference`` is 3-D
-    (``(batch, n_components, n_genes)``), the parameter is reshaped to
-    ``(batch, 1, n_genes)`` so it broadcasts across components.
-
-    Works for any per-gene parameter (p, phi, gate, etc.).
-
-    Parameters
-    ----------
-    param : jnp.ndarray
-        Parameter to broadcast.  Possible shapes:
-
-        - ``()`` — scalar (shared across components and genes)
-        - ``(n_components,)`` — mixture-specific scalar
-        - ``(n_genes,)`` — gene-specific (shared across components)
-        - ``(n_components, n_genes)`` — both mixture- and gene-specific
-        - ``(batch, n_genes)`` — per-cell gene-specific (after dataset
-          indexing)
-        - ``(batch, n_components, n_genes)`` — per-cell mixture+gene
-
-    reference : jnp.ndarray
-        Reference tensor whose shape defines the target layout.
-        Typically ``r`` with shape ``(n_components, n_genes)`` or
-        ``(batch, n_components, n_genes)`` in mixture models.
-
-    Returns
-    -------
-    jnp.ndarray
-        ``param`` reshaped for broadcasting with ``reference``.
-    """
-    p, r = param, reference
-    if p.ndim == 0:
-        # Scalar — add two singleton dims for (K, G)
-        if r.ndim == 3:
-            return p[None, None, None]
-        return p[None, None]
-    elif p.ndim == 1:
-        # Distinguish (n_genes,) from (n_components,) by comparing with r
-        if r.ndim >= 2 and p.shape[0] == r.shape[-1]:
-            # Gene-specific: (G,) → (1, G) or (1, 1, G) for 3-D r
-            if r.ndim == 3:
-                return p[None, None, :]
-            return p[None, :]
-        else:
-            # Mixture-specific scalar: (K,) → (K, 1)
-            return p[:, None]
-    elif p.ndim == 2:
-        if r.ndim == 3:
-            # Disambiguate (batch, G) from (K, G) when r is (batch, K, G).
-            # After dataset indexing the batch dim matches r's leading dim;
-            # per-component params that skipped indexing have shape (K, G)
-            # where K == r.shape[1].
-            if p.shape[0] == r.shape[0]:
-                # (batch, G) — insert component singleton: (batch, 1, G)
-                return p[:, None, :]
-            # (K, G) or other non-batch 2-D — leave for JAX rank-promotion
-            return p
-        # Already (K, G) or compatible 2-D shape
-        return p
-    # Already 3-D (batch, K, G) or compatible
-    return p
-
-
-# ==============================================================================
 # Helper for cell-specific mixing weights (annotation priors)
 # ==============================================================================
 
@@ -673,6 +595,7 @@ class Likelihood(ABC):
         ] = None,
         annotation_prior_logits: Optional[jnp.ndarray] = None,
         dataset_indices: Optional[jnp.ndarray] = None,
+        param_layouts: Optional[Dict[str, "AxisLayout"]] = None,
     ) -> None:
         """
         Sample observations given parameters.
@@ -707,6 +630,13 @@ class Likelihood(ABC):
             probabilities via :func:`compute_cell_specific_mixing`.
             If ``None``, the global mixing weights are used for all cells
             (standard behaviour).
+        param_layouts : dict, optional
+            Semantic ``AxisLayout`` for each parameter, built by the model
+            builder from ``ParamSpec`` metadata.  Used for layout-aware
+            broadcasting in mixture distributions.  When ``None``, the
+            likelihood falls back to building layouts from
+            ``model_config.param_specs`` (which may itself be empty for
+            legacy code paths).
 
         Notes
         -----

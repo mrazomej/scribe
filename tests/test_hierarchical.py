@@ -28,7 +28,6 @@ from scribe.models.builders.parameter_specs import (
 from scribe.models.parameterizations import (
     PARAMETERIZATIONS,
 )
-from scribe.models.components.likelihoods.base import broadcast_param_for_mixture
 from scribe.models.presets.registry import (
     MODEL_EXTRA_PARAMS,
     build_extra_param_spec,
@@ -428,43 +427,6 @@ class TestGammaSampling:
         np.testing.assert_allclose(
             np.array(row_sums), np.ones(N * S), atol=1e-5
         )
-
-
-# ==========================================================================
-# Tests: Broadcasting p for Mixture Models
-# ==========================================================================
-
-
-class TestBroadcastPForMixture:
-    """Test the broadcast_param_for_mixture helper function."""
-
-    def test_scalar_p(self):
-        """Test scalar p broadcasts to (1, 1)."""
-        p = jnp.array(0.5)
-        r = jnp.ones((3, 10))
-        result = broadcast_param_for_mixture(p, r)
-        assert result.shape == (1, 1)
-
-    def test_mixture_specific_p(self):
-        """Test (n_components,) p broadcasts to (n_components, 1)."""
-        p = jnp.array([0.3, 0.5, 0.7])
-        r = jnp.ones((3, 10))
-        result = broadcast_param_for_mixture(p, r)
-        assert result.shape == (3, 1)
-
-    def test_gene_specific_p(self):
-        """Test (n_genes,) p broadcasts to (1, n_genes)."""
-        p = jnp.ones(10) * 0.5
-        r = jnp.ones((3, 10))
-        result = broadcast_param_for_mixture(p, r)
-        assert result.shape == (1, 10)
-
-    def test_full_2d_p(self):
-        """Test (n_components, n_genes) p is unchanged."""
-        p = jnp.ones((3, 10)) * 0.5
-        r = jnp.ones((3, 10))
-        result = broadcast_param_for_mixture(p, r)
-        assert result.shape == (3, 10)
 
 
 # ==========================================================================

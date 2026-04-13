@@ -15,15 +15,52 @@ import numpyro.distributions as dist
 from .base import (
     Likelihood,
     build_mixture_general,
-    broadcast_param_for_mixture,
     compute_cell_specific_mixing,
     index_dataset_params,
+)
+from ....core.axis_layout import (
+    AxisLayout,
+    build_param_layouts,
+    broadcast_param_to_layout,
+    DATASETS,
 )
 from ...builders.parameter_specs import sample_prior
 
 if TYPE_CHECKING:
+    from ....core.axis_layout import AxisLayout  # noqa: F811
     from ...builders.parameter_specs import ParamSpec
     from ...config import ModelConfig
+
+
+def _drop_dataset_axis(
+    param_layouts: Optional[Dict[str, "AxisLayout"]],
+) -> Optional[Dict[str, "AxisLayout"]]:
+    """Return a copy of *param_layouts* with the ``"datasets"`` axis removed.
+
+    After ``index_dataset_params`` collapses the dataset dimension,
+    layouts that carried a ``"datasets"`` axis need to be updated so
+    that :func:`broadcast_param_to_layout` correctly treats the new
+    leading dimension as a batch (cells) dim rather than a semantic axis.
+
+    Parameters
+    ----------
+    param_layouts : dict or None
+        Original layouts built from ``param_specs``.
+
+    Returns
+    -------
+    dict or None
+        Updated layouts with ``"datasets"`` removed where present.
+    """
+    if param_layouts is None:
+        return None
+    out: Dict[str, "AxisLayout"] = {}
+    for key, layout in param_layouts.items():
+        if DATASETS in layout.axes:
+            out[key] = layout.subset_axis(DATASETS)
+        else:
+            out[key] = layout
+    return out
 
 
 # ==============================================================================
@@ -90,9 +127,23 @@ class ZeroInflatedNBLikelihood(Likelihood):
     # ------------------------------------------------------------------
 
     def _build_dist(
-        self, param_values: Dict[str, jnp.ndarray]
+        self,
+        param_values: Dict[str, jnp.ndarray],
+        param_layouts: Optional[Dict[str, "AxisLayout"]] = None,
     ) -> dist.Distribution:
-        """Build the ZINB distribution from current param_values."""
+        """Build the ZINB distribution from current param_values.
+
+        Parameters
+        ----------
+        param_values : dict
+            Sampled parameter arrays (``"p"``, ``"r"``, ``"gate"``, optionally
+            ``"mixing_weights"``).
+        param_layouts : dict, optional
+            Semantic :class:`AxisLayout` per parameter key.  When
+            provided, layout-aware broadcasting replaces shape
+            heuristics for ``p`` and ``gate`` in mixture models relative
+            to ``r``.
+        """
         p = param_values["p"]
         r = param_values["r"]
         gate = param_values["gate"]
@@ -122,9 +173,13 @@ class ZeroInflatedNBLikelihood(Likelihood):
             mixing_weights = param_values["mixing_weights"]
             mixing_dist = dist.Categorical(probs=mixing_weights)
 
-            # Broadcast p and gate to match r shape (n_components, n_genes)
-            p = broadcast_param_for_mixture(p, r)
-            gate = broadcast_param_for_mixture(gate, r)
+            # Align p and gate to r using semantic layouts (handles batched
+            # shapes after dataset indexing vs. static K×G component grids).
+            r_layout = (param_layouts or {}).get("r", AxisLayout(()))
+            p_layout = (param_layouts or {}).get("p", AxisLayout(()))
+            gate_layout = (param_layouts or {}).get("gate", AxisLayout(()))
+            p = broadcast_param_to_layout(p, p_layout, r_layout)
+            gate = broadcast_param_to_layout(gate, gate_layout, r_layout)
 
             return build_mixture_general(
                 mixing_dist,
@@ -145,6 +200,7 @@ class ZeroInflatedNBLikelihood(Likelihood):
         self,
         param_values: Dict[str, jnp.ndarray],
         annotation_logits_batch: jnp.ndarray,
+        param_layouts: Optional[Dict[str, "AxisLayout"]] = None,
     ) -> dist.Distribution:
         """
         Build a mixture ZINB distribution with cell-specific mixing weights.
@@ -156,6 +212,9 @@ class ZeroInflatedNBLikelihood(Likelihood):
             ``r``, and ``gate``.
         annotation_logits_batch : jnp.ndarray, shape ``(batch, K)``
             Per-cell annotation logit offsets for the current batch.
+        param_layouts : dict, optional
+            Semantic :class:`AxisLayout` per parameter key for layout-aware
+            broadcasting of ``p`` and ``gate`` to ``r``.
 
         Returns
         -------
@@ -173,9 +232,13 @@ class ZeroInflatedNBLikelihood(Likelihood):
         )
         mixing_dist = dist.Categorical(probs=cell_mixing)
 
-        # Broadcast p and gate to match r shape (n_components, n_genes)
-        p = broadcast_param_for_mixture(p, r)
-        gate = broadcast_param_for_mixture(gate, r)
+        # Align p and gate to r using semantic layouts (same as non-annotated
+        # mixture path; cell_mixing only affects the Categorical, not shapes).
+        r_layout = (param_layouts or {}).get("r", AxisLayout(()))
+        p_layout = (param_layouts or {}).get("p", AxisLayout(()))
+        gate_layout = (param_layouts or {}).get("gate", AxisLayout(()))
+        p = broadcast_param_to_layout(p, p_layout, r_layout)
+        gate = broadcast_param_to_layout(gate, gate_layout, r_layout)
 
         return build_mixture_general(
             mixing_dist,
@@ -202,6 +265,7 @@ class ZeroInflatedNBLikelihood(Likelihood):
         ] = None,
         annotation_prior_logits: Optional[jnp.ndarray] = None,
         dataset_indices: Optional[jnp.ndarray] = None,
+        param_layouts: Optional[Dict[str, "AxisLayout"]] = None,
     ) -> None:
         """Sample from Zero-Inflated Negative Binomial likelihood.
 
@@ -225,6 +289,14 @@ class ZeroInflatedNBLikelihood(Likelihood):
             n_datasets is not None and dataset_indices is not None
         )
 
+        # Use externally-provided layouts (from model builder) when
+        # available.  Fall back to building from model_config.param_specs
+        # for legacy callers that don't pass param_layouts.
+        if param_layouts is None:
+            specs = getattr(model_config, "param_specs", None) or []
+            if specs:
+                param_layouts = build_param_layouts(specs, param_values)
+
         # ====================================================================
         # Non-VAE fast path: build distribution once outside the plate
         # ====================================================================
@@ -234,6 +306,11 @@ class ZeroInflatedNBLikelihood(Likelihood):
             # Multi-dataset path: per-dataset params indexed inside plate
             # ----------------------------------------------------------------
             if use_dataset_indexing:
+                # After index_dataset_params, the dataset axis is gone and a
+                # leading batch (cells) dimension appears; drop "datasets" from
+                # layouts so broadcast_param_to_layout matches array ranks.
+                ds_layouts = _drop_dataset_axis(param_layouts)
+
                 # batch_size takes priority so the model plate matches
                 # the guide plate during batched posterior sampling.
                 if batch_size is not None:
@@ -253,7 +330,9 @@ class ZeroInflatedNBLikelihood(Likelihood):
                         obs = counts[idx] if counts is not None else None
                         numpyro.sample(
                             "counts",
-                            self._build_dist(cell_pv),
+                            self._build_dist(
+                                cell_pv, param_layouts=ds_layouts
+                            ),
                             obs=obs,
                         )
                 elif counts is None:
@@ -267,7 +346,12 @@ class ZeroInflatedNBLikelihood(Likelihood):
                             n_datasets,
                             param_specs=model_config.param_specs,
                         )
-                        numpyro.sample("counts", self._build_dist(cell_pv))
+                        numpyro.sample(
+                            "counts",
+                            self._build_dist(
+                                cell_pv, param_layouts=ds_layouts
+                            ),
+                        )
                 else:
                     # Full dataset: observe all counts, full plate.
                     with numpyro.plate("cells", n_cells):
@@ -281,7 +365,9 @@ class ZeroInflatedNBLikelihood(Likelihood):
                         )
                         numpyro.sample(
                             "counts",
-                            self._build_dist(cell_pv),
+                            self._build_dist(
+                                cell_pv, param_layouts=ds_layouts
+                            ),
                             obs=counts,
                         )
                 return
@@ -300,7 +386,9 @@ class ZeroInflatedNBLikelihood(Likelihood):
                         for spec in cell_specs:
                             sample_prior(spec, dims, model_config)
                         cell_dist = self._build_annotated_mixture_dist(
-                            param_values, annotation_prior_logits[idx]
+                            param_values,
+                            annotation_prior_logits[idx],
+                            param_layouts=param_layouts,
                         )
                         obs = counts[idx] if counts is not None else None
                         numpyro.sample("counts", cell_dist, obs=obs)
@@ -310,7 +398,9 @@ class ZeroInflatedNBLikelihood(Likelihood):
                         for spec in cell_specs:
                             sample_prior(spec, dims, model_config)
                         cell_dist = self._build_annotated_mixture_dist(
-                            param_values, annotation_prior_logits
+                            param_values,
+                            annotation_prior_logits,
+                            param_layouts=param_layouts,
                         )
                         numpyro.sample("counts", cell_dist)
                 else:
@@ -319,7 +409,9 @@ class ZeroInflatedNBLikelihood(Likelihood):
                         for spec in cell_specs:
                             sample_prior(spec, dims, model_config)
                         cell_dist = self._build_annotated_mixture_dist(
-                            param_values, annotation_prior_logits
+                            param_values,
+                            annotation_prior_logits,
+                            param_layouts=param_layouts,
                         )
                         numpyro.sample("counts", cell_dist, obs=counts)
                 return
@@ -327,7 +419,9 @@ class ZeroInflatedNBLikelihood(Likelihood):
             # ----------------------------------------------------------------
             # Standard (no annotation) path: build dist once outside plate
             # ----------------------------------------------------------------
-            base_dist = self._build_dist(param_values)
+            base_dist = self._build_dist(
+                param_values, param_layouts=param_layouts
+            )
 
             # batch_size takes priority so the model plate matches
             # the guide plate during batched posterior sampling.
@@ -372,7 +466,11 @@ class ZeroInflatedNBLikelihood(Likelihood):
                 # 3. Observe minibatched counts when available.
                 obs = counts[idx] if counts is not None else None
                 numpyro.sample(
-                    "counts", self._build_dist(param_values), obs=obs
+                    "counts",
+                    self._build_dist(
+                        param_values, param_layouts=param_layouts
+                    ),
+                    obs=obs,
                 )
         elif counts is None:
             # Prior predictive: run decoder for all cells, sample from prior.
@@ -380,7 +478,12 @@ class ZeroInflatedNBLikelihood(Likelihood):
                 param_values.update(vae_cell_fn(None))
                 for spec in cell_specs:
                     sample_prior(spec, dims, model_config)
-                numpyro.sample("counts", self._build_dist(param_values))
+                numpyro.sample(
+                    "counts",
+                    self._build_dist(
+                        param_values, param_layouts=param_layouts
+                    ),
+                )
         else:
             # Full data: run decoder for all cells, observe all counts.
             with numpyro.plate("cells", n_cells):
@@ -388,5 +491,9 @@ class ZeroInflatedNBLikelihood(Likelihood):
                 for spec in cell_specs:
                     sample_prior(spec, dims, model_config)
                 numpyro.sample(
-                    "counts", self._build_dist(param_values), obs=counts
+                    "counts",
+                    self._build_dist(
+                        param_values, param_layouts=param_layouts
+                    ),
+                    obs=counts,
                 )

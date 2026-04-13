@@ -14,13 +14,19 @@ import numpyro.distributions as dist
 from .base import (
     Likelihood,
     build_mixture_general,
-    broadcast_param_for_mixture,
     compute_cell_specific_mixing,
     index_dataset_params,
+)
+from ....core.axis_layout import (
+    AxisLayout,
+    build_param_layouts,
+    broadcast_param_to_layout,
+    DATASETS,
 )
 from ...builders.parameter_specs import sample_prior
 
 if TYPE_CHECKING:
+    from ....core.axis_layout import AxisLayout  # noqa: F811
     from ...builders.parameter_specs import ParamSpec
     from ...config import ModelConfig
 
@@ -28,6 +34,37 @@ if TYPE_CHECKING:
 # in the NB log-probability during SVI training.  Mirrors the p_floor
 # default used in post-hoc log-likelihood evaluation (log_likelihood.py).
 _P_EPS = 1e-6
+
+
+def _drop_dataset_axis(
+    param_layouts: Optional[Dict[str, "AxisLayout"]],
+) -> Optional[Dict[str, "AxisLayout"]]:
+    """Return a copy of *param_layouts* with the ``"datasets"`` axis removed.
+
+    After ``index_dataset_params`` collapses the dataset dimension,
+    layouts that carried a ``"datasets"`` axis need to be updated so
+    that :func:`broadcast_param_to_layout` correctly treats the new
+    leading dimension as a batch (cells) dim rather than a semantic axis.
+
+    Parameters
+    ----------
+    param_layouts : dict or None
+        Original layouts built from ``param_specs``.
+
+    Returns
+    -------
+    dict or None
+        Updated layouts with ``"datasets"`` removed where present.
+    """
+    if param_layouts is None:
+        return None
+    out: Dict[str, "AxisLayout"] = {}
+    for key, layout in param_layouts.items():
+        if DATASETS in layout.axes:
+            out[key] = layout.subset_axis(DATASETS)
+        else:
+            out[key] = layout
+    return out
 
 
 # ==============================================================================
@@ -91,17 +128,28 @@ class NegativeBinomialLikelihood(Likelihood):
     # ------------------------------------------------------------------
 
     def _build_dist(
-        self, param_values: Dict[str, jnp.ndarray]
+        self,
+        param_values: Dict[str, jnp.ndarray],
+        param_layouts: Optional[Dict[str, "AxisLayout"]] = None,
     ) -> dist.Distribution:
-        """Build the NB distribution from current param_values."""
+        """Build the NB distribution from current param_values.
+
+        Parameters
+        ----------
+        param_values : dict
+            Sampled parameter arrays (``"p"``, ``"r"``, optionally
+            ``"mixing_weights"``).
+        param_layouts : dict, optional
+            Semantic :class:`AxisLayout` per parameter key.  When
+            provided, layout-aware broadcasting replaces shape
+            heuristics in mixture models.
+        """
         p = param_values["p"]
         r = param_values["r"]
 
         # Clamp p to (eps, 1-eps) so that log(p) and log(1-p) stay finite
         p = jnp.clip(p, _P_EPS, 1.0 - _P_EPS)
 
-        # Determine if this is a mixture NB model by the shape of r.
-        # r shape (n_components, n_genes) → mixture; (n_genes,) → regular NB.
         is_mixture = "mixing_weights" in param_values
 
         # For non-mixture paths, when r is (n_cells, n_genes) we need to
@@ -117,17 +165,17 @@ class NegativeBinomialLikelihood(Likelihood):
                 p = p[None, :]
 
         if is_mixture:
-            # Mixture model: expect mixing_weights giving categorical mixture
-            # probabilities.
             mixing_weights = param_values["mixing_weights"]
             mixing_dist = dist.Categorical(probs=mixing_weights)
 
-            # Broadcast p to match r shape (n_components, n_genes).
-            # Handles scalar, gene-specific, and mixture-specific p.
-            p = broadcast_param_for_mixture(p, r)
-            # NumPyro>=0.20 rejects MixtureSameFamily when component support is
-            # wrapped by IndependentConstraint via to_event(1). Build an
-            # equivalent MixtureGeneral over explicit component slices instead.
+            # Broadcast p to match r using semantic layouts.  The
+            # broadcast_param_to_layout helper handles both the
+            # non-batched case (p is (K,) or (G,)) and the batched
+            # case (p is (batch, G) after dataset indexing).
+            r_layout = (param_layouts or {}).get("r", AxisLayout(()))
+            p_layout = (param_layouts or {}).get("p", AxisLayout(()))
+            p = broadcast_param_to_layout(p, p_layout, r_layout)
+
             return build_mixture_general(
                 mixing_dist,
                 lambda comp_idx: self._make_count_dist(
@@ -144,9 +192,9 @@ class NegativeBinomialLikelihood(Likelihood):
         self,
         param_values: Dict[str, jnp.ndarray],
         annotation_logits_batch: jnp.ndarray,
+        param_layouts: Optional[Dict[str, "AxisLayout"]] = None,
     ) -> dist.Distribution:
-        """
-        Build a mixture NB distribution with cell-specific mixing weights.
+        """Build a mixture NB distribution with cell-specific mixing weights.
 
         Parameters
         ----------
@@ -155,6 +203,8 @@ class NegativeBinomialLikelihood(Likelihood):
             and ``r``.
         annotation_logits_batch : jnp.ndarray, shape ``(batch, K)``
             Per-cell annotation logit offsets for the current batch.
+        param_layouts : dict, optional
+            Semantic :class:`AxisLayout` per parameter key.
 
         Returns
         -------
@@ -175,12 +225,11 @@ class NegativeBinomialLikelihood(Likelihood):
         )  # (batch, K)
         mixing_dist = dist.Categorical(probs=cell_mixing)
 
-        # Broadcast p to match r shape (n_components, n_genes).
-        # Handles scalar, gene-specific, and mixture-specific p.
-        p = broadcast_param_for_mixture(p, r)
+        # Broadcast p to match r using semantic layouts.
+        r_layout = (param_layouts or {}).get("r", AxisLayout(()))
+        p_layout = (param_layouts or {}).get("p", AxisLayout(()))
+        p = broadcast_param_to_layout(p, p_layout, r_layout)
 
-        # Use MixtureGeneral for NumPyro>=0.20 compatibility when genes are
-        # represented as event dimensions.
         return build_mixture_general(
             mixing_dist,
             lambda comp_idx: self._make_count_dist(
@@ -203,6 +252,7 @@ class NegativeBinomialLikelihood(Likelihood):
         ] = None,
         annotation_prior_logits: Optional[jnp.ndarray] = None,
         dataset_indices: Optional[jnp.ndarray] = None,
+        param_layouts: Optional[Dict[str, "AxisLayout"]] = None,
     ) -> None:
         """Sample from Negative Binomial likelihood.
 
@@ -220,6 +270,14 @@ class NegativeBinomialLikelihood(Likelihood):
         is_mixture = "mixing_weights" in param_values
         use_annotation = annotation_prior_logits is not None and is_mixture
 
+        # Use externally-provided layouts (from model builder) when
+        # available.  Fall back to building from model_config.param_specs
+        # for legacy callers that don't pass param_layouts.
+        if param_layouts is None:
+            specs = getattr(model_config, "param_specs", None) or []
+            if specs:
+                param_layouts = build_param_layouts(specs, param_values)
+
         # Multi-dataset: determine n_datasets for indexing
         n_datasets = getattr(model_config, "n_datasets", None)
         use_dataset_indexing = (
@@ -236,37 +294,37 @@ class NegativeBinomialLikelihood(Likelihood):
             # because mixing weights are now cell-specific.
             # ----------------------------------------------------------------
             if use_annotation:
-                # batch_size takes priority so the model plate matches
-                # the guide plate during batched posterior sampling.
                 if batch_size is not None:
-                    # Batch mode: subsample cells; obs may or may not exist
-                    # (counts=None during posterior sampling).
                     with numpyro.plate(
                         "cells", n_cells, subsample_size=batch_size
                     ) as idx:
                         for spec in cell_specs:
                             sample_prior(spec, dims, model_config)
                         cell_dist = self._build_annotated_mixture_dist(
-                            param_values, annotation_prior_logits[idx]
+                            param_values,
+                            annotation_prior_logits[idx],
+                            param_layouts=param_layouts,
                         )
                         obs = counts[idx] if counts is not None else None
                         numpyro.sample("counts", cell_dist, obs=obs)
                 elif counts is None:
-                    # Prior predictive: sample counts from prior, full plate.
                     with numpyro.plate("cells", n_cells):
                         for spec in cell_specs:
                             sample_prior(spec, dims, model_config)
                         cell_dist = self._build_annotated_mixture_dist(
-                            param_values, annotation_prior_logits
+                            param_values,
+                            annotation_prior_logits,
+                            param_layouts=param_layouts,
                         )
                         numpyro.sample("counts", cell_dist)
                 else:
-                    # Full dataset: observe all counts, full plate.
                     with numpyro.plate("cells", n_cells):
                         for spec in cell_specs:
                             sample_prior(spec, dims, model_config)
                         cell_dist = self._build_annotated_mixture_dist(
-                            param_values, annotation_prior_logits
+                            param_values,
+                            annotation_prior_logits,
+                            param_layouts=param_layouts,
                         )
                         numpyro.sample("counts", cell_dist, obs=counts)
                 return
@@ -274,13 +332,16 @@ class NegativeBinomialLikelihood(Likelihood):
             # ----------------------------------------------------------------
             # Multi-dataset path: per-dataset params must be indexed inside
             # the cell plate so that each cell uses its dataset's parameters.
+            # After index_dataset_params, the dataset axis is collapsed and
+            # a leading batch (cells) dim appears.  Update layouts to drop
+            # the "datasets" axis so broadcast_param_to_layout correctly
+            # treats the leading dim as batch.
             # ----------------------------------------------------------------
             if use_dataset_indexing:
-                # batch_size takes priority so the model plate matches
-                # the guide plate during batched posterior sampling.
+                # Prepare post-indexing layouts: drop the dataset axis.
+                ds_layouts = _drop_dataset_axis(param_layouts)
+
                 if batch_size is not None:
-                    # Batch mode: subsample cells and dataset_indices
-                    # together; obs may or may not exist.
                     with numpyro.plate(
                         "cells", n_cells, subsample_size=batch_size
                     ) as idx:
@@ -295,23 +356,10 @@ class NegativeBinomialLikelihood(Likelihood):
                         obs = counts[idx] if counts is not None else None
                         numpyro.sample(
                             "counts",
-                            self._build_dist(cell_pv),
+                            self._build_dist(cell_pv, param_layouts=ds_layouts),
                             obs=obs,
                         )
                 elif counts is None:
-                    # Prior predictive: full plate, index all cells.
-                    with numpyro.plate("cells", n_cells):
-                        for spec in cell_specs:
-                            sample_prior(spec, dims, model_config)
-                        cell_pv = index_dataset_params(
-                            param_values,
-                            dataset_indices,
-                            n_datasets,
-                            param_specs=model_config.param_specs,
-                        )
-                        numpyro.sample("counts", self._build_dist(cell_pv))
-                else:
-                    # Full dataset: observe all counts, full plate.
                     with numpyro.plate("cells", n_cells):
                         for spec in cell_specs:
                             sample_prior(spec, dims, model_config)
@@ -322,7 +370,23 @@ class NegativeBinomialLikelihood(Likelihood):
                             param_specs=model_config.param_specs,
                         )
                         numpyro.sample(
-                            "counts", self._build_dist(cell_pv), obs=counts
+                            "counts",
+                            self._build_dist(cell_pv, param_layouts=ds_layouts),
+                        )
+                else:
+                    with numpyro.plate("cells", n_cells):
+                        for spec in cell_specs:
+                            sample_prior(spec, dims, model_config)
+                        cell_pv = index_dataset_params(
+                            param_values,
+                            dataset_indices,
+                            n_datasets,
+                            param_specs=model_config.param_specs,
+                        )
+                        numpyro.sample(
+                            "counts",
+                            self._build_dist(cell_pv, param_layouts=ds_layouts),
+                            obs=counts,
                         )
                 return
 
@@ -330,7 +394,9 @@ class NegativeBinomialLikelihood(Likelihood):
             # Standard (no annotation) path: build dist once outside plate
             # for efficiency.
             # ----------------------------------------------------------------
-            base_dist = self._build_dist(param_values)
+            base_dist = self._build_dist(
+                param_values, param_layouts=param_layouts
+            )
 
             # batch_size takes priority so the model plate matches
             # the guide plate during batched posterior sampling.
@@ -383,21 +449,26 @@ class NegativeBinomialLikelihood(Likelihood):
                 # 3. Observe minibatched counts when available.
                 obs = counts[idx] if counts is not None else None
                 numpyro.sample(
-                    "counts", self._build_dist(param_values), obs=obs
+                    "counts",
+                    self._build_dist(param_values, param_layouts=param_layouts),
+                    obs=obs,
                 )
         elif counts is None:
-            # Prior predictive: run decoder for all cells, sample from prior.
-            with numpyro.plate("cells", n_cells):
-                param_values.update(vae_cell_fn(None))
-                for spec in cell_specs:
-                    sample_prior(spec, dims, model_config)
-                numpyro.sample("counts", self._build_dist(param_values))
-        else:
-            # Full data: run decoder for all cells, observe all counts.
             with numpyro.plate("cells", n_cells):
                 param_values.update(vae_cell_fn(None))
                 for spec in cell_specs:
                     sample_prior(spec, dims, model_config)
                 numpyro.sample(
-                    "counts", self._build_dist(param_values), obs=counts
+                    "counts",
+                    self._build_dist(param_values, param_layouts=param_layouts),
+                )
+        else:
+            with numpyro.plate("cells", n_cells):
+                param_values.update(vae_cell_fn(None))
+                for spec in cell_specs:
+                    sample_prior(spec, dims, model_config)
+                numpyro.sample(
+                    "counts",
+                    self._build_dist(param_values, param_layouts=param_layouts),
+                    obs=counts,
                 )

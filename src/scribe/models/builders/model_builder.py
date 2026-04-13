@@ -44,6 +44,12 @@ from .parameter_specs import (
     sample_prior,
 )
 from ..components.guide_families import VAELatentGuide
+from ...core.axis_layout import (
+    AxisLayout,
+    align_to_layout,
+    layout_from_param_spec,
+    merge_layouts,
+)
 
 if TYPE_CHECKING:
     from ..components.likelihoods import Likelihood
@@ -458,13 +464,52 @@ class ModelBuilder:
             # ================================================================
             # 3. Compute DERIVED parameters from sampled values
             #    Examples: r = mu * (1-p) / p (linked parameterization)
-            #    These are deterministic transformations of sampled parameters
+            #    These are deterministic transformations of sampled parameters.
+            #
+            #    Dependencies may have different axis layouts (e.g. mu is
+            #    (K, D, G) from a dataset hierarchy while phi is (K, G)
+            #    from gene-level only).  We use AxisLayout metadata to
+            #    align every dependency to a common target layout *before*
+            #    calling the compute function, so compute functions can
+            #    assume pre-aligned inputs and contain only pure math.
             # ================================================================
+
+            # Build semantic layouts for all sampled parameters so that
+            # derived-param alignment can look up each dependency's axes.
+            param_layouts: Dict[str, AxisLayout] = {
+                spec.name: layout_from_param_spec(spec) for spec in specs
+            }
+
             for d in derived:
-                dep_values = {k: param_values[k] for k in d.deps}
-                param_values[d.name] = numpyro.deterministic(
-                    d.name, d.compute(**dep_values)
+                # Determine the target layout: the union of all dependency
+                # layouts (e.g. merging ("components", "genes") with
+                # ("components", "datasets", "genes") yields the latter).
+                dep_layouts = [
+                    param_layouts.get(k, AxisLayout(())) for k in d.deps
+                ]
+                target = (
+                    merge_layouts(*dep_layouts)
+                    if dep_layouts
+                    else AxisLayout(())
                 )
+
+                # Align each dependency tensor to the target layout by
+                # inserting singleton dimensions where axes are missing.
+                aligned = {
+                    k: align_to_layout(
+                        param_values[k],
+                        param_layouts.get(k, AxisLayout(())),
+                        target,
+                    )
+                    for k in d.deps
+                }
+
+                param_values[d.name] = numpyro.deterministic(
+                    d.name, d.compute(**aligned)
+                )
+                # Record the derived param's layout so downstream derived
+                # params (or the likelihood) can reference it.
+                param_layouts[d.name] = target
 
             # ================================================================
             # 4. Handle CELL-SPECIFIC params and LIKELIHOOD inside cell plate
@@ -543,18 +588,46 @@ class ModelBuilder:
                         for name, value in decoder_out.items():
                             numpyro.deterministic(name, value)
 
-                        # Compute in-plate derived params (deps include decoder
-                        # outputs)
+                        # Compute in-plate derived params (deps include
+                        # decoder outputs).  Align dependencies using
+                        # AxisLayout metadata, same as the pre-plate path.
+                        # Decoder outputs are cell-specific tensors that
+                        # typically have no component/dataset axes, so
+                        # their layout defaults to AxisLayout(()).
                         for d in in_plate_derived:
                             deps = {}
+                            dep_layouts = []
                             for dep in d.deps:
                                 if dep in decoder_out:
                                     deps[dep] = decoder_out[dep]
                                 else:
                                     deps[dep] = param_values[dep]
-                            result = d.compute(**deps)
+                                dep_layouts.append(
+                                    param_layouts.get(
+                                        dep, AxisLayout(())
+                                    )
+                                )
+
+                            target = (
+                                merge_layouts(*dep_layouts)
+                                if dep_layouts
+                                else AxisLayout(())
+                            )
+                            aligned = {
+                                k: align_to_layout(
+                                    v,
+                                    param_layouts.get(
+                                        k, AxisLayout(())
+                                    ),
+                                    target,
+                                )
+                                for k, v in deps.items()
+                            }
+
+                            result = d.compute(**aligned)
                             numpyro.deterministic(d.name, result)
                             decoder_out[d.name] = result
+                            param_layouts[d.name] = target
 
                         return decoder_out
 
@@ -575,6 +648,9 @@ class ModelBuilder:
             else:
                 non_vae_cell_specs = cell_specs
 
+            # Pass param_layouts so the likelihood can use semantic
+            # AxisLayout metadata for broadcasting in mixture models,
+            # even when model_config.param_specs is empty.
             likelihood.sample(
                 param_values=param_values,
                 cell_specs=non_vae_cell_specs,
@@ -585,6 +661,7 @@ class ModelBuilder:
                 vae_cell_fn=vae_cell_fn,
                 annotation_prior_logits=annotation_prior_logits,
                 dataset_indices=dataset_indices,
+                param_layouts=param_layouts,
             )
 
         return model
