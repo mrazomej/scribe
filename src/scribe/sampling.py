@@ -36,6 +36,136 @@ from typing import Dict, Optional, Tuple, Union, Callable, List
 from numpyro.infer import SVI
 from numpyro.handlers import block
 
+
+# ==============================================================================
+# Shared helpers for sample-dimension detection and per-draw slicing
+# ==============================================================================
+
+
+def _has_sample_dim(r: jnp.ndarray, is_mixture: bool) -> bool:
+    """Determine whether ``r`` has a leading posterior-sample dimension.
+
+    The convention is:
+
+    * **Standard model MAP**: ``r.ndim == 1``  (``n_genes``,)
+    * **Standard model posterior**: ``r.ndim == 2``  (``n_samples, n_genes``)
+    * **Mixture model MAP**: ``r.ndim == 2``  (``n_components, n_genes``)
+    * **Mixture model posterior**: ``r.ndim == 3``  (``n_samples, n_components, n_genes``)
+
+    Parameters
+    ----------
+    r : jnp.ndarray
+        The NB dispersion tensor ``r``.
+    is_mixture : bool
+        Whether the model is a mixture model (i.e. ``mixing_weights`` is
+        not ``None``).
+
+    Returns
+    -------
+    bool
+        ``True`` when ``r`` carries a leading sample axis.
+    """
+    return (is_mixture and r.ndim == 3) or (not is_mixture and r.ndim == 2)
+
+
+def _slice_posterior_draw(
+    idx: int,
+    *,
+    r: jnp.ndarray,
+    p: jnp.ndarray,
+    p_capture: Optional[jnp.ndarray],
+    gate: Optional[jnp.ndarray],
+    mixing_weights: Optional[jnp.ndarray],
+    n_samples: int,
+    is_mixture: bool,
+    bnb_concentration: Optional[jnp.ndarray] = None,
+) -> dict:
+    """Extract parameter values for a single posterior draw.
+
+    Each parameter may or may not carry a leading sample dimension.
+    This helper uses the same ``ndim``-based rules that were historically
+    copy-pasted in ``denoise_counts``, the SVI AnnData mixin, and the
+    MCMC AnnData mixin.  Centralising the logic here ensures the rules
+    stay consistent.
+
+    Parameters
+    ----------
+    idx : int
+        Index of the posterior draw to extract.
+    r : jnp.ndarray
+        NB dispersion array with a leading sample axis.
+    p : jnp.ndarray
+        Success probability — may or may not have a sample axis.
+    p_capture : jnp.ndarray or None
+        Capture probability — ``(n_samples, n_cells)`` or ``(n_cells,)``
+        or ``None``.
+    gate : jnp.ndarray or None
+        Zero-inflation gate — expected ``ndim`` depends on whether the
+        model is a mixture.
+    mixing_weights : jnp.ndarray or None
+        Component mixing weights — ``(n_samples, K)`` or ``(K,)`` or
+        ``None``.
+    n_samples : int
+        Number of posterior draws (i.e. ``r.shape[0]``).
+    is_mixture : bool
+        Whether the model is a mixture model.
+    bnb_concentration : jnp.ndarray or None
+        Optional BNB excess-dispersion concentration.
+
+    Returns
+    -------
+    dict
+        Keys: ``r``, ``p``, ``p_capture``, ``gate``, ``mixing_weights``,
+        ``bnb_concentration`` — each sliced to remove the sample axis.
+    """
+    # r always has the leading sample axis — index directly
+    r_s = r[idx]
+
+    # p may or may not have a sample axis; check leading dim size
+    p_s = p[idx] if p.ndim >= 1 and p.shape[0] == n_samples else p
+
+    # p_capture has a sample axis when it is 2-D: (n_samples, n_cells)
+    pc_s = (
+        p_capture[idx]
+        if p_capture is not None and p_capture.ndim == 2
+        else p_capture
+    )
+
+    # gate has a sample axis when its ndim exceeds the "MAP ndim"
+    # (standard MAP gate is 1-D; mixture MAP gate is 2-D)
+    map_gate_ndim = 2 if is_mixture else 1
+    g_s = (
+        gate[idx]
+        if gate is not None and gate.ndim > map_gate_ndim
+        else gate
+    )
+
+    # mixing_weights has a sample axis when it is 2-D: (n_samples, K)
+    mw_s = (
+        mixing_weights[idx]
+        if mixing_weights is not None and mixing_weights.ndim == 2
+        else mixing_weights
+    )
+
+    # bnb_concentration follows the same rule as gate
+    map_bnb_ndim = 2 if is_mixture else 1
+    bnb_s = (
+        bnb_concentration[idx]
+        if bnb_concentration is not None
+        and bnb_concentration.ndim > map_bnb_ndim
+        else bnb_concentration
+    )
+
+    return {
+        "r": r_s,
+        "p": p_s,
+        "p_capture": pc_s,
+        "gate": g_s,
+        "mixing_weights": mw_s,
+        "bnb_concentration": bnb_s,
+    }
+
+
 # ------------------------------------------------------------------------------
 # Posterior predictive samples
 # ------------------------------------------------------------------------------
@@ -389,16 +519,8 @@ def sample_biological_nb(
     """
     is_mixture = mixing_weights is not None
 
-    # ------------------------------------------------------------------
-    # Determine whether r has a leading sample dimension.
-    # Standard model MAP: r.ndim == 1  (n_genes,)
-    # Standard model posterior: r.ndim == 2  (n_samples, n_genes)
-    # Mixture model MAP: r.ndim == 2  (n_components, n_genes)
-    # Mixture model posterior: r.ndim == 3  (n_samples, n_components, n_genes)
-    # ------------------------------------------------------------------
-    has_sample_dim = (is_mixture and r.ndim == 3) or (
-        not is_mixture and r.ndim == 2
-    )
+    # Detect whether r carries a leading posterior-sample dimension
+    has_sample_dim = _has_sample_dim(r, is_mixture)
 
     if has_sample_dim:
         # Infer n_samples from the leading dimension of r
@@ -661,15 +783,8 @@ def sample_posterior_ppc(
     """
     is_mixture = mixing_weights is not None
 
-    # ------------------------------------------------------------------
-    # Detect leading sample dimension using the same heuristic as
-    # sample_biological_nb: posterior arrays have one extra leading axis.
-    # Standard MAP: r.ndim == 1 ; posterior: r.ndim == 2
-    # Mixture  MAP: r.ndim == 2 ; posterior: r.ndim == 3
-    # ------------------------------------------------------------------
-    has_sample_dim = (is_mixture and r.ndim == 3) or (
-        not is_mixture and r.ndim == 2
-    )
+    # Detect whether r carries a leading posterior-sample dimension
+    has_sample_dim = _has_sample_dim(r, is_mixture)
 
     if has_sample_dim:
         actual_n_samples = r.shape[0]
@@ -1090,10 +1205,8 @@ def denoise_counts(
 
     is_mixture = mixing_weights is not None
 
-    # Detect leading sample dimension
-    has_sample_dim = (is_mixture and r.ndim == 3) or (
-        not is_mixture and r.ndim == 2
-    )
+    # Detect whether r carries a leading posterior-sample dimension
+    has_sample_dim = _has_sample_dim(r, is_mixture)
 
     if not has_sample_dim:
         return _denoise_single(
@@ -1123,43 +1236,33 @@ def denoise_counts(
     var_list: List[jnp.ndarray] = []
 
     for s in range(n_samples):
-        r_s = r[s]
-        p_s = p[s] if p.ndim >= 1 and p.shape[0] == n_samples else p
-        pc_s = (
-            p_capture[s]
-            if p_capture is not None and p_capture.ndim == 2
-            else p_capture
-        )
-        g_s = (
-            gate[s]
-            if gate is not None and gate.ndim > (1 if not is_mixture else 2)
-            else gate
-        )
-        mw_s = (
-            mixing_weights[s]
-            if mixing_weights is not None and mixing_weights.ndim == 2
-            else mixing_weights
-        )
-        bnb_s = (
-            bnb_concentration[s]
-            if bnb_concentration is not None
-            and bnb_concentration.ndim > (1 if not is_mixture else 2)
-            else bnb_concentration
+        # Extract parameters for this single posterior draw, stripping
+        # the leading sample dimension where present
+        draw = _slice_posterior_draw(
+            s,
+            r=r,
+            p=p,
+            p_capture=p_capture,
+            gate=gate,
+            mixing_weights=mixing_weights,
+            n_samples=n_samples,
+            is_mixture=is_mixture,
+            bnb_concentration=bnb_concentration,
         )
 
         out = _denoise_single(
             counts=counts,
-            r=r_s,
-            p=p_s,
-            p_capture=pc_s,
-            gate=g_s,
+            r=draw["r"],
+            p=draw["p"],
+            p_capture=draw["p_capture"],
+            gate=draw["gate"],
             method=method,
             rng_key=keys[s],
             return_variance=return_variance,
-            mixing_weights=mw_s,
+            mixing_weights=draw["mixing_weights"],
             component_assignment=component_assignment,
             cell_batch_size=cell_batch_size,
-            bnb_concentration=bnb_s,
+            bnb_concentration=draw["bnb_concentration"],
         )
 
         if return_variance:
