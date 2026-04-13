@@ -368,3 +368,168 @@ class TestNBDMEquivalence:
             standard["predictive_samples"].shape
             == biological["predictive_samples"].shape
         )
+
+
+# ==============================================================================
+# Unit tests for shared sampling helpers
+# ==============================================================================
+
+
+class TestHasSampleDim:
+    """Tests for ``_has_sample_dim`` — detects a leading posterior-sample axis
+    on the ``r`` tensor based on its ndim and whether the model is a mixture.
+    """
+
+    def test_standard_map_no_sample_dim(self):
+        """Standard model MAP r with shape (G,) should not have a sample dim."""
+        from scribe.sampling import _has_sample_dim
+
+        r = jnp.ones((20,))
+        assert _has_sample_dim(r, is_mixture=False) is False
+
+    def test_standard_posterior_has_sample_dim(self):
+        """Standard model posterior r with shape (S, G) has a sample dim."""
+        from scribe.sampling import _has_sample_dim
+
+        r = jnp.ones((50, 20))
+        assert _has_sample_dim(r, is_mixture=False) is True
+
+    def test_mixture_map_no_sample_dim(self):
+        """Mixture model MAP r with shape (K, G) should not have a sample dim."""
+        from scribe.sampling import _has_sample_dim
+
+        r = jnp.ones((3, 20))
+        assert _has_sample_dim(r, is_mixture=True) is False
+
+    def test_mixture_posterior_has_sample_dim(self):
+        """Mixture model posterior r with shape (S, K, G) has a sample dim."""
+        from scribe.sampling import _has_sample_dim
+
+        r = jnp.ones((50, 3, 20))
+        assert _has_sample_dim(r, is_mixture=True) is True
+
+
+class TestSlicePosteriorDraw:
+    """Tests for ``_slice_posterior_draw`` — extracts parameter values for a
+    single posterior draw, stripping the leading sample axis where present.
+    """
+
+    def test_standard_model_slices_all_params(self):
+        """All params with a sample axis should be sliced at the given index."""
+        from scribe.sampling import _slice_posterior_draw
+
+        n_samples, n_genes, n_cells = 10, 20, 50
+
+        r = jnp.ones((n_samples, n_genes))
+        p = jnp.ones((n_samples,)) * 0.3
+        p_capture = jnp.ones((n_samples, n_cells)) * 0.9
+        gate = jnp.ones((n_samples, n_genes)) * 0.1
+
+        draw = _slice_posterior_draw(
+            3,
+            r=r, p=p, p_capture=p_capture, gate=gate,
+            mixing_weights=None, n_samples=n_samples, is_mixture=False,
+        )
+
+        # r should be sliced to (n_genes,)
+        assert draw["r"].shape == (n_genes,)
+        # p should be sliced to scalar
+        assert draw["p"].shape == ()
+        # p_capture should be sliced to (n_cells,)
+        assert draw["p_capture"].shape == (n_cells,)
+        # gate should be sliced to (n_genes,)
+        assert draw["gate"].shape == (n_genes,)
+        # mixing_weights and bnb_concentration should remain None
+        assert draw["mixing_weights"] is None
+        assert draw["bnb_concentration"] is None
+
+    def test_mixture_model_slices_all_params(self):
+        """Mixture model params with sample axis should be properly sliced."""
+        from scribe.sampling import _slice_posterior_draw
+
+        n_samples, K, n_genes = 10, 3, 20
+
+        r = jnp.ones((n_samples, K, n_genes))
+        p = jnp.ones((n_samples,)) * 0.3
+        gate = jnp.ones((n_samples, K, n_genes)) * 0.1
+        mw = jnp.ones((n_samples, K)) / K
+
+        draw = _slice_posterior_draw(
+            5,
+            r=r, p=p, p_capture=None, gate=gate,
+            mixing_weights=mw, n_samples=n_samples, is_mixture=True,
+        )
+
+        # r should be sliced to (K, n_genes)
+        assert draw["r"].shape == (K, n_genes)
+        # p is scalar-like per sample — should be sliced to scalar
+        assert draw["p"].shape == ()
+        # gate is (S, K, G) -> (K, G)
+        assert draw["gate"].shape == (K, n_genes)
+        # mixing_weights is (S, K) -> (K,)
+        assert draw["mixing_weights"].shape == (K,)
+
+    def test_shared_params_not_sliced(self):
+        """Params without a sample dim (shared across draws) pass through."""
+        from scribe.sampling import _slice_posterior_draw
+
+        n_samples, n_genes = 10, 20
+
+        # r has sample dim, but p and gate do not
+        r = jnp.ones((n_samples, n_genes))
+        p_shared = jnp.array(0.3)
+        gate_shared = jnp.ones((n_genes,)) * 0.1
+
+        draw = _slice_posterior_draw(
+            0,
+            r=r, p=p_shared, p_capture=None, gate=gate_shared,
+            mixing_weights=None, n_samples=n_samples, is_mixture=False,
+        )
+
+        # p is scalar (no sample dim) — should pass through unchanged
+        assert draw["p"].shape == ()
+        # gate is 1-D (MAP ndim for standard) — should pass through
+        assert draw["gate"].shape == (n_genes,)
+
+    def test_bnb_concentration_sliced_when_has_sample_dim(self):
+        """bnb_concentration with a sample axis should be sliced."""
+        from scribe.sampling import _slice_posterior_draw
+
+        n_samples, n_genes = 10, 20
+
+        r = jnp.ones((n_samples, n_genes))
+        p = jnp.ones((n_samples,)) * 0.3
+        # bnb_concentration with sample dim: (S, G)
+        bnb = jnp.ones((n_samples, n_genes)) * 0.5
+
+        draw = _slice_posterior_draw(
+            7,
+            r=r, p=p, p_capture=None, gate=None,
+            mixing_weights=None, n_samples=n_samples, is_mixture=False,
+            bnb_concentration=bnb,
+        )
+
+        # bnb_concentration should be sliced to (n_genes,)
+        assert draw["bnb_concentration"].shape == (n_genes,)
+
+    def test_bnb_concentration_mixture_sliced(self):
+        """Mixture bnb_concentration (S, K, G) should be sliced to (K, G)."""
+        from scribe.sampling import _slice_posterior_draw
+
+        n_samples, K, n_genes = 10, 3, 20
+
+        r = jnp.ones((n_samples, K, n_genes))
+        p = jnp.ones((n_samples,)) * 0.3
+        mw = jnp.ones((n_samples, K)) / K
+        # bnb_concentration with sample dim: (S, K, G)
+        bnb = jnp.ones((n_samples, K, n_genes)) * 0.5
+
+        draw = _slice_posterior_draw(
+            2,
+            r=r, p=p, p_capture=None, gate=None,
+            mixing_weights=mw, n_samples=n_samples, is_mixture=True,
+            bnb_concentration=bnb,
+        )
+
+        # bnb_concentration should be sliced to (K, n_genes)
+        assert draw["bnb_concentration"].shape == (K, n_genes)
