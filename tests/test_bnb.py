@@ -128,9 +128,11 @@ class TestBuildCountDist:
 
     def test_returns_bnb_when_concentration_given(self):
         """With bnb_concentration, returns BetaNegativeBinomial."""
-        from scribe.stats.distributions import BetaNegativeBinomial
-
+        # Import from the same module that build_count_dist uses, so we
+        # get numpyro's class on numpyro>=0.20 and the scribe fallback
+        # on older versions.
         from scribe.models.components.likelihoods.beta_negative_binomial import (
+            BetaNegativeBinomial,
             build_count_dist,
         )
 
@@ -321,7 +323,9 @@ class TestBNBLogLikelihood:
         """Shared synthetic data for LL tests."""
         rng = np.random.default_rng(42)
         n_cells, n_genes = 20, 5
-        counts = jnp.array(rng.poisson(5, size=(n_cells, n_genes)), dtype=jnp.float32)
+        counts = jnp.array(
+            rng.poisson(5, size=(n_cells, n_genes)), dtype=jnp.float32
+        )
         return counts
 
     def test_nbdm_with_bnb(self, _data):
@@ -811,8 +815,13 @@ class TestSamplingMixtureBNB:
         key = jax.random.PRNGKey(0)
 
         samples = sample_biological_nb(
-            r=r, p=p, n_cells=C, rng_key=key, n_samples=3,
-            mixing_weights=mw, bnb_concentration=bnb,
+            r=r,
+            p=p,
+            n_cells=C,
+            rng_key=key,
+            n_samples=3,
+            mixing_weights=mw,
+            bnb_concentration=bnb,
         )
         assert samples.shape == (3, C, G)
         assert jnp.all(jnp.isfinite(samples))
@@ -829,8 +838,12 @@ class TestSamplingMixtureBNB:
         key = jax.random.PRNGKey(1)
 
         samples = sample_biological_nb(
-            r=r, p=p, n_cells=C, rng_key=key,
-            mixing_weights=mw, bnb_concentration=bnb,
+            r=r,
+            p=p,
+            n_cells=C,
+            rng_key=key,
+            mixing_weights=mw,
+            bnb_concentration=bnb,
         )
         assert samples.shape == (S, C, G)
         assert jnp.all(jnp.isfinite(samples))
@@ -848,8 +861,13 @@ class TestSamplingMixtureBNB:
         key = jax.random.PRNGKey(2)
 
         samples = sample_posterior_ppc(
-            r=r, p=p, n_cells=C, rng_key=key, n_samples=2,
-            mixing_weights=mw, p_capture=p_capture,
+            r=r,
+            p=p,
+            n_cells=C,
+            rng_key=key,
+            n_samples=2,
+            mixing_weights=mw,
+            p_capture=p_capture,
             bnb_concentration=bnb,
         )
         assert samples.shape == (2, C, G)
@@ -868,8 +886,12 @@ class TestSamplingMixtureBNB:
         key = jax.random.PRNGKey(3)
 
         samples = sample_posterior_ppc(
-            r=r, p=p, n_cells=C, rng_key=key,
-            mixing_weights=mw, p_capture=p_capture,
+            r=r,
+            p=p,
+            n_cells=C,
+            rng_key=key,
+            mixing_weights=mw,
+            p_capture=p_capture,
             bnb_concentration=bnb,
         )
         assert samples.shape == (S, C, G)
@@ -887,8 +909,13 @@ class TestSamplingMixtureBNB:
         key = jax.random.PRNGKey(4)
 
         samples = sample_biological_nb(
-            r=r, p=p, n_cells=C, rng_key=key, n_samples=2,
-            mixing_weights=mw, bnb_concentration=bnb,
+            r=r,
+            p=p,
+            n_cells=C,
+            rng_key=key,
+            n_samples=2,
+            mixing_weights=mw,
+            bnb_concentration=bnb,
         )
         assert samples.shape == (2, C, G)
         assert jnp.all(jnp.isfinite(samples))
@@ -1115,9 +1142,7 @@ class TestBNBDenoisingQuadrature:
         r = jnp.array([5.0, 10.0, 2.0])
         p = jnp.array([0.3, 0.6, 0.1])
         p_capture = jnp.array([0.05, 0.08, 0.03, 0.10])
-        counts = jnp.array(
-            [[2, 15, 0], [0, 5, 1], [10, 0, 3], [1, 20, 0]]
-        )
+        counts = jnp.array([[2, 15, 0], [0, 5, 1], [10, 0, 3], [1, 20, 0]])
         return counts, r, p, p_capture
 
     def test_reduces_to_nb_when_kappa_large(self, nb_params):
@@ -1164,9 +1189,7 @@ class TestBNBDenoisingQuadrature:
         np.testing.assert_allclose(
             np.array(bnb_mean), np.array(counts), atol=1e-4
         )
-        np.testing.assert_allclose(
-            np.array(bnb_var), 0.0, atol=1e-4
-        )
+        np.testing.assert_allclose(np.array(bnb_var), 0.0, atol=1e-4)
 
     def test_bnb_mean_differs_from_nb(self, nb_params):
         """BNB posterior mean should differ from NB for finite kappa."""
@@ -1176,9 +1199,7 @@ class TestBNBDenoisingQuadrature:
 
         # Moderate overdispersion
         omega = jnp.full(r.shape, 1.0)
-        bnb_mean, _ = _denoise_bnb_quadrature(
-            counts, r, p, p_capture, omega
-        )
+        bnb_mean, _ = _denoise_bnb_quadrature(counts, r, p, p_capture, omega)
 
         # NB closed-form
         nu = p_capture[:, None]
@@ -1198,9 +1219,7 @@ class TestBNBDenoisingQuadrature:
 
         counts, r, p, p_capture = nb_params
         omega = jnp.full(r.shape, 0.5)
-        _, bnb_var = _denoise_bnb_quadrature(
-            counts, r, p, p_capture, omega
-        )
+        _, bnb_var = _denoise_bnb_quadrature(counts, r, p, p_capture, omega)
         assert jnp.all(bnb_var >= -1e-6)
 
     def test_output_shape(self, nb_params):
@@ -1231,9 +1250,7 @@ class TestBNBDenoSampling:
         omega = jnp.ones(G) * 0.5
         key = jax.random.PRNGKey(0)
 
-        p_samples = _sample_p_posterior_bnb(
-            key, counts, r, p, p_capture, omega
-        )
+        p_samples = _sample_p_posterior_bnb(key, counts, r, p, p_capture, omega)
         assert p_samples.shape == (C, G)
 
     def test_samples_in_unit_interval(self):
@@ -1248,9 +1265,7 @@ class TestBNBDenoSampling:
         omega = jnp.ones(G) * 1.0
         key = jax.random.PRNGKey(42)
 
-        p_samples = _sample_p_posterior_bnb(
-            key, counts, r, p, p_capture, omega
-        )
+        p_samples = _sample_p_posterior_bnb(key, counts, r, p, p_capture, omega)
         assert jnp.all(p_samples > 0.0)
         assert jnp.all(p_samples < 1.0)
 
@@ -1270,9 +1285,7 @@ class TestBNBDenoSampling:
         omega = jnp.array([0.5])
 
         # Quadrature mean
-        bnb_mean, _ = _denoise_bnb_quadrature(
-            counts, r, p, p_capture, omega
-        )
+        bnb_mean, _ = _denoise_bnb_quadrature(counts, r, p, p_capture, omega)
 
         # Many augmented samples
         n_samples = 5000
@@ -1280,9 +1293,7 @@ class TestBNBDenoSampling:
         for i in range(n_samples):
             key = jax.random.PRNGKey(i)
             key_p, key_nb = jax.random.split(key)
-            p_s = _sample_p_posterior_bnb(
-                key_p, counts, r, p, p_capture, omega
-            )
+            p_s = _sample_p_posterior_bnb(key_p, counts, r, p, p_capture, omega)
             nu = p_capture[:, None]
             probs_cond = p_s * (1.0 - nu)
             alpha_cond = r + counts
@@ -1307,8 +1318,12 @@ class TestDenoiseBatchBNBDispatch:
 
         C, G = 4, 3
         counts = jnp.array(
-            [[2.0, 10.0, 0.0], [0.0, 5.0, 1.0],
-             [8.0, 0.0, 3.0], [1.0, 15.0, 0.0]]
+            [
+                [2.0, 10.0, 0.0],
+                [0.0, 5.0, 1.0],
+                [8.0, 0.0, 3.0],
+                [1.0, 15.0, 0.0],
+            ]
         )
         r = jnp.array([5.0, 8.0, 3.0])
         p = jnp.array([0.3, 0.5, 0.2])
@@ -1317,8 +1332,14 @@ class TestDenoiseBatchBNBDispatch:
 
         key = jax.random.PRNGKey(0)
         denoised, variance = _denoise_batch(
-            counts, r, p, p_capture, gate=None,
-            method="mean", rng_key=key, bnb_concentration=omega,
+            counts,
+            r,
+            p,
+            p_capture,
+            gate=None,
+            method="mean",
+            rng_key=key,
+            bnb_concentration=omega,
         )
 
         assert denoised.shape == (C, G)
@@ -1332,8 +1353,12 @@ class TestDenoiseBatchBNBDispatch:
 
         C, G = 4, 3
         counts = jnp.array(
-            [[2.0, 10.0, 0.0], [0.0, 5.0, 1.0],
-             [8.0, 0.0, 3.0], [1.0, 15.0, 0.0]]
+            [
+                [2.0, 10.0, 0.0],
+                [0.0, 5.0, 1.0],
+                [8.0, 0.0, 3.0],
+                [1.0, 15.0, 0.0],
+            ]
         )
         r = jnp.array([5.0, 8.0, 3.0])
         p = jnp.array([0.3, 0.5, 0.2])
@@ -1342,8 +1367,14 @@ class TestDenoiseBatchBNBDispatch:
 
         key = jax.random.PRNGKey(42)
         denoised, variance = _denoise_batch(
-            counts, r, p, p_capture, gate=None,
-            method="sample", rng_key=key, bnb_concentration=omega,
+            counts,
+            r,
+            p,
+            p_capture,
+            gate=None,
+            method="sample",
+            rng_key=key,
+            bnb_concentration=omega,
         )
 
         assert denoised.shape == (C, G)
@@ -1361,8 +1392,14 @@ class TestDenoiseBatchBNBDispatch:
 
         key = jax.random.PRNGKey(0)
         denoised, _ = _denoise_batch(
-            counts, r, p, p_capture, gate=None,
-            method="mean", rng_key=key, bnb_concentration=None,
+            counts,
+            r,
+            p,
+            p_capture,
+            gate=None,
+            method="mean",
+            rng_key=key,
+            bnb_concentration=None,
         )
 
         # NB closed-form
@@ -1385,8 +1422,14 @@ class TestDenoiseBatchBNBDispatch:
 
         key = jax.random.PRNGKey(0)
         denoised, _ = _denoise_batch(
-            counts, r, p, p_capture=None, gate=None,
-            method="mean", rng_key=key, bnb_concentration=omega,
+            counts,
+            r,
+            p,
+            p_capture=None,
+            gate=None,
+            method="mean",
+            rng_key=key,
+            bnb_concentration=omega,
         )
 
         # Without VCP: probs_post=0, so denoised = counts
