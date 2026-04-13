@@ -951,3 +951,97 @@ class TestFlowSamplingHelpers:
         np.testing.assert_array_equal(out["r"][0], jnp.array([0, 3, 7]))
         # Scalar should be unchanged
         np.testing.assert_array_equal(out["scalar"], samples["scalar"])
+
+
+# =========================================================================
+# AxisLayout gene-axis equivalence tests
+# =========================================================================
+
+from scribe.core.axis_layout import (
+    layout_from_param_spec,
+    build_param_layouts,
+    GENES,
+)
+
+
+class TestAxisLayoutGeneAxisEquivalence:
+    """Verify layout.gene_axis agrees with build_gene_axis_by_key."""
+
+    def test_1d_gene_param(self):
+        """Gene-specific 1D param: layout gene_axis should be 0."""
+        spec = _MockSpec("r", ("n_genes",))
+        params = {"r_loc": jnp.ones(5)}
+        old = build_gene_axis_by_key([spec], params, 5)
+        assert old is not None
+
+        real_spec = LogNormalSpec(
+            name="r",
+            shape_dims=("n_genes",),
+            default_params=(0.0, 1.0),
+            is_gene_specific=True,
+        )
+        layouts = build_param_layouts([real_spec], params)
+        assert layouts["r_loc"].gene_axis == old["r_loc"]
+
+    def test_2d_mixture_gene_param(self):
+        """(n_components, n_genes) param: layout gene_axis should be 1."""
+        real_spec = LogNormalSpec(
+            name="r",
+            shape_dims=("n_genes",),
+            default_params=(0.0, 1.0),
+            is_mixture=True,
+            is_gene_specific=True,
+        )
+        params = {"r_loc": jnp.ones((3, 5))}
+        old = build_gene_axis_by_key([real_spec], params, 5)
+        assert old is not None
+
+        layouts = build_param_layouts([real_spec], params)
+        assert layouts["r_loc"].gene_axis == old["r_loc"]
+
+    def test_ambiguous_shape_5x5_layout_is_correct(self):
+        """Ambiguous (5,5) shape: layout correctly identifies gene axis as 1.
+
+        ``build_gene_axis_by_key`` falls back to ``shape.index(n_genes)``
+        which returns 0 (wrong) because ``shape_dims`` is ``("n_genes",)``
+        and doesn't encode the mixture axis.  ``layout_from_param_spec``
+        correctly reads ``is_mixture=True`` and places genes at axis 1.
+        This is an improvement over the old heuristic.
+        """
+        real_spec = LogNormalSpec(
+            name="r",
+            shape_dims=("n_genes",),
+            default_params=(0.0, 1.0),
+            is_mixture=True,
+            is_gene_specific=True,
+        )
+        params = {"r_loc": jnp.ones((5, 5))}
+        layouts = build_param_layouts([real_spec], params)
+        # AxisLayout knows the correct axis via is_mixture
+        assert layouts["r_loc"].gene_axis == 1
+
+    def test_scalar_param_no_gene_axis(self):
+        """Scalar param: no gene axis in either system."""
+        real_spec = BetaSpec(
+            name="p", shape_dims=(), default_params=(1.0, 1.0)
+        )
+        params = {"p_loc": jnp.array(0.5)}
+        old = build_gene_axis_by_key([real_spec], params, 5)
+
+        layouts = build_param_layouts([real_spec], params)
+        assert layouts["p_loc"].gene_axis is None
+
+    def test_log_prefixed_key(self):
+        """log_mu_loc should still get correct gene axis."""
+        real_spec = LogNormalSpec(
+            name="mu",
+            shape_dims=("n_genes",),
+            default_params=(0.0, 1.0),
+            is_gene_specific=True,
+        )
+        params = {"log_mu_loc": jnp.ones(5)}
+        old = build_gene_axis_by_key([real_spec], params, 5)
+        assert old is not None
+
+        layouts = build_param_layouts([real_spec], params)
+        assert layouts["log_mu_loc"].gene_axis == old["log_mu_loc"]

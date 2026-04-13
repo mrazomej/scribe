@@ -707,3 +707,98 @@ class TestResultConcatenation:
         )
         with pytest.raises(ValueError, match="at least two elements"):
             ScribeMCMCResults.concat([res])
+
+
+# ==============================================================================
+# AxisLayout component-axis equivalence
+# ==============================================================================
+
+from scribe.core.axis_layout import (
+    AxisLayout,
+    layout_from_param_spec,
+    infer_layout,
+    COMPONENTS,
+    GENES,
+)
+from scribe.models.builders.parameter_specs import BetaSpec
+
+
+class TestAxisLayoutComponentAxis:
+    """Verify layout.component_axis identifies the mixture-component dimension."""
+
+    def test_mixture_gene_from_spec(self):
+        spec = LogNormalSpec(
+            name="r",
+            shape_dims=("n_genes",),
+            default_params=(0.0, 1.0),
+            is_mixture=True,
+            is_gene_specific=True,
+        )
+        layout = layout_from_param_spec(spec, has_sample_dim=True)
+        assert layout.component_axis == 1
+        assert layout.gene_axis == 2
+
+    def test_mixture_scalar_from_spec(self):
+        spec = BetaSpec(
+            name="p",
+            shape_dims=(),
+            default_params=(1.0, 1.0),
+            is_mixture=True,
+        )
+        layout = layout_from_param_spec(spec, has_sample_dim=True)
+        assert layout.component_axis == 1
+        assert layout.gene_axis is None
+
+    def test_non_mixture_has_no_component_axis(self):
+        spec = LogNormalSpec(
+            name="r",
+            shape_dims=("n_genes",),
+            default_params=(0.0, 1.0),
+            is_gene_specific=True,
+        )
+        layout = layout_from_param_spec(spec)
+        assert layout.component_axis is None
+
+    def test_infer_layout_mixture_posterior(self):
+        """Infer component axis from (samples, K, G) tensor."""
+        layout = infer_layout(
+            "r",
+            jnp.ones((200, 3, 100)),
+            n_genes=100,
+            n_components=3,
+            has_sample_dim=True,
+        )
+        assert layout.component_axis == 1
+        assert layout.gene_axis == 2
+
+    def test_infer_layout_no_mixture(self):
+        """Without n_components, no component axis."""
+        layout = infer_layout(
+            "r",
+            jnp.ones((200, 100)),
+            n_genes=100,
+            has_sample_dim=True,
+        )
+        assert layout.component_axis is None
+        assert layout.gene_axis == 1
+
+    def test_mcmc_results_layouts_property(self):
+        """ScribeMCMCResults.layouts should identify component axis."""
+        samples = {
+            "p": jnp.ones((20, 3)),
+            "r": jnp.ones((20, 3, 5)),
+        }
+        cfg = _make_model_config("nbdm", n_components=3)
+        results = ScribeMCMCResults(
+            samples=samples,
+            n_cells=4,
+            n_genes=5,
+            model_type="nbdm_mix",
+            model_config=cfg,
+            prior_params={},
+            n_components=3,
+        )
+        layouts = results.layouts
+        assert layouts["r"].component_axis == 1
+        assert layouts["r"].gene_axis == 2
+        assert layouts["r"].has_sample_dim is True

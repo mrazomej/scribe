@@ -800,13 +800,67 @@ log-space.  A future **auxiliary observation model** could:
 The `build_annotation_prior_logits` function and the label-to-component mapping
 are reusable by the auxiliary observation model.
 
+### AxisLayout (`axis_layout.py`)
+
+Semantic axis metadata for parameter tensors.  An `AxisLayout` tracks what
+each axis of a parameter tensor represents (genes, components, datasets,
+cells), eliminating the need for scattered `ndim`/`shape` heuristics in
+downstream code.
+
+```python
+from scribe.core import AxisLayout, layout_from_param_spec, infer_layout
+
+# Build from a ParamSpec (exact, no heuristics)
+from scribe.models.builders.parameter_specs import LogNormalSpec
+spec = LogNormalSpec(
+    name="r", shape_dims=("n_genes",), default_params=(0.0, 1.0),
+    is_mixture=True, is_gene_specific=True,
+)
+layout = layout_from_param_spec(spec)
+print(layout.axes)           # ("components", "genes")
+print(layout.gene_axis)      # 1
+print(layout.component_axis) # 0
+
+# For posterior samples with a leading sample dimension
+layout_post = layout.with_sample_dim()
+print(layout_post.gene_axis)      # 2
+print(layout_post.component_axis) # 1
+
+# Broadcasting: insert singletons for alignment
+from scribe.core import align_to_layout
+import jax.numpy as jnp
+p = jnp.array([0.3, 0.4, 0.5])  # (K=3,) per-component
+p_layout = AxisLayout(axes=("components",))
+r_layout = AxisLayout(axes=("components", "genes"))
+p_broadcast = align_to_layout(p, p_layout, r_layout)
+print(p_broadcast.shape)  # (3, 1)
+```
+
+**Backward compatibility:** Layouts are stored on `ScribeSVIResults` and
+`ScribeMCMCResults` as `param_layouts`.  Old pickles that predate this
+field use the `.layouts` property, which lazily reconstructs layouts from
+`ModelConfig` metadata (n_components, n_datasets, mixture_params, etc.)
+and tensor shapes.
+
+**Key functions:**
+
+| Function | Purpose |
+|----------|---------|
+| `layout_from_param_spec` | Build layout from a `ParamSpec` (exact path) |
+| `infer_layout` | Reconstruct layout from tensor shape + config metadata |
+| `build_param_layouts` | Bulk builder from `param_specs` + parameter dict |
+| `reconstruct_param_layouts` | Bulk backward-compat builder (no specs needed) |
+| `align_to_layout` | Insert singletons for broadcasting between layouts |
+
 ## Integration with Other Modules
 
 - **Models**: Core utilities are used by all model types and parameterizations
 - **SVI/MCMC**: Both inference engines rely on core preprocessing and
-  normalization
+  normalization; `AxisLayout` metadata is built from `ParamSpec` during
+  results packaging and stored on results objects
 - **Stats**: Normalization integrates with statistical analysis functions
-- **Viz**: Normalized profiles and cell assignments can be visualized
+- **Viz**: Normalized profiles and cell assignments can be visualized;
+  `AxisLayout` eliminates shape heuristics in plotting code
 - **Sampling**: Core functions support posterior and predictive sampling
 
 ## Dependencies

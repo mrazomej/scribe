@@ -10,6 +10,7 @@ import jax.numpy as jnp
 
 from ..mcmc.results import ScribeMCMCResults
 from ..models.config import ModelConfig
+from ..core.axis_layout import build_param_layouts
 
 
 class MCMCResultsFactory:
@@ -55,6 +56,16 @@ class MCMCResultsFactory:
         ScribeMCMCResults
             Packaged results object.
         """
+        # Build semantic axis layouts from param_specs when available.
+        # MCMC samples carry a leading sample dimension.
+        param_layouts = None
+        specs = getattr(model_config, "param_specs", None)
+        if specs:
+            samples = mcmc_results.get_samples()
+            param_layouts = build_param_layouts(
+                specs, samples, has_sample_dim=True
+            )
+
         if adata is not None:
             return ScribeMCMCResults.from_anndata(
                 mcmc=mcmc_results,
@@ -63,6 +74,7 @@ class MCMCResultsFactory:
                 model_config=model_config,
                 n_components=n_components,
                 prior_params=prior_params,
+                param_layouts=param_layouts,
             )
 
         return ScribeMCMCResults.from_mcmc(
@@ -73,4 +85,5 @@ class MCMCResultsFactory:
             model_config=model_config,
             n_components=n_components,
             prior_params=prior_params,
+            param_layouts=param_layouts,
         )

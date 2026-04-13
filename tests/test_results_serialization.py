@@ -176,3 +176,139 @@ def test_model_comparison_results_pickle_roundtrip():
     restored = _roundtrip(results)
     assert isinstance(restored, ScribeModelComparisonResults)
     assert restored.K == 2
+
+
+# =========================================================================
+# AxisLayout backward compatibility tests
+# =========================================================================
+
+from scribe.core.axis_layout import AxisLayout, GENES, COMPONENTS
+
+
+def test_svi_results_with_param_layouts_roundtrip():
+    """New SVI results with param_layouts should survive pickle roundtrip."""
+    cfg = ModelConfigBuilder().for_model("nbdm").with_inference("svi").build()
+    layouts = {
+        "p_loc": AxisLayout(axes=()),
+        "r_loc": AxisLayout(axes=(GENES,)),
+    }
+    results = ScribeSVIResults(
+        params={"p_loc": jnp.array(0.5), "r_loc": jnp.ones(100)},
+        loss_history=jnp.array([5.0, 3.0]),
+        n_cells=50,
+        n_genes=100,
+        model_type="nbdm",
+        model_config=cfg,
+        prior_params={},
+        param_layouts=layouts,
+    )
+    restored = _roundtrip(results)
+    assert restored.param_layouts is not None
+    assert restored.param_layouts["r_loc"].axes == (GENES,)
+    assert restored.param_layouts["p_loc"].axes == ()
+
+
+def test_mcmc_results_with_param_layouts_roundtrip():
+    """New MCMC results with param_layouts should survive pickle roundtrip."""
+    cfg = ModelConfigBuilder().for_model("nbdm").with_inference("mcmc").build()
+    layouts = {
+        "r": AxisLayout(axes=(GENES,), has_sample_dim=True),
+    }
+    results = ScribeMCMCResults(
+        samples={"r": jnp.ones((200, 100))},
+        n_cells=50,
+        n_genes=100,
+        model_type="nbdm",
+        model_config=cfg,
+        prior_params={},
+        param_layouts=layouts,
+    )
+    restored = _roundtrip(results)
+    assert restored.param_layouts is not None
+    assert restored.param_layouts["r"].axes == (GENES,)
+    assert restored.param_layouts["r"].has_sample_dim is True
+
+
+def test_old_pickle_without_param_layouts_falls_back():
+    """Old pickles without param_layouts should still provide .layouts."""
+    cfg = ModelConfigBuilder().for_model("nbdm").with_inference("svi").build()
+    results = ScribeSVIResults(
+        params={"p_loc": jnp.array(0.5), "r_loc": jnp.ones(100)},
+        loss_history=jnp.array([5.0, 3.0]),
+        n_cells=50,
+        n_genes=100,
+        model_type="nbdm",
+        model_config=cfg,
+        prior_params={},
+    )
+    # Simulate old pickle by stripping param_layouts from state
+    state = results.__getstate__()
+    state.pop("param_layouts", None)
+    restored = ScribeSVIResults.__new__(ScribeSVIResults)
+    restored.__setstate__(state)
+
+    # param_layouts is None but .layouts property still works
+    assert restored.param_layouts is None
+    layouts = restored.layouts
+    assert "r_loc" in layouts
+    assert layouts["r_loc"].gene_axis == 0
+
+
+def test_old_mcmc_pickle_without_param_layouts_falls_back():
+    """Old MCMC pickles without param_layouts should still provide .layouts."""
+    cfg = ModelConfigBuilder().for_model("nbdm").with_inference("mcmc").build()
+    results = ScribeMCMCResults(
+        samples={
+            "p": jnp.array([0.2, 0.3, 0.4]),
+            "r": jnp.ones((3, 100)),
+        },
+        n_cells=50,
+        n_genes=100,
+        model_type="nbdm",
+        model_config=cfg,
+        prior_params={},
+    )
+    state = results.__getstate__()
+    state.pop("param_layouts", None)
+    restored = ScribeMCMCResults.__new__(ScribeMCMCResults)
+    restored.__setstate__(state)
+
+    assert restored.param_layouts is None
+    layouts = restored.layouts
+    assert "r" in layouts
+    # MCMC samples have a leading sample dim
+    assert layouts["r"].has_sample_dim is True
+    assert layouts["r"].gene_axis == 1
+
+
+def test_mixture_svi_old_pickle_reconstructs_layouts():
+    """Mixture model old pickle should reconstruct component+gene layouts."""
+    cfg = (
+        ModelConfigBuilder()
+        .for_model("nbdm")
+        .with_inference("svi")
+        .as_mixture(n_components=3)
+        .build()
+    )
+    results = ScribeSVIResults(
+        params={
+            "p_loc": jnp.ones(3),
+            "r_loc": jnp.ones((3, 100)),
+            "mixing_weights_loc": jnp.ones(3),
+        },
+        loss_history=jnp.array([5.0, 3.0]),
+        n_cells=50,
+        n_genes=100,
+        model_type="nbdm_mix",
+        model_config=cfg,
+        prior_params={},
+        n_components=3,
+    )
+    state = results.__getstate__()
+    state.pop("param_layouts", None)
+    restored = ScribeSVIResults.__new__(ScribeSVIResults)
+    restored.__setstate__(state)
+
+    layouts = restored.layouts
+    assert layouts["r_loc"].axes == (COMPONENTS, GENES)
+    assert layouts["mixing_weights_loc"].axes == (COMPONENTS,)
