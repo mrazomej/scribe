@@ -842,8 +842,6 @@ ScribeSVIResults
        (propagates parameter uncertainty across posterior draws)
      - `get_denoised_anndata()`: Export denoised counts as AnnData/h5ad
        with metadata, supporting tuple method and multi-dataset generation
-     - `_sample_standard_model()`: Helper for standard (non-mixture) models
-     - `_sample_mixture_model()`: Helper for mixture models
    - Dependencies: Uses `ModelHelpersMixin`, `ParameterExtractionMixin`
 
 7. **LikelihoodMixin** (`_likelihood.py`)
