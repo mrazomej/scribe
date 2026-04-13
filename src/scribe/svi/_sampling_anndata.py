@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import random
 
-from ..sampling import denoise_counts
+from ..sampling import denoise_counts, _slice_posterior_draw
 from ._sampling_denoising import _denoise_per_dataset
 
 try:
@@ -233,28 +233,17 @@ class DenoisedAnnDataMixin:
                         f"(posterior sample {idx})..."
                     )
 
-                r_s = r_post[idx]
-                p_s = (
-                    p_post[idx]
-                    if p_post.ndim >= 1
-                    and p_post.shape[0] == n_available
-                    else p_post
-                )
-                pc_s = (
-                    pc_post[idx]
-                    if pc_post is not None and pc_post.ndim == 2
-                    else pc_post
-                )
-                g_s = (
-                    gate_post[idx]
-                    if gate_post is not None
-                    and gate_post.ndim > (1 if not is_mix else 2)
-                    else gate_post
-                )
-                mw_s = (
-                    mw_post[idx]
-                    if mw_post is not None and mw_post.ndim == 2
-                    else mw_post
+                # Extract parameters for this single posterior draw,
+                # stripping the leading sample dimension where present.
+                draw = _slice_posterior_draw(
+                    idx,
+                    r=r_post,
+                    p=p_post,
+                    p_capture=pc_post,
+                    gate=gate_post,
+                    mixing_weights=mw_post,
+                    n_samples=n_available,
+                    is_mixture=is_mix,
                 )
 
                 rng_key, sample_key = random.split(rng_key)
@@ -265,28 +254,28 @@ class DenoisedAnnDataMixin:
                 if n_ds is not None and ds_idx is not None:
                     denoised_s = _denoise_per_dataset(
                         counts=counts,
-                        r=r_s,
-                        p=p_s,
-                        gate=g_s,
-                        p_capture=pc_s,
+                        r=draw["r"],
+                        p=draw["p"],
+                        gate=draw["gate"],
+                        p_capture=draw["p_capture"],
                         dataset_indices=ds_idx,
                         n_datasets=n_ds,
                         method=method,
                         rng_key=sample_key,
                         return_variance=False,
-                        mixing_weights=mw_s,
+                        mixing_weights=draw["mixing_weights"],
                         cell_batch_size=cell_batch_size,
                     )
                 else:
                     denoised_s = denoise_counts(
                         counts=counts,
-                        r=r_s,
-                        p=p_s,
-                        p_capture=pc_s,
-                        gate=g_s,
+                        r=draw["r"],
+                        p=draw["p"],
+                        p_capture=draw["p_capture"],
+                        gate=draw["gate"],
                         method=method,
                         rng_key=sample_key,
-                        mixing_weights=mw_s,
+                        mixing_weights=draw["mixing_weights"],
                         cell_batch_size=cell_batch_size,
                     )
 
