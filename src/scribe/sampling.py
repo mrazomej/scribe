@@ -166,6 +166,44 @@ def _slice_posterior_draw(
     }
 
 
+def _slice_gene_axis(
+    arr: Optional[jnp.ndarray],
+    gene_axis: Optional[int],
+    gene_indices: jnp.ndarray,
+) -> Optional[jnp.ndarray]:
+    """Subset the gene dimension of a tensor using a known axis index.
+
+    If either the array or the gene axis is ``None`` the array is
+    returned unchanged.  This is a convenience wrapper that replaces
+    the pattern of branching on ``ndim`` / ``shape[-1] == n_genes``
+    when the layout already tells us which axis carries genes.
+
+    Parameters
+    ----------
+    arr : jnp.ndarray or None
+        Tensor to subset. ``None`` is passed through.
+    gene_axis : int or None
+        Axis index carrying the gene dimension, as returned by
+        ``AxisLayout.gene_axis``.  ``None`` means the tensor does not
+        have a gene axis and should be returned unchanged.
+    gene_indices : jnp.ndarray
+        Integer indices selecting a subset of genes.
+
+    Returns
+    -------
+    jnp.ndarray or None
+        The input array with the gene dimension subsetted, or the
+        original array when subsetting is not applicable.
+    """
+    if arr is None or gene_axis is None:
+        return arr
+
+    # Build an index tuple that slices only the gene axis
+    slicer = [slice(None)] * arr.ndim
+    slicer[gene_axis] = gene_indices
+    return arr[tuple(slicer)]
+
+
 # ------------------------------------------------------------------------------
 # Posterior predictive samples
 # ------------------------------------------------------------------------------

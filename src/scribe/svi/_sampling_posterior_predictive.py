@@ -2,13 +2,16 @@
 Posterior and constrained predictive sampling mixin for SVI results.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 import numpy as np
 import jax.numpy as jnp
 from jax import random
 
 from ..sampling import generate_predictive_samples, sample_variational_posterior
+
+if TYPE_CHECKING:
+    from ..core.axis_layout import AxisLayout
 
 
 # ---------------------------------------------------------------------------
@@ -29,19 +32,52 @@ def _subset_gene_dim_samples(
     samples: Dict[str, Any],
     gene_index: np.ndarray,
     original_n_genes: int,
+    layouts: Optional[Dict[str, "AxisLayout"]] = None,
 ) -> Dict[str, Any]:
     """Slice the gene dimension of posterior/predictive sample arrays.
 
-    For every array in *samples* whose shape contains *original_n_genes*,
-    index the first matching axis with *gene_index*.  Non-matching arrays
-    are passed through unchanged.
+    When *layouts* are provided the gene axis is determined semantically
+    via ``AxisLayout.gene_axis`` — no shape scanning needed.  When
+    *layouts* is ``None`` the function falls back to matching
+    *original_n_genes* against the value's shape (the legacy heuristic).
+
+    Parameters
+    ----------
+    samples : dict
+        Mapping from parameter name to array.
+    gene_index : np.ndarray
+        Integer indices selecting a subset of genes.
+    original_n_genes : int
+        Total number of genes in the full (un-subsetted) array.
+        Used only by the fallback shape-scanning path.
+    layouts : dict or None, optional
+        ``{key: AxisLayout}`` mapping.  When available, gene-axis
+        identification is exact rather than heuristic.
+
+    Returns
+    -------
+    dict
+        Copy of *samples* with the gene dimension sliced where present.
     """
     out: Dict[str, Any] = {}
     for key, value in samples.items():
         if not hasattr(value, "shape"):
             out[key] = value
             continue
-        if original_n_genes in value.shape:
+
+        # Prefer semantic gene-axis lookup from AxisLayout when available
+        if layouts is not None and key in layouts:
+            gene_ax = layouts[key].gene_axis
+            if gene_ax is not None:
+                slicer = [slice(None)] * value.ndim
+                slicer[gene_ax] = gene_index
+                out[key] = value[tuple(slicer)]
+            else:
+                out[key] = value
+        elif original_n_genes in value.shape:
+            # Legacy fallback: match the first axis whose size equals
+            # original_n_genes (fragile when multiple dims share that
+            # size, but preserved for backward compatibility)
             axis = list(value.shape).index(original_n_genes)
             slicer = [slice(None)] * value.ndim
             slicer[axis] = gene_index
@@ -355,10 +391,17 @@ class PosteriorPredictiveSamplingMixin:
             counts=counts,
         )
 
-        # Slice full-dim flow samples down to the gene subset
+        # Slice full-dim flow samples down to the gene subset.
+        # Build sample-level layouts (with_sample_dim) so that gene_axis
+        # accounts for the leading posterior-draw dimension.
         if _full_dim:
+            _sample_layouts = {
+                k: v.with_sample_dim()
+                for k, v in self.layouts.items()
+            }
             posterior_samples = _subset_gene_dim_samples(
                 posterior_samples, _gene_idx, _orig_ng,
+                layouts=_sample_layouts,
             )
 
         return posterior_samples

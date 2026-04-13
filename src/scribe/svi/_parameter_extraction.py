@@ -1577,8 +1577,11 @@ class ParameterExtractionMixin:
                     _subset_gene_dim_samples,
                 )
 
+                # Use MAP-level layouts (no sample dim) for gene-axis
+                # lookup; flow_estimates are point estimates.
                 flow_estimates = _subset_gene_dim_samples(
-                    flow_estimates, _gene_idx, _orig_ng
+                    flow_estimates, _gene_idx, _orig_ng,
+                    layouts=self.layouts,
                 )
 
             map_estimates.update(flow_estimates)
