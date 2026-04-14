@@ -1,5 +1,5 @@
 """
-Tests for metadata-based gene subsetting.
+Tests for metadata-based gene subsetting via AxisLayout.
 
 Verifies that when param_specs are available, subsetting uses the correct
 gene axis (avoiding ambiguity when two axes have the same size), and that
@@ -11,76 +11,10 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 
-from scribe.svi._gene_subsetting import build_gene_axis_by_key
 from scribe.svi.results import ScribeSVIResults
 from scribe.models.config import ModelConfig
 from scribe.models.builders.parameter_specs import LogNormalSpec, BetaSpec
-
-
-# Minimal spec-like object for testing (name, shape_dims, is_gene_specific)
-class _MockSpec:
-    def __init__(self, name, shape_dims, is_gene_specific=True):
-        self.name = name
-        self.shape_dims = shape_dims
-        self.is_gene_specific = is_gene_specific
-
-
-class TestBuildGeneAxisByKey:
-    """Tests for build_gene_axis_by_key helper."""
-
-    def test_returns_none_when_param_specs_empty(self):
-        params = {"r_loc": jnp.ones(5)}
-        assert build_gene_axis_by_key([], params, 5) is None
-
-    def test_gene_axis_from_shape_dims_1d(self):
-        spec = _MockSpec("r", ("n_genes",))
-        params = {"r_loc": jnp.ones(5)}
-        out = build_gene_axis_by_key([spec], params, 5)
-        assert out is not None
-        assert out["r_loc"] == 0
-
-    def test_gene_axis_from_shape_dims_2d_gene_last(self):
-        """When shape_dims is (n_components, n_genes), gene axis is 1."""
-        spec = _MockSpec("r", ("n_components", "n_genes"))
-        params = {"r_loc": jnp.ones((3, 5))}
-        out = build_gene_axis_by_key([spec], params, 5)
-        assert out is not None
-        assert out["r_loc"] == 1
-
-    def test_ambiguous_shape_uses_metadata_axis(self):
-        """When two axes have same size (5, 5), metadata gives gene_axis=1."""
-        spec = _MockSpec("r", ("n_components", "n_genes"))
-        params = {"r_loc": jnp.ones((5, 5))}  # n_components=n_genes=5
-        out = build_gene_axis_by_key([spec], params, 5)
-        assert out is not None
-        assert out["r_loc"] == 1
-
-    def test_matches_prefix_log_spec_name(self):
-        spec = _MockSpec("mu", ("n_genes",))
-        params = {"log_mu_loc": jnp.ones(5)}
-        out = build_gene_axis_by_key([spec], params, 5)
-        assert out is not None
-        assert out["log_mu_loc"] == 0
-
-    def test_skips_keys_with_dollar(self):
-        spec = _MockSpec("r", ("n_genes",))
-        params = {"r_loc": jnp.ones(5), "amortizer$params": {}}
-        out = build_gene_axis_by_key([spec], params, 5)
-        assert "amortizer$params" not in (out or {})
-
-    def test_detects_joint_prefixed_keys_from_metadata(self):
-        """Joint guide keys should be mapped with metadata-derived gene axes."""
-        spec = _MockSpec("mu", ("n_components", "n_genes"))
-        params = {
-            # Joint variational params mirror LowRankMVN tensors and should
-            # follow the same axis mapping semantics as non-joint keys.
-            "joint_joint_mu_loc": jnp.ones((3, 5)),
-            "joint_joint_mu_W": jnp.ones((3, 5, 2)),
-        }
-        out = build_gene_axis_by_key([spec], params, 5)
-        assert out is not None
-        assert out["joint_joint_mu_loc"] == 1
-        assert out["joint_joint_mu_W"] == 1
+from scribe.core.axis_layout import build_param_layouts, gene_axes_from_layouts
 
 
 class TestMetadataSubsettingCorrectAxis:
@@ -90,10 +24,13 @@ class TestMetadataSubsettingCorrectAxis:
     def model_config_with_param_specs(self):
         from scribe.models.builders.parameter_specs import LogNormalSpec
 
+        # is_mixture=True encodes the component axis; shape_dims lists the
+        # remaining semantic dimensions only (here genes).
         spec = LogNormalSpec(
             name="r",
-            shape_dims=("n_components", "n_genes"),
+            shape_dims=("n_genes",),
             default_params=(0.0, 1.0),
+            is_mixture=True,
             is_gene_specific=True,
         )
         return ModelConfig(
@@ -108,12 +45,14 @@ class TestMetadataSubsettingCorrectAxis:
     ):
         """With (n_components, n_genes) = (5, 5), subsetting must use axis 1, not 0."""
         n_genes = 5
-        # Param with shape (5, 5) - ambiguous without metadata
+        # Param with shape (5, 5) — ambiguous without metadata
         params = {"r_loc": jnp.arange(25).reshape(5, 5).astype(float)}
-        gene_axis_by_key = build_gene_axis_by_key(
-            model_config_with_param_specs.param_specs, params, n_genes
+
+        # Use the AxisLayout system to derive gene axes
+        layouts = build_param_layouts(
+            model_config_with_param_specs.param_specs, params
         )
-        assert gene_axis_by_key is not None
+        gene_axis_by_key = gene_axes_from_layouts(layouts)
         assert gene_axis_by_key["r_loc"] == 1
 
         # Build a minimal results-like object with _gene_axis_by_key set
@@ -142,20 +81,22 @@ class TestMetadataSubsettingCorrectAxis:
         """Posterior samples with (n_samples, n_components, n_genes) use gene axis 2."""
         from scribe.models.builders.parameter_specs import LogNormalSpec
 
+        # is_mixture=True encodes component axis; shape_dims only lists genes
         spec = LogNormalSpec(
             name="r",
-            shape_dims=("n_components", "n_genes"),
+            shape_dims=("n_genes",),
             default_params=(0.0, 1.0),
+            is_mixture=True,
             is_gene_specific=True,
         )
         n_genes = 4
         samples = {
             "r": jnp.ones((10, 3, n_genes))
         }  # (n_samples, n_components, n_genes)
-        gene_axis_by_key = build_gene_axis_by_key(
-            [spec], {"r": samples["r"]}, n_genes
-        )
-        assert gene_axis_by_key is not None
+
+        # Use AxisLayout system: has_sample_dim=True for posterior samples
+        layouts = build_param_layouts([spec], {"r": samples["r"]}, has_sample_dim=True)
+        gene_axis_by_key = gene_axes_from_layouts(layouts)
         assert gene_axis_by_key["r"] == 2
 
         results = ScribeSVIResults(
@@ -182,10 +123,12 @@ class TestMetadataSubsettingCorrectAxis:
             "joint_joint_r_loc": jnp.arange(25).reshape(5, 5).astype(float),
             "joint_joint_r_W": jnp.arange(50).reshape(5, 5, 2).astype(float),
         }
-        gene_axis_by_key = build_gene_axis_by_key(
-            model_config_with_param_specs.param_specs, params, n_genes
+
+        # Use AxisLayout system to derive gene axes
+        layouts = build_param_layouts(
+            model_config_with_param_specs.param_specs, params
         )
-        assert gene_axis_by_key is not None
+        gene_axis_by_key = gene_axes_from_layouts(layouts)
         assert gene_axis_by_key["joint_joint_r_loc"] == 1
         assert gene_axis_by_key["joint_joint_r_W"] == 1
 
@@ -952,96 +895,3 @@ class TestFlowSamplingHelpers:
         # Scalar should be unchanged
         np.testing.assert_array_equal(out["scalar"], samples["scalar"])
 
-
-# =========================================================================
-# AxisLayout gene-axis equivalence tests
-# =========================================================================
-
-from scribe.core.axis_layout import (
-    layout_from_param_spec,
-    build_param_layouts,
-    GENES,
-)
-
-
-class TestAxisLayoutGeneAxisEquivalence:
-    """Verify layout.gene_axis agrees with build_gene_axis_by_key."""
-
-    def test_1d_gene_param(self):
-        """Gene-specific 1D param: layout gene_axis should be 0."""
-        spec = _MockSpec("r", ("n_genes",))
-        params = {"r_loc": jnp.ones(5)}
-        old = build_gene_axis_by_key([spec], params, 5)
-        assert old is not None
-
-        real_spec = LogNormalSpec(
-            name="r",
-            shape_dims=("n_genes",),
-            default_params=(0.0, 1.0),
-            is_gene_specific=True,
-        )
-        layouts = build_param_layouts([real_spec], params)
-        assert layouts["r_loc"].gene_axis == old["r_loc"]
-
-    def test_2d_mixture_gene_param(self):
-        """(n_components, n_genes) param: layout gene_axis should be 1."""
-        real_spec = LogNormalSpec(
-            name="r",
-            shape_dims=("n_genes",),
-            default_params=(0.0, 1.0),
-            is_mixture=True,
-            is_gene_specific=True,
-        )
-        params = {"r_loc": jnp.ones((3, 5))}
-        old = build_gene_axis_by_key([real_spec], params, 5)
-        assert old is not None
-
-        layouts = build_param_layouts([real_spec], params)
-        assert layouts["r_loc"].gene_axis == old["r_loc"]
-
-    def test_ambiguous_shape_5x5_layout_is_correct(self):
-        """Ambiguous (5,5) shape: layout correctly identifies gene axis as 1.
-
-        ``build_gene_axis_by_key`` falls back to ``shape.index(n_genes)``
-        which returns 0 (wrong) because ``shape_dims`` is ``("n_genes",)``
-        and doesn't encode the mixture axis.  ``layout_from_param_spec``
-        correctly reads ``is_mixture=True`` and places genes at axis 1.
-        This is an improvement over the old heuristic.
-        """
-        real_spec = LogNormalSpec(
-            name="r",
-            shape_dims=("n_genes",),
-            default_params=(0.0, 1.0),
-            is_mixture=True,
-            is_gene_specific=True,
-        )
-        params = {"r_loc": jnp.ones((5, 5))}
-        layouts = build_param_layouts([real_spec], params)
-        # AxisLayout knows the correct axis via is_mixture
-        assert layouts["r_loc"].gene_axis == 1
-
-    def test_scalar_param_no_gene_axis(self):
-        """Scalar param: no gene axis in either system."""
-        real_spec = BetaSpec(
-            name="p", shape_dims=(), default_params=(1.0, 1.0)
-        )
-        params = {"p_loc": jnp.array(0.5)}
-        old = build_gene_axis_by_key([real_spec], params, 5)
-
-        layouts = build_param_layouts([real_spec], params)
-        assert layouts["p_loc"].gene_axis is None
-
-    def test_log_prefixed_key(self):
-        """log_mu_loc should still get correct gene axis."""
-        real_spec = LogNormalSpec(
-            name="mu",
-            shape_dims=("n_genes",),
-            default_params=(0.0, 1.0),
-            is_gene_specific=True,
-        )
-        params = {"log_mu_loc": jnp.ones(5)}
-        old = build_gene_axis_by_key([real_spec], params, 5)
-        assert old is not None
-
-        layouts = build_param_layouts([real_spec], params)
-        assert layouts["log_mu_loc"].gene_axis == old["log_mu_loc"]

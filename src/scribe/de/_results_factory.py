@@ -79,13 +79,27 @@ def _extract_de_inputs(results, component=None):
     )
 
 
+def _is_parametric_model(obj) -> bool:
+    """Check whether an object looks like a fitted logistic-normal dict.
+
+    Parametric models are dicts with the keys ``loc``, ``cov_factor``, and
+    ``cov_diag``, or ``LowRankLogisticNormal`` / ``SoftmaxNormal`` dist
+    objects (anything accepted by :func:`extract_alr_params`).
+    """
+    if isinstance(obj, dict):
+        return {"loc", "cov_factor", "cov_diag"} <= obj.keys()
+    from ..stats.distributions import LowRankLogisticNormal, SoftmaxNormal
+
+    return isinstance(obj, (LowRankLogisticNormal, SoftmaxNormal))
+
+
 def compare(
     model_A,
     model_B,
     gene_names: Optional[List[str]] = None,
     label_A: str = "A",
     label_B: str = "B",
-    method: str = "empirical",
+    method: Optional[str] = None,
     component_A: Optional[int] = None,
     component_B: Optional[int] = None,
     paired: bool = False,
@@ -115,8 +129,11 @@ def compare(
         Display label for condition A.
     label_B : str, default='B'
         Display label for condition B.
-    method : {'parametric', 'empirical', 'shrinkage'}, default='empirical'
-        Differential-expression strategy.
+    method : {'parametric', 'empirical', 'shrinkage'} or None
+        Differential-expression strategy.  When ``None`` (default), the
+        method is auto-detected: ``'parametric'`` if both inputs look like
+        fitted logistic-normal models (dicts or distributions), otherwise
+        ``'empirical'``.
     component_A : int, optional
         Mixture component index for condition A (empirical/shrinkage).
     component_B : int, optional
@@ -151,6 +168,14 @@ def compare(
     """
     _a_is_results = _is_results_object(model_A)
     _b_is_results = _is_results_object(model_B)
+
+    # Auto-detect method when not explicitly provided: use "parametric" for
+    # fitted logistic-normal models, "empirical" for everything else.
+    if method is None:
+        if _is_parametric_model(model_A) and _is_parametric_model(model_B):
+            method = "parametric"
+        else:
+            method = "empirical"
 
     if _a_is_results or _b_is_results:
         if not (_a_is_results and _b_is_results):

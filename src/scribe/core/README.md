@@ -868,10 +868,9 @@ automatic fallback when layouts are unavailable:
 - `svi/_component.py`: `_subset_posterior_samples_by_component` and
   `_subset_posterior_samples_by_components` use `layout.component_axis` (via
   `build_sample_layouts`) instead of `_infer_component_axis`.
-- `svi/results.py`: `_svi_param_gene_axes` uses `gene_axes_from_layouts` instead
-  of `build_gene_axis_by_key`.
+- `svi/results.py`: `_svi_param_gene_axes` uses `gene_axes_from_layouts`.
 - `svi/results_factory.py`: derives `gene_axis_by_key` from `param_layouts`
-  instead of calling `build_gene_axis_by_key`.
+  via `gene_axes_from_layouts`.
 - `mcmc/results.py`: `_mcmc_sample_gene_axes` uses `gene_axes_from_layouts`.
 - `mcmc/_gene_subsetting.py`: `_subset_posterior_samples` uses
   `gene_axes_from_layouts` as the primary source.
