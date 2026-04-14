@@ -255,15 +255,15 @@ going down) even when the average balance is near zero.
 
 ### How this compares to other tools
 
-| Feature | DESeq2 / edgeR | Wilcoxon | scVI | SCRIBE |
-|---------|:-:|:-:|:-:|:-:|
-| Respects compositionality | No | No | No | **Yes** |
-| Accounts for gene-gene correlations | No | No | Partially | **Yes** |
-| Bayesian uncertainty | No | No | Partially | **Yes** |
-| Pathway analysis (integrated) | No | No | No | **Yes** |
-| No distributional assumption needed | No | Yes | No | **Yes** (empirical) |
-| Error control | BH-FDR | BH-FDR | -- | **PEFP** |
-| Computational cost | Fast | Fast | Moderate | **Fast** |
+| Feature                             | DESeq2 / edgeR | Wilcoxon |   scVI    |       SCRIBE        |
+| ----------------------------------- | :------------: | :------: | :-------: | :-----------------: |
+| Respects compositionality           |       No       |    No    |    No     |       **Yes**       |
+| Accounts for gene-gene correlations |       No       |    No    | Partially |       **Yes**       |
+| Bayesian uncertainty                |       No       |    No    | Partially |       **Yes**       |
+| Pathway analysis (integrated)       |       No       |    No    |    No     |       **Yes**       |
+| No distributional assumption needed |       No       |   Yes    |    No     | **Yes** (empirical) |
+| Error control                       |     BH-FDR     |  BH-FDR  |    --     |      **PEFP**       |
+| Computational cost                  |      Fast      |   Fast   | Moderate  |      **Fast**       |
 
 The compositional approach means SCRIBE's DE results are
 **reference-invariant**: they do not depend on an arbitrary choice of

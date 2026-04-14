@@ -259,12 +259,12 @@ results = scribe.fit(
 
 ## Comparison table
 
-| Model | Zero Inflated | Variable Capture | BNB | Mixture | Best For |
-|-------|:---:|:---:|:---:|:---:|----------|
-| `"nbdm"` (`variable_capture=False`) | -- | -- | opt. | opt. | **Tight** total-UMI distribution (~within 2x) |
-| `"nbvcp"` (**default**) | -- | Yes | opt. | opt. | **Typical** data; heterogeneous library sizes |
-| `"zinb"` (`zero_inflation=True`) | Yes | -- | opt. | opt. | Excess zeros **after** VCP ruled out / no VCP |
-| `"zinbvcp"` (`variable_capture=True`, `zero_inflation=True`) | Yes | Yes | opt. | opt. | Strong evidence for **both** ZI and VCP |
+| Model                                                        | Zero Inflated | Variable Capture |  BNB  | Mixture | Best For                                      |
+| ------------------------------------------------------------ | :-----------: | :--------------: | :---: | :-----: | --------------------------------------------- |
+| `"nbdm"` (`variable_capture=False`)                          |      --       |        --        | opt.  |  opt.   | **Tight** total-UMI distribution (~within 2x) |
+| `"nbvcp"` (**default**)                                      |      --       |       Yes        | opt.  |  opt.   | **Typical** data; heterogeneous library sizes |
+| `"zinb"` (`zero_inflation=True`)                             |      Yes      |        --        | opt.  |  opt.   | Excess zeros **after** VCP ruled out / no VCP |
+| `"zinbvcp"` (`variable_capture=True`, `zero_inflation=True`) |      Yes      |       Yes        | opt.  |  opt.   | Strong evidence for **both** ZI and VCP       |
 
 "opt." = add `overdispersion="bnb"` or `n_components=K`.
 
@@ -277,11 +277,11 @@ represented internally). SCRIBE names them **canonical**, **mean probs**, and
 **mean odds**; the `parameterization=` string uses the codes below (aliases in
 parentheses).
 
-| Name | `parameterization=` | Samples | Derives | Best For |
-|------|---------------------|---------|---------|----------|
-| **Canonical** | `"canonical"` (alias `"standard"`) | \(p, r\) | -- | Direct interpretation |
-| **Mean probs** | `"mean_prob"` (alias `"linked"`) | \(p, \mu\) | \(r = \mu(1-p)/p\) | Couples mean and success probability |
-| **Mean odds** | `"mean_odds"` (alias `"odds_ratio"`) | \(\phi, \mu\) | \(p = 1/(1+\phi)\), \(r = \mu\phi\) | Stable when \(p\) is near 1 |
+| Name           | `parameterization=`                  | Samples       | Derives                             | Best For                             |
+| -------------- | ------------------------------------ | ------------- | ----------------------------------- | ------------------------------------ |
+| **Canonical**  | `"canonical"` (alias `"standard"`)   | \(p, r\)      | --                                  | Direct interpretation                |
+| **Mean probs** | `"mean_prob"` (alias `"linked"`)     | \(p, \mu\)    | \(r = \mu(1-p)/p\)                  | Couples mean and success probability |
+| **Mean odds**  | `"mean_odds"` (alias `"odds_ratio"`) | \(\phi, \mu\) | \(p = 1/(1+\phi)\), \(r = \mu\phi\) | Stable when \(p\) is near 1          |
 
 ```python
 results = scribe.fit(

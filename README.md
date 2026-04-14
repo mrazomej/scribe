@@ -135,28 +135,28 @@ mixture components, hierarchical priors, multi-dataset structure, and more.
 SCRIBE's four likelihoods build on each other -- the base Negative Binomial model
 can be extended with zero inflation and/or variable capture probability:
 
-| Likelihood                              | Code string  | Construction                    | Extra Parameters        | Best For                   |
-| --------------------------------------- | ------------ | ------------------------------- | ----------------------- | -------------------------- |
-| **Negative Binomial**                   | `"nbdm"`     | Base model                      | --                      | Baseline analysis, fast    |
-| **Zero-Inflated NB**                    | `"zinb"`     | NB + zero inflation             | `gate`                  | Data with excess zeros     |
-| **NB + variable capture**               | `"nbvcp"`    | NB + capture probability        | `p_capture`             | Variable sequencing depth  |
-| **ZINB + variable capture**             | `"zinbvcp"`  | ZINB + capture probability      | `gate`, `p_capture`     | Complex technical variation |
+| Likelihood                  | Code string | Construction               | Extra Parameters    | Best For                    |
+| --------------------------- | ----------- | -------------------------- | ------------------- | --------------------------- |
+| **Negative Binomial**       | `"nbdm"`    | Base model                 | --                  | Baseline analysis, fast     |
+| **Zero-Inflated NB**        | `"zinb"`    | NB + zero inflation        | `gate`              | Data with excess zeros      |
+| **NB + variable capture**   | `"nbvcp"`   | NB + capture probability   | `p_capture`         | Variable sequencing depth   |
+| **ZINB + variable capture** | `"zinbvcp"` | ZINB + capture probability | `gate`, `p_capture` | Complex technical variation |
 
 ### Parameterizations
 
 Each likelihood can be parameterized in three ways:
 
-| Parameterization | Aliases       | Core Parameters | Derived                       | When to Use                   |
-| ---------------- | ------------- | --------------- | ----------------------------- | ----------------------------- |
-| **canonical**    | `standard`    | p, r            | --                            | Direct interpretation         |
-| **linked**       | `mean_prob`   | p, mu           | r = mu(1-p)/p                 | Captures p-r correlation      |
-| **odds_ratio**   | `mean_odds`   | phi, mu         | p = 1/(1+phi), r = mu*phi     | Numerically stable near p ~ 1 |
+| Parameterization | Aliases     | Core Parameters | Derived                   | When to Use                   |
+| ---------------- | ----------- | --------------- | ------------------------- | ----------------------------- |
+| **canonical**    | `standard`  | p, r            | --                        | Direct interpretation         |
+| **linked**       | `mean_prob` | p, mu           | r = mu(1-p)/p             | Captures p-r correlation      |
+| **odds_ratio**   | `mean_odds` | phi, mu         | p = 1/(1+phi), r = mu*phi | Numerically stable near p ~ 1 |
 
 ### Constrained vs Unconstrained
 
-| Mode              | Prior Distributions           | Use Case                                      |
-| ----------------- | ----------------------------- | --------------------------------------------- |
-| **Constrained**   | Beta, LogNormal, BetaPrime    | Default; interpretable parameters              |
+| Mode              | Prior Distributions             | Use Case                                                |
+| ----------------- | ------------------------------- | ------------------------------------------------------- |
+| **Constrained**   | Beta, LogNormal, BetaPrime      | Default; interpretable parameters                       |
 | **Unconstrained** | Normal + sigmoid/exp transforms | Optimization-friendly; required for hierarchical priors |
 
 ## Installation
@@ -272,11 +272,11 @@ vae_results = scribe.fit(
 
 ### Inference Methods
 
-| Method   | Engine           | Precision | Use Case                          |
-| -------- | ---------------- | --------- | --------------------------------- |
-| **SVI**  | Adam optimizer   | float32   | Fast exploration, large datasets  |
-| **MCMC** | NUTS sampler     | float64   | Exact posterior, gold standard    |
-| **VAE**  | Encoder-decoder  | float32   | Latent representations, embeddings |
+| Method   | Engine          | Precision | Use Case                           |
+| -------- | --------------- | --------- | ---------------------------------- |
+| **SVI**  | Adam optimizer  | float32   | Fast exploration, large datasets   |
+| **MCMC** | NUTS sampler    | float64   | Exact posterior, gold standard     |
+| **VAE**  | Encoder-decoder | float32   | Latent representations, embeddings |
 
 SVI results can initialize MCMC chains for faster convergence, even across
 different parameterizations:
@@ -296,12 +296,12 @@ mcmc_results = scribe.fit(
 
 For SVI and VAE inference, SCRIBE offers several variational guide families:
 
-| Guide              | Parameter        | Description                                    |
-| ------------------ | ---------------- | ---------------------------------------------- |
-| **Mean-field**     | *(default)*      | Fully factorized; fast, memory-efficient       |
-| **Low-rank**       | `guide_rank=k`   | Captures gene correlations via rank-k covariance |
-| **Joint low-rank** | `joint_params="biological"` | Shared low-rank covariance across parameter groups |
-| **Amortized**      | `amortize_capture=True` | Neural net predicts capture variational params from UMI counts |
+| Guide              | Parameter                   | Description                                                    |
+| ------------------ | --------------------------- | -------------------------------------------------------------- |
+| **Mean-field**     | *(default)*                 | Fully factorized; fast, memory-efficient                       |
+| **Low-rank**       | `guide_rank=k`              | Captures gene correlations via rank-k covariance               |
+| **Joint low-rank** | `joint_params="biological"` | Shared low-rank covariance across parameter groups             |
+| **Amortized**      | `amortize_capture=True`     | Neural net predicts capture variational params from UMI counts |
 
 ```python
 # Low-rank guide capturing gene correlations
@@ -501,11 +501,11 @@ log-ratio coordinates (CLR/ILR), propagating full posterior uncertainty.
 
 ### Three DE Methods
 
-| Method          | Description                              | Use Case                       |
-| --------------- | ---------------------------------------- | ------------------------------ |
-| **Parametric**  | Analytic Gaussian in ALR space           | Fast, requires low-rank logistic-normal fit |
-| **Empirical**   | Monte Carlo CLR differences              | Assumption-free, from posterior samples |
-| **Shrinkage**   | Empirical Bayes scale-mixture prior      | Improved per-gene inference, borrows strength across genes |
+| Method         | Description                         | Use Case                                                   |
+| -------------- | ----------------------------------- | ---------------------------------------------------------- |
+| **Parametric** | Analytic Gaussian in ALR space      | Fast, requires low-rank logistic-normal fit                |
+| **Empirical**  | Monte Carlo CLR differences         | Assumption-free, from posterior samples                    |
+| **Shrinkage**  | Empirical Bayes scale-mixture prior | Improved per-gene inference, borrows strength across genes |
 
 ### Example
 

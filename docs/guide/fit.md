@@ -124,16 +124,16 @@ analyses are available. This is independent of whether you select the
 likelihood with **`variable_capture` / `zero_inflation`** or with a **`model=`**
 string (both remain valid; see [Model selection](#2-model-selection)).
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `parameterization` | `"canonical"` | `"canonical"` (alias `"standard"`), `"mean_prob"` (alias `"linked"`), or `"mean_odds"` (alias `"odds_ratio"`) |
-| `unconstrained` | `False` | Use Normal + transform instead of constrained distributions. **Required** for hierarchical priors and BNB overdispersion |
+| Parameter          | Default       | Description                                                                                                              |
+| ------------------ | ------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `parameterization` | `"canonical"` | `"canonical"` (alias `"standard"`), `"mean_prob"` (alias `"linked"`), or `"mean_odds"` (alias `"odds_ratio"`)            |
+| `unconstrained`    | `False`       | Use Normal + transform instead of constrained distributions. **Required** for hierarchical priors and BNB overdispersion |
 
-| Name | Code | Samples | Derives | Best for |
-|------|------|---------|---------|----------|
-| **Canonical** | `"canonical"` | \(p, r\) | --- | Direct interpretation |
-| **Mean probs** | `"mean_prob"` | \(p, \mu\) | \(r = \mu(1-p)/p\) | Couples mean and success probability |
-| **Mean odds** | `"mean_odds"` | \(\phi, \mu\) | \(p = 1/(1+\phi)\), \(r = \mu\phi\) | Stable when \(p\) is near 1 |
+| Name           | Code          | Samples       | Derives                             | Best for                             |
+| -------------- | ------------- | ------------- | ----------------------------------- | ------------------------------------ |
+| **Canonical**  | `"canonical"` | \(p, r\)      | ---                                 | Direct interpretation                |
+| **Mean probs** | `"mean_prob"` | \(p, \mu\)    | \(r = \mu(1-p)/p\)                  | Couples mean and success probability |
+| **Mean odds**  | `"mean_odds"` | \(\phi, \mu\) | \(p = 1/(1+\phi)\), \(r = \mu\phi\) | Stable when \(p\) is near 1          |
 
 ```python
 # Mean odds parameterization (often converges faster)
