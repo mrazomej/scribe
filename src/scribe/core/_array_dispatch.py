@@ -14,6 +14,10 @@ and unnecessary GPU round-trips.  When samples remain as ``jax.Array``
 automatically.
 """
 
+from __future__ import annotations
+
+import math
+
 import numpy as np
 
 
@@ -80,3 +84,39 @@ def _special_module(x):
     from jax import scipy as jsp
 
     return jsp.special
+
+
+def _gpu_memory_budget(fraction: float = 0.8) -> float:
+    """Estimate usable GPU memory in bytes.
+
+    Queries the default JAX device for its total memory and returns
+    ``fraction`` of that value.  On CPU-only runtimes or when memory
+    stats are unavailable, returns ``math.inf`` so that callers never
+    chunk unnecessarily.
+
+    Parameters
+    ----------
+    fraction : float, default=0.8
+        Fraction of total device memory to consider usable.  The
+        remaining headroom covers JAX runtime allocations, XLA
+        temporaries, and other resident tensors.
+
+    Returns
+    -------
+    float
+        Usable bytes on the GPU, or ``math.inf`` when no GPU is
+        present or stats cannot be read.
+    """
+    try:
+        import jax
+
+        dev = jax.local_devices()[0]
+        # CPU devices have platform == "cpu" and no useful memory stats
+        if dev.platform == "cpu":
+            return math.inf
+        stats = dev.memory_stats()
+        if stats and "bytes_limit" in stats:
+            return stats["bytes_limit"] * fraction
+    except Exception:
+        pass
+    return math.inf

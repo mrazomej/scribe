@@ -177,6 +177,15 @@ de = compare_datasets(results, 0, 1, component=0, method="shrinkage")
 > transparently use the NumPy/SciPy stack when inputs are NumPy —
 > avoiding JAX's XLA CPU backend overhead and unnecessary GPU
 > round-trips.
+>
+> **Adaptive composition sampling:** The composition sampling step
+> (Dirichlet / Gamma-normalise) is JIT-compiled and uses adaptive
+> memory-aware chunking.  The `batch_size` parameter now acts as an
+> upper-bound safety cap — the adaptive layer queries available GPU
+> memory and processes the full array in as few JIT-compiled kernel
+> launches as possible (typically a single launch on GPUs with ≥ 8 GB).
+> On smaller GPUs the work is split automatically; on CPU-only runtimes
+> no chunking is applied.
 
 ### Component Matching Utilities
 
@@ -185,10 +194,10 @@ When mixture models are fit with `annotation_key`, each result stores a
 indices. The `_component_matching` module provides utilities for label-based
 component lookup, simplifying multi-dataset DE workflows:
 
-| Function | Description |
-|----------|-------------|
+| Function                                                 | Description                                                                                                                                                              |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `match_components_by_label(results_A, results_B, label)` | Returns `(idx_A, idx_B)` — component indices for the given label in both results. Both must have `_label_map` (populated when `annotation_key` was provided to `fit()`). |
-| `get_shared_labels(results_A, results_B)` | Returns a sorted list of labels present in both result label maps. |
+| `get_shared_labels(results_A, results_B)`                | Returns a sorted list of labels present in both result label maps.                                                                                                       |
 
 ```python
 from scribe.de import compare, match_components_by_label, get_shared_labels
