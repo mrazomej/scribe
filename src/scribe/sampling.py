@@ -143,6 +143,33 @@ def _build_canonical_layouts(
         else getattr(model_config, "n_components", None)
     )
 
+    # Expand mixture_params and dataset_params to include derived
+    # canonical counterparts.  When the model uses mean_odds
+    # parameterization, mixture_params may be ["phi", "mu"] — but
+    # _compute_canonical_parameters derives "r" and "p" from those
+    # with identical component structure.  Without expansion,
+    # infer_layout would fail to assign a component axis to derived
+    # canonical keys like "r" and "p".
+    #
+    # Instead of hardcoding canonical pairs, we read the dep graph
+    # from the parameterization strategy's DerivedParam list: any
+    # derived param whose deps overlap with the current member set
+    # inherits that axis membership (mirroring merge_layouts).
+    _mp = getattr(model_config, "mixture_params", None)
+    if _mp is not None or ds_params is not None:
+        from .models.parameterizations import PARAMETERIZATIONS
+        from .core.axis_layout import expand_membership_from_derived
+
+        _param = getattr(model_config, "parameterization", "canonical")
+        _derived = PARAMETERIZATIONS[_param].build_derived_params()
+        if _derived:
+            if _mp is not None:
+                _mp = sorted(expand_membership_from_derived(_mp, _derived))
+            if ds_params is not None:
+                ds_params = sorted(
+                    expand_membership_from_derived(ds_params, _derived)
+                )
+
     return build_sample_layouts(
         specs,
         samples,
@@ -150,7 +177,7 @@ def _build_canonical_layouts(
         n_cells=n_cells,
         n_components=_nc,
         n_datasets=getattr(model_config, "n_datasets", None),
-        mixture_params=getattr(model_config, "mixture_params", None),
+        mixture_params=_mp,
         dataset_params=ds_params,
         has_sample_dim=has_sample_dim,
     )

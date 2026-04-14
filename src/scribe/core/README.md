@@ -850,6 +850,7 @@ and tensor shapes.
 | `infer_layout` | Reconstruct layout from tensor shape + config metadata |
 | `build_param_layouts` | Bulk builder from `param_specs` + parameter dict |
 | `build_sample_layouts` | Hybrid builder using specs where available, heuristic fallback for derived keys |
+| `expand_membership_from_derived` | Propagate axis membership (mixture/dataset) to derived params via `DerivedParam.deps` |
 | `gene_axes_from_layouts` | Extract `{key: gene_axis}` mapping from a layouts dict |
 | `reconstruct_param_layouts` | Bulk backward-compat builder (no specs needed) |
 | `align_to_layout` | Insert singletons for broadcasting between layouts |
