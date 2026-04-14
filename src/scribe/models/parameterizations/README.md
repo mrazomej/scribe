@@ -21,7 +21,11 @@ A parameterization scheme determines:
 Directly samples both the success probability `p` and dispersion `r`:
 
 - **Core parameters**: `p`, `r`
-- **Derived parameters**: None
+- **Derived parameters**: `mu = r * p / (1 - p)` — declared so that axis
+  membership (dataset, mixture) propagates correctly from `r`/`p` to `mu`
+  via `expand_membership_from_derived`.  Without this, `get_dataset()` would
+  not slice `mu` along the dataset axis, producing identical `mu_map_A` and
+  `mu_map_B` in empirical DE.
 - **Gene parameter**: `r` (gene-specific)
 
 **Example**:
@@ -34,6 +38,8 @@ param_specs = param_strategy.build_param_specs(
     guide_families=GuideFamilyConfig(),
 )
 # Returns: [BetaSpec("p"), LogNormalSpec("r")]
+derived_params = param_strategy.build_derived_params()
+# Returns: [DerivedParam("mu", _compute_mu_from_r_p, ["r", "p"])]
 ```
 
 ### `MeanProbParameterization` (formerly "linked")

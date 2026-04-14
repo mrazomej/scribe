@@ -188,7 +188,10 @@ class CanonicalParameterization(Parameterization):
     - p: Success probability (Beta or SigmoidNormal)
     - r: Dispersion parameter (LogNormal or ExpNormal)
 
-    No derived parameters are computed.
+    Derived parameters:
+    - mu: Mean expression ``mu = r * p / (1 - p)``.  Declared so that
+      axis membership (dataset, mixture) propagates correctly from the
+      core parameters to ``mu`` during layout inference.
     """
 
     @property
@@ -265,8 +268,16 @@ class CanonicalParameterization(Parameterization):
     # --------------------------------------------------------------------------
 
     def build_derived_params(self) -> List[DerivedParam]:
-        """No derived parameters for canonical parameterization."""
-        return []
+        """Derived parameter: mu = r * p / (1 - p).
+
+        Although ``r`` and ``p`` are the *sampled* parameters in canonical
+        mode, ``mu`` is derived from them during MAP / posterior extraction
+        (see ``_compute_canonical_parameters``).  Declaring this dependency
+        lets ``expand_membership_from_derived`` propagate dataset (and
+        mixture) axis membership from ``r`` / ``p`` to ``mu``, ensuring
+        that ``get_dataset()`` slices ``mu`` along the correct axis.
+        """
+        return [DerivedParam("mu", _compute_mu_from_r_p, ["r", "p"])]
 
 
 # ------------------------------------------------------------------------------
@@ -531,6 +542,31 @@ def _compute_r_from_mu_phi(phi: jnp.ndarray, mu: jnp.ndarray) -> jnp.ndarray:
 # ------------------------------------------------------------------------------
 
 
+def _compute_mu_from_r_p(r: jnp.ndarray, p: jnp.ndarray) -> jnp.ndarray:
+    """Compute the mean parameter ``mu = r * p / (1 - p)``.
+
+    Used by the canonical parameterization's ``DerivedParam`` declaration
+    so that ``expand_membership_from_derived`` can propagate axis
+    membership from ``r`` and ``p`` to ``mu``.
+
+    Parameters
+    ----------
+    r : jnp.ndarray
+        Dispersion parameter (pre-aligned).
+    p : jnp.ndarray
+        Success probability parameter (pre-aligned).
+
+    Returns
+    -------
+    jnp.ndarray
+        Mean parameter ``mu = r * p / (1 - p)``.
+    """
+    return r * p / (1 - p)
+
+
+# ------------------------------------------------------------------------------
+
+
 def _compute_r_from_mu_p(p: jnp.ndarray, mu: jnp.ndarray) -> jnp.ndarray:
     """Compute the dispersion parameter ``r = mu * (1 - p) / p``.
 
@@ -583,6 +619,7 @@ __all__ = [
     "MeanOddsParameterization",
     "PARAMETERIZATIONS",
     # Derived parameter compute functions (pure math, alignment-free)
+    "_compute_mu_from_r_p",
     "_compute_r_from_mu_phi",
     "_compute_r_from_mu_p",
 ]

@@ -536,6 +536,15 @@ the fit-time `_label_map` and `_component_mapping` metadata. This guarantees
 that per-dataset visualization and component lookups reuse the original
 label-to-component assignment rather than reconstructing a dataset-local order.
 
+**Posterior sample subsetting:** `get_dataset()` uses `derive_axis_membership`
+to resolve which posterior keys carry a dataset axis, then slices them via
+layout-aware indexing.  This ensures that **derived** posterior keys (e.g. `mu`
+in canonical parameterization, where `mu = r * p / (1 - p)`) correctly inherit
+dataset membership from their source parameters through the `DerivedParam`
+dependency graph.  Without this, shared (global) posterior tensors would be
+copied unchanged into both per-dataset views, leading to identical
+`clr_mean_expression_A/B` columns in empirical DE output.
+
 **Amortized Capture Probability and PPC:**
 
 When using amortized capture probability (enabled via
