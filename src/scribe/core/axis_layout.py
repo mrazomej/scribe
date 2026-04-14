@@ -48,6 +48,7 @@ from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
+    Collection,
     Dict,
     List,
     Optional,
@@ -391,6 +392,51 @@ def _is_dataset_param(
     return base_name in dataset_params
 
 
+def expand_membership_from_derived(
+    member_names: Collection[str],
+    derived_params: list,
+) -> set:
+    """Expand a set of parameter names to include derived params whose
+    dependencies overlap with the current members.
+
+    A derived parameter inherits structural axes (component, dataset)
+    from its dependencies — this mirrors the ``merge_layouts`` semantics
+    used at model-execution time in ``ModelBuilder.build()``.  If *any*
+    dep of a ``DerivedParam`` is already a member, the derived param is
+    added to the set.
+
+    Uses a fixed-point loop so that transitive dependencies are handled
+    correctly (e.g. if ``q`` depends on ``p`` which depends on ``phi``,
+    and ``phi`` is a member, both ``p`` and ``q`` will be added).
+
+    Parameters
+    ----------
+    member_names : Collection[str]
+        Initial set of parameter names that carry the axis in question
+        (e.g. ``mixture_params`` or ``dataset_params``).
+    derived_params : list of DerivedParam
+        Derived parameter descriptors carrying ``name`` and ``deps``
+        fields.  Only those two attributes are read.
+
+    Returns
+    -------
+    set of str
+        Expanded set including any derived param whose dependency chain
+        reaches into *member_names*.
+    """
+    expanded = set(member_names)
+    changed = True
+    while changed:
+        changed = False
+        for d in derived_params:
+            if d.name not in expanded and any(
+                dep in expanded for dep in d.deps
+            ):
+                expanded.add(d.name)
+                changed = True
+    return expanded
+
+
 def infer_layout(
     key: str,
     value: jnp.ndarray,
@@ -675,16 +721,16 @@ def build_sample_layouts(
         # rank doesn't match the tensor (post-subsetting) — use
         # shape-based heuristics so axes are still detected correctly.
         layouts[key] = infer_layout(
-                key,
-                value,
-                n_genes=n_genes,
-                n_cells=n_cells,
-                n_components=n_components,
-                n_datasets=n_datasets,
-                mixture_params=mixture_params,
-                dataset_params=dataset_params,
-                has_sample_dim=has_sample_dim,
-            )
+            key,
+            value,
+            n_genes=n_genes,
+            n_cells=n_cells,
+            n_components=n_components,
+            n_datasets=n_datasets,
+            mixture_params=mixture_params,
+            dataset_params=dataset_params,
+            has_sample_dim=has_sample_dim,
+        )
     return layouts
 
 
@@ -877,9 +923,7 @@ def merge_layouts(*layouts: AxisLayout) -> AxisLayout:
 
     # Sort the axes using the canonical ordering defined in _AXIS_ORDER.
     # Axes not in _AXIS_ORDER (unlikely, but defensive) sort last.
-    sorted_axes = tuple(
-        sorted(all_axes, key=lambda a: _AXIS_ORDER.get(a, 99))
-    )
+    sorted_axes = tuple(sorted(all_axes, key=lambda a: _AXIS_ORDER.get(a, 99)))
     return AxisLayout(axes=sorted_axes)
 
 

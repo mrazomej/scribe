@@ -528,6 +528,97 @@ class TestInferLayout:
 
 
 # =========================================================================
+# expand_membership_from_derived tests
+# =========================================================================
+
+
+class TestExpandMembershipFromDerived:
+    """Test axis-membership propagation through DerivedParam dep chains."""
+
+    def test_no_derived_params(self):
+        """Empty derived list returns original set unchanged."""
+        from scribe.core.axis_layout import expand_membership_from_derived
+
+        result = expand_membership_from_derived({"phi", "mu"}, [])
+        assert result == {"phi", "mu"}
+
+    def test_single_derived_added(self):
+        """Derived param whose dep is a member gets added."""
+        from scribe.core.axis_layout import expand_membership_from_derived
+        from scribe.models.builders.parameter_specs import DerivedParam
+
+        # r depends on phi and mu — both are members, so r is added
+        derived = [
+            DerivedParam("r", lambda phi, mu: mu * phi, ["phi", "mu"]),
+        ]
+        result = expand_membership_from_derived({"phi", "mu"}, derived)
+        assert "r" in result
+        assert result == {"phi", "mu", "r"}
+
+    def test_multiple_derived_added(self):
+        """Multiple derived params from same deps are all added."""
+        from scribe.core.axis_layout import expand_membership_from_derived
+        from scribe.models.builders.parameter_specs import DerivedParam
+
+        # mean_odds: r from [phi, mu], p from [phi]
+        derived = [
+            DerivedParam("r", lambda phi, mu: mu * phi, ["phi", "mu"]),
+            DerivedParam("p", lambda phi: 1.0 / (1.0 + phi), ["phi"]),
+        ]
+        result = expand_membership_from_derived({"phi", "mu"}, derived)
+        assert result == {"phi", "mu", "r", "p"}
+
+    def test_transitive_expansion(self):
+        """Derived param depending on another derived param gets added."""
+        from scribe.core.axis_layout import expand_membership_from_derived
+        from scribe.models.builders.parameter_specs import DerivedParam
+
+        # p depends on phi (direct), q depends on p (transitive)
+        derived = [
+            DerivedParam("p", lambda phi: phi, ["phi"]),
+            DerivedParam("q", lambda p: p, ["p"]),
+        ]
+        result = expand_membership_from_derived({"phi"}, derived)
+        assert result == {"phi", "p", "q"}
+
+    def test_unrelated_derived_not_added(self):
+        """Derived param whose deps are disjoint from members is not added."""
+        from scribe.core.axis_layout import expand_membership_from_derived
+        from scribe.models.builders.parameter_specs import DerivedParam
+
+        derived = [
+            DerivedParam("gate", lambda z: z, ["z"]),
+        ]
+        result = expand_membership_from_derived({"phi", "mu"}, derived)
+        assert "gate" not in result
+        assert result == {"phi", "mu"}
+
+    def test_partial_dep_overlap_adds(self):
+        """A derived param is added if ANY dep is a member, not all."""
+        from scribe.core.axis_layout import expand_membership_from_derived
+        from scribe.models.builders.parameter_specs import DerivedParam
+
+        # r depends on [phi, mu], but only phi is a member
+        derived = [
+            DerivedParam("r", lambda phi, mu: mu * phi, ["phi", "mu"]),
+        ]
+        result = expand_membership_from_derived({"phi"}, derived)
+        assert "r" in result
+
+    def test_dataset_params_expansion(self):
+        """Same function works for dataset membership propagation."""
+        from scribe.core.axis_layout import expand_membership_from_derived
+        from scribe.models.builders.parameter_specs import DerivedParam
+
+        # dataset_params contains "mu", derived r depends on mu
+        derived = [
+            DerivedParam("r", lambda p, mu: mu, ["p", "mu"]),
+        ]
+        result = expand_membership_from_derived({"mu"}, derived)
+        assert result == {"mu", "r"}
+
+
+# =========================================================================
 # _strip_param_key tests
 # =========================================================================
 
