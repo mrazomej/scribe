@@ -1,7 +1,16 @@
 """Divergence and distance functions for probability distributions."""
 
+from __future__ import annotations
+
+from typing import Union
+
+import numpy as np
+import jax
 import jax.numpy as jnp
 from jax import scipy as jsp
+
+#: Array type accepted by backend-aware divergence functions.
+Array = Union[np.ndarray, jax.Array]
 
 from numpyro.distributions import Beta, Normal, LogNormal
 from numpyro.distributions.kl import kl_divergence
@@ -96,11 +105,11 @@ def _kl_lognormal(p, q):
 
 
 def gamma_kl(
-    alpha_p: jnp.ndarray,
-    beta_p: jnp.ndarray,
-    alpha_q: jnp.ndarray,
-    beta_q: jnp.ndarray,
-) -> jnp.ndarray:
+    alpha_p: Array,
+    beta_p: Array,
+    alpha_q: Array,
+    beta_q: Array,
+) -> Array:
     """Closed-form KL divergence between two Gamma distributions.
 
     Computes KL(Gamma(alpha_p, beta_p) || Gamma(alpha_q, beta_q)) using
@@ -108,73 +117,84 @@ def gamma_kl(
 
     .. math::
 
-        f(x; \\alpha, \\beta) =
-            \\frac{\\beta^\\alpha}{\\Gamma(\\alpha)}
-            x^{\\alpha - 1} e^{-\\beta x}.
+        f(x; α, β) = β^α / Γ(α) × x^{α − 1} × e^{−β x}.
 
     The closed-form expression is
 
     .. math::
 
-        \\text{KL}(p \\| q) =
-            (\\alpha_p - \\alpha_q)\\,\\psi(\\alpha_p)
-            - \\ln\\Gamma(\\alpha_p) + \\ln\\Gamma(\\alpha_q)
-            + \\alpha_q\\bigl(\\ln\\beta_p - \\ln\\beta_q\\bigr)
-            + \\alpha_p\\bigl(\\beta_q / \\beta_p - 1\\bigr)
+        KL(p ∥ q) =
+            (α_p − α_q)·ψ(α_p)
+            − ln Γ(α_p) + ln Γ(α_q)
+            + α_q·(ln β_p − ln β_q)
+            + α_p·(β_q / β_p − 1)
+
 
     where :math:`\\psi` is the digamma function.
 
+    Backend-aware: when inputs are ``numpy.ndarray`` the function uses
+    ``scipy.special``; when they are ``jax.Array`` it uses
+    ``jax.scipy.special``.
+
     Parameters
     ----------
-    alpha_p : jnp.ndarray
+    alpha_p : numpy.ndarray or jax.Array
         Shape parameter of the first (reference) Gamma distribution.
-    beta_p : jnp.ndarray
+    beta_p : numpy.ndarray or jax.Array
         Rate parameter of the first Gamma distribution.
-    alpha_q : jnp.ndarray
+    alpha_q : numpy.ndarray or jax.Array
         Shape parameter of the second (comparison) Gamma distribution.
-    beta_q : jnp.ndarray
+    beta_q : numpy.ndarray or jax.Array
         Rate parameter of the second Gamma distribution.
 
     Returns
     -------
-    jnp.ndarray
+    numpy.ndarray or jax.Array
         KL divergence, same shape as the broadcast of the inputs.
         Non-negative; zero iff the two distributions are identical.
     """
+    from ..core._array_dispatch import _array_module, _special_module
+
+    xp = _array_module(alpha_p)
+    special = _special_module(alpha_p)
+
     return (
-        (alpha_p - alpha_q) * jsp.special.digamma(alpha_p)
-        - jsp.special.gammaln(alpha_p)
-        + jsp.special.gammaln(alpha_q)
-        + alpha_q * (jnp.log(beta_p) - jnp.log(beta_q))
+        (alpha_p - alpha_q) * special.digamma(alpha_p)
+        - special.gammaln(alpha_p)
+        + special.gammaln(alpha_q)
+        + alpha_q * (xp.log(beta_p) - xp.log(beta_q))
         + alpha_p * (beta_q / beta_p - 1.0)
     )
 
 
 def gamma_jeffreys(
-    alpha_p: jnp.ndarray,
-    beta_p: jnp.ndarray,
-    alpha_q: jnp.ndarray,
-    beta_q: jnp.ndarray,
-) -> jnp.ndarray:
+    alpha_p: Array,
+    beta_p: Array,
+    alpha_q: Array,
+    beta_q: Array,
+) -> Array:
     """Symmetrised KL (Jeffreys divergence) between two Gamma distributions.
 
     Defined as ``KL(p || q) + KL(q || p)``.  Non-negative, symmetric, and
     zero iff the two distributions are identical.
 
+    Backend-aware: dispatches to NumPy/SciPy or JAX depending on input
+    type (see :func:`gamma_kl`).
+
     Parameters
     ----------
-    alpha_p : jnp.ndarray
+    alpha_p : numpy.ndarray or jax.Array
         Shape parameter of the first Gamma distribution.
-    beta_p : jnp.ndarray
+    beta_p : numpy.ndarray or jax.Array
         Rate parameter of the first Gamma distribution.
-    alpha_q : jnp.ndarray
+    alpha_q : numpy.ndarray or jax.Array
         Shape parameter of the second Gamma distribution.
-    beta_q : jnp.ndarray
+    beta_q : numpy.ndarray or jax.Array
         Rate parameter of the second Gamma distribution.
 
     Returns
     -------
-    jnp.ndarray
+    numpy.ndarray or jax.Array
         Jeffreys divergence, same shape as the broadcast of the inputs.
     """
     return gamma_kl(alpha_p, beta_p, alpha_q, beta_q) + gamma_kl(

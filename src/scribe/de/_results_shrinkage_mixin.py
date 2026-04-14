@@ -28,9 +28,12 @@ class ShrinkageResultsMixin:
             Shrunk per-gene DE statistics and shrinkage diagnostics.
         """
         from ._shrinkage import shrinkage_differential_expression
+        from ..core._array_dispatch import _array_module
 
-        raw_mean = jnp.mean(self.delta_samples, axis=0)
-        raw_sd = jnp.std(self.delta_samples, axis=0, ddof=1)
+        xp = _array_module(self.delta_samples)
+
+        raw_mean = xp.mean(self.delta_samples, axis=0)
+        raw_sd = xp.std(self.delta_samples, axis=0, ddof=1)
 
         self._cached_tau = tau
         self._gene_results = shrinkage_differential_expression(

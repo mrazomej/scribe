@@ -27,8 +27,8 @@ Mathematical details are in Section 10 of the paper
 
 from typing import Optional, Dict, Any
 
+import numpy as _np
 import jax.numpy as jnp
-from jax.scipy.stats import norm
 
 
 # --------------------------------------------------------------------------
@@ -68,9 +68,13 @@ def default_sigma_grid(
     jnp.ndarray, shape ``(K + 1,)``
         Geometric grid of prior standard deviations.
     """
-    sigma_max = sigma_max_mult * float(jnp.max(delta_sd))
+    from ..core._array_dispatch import _array_module
+
+    xp = _array_module(delta_sd)
+
+    sigma_max = sigma_max_mult * float(xp.max(delta_sd))
     # Geometric sequence from sigma_min to sigma_max
-    return jnp.geomspace(sigma_min, sigma_max, K + 1)
+    return xp.geomspace(sigma_min, sigma_max, K + 1)
 
 
 # --------------------------------------------------------------------------
@@ -129,12 +133,17 @@ def fit_scale_mixture_prior(
         - **converged** : bool
             Whether the algorithm converged before ``max_iter``.
     """
-    delta_mean = jnp.asarray(delta_mean)
-    delta_sd = jnp.asarray(delta_sd)
+    from ..core._array_dispatch import _array_module, _stats_norm
+
+    xp = _array_module(delta_mean)
+    norm = _stats_norm(delta_mean)
+
+    delta_mean = xp.asarray(delta_mean)
+    delta_sd = xp.asarray(delta_sd)
 
     if sigma_grid is None:
         sigma_grid = default_sigma_grid(delta_sd)
-    sigma_grid = jnp.asarray(sigma_grid)
+    sigma_grid = xp.asarray(sigma_grid)
 
     D = delta_mean.shape[0]
     K_plus_1 = sigma_grid.shape[0]
@@ -147,46 +156,46 @@ def fit_scale_mixture_prior(
     log_densities = norm.logpdf(
         delta_mean[:, None],
         loc=0.0,
-        scale=jnp.sqrt(marginal_var),
+        scale=xp.sqrt(marginal_var),
     )
 
     # Initialise with uniform weights
-    weights = jnp.ones(K_plus_1) / K_plus_1
-    prev_ll = -jnp.inf
+    weights = xp.ones(K_plus_1) / K_plus_1
+    prev_ll = -xp.inf
     converged = False
 
     for iteration in range(max_iter):
         # --- E-step ---
         # log(w_k * N(...)) = log(w_k) + log_densities[g, k]
-        log_numerator = jnp.log(weights[None, :]) + log_densities
+        log_numerator = xp.log(weights[None, :]) + log_densities
         # Log-sum-exp for numerical stability
-        log_denominator = jnp.max(
+        log_denominator = xp.max(
             log_numerator, axis=1, keepdims=True
-        ) + jnp.log(
-            jnp.sum(
-                jnp.exp(
+        ) + xp.log(
+            xp.sum(
+                xp.exp(
                     log_numerator
-                    - jnp.max(log_numerator, axis=1, keepdims=True)
+                    - xp.max(log_numerator, axis=1, keepdims=True)
                 ),
                 axis=1,
                 keepdims=True,
             )
         )
         log_gamma = log_numerator - log_denominator
-        gamma = jnp.exp(log_gamma)
+        gamma = xp.exp(log_gamma)
 
         # --- Log-likelihood ---
-        ll = float(jnp.sum(log_denominator))
-        if jnp.abs(ll - prev_ll) < tol:
+        ll = float(xp.sum(log_denominator))
+        if abs(ll - prev_ll) < tol:
             converged = True
             break
         prev_ll = ll
 
         # --- M-step ---
-        weights = jnp.mean(gamma, axis=0)
+        weights = xp.mean(gamma, axis=0)
         # Guard against zero weights (add tiny floor and renormalize)
-        weights = jnp.maximum(weights, 1e-15)
-        weights = weights / jnp.sum(weights)
+        weights = xp.maximum(weights, 1e-15)
+        weights = weights / xp.sum(weights)
 
     return {
         "weights": weights,
@@ -247,10 +256,15 @@ def shrinkage_posterior(
         - **component_weights** : jnp.ndarray, shape ``(D, K+1)``
             Responsibility matrix ``gamma_{gk}``.
     """
-    delta_mean = jnp.asarray(delta_mean)
-    delta_sd = jnp.asarray(delta_sd)
-    weights = jnp.asarray(weights)
-    sigma_grid = jnp.asarray(sigma_grid)
+    from ..core._array_dispatch import _array_module, _stats_norm
+
+    xp = _array_module(delta_mean)
+    norm = _stats_norm(delta_mean)
+
+    delta_mean = xp.asarray(delta_mean)
+    delta_sd = xp.asarray(delta_sd)
+    weights = xp.asarray(weights)
+    sigma_grid = xp.asarray(sigma_grid)
 
     sigma_sq = sigma_grid[None, :] ** 2  # (1, K+1)
     s_sq = delta_sd[:, None] ** 2  # (D, 1)
@@ -268,30 +282,30 @@ def shrinkage_posterior(
     if posterior_probs is None:
         marginal_var = sigma_grid[None, :] ** 2 + delta_sd[:, None] ** 2
         log_densities = norm.logpdf(
-            delta_mean[:, None], loc=0.0, scale=jnp.sqrt(marginal_var)
+            delta_mean[:, None], loc=0.0, scale=xp.sqrt(marginal_var)
         )
-        log_numerator = jnp.log(weights[None, :]) + log_densities
-        log_max = jnp.max(log_numerator, axis=1, keepdims=True)
+        log_numerator = xp.log(weights[None, :]) + log_densities
+        log_max = xp.max(log_numerator, axis=1, keepdims=True)
         log_gamma = (
             log_numerator
             - log_max
-            - jnp.log(
-                jnp.sum(jnp.exp(log_numerator - log_max), axis=1, keepdims=True)
+            - xp.log(
+                xp.sum(xp.exp(log_numerator - log_max), axis=1, keepdims=True)
             )
         )
-        posterior_probs = jnp.exp(log_gamma)
+        posterior_probs = xp.exp(log_gamma)
 
     gamma = posterior_probs
 
     # Marginal posterior mean: E[beta_g | data] = sum_k gamma_{gk} * m_{gk}
-    shrunk_mean = jnp.sum(gamma * component_means, axis=1)
+    shrunk_mean = xp.sum(gamma * component_means, axis=1)
 
     # Marginal posterior variance via law of total variance:
     # Var = E[V_k] + E[M_k^2] - (E[M_k])^2
-    within_var = jnp.sum(gamma * component_variances, axis=1)
-    mean_of_sq = jnp.sum(gamma * component_means**2, axis=1)
+    within_var = xp.sum(gamma * component_variances, axis=1)
+    mean_of_sq = xp.sum(gamma * component_means**2, axis=1)
     shrunk_var = within_var + mean_of_sq - shrunk_mean**2
-    shrunk_sd = jnp.sqrt(jnp.maximum(shrunk_var, 0.0))
+    shrunk_sd = xp.sqrt(xp.maximum(shrunk_var, 0.0))
 
     return {
         "shrunk_mean": shrunk_mean,
@@ -359,8 +373,13 @@ def shrinkage_differential_expression(
         - **em_log_likelihood** : float
             Final marginal log-likelihood.
     """
-    delta_mean = jnp.asarray(delta_mean)
-    delta_sd = jnp.asarray(delta_sd)
+    from ..core._array_dispatch import _array_module, _stats_norm
+
+    xp = _array_module(delta_mean)
+    norm = _stats_norm(delta_mean)
+
+    delta_mean = xp.asarray(delta_mean)
+    delta_sd = xp.asarray(delta_sd)
 
     # Step 1: Fit the prior
     em_result = fit_scale_mixture_prior(
@@ -383,22 +402,22 @@ def shrinkage_differential_expression(
     gamma = post["component_weights"]  # (D, K+1)
     m = post["component_means"]  # (D, K+1)
     v = post["component_variances"]  # (D, K+1)
-    sqrt_v = jnp.sqrt(jnp.maximum(v, 1e-30))
+    sqrt_v = xp.sqrt(xp.maximum(v, 1e-30))
 
     # Step 3: Shrunk probability of positive effect
     # P(beta_g > 0) = sum_k gamma_{gk} Phi(m_{gk} / sqrt(v_{gk}))
-    prob_positive = jnp.sum(gamma * norm.cdf(m / sqrt_v), axis=1)
+    prob_positive = xp.sum(gamma * norm.cdf(m / sqrt_v), axis=1)
 
     # Step 4: Shrunk lfsr
-    lfsr = jnp.minimum(prob_positive, 1.0 - prob_positive)
+    lfsr = xp.minimum(prob_positive, 1.0 - prob_positive)
 
     # Step 5: Practical significance
     # P(beta_g > tau) = sum_k gamma_{gk} Phi((m_{gk} - tau) / sqrt(v_{gk}))
-    prob_up = jnp.sum(gamma * norm.cdf((m - tau) / sqrt_v), axis=1)
+    prob_up = xp.sum(gamma * norm.cdf((m - tau) / sqrt_v), axis=1)
     # P(beta_g < -tau) = sum_k gamma_{gk} Phi(-(m_{gk} + tau) / sqrt(v_{gk}))
-    prob_down = jnp.sum(gamma * norm.cdf(-(m + tau) / sqrt_v), axis=1)
+    prob_down = xp.sum(gamma * norm.cdf(-(m + tau) / sqrt_v), axis=1)
     prob_effect = prob_up + prob_down
-    lfsr_tau = 1.0 - jnp.maximum(prob_up, prob_down)
+    lfsr_tau = 1.0 - xp.maximum(prob_up, prob_down)
 
     # Gene names
     if gene_names is None:

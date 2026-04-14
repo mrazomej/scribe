@@ -728,9 +728,13 @@ def empirical_differential_expression(
     so that downstream code (error control, formatting) works
     interchangeably.
 
+    Backend-aware: when ``delta_samples`` is a ``numpy.ndarray`` the
+    function uses the NumPy stack; when it is a ``jax.Array`` it uses
+    JAX (and therefore GPU when available).
+
     Parameters
     ----------
-    delta_samples : jnp.ndarray, shape ``(N, D)``
+    delta_samples : array-like, shape ``(N, D)``
         Posterior CLR-space differences
         ``Delta_g^(s) = CLR(rho_A)_g^(s) - CLR(rho_B)_g^(s)``.
     tau : float, default=0.0
@@ -762,28 +766,32 @@ def empirical_differential_expression(
     estimate is ``SE = sqrt(lfsr * (1 - lfsr) / N)``, which is ~0.001
     for lfsr=0.01 with N=10,000.
 
-    All operations are fully vectorized JAX and run on GPU.  Cost is
-    ``O(N * D)`` with no additional memory beyond the input.
+    All operations are fully vectorized.  Cost is ``O(N * D)`` with no
+    additional memory beyond the input.
     """
+    from ..core._array_dispatch import _array_module
+
+    xp = _array_module(delta_samples)
+
     # Posterior mean and standard deviation per gene
-    delta_mean = jnp.mean(delta_samples, axis=0)
-    delta_sd = jnp.std(delta_samples, axis=0, ddof=1)
+    delta_mean = xp.mean(delta_samples, axis=0)
+    delta_sd = xp.std(delta_samples, axis=0, ddof=1)
 
     # Fraction of samples with positive difference
-    prob_positive = jnp.mean(delta_samples > 0, axis=0)
+    prob_positive = xp.mean(delta_samples > 0, axis=0)
 
     # Local false sign rate: posterior probability of the minority sign
-    lfsr = jnp.minimum(prob_positive, 1.0 - prob_positive)
+    lfsr = xp.minimum(prob_positive, 1.0 - prob_positive)
 
     # Probability of practical effect: fraction of samples where
     # |Delta_g| > tau
-    prob_up = jnp.mean(delta_samples > tau, axis=0)
-    prob_down = jnp.mean(delta_samples < -tau, axis=0)
+    prob_up = xp.mean(delta_samples > tau, axis=0)
+    prob_down = xp.mean(delta_samples < -tau, axis=0)
     prob_effect = prob_up + prob_down
 
     # Practical-significance lfsr (paper definition):
     # lfsr_tau = 1 - max(P(Delta > tau), P(Delta < -tau))
-    lfsr_tau = 1.0 - jnp.maximum(prob_up, prob_down)
+    lfsr_tau = 1.0 - xp.maximum(prob_up, prob_down)
 
     # Generate gene names if not provided
     if gene_names is None:
@@ -846,6 +854,10 @@ def _slice_component(
         The layout after removing the component axis (if one was present),
         or ``None`` when no layout was provided.
     """
+    from ..core._array_dispatch import _array_module
+
+    xp = _array_module(r_samples)
+
     # --- Layout-aware path: use semantic axis metadata ---
     if layout is not None:
         comp_ax = layout.component_axis
@@ -855,7 +867,7 @@ def _slice_component(
                     f"r_samples_{label} has a component axis (layout={layout}) "
                     f"but component_{label} was not specified."
                 )
-            sliced = jnp.take(r_samples, component, axis=comp_ax)
+            sliced = xp.take(r_samples, component, axis=comp_ax)
             # Derive the post-sliced layout (component axis removed)
             post_layout = layout.subset_axis("components")
             return sliced, post_layout
