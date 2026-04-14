@@ -109,10 +109,16 @@ def _has_fallback_mixture_evidence(
     (for example, persisted ``DerivedParam`` metadata) so subsetting does not
     need fallback evidence heuristics.
     """
+    # Map each derived key to the spec-level keys whose component axis
+    # can serve as evidence.  The tuples include both the key itself
+    # (in case it has a spec) and its parameterization-level parents:
+    #   - canonical: mu derived from r, p
+    #   - linked/mean_prob: r derived from p, mu
+    #   - mean_odds: r derived from phi, mu; p derived from phi
     reference_map = {
         "p": ("p", "phi"),
-        "r": ("r", "mu"),
-        "mu": ("mu",),
+        "r": ("r", "mu", "phi"),
+        "mu": ("mu", "r", "p"),
         "phi": ("phi",),
         "gate": ("gate",),
     }
@@ -153,23 +159,47 @@ def _resolve_component_axes(
        ``gate``) only when their layout-inferred component axis is
        corroborated by the explicit axes (evidence check).
     """
-    from ..core.axis_layout import build_sample_layouts
+    from ..core.axis_layout import build_sample_layouts, derive_axis_membership
 
     mc = getattr(mixin, "model_config", None)
     specs = list(getattr(mc, "param_specs", None) or []) if mc else []
     specs_by_name = {s.name: s for s in specs}
 
+    # Resolve mixture_params and dataset_params via derive_axis_membership
+    # so that derived keys (e.g. "mu" in canonical) inherit axis membership
+    # from their source parameters through the DerivedParam graph.
+    # When the config's mixture_params is None (= "all non-cell params are
+    # mixture"), we preserve None to avoid breaking keys absent from specs
+    # (e.g. p, r as derived keys in linked mode). When the config has an
+    # explicit list (e.g. ['r', 'p']), we use the expanded version so
+    # derived keys like 'mu' are included.
+    _mp_cfg = getattr(mc, "mixture_params", None) if mc else None
+    _mp_expanded, _dp = (
+        derive_axis_membership(mc, samples=samples, has_sample_dim=True)
+        if mc is not None
+        else (None, None)
+    )
+    # Use expanded mixture_params only when config had an explicit list;
+    # keep None to preserve "all" semantics when config was None.
+    _mp_final = _mp_expanded if _mp_cfg is not None else None
+
     # Build semantic layouts for every key in the posterior samples.
     # Spec-matched keys get deterministic layouts; derived keys (p, r, ...)
     # fall back to shape-based inference via infer_layout.
+    _n_genes = getattr(mixin, "n_genes", None)
+    _n_cells = getattr(mixin, "n_cells", None)
+    _n_comp = getattr(mixin, "n_components", None)
+    _n_ds = getattr(mc, "n_datasets", None) if mc else None
+
     sample_layouts = build_sample_layouts(
         specs,
         samples,
-        n_genes=getattr(mixin, "n_genes", None),
-        n_cells=getattr(mixin, "n_cells", None),
-        n_components=getattr(mixin, "n_components", None),
-        n_datasets=getattr(mc, "n_datasets", None) if mc else None,
-        mixture_params=getattr(mc, "mixture_params", None) if mc else None,
+        n_genes=_n_genes,
+        n_cells=_n_cells,
+        n_components=_n_comp,
+        n_datasets=_n_ds,
+        mixture_params=_mp_final,
+        dataset_params=_dp,
         has_sample_dim=True,
     )
 

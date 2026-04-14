@@ -4092,6 +4092,149 @@ class TestSubsetPosteriorDerivedKeys:
             view_1.posterior_samples["p"],
         )
 
+    # ------------------------------------------------------------------
+    # Composition: get_component() then get_dataset()
+    # ------------------------------------------------------------------
+
+    def test_canonical_get_component_then_get_dataset_slices_mu(self):
+        """get_component(k).get_dataset(d) correctly slices mu in canonical
+        mixture + multi-dataset models.
+
+        Regression test for the 4D mu error: without dataset_params in
+        _resolve_component_axes, get_component() could misidentify axes
+        in the derived mu tensor, leaving it 4D after component slicing
+        and causing get_dataset() or _slice_component to fail downstream.
+        """
+        n_ds, n_genes, n_samples, n_comp = 2, 8, 5, 3
+
+        # r: (S, K, D, G) — mixture + dataset + gene
+        r = jnp.ones((n_samples, n_comp, n_ds, n_genes))
+        r = r.at[:, :, 0, :].set(2.0)
+        r = r.at[:, :, 1, :].set(8.0)
+
+        # p: scalar (S,) — shared
+        p_scalar = jnp.full((n_samples,), 0.3)
+
+        # mu: (S, K, D, G) — derived from r and p
+        mu = r * 0.3 / (1.0 - 0.3)
+
+        # mixing_weights: (S, K)
+        mw = jnp.ones((n_samples, n_comp)) / n_comp
+
+        posterior = {"r": r, "p": p_scalar, "mu": mu, "mixing_weights": mw}
+
+        r_spec = DatasetHierarchicalPositiveNormalSpec(
+            name="r", shape_dims=("n_genes",),
+            default_params=(0.0, 1.0), is_gene_specific=True,
+            is_dataset=True, is_mixture=True, unconstrained=True,
+            loc=0.0, scale=1.0,
+            hyper_loc_name="log_r_dataset_loc",
+            hyper_scale_name="log_r_dataset_scale",
+        )
+        config = ModelConfig(
+            base_model="nbdm",
+            n_datasets=n_ds,
+            n_components=n_comp,
+            parameterization="canonical",
+            unconstrained=True,
+            expression_dataset_prior="gaussian",
+            param_specs=[r_spec],
+        )
+
+        from scribe.svi.results import ScribeSVIResults
+        results = ScribeSVIResults(
+            params={"dummy_loc": jnp.zeros(n_genes)},
+            loss_history=jnp.array([1.0]),
+            n_cells=50,
+            n_genes=n_genes,
+            model_type="nbdm_mix",
+            model_config=config,
+            prior_params={},
+            posterior_samples=posterior,
+            n_components=n_comp,
+        )
+
+        # Compose: component 0, then dataset 0 vs 1
+        comp0 = results.get_component(0)
+        assert comp0.posterior_samples["r"].shape == (n_samples, n_ds, n_genes)
+        assert comp0.posterior_samples["mu"].shape == (n_samples, n_ds, n_genes), (
+            "mu must be 3D after component slicing (component axis removed)"
+        )
+
+        view_0 = comp0.get_dataset(0)
+        view_1 = comp0.get_dataset(1)
+
+        assert view_0.posterior_samples["mu"].shape == (n_samples, n_genes)
+        assert not jnp.allclose(
+            view_0.posterior_samples["mu"],
+            view_1.posterior_samples["mu"],
+        ), "mu must differ across datasets after component+dataset slicing"
+
+    def test_canonical_explicit_mixture_params_config(self):
+        """get_component(k).get_dataset(d) works when model_config has an
+        explicit mixture_params list (e.g. ['r', 'p']) that does NOT
+        include derived key 'mu'.
+
+        Regression test: derive_axis_membership must expand the config's
+        mixture_params through the DerivedParam graph so infer_layout
+        can detect the component axis for 'mu'.
+        """
+        n_ds, n_genes, n_samples, n_comp = 2, 8, 5, 4
+
+        r = jnp.ones((n_samples, n_comp, n_ds, n_genes))
+        r = r.at[:, :, 0, :].set(2.0)
+        r = r.at[:, :, 1, :].set(8.0)
+        p = jnp.full((n_samples, n_comp, n_genes), 0.3)
+        mu = r * 0.3 / (1.0 - 0.3)
+        mw = jnp.ones((n_samples, n_ds, n_comp)) / n_comp
+
+        posterior = {"r": r, "p": p, "mu": mu, "mixing_weights": mw}
+
+        r_spec = DatasetHierarchicalPositiveNormalSpec(
+            name="r", shape_dims=("n_genes",),
+            default_params=(0.0, 1.0), is_gene_specific=True,
+            is_dataset=True, is_mixture=True, unconstrained=True,
+            loc=0.0, scale=1.0,
+            hyper_loc_name="log_r_dataset_loc",
+            hyper_scale_name="log_r_dataset_scale",
+        )
+        config = ModelConfig(
+            base_model="nbdm",
+            n_datasets=n_ds,
+            n_components=n_comp,
+            parameterization="canonical",
+            unconstrained=True,
+            expression_dataset_prior="gaussian",
+            param_specs=[r_spec],
+            mixture_params=["r", "p"],
+        )
+
+        from scribe.svi.results import ScribeSVIResults
+        results = ScribeSVIResults(
+            params={"dummy_loc": jnp.zeros(n_genes)},
+            loss_history=jnp.array([1.0]),
+            n_cells=50,
+            n_genes=n_genes,
+            model_type="nbdm_mix",
+            model_config=config,
+            prior_params={},
+            posterior_samples=posterior,
+            n_components=n_comp,
+        )
+
+        comp0 = results.get_component(0)
+        assert comp0.posterior_samples["mu"].shape == (n_samples, n_ds, n_genes), (
+            "mu must lose component axis after get_component()"
+        )
+
+        view_0 = comp0.get_dataset(0)
+        view_1 = comp0.get_dataset(1)
+        assert view_0.posterior_samples["mu"].shape == (n_samples, n_genes)
+        assert not jnp.allclose(
+            view_0.posterior_samples["mu"],
+            view_1.posterior_samples["mu"],
+        )
+
 
 # ==============================================================================
 # mu_map_A != mu_map_B in _compare_empirical
