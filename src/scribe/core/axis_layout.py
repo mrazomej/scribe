@@ -455,8 +455,8 @@ def infer_layout(
     This is the backward-compatibility path used when ``param_specs`` are
     not available (e.g. old pickles).  It consolidates the heuristics that
     were previously scattered across ``_infer_dataset_axis``,
-    ``_infer_component_axis``, ``build_gene_axis_by_key``, and
-    ``broadcast_param_for_mixture`` into a single canonical location.
+    ``_infer_component_axis``, and ``broadcast_param_for_mixture`` into a
+    single canonical location.
 
     Parameters
     ----------
@@ -602,8 +602,8 @@ def build_param_layouts(
     """Build ``{key: AxisLayout}`` from ``param_specs`` and parameter dict.
 
     Each key in *params* is matched to the most appropriate spec by name
-    (same matching logic as ``build_gene_axis_by_key``).  Keys that don't
-    match any spec are given an empty layout.
+    using ``_strip_param_key``.  Keys that don't match any spec are given
+    an empty layout.
 
     Parameters
     ----------
@@ -740,9 +740,6 @@ def gene_axes_from_layouts(
     layouts: Dict[str, AxisLayout],
 ) -> Dict[str, int]:
     """Extract a ``{key: gene_axis}`` mapping from a layouts dict.
-
-    This is a convenience wrapper that replaces the role of
-    ``build_gene_axis_by_key`` in call sites that already have layouts.
 
     Parameters
     ----------

@@ -53,7 +53,9 @@ print(de.summary(sort_by='lfsr', top_n=20))
 
 The recommended entry point.  Returns a `ScribeParametricDEResults`,
 `ScribeEmpiricalDEResults`, or `ScribeShrinkageDEResults` depending on
-`method=`:
+`method=`.  When `method` is omitted, it is auto-detected: fitted
+logistic-normal models (dicts or distribution objects) default to
+`"parametric"`, while all other inputs default to `"empirical"`:
 
 ```python
 # Results-object interface (recommended for empirical / shrinkage).
