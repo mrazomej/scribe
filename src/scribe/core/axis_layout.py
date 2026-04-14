@@ -78,8 +78,12 @@ _DIM_TO_AXIS = {
 # This matches the convention in ``resolve_shape``.
 _AXIS_ORDER = {COMPONENTS: 0, DATASETS: 1, GENES: 2, CELLS: 2}
 
-# Well-known parameter names and their expected axis structure when
-# param_specs are unavailable (backward-compat reconstruction).
+# Frozen parameter name tables for backward-compat layout reconstruction.
+#
+# These sets are consulted ONLY by ``infer_layout()`` — the fallback
+# path for old pickles that lack ``param_specs``.  They must NOT be
+# extended for new parameters.  New parameters should be recognised
+# exclusively through their ``ParamSpec`` via ``layout_from_param_spec``.
 _KNOWN_GENE_PARAMS = frozenset({"r", "mu", "phi", "gate"})
 _KNOWN_CELL_PARAMS = frozenset({"p_capture", "phi_capture", "eta_capture"})
 _KNOWN_COMPONENT_ONLY_PARAMS = frozenset({"mixing_weights", "mixing_logits"})

@@ -164,7 +164,9 @@ class ScribeMCMCResults(
         mc = self.model_config
         _mp, _dp = derive_axis_membership(mc)
 
-        return reconstruct_param_layouts(
+        # Reconstruct and cache so repeated .layouts calls on old pickles
+        # do not recompute every time.
+        _layouts = reconstruct_param_layouts(
             self.samples,
             n_genes=self.n_genes,
             n_cells=self.n_cells,
@@ -174,6 +176,8 @@ class ScribeMCMCResults(
             dataset_params=_dp,
             has_sample_dim=True,
         )
+        object.__setattr__(self, "param_layouts", _layouts)
+        return _layouts
 
     @classmethod
     def concat(

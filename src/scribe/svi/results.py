@@ -206,7 +206,9 @@ class ScribeSVIResults(
         mc = self.model_config
         _mp, _dp = derive_axis_membership(mc)
 
-        return reconstruct_param_layouts(
+        # Reconstruct and cache so repeated .layouts calls on old pickles
+        # do not recompute every time.
+        _layouts = reconstruct_param_layouts(
             self.params,
             n_genes=self.n_genes,
             n_cells=self.n_cells,
@@ -217,6 +219,8 @@ class ScribeSVIResults(
             gene_axis_by_key=getattr(self, "_gene_axis_by_key", None),
             has_sample_dim=False,
         )
+        object.__setattr__(self, "param_layouts", _layouts)
+        return _layouts
 
     @classmethod
     def concat(

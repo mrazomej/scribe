@@ -33,6 +33,7 @@ References
   *Biostatistics*, 18(2), 275--294.  (lfsr concept)
 """
 
+import warnings
 from typing import Optional, List, TYPE_CHECKING
 
 import numpy as np
@@ -363,7 +364,14 @@ def _drop_scalar_p(
             return None
         return p
 
-    # Legacy fallback: ndim < 2 means no gene dimension
+    # Legacy fallback: ndim < 2 means no gene dimension.
+    # Deprecated — callers should provide layout metadata.
+    warnings.warn(
+        "Calling _drop_scalar_p without layout metadata is deprecated. "
+        "Pass param_layouts explicitly.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if p.ndim < 2:
         return None
     return p
@@ -855,6 +863,13 @@ def _slice_component(
         return r_samples, layout
 
     # --- Legacy ndim fallback (no layout provided) ---
+    # Deprecated — callers should provide layout metadata.
+    warnings.warn(
+        "Calling _slice_component without layout metadata is deprecated. "
+        "Pass param_layouts explicitly.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if r_samples.ndim == 3:
         if component is None:
             raise ValueError(
