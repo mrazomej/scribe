@@ -33,8 +33,10 @@ References
   *Biostatistics*, 18(2), 275--294.  (lfsr concept)
 """
 
+import math
 import warnings
-from typing import Optional, List, TYPE_CHECKING
+from functools import partial
+from typing import Optional, List, Callable, Sequence, TYPE_CHECKING, Union
 
 import numpy as np
 import jax
@@ -43,6 +45,9 @@ from jax import random
 
 if TYPE_CHECKING:
     from ..core.axis_layout import AxisLayout
+
+#: Union type accepted by backend-aware functions.
+Array = Union[np.ndarray, jax.Array]
 
 
 # --------------------------------------------------------------------------
@@ -101,9 +106,9 @@ def _require_mixture_components(
 
 
 def _aggregate_genes(
-    r_A: jnp.ndarray,
-    r_B: jnp.ndarray,
-    gene_mask: jnp.ndarray,
+    r_A: Array,
+    r_B: Array,
+    gene_mask: Array,
 ) -> tuple:
     """Pool filtered genes into a single "other" pseudo-gene.
 
@@ -114,17 +119,17 @@ def _aggregate_genes(
 
     Parameters
     ----------
-    r_A : jnp.ndarray, shape ``(N, D)``
+    r_A : numpy.ndarray or jax.Array, shape ``(N, D)``
         Dirichlet concentration samples for condition A.
-    r_B : jnp.ndarray, shape ``(N, D)``
+    r_B : numpy.ndarray or jax.Array, shape ``(N, D)``
         Dirichlet concentration samples for condition B.
-    gene_mask : jnp.ndarray, shape ``(D,)``
+    gene_mask : numpy.ndarray or jax.Array, shape ``(D,)``
         Boolean mask.  ``True`` = keep the gene, ``False`` = pool into
         "other".
 
     Returns
     -------
-    tuple of (jnp.ndarray, jnp.ndarray)
+    tuple of arrays
         ``(r_A_agg, r_B_agg)`` each of shape ``(N, D_kept + 1)``, where
         ``D_kept = gene_mask.sum()``.  The last column is the summed
         concentration of all filtered genes.
@@ -225,8 +230,8 @@ def compute_expression_mask(
     component_A: int,
     component_B: int,
     min_mean_expression: float = 1.0,
-    counts_A: Optional[jnp.ndarray] = None,
-    counts_B: Optional[jnp.ndarray] = None,
+    counts_A: Optional[Array] = None,
+    counts_B: Optional[Array] = None,
 ) -> np.ndarray:
     """Build a boolean gene mask from MAP mean-expression estimates.
 
@@ -255,10 +260,10 @@ def compute_expression_mask(
         Minimum MAP mean expression (in count space) for a gene to pass
         the filter.  Genes below this threshold in *both* conditions are
         pooled into "other".
-    counts_A : jnp.ndarray, optional
+    counts_A : numpy.ndarray or jax.Array, optional
         Count matrix for condition A.  Required when the model uses
         amortized capture probability.
-    counts_B : jnp.ndarray, optional
+    counts_B : numpy.ndarray or jax.Array, optional
         Count matrix for condition B.  Required when the model uses
         amortized capture probability.
 
@@ -284,7 +289,7 @@ def compute_expression_mask(
 # ------------------------------------------------------------------------------
 
 
-def _extract_mu(map_estimates: dict) -> jnp.ndarray:
+def _extract_mu(map_estimates: dict) -> Array:
     """Extract or derive mean expression ``mu`` from MAP estimates.
 
     For parameterizations that include ``mu`` directly (``linked``,
@@ -300,7 +305,7 @@ def _extract_mu(map_estimates: dict) -> jnp.ndarray:
 
     Returns
     -------
-    jnp.ndarray
+    numpy.ndarray or jax.Array
         Mean expression vector, shape ``(D,)`` (or ``(K, D)`` for
         mixture models before component slicing).
 
@@ -331,9 +336,9 @@ def _extract_mu(map_estimates: dict) -> jnp.ndarray:
 
 
 def _drop_scalar_p(
-    p: Optional[jnp.ndarray],
+    p: Optional[Array],
     post_layout: Optional["AxisLayout"] = None,
-) -> Optional[jnp.ndarray]:
+) -> Optional[Array]:
     """Return ``None`` if ``p`` has no gene dimension (scalar across genes).
 
     A scalar ``p`` produces a constant scaling factor in Gamma-based
@@ -344,7 +349,7 @@ def _drop_scalar_p(
 
     Parameters
     ----------
-    p : jnp.ndarray or None
+    p : numpy.ndarray or jax.Array, or None
         Sliced (post-component) ``p`` samples.
     post_layout : AxisLayout, optional
         Layout for ``p`` **after** component slicing.  This is the
@@ -353,7 +358,7 @@ def _drop_scalar_p(
 
     Returns
     -------
-    jnp.ndarray or None
+    numpy.ndarray or jax.Array, or None
         The input unchanged if it has a gene axis, ``None`` otherwise.
     """
     if p is None:
@@ -378,16 +383,16 @@ def _drop_scalar_p(
 
 
 def sample_compositions(
-    r_samples_A: jnp.ndarray,
-    r_samples_B: jnp.ndarray,
+    r_samples_A: Array,
+    r_samples_B: Array,
     component_A: Optional[int] = None,
     component_B: Optional[int] = None,
     paired: bool = False,
     n_samples_dirichlet: int = 1,
     rng_key=None,
     batch_size: int = 2048,
-    p_samples_A: Optional[jnp.ndarray] = None,
-    p_samples_B: Optional[jnp.ndarray] = None,
+    p_samples_A: Optional[Array] = None,
+    p_samples_B: Optional[Array] = None,
     param_layouts: Optional[dict] = None,
 ) -> tuple:
     """Draw full-dimensional simplex samples from posterior parameters.
@@ -400,17 +405,20 @@ def sample_compositions(
     returned simplices can be stored and reused with different gene masks
     via :func:`compute_delta_from_simplex`.
 
-    Sampling is performed on GPU in small batches, but each batch is
-    transferred to CPU immediately.  The returned arrays are numpy
-    (host) arrays, so the full simplex never resides on device memory.
+    Sampling is JIT-compiled and dispatched in as few GPU round-trips
+    as possible.  The adaptive memory layer queries the device once and
+    splits the work only when the full output would exceed available
+    memory — on most GPUs the entire array is sampled in a single
+    kernel launch.  The returned arrays are always ``numpy.ndarray``
+    (host) arrays.
 
     Parameters
     ----------
-    r_samples_A : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``
+    r_samples_A : numpy.ndarray or jax.Array, shape ``(N, D)`` or ``(N, K, D)``
         Posterior samples of Dirichlet concentration parameters for
         condition A.  If 3D, ``K`` is the number of mixture components
         and ``component_A`` must be specified.
-    r_samples_B : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``
+    r_samples_B : numpy.ndarray or jax.Array, shape ``(N, D)`` or ``(N, K, D)``
         Posterior samples for condition B.
     component_A : int, optional
         Mixture component index to extract from ``r_samples_A``.
@@ -426,14 +434,17 @@ def sample_compositions(
     rng_key : jax.random.PRNGKey, optional
         JAX PRNG key.  If ``None``, uses ``jax.random.PRNGKey(0)``.
     batch_size : int, default=2048
-        Number of posterior samples per batched sampling call.
-    p_samples_A : jnp.ndarray, optional
+        Upper-bound cap on chunk size.  The adaptive layer may use a
+        larger chunk when GPU memory allows; this parameter acts as a
+        safety net for backward compatibility or explicit memory
+        control.
+    p_samples_A : numpy.ndarray or jax.Array, optional
         Success probabilities for condition A.  When gene-specific
         (shape ``(N, D)`` or ``(N, K, D)``), Gamma-based composition
         sampling is used.  Scalar ``p`` (shape ``(N,)`` or ``(N, K)``)
         is dropped because the constant scaling factor cancels in
         the normalization, making Gamma equivalent to Dirichlet.
-    p_samples_B : jnp.ndarray, optional
+    p_samples_B : numpy.ndarray or jax.Array, optional
         Same as above for condition B.
     param_layouts : dict of str to AxisLayout, optional
         Semantic axis layouts keyed by parameter name (e.g. ``"r"``,
@@ -526,38 +537,35 @@ def sample_compositions(
     if p_B is not None:
         p_B = p_B[:N]
 
-    # Move sliced inputs to CPU.  The full posterior-sample arrays (potentially
-    # multi-GiB each) are kept on GPU only as long as they're referenced by
-    # Python.  Converting the slices to numpy here lets JAX free the original
-    # device buffers, so the batched samplers below only put one small chunk on
-    # GPU at a time.
-    r_A = np.asarray(r_A)
-    r_B = np.asarray(r_B)
-    if p_A is not None:
-        p_A = np.asarray(p_A)
-    if p_B is not None:
-        p_B = np.asarray(p_B)
+    # Query the device memory budget once; the adaptive wrapper uses it
+    # to decide how many chunks (ideally just 1) to split the work into.
+    from ..core._array_dispatch import _gpu_memory_budget
+
+    budget = _gpu_memory_budget()
 
     # --- Composition sampling (always full-dimensional, no aggregation) ---
+    # Inputs stay on their current device (GPU or CPU) — the JIT kernels
+    # handle the transfer implicitly, and np.asarray is called once per
+    # chunk on the *output* inside the adaptive wrapper.
     if use_gamma:
         key_A, key_B = random.split(rng_key)
         simplex_A = _batched_gamma_normalize(
-            r_A, p_A, n_samples_dirichlet, key_A, batch_size
+            r_A, p_A, n_samples_dirichlet, key_A, batch_size, budget
         )
         simplex_B = _batched_gamma_normalize(
-            r_B, p_B, n_samples_dirichlet, key_B, batch_size
+            r_B, p_B, n_samples_dirichlet, key_B, batch_size, budget
         )
     elif paired:
         simplex_A, simplex_B = _paired_dirichlet_sample(
-            r_A, r_B, n_samples_dirichlet, rng_key, batch_size
+            r_A, r_B, n_samples_dirichlet, rng_key, batch_size, budget
         )
     else:
         key_A, key_B = random.split(rng_key)
         simplex_A = _batched_dirichlet(
-            r_A, n_samples_dirichlet, key_A, batch_size
+            r_A, n_samples_dirichlet, key_A, batch_size, budget
         )
         simplex_B = _batched_dirichlet(
-            r_B, n_samples_dirichlet, key_B, batch_size
+            r_B, n_samples_dirichlet, key_B, batch_size, budget
         )
 
     return simplex_A, simplex_B
@@ -634,17 +642,17 @@ def compute_delta_from_simplex(
 
 
 def compute_clr_differences(
-    r_samples_A: jnp.ndarray,
-    r_samples_B: jnp.ndarray,
+    r_samples_A: Array,
+    r_samples_B: Array,
     component_A: Optional[int] = None,
     component_B: Optional[int] = None,
     paired: bool = False,
     n_samples_dirichlet: int = 1,
     rng_key=None,
     batch_size: int = 2048,
-    gene_mask: Optional[jnp.ndarray] = None,
-    p_samples_A: Optional[jnp.ndarray] = None,
-    p_samples_B: Optional[jnp.ndarray] = None,
+    gene_mask: Optional[Array] = None,
+    p_samples_A: Optional[Array] = None,
+    p_samples_B: Optional[Array] = None,
 ) -> np.ndarray:
     """Compute CLR-space posterior differences from Dirichlet concentration samples.
 
@@ -655,11 +663,11 @@ def compute_clr_differences(
 
     Parameters
     ----------
-    r_samples_A : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``
+    r_samples_A : numpy.ndarray or jax.Array, shape ``(N, D)`` or ``(N, K, D)``
         Posterior samples of Dirichlet concentration parameters for
         condition A.  If 3D, ``K`` is the number of mixture components
         and ``component_A`` must be specified.
-    r_samples_B : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``
+    r_samples_B : numpy.ndarray or jax.Array, shape ``(N, D)`` or ``(N, K, D)``
         Posterior samples for condition B.
     component_A : int, optional
         Mixture component index to extract from ``r_samples_A``.
@@ -673,13 +681,14 @@ def compute_clr_differences(
     rng_key : jax.random.PRNGKey, optional
         JAX PRNG key.  If ``None``, uses ``jax.random.PRNGKey(0)``.
     batch_size : int, default=2048
-        Number of posterior samples per batched Dirichlet sampling call.
-    gene_mask : jnp.ndarray, shape ``(D,)``, optional
+        Upper-bound cap on chunk size.  The adaptive memory layer may
+        use larger chunks when GPU memory allows.
+    gene_mask : numpy.ndarray or jax.Array, shape ``(D,)``, optional
         Boolean mask selecting genes to keep.  Genes marked ``False``
         are aggregated into an "other" pseudo-gene before CLR.
-    p_samples_A : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``, optional
+    p_samples_A : numpy.ndarray or jax.Array, shape ``(N, D)`` or ``(N, K, D)``, optional
         Gene-specific success probabilities for condition A.
-    p_samples_B : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``, optional
+    p_samples_B : numpy.ndarray or jax.Array, shape ``(N, D)`` or ``(N, K, D)``, optional
         Gene-specific success probabilities for condition B.
 
     Returns
@@ -716,7 +725,7 @@ def compute_clr_differences(
 
 
 def empirical_differential_expression(
-    delta_samples: jnp.ndarray,
+    delta_samples: Array,
     tau: float = 0.0,
     gene_names: Optional[List[str]] = None,
 ) -> dict:
@@ -815,7 +824,7 @@ def empirical_differential_expression(
 
 
 def _slice_component(
-    r_samples: jnp.ndarray,
+    r_samples: Array,
     component: Optional[int],
     label: str,
     layout: Optional["AxisLayout"] = None,
@@ -829,7 +838,7 @@ def _slice_component(
 
     Parameters
     ----------
-    r_samples : jnp.ndarray
+    r_samples : numpy.ndarray or jax.Array
         Posterior samples with one of these shapes:
 
         - ``(N, D)`` -- non-mixture gene-specific
@@ -848,7 +857,7 @@ def _slice_component(
 
     Returns
     -------
-    sliced : jnp.ndarray
+    sliced : numpy.ndarray or jax.Array
         Sliced samples: ``(N, D)`` for gene-specific, ``(N,)`` for scalar.
     post_layout : AxisLayout or None
         The layout after removing the component axis (if one was present),
@@ -929,276 +938,455 @@ def _clr_transform(simplex_samples: np.ndarray) -> np.ndarray:
 # ------------------------------------------------------------------------------
 
 
-def _batched_dirichlet(
-    r_samples: jnp.ndarray,
-    n_samples_dirichlet: int,
-    rng_key: random.PRNGKey,
-    batch_size: int,
-) -> np.ndarray:
-    """Batched Dirichlet sampling from concentration parameters.
+# ===========================================================================
+# JIT-compiled sampling kernels
+# ===========================================================================
+# Defined at module level so JAX traces them once per unique shape and
+# caches the compiled XLA program across calls.  All kernels accept and
+# return device arrays — the host transfer (np.asarray) happens in the
+# adaptive wrapper, not inside the kernel.
 
-    Reuses the batching strategy from
-    ``scribe.core.normalization_logistic._batched_dirichlet_sample_raw``
-    but implemented locally to avoid circular imports.
 
-    Each batch is sampled on GPU and immediately transferred to CPU so
-    the full simplex array never resides on device.
+@jax.jit
+def _jit_dirichlet_single(
+    key: random.PRNGKey,
+    r: jax.Array,
+) -> jax.Array:
+    """Single Dirichlet draw per row.  ``r`` has shape ``(B, D)``."""
+    return jax.random.dirichlet(key, r)
 
-    Parameters
-    ----------
-    r_samples : jnp.ndarray, shape ``(N, D)``
-        Dirichlet concentration parameters.
-    n_samples_dirichlet : int
-        Number of Dirichlet draws per posterior sample.
-    rng_key : random.PRNGKey
-        JAX PRNG key.
-    batch_size : int
-        Number of posterior samples per batch.
 
-    Returns
-    -------
-    numpy.ndarray, shape ``(N_total, D)``
-        Simplex samples on CPU.  ``N_total = N * n_samples_dirichlet``.
+@jax.jit
+def _jit_gamma_normalize_single(
+    key: random.PRNGKey,
+    r: jax.Array,
+    p: jax.Array,
+) -> jax.Array:
+    """Single Gamma-normalise draw per row.
+
+    Draws Gamma(r_g, 1) variates, scales by p_g/(1-p_g), normalises.
     """
-    N, D = r_samples.shape
-    chunks: list[np.ndarray] = []
-
-    # When n_samples_dirichlet > 1, each posterior sample fans out to S
-    # output rows.  Shrink the batch size so the per-chunk GPU tensor
-    # (B * S, D) stays manageable.
-    effective_bs = max(1, batch_size // max(1, n_samples_dirichlet))
-
-    for start in range(0, N, effective_bs):
-        end = min(start + effective_bs, N)
-        r_batch = r_samples[start:end]  # (B, D)
-
-        # Deterministic sub-key for this batch
-        key_batch = random.fold_in(rng_key, start)
-
-        # Sample from Dirichlet for each row in the batch
-        if n_samples_dirichlet == 1:
-            # Shape: (B, D)
-            samples = jax.random.dirichlet(key_batch, r_batch)
-        else:
-            # Draw multiple Dirichlet samples per posterior sample
-            # We vmap over the batch dimension
-            keys = random.split(key_batch, end - start)
-
-            def _sample_one(key, alpha):
-                return jax.random.dirichlet(
-                    key, alpha, shape=(n_samples_dirichlet,)
-                )
-
-            # (B, S, D)
-            samples = jax.vmap(_sample_one)(keys, r_batch)
-            # Flatten to (B * S, D)
-            samples = samples.reshape(-1, D)
-
-        # Transfer to CPU immediately so the full result never lives on GPU
-        chunks.append(np.asarray(samples))
-
-    return np.concatenate(chunks, axis=0)
+    p = jnp.clip(p, 1e-7, 1.0 - 1e-7)
+    gamma_raw = jax.random.gamma(key, r)
+    lam = gamma_raw * p / (1.0 - p)
+    total = jnp.maximum(lam.sum(axis=-1, keepdims=True), 1e-30)
+    return lam / total
 
 
-# ------------------------------------------------------------------------------
-
-
-def _batched_gamma_normalize(
-    r_samples: jnp.ndarray,
-    p_samples: jnp.ndarray,
-    n_samples_dirichlet: int,
-    rng_key: random.PRNGKey,
-    batch_size: int,
-) -> np.ndarray:
-    """Sample compositions via scaled Gamma variates and normalization.
-
-    This generalizes Dirichlet sampling to the case where each gene has
-    its own success probability ``p_g``.  The generative process is:
-
-    1. Draw ``lambda_raw_g ~ Gamma(r_g, rate=1)`` independently per gene.
-    2. Scale: ``lambda_g = lambda_raw_g * p_g / (1 - p_g)``.
-    3. Normalize: ``rho_g = lambda_g / sum_j lambda_j``.
-
-    When all ``p_g`` are equal, the scaling factor ``p / (1 - p)`` is a
-    constant that cancels in the normalization, recovering exactly
-    ``Dirichlet(r)``.  When ``p_g`` vary across genes, the compositions
-    reflect gene-specific rate heterogeneity from the Negative Binomial
-    model.
-
-    Each batch is sampled on GPU and immediately transferred to CPU so
-    the full simplex array never resides on device.
-
-    Parameters
-    ----------
-    r_samples : jnp.ndarray, shape ``(N, D)``
-        Dirichlet concentration (dispersion) parameters.
-    p_samples : jnp.ndarray, shape ``(N, D)``
-        Gene-specific success probabilities.  Must be in ``(0, 1)``.
-    n_samples_dirichlet : int
-        Number of composition draws per posterior sample.
-    rng_key : random.PRNGKey
-        JAX PRNG key.
-    batch_size : int
-        Number of posterior samples per batch.
-
-    Returns
-    -------
-    numpy.ndarray, shape ``(N_total, D)``
-        Simplex samples on CPU.  ``N_total = N * n_samples_dirichlet``.
-
-    Notes
-    -----
-    The Gamma(r_g, 1) variate is the latent rate parameter of the
-    Negative Binomial.  Scaling by p_g / (1 - p_g) converts from the
-    NB parameterization to expected counts, which are then normalized
-    to get compositional proportions.
-    """
-    N, D = r_samples.shape
-    chunks: list[np.ndarray] = []
-
-    # When n_samples_dirichlet > 1, each posterior sample fans out to S
-    # output rows.  Shrink the batch size so the per-chunk GPU tensor
-    # (B * S, D) stays manageable.
-    effective_bs = max(1, batch_size // max(1, n_samples_dirichlet))
-
-    for start in range(0, N, effective_bs):
-        end = min(start + effective_bs, N)
-        r_batch = r_samples[start:end]  # (B, D)
-        p_batch = p_samples[start:end]  # (B, D) or (B, 1)
-
-        key_batch = random.fold_in(rng_key, start)
-
-        # Clamp p away from 0 and 1 to avoid inf/nan in p/(1-p)
-        p_batch = jnp.clip(p_batch, 1e-7, 1.0 - 1e-7)
-
-        if n_samples_dirichlet == 1:
-            # Draw Gamma(r, 1) and scale by p / (1 - p)
-            gamma_raw = jax.random.gamma(key_batch, r_batch)  # (B, D)
-            lambda_scaled = gamma_raw * p_batch / (1.0 - p_batch)
-            total = jnp.maximum(
-                lambda_scaled.sum(axis=-1, keepdims=True), 1e-30
-            )
-            samples = lambda_scaled / total  # (B, D)
-        else:
-            keys = random.split(key_batch, end - start)
-
-            def _sample_one(key, alpha, p_gene):
-                gamma_raw = jax.random.gamma(
-                    key, alpha, shape=(n_samples_dirichlet,) + alpha.shape
-                )
-                # alpha has shape (D,); gamma_raw has shape (S, D)
-                lambda_scaled = gamma_raw * p_gene / (1.0 - p_gene)
-                total = jnp.maximum(
-                    lambda_scaled.sum(axis=-1, keepdims=True), 1e-30
-                )
-                return lambda_scaled / total  # (S, D)
-
-            # (B, S, D)
-            samples = jax.vmap(_sample_one)(keys, r_batch, p_batch)
-            samples = samples.reshape(-1, D)  # (B * S, D)
-
-        # Transfer to CPU immediately so the full result never lives on GPU
-        chunks.append(np.asarray(samples))
-
-    return np.concatenate(chunks, axis=0)
-
-
-# ------------------------------------------------------------------------------
-
-
-def _paired_dirichlet_sample(
-    r_A: jnp.ndarray,
-    r_B: jnp.ndarray,
-    n_samples_dirichlet: int,
-    rng_key: random.PRNGKey,
-    batch_size: int,
+@jax.jit
+def _jit_paired_dirichlet_single(
+    keys: jax.Array,
+    r_A: jax.Array,
+    r_B: jax.Array,
 ) -> tuple:
-    """Paired Dirichlet sampling for within-mixture comparisons.
+    """Paired single-draw Dirichlet for within-mixture comparisons.
 
-    Uses the **same** per-sample RNG sub-key for both conditions,
-    ensuring that the joint posterior correlation structure between
-    components is preserved.
+    Uses the same per-sample seed for both conditions so the joint
+    posterior correlation structure is preserved.
+    """
+    def _draw(key, alpha_a, alpha_b):
+        k_a, k_b = random.split(key)
+        return jax.random.dirichlet(k_a, alpha_a), jax.random.dirichlet(k_b, alpha_b)
 
-    Each batch is sampled on GPU and immediately transferred to CPU so
-    the full simplex arrays never reside on device.
+    return jax.vmap(_draw)(keys, r_A, r_B)
+
+
+# Multi-draw kernels use ``static_argnums`` for ``n_samples`` so that
+# JAX compiles a separate XLA program per distinct S value (typically
+# only 1 or 2 unique values per session).
+
+
+@partial(jax.jit, static_argnums=(2,))
+def _jit_dirichlet_multi(
+    keys: jax.Array,
+    r: jax.Array,
+    n_samples: int,
+) -> jax.Array:
+    """Multiple Dirichlet draws per row, flattened to ``(B*S, D)``.
+
+    ``keys`` has shape ``(B, 2)``; ``r`` has shape ``(B, D)``.
+    """
+    def _one(key, alpha):
+        return jax.random.dirichlet(key, alpha, shape=(n_samples,))
+
+    # (B, S, D) -> (B*S, D)
+    return jax.vmap(_one)(keys, r).reshape(-1, r.shape[-1])
+
+
+@partial(jax.jit, static_argnums=(3,))
+def _jit_gamma_normalize_multi(
+    keys: jax.Array,
+    r: jax.Array,
+    p: jax.Array,
+    n_samples: int,
+) -> jax.Array:
+    """Multiple Gamma-normalise draws per row, flattened to ``(B*S, D)``."""
+    p = jnp.clip(p, 1e-7, 1.0 - 1e-7)
+
+    def _one(key, alpha, p_gene):
+        gamma_raw = jax.random.gamma(
+            key, alpha, shape=(n_samples,) + alpha.shape
+        )
+        lam = gamma_raw * p_gene / (1.0 - p_gene)
+        total = jnp.maximum(lam.sum(axis=-1, keepdims=True), 1e-30)
+        return lam / total
+
+    return jax.vmap(_one)(keys, r, p).reshape(-1, r.shape[-1])
+
+
+@partial(jax.jit, static_argnums=(3,))
+def _jit_paired_dirichlet_multi(
+    keys: jax.Array,
+    r_A: jax.Array,
+    r_B: jax.Array,
+    n_samples: int,
+) -> tuple:
+    """Paired multi-draw Dirichlet, each flattened to ``(B*S, D)``."""
+    def _draw(key, alpha_a, alpha_b):
+        k_a, k_b = random.split(key)
+        s_a = jax.random.dirichlet(k_a, alpha_a, shape=(n_samples,))
+        s_b = jax.random.dirichlet(k_b, alpha_b, shape=(n_samples,))
+        return s_a, s_b
+
+    s_A, s_B = jax.vmap(_draw)(keys, r_A, r_B)
+    D = r_A.shape[-1]
+    return s_A.reshape(-1, D), s_B.reshape(-1, D)
+
+
+# ===========================================================================
+# Adaptive memory-aware wrapper
+# ===========================================================================
+
+
+def _estimate_chunk_size(
+    N: int,
+    D: int,
+    n_samples_dirichlet: int,
+    memory_budget: float,
+    n_input_arrays: int = 1,
+) -> int:
+    """Compute the largest chunk size that fits within *memory_budget*.
+
+    Accounts for both the output tensor (the dominant allocation) and
+    the input slices transferred to the device.
 
     Parameters
     ----------
-    r_A : jnp.ndarray, shape ``(N, D)``
-        Concentration parameters for component A.
-    r_B : jnp.ndarray, shape ``(N, D)``
-        Concentration parameters for component B.
+    N : int
+        Total number of posterior samples (rows).
+    D : int
+        Number of genes (columns).
     n_samples_dirichlet : int
-        Number of Dirichlet draws per posterior sample.
+        Fan-out factor per posterior sample.
+    memory_budget : float
+        Usable device bytes (from ``_gpu_memory_budget``).
+    n_input_arrays : int
+        Number of input arrays transferred per chunk (e.g. 1 for
+        Dirichlet, 2 for Gamma-normalise, 2 for paired).
+
+    Returns
+    -------
+    int
+        Chunk size (number of posterior-sample rows per JIT call).
+        Always >= 1.  When *memory_budget* is ``math.inf`` (CPU-only),
+        returns *N* so the loop executes exactly once.
+    """
+    if math.isinf(memory_budget):
+        return N
+
+    bytes_per_element = 4  # float32
+
+    # Output: (chunk * n_samples_dirichlet, D) float32
+    # Inputs: n_input_arrays * (chunk, D) float32
+    # Rough 2x headroom for XLA temporaries (key splits, intermediates)
+    per_row = (
+        n_samples_dirichlet * D * bytes_per_element  # output
+        + n_input_arrays * D * bytes_per_element      # inputs on device
+    ) * 2  # XLA headroom factor
+
+    chunk = max(1, int(memory_budget // per_row))
+    return min(chunk, N)
+
+
+def _adaptive_sample(
+    jit_fn: Callable,
+    arrays: Sequence[Array],
+    n_samples_dirichlet: int,
+    rng_key: random.PRNGKey,
+    batch_size: int,
+    memory_budget: float,
+    multi: bool,
+) -> np.ndarray:
+    """Run a JIT sampling kernel in as few chunks as possible.
+
+    Chooses chunk size as ``min(batch_size, memory-derived chunk)``.
+    When the entire array fits in one chunk the Python loop executes
+    exactly once — the common case on modern GPUs.
+
+    Parameters
+    ----------
+    jit_fn : callable
+        One of the ``_jit_*`` kernels.  For the single-draw path it is
+        called as ``jit_fn(key, *arrays)``; for the multi-draw path as
+        ``jit_fn(keys, *arrays, n_samples_dirichlet)``.
+    arrays : sequence of array-like
+        Input arrays, each with leading dimension N (posterior samples).
+    n_samples_dirichlet : int
+        Fan-out factor; 1 for the single-draw path.
     rng_key : random.PRNGKey
         JAX PRNG key.
     batch_size : int
-        Number of posterior samples per batch.
+        User-provided upper bound on chunk size (backward-compat cap).
+    memory_budget : float
+        Usable device bytes.
+    multi : bool
+        If ``True``, use the multi-draw calling convention.
+
+    Returns
+    -------
+    numpy.ndarray, shape ``(N_total, D)``
+        Concatenated simplex samples on CPU.
+    """
+    N = arrays[0].shape[0]
+    D = arrays[0].shape[1]
+
+    mem_chunk = _estimate_chunk_size(
+        N, D, n_samples_dirichlet, memory_budget,
+        n_input_arrays=len(arrays),
+    )
+    # Respect user-provided batch_size as an upper bound, but scale it
+    # down for multi-draw the same way the old code did.
+    effective_user_bs = max(1, batch_size // max(1, n_samples_dirichlet))
+    chunk_size = min(mem_chunk, effective_user_bs)
+
+    chunks: list[np.ndarray] = []
+    for start in range(0, N, chunk_size):
+        end = min(start + chunk_size, N)
+        sliced = [a[start:end] for a in arrays]
+
+        key_chunk = random.fold_in(rng_key, start)
+
+        if multi:
+            keys = random.split(key_chunk, end - start)
+            result = jit_fn(keys, *sliced, n_samples_dirichlet)
+        else:
+            result = jit_fn(key_chunk, *sliced)
+
+        chunks.append(np.asarray(result))
+
+    return np.concatenate(chunks, axis=0)
+
+
+def _adaptive_sample_paired(
+    jit_fn: Callable,
+    r_A: Array,
+    r_B: Array,
+    n_samples_dirichlet: int,
+    rng_key: random.PRNGKey,
+    batch_size: int,
+    memory_budget: float,
+    multi: bool,
+) -> tuple:
+    """Paired variant of ``_adaptive_sample`` returning two arrays.
+
+    Parameters
+    ----------
+    jit_fn : callable
+        ``_jit_paired_dirichlet_single`` or ``_jit_paired_dirichlet_multi``.
+    r_A, r_B : array-like, shape ``(N, D)``
+        Concentration parameters for conditions A and B.
+    n_samples_dirichlet : int
+        Fan-out factor.
+    rng_key : random.PRNGKey
+        JAX PRNG key.
+    batch_size : int
+        User-provided upper bound on chunk size.
+    memory_budget : float
+        Usable device bytes.
+    multi : bool
+        If ``True``, use the multi-draw calling convention.
 
     Returns
     -------
     tuple of (numpy.ndarray, numpy.ndarray)
         ``(simplex_A, simplex_B)`` each of shape ``(N_total, D)`` on CPU.
     """
-    N, D = r_A.shape
+    N = r_A.shape[0]
+    D = r_A.shape[1]
+
+    # Two input arrays + two output arrays -> 2 for n_input_arrays
+    mem_chunk = _estimate_chunk_size(
+        N, D, n_samples_dirichlet, memory_budget, n_input_arrays=2,
+    )
+    effective_user_bs = max(1, batch_size // max(1, n_samples_dirichlet))
+    chunk_size = min(mem_chunk, effective_user_bs)
+
     chunks_A: list[np.ndarray] = []
     chunks_B: list[np.ndarray] = []
+    for start in range(0, N, chunk_size):
+        end = min(start + chunk_size, N)
+        rA_chunk = r_A[start:end]
+        rB_chunk = r_B[start:end]
 
-    # When n_samples_dirichlet > 1, each posterior sample fans out to S
-    # output rows (for BOTH conditions).  Shrink the batch size so the
-    # per-chunk GPU tensors stay manageable.
-    effective_bs = max(1, batch_size // max(1, n_samples_dirichlet))
+        key_chunk = random.fold_in(rng_key, start)
+        keys = random.split(key_chunk, end - start)
 
-    for start in range(0, N, effective_bs):
-        end = min(start + effective_bs, N)
-        r_batch_A = r_A[start:end]
-        r_batch_B = r_B[start:end]
-        B = end - start
-
-        # Same base key for this batch — both conditions share it
-        key_batch = random.fold_in(rng_key, start)
-
-        if n_samples_dirichlet == 1:
-            # Split the shared key into per-sample sub-keys
-            keys = random.split(key_batch, B)
-
-            # For each sample, split the per-sample key into two
-            # sub-keys (one for A, one for B).  The correlation comes
-            # from using the same per-sample seed, NOT from sharing
-            # the exact key — the Dirichlet draws themselves are
-            # independent given the concentrations.
-            def _paired_draw(key, alpha_a, alpha_b):
-                k_a, k_b = random.split(key)
-                return (
-                    jax.random.dirichlet(k_a, alpha_a),
-                    jax.random.dirichlet(k_b, alpha_b),
-                )
-
-            samples_A, samples_B = jax.vmap(_paired_draw)(
-                keys, r_batch_A, r_batch_B
-            )
+        if multi:
+            sA, sB = jit_fn(keys, rA_chunk, rB_chunk, n_samples_dirichlet)
         else:
-            keys = random.split(key_batch, B)
+            sA, sB = jit_fn(keys, rA_chunk, rB_chunk)
 
-            def _paired_draw_multi(key, alpha_a, alpha_b):
-                k_a, k_b = random.split(key)
-                s_a = jax.random.dirichlet(
-                    k_a, alpha_a, shape=(n_samples_dirichlet,)
-                )
-                s_b = jax.random.dirichlet(
-                    k_b, alpha_b, shape=(n_samples_dirichlet,)
-                )
-                return s_a, s_b
+        chunks_A.append(np.asarray(sA))
+        chunks_B.append(np.asarray(sB))
 
-            samples_A, samples_B = jax.vmap(_paired_draw_multi)(
-                keys, r_batch_A, r_batch_B
-            )
-            # (B, S, D) -> (B * S, D)
-            samples_A = samples_A.reshape(-1, D)
-            samples_B = samples_B.reshape(-1, D)
+    return (
+        np.concatenate(chunks_A, axis=0),
+        np.concatenate(chunks_B, axis=0),
+    )
 
-        # Transfer to CPU immediately so full results never live on GPU
-        chunks_A.append(np.asarray(samples_A))
-        chunks_B.append(np.asarray(samples_B))
 
-    return np.concatenate(chunks_A, axis=0), np.concatenate(chunks_B, axis=0)
+# ===========================================================================
+# Public batched-sampling functions (thin wrappers)
+# ===========================================================================
+
+
+def _batched_dirichlet(
+    r_samples: Array,
+    n_samples_dirichlet: int,
+    rng_key: random.PRNGKey,
+    batch_size: int,
+    memory_budget: float = math.inf,
+) -> np.ndarray:
+    """Dirichlet sampling with JIT compilation and adaptive chunking.
+
+    Draws simplex samples from ``Dirichlet(r_samples[i, :])`` for each
+    posterior sample *i*.  The work is JIT-compiled and dispatched in as
+    few GPU round-trips as possible; the adaptive wrapper only splits
+    into multiple chunks when device memory would be exceeded.
+
+    Parameters
+    ----------
+    r_samples : array-like, shape ``(N, D)``
+        Dirichlet concentration parameters.
+    n_samples_dirichlet : int
+        Number of Dirichlet draws per posterior sample.
+    rng_key : random.PRNGKey
+        JAX PRNG key.
+    batch_size : int
+        Upper-bound cap on chunk size (backward-compat safety net).
+    memory_budget : float, default=math.inf
+        Usable device bytes.  ``math.inf`` disables chunking.
+
+    Returns
+    -------
+    numpy.ndarray, shape ``(N * n_samples_dirichlet, D)``
+        Simplex samples on CPU.
+    """
+    if n_samples_dirichlet == 1:
+        return _adaptive_sample(
+            _jit_dirichlet_single, [r_samples],
+            n_samples_dirichlet, rng_key, batch_size, memory_budget,
+            multi=False,
+        )
+    return _adaptive_sample(
+        _jit_dirichlet_multi, [r_samples],
+        n_samples_dirichlet, rng_key, batch_size, memory_budget,
+        multi=True,
+    )
+
+
+def _batched_gamma_normalize(
+    r_samples: Array,
+    p_samples: Array,
+    n_samples_dirichlet: int,
+    rng_key: random.PRNGKey,
+    batch_size: int,
+    memory_budget: float = math.inf,
+) -> np.ndarray:
+    """Gamma-normalise sampling with JIT compilation and adaptive chunking.
+
+    Generalises Dirichlet sampling to the case where each gene has its
+    own success probability ``p_g``.  The generative process is:
+
+    1. Draw ``lambda_raw_g ~ Gamma(r_g, rate=1)`` independently per gene.
+    2. Scale: ``lambda_g = lambda_raw_g * p_g / (1 - p_g)``.
+    3. Normalise: ``rho_g = lambda_g / sum_j lambda_j``.
+
+    Parameters
+    ----------
+    r_samples : array-like, shape ``(N, D)``
+        Dirichlet concentration (dispersion) parameters.
+    p_samples : array-like, shape ``(N, D)``
+        Gene-specific success probabilities in ``(0, 1)``.
+    n_samples_dirichlet : int
+        Number of composition draws per posterior sample.
+    rng_key : random.PRNGKey
+        JAX PRNG key.
+    batch_size : int
+        Upper-bound cap on chunk size.
+    memory_budget : float, default=math.inf
+        Usable device bytes.
+
+    Returns
+    -------
+    numpy.ndarray, shape ``(N * n_samples_dirichlet, D)``
+        Simplex samples on CPU.
+    """
+    if n_samples_dirichlet == 1:
+        return _adaptive_sample(
+            _jit_gamma_normalize_single, [r_samples, p_samples],
+            n_samples_dirichlet, rng_key, batch_size, memory_budget,
+            multi=False,
+        )
+    return _adaptive_sample(
+        _jit_gamma_normalize_multi, [r_samples, p_samples],
+        n_samples_dirichlet, rng_key, batch_size, memory_budget,
+        multi=True,
+    )
+
+
+def _paired_dirichlet_sample(
+    r_A: Array,
+    r_B: Array,
+    n_samples_dirichlet: int,
+    rng_key: random.PRNGKey,
+    batch_size: int,
+    memory_budget: float = math.inf,
+) -> tuple:
+    """Paired Dirichlet sampling with JIT compilation and adaptive chunking.
+
+    Uses the **same** per-sample RNG sub-key for both conditions so
+    the joint posterior correlation structure is preserved.
+
+    Parameters
+    ----------
+    r_A : array-like, shape ``(N, D)``
+        Concentration parameters for condition A.
+    r_B : array-like, shape ``(N, D)``
+        Concentration parameters for condition B.
+    n_samples_dirichlet : int
+        Number of Dirichlet draws per posterior sample.
+    rng_key : random.PRNGKey
+        JAX PRNG key.
+    batch_size : int
+        Upper-bound cap on chunk size.
+    memory_budget : float, default=math.inf
+        Usable device bytes.
+
+    Returns
+    -------
+    tuple of (numpy.ndarray, numpy.ndarray)
+        ``(simplex_A, simplex_B)`` each of shape
+        ``(N * n_samples_dirichlet, D)`` on CPU.
+    """
+    if n_samples_dirichlet == 1:
+        return _adaptive_sample_paired(
+            _jit_paired_dirichlet_single, r_A, r_B,
+            n_samples_dirichlet, rng_key, batch_size, memory_budget,
+            multi=False,
+        )
+    return _adaptive_sample_paired(
+        _jit_paired_dirichlet_multi, r_A, r_B,
+        n_samples_dirichlet, rng_key, batch_size, memory_budget,
+        multi=True,
+    )

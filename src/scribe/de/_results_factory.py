@@ -145,7 +145,9 @@ def compare(
     rng_key : jax.random.PRNGKey, optional
         Random key used by composition sampling.
     batch_size : int, default=2048
-        Batched sampling chunk size.
+        Upper-bound cap on chunk size for composition sampling.  The
+        adaptive memory layer may use larger chunks when GPU memory
+        allows; this parameter acts as a safety net.
     gene_mask : jnp.ndarray, optional
         Optional keep-mask over full genes.
     p_samples_A : jnp.ndarray, optional
