@@ -926,6 +926,12 @@ def test_plot_mu_pairwise_saves_output_for_multi_dataset(monkeypatch, tmp_path):
         "_get_map_estimates_for_plot",
         _fake_get_map_estimates,
     )
+    # Provide AxisLayout metadata matching the fake mu shape (D=2, G=4).
+    monkeypatch.setattr(
+        mu_pairwise_module,
+        "_get_layouts_for_plot",
+        lambda _results: {"mu": AxisLayout(axes=("datasets", "genes"))},
+    )
     monkeypatch.setattr(
         viz_config,
         "_get_config_values",
@@ -985,6 +991,15 @@ def test_plot_mean_calibration_requests_targeted_map(monkeypatch, tmp_path):
         mean_calibration_module,
         "_get_map_estimates_for_plot",
         _fake_get_map_estimates,
+    )
+    # Provide AxisLayout metadata matching the fake r, p shapes.
+    monkeypatch.setattr(
+        mean_calibration_module,
+        "_get_layouts_for_plot",
+        lambda _results: {
+            "r": AxisLayout(axes=("genes",)),
+            "p": AxisLayout(axes=("genes",)),
+        },
     )
     monkeypatch.setattr(
         viz_config,
@@ -1654,6 +1669,14 @@ def test_mixture_composition_requests_mixing_weights_only(
         "_get_map_estimates_for_plot",
         _fake_get_map_estimates,
     )
+    # Provide AxisLayout metadata matching the fake mixing_weights shape.
+    monkeypatch.setattr(
+        mixture_ppc_module,
+        "_get_layouts_for_plot",
+        lambda _results: {
+            "mixing_weights": AxisLayout(axes=("components",)),
+        },
+    )
     monkeypatch.setattr(
         mixture_ppc_module,
         "_get_config_values",
@@ -1712,10 +1735,14 @@ def test_mixture_composition_aggregates_dataset_specific_weights():
         ],
         dtype=float,
     )
+    layouts = {
+        "mixing_weights": AxisLayout(axes=("datasets", "components")),
+    }
     resolved = _resolve_weight_fractions_for_composition(
         mixing_weights=mixing_weights,
         n_components=2,
         dataset_indices=dataset_indices,
+        layouts=layouts,
     )
     np.testing.assert_allclose(resolved, np.array([2.0 / 3.0, 1.0 / 3.0]))
 
@@ -2047,6 +2074,14 @@ def test_prepare_calibration_data_single_dataset(monkeypatch):
             "p": np.array([0.4, 0.5]),
         },
     )
+    monkeypatch.setattr(
+        mc_module,
+        "_get_layouts_for_plot",
+        lambda _r: {
+            "r": AxisLayout(axes=("genes",)),
+            "p": AxisLayout(axes=("genes",)),
+        },
+    )
 
     counts = np.array([[2.0, 3.0], [4.0, 1.0]], dtype=float)
     data = _prepare_calibration_data(_Fake(), counts)
@@ -2068,6 +2103,11 @@ def test_prepare_calibration_data_returns_none_when_r_missing(monkeypatch):
         mc_module,
         "_get_map_estimates_for_plot",
         lambda *_a, **_kw: {"p": np.array([0.5])},
+    )
+    monkeypatch.setattr(
+        mc_module,
+        "_get_layouts_for_plot",
+        lambda _r: {"p": AxisLayout(axes=("genes",))},
     )
 
     data = _prepare_calibration_data(_Fake(), np.ones((2, 1)))
@@ -2130,6 +2170,13 @@ def test_prepare_mixture_composition_data_global_mode(monkeypatch):
         mp_module,
         "_get_map_estimates_for_plot",
         lambda *_a, **_kw: {"mixing_weights": np.array([0.6, 0.4])},
+    )
+    monkeypatch.setattr(
+        mp_module,
+        "_get_layouts_for_plot",
+        lambda _r: {
+            "mixing_weights": AxisLayout(axes=("components",)),
+        },
     )
 
     data = _prepare_mixture_composition_data(
@@ -2527,3 +2574,235 @@ def test_plot_ecdf_viz_cfg_none_uses_default(monkeypatch):
     result = plot_ecdf(counts, save=False)
     assert captured["n_genes"] == 25
     plt.close(result.fig)
+
+
+# =========================================================================
+# Phase D – AxisLayout-driven viz helper tests
+# =========================================================================
+
+from scribe.core.axis_layout import AxisLayout
+from scribe.viz.mean_calibration import (
+    _compute_predicted_mean,
+    _compute_per_dataset_means,
+)
+from scribe.viz.mu_pairwise import (
+    _collapse_mixture_axis,
+    _get_dataset_count,
+)
+
+
+class TestGetLayoutsForPlot:
+    """Verify _get_layouts_for_plot dispatch for SVI and MCMC results."""
+
+    def test_mcmc_returns_layouts_without_sample_dim(self):
+        """MCMC dispatch should return layouts with has_sample_dim=False."""
+        from scribe.viz.dispatch import _get_layouts_for_plot
+
+        results = _make_mcmc_results_for_viz()
+        layouts = _get_layouts_for_plot(results)
+        assert isinstance(layouts, dict)
+        # r has shape (3, 2) = (samples, genes) so layout should know
+        # about genes after stripping the sample dim.
+        assert "r" in layouts
+        assert not layouts["r"].has_sample_dim
+
+    def test_svi_returns_canonical_layouts(self):
+        """SVI dispatch should return layouts keyed by canonical names."""
+        from scribe.viz.dispatch import _get_layouts_for_plot
+
+        params = {
+            "p": jnp.array(0.3, dtype=jnp.float32),
+            "r": jnp.ones((5,), dtype=jnp.float32),
+        }
+        config = ModelConfig(base_model="nbdm", n_components=None)
+        results = ScribeSVIResults(
+            params=params,
+            loss_history=jnp.zeros(10),
+            n_cells=10,
+            n_genes=5,
+            model_type="nbdm",
+            model_config=config,
+            prior_params={},
+        )
+        layouts = _get_layouts_for_plot(results)
+        assert isinstance(layouts, dict)
+        assert "r" in layouts
+        assert layouts["r"].gene_axis is not None
+
+
+class TestComputePredictedMeanWithLayouts:
+    """Verify _compute_predicted_mean layout-driven vs fallback paths agree."""
+
+    def test_standard_model_with_layouts(self):
+        """Standard (non-mixture) model should produce (G,) prediction."""
+        r = np.array([1.0, 2.0, 3.0])
+        p = np.array(0.4)
+        layouts = {
+            "r": AxisLayout(axes=("genes",)),
+            "p": AxisLayout(axes=()),
+        }
+        pred = _compute_predicted_mean(r, p, layouts=layouts)
+        # mu = r * p / (1-p) = r * 0.4/0.6
+        expected = r * 0.4 / 0.6
+        np.testing.assert_allclose(pred, expected, rtol=1e-6)
+
+    def test_mixture_model_with_layouts(self):
+        """Mixture model should collapse component axis to (G,)."""
+        r = np.array([[1.0, 2.0], [3.0, 4.0]])
+        p = np.array([0.3, 0.5])
+        w = np.array([0.6, 0.4])
+        layouts = {
+            "r": AxisLayout(axes=("components", "genes")),
+            "p": AxisLayout(axes=("components",)),
+        }
+        pred = _compute_predicted_mean(r, p, w, layouts=layouts)
+        assert pred.shape == (2,)
+        assert pred[0] > 0
+
+    def test_mixture_with_vcp(self):
+        """Mixture + VCP should scale prediction by mean capture prob."""
+        r = np.array([[1.0, 2.0], [3.0, 4.0]])
+        p = np.array([0.3, 0.5])
+        w = np.array([0.6, 0.4])
+        pc = np.array([0.8, 0.9, 0.7])
+        layouts = {
+            "r": AxisLayout(axes=("components", "genes")),
+            "p": AxisLayout(axes=("components",)),
+        }
+        pred_vcp = _compute_predicted_mean(r, p, w, pc, layouts=layouts)
+        pred_no_vcp = _compute_predicted_mean(r, p, w, layouts=layouts)
+        # VCP scales by mean(pc) = 0.8; all predictions should shrink.
+        np.testing.assert_allclose(pred_vcp, pred_no_vcp * np.mean(pc))
+
+
+class TestPerDatasetMeansWithLayouts:
+    """Verify _compute_per_dataset_means layout-driven vs fallback."""
+
+    def test_dataset_slicing_with_layouts(self):
+        """Per-dataset slicing should use layout.dataset_axis."""
+        r = np.array([[1.0, 2.0], [3.0, 4.0]])  # (D=2, G=2)
+        p = np.array([[0.3, 0.4], [0.5, 0.6]])   # (D=2, G=2)
+        counts = np.ones((6, 2))
+        ds_codes = np.array([0, 0, 0, 1, 1, 1])
+        ds_names = ["A", "B"]
+        layouts = {
+            "r": AxisLayout(axes=("datasets", "genes")),
+            "p": AxisLayout(axes=("datasets", "genes")),
+        }
+        results = _compute_per_dataset_means(
+            counts, r, p, ds_codes, ds_names,
+            n_datasets=2, layouts=layouts,
+        )
+        assert len(results) == 2
+        assert results[0]["name"] == "A"
+        assert results[1]["name"] == "B"
+        # Dataset 0 uses r[0]=[1,2], p[0]=[0.3,0.4]; dataset 1 uses r[1], p[1].
+        assert results[0]["pred_mean"].shape == (2,)
+        assert results[1]["pred_mean"].shape == (2,)
+        assert not np.allclose(results[0]["pred_mean"], results[1]["pred_mean"])
+
+
+class TestCollapseMixtureAxisWithLayouts:
+    """Verify _collapse_mixture_axis layout path vs fallback."""
+
+    def test_no_mixture_1d(self):
+        """Gene-only mu should become (1, G)."""
+        mu = np.array([1.0, 2.0, 3.0])
+        layouts = {"mu": AxisLayout(axes=("genes",))}
+        # No component axis → skip collapsing, but must reshape to (1, G).
+        result = _collapse_mixture_axis(mu, None, layouts=layouts)
+        assert result.shape[0] == 1
+        np.testing.assert_allclose(result[0], mu)
+
+    def test_mixture_collapse_with_weights(self):
+        """(K, G) mu with weights should collapse to (G,)."""
+        mu = np.array([[1.0, 2.0], [3.0, 4.0]])  # (K=2, G=2)
+        w = np.array([0.6, 0.4])
+        layouts = {
+            "mu": AxisLayout(axes=("components", "genes")),
+            "mixing_weights": AxisLayout(axes=("components",)),
+        }
+        result = _collapse_mixture_axis(mu, w, layouts=layouts)
+        # Weighted sum: 0.6*[1,2] + 0.4*[3,4] = [1.8, 2.8]
+        np.testing.assert_allclose(result, np.array([1.8, 2.8]))
+
+    def test_dataset_only_passthrough(self):
+        """(D, G) mu without component axis should pass through."""
+        mu = np.array([[1.0, 2.0], [3.0, 4.0]])
+        layouts = {"mu": AxisLayout(axes=("datasets", "genes"))}
+        result = _collapse_mixture_axis(mu, None, layouts=layouts)
+        np.testing.assert_array_equal(result, mu)
+
+
+class TestGetDatasetCountWithLayouts:
+    """Verify _get_dataset_count layout path vs fallback."""
+
+    def test_from_model_config(self):
+        """Explicit n_datasets in model_config takes priority."""
+
+        class _Fake:
+            model_config = type("MC", (), {"n_datasets": 3})()
+
+        assert _get_dataset_count(_Fake(), np.ones((3, 10))) == 3
+
+    def test_from_layout(self):
+        """Layout dataset_axis should be used when model_config lacks n_datasets."""
+
+        class _Fake:
+            model_config = type("MC", (), {"n_datasets": None})()
+
+        mu = np.ones((2, 5))
+        layouts = {"mu": AxisLayout(axes=("datasets", "genes"))}
+        assert _get_dataset_count(_Fake(), mu, layouts=layouts) == 2
+
+    def test_from_layout_no_dataset_axis(self):
+        """Gene-only layout should return 1."""
+
+        class _Fake:
+            model_config = type("MC", (), {"n_datasets": None})()
+
+        mu = np.ones((5,))
+        layouts = {"mu": AxisLayout(axes=("genes",))}
+        assert _get_dataset_count(_Fake(), mu, layouts=layouts) == 1
+
+
+class TestNormalizeMixingFractionsWithLayouts:
+    """Verify _resolve_weight_fractions_for_composition layout path."""
+
+    def test_global_weights_1d(self):
+        """1-D global weights (K,) should pass through regardless."""
+        w = np.array([0.5, 0.3, 0.2])
+        layouts = {"mixing_weights": AxisLayout(axes=("components",))}
+        result = _resolve_weight_fractions_for_composition(
+            w, n_components=3, layouts=layouts,
+        )
+        np.testing.assert_allclose(result, w / w.sum())
+
+    def test_per_dataset_weights_with_layout(self):
+        """(D, K) weights should average over dataset axis using layout."""
+        w = np.array([[0.6, 0.4], [0.3, 0.7]])  # (D=2, K=2)
+        layouts = {
+            "mixing_weights": AxisLayout(axes=("datasets", "components")),
+        }
+        result = _resolve_weight_fractions_for_composition(
+            w, n_components=2, layouts=layouts,
+        )
+        expected = np.mean(w, axis=0)
+        expected = expected / expected.sum()
+        np.testing.assert_allclose(result, expected)
+
+    def test_per_dataset_weighted_aggregate(self):
+        """(D, K) weights with dataset_indices should do cell-count weighting."""
+        w = np.array([[0.6, 0.4], [0.3, 0.7]])
+        ds_idx = np.array([0, 0, 0, 1])  # 3 cells in ds 0, 1 in ds 1
+        layouts = {
+            "mixing_weights": AxisLayout(axes=("datasets", "components")),
+        }
+        result = _resolve_weight_fractions_for_composition(
+            w, n_components=2, dataset_indices=ds_idx, layouts=layouts,
+        )
+        # Weighted: ds_weights = [0.75, 0.25]
+        # fractions = 0.75*[0.6,0.4] + 0.25*[0.3,0.7] = [0.525, 0.475]
+        expected = np.array([0.525, 0.475])
+        expected = expected / expected.sum()
+        np.testing.assert_allclose(result, expected)

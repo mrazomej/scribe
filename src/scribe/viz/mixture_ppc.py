@@ -28,6 +28,7 @@ from ._interactive import (
 )
 from .config import _get_config_values
 from .dispatch import (
+    _get_layouts_for_plot,
     _get_map_estimates_for_plot,
     _get_map_like_predictive_samples_for_plot,
     _get_cell_assignment_probabilities_for_plot,
@@ -182,26 +183,31 @@ def _get_component_ppc_samples(
         targets=component_targets,
     )
 
+    # Fetch AxisLayout metadata for layout-driven axis checks.
+    _layouts = _get_layouts_for_plot(results)
+
     r_all = map_estimates["r"]
     p_all = map_estimates["p"]
 
     r_k = r_all[component_idx]
     n_genes = r_k.shape[0]
 
-    if jnp.ndim(p_all) == 0:
-        p_k = p_all
-    elif jnp.ndim(p_all) == 1:
-        p_k = p_all[component_idx]
-    else:
-        p_k = p_all[component_idx]
+    # Slice p along its component axis when it is per-component.
+    p_k = (
+        p_all[component_idx]
+        if _layouts["p"].component_axis is not None
+        else p_all
+    )
 
     gate_k = None
     if "gate" in map_estimates:
         gate_all = map_estimates["gate"]
-        if jnp.ndim(gate_all) > 1:
-            gate_k = gate_all[component_idx]
-        else:
-            gate_k = gate_all
+        # Slice gate along its component axis when it is per-component.
+        gate_k = (
+            gate_all[component_idx]
+            if _layouts["gate"].component_axis is not None
+            else gate_all
+        )
 
     p_capture = map_estimates.get("p_capture")
     has_vcp = p_capture is not None
@@ -1370,7 +1376,7 @@ def plot_mixture_ppc_comparison(*args, **kwargs):
 
 
 def _resolve_weight_fractions_for_composition(
-    mixing_weights, n_components, dataset_indices=None
+    mixing_weights, n_components, dataset_indices=None, layouts=None
 ):
     """Convert MAP mixing weights into a normalized component-fraction vector.
 
@@ -1383,6 +1389,10 @@ def _resolve_weight_fractions_for_composition(
     dataset_indices : array-like, optional
         Per-cell dataset ids used to build a dataset-size-weighted aggregate
         when ``mixing_weights`` is dataset-specific with shape ``(D, K)``.
+    layouts : dict of str to AxisLayout or None
+        When provided, ``layouts["mixing_weights"].dataset_axis`` is used
+        to determine if the weights are per-dataset and which axis to
+        aggregate over, avoiding shape-matching heuristics.
 
     Returns
     -------
@@ -1397,34 +1407,31 @@ def _resolve_weight_fractions_for_composition(
     if w.ndim == 0:
         return None
 
+    # Use layout metadata to identify the dataset axis (if any).
+    _ds_ax = layouts["mixing_weights"].dataset_axis
+
     if w.ndim == 1:
         fractions = w
     elif w.ndim == 2:
-        # Prefer (D, K) orientation. If not already in that orientation,
-        # transpose when that produces (D, K).
-        if w.shape[-1] == n_components:
-            w_dk = w
-        elif w.shape[0] == n_components:
-            w_dk = w.T
-        else:
-            # Fall back to flatten+truncate behavior only when no axis
-            # matches K; this keeps plots robust to unexpected shapes.
+        if _ds_ax is None:
+            # No dataset axis — shouldn't happen for a 2-D weight tensor
+            # when layouts are present, but handle gracefully.
             fractions = w.reshape(-1)
-            fractions = fractions[:n_components]
-            fractions = np.clip(fractions, a_min=0.0, a_max=None)
-            return fractions / max(np.sum(fractions), 1e-12)
-
-        if dataset_indices is not None:
+        elif dataset_indices is not None:
             ds_idx = np.asarray(dataset_indices)
             if ds_idx.ndim == 1 and ds_idx.size > 0:
-                n_datasets = w_dk.shape[0]
-                counts = np.bincount(ds_idx.astype(int), minlength=n_datasets)
-                ds_weights = counts / max(int(np.sum(counts)), 1)
+                n_datasets = w.shape[_ds_ax]
+                cell_counts = np.bincount(
+                    ds_idx.astype(int), minlength=n_datasets,
+                )
+                ds_weights = cell_counts / max(int(np.sum(cell_counts)), 1)
+                # Move dataset axis to 0 for consistent broadcasting.
+                w_dk = np.moveaxis(w, _ds_ax, 0)
                 fractions = np.sum(w_dk * ds_weights[:, None], axis=0)
             else:
-                fractions = np.mean(w_dk, axis=0)
+                fractions = np.mean(w, axis=_ds_ax)
         else:
-            fractions = np.mean(w_dk, axis=0)
+            fractions = np.mean(w, axis=_ds_ax)
     else:
         fractions = w.reshape(-1)
 
@@ -1535,11 +1542,13 @@ def _prepare_mixture_composition_data(
         mixing_weights = map_estimates.get("mixing_weights")
     except ValueError:
         mixing_weights = None
+    _layouts = _get_layouts_for_plot(results)
     dataset_indices = getattr(results, "_dataset_indices", None)
     weight_fractions = _resolve_weight_fractions_for_composition(
         mixing_weights=mixing_weights,
         n_components=n_components,
         dataset_indices=dataset_indices,
+        layouts=_layouts,
     )
 
     if cell_labels is not None:

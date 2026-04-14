@@ -1,8 +1,15 @@
 """Dispatch helpers for SVI vs MCMC result types."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import numpy as np
 from multipledispatch import dispatch
 import scribe
+
+if TYPE_CHECKING:
+    from ..core.axis_layout import AxisLayout
 
 
 @dispatch(scribe.ScribeSVIResults, object)
@@ -206,6 +213,53 @@ def _get_map_estimates_for_plot(
     _ = use_mean
     _ = targets
     return results.get_map()
+
+
+# ---------------------------------------------------------------------------
+# Layout metadata (AxisLayout) for plot helpers
+# ---------------------------------------------------------------------------
+
+
+@dispatch(scribe.ScribeSVIResults)
+def _get_layouts_for_plot(results) -> dict[str, "AxisLayout"]:
+    """Get canonical MAP-level AxisLayout metadata from SVI results.
+
+    Builds layouts keyed by canonical parameter names (``r``, ``p``,
+    ``gate``, ``mixing_weights``, …) with ``has_sample_dim=False``
+    so callers can query axis semantics without shape heuristics.
+    """
+    from ..sampling import _build_canonical_layouts
+
+    # SVI variational params use internal names (e.g. p_alpha, p_beta);
+    # the viz layer needs layouts keyed by canonical names.  Build them
+    # from the canonical MAP dict, falling back to the raw variational
+    # layouts when MAP extraction is unavailable (e.g. in unit tests
+    # with minimal results objects).
+    try:
+        map_est = results.get_map(canonical=True, verbose=False)
+    except (KeyError, ValueError, AttributeError):
+        raw = results.layouts
+        return {k: v.without_sample_dim() for k, v in raw.items()}
+    return _build_canonical_layouts(
+        map_est,
+        results.model_config,
+        n_genes=results.n_genes,
+        n_cells=results.n_cells,
+        n_components=getattr(results.model_config, "n_components", None),
+        has_sample_dim=False,
+    )
+
+
+@dispatch(scribe.ScribeMCMCResults)
+def _get_layouts_for_plot(results) -> dict[str, "AxisLayout"]:
+    """Get MAP-level AxisLayout metadata from MCMC results.
+
+    MCMC samples carry a leading draw axis; the MAP (posterior mean)
+    does not, so we strip it for the viz layer.
+    """
+    raw = results.layouts
+    return {k: v.without_sample_dim() for k, v in raw.items()}
+
 
 
 @dispatch(scribe.ScribeSVIResults)

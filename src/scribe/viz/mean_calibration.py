@@ -30,7 +30,7 @@ from ._interactive import (
     _create_or_validate_single_axis,
     plot_function,
 )
-from .dispatch import _get_map_estimates_for_plot
+from .dispatch import _get_layouts_for_plot, _get_map_estimates_for_plot
 from .gene_selection import _coerce_counts
 
 
@@ -44,6 +44,7 @@ def _compute_predicted_mean(
     p,
     mixing_weights=None,
     p_capture=None,
+    layouts=None,
 ):
     """Compute predicted per-gene observed mean from MAP parameters.
 
@@ -62,6 +63,9 @@ def _compute_predicted_mean(
     p_capture : ndarray or None
         Per-cell capture probability ``(C,)``.  ``None`` for
         non-VCP models (treated as :math:`\\nu = 1`).
+    layouts : dict of str to AxisLayout
+        Canonical MAP-level layouts from ``_get_layouts_for_plot``.
+        Axis semantics are read from the layout metadata.
 
     Returns
     -------
@@ -71,27 +75,23 @@ def _compute_predicted_mean(
     r = np.asarray(r, dtype=float)
     p = np.asarray(p, dtype=float)
 
-    # Broadcast p to match r when p is (K,) and r is (K, G) or deeper
-    if r.ndim >= 2 and p.ndim == 1 and p.shape[0] == r.shape[0]:
+    # Use layout metadata to determine whether p is per-component.
+    if layouts["p"].component_axis is not None:
         p = p.reshape((-1,) + (1,) * (r.ndim - 1))
 
-    # Biological NB mean per gene (per component if mixture)
     p_safe = np.clip(p, 1e-8, 1.0 - 1e-8)
     mu_bio = r * p_safe / (1.0 - p_safe)
 
-    # For mixture models: weighted average across component axis (axis 0)
-    is_mixture = mixing_weights is not None and r.ndim >= 2
-    if is_mixture:
+    # Use layout metadata to determine whether r is per-component.
+    if layouts["r"].component_axis is not None and mixing_weights is not None:
         w = np.asarray(mixing_weights, dtype=float)
-        # Reshape weights to (K, 1, ...) for broadcasting
         w = w.reshape((-1,) + (1,) * (mu_bio.ndim - 1))
         mu_bio = np.sum(w * mu_bio, axis=0)
 
-    # Collapse any remaining non-gene dimensions (e.g. dataset) by averaging
+    # Collapse remaining non-gene dimensions (e.g. dataset) by averaging.
     while mu_bio.ndim > 1:
         mu_bio = np.mean(mu_bio, axis=0)
 
-    # Scale by average capture probability
     if p_capture is not None:
         mean_nu = float(np.mean(np.asarray(p_capture, dtype=float)))
     else:
@@ -109,6 +109,7 @@ def _compute_per_dataset_means(
     mixing_weights=None,
     p_capture=None,
     n_datasets=None,
+    layouts=None,
 ):
     """Compute observed and predicted means per dataset.
 
@@ -123,6 +124,9 @@ def _compute_per_dataset_means(
     mixing_weights : ndarray or None
     p_capture : ndarray or None, shape ``(C,)``
     n_datasets : int or None
+    layouts : dict of str to AxisLayout or None
+        Canonical MAP-level layouts. When provided, dataset-axis slicing
+        uses ``layout.dataset_axis`` instead of shape-matching heuristics.
 
     Returns
     -------
@@ -138,41 +142,29 @@ def _compute_per_dataset_means(
     for d in unique_ds:
         mask = ds_codes == d
 
-        # Observed mean for this dataset's cells
         obs_mean = np.mean(np.asarray(counts[mask], dtype=float), axis=0)
 
-        # Slice per-dataset parameters if the leading dim matches n_datasets
-        def _slice(param, ds_idx):
+        def _slice(param, ds_idx, key):
+            """Slice a parameter along its dataset axis via layout metadata."""
             if param is None:
                 return None
             param = np.asarray(param, dtype=float)
-            if param.ndim >= 1 and param.shape[0] == _n_ds:
-                return param[ds_idx]
-            # Mixture with dataset dim: (K, D, G) -> (K, G)
-            if param.ndim >= 2 and param.shape[1] == _n_ds:
-                return param[:, ds_idx]
+            ds_ax = layouts[key].dataset_axis
+            if ds_ax is not None:
+                return np.take(param, ds_idx, axis=ds_ax)
             return param
 
-        r_d = _slice(r, int(d))
-        p_d = _slice(p, int(d))
+        r_d = _slice(r, int(d), key="r")
+        p_d = _slice(p, int(d), key="p")
 
-        # Mixing weights need dedicated slicing logic because a 1-D global
-        # weight vector has shape (K,). When K == n_datasets, generic shape
-        # heuristics would incorrectly treat it as per-dataset and slice a
-        # scalar, breaking mixture broadcasting.
         def _slice_mixing(weights, ds_idx):
+            """Slice mixing weights along the dataset axis via layout metadata."""
             if weights is None:
                 return None
             weights = np.asarray(weights, dtype=float)
-            if weights.ndim == 1:
-                # Global mixture weights (K,) shared by all datasets.
-                return weights
-            if weights.ndim >= 2 and weights.shape[0] == _n_ds:
-                # Dataset-major layout: (D, K)
-                return weights[ds_idx]
-            if weights.ndim >= 2 and weights.shape[1] == _n_ds:
-                # Component-major layout: (K, D)
-                return weights[:, ds_idx]
+            ds_ax = layouts["mixing_weights"].dataset_axis
+            if ds_ax is not None:
+                return np.take(weights, ds_idx, axis=ds_ax)
             return weights
 
         mixing_d = _slice_mixing(mixing_weights, int(d))
@@ -182,7 +174,9 @@ def _compute_per_dataset_means(
             else None
         )
 
-        pred_mean = _compute_predicted_mean(r_d, p_d, mixing_d, pc_d)
+        pred_mean = _compute_predicted_mean(
+            r_d, p_d, mixing_d, pc_d, layouts=layouts,
+        )
 
         name = (
             str(dataset_names[int(d)])
@@ -338,6 +332,9 @@ def _prepare_calibration_data(
         )
         return None
 
+    # Fetch AxisLayout metadata for layout-driven axis lookups.
+    layouts = _get_layouts_for_plot(results)
+
     mixing_weights = None
     if is_mixture:
         try:
@@ -349,7 +346,6 @@ def _prepare_calibration_data(
             mixing_weights = None
     p_capture = map_estimates.get("p_capture")
 
-    # Build annotation string for model details
     _annotations = []
     bnb_kappa = None
     bnb_concentration = None
@@ -399,6 +395,7 @@ def _prepare_calibration_data(
             mixing_weights=mixing_weights,
             p_capture=p_capture,
             n_datasets=n_ds_cfg,
+            layouts=layouts,
         )
         return {
             "mode": "multi_dataset",
@@ -410,7 +407,9 @@ def _prepare_calibration_data(
         }
 
     obs_mean = np.mean(np.asarray(counts, dtype=float), axis=0)
-    pred_mean = _compute_predicted_mean(r, p, mixing_weights, p_capture)
+    pred_mean = _compute_predicted_mean(
+        r, p, mixing_weights, p_capture, layouts=layouts,
+    )
     return {
         "mode": "single",
         "ds_results": None,

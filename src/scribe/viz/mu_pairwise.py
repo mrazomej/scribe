@@ -21,10 +21,10 @@ from ._interactive import (
     _create_or_validate_grid_axes,
     plot_function,
 )
-from .dispatch import _get_map_estimates_for_plot
+from .dispatch import _get_layouts_for_plot, _get_map_estimates_for_plot
 
 
-def _get_dataset_count(results, mu_values):
+def _get_dataset_count(results, mu_values, layouts=None):
     """Infer the number of datasets from result metadata and ``mu`` shape.
 
     Parameters
@@ -33,6 +33,9 @@ def _get_dataset_count(results, mu_values):
         Fitted results object that may expose ``model_config.n_datasets``.
     mu_values : ndarray
         MAP estimate for ``mu``.
+    layouts : dict of str to AxisLayout or None
+        When provided, ``layouts["mu"].dataset_axis`` is checked before
+        falling back to shape-based inference.
 
     Returns
     -------
@@ -40,20 +43,21 @@ def _get_dataset_count(results, mu_values):
         Inferred number of datasets. Returns ``1`` when no multi-dataset
         signal is available.
     """
-    # Prefer explicit model metadata because it is the most reliable source.
+    # Prefer explicit model metadata.
     model_cfg = getattr(results, "model_config", None)
     n_datasets = getattr(model_cfg, "n_datasets", None)
     if n_datasets is not None:
         return int(n_datasets)
 
-    # Fall back to shape-based inference for ad hoc test stubs.
+    # Use layout metadata to determine dataset count.
     mu_arr = np.asarray(mu_values)
-    if mu_arr.ndim >= 2:
-        return int(mu_arr.shape[0])
+    ds_ax = layouts["mu"].dataset_axis
+    if ds_ax is not None:
+        return int(mu_arr.shape[ds_ax])
     return 1
 
 
-def _collapse_mixture_axis(mu_values, mixing_weights):
+def _collapse_mixture_axis(mu_values, mixing_weights, layouts=None):
     """Collapse mixture-specific ``mu`` into dataset-level ``mu``.
 
     Parameters
@@ -64,6 +68,9 @@ def _collapse_mixture_axis(mu_values, mixing_weights):
     mixing_weights : ndarray or None
         Mixture weights if available. Supported shapes are ``(K,)`` and
         ``(K, D)``.
+    layouts : dict of str to AxisLayout or None
+        When provided, ``layouts["mu"].component_axis`` determines
+        whether there is a mixture dimension to collapse.
 
     Returns
     -------
@@ -72,28 +79,29 @@ def _collapse_mixture_axis(mu_values, mixing_weights):
         or ``(1, G)`` for single-dataset inputs.
     """
     mu_arr = np.asarray(mu_values, dtype=float)
+
+    # Read the component axis from layout metadata.
+    _comp_ax = layouts["mu"].component_axis
+
+    if _comp_ax is not None:
+        # Mixture model: weighted-average (or simple average) over component axis.
+        if mixing_weights is None:
+            return np.mean(mu_arr, axis=_comp_ax)
+        w = np.asarray(mixing_weights, dtype=float)
+        # Expand weight dims so they broadcast with mu along the
+        # component axis.  Other axes get singleton dimensions.
+        shape = [1] * mu_arr.ndim
+        shape[_comp_ax] = w.shape[0]
+        if w.ndim == 1:
+            w = w.reshape(shape)
+        elif w.ndim == 2:
+            w = w.reshape(shape[:_comp_ax] + [w.shape[0]] + [w.shape[1]] + [1])
+        return np.sum(w * mu_arr, axis=_comp_ax)
+
+    # No component axis: ensure output is at least 2-D for downstream plotting.
     if mu_arr.ndim == 1:
         return mu_arr[None, :]
-    if mu_arr.ndim == 2:
-        return mu_arr
-
-    # For (K, D, G) or similar high-rank structures, use provided mixture
-    # weights when available and otherwise average across component axis.
-    if mu_arr.ndim >= 3:
-        if mixing_weights is None:
-            return np.mean(mu_arr, axis=0)
-
-        w = np.asarray(mixing_weights, dtype=float)
-        if w.ndim == 1 and w.shape[0] == mu_arr.shape[0]:
-            w = w[:, None, None]
-            return np.sum(w * mu_arr, axis=0)
-        if w.ndim == 2 and w.shape == mu_arr.shape[:2]:
-            w = w[:, :, None]
-            return np.sum(w * mu_arr, axis=0)
-        return np.mean(mu_arr, axis=0)
-
-    # Degenerate fallback keeps output 2D to simplify downstream plotting.
-    return mu_arr.reshape(1, -1)
+    return mu_arr
 
 
 def _resolve_dataset_names(dataset_names, n_datasets):
@@ -180,7 +188,12 @@ def plot_mu_pairwise(
         )
         return None
 
-    inferred_n_datasets = _get_dataset_count(results, mu_values)
+    # Fetch layout metadata for axis-driven lookups.
+    _layouts = _get_layouts_for_plot(results)
+
+    inferred_n_datasets = _get_dataset_count(
+        results, mu_values, layouts=_layouts,
+    )
     if inferred_n_datasets <= 1:
         console.print(
             "[yellow]Skipping mu pairwise plot: run is not multi-dataset."
@@ -200,6 +213,7 @@ def plot_mu_pairwise(
     mu_dataset = _collapse_mixture_axis(
         mu_values=mu_values,
         mixing_weights=mixing_weights,
+        layouts=_layouts,
     )
     if mu_dataset.ndim != 2:
         mu_dataset = np.asarray(mu_dataset, dtype=float).reshape(
