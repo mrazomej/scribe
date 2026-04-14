@@ -26,7 +26,13 @@ from scribe.de import (
     compute_delta_from_simplex,
     empirical_differential_expression,
 )
-from scribe.de._empirical import _aggregate_genes, _aggregate_simplex
+from scribe.de._empirical import (
+    _aggregate_genes,
+    _aggregate_simplex,
+    _drop_scalar_p,
+    _slice_component,
+)
+from scribe.de._biological import _needs_gene_broadcast
 
 
 # --------------------------------------------------------------------------
@@ -1861,3 +1867,30 @@ class TestMixtureComponentValidation:
         # Should pass the mixture guard and fail later (no real data)
         with pytest.raises(Exception, match="(?!.*mixture)"):
             compare_datasets(mock_results, dataset_A=0, dataset_B=1)
+
+
+# ==========================================================================
+# Deprecation warnings for ndim-based fallbacks
+# ==========================================================================
+
+
+class TestDEDeprecationWarnings:
+    """Calling DE helpers without layout metadata should emit DeprecationWarning."""
+
+    def test_slice_component_warns_without_layout(self):
+        """_slice_component falls back to ndim heuristic when layout is None."""
+        arr = jnp.ones((10, 50))
+        with pytest.warns(DeprecationWarning, match="_slice_component"):
+            _slice_component(arr, component=None, label="A", layout=None)
+
+    def test_drop_scalar_p_warns_without_layout(self):
+        """_drop_scalar_p falls back to ndim heuristic when post_layout is None."""
+        arr = jnp.ones((10,))
+        with pytest.warns(DeprecationWarning, match="_drop_scalar_p"):
+            _drop_scalar_p(arr, post_layout=None)
+
+    def test_needs_gene_broadcast_warns_without_layout(self):
+        """_needs_gene_broadcast falls back to ndim heuristic when layout is None."""
+        arr = jnp.ones((10,))
+        with pytest.warns(DeprecationWarning, match="_needs_gene_broadcast"):
+            _needs_gene_broadcast(arr, layout=None)

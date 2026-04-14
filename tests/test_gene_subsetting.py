@@ -95,7 +95,9 @@ class TestMetadataSubsettingCorrectAxis:
         }  # (n_samples, n_components, n_genes)
 
         # Use AxisLayout system: has_sample_dim=True for posterior samples
-        layouts = build_param_layouts([spec], {"r": samples["r"]}, has_sample_dim=True)
+        layouts = build_param_layouts(
+            [spec], {"r": samples["r"]}, has_sample_dim=True
+        )
         gene_axis_by_key = gene_axes_from_layouts(layouts)
         assert gene_axis_by_key["r"] == 2
 
@@ -272,6 +274,47 @@ class TestFallbackWhenParamSpecsEmpty:
         index = jnp.array([True, False, True, False, False])
         new_samples = results._subset_posterior_samples(samples, index)
         assert new_samples["r"].shape == (10, 2)
+
+
+class TestLayoutDrivenSubsettingWithoutGeneAxisByKey:
+    """Verify subsetting works when only param_layouts is set (no _gene_axis_by_key)."""
+
+    def test_subset_params_uses_layouts_when_gene_axis_by_key_is_none(self):
+        """Layout-derived gene axes drive subsetting without _gene_axis_by_key."""
+        from scribe.core.axis_layout import AxisLayout
+
+        n_genes = 10
+        params = {
+            "r_loc": jnp.arange(30).reshape(3, 10).astype(float),
+            "p_loc": jnp.ones(3),
+        }
+        # Layouts declare that r_loc has (components, genes) axes
+        layouts = {
+            "r_loc": AxisLayout(axes=("components", "genes")),
+            "p_loc": AxisLayout(axes=("components",)),
+        }
+        config = ModelConfig(
+            base_model="nbdm", parameterization="standard", unconstrained=False
+        )
+        results = ScribeSVIResults(
+            params=params,
+            loss_history=jnp.array([1.0]),
+            n_cells=10,
+            n_genes=n_genes,
+            model_type="nbdm",
+            model_config=config,
+            prior_params={},
+            _gene_axis_by_key=None,
+            param_layouts=layouts,
+        )
+        # Select the first 3 genes via boolean mask
+        index = np.array([True] * 3 + [False] * 7)
+        new_params = results._subset_params(params, index)
+
+        # r_loc should be subsetted along axis 1 (genes), not axis 0
+        assert new_params["r_loc"].shape == (3, 3)
+        # p_loc has no gene axis and should be unchanged
+        assert new_params["p_loc"].shape == (3,)
 
 
 class TestConcatGeneAlignment:
@@ -894,4 +937,3 @@ class TestFlowSamplingHelpers:
         np.testing.assert_array_equal(out["r"][0], jnp.array([0, 3, 7]))
         # Scalar should be unchanged
         np.testing.assert_array_equal(out["scalar"], samples["scalar"])
-

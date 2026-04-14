@@ -63,31 +63,44 @@ class GeneSubsettingMixin:
     # --------------------------------------------------------------------------
 
     def _subset_params(self, params: Dict, index) -> Dict:
+        """Subset variational parameters along the gene axis.
+
+        Gene axes come from ``_gene_axis_by_key`` (authoritative,
+        computed at inference time with full ParamSpec metadata) first,
+        then ``self.layouts`` fills gaps for keys that ``_gene_axis_by_key``
+        does not cover.  When neither source identifies a gene axis, a
+        shape-based heuristic (first axis matching ``n_genes``) is used
+        as a last-resort fallback.
         """
-        Create a new parameter dictionary for the given index using a dynamic,
-        shape-based approach. When _gene_axis_by_key is set (from param_specs),
-        subset only gene-indexed keys along the stored axis; otherwise use
-        shape-based heuristic (first axis matching n_genes) as fallback.
-        """
+        from ..core.axis_layout import gene_axes_from_layouts
+
+        # Start with _gene_axis_by_key (computed at inference time with
+        # full ParamSpec metadata) as the authoritative source.  Then
+        # fill gaps from layout-derived axes for keys that
+        # _gene_axis_by_key doesn't cover.
+        existing = getattr(self, "_gene_axis_by_key", None)
+        gene_axis_by_key = dict(existing) if existing else {}
+        layout_axes = gene_axes_from_layouts(self.layouts)
+        for key, axis in layout_axes.items():
+            gene_axis_by_key.setdefault(key, axis)
+
         new_params = {}
         original_n_genes = self.n_genes
-        gene_axis_by_key = getattr(self, "_gene_axis_by_key", None)
 
         for key, value in params.items():
             # Skip nested dicts (e.g., Flax module params from flax_module)
-            # These have keys like "amortizer$params" and contain nested dicts
             if not hasattr(value, "shape"):
                 new_params[key] = value
                 continue
 
-            if gene_axis_by_key is not None and key in gene_axis_by_key:
+            if key in gene_axis_by_key:
                 gene_axis = gene_axis_by_key[key]
                 slicer = [slice(None)] * value.ndim
                 slicer[gene_axis] = index
                 new_params[key] = value[tuple(slicer)]
                 continue
 
-            # Fallback: find the first axis with size original_n_genes
+            # Last-resort fallback: first axis matching n_genes
             try:
                 gene_axis = value.shape.index(original_n_genes)
                 slicer = [slice(None)] * value.ndim
@@ -100,17 +113,34 @@ class GeneSubsettingMixin:
     # --------------------------------------------------------------------------
 
     def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
-        """
-        Create a new posterior samples dictionary for the given index.
-        When _gene_axis_by_key is set, subset only gene-indexed keys along the
-        stored axis; otherwise use last-axis heuristic as fallback.
+        """Subset posterior samples along the gene axis.
+
+        Gene axes are resolved from ``_gene_axis_by_key`` (authoritative,
+        set at inference time) and ``self.layouts`` (gap filler).  Both
+        sources store variational-level keys (e.g. ``r_loc``), while
+        posterior samples typically use canonical keys (``r``, ``p``).
+        Keys without an explicit mapping fall through to a shape-based
+        heuristic (trailing axis matching ``n_genes``).
         """
         if samples is None:
             return None
 
+        from ..core.axis_layout import gene_axes_from_layouts
+
+        # Start with _gene_axis_by_key (computed at inference time with
+        # full ParamSpec metadata) as the authoritative source.  Values
+        # are used as-is: for variational keys they are variational-level
+        # indices; for canonical keys they are already posterior-level.
+        existing = getattr(self, "_gene_axis_by_key", None)
+        gene_axis_by_key = dict(existing) if existing else {}
+
+        # Fill gaps from layout-derived axes.
+        layout_axes = gene_axes_from_layouts(self.layouts)
+        for key, axis in layout_axes.items():
+            gene_axis_by_key.setdefault(key, axis)
+
         new_samples = {}
         original_n_genes = self.n_genes
-        gene_axis_by_key = getattr(self, "_gene_axis_by_key", None)
 
         for key, value in samples.items():
             # Skip nested dicts (e.g., Flax module params from flax_module)
@@ -118,14 +148,14 @@ class GeneSubsettingMixin:
                 new_samples[key] = value
                 continue
 
-            if gene_axis_by_key is not None and key in gene_axis_by_key:
+            if key in gene_axis_by_key:
                 gene_axis = gene_axis_by_key[key]
                 slicer = [slice(None)] * value.ndim
                 slicer[gene_axis] = index
                 new_samples[key] = value[tuple(slicer)]
                 continue
 
-            # Fallback: gene dimension is typically last
+            # Last-resort fallback: trailing axis matching n_genes
             if value.ndim > 0 and value.shape[-1] == original_n_genes:
                 new_samples[key] = value[..., index]
             else:

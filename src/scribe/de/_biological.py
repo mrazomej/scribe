@@ -54,6 +54,7 @@ computation path based on which posterior samples are supplied:
    (``mu_A`` or ``mu_B``) before interpreting the results.
 """
 
+import warnings
 from typing import Optional, List, Iterable, Set, TYPE_CHECKING
 
 import jax.numpy as jnp
@@ -92,6 +93,15 @@ def _needs_gene_broadcast(
     """
     if layout is not None:
         return layout.gene_axis is None
+
+    # Legacy fallback: ndim == 1 means no gene dimension.
+    # Deprecated — callers should provide layout metadata.
+    warnings.warn(
+        "Calling _needs_gene_broadcast without layout metadata is "
+        "deprecated. Pass param_layouts explicitly.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return arr.ndim == 1
 
 

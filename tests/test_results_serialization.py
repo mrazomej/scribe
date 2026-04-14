@@ -253,6 +253,11 @@ def test_old_pickle_without_param_layouts_falls_back():
     assert "r_loc" in layouts
     assert layouts["r_loc"].gene_axis == 0
 
+    # After the first access the reconstructed layouts are cached on
+    # param_layouts so repeated calls do not recompute.
+    assert restored.param_layouts is not None
+    assert restored.param_layouts is layouts
+
 
 def test_old_mcmc_pickle_without_param_layouts_falls_back():
     """Old MCMC pickles without param_layouts should still provide .layouts."""
@@ -279,6 +284,11 @@ def test_old_mcmc_pickle_without_param_layouts_falls_back():
     # MCMC samples have a leading sample dim
     assert layouts["r"].has_sample_dim is True
     assert layouts["r"].gene_axis == 1
+
+    # After the first access the reconstructed layouts are cached on
+    # param_layouts so repeated calls do not recompute.
+    assert restored.param_layouts is not None
+    assert restored.param_layouts is layouts
 
 
 def test_mixture_svi_old_pickle_reconstructs_layouts():
