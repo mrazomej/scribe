@@ -195,24 +195,16 @@ class ScribeSVIResults(
             return self.param_layouts
 
         # Backward compatibility: old pickles or manually constructed results
-        # lack param_layouts.  Reconstruct from tensor shapes, enriched with
-        # semantic hints derived from param_specs when available.
-        from ..core.axis_layout import reconstruct_param_layouts
+        # lack param_layouts.  Reconstruct from tensor shapes, using the
+        # unified derive_axis_membership cascade (explicit config fields →
+        # ParamSpec flags → HierarchicalPriorType flags → derived expansion).
+        from ..core.axis_layout import (
+            reconstruct_param_layouts,
+            derive_axis_membership,
+        )
 
         mc = self.model_config
-        specs = getattr(mc, "param_specs", None)
-
-        # Fill ``dataset_params`` / ``mixture_params`` from ``ParamSpec`` flags
-        # when ``ModelConfig`` does not store explicit lists.
-        dataset_params = getattr(mc, "dataset_params", None)
-        if dataset_params is None and specs:
-            ds = [s.name for s in specs if getattr(s, "is_dataset", False)]
-            dataset_params = ds or None
-
-        mixture_params = getattr(mc, "mixture_params", None)
-        if mixture_params is None and specs:
-            mx = [s.name for s in specs if getattr(s, "is_mixture", False)]
-            mixture_params = mx or None
+        _mp, _dp = derive_axis_membership(mc)
 
         return reconstruct_param_layouts(
             self.params,
@@ -220,8 +212,8 @@ class ScribeSVIResults(
             n_cells=self.n_cells,
             n_components=getattr(mc, "n_components", None),
             n_datasets=getattr(mc, "n_datasets", None),
-            mixture_params=mixture_params,
-            dataset_params=dataset_params,
+            mixture_params=_mp,
+            dataset_params=_dp,
             gene_axis_by_key=getattr(self, "_gene_axis_by_key", None),
             has_sample_dim=False,
         )

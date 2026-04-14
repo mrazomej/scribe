@@ -14,7 +14,6 @@ import numpyro.distributions as dist
 from jax import random
 
 from ..utils import numpyro_to_scipy
-from ..models.config.enums import HierarchicalPriorType
 from ..models.config.parameter_mapping import rename_dict_keys
 from ..core.axis_layout import (
     AxisLayout,
@@ -781,63 +780,6 @@ def _required_map_keys_for_targets(
 # ==============================================================================
 
 
-def _derive_dataset_params(model_config) -> Optional[List[str]]:
-    """Derive ``dataset_params`` from config hierarchical-prior flags.
-
-    When ``model_config.dataset_params`` is already set, returns it as-is.
-    Otherwise, inspects ``expression_dataset_prior``,
-    ``prob_dataset_prior``, ``zero_inflation_dataset_prior``, and
-    ``overdispersion_dataset_prior`` to infer which canonical parameter
-    names carry a dataset axis.  This ensures correct layout inference
-    even for configs that don't explicitly set ``dataset_params``
-    (common in older code paths and test harnesses).
-
-    Parameters
-    ----------
-    model_config
-        Model configuration object.
-
-    Returns
-    -------
-    list of str or None
-        Derived list of dataset parameter names, or ``None`` if no
-        dataset hierarchy is active.
-    """
-    # If explicitly set, trust it.
-    explicit = getattr(model_config, "dataset_params", None)
-    if explicit is not None:
-        return explicit
-
-    _NONE = HierarchicalPriorType.NONE
-    ds: List[str] = []
-
-    # expression_dataset_prior → mu (or r for canonical/standard)
-    if getattr(model_config, "expression_dataset_prior", _NONE) != _NONE:
-        param = getattr(model_config, "parameterization", "linked")
-        if param in ("canonical", "standard"):
-            ds.append("r")
-        else:
-            ds.append("mu")
-
-    # prob_dataset_prior → p (or phi for mean_odds/odds_ratio)
-    if getattr(model_config, "prob_dataset_prior", _NONE) != _NONE:
-        param = getattr(model_config, "parameterization", "linked")
-        if param in ("mean_odds", "odds_ratio"):
-            ds.append("phi")
-        else:
-            ds.append("p")
-
-    # zero_inflation_dataset_prior → gate
-    if getattr(model_config, "zero_inflation_dataset_prior", _NONE) != _NONE:
-        ds.append("gate")
-
-    # overdispersion_dataset_prior → bnb_concentration
-    if getattr(model_config, "overdispersion_dataset_prior", _NONE) != _NONE:
-        ds.append("bnb_concentration")
-
-    return ds if ds else None
-
-
 def _build_map_layouts(
     map_estimates: Dict[str, Any],
     model_config,
@@ -850,10 +792,15 @@ def _build_map_layouts(
 
     Uses ``param_specs`` from *model_config* when available (exact path),
     falling back to shape-based inference for derived keys like ``"r"``
-    or ``"mu"`` that may not have a direct spec.  When
-    ``model_config.dataset_params`` is ``None``, dataset-specific
-    parameters are inferred from the hierarchical-prior flags on the
-    config (``expression_dataset_prior``, ``prob_dataset_prior``, etc.).
+    or ``"mu"`` that may not have a direct spec.
+
+    Axis membership (which params are mixture-specific or
+    dataset-specific) is resolved by :func:`derive_axis_membership`,
+    which checks explicit config fields, ``ParamSpec`` flags,
+    ``HierarchicalPriorType`` flags, and the concat shape scan —
+    in that priority order — and expands through the ``DerivedParam``
+    graph so that canonical keys like ``"r"`` and ``"p"`` correctly
+    inherit their sources' axes.
 
     Parameters
     ----------
@@ -879,32 +826,18 @@ def _build_map_layouts(
         Semantic layout for every key in *map_estimates* that has a
         ``shape`` attribute.
     """
+    from ..core.axis_layout import derive_axis_membership
+
     specs = getattr(model_config, "param_specs", None) or []
 
-    # Derive dataset_params from config flags when not explicitly set.
-    # This ensures correct layout inference even for configs that only
-    # set expression_dataset_prior / prob_dataset_prior without
-    # populating the dataset_params list.
-    ds_params = _derive_dataset_params(model_config)
-
-    # Concatenated multi-dataset results: n_datasets >= 2 but no
-    # hierarchical priors are active (original fits were single-dataset
-    # and the dataset axis was injected by ScribeSVIResults.concat).
-    # Detect which canonical params carry a leading dataset dimension
-    # so that infer_layout can assign the "datasets" axis correctly.
-    _n_ds = getattr(model_config, "n_datasets", None)
-    if not ds_params and _n_ds is not None and _n_ds >= 2:
-        from ..core.axis_layout import _KNOWN_CELL_PARAMS
-
-        _inferred_ds: List[str] = []
-        for key, val in map_estimates.items():
-            if not hasattr(val, "shape") or not hasattr(val, "ndim"):
-                continue
-            if key in _KNOWN_CELL_PARAMS:
-                continue
-            if val.ndim >= 1 and val.shape[0] == _n_ds:
-                _inferred_ds.append(key)
-        ds_params = _inferred_ds if _inferred_ds else None
+    # Unified derivation of mixture_params and dataset_params —
+    # replaces the previous inline _derive_dataset_params +
+    # concat shape scan, and also adds derived-param expansion
+    # that was previously missing (latent bug for non-canonical
+    # parameterizations like mean_odds).
+    _mp, ds_params = derive_axis_membership(
+        model_config, samples=map_estimates, has_sample_dim=False,
+    )
 
     # Use the explicit n_components if provided, otherwise fall back to
     # the value on model_config.
@@ -920,8 +853,8 @@ def _build_map_layouts(
         n_genes=n_genes,
         n_cells=n_cells,
         n_components=_n_components,
-        n_datasets=_n_ds,
-        mixture_params=getattr(model_config, "mixture_params", None),
+        n_datasets=getattr(model_config, "n_datasets", None),
+        mixture_params=_mp,
         dataset_params=ds_params,
     )
 

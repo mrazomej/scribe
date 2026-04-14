@@ -87,90 +87,25 @@ def _build_canonical_layouts(
         Layouts keyed by canonical parameter names, with
         ``has_sample_dim`` set appropriately.
     """
-    # Lazy imports to avoid circular dependency (sampling.py is
+    # Lazy import to avoid circular dependency (sampling.py is
     # imported by svi/mcmc modules that also import from it).
-    from .core.axis_layout import build_sample_layouts
-    from .models.config import HierarchicalPriorType
+    from .core.axis_layout import build_sample_layouts, derive_axis_membership
 
     specs = getattr(model_config, "param_specs", None) or []
 
-    # Derive dataset_params from hierarchical-prior flags when not
-    # explicitly set (mirrors _derive_dataset_params in
-    # svi/_parameter_extraction.py but inlined here to avoid
-    # importing from the svi subpackage).
-    _n_ds = getattr(model_config, "n_datasets", None)
-    ds_params = getattr(model_config, "dataset_params", None)
-    if ds_params is None:
-        _NONE = HierarchicalPriorType.NONE
-        ds: list = []
-        param = getattr(model_config, "parameterization", "linked")
-        if getattr(model_config, "expression_dataset_prior", _NONE) != _NONE:
-            ds.append("r" if param in ("canonical", "standard") else "mu")
-        if getattr(model_config, "prob_dataset_prior", _NONE) != _NONE:
-            ds.append("phi" if param in ("mean_odds", "odds_ratio") else "p")
-        if (
-            getattr(model_config, "zero_inflation_dataset_prior", _NONE)
-            != _NONE
-        ):
-            ds.append("gate")
-        if (
-            getattr(model_config, "overdispersion_dataset_prior", _NONE)
-            != _NONE
-        ):
-            ds.append("bnb_concentration")
-
-        # Concatenated multi-dataset results: n_datasets >= 2 but no
-        # hierarchical priors were set (original fits were single-dataset).
-        # The concat path promotes ALL non-cell canonical params to
-        # dataset-specific, so treat every key in *samples* that has a
-        # leading dimension equal to n_datasets as dataset-specific.
-        if not ds and _n_ds is not None and _n_ds >= 2:
-            from .core.axis_layout import _KNOWN_CELL_PARAMS
-
-            _offset = 1 if has_sample_dim else 0
-            for key, arr in samples.items():
-                if not hasattr(arr, "shape"):
-                    continue
-                base = key.split("_loc")[0].split("_scale")[0]
-                if base in _KNOWN_CELL_PARAMS:
-                    continue
-                if arr.ndim > _offset and arr.shape[_offset] == _n_ds:
-                    ds.append(key)
-
-        ds_params = ds if ds else None
+    # Unified derivation of mixture_params and dataset_params from
+    # model_config.  Replaces ~80 lines of inline logic that duplicated
+    # derive_axis_membership's cascade (HierarchicalPriorType flags,
+    # concat shape scan, derived-param expansion).
+    _mp, ds_params = derive_axis_membership(
+        model_config, samples=samples, has_sample_dim=has_sample_dim,
+    )
 
     _nc = (
         n_components
         if n_components is not None
         else getattr(model_config, "n_components", None)
     )
-
-    # Expand mixture_params and dataset_params to include derived
-    # canonical counterparts.  When the model uses mean_odds
-    # parameterization, mixture_params may be ["phi", "mu"] — but
-    # _compute_canonical_parameters derives "r" and "p" from those
-    # with identical component structure.  Without expansion,
-    # infer_layout would fail to assign a component axis to derived
-    # canonical keys like "r" and "p".
-    #
-    # Instead of hardcoding canonical pairs, we read the dep graph
-    # from the parameterization strategy's DerivedParam list: any
-    # derived param whose deps overlap with the current member set
-    # inherits that axis membership (mirroring merge_layouts).
-    _mp = getattr(model_config, "mixture_params", None)
-    if _mp is not None or ds_params is not None:
-        from .models.parameterizations import PARAMETERIZATIONS
-        from .core.axis_layout import expand_membership_from_derived
-
-        _param = getattr(model_config, "parameterization", "canonical")
-        _derived = PARAMETERIZATIONS[_param].build_derived_params()
-        if _derived:
-            if _mp is not None:
-                _mp = sorted(expand_membership_from_derived(_mp, _derived))
-            if ds_params is not None:
-                ds_params = sorted(
-                    expand_membership_from_derived(ds_params, _derived)
-                )
 
     return build_sample_layouts(
         specs,

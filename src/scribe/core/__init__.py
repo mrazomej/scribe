@@ -27,6 +27,7 @@ from .axis_layout import (
     align_to_layout,
     merge_layouts,
     broadcast_param_to_layout,
+    derive_axis_membership,
 )
 
 # Differential expression module has moved to scribe.de (top-level)
@@ -57,6 +58,7 @@ __all__ = [
     "align_to_layout",
     "merge_layouts",
     "broadcast_param_to_layout",
+    "derive_axis_membership",
     # "de" has moved to scribe.de (top-level)
     "compute_cell_type_probabilities",
     "compute_cell_type_probabilities_map",

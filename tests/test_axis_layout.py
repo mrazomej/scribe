@@ -1083,6 +1083,406 @@ class TestBroadcastParamToLayout:
 # ==============================================================================
 
 
+class TestDeriveAxisMembership:
+    """Test the unified ``derive_axis_membership`` cascade.
+
+    Verifies every priority level (explicit config, ParamSpec flags,
+    HierarchicalPriorType flags, concat shape scan) and the DerivedParam
+    expansion step.
+    """
+
+    # ------------------------------------------------------------------
+    # Helper to build lightweight config stubs
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _cfg(**kwargs):
+        """Return a SimpleNamespace masquerading as a ModelConfig."""
+        from types import SimpleNamespace
+
+        defaults = dict(
+            parameterization="linked",
+            mixture_params=None,
+            dataset_params=None,
+            param_specs=[],
+            n_datasets=None,
+            expression_dataset_prior=None,
+            prob_dataset_prior=None,
+            zero_inflation_dataset_prior=None,
+            overdispersion_dataset_prior=None,
+        )
+        defaults.update(kwargs)
+        return SimpleNamespace(**defaults)
+
+    # ------------------------------------------------------------------
+    # Explicit config fields are returned as-is (but expanded)
+    # ------------------------------------------------------------------
+
+    def test_explicit_mixture_params_returned(self):
+        """Explicit mixture_params on config are returned (with expansion)."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg(
+            parameterization="mean_odds",
+            mixture_params=["phi", "mu"],
+        )
+        mp, dp = derive_axis_membership(cfg)
+        # phi and mu are explicitly set; derived "r" and "p" should be
+        # added by expansion through mean_odds DerivedParam graph.
+        assert "phi" in mp
+        assert "mu" in mp
+        assert "r" in mp
+        assert "p" in mp
+        assert dp is None
+
+    def test_explicit_dataset_params_returned(self):
+        """Explicit dataset_params on config are returned (with expansion)."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg(
+            parameterization="linked",
+            dataset_params=["mu"],
+        )
+        mp, dp = derive_axis_membership(cfg)
+        assert mp is None
+        # "mu" is explicit; "r" derives from ["p", "mu"] in linked,
+        # and mu is a member so "r" is added.
+        assert "mu" in dp
+        assert "r" in dp
+
+    # ------------------------------------------------------------------
+    # ParamSpec flags
+    # ------------------------------------------------------------------
+
+    def test_param_spec_is_mixture_flag(self):
+        """When no explicit lists, ParamSpec.is_mixture is used."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg(
+            parameterization="linked",
+            param_specs=[
+                LogNormalSpec(
+                    name="mu",
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
+                    is_mixture=True,
+                    is_gene_specific=True,
+                ),
+            ],
+        )
+        mp, dp = derive_axis_membership(cfg)
+        # "mu" detected from spec flag
+        assert "mu" in mp
+        # "r" expanded (linked: r depends on ["p", "mu"])
+        assert "r" in mp
+        assert dp is None
+
+    def test_param_spec_is_dataset_flag(self):
+        """When no explicit lists, ParamSpec.is_dataset is used."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg(
+            parameterization="linked",
+            param_specs=[
+                LogNormalSpec(
+                    name="mu",
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
+                    is_gene_specific=True,
+                    is_dataset=True,
+                ),
+            ],
+        )
+        mp, dp = derive_axis_membership(cfg)
+        assert mp is None
+        assert "mu" in dp
+        assert "r" in dp
+
+    # ------------------------------------------------------------------
+    # HierarchicalPriorType flags
+    # ------------------------------------------------------------------
+
+    def test_expression_dataset_prior_linked(self):
+        """expression_dataset_prior under linked → mu."""
+        from scribe.core.axis_layout import derive_axis_membership
+        from scribe.models.config.enums import HierarchicalPriorType
+
+        cfg = self._cfg(
+            parameterization="linked",
+            expression_dataset_prior=HierarchicalPriorType.GAUSSIAN,
+        )
+        mp, dp = derive_axis_membership(cfg)
+        assert mp is None
+        assert "mu" in dp
+        # Derived expansion: r depends on mu in linked
+        assert "r" in dp
+
+    def test_expression_dataset_prior_canonical(self):
+        """expression_dataset_prior under canonical → r."""
+        from scribe.core.axis_layout import derive_axis_membership
+        from scribe.models.config.enums import HierarchicalPriorType
+
+        cfg = self._cfg(
+            parameterization="canonical",
+            expression_dataset_prior=HierarchicalPriorType.GAUSSIAN,
+        )
+        mp, dp = derive_axis_membership(cfg)
+        assert mp is None
+        assert "r" in dp
+
+    def test_prob_dataset_prior_mean_odds(self):
+        """prob_dataset_prior under mean_odds → phi (+ derived p)."""
+        from scribe.core.axis_layout import derive_axis_membership
+        from scribe.models.config.enums import HierarchicalPriorType
+
+        cfg = self._cfg(
+            parameterization="mean_odds",
+            prob_dataset_prior=HierarchicalPriorType.GAUSSIAN,
+        )
+        mp, dp = derive_axis_membership(cfg)
+        assert mp is None
+        assert "phi" in dp
+        # mean_odds: p = 1/(1+phi), so p is derived from phi
+        assert "p" in dp
+
+    def test_prob_dataset_prior_linked(self):
+        """prob_dataset_prior under linked → p."""
+        from scribe.core.axis_layout import derive_axis_membership
+        from scribe.models.config.enums import HierarchicalPriorType
+
+        cfg = self._cfg(
+            parameterization="linked",
+            prob_dataset_prior=HierarchicalPriorType.GAUSSIAN,
+        )
+        mp, dp = derive_axis_membership(cfg)
+        assert "p" in dp
+        # linked: r depends on ["p", "mu"], and p is a member
+        assert "r" in dp
+
+    def test_zero_inflation_dataset_prior(self):
+        """zero_inflation_dataset_prior → gate."""
+        from scribe.core.axis_layout import derive_axis_membership
+        from scribe.models.config.enums import HierarchicalPriorType
+
+        cfg = self._cfg(
+            parameterization="linked",
+            zero_inflation_dataset_prior=HierarchicalPriorType.GAUSSIAN,
+        )
+        _, dp = derive_axis_membership(cfg)
+        assert "gate" in dp
+
+    def test_overdispersion_dataset_prior(self):
+        """overdispersion_dataset_prior → bnb_concentration."""
+        from scribe.core.axis_layout import derive_axis_membership
+        from scribe.models.config.enums import HierarchicalPriorType
+
+        cfg = self._cfg(
+            parameterization="linked",
+            overdispersion_dataset_prior=HierarchicalPriorType.GAUSSIAN,
+        )
+        _, dp = derive_axis_membership(cfg)
+        assert "bnb_concentration" in dp
+
+    # ------------------------------------------------------------------
+    # Parameterization-dependent canonical-name mapping
+    # ------------------------------------------------------------------
+
+    def test_canonical_parameterization_maps_to_r(self):
+        """canonical: expression_dataset_prior → 'r' (not 'mu')."""
+        from scribe.core.axis_layout import derive_axis_membership
+        from scribe.models.config.enums import HierarchicalPriorType
+
+        cfg = self._cfg(
+            parameterization="canonical",
+            expression_dataset_prior=HierarchicalPriorType.GAUSSIAN,
+        )
+        _, dp = derive_axis_membership(cfg)
+        assert "r" in dp
+        assert "mu" not in dp
+
+    def test_standard_alias_maps_like_canonical(self):
+        """'standard' is an alias for canonical."""
+        from scribe.core.axis_layout import derive_axis_membership
+        from scribe.models.config.enums import HierarchicalPriorType
+
+        cfg = self._cfg(
+            parameterization="standard",
+            expression_dataset_prior=HierarchicalPriorType.GAUSSIAN,
+        )
+        _, dp = derive_axis_membership(cfg)
+        assert "r" in dp
+
+    def test_odds_ratio_alias_maps_like_mean_odds(self):
+        """'odds_ratio' is an alias for mean_odds; prob_dataset → phi."""
+        from scribe.core.axis_layout import derive_axis_membership
+        from scribe.models.config.enums import HierarchicalPriorType
+
+        cfg = self._cfg(
+            parameterization="odds_ratio",
+            prob_dataset_prior=HierarchicalPriorType.GAUSSIAN,
+        )
+        _, dp = derive_axis_membership(cfg)
+        assert "phi" in dp
+        assert "p" in dp  # derived from phi
+
+    # ------------------------------------------------------------------
+    # Derived expansion through DerivedParam graph
+    # ------------------------------------------------------------------
+
+    def test_mean_odds_mixture_expansion(self):
+        """mixture_params=['phi', 'mu'] under mean_odds → includes r, p."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg(
+            parameterization="mean_odds",
+            mixture_params=["phi", "mu"],
+        )
+        mp, _ = derive_axis_membership(cfg)
+        assert set(mp) >= {"phi", "mu", "r", "p"}
+
+    def test_linked_dataset_expansion(self):
+        """dataset_params=['p', 'mu'] under linked → includes r."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg(
+            parameterization="linked",
+            dataset_params=["p", "mu"],
+        )
+        _, dp = derive_axis_membership(cfg)
+        assert "r" in dp
+
+    def test_canonical_has_no_derived_expansion(self):
+        """canonical has no DerivedParams, so lists stay as-is."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg(
+            parameterization="canonical",
+            mixture_params=["r", "p"],
+        )
+        mp, _ = derive_axis_membership(cfg)
+        assert sorted(mp) == ["p", "r"]
+
+    # ------------------------------------------------------------------
+    # Concat multi-dataset shape scan
+    # ------------------------------------------------------------------
+
+    def test_concat_shape_scan_detects_dataset_keys(self):
+        """Shape scan finds keys with leading dim == n_datasets."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg(n_datasets=3, parameterization="canonical")
+        samples = {
+            "r": jnp.ones((3, 100)),
+            "p": jnp.ones((3, 100)),
+            "mixing_weights": jnp.ones(3),
+        }
+        _, dp = derive_axis_membership(cfg, samples=samples)
+        assert "r" in dp
+        assert "p" in dp
+        # mixing_weights also has shape[0] == 3, but is not a cell param
+        # so it should be detected too
+        assert "mixing_weights" in dp
+
+    def test_concat_shape_scan_excludes_cell_params(self):
+        """Cell-specific params (p_capture, etc.) are excluded from scan."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg(n_datasets=2, parameterization="canonical")
+        samples = {
+            "r": jnp.ones((2, 100)),
+            "p_capture": jnp.ones((2,)),
+        }
+        _, dp = derive_axis_membership(cfg, samples=samples)
+        assert "r" in dp
+        # p_capture is a known cell param and should be excluded
+        assert "p_capture" not in dp
+
+    def test_concat_shape_scan_with_sample_dim(self):
+        """has_sample_dim shifts dataset axis to position 1."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg(n_datasets=2, parameterization="canonical")
+        # With sample dim: shape is (n_samples, n_datasets, ...)
+        samples = {
+            "r": jnp.ones((10, 2, 100)),
+            "p": jnp.ones((10, 2, 100)),
+        }
+        _, dp = derive_axis_membership(
+            cfg, samples=samples, has_sample_dim=True,
+        )
+        assert "r" in dp
+        assert "p" in dp
+
+    def test_concat_scan_skipped_when_priors_active(self):
+        """If HierarchicalPriorType flags resolve dataset_params,
+        the concat scan is never reached."""
+        from scribe.core.axis_layout import derive_axis_membership
+        from scribe.models.config.enums import HierarchicalPriorType
+
+        cfg = self._cfg(
+            parameterization="linked",
+            n_datasets=2,
+            expression_dataset_prior=HierarchicalPriorType.GAUSSIAN,
+        )
+        # Samples with leading dim 2 for ALL keys — but the prior flag
+        # should resolve before the scan runs.
+        samples = {
+            "r": jnp.ones((2, 100)),
+            "p": jnp.ones((2, 100)),
+            "mu": jnp.ones((2, 100)),
+        }
+        _, dp = derive_axis_membership(cfg, samples=samples)
+        # "mu" from prior flag (linked), "r" from derived expansion —
+        # but "p" should NOT be added because the scan didn't run.
+        assert "mu" in dp
+        assert "r" in dp
+        assert "p" not in dp
+
+    # ------------------------------------------------------------------
+    # No signals at all → (None, None)
+    # ------------------------------------------------------------------
+
+    def test_no_signals_returns_none_none(self):
+        """When there are no signals, both should be None."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg()
+        mp, dp = derive_axis_membership(cfg)
+        assert mp is None
+        assert dp is None
+
+    def test_no_signals_single_dataset(self):
+        """Single dataset (n_datasets=1) never triggers concat scan."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg(n_datasets=1)
+        samples = {"r": jnp.ones((1, 100))}
+        mp, dp = derive_axis_membership(cfg, samples=samples)
+        assert mp is None
+        assert dp is None
+
+    # ------------------------------------------------------------------
+    # Combined: both mixture and dataset
+    # ------------------------------------------------------------------
+
+    def test_combined_mixture_and_dataset(self):
+        """Both mixture_params and dataset_params derived simultaneously."""
+        from scribe.core.axis_layout import derive_axis_membership
+        from scribe.models.config.enums import HierarchicalPriorType
+
+        cfg = self._cfg(
+            parameterization="mean_odds",
+            mixture_params=["phi", "mu"],
+            expression_dataset_prior=HierarchicalPriorType.GAUSSIAN,
+        )
+        mp, dp = derive_axis_membership(cfg)
+        # Mixture: phi, mu + derived r, p
+        assert set(mp) >= {"phi", "mu", "r", "p"}
+        # Dataset: mean_odds + expression → mu + derived r
+        assert "mu" in dp
+        assert "r" in dp
+
+
 class TestSliceGeneAxis:
     """Tests for ``_slice_gene_axis`` — subsets the gene dimension of a tensor
     using a known axis index from an ``AxisLayout``.

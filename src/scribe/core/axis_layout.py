@@ -999,3 +999,240 @@ def broadcast_param_to_layout(
         tgt = target_layout
 
     return align_to_layout(param, src, tgt)
+
+
+# =========================================================================
+# Unified axis-membership derivation
+# =========================================================================
+
+
+def _derive_dataset_params_from_flags(model_config) -> List[str]:
+    """Derive dataset-specific parameter names from hierarchical-prior flags.
+
+    Inspects the four ``*_dataset_prior`` fields on *model_config* and
+    maps each active prior to the canonical parameter name used by the
+    current ``parameterization`` strategy.
+
+    Parameters
+    ----------
+    model_config
+        Model configuration object carrying hierarchical-prior flags
+        and a ``parameterization`` string.
+
+    Returns
+    -------
+    list of str
+        Canonical names (may be empty if no dataset priors are active).
+    """
+    # Lazy import: HierarchicalPriorType lives in models.config, which
+    # is higher in the dependency stack than core/.
+    from ..models.config.enums import HierarchicalPriorType
+
+    _NONE = HierarchicalPriorType.NONE
+
+    def _is_active(field_name: str) -> bool:
+        """Check whether a hierarchical-prior field is active.
+
+        Treats both missing attributes and Python ``None`` as inactive
+        (equivalent to ``HierarchicalPriorType.NONE``).
+        """
+        val = getattr(model_config, field_name, None)
+        return val is not None and val != _NONE
+
+    ds: List[str] = []
+    param = getattr(model_config, "parameterization", "linked")
+
+    if _is_active("expression_dataset_prior"):
+        ds.append("r" if param in ("canonical", "standard") else "mu")
+    if _is_active("prob_dataset_prior"):
+        ds.append("phi" if param in ("mean_odds", "odds_ratio") else "p")
+    if _is_active("zero_inflation_dataset_prior"):
+        ds.append("gate")
+    if _is_active("overdispersion_dataset_prior"):
+        ds.append("bnb_concentration")
+
+    return ds
+
+
+def _scan_concat_dataset_keys(
+    samples: Dict[str, Any],
+    n_datasets: int,
+    has_sample_dim: bool,
+) -> List[str]:
+    """Detect parameter keys whose leading axis matches *n_datasets*.
+
+    When single-dataset results are concatenated via
+    ``ScribeSVIResults.concat`` / ``ScribeMCMCResults.concat``, every
+    non-cell parameter acquires a leading dataset dimension but no
+    hierarchical-prior flags are set.  This scanner identifies those
+    keys by shape inspection.
+
+    Parameters
+    ----------
+    samples : dict
+        Parameter or sample arrays.
+    n_datasets : int
+        Expected size of the dataset dimension.
+    has_sample_dim : bool
+        Whether tensors carry a leading posterior-draw axis before the
+        dataset axis.
+
+    Returns
+    -------
+    list of str
+        Keys whose axis at *offset* equals *n_datasets*.
+    """
+    _offset = 1 if has_sample_dim else 0
+    ds: List[str] = []
+    for key, arr in samples.items():
+        if not hasattr(arr, "shape"):
+            continue
+        # Strip variational suffixes so cell-param detection uses the
+        # base name (e.g. "p_capture_loc" -> "p_capture").
+        base = key.split("_loc")[0].split("_scale")[0]
+        if base in _KNOWN_CELL_PARAMS:
+            continue
+        if arr.ndim > _offset and arr.shape[_offset] == n_datasets:
+            ds.append(key)
+    return ds
+
+
+def derive_axis_membership(
+    model_config,
+    *,
+    samples: Optional[Dict[str, Any]] = None,
+    has_sample_dim: bool = False,
+) -> Tuple[Optional[List[str]], Optional[List[str]]]:
+    """Derive ``mixture_params`` and ``dataset_params`` from *model_config*.
+
+    Centralises the logic for figuring out which parameter names carry a
+    component axis and which carry a dataset axis.  Multiple information
+    sources are checked in priority order so that callers never need to
+    re-implement the derivation cascade.
+
+    **Priority for ``mixture_params``**:
+
+    1. ``model_config.mixture_params`` (explicit user setting).
+    2. ``ParamSpec.is_mixture`` flags from ``model_config.param_specs``.
+    3. ``None`` — by convention this means *all non-cell-specific
+       parameters* are mixture-specific (the scribe default).
+
+    **Priority for ``dataset_params``**:
+
+    1. ``model_config.dataset_params`` (explicit user setting).
+    2. ``ParamSpec.is_dataset`` flags from ``model_config.param_specs``.
+    3. ``HierarchicalPriorType`` flags on *model_config*
+       (``expression_dataset_prior``, ``prob_dataset_prior``, etc.).
+    4. Concatenated multi-dataset shape scan: when ``n_datasets >= 2``
+       and no priors are active, any non-cell key whose leading
+       dimension equals ``n_datasets`` is treated as dataset-specific.
+
+    After resolution, both lists are expanded through the
+    parameterization's ``DerivedParam`` dependency graph so that
+    derived canonical keys (e.g. ``"r"``, ``"p"``) inherit axis
+    membership from their sources (e.g. ``"mu"``, ``"phi"``).
+
+    Parameters
+    ----------
+    model_config
+        Model configuration object.  Must expose at least
+        ``parameterization`` (str).  Optional fields consulted:
+        ``mixture_params``, ``dataset_params``, ``param_specs``,
+        ``n_datasets``, ``expression_dataset_prior``,
+        ``prob_dataset_prior``, ``zero_inflation_dataset_prior``,
+        ``overdispersion_dataset_prior``.
+    samples : dict, optional
+        Parameter / sample arrays.  Only needed for the concatenated
+        multi-dataset shape scan (priority 4 for ``dataset_params``).
+        Can be ``None`` when the caller knows no concat edge case
+        applies (e.g. the ``layouts`` backward-compat property).
+    has_sample_dim : bool, default False
+        Whether tensors in *samples* carry a leading posterior-draw
+        axis.  Shifts the dataset-axis scan by one position.
+
+    Returns
+    -------
+    tuple of (list[str] | None, list[str] | None)
+        ``(mixture_params, dataset_params)``.  Either element may be
+        ``None`` when no specific list could be derived (which means
+        "all non-cell params" for mixture, or "no dataset axis" for
+        dataset).
+
+    Examples
+    --------
+    >>> from types import SimpleNamespace
+    >>> cfg = SimpleNamespace(
+    ...     parameterization="linked",
+    ...     mixture_params=["p", "mu"],
+    ...     dataset_params=None,
+    ...     param_specs=[],
+    ...     n_datasets=None,
+    ... )
+    >>> mp, dp = derive_axis_membership(cfg)
+    >>> "r" in mp  # derived from "mu" dep in linked/mean_prob
+    True
+    >>> dp is None
+    True
+    """
+    specs = getattr(model_config, "param_specs", None) or []
+
+    # ---- mixture_params ----
+    mp: Optional[List[str]] = getattr(model_config, "mixture_params", None)
+    if mp is None and specs:
+        inferred = [s.name for s in specs if getattr(s, "is_mixture", False)]
+        mp = inferred if inferred else None
+
+    # ---- dataset_params ----
+    dp: Optional[List[str]] = getattr(model_config, "dataset_params", None)
+
+    if dp is None and specs:
+        # Priority 2: ParamSpec.is_dataset flags
+        inferred = [s.name for s in specs if getattr(s, "is_dataset", False)]
+        dp = inferred if inferred else None
+
+    if dp is None:
+        # Priority 3: HierarchicalPriorType flags
+        ds_from_flags = _derive_dataset_params_from_flags(model_config)
+        dp = ds_from_flags if ds_from_flags else None
+
+    if (
+        dp is None
+        and samples is not None
+        and getattr(model_config, "n_datasets", None) is not None
+        and getattr(model_config, "n_datasets", None) >= 2
+    ):
+        # Priority 4: concat multi-dataset shape scan
+        ds_from_scan = _scan_concat_dataset_keys(
+            samples,
+            int(getattr(model_config, "n_datasets")),
+            has_sample_dim,
+        )
+        dp = ds_from_scan if ds_from_scan else None
+
+    # ---- Expand both lists through the DerivedParam graph ----
+    # Derived canonical keys (r, p) inherit axis membership from their
+    # source params (mu, phi) so that infer_layout assigns the correct
+    # component / dataset axes to them.
+    if mp is not None or dp is not None:
+        try:
+            from ..models.parameterizations import PARAMETERIZATIONS
+        except ImportError:
+            # Defensive: if the import fails (e.g. in a minimal test
+            # environment), skip expansion rather than crashing.
+            pass
+        else:
+            _param = getattr(model_config, "parameterization", "linked")
+            _strategy = PARAMETERIZATIONS.get(_param)
+            _derived = (
+                _strategy.build_derived_params() if _strategy is not None
+                else []
+            )
+            if _derived:
+                if mp is not None:
+                    mp = sorted(expand_membership_from_derived(mp, _derived))
+                if dp is not None:
+                    dp = sorted(
+                        expand_membership_from_derived(dp, _derived)
+                    )
+
+    return mp, dp
