@@ -23,6 +23,8 @@ therefore ``r * p / (1 - p)``.  This is the *complement* of the paper's
 :math:`p` (which appears as :math:`p^r` in the PMF).
 """
 
+import warnings
+
 from jax import random, vmap
 import jax.numpy as jnp
 import numpyro.distributions as dist
@@ -643,6 +645,18 @@ def sample_biological_nb(
     cell_batch_size : int or None, optional
         If set, cells are processed in batches of this size to limit peak
         memory usage.  When ``None`` all cells are sampled at once.
+    bnb_concentration : jnp.ndarray or None, optional
+        BNB concentration parameter.  ``None`` for non-BNB models.
+    param_layouts : dict of str to AxisLayout, optional
+        Semantic axis layouts keyed by canonical parameter name
+        (``"r"``, ``"p"``, ``"mixing_weights"``, …).  These are
+        provided automatically by results-object methods.  Passing
+        ``None`` triggers a deprecated fallback that infers layouts
+        from tensor shapes.
+
+        .. deprecated::
+            Omitting *param_layouts* is deprecated and will raise an
+            error in a future release.
 
     Returns
     -------
@@ -686,10 +700,16 @@ def sample_biological_nb(
     """
     is_mixture = mixing_weights is not None
 
-    # When called without explicit layouts, infer from tensor shapes.
-    # The sample-dim detection replicates the old ndim heuristic:
-    # r has a sample dim when its rank exceeds the expected MAP rank.
+    # param_layouts should always be provided by results-object callers.
+    # The fallback infers layouts from tensor shapes and will be removed
+    # in a future release.
     if param_layouts is None:
+        warnings.warn(
+            "Calling sample_biological_nb without param_layouts is "
+            "deprecated. Pass param_layouts explicitly.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         from .core.axis_layout import infer_layout
 
         _expected_r_rank = 2 if is_mixture else 1
@@ -965,6 +985,18 @@ def sample_posterior_ppc(
         If set, cells are processed in batches of this size to limit peak
         memory.  Particularly useful for VCP models.  ``None`` processes
         all cells at once.
+    bnb_concentration : jnp.ndarray or None, optional
+        BNB concentration parameter.  ``None`` for non-BNB models.
+    param_layouts : dict of str to AxisLayout, optional
+        Semantic axis layouts keyed by canonical parameter name
+        (``"r"``, ``"p"``, ``"gate"``, ``"p_capture"``, …).  These
+        are provided automatically by results-object methods.  Passing
+        ``None`` triggers a deprecated fallback that infers layouts
+        from tensor shapes.
+
+        .. deprecated::
+            Omitting *param_layouts* is deprecated and will raise an
+            error in a future release.
 
     Returns
     -------
@@ -991,10 +1023,16 @@ def sample_posterior_ppc(
     """
     is_mixture = mixing_weights is not None
 
-    # When called without explicit layouts, infer from tensor shapes.
-    # The sample-dim detection replicates the old ndim heuristic:
-    # r has a sample dim when its rank exceeds the expected MAP rank.
+    # param_layouts should always be provided by results-object callers.
+    # The fallback infers layouts from tensor shapes and will be removed
+    # in a future release.
     if param_layouts is None:
+        warnings.warn(
+            "Calling sample_posterior_ppc without param_layouts is "
+            "deprecated. Pass param_layouts explicitly.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         from .core.axis_layout import infer_layout
 
         _expected_r_rank = 2 if is_mixture else 1
@@ -1403,6 +1441,18 @@ def denoise_counts(
     cell_batch_size : int or None, optional
         Process cells in batches of this size to limit peak memory.
         ``None`` processes all cells at once.
+    bnb_concentration : jnp.ndarray or None, optional
+        BNB concentration parameter.  ``None`` for non-BNB models.
+    param_layouts : dict of str to AxisLayout, optional
+        Semantic axis layouts keyed by canonical parameter name
+        (``"r"``, ``"p"``, ``"gate"``, ``"p_capture"``, …).  These
+        are provided automatically by results-object methods.  Passing
+        ``None`` triggers a deprecated fallback that infers layouts
+        from tensor shapes.
+
+        .. deprecated::
+            Omitting *param_layouts* is deprecated and will raise an
+            error in a future release.
 
     Returns
     -------
@@ -1466,12 +1516,16 @@ def denoise_counts(
 
     is_mixture = mixing_weights is not None
 
-    # When called without explicit layouts (e.g. directly from user code
-    # with raw tensors), infer layouts from the parameter shapes.
-    # The sample-dim detection replicates the old ndim heuristic as a
-    # one-time compatibility shim: r has a sample dim when its rank
-    # exceeds the expected MAP rank.
+    # param_layouts should always be provided by results-object callers.
+    # The fallback infers layouts from tensor shapes and will be removed
+    # in a future release.
     if param_layouts is None:
+        warnings.warn(
+            "Calling denoise_counts without param_layouts is deprecated. "
+            "Pass param_layouts explicitly.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         _expected_r_rank = 2 if is_mixture else 1
         _has_sd = r.ndim > _expected_r_rank
         _params: Dict[str, jnp.ndarray] = {"r": r, "p": p}
