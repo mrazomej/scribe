@@ -1287,8 +1287,8 @@ class TestDeriveAxisMembership:
     # Parameterization-dependent canonical-name mapping
     # ------------------------------------------------------------------
 
-    def test_canonical_parameterization_maps_to_r(self):
-        """canonical: expression_dataset_prior → 'r' (not 'mu')."""
+    def test_canonical_parameterization_maps_to_r_and_mu(self):
+        """canonical: expression_dataset_prior → 'r', plus derived 'mu'."""
         from scribe.core.axis_layout import derive_axis_membership
         from scribe.models.config.enums import HierarchicalPriorType
 
@@ -1298,10 +1298,11 @@ class TestDeriveAxisMembership:
         )
         _, dp = derive_axis_membership(cfg)
         assert "r" in dp
-        assert "mu" not in dp
+        # mu is derived from r and p in canonical, so it inherits dataset membership
+        assert "mu" in dp
 
     def test_standard_alias_maps_like_canonical(self):
-        """'standard' is an alias for canonical."""
+        """'standard' is an alias for canonical; mu derived from r."""
         from scribe.core.axis_layout import derive_axis_membership
         from scribe.models.config.enums import HierarchicalPriorType
 
@@ -1311,6 +1312,7 @@ class TestDeriveAxisMembership:
         )
         _, dp = derive_axis_membership(cfg)
         assert "r" in dp
+        assert "mu" in dp
 
     def test_odds_ratio_alias_maps_like_mean_odds(self):
         """'odds_ratio' is an alias for mean_odds; prob_dataset → phi."""
@@ -1351,8 +1353,8 @@ class TestDeriveAxisMembership:
         _, dp = derive_axis_membership(cfg)
         assert "r" in dp
 
-    def test_canonical_has_no_derived_expansion(self):
-        """canonical has no DerivedParams, so lists stay as-is."""
+    def test_canonical_expands_mu_from_r_and_p(self):
+        """canonical declares mu as derived from r and p, so mu is expanded."""
         from scribe.core.axis_layout import derive_axis_membership
 
         cfg = self._cfg(
@@ -1360,7 +1362,7 @@ class TestDeriveAxisMembership:
             mixture_params=["r", "p"],
         )
         mp, _ = derive_axis_membership(cfg)
-        assert sorted(mp) == ["p", "r"]
+        assert sorted(mp) == ["mu", "p", "r"]
 
     # ------------------------------------------------------------------
     # Concat multi-dataset shape scan
@@ -1601,3 +1603,186 @@ class TestSubsetGeneDimSamplesWithLayouts:
         # Both should be sliced correctly
         assert result["r"].shape == (3, 2)
         assert result["some_flow_param"].shape == (3, 2)
+
+
+# ==============================================================================
+# Dataset membership propagation through DerivedParam for all parameterizations
+# ==============================================================================
+
+
+class TestDerivedDatasetMembershipAllParameterizations:
+    """Verify that dataset membership propagates through the DerivedParam graph
+    for every parameterization, ensuring ``get_dataset()`` will correctly slice
+    all derived posterior keys.
+
+    The core invariant: if any *source* parameter of a DerivedParam is
+    dataset-specific, the derived param must also become dataset-specific.
+    """
+
+    @staticmethod
+    def _cfg(**kwargs):
+        from types import SimpleNamespace
+
+        defaults = dict(
+            parameterization="canonical",
+            mixture_params=None,
+            dataset_params=None,
+            param_specs=[],
+            n_datasets=None,
+            expression_dataset_prior=None,
+            prob_dataset_prior=None,
+            zero_inflation_dataset_prior=None,
+            overdispersion_dataset_prior=None,
+        )
+        defaults.update(kwargs)
+        return SimpleNamespace(**defaults)
+
+    # ------------------------------------------------------------------
+    # Canonical: r is dataset → mu must become dataset
+    # ------------------------------------------------------------------
+
+    def test_canonical_r_dataset_propagates_to_mu(self):
+        """When r is dataset-specific, derived mu inherits dataset membership."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg(
+            parameterization="canonical",
+            dataset_params=["r"],
+        )
+        _, dp = derive_axis_membership(cfg)
+        assert "r" in dp
+        assert "mu" in dp, (
+            "mu is derived from r in canonical; must inherit dataset membership"
+        )
+
+    def test_canonical_p_dataset_propagates_to_mu(self):
+        """When p is dataset-specific, derived mu inherits dataset membership."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg(
+            parameterization="canonical",
+            dataset_params=["p"],
+        )
+        _, dp = derive_axis_membership(cfg)
+        assert "p" in dp
+        assert "mu" in dp
+
+    def test_canonical_both_r_and_p_dataset(self):
+        """When both r and p are dataset, mu is also dataset."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg(
+            parameterization="canonical",
+            dataset_params=["r", "p"],
+        )
+        _, dp = derive_axis_membership(cfg)
+        assert set(dp) >= {"r", "p", "mu"}
+
+    def test_canonical_no_dataset_params_no_mu_expansion(self):
+        """Without any dataset params, mu is not incorrectly added."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg(parameterization="canonical")
+        _, dp = derive_axis_membership(cfg)
+        assert dp is None
+
+    # ------------------------------------------------------------------
+    # Mean prob (linked): mu is dataset → r must become dataset
+    # ------------------------------------------------------------------
+
+    def test_linked_mu_dataset_propagates_to_r(self):
+        """linked/mean_prob: mu dataset → r inherits (derived from p, mu)."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg(
+            parameterization="linked",
+            dataset_params=["mu"],
+        )
+        _, dp = derive_axis_membership(cfg)
+        assert "mu" in dp
+        assert "r" in dp
+
+    def test_linked_p_dataset_propagates_to_r(self):
+        """linked/mean_prob: p dataset → r inherits."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg(
+            parameterization="linked",
+            dataset_params=["p"],
+        )
+        _, dp = derive_axis_membership(cfg)
+        assert "p" in dp
+        assert "r" in dp
+
+    # ------------------------------------------------------------------
+    # Mean odds (odds_ratio): phi/mu dataset → r, p must become dataset
+    # ------------------------------------------------------------------
+
+    def test_mean_odds_mu_dataset_propagates_to_r(self):
+        """mean_odds: mu dataset → r inherits (r depends on phi, mu)."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg(
+            parameterization="mean_odds",
+            dataset_params=["mu"],
+        )
+        _, dp = derive_axis_membership(cfg)
+        assert "mu" in dp
+        assert "r" in dp
+
+    def test_mean_odds_phi_dataset_propagates_to_r_and_p(self):
+        """mean_odds: phi dataset → both r and p inherit."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg(
+            parameterization="mean_odds",
+            dataset_params=["phi"],
+        )
+        _, dp = derive_axis_membership(cfg)
+        assert "phi" in dp
+        assert "r" in dp, "r depends on [phi, mu]; phi is dataset"
+        assert "p" in dp, "p depends on [phi]; phi is dataset"
+
+    # ------------------------------------------------------------------
+    # Mixture membership mirrors dataset propagation
+    # ------------------------------------------------------------------
+
+    def test_canonical_mixture_r_propagates_to_mu(self):
+        """Mixture axis: if r is mixture, derived mu inherits."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg(
+            parameterization="canonical",
+            mixture_params=["r"],
+        )
+        mp, _ = derive_axis_membership(cfg)
+        assert "r" in mp
+        assert "mu" in mp
+
+    def test_mean_odds_mixture_phi_propagates_to_r_and_p(self):
+        """Mixture axis under mean_odds: phi → r, p."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg(
+            parameterization="mean_odds",
+            mixture_params=["phi"],
+        )
+        mp, _ = derive_axis_membership(cfg)
+        assert set(mp) >= {"phi", "r", "p"}
+
+    # ------------------------------------------------------------------
+    # Combined mixture + dataset
+    # ------------------------------------------------------------------
+
+    def test_canonical_mixture_and_dataset_both_propagate(self):
+        """Mixture r + dataset r → mu appears in both lists."""
+        from scribe.core.axis_layout import derive_axis_membership
+
+        cfg = self._cfg(
+            parameterization="canonical",
+            mixture_params=["r", "p"],
+            dataset_params=["r"],
+        )
+        mp, dp = derive_axis_membership(cfg)
+        assert "mu" in mp, "mu derived from r (mixture member)"
+        assert "mu" in dp, "mu derived from r (dataset member)"

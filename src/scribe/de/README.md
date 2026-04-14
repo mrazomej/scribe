@@ -496,7 +496,10 @@ Biological computation is now family-selective: requesting only
 reduces memory pressure for large comparisons.
 
 For empirical/shrinkage results with stored MAP mean expression, CLR exports
-also include `clr_mean_expression_A` and `clr_mean_expression_B`.
+also include `clr_mean_expression_A` and `clr_mean_expression_B`.  These are
+derived preferentially from per-arm `r * p / (1 - p)` (guaranteed to be
+dataset-specific), falling back to `mu` posterior samples only when `r` or `p`
+are unavailable.
 
 Use `column_naming="legacy"` to recover historical un-prefixed column names.
 

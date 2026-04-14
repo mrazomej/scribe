@@ -3877,3 +3877,349 @@ class TestAxisLayoutDatasetAxis:
         layout = layout_from_param_spec(spec, has_sample_dim=True)
         assert layout.dataset_axis == 1
         assert layout.gene_axis == 2
+
+
+# ==============================================================================
+# Posterior subsetting: derived keys sliced correctly by get_dataset
+# ==============================================================================
+
+
+class TestSubsetPosteriorDerivedKeys:
+    """Verify that _subset_posterior_by_dataset correctly slices derived
+    posterior keys whose dataset membership comes from the DerivedParam
+    graph rather than from explicit ParamSpec.is_dataset flags.
+
+    This is the core regression test for the identity-diagonal bug where
+    mu_map_A == mu_map_B in empirical DE with canonical parameterization.
+    """
+
+    @staticmethod
+    def _make_results(
+        parameterization, n_datasets, n_genes, posterior_samples,
+        param_specs=None,
+    ):
+        """Build a minimal ScribeSVIResults with posterior samples."""
+        from scribe.svi.results import ScribeSVIResults
+
+        config = ModelConfig(
+            base_model="nbdm",
+            n_datasets=n_datasets,
+            parameterization=parameterization,
+            unconstrained=True,
+            expression_dataset_prior="gaussian",
+            param_specs=param_specs or [],
+        )
+        return ScribeSVIResults(
+            params={"dummy_loc": jnp.zeros(n_genes)},
+            loss_history=jnp.array([1.0]),
+            n_cells=50,
+            n_genes=n_genes,
+            model_type="nbdm",
+            model_config=config,
+            prior_params={},
+            posterior_samples=posterior_samples,
+        )
+
+    # ------------------------------------------------------------------
+    # Canonical: mu derived from r → mu must be sliced per-dataset
+    # ------------------------------------------------------------------
+
+    def test_canonical_mu_sliced_by_dataset(self):
+        """get_dataset() slices derived 'mu' in canonical mode."""
+        n_ds, n_genes, n_samples = 2, 10, 5
+        # r has dataset axis: (S, D, G)
+        r = jnp.ones((n_samples, n_ds, n_genes))
+        r = r.at[:, 0, :].set(2.0)
+        r = r.at[:, 1, :].set(8.0)
+
+        # p is global (shared): scalar (S,) — no dataset dim
+        p_scalar = jnp.full((n_samples,), 0.3)
+
+        # mu derived from r and p: (S, D, G) — different per dataset
+        # Build explicitly with correct broadcast
+        mu = r * 0.3 / (1.0 - 0.3)
+
+        posterior = {"r": r, "p": p_scalar, "mu": mu}
+        specs = [
+            DatasetHierarchicalPositiveNormalSpec(
+                name="r", shape_dims=("n_genes",),
+                default_params=(0.0, 1.0), is_gene_specific=True,
+                is_dataset=True, unconstrained=True, loc=0.0, scale=1.0,
+                hyper_loc_name="log_r_dataset_loc",
+                hyper_scale_name="log_r_dataset_scale",
+            ),
+        ]
+        results = self._make_results(
+            "canonical", n_ds, n_genes, posterior, param_specs=specs,
+        )
+
+        view_0 = results.get_dataset(0)
+        view_1 = results.get_dataset(1)
+
+        # r must differ between datasets
+        assert view_0.posterior_samples["r"].shape == (n_samples, n_genes)
+        assert not jnp.allclose(
+            view_0.posterior_samples["r"],
+            view_1.posterior_samples["r"],
+        )
+
+        # mu must also differ — this was the bug
+        assert view_0.posterior_samples["mu"].shape == (n_samples, n_genes)
+        assert not jnp.allclose(
+            view_0.posterior_samples["mu"],
+            view_1.posterior_samples["mu"],
+        ), "mu must be sliced per-dataset (derived from dataset-specific r)"
+
+    def test_canonical_shared_p_passes_through(self):
+        """Shared (non-dataset) p passes through unchanged."""
+        n_ds, n_genes, n_samples = 2, 10, 5
+        r = jnp.ones((n_samples, n_ds, n_genes))
+        # p is scalar (S,) — no dataset dim
+        p_scalar = jnp.full((n_samples,), 0.3)
+        mu = r * 0.3 / (1.0 - 0.3)
+
+        posterior = {"r": r, "p": p_scalar, "mu": mu}
+        specs = [
+            DatasetHierarchicalPositiveNormalSpec(
+                name="r", shape_dims=("n_genes",),
+                default_params=(0.0, 1.0), is_gene_specific=True,
+                is_dataset=True, unconstrained=True, loc=0.0, scale=1.0,
+                hyper_loc_name="log_r_dataset_loc",
+                hyper_scale_name="log_r_dataset_scale",
+            ),
+        ]
+        results = self._make_results(
+            "canonical", n_ds, n_genes, posterior, param_specs=specs,
+        )
+
+        view_0 = results.get_dataset(0)
+        view_1 = results.get_dataset(1)
+
+        # p is global: both views should have identical p
+        assert jnp.allclose(
+            view_0.posterior_samples["p"],
+            view_1.posterior_samples["p"],
+        )
+
+    # ------------------------------------------------------------------
+    # Mean prob (linked): r derived from p, mu → r must be sliced
+    # ------------------------------------------------------------------
+
+    def test_linked_r_sliced_when_mu_is_dataset(self):
+        """get_dataset() slices derived 'r' in linked mode when mu is
+        dataset-specific.
+        """
+        n_ds, n_genes, n_samples = 2, 8, 4
+        # mu has dataset axis: (S, D, G)
+        mu = jnp.ones((n_samples, n_ds, n_genes))
+        mu = mu.at[:, 0, :].set(5.0)
+        mu = mu.at[:, 1, :].set(15.0)
+
+        # p is scalar (S,) — no dataset dim
+        p_scalar = jnp.full((n_samples,), 0.4)
+
+        # r = mu * (1-p) / p — build with scalar constants for clean broadcast
+        r = mu * (1.0 - 0.4) / 0.4
+
+        posterior = {"mu": mu, "p": p_scalar, "r": r}
+        specs = [
+            DatasetHierarchicalPositiveNormalSpec(
+                name="mu", shape_dims=("n_genes",),
+                default_params=(0.0, 1.0), is_gene_specific=True,
+                is_dataset=True, unconstrained=True, loc=0.0, scale=1.0,
+                hyper_loc_name="log_mu_dataset_loc",
+                hyper_scale_name="log_mu_dataset_scale",
+            ),
+        ]
+        results = self._make_results(
+            "linked", n_ds, n_genes, posterior, param_specs=specs,
+        )
+
+        view_0 = results.get_dataset(0)
+        view_1 = results.get_dataset(1)
+
+        # r is derived from mu (dataset) and p — must differ
+        assert not jnp.allclose(
+            view_0.posterior_samples["r"],
+            view_1.posterior_samples["r"],
+        ), "r must be sliced per-dataset (derived from dataset-specific mu)"
+
+    # ------------------------------------------------------------------
+    # Mean odds (odds_ratio): r, p derived from phi, mu
+    # ------------------------------------------------------------------
+
+    def test_mean_odds_r_and_p_sliced_when_phi_is_dataset(self):
+        """get_dataset() slices derived 'r' and 'p' in mean_odds mode
+        when phi is dataset-specific.
+        """
+        n_ds, n_genes, n_samples = 2, 6, 3
+        # phi has dataset axis: (S, D) — scalar per dataset per draw
+        phi = jnp.ones((n_samples, n_ds))
+        phi = phi.at[:, 0].set(0.5)
+        phi = phi.at[:, 1].set(2.0)
+
+        # mu is global: (S, G)
+        mu = jnp.ones((n_samples, n_genes)) * 10.0
+
+        # r = mu * phi — shape (S, D, G) via broadcasting
+        r = mu[:, None, :] * phi[:, :, None]
+        # p = 1/(1+phi) — shape (S, D)
+        p = 1.0 / (1.0 + phi)
+
+        posterior = {"phi": phi, "mu": mu, "r": r, "p": p}
+        specs = [
+            DatasetHierarchicalPositiveNormalSpec(
+                name="phi", shape_dims=(),
+                default_params=(0.0, 1.0), is_gene_specific=False,
+                is_dataset=True, unconstrained=True, loc=0.0, scale=1.0,
+                hyper_loc_name="log_phi_dataset_loc",
+                hyper_scale_name="log_phi_dataset_scale",
+            ),
+        ]
+        results = self._make_results(
+            "mean_odds", n_ds, n_genes, posterior, param_specs=specs,
+        )
+
+        view_0 = results.get_dataset(0)
+        view_1 = results.get_dataset(1)
+
+        assert not jnp.allclose(
+            view_0.posterior_samples["r"],
+            view_1.posterior_samples["r"],
+        )
+        assert not jnp.allclose(
+            view_0.posterior_samples["p"],
+            view_1.posterior_samples["p"],
+        )
+
+
+# ==============================================================================
+# mu_map_A != mu_map_B in _compare_empirical
+# ==============================================================================
+
+
+class TestMuMapDiffersAcrossDatasets:
+    """Verify that mu_map_A and mu_map_B in the empirical DE result object
+    are different when r is dataset-specific, regardless of whether mu
+    posterior samples exist.
+
+    Regression test for the identity-diagonal artefact.
+    """
+
+    def test_mu_map_from_r_and_p_differs(self):
+        """mu_map derived from r*p/(1-p) differs when r differs per arm."""
+        from scribe.de._results_factory import _compare_empirical
+
+        n_samples, n_genes = 100, 20
+        rng = np.random.default_rng(42)
+
+        # Arm A and B have different r but same p
+        r_A = rng.gamma(5.0, 1.0, size=(n_samples, n_genes)).astype(np.float32)
+        r_B = rng.gamma(10.0, 1.0, size=(n_samples, n_genes)).astype(np.float32)
+        p_shared = np.full((n_samples, 1), 0.3, dtype=np.float32)
+
+        result = _compare_empirical(
+            r_samples_A=jnp.array(r_A),
+            r_samples_B=jnp.array(r_B),
+            component_A=None,
+            component_B=None,
+            paired=True,
+            n_samples_dirichlet=1,
+            rng_key=jax.random.PRNGKey(0),
+            batch_size=n_samples,
+            gene_names=[f"g{i}" for i in range(n_genes)],
+            gene_mask=None,
+            label_A="A",
+            label_B="B",
+            p_samples_A=jnp.array(p_shared),
+            p_samples_B=jnp.array(p_shared),
+            compute_biological=False,
+        )
+
+        assert result.mu_map_A is not None
+        assert result.mu_map_B is not None
+        assert not np.allclose(result.mu_map_A, result.mu_map_B), (
+            "mu_map should differ across arms when r differs"
+        )
+
+    def test_mu_map_from_shared_mu_but_different_r_p(self):
+        """Even if mu samples are identical (shared), the r*p/(1-p) path
+        should be preferred and produce different mu_map values.
+        """
+        from scribe.de._results_factory import _compare_empirical
+
+        n_samples, n_genes = 50, 15
+        rng = np.random.default_rng(99)
+
+        r_A = rng.gamma(3.0, 1.0, size=(n_samples, n_genes)).astype(np.float32)
+        r_B = rng.gamma(8.0, 1.0, size=(n_samples, n_genes)).astype(np.float32)
+        p_shared = np.full((n_samples, 1), 0.25, dtype=np.float32)
+
+        # Shared mu (simulating the bug scenario before the fix)
+        mu_shared = np.ones((n_samples, n_genes), dtype=np.float32) * 5.0
+
+        result = _compare_empirical(
+            r_samples_A=jnp.array(r_A),
+            r_samples_B=jnp.array(r_B),
+            component_A=None,
+            component_B=None,
+            paired=True,
+            n_samples_dirichlet=1,
+            rng_key=jax.random.PRNGKey(1),
+            batch_size=n_samples,
+            gene_names=[f"g{i}" for i in range(n_genes)],
+            gene_mask=None,
+            label_A="A",
+            label_B="B",
+            p_samples_A=jnp.array(p_shared),
+            p_samples_B=jnp.array(p_shared),
+            mu_samples_A=jnp.array(mu_shared),
+            mu_samples_B=jnp.array(mu_shared),
+            compute_biological=False,
+        )
+
+        # r*p/(1-p) should take precedence over shared mu samples
+        assert result.mu_map_A is not None
+        assert result.mu_map_B is not None
+        assert not np.allclose(result.mu_map_A, result.mu_map_B), (
+            "mu_map should use r*p/(1-p) even when mu samples exist"
+        )
+
+    def test_mu_map_falls_back_to_mu_samples(self):
+        """When r or p are unavailable, mu_map falls back to mu samples."""
+        from scribe.de._results_factory import _compare_empirical
+
+        n_samples, n_genes = 50, 10
+        rng = np.random.default_rng(7)
+
+        r_A = rng.gamma(5.0, 1.0, size=(n_samples, n_genes)).astype(np.float32)
+        r_B = rng.gamma(5.0, 1.0, size=(n_samples, n_genes)).astype(np.float32)
+
+        mu_A = np.ones((n_samples, n_genes), dtype=np.float32) * 3.0
+        mu_B = np.ones((n_samples, n_genes), dtype=np.float32) * 7.0
+
+        result = _compare_empirical(
+            r_samples_A=jnp.array(r_A),
+            r_samples_B=jnp.array(r_B),
+            component_A=None,
+            component_B=None,
+            paired=True,
+            n_samples_dirichlet=1,
+            rng_key=jax.random.PRNGKey(2),
+            batch_size=n_samples,
+            gene_names=[f"g{i}" for i in range(n_genes)],
+            gene_mask=None,
+            label_A="A",
+            label_B="B",
+            # No p_samples → r*p/(1-p) path unavailable
+            p_samples_A=None,
+            p_samples_B=None,
+            mu_samples_A=jnp.array(mu_A),
+            mu_samples_B=jnp.array(mu_B),
+            compute_biological=False,
+        )
+
+        # Should use mu samples as fallback
+        assert result.mu_map_A is not None
+        assert result.mu_map_B is not None
+        assert not np.allclose(result.mu_map_A, result.mu_map_B)

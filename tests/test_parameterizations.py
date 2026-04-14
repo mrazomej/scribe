@@ -12,6 +12,7 @@ from scribe.models.parameterizations import (
     CanonicalParameterization,
     MeanOddsParameterization,
     MeanProbParameterization,
+    _compute_mu_from_r_p,
     _compute_r_from_mu_p,
     _compute_r_from_mu_phi,
 )
@@ -169,13 +170,25 @@ class TestMeanProbDerivedParams:
 
 
 class TestCanonicalParameterization:
-    """Test canonical parameterization has no derived parameters."""
+    """Test canonical parameterization derives mu from r and p."""
 
-    def test_no_derived_params(self):
-        """Test canonical parameterization has empty derived params."""
+    def test_derived_params_declares_mu(self):
+        """Canonical declares mu as derived from r and p."""
         param = CanonicalParameterization()
         derived = param.build_derived_params()
-        assert derived == []
+        assert len(derived) == 1
+        assert derived[0].name == "mu"
+        assert set(derived[0].deps) == {"r", "p"}
+
+    def test_derived_mu_compute_function(self):
+        """The compute function produces mu = r * p / (1 - p)."""
+        param = CanonicalParameterization()
+        derived = param.build_derived_params()
+        fn = derived[0].compute
+        r = jnp.array([4.0, 8.0])
+        p = jnp.array([0.25, 0.5])
+        expected = r * p / (1 - p)
+        assert jnp.allclose(fn(r, p), expected)
 
 
 # ==============================================================================

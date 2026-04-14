@@ -327,9 +327,20 @@ class DatasetMixin:
 
         # Hybrid layouts so derived posterior keys (not in specs) still get a
         # correct ``dataset_axis`` when shapes and config metadata allow it.
-        from ..core.axis_layout import build_sample_layouts
+        # We resolve dataset_params via derive_axis_membership so that
+        # derived keys (e.g. "mu" in canonical mode) inherit dataset
+        # membership from their source parameters ("r", "p").
+        from ..core.axis_layout import (
+            build_sample_layouts,
+            derive_axis_membership,
+        )
 
         mc = self.model_config
+        _mp, _dp = derive_axis_membership(
+            mc,
+            samples=samples,
+            has_sample_dim=True,
+        )
         sample_layouts = build_sample_layouts(
             list(mc.param_specs or []),
             samples,
@@ -337,7 +348,8 @@ class DatasetMixin:
             n_cells=self.n_cells,
             n_components=getattr(mc, "n_components", None),
             n_datasets=getattr(mc, "n_datasets", None),
-            mixture_params=getattr(mc, "mixture_params", None),
+            mixture_params=_mp,
+            dataset_params=_dp,
             has_sample_dim=True,
         )
 

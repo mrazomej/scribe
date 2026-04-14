@@ -504,22 +504,30 @@ def _compare_empirical(
 
     # Compute mean biological expression on CPU (bio arrays are already
     # numpy after the transfer above).
+    #
+    # Prefer deriving mu_map from per-arm r and p: these are guaranteed
+    # to be dataset-specific in multi-dataset models, whereas mu
+    # posterior samples may be a global (shared) tensor when the model
+    # parameterization stores r/p directly (canonical) and mu is derived
+    # after posterior extraction.  Using r*p/(1-p) avoids the
+    # identity-diagonal artefact where mu_map_A == mu_map_B.
+    # Fall back to mu samples only when r or p are unavailable.
     mu_map_A_vec = None
     mu_map_B_vec = None
-    if mu_bio_A is not None:
-        mu_map_A_vec = mu_bio_A.mean(axis=0)
-    elif r_bio_A is not None and p_bio_A is not None:
+    if r_bio_A is not None and p_bio_A is not None:
         _r_mean = r_bio_A.mean(axis=0)
         _p_mean = p_bio_A.mean(axis=0)
         _p_mean = _np.clip(_p_mean, 1e-7, 1.0 - 1e-7)
         mu_map_A_vec = _r_mean * _p_mean / (1.0 - _p_mean)
-    if mu_bio_B is not None:
-        mu_map_B_vec = mu_bio_B.mean(axis=0)
-    elif r_bio_B is not None and p_bio_B is not None:
+    elif mu_bio_A is not None:
+        mu_map_A_vec = mu_bio_A.mean(axis=0)
+    if r_bio_B is not None and p_bio_B is not None:
         _r_mean = r_bio_B.mean(axis=0)
         _p_mean = p_bio_B.mean(axis=0)
         _p_mean = _np.clip(_p_mean, 1e-7, 1.0 - 1e-7)
         mu_map_B_vec = _r_mean * _p_mean / (1.0 - _p_mean)
+    elif mu_bio_B is not None:
+        mu_map_B_vec = mu_bio_B.mean(axis=0)
 
     all_gene_names = gene_names
     kept_gene_names = gene_names
