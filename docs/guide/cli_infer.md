@@ -290,14 +290,14 @@ scribe-infer --config-path /path/to/conf --config-name config data=my_dataset
 
 ## CLI flags reference
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--config-path` | `./conf` | Hydra config root directory |
-| `--config-name` | `config` | Top-level Hydra config filename (without `.yaml`) |
-| `--initialize [PATH]` | --- | Scaffold starter configs. Cannot be combined with `--slurm` |
-| `--slurm` | `false` | Launch via submitit with interactive resource prompts |
-| `--slurm-profile PROFILE` | `null` | Load a reusable SLURM profile (auto-enables SLURM mode) |
-| `--slurm-set KEY=VALUE` | --- | Per-run SLURM override (repeatable, auto-enables SLURM mode) |
+| Flag                      | Default  | Description                                                  |
+| ------------------------- | -------- | ------------------------------------------------------------ |
+| `--config-path`           | `./conf` | Hydra config root directory                                  |
+| `--config-name`           | `config` | Top-level Hydra config filename (without `.yaml`)            |
+| `--initialize [PATH]`     | ---      | Scaffold starter configs. Cannot be combined with `--slurm`  |
+| `--slurm`                 | `false`  | Launch via submitit with interactive resource prompts        |
+| `--slurm-profile PROFILE` | `null`   | Load a reusable SLURM profile (auto-enables SLURM mode)      |
+| `--slurm-set KEY=VALUE`   | ---      | Per-run SLURM override (repeatable, auto-enables SLURM mode) |
 
 ---
 
