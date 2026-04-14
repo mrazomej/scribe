@@ -165,14 +165,15 @@ def _merge_per_dataset_posterior_samples(
     return merged
 
 
-def _move_to_cpu(samples: Dict[str, Any]) -> Dict[str, Any]:
-    """Transfer all JAX arrays in a posterior-samples dict to CPU device.
+def _convert_to_numpy(samples: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert all JAX arrays in a posterior-samples dict to NumPy.
 
-    Each value that is a ``jax.Array`` is placed on the first CPU device
-    via ``jax.device_put``.  The returned arrays are still ``jax.Array``
-    instances (not plain numpy), so downstream code using ``jnp``,
-    ``vmap``, or NumPyro continues to work transparently.  Non-array
-    entries (e.g., metadata) are passed through unchanged.
+    Each value that is a ``jax.Array`` is transferred to host memory and
+    returned as a plain ``numpy.ndarray``.  This frees GPU memory
+    immediately and lets downstream code (e.g., the DE pipeline) use the
+    NumPy/SciPy stack directly — avoiding JAX's XLA CPU backend overhead
+    and unnecessary GPU round-trips.  Non-array entries (e.g., metadata)
+    are passed through unchanged.
 
     Parameters
     ----------
@@ -182,13 +183,12 @@ def _move_to_cpu(samples: Dict[str, Any]) -> Dict[str, Any]:
     Returns
     -------
     Dict[str, Any]
-        Same dict with every JAX array moved to CPU host memory.
+        Same dict with every JAX array converted to ``numpy.ndarray``.
     """
     import jax
 
-    cpu = jax.devices("cpu")[0]
     return {
-        k: jax.device_put(v, cpu) if isinstance(v, jax.Array) else v
+        k: np.asarray(v) if isinstance(v, jax.Array) else v
         for k, v in samples.items()
     }
 
@@ -222,7 +222,7 @@ class PosteriorPredictiveSamplingMixin:
         n_samples: int = 100,
         batch_size: Optional[int] = None,
         store_samples: bool = True,
-        store_on_cpu: bool = False,
+        convert_to_numpy: bool = False,
         counts: Optional[jnp.ndarray] = None,
         descriptive_names: bool = False,
     ) -> Dict:
@@ -245,15 +245,15 @@ class PosteriorPredictiveSamplingMixin:
             Batch size for memory-efficient sampling (default: None)
         store_samples : bool, optional
             Whether to store samples in self.posterior_samples (default: True)
-        store_on_cpu : bool, optional
-            If True, transfer all sampled arrays to CPU-resident JAX arrays
-            via ``jax.device_put`` before storing and returning.  The arrays
-            remain ``jax.Array`` instances (not plain numpy) so downstream
-            code that uses ``jnp``, ``vmap``, or NumPyro continues to work
-            transparently.  This frees GPU memory immediately after
-            sampling, which is important when downstream operations (e.g.,
-            differential expression) need GPU headroom.  Implies
-            ``store_samples=True``.  Default: False.
+        convert_to_numpy : bool, optional
+            If True, convert all sampled arrays to plain ``numpy.ndarray``
+            before storing and returning.  This frees GPU memory
+            immediately after sampling, which is important when downstream
+            operations (e.g., differential expression) need GPU headroom.
+            The DE pipeline's array-backend dispatch will then use the
+            NumPy/SciPy stack directly for summary statistics, avoiding
+            JAX's XLA CPU backend overhead and unnecessary GPU
+            round-trips.  Implies ``store_samples=True``.  Default: False.
         counts : Optional[jnp.ndarray], optional
             Observed count matrix of shape (n_cells, n_genes). Required when
             using amortized capture probability (e.g., with
@@ -311,11 +311,11 @@ class PosteriorPredictiveSamplingMixin:
                 counts=counts,
             )
 
-        # store_on_cpu implies store_samples — if the caller explicitly
-        # asks for CPU-resident storage, the intent is always to persist.
-        if store_on_cpu:
+        # convert_to_numpy implies store_samples — if the caller explicitly
+        # asks for NumPy-resident storage, the intent is always to persist.
+        if convert_to_numpy:
             store_samples = True
-            posterior_samples = _move_to_cpu(posterior_samples)
+            posterior_samples = _convert_to_numpy(posterior_samples)
 
         if store_samples:
             self.posterior_samples = posterior_samples

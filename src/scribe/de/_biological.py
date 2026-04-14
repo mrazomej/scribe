@@ -227,6 +227,10 @@ def biological_differential_expression(
     3. **Fallback** (``canonical``): ``mu = r * p / (1 - p)``,
        ``var = mu / p``, ``beta = p / (1 - p)``.
     """
+    from ..core._array_dispatch import _array_module
+
+    xp = _array_module(r_samples_A)
+
     # Resolve requested biological families once so downstream blocks can skip
     # unused expensive computations (for example KL divergence).
     metric_families_set = _resolve_biological_metric_families(metric_families)
@@ -300,8 +304,8 @@ def biological_differential_expression(
             raise RuntimeError(
                 "Internal error: LFC requested but mu was not computed."
             )
-        lfc_samples = jnp.log(jnp.maximum(mu_A, eps)) - jnp.log(
-            jnp.maximum(mu_B, eps)
+        lfc_samples = xp.log(xp.maximum(mu_A, eps)) - xp.log(
+            xp.maximum(mu_B, eps)
         )
         lfc_stats = _summarise_signed_metric(lfc_samples, tau_lfc)
 
@@ -314,8 +318,8 @@ def biological_differential_expression(
             raise RuntimeError(
                 "Internal error: LVR requested but variance was not computed."
             )
-        lvr_samples = jnp.log(jnp.maximum(var_A, eps)) - jnp.log(
-            jnp.maximum(var_B, eps)
+        lvr_samples = xp.log(xp.maximum(var_A, eps)) - xp.log(
+            xp.maximum(var_B, eps)
         )
         lvr_stats = _summarise_signed_metric(lvr_samples, tau_var)
 
@@ -347,10 +351,10 @@ def biological_differential_expression(
     if gene_names is None:
         gene_names = [f"gene_{i}" for i in range(D)]
 
-    mu_A_mean = jnp.mean(mu_A, axis=0) if mu_A is not None else None
-    mu_B_mean = jnp.mean(mu_B, axis=0) if mu_B is not None else None
+    mu_A_mean = xp.mean(mu_A, axis=0) if mu_A is not None else None
+    mu_B_mean = xp.mean(mu_B, axis=0) if mu_B is not None else None
     max_bio_expr = (
-        jnp.maximum(mu_A_mean, mu_B_mean)
+        xp.maximum(mu_A_mean, mu_B_mean)
         if (mu_A_mean is not None and mu_B_mean is not None)
         else None
     )
@@ -403,10 +407,10 @@ def biological_differential_expression(
                 "mu_A_mean": mu_A_mean,
                 "mu_B_mean": mu_B_mean,
                 "var_A_mean": (
-                    jnp.mean(var_A, axis=0) if var_A is not None else jnp.nan
+                    xp.mean(var_A, axis=0) if var_A is not None else xp.nan
                 ),
                 "var_B_mean": (
-                    jnp.mean(var_B, axis=0) if var_B is not None else jnp.nan
+                    xp.mean(var_B, axis=0) if var_B is not None else xp.nan
                 ),
                 "max_bio_expr": max_bio_expr,
             }
@@ -453,9 +457,11 @@ def _summarise_signed_metric(
 ) -> dict:
     """Summarise a signed per-gene metric (LFC or LVR) across samples.
 
+    Backend-aware: dispatches to NumPy or JAX depending on input type.
+
     Parameters
     ----------
-    samples : jnp.ndarray, shape ``(N, D)``
+    samples : array-like, shape ``(N, D)``
         Per-sample values of the signed metric.
     tau : float
         Practical significance threshold.
@@ -466,16 +472,20 @@ def _summarise_signed_metric(
         Summary statistics: mean, sd, prob_positive, lfsr,
         prob_up, prob_down, prob_effect, lfsr_tau.
     """
-    mean = jnp.mean(samples, axis=0)
-    sd = jnp.std(samples, axis=0, ddof=1)
+    from ..core._array_dispatch import _array_module
 
-    prob_positive = jnp.mean(samples > 0, axis=0)
-    lfsr = jnp.minimum(prob_positive, 1.0 - prob_positive)
+    xp = _array_module(samples)
 
-    prob_up = jnp.mean(samples > tau, axis=0)
-    prob_down = jnp.mean(samples < -tau, axis=0)
+    mean = xp.mean(samples, axis=0)
+    sd = xp.std(samples, axis=0, ddof=1)
+
+    prob_positive = xp.mean(samples > 0, axis=0)
+    lfsr = xp.minimum(prob_positive, 1.0 - prob_positive)
+
+    prob_up = xp.mean(samples > tau, axis=0)
+    prob_down = xp.mean(samples < -tau, axis=0)
     prob_effect = prob_up + prob_down
-    lfsr_tau = 1.0 - jnp.maximum(prob_up, prob_down)
+    lfsr_tau = 1.0 - xp.maximum(prob_up, prob_down)
 
     return {
         "mean": mean,
@@ -495,9 +505,11 @@ def _summarise_nonneg_metric(
 ) -> dict:
     """Summarise a non-negative per-gene metric (KL) across samples.
 
+    Backend-aware: dispatches to NumPy or JAX depending on input type.
+
     Parameters
     ----------
-    samples : jnp.ndarray, shape ``(N, D)``
+    samples : array-like, shape ``(N, D)``
         Per-sample values of the non-negative metric.
     tau : float
         Practical significance threshold.
@@ -507,9 +519,13 @@ def _summarise_nonneg_metric(
     dict
         Summary statistics: mean, sd, prob_effect.
     """
-    mean = jnp.mean(samples, axis=0)
-    sd = jnp.std(samples, axis=0, ddof=1)
-    prob_effect = jnp.mean(samples > tau, axis=0)
+    from ..core._array_dispatch import _array_module
+
+    xp = _array_module(samples)
+
+    mean = xp.mean(samples, axis=0)
+    sd = xp.std(samples, axis=0, ddof=1)
+    prob_effect = xp.mean(samples > tau, axis=0)
 
     return {
         "mean": mean,

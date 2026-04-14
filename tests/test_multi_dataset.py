@@ -9,7 +9,7 @@ Covers:
 - compare_datasets DE helper
 - Integration: create_model end-to-end with multi-dataset configs
 - Regression: batched posterior sampling with VCP + multi-dataset
-- store_on_cpu: CPU-resident JAX array storage for posterior samples
+- convert_to_numpy: NumPy-resident array storage for posterior samples
 """
 
 import jax
@@ -3632,17 +3632,17 @@ class TestBatchedPosteriorMultiDataset:
 
 
 # ==============================================================================
-# store_on_cpu: CPU-resident JAX arrays for posterior samples
+# convert_to_numpy: NumPy-resident arrays for posterior samples
 # ==============================================================================
 
 
-class TestStoreOnCpu:
-    """Tests for the ``store_on_cpu`` parameter of ``get_posterior_samples``.
+class TestConvertToNumpy:
+    """Tests for the ``convert_to_numpy`` parameter of ``get_posterior_samples``.
 
-    Verifies that when ``store_on_cpu=True``, all stored arrays are
-    ``jax.Array`` instances residing on a CPU device, that shapes match
-    the default (GPU) path, and that the arrays remain compatible with
-    ``jnp`` operations.
+    Verifies that when ``convert_to_numpy=True``, all stored arrays are
+    plain ``numpy.ndarray`` instances, that shapes match the default
+    (JAX) path, and that the arrays are compatible with ``numpy``
+    operations.
     """
 
     @staticmethod
@@ -3686,92 +3686,84 @@ class TestStoreOnCpu:
             seed=0,
         )
 
-    def test_store_on_cpu_produces_jax_arrays_on_cpu_device(self):
-        """All stored arrays are jax.Array on a CPU device."""
+    def test_convert_to_numpy_produces_numpy_arrays(self):
+        """All stored arrays are plain numpy.ndarray."""
         adata = self._make_adata()
         result = self._fit_small_model(adata)
 
         result.get_posterior_samples(
             n_samples=3,
             store_samples=True,
-            store_on_cpu=True,
+            convert_to_numpy=True,
             rng_key=random.PRNGKey(0),
         )
 
         assert result.posterior_samples is not None
         for key, val in result.posterior_samples.items():
-            if not hasattr(val, "devices"):
+            if not hasattr(val, "shape"):
                 continue
-            # Must be a jax.Array, not a plain numpy.ndarray
-            assert isinstance(val, jax.Array), (
+            assert isinstance(val, np.ndarray), (
                 f"posterior_samples['{key}'] is {type(val).__name__}, "
-                f"expected jax.Array"
+                f"expected numpy.ndarray"
             )
-            # All shards must be on a CPU device
-            devices = val.devices()
-            for dev in devices:
-                assert dev.platform == "cpu", (
-                    f"posterior_samples['{key}'] on {dev.platform}, "
-                    f"expected cpu"
-                )
 
-    def test_store_on_cpu_shapes_match_default(self):
-        """Shapes from store_on_cpu=True match the default (GPU) path."""
+    def test_convert_to_numpy_shapes_match_default(self):
+        """Shapes from convert_to_numpy=True match the default (JAX) path."""
         adata = self._make_adata()
         result = self._fit_small_model(adata)
         n_samples = 3
         key = random.PRNGKey(0)
 
-        # Collect shapes from GPU path
-        gpu_samples = result.get_posterior_samples(
+        # Collect shapes from default JAX path
+        jax_samples = result.get_posterior_samples(
             n_samples=n_samples,
             store_samples=False,
-            store_on_cpu=False,
+            convert_to_numpy=False,
             rng_key=key,
         )
-        gpu_shapes = {
-            k: v.shape for k, v in gpu_samples.items() if hasattr(v, "shape")
+        jax_shapes = {
+            k: v.shape for k, v in jax_samples.items() if hasattr(v, "shape")
         }
 
-        # Collect shapes from CPU path (same RNG → same shapes)
-        cpu_samples = result.get_posterior_samples(
+        # Collect shapes from NumPy path (same RNG -> same shapes)
+        np_samples = result.get_posterior_samples(
             n_samples=n_samples,
             store_samples=False,
-            store_on_cpu=True,
+            convert_to_numpy=True,
             rng_key=key,
         )
-        cpu_shapes = {
-            k: v.shape for k, v in cpu_samples.items() if hasattr(v, "shape")
+        np_shapes = {
+            k: v.shape for k, v in np_samples.items() if hasattr(v, "shape")
         }
 
-        assert gpu_shapes.keys() == cpu_shapes.keys()
-        for k in gpu_shapes:
-            assert gpu_shapes[k] == cpu_shapes[k], (
-                f"Shape mismatch for '{k}': GPU {gpu_shapes[k]} "
-                f"vs CPU {cpu_shapes[k]}"
+        assert jax_shapes.keys() == np_shapes.keys()
+        for k in jax_shapes:
+            assert jax_shapes[k] == np_shapes[k], (
+                f"Shape mismatch for '{k}': JAX {jax_shapes[k]} "
+                f"vs NumPy {np_shapes[k]}"
             )
 
-    def test_store_on_cpu_jnp_compatible(self):
-        """CPU-resident arrays work with standard jnp operations."""
+    def test_convert_to_numpy_np_compatible(self):
+        """NumPy-resident arrays work with standard numpy operations."""
         adata = self._make_adata()
         result = self._fit_small_model(adata)
 
         samples = result.get_posterior_samples(
             n_samples=3,
             store_samples=True,
-            store_on_cpu=True,
+            convert_to_numpy=True,
             rng_key=random.PRNGKey(0),
         )
 
         # Pick an array key that exists (r is always present)
         r = samples["r"]
-        assert isinstance(r, jax.Array)
+        assert isinstance(r, np.ndarray)
 
-        # Basic jnp operations should work without errors
-        mean_r = jnp.mean(r, axis=0)
+        # Basic numpy operations should work without errors
+        mean_r = np.mean(r, axis=0)
         assert mean_r.shape == r.shape[1:]
 
-        log_r = jnp.log(r + 1e-8)
+        log_r = np.log(r + 1e-8)
         assert log_r.shape == r.shape
 
 

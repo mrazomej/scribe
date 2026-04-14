@@ -1,0 +1,82 @@
+"""Array-backend dispatch helpers for NumPy / JAX interoperability.
+
+Provides lightweight dispatchers that inspect the concrete type of an
+input array and return the matching module (``numpy`` vs ``jax.numpy``,
+``scipy.stats.norm`` vs ``jax.scipy.stats.norm``, etc.).  This lets
+call-sites write backend-agnostic code with a single ``xp = ...``
+binding instead of duplicating logic.
+
+When posterior samples have been converted to NumPy via
+``convert_to_numpy=True``, all downstream DE computations transparently
+use the NumPy/SciPy stack — avoiding JAX's XLA CPU backend overhead
+and unnecessary GPU round-trips.  When samples remain as ``jax.Array``
+(the default for small sample counts), the JAX/GPU path is used
+automatically.
+"""
+
+import numpy as np
+
+
+def _array_module(x):
+    """Return ``numpy`` or ``jax.numpy`` depending on the input type.
+
+    Parameters
+    ----------
+    x : array-like
+        Any array whose concrete type determines the backend.
+
+    Returns
+    -------
+    module
+        ``numpy`` if *x* is a plain ``numpy.ndarray``, otherwise
+        ``jax.numpy``.
+    """
+    if isinstance(x, np.ndarray):
+        return np
+    import jax.numpy as jnp
+
+    return jnp
+
+
+def _stats_norm(x):
+    """Return ``scipy.stats.norm`` or ``jax.scipy.stats.norm``.
+
+    Parameters
+    ----------
+    x : array-like
+        Any array whose concrete type determines the backend.
+
+    Returns
+    -------
+    module
+        The ``norm`` object from the matching SciPy backend.
+    """
+    if isinstance(x, np.ndarray):
+        from scipy.stats import norm
+
+        return norm
+    from jax.scipy.stats import norm
+
+    return norm
+
+
+def _special_module(x):
+    """Return ``scipy.special`` or ``jax.scipy.special``.
+
+    Parameters
+    ----------
+    x : array-like
+        Any array whose concrete type determines the backend.
+
+    Returns
+    -------
+    module
+        ``scipy.special`` or ``jax.scipy.special``.
+    """
+    if isinstance(x, np.ndarray):
+        import scipy.special as special
+
+        return special
+    from jax import scipy as jsp
+
+    return jsp.special

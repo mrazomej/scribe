@@ -1894,3 +1894,145 @@ class TestDEDeprecationWarnings:
         arr = jnp.ones((10,))
         with pytest.warns(DeprecationWarning, match="_needs_gene_broadcast"):
             _needs_gene_broadcast(arr, layout=None)
+
+
+# ==========================================================================
+# Array-backend dispatch (xp): NumPy vs JAX transparency
+# ==========================================================================
+
+
+class TestArrayBackendDispatch:
+    """Verify that DE summary functions dispatch correctly for np vs jnp inputs.
+
+    When inputs are ``numpy.ndarray`` the functions should return
+    ``numpy.ndarray``.  When inputs are ``jax.Array`` the functions
+    should return ``jax.Array``.
+    """
+
+    @staticmethod
+    def _make_delta_samples(xp, n=50, d=10, seed=0):
+        """Generate synthetic CLR delta samples with the given backend."""
+        rng = np.random.default_rng(seed)
+        arr = rng.standard_normal((n, d)).astype(np.float32)
+        if xp is jnp:
+            return jnp.asarray(arr)
+        return arr
+
+    def test_empirical_de_returns_numpy_for_numpy_input(self):
+        """empirical_differential_expression returns np.ndarray for np input."""
+        delta = self._make_delta_samples(np)
+        result = empirical_differential_expression(delta, tau=0.1)
+        for key in ("delta_mean", "delta_sd", "prob_positive", "lfsr"):
+            assert isinstance(result[key], np.ndarray), (
+                f"Expected np.ndarray for key '{key}', got {type(result[key])}"
+            )
+
+    def test_empirical_de_returns_jax_for_jax_input(self):
+        """empirical_differential_expression returns jax.Array for jax input."""
+        delta = self._make_delta_samples(jnp)
+        result = empirical_differential_expression(delta, tau=0.1)
+        for key in ("delta_mean", "delta_sd", "prob_positive", "lfsr"):
+            assert isinstance(result[key], jax.Array), (
+                f"Expected jax.Array for key '{key}', got {type(result[key])}"
+            )
+
+    def test_empirical_de_values_match_across_backends(self):
+        """NumPy and JAX backends produce numerically close results."""
+        delta_np = self._make_delta_samples(np)
+        delta_jnp = self._make_delta_samples(jnp)
+
+        res_np = empirical_differential_expression(delta_np, tau=0.1)
+        res_jnp = empirical_differential_expression(delta_jnp, tau=0.1)
+
+        for key in ("delta_mean", "delta_sd", "prob_positive", "lfsr"):
+            np.testing.assert_allclose(
+                np.asarray(res_np[key]),
+                np.asarray(res_jnp[key]),
+                atol=1e-5,
+                err_msg=f"Value mismatch for key '{key}'",
+            )
+
+    def test_biological_de_returns_numpy_for_numpy_input(self):
+        """biological_differential_expression returns np.ndarray for np input."""
+        from scribe.de._biological import biological_differential_expression
+
+        rng = np.random.default_rng(42)
+        n, d = 30, 8
+        r_A = rng.gamma(2.0, size=(n, d)).astype(np.float32)
+        r_B = rng.gamma(2.0, size=(n, d)).astype(np.float32)
+        p_A = rng.beta(2, 5, size=(n, d)).astype(np.float32)
+        p_B = rng.beta(2, 5, size=(n, d)).astype(np.float32)
+
+        result = biological_differential_expression(
+            r_A, r_B, p_A, p_B,
+            metric_families=("bio_lfc", "bio_aux"),
+        )
+        assert isinstance(result["lfc_mean"], np.ndarray)
+        assert isinstance(result["mu_A_mean"], np.ndarray)
+
+    def test_biological_de_returns_jax_for_jax_input(self):
+        """biological_differential_expression returns jax.Array for jax input."""
+        from scribe.de._biological import biological_differential_expression
+
+        rng = np.random.default_rng(42)
+        n, d = 30, 8
+        r_A = jnp.asarray(rng.gamma(2.0, size=(n, d)).astype(np.float32))
+        r_B = jnp.asarray(rng.gamma(2.0, size=(n, d)).astype(np.float32))
+        p_A = jnp.asarray(rng.beta(2, 5, size=(n, d)).astype(np.float32))
+        p_B = jnp.asarray(rng.beta(2, 5, size=(n, d)).astype(np.float32))
+
+        result = biological_differential_expression(
+            r_A, r_B, p_A, p_B,
+            metric_families=("bio_lfc", "bio_aux"),
+        )
+        assert isinstance(result["lfc_mean"], jax.Array)
+        assert isinstance(result["mu_A_mean"], jax.Array)
+
+    def test_shrinkage_de_returns_numpy_for_numpy_input(self):
+        """shrinkage_differential_expression works with NumPy inputs."""
+        from scribe.de._shrinkage import shrinkage_differential_expression
+
+        rng = np.random.default_rng(99)
+        d = 50
+        delta_mean = rng.standard_normal(d).astype(np.float64)
+        delta_sd = np.abs(rng.standard_normal(d).astype(np.float64)) + 0.01
+
+        result = shrinkage_differential_expression(delta_mean, delta_sd, tau=0.1)
+        assert isinstance(result["delta_mean"], np.ndarray), (
+            f"Expected np.ndarray, got {type(result['delta_mean'])}"
+        )
+        assert isinstance(result["lfsr"], np.ndarray)
+
+    def test_gamma_kl_returns_numpy_for_numpy_input(self):
+        """gamma_kl dispatches to scipy.special for NumPy arrays."""
+        from scribe.stats.divergences import gamma_kl
+
+        rng = np.random.default_rng(7)
+        n = 20
+        a_p = rng.gamma(2.0, size=n).astype(np.float64)
+        b_p = rng.gamma(1.0, size=n).astype(np.float64)
+        a_q = rng.gamma(2.0, size=n).astype(np.float64)
+        b_q = rng.gamma(1.0, size=n).astype(np.float64)
+
+        result = gamma_kl(a_p, b_p, a_q, b_q)
+        assert isinstance(result, np.ndarray)
+
+    def test_gamma_kl_values_match_across_backends(self):
+        """gamma_kl produces consistent values for NumPy vs JAX inputs."""
+        from scribe.stats.divergences import gamma_kl
+
+        rng = np.random.default_rng(7)
+        n = 20
+        a_p = rng.gamma(2.0, size=n).astype(np.float64)
+        b_p = rng.gamma(1.0, size=n).astype(np.float64)
+        a_q = rng.gamma(2.0, size=n).astype(np.float64)
+        b_q = rng.gamma(1.0, size=n).astype(np.float64)
+
+        result_np = gamma_kl(a_p, b_p, a_q, b_q)
+        result_jnp = gamma_kl(
+            jnp.asarray(a_p), jnp.asarray(b_p),
+            jnp.asarray(a_q), jnp.asarray(b_q),
+        )
+        np.testing.assert_allclose(
+            np.asarray(result_np), np.asarray(result_jnp), atol=1e-6,
+        )
