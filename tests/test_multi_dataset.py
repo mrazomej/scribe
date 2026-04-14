@@ -529,17 +529,25 @@ class TestSliceParamForDataset:
     def test_2d_per_dataset_sliced(self):
         """Standard 2D (n_datasets, n_genes) is sliced to (n_genes,)."""
         from scribe.svi._sampling_denoising import _slice_param_for_dataset
+        from scribe.core.axis_layout import AxisLayout, DATASETS, GENES
 
         param = jnp.ones((3, 10))
-        result = _slice_param_for_dataset(param, dataset_idx=1, n_datasets=3)
+        layout = AxisLayout(axes=(DATASETS, GENES))
+        result = _slice_param_for_dataset(
+            param, dataset_idx=1, n_datasets=3, layout=layout
+        )
         assert result.shape == (10,)
 
     def test_1d_per_dataset_scalar_sliced(self):
         """1D (n_datasets,) scalar-per-dataset param is sliced to scalar."""
         from scribe.svi._sampling_denoising import _slice_param_for_dataset
+        from scribe.core.axis_layout import AxisLayout, DATASETS
 
         param = jnp.array([0.1, 0.2, 0.3])
-        result = _slice_param_for_dataset(param, dataset_idx=2, n_datasets=3)
+        layout = AxisLayout(axes=(DATASETS,))
+        result = _slice_param_for_dataset(
+            param, dataset_idx=2, n_datasets=3, layout=layout
+        )
         assert result.shape == ()
         assert jnp.isclose(result, 0.3)
 
