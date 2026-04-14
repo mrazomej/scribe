@@ -16,23 +16,23 @@ likelihoods/
 
 ## Classes
 
-| Class | File | Description |
-|-------|------|-------------|
-| `Likelihood` | base.py | Abstract base class for all likelihoods |
-| `NegativeBinomialLikelihood` | negative_binomial.py | Standard Negative Binomial |
-| `ZeroInflatedNBLikelihood` | zero_inflated.py | Zero-Inflated Negative Binomial |
-| `NBWithVCPLikelihood` | vcp.py | NB with Variable Capture Probability |
-| `ZINBWithVCPLikelihood` | vcp.py | ZINB with Variable Capture Probability |
+| Class                        | File                 | Description                             |
+| ---------------------------- | -------------------- | --------------------------------------- |
+| `Likelihood`                 | base.py              | Abstract base class for all likelihoods |
+| `NegativeBinomialLikelihood` | negative_binomial.py | Standard Negative Binomial              |
+| `ZeroInflatedNBLikelihood`   | zero_inflated.py     | Zero-Inflated Negative Binomial         |
+| `NBWithVCPLikelihood`        | vcp.py               | NB with Variable Capture Probability    |
+| `ZINBWithVCPLikelihood`      | vcp.py               | ZINB with Variable Capture Probability  |
 
 ## Plate Modes
 
 All likelihoods handle three plate modes for different use cases:
 
-| Mode | `counts` | `batch_size` | Use Case |
-|------|----------|--------------|----------|
-| Prior Predictive | `None` | - | Generate synthetic data |
-| Full Sampling | provided | `None` | MCMC, small datasets |
-| Batch Sampling | provided | specified | SVI on large datasets |
+| Mode             | `counts` | `batch_size` | Use Case                |
+| ---------------- | -------- | ------------ | ----------------------- |
+| Prior Predictive | `None`   | -            | Generate synthetic data |
+| Full Sampling    | provided | `None`       | MCMC, small datasets    |
+| Batch Sampling   | provided | specified    | SVI on large datasets   |
 
 ## VAE Path
 

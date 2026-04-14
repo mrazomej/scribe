@@ -119,11 +119,11 @@ The NB distribution can be parameterized in three equivalent ways. The
 
 ### Conversion table
 
-| Parameterization | `parameterization=` | Sampled | Derived | Conversion |
-|------------------|---------------------|---------|---------|------------|
-| **Canonical** | `"canonical"` (alias `"standard"`) | \(\color{#e07a5f}{r_g}\), \(\color{#3d85c6}{p}\) | --- | --- |
-| **Mean probs** | `"mean_prob"` (alias `"linked"`) | \(\color{#81b29a}{\mu_g}\), \(\color{#3d85c6}{p}\) | \(\color{#e07a5f}{r_g}\) | \(r_g = \mu_g\,(1-p)\,/\,p\) |
-| **Mean odds** | `"mean_odds"` (alias `"odds_ratio"`) | \(\color{#81b29a}{\mu_g}\), \(\color{#f2cc8f}{\phi}\) | \(\color{#3d85c6}{p}\), \(\color{#e07a5f}{r_g}\) | \(p = 1/(1+\phi)\), \(r_g = \mu_g \cdot \phi\) |
+| Parameterization | `parameterization=`                  | Sampled                                               | Derived                                          | Conversion                                     |
+| ---------------- | ------------------------------------ | ----------------------------------------------------- | ------------------------------------------------ | ---------------------------------------------- |
+| **Canonical**    | `"canonical"` (alias `"standard"`)   | \(\color{#e07a5f}{r_g}\), \(\color{#3d85c6}{p}\)      | ---                                              | ---                                            |
+| **Mean probs**   | `"mean_prob"` (alias `"linked"`)     | \(\color{#81b29a}{\mu_g}\), \(\color{#3d85c6}{p}\)    | \(\color{#e07a5f}{r_g}\)                         | \(r_g = \mu_g\,(1-p)\,/\,p\)                   |
+| **Mean odds**    | `"mean_odds"` (alias `"odds_ratio"`) | \(\color{#81b29a}{\mu_g}\), \(\color{#f2cc8f}{\phi}\) | \(\color{#3d85c6}{p}\), \(\color{#e07a5f}{r_g}\) | \(p = 1/(1+\phi)\), \(r_g = \mu_g \cdot \phi\) |
 
 All three produce the **same NB distribution** for any given
 \((\mu_g, r_g, p)\) triple --- they differ only in which quantities the
@@ -145,11 +145,11 @@ graph LR
 
 The VCP capture parameter name depends on the parameterization:
 
-| Parameterization | Capture parameter | Symbol | Domain |
-|------------------|-------------------|--------|--------|
-| Canonical, Mean probs | `p_capture` | \(\nu^{(c)}\) | \((0, 1)\) |
-| Mean odds | `phi_capture` | \(\phi^{(c)}_{\text{cap}}\) | \((0, \infty)\) |
-| Biology-informed (any) | `eta_capture` | \(\eta_c = \log(M_c / L_c)\) | \((0, \infty)\) |
+| Parameterization       | Capture parameter | Symbol                       | Domain          |
+| ---------------------- | ----------------- | ---------------------------- | --------------- |
+| Canonical, Mean probs  | `p_capture`       | \(\nu^{(c)}\)                | \((0, 1)\)      |
+| Mean odds              | `phi_capture`     | \(\phi^{(c)}_{\text{cap}}\)  | \((0, \infty)\) |
+| Biology-informed (any) | `eta_capture`     | \(\eta_c = \log(M_c / L_c)\) | \((0, \infty)\) |
 
 Exact relationships:
 
@@ -166,27 +166,27 @@ When the **biology-informed capture prior** is enabled (via
 
 ## Master parameter table
 
-| Parameter name | Symbol | Role | Domain | Models | Parameterization |
-|----------------|--------|------|--------|--------|------------------|
-| `r` | \(\color{#e07a5f}{r_g}\) | Gene-specific NB dispersion (burst rate). Higher \(r_g\) means less overdispersion | \(\mathbb{R}^+\) | All | Sampled in canonical; derived in mean_prob and mean_odds |
-| `p` | \(\color{#3d85c6}{p}\) | NB success probability. Shared across genes in NBDM; gene-specific \(p_g\) when hierarchical | \((0, 1)\) | All | Sampled in canonical and mean_prob; derived in mean_odds |
-| `mu` | \(\color{#81b29a}{\mu_g}\) | Biological mean expression per gene (before capture) | \(\mathbb{R}^+\) | All | Sampled in mean_prob and mean_odds; not directly in canonical |
-| `phi` | \(\color{#f2cc8f}{\phi}\) | Odds of success probability: \(\phi = (1-p)/p\) | \(\mathbb{R}^+\) | All | Sampled only in mean_odds |
-| `gate` | \(\color{#e74c3c}{\pi_g}\) | Per-gene zero-inflation probability (technical dropout) | \((0, 1)\) | ZINB, ZINBVCP | All parameterizations |
-| `p_capture` | \(\color{#9b59b6}{\nu^{(c)}}\) | Cell-specific capture probability (library-size factor) | \((0, 1)\) | NBVCP, ZINBVCP | Canonical, mean_prob |
-| `phi_capture` | \(\phi^{(c)}_{\text{cap}}\) | Cell-specific capture odds | \(\mathbb{R}^+\) | NBVCP, ZINBVCP | Mean odds only |
-| `eta_capture` | \(\eta_c\) | Latent log-ratio \(\log(M_c / L_c)\) under biology-informed prior | \(\mathbb{R}^+\) | NBVCP, ZINBVCP | Any (when biology-informed prior is active) |
-| `bnb_concentration` | \(\color{#f39c12}{\kappa_g}\) | Beta concentration controlling BNB tail heaviness. \(\kappa_g \to \infty\) recovers NB | \((2, \infty)\) | Any + `overdispersion="bnb"` | All parameterizations |
-| `mixing_weights` | \(w_k\) | Dirichlet-distributed component probabilities | Simplex | Any + `n_components >= 2` | All parameterizations |
-| `z` | \(\underline{z}^{(c)}\) | Per-cell latent embedding (VAE only) | \(\mathbb{R}^d\) | Any + `inference_method="vae"` | All parameterizations |
+| Parameter name      | Symbol                         | Role                                                                                         | Domain           | Models                         | Parameterization                                              |
+| ------------------- | ------------------------------ | -------------------------------------------------------------------------------------------- | ---------------- | ------------------------------ | ------------------------------------------------------------- |
+| `r`                 | \(\color{#e07a5f}{r_g}\)       | Gene-specific NB dispersion (burst rate). Higher \(r_g\) means less overdispersion           | \(\mathbb{R}^+\) | All                            | Sampled in canonical; derived in mean_prob and mean_odds      |
+| `p`                 | \(\color{#3d85c6}{p}\)         | NB success probability. Shared across genes in NBDM; gene-specific \(p_g\) when hierarchical | \((0, 1)\)       | All                            | Sampled in canonical and mean_prob; derived in mean_odds      |
+| `mu`                | \(\color{#81b29a}{\mu_g}\)     | Biological mean expression per gene (before capture)                                         | \(\mathbb{R}^+\) | All                            | Sampled in mean_prob and mean_odds; not directly in canonical |
+| `phi`               | \(\color{#f2cc8f}{\phi}\)      | Odds of success probability: \(\phi = (1-p)/p\)                                              | \(\mathbb{R}^+\) | All                            | Sampled only in mean_odds                                     |
+| `gate`              | \(\color{#e74c3c}{\pi_g}\)     | Per-gene zero-inflation probability (technical dropout)                                      | \((0, 1)\)       | ZINB, ZINBVCP                  | All parameterizations                                         |
+| `p_capture`         | \(\color{#9b59b6}{\nu^{(c)}}\) | Cell-specific capture probability (library-size factor)                                      | \((0, 1)\)       | NBVCP, ZINBVCP                 | Canonical, mean_prob                                          |
+| `phi_capture`       | \(\phi^{(c)}_{\text{cap}}\)    | Cell-specific capture odds                                                                   | \(\mathbb{R}^+\) | NBVCP, ZINBVCP                 | Mean odds only                                                |
+| `eta_capture`       | \(\eta_c\)                     | Latent log-ratio \(\log(M_c / L_c)\) under biology-informed prior                            | \(\mathbb{R}^+\) | NBVCP, ZINBVCP                 | Any (when biology-informed prior is active)                   |
+| `bnb_concentration` | \(\color{#f39c12}{\kappa_g}\)  | Beta concentration controlling BNB tail heaviness. \(\kappa_g \to \infty\) recovers NB       | \((2, \infty)\)  | Any + `overdispersion="bnb"`   | All parameterizations                                         |
+| `mixing_weights`    | \(w_k\)                        | Dirichlet-distributed component probabilities                                                | Simplex          | Any + `n_components >= 2`      | All parameterizations                                         |
+| `z`                 | \(\underline{z}^{(c)}\)        | Per-cell latent embedding (VAE only)                                                         | \(\mathbb{R}^d\) | Any + `inference_method="vae"` | All parameterizations                                         |
 
 ### Derived quantities (not directly sampled)
 
-| Quantity | Formula | Appears in |
-|----------|---------|------------|
-| \(\hat{p}^{(c)}\) | \(\dfrac{p \cdot \nu^{(c)}}{1 - p\,(1 - \nu^{(c)})}\) | NBVCP / ZINBVCP effective success probability |
-| \(\omega_g\) | \(\dfrac{r_g + 1}{\kappa_g - 2}\) | BNB excess dispersion fraction (prior applied to this) |
-| \(\alpha_{gc}\) | \(\dfrac{\hat{p}^{(c)} \cdot \kappa_g}{1 - \hat{p}^{(c)}}\) | BNB Beta shape (mean-preserving) |
+| Quantity          | Formula                                                     | Appears in                                             |
+| ----------------- | ----------------------------------------------------------- | ------------------------------------------------------ |
+| \(\hat{p}^{(c)}\) | \(\dfrac{p \cdot \nu^{(c)}}{1 - p\,(1 - \nu^{(c)})}\)       | NBVCP / ZINBVCP effective success probability          |
+| \(\omega_g\)      | \(\dfrac{r_g + 1}{\kappa_g - 2}\)                           | BNB excess dispersion fraction (prior applied to this) |
+| \(\alpha_{gc}\)   | \(\dfrac{\hat{p}^{(c)} \cdot \kappa_g}{1 - \hat{p}^{(c)}}\) | BNB Beta shape (mean-preserving)                       |
 
 ---
 
@@ -280,10 +280,10 @@ the multiplicative degeneracy between expression and capture:
 \log(\mu_g) \sim \mathcal{N}(\log(\hat{\mu}_g),\; \sigma_\mu^2).
 \]
 
-| `scribe.fit()` parameter | Symbol | Default | Role |
-|---------------------------|--------|---------|------|
-| `expression_anchor` | --- | `False` | Enable mean anchoring |
-| `expression_anchor_sigma` | \(\sigma_\mu\) | `0.3` | Width of the anchor. Smaller = tighter regularization toward data mean |
+| `scribe.fit()` parameter  | Symbol         | Default | Role                                                                   |
+| ------------------------- | -------------- | ------- | ---------------------------------------------------------------------- |
+| `expression_anchor`       | ---            | `False` | Enable mean anchoring                                                  |
+| `expression_anchor_sigma` | \(\sigma_\mu\) | `0.3`   | Width of the anchor. Smaller = tighter regularization toward data mean |
 
 See [Theory: Anchoring Priors](../theory/anchoring-priors.md).
 
@@ -297,10 +297,10 @@ content:
 \qquad \nu_c = \exp(-\eta_c).
 \]
 
-| `scribe.fit()` parameter | Symbol | Default | Role |
-|---------------------------|--------|---------|------|
-| `priors={"organism": "human"}` | \(M_0\) | --- | Sets organism-specific expected total mRNA (e.g., 200,000 for human/mouse) |
-| `priors={"capture_efficiency": (log_M0, sigma_M)}` | \(\log M_0, \sigma_M\) | --- | Direct specification of capture prior parameters |
+| `scribe.fit()` parameter                           | Symbol                 | Default | Role                                                                       |
+| -------------------------------------------------- | ---------------------- | ------- | -------------------------------------------------------------------------- |
+| `priors={"organism": "human"}`                     | \(M_0\)                | ---     | Sets organism-specific expected total mRNA (e.g., 200,000 for human/mouse) |
+| `priors={"capture_efficiency": (log_M0, sigma_M)}` | \(\log M_0, \sigma_M\) | ---     | Direct specification of capture prior parameters                           |
 
 See [Theory: Anchoring Priors](../theory/anchoring-priors.md).
 
@@ -311,16 +311,16 @@ See [Theory: Anchoring Priors](../theory/anchoring-priors.md).
 Hierarchical priors are selected via the `*_prior` arguments. Each argument
 targets a specific parameter at a specific level:
 
-| `scribe.fit()` argument | Target parameter | Level | Accepted values | Requires |
-|--------------------------|-----------------|-------|-----------------|----------|
-| `prob_prior` | \(p_g\) (gene-specific) | Gene | `"gaussian"`, `"horseshoe"`, `"neg"` | --- |
-| `expression_prior` | \(\mu_g^{(k)}\) (across components) | Gene x component | `"gaussian"`, `"horseshoe"`, `"neg"` | `n_components >= 2`, `unconstrained=True` |
-| `zero_inflation_prior` | \(\pi_g\) | Gene | `"gaussian"`, `"horseshoe"`, `"neg"` | ZI model |
-| `overdispersion_prior` | \(\kappa_g\) (via \(\omega_g\)) | Gene | `"horseshoe"`, `"neg"` | `overdispersion="bnb"` |
-| `expression_dataset_prior` | \(\mu_g^{(d)}\) | Gene x dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key` |
-| `prob_dataset_prior` | \(p^{(d)}\) or \(p_g^{(d)}\) | Dataset (or gene x dataset) | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key` |
-| `zero_inflation_dataset_prior` | \(\pi_g^{(d)}\) | Gene x dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key`, ZI model |
-| `overdispersion_dataset_prior` | \(\kappa_g^{(d)}\) | Gene x dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `overdispersion="bnb"`, `dataset_key` |
+| `scribe.fit()` argument        | Target parameter                    | Level                       | Accepted values                      | Requires                                  |
+| ------------------------------ | ----------------------------------- | --------------------------- | ------------------------------------ | ----------------------------------------- |
+| `prob_prior`                   | \(p_g\) (gene-specific)             | Gene                        | `"gaussian"`, `"horseshoe"`, `"neg"` | ---                                       |
+| `expression_prior`             | \(\mu_g^{(k)}\) (across components) | Gene x component            | `"gaussian"`, `"horseshoe"`, `"neg"` | `n_components >= 2`, `unconstrained=True` |
+| `zero_inflation_prior`         | \(\pi_g\)                           | Gene                        | `"gaussian"`, `"horseshoe"`, `"neg"` | ZI model                                  |
+| `overdispersion_prior`         | \(\kappa_g\) (via \(\omega_g\))     | Gene                        | `"horseshoe"`, `"neg"`               | `overdispersion="bnb"`                    |
+| `expression_dataset_prior`     | \(\mu_g^{(d)}\)                     | Gene x dataset              | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key`                             |
+| `prob_dataset_prior`           | \(p^{(d)}\) or \(p_g^{(d)}\)        | Dataset (or gene x dataset) | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key`                             |
+| `zero_inflation_dataset_prior` | \(\pi_g^{(d)}\)                     | Gene x dataset              | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key`, ZI model                   |
+| `overdispersion_dataset_prior` | \(\kappa_g^{(d)}\)                  | Gene x dataset              | `"gaussian"`, `"horseshoe"`, `"neg"` | `overdispersion="bnb"`, `dataset_key`     |
 
 ---
 
@@ -354,18 +354,18 @@ See [Theory: Hierarchical Priors --- Multi-dataset](../theory/hierarchical-prior
 
 Which parameters appear in which model configuration:
 
-| Parameter | NBDM | NBVCP | ZINB | ZINBVCP | + BNB | + Mixture |
-|-----------|:----:|:-----:|:----:|:-------:|:-----:|:---------:|
-| `r` / `r_g` | yes | yes | yes | yes | yes | per-component |
-| `p` | yes | yes | yes | yes | yes | yes |
-| `mu` | MP/MO | MP/MO | MP/MO | MP/MO | MP/MO | per-component |
-| `phi` | MO | MO | MO | MO | MO | MO |
-| `gate` | --- | --- | yes | yes | yes | per-component |
-| `p_capture` / `phi_capture` | --- | yes | --- | yes | yes | yes |
-| `eta_capture` | --- | opt | --- | opt | opt | opt |
-| `bnb_concentration` | --- | --- | --- | --- | yes | per-component |
-| `mixing_weights` | --- | --- | --- | --- | --- | yes |
-| `z` (VAE latent) | VAE | VAE | VAE | VAE | VAE | VAE |
+| Parameter                   | NBDM  | NBVCP | ZINB  | ZINBVCP | + BNB |   + Mixture   |
+| --------------------------- | :---: | :---: | :---: | :-----: | :---: | :-----------: |
+| `r` / `r_g`                 |  yes  |  yes  |  yes  |   yes   |  yes  | per-component |
+| `p`                         |  yes  |  yes  |  yes  |   yes   |  yes  |      yes      |
+| `mu`                        | MP/MO | MP/MO | MP/MO |  MP/MO  | MP/MO | per-component |
+| `phi`                       |  MO   |  MO   |  MO   |   MO    |  MO   |      MO       |
+| `gate`                      |  ---  |  ---  |  yes  |   yes   |  yes  | per-component |
+| `p_capture` / `phi_capture` |  ---  |  yes  |  ---  |   yes   |  yes  |      yes      |
+| `eta_capture`               |  ---  |  opt  |  ---  |   opt   |  opt  |      opt      |
+| `bnb_concentration`         |  ---  |  ---  |  ---  |   ---   |  yes  | per-component |
+| `mixing_weights`            |  ---  |  ---  |  ---  |   ---   |  ---  |      yes      |
+| `z` (VAE latent)            |  VAE  |  VAE  |  VAE  |   VAE   |  VAE  |      VAE      |
 
 **Legend:** "yes" = always present; "MP/MO" = only with mean_prob or mean_odds
 parameterization; "MO" = only with mean_odds; "opt" = optional (biology-informed

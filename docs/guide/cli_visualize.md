@@ -50,26 +50,26 @@ ECDF); the rest are opt-in via flags or `--all`.
 
 ### Default plots (on unless `--no-*` is passed)
 
-| Plot | Flag | Description |
-|------|------|-------------|
+| Plot             | Flag                   | Description                                                      |
+| ---------------- | ---------------------- | ---------------------------------------------------------------- |
 | **Loss history** | `--no-loss` to disable | ELBO / loss curve over SVI steps; MCMC diagnostics for MCMC runs |
-| **ECDF** | `--no-ecdf` to disable | Empirical CDF of observed counts for a sample of genes |
+| **ECDF**         | `--no-ecdf` to disable | Empirical CDF of observed counts for a sample of genes           |
 
 ### Opt-in plots (off unless explicitly enabled)
 
-| Plot | Flag | Description | Requirements |
-|------|------|-------------|-------------|
-| **Posterior Predictive Check (PPC)** | `--ppc` | Grid of per-gene histograms comparing observed counts to posterior predictive samples | --- |
-| **Biological PPC** | `--bio-ppc` | NB(r, p) credible bands overlaid with denoised data histograms | --- |
-| **UMAP** | `--umap` | Joint UMAP embedding of observed and synthetic (PPC) data | --- |
-| **Correlation heatmap** | `--heatmap` | Posterior gene-gene correlation matrix | --- |
-| **Mixture PPC** | `--mixture-ppc` | Per-component posterior predictive check | Mixture model (`n_components >= 2`) |
-| **Mixture composition** | `--mixture-composition` | MAP component assignment barplot | Mixture model |
-| **Annotation PPC** | `--annotation-ppc` | Per-annotation-label posterior predictive | Mixture model + `annotation_key` |
-| **Capture anchor** | `--capture-anchor` | Eta capture-anchor diagnostic (prior vs. posterior) | Biology-informed capture prior |
-| **p_capture scaling** | `--p-capture-scaling` | Capture probability vs. library size | VCP model |
-| **Mean calibration** | `--mean-calibration` | Log-log scatter of observed vs. predicted per-gene means | --- |
-| **Mean pairwise** | `--mean-pairwise` | Pairwise dataset-level mean comparison | Multi-dataset model |
+| Plot                                 | Flag                    | Description                                                                           | Requirements                        |
+| ------------------------------------ | ----------------------- | ------------------------------------------------------------------------------------- | ----------------------------------- |
+| **Posterior Predictive Check (PPC)** | `--ppc`                 | Grid of per-gene histograms comparing observed counts to posterior predictive samples | ---                                 |
+| **Biological PPC**                   | `--bio-ppc`             | NB(r, p) credible bands overlaid with denoised data histograms                        | ---                                 |
+| **UMAP**                             | `--umap`                | Joint UMAP embedding of observed and synthetic (PPC) data                             | ---                                 |
+| **Correlation heatmap**              | `--heatmap`             | Posterior gene-gene correlation matrix                                                | ---                                 |
+| **Mixture PPC**                      | `--mixture-ppc`         | Per-component posterior predictive check                                              | Mixture model (`n_components >= 2`) |
+| **Mixture composition**              | `--mixture-composition` | MAP component assignment barplot                                                      | Mixture model                       |
+| **Annotation PPC**                   | `--annotation-ppc`      | Per-annotation-label posterior predictive                                             | Mixture model + `annotation_key`    |
+| **Capture anchor**                   | `--capture-anchor`      | Eta capture-anchor diagnostic (prior vs. posterior)                                   | Biology-informed capture prior      |
+| **p_capture scaling**                | `--p-capture-scaling`   | Capture probability vs. library size                                                  | VCP model                           |
+| **Mean calibration**                 | `--mean-calibration`    | Log-log scatter of observed vs. predicted per-gene means                              | ---                                 |
+| **Mean pairwise**                    | `--mean-pairwise`       | Pairwise dataset-level mean comparison                                                | Multi-dataset model                 |
 
 Use `--all` to enable every plot at once.
 
@@ -247,29 +247,29 @@ same conventions as [`scribe-infer`](cli_infer.md#slurm-integration).
 
 ## CLI flags reference
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `run_target` | (required) | One or more run targets (directories, result `.pkl` files, or glob patterns) |
-| `--all` | off | Enable all plot types |
-| `--no-loss` | off | Disable the loss curve |
-| `--no-ecdf` | off | Disable the ECDF plot |
-| `--ppc` | off | Enable PPC grid |
-| `--bio-ppc` | off | Enable biological PPC |
-| `--umap` | off | Enable UMAP overlay |
-| `--heatmap` | off | Enable correlation heatmap |
-| `--mixture-ppc` | off | Enable mixture PPC |
-| `--mixture-composition` | off | Enable mixture composition barplot |
-| `--annotation-ppc` | off | Enable per-annotation PPC |
-| `--capture-anchor` | off | Enable capture-anchor diagnostic |
-| `--p-capture-scaling` | off | Enable capture probability vs. library size |
-| `--mean-calibration` | off | Enable mean calibration scatter |
-| `--mean-pairwise` | off | Enable dataset-level mean comparison |
-| `--recursive [PATTERN]` | off | Recursively search directories for result files; defaults to `scribe_results.pkl` when used without PATTERN |
-| `--overwrite` | off | Regenerate existing plots |
-| `--format` | `png` | Output format (`png`, `pdf`, `svg`, `eps`) |
-| `--slurm` | off | Launch as SLURM batch job |
-| `--slurm-profile` | --- | Reusable SLURM profile name or path |
-| `--slurm-set` | --- | Per-run SLURM overrides (repeatable) |
+| Flag                    | Default    | Description                                                                                                 |
+| ----------------------- | ---------- | ----------------------------------------------------------------------------------------------------------- |
+| `run_target`            | (required) | One or more run targets (directories, result `.pkl` files, or glob patterns)                                |
+| `--all`                 | off        | Enable all plot types                                                                                       |
+| `--no-loss`             | off        | Disable the loss curve                                                                                      |
+| `--no-ecdf`             | off        | Disable the ECDF plot                                                                                       |
+| `--ppc`                 | off        | Enable PPC grid                                                                                             |
+| `--bio-ppc`             | off        | Enable biological PPC                                                                                       |
+| `--umap`                | off        | Enable UMAP overlay                                                                                         |
+| `--heatmap`             | off        | Enable correlation heatmap                                                                                  |
+| `--mixture-ppc`         | off        | Enable mixture PPC                                                                                          |
+| `--mixture-composition` | off        | Enable mixture composition barplot                                                                          |
+| `--annotation-ppc`      | off        | Enable per-annotation PPC                                                                                   |
+| `--capture-anchor`      | off        | Enable capture-anchor diagnostic                                                                            |
+| `--p-capture-scaling`   | off        | Enable capture probability vs. library size                                                                 |
+| `--mean-calibration`    | off        | Enable mean calibration scatter                                                                             |
+| `--mean-pairwise`       | off        | Enable dataset-level mean comparison                                                                        |
+| `--recursive [PATTERN]` | off        | Recursively search directories for result files; defaults to `scribe_results.pkl` when used without PATTERN |
+| `--overwrite`           | off        | Regenerate existing plots                                                                                   |
+| `--format`              | `png`      | Output format (`png`, `pdf`, `svg`, `eps`)                                                                  |
+| `--slurm`               | off        | Launch as SLURM batch job                                                                                   |
+| `--slurm-profile`       | ---        | Reusable SLURM profile name or path                                                                         |
+| `--slurm-set`           | ---        | Per-run SLURM overrides (repeatable)                                                                        |
 
 ---
 

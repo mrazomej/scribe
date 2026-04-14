@@ -173,11 +173,11 @@ mixture components, hierarchical priors, multi-dataset structure, and more.
 SCRIBE's four likelihoods build on each other -- the base Negative Binomial
 model can be extended with zero inflation and/or variable capture probability:
 
-| Likelihood | Code | Construction | Extra Parameters | Best For |
-|---|---|---|---|---|
-| **Negative Binomial** | `"nbdm"` | Base model | -- | Very **tight** total-UMI distribution |
-| **NB + variable capture** | `"nbvcp"` | NB + capture probability | `p_capture` | **Typical** heterogeneous library sizes |
-| **Zero-Inflated NB** | `"zinb"` | NB + zero inflation | `gate` | Excess zeros after VCP ruled out |
+| Likelihood                  | Code        | Construction               | Extra Parameters    | Best For                                 |
+| --------------------------- | ----------- | -------------------------- | ------------------- | ---------------------------------------- |
+| **Negative Binomial**       | `"nbdm"`    | Base model                 | --                  | Very **tight** total-UMI distribution    |
+| **NB + variable capture**   | `"nbvcp"`   | NB + capture probability   | `p_capture`         | **Typical** heterogeneous library sizes  |
+| **Zero-Inflated NB**        | `"zinb"`    | NB + zero inflation        | `gate`              | Excess zeros after VCP ruled out         |
 | **ZINB + variable capture** | `"zinbvcp"` | ZINB + capture probability | `gate`, `p_capture` | Both ZI and VCP supported by diagnostics |
 
 Any of the above can be extended to **mixture models** with `n_components=K`
@@ -187,17 +187,17 @@ for subpopulation analysis.
 
 Each likelihood can be parameterized in three ways:
 
-| Name | `parameterization=` | Aliases | Core | Derived | When to Use |
-|---|---|---|---|---|---|
-| **Canonical** | `canonical` | `standard` | p, r | -- | Direct interpretation |
-| **Mean probs** | `mean_prob` | `linked` | p, mu | r = mu(1-p)/p | Couples mean and p |
-| **Mean odds** | `mean_odds` | `odds_ratio` | phi, mu | p = 1/(1+phi), r = mu*phi | Stable when p is near 1 |
+| Name           | `parameterization=` | Aliases      | Core    | Derived                   | When to Use             |
+| -------------- | ------------------- | ------------ | ------- | ------------------------- | ----------------------- |
+| **Canonical**  | `canonical`         | `standard`   | p, r    | --                        | Direct interpretation   |
+| **Mean probs** | `mean_prob`         | `linked`     | p, mu   | r = mu(1-p)/p             | Couples mean and p      |
+| **Mean odds**  | `mean_odds`         | `odds_ratio` | phi, mu | p = 1/(1+phi), r = mu*phi | Stable when p is near 1 |
 
 ### Constrained vs Unconstrained
 
-| Mode | Prior Distributions | Use Case |
-|---|---|---|
-| **Constrained** | Beta, LogNormal, BetaPrime | Default; interpretable parameters |
+| Mode              | Prior Distributions             | Use Case                                                |
+| ----------------- | ------------------------------- | ------------------------------------------------------- |
+| **Constrained**   | Beta, LogNormal, BetaPrime      | Default; interpretable parameters                       |
 | **Unconstrained** | Normal + sigmoid/exp transforms | Optimization-friendly; required for hierarchical priors |
 
 ## Quick Start
@@ -246,11 +246,11 @@ results = scribe.fit(
 
 ### Choose Your Inference Method
 
-| Method | Engine | Precision | Use Case |
-|---|---|---|---|
-| **SVI** | [Adam optimizer](https://en.wikipedia.org/wiki/Adam_(optimization_algorithm)) | float32 | Fast exploration, large datasets |
-| **MCMC** | NUTS sampler | float64 | Exact posterior, gold standard |
-| **VAE** | [Encoder-decoder](https://en.wikipedia.org/wiki/Autoencoder) | float32 | Latent representations, embeddings |
+| Method   | Engine                                                                        | Precision | Use Case                           |
+| -------- | ----------------------------------------------------------------------------- | --------- | ---------------------------------- |
+| **SVI**  | [Adam optimizer](https://en.wikipedia.org/wiki/Adam_(optimization_algorithm)) | float32   | Fast exploration, large datasets   |
+| **MCMC** | NUTS sampler                                                                  | float64   | Exact posterior, gold standard     |
+| **VAE**  | [Encoder-decoder](https://en.wikipedia.org/wiki/Autoencoder)                  | float32   | Latent representations, embeddings |
 
 ```python
 # Fast exploration with SVI (default)
@@ -281,11 +281,11 @@ respects the compositional nature of scRNA-seq data. All comparisons are
 performed in log-ratio coordinates (CLR/ILR), propagating full posterior
 uncertainty.
 
-| Method | Description | Use Case |
-|---|---|---|
-| **Parametric** | Analytic Gaussian in ALR space | Fast, requires low-rank logistic-normal fit |
-| **Empirical** | Monte Carlo CLR differences | Assumption-free, from posterior samples |
-| **Shrinkage** | Empirical Bayes scale-mixture prior | Improved per-gene inference, borrows strength across genes |
+| Method         | Description                         | Use Case                                                   |
+| -------------- | ----------------------------------- | ---------------------------------------------------------- |
+| **Parametric** | Analytic Gaussian in ALR space      | Fast, requires low-rank logistic-normal fit                |
+| **Empirical**  | Monte Carlo CLR differences         | Assumption-free, from posterior samples                    |
+| **Shrinkage**  | Empirical Bayes scale-mixture prior | Improved per-gene inference, borrows strength across genes |
 
 ```python
 import jax.numpy as jnp

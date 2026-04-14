@@ -440,31 +440,31 @@ results = scribe.fit(
 
 ### Parameter reference
 
-| Parameter | Level | Accepted values | Requires |
-|-----------|-------|-----------------|----------|
-| `expression_prior` | Gene (across components) | `"gaussian"`, `"horseshoe"`, `"neg"` | `n_components >= 2`, `unconstrained=True` |
-| `prob_prior` | Gene | `"gaussian"`, `"horseshoe"`, `"neg"` | -- |
-| `zero_inflation_prior` | Gene | `"gaussian"`, `"horseshoe"`, `"neg"` | ZI model (zinb/zinbvcp) |
-| `expression_dataset_prior` | Dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key` |
-| `prob_dataset_prior` | Dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key` |
-| `prob_dataset_mode` | -- | `"scalar"`, `"gene_specific"`, `"two_level"` | `prob_dataset_prior` set |
-| `zero_inflation_dataset_prior` | Dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `dataset_key`, ZI model |
-| `overdispersion` | -- | `"none"`, `"bnb"` | -- |
-| `overdispersion_prior` | Gene | `"horseshoe"`, `"neg"` | `overdispersion="bnb"` |
-| `overdispersion_dataset_prior` | Dataset | `"gaussian"`, `"horseshoe"`, `"neg"` | `overdispersion="bnb"`, `dataset_key` |
+| Parameter                      | Level                    | Accepted values                              | Requires                                  |
+| ------------------------------ | ------------------------ | -------------------------------------------- | ----------------------------------------- |
+| `expression_prior`             | Gene (across components) | `"gaussian"`, `"horseshoe"`, `"neg"`         | `n_components >= 2`, `unconstrained=True` |
+| `prob_prior`                   | Gene                     | `"gaussian"`, `"horseshoe"`, `"neg"`         | --                                        |
+| `zero_inflation_prior`         | Gene                     | `"gaussian"`, `"horseshoe"`, `"neg"`         | ZI model (zinb/zinbvcp)                   |
+| `expression_dataset_prior`     | Dataset                  | `"gaussian"`, `"horseshoe"`, `"neg"`         | `dataset_key`                             |
+| `prob_dataset_prior`           | Dataset                  | `"gaussian"`, `"horseshoe"`, `"neg"`         | `dataset_key`                             |
+| `prob_dataset_mode`            | --                       | `"scalar"`, `"gene_specific"`, `"two_level"` | `prob_dataset_prior` set                  |
+| `zero_inflation_dataset_prior` | Dataset                  | `"gaussian"`, `"horseshoe"`, `"neg"`         | `dataset_key`, ZI model                   |
+| `overdispersion`               | --                       | `"none"`, `"bnb"`                            | --                                        |
+| `overdispersion_prior`         | Gene                     | `"horseshoe"`, `"neg"`                       | `overdispersion="bnb"`                    |
+| `overdispersion_dataset_prior` | Dataset                  | `"gaussian"`, `"horseshoe"`, `"neg"`         | `overdispersion="bnb"`, `dataset_key`     |
 
 ### Horseshoe and NEG hyperparameters
 
 These are shared across all parameters that use the corresponding prior:
 
-| Parameter | Default | Effect |
-|-----------|---------|--------|
-| `horseshoe_tau0` | 1.0 | Global shrinkage scale |
-| `horseshoe_slab_df` | 4 | Slab tail weight (degrees of freedom) |
-| `horseshoe_slab_scale` | 2.0 | Slab location scale |
-| `neg_u` | 1.0 | Inner Gamma shape (1 = NEG, 0.5 = horseshoe) |
-| `neg_a` | 1.0 | Outer Gamma shape (controls concentration near zero) |
-| `neg_tau` | 1.0 | Global rate for the outer Gamma |
+| Parameter              | Default | Effect                                               |
+| ---------------------- | ------- | ---------------------------------------------------- |
+| `horseshoe_tau0`       | 1.0     | Global shrinkage scale                               |
+| `horseshoe_slab_df`    | 4       | Slab tail weight (degrees of freedom)                |
+| `horseshoe_slab_scale` | 2.0     | Slab location scale                                  |
+| `neg_u`                | 1.0     | Inner Gamma shape (1 = NEG, 0.5 = horseshoe)         |
+| `neg_a`                | 1.0     | Outer Gamma shape (controls concentration near zero) |
+| `neg_tau`              | 1.0     | Global rate for the outer Gamma                      |
 
 !!! tip "Choosing a prior family"
     - **Start with `"gaussian"`** for well-behaved problems with few
