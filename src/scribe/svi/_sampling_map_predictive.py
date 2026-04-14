@@ -191,10 +191,13 @@ class MapPredictiveSamplingMixin:
         _r_layout = _map_layouts.get("r")
         if _r_layout is not None and _r_layout.gene_axis is not None:
             n_genes = int(r.shape[_r_layout.gene_axis])
-        else:
+        elif r.ndim >= 1:
             # Fallback: last axis is genes for both standard (G,) and
             # mixture (K, G) models.
             n_genes = int(r.shape[-1])
+        else:
+            # Scalar r (e.g. single-gene subset) — use stored n_genes.
+            n_genes = self.n_genes
 
         # Generate MAP PPC samples through the full-model helper.
         # MAP estimates have no sample dim; pass canonical layouts.
