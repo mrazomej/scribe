@@ -33,12 +33,15 @@ References
   *Biostatistics*, 18(2), 275--294.  (lfsr concept)
 """
 
-from typing import Optional, List
+from typing import Optional, List, TYPE_CHECKING
 
 import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import random
+
+if TYPE_CHECKING:
+    from ..core.axis_layout import AxisLayout
 
 
 # --------------------------------------------------------------------------
@@ -276,6 +279,46 @@ def _extract_mu(map_estimates: dict) -> jnp.ndarray:
 # --------------------------------------------------------------------------
 
 
+def _drop_scalar_p(
+    p: Optional[jnp.ndarray],
+    post_layout: Optional["AxisLayout"] = None,
+) -> Optional[jnp.ndarray]:
+    """Return ``None`` if ``p`` has no gene dimension (scalar across genes).
+
+    A scalar ``p`` produces a constant scaling factor in Gamma-based
+    composition sampling that cancels after normalization, making
+    Gamma equivalent to Dirichlet.  When a post-sliced layout is
+    available the gene axis is checked semantically; otherwise the
+    ``ndim < 2`` heuristic is used as a fallback.
+
+    Parameters
+    ----------
+    p : jnp.ndarray or None
+        Sliced (post-component) ``p`` samples.
+    post_layout : AxisLayout, optional
+        Layout for ``p`` **after** component slicing.  This is the
+        layout returned by ``_slice_component`` — component axis
+        already removed.
+
+    Returns
+    -------
+    jnp.ndarray or None
+        The input unchanged if it has a gene axis, ``None`` otherwise.
+    """
+    if p is None:
+        return None
+
+    if post_layout is not None:
+        if post_layout.gene_axis is None:
+            return None
+        return p
+
+    # Legacy fallback: ndim < 2 means no gene dimension
+    if p.ndim < 2:
+        return None
+    return p
+
+
 def sample_compositions(
     r_samples_A: jnp.ndarray,
     r_samples_B: jnp.ndarray,
@@ -287,6 +330,7 @@ def sample_compositions(
     batch_size: int = 2048,
     p_samples_A: Optional[jnp.ndarray] = None,
     p_samples_B: Optional[jnp.ndarray] = None,
+    param_layouts: Optional[dict] = None,
 ) -> tuple:
     """Draw full-dimensional simplex samples from posterior parameters.
 
@@ -333,6 +377,10 @@ def sample_compositions(
         the normalization, making Gamma equivalent to Dirichlet.
     p_samples_B : jnp.ndarray, optional
         Same as above for condition B.
+    param_layouts : dict of str to AxisLayout, optional
+        Semantic axis layouts keyed by parameter name (e.g. ``"r"``,
+        ``"p"``).  When available, component slicing and gene-axis
+        checks use layout metadata instead of ``ndim`` heuristics.
 
     Returns
     -------
@@ -358,27 +406,35 @@ def sample_compositions(
     if rng_key is None:
         rng_key = random.PRNGKey(0)
 
+    # Resolve per-parameter layouts (None when no layouts available)
+    r_layout = param_layouts.get("r") if param_layouts else None
+    p_layout = param_layouts.get("p") if param_layouts else None
+
     # --- Slice mixture components if needed ---
-    r_A = _slice_component(r_samples_A, component_A, "A")
-    r_B = _slice_component(r_samples_B, component_B, "B")
+    # _slice_component returns (array, post_layout) — post_layout has the
+    # component axis removed and is None when no layout was provided.
+    r_A, _ = _slice_component(r_samples_A, component_A, "A", layout=r_layout)
+    r_B, _ = _slice_component(r_samples_B, component_B, "B", layout=r_layout)
 
     # Slice p samples if provided.  Scalar p (no gene dimension) produces
     # a constant scaling factor that cancels in the normalization, so
     # Gamma-based sampling is equivalent to Dirichlet -- skip it.
-    p_A = (
-        _slice_component(p_samples_A, component_A, "A")
+    p_A, p_post = (
+        _slice_component(p_samples_A, component_A, "A", layout=p_layout)
         if p_samples_A is not None
-        else None
+        else (None, None)
     )
-    p_B = (
-        _slice_component(p_samples_B, component_B, "B")
+    p_B, _ = (
+        _slice_component(p_samples_B, component_B, "B", layout=p_layout)
         if p_samples_B is not None
-        else None
+        else (None, None)
     )
-    if p_A is not None and p_A.ndim < 2:
-        p_A = None
-    if p_B is not None and p_B.ndim < 2:
-        p_B = None
+
+    # Drop scalar p (no gene axis): the constant scaling factor cancels
+    # in the normalization.  Use the *post-sliced* layout's gene_axis
+    # when available, otherwise fall back to ndim < 2.
+    p_A = _drop_scalar_p(p_A, p_post)
+    p_B = _drop_scalar_p(p_B, p_post)
 
     # Gamma-based sampling only when p is gene-specific (2D)
     use_gamma = p_A is not None or p_B is not None
@@ -691,12 +747,14 @@ def _slice_component(
     r_samples: jnp.ndarray,
     component: Optional[int],
     label: str,
-) -> jnp.ndarray:
+    layout: Optional["AxisLayout"] = None,
+) -> tuple:
     """Slice a mixture component from posterior samples.
 
-    Handles gene-specific parameters (with a trailing gene dimension)
-    and scalar parameters (no gene dimension, e.g. ``p`` or ``phi``
-    when ``hierarchical_p=False``).
+    When an ``AxisLayout`` is provided, the component axis is determined
+    semantically via ``layout.component_axis`` and the returned layout
+    reflects the post-sliced shape (component axis removed).  Without a
+    layout the function falls back to the legacy ``ndim``-based heuristic.
 
     Parameters
     ----------
@@ -711,26 +769,48 @@ def _slice_component(
         Component index to extract from mixture models.
     label : str
         Label for error messages (``"A"`` or ``"B"``).
+    layout : AxisLayout, optional
+        Semantic axis descriptor for ``r_samples``.  When given, the
+        component axis is read from ``layout.component_axis`` and slicing
+        uses ``jnp.take`` along that axis.  When ``None``, falls back to
+        the legacy ``ndim`` ladder.
 
     Returns
     -------
-    jnp.ndarray
+    sliced : jnp.ndarray
         Sliced samples: ``(N, D)`` for gene-specific, ``(N,)`` for scalar.
+    post_layout : AxisLayout or None
+        The layout after removing the component axis (if one was present),
+        or ``None`` when no layout was provided.
     """
+    # --- Layout-aware path: use semantic axis metadata ---
+    if layout is not None:
+        comp_ax = layout.component_axis
+        if comp_ax is not None:
+            if component is None:
+                raise ValueError(
+                    f"r_samples_{label} has a component axis (layout={layout}) "
+                    f"but component_{label} was not specified."
+                )
+            sliced = jnp.take(r_samples, component, axis=comp_ax)
+            # Derive the post-sliced layout (component axis removed)
+            post_layout = layout.subset_axis("components")
+            return sliced, post_layout
+        # No component axis -> nothing to slice, layout unchanged
+        return r_samples, layout
+
+    # --- Legacy ndim fallback (no layout provided) ---
     if r_samples.ndim == 3:
         if component is None:
             raise ValueError(
                 f"r_samples_{label} is 3D (mixture model) but "
                 f"component_{label} was not specified."
             )
-        # Slice the component: (N, K, D) -> (N, D)
-        return r_samples[:, component, :]
+        return r_samples[:, component, :], None
     elif r_samples.ndim == 2:
-        return r_samples
+        return r_samples, None
     elif r_samples.ndim == 1:
-        # Scalar parameter (e.g. p or phi when hierarchical_p=False),
-        # shape (N,): no gene or component dimension to slice.
-        return r_samples
+        return r_samples, None
     else:
         raise ValueError(
             f"r_samples_{label} must be 1-3D, got {r_samples.ndim}D."

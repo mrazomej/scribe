@@ -28,7 +28,7 @@ def _is_results_object(obj) -> bool:
 
 
 def _extract_de_inputs(results, component=None):
-    """Extract arrays needed by empirical DE from a results object.
+    """Extract arrays and layout metadata needed by empirical DE.
 
     Parameters
     ----------
@@ -40,7 +40,11 @@ def _extract_de_inputs(results, component=None):
     Returns
     -------
     tuple
-        ``(r_samples, p_samples, mu_samples, phi_samples, gene_names)``.
+        ``(r_samples, p_samples, mu_samples, phi_samples, gene_names,
+        param_layouts)``.  ``param_layouts`` is a dict mapping parameter
+        names to ``AxisLayout`` instances (with ``has_sample_dim=True``
+        since posterior samples carry a leading draw axis), or ``None``
+        if the results object does not expose layouts.
     """
     if results.posterior_samples is None:
         raise ValueError(
@@ -57,7 +61,22 @@ def _extract_de_inputs(results, component=None):
     if results.var is not None:
         gene_names = results.var.index.tolist()
 
-    return r_samples, p_samples, mu_samples, phi_samples, gene_names
+    # Extract axis layouts from the results object.  Posterior samples
+    # have a leading draw dimension, so layouts already carry
+    # has_sample_dim=True via results.layouts.
+    param_layouts = None
+    layouts_prop = getattr(results, "layouts", None)
+    if layouts_prop is not None:
+        param_layouts = dict(layouts_prop)
+
+    return (
+        r_samples,
+        p_samples,
+        mu_samples,
+        phi_samples,
+        gene_names,
+        param_layouts,
+    )
 
 
 def compare(
@@ -150,10 +169,10 @@ def compare(
                 "results objects."
             )
 
-        r_A, p_A, mu_A, phi_A, names_A = _extract_de_inputs(
+        r_A, p_A, mu_A, phi_A, names_A, layouts_A = _extract_de_inputs(
             model_A, component_A
         )
-        r_B, p_B, mu_B, phi_B, names_B = _extract_de_inputs(
+        r_B, p_B, mu_B, phi_B, names_B, layouts_B = _extract_de_inputs(
             model_B, component_B
         )
 
@@ -170,12 +189,17 @@ def compare(
         _phi_samples_A = phi_A
         _phi_samples_B = phi_B
 
+        # Use layouts from condition A (both conditions share the same
+        # model structure, so layouts are identical).
+        _param_layouts = layouts_A
+
         model_A = r_A
         model_B = r_B
 
     if not (_a_is_results and _b_is_results):
         _mu_samples_A = _mu_samples_B = None
         _phi_samples_A = _phi_samples_B = None
+        _param_layouts = None
 
     if method == "parametric":
         return _compare_parametric(
@@ -207,6 +231,7 @@ def compare(
             mu_samples_B=_mu_samples_B,
             phi_samples_A=_phi_samples_A,
             phi_samples_B=_phi_samples_B,
+            param_layouts=_param_layouts,
         )
     if method == "shrinkage":
         return _compare_shrinkage(
@@ -232,6 +257,7 @@ def compare(
             mu_samples_B=_mu_samples_B,
             phi_samples_A=_phi_samples_A,
             phi_samples_B=_phi_samples_B,
+            param_layouts=_param_layouts,
         )
 
     raise ValueError(
@@ -312,8 +338,16 @@ def _compare_empirical(
     mu_samples_B: Optional[jnp.ndarray] = None,
     phi_samples_A: Optional[jnp.ndarray] = None,
     phi_samples_B: Optional[jnp.ndarray] = None,
+    param_layouts: Optional[dict] = None,
 ) -> "ScribeEmpiricalDEResults":
-    """Build an empirical DE comparison from posterior concentration samples."""
+    """Build an empirical DE comparison from posterior concentration samples.
+
+    Parameters
+    ----------
+    param_layouts : dict of str to AxisLayout, optional
+        Semantic axis layouts keyed by parameter name.  Threaded to
+        ``_slice_component`` for layout-aware component slicing.
+    """
     from ._empirical import (
         _slice_component,
         compute_delta_from_simplex,
@@ -321,38 +355,51 @@ def _compare_empirical(
     )
     from .results import ScribeEmpiricalDEResults
 
-    r_bio_A = _slice_component(r_samples_A, component_A, "A")
-    r_bio_B = _slice_component(r_samples_B, component_B, "B")
-    p_bio_A = (
-        _slice_component(p_samples_A, component_A, "A")
-        if p_samples_A is not None
-        else None
+    # Resolve per-parameter layouts for component slicing.
+    # _slice_component returns (array, post_layout) — the post_layout has
+    # the component axis removed and is used downstream so that later code
+    # never falls back to ndim heuristics when layouts were available.
+    r_layout = param_layouts.get("r") if param_layouts else None
+    p_layout = param_layouts.get("p") if param_layouts else None
+    mu_layout = param_layouts.get("mu") if param_layouts else None
+    phi_layout = param_layouts.get("phi") if param_layouts else None
+
+    r_bio_A, _ = _slice_component(
+        r_samples_A, component_A, "A", layout=r_layout
     )
-    p_bio_B = (
-        _slice_component(p_samples_B, component_B, "B")
+    r_bio_B, _ = _slice_component(
+        r_samples_B, component_B, "B", layout=r_layout
+    )
+    p_bio_A, p_post_layout = (
+        _slice_component(p_samples_A, component_A, "A", layout=p_layout)
+        if p_samples_A is not None
+        else (None, None)
+    )
+    p_bio_B, _ = (
+        _slice_component(p_samples_B, component_B, "B", layout=p_layout)
         if p_samples_B is not None
-        else None
+        else (None, None)
     )
 
-    mu_bio_A = (
-        _slice_component(mu_samples_A, component_A, "A")
+    mu_bio_A, _ = (
+        _slice_component(mu_samples_A, component_A, "A", layout=mu_layout)
         if mu_samples_A is not None
-        else None
+        else (None, None)
     )
-    mu_bio_B = (
-        _slice_component(mu_samples_B, component_B, "B")
+    mu_bio_B, _ = (
+        _slice_component(mu_samples_B, component_B, "B", layout=mu_layout)
         if mu_samples_B is not None
-        else None
+        else (None, None)
     )
-    phi_bio_A = (
-        _slice_component(phi_samples_A, component_A, "A")
+    phi_bio_A, phi_post_layout = (
+        _slice_component(phi_samples_A, component_A, "A", layout=phi_layout)
         if phi_samples_A is not None
-        else None
+        else (None, None)
     )
-    phi_bio_B = (
-        _slice_component(phi_samples_B, component_B, "B")
+    phi_bio_B, _ = (
+        _slice_component(phi_samples_B, component_B, "B", layout=phi_layout)
         if phi_samples_B is not None
-        else None
+        else (None, None)
     )
 
     N_bio = min(r_bio_A.shape[0], r_bio_B.shape[0])
@@ -467,6 +514,10 @@ def _compare_empirical(
         simplex_B=simplex_B,
         mu_map_A=mu_map_A_vec,
         mu_map_B=mu_map_B_vec,
+        # Post-sliced layouts for biological_level() to use instead
+        # of ndim heuristics.
+        p_post_layout=p_post_layout,
+        phi_post_layout=phi_post_layout,
     )
 
     if gene_mask is not None:
@@ -501,6 +552,7 @@ def _compare_shrinkage(
     mu_samples_B: Optional[jnp.ndarray] = None,
     phi_samples_A: Optional[jnp.ndarray] = None,
     phi_samples_B: Optional[jnp.ndarray] = None,
+    param_layouts: Optional[dict] = None,
 ) -> "ScribeShrinkageDEResults":
     """Build shrinkage DE by wrapping the empirical result object."""
     empirical = _compare_empirical(
@@ -523,6 +575,7 @@ def _compare_shrinkage(
         mu_samples_B=mu_samples_B,
         phi_samples_A=phi_samples_A,
         phi_samples_B=phi_samples_B,
+        param_layouts=param_layouts,
     )
 
     return empirical.shrink(

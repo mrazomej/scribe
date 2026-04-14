@@ -82,10 +82,20 @@ class EmpiricalResultsMixin:
             else ("bio_lfc", "bio_lvr", "bio_kl", "bio_aux")
         )
         cache_key = (tau_lfc, tau_var, tau_kl, family_key)
-        if self._biological_results is None or self._cached_bio_taus != cache_key:
+        if (
+            self._biological_results is None
+            or self._cached_bio_taus != cache_key
+        ):
             from ._biological import biological_differential_expression
 
             self._cached_bio_taus = cache_key
+
+            # Pass stored post-sliced layouts so the biological function
+            # uses semantic axis info instead of ndim heuristics for
+            # p/phi broadcast decisions.
+            _p_layout = getattr(self, "p_post_layout", None)
+            _phi_layout = getattr(self, "phi_post_layout", None)
+
             self._biological_results = biological_differential_expression(
                 r_samples_A=self.r_samples_A,
                 r_samples_B=self.r_samples_B,
@@ -100,6 +110,8 @@ class EmpiricalResultsMixin:
                 tau_kl=tau_kl,
                 gene_names=self.gene_names,
                 metric_families=family_key,
+                p_layout=_p_layout,
+                phi_layout=_phi_layout,
             )
         return self._biological_results
 

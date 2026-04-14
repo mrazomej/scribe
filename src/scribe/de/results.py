@@ -141,6 +141,12 @@ class ScribeEmpiricalDEResults(EmpiricalResultsMixin, ScribeDEResults):
     mu_map_A: Optional[jnp.ndarray] = field(default=None, repr=False)
     mu_map_B: Optional[jnp.ndarray] = field(default=None, repr=False)
 
+    # Post-component-sliced AxisLayout for p and phi (used by the
+    # biological_level() call to avoid ndim heuristics).  None when
+    # layouts were not available at construction time.
+    p_post_layout: Optional[object] = field(default=None, repr=False)
+    phi_post_layout: Optional[object] = field(default=None, repr=False)
+
     # Internal mask bookkeeping for interactive mask updates.
     _gene_mask: Optional[jnp.ndarray] = field(
         default=None, repr=False, init=False

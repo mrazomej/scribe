@@ -54,11 +54,45 @@ computation path based on which posterior samples are supplied:
    (``mu_A`` or ``mu_B``) before interpreting the results.
 """
 
-from typing import Optional, List, Iterable, Set
+from typing import Optional, List, Iterable, Set, TYPE_CHECKING
 
 import jax.numpy as jnp
 
 from ..stats.divergences import gamma_jeffreys
+
+if TYPE_CHECKING:
+    from ..core.axis_layout import AxisLayout
+
+
+# --------------------------------------------------------------------------
+# Helpers
+# --------------------------------------------------------------------------
+
+
+def _needs_gene_broadcast(
+    arr: jnp.ndarray,
+    layout: Optional["AxisLayout"] = None,
+) -> bool:
+    """Return ``True`` if ``arr`` has no gene dimension and needs ``[:, None]``.
+
+    When a layout is available the gene axis is checked semantically.
+    Otherwise the legacy ``ndim == 1`` heuristic is used: a 1-D array
+    is assumed to have only the sample dimension (no gene axis).
+
+    Parameters
+    ----------
+    arr : jnp.ndarray
+        Array to inspect.
+    layout : AxisLayout, optional
+        Semantic axis descriptor for ``arr``.
+
+    Returns
+    -------
+    bool
+    """
+    if layout is not None:
+        return layout.gene_axis is None
+    return arr.ndim == 1
 
 
 # --------------------------------------------------------------------------
@@ -80,6 +114,8 @@ def biological_differential_expression(
     tau_kl: float = 0.0,
     gene_names: Optional[List[str]] = None,
     metric_families: Optional[Iterable[str]] = None,
+    p_layout: Optional["AxisLayout"] = None,
+    phi_layout: Optional["AxisLayout"] = None,
 ) -> dict:
     """Compute biological-level DE statistics from posterior NB parameters.
 
@@ -122,6 +158,12 @@ def biological_differential_expression(
     metric_families : iterable of {'bio_lfc', 'bio_lvr', 'bio_kl', 'bio_aux'}, optional
         Biological families to compute. When ``None``, all biological families
         are computed for backward compatibility.
+    p_layout : AxisLayout, optional
+        Semantic axis layout for the ``p`` samples.  When provided, the
+        gene-axis check uses ``layout.gene_axis is None`` instead of
+        the ``ndim == 1`` heuristic for broadcast decisions.
+    phi_layout : AxisLayout, optional
+        Semantic axis layout for the ``phi`` samples.
 
     Returns
     -------
@@ -183,16 +225,22 @@ def biological_differential_expression(
     include_kl = "bio_kl" in metric_families_set
     include_aux = "bio_aux" in metric_families_set
 
-    # Broadcast shared p to (N, 1) so element-wise ops work correctly.
-    if p_samples_A.ndim == 1:
+    # Broadcast shared (scalar-across-genes) p to (N, 1) so element-wise
+    # ops work correctly.  Use layout.gene_axis when available; otherwise
+    # fall back to the ndim == 1 heuristic.
+    if _needs_gene_broadcast(p_samples_A, p_layout):
         p_samples_A = p_samples_A[:, None]
-    if p_samples_B.ndim == 1:
+    if _needs_gene_broadcast(p_samples_B, p_layout):
         p_samples_B = p_samples_B[:, None]
 
     # Broadcast shared phi to (N, 1) when present
-    if phi_samples_A is not None and phi_samples_A.ndim == 1:
+    if phi_samples_A is not None and _needs_gene_broadcast(
+        phi_samples_A, phi_layout
+    ):
         phi_samples_A = phi_samples_A[:, None]
-    if phi_samples_B is not None and phi_samples_B.ndim == 1:
+    if phi_samples_B is not None and _needs_gene_broadcast(
+        phi_samples_B, phi_layout
+    ):
         phi_samples_B = phi_samples_B[:, None]
 
     # Determine which computation tier to use:
