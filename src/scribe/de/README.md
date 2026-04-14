@@ -853,6 +853,51 @@ Enrichment via ILR Balances") for the full derivation, including:
 - Multivariate within-pathway perturbation statistic
 - Compatibility with PEFP error control
 
+## AxisLayout Integration
+
+The DE module adopts the `AxisLayout` metadata system from `scribe.core` to
+replace `ndim`-based heuristics for tensor axis identification.  When a results
+object is passed to `compare()`, the axis layouts are extracted and used as the
+**sole source of truth** for every axis-dependent decision in the pipeline.
+
+### How layouts flow through the pipeline
+
+```
+results.layouts            ← extracted by _extract_de_inputs()
+  ↓
+param_layouts dict         ← threaded into _compare_empirical / _compare_shrinkage
+  ↓
+_slice_component()         ← uses layout.component_axis (returns post-sliced layout)
+  ↓
+post-sliced layouts        ← stored on ScribeEmpiricalDEResults
+  ↓
+_drop_scalar_p()           ← uses post_layout.gene_axis to gate scalar p
+sample_compositions()      ← threads layouts to _slice_component / _drop_scalar_p
+biological_level()         ← passes p_post_layout / phi_post_layout from results
+  ↓
+_needs_gene_broadcast()    ← uses layout.gene_axis for p/phi broadcast decisions
+```
+
+### Where layouts replace heuristics
+
+| Location | Old heuristic | New layout-based decision |
+|----------|--------------|--------------------------|
+| `_slice_component()` in `_empirical.py` | `ndim` 3-tier ladder (3D/2D/1D) | `layout.component_axis` via `jnp.take`; returns `layout.subset_axis("components")` |
+| `_drop_scalar_p()` in `_empirical.py` | `p.ndim < 2` | `post_layout.gene_axis is None` |
+| `_needs_gene_broadcast()` in `_biological.py` | `ndim == 1` | `layout.gene_axis is None` |
+| `_extract_de_inputs()` in `_results_factory.py` | — | Extracts `param_layouts` from `results.layouts` |
+| `ScribeEmpiricalDEResults` | — | Stores `p_post_layout` and `phi_post_layout` for `biological_level()` |
+
+### Backward compatibility
+
+When layouts are **not** available (e.g. raw arrays passed without a results
+object to the standalone `sample_compositions()` or
+`compute_clr_differences()` functions), all layout parameters default to
+`None` and the existing `ndim` heuristics remain as a fallback.  However, the
+primary `compare()` and `compare_datasets()` entry points always extract
+layouts from results objects, so the heuristic path is only reached by direct
+callers of the lower-level functions.
+
 ## Module Layout
 
 ```

@@ -88,8 +88,14 @@ class TestEmpiricalDE:
         """Output dict has correct shapes for all keys."""
         result = empirical_differential_expression(gaussian_delta_samples)
         D = gaussian_delta_samples.shape[1]
-        for key in ["delta_mean", "delta_sd", "prob_positive",
-                     "prob_effect", "lfsr", "lfsr_tau"]:
+        for key in [
+            "delta_mean",
+            "delta_sd",
+            "prob_positive",
+            "prob_effect",
+            "lfsr",
+            "lfsr_tau",
+        ]:
             assert result[key].shape == (D,), f"{key} has wrong shape"
         assert len(result["gene_names"]) == D
 
@@ -132,7 +138,9 @@ class TestEmpiricalDE:
             gaussian_delta_samples, tau=1.0
         )
         # prob_effect with tau=1.0 should be <= prob_effect with tau=0
-        assert jnp.all(result_1["prob_effect"] <= result_0["prob_effect"] + 1e-6)
+        assert jnp.all(
+            result_1["prob_effect"] <= result_0["prob_effect"] + 1e-6
+        )
 
     def test_gaussian_sanity_check(self, gaussian_delta_samples):
         """Empirical lfsr matches analytic Gaussian lfsr within tolerance.
@@ -180,8 +188,10 @@ class TestComputeCLRDifferences:
     def test_shapes_3d_mixture(self, mixture_r_samples, rng):
         """3D (mixture) input with component slicing produces (N, D)."""
         delta = compute_clr_differences(
-            mixture_r_samples, mixture_r_samples,
-            component_A=0, component_B=1,
+            mixture_r_samples,
+            mixture_r_samples,
+            component_A=0,
+            component_B=1,
             rng_key=rng,
         )
         assert delta.shape == (100, 5)
@@ -224,9 +234,7 @@ class TestComputeCLRDifferences:
         r_B = jnp.abs(random.normal(random.PRNGKey(7), (100, 5))) + 1.0
         delta = compute_clr_differences(r_A, r_B, rng_key=rng)
         row_sums = jnp.sum(delta, axis=1)
-        np.testing.assert_allclose(
-            np.array(row_sums), 0.0, atol=1e-5
-        )
+        np.testing.assert_allclose(np.array(row_sums), 0.0, atol=1e-5)
 
     def test_n_samples_dirichlet_gt_1(self, rng):
         """n_samples_dirichlet > 1 multiplies the sample count."""
@@ -257,14 +265,18 @@ class TestPairedVsUnpaired:
         giving larger variance).
         """
         delta_paired = compute_clr_differences(
-            mixture_r_samples, mixture_r_samples,
-            component_A=0, component_B=1,
+            mixture_r_samples,
+            mixture_r_samples,
+            component_A=0,
+            component_B=1,
             paired=True,
             rng_key=rng,
         )
         delta_unpaired = compute_clr_differences(
-            mixture_r_samples, mixture_r_samples,
-            component_A=0, component_B=1,
+            mixture_r_samples,
+            mixture_r_samples,
+            component_A=0,
+            component_B=1,
             paired=False,
             rng_key=rng,
         )
@@ -337,7 +349,10 @@ class TestCompareDispatch:
         r = jnp.abs(random.normal(rng, (50, 4))) + 1.0
         with pytest.raises(ValueError, match="gene_names"):
             compare(
-                r, r, method="empirical", gene_names=["a", "b"],
+                r,
+                r,
+                method="empirical",
+                gene_names=["a", "b"],
                 rng_key=rng,
             )
 
@@ -361,7 +376,8 @@ class TestEmpiricalResultsMethods:
         r_A = jnp.abs(random.normal(rng, (500, 8))) + 1.0
         r_B = jnp.abs(random.normal(random.PRNGKey(1), (500, 8))) + 2.0
         return compare(
-            r_A, r_B,
+            r_A,
+            r_B,
             method="empirical",
             gene_names=[f"g{i}" for i in range(8)],
             rng_key=rng,
@@ -371,8 +387,13 @@ class TestEmpiricalResultsMethods:
         """gene_level returns a dict with expected keys."""
         result = empirical_de.gene_level(tau=0.0)
         expected_keys = {
-            "delta_mean", "delta_sd", "prob_positive",
-            "prob_effect", "lfsr", "lfsr_tau", "gene_names",
+            "delta_mean",
+            "delta_sd",
+            "prob_positive",
+            "prob_effect",
+            "lfsr",
+            "lfsr_tau",
+            "gene_names",
         }
         assert set(result.keys()) == expected_keys
 
@@ -412,9 +433,7 @@ class TestEmpiricalResultsMethods:
         assert empirical_de._cached_tau == 0.5
         cached_05 = empirical_de._gene_results
         # lfsr_tau should differ between tau=0 and tau=0.5
-        assert not jnp.allclose(
-            cached_0["lfsr_tau"], cached_05["lfsr_tau"]
-        )
+        assert not jnp.allclose(cached_0["lfsr_tau"], cached_05["lfsr_tau"])
 
     def test_repr(self, empirical_de):
         """repr includes method info."""
@@ -449,8 +468,12 @@ class TestEmpiricalTestContrast:
         contrast = jnp.array([1.0, -1.0, 0.0, 0.0])
         result = de.test_contrast(contrast, tau=0.0)
         expected_keys = {
-            "contrast_mean", "contrast_sd", "prob_positive",
-            "prob_effect", "lfsr", "lfsr_tau",
+            "contrast_mean",
+            "contrast_sd",
+            "prob_positive",
+            "prob_effect",
+            "lfsr",
+            "lfsr_tau",
         }
         assert set(result.keys()) == expected_keys
 
@@ -587,7 +610,9 @@ class TestAggregateGenes:
         assert r_A_agg.shape == (30, 5)
         # The "other" column should be 0 when no genes are filtered
         np.testing.assert_allclose(
-            np.array(r_A_agg[:, -1]), 0.0, atol=1e-7,
+            np.array(r_A_agg[:, -1]),
+            0.0,
+            atol=1e-7,
         )
 
     def test_all_false_raises(self, rng):
@@ -719,8 +744,10 @@ class TestCLRDifferencesGeneMask:
         r_mix = jnp.abs(random.normal(rng, (100, 3, D))) + 1.0
         mask = jnp.array([True, False, True, True, False])
         delta = compute_clr_differences(
-            r_mix, r_mix,
-            component_A=0, component_B=1,
+            r_mix,
+            r_mix,
+            component_A=0,
+            component_B=1,
             rng_key=rng,
             gene_mask=mask,
         )
@@ -737,7 +764,8 @@ class TestCLRDifferencesGeneMask:
         D_kept = int(mask.sum())
         # Should not raise; lazy aggregation used after Gamma sampling.
         delta = compute_clr_differences(
-            r_A, r_B,
+            r_A,
+            r_B,
             p_samples_A=p_A,
             p_samples_B=p_B,
             rng_key=rng,
@@ -754,7 +782,8 @@ class TestCLRDifferencesGeneMask:
         p_B = jax.nn.sigmoid(random.normal(random.PRNGKey(3), (80, D)))
         mask = jnp.array([True, True, True, True, False, False])
         delta = compute_clr_differences(
-            r_A, r_B,
+            r_A,
+            r_B,
             p_samples_A=p_A,
             p_samples_B=p_B,
             rng_key=rng,
@@ -784,7 +813,8 @@ class TestCompareGeneMask:
         names = ["g0", "g1", "g2", "g3", "g4", "g5"]
         mask = jnp.array([True, False, True, True, False, True])
         de = compare(
-            r_A, r_B,
+            r_A,
+            r_B,
             method="empirical",
             gene_names=names,
             rng_key=rng,
@@ -818,7 +848,8 @@ class TestCompareGeneMask:
         names = ["g0", "g1", "g2", "g3", "g4"]
         mask = np.array([True, True, False, True, True])
         de = compare(
-            model, model,
+            model,
+            model,
             method="parametric",
             gene_names=names,
             gene_mask=mask,
@@ -841,7 +872,8 @@ class TestCompareGeneMask:
         mask = jnp.array([True, True, False, True, False, True, True, False])
         D_kept = int(mask.sum())
         de = compare(
-            r_A, r_B,
+            r_A,
+            r_B,
             method="empirical",
             gene_names=[f"g{i}" for i in range(D)],
             rng_key=rng,
@@ -884,6 +916,7 @@ class _MockResults:
             self.posterior_samples["p"] = p_samples
         self.model_config = _MockModelConfig(is_hierarchical=is_hierarchical)
         import pandas as pd
+
         if gene_names is not None:
             self.var = pd.DataFrame(index=gene_names)
         else:
@@ -947,9 +980,11 @@ class TestResultsObjectDispatch:
         )
 
         de = compare(
-            res_A, res_B,
+            res_A,
+            res_B,
             method="empirical",
-            component_A=0, component_B=1,
+            component_A=0,
+            component_B=1,
             rng_key=rng,
         )
         result = de.gene_level(tau=0.0)
@@ -979,7 +1014,8 @@ class TestResultsObjectDispatch:
         res_B = _MockResults(r, gene_names=results_names, is_hierarchical=False)
 
         de = compare(
-            res_A, res_B,
+            res_A,
+            res_B,
             method="empirical",
             gene_names=override_names,
             rng_key=rng,
@@ -1009,10 +1045,12 @@ class TestResultsObjectDispatch:
 
         # Should not warn or raise — lazy simplex aggregation handles this.
         import warnings
+
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             de = compare(
-                res_A, res_B,
+                res_A,
+                res_B,
                 method="empirical",
                 gene_mask=mask,
                 rng_key=rng,
@@ -1092,6 +1130,7 @@ class TestShrinkMethod:
         de_shrink = de_emp.shrink()
 
         from scribe.de.results import ScribeShrinkageDEResults
+
         assert isinstance(de_shrink, ScribeShrinkageDEResults)
         # Same underlying buffer — no extra GPU memory
         assert de_shrink.delta_samples is de_emp.delta_samples
@@ -1159,6 +1198,7 @@ class TestGammaNormalizeSafety:
         p = jnp.ones((50, D)) * 1e-9
 
         from scribe.de._empirical import _batched_gamma_normalize
+
         result = _batched_gamma_normalize(r, p, 1, rng, 2048)
         assert result.shape == (50, D)
         assert np.all(np.isfinite(np.array(result)))
@@ -1170,6 +1210,7 @@ class TestGammaNormalizeSafety:
         p = jnp.ones((50, D)) * (1.0 - 1e-9)
 
         from scribe.de._empirical import _batched_gamma_normalize
+
         result = _batched_gamma_normalize(r, p, 1, rng, 2048)
         assert result.shape == (50, D)
         assert np.all(np.isfinite(np.array(result)))
@@ -1181,6 +1222,7 @@ class TestGammaNormalizeSafety:
         p = jnp.array([[0.0, 1.0, 0.5, 0.3]] * 30)
 
         from scribe.de._empirical import _batched_gamma_normalize
+
         result = _batched_gamma_normalize(r, p, 1, rng, 2048)
         assert result.shape == (30, D)
         assert np.all(np.isfinite(np.array(result)))
@@ -1192,6 +1234,7 @@ class TestGammaNormalizeSafety:
         p = jnp.ones((20, D)) * 1e-9
 
         from scribe.de._empirical import _batched_gamma_normalize
+
         result = _batched_gamma_normalize(r, p, 3, rng, 2048)
         assert result.shape == (60, D)  # 20 * 3
         assert np.all(np.isfinite(np.array(result)))
@@ -1232,9 +1275,7 @@ class TestSampleCompositions:
         D = 4
         N = 30
         r = jnp.abs(random.normal(rng, (N, D))) + 1.0
-        s_A, s_B = sample_compositions(
-            r, r, n_samples_dirichlet=3, rng_key=rng
-        )
+        s_A, s_B = sample_compositions(r, r, n_samples_dirichlet=3, rng_key=rng)
         assert s_A.shape == (N * 3, D)
         assert s_B.shape == (N * 3, D)
 
@@ -1292,9 +1333,7 @@ class TestComputeDeltaFromSimplex:
         """CLR differences sum to 0 along gene axis when no mask."""
         s_A, s_B = simplex_pair
         delta = compute_delta_from_simplex(s_A, s_B)
-        np.testing.assert_allclose(
-            np.array(delta.sum(axis=1)), 0.0, atol=1e-5
-        )
+        np.testing.assert_allclose(np.array(delta.sum(axis=1)), 0.0, atol=1e-5)
 
     def test_with_mask_d_kept(self, simplex_pair):
         """With mask, output has D_kept columns."""
@@ -1331,9 +1370,7 @@ class TestComputeDeltaFromSimplex:
         )
 
         # Path 2: new two-stage (sample full D → aggregate simplex → CLR)
-        s_A, s_B = sample_compositions(
-            r_A, r_B, rng_key=random.PRNGKey(99)
-        )
+        s_A, s_B = sample_compositions(r_A, r_B, rng_key=random.PRNGKey(99))
         delta_twostage = compute_delta_from_simplex(s_A, s_B, gene_mask=mask)
 
         # Same column count
@@ -1365,3 +1402,316 @@ def test_empirical_methods_come_from_empirical_mixin():
         ScribeEmpiricalDEResults.set_gene_mask.__module__
         == "scribe.de._results_empirical_mixin"
     )
+
+
+# --------------------------------------------------------------------------
+# Tests: AxisLayout-aware _slice_component
+# --------------------------------------------------------------------------
+
+
+class TestSliceComponentLayout:
+    """Tests for layout-aware ``_slice_component``.
+
+    ``_slice_component`` returns ``(sliced_array, post_layout)`` where
+    ``post_layout`` is the ``AxisLayout`` with the component axis removed
+    (or ``None`` when no layout was provided).
+    """
+
+    def _make_layout(self, axes, has_sample_dim=True):
+        from scribe.core.axis_layout import AxisLayout
+
+        return AxisLayout(axes=tuple(axes), has_sample_dim=has_sample_dim)
+
+    # -- 3D mixture (samples, components, genes) --
+
+    def test_mixture_gene_specific_layout(self, rng):
+        """Layout-aware slicing of (N, K, D) -> (N, D)."""
+        from scribe.de._empirical import _slice_component
+
+        arr = jnp.abs(random.normal(rng, (50, 3, 10))) + 1.0
+        layout = self._make_layout(("components", "genes"))
+        result, post = _slice_component(
+            arr, component=1, label="A", layout=layout
+        )
+        assert result.shape == (50, 10)
+        np.testing.assert_array_equal(result, arr[:, 1, :])
+        # Post-layout should have component axis removed, gene axis intact
+        assert post is not None
+        assert post.component_axis is None
+        assert post.gene_axis is not None
+
+    def test_mixture_scalar_layout(self, rng):
+        """Layout-aware slicing of (N, K) -> (N,) for scalar params."""
+        from scribe.de._empirical import _slice_component
+
+        arr = jnp.abs(random.normal(rng, (50, 3))) + 1.0
+        layout = self._make_layout(("components",))
+        result, post = _slice_component(
+            arr, component=2, label="A", layout=layout
+        )
+        assert result.shape == (50,)
+        np.testing.assert_array_equal(result, arr[:, 2])
+        # Post-layout: component removed, no genes (scalar)
+        assert post is not None
+        assert post.component_axis is None
+        assert post.gene_axis is None
+
+    def test_mixture_requires_component_with_layout(self, rng):
+        """component=None raises ValueError when layout has component_axis."""
+        from scribe.de._empirical import _slice_component
+
+        arr = jnp.abs(random.normal(rng, (50, 3, 10))) + 1.0
+        layout = self._make_layout(("components", "genes"))
+        with pytest.raises(ValueError, match="component_A was not specified"):
+            _slice_component(arr, component=None, label="A", layout=layout)
+
+    # -- 2D non-mixture (samples, genes) --
+
+    def test_non_mixture_gene_specific_layout(self, rng):
+        """Layout without component axis returns array and layout unchanged."""
+        from scribe.de._empirical import _slice_component
+
+        arr = jnp.abs(random.normal(rng, (50, 10))) + 1.0
+        layout = self._make_layout(("genes",))
+        result, post = _slice_component(
+            arr, component=None, label="A", layout=layout
+        )
+        assert result.shape == (50, 10)
+        np.testing.assert_array_equal(result, arr)
+        # Layout is unchanged (no component to remove)
+        assert post is layout
+
+    # -- 1D scalar (samples,) --
+
+    def test_scalar_layout(self, rng):
+        """Layout with no component/gene axes returns array and layout unchanged."""
+        from scribe.de._empirical import _slice_component
+
+        arr = jnp.abs(random.normal(rng, (50,))) + 1.0
+        layout = self._make_layout(())
+        result, post = _slice_component(
+            arr, component=None, label="A", layout=layout
+        )
+        assert result.shape == (50,)
+        np.testing.assert_array_equal(result, arr)
+        assert post is layout
+
+    # -- Legacy ndim fallback (no layout) --
+
+    def test_ndim_fallback_3d(self, rng):
+        """Without layout, 3D input is sliced via ndim heuristic."""
+        from scribe.de._empirical import _slice_component
+
+        arr = jnp.abs(random.normal(rng, (50, 3, 10))) + 1.0
+        result, post = _slice_component(arr, component=0, label="B")
+        assert result.shape == (50, 10)
+        np.testing.assert_array_equal(result, arr[:, 0, :])
+        assert post is None
+
+    def test_ndim_fallback_2d(self, rng):
+        """Without layout, 2D input passes through."""
+        from scribe.de._empirical import _slice_component
+
+        arr = jnp.abs(random.normal(rng, (50, 10))) + 1.0
+        result, post = _slice_component(arr, component=None, label="B")
+        assert result.shape == (50, 10)
+        assert post is None
+
+    def test_ndim_fallback_1d(self, rng):
+        """Without layout, 1D input passes through."""
+        from scribe.de._empirical import _slice_component
+
+        arr = jnp.abs(random.normal(rng, (50,))) + 1.0
+        result, post = _slice_component(arr, component=None, label="B")
+        assert result.shape == (50,)
+        assert post is None
+
+    # -- Consistency: layout path matches ndim path --
+
+    def test_layout_matches_ndim_3d(self, rng):
+        """Layout-aware and ndim paths produce identical sliced arrays for 3D."""
+        from scribe.de._empirical import _slice_component
+
+        arr = jnp.abs(random.normal(rng, (50, 3, 10))) + 1.0
+        layout = self._make_layout(("components", "genes"))
+        res_layout, _ = _slice_component(arr, 1, "A", layout=layout)
+        res_ndim, _ = _slice_component(arr, 1, "A", layout=None)
+        np.testing.assert_array_equal(res_layout, res_ndim)
+
+
+# --------------------------------------------------------------------------
+# Tests: AxisLayout-aware _drop_scalar_p / sample_compositions
+# --------------------------------------------------------------------------
+
+
+class TestDropScalarP:
+    """Tests for ``_drop_scalar_p`` helper.
+
+    The helper accepts a *post-sliced* layout (component axis already
+    removed by ``_slice_component``).
+    """
+
+    def _make_layout(self, axes, has_sample_dim=True):
+        from scribe.core.axis_layout import AxisLayout
+
+        return AxisLayout(axes=tuple(axes), has_sample_dim=has_sample_dim)
+
+    def test_none_input(self):
+        """None input returns None regardless of layout."""
+        from scribe.de._empirical import _drop_scalar_p
+
+        assert _drop_scalar_p(None) is None
+        assert _drop_scalar_p(None, self._make_layout(("genes",))) is None
+
+    def test_gene_specific_with_post_layout(self, rng):
+        """Gene-specific p (post-layout has gene_axis) is kept."""
+        from scribe.de._empirical import _drop_scalar_p
+
+        p = jnp.abs(random.normal(rng, (50, 10))) + 0.1
+        # Post-sliced layout: component axis already removed
+        post_layout = self._make_layout(("genes",))
+        assert _drop_scalar_p(p, post_layout) is p
+
+    def test_scalar_with_post_layout(self, rng):
+        """Scalar p (no gene_axis in post-layout) is dropped."""
+        from scribe.de._empirical import _drop_scalar_p
+
+        p = jnp.abs(random.normal(rng, (50,))) + 0.1
+        # Post-sliced layout: was (components,), now () after slicing
+        post_layout = self._make_layout(())
+        assert _drop_scalar_p(p, post_layout) is None
+
+    def test_ndim_fallback_gene_specific(self, rng):
+        """Without layout, 2D p is kept (ndim >= 2)."""
+        from scribe.de._empirical import _drop_scalar_p
+
+        p = jnp.abs(random.normal(rng, (50, 10))) + 0.1
+        assert _drop_scalar_p(p, post_layout=None) is p
+
+    def test_ndim_fallback_scalar(self, rng):
+        """Without layout, 1D p is dropped (ndim < 2)."""
+        from scribe.de._empirical import _drop_scalar_p
+
+        p = jnp.abs(random.normal(rng, (50,))) + 0.1
+        assert _drop_scalar_p(p, post_layout=None) is None
+
+
+# --------------------------------------------------------------------------
+# Tests: AxisLayout-aware _needs_gene_broadcast in _biological.py
+# --------------------------------------------------------------------------
+
+
+class TestNeedsGeneBroadcast:
+    """Tests for ``_needs_gene_broadcast`` helper."""
+
+    def _make_layout(self, axes, has_sample_dim=True):
+        from scribe.core.axis_layout import AxisLayout
+
+        return AxisLayout(axes=tuple(axes), has_sample_dim=has_sample_dim)
+
+    def test_with_gene_axis(self, rng):
+        """Array with gene axis does not need broadcast."""
+        from scribe.de._biological import _needs_gene_broadcast
+
+        arr = jnp.ones((50, 10))
+        layout = self._make_layout(("genes",))
+        assert _needs_gene_broadcast(arr, layout) is False
+
+    def test_without_gene_axis(self, rng):
+        """Array without gene axis needs broadcast."""
+        from scribe.de._biological import _needs_gene_broadcast
+
+        arr = jnp.ones((50,))
+        layout = self._make_layout(())
+        assert _needs_gene_broadcast(arr, layout) is True
+
+    def test_ndim_fallback_2d(self, rng):
+        """Without layout, 2D does not need broadcast."""
+        from scribe.de._biological import _needs_gene_broadcast
+
+        arr = jnp.ones((50, 10))
+        assert _needs_gene_broadcast(arr) is False
+
+    def test_ndim_fallback_1d(self, rng):
+        """Without layout, 1D needs broadcast."""
+        from scribe.de._biological import _needs_gene_broadcast
+
+        arr = jnp.ones((50,))
+        assert _needs_gene_broadcast(arr) is True
+
+
+# --------------------------------------------------------------------------
+# Tests: Layout threading through sample_compositions
+# --------------------------------------------------------------------------
+
+
+class TestSampleCompositionsWithLayouts:
+    """Verify ``sample_compositions`` accepts and threads layouts."""
+
+    def _make_layout(self, axes, has_sample_dim=True):
+        from scribe.core.axis_layout import AxisLayout
+
+        return AxisLayout(axes=tuple(axes), has_sample_dim=has_sample_dim)
+
+    def test_layout_produces_same_result(self, rng):
+        """Layout-aware path produces identical output to ndim path.
+
+        Uses a 3D mixture array ``(N, K, D)`` with component slicing,
+        verifying that the layout path and the ndim fallback produce
+        the same simplex samples.
+        """
+        N, K, D = 100, 3, 5
+        r = jnp.abs(random.normal(rng, (N, K, D))) + 1.0
+
+        layouts = {
+            "r": self._make_layout(("components", "genes")),
+        }
+
+        # Layout path
+        s_A_l, s_B_l = sample_compositions(
+            r,
+            r,
+            component_A=0,
+            component_B=1,
+            paired=True,
+            rng_key=random.PRNGKey(7),
+            param_layouts=layouts,
+        )
+
+        # ndim fallback path
+        s_A_n, s_B_n = sample_compositions(
+            r,
+            r,
+            component_A=0,
+            component_B=1,
+            paired=True,
+            rng_key=random.PRNGKey(7),
+            param_layouts=None,
+        )
+
+        np.testing.assert_allclose(s_A_l, s_A_n, atol=1e-6)
+        np.testing.assert_allclose(s_B_l, s_B_n, atol=1e-6)
+
+    def test_layout_with_scalar_p_dropped(self, rng):
+        """Scalar p (no gene axis in layout) is correctly dropped."""
+        N, D = 100, 5
+        r = jnp.abs(random.normal(rng, (N, D))) + 1.0
+        p_scalar = jnp.full((N,), 0.5)
+
+        layouts = {
+            "r": self._make_layout(("genes",)),
+            "p": self._make_layout(()),  # scalar: no gene axis
+        }
+
+        # Should not error, and should use Dirichlet (not Gamma)
+        # because scalar p is dropped
+        s_A, s_B = sample_compositions(
+            r,
+            r,
+            rng_key=random.PRNGKey(8),
+            p_samples_A=p_scalar,
+            p_samples_B=p_scalar,
+            param_layouts=layouts,
+        )
+        assert s_A.shape[1] == D
+        assert s_B.shape[1] == D
