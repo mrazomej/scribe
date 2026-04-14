@@ -103,13 +103,17 @@ def plot_correlation_heatmap(
     base_fname = "correlation"
     if ctx.save:
         _fname_prefix = ctx.build_filename("correlation_heatmap", results=results)
-        # Strip the suffix that build_filename adds so we can append component suffixes
         base_fname = _fname_prefix.rsplit("_correlation_heatmap.", 1)[0]
     output_format = ctx.output_format
 
-    if samples.ndim == 3:
-        n_components = samples.shape[1]
-        n_genes = samples.shape[2]
+    # Use AxisLayout to determine whether this is a mixture model and
+    # which axes carry component / gene semantics.
+    _layout = results.layouts[param_name]
+    _is_mixture = _layout.component_axis is not None
+
+    if _is_mixture:
+        n_components = samples.shape[_layout.component_axis]
+        n_genes = samples.shape[_layout.gene_axis]
         n_genes_capped = min(n_genes_to_plot, n_genes)
         console.print(
             f"[dim]Detected mixture model with {n_components} components "
@@ -198,7 +202,7 @@ def plot_correlation_heatmap(
         return PlotResultCollection(component_results) if component_results else None
 
     else:
-        n_genes = samples.shape[1]
+        n_genes = samples.shape[_layout.gene_axis]
         n_genes_to_plot = min(n_genes_to_plot, n_genes)
 
         console.print(
