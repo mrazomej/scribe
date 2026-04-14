@@ -900,6 +900,23 @@ primary `compare()` and `compare_datasets()` entry points always extract
 layouts from results objects, so the heuristic path is only reached by direct
 callers of the lower-level functions.
 
+### Early mixture-component validation
+
+All public entry points validate that mixture-component indices are
+provided when the data has a component axis.  This prevents confusing
+errors deep inside internal helpers like `_slice_component`.
+
+| Entry point             | Detection method                    | Guard                                    |
+| ----------------------- | ----------------------------------- | ---------------------------------------- |
+| `compare_datasets()`    | `model_config.n_components > 1`     | Requires `component=` parameter          |
+| `compare()`             | Layout `component_axis` on `"r"`    | Requires `component_A` and `component_B` |
+| `sample_compositions()` | Layout `component_axis` on `"r"`    | Requires `component_A` and `component_B` |
+
+The shared validation logic lives in `_require_mixture_components()` in
+`_empirical.py` and relies solely on semantic layout metadata.  When
+layouts are not available (raw-array callers), the guard is a no-op and
+`_slice_component()` provides defense-in-depth via its own checks.
+
 ## Module Layout
 
 ```

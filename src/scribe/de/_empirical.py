@@ -45,6 +45,56 @@ if TYPE_CHECKING:
 
 
 # --------------------------------------------------------------------------
+# Mixture-component validation
+# --------------------------------------------------------------------------
+
+
+def _require_mixture_components(
+    component_A,
+    component_B,
+    param_layouts,
+    caller: str,
+) -> None:
+    """Raise early if mixture-component indices are missing.
+
+    Uses the semantic ``AxisLayout`` on the ``"r"`` parameter to decide
+    whether the data is from a mixture model.  When no layouts are
+    available (raw-array callers), this function is a no-op; the
+    existing checks in ``_slice_component`` serve as defense-in-depth.
+
+    Parameters
+    ----------
+    component_A, component_B : int or None
+        Component indices supplied by the caller.
+    param_layouts : dict or None
+        Layout metadata.  When ``None``, the function returns
+        immediately (no heuristic fallback).
+    caller : str
+        Name of the calling function (used in the error message).
+    """
+    if param_layouts is None:
+        return
+
+    r_layout = param_layouts.get("r")
+    if r_layout is None or r_layout.component_axis is None:
+        return
+
+    missing = []
+    if component_A is None:
+        missing.append("component_A")
+    if component_B is None:
+        missing.append("component_B")
+    if missing:
+        raise ValueError(
+            f"{caller}(): posterior samples have a mixture-component "
+            f"axis but {' and '.join(missing)} "
+            f"{'was' if len(missing) == 1 else 'were'} not "
+            f"specified. For mixture models, provide component_A "
+            f"and component_B to select which components to compare."
+        )
+
+
+# --------------------------------------------------------------------------
 # Gene aggregation for expression filtering
 # --------------------------------------------------------------------------
 
@@ -405,6 +455,11 @@ def sample_compositions(
     """
     if rng_key is None:
         rng_key = random.PRNGKey(0)
+
+    # Early guard: require component indices for mixture-model inputs
+    _require_mixture_components(
+        component_A, component_B, param_layouts, "sample_compositions",
+    )
 
     # Resolve per-parameter layouts (None when no layouts available)
     r_layout = param_layouts.get("r") if param_layouts else None

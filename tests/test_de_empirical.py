@@ -1715,3 +1715,149 @@ class TestSampleCompositionsWithLayouts:
         )
         assert s_A.shape[1] == D
         assert s_B.shape[1] == D
+
+
+# --------------------------------------------------------------------------
+# Tests: early mixture-component validation guards
+# --------------------------------------------------------------------------
+
+
+class TestMixtureComponentValidation:
+    """Early-validation guards at DE public entry points.
+
+    Each public function that accepts mixture-model inputs should raise a
+    clear ``ValueError`` immediately when the data has a component axis
+    but no ``component_*`` index is provided.
+    """
+
+    def _make_layout(self, axes, has_sample_dim=True):
+        from scribe.core.axis_layout import AxisLayout
+
+        return AxisLayout(axes=tuple(axes), has_sample_dim=has_sample_dim)
+
+    # -- _require_mixture_components (layout-aware guard) --
+
+    def test_guard_detects_mixture_via_layout(self):
+        """Guard should raise when layout has a component axis."""
+        from scribe.de._empirical import _require_mixture_components
+
+        layouts = {"r": self._make_layout(("components", "genes"))}
+        with pytest.raises(
+            ValueError, match="posterior samples have a mixture-component axis"
+        ):
+            _require_mixture_components(None, None, layouts, "compare")
+
+    def test_guard_names_only_missing_component(self):
+        """Guard should name only the missing component index."""
+        from scribe.de._empirical import _require_mixture_components
+
+        layouts = {"r": self._make_layout(("components", "genes"))}
+        with pytest.raises(ValueError, match=r"component_A was not specified"):
+            _require_mixture_components(None, 0, layouts, "compare")
+
+    def test_guard_ok_when_components_provided(self):
+        """Guard should not raise when both components are given."""
+        from scribe.de._empirical import _require_mixture_components
+
+        layouts = {"r": self._make_layout(("components", "genes"))}
+        _require_mixture_components(0, 1, layouts, "compare")
+
+    def test_guard_no_component_axis_ok(self):
+        """No error when layout has no component axis (non-mixture)."""
+        from scribe.de._empirical import _require_mixture_components
+
+        layouts = {"r": self._make_layout(("genes",))}
+        _require_mixture_components(None, None, layouts, "compare")
+
+    def test_guard_no_layouts_is_noop(self):
+        """Guard is a no-op when no layouts are available."""
+        from scribe.de._empirical import _require_mixture_components
+
+        _require_mixture_components(None, None, None, "compare")
+
+    # -- sample_compositions() with layout --
+
+    def test_sample_compositions_requires_component_with_layout(self):
+        """sample_compositions() should detect mixture via layout."""
+        r_3d = jnp.ones((20, 3, 5))
+        layouts = {"r": self._make_layout(("components", "genes"))}
+        with pytest.raises(
+            ValueError,
+            match="sample_compositions.*mixture-component axis",
+        ):
+            sample_compositions(
+                r_3d,
+                r_3d,
+                rng_key=random.PRNGKey(0),
+                param_layouts=layouts,
+            )
+
+    def test_sample_compositions_ok_for_2d(self, rng):
+        """sample_compositions() should not error for non-mixture inputs."""
+        r_2d = jnp.abs(random.normal(rng, (20, 5))) + 1.0
+        s_A, s_B = sample_compositions(r_2d, r_2d, rng_key=rng)
+        assert s_A.shape[1] == 5
+
+    # -- compare_datasets() --
+
+    def test_compare_datasets_requires_component_for_mixture(self):
+        """compare_datasets() should error early for mixture models."""
+        from scribe.de import compare_datasets
+        from unittest.mock import MagicMock
+
+        # Mock a multi-dataset mixture results object
+        mock_results = MagicMock()
+        mock_results.model_config.n_datasets = 2
+        mock_results.model_config.n_components = 3
+        with pytest.raises(
+            ValueError,
+            match=r"compare_datasets\(\).*mixture with 3 components.*component=",
+        ):
+            compare_datasets(mock_results, dataset_A=0, dataset_B=1)
+
+    def test_compare_datasets_ok_when_component_provided(self):
+        """compare_datasets() should not error when component is given."""
+        from scribe.de import compare_datasets
+        from unittest.mock import MagicMock
+
+        # Mock the results chain: get_component -> get_dataset -> compare
+        mock_results = MagicMock()
+        mock_results.model_config.n_datasets = 2
+        mock_results.model_config.n_components = 3
+
+        # Calling get_component returns a view; get_dataset returns views.
+        # compare() will eventually fail because the mock doesn't have
+        # real data, but the early guard should pass.
+        mock_component_view = MagicMock()
+        mock_results.get_component.return_value = mock_component_view
+
+        mock_ds_view = MagicMock()
+        mock_ds_view.posterior_samples = None
+        mock_component_view.get_dataset.return_value = mock_ds_view
+
+        # Should pass the mixture guard and fail later (no real data)
+        with pytest.raises(Exception, match="(?!.*mixture)"):
+            compare_datasets(
+                mock_results,
+                dataset_A=0,
+                dataset_B=1,
+                component=0,
+            )
+
+    def test_compare_datasets_ok_for_non_mixture(self):
+        """compare_datasets() should not error when model is non-mixture."""
+        from scribe.de import compare_datasets
+        from unittest.mock import MagicMock
+
+        # Non-mixture model: n_components is None (not set)
+        mock_results = MagicMock()
+        mock_results.model_config.n_datasets = 2
+        mock_results.model_config.n_components = None
+
+        mock_ds_view = MagicMock()
+        mock_ds_view.posterior_samples = None
+        mock_results.get_dataset.return_value = mock_ds_view
+
+        # Should pass the mixture guard and fail later (no real data)
+        with pytest.raises(Exception, match="(?!.*mixture)"):
+            compare_datasets(mock_results, dataset_A=0, dataset_B=1)

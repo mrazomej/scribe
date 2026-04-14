@@ -226,6 +226,18 @@ def compare(
         _phi_samples_A = _phi_samples_B = None
         _param_layouts = None
 
+    # Early guard: require component indices for mixture models before
+    # dispatching to empirical/shrinkage (parametric ignores components).
+    if method != "parametric":
+        from ._empirical import _require_mixture_components
+
+        _require_mixture_components(
+            component_A,
+            component_B,
+            _param_layouts,
+            "compare",
+        )
+
     if method == "parametric":
         return _compare_parametric(
             model_A,
@@ -659,6 +671,19 @@ def compare_datasets(
         label_A = f"dataset_{dataset_A}"
     if label_B is None:
         label_B = f"dataset_{dataset_B}"
+
+    # Early guard: mixture models require an explicit component selection.
+    # Without it, dataset views still carry a component axis and the
+    # downstream _slice_component call would fail with a confusing error.
+    n_components = getattr(
+        getattr(results, "model_config", None), "n_components", None
+    )
+    if component is None and n_components is not None and n_components > 1:
+        raise ValueError(
+            f"compare_datasets(): the model is a mixture with "
+            f"{n_components} components. Specify `component=` to select "
+            f"which mixture component to compare across datasets."
+        )
 
     working = results
     if component is not None:
