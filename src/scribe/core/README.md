@@ -851,6 +851,7 @@ and tensor shapes.
 | `build_param_layouts` | Bulk builder from `param_specs` + parameter dict |
 | `build_sample_layouts` | Hybrid builder using specs where available, heuristic fallback for derived keys |
 | `expand_membership_from_derived` | Propagate axis membership (mixture/dataset) to derived params via `DerivedParam.deps` |
+| `derive_axis_membership` | Unified cascade to derive `mixture_params` and `dataset_params` from a `ModelConfig` (explicit fields → `ParamSpec` flags → `HierarchicalPriorType` flags → concat shape scan), with `DerivedParam` expansion |
 | `gene_axes_from_layouts` | Extract `{key: gene_axis}` mapping from a layouts dict |
 | `reconstruct_param_layouts` | Bulk backward-compat builder (no specs needed) |
 | `align_to_layout` | Insert singletons for broadcasting between layouts |
