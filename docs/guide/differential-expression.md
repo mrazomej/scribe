@@ -215,6 +215,66 @@ bio["kl_mean"]      # posterior mean Jeffreys divergence
 
 ---
 
+## Mixture-Weighted DE
+
+When a cell type is modeled as a multi-component mixture (e.g., to capture
+distinct cellular states), you can perform **population-level** DE that
+marginalises over the mixture instead of comparing individual components.
+
+The pipeline samples compositions from all K components and averages them on the
+simplex using the posterior mixture weights, then feeds the result into the
+standard CLR machinery.
+
+```python
+# Auto-extract mixing_weights from results objects
+de = compare(
+    results_A, results_B,
+    method="empirical",
+    mixture_weighted=True,
+)
+
+results = de.gene_level(tau=jnp.log(1.1))
+```
+
+For raw arrays, provide weights explicitly:
+
+```python
+de = compare(
+    r_samples_A,  # (N, K, D)
+    r_samples_B,  # (N, K, D)
+    method="empirical",
+    mixture_weighted=True,
+    mixture_weights_A=weights_A,  # (N, K)
+    mixture_weights_B=weights_B,  # (N, K)
+)
+```
+
+| Scenario | Approach |
+|----------|----------|
+| Compare biologically distinct states | `component_A=`, `component_B=` |
+| Population-level change of a multi-component cell type | `mixture_weighted=True` |
+| Single-component model | Standard `compare()` (mixture weighting is a no-op) |
+
+!!! note
+    `mixture_weighted=True` is mutually exclusive with `component_A` /
+    `component_B`. The parametric method is not supported because the CLR
+    of a mixture of Dirichlets is not Gaussian.
+
+Shrinkage works on top of the mixture-weighted empirical result:
+
+```python
+de_shrink = compare(
+    results_A, results_B,
+    method="shrinkage",
+    mixture_weighted=True,
+)
+```
+
+Biological-level metrics (LFC, LVR, Jeffreys divergence) are computed
+from mixture-weighted NB parameters when `compute_biological=True`.
+
+---
+
 ## Gene Expression Filter
 
 Low-expression genes can appear spuriously DE due to compositional artifacts.
