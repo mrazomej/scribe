@@ -66,6 +66,33 @@ of each Bernoulli trial producing a count.  The NB mean is therefore
 `r * p / (1 - p)`.  This is the *complement* of the paper's p (which
 appears as p^r in the PMF).
 
+## GPU Performance Optimizations
+
+### PPC MAP Path — `vmap` over RNG Keys
+
+The MAP (non-sample-dimension) path in both `sample_biological_nb` and
+`sample_posterior_ppc` replaces a Python `for` loop over `n_samples` with
+`jax.vmap`.  Since MAP parameters are constant across draws, only the PRNG key
+varies per sample; the wrapper captures all other arguments and passes
+`cell_batch_size=None` to let XLA fuse the full cell dimension into a single
+kernel.
+
+When `n_samples` is large enough to exceed GPU memory, the vmap call is chunked
+using `_vmap_chunk_size` from `core._array_dispatch`, which queries available
+device memory at runtime and splits the batch automatically.
+
+### Denoising — `vmap` over Posterior Draws
+
+`denoise_counts` uses the same vmap + adaptive-chunking pattern for its
+multi-sample (posterior) path.  Each posterior draw's parameters are mapped via
+`in_axes` based on `AxisLayout` metadata (with a runtime guard that verifies
+axis-0 size matches `n_samples`, protecting against the deprecated
+layout-inference path which can over-report sample dims). `cell_batch_size=None`
+is passed to `_denoise_single` so XLA fuses the full cell dimension, while
+memory is managed by chunking the sample axis.  `return_variance=True` is always
+used inside the vmap closure to ensure a consistent return signature; the
+variance array is discarded when the caller did not request it.
+
 ## Integration
 
 - **SVI / MCMC results objects** call into this package for PPC, biological

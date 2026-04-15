@@ -17,6 +17,7 @@ from ._array_dispatch import (
     _stats_norm,
     _special_module,
     _gpu_memory_budget,
+    _vmap_chunk_size,
 )
 # AxisLayout helpers: ``build_sample_layouts`` / ``gene_axes_from_layouts`` support
 # posterior-sample dicts and gene-axis maps alongside ``build_param_layouts``.
@@ -58,6 +59,7 @@ __all__ = [
     "_stats_norm",
     "_special_module",
     "_gpu_memory_budget",
+    "_vmap_chunk_size",
     "AxisLayout",
     "layout_from_param_spec",
     "infer_layout",

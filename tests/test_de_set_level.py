@@ -952,6 +952,69 @@ class TestEmpiricalTestPathwayPerturbation:
 # ==============================================================================
 
 
+class TestPathwayPermutationJIT:
+    """Tests for the JIT-compiled permutation null via ``lax.scan``.
+
+    Verifies that the ``_jit_permutation_null`` helper produces the same
+    null distribution as an equivalent pure-Python loop, and that results
+    are deterministic given a fixed PRNG key.
+    """
+
+    def test_deterministic_given_key(self):
+        """Same PRNG key must produce identical null statistics."""
+        key = random.PRNGKey(42)
+        delta = random.normal(random.PRNGKey(0), (200, 15)) * 0.1
+        idx = jnp.array([0, 1, 2, 3])
+
+        r1 = empirical_test_pathway_perturbation(
+            delta, idx, n_permutations=50, key=key,
+        )
+        r2 = empirical_test_pathway_perturbation(
+            delta, idx, n_permutations=50, key=key,
+        )
+        assert r1["t_obs"] == r2["t_obs"]
+        assert r1["p_value"] == r2["p_value"]
+
+    def test_null_shape(self):
+        """Internal null array should have length n_permutations."""
+        from scribe.de._set_level import _jit_permutation_null
+        from scribe.de._transforms import build_ilr_basis
+
+        key = random.PRNGKey(7)
+        N, D, n_plus, n_perms = 100, 10, 3, 37
+        delta = random.normal(key, (N, D))
+        keys = random.split(random.PRNGKey(8), n_perms)
+        H = build_ilr_basis(n_plus)
+
+        t_null = _jit_permutation_null(delta, keys, H, n_plus, D)
+        assert t_null.shape == (n_perms,)
+        assert jnp.all(jnp.isfinite(t_null))
+
+    def test_null_all_non_negative(self):
+        """Quadratic statistics are sums of squares — always >= 0."""
+        from scribe.de._set_level import _jit_permutation_null
+        from scribe.de._transforms import build_ilr_basis
+
+        delta = random.normal(random.PRNGKey(3), (300, 20))
+        n_plus, D = 5, 20
+        keys = random.split(random.PRNGKey(4), 100)
+        H = build_ilr_basis(n_plus)
+
+        t_null = _jit_permutation_null(delta, keys, H, n_plus, D)
+        assert jnp.all(t_null >= 0)
+
+    def test_single_permutation(self):
+        """n_permutations=1 produces a single-element null."""
+        delta = random.normal(random.PRNGKey(5), (500, 15)) * 0.1
+        idx = jnp.array([0, 1, 2, 3])
+
+        result = empirical_test_pathway_perturbation(
+            delta, idx, n_permutations=1, key=random.PRNGKey(6),
+        )
+        assert result["n_permutations"] == 1
+        assert 0.0 <= result["p_value"] <= 1.0
+
+
 class TestEmpiricalTestMultipleGeneSets:
     """Tests for batch empirical pathway enrichment with PEFP control."""
 

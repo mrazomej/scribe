@@ -1073,6 +1073,17 @@ final_results = SVIResultsFactory.create_results(
 )
 ```
 
+## GPU Performance Optimizations
+
+### Log-Likelihood Device-Stay
+
+`log_likelihood_map` with `gene_batch_size` accumulates per-batch JAX arrays
+on-device (as a Python list of `jax.Array`) and performs a single
+`jnp.concatenate` at the end, followed by one device-to-host transfer.  The
+previous approach called `np.array()` after every batch, forcing a blocking D2H
+sync on each iteration.  This reduces the number of synchronization points from
+`O(n_genes / gene_batch_size)` to one.
+
 ## Optimization Tips
 
 ### Convergence

@@ -2272,3 +2272,70 @@ class TestAdaptiveSampling:
         # per_row = (1*20000*4 + 1*20000*4) * 2 = 320_000 bytes
         # chunk = 8GB / 320k ~= 26843 -> capped at N=10000
         assert chunk == 10000
+
+
+class TestLikelihoodDeviceStay:
+    """Tests for the on-device accumulation in log_likelihood_map.
+
+    The gene-batched path should accumulate JAX arrays and do a single
+    device-to-host transfer instead of calling ``np.array()`` per batch.
+    """
+
+    def test_gene_batched_returns_jax_array(self):
+        """Gene-batched MAP log-likelihood returns a jnp.ndarray (not np)."""
+        from scribe.models.config import InferenceConfig, SVIConfig
+        from scribe.inference import run_scribe
+        from scribe.inference.preset_builder import build_config_from_preset
+
+        _np = np.random.RandomState(42)
+        counts = jnp.array(
+            _np.negative_binomial(5, 0.3, (10, 8))
+        )
+        cfg = build_config_from_preset(
+            model="nbdm", parameterization="standard",
+            inference_method="svi", unconstrained=False,
+            priors={"r": (2, 0.1), "p": (1, 1)},
+        )
+        inf = InferenceConfig.from_svi(SVIConfig(n_steps=5, batch_size=5))
+        result = run_scribe(
+            counts=counts, model_config=cfg,
+            inference_config=inf, seed=0,
+        )
+
+        # Gene-batched path (small batch to force multiple iterations)
+        ll = result.log_likelihood_map(
+            counts, gene_batch_size=3, return_by="gene", verbose=False,
+        )
+        assert isinstance(ll, jax.Array)
+        assert ll.shape[0] == 8  # n_genes
+
+    def test_gene_batched_matches_full(self):
+        """Gene-batched MAP log-likelihood matches full computation."""
+        from scribe.models.config import InferenceConfig, SVIConfig
+        from scribe.inference import run_scribe
+        from scribe.inference.preset_builder import build_config_from_preset
+
+        _np = np.random.RandomState(42)
+        counts = jnp.array(
+            _np.negative_binomial(5, 0.3, (10, 8))
+        )
+        cfg = build_config_from_preset(
+            model="nbdm", parameterization="standard",
+            inference_method="svi", unconstrained=False,
+            priors={"r": (2, 0.1), "p": (1, 1)},
+        )
+        inf = InferenceConfig.from_svi(SVIConfig(n_steps=5, batch_size=5))
+        result = run_scribe(
+            counts=counts, model_config=cfg,
+            inference_config=inf, seed=0,
+        )
+
+        ll_full = result.log_likelihood_map(
+            counts, return_by="gene", verbose=False,
+        )
+        ll_batched = result.log_likelihood_map(
+            counts, gene_batch_size=3, return_by="gene", verbose=False,
+        )
+        np.testing.assert_allclose(
+            np.asarray(ll_full), np.asarray(ll_batched), atol=1e-4,
+        )

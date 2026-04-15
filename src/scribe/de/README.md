@@ -1036,6 +1036,18 @@ All operations are memory-efficient:
 - Low-rank operations: O(kG) or O(k²G) where k ~ 50, G ~ 30,000
 - Exact computation (no approximations beyond the Gaussian fit)
 
+### JIT-Compiled Pathway Permutation Test
+
+The null-calibration loop in `empirical_test_pathway_perturbation` (gene-label
+permutation test) is compiled to a single XLA kernel via `@jax.jit` and
+`jax.lax.scan`.  The within-pathway Helmert basis `H_within` depends only on the
+pathway *size* (not which genes are selected), so it is precomputed once outside
+the scan.  Each scan iteration permutes all `D` gene indices, gathers the first
+`n_plus` as the permuted pathway, projects onto `H_within`, and returns the mean
+quadratic statistic.  `n_plus` and `D` are passed as `static_argnums` so XLA can
+specialize the compiled kernel per pathway size.  This replaces a Python `for`
+loop and keeps all permutation work on-device.
+
 ## References
 
 - Aitchison, J. (1982). "The statistical analysis of compositional data." JRSS

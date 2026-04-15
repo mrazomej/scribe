@@ -375,6 +375,130 @@ class TestNBDMEquivalence:
 # ==============================================================================
 
 
+class TestPPCMapVmap:
+    """Tests for the vmap-accelerated MAP path in PPC sampling.
+
+    The MAP branch uses ``jax.vmap`` over independent RNG keys instead
+    of a Python for-loop.  These tests verify that the vmap path
+    produces correct shapes, reproducible results, and statistically
+    sensible outputs.
+    """
+
+    def test_biological_map_shape(self, rng):
+        """Biological MAP vmap produces (n_samples, n_cells, n_genes)."""
+        n_genes, n_cells, n_samples = 5, 10, 4
+        r = jnp.ones(n_genes) * 5.0
+        p = jnp.array(0.4)
+
+        result = sample_biological_nb(
+            r=r, p=p, n_cells=n_cells, rng_key=rng, n_samples=n_samples,
+        )
+        assert result.shape == (n_samples, n_cells, n_genes)
+
+    def test_biological_map_rng_reproducibility(self, rng):
+        """Same RNG key must produce identical MAP vmap results."""
+        n_genes, n_cells = 5, 10
+        r = jnp.ones(n_genes) * 5.0
+        p = jnp.array(0.4)
+
+        a = sample_biological_nb(
+            r=r, p=p, n_cells=n_cells, rng_key=rng, n_samples=3,
+        )
+        b = sample_biological_nb(
+            r=r, p=p, n_cells=n_cells, rng_key=rng, n_samples=3,
+        )
+        np.testing.assert_array_equal(a, b)
+
+    def test_biological_map_different_keys_differ(self):
+        """Different RNG keys should produce different MAP results."""
+        n_genes, n_cells = 5, 10
+        r = jnp.ones(n_genes) * 5.0
+        p = jnp.array(0.4)
+
+        a = sample_biological_nb(
+            r=r, p=p, n_cells=n_cells,
+            rng_key=random.PRNGKey(0), n_samples=3,
+        )
+        b = sample_biological_nb(
+            r=r, p=p, n_cells=n_cells,
+            rng_key=random.PRNGKey(1), n_samples=3,
+        )
+        assert not jnp.allclose(a, b)
+
+    def test_biological_map_non_negative(self, rng):
+        """MAP vmap biological counts are non-negative."""
+        r = jnp.ones(5) * 5.0
+        p = jnp.array(0.4)
+        result = sample_biological_nb(
+            r=r, p=p, n_cells=10, rng_key=rng, n_samples=5,
+        )
+        assert jnp.all(result >= 0)
+
+    def test_biological_map_mixture_shape(self, rng):
+        """Mixture MAP vmap produces correct shape."""
+        n_components, n_genes, n_cells = 3, 5, 10
+        r = jnp.ones((n_components, n_genes)) * 5.0
+        p = jnp.array(0.4)
+        mw = jnp.ones(n_components) / n_components
+
+        result = sample_biological_nb(
+            r=r, p=p, n_cells=n_cells, rng_key=rng,
+            n_samples=4, mixing_weights=mw,
+        )
+        assert result.shape == (4, n_cells, n_genes)
+        assert jnp.all(result >= 0)
+
+    def test_posterior_ppc_map_shape(self, rng):
+        """Full-model MAP vmap produces (n_samples, n_cells, n_genes)."""
+        from scribe.sampling import sample_posterior_ppc
+
+        n_genes, n_cells, n_samples = 5, 8, 3
+        r = jnp.ones(n_genes) * 5.0
+        p = jnp.array(0.4)
+        gate = jnp.ones(n_genes) * 0.1
+        nu = jnp.ones(n_cells) * 0.5
+
+        result = sample_posterior_ppc(
+            r=r, p=p, n_cells=n_cells, rng_key=rng,
+            n_samples=n_samples, gate=gate, p_capture=nu,
+        )
+        assert result.shape == (n_samples, n_cells, n_genes)
+        assert jnp.all(result >= 0)
+
+    def test_posterior_ppc_map_rng_reproducibility(self, rng):
+        """Same RNG key must produce identical full-model MAP vmap results."""
+        from scribe.sampling import sample_posterior_ppc
+
+        n_genes, n_cells = 5, 8
+        r = jnp.ones(n_genes) * 5.0
+        p = jnp.array(0.4)
+
+        a = sample_posterior_ppc(
+            r=r, p=p, n_cells=n_cells, rng_key=rng, n_samples=3,
+        )
+        b = sample_posterior_ppc(
+            r=r, p=p, n_cells=n_cells, rng_key=rng, n_samples=3,
+        )
+        np.testing.assert_array_equal(a, b)
+
+    def test_biological_map_statistical_properties(self, rng):
+        """MAP vmap NB samples have plausible mean/variance relationship."""
+        n_genes, n_cells = 1, 500
+        r_val = 5.0
+        p_val = 0.3
+        r = jnp.ones(n_genes) * r_val
+        p = jnp.array(p_val)
+
+        # NB mean = r*p/(1-p), var = r*p/(1-p)^2
+        expected_mean = r_val * p_val / (1.0 - p_val)
+
+        result = sample_biological_nb(
+            r=r, p=p, n_cells=n_cells, rng_key=rng, n_samples=1,
+        )
+        empirical_mean = float(jnp.mean(result))
+        assert abs(empirical_mean - expected_mean) / expected_mean < 0.3
+
+
 class TestHasSampleDim:
     """Tests for ``_has_sample_dim`` — reads ``has_sample_dim`` directly
     from the ``param_layouts["r"]`` AxisLayout metadata.

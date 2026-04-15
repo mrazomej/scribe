@@ -3,7 +3,7 @@
 import warnings
 from typing import Dict, List, Optional, Tuple, Union
 
-from jax import random
+from jax import random, vmap
 import jax.numpy as jnp
 import numpyro.distributions as dist
 
@@ -11,6 +11,7 @@ from scribe.models.components.likelihoods.beta_negative_binomial import (
     build_count_dist,
 )
 
+from ..core._array_dispatch import _vmap_chunk_size
 from ._helpers import _has_sample_dim, _slice_posterior_draw
 from ._denoising_bnb import (
     _denoise_bnb_quadrature,
@@ -285,62 +286,113 @@ def denoise_counts(
             param_layouts=_base_layouts,
         )
 
-    # Multi-sample path: iterate over posterior draws
+    # Multi-sample path: vmap over posterior draws with adaptive memory
+    # chunking.  Each draw's parameters are sliced by vmap's in_axes
+    # (0 for arrays that carry a sample dim, None for shared params).
+    # cell_batch_size is set to None inside the vmap'd function so XLA
+    # fuses the full cell dimension; memory is managed by chunking over
+    # the n_samples axis.
     n_samples = r.shape[0]
+    _needs_rng = _method_needs_rng(method)
+
+    # Pre-split all RNG keys (or create dummy keys for non-RNG methods)
     keys = (
         random.split(rng_key, n_samples)
-        if _method_needs_rng(method)
-        else [None] * n_samples
+        if _needs_rng
+        else jnp.zeros((n_samples, 2))
     )
 
-    result_list: List[jnp.ndarray] = []
-    var_list: List[jnp.ndarray] = []
+    # Python-level flags captured by the vmap closure
+    _has_gate = gate is not None
+    _has_pc = p_capture is not None
+    _has_mw = mixing_weights is not None
+    _has_bnb = bnb_concentration is not None
 
-    for s in range(n_samples):
-        # Extract parameters for this single posterior draw, using
-        # layout metadata to decide which arrays carry a sample axis.
-        draw = _slice_posterior_draw(
-            s,
-            r=r,
-            p=p,
-            p_capture=p_capture,
-            gate=gate,
-            mixing_weights=mixing_weights,
-            param_layouts=param_layouts,
-            bnb_concentration=bnb_concentration,
-        )
+    # Dummy arrays for None optionals so vmap sees concrete inputs.
+    # Shape (n_samples,) ensures they are sliceable along axis 0.
+    _gate_arr = gate if _has_gate else jnp.zeros(n_samples)
+    _pc_arr = p_capture if _has_pc else jnp.zeros(n_samples)
+    _mw_arr = mixing_weights if _has_mw else jnp.zeros(n_samples)
+    _bnb_arr = bnb_concentration if _has_bnb else jnp.zeros(n_samples)
 
-        # After slicing, the draw parameters are MAP-level (no sample dim);
-        # pass _base_layouts for layout-driven flag computation.
+    # Determine which params carry a sample dim.  The layout metadata says
+    # whether a param *should* have a sample axis, but the deprecated
+    # inference path can be wrong (e.g. a shared gate of shape (n_genes,)
+    # gets has_sample_dim=True because *r* has a sample dim).  So we also
+    # verify that the leading axis actually equals n_samples before mapping.
+    def _has_sd(name, arr):
+        layout_says = param_layouts.get(name)
+        if layout_says is None or not layout_says.has_sample_dim:
+            return False
+        if arr is None or arr.ndim == 0:
+            return False
+        return arr.shape[0] == n_samples
+
+    def _denoise_draw(key_i, r_i, p_i, pc_i, gate_i, mw_i, bnb_i):
+        """Denoise one posterior draw (always returns variance)."""
         out = _denoise_single(
             counts=counts,
-            r=draw["r"],
-            p=draw["p"],
-            p_capture=draw["p_capture"],
-            gate=draw["gate"],
+            r=r_i,
+            p=p_i,
+            p_capture=pc_i if _has_pc else None,
+            gate=gate_i if _has_gate else None,
             method=method,
-            rng_key=keys[s],
-            return_variance=return_variance,
-            mixing_weights=draw["mixing_weights"],
+            rng_key=key_i if _needs_rng else None,
+            return_variance=True,
+            mixing_weights=mw_i if _has_mw else None,
             component_assignment=component_assignment,
-            cell_batch_size=cell_batch_size,
-            bnb_concentration=draw["bnb_concentration"],
+            cell_batch_size=None,
+            bnb_concentration=bnb_i if _has_bnb else None,
             param_layouts=_base_layouts,
         )
+        return out["denoised_counts"], out["variance"]
 
-        if return_variance:
-            result_list.append(out["denoised_counts"])
-            var_list.append(out["variance"])
-        else:
-            result_list.append(out)
+    # in_axes: 0 for per-draw arrays whose axis-0 size equals n_samples,
+    # None for shared/broadcast arrays.  Dummy arrays always have axis-0
+    # == n_samples so they get mapped harmlessly.
+    in_axes = (
+        0,
+        0 if _has_sd("r", r) else None,
+        0 if _has_sd("p", p) else None,
+        0 if (not _has_pc or _has_sd("p_capture", p_capture)) else None,
+        0 if (not _has_gate or _has_sd("gate", gate)) else None,
+        0 if (not _has_mw or _has_sd("mixing_weights", mixing_weights)) else None,
+        0 if (not _has_bnb or _has_sd("bnb_concentration", bnb_concentration)) else None,
+    )
 
-    stacked = jnp.stack(result_list, axis=0)
+    vmapped = vmap(_denoise_draw, in_axes=in_axes)
+
+    # Adaptive chunking over the n_samples axis
+    n_cells, n_genes = counts.shape
+    _per_sample = n_cells * n_genes * 4 * 2
+    _chunk = _vmap_chunk_size(n_samples, _per_sample)
+
+    def _slice_ax(arr, ax, s, e):
+        """Slice array along axis 0 only when vmapped (ax == 0)."""
+        return arr[s:e] if ax == 0 else arr
+
+    if _chunk >= n_samples:
+        d_all, v_all = vmapped(
+            keys, r, p, _pc_arr, _gate_arr, _mw_arr, _bnb_arr,
+        )
+    else:
+        d_parts: List[jnp.ndarray] = []
+        v_parts: List[jnp.ndarray] = []
+        _arrs = (keys, r, p, _pc_arr, _gate_arr, _mw_arr, _bnb_arr)
+        for _s in range(0, n_samples, _chunk):
+            _e = min(_s + _chunk, n_samples)
+            _chunk_args = tuple(
+                _slice_ax(a, ax, _s, _e) for a, ax in zip(_arrs, in_axes)
+            )
+            _d, _v = vmapped(*_chunk_args)
+            d_parts.append(_d)
+            v_parts.append(_v)
+        d_all = jnp.concatenate(d_parts, axis=0)
+        v_all = jnp.concatenate(v_parts, axis=0)
+
     if return_variance:
-        return {
-            "denoised_counts": stacked,
-            "variance": jnp.stack(var_list, axis=0),
-        }
-    return stacked
+        return {"denoised_counts": d_all, "variance": v_all}
+    return d_all
 
 
 def _denoise_single(
