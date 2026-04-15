@@ -9,6 +9,7 @@ import jax.numpy as jnp
 
 from ._common import console
 from ._interactive import PlotResultCollection, plot_function
+from .dispatch import _get_layouts_for_plot
 
 
 def _compute_correlation_matrix(samples, n_samples):
@@ -106,9 +107,11 @@ def plot_correlation_heatmap(
         base_fname = _fname_prefix.rsplit("_correlation_heatmap.", 1)[0]
     output_format = ctx.output_format
 
-    # Use AxisLayout to determine whether this is a mixture model and
-    # which axes carry component / gene semantics.
-    _layout = results.layouts[param_name]
+    # Use canonical AxisLayout (keyed by "r", "mu", etc.) to determine
+    # whether this is a mixture model and which axes carry semantics.
+    # Posterior samples have a leading sample dim, so shift indices.
+    _canonical_layouts = _get_layouts_for_plot(results)
+    _layout = _canonical_layouts[param_name].with_sample_dim()
     _is_mixture = _layout.component_axis is not None
 
     if _is_mixture:
@@ -124,7 +127,7 @@ def plot_correlation_heatmap(
         variance_per_component = []
 
         for k in range(n_components):
-            comp_samples = samples[:, k, :]
+            comp_samples = jnp.take(samples, k, axis=_layout.component_axis)
             corr_matrix = _compute_correlation_matrix(
                 comp_samples, n_samples
             )

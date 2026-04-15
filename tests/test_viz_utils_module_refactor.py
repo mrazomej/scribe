@@ -2726,6 +2726,37 @@ class TestCollapseMixtureAxisWithLayouts:
         # Weighted sum: 0.6*[1,2] + 0.4*[3,4] = [1.8, 2.8]
         np.testing.assert_allclose(result, np.array([1.8, 2.8]))
 
+    def test_mixture_collapse_2d_weights_dk_ordering(self):
+        """(K, D, G) mu with (D, K) weights should broadcast correctly."""
+        K, D, G = 5, 2, 4
+        mu = np.ones((K, D, G))
+        # Per-dataset weights with datasets-first ordering (D, K)
+        w = np.full((D, K), 1.0 / K)
+        layouts = {
+            "mu": AxisLayout(axes=("components", "datasets", "genes")),
+            "mixing_weights": AxisLayout(axes=("datasets", "components")),
+        }
+        result = _collapse_mixture_axis(mu, w, layouts=layouts)
+        # Uniform weights → average over components → (D, G) of ones
+        assert result.shape == (D, G)
+        np.testing.assert_allclose(result, np.ones((D, G)))
+
+    def test_mixture_collapse_2d_weights_kd_ordering(self):
+        """(K, D, G) mu with (K, D) weights should broadcast correctly."""
+        K, D, G = 3, 2, 4
+        mu = np.arange(K * D * G, dtype=float).reshape(K, D, G)
+        w = np.array([[0.5, 0.3], [0.3, 0.5], [0.2, 0.2]])  # (K, D)
+        layouts = {
+            "mu": AxisLayout(axes=("components", "datasets", "genes")),
+            "mixing_weights": AxisLayout(axes=("components", "datasets")),
+        }
+        result = _collapse_mixture_axis(mu, w, layouts=layouts)
+        assert result.shape == (D, G)
+        expected = np.sum(
+            w[:, :, None] * mu, axis=0
+        )
+        np.testing.assert_allclose(result, expected)
+
     def test_dataset_only_passthrough(self):
         """(D, G) mu without component axis should pass through."""
         mu = np.array([[1.0, 2.0], [3.0, 4.0]])
