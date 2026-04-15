@@ -179,6 +179,57 @@ most genes are not DE), while strong effects are left largely unchanged.
 The estimated null proportion \(w_0\) is a useful diagnostic: it tells you
 what fraction of the genome is unaffected by the perturbation.
 
+#### Mixture-weighted DE for heterogeneous cell types
+
+When a cell type is modeled as a \(K\)-component mixture to capture internal
+heterogeneity (e.g., quiescent and activated fibroblasts), the per-component
+DE answers "how does state \(k\) change?" But the biologist often needs the
+**population-level** question: "how does this cell type *as a whole* change?"
+
+The marginal composition of a random cell from a \(K\)-component mixture is a
+*mixture of Dirichlets*:
+
+\[
+p(\underline{\rho}) = \sum_{k=1}^{K} \pi_k \,
+\text{Dir}(\underline{\rho} \mid \underline{r}_k),
+\]
+
+where \(\pi_k\) are the mixture weights and \(\underline{r}_k\) are the
+per-component Dirichlet concentration parameters. The marginal expected
+proportion of gene \(g\) is:
+
+\[
+\langle \rho_g \rangle = \sum_{k=1}^{K} \pi_k \,
+\frac{r_{g,k}}{r_{T,k}}.
+\]
+
+The mixture-weighted CLR pipeline proceeds by:
+
+1. For each posterior sample \(s\) and each component \(k\), drawing
+   \(\underline{\rho}_k^{(s)} \sim \text{Dir}(\underline{r}_k^{(s)})\).
+2. Forming the weighted composition:
+   \(\bar{\underline{\rho}}^{(s)} = \sum_k \pi_k^{(s)} \,
+   \underline{\rho}_k^{(s)}\).
+3. Applying CLR transformation and paired differencing as usual.
+
+Critically, the mixture weights \(\pi_k^{(s)}\) are **posterior samples**,
+not point estimates, so uncertainty about the relative abundance of cellular
+states is propagated into the DE statistics.
+
+!!! warning "Why not average the \(r\) parameters directly?"
+    Averaging concentration parameters
+    \(\bar{r}_g = \sum_k \pi_k r_{g,k}\) then sampling
+    \(\text{Dir}(\bar{\underline{r}})\) gives the **wrong mean** (normalization
+    does not commute with weighted sums) and the **wrong variance** (the
+    between-component contribution is lost). Aggregation must happen on the
+    simplex, not at the parameter level.
+
+When \(K = 1\), the pipeline reduces exactly to standard empirical DE.
+When the weights are indicator vectors (all mass on one component), it
+reduces to per-component DE. Biological-level metrics (LFC, LVR, Jeffreys
+divergence) are extended by forming weighted NB parameters before computing
+the metrics. See the paper (`_diffexp03.qmd`, §3.6) for the full derivation.
+
 ### Measuring evidence: the local false sign rate
 
 Rather than p-values and FDR, SCRIBE uses the **local false sign rate
