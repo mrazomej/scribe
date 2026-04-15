@@ -249,11 +249,11 @@ de = compare(
 )
 ```
 
-| Scenario | Approach |
-|----------|----------|
-| Compare biologically distinct states | `component_A=`, `component_B=` |
-| Population-level change of a multi-component cell type | `mixture_weighted=True` |
-| Single-component model | Standard `compare()` (mixture weighting is a no-op) |
+| Scenario                                               | Approach                                            |
+| ------------------------------------------------------ | --------------------------------------------------- |
+| Compare biologically distinct states                   | `component_A=`, `component_B=`                      |
+| Population-level change of a multi-component cell type | `mixture_weighted=True`                             |
+| Single-component model                                 | Standard `compare()` (mixture weighting is a no-op) |
 
 !!! note
     `mixture_weighted=True` is mutually exclusive with `component_A` /
