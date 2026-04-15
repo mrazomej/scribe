@@ -22,6 +22,7 @@ from ....core.axis_layout import (
     AxisLayout,
     build_param_layouts,
     broadcast_param_to_layout,
+    subset_layouts,
     DATASETS,
 )
 from ...builders.parameter_specs import sample_prior
@@ -54,13 +55,7 @@ def _drop_dataset_axis(
     """
     if param_layouts is None:
         return None
-    out: Dict[str, "AxisLayout"] = {}
-    for key, layout in param_layouts.items():
-        if DATASETS in layout.axes:
-            out[key] = layout.subset_axis(DATASETS)
-        else:
-            out[key] = layout
-    return out
+    return subset_layouts(param_layouts, DATASETS)
 
 
 # ==============================================================================
@@ -243,9 +238,7 @@ class ZeroInflatedNBLikelihood(Likelihood):
         return build_mixture_general(
             mixing_dist,
             lambda comp_idx: dist.ZeroInflatedDistribution(
-                self._make_count_dist(
-                    r[..., comp_idx, :], p[..., comp_idx, :]
-                ),
+                self._make_count_dist(r[..., comp_idx, :], p[..., comp_idx, :]),
                 gate=gate[..., comp_idx, :],
             ).to_event(1),
         )
@@ -330,9 +323,7 @@ class ZeroInflatedNBLikelihood(Likelihood):
                         obs = counts[idx] if counts is not None else None
                         numpyro.sample(
                             "counts",
-                            self._build_dist(
-                                cell_pv, param_layouts=ds_layouts
-                            ),
+                            self._build_dist(cell_pv, param_layouts=ds_layouts),
                             obs=obs,
                         )
                 elif counts is None:
@@ -348,9 +339,7 @@ class ZeroInflatedNBLikelihood(Likelihood):
                         )
                         numpyro.sample(
                             "counts",
-                            self._build_dist(
-                                cell_pv, param_layouts=ds_layouts
-                            ),
+                            self._build_dist(cell_pv, param_layouts=ds_layouts),
                         )
                 else:
                     # Full dataset: observe all counts, full plate.
@@ -365,9 +354,7 @@ class ZeroInflatedNBLikelihood(Likelihood):
                         )
                         numpyro.sample(
                             "counts",
-                            self._build_dist(
-                                cell_pv, param_layouts=ds_layouts
-                            ),
+                            self._build_dist(cell_pv, param_layouts=ds_layouts),
                             obs=counts,
                         )
                 return
@@ -467,9 +454,7 @@ class ZeroInflatedNBLikelihood(Likelihood):
                 obs = counts[idx] if counts is not None else None
                 numpyro.sample(
                     "counts",
-                    self._build_dist(
-                        param_values, param_layouts=param_layouts
-                    ),
+                    self._build_dist(param_values, param_layouts=param_layouts),
                     obs=obs,
                 )
         elif counts is None:
@@ -480,9 +465,7 @@ class ZeroInflatedNBLikelihood(Likelihood):
                     sample_prior(spec, dims, model_config)
                 numpyro.sample(
                     "counts",
-                    self._build_dist(
-                        param_values, param_layouts=param_layouts
-                    ),
+                    self._build_dist(param_values, param_layouts=param_layouts),
                 )
         else:
             # Full data: run decoder for all cells, observe all counts.
@@ -492,8 +475,6 @@ class ZeroInflatedNBLikelihood(Likelihood):
                     sample_prior(spec, dims, model_config)
                 numpyro.sample(
                     "counts",
-                    self._build_dist(
-                        param_values, param_layouts=param_layouts
-                    ),
+                    self._build_dist(param_values, param_layouts=param_layouts),
                     obs=counts,
                 )

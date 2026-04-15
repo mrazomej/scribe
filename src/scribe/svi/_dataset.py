@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
 import jax.numpy as jnp
 
+from ..core.axis_layout import DATASETS, subset_layouts
+
 if TYPE_CHECKING:
     from .results import ScribeSVIResults
 
@@ -178,6 +180,34 @@ class DatasetMixin:
             update={"n_datasets": None}
         )
 
+        # Snapshot parent layouts before modification so we can compute
+        # adjusted gene-axis indices below.
+        parent_layouts = self.layouts
+
+        # Drop the dataset axis from every layout that has it so the
+        # child results object carries correct semantic metadata.
+        new_layouts = subset_layouts(parent_layouts, DATASETS)
+
+        # Adjust _gene_axis_by_key: when a dataset axis is removed from
+        # a param, any gene axis after it shifts down by one.
+        parent_gene_axes = getattr(self, "_gene_axis_by_key", None)
+        new_gene_axes = None
+        if parent_gene_axes:
+            new_gene_axes = {}
+            for key, gene_ax in parent_gene_axes.items():
+                if key not in new_params:
+                    continue
+                layout = parent_layouts.get(key)
+                ds_ax = (
+                    layout.dataset_axis
+                    if layout is not None
+                    else None
+                )
+                if ds_ax is not None and gene_ax > ds_ax:
+                    new_gene_axes[key] = gene_ax - 1
+                else:
+                    new_gene_axes[key] = gene_ax
+
         # Resolve per-dataset cell count if available
         per_ds = getattr(self, "_n_cells_per_dataset", None)
         ds_n_cells = (
@@ -200,6 +230,8 @@ class DatasetMixin:
             posterior_samples=new_posterior_samples,
             predictive_samples=None,
             n_components=getattr(self, "n_components", None),
+            param_layouts=new_layouts,
+            _gene_axis_by_key=new_gene_axes,
             # Preserve fit-time annotation/component metadata so per-dataset
             # plotting and downstream component lookups stay index-consistent.
             _label_map=getattr(self, "_label_map", None),

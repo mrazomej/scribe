@@ -330,6 +330,8 @@ class GeneSubsettingMixin:
         else:
             gene_index_abs = np.asarray(index)
 
+        # Gene subsetting reduces gene count but does not remove the gene
+        # axis, so axis layout semantics are structurally unchanged.
         subset = type(self)(
             params=new_params,
             loss_history=self.loss_history,
@@ -357,6 +359,7 @@ class GeneSubsettingMixin:
             posterior_samples=new_posterior_samples,
             predictive_samples=new_predictive_samples,
             n_components=self.n_components,
+            param_layouts=dict(self.layouts),
             _original_n_genes=original_n_genes,
             _gene_axis_by_key=getattr(self, "_gene_axis_by_key", None),
             _subset_gene_index=gene_index_abs,

@@ -44,7 +44,8 @@ def _compute_predicted_mean(
     p,
     mixing_weights=None,
     p_capture=None,
-    layouts=None,
+    *,
+    layouts,
 ):
     """Compute predicted per-gene observed mean from MAP parameters.
 
@@ -64,8 +65,9 @@ def _compute_predicted_mean(
         Per-cell capture probability ``(C,)``.  ``None`` for
         non-VCP models (treated as :math:`\\nu = 1`).
     layouts : dict of str to AxisLayout
-        Canonical MAP-level layouts from ``_get_layouts_for_plot``.
-        Axis semantics are read from the layout metadata.
+        **Required.** Canonical MAP-level layouts from
+        ``_get_layouts_for_plot``.  Must contain entries for ``"r"``
+        and ``"p"`` (and ``"mixing_weights"`` when present).
 
     Returns
     -------
@@ -75,8 +77,15 @@ def _compute_predicted_mean(
     r = np.asarray(r, dtype=float)
     p = np.asarray(p, dtype=float)
 
-    # Use layout metadata to determine whether p is per-component.
-    if layouts["p"].component_axis is not None:
+    # Align p with r for broadcasting.  When p has a component axis
+    # but NOT a gene axis, add trailing dimensions so it broadcasts
+    # along the component axis of r.  When p already matches r's shape
+    # (e.g. both (K, G) for gene-specific p), leave it unchanged.
+    if (
+        layouts["p"].component_axis is not None
+        and layouts["p"].gene_axis is None
+        and p.shape != r.shape
+    ):
         p = p.reshape((-1,) + (1,) * (r.ndim - 1))
 
     p_safe = np.clip(p, 1e-8, 1.0 - 1e-8)
@@ -109,7 +118,8 @@ def _compute_per_dataset_means(
     mixing_weights=None,
     p_capture=None,
     n_datasets=None,
-    layouts=None,
+    *,
+    layouts,
 ):
     """Compute observed and predicted means per dataset.
 
@@ -124,9 +134,12 @@ def _compute_per_dataset_means(
     mixing_weights : ndarray or None
     p_capture : ndarray or None, shape ``(C,)``
     n_datasets : int or None
-    layouts : dict of str to AxisLayout or None
-        Canonical MAP-level layouts. When provided, dataset-axis slicing
-        uses ``layout.dataset_axis`` instead of shape-matching heuristics.
+    layouts : dict of str to AxisLayout
+        **Required.** Canonical MAP-level layouts from
+        ``_get_layouts_for_plot``.  Must contain entries for every
+        parameter key (``"r"``, ``"p"``, and optionally
+        ``"mixing_weights"``) so that dataset-axis slicing uses
+        ``layout.dataset_axis``.
 
     Returns
     -------
@@ -175,7 +188,11 @@ def _compute_per_dataset_means(
         )
 
         pred_mean = _compute_predicted_mean(
-            r_d, p_d, mixing_d, pc_d, layouts=layouts,
+            r_d,
+            p_d,
+            mixing_d,
+            pc_d,
+            layouts=layouts,
         )
 
         name = (
@@ -408,7 +425,11 @@ def _prepare_calibration_data(
 
     obs_mean = np.mean(np.asarray(counts, dtype=float), axis=0)
     pred_mean = _compute_predicted_mean(
-        r, p, mixing_weights, p_capture, layouts=layouts,
+        r,
+        p,
+        mixing_weights,
+        p_capture,
+        layouts=layouts,
     )
     return {
         "mode": "single",
@@ -516,8 +537,12 @@ def plot_mean_calibration(
                 ds["pred_mean"],
                 color=colors[i],
             )
-            axes_flat[i].set_xlabel(r"$\log_{10}(\bar{u}_g^{\mathrm{obs}} + 1)$")
-            axes_flat[i].set_ylabel(r"$\log_{10}(\bar{u}_g^{\mathrm{pred}} + 1)$")
+            axes_flat[i].set_xlabel(
+                r"$\log_{10}(\bar{u}_g^{\mathrm{obs}} + 1)$"
+            )
+            axes_flat[i].set_ylabel(
+                r"$\log_{10}(\bar{u}_g^{\mathrm{pred}} + 1)$"
+            )
             axes_flat[i].set_title(ds["name"], fontsize=10)
 
     # ---- Single-dataset (with or without mixture) ---------------------------

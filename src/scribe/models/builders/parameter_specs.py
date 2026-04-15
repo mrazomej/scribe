@@ -537,6 +537,54 @@ class ParamSpec(BaseModel):
 
 
 # ==============================================================================
+# Layout-only spec (no distribution)
+# ==============================================================================
+
+
+class LayoutOnlySpec(ParamSpec):
+    """Lightweight spec that carries only axis-layout metadata.
+
+    Use this when a sample site needs to be discoverable by the layout
+    system (e.g. via ``companion_specs``) but is not itself a
+    distribution-backed ``ParamSpec``.  Typical examples are auxiliary
+    sites generated inside hierarchical priors (``mu_eta``,
+    ``lambda_mu_eta``, etc.) whose distributions are hard-coded in the
+    model and whose only relationship to the spec system is the set of
+    boolean axis flags (``is_dataset``, ``is_mixture``, ...).
+
+    ``LayoutOnlySpec`` intentionally disables distribution validation
+    and will raise at runtime if anything tries to use it as a real
+    distribution spec.
+
+    Parameters
+    ----------
+    name : str
+        Sample-site name.
+    is_dataset : bool
+        Whether the site carries a dataset axis.
+    is_mixture : bool
+        Whether the site carries a component axis.
+    is_gene_specific : bool
+        Whether the site carries a gene axis.
+    is_cell_specific : bool
+        Whether the site carries a cell axis.
+    """
+
+    def _get_distribution_type(self) -> Type:
+        """LayoutOnlySpec has no distribution; raise if called."""
+        raise TypeError(
+            f"LayoutOnlySpec('{self.name}') is metadata-only and does "
+            "not define a distribution.  Do not call sampling or "
+            "validation methods on it."
+        )
+
+    @model_validator(mode="after")
+    def validate_hyperparameters(self) -> "LayoutOnlySpec":
+        """Skip distribution-based validation (no distribution to check)."""
+        return self
+
+
+# ==============================================================================
 # Constrained Parameter Types (direct sampling from constrained distributions)
 # ==============================================================================
 
@@ -1233,6 +1281,74 @@ class BiologyInformedCaptureSpec(ParamSpec):
         present when splitting by dataset.
         """
         return ["eta_capture", "eta_capture_raw"]
+
+    @property
+    def companion_specs(self) -> list:
+        """Lightweight ParamSpec descriptors for auxiliary mu_eta sites.
+
+        The biology-informed capture hierarchy creates sample sites
+        (``mu_eta``, ``mu_eta_pop``, ``mu_eta_raw``, ``tau_eta``, etc.)
+        that are not covered by this spec's ``name`` or ``alias_names``.
+        Returning companion specs makes them discoverable by
+        ``build_param_layouts`` so they get correct axis metadata
+        (in particular ``is_dataset=True`` for the ``(D,)``-shaped
+        per-dataset sites).
+
+        Returns
+        -------
+        list of ParamSpec
+            Companion specs.  Empty when not data-driven.
+        """
+        if not self.data_driven:
+            return []
+
+        prior = self.mu_eta_prior
+        # LayoutOnlySpec carries axis flags without pretending to
+        # describe the actual distribution of these auxiliary sites.
+        _base = dict(shape_dims=(), default_params=(0.0, 1.0))
+
+        # Scalars: population mean and prior-specific hyperparams
+        specs = [
+            LayoutOnlySpec(name="mu_eta", is_dataset=False, **_base),
+            LayoutOnlySpec(name="mu_eta_pop", is_dataset=False, **_base),
+            LayoutOnlySpec(name="tau_eta", is_dataset=False, **_base),
+        ]
+
+        # Per-dataset sites carry is_dataset=True so that
+        # layout_from_param_spec assigns them a dataset axis.
+        specs.append(
+            LayoutOnlySpec(name="mu_eta_raw", is_dataset=True, **_base)
+        )
+
+        if prior == "horseshoe":
+            specs.append(
+                LayoutOnlySpec(
+                    name="tau_mu_eta", is_dataset=False, **_base
+                )
+            )
+            specs.append(
+                LayoutOnlySpec(
+                    name="lambda_mu_eta", is_dataset=True, **_base
+                )
+            )
+            specs.append(
+                LayoutOnlySpec(
+                    name="c_sq_mu_eta", is_dataset=False, **_base
+                )
+            )
+        elif prior == "neg":
+            specs.append(
+                LayoutOnlySpec(
+                    name="zeta_mu_eta", is_dataset=True, **_base
+                )
+            )
+            specs.append(
+                LayoutOnlySpec(
+                    name="psi_mu_eta", is_dataset=True, **_base
+                )
+            )
+
+        return specs
 
     def _get_distribution_type(self) -> Type:
         """Return Normal as the base distribution type for eta."""

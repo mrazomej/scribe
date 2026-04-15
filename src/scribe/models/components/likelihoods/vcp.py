@@ -34,6 +34,7 @@ from ....core.axis_layout import (
     AxisLayout,
     build_param_layouts,
     broadcast_param_to_layout,
+    subset_layouts,
     DATASETS,
 )
 
@@ -71,13 +72,7 @@ def _drop_dataset_axis(
     """
     if param_layouts is None:
         return None
-    out: Dict[str, "AxisLayout"] = {}
-    for key, layout in param_layouts.items():
-        if DATASETS in layout.axes:
-            out[key] = layout.subset_axis(DATASETS)
-        else:
-            out[key] = layout
-    return out
+    return subset_layouts(param_layouts, DATASETS)
 
 
 # ==============================================================================
@@ -492,7 +487,9 @@ class NBWithVCPLikelihood(Likelihood):
                         ds_layouts if use_dataset_indexing else param_layouts
                     )
                     r_layout = (active_layouts or {}).get("r", AxisLayout(()))
-                    phi_layout = (active_layouts or {}).get("phi", AxisLayout(()))
+                    phi_layout = (active_layouts or {}).get(
+                        "phi", AxisLayout(())
+                    )
                     phi = broadcast_param_to_layout(phi, phi_layout, r_layout)
 
                 # Clamp phi away from 0 so log(phi * ...) stays finite
@@ -1004,7 +1001,9 @@ class ZINBWithVCPLikelihood(Likelihood):
                         ds_layouts if use_dataset_indexing else param_layouts
                     )
                     r_layout = (active_layouts or {}).get("r", AxisLayout(()))
-                    phi_layout = (active_layouts or {}).get("phi", AxisLayout(()))
+                    phi_layout = (active_layouts or {}).get(
+                        "phi", AxisLayout(())
+                    )
                     gate_layout = (active_layouts or {}).get(
                         "gate", AxisLayout(())
                     )
@@ -1099,9 +1098,7 @@ class ZINBWithVCPLikelihood(Likelihood):
                     gate_layout = (active_layouts or {}).get(
                         "gate", AxisLayout(())
                     )
-                    p_for_hat = broadcast_param_to_layout(
-                        p, p_layout, r_layout
-                    )
+                    p_for_hat = broadcast_param_to_layout(p, p_layout, r_layout)
                     gate = broadcast_param_to_layout(
                         gate, gate_layout, r_layout
                     )

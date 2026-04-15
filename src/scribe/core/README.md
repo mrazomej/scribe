@@ -844,19 +844,38 @@ and tensor shapes.
 
 **Key functions:**
 
-| Function | Purpose |
-|----------|---------|
-| `layout_from_param_spec` | Build layout from a `ParamSpec` (exact path) |
-| `infer_layout` | Reconstruct layout from tensor shape + config metadata |
-| `build_param_layouts` | Bulk builder from `param_specs` + parameter dict |
-| `build_sample_layouts` | Hybrid builder using specs where available, heuristic fallback for derived keys |
-| `expand_membership_from_derived` | Propagate axis membership (mixture/dataset) to derived params via `DerivedParam.deps` |
-| `derive_axis_membership` | Unified cascade to derive `mixture_params` and `dataset_params` from a `ModelConfig` (explicit fields → `ParamSpec` flags → `HierarchicalPriorType` flags → concat shape scan), with `DerivedParam` expansion |
-| `gene_axes_from_layouts` | Extract `{key: gene_axis}` mapping from a layouts dict |
-| `reconstruct_param_layouts` | Bulk backward-compat builder (no specs needed) |
-| `align_to_layout` | Insert singletons for broadcasting between layouts |
-| `merge_layouts` | Compute the union of two or more layouts in canonical axis order |
-| `broadcast_param_to_layout` | Convenience wrapper around `align_to_layout` that auto-detects a leading batch/cell dimension |
+| Function                         | Purpose                                                                                                                                                                                                       |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `layout_from_param_spec`         | Build layout from a `ParamSpec` (exact path)                                                                                                                                                                  |
+| `infer_layout`                   | Reconstruct layout from tensor shape + config metadata                                                                                                                                                        |
+| `build_param_layouts`            | Bulk builder from `param_specs` + parameter dict                                                                                                                                                              |
+| `build_sample_layouts`           | Hybrid builder using specs where available, heuristic fallback for derived keys                                                                                                                               |
+| `subset_layouts`                 | Drop a named axis from every layout that carries it — canonical way to update `param_layouts` after a slicing operation                                                                                       |
+| `expand_membership_from_derived` | Propagate axis membership (mixture/dataset) to derived params via `DerivedParam.deps`                                                                                                                         |
+| `derive_axis_membership`         | Unified cascade to derive `mixture_params` and `dataset_params` from a `ModelConfig` (explicit fields → `ParamSpec` flags → `HierarchicalPriorType` flags → concat shape scan), with `DerivedParam` expansion |
+| `gene_axes_from_layouts`         | Extract `{key: gene_axis}` mapping from a layouts dict                                                                                                                                                        |
+| `reconstruct_param_layouts`      | Bulk backward-compat builder (no specs needed)                                                                                                                                                                |
+| `align_to_layout`                | Insert singletons for broadcasting between layouts                                                                                                                                                            |
+| `merge_layouts`                  | Compute the union of two or more layouts in canonical axis order                                                                                                                                              |
+| `broadcast_param_to_layout`      | Convenience wrapper around `align_to_layout` that auto-detects a leading batch/cell dimension                                                                                                                 |
+
+**Layout propagation contract:** Every method that constructs a new results
+object from a parent (`get_dataset`, `get_component`, gene `__getitem__`,
+`concat`, gene reorder) **must** compute and pass `param_layouts` to the child
+constructor.  The rules are:
+
+| Operation                                  | Layout update                                                           |
+| ------------------------------------------ | ----------------------------------------------------------------------- |
+| `get_dataset(i)` (single index)            | `subset_layouts(parent.layouts, "datasets")` — removes dataset axis     |
+| `get_component(i)` (single index)          | `subset_layouts(parent.layouts, "components")` — removes component axis |
+| `get_component([i, j, ...])` (multi-index) | `dict(parent.layouts)` — component axis kept, just fewer elements       |
+| Gene subsetting (`__getitem__`)            | `dict(parent.layouts)` — gene axis kept, just fewer genes               |
+| `concat([r1, r2, ...])`                    | Promoted keys gain a dataset axis via `layout.with_axis("datasets")`    |
+| Gene reorder                               | `dict(parent.layouts)` — no axis change                                 |
+
+This eliminates reliance on lazy `reconstruct_param_layouts` from tensor
+shapes, which is lossy for parameters not described by `ParamSpec` (e.g.
+the `mu_eta` hierarchy).
 
 **Layout-based axis lookups (Phase A):** The following subsetting methods now
 prefer `AxisLayout`-based axis detection over the legacy shape heuristics, with

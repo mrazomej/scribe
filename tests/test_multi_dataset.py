@@ -4366,3 +4366,256 @@ class TestMuMapDiffersAcrossDatasets:
         assert result.mu_map_A is not None
         assert result.mu_map_B is not None
         assert not np.allclose(result.mu_map_A, result.mu_map_B)
+
+
+# =========================================================================
+# Layout propagation through slicing operations
+# =========================================================================
+
+
+class TestLayoutPropagationSVI:
+    """Verify that param_layouts travel through get_dataset, get_component,
+    gene subsetting, concat, and gene reorder on SVI results."""
+
+    def _make_svi_result(
+        self, *, n_genes=10, n_components=None, n_datasets=None
+    ):
+        """Helper to build a minimal ScribeSVIResults with explicit layouts."""
+        from scribe.svi.results import ScribeSVIResults
+        from scribe.core.axis_layout import AxisLayout, GENES, DATASETS, COMPONENTS
+
+        base = "nbdm"
+        model_type = f"{base}_mix" if n_components else base
+
+        cfg_kw = dict(base_model=base, unconstrained=True)
+        if n_components:
+            cfg_kw["n_components"] = n_components
+        if n_datasets:
+            cfg_kw["n_datasets"] = n_datasets
+            cfg_kw["expression_dataset_prior"] = "gaussian"
+
+        config = ModelConfig(**cfg_kw)
+
+        # Build params with plausible shapes
+        axes_r = []
+        shape_r = []
+        if n_components:
+            axes_r.append(COMPONENTS)
+            shape_r.append(n_components)
+        if n_datasets:
+            axes_r.append(DATASETS)
+            shape_r.append(n_datasets)
+        axes_r.append(GENES)
+        shape_r.append(n_genes)
+
+        r_layout = AxisLayout(axes=tuple(axes_r))
+        p_layout = AxisLayout(axes=())
+
+        params = {
+            "r_loc": jnp.ones(shape_r),
+            "r_scale": jnp.ones(shape_r),
+            "p_loc": jnp.zeros(()),
+            "p_scale": jnp.ones(()),
+        }
+        layouts = {"r_loc": r_layout, "r_scale": r_layout, "p_loc": p_layout, "p_scale": p_layout}
+
+        var_df = None
+        try:
+            import pandas as pd
+            var_df = pd.DataFrame({"gene": [f"g{i}" for i in range(n_genes)]})
+        except ImportError:
+            pass
+
+        result = ScribeSVIResults(
+            params=params,
+            loss_history=jnp.array([1.0]),
+            n_cells=50,
+            n_genes=n_genes,
+            model_type=model_type,
+            model_config=config,
+            prior_params={},
+            var=var_df,
+            param_layouts=layouts,
+            n_components=n_components,
+        )
+        return result
+
+    # ------------------------------------------------------------------
+    # get_dataset
+    # ------------------------------------------------------------------
+
+    def test_get_dataset_propagates_layouts(self):
+        """After get_dataset, param_layouts is not None and dataset axis
+        is removed from all layouts."""
+        from scribe.core.axis_layout import DATASETS
+
+        result = self._make_svi_result(n_datasets=2)
+        child = result.get_dataset(0)
+
+        assert child.param_layouts is not None
+        for key, layout in child.param_layouts.items():
+            assert DATASETS not in layout.axes, (
+                f"Layout for {key!r} still has dataset axis"
+            )
+
+    # ------------------------------------------------------------------
+    # get_component
+    # ------------------------------------------------------------------
+
+    def test_get_component_single_drops_component_axis(self):
+        """Single-component extraction removes the component axis."""
+        from scribe.core.axis_layout import COMPONENTS
+
+        result = self._make_svi_result(n_components=3)
+        child = result.get_component(0)
+
+        assert child.param_layouts is not None
+        for key, layout in child.param_layouts.items():
+            assert COMPONENTS not in layout.axes, (
+                f"Layout for {key!r} still has component axis"
+            )
+
+    def test_get_component_multi_keeps_component_axis(self):
+        """Multi-component selection keeps the component axis."""
+        from scribe.core.axis_layout import COMPONENTS
+
+        result = self._make_svi_result(n_components=3)
+        child = result.get_component([0, 2])
+
+        assert child.param_layouts is not None
+        r_layout = child.param_layouts.get("r_loc")
+        assert r_layout is not None
+        assert COMPONENTS in r_layout.axes
+
+    # ------------------------------------------------------------------
+    # gene subsetting
+    # ------------------------------------------------------------------
+
+    def test_gene_subset_propagates_layouts(self):
+        """Gene subsetting preserves param_layouts (gene axis still exists)."""
+        from scribe.core.axis_layout import GENES
+
+        result = self._make_svi_result(n_genes=10)
+        child = result[:5]
+
+        assert child.param_layouts is not None
+        r_layout = child.param_layouts.get("r_loc")
+        assert r_layout is not None
+        assert GENES in r_layout.axes
+
+    # ------------------------------------------------------------------
+    # concat
+    # ------------------------------------------------------------------
+
+    def test_concat_adds_dataset_axis_to_promoted_keys(self):
+        """After concat, promoted keys gain a dataset axis."""
+        from scribe.core.axis_layout import DATASETS
+
+        r1 = self._make_svi_result(n_genes=10)
+        r2 = self._make_svi_result(n_genes=10)
+        from scribe.svi.results import ScribeSVIResults
+
+        combined = ScribeSVIResults.concat([r1, r2])
+        assert combined.param_layouts is not None
+        # r_loc was non-cell-specific → promoted → should have dataset axis
+        r_layout = combined.param_layouts.get("r_loc")
+        assert r_layout is not None
+        assert DATASETS in r_layout.axes
+
+
+class TestLayoutPropagationMCMC:
+    """Verify that param_layouts travel through MCMC slicing operations."""
+
+    def _make_mcmc_result(
+        self, *, n_genes=10, n_components=None, n_datasets=None, n_samples=20
+    ):
+        """Helper to build a minimal ScribeMCMCResults with explicit layouts."""
+        from scribe.mcmc.results import ScribeMCMCResults
+        from scribe.core.axis_layout import AxisLayout, GENES, DATASETS, COMPONENTS
+
+        base = "nbdm"
+        model_type = f"{base}_mix" if n_components else base
+
+        cfg_kw = dict(base_model=base, unconstrained=True)
+        if n_components:
+            cfg_kw["n_components"] = n_components
+        if n_datasets:
+            cfg_kw["n_datasets"] = n_datasets
+            cfg_kw["expression_dataset_prior"] = "gaussian"
+
+        config = ModelConfig(**cfg_kw)
+
+        # Samples have a leading sample dimension
+        axes_r = []
+        shape_r = [n_samples]
+        if n_components:
+            axes_r.append(COMPONENTS)
+            shape_r.append(n_components)
+        if n_datasets:
+            axes_r.append(DATASETS)
+            shape_r.append(n_datasets)
+        axes_r.append(GENES)
+        shape_r.append(n_genes)
+
+        r_layout = AxisLayout(axes=tuple(axes_r), has_sample_dim=True)
+        p_layout = AxisLayout(axes=(), has_sample_dim=True)
+
+        samples = {
+            "r": jnp.ones(shape_r),
+            "p": jnp.zeros((n_samples,)),
+        }
+        layouts = {"r": r_layout, "p": p_layout}
+
+        var_df = None
+        try:
+            import pandas as pd
+            var_df = pd.DataFrame({"gene": [f"g{i}" for i in range(n_genes)]})
+        except ImportError:
+            pass
+
+        result = ScribeMCMCResults(
+            samples=samples,
+            n_cells=50,
+            n_genes=n_genes,
+            model_type=model_type,
+            model_config=config,
+            prior_params={},
+            var=var_df,
+            param_layouts=layouts,
+            n_components=n_components,
+        )
+        return result
+
+    def test_get_dataset_propagates_layouts(self):
+        """MCMC get_dataset drops dataset axis in child layouts."""
+        from scribe.core.axis_layout import DATASETS
+
+        result = self._make_mcmc_result(n_datasets=2)
+        child = result.get_dataset(0)
+
+        assert child.param_layouts is not None
+        for key, layout in child.param_layouts.items():
+            assert DATASETS not in layout.axes
+
+    def test_get_component_single_drops_axis(self):
+        """MCMC single-component extraction drops the axis."""
+        from scribe.core.axis_layout import COMPONENTS
+
+        result = self._make_mcmc_result(n_components=3)
+        child = result.get_component(0)
+
+        assert child.param_layouts is not None
+        for key, layout in child.param_layouts.items():
+            assert COMPONENTS not in layout.axes
+
+    def test_gene_subset_propagates_layouts(self):
+        """MCMC gene subsetting preserves param_layouts."""
+        from scribe.core.axis_layout import GENES
+
+        result = self._make_mcmc_result(n_genes=10)
+        child = result[:5]
+
+        assert child.param_layouts is not None
+        r_layout = child.param_layouts.get("r")
+        assert r_layout is not None
+        assert GENES in r_layout.axes

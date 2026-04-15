@@ -348,6 +348,17 @@ class ScribeMCMCResults(
                     samples[key] = stacked
                     promoted_dataset_keys.add(key)
 
+        # Build layouts: promoted keys gain a dataset axis.
+        from ..core.axis_layout import DATASETS
+
+        _base_layouts = first.layouts
+        concat_layouts = {}
+        for key, layout in _base_layouts.items():
+            if promoted_dataset_keys and key in promoted_dataset_keys:
+                concat_layouts[key] = layout.with_axis(DATASETS)
+            else:
+                concat_layouts[key] = layout
+
         return cls(
             samples=samples,
             n_cells=n_cells_total,
@@ -362,6 +373,7 @@ class ScribeMCMCResults(
             n_vars=first.n_genes,
             predictive_samples=None,
             n_components=first.n_components,
+            param_layouts=concat_layouts,
             denoised_counts=None,
             _n_cells_per_dataset=n_cells_per_dataset,
             _dataset_indices=dataset_indices,
@@ -684,6 +696,7 @@ def _reorder_mcmc_result_genes(
     )
     var = result.var.iloc[list(map(int, gene_indexer.tolist()))].copy()
 
+    # Gene reorder preserves all axis semantics; layouts are unchanged.
     return type(result)(
         samples=samples,
         n_cells=result.n_cells,
@@ -698,6 +711,7 @@ def _reorder_mcmc_result_genes(
         n_vars=result.n_vars,
         predictive_samples=None,
         n_components=result.n_components,
+        param_layouts=getattr(result, "param_layouts", None),
         denoised_counts=None,
         _n_cells_per_dataset=getattr(result, "_n_cells_per_dataset", None),
         _dataset_indices=getattr(result, "_dataset_indices", None),

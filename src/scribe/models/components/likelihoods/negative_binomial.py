@@ -21,6 +21,7 @@ from ....core.axis_layout import (
     AxisLayout,
     build_param_layouts,
     broadcast_param_to_layout,
+    subset_layouts,
     DATASETS,
 )
 from ...builders.parameter_specs import sample_prior
@@ -58,13 +59,7 @@ def _drop_dataset_axis(
     """
     if param_layouts is None:
         return None
-    out: Dict[str, "AxisLayout"] = {}
-    for key, layout in param_layouts.items():
-        if DATASETS in layout.axes:
-            out[key] = layout.subset_axis(DATASETS)
-        else:
-            out[key] = layout
-    return out
+    return subset_layouts(param_layouts, DATASETS)
 
 
 # ==============================================================================
