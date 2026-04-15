@@ -23,6 +23,7 @@ from scribe.de import (
     compare,
     compute_clr_differences,
     sample_compositions,
+    sample_mixture_compositions,
     compute_delta_from_simplex,
     empirical_differential_expression,
 )
@@ -31,8 +32,9 @@ from scribe.de._empirical import (
     _aggregate_simplex,
     _drop_scalar_p,
     _slice_component,
+    _weight_simplex_by_components,
 )
-from scribe.de._biological import _needs_gene_broadcast
+from scribe.de._biological import _needs_gene_broadcast, weight_bio_samples
 
 
 # --------------------------------------------------------------------------
@@ -1923,18 +1925,18 @@ class TestArrayBackendDispatch:
         delta = self._make_delta_samples(np)
         result = empirical_differential_expression(delta, tau=0.1)
         for key in ("delta_mean", "delta_sd", "prob_positive", "lfsr"):
-            assert isinstance(result[key], np.ndarray), (
-                f"Expected np.ndarray for key '{key}', got {type(result[key])}"
-            )
+            assert isinstance(
+                result[key], np.ndarray
+            ), f"Expected np.ndarray for key '{key}', got {type(result[key])}"
 
     def test_empirical_de_returns_jax_for_jax_input(self):
         """empirical_differential_expression returns jax.Array for jax input."""
         delta = self._make_delta_samples(jnp)
         result = empirical_differential_expression(delta, tau=0.1)
         for key in ("delta_mean", "delta_sd", "prob_positive", "lfsr"):
-            assert isinstance(result[key], jax.Array), (
-                f"Expected jax.Array for key '{key}', got {type(result[key])}"
-            )
+            assert isinstance(
+                result[key], jax.Array
+            ), f"Expected jax.Array for key '{key}', got {type(result[key])}"
 
     def test_empirical_de_values_match_across_backends(self):
         """NumPy and JAX backends produce numerically close results."""
@@ -1964,7 +1966,10 @@ class TestArrayBackendDispatch:
         p_B = rng.beta(2, 5, size=(n, d)).astype(np.float32)
 
         result = biological_differential_expression(
-            r_A, r_B, p_A, p_B,
+            r_A,
+            r_B,
+            p_A,
+            p_B,
             metric_families=("bio_lfc", "bio_aux"),
         )
         assert isinstance(result["lfc_mean"], np.ndarray)
@@ -1982,7 +1987,10 @@ class TestArrayBackendDispatch:
         p_B = jnp.asarray(rng.beta(2, 5, size=(n, d)).astype(np.float32))
 
         result = biological_differential_expression(
-            r_A, r_B, p_A, p_B,
+            r_A,
+            r_B,
+            p_A,
+            p_B,
             metric_families=("bio_lfc", "bio_aux"),
         )
         assert isinstance(result["lfc_mean"], jax.Array)
@@ -1997,10 +2005,12 @@ class TestArrayBackendDispatch:
         delta_mean = rng.standard_normal(d).astype(np.float64)
         delta_sd = np.abs(rng.standard_normal(d).astype(np.float64)) + 0.01
 
-        result = shrinkage_differential_expression(delta_mean, delta_sd, tau=0.1)
-        assert isinstance(result["delta_mean"], np.ndarray), (
-            f"Expected np.ndarray, got {type(result['delta_mean'])}"
+        result = shrinkage_differential_expression(
+            delta_mean, delta_sd, tau=0.1
         )
+        assert isinstance(
+            result["delta_mean"], np.ndarray
+        ), f"Expected np.ndarray, got {type(result['delta_mean'])}"
         assert isinstance(result["lfsr"], np.ndarray)
 
     def test_gamma_kl_returns_numpy_for_numpy_input(self):
@@ -2030,14 +2040,18 @@ class TestArrayBackendDispatch:
 
         result_np = gamma_kl(a_p, b_p, a_q, b_q)
         result_jnp = gamma_kl(
-            jnp.asarray(a_p), jnp.asarray(b_p),
-            jnp.asarray(a_q), jnp.asarray(b_q),
+            jnp.asarray(a_p),
+            jnp.asarray(b_p),
+            jnp.asarray(a_q),
+            jnp.asarray(b_q),
         )
         # JAX defaults to float32 even for float64 inputs (unless
         # jax_enable_x64 is set), so digamma/gammaln accumulate ~1e-5
         # differences vs the float64 SciPy path.
         np.testing.assert_allclose(
-            np.asarray(result_np), np.asarray(result_jnp), atol=1e-4,
+            np.asarray(result_np),
+            np.asarray(result_jnp),
+            atol=1e-4,
         )
 
 
@@ -2117,12 +2131,20 @@ class TestAdaptiveSampling:
 
         # Large budget -> single chunk
         result_single = _batched_dirichlet(
-            r, 1, rng, batch_size=N, memory_budget=float("inf"),
+            r,
+            1,
+            rng,
+            batch_size=N,
+            memory_budget=float("inf"),
         )
 
         # Tiny budget -> forces many chunks (but still same fold_in keys)
         result_multi = _batched_dirichlet(
-            r, 1, rng, batch_size=N, memory_budget=1.0,
+            r,
+            1,
+            rng,
+            batch_size=N,
+            memory_budget=1.0,
         )
 
         # Both paths use fold_in(rng_key, start) so chunks aligned with
@@ -2131,7 +2153,9 @@ class TestAdaptiveSampling:
         # different chunk boundaries produce different fold_in offsets).
         assert result_single.shape == result_multi.shape
         np.testing.assert_allclose(
-            result_multi.sum(axis=1), 1.0, atol=1e-5,
+            result_multi.sum(axis=1),
+            1.0,
+            atol=1e-5,
         )
 
     def test_adaptive_single_chunk_when_budget_large(self, rng):
@@ -2145,7 +2169,11 @@ class TestAdaptiveSampling:
         N, D = 30, 8
         r = jnp.ones((N, D)) * 2.0
         result = _batched_dirichlet(
-            r, 1, rng, batch_size=100_000, memory_budget=float("inf"),
+            r,
+            1,
+            rng,
+            batch_size=100_000,
+            memory_budget=float("inf"),
         )
         assert result.shape == (N, D)
 
@@ -2288,23 +2316,28 @@ class TestLikelihoodDeviceStay:
         from scribe.inference.preset_builder import build_config_from_preset
 
         _np = np.random.RandomState(42)
-        counts = jnp.array(
-            _np.negative_binomial(5, 0.3, (10, 8))
-        )
+        counts = jnp.array(_np.negative_binomial(5, 0.3, (10, 8)))
         cfg = build_config_from_preset(
-            model="nbdm", parameterization="standard",
-            inference_method="svi", unconstrained=False,
+            model="nbdm",
+            parameterization="standard",
+            inference_method="svi",
+            unconstrained=False,
             priors={"r": (2, 0.1), "p": (1, 1)},
         )
         inf = InferenceConfig.from_svi(SVIConfig(n_steps=5, batch_size=5))
         result = run_scribe(
-            counts=counts, model_config=cfg,
-            inference_config=inf, seed=0,
+            counts=counts,
+            model_config=cfg,
+            inference_config=inf,
+            seed=0,
         )
 
         # Gene-batched path (small batch to force multiple iterations)
         ll = result.log_likelihood_map(
-            counts, gene_batch_size=3, return_by="gene", verbose=False,
+            counts,
+            gene_batch_size=3,
+            return_by="gene",
+            verbose=False,
         )
         assert isinstance(ll, jax.Array)
         assert ll.shape[0] == 8  # n_genes
@@ -2316,26 +2349,349 @@ class TestLikelihoodDeviceStay:
         from scribe.inference.preset_builder import build_config_from_preset
 
         _np = np.random.RandomState(42)
-        counts = jnp.array(
-            _np.negative_binomial(5, 0.3, (10, 8))
-        )
+        counts = jnp.array(_np.negative_binomial(5, 0.3, (10, 8)))
         cfg = build_config_from_preset(
-            model="nbdm", parameterization="standard",
-            inference_method="svi", unconstrained=False,
+            model="nbdm",
+            parameterization="standard",
+            inference_method="svi",
+            unconstrained=False,
             priors={"r": (2, 0.1), "p": (1, 1)},
         )
         inf = InferenceConfig.from_svi(SVIConfig(n_steps=5, batch_size=5))
         result = run_scribe(
-            counts=counts, model_config=cfg,
-            inference_config=inf, seed=0,
+            counts=counts,
+            model_config=cfg,
+            inference_config=inf,
+            seed=0,
         )
 
         ll_full = result.log_likelihood_map(
-            counts, return_by="gene", verbose=False,
+            counts,
+            return_by="gene",
+            verbose=False,
         )
         ll_batched = result.log_likelihood_map(
-            counts, gene_batch_size=3, return_by="gene", verbose=False,
+            counts,
+            gene_batch_size=3,
+            return_by="gene",
+            verbose=False,
         )
         np.testing.assert_allclose(
-            np.asarray(ll_full), np.asarray(ll_batched), atol=1e-4,
+            np.asarray(ll_full),
+            np.asarray(ll_batched),
+            atol=1e-4,
         )
+
+
+# ==========================================================================
+# Tests: mixture-weighted differential expression
+# ==========================================================================
+
+
+class TestMixtureWeightedDE:
+    """Tests for mixture-weighted composition sampling and DE pipeline."""
+
+    # --- Fixtures local to this class ---
+
+    @pytest.fixture
+    def rng(self):
+        return random.PRNGKey(99)
+
+    @pytest.fixture
+    def mixture_r_2comp(self, rng):
+        """3D r samples: (200, 2, 5) — 2 components, 5 genes.
+
+        Component 0 has higher concentration on gene 0,
+        component 1 has higher concentration on gene 4,
+        making them distinguishable.
+        """
+        k1, k2 = random.split(rng)
+        base_0 = jnp.array([10.0, 2.0, 2.0, 2.0, 1.0])
+        base_1 = jnp.array([1.0, 2.0, 2.0, 2.0, 10.0])
+        r0 = base_0[None, :] + jnp.abs(random.normal(k1, (200, 5))) * 0.5
+        r1 = base_1[None, :] + jnp.abs(random.normal(k2, (200, 5))) * 0.5
+        return jnp.stack([r0, r1], axis=1)
+
+    @pytest.fixture
+    def mixture_weights(self, rng):
+        """Posterior mixture weight samples: (200, 2).
+
+        Concentrated around (0.8, 0.2).
+        """
+        concentrations = jnp.array([80.0, 20.0])
+        return jax.random.dirichlet(rng, concentrations, shape=(200,))
+
+    @pytest.fixture
+    def mixture_p_2comp(self, rng):
+        """Gene-specific p samples: (200, 2, 5)."""
+        return (
+            jnp.full((200, 2, 5), 0.5)
+            + jnp.abs(random.normal(rng, (200, 2, 5))) * 0.05
+        )
+
+    # --- Tests ---
+
+    def test_weight_simplex_by_components_shape(self):
+        """_weight_simplex_by_components returns correct shape."""
+        N, K, D = 50, 3, 10
+        components = [np.ones((N, D)) / D for _ in range(K)]
+        weights = np.ones((N, K)) / K
+        result = _weight_simplex_by_components(components, weights)
+        assert result.shape == (N, D)
+
+    def test_weight_simplex_preserves_simplex(self):
+        """Weighted simplex output sums to 1 and is non-negative."""
+        N, K, D = 100, 2, 5
+        rng = random.PRNGKey(0)
+        k1, k2, k3 = random.split(rng, 3)
+        # Random valid simplices
+        c0 = np.asarray(jax.random.dirichlet(k1, jnp.ones(D), shape=(N,)))
+        c1 = np.asarray(jax.random.dirichlet(k2, jnp.ones(D), shape=(N,)))
+        w = np.asarray(jax.random.dirichlet(k3, jnp.ones(K), shape=(N,)))
+        result = _weight_simplex_by_components([c0, c1], w)
+        np.testing.assert_allclose(result.sum(axis=1), 1.0, atol=1e-6)
+        assert (result >= 0).all()
+
+    def test_mixture_weighted_simplex_on_simplex(
+        self, mixture_r_2comp, mixture_weights, rng
+    ):
+        """sample_mixture_compositions returns valid simplex samples."""
+        s_A, s_B = sample_mixture_compositions(
+            r_samples_A=mixture_r_2comp,
+            r_samples_B=mixture_r_2comp,
+            weights_A=mixture_weights,
+            weights_B=mixture_weights,
+            rng_key=rng,
+        )
+        np.testing.assert_allclose(s_A.sum(axis=1), 1.0, atol=1e-6)
+        np.testing.assert_allclose(s_B.sum(axis=1), 1.0, atol=1e-6)
+        assert (s_A > 0).all()
+        assert (s_B > 0).all()
+
+    def test_mixture_weighted_reduces_to_single_component(
+        self, mixture_r_2comp, rng
+    ):
+        """When weights are [1, 0], result matches component 0."""
+        N = mixture_r_2comp.shape[0]
+        # Indicator weights: all mass on component 0
+        indicator_weights = np.zeros((N, 2))
+        indicator_weights[:, 0] = 1.0
+
+        s_mix, _ = sample_mixture_compositions(
+            r_samples_A=mixture_r_2comp,
+            r_samples_B=mixture_r_2comp,
+            weights_A=indicator_weights,
+            weights_B=indicator_weights,
+            rng_key=rng,
+        )
+
+        # Single-component sampling with the same key
+        s_single, _ = sample_compositions(
+            r_samples_A=mixture_r_2comp[:, 0, :],
+            r_samples_B=mixture_r_2comp[:, 0, :],
+            rng_key=random.fold_in(rng, 0),
+        )
+
+        # The means should converge (not exact match due to different
+        # key threading, but statistically close).
+        np.testing.assert_allclose(
+            s_mix.mean(axis=0), s_single.mean(axis=0), atol=0.05
+        )
+
+    def test_mixture_weighted_reduces_to_standard_when_k1(self, rng):
+        """K=1 mixture-weighted path matches standard pipeline."""
+        N, D = 100, 5
+        r_1comp = jnp.abs(random.normal(rng, (N, 1, D))) + 1.0
+        w_1comp = np.ones((N, 1))
+
+        s_mix, _ = sample_mixture_compositions(
+            r_samples_A=r_1comp,
+            r_samples_B=r_1comp,
+            weights_A=w_1comp,
+            weights_B=w_1comp,
+            rng_key=rng,
+        )
+
+        # Standard path with the same component
+        s_std, _ = sample_compositions(
+            r_samples_A=r_1comp[:, 0, :],
+            r_samples_B=r_1comp[:, 0, :],
+            rng_key=random.fold_in(rng, 0),
+        )
+
+        # Statistical convergence of means
+        np.testing.assert_allclose(
+            s_mix.mean(axis=0), s_std.mean(axis=0), atol=0.05
+        )
+
+    def test_mixture_weighted_mean_matches_expected(self, rng):
+        """Mean of weighted simplex converges to sum_k pi_k * r_k / r_Tk."""
+        N = 10_000
+        D = 3
+        K = 2
+        # Fixed concentrations (no posterior uncertainty) for exact target
+        r_fixed = jnp.array(
+            [
+                [5.0, 3.0, 2.0],  # Component 0: r_T=10
+                [2.0, 2.0, 6.0],  # Component 1: r_T=10
+            ]
+        )
+        r_3d = jnp.broadcast_to(r_fixed[None, :, :], (N, K, D))
+        pi_fixed = jnp.array([0.7, 0.3])
+        w = jnp.broadcast_to(pi_fixed[None, :], (N, K))
+
+        s_A, _ = sample_mixture_compositions(
+            r_samples_A=r_3d,
+            r_samples_B=r_3d,
+            weights_A=w,
+            weights_B=w,
+            rng_key=rng,
+        )
+
+        # Expected: 0.7 * [5/10, 3/10, 2/10] + 0.3 * [2/10, 2/10, 6/10]
+        expected = 0.7 * np.array([0.5, 0.3, 0.2]) + 0.3 * np.array(
+            [0.2, 0.2, 0.6]
+        )
+        np.testing.assert_allclose(s_A.mean(axis=0), expected, atol=0.02)
+
+    def test_mixture_weighted_clr_differences_shape(
+        self, mixture_r_2comp, mixture_weights, rng
+    ):
+        """CLR differences from mixture-weighted simplices have correct shape."""
+        s_A, s_B = sample_mixture_compositions(
+            r_samples_A=mixture_r_2comp,
+            r_samples_B=mixture_r_2comp,
+            weights_A=mixture_weights,
+            weights_B=mixture_weights,
+            rng_key=rng,
+        )
+        delta = compute_delta_from_simplex(s_A, s_B)
+        assert delta.shape == (mixture_r_2comp.shape[0], 5)
+
+    def test_mixture_weighted_with_gene_mask(
+        self, mixture_r_2comp, mixture_weights, rng
+    ):
+        """Gene mask aggregation works with mixture-weighted simplices."""
+        s_A, s_B = sample_mixture_compositions(
+            r_samples_A=mixture_r_2comp,
+            r_samples_B=mixture_r_2comp,
+            weights_A=mixture_weights,
+            weights_B=mixture_weights,
+            rng_key=rng,
+        )
+        mask = np.array([True, True, False, True, False])
+        delta = compute_delta_from_simplex(s_A, s_B, gene_mask=mask)
+        # Only 3 kept genes in output
+        assert delta.shape == (mixture_r_2comp.shape[0], 3)
+
+    def test_mixture_weighted_with_gene_specific_p(
+        self, mixture_r_2comp, mixture_weights, mixture_p_2comp, rng
+    ):
+        """Gamma-normalise path works with mixture-weighted sampling."""
+        s_A, s_B = sample_mixture_compositions(
+            r_samples_A=mixture_r_2comp,
+            r_samples_B=mixture_r_2comp,
+            weights_A=mixture_weights,
+            weights_B=mixture_weights,
+            p_samples_A=mixture_p_2comp,
+            p_samples_B=mixture_p_2comp,
+            rng_key=rng,
+        )
+        np.testing.assert_allclose(s_A.sum(axis=1), 1.0, atol=1e-6)
+        assert s_A.shape == (200, 5)
+
+    def test_mixture_weighted_paired(
+        self, mixture_r_2comp, mixture_weights, rng
+    ):
+        """Paired mode works for within-model mixture comparisons."""
+        s_A, s_B = sample_mixture_compositions(
+            r_samples_A=mixture_r_2comp,
+            r_samples_B=mixture_r_2comp,
+            weights_A=mixture_weights,
+            weights_B=mixture_weights,
+            paired=True,
+            rng_key=rng,
+        )
+        assert s_A.shape == s_B.shape
+        np.testing.assert_allclose(s_A.sum(axis=1), 1.0, atol=1e-6)
+
+    def test_mixture_weighted_compare_factory(
+        self, mixture_r_2comp, mixture_weights, rng
+    ):
+        """End-to-end through compare() with mixture_weighted=True."""
+        de = compare(
+            model_A=mixture_r_2comp,
+            model_B=mixture_r_2comp,
+            method="empirical",
+            mixture_weighted=True,
+            mixture_weights_A=np.asarray(mixture_weights),
+            mixture_weights_B=np.asarray(mixture_weights),
+            rng_key=rng,
+        )
+        assert isinstance(de, ScribeEmpiricalDEResults)
+        result = de.gene_level()
+        assert "delta_mean" in result
+        assert result["delta_mean"].shape == (5,)
+
+    def test_mixture_weighted_biological_metrics(self, rng):
+        """weight_bio_samples produces correct shapes and values."""
+        N, K, D = 50, 2, 5
+        k1, k2, k3 = random.split(rng, 3)
+        r = jnp.abs(random.normal(k1, (N, K, D))) + 1.0
+        p = jnp.full((N, K, D), 0.5)
+        w = jnp.ones((N, K)) / K
+
+        bio = weight_bio_samples(r_samples=r, weights=w, p_samples=p)
+        assert bio["r"].shape == (N, D)
+        assert bio["p"].shape == (N, D)
+        assert bio["mu"].shape == (N, D)
+
+        # With equal weights and same p, weighted r should be mean of
+        # per-component r
+        expected_r = (r[:, 0, :] + r[:, 1, :]) / 2.0
+        np.testing.assert_allclose(
+            np.asarray(bio["r"]), np.asarray(expected_r), atol=1e-5
+        )
+
+    def test_mixture_weighted_mutual_exclusion(
+        self, mixture_r_2comp, mixture_weights
+    ):
+        """Error when both component_A and mixture_weighted are set."""
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            compare(
+                model_A=mixture_r_2comp,
+                model_B=mixture_r_2comp,
+                method="empirical",
+                component_A=0,
+                component_B=0,
+                mixture_weighted=True,
+                mixture_weights_A=np.asarray(mixture_weights),
+                mixture_weights_B=np.asarray(mixture_weights),
+            )
+
+    def test_mixture_weighted_shape_validation(self, rng):
+        """Mismatched shapes raise ValueError."""
+        r_3d = jnp.ones((50, 2, 5))
+        # Wrong K in weights
+        w_bad = np.ones((50, 3)) / 3
+        with pytest.raises(ValueError, match="weights_A shape"):
+            sample_mixture_compositions(
+                r_samples_A=r_3d,
+                r_samples_B=r_3d,
+                weights_A=w_bad,
+                weights_B=np.ones((50, 2)) / 2,
+                rng_key=rng,
+            )
+
+    def test_mixture_weighted_requires_3d_r(self, rng):
+        """2D r_samples raises ValueError."""
+        r_2d = jnp.ones((50, 5))
+        w = np.ones((50, 2)) / 2
+        with pytest.raises(ValueError, match="3D"):
+            sample_mixture_compositions(
+                r_samples_A=r_2d,
+                r_samples_B=r_2d,
+                weights_A=w,
+                weights_B=w,
+                rng_key=rng,
+            )

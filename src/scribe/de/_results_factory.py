@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import List, Optional, TYPE_CHECKING
 
 import numpy as _np
@@ -113,6 +114,9 @@ def compare(
     shrinkage_max_iter: int = 200,
     shrinkage_tol: float = 1e-8,
     compute_biological: bool = False,
+    mixture_weighted: bool = False,
+    mixture_weights_A: Optional[jnp.ndarray] = None,
+    mixture_weights_B: Optional[jnp.ndarray] = None,
 ) -> "ScribeDEResults":
     """Create a DE results object from fitted models or posterior samples.
 
@@ -162,12 +166,35 @@ def compare(
         EM convergence tolerance for shrinkage.
     compute_biological : bool, default=False
         Whether to retain samples needed for biological-level DE.
+    mixture_weighted : bool, default=False
+        If ``True``, perform mixture-weighted DE by averaging simplex
+        samples across all mixture components using the posterior
+        mixture weights.  Mutually exclusive with ``component_A`` /
+        ``component_B``.  When inputs are results objects, the mixture
+        weights are auto-extracted from ``posterior_samples``.
+    mixture_weights_A : jnp.ndarray, optional, shape ``(N, K)``
+        Explicit posterior mixture weight samples for condition A.
+        Only used when ``mixture_weighted=True`` and inputs are raw
+        arrays (not results objects).
+    mixture_weights_B : jnp.ndarray, optional, shape ``(N, K)``
+        Same for condition B.
 
     Returns
     -------
     ScribeDEResults
         Concrete DE results object based on ``method``.
     """
+    # --- Validate mixture_weighted vs component_* mutual exclusion ---
+    if mixture_weighted and (
+        component_A is not None or component_B is not None
+    ):
+        raise ValueError(
+            "mixture_weighted=True is mutually exclusive with "
+            "component_A / component_B.  Mixture-weighted DE averages "
+            "across all components; per-component DE slices one.  "
+            "Choose one mode."
+        )
+
     _a_is_results = _is_results_object(model_A)
     _b_is_results = _is_results_object(model_B)
 
@@ -178,6 +205,17 @@ def compare(
             method = "parametric"
         else:
             method = "empirical"
+
+    if mixture_weighted and method == "parametric":
+        raise ValueError(
+            "mixture_weighted=True is not compatible with "
+            "method='parametric'.  The CLR of a mixture of Dirichlets "
+            "is not Gaussian; use method='empirical' or 'shrinkage'."
+        )
+
+    # Track mixture weights extracted from results objects
+    _mix_weights_A = mixture_weights_A
+    _mix_weights_B = mixture_weights_B
 
     if _a_is_results or _b_is_results:
         if not (_a_is_results and _b_is_results):
@@ -202,6 +240,28 @@ def compare(
         r_B, p_B, mu_B, phi_B, names_B, layouts_B = _extract_de_inputs(
             model_B, component_B
         )
+
+        # Auto-extract mixture weights from results objects
+        if mixture_weighted and _mix_weights_A is None:
+            ps_A = model_A.posterior_samples
+            if ps_A is not None and "mixing_weights" in ps_A:
+                _mix_weights_A = ps_A["mixing_weights"]
+            else:
+                raise ValueError(
+                    "mixture_weighted=True but model_A has no "
+                    "'mixing_weights' in posterior_samples.  "
+                    "Is this a mixture model?"
+                )
+        if mixture_weighted and _mix_weights_B is None:
+            ps_B = model_B.posterior_samples
+            if ps_B is not None and "mixing_weights" in ps_B:
+                _mix_weights_B = ps_B["mixing_weights"]
+            else:
+                raise ValueError(
+                    "mixture_weighted=True but model_B has no "
+                    "'mixing_weights' in posterior_samples.  "
+                    "Is this a mixture model?"
+                )
 
         if gene_names is None:
             gene_names = names_A
@@ -230,7 +290,8 @@ def compare(
 
     # Early guard: require component indices for mixture models before
     # dispatching to empirical/shrinkage (parametric ignores components).
-    if method != "parametric":
+    # Skip this check when mixture_weighted=True (we use all components).
+    if method != "parametric" and not mixture_weighted:
         from ._empirical import _require_mixture_components
 
         _require_mixture_components(
@@ -239,6 +300,55 @@ def compare(
             _param_layouts,
             "compare",
         )
+
+    # --- Mixture-weighted path: route to dedicated builder ---
+    if mixture_weighted:
+        if _mix_weights_A is None or _mix_weights_B is None:
+            raise ValueError(
+                "mixture_weighted=True requires mixture weights.  "
+                "Either pass results objects (auto-extracted) or "
+                "provide mixture_weights_A / mixture_weights_B."
+            )
+
+        # Warn if K=1 (mixture weighting is a no-op)
+        w_A_arr = _np.asarray(_mix_weights_A)
+        if w_A_arr.ndim == 2 and w_A_arr.shape[1] == 1:
+            warnings.warn(
+                "mixture_weighted=True with K=1 is a no-op.  "
+                "Consider using the standard compare() path.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        empirical_result = _compare_empirical_mixture(
+            r_samples_A=model_A,
+            r_samples_B=model_B,
+            weights_A=_mix_weights_A,
+            weights_B=_mix_weights_B,
+            gene_names=gene_names,
+            label_A=label_A,
+            label_B=label_B,
+            paired=paired,
+            n_samples_dirichlet=n_samples_dirichlet,
+            rng_key=rng_key,
+            batch_size=batch_size,
+            gene_mask=gene_mask,
+            p_samples_A=p_samples_A,
+            p_samples_B=p_samples_B,
+            compute_biological=compute_biological,
+            mu_samples_A=_mu_samples_A,
+            mu_samples_B=_mu_samples_B,
+            phi_samples_A=_phi_samples_A,
+            phi_samples_B=_phi_samples_B,
+        )
+
+        if method == "shrinkage":
+            return empirical_result.shrink(
+                sigma_grid=sigma_grid,
+                shrinkage_max_iter=shrinkage_max_iter,
+                shrinkage_tol=shrinkage_tol,
+            )
+        return empirical_result
 
     if method == "parametric":
         return _compare_parametric(
@@ -565,6 +675,215 @@ def _compare_empirical(
         # of ndim heuristics.
         p_post_layout=p_post_layout,
         phi_post_layout=phi_post_layout,
+    )
+
+    if gene_mask is not None:
+        result._gene_mask = jnp.asarray(_np.asarray(gene_mask, dtype=bool))
+    result._all_gene_names = (
+        list(all_gene_names) if all_gene_names is not None else None
+    )
+
+    return result
+
+
+def _compare_empirical_mixture(
+    r_samples_A: jnp.ndarray,
+    r_samples_B: jnp.ndarray,
+    weights_A: jnp.ndarray,
+    weights_B: jnp.ndarray,
+    gene_names: Optional[List[str]],
+    label_A: str,
+    label_B: str,
+    paired: bool,
+    n_samples_dirichlet: int,
+    rng_key,
+    batch_size: int,
+    gene_mask: Optional[jnp.ndarray] = None,
+    p_samples_A: Optional[jnp.ndarray] = None,
+    p_samples_B: Optional[jnp.ndarray] = None,
+    compute_biological: bool = True,
+    mu_samples_A: Optional[jnp.ndarray] = None,
+    mu_samples_B: Optional[jnp.ndarray] = None,
+    phi_samples_A: Optional[jnp.ndarray] = None,
+    phi_samples_B: Optional[jnp.ndarray] = None,
+) -> "ScribeEmpiricalDEResults":
+    """Build an empirical DE comparison using mixture-weighted compositions.
+
+    Samples compositions from every mixture component and forms a
+    weighted average on the simplex using the posterior mixture weights.
+    Biological-level DE metrics use weighted NB parameters.
+
+    Parameters
+    ----------
+    r_samples_A : jnp.ndarray, shape ``(N, K, D)``
+        Posterior concentration samples for condition A.
+    r_samples_B : jnp.ndarray, shape ``(N, K, D)``
+        Posterior concentration samples for condition B.
+    weights_A : jnp.ndarray, shape ``(N, K)``
+        Posterior mixture weight samples for condition A.
+    weights_B : jnp.ndarray, shape ``(N, K)``
+        Posterior mixture weight samples for condition B.
+    gene_names : list of str, optional
+        Gene names for the output.
+    label_A, label_B : str
+        Display labels for the two conditions.
+    paired : bool
+        Preserve posterior pairing for within-model comparisons.
+    n_samples_dirichlet : int
+        Number of Dirichlet draws per posterior sample.
+    rng_key : jax.random.PRNGKey
+        PRNG key for composition sampling.
+    batch_size : int
+        Chunk size cap for adaptive memory.
+    gene_mask : jnp.ndarray, optional
+        Boolean keep-mask over genes.
+    p_samples_A, p_samples_B : jnp.ndarray, optional
+        Gene-specific success probabilities, shape ``(N, K, D)``.
+    compute_biological : bool
+        Whether to retain weighted NB samples for biological DE.
+    mu_samples_A, mu_samples_B : jnp.ndarray, optional
+        Biological mean samples, shape ``(N, K, D)``.
+    phi_samples_A, phi_samples_B : jnp.ndarray, optional
+        Odds-ratio samples, shape ``(N, K, D)`` or ``(N, K)``.
+    """
+    from ._empirical import (
+        compute_delta_from_simplex,
+        sample_mixture_compositions,
+    )
+    from ._biological import weight_bio_samples
+    from .results import ScribeEmpiricalDEResults
+
+    # --- Sample mixture-weighted compositions ---
+    simplex_A, simplex_B = sample_mixture_compositions(
+        r_samples_A=r_samples_A,
+        r_samples_B=r_samples_B,
+        weights_A=weights_A,
+        weights_B=weights_B,
+        paired=paired,
+        n_samples_dirichlet=n_samples_dirichlet,
+        rng_key=rng_key,
+        batch_size=batch_size,
+        p_samples_A=p_samples_A,
+        p_samples_B=p_samples_B,
+    )
+
+    # --- CLR differences ---
+    delta_samples = compute_delta_from_simplex(
+        simplex_A, simplex_B, gene_mask=gene_mask
+    )
+
+    # --- Weighted biological parameters ---
+    # Truncate to common N (matching sample_mixture_compositions)
+    N = min(
+        jnp.asarray(r_samples_A).shape[0], jnp.asarray(r_samples_B).shape[0]
+    )
+    w_A = _np.asarray(weights_A)[:N]
+    w_B = _np.asarray(weights_B)[:N]
+
+    r_bio_A = r_bio_B = None
+    p_bio_A = p_bio_B = None
+    mu_bio_A = mu_bio_B = None
+    phi_bio_A = phi_bio_B = None
+    mu_map_A_vec = mu_map_B_vec = None
+
+    if compute_biological:
+        # Condition A: weighted NB parameters
+        bio_A = weight_bio_samples(
+            r_samples=jnp.asarray(r_samples_A)[:N],
+            weights=jnp.asarray(w_A),
+            p_samples=(
+                jnp.asarray(p_samples_A)[:N]
+                if p_samples_A is not None
+                else None
+            ),
+            mu_samples=(
+                jnp.asarray(mu_samples_A)[:N]
+                if mu_samples_A is not None
+                else None
+            ),
+            phi_samples=(
+                jnp.asarray(phi_samples_A)[:N]
+                if phi_samples_A is not None
+                else None
+            ),
+        )
+        r_bio_A = _np.asarray(bio_A["r"])
+        p_bio_A = _np.asarray(bio_A["p"])
+        mu_bio_A = _np.asarray(bio_A.get("mu"))
+        phi_bio_A = _np.asarray(bio_A["phi"]) if "phi" in bio_A else None
+
+        # Condition B: weighted NB parameters
+        bio_B = weight_bio_samples(
+            r_samples=jnp.asarray(r_samples_B)[:N],
+            weights=jnp.asarray(w_B),
+            p_samples=(
+                jnp.asarray(p_samples_B)[:N]
+                if p_samples_B is not None
+                else None
+            ),
+            mu_samples=(
+                jnp.asarray(mu_samples_B)[:N]
+                if mu_samples_B is not None
+                else None
+            ),
+            phi_samples=(
+                jnp.asarray(phi_samples_B)[:N]
+                if phi_samples_B is not None
+                else None
+            ),
+        )
+        r_bio_B = _np.asarray(bio_B["r"])
+        p_bio_B = _np.asarray(bio_B["p"])
+        mu_bio_B = _np.asarray(bio_B.get("mu"))
+        phi_bio_B = _np.asarray(bio_B["phi"]) if "phi" in bio_B else None
+
+        # MAP mean expression for display/filtering
+        if mu_bio_A is not None:
+            mu_map_A_vec = mu_bio_A.mean(axis=0)
+        elif r_bio_A is not None and p_bio_A is not None:
+            _r = r_bio_A.mean(axis=0)
+            _p = _np.clip(p_bio_A.mean(axis=0), 1e-7, 1.0 - 1e-7)
+            mu_map_A_vec = _r * _p / (1.0 - _p)
+        if mu_bio_B is not None:
+            mu_map_B_vec = mu_bio_B.mean(axis=0)
+        elif r_bio_B is not None and p_bio_B is not None:
+            _r = r_bio_B.mean(axis=0)
+            _p = _np.clip(p_bio_B.mean(axis=0), 1e-7, 1.0 - 1e-7)
+            mu_map_B_vec = _r * _p / (1.0 - _p)
+
+    # --- Assemble gene names ---
+    all_gene_names = gene_names
+    kept_gene_names = gene_names
+    if gene_mask is not None and gene_names is not None:
+        gene_mask_arr = _np.asarray(gene_mask, dtype=bool)
+        kept_gene_names = [n for n, m in zip(gene_names, gene_mask_arr) if m]
+
+    D = delta_samples.shape[1]
+    if kept_gene_names is None:
+        kept_gene_names = [f"gene_{i}" for i in range(D)]
+    elif len(kept_gene_names) != D:
+        raise ValueError(
+            f"gene_names has length {len(kept_gene_names)} but samples "
+            f"have D={D} genes."
+        )
+
+    result = ScribeEmpiricalDEResults(
+        delta_samples=delta_samples,
+        gene_names=kept_gene_names,
+        label_A=label_A,
+        label_B=label_B,
+        r_samples_A=r_bio_A if compute_biological else None,
+        r_samples_B=r_bio_B if compute_biological else None,
+        p_samples_A=p_bio_A if compute_biological else None,
+        p_samples_B=p_bio_B if compute_biological else None,
+        mu_samples_A=mu_bio_A if compute_biological else None,
+        mu_samples_B=mu_bio_B if compute_biological else None,
+        phi_samples_A=phi_bio_A if compute_biological else None,
+        phi_samples_B=phi_bio_B if compute_biological else None,
+        simplex_A=simplex_A,
+        simplex_B=simplex_B,
+        mu_map_A=mu_map_A_vec,
+        mu_map_B=mu_map_B_vec,
     )
 
     if gene_mask is not None:

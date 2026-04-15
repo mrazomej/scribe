@@ -638,6 +638,111 @@ The `compare()` factory returns the appropriate subclass based on `method=`.
 All shared methods (`call_genes`, `compute_pefp`, `find_threshold`, `summary`)
 work identically on all three.
 
+## Mixture-Weighted Differential Expression
+
+When a cell type is modeled as a multi-component mixture (e.g. to capture
+distinct cellular states within a single annotation), the standard per-component
+DE asks "how does state *k* change?" But biologists often need to ask "how does
+this cell type *as a whole* change?" — a population-level question that
+marginalises over the mixture.
+
+The mixture-weighted pipeline answers this by sampling compositions from *all*
+K components and forming a weighted average on the simplex using the posterior
+mixture weights, before applying the standard CLR pipeline.
+
+### When to use mixture-weighted vs component-level DE
+
+| Scenario | Approach |
+|----------|----------|
+| Comparing biologically distinct states (e.g. quiescent vs activated) | `component_A=`, `component_B=` (per-component DE) |
+| Cell type modeled with K components for flexibility; want population-level change | `mixture_weighted=True` (mixture-weighted DE) |
+| Single-component model | Standard `compare()` (mixture weighting is a no-op) |
+
+### Quick start
+
+```python
+from scribe.de import compare
+
+# Mixture-weighted DE via results objects (auto-extracts mixing_weights)
+de = compare(
+    results_bleo, results_ctrl,
+    method="empirical",
+    mixture_weighted=True,
+)
+
+# Same interface as standard DE
+results = de.gene_level(tau=jnp.log(1.1))
+is_de = de.call_genes(lfsr_threshold=0.05)
+print(de.summary(sort_by="lfsr", top_n=20))
+
+# Shrinkage works too
+de_shrink = compare(
+    results_bleo, results_ctrl,
+    method="shrinkage",
+    mixture_weighted=True,
+)
+```
+
+For raw arrays (not results objects), provide weights explicitly:
+
+```python
+de = compare(
+    r_samples_A,  # shape (N, K, D)
+    r_samples_B,  # shape (N, K, D)
+    method="empirical",
+    mixture_weighted=True,
+    mixture_weights_A=weights_A,  # shape (N, K)
+    mixture_weights_B=weights_B,  # shape (N, K)
+    gene_names=gene_names,
+)
+```
+
+### Two-stage API
+
+For users who want direct control over simplex sampling:
+
+```python
+from scribe.de import sample_mixture_compositions, compute_delta_from_simplex
+
+simplex_A, simplex_B = sample_mixture_compositions(
+    r_samples_A=r_A,   # (N, K, D)
+    r_samples_B=r_B,   # (N, K, D)
+    weights_A=w_A,      # (N, K)
+    weights_B=w_B,      # (N, K)
+)
+
+delta = compute_delta_from_simplex(simplex_A, simplex_B, gene_mask=mask)
+```
+
+### Interaction with other features
+
+- **Gene mask**: Applied to the weighted simplex *after* mixture averaging,
+  same as the standard pipeline.
+- **Gene-specific `p`**: The Gamma-normalise path works with mixture weighting.
+  Pass `p_samples_A` / `p_samples_B` of shape `(N, K, D)`.
+- **Biological metrics**: `compute_biological=True` computes LFC, LVR, and
+  Gamma KL from weighted NB parameters (weighted `r`, `mu`, derived `p`).
+- **Paired mode**: `paired=True` preserves posterior correlation for
+  within-model comparisons.
+- **Parametric path**: Not supported with mixture weighting. The CLR of a
+  mixture of Dirichlets is not Gaussian.
+
+### Validation
+
+- `mixture_weighted=True` and `component_A`/`component_B` are **mutually
+  exclusive** — a `ValueError` is raised if both are specified.
+- Shape mismatches between `r_samples` and `mixing_weights` raise
+  `ValueError`.
+- A `UserWarning` is emitted when `K=1` (mixture weighting is a no-op).
+
+### Mathematical details
+
+See Section 3 of the paper (`paper/_diffexp03.qmd`, "Mixture-Weighted
+Differential Expression for Heterogeneous Cell Types") for the full
+derivation, including proofs of simplex constraint preservation, why
+r-parameter averaging is incorrect, and the extension to biological-level
+metrics.
+
 ## Biological-Level Differential Expression
 
 While the CLR-based metrics operate in the compositional simplex, the
