@@ -481,3 +481,281 @@ Dirichlet/Gamma sampling stage.
      delta_sd, lfsr, and histogram of the constant shift) using a public dataset.
      See altos/exploratory/panfibrosis/panfibrosis_de_eda.py for the template. -->
 ```
+
+### Mixture-Weighted Differential Expression for Heterogeneous Cell Types {#sec-diffexp-mixture-weighted}
+
+The empirical CLR pipeline described above produces compositional differences
+for a single fitted model per condition. In practice, however, a cell type may
+harbour internal heterogeneity that a single Dirichlet-Multinomial component
+cannot capture. A mixture model with $K$ components can represent distinct
+transcriptional states within what the analyst considers a single cell
+type---for example, quiescent and activated fibroblasts, or cycling and
+non-cycling progenitors. The question then becomes: **how does the cell type *as
+a whole* change between experimental conditions?**
+
+The per-component DE developed earlier answers a narrower question---"how does
+state $k$ change?"---by slicing the posterior along the component axis and
+running the standard pipeline on a single component. This is appropriate when
+the analyst has identified biologically meaningful components and wants to
+compare them individually. But when the mixture is used purely as a flexible
+density estimator to accommodate within-cell-type variability, a
+**population-level** comparison that marginalises over the mixture is more
+natural.
+
+We now extend the empirical CLR pipeline to this setting. The key idea is
+simple: rather than sampling a composition from a single component, we sample
+compositions from *all* $K$ components and form a weighted average on the
+simplex using the posterior mixture weights. The resulting weighted composition
+feeds into the same CLR transformation and differencing machinery developed
+above, so all downstream statistics---lfsr, PEFP, pathway tests---apply without
+modification.
+
+#### The marginal composition of a mixture model
+
+Consider a $K$-component mixture model for a single cell type in one
+experimental condition. The model assigns each cell to component $k$ with
+probability $\pi_k$, where the mixture weights satisfy the simplex constraint
+$\pi_k \geq 0$ and $\sum_{k=1}^{K} \pi_k = 1$. Conditional on component $k$, the
+cell's normalised expression vector lies on the $D$-simplex:
+
+$$
+\underline{\rho} \mid k \sim \text{Dir}(\underline{r}_k),
+$$ {#eq-mixture-component-dirichlet}
+
+where $\underline{r}_k = (r_{1,k}, r_{2,k}, \ldots, r_{D,k})$ are the
+component-specific Dirichlet concentration parameters.
+
+The marginal distribution of the composition for a randomly sampled cell from
+this cell type is the *mixture of Dirichlets*:
+
+$$
+p(\underline{\rho}) = \sum_{k=1}^{K} \pi_k \, \text{Dir}(\underline{\rho}
+\mid \underline{r}_k).
+$$ {#eq-mixture-of-dirichlets}
+
+This is not itself a Dirichlet distribution---it can be multimodal and have a
+richer covariance structure than any single Dirichlet. The marginal expected
+composition of gene $g$ is
+
+$$
+\langle \rho_g \rangle = \sum_{k=1}^{K} \pi_k \,
+\frac{r_{g,k}}{r_{T,k}},
+$$ {#eq-mixture-expected-composition}
+
+where $r_{T,k} = \sum_{g=1}^{D} r_{g,k}$ is the total concentration for
+component $k$. This is a weighted average of the *per-component mean
+proportions*, not the proportion derived from a weighted average of the
+concentration parameters.
+
+#### Why aggregation must happen on the simplex, not at the $r$ level
+
+A natural but incorrect shortcut would be to average the concentration
+parameters across components,
+
+$$
+\bar{r}_g = \sum_{k=1}^{K} \pi_k \, r_{g,k},
+$$ {#eq-r-averaging}
+
+and then sample a single Dirichlet $\underline{\rho} \sim
+\text{Dir}(\bar{\underline{r}})$. This fails for two reasons.
+
+**Wrong mean.** The mean of $\text{Dir}(\bar{\underline{r}})$ is
+
+$$
+\frac{\bar{r}_g}{\bar{r}_T} =
+\frac{\sum_{k=1}^{K} \pi_k \, r_{g,k}}{\sum_{k=1}^{K} \pi_k \, r_{T,k}},
+$$ {#eq-r-averaging-mean}
+
+which is in general *not* equal to the correct marginal mean in
+@eq-mixture-expected-composition unless all components have the same total
+concentration $r_{T,k} = r_T$. The discrepancy arises because normalisation does
+not commute with weighted sums: components with larger total concentration are
+implicitly upweighted in the $r$-averaged Dirichlet, biasing the result.
+
+To see this concretely, consider two components ($K=2$) with equal mixture
+weights $\pi_1 = \pi_2 = \frac{1}{2}$ and two genes ($D=2$):
+
+$$
+\underline{r}_1 = (1, 9), \quad \underline{r}_2 = (9, 1).
+$$
+
+The correct marginal mean for gene 1 is $\frac{1}{2} \cdot \frac{1}{10} +
+\frac{1}{2} \cdot \frac{9}{10} = 0.5$. But the $r$-averaged concentration is
+$\bar{\underline{r}} = (5, 5)$, whose Dirichlet mean is $\frac{5}{10} = 0.5$.
+Here the means happen to agree because both total concentrations are 10. Now
+change the second component to $\underline{r}_2 = (90, 10)$, so $r_{T,2} = 100$.
+The correct mean is $\frac{1}{2} \cdot \frac{1}{10} + \frac{1}{2} \cdot
+\frac{90}{100} = 0.5$, but the $r$-averaged mean is $\frac{45.5}{55} \approx
+0.827$---a substantial bias toward the high-concentration component.
+
+**Wrong variance.** Even when the means coincidentally agree, the variance of
+$\text{Dir}(\bar{\underline{r}})$ is that of a *single* Dirichlet with
+intermediate concentration. It cannot represent the multimodal or heavy-tailed
+structure of the true mixture. By the law of total variance, the true marginal
+variance decomposes as
+
+$$
+\text{Var}_{\text{mix}}(\rho_g) =
+\underbrace{\sum_{k=1}^{K} \pi_k \, \text{Var}_k(\rho_g)}_{\text{within-component}}
+\;+\;
+\underbrace{\sum_{k=1}^{K} \pi_k \left(\mu_{g,k} - \bar{\mu}_g\right)^2}_{\text{between-component}},
+$$ {#eq-mixture-variance-decomposition}
+
+where $\mu_{g,k} = r_{g,k} / r_{T,k}$. The between-component term is necessarily
+non-negative and is lost entirely by collapsing to a single Dirichlet.
+
+The correct approach is therefore to sample compositions from each component
+*separately*, then combine them on the simplex using the mixture weights.
+
+#### The mixture-weighted CLR pipeline
+
+Given posterior samples $\underline{r}_k^{(s)}$ for each component $k = 1,
+\ldots, K$ and posterior samples of the mixture weights $\underline{\pi}^{(s)} =
+(\pi_1^{(s)}, \ldots, \pi_K^{(s)})$, the mixture-weighted CLR pipeline proceeds
+as follows.
+
+**Step 1: Sample per-component compositions.** For each posterior sample $s$ and
+each component $k$, draw an independent composition from the Dirichlet
+predictive:
+
+$$
+\underline{\rho}_k^{(s)} \sim \text{Dir}(\underline{r}_k^{(s)}),
+\quad k = 1, \ldots, K.
+$$ {#eq-mixture-per-component-draw}
+
+**Step 2: Form the mixture-weighted composition.** Combine the per-component
+compositions using the posterior mixture weights:
+
+$$
+\bar{\underline{\rho}}^{(s)} = \sum_{k=1}^{K} \pi_k^{(s)} \,
+\underline{\rho}_k^{(s)}.
+$$ {#eq-mixture-weighted-composition}
+
+This is a convex combination of simplex vectors and is therefore itself on the
+simplex, since
+
+$$
+\bar{\rho}_g^{(s)} = \sum_{k=1}^{K} \pi_k^{(s)} \, \rho_{g,k}^{(s)}
+\geq 0
+\quad \text{and} \quad
+\sum_{g=1}^{D} \bar{\rho}_g^{(s)} = \sum_{k=1}^{K} \pi_k^{(s)}
+\underbrace{\sum_{g=1}^{D} \rho_{g,k}^{(s)}}_{=\,1} = 1.
+$$ {#eq-mixture-simplex-preservation}
+
+**Step 3: CLR transform and difference.** Apply the centered log-ratio
+transformation to the weighted compositions for both conditions A and B, then
+form the paired difference:
+
+$$
+\Delta_g^{(s)} = \text{CLR}(\bar{\underline{\rho}}_A^{(s)})_g -
+\text{CLR}(\bar{\underline{\rho}}_B^{(s)})_g.
+$$ {#eq-mixture-clr-delta}
+
+**Step 4: Compute statistics.** All gene-level DE statistics---posterior mean,
+standard deviation, lfsr, lfsr$_\tau$, probability of practical effect---are
+computed from the matrix $\{\Delta_g^{(s)}\}_{s,g}$ by the same counting
+procedures described earlier in this section. No distributional assumptions are
+required.
+
+#### Propagation of mixture-weight uncertainty
+
+A critical feature of this construction is that the mixture weights
+$\underline{\pi}^{(s)}$ are *posterior samples*, not fixed point estimates. The
+model's variational posterior (or MCMC chain) over the mixture weights is a
+Dirichlet distribution whose concentration parameters are learned during
+inference. Using posterior draws of $\underline{\pi}$ means that uncertainty
+about the relative abundance of cellular states is automatically propagated into
+the DE statistics.
+
+If the data strongly constrain the mixture proportions (e.g., 90\% quiescent
+with tight posterior), the mixture weights will be nearly constant across
+samples and the DE statistics will be dominated by within-state expression
+differences. If the proportions are uncertain (e.g., similar proportions with
+wide posterior), the additional variability in $\underline{\pi}^{(s)}$ inflates
+the standard deviation of $\Delta_g^{(s)}$, appropriately increasing the lfsr
+and reducing the number of called DE genes.
+
+This stands in contrast to using a fixed point estimate $\hat{\pi}_k$ for the
+mixture weights, which would understate the true posterior uncertainty about the
+cell type's overall expression profile.
+
+#### Invariance to capture probability
+
+The thinning-invariance argument from @sec-diffexp-robustness extends directly
+to the mixture-weighted pipeline. Recall that the key property is that the NB
+shape parameter $r_g$ is invariant to binomial thinning, so the Dirichlet
+concentrations $\underline{r}_k$ do not depend on the capture probability. Since
+the mixture weights $\pi_k$ represent the probability of a cell belonging to
+state $k$---a biological quantity that does not depend on the capture efficiency
+of the sequencing protocol---the weighted composition
+$\bar{\underline{\rho}}^{(s)}$ inherits the capture-probability invariance from
+its components.
+
+#### Reduction to existing pipelines
+
+The mixture-weighted pipeline is a strict generalisation of the standard
+empirical pipeline:
+
+- **$K = 1$**: The only component receives weight $\pi_1 = 1$, and
+  $\bar{\underline{\rho}}^{(s)} = \underline{\rho}_1^{(s)}$. This is exactly the
+  standard pipeline from the beginning of this section.
+
+- **Indicator weights**: If $\pi_k = \mathbb{1}[k = k^*]$ for some fixed
+  component $k^*$, then $\bar{\underline{\rho}}^{(s)} =
+  \underline{\rho}_{k^*}^{(s)}$. This is the per-component pipeline obtained by
+  slicing a single mixture component.
+
+Both limiting cases are recovered exactly, establishing backward compatibility.
+
+#### Extension to biological-level metrics
+
+The biological-level DE metrics developed in @sec-diffexp-biological---log-fold
+change (LFC), log-variance ratio (LVR), and Gamma Jeffreys divergence---operate
+directly on the negative binomial parameters $(r_g, p_g)$ rather than on the
+simplex. For mixture-weighted biological DE, the natural extension is to form
+the expected NB mean across components:
+
+$$
+\bar{\mu}_g^{(s)} = \sum_{k=1}^{K} \pi_k^{(s)} \, \mu_{g,k}^{(s)},
+$$ {#eq-mixture-bio-mu}
+
+where $\mu_{g,k}^{(s)} = r_{g,k}^{(s)} (1 - p_{g,k}^{(s)}) / p_{g,k}^{(s)}$ is
+the NB mean for gene $g$ in component $k$. The weighted dispersion parameter is
+
+$$
+\bar{r}_g^{(s)} = \sum_{k=1}^{K} \pi_k^{(s)} \, r_{g,k}^{(s)},
+$$ {#eq-mixture-bio-r}
+
+and the effective success probability is derived from the weighted mean and
+dispersion to maintain consistency with the NB parameterisation:
+
+$$
+\bar{p}_g^{(s)} = \frac{\bar{r}_g^{(s)}}{\bar{r}_g^{(s)} +
+\bar{\mu}_g^{(s)}}.
+$$ {#eq-mixture-bio-p}
+
+These weighted parameters are then fed into the same LFC, LVR, and Gamma
+Jeffreys divergence formulae, with all statistics computed by counting over
+posterior samples as before.
+
+#### Compatibility with expression masking
+
+The expression mask described in @sec-diffexp-expression-mask applies to the
+mixture-weighted pipeline without modification. The mask is applied to the
+full-dimensional weighted simplex $\bar{\underline{\rho}}^{(s)}$ before CLR
+transformation, exactly as in the standard pipeline. The Dirichlet aggregation
+property ensures that genes pooled into the "other" pseudo-gene retain their
+correct total proportion. Because the weighted composition is itself a valid
+simplex vector, the mask operates on it identically to how it operates on a
+single-component composition.
+
+#### Computational cost
+
+The mixture-weighted pipeline requires $K$ Dirichlet draws per posterior sample
+per condition, compared to 1 in the standard pipeline. The weighted averaging
+step is a single vectorised operation of cost $O(KND)$. For typical mixture
+models with $K = 2$--$5$, this represents a modest constant-factor overhead on
+the sampling stage, which is already JIT-compiled and GPU-accelerated. All
+downstream operations---CLR transformation, differencing, gene-level statistics,
+PEFP error control, and pathway analysis---remain $O(ND)$ regardless of $K$,
+since they operate on the same $(N, D)$ matrix of CLR differences.

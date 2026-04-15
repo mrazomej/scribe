@@ -106,6 +106,113 @@ def _needs_gene_broadcast(
 
 
 # --------------------------------------------------------------------------
+# Mixture weighting
+# --------------------------------------------------------------------------
+
+
+def weight_bio_samples(
+    r_samples: jnp.ndarray,
+    weights: jnp.ndarray,
+    p_samples: Optional[jnp.ndarray] = None,
+    mu_samples: Optional[jnp.ndarray] = None,
+    phi_samples: Optional[jnp.ndarray] = None,
+) -> dict:
+    """Compute mixture-weighted biological NB parameters.
+
+    For each posterior draw, forms the expected NB parameters of a
+    random cell from a K-component mixture by averaging per-component
+    values with the posterior mixture weights.
+
+    The weighted mean ``mu_bar`` is computed first (either from supplied
+    ``mu`` samples or derived from ``r`` and ``p``).  The weighted
+    dispersion ``r_bar`` is the direct weighted sum.  The effective
+    success probability ``p_bar`` is then derived from ``r_bar`` and
+    ``mu_bar`` to maintain NB parameterisation consistency, rather than
+    averaging ``p`` directly (which would be incorrect because ``p``
+    is a ratio and does not commute with weighted sums).
+
+    Parameters
+    ----------
+    r_samples : jnp.ndarray, shape ``(N, K, D)``
+        Per-component posterior samples of the NB dispersion.
+    weights : jnp.ndarray, shape ``(N, K)``
+        Posterior mixture weight samples.
+    p_samples : jnp.ndarray, optional, shape ``(N, K, D)`` or ``(N, K)``
+        Per-component success probabilities.  Required unless
+        ``mu_samples`` is provided.
+    mu_samples : jnp.ndarray, optional, shape ``(N, K, D)``
+        Per-component biological means.  When provided, used directly
+        for the weighted mean (avoids reconstructing from ``r`` and
+        ``p``).
+    phi_samples : jnp.ndarray, optional, shape ``(N, K, D)`` or ``(N, K)``
+        Per-component odds ratio ``phi``.  Passed through after
+        weighting for downstream use by the ``mean_odds`` path.
+
+    Returns
+    -------
+    dict
+        Dictionary with keys ``"r"``, ``"p"``, and optionally ``"mu"``
+        and ``"phi"``, each of shape ``(N, D)``.
+
+    Raises
+    ------
+    ValueError
+        If neither ``p_samples`` nor ``mu_samples`` is provided, or
+        if shapes are inconsistent.
+    """
+    r = jnp.asarray(r_samples)
+    w = jnp.asarray(weights)
+
+    if r.ndim != 3:
+        raise ValueError(f"r_samples must be 3D (N, K, D), got ndim={r.ndim}.")
+    N, K, D = r.shape
+    if w.shape != (N, K):
+        raise ValueError(
+            f"weights shape {w.shape} does not match r_samples "
+            f"(N={N}, K={K})."
+        )
+
+    # Weighted dispersion: r_bar_g = sum_k pi_k r_{g,k}
+    r_bar = jnp.einsum("nk,nkd->nd", w, r)
+
+    # Weighted mean: mu_bar_g = sum_k pi_k mu_{g,k}
+    if mu_samples is not None:
+        mu = jnp.asarray(mu_samples)
+        mu_bar = jnp.einsum("nk,nkd->nd", w, mu)
+    elif p_samples is not None:
+        p = jnp.asarray(p_samples)
+        # Broadcast scalar p (N, K) -> (N, K, 1) for element-wise ops
+        if p.ndim == 2:
+            p = p[:, :, None]
+        p_safe = jnp.clip(p, 1e-7, 1.0 - 1e-7)
+        # mu_{g,k} = r_{g,k} * (1 - p_{g,k}) / p_{g,k}
+        mu_per_comp = r * (1.0 - p_safe) / p_safe
+        mu_bar = jnp.einsum("nk,nkd->nd", w, mu_per_comp)
+    else:
+        raise ValueError(
+            "weight_bio_samples requires either p_samples or "
+            "mu_samples to compute the weighted biological mean."
+        )
+
+    # Derive p_bar from r_bar and mu_bar for NB consistency:
+    # p = r / (r + mu)
+    mu_bar_safe = jnp.maximum(mu_bar, 1e-30)
+    p_bar = r_bar / (r_bar + mu_bar_safe)
+
+    result = {"r": r_bar, "p": p_bar, "mu": mu_bar}
+
+    # Weighted phi if provided (for the mean_odds computation path)
+    if phi_samples is not None:
+        phi = jnp.asarray(phi_samples)
+        if phi.ndim == 2:
+            phi = phi[:, :, None]
+        phi_bar = jnp.einsum("nk,nkd->nd", w, phi)
+        result["phi"] = phi_bar
+
+    return result
+
+
+# --------------------------------------------------------------------------
 # Core computation
 # --------------------------------------------------------------------------
 
