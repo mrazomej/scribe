@@ -417,6 +417,18 @@ class ScribeSVIResults(
                         )
                         posterior_samples[key] = stacked
 
+        # Build layouts for the concatenated result.  Promoted keys gain
+        # a new dataset axis; non-promoted keys keep their original layout.
+        from ..core.axis_layout import DATASETS
+
+        _base_layouts = first.layouts
+        concat_layouts = {}
+        for key, layout in _base_layouts.items():
+            if promoted_dataset_keys and key in promoted_dataset_keys:
+                concat_layouts[key] = layout.with_axis(DATASETS)
+            else:
+                concat_layouts[key] = layout
+
         combined = cls(
             params=params,
             loss_history=loss_history,
@@ -433,6 +445,7 @@ class ScribeSVIResults(
             posterior_samples=posterior_samples,
             predictive_samples=predictive_samples,
             n_components=first.n_components,
+            param_layouts=concat_layouts,
             denoised_counts=None,
             _n_cells_per_dataset=n_cells_per_dataset,
             _dataset_indices=dataset_indices,
@@ -539,6 +552,7 @@ def _reorder_svi_result_genes(
     )
     var = result.var.iloc[list(map(int, gene_indexer.tolist()))].copy()
 
+    # Gene reorder preserves all axis semantics; layouts are unchanged.
     return type(result)(
         params=params,
         loss_history=result.loss_history,
@@ -555,6 +569,7 @@ def _reorder_svi_result_genes(
         posterior_samples=posterior_samples,
         predictive_samples=predictive_samples,
         n_components=result.n_components,
+        param_layouts=getattr(result, "param_layouts", None),
         denoised_counts=None,
         _n_cells_per_dataset=getattr(result, "_n_cells_per_dataset", None),
         _dataset_indices=getattr(result, "_dataset_indices", None),

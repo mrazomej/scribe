@@ -18,6 +18,7 @@ from scribe.viz import pipeline as visualize
 from scribe.inference.preset_builder import build_config_from_preset
 from scribe.models import get_model_and_guide
 from scribe.svi.results import ScribeSVIResults
+from scribe.core.axis_layout import AxisLayout
 from scribe.viz.capture_anchor import plot_p_capture_scaling
 from scribe.viz.mean_calibration import _compute_per_dataset_means
 
@@ -264,6 +265,13 @@ def test_mean_calibration_uses_per_dataset_mixing_weights():
     p = 0.5  # mean reduces to r for this test
     mixing = np.array([[0.8, 0.1, 0.1], [0.1, 0.2, 0.7]])  # (D, K)
 
+    # r: (K=3, D=2, G=3), p: scalar, mixing: (D=2, K=3)
+    layouts = {
+        "r": AxisLayout(axes=("components", "datasets", "genes")),
+        "p": AxisLayout(axes=()),
+        "mixing_weights": AxisLayout(axes=("datasets", "components")),
+    }
+
     out = _compute_per_dataset_means(
         counts=counts,
         r=r,
@@ -273,6 +281,7 @@ def test_mean_calibration_uses_per_dataset_mixing_weights():
         mixing_weights=mixing,
         p_capture=None,
         n_datasets=2,
+        layouts=layouts,
     )
 
     pred0_expected = 0.8 * r[0, 0] + 0.1 * r[1, 0] + 0.1 * r[2, 0]
@@ -298,6 +307,13 @@ def test_mean_calibration_keeps_global_mixing_weights_shared():
     p = 0.5
     global_mixing = np.array([0.6, 0.2, 0.2])
 
+    # r: (K=3, D=2, G=3), p: scalar, global_mixing: (K=3,)
+    layouts = {
+        "r": AxisLayout(axes=("components", "datasets", "genes")),
+        "p": AxisLayout(axes=()),
+        "mixing_weights": AxisLayout(axes=("components",)),
+    }
+
     out = _compute_per_dataset_means(
         counts=counts,
         r=r,
@@ -307,6 +323,7 @@ def test_mean_calibration_keeps_global_mixing_weights_shared():
         mixing_weights=global_mixing,
         p_capture=None,
         n_datasets=2,
+        layouts=layouts,
     )
 
     pred0_expected = 0.6 * r[0, 0] + 0.2 * r[1, 0] + 0.2 * r[2, 0]

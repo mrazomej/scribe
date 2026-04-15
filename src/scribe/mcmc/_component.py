@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Dict, Optional
 
 import jax.numpy as jnp
 
+from ..core.axis_layout import COMPONENTS, subset_layouts
 from ..core.component_indexing import (
     normalize_component_indices,
     renormalize_mixing_logits,
@@ -92,6 +93,7 @@ class ComponentMixin:
         new_model_config = self.model_config.model_copy(
             update={"n_components": new_n_components}
         )
+        # Multi-component: axis kept, just fewer elements.
         subset = ScribeMCMCResults(
             samples=new_samples,
             n_cells=self.n_cells,
@@ -105,6 +107,7 @@ class ComponentMixin:
             n_obs=self.n_obs,
             n_vars=self.n_vars,
             n_components=new_n_components,
+            param_layouts=dict(self.layouts),
         )
         per_ds = getattr(self, "_n_cells_per_dataset", None)
         if per_ds is not None:
@@ -134,6 +137,9 @@ class ComponentMixin:
         new_model_config = self.model_config.model_copy(
             update={"base_model": base_model, "n_components": None}
         )
+        # Single-component extraction collapses the component axis.
+        new_layouts = subset_layouts(self.layouts, COMPONENTS)
+
         subset = ScribeMCMCResults(
             samples=new_samples,
             n_cells=self.n_cells,
@@ -147,6 +153,7 @@ class ComponentMixin:
             n_obs=self.n_obs,
             n_vars=self.n_vars,
             n_components=None,
+            param_layouts=new_layouts,
         )
         per_ds = getattr(self, "_n_cells_per_dataset", None)
         if per_ds is not None:

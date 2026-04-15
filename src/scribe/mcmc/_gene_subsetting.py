@@ -83,6 +83,7 @@ class GeneSubsettingMixin:
         new_var = self.var.iloc[bool_index] if self.var is not None else None
         new_samples = self._subset_posterior_samples(self.samples, bool_index)
 
+        # Gene subsetting keeps the gene axis; layouts are unchanged.
         subset = ScribeMCMCResults(
             samples=new_samples,
             n_cells=self.n_cells,
@@ -100,6 +101,7 @@ class GeneSubsettingMixin:
             n_obs=self.n_obs,
             n_vars=new_var.shape[0] if new_var is not None else None,
             n_components=self.n_components,
+            param_layouts=dict(self.layouts),
         )
 
         # Carry over per-dataset metadata for downstream get_dataset()

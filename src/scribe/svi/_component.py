@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
 import jax.numpy as jnp
 
+from ..core.axis_layout import COMPONENTS, subset_layouts
 from ..core.component_indexing import (
     normalize_component_indices,
     renormalize_mixing_logits,
@@ -574,6 +575,33 @@ class ComponentMixin:
             }
         )
 
+        # Snapshot parent layouts before modification so we can compute
+        # adjusted gene-axis indices below.
+        parent_layouts = self.layouts
+
+        # Single-component extraction collapses the component axis.
+        new_layouts = subset_layouts(parent_layouts, COMPONENTS)
+
+        # Adjust _gene_axis_by_key: when a component axis is removed
+        # from a param, any gene axis after it shifts down by one.
+        parent_gene_axes = getattr(self, "_gene_axis_by_key", None)
+        new_gene_axes = None
+        if parent_gene_axes:
+            new_gene_axes = {}
+            for key, gene_ax in parent_gene_axes.items():
+                if key not in new_params:
+                    continue
+                layout = parent_layouts.get(key)
+                comp_ax = (
+                    layout.component_axis
+                    if layout is not None
+                    else None
+                )
+                if comp_ax is not None and gene_ax > comp_ax:
+                    new_gene_axes[key] = gene_ax - 1
+                else:
+                    new_gene_axes[key] = gene_ax
+
         subset = type(self)(
             params=new_params,
             loss_history=self.loss_history,
@@ -590,6 +618,8 @@ class ComponentMixin:
             posterior_samples=new_posterior_samples,
             predictive_samples=new_predictive_samples,
             n_components=None,
+            param_layouts=new_layouts,
+            _gene_axis_by_key=new_gene_axes,
         )
 
         # Carry over per-dataset metadata for downstream get_dataset()
@@ -635,6 +665,8 @@ class ComponentMixin:
             update={"n_components": new_n_components}
         )
 
+        # Multi-component selection keeps the component axis (just fewer
+        # elements), so layouts are structurally unchanged.
         subset = type(self)(
             params=new_params,
             loss_history=self.loss_history,
@@ -651,6 +683,7 @@ class ComponentMixin:
             posterior_samples=new_posterior_samples,
             predictive_samples=new_predictive_samples,
             n_components=new_n_components,
+            param_layouts=dict(self.layouts),
             _original_n_genes=getattr(self, "_original_n_genes", None),
             _gene_axis_by_key=getattr(self, "_gene_axis_by_key", None),
         )

@@ -179,6 +179,33 @@ class AxisLayout:
             return self
         return AxisLayout(axes=self.axes, has_sample_dim=False)
 
+    def with_axis(self, axis_name: str) -> "AxisLayout":
+        """Return a copy with *axis_name* inserted in canonical order.
+
+        The canonical ordering is components > datasets > genes/cells
+        (matching ``_AXIS_ORDER``).  If *axis_name* is already present,
+        returns ``self`` unchanged.
+
+        Parameters
+        ----------
+        axis_name : str
+            The axis to add (e.g. ``"datasets"``).
+
+        Returns
+        -------
+        AxisLayout
+            Layout with the new axis inserted.
+        """
+        if axis_name in self.axes:
+            return self
+        new_axes = sorted(
+            list(self.axes) + [axis_name],
+            key=lambda a: _AXIS_ORDER.get(a, 99),
+        )
+        return AxisLayout(
+            axes=tuple(new_axes), has_sample_dim=self.has_sample_dim
+        )
+
     def subset_axis(self, axis_name: str) -> "AxisLayout":
         """Return a copy with *axis_name* removed (after indexing it out).
 
@@ -271,6 +298,57 @@ class AxisLayout:
 
 
 # =========================================================================
+# Bulk layout transformations
+# =========================================================================
+
+
+def subset_layouts(
+    layouts: Dict[str, AxisLayout],
+    axis_name: str,
+) -> Dict[str, AxisLayout]:
+    """Return a copy of *layouts* with *axis_name* removed where present.
+
+    For each entry whose :attr:`~AxisLayout.axes` contain *axis_name*,
+    :meth:`AxisLayout.subset_axis` is called to drop the axis.  Entries
+    that do not carry the axis are passed through unchanged.
+
+    This is the canonical way to update a ``param_layouts`` dict after a
+    slicing operation that collapses one semantic axis (e.g.
+    ``get_dataset`` removes ``"datasets"``, single-component extraction
+    removes ``"components"``).
+
+    Parameters
+    ----------
+    layouts : dict of str to AxisLayout
+        Source layout dict (not mutated).
+    axis_name : str
+        The semantic axis to drop (e.g. ``"datasets"``, ``"components"``).
+
+    Returns
+    -------
+    dict of str to AxisLayout
+        New dict with the axis removed from every layout that had it.
+
+    Examples
+    --------
+    >>> from scribe.core.axis_layout import AxisLayout, subset_layouts
+    >>> layouts = {
+    ...     "r": AxisLayout(("components", "datasets", "genes")),
+    ...     "p": AxisLayout(("components",)),
+    ... }
+    >>> subset_layouts(layouts, "datasets")
+    {'r': AxisLayout(axes=('components', 'genes')), 'p': AxisLayout(axes=('components',))}
+    """
+    out: Dict[str, AxisLayout] = {}
+    for key, layout in layouts.items():
+        if axis_name in layout.axes:
+            out[key] = layout.subset_axis(axis_name)
+        else:
+            out[key] = layout
+    return out
+
+
+# =========================================================================
 # Factory: build from ParamSpec (exact path)
 # =========================================================================
 
@@ -321,6 +399,10 @@ def _strip_param_key(key: str) -> str:
     base name used in ``ParamSpec.name`` so we can look it up in the
     known-parameter tables.
 
+    Joint-guide alpha regression coefficients use the pattern
+    ``joint_{group}_{nondense}_alpha_{dense}``; the ``_alpha_*`` suffix
+    is stripped so the key resolves to the nondense spec name.
+
     Examples
     --------
     >>> _strip_param_key("r_loc")
@@ -329,12 +411,23 @@ def _strip_param_key(key: str) -> str:
     'mu'
     >>> _strip_param_key("mixing_weights_loc")
     'mixing_weights'
+    >>> _strip_param_key("joint_joint_p_alpha_r")
+    'p'
+    >>> _strip_param_key("mixing_concentrations")
+    'mixing_weights'
     """
+    # Known variational aliases that reparameterize a spec under a
+    # different name.  Map them to the canonical spec name first.
+    _VARIATIONAL_ALIASES = {
+        "mixing_concentrations": "mixing_weights",
+        "mixing_logits_unconstrained": "mixing_weights",
+    }
+
     # Skip Flax nested-dict keys (e.g. "flow_p$params")
     if "$" in key:
         return key
 
-    name = key
+    name = _VARIATIONAL_ALIASES.get(key, key)
 
     # Strip joint-guide prefix: "joint_{group}_" → keep the remainder
     if name.startswith("joint_"):
@@ -342,6 +435,12 @@ def _strip_param_key(key: str) -> str:
         _, sep, remainder = rest.partition("_")
         if sep and remainder:
             name = remainder
+
+    # Strip nondense alpha regression suffix before other suffixes.
+    # Pattern: ``{nondense_name}_alpha_{dense_name}`` → ``{nondense_name}``
+    _alpha_idx = name.find("_alpha_")
+    if _alpha_idx > 0:
+        name = name[:_alpha_idx]
 
     # Strip common suffixes (longer first to avoid partial matches).  ``_W`` and
     # ``_raw_diag`` appear in structured-guide / low-rank factor names so the
@@ -625,11 +724,16 @@ def build_param_layouts(
     if not param_specs:
         return {}
 
-    # Build a name -> spec lookup (first spec wins for a given name)
+    # Build a name -> spec lookup (first spec wins for a given name).
+    # Also register companion specs (auxiliary sample sites generated
+    # by hierarchical priors like biology-informed capture).
     spec_by_name: Dict[str, "ParamSpec"] = {}
     for spec in param_specs:
         if spec.name not in spec_by_name:
             spec_by_name[spec.name] = spec
+        for companion in getattr(spec, "companion_specs", []):
+            if companion.name not in spec_by_name:
+                spec_by_name[companion.name] = companion
 
     layouts: Dict[str, AxisLayout] = {}
     for key in params:
@@ -637,6 +741,15 @@ def build_param_layouts(
             continue
         base = _strip_param_key(key)
         spec = spec_by_name.get(base)
+        # Fallback: some spec names include a prefix (e.g.
+        # ``log_r_dataset_loc``).  ``_strip_param_key`` aggressively
+        # removes ``log_`` / ``logit_`` and may overshoot.  Re-try
+        # with the prefix restored when the first lookup misses.
+        if spec is None:
+            for pfx in ("log_", "logit_"):
+                spec = spec_by_name.get(pfx + base)
+                if spec is not None:
+                    break
         if spec is not None:
             layouts[key] = layout_from_param_spec(
                 spec, has_sample_dim=has_sample_dim
@@ -696,10 +809,14 @@ def build_sample_layouts(
     -------
     dict of str to AxisLayout
     """
+    # Build name -> spec lookup, including companion specs.
     spec_by_name: Dict[str, "ParamSpec"] = {}
     for spec in param_specs or []:
         if spec.name not in spec_by_name:
             spec_by_name[spec.name] = spec
+        for companion in getattr(spec, "companion_specs", []):
+            if companion.name not in spec_by_name:
+                spec_by_name[companion.name] = companion
 
     layouts: Dict[str, AxisLayout] = {}
     for key, value in samples.items():
@@ -707,6 +824,12 @@ def build_sample_layouts(
             continue
         base = _strip_param_key(key)
         spec = spec_by_name.get(base)
+        # Prefix-restoration fallback (same logic as build_param_layouts).
+        if spec is None:
+            for pfx in ("log_", "logit_"):
+                spec = spec_by_name.get(pfx + base)
+                if spec is not None:
+                    break
 
         # Use the spec when the spec-based layout rank matches the
         # tensor's actual ndim.  After subsetting (e.g. get_component),
@@ -1052,6 +1175,28 @@ def _derive_dataset_params_from_flags(model_config) -> List[str]:
     if _is_active("overdispersion_dataset_prior"):
         ds.append("bnb_concentration")
 
+    # Biology-informed VCP capture: when data_driven is True and
+    # n_datasets >= 2, the model creates a hierarchical mu_eta with
+    # per-dataset values via _sample_hierarchical_mu_eta.  The (D,)-shaped
+    # variational keys need a dataset axis so get_dataset() slices them.
+    # This covers: mu_eta_raw (NCP noise), lambda_mu_eta (horseshoe
+    # local scales), zeta_mu_eta / psi_mu_eta (NEG rates/variances).
+    if (
+        getattr(model_config, "uses_biology_informed_capture", False)
+        and getattr(model_config, "n_datasets", None) is not None
+        and getattr(model_config, "n_datasets", 0) >= 2
+    ):
+        _mu_eta_ds_names = [
+            "mu_eta",
+            "mu_eta_raw",
+            "lambda_mu_eta",
+            "zeta_mu_eta",
+            "psi_mu_eta",
+        ]
+        for _name in _mu_eta_ds_names:
+            if _name not in ds:
+                ds.append(_name)
+
     return ds
 
 
@@ -1225,15 +1370,14 @@ def derive_axis_membership(
             _param = getattr(model_config, "parameterization", "linked")
             _strategy = PARAMETERIZATIONS.get(_param)
             _derived = (
-                _strategy.build_derived_params() if _strategy is not None
+                _strategy.build_derived_params()
+                if _strategy is not None
                 else []
             )
             if _derived:
                 if mp is not None:
                     mp = sorted(expand_membership_from_derived(mp, _derived))
                 if dp is not None:
-                    dp = sorted(
-                        expand_membership_from_derived(dp, _derived)
-                    )
+                    dp = sorted(expand_membership_from_derived(dp, _derived))
 
     return mp, dp

@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Dict, Optional, Set
 
 import jax.numpy as jnp
 
+from ..core.axis_layout import DATASETS, subset_layouts
+
 if TYPE_CHECKING:
     from .results import ScribeMCMCResults
 
@@ -22,7 +24,8 @@ if TYPE_CHECKING:
 
 
 def _build_cell_specific_keys(
-    param_specs: list, samples: Dict[str, jnp.ndarray],
+    param_specs: list,
+    samples: Dict[str, jnp.ndarray],
 ) -> Set[str]:
     """Identify sample keys that correspond to cell-specific parameters.
 
@@ -123,12 +126,13 @@ class DatasetMixin:
             update={"n_datasets": None}
         )
 
+        # Drop the dataset axis from every layout that has it.
+        new_layouts = subset_layouts(self.layouts, DATASETS)
+
         # Resolve per-dataset cell count if available
         per_ds = getattr(self, "_n_cells_per_dataset", None)
         ds_n_cells = (
-            int(per_ds[dataset_index])
-            if per_ds is not None
-            else self.n_cells
+            int(per_ds[dataset_index]) if per_ds is not None else self.n_cells
         )
 
         return ScribeMCMCResults(
@@ -144,6 +148,7 @@ class DatasetMixin:
             n_obs=self.n_obs,
             n_vars=self.n_vars,
             n_components=getattr(self, "n_components", None),
+            param_layouts=new_layouts,
         )
 
     # ------------------------------------------------------------------
@@ -251,7 +256,11 @@ class DatasetMixin:
         mask = dataset_indices == dataset_index
         new_samples: Dict[str, jnp.ndarray] = {}
         for key, values in samples.items():
-            if key in cell_keys and hasattr(values, "ndim") and values.ndim >= 2:
+            if (
+                key in cell_keys
+                and hasattr(values, "ndim")
+                and values.ndim >= 2
+            ):
                 # Shape (n_samples, n_cells, ...) → mask axis 1
                 new_samples[key] = values[:, mask]
             else:
@@ -299,8 +308,6 @@ class DatasetMixin:
         if values.shape[1] == n_datasets:
             return 1
         candidates = [
-            ax
-            for ax in range(1, values.ndim)
-            if values.shape[ax] == n_datasets
+            ax for ax in range(1, values.ndim) if values.shape[ax] == n_datasets
         ]
         return candidates[0] if candidates else None

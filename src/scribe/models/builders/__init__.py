@@ -60,6 +60,8 @@ from .parameter_specs import (
     SigmoidNormalSpec,
     PositiveNormalSpec,
     SoftplusNormalSpec,
+    # Layout-only (metadata, no distribution)
+    LayoutOnlySpec,
     # Biology-informed capture
     BiologyInformedCaptureSpec,
     # Data-informed mean anchoring
@@ -124,6 +126,8 @@ __all__ = [
     "SigmoidNormalSpec",
     "PositiveNormalSpec",
     "SoftplusNormalSpec",
+    # Layout-only
+    "LayoutOnlySpec",
     # Biology-informed capture
     "BiologyInformedCaptureSpec",
     # Data-informed mean anchoring

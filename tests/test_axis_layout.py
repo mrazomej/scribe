@@ -18,6 +18,7 @@ from scribe.core.axis_layout import (
     build_sample_layouts,
     gene_axes_from_layouts,
     reconstruct_param_layouts,
+    subset_layouts,
     align_to_layout,
     merge_layouts,
     broadcast_param_to_layout,
@@ -1786,3 +1787,202 @@ class TestDerivedDatasetMembershipAllParameterizations:
         mp, dp = derive_axis_membership(cfg)
         assert "mu" in mp, "mu derived from r (mixture member)"
         assert "mu" in dp, "mu derived from r (dataset member)"
+
+
+# =========================================================================
+# subset_layouts utility
+# =========================================================================
+
+
+class TestSubsetLayouts:
+    """Tests for the ``subset_layouts`` bulk axis-removal helper."""
+
+    def test_removes_dataset_axis(self):
+        """Axis removed from layouts that carry it."""
+        layouts = {
+            "r": AxisLayout(axes=(COMPONENTS, DATASETS, GENES)),
+            "p": AxisLayout(axes=(COMPONENTS,)),
+        }
+        result = subset_layouts(layouts, DATASETS)
+        assert result["r"] == AxisLayout(axes=(COMPONENTS, GENES))
+        assert result["p"] == AxisLayout(axes=(COMPONENTS,))
+
+    def test_removes_component_axis(self):
+        """Works for any axis name, not just datasets."""
+        layouts = {
+            "r": AxisLayout(axes=(COMPONENTS, GENES)),
+            "gate": AxisLayout(axes=(GENES,)),
+        }
+        result = subset_layouts(layouts, COMPONENTS)
+        assert result["r"] == AxisLayout(axes=(GENES,))
+        assert result["gate"] == AxisLayout(axes=(GENES,))
+
+    def test_preserves_sample_dim(self):
+        """``has_sample_dim`` is forwarded through ``subset_axis``."""
+        layouts = {
+            "r": AxisLayout(axes=(DATASETS, GENES), has_sample_dim=True),
+        }
+        result = subset_layouts(layouts, DATASETS)
+        assert result["r"].has_sample_dim is True
+        assert result["r"].axes == (GENES,)
+
+    def test_empty_dict(self):
+        """No-op on empty dict."""
+        assert subset_layouts({}, DATASETS) == {}
+
+    def test_no_matching_axis(self):
+        """When no layout has the axis, the dict is returned unchanged."""
+        layouts = {"r": AxisLayout(axes=(GENES,))}
+        result = subset_layouts(layouts, DATASETS)
+        assert result == layouts
+
+    def test_does_not_mutate_input(self):
+        """Input dict should not be modified."""
+        layouts = {"r": AxisLayout(axes=(DATASETS, GENES))}
+        original_layout = layouts["r"]
+        _ = subset_layouts(layouts, DATASETS)
+        assert layouts["r"] is original_layout
+
+
+# =========================================================================
+# AxisLayout.with_axis
+# =========================================================================
+
+
+class TestWithAxis:
+    """Tests for the ``with_axis`` method."""
+
+    def test_insert_dataset_axis(self):
+        """Inserts dataset axis at canonical position."""
+        layout = AxisLayout(axes=(COMPONENTS, GENES))
+        result = layout.with_axis(DATASETS)
+        assert result.axes == (COMPONENTS, DATASETS, GENES)
+
+    def test_insert_component_axis(self):
+        """Components should be inserted before genes."""
+        layout = AxisLayout(axes=(GENES,))
+        result = layout.with_axis(COMPONENTS)
+        assert result.axes == (COMPONENTS, GENES)
+
+    def test_noop_when_already_present(self):
+        """Returns self when axis already exists."""
+        layout = AxisLayout(axes=(DATASETS, GENES))
+        result = layout.with_axis(DATASETS)
+        assert result is layout
+
+    def test_preserves_sample_dim(self):
+        """has_sample_dim is preserved."""
+        layout = AxisLayout(axes=(GENES,), has_sample_dim=True)
+        result = layout.with_axis(DATASETS)
+        assert result.has_sample_dim is True
+        assert result.axes == (DATASETS, GENES)
+
+    def test_insert_into_empty_layout(self):
+        """Adding an axis to a scalar layout."""
+        layout = AxisLayout(axes=())
+        result = layout.with_axis(DATASETS)
+        assert result.axes == (DATASETS,)
+
+
+# =========================================================================
+# Companion specs for BiologyInformedCaptureSpec
+# =========================================================================
+
+
+class TestCompanionSpecs:
+    """Tests that companion_specs on BiologyInformedCaptureSpec make
+    mu_eta hierarchy discoverable by build_param_layouts."""
+
+    # Shared kwargs for constructing a BiologyInformedCaptureSpec
+    _BASE_KW = dict(
+        name="p_capture",
+        shape_dims=("n_cells",),
+        default_params=(0.0, 1.0),
+        is_cell_specific=True,
+        log_M0=10.0,
+        sigma_M=0.5,
+        use_phi_capture=False,
+    )
+
+    def test_horseshoe_companion_specs_names(self):
+        """Horseshoe prior produces the expected set of companion specs."""
+        from scribe.models.builders.parameter_specs import (
+            BiologyInformedCaptureSpec,
+        )
+
+        spec = BiologyInformedCaptureSpec(
+            mu_eta_prior="horseshoe", **self._BASE_KW
+        )
+        companions = spec.companion_specs
+        names = {c.name for c in companions}
+        assert "mu_eta" in names
+        assert "mu_eta_pop" in names
+        assert "mu_eta_raw" in names
+        assert "tau_eta" in names
+        assert "tau_mu_eta" in names
+        assert "lambda_mu_eta" in names
+        assert "c_sq_mu_eta" in names
+
+    def test_neg_companion_specs_names(self):
+        """NEG prior produces the expected set of companion specs."""
+        from scribe.models.builders.parameter_specs import (
+            BiologyInformedCaptureSpec,
+        )
+
+        spec = BiologyInformedCaptureSpec(
+            mu_eta_prior="neg", **self._BASE_KW
+        )
+        companions = spec.companion_specs
+        names = {c.name for c in companions}
+        assert "mu_eta_raw" in names
+        assert "zeta_mu_eta" in names
+        assert "psi_mu_eta" in names
+
+    def test_dataset_flags_on_companions(self):
+        """Per-dataset companions have is_dataset=True."""
+        from scribe.models.builders.parameter_specs import (
+            BiologyInformedCaptureSpec,
+        )
+
+        spec = BiologyInformedCaptureSpec(
+            mu_eta_prior="horseshoe", **self._BASE_KW
+        )
+        by_name = {c.name: c for c in spec.companion_specs}
+        assert by_name["mu_eta_raw"].is_dataset is True
+        assert by_name["lambda_mu_eta"].is_dataset is True
+        assert by_name["mu_eta_pop"].is_dataset is False
+        assert by_name["tau_mu_eta"].is_dataset is False
+
+    def test_no_companions_when_not_data_driven(self):
+        """Non-data-driven capture spec returns empty companions."""
+        from scribe.models.builders.parameter_specs import (
+            BiologyInformedCaptureSpec,
+        )
+
+        spec = BiologyInformedCaptureSpec(
+            mu_eta_prior=None, **self._BASE_KW
+        )
+        assert spec.companion_specs == []
+
+    def test_build_param_layouts_discovers_mu_eta(self):
+        """build_param_layouts assigns dataset axis to mu_eta_raw via
+        companion specs."""
+        from scribe.models.builders.parameter_specs import (
+            BiologyInformedCaptureSpec,
+        )
+
+        spec = BiologyInformedCaptureSpec(
+            mu_eta_prior="horseshoe", **self._BASE_KW
+        )
+        # Simulate a params dict with variational keys
+        params = {
+            "mu_eta_loc": jnp.zeros(()),
+            "mu_eta_raw_loc": jnp.zeros((2,)),
+            "lambda_mu_eta_loc": jnp.zeros((2,)),
+        }
+        layouts = build_param_layouts([spec], params)
+        # mu_eta_raw_loc maps to base "mu_eta_raw" which has is_dataset=True
+        assert DATASETS in layouts["mu_eta_raw_loc"].axes
+        assert DATASETS in layouts["lambda_mu_eta_loc"].axes
+        # mu_eta itself is not per-dataset
+        assert DATASETS not in layouts["mu_eta_loc"].axes

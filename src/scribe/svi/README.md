@@ -213,6 +213,13 @@ results = ScribeSVIResults.from_anndata(
 - **`loss_history`**: ELBO loss trajectory during optimization
 - **`model_config`**: Model configuration used for inference
 - **`n_cells`**, **`n_genes`**: Dataset dimensions
+- **`param_layouts`**: Optional `Dict[str, AxisLayout]` that describes the
+  semantic axes of every parameter.  When present, subsetting operations
+  (`get_dataset`, `get_component`, gene `__getitem__`, `concat`, gene reorder)
+  propagate an updated copy to the child results object, so layouts are never
+  lazily reconstructed from tensor shapes.  Old pickles that predate this field
+  still work via the `.layouts` property fallback (see `core/README.md` for
+  the propagation contract).
 - **`_n_cells_per_dataset`**: Optional 1-D array of per-dataset cell counts
   (set automatically during inference for multi-dataset hierarchical models).
   When present, `get_dataset(d)` uses this to set the correct `n_cells` on the
