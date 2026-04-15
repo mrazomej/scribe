@@ -60,6 +60,13 @@ path: "data/my_experiment/counts.h5ad"
 # Use this when enabling dataset-level priors in config.yaml.
 # data.dataset_key takes precedence over global dataset_key when both are set.
 # dataset_key: "batch"
+#
+# Optional fail-fast guard for dataset-level comparisons.
+# After filter_obs/subsetting/preprocessing, inference fails early if any
+# dataset in `dataset_key` has fewer cells than this threshold.
+# This is useful for paired/hierarchical analyses where one arm can be too
+# small for stable inference.
+# min_cells_per_dataset: 1000
 
 # ---- Optional: Covariate-Split Settings -------------------------------------
 # Column in adata.obs to split on (each unique value gets its own model fit)

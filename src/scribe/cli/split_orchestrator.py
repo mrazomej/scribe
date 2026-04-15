@@ -857,15 +857,31 @@ def main(argv: list[str] | None = None) -> None:
                 f"[red]Hydra multirun exited with code "
                 f"{result.returncode}[/red]"
             )
+            console.print(
+                "[yellow]Some split jobs failed.[/yellow] "
+                "[dim]Inspect each failed run directory for "
+                "`FAILED_MIN_CELLS.json` (when min-cells guard is enabled).[/dim]"
+            )
             sys.exit(result.returncode)
     finally:
         # ------------------------------------------------------------------
         # 7. Cleanup
         # ------------------------------------------------------------------
         console.print()
-        console.print("[dim]Cleaning up temporary configs...[/dim]")
-        _cleanup_tmp_dir(tmp_dir)
-        console.print("[green]✓[/green] Temporary configs removed.")
+        if launcher_mode == "submitit_slurm":
+            # Submitit workers can start after this parent process exits; keep
+            # temp split configs available so Hydra can compose data=... keys.
+            console.print(
+                "[yellow]Skipping temporary config cleanup for submitit mode.[/yellow]"
+            )
+            console.print(
+                "[dim]Temporary configs retained at:[/dim] "
+                f"[cyan]{tmp_dir}[/cyan]"
+            )
+        else:
+            console.print("[dim]Cleaning up temporary configs...[/dim]")
+            _cleanup_tmp_dir(tmp_dir)
+            console.print("[green]✓[/green] Temporary configs removed.")
 
     # ------------------------------------------------------------------
     # Done

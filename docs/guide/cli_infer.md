@@ -156,20 +156,21 @@ For the meaning of each parameter, see the
 
 Each dataset gets its own YAML file under `conf/data/`. Required fields:
 
-| Field | Description |
-|-------|-------------|
+| Field  | Description                                         |
+| ------ | --------------------------------------------------- |
 | `name` | Short identifier used in output paths and job names |
-| `path` | Path to count matrix (`.h5ad` or `.csv`) |
+| `path` | Path to count matrix (`.h5ad` or `.csv`)            |
 
 Optional fields:
 
-| Field | Description |
-|-------|-------------|
-| `layer` | AnnData layer name when counts are not in `adata.X` |
-| `dataset_key` | Column in `adata.obs` identifying dataset membership (used for dataset-level hierarchical priors); overrides global `dataset_key` when set |
-| `split_by` | Column in `adata.obs` for automatic split orchestration |
-| `filter_obs` | Pre-filter observations before fitting (dict of column → allowed values) |
-| `preprocessing` | Scanpy-like pipeline (`filter_cells`, `filter_genes`, `normalize_total`, `log1p`, `highly_variable_genes`) |
+| Field                   | Description                                                                                                                                                                   |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `layer`                 | AnnData layer name when counts are not in `adata.X`                                                                                                                           |
+| `dataset_key`           | Column in `adata.obs` identifying dataset membership (used for dataset-level hierarchical priors); overrides global `dataset_key` when set                                    |
+| `min_cells_per_dataset` | Optional fail-fast threshold. After `filter_obs`/subsetting/preprocessing, each dataset identified by `dataset_key` must have at least this many cells or the job fails early |
+| `split_by`              | Column in `adata.obs` for automatic split orchestration                                                                                                                       |
+| `filter_obs`            | Pre-filter observations before fitting (dict of column → allowed values)                                                                                                      |
+| `preprocessing`         | Scanpy-like pipeline (`filter_cells`, `filter_genes`, `normalize_total`, `log1p`, `highly_variable_genes`)                                                                    |
 
 !!! note "SCRIBE fits on counts"
     Even when preprocessing includes HVG selection or normalization, SCRIBE

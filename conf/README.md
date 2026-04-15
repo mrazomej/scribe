@@ -211,12 +211,18 @@ path: "data/singer/singer_transcript_counts.csv"
 # @package data
 name: "my_dataset"
 path: "path/to/my_data.h5ad"
+dataset_key: "condition"
+min_cells_per_dataset: 50
 preprocessing:
   filter_cells:
     min_genes: 200
   filter_genes:
     min_cells: 5
 ```
+
+`min_cells_per_dataset` is optional. When set, SCRIBE checks post-filtered cell
+counts per value in `dataset_key` and fails early if any dataset is below the
+threshold.
 
 ### Covariate-Split Inference (`split_by`)
 
