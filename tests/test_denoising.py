@@ -1945,3 +1945,134 @@ class TestPreserveCorrelations:
 
         assert adata.X.shape == (2 * n_cells, n_genes)
         assert adata.uns["scribe_denoising"]["parameter_source"] == "map"
+
+
+# ==============================================================================
+# Denoising vmap tests
+# ==============================================================================
+
+
+class TestDenoiseVmap:
+    """Tests for the vmap-accelerated multi-sample denoising path."""
+
+    @pytest.fixture()
+    def multi_sample_data(self):
+        """Multi-sample parameters with shape (n_samples, ...)."""
+        n_samples, n_cells, n_genes = 4, 8, 5
+        counts = jnp.ones((n_cells, n_genes), dtype=jnp.float32) * 3
+        r = jnp.ones((n_samples, n_genes)) * 5.0
+        p = jnp.ones((n_samples,)) * 0.4
+        nu = jnp.ones((n_samples, n_cells)) * 0.6
+        return counts, r, p, nu, n_samples, n_cells, n_genes
+
+    def test_multi_sample_mean_shape(self, multi_sample_data):
+        """vmap path returns (n_samples, n_cells, n_genes) for 'mean'."""
+        counts, r, p, nu, n_samples, n_cells, n_genes = multi_sample_data
+        result = denoise_counts(counts, r, p, p_capture=nu, method="mean")
+        assert result.shape == (n_samples, n_cells, n_genes)
+
+    def test_multi_sample_sample_shape(self, multi_sample_data, rng):
+        """vmap path returns (n_samples, n_cells, n_genes) for 'sample'."""
+        counts, r, p, nu, n_samples, n_cells, n_genes = multi_sample_data
+        result = denoise_counts(
+            counts, r, p, p_capture=nu, method="sample", rng_key=rng,
+        )
+        assert result.shape == (n_samples, n_cells, n_genes)
+
+    def test_rng_reproducibility(self, multi_sample_data, rng):
+        """Same rng_key produces identical results in the vmap path."""
+        counts, r, p, nu, *_ = multi_sample_data
+        a = denoise_counts(
+            counts, r, p, p_capture=nu, method="sample", rng_key=rng,
+        )
+        b = denoise_counts(
+            counts, r, p, p_capture=nu, method="sample", rng_key=rng,
+        )
+        np.testing.assert_array_equal(a, b)
+
+    def test_non_negative(self, multi_sample_data, rng):
+        """vmap-denoised counts are non-negative for all methods."""
+        counts, r, p, nu, *_ = multi_sample_data
+        for method in ("mean", "mode", "sample"):
+            result = denoise_counts(
+                counts, r, p, p_capture=nu, method=method, rng_key=rng,
+            )
+            assert jnp.all(result >= 0), f"method={method}"
+
+    def test_variance_shape(self, multi_sample_data):
+        """return_variance produces dict with correct shapes from vmap."""
+        counts, r, p, nu, n_samples, n_cells, n_genes = multi_sample_data
+        result = denoise_counts(
+            counts, r, p, p_capture=nu, method="mean",
+            return_variance=True,
+        )
+        assert isinstance(result, dict)
+        assert result["denoised_counts"].shape == (
+            n_samples, n_cells, n_genes,
+        )
+        assert result["variance"].shape == (n_samples, n_cells, n_genes)
+
+    def test_shared_gate_broadcast(self, multi_sample_data, rng):
+        """Gate without sample dim is broadcast correctly in the vmap path."""
+        counts, r, p, nu, n_samples, n_cells, n_genes = multi_sample_data
+        # gate has shape (n_genes,) — no sample dim
+        gate = jnp.ones(n_genes) * 0.2
+        result = denoise_counts(
+            counts, r, p, p_capture=nu, gate=gate,
+            method="mean", rng_key=rng,
+        )
+        assert result.shape == (n_samples, n_cells, n_genes)
+        assert jnp.all(result >= 0)
+
+    def test_tuple_method_vmap(self, multi_sample_data, rng):
+        """Tuple method works through the vmap path."""
+        counts, r, p, nu, n_samples, n_cells, n_genes = multi_sample_data
+        gate = jnp.ones(n_genes) * 0.3
+        result = denoise_counts(
+            counts, r, p, p_capture=nu, gate=gate,
+            method=("mean", "sample"), rng_key=rng,
+        )
+        assert result.shape == (n_samples, n_cells, n_genes)
+
+    def test_vmap_matches_loop_mean(self):
+        """vmap mean path gives identical results to sequential iteration."""
+        n_samples, n_cells, n_genes = 3, 6, 4
+        counts = jnp.ones((n_cells, n_genes), dtype=jnp.float32) * 2
+        r = jnp.ones((n_samples, n_genes)) * 5.0
+        p = jnp.ones((n_samples,)) * 0.3
+        nu = jnp.ones((n_samples, n_cells)) * 0.6
+
+        # vmap result (the new path)
+        vmap_result = denoise_counts(
+            counts, r, p, p_capture=nu, method="mean",
+        )
+
+        # Sequential reference: denoise each draw independently
+        from scribe.sampling._denoising import _denoise_single
+        from scribe.core.axis_layout import AxisLayout
+        base_layouts = {
+            "r": AxisLayout(axes=("genes",)),
+            "p": AxisLayout(axes=()),
+            "p_capture": AxisLayout(axes=("cells",)),
+        }
+        parts = []
+        for s in range(n_samples):
+            out = _denoise_single(
+                counts=counts,
+                r=r[s],
+                p=p[s],
+                p_capture=nu[s],
+                gate=None,
+                method="mean",
+                rng_key=None,
+                return_variance=False,
+                mixing_weights=None,
+                component_assignment=None,
+                cell_batch_size=None,
+                bnb_concentration=None,
+                param_layouts=base_layouts,
+            )
+            parts.append(out)
+        loop_result = jnp.stack(parts, axis=0)
+
+        np.testing.assert_allclose(vmap_result, loop_result, atol=1e-5)

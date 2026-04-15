@@ -11,14 +11,17 @@ enabling pathway-level inference using compositional balances.
   requiring no distributional assumptions.
 """
 
+import functools
 from typing import Dict, List, Optional
 
 import jax
 import jax.numpy as jnp
+from jax import lax
 from jax.scipy.stats import norm
 
 from ._transforms import (
     build_ilr_balance,
+    build_ilr_basis,
     build_pathway_sbp_basis,
     transform_gaussian_alr_to_clr,
 )
@@ -376,6 +379,54 @@ def empirical_test_gene_set(
     }
 
 
+@functools.partial(jax.jit, static_argnums=(3, 4))
+def _jit_permutation_null(
+    delta_samples: jnp.ndarray,
+    keys: jnp.ndarray,
+    H_within: jnp.ndarray,
+    n_plus: int,
+    D: int,
+) -> jnp.ndarray:
+    """Compute the permutation null distribution on-device via lax.scan.
+
+    For each PRNG key, permutes all ``D`` gene indices, takes the first
+    ``n_plus`` as the permuted pathway, gathers columns from
+    ``delta_samples``, projects onto the precomputed Helmert basis
+    ``H_within``, and returns the mean quadratic statistic.
+
+    Parameters
+    ----------
+    delta_samples : jnp.ndarray, shape ``(N, D)``
+        CLR-space posterior difference samples.
+    keys : jnp.ndarray, shape ``(n_permutations, 2)``
+        Pre-split PRNG keys, one per permutation.
+    H_within : jnp.ndarray, shape ``(n_plus - 1, n_plus)``
+        Within-pathway Helmert basis (precomputed).
+    n_plus : int
+        Number of pathway genes (static for JIT).
+    D : int
+        Total number of genes (static for JIT).
+
+    Returns
+    -------
+    jnp.ndarray, shape ``(n_permutations,)``
+        Mean quadratic perturbation statistic for each permutation.
+    """
+    all_indices = jnp.arange(D)
+
+    def _scan_body(carry, key_i):
+        perm = jax.random.permutation(key_i, all_indices)
+        perm_indices = perm[:n_plus]
+        # Gather permuted pathway columns and project
+        delta_perm = delta_samples[:, perm_indices]  # (N, n_plus)
+        b_perm = delta_perm @ H_within.T             # (N, n_plus-1)
+        t_perm = jnp.mean(jnp.sum(b_perm ** 2, axis=1))
+        return carry, t_perm
+
+    _, t_null = lax.scan(_scan_body, None, keys)
+    return t_null
+
+
 def empirical_test_pathway_perturbation(
     delta_samples: jnp.ndarray,
     gene_set_indices: jnp.ndarray,
@@ -444,35 +495,27 @@ def empirical_test_pathway_perturbation(
             f"test, got n_+={n_plus}."
         )
 
-    # Build pathway-aware SBP basis and extract within-pathway rows
-    V_sbp = build_pathway_sbp_basis(gene_set_indices, D)
-    V_within = V_sbp[1:n_plus]  # (n_+-1, D)
+    # Precompute the within-pathway Helmert basis once; it only depends
+    # on the pathway size n_plus, not on which genes are in the set.
+    H_within = build_ilr_basis(n_plus)  # (n_plus-1, n_plus)
 
-    # Compute within-pathway ILR differences: (N, n_+-1) = (N, D) @ (D, n_+-1)
-    b_within = delta_samples @ V_within.T
-    # Quadratic statistic per sample: sum of squared within-pathway ILR coords
-    T_per_sample = jnp.sum(b_within**2, axis=1)  # (N,)
+    # Observed statistic: gather pathway columns, project, and compute
+    # the mean sum-of-squares across posterior samples.
+    delta_pathway = delta_samples[:, gene_set_indices]  # (N, n_plus)
+    b_within = delta_pathway @ H_within.T               # (N, n_plus-1)
+    T_per_sample = jnp.sum(b_within**2, axis=1)         # (N,)
     t_obs = float(jnp.mean(T_per_sample))
     t_sd = float(jnp.std(T_per_sample, ddof=1))
 
-    # Null calibration via gene-label permutation
-    all_indices = jnp.arange(D)
-    t_null = jnp.zeros(n_permutations)
+    # Null calibration via JIT-compiled lax.scan over permuted gene
+    # labels.  Each iteration permutes all D gene indices, takes the
+    # first n_plus as the permuted pathway, gathers the corresponding
+    # columns from delta_samples, projects onto H_within, and returns
+    # the mean quadratic statistic.
     keys = jax.random.split(key, n_permutations)
-
-    for r in range(n_permutations):
-        # Random subset of size n_plus
-        perm = jax.random.permutation(keys[r], all_indices)
-        perm_indices = perm[:n_plus]
-
-        # Build the permuted within-pathway basis
-        V_perm = build_pathway_sbp_basis(perm_indices, D)
-        V_within_perm = V_perm[1:n_plus]
-
-        # Permuted perturbation statistic
-        b_perm = delta_samples @ V_within_perm.T
-        T_perm = jnp.sum(b_perm**2, axis=1)
-        t_null = t_null.at[r].set(jnp.mean(T_perm))
+    t_null = _jit_permutation_null(
+        delta_samples, keys, H_within, n_plus, D,
+    )
 
     # Empirical p-value (fraction of null values >= observed)
     p_value = float(jnp.mean(t_null >= t_obs))

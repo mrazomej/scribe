@@ -286,18 +286,11 @@ class LikelihoodMixin:
 
         # If computing by gene and gene_batch_size is provided, use batched computation
         if return_by == "gene" and gene_batch_size is not None:
-            # Determine output shape
-            if (
-                is_mixture
-                and split_components
-                and self.n_components is not None
-            ):
-                result_shape = (self.n_genes, self.n_components)
-            else:
-                result_shape = (self.n_genes,)
-
-            # Initialize result array
-            log_liks = np.zeros(result_shape, dtype=dtype)
+            # Accumulate results as JAX arrays on-device, then do a
+            # single D2H transfer at the end.  The previous approach
+            # called np.array() per batch, forcing a blocking
+            # device-to-host sync on every iteration.
+            jax_chunks = []
 
             # Process genes in batches
             for i in range(0, self.n_genes, gene_batch_size):
@@ -354,11 +347,10 @@ class LikelihoodMixin:
                         dtype=dtype,
                     )
 
-                # Store results
-                log_liks[i:end_idx] = np.array(batch_log_liks)
+                jax_chunks.append(batch_log_liks)
 
-            # Convert to JAX array for consistency
-            return jnp.array(log_liks)
+            # Single concatenation + single D2H transfer
+            return jnp.concatenate(jax_chunks, axis=0)
 
         # Standard computation (no gene batching)
         else:

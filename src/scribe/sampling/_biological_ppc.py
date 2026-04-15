@@ -11,6 +11,7 @@ from scribe.models.components.likelihoods.beta_negative_binomial import (
     build_count_dist,
 )
 
+from ..core._array_dispatch import _vmap_chunk_size
 from ._helpers import _has_sample_dim
 
 
@@ -214,25 +215,45 @@ def sample_biological_nb(
 
         return vmap(_sample_one)(keys, r, p, mw_arr, bnb_arr)
     else:
-        # MAP path: no leading sample dimension, so we loop n_samples times
+        # MAP path: vmap over independent RNG keys with broadcast
+        # parameters.  All parameters are identical across draws — only
+        # the PRNG key varies.  cell_batch_size is set to None inside
+        # the vmap'd function so XLA fuses the full cell dimension;
+        # adaptive chunking over n_samples prevents OOM.
         keys = random.split(rng_key, n_samples)
-        all_samples = []
-        for i in range(n_samples):
-            sample_i = _sample_biological_nb_single(
+
+        _is_mixture = is_mixture
+        _has_bnb = bnb_concentration is not None
+
+        def _sample_one_map(key_i):
+            return _sample_biological_nb_single(
                 r=r,
                 p=p,
                 n_cells=n_cells,
-                rng_key=keys[i],
-                mixing_weights=mixing_weights,
-                cell_batch_size=cell_batch_size,
-                bnb_concentration=bnb_concentration,
+                rng_key=key_i,
+                mixing_weights=mixing_weights if _is_mixture else None,
+                cell_batch_size=None,
+                bnb_concentration=(
+                    bnb_concentration if _has_bnb else None
+                ),
                 p_has_components=_p_has_comp,
                 p_has_genes=_p_has_genes,
                 bnb_has_components=_bnb_comp,
             )
-            all_samples.append(sample_i)
-        # Stack along a new leading sample axis → (n_samples, n_cells, n_genes)
-        return jnp.stack(all_samples, axis=0)
+
+        # Estimate per-sample memory: output + intermediates
+        _n_genes = int(r.shape[-1])
+        _per_sample = n_cells * _n_genes * 4 * 2
+        _chunk = _vmap_chunk_size(n_samples, _per_sample)
+
+        if _chunk >= n_samples:
+            return vmap(_sample_one_map)(keys)
+        # Chunk over the n_samples axis to stay within GPU memory
+        parts = []
+        for _s in range(0, n_samples, _chunk):
+            _e = min(_s + _chunk, n_samples)
+            parts.append(vmap(_sample_one_map)(keys[_s:_e]))
+        return jnp.concatenate(parts, axis=0)
 
 
 def _sample_biological_nb_single(
