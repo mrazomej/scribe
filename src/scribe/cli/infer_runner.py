@@ -24,6 +24,7 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 import scribe
 from scribe.models.config import AmortizationConfig
+import json
 import pickle
 import os
 import warnings
@@ -594,6 +595,220 @@ def _resolve_empirical_mixing_components(
         return None
 
 
+class MinCellsPerDatasetError(ValueError):
+    """Raised when per-dataset cell counts violate the configured threshold.
+
+    Parameters
+    ----------
+    dataset_key : str
+        Observation column used to define dataset membership.
+    min_cells_per_dataset : int
+        Minimum required number of cells per dataset.
+    dataset_counts : dict[str, int]
+        Post-filtered cell counts for each dataset label.
+    """
+
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        dataset_key: str | None = None,
+        min_cells_per_dataset: int | None = None,
+        dataset_counts: dict[str, int] | None = None,
+    ) -> None:
+        """Initialize error with keyword payload and pickle-safe fallback.
+
+        Parameters
+        ----------
+        message : str or None, optional
+            Optional pre-rendered message used during exception unpickling.
+            Submitit/pickle may reconstruct exceptions positionally as
+            ``MinCellsPerDatasetError(message)``.
+        dataset_key : str or None, optional
+            Observation column used to define dataset membership.
+        min_cells_per_dataset : int or None, optional
+            Minimum required number of cells per dataset.
+        dataset_counts : dict[str, int] or None, optional
+            Post-filtered cell counts for each dataset label.
+        """
+        # Store optional payload fields even when reconstructed from message-only
+        # pickling paths so downstream logging/marker code can introspect safely.
+        self.dataset_key = dataset_key
+        self.min_cells_per_dataset = (
+            int(min_cells_per_dataset)
+            if min_cells_per_dataset is not None
+            else None
+        )
+        self.dataset_counts = (
+            dict(dataset_counts) if dataset_counts is not None else {}
+        )
+
+        if (
+            message is None
+            and self.dataset_key is not None
+            and self.min_cells_per_dataset is not None
+        ):
+            too_small = {
+                key: value
+                for key, value in self.dataset_counts.items()
+                if value < self.min_cells_per_dataset
+            }
+            message = (
+                "Per-dataset minimum cell threshold violated. "
+                f"dataset_key='{self.dataset_key}', "
+                f"min_cells_per_dataset={self.min_cells_per_dataset}, "
+                f"too_small={too_small}, "
+                f"dataset_counts={self.dataset_counts}"
+            )
+
+        # Ensure BaseException.args is always populated with one positional
+        # message so the object remains fully pickle-compatible.
+        if message is None:
+            message = "Per-dataset minimum cell threshold violated."
+        super().__init__(message)
+
+
+def _normalize_min_cells_per_dataset(raw_value: object) -> int | None:
+    """Normalize ``data.min_cells_per_dataset`` into an integer threshold.
+
+    Parameters
+    ----------
+    raw_value : object
+        Raw value from Hydra config.
+
+    Returns
+    -------
+    int or None
+        Parsed threshold, or ``None`` when disabled.
+
+    Raises
+    ------
+    ValueError
+        Raised when ``raw_value`` is not a positive integer.
+    """
+    if raw_value is None:
+        return None
+    value = int(raw_value)
+    if value <= 0:
+        raise ValueError(
+            "data.min_cells_per_dataset must be a positive integer when set."
+        )
+    return value
+
+
+def _compute_dataset_counts(adata, dataset_key: str) -> dict[str, int]:
+    """Compute per-dataset cell counts from ``adata.obs``.
+
+    Parameters
+    ----------
+    adata : AnnData
+        Loaded AnnData object after all filtering/subsetting.
+    dataset_key : str
+        Observation column name used to define dataset membership.
+
+    Returns
+    -------
+    dict[str, int]
+        Mapping from dataset label to number of cells.
+
+    Raises
+    ------
+    ValueError
+        Raised when ``dataset_key`` is missing in ``adata.obs`` or no datasets
+        are present after preprocessing.
+    """
+    if dataset_key not in adata.obs.columns:
+        raise ValueError(
+            f"dataset_key '{dataset_key}' not found in adata.obs after "
+            f"preprocessing. Available columns: {list(adata.obs.columns)}"
+        )
+    counts_series = adata.obs[dataset_key].astype(str).value_counts(sort=False)
+    dataset_counts = {
+        str(key): int(value)
+        for key, value in counts_series.to_dict().items()
+    }
+    if len(dataset_counts) == 0:
+        raise ValueError(
+            "No datasets remain after preprocessing. "
+            f"dataset_key='{dataset_key}'."
+        )
+    return dict(sorted(dataset_counts.items(), key=lambda item: item[0]))
+
+
+def _validate_min_cells_per_dataset(
+    adata,
+    *,
+    dataset_key: str,
+    min_cells_per_dataset: int | None,
+) -> None:
+    """Validate minimum per-dataset cell counts for fail-fast inference.
+
+    Parameters
+    ----------
+    adata : AnnData
+        Loaded AnnData object after filtering/subsetting/preprocessing.
+    dataset_key : str
+        Observation column used to define dataset membership.
+    min_cells_per_dataset : int or None
+        Optional threshold; when ``None`` validation is disabled.
+
+    Raises
+    ------
+    MinCellsPerDatasetError
+        Raised when any dataset has fewer than the configured threshold.
+    """
+    if min_cells_per_dataset is None:
+        return
+    dataset_counts = _compute_dataset_counts(adata, dataset_key)
+    too_small = [
+        label
+        for label, count in dataset_counts.items()
+        if count < min_cells_per_dataset
+    ]
+    if len(too_small) > 0:
+        raise MinCellsPerDatasetError(
+            dataset_key=dataset_key,
+            min_cells_per_dataset=min_cells_per_dataset,
+            dataset_counts=dataset_counts,
+        )
+
+
+def _write_min_cells_failure_marker(
+    *,
+    output_dir: str,
+    exc: MinCellsPerDatasetError,
+) -> str:
+    """Write a structured failure marker for min-cells guard violations.
+
+    Parameters
+    ----------
+    output_dir : str
+        Hydra job output directory for this run.
+    exc : MinCellsPerDatasetError
+        Validation error carrying threshold and per-dataset counts.
+
+    Returns
+    -------
+    str
+        Path to the marker file written under ``output_dir``.
+    """
+    marker_path = Path(output_dir) / "FAILED_MIN_CELLS.json"
+    marker_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "status": "failed",
+        "reason": "min_cells_per_dataset",
+        "dataset_key": exc.dataset_key,
+        "min_cells_per_dataset": exc.min_cells_per_dataset,
+        "dataset_counts": exc.dataset_counts,
+        "message": str(exc),
+    }
+    marker_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    return marker_path.as_posix()
+
+
 # ==============================================================================
 # Main Function
 # ==============================================================================
@@ -640,6 +855,9 @@ def main(cfg: DictConfig) -> None:
     # Resolve dataset_key: data-level setting takes precedence over global
     # (mirrors the layer resolution pattern).
     dataset_key = cfg.data.get("dataset_key") or cfg.get("dataset_key")
+    min_cells_per_dataset = _normalize_min_cells_per_dataset(
+        cfg.data.get("min_cells_per_dataset")
+    )
 
     # Validate dataset-level hierarchical/structured priors before data
     # loading so users fail fast when dataset splitting is not configured.
@@ -657,6 +875,11 @@ def main(cfg: DictConfig) -> None:
             "require dataset_key so cells can "
             "be mapped to datasets. Set dataset_key to an adata.obs column "
             "when using dataset-level hierarchical priors."
+        )
+    if min_cells_per_dataset is not None and dataset_key is None:
+        raise ValueError(
+            "data.min_cells_per_dataset requires dataset_key so cells can be "
+            "grouped per dataset."
         )
 
     # When annotation_key or dataset_key is set we need the full AnnData
@@ -895,6 +1118,33 @@ def main(cfg: DictConfig) -> None:
 
     # Add inference-specific parameters
     kwargs.update(inference_cfg)
+
+    # Enforce a post-filter per-dataset minimum cell threshold before expensive
+    # inference starts. This protects against tiny dataset arms after
+    # filter_obs/subsetting/preprocessing.
+    if min_cells_per_dataset is not None:
+        from hydra.core.hydra_config import HydraConfig
+
+        output_dir_for_marker = HydraConfig.get().runtime.output_dir
+        try:
+            _validate_min_cells_per_dataset(
+                counts,
+                dataset_key=str(dataset_key),
+                min_cells_per_dataset=min_cells_per_dataset,
+            )
+        except MinCellsPerDatasetError as exc:
+            marker_path = _write_min_cells_failure_marker(
+                output_dir=output_dir_for_marker,
+                exc=exc,
+            )
+            console.print(
+                "[red]✗[/red] "
+                "[bold red]Per-dataset minimum-cell guard failed.[/bold red]"
+            )
+            console.print(
+                f"[dim]Failure marker:[/dim] [cyan]{marker_path}[/cyan]"
+            )
+            raise
 
     console.print(f"[dim]Model:[/dim] [bold]{kwargs['model']}[/bold]")
     console.print(
