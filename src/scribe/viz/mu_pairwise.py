@@ -88,14 +88,44 @@ def _collapse_mixture_axis(mu_values, mixing_weights, layouts=None):
         if mixing_weights is None:
             return np.mean(mu_arr, axis=_comp_ax)
         w = np.asarray(mixing_weights, dtype=float)
-        # Expand weight dims so they broadcast with mu along the
-        # component axis.  Other axes get singleton dimensions.
-        shape = [1] * mu_arr.ndim
-        shape[_comp_ax] = w.shape[0]
+
+        # Reshape w to broadcast with mu.  Use layout metadata to
+        # determine which w-axis is components vs datasets so the
+        # broadcast shape matches mu's axis ordering.
         if w.ndim == 1:
-            w = w.reshape(shape)
+            bcast = [1] * mu_arr.ndim
+            bcast[_comp_ax] = w.shape[0]
+            w = w.reshape(bcast)
         elif w.ndim == 2:
-            w = w.reshape(shape[:_comp_ax] + [w.shape[0]] + [w.shape[1]] + [1])
+            mu_layout = layouts["mu"]
+            w_layout = layouts.get("mixing_weights") if layouts else None
+
+            # Identify component and dataset axes inside w.
+            if w_layout is not None and w_layout.component_axis is not None:
+                w_comp_ax = w_layout.component_axis
+            else:
+                # Fallback: whichever w-axis matches mu's component size
+                w_comp_ax = (
+                    0 if w.shape[0] == mu_arr.shape[_comp_ax] else 1
+                )
+            w_ds_ax = 1 - w_comp_ax
+
+            mu_ds_ax = mu_layout.dataset_axis
+
+            # Build target broadcast shape aligned with mu's axes.
+            bcast = [1] * mu_arr.ndim
+            bcast[_comp_ax] = w.shape[w_comp_ax]
+            if mu_ds_ax is not None:
+                bcast[mu_ds_ax] = w.shape[w_ds_ax]
+
+            # Transpose w so its axes appear in the same order as in mu,
+            # then reshape to add trailing singleton(s) for genes, etc.
+            axis_map = [(_comp_ax, w_comp_ax)]
+            if mu_ds_ax is not None:
+                axis_map.append((mu_ds_ax, w_ds_ax))
+            axis_map.sort(key=lambda x: x[0])
+            w = np.transpose(w, [src for _, src in axis_map]).reshape(bcast)
+
         return np.sum(w * mu_arr, axis=_comp_ax)
 
     # No component axis: ensure output is at least 2-D for downstream plotting.
