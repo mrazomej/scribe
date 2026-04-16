@@ -23,6 +23,182 @@ if TYPE_CHECKING:
 
 
 # ==============================================================================
+# Metadata-driven helpers
+# ==============================================================================
+
+# Posterior keys that unambiguously carry mixture structure.
+_MIXING_KEY_NAMES = frozenset({"mixing_weights", "mixing_logits_unconstrained"})
+
+# Canonical/derived keys that may be absent from ParamSpec names. We keep an
+# explicit allowlist here and require corroborating mixture evidence so that
+# shared scalar keys are not accidentally treated as component-specific.
+_FALLBACK_MIXTURE_KEYS = frozenset(
+    {
+        "p",
+        "r",
+        "mu",
+        "phi",
+        "gate",
+        "p_unconstrained",
+        "r_unconstrained",
+        "mu_unconstrained",
+        "phi_unconstrained",
+        "gate_unconstrained",
+    }
+)
+
+
+def _has_fallback_mixture_evidence(
+    key: str,
+    component_axis: int,
+    explicit_component_axes: Dict[str, int],
+) -> bool:
+    """Check whether a fallback key should be treated as mixture-specific.
+
+    Parameters
+    ----------
+    key : str
+        Posterior-sample key being inspected.
+    component_axis : int
+        Candidate component axis inferred for ``key``.
+    explicit_component_axes : Dict[str, int]
+        Component-axis map for explicitly mixture-marked keys from pass 1.
+
+    Returns
+    -------
+    bool
+        True when there is corroborating evidence from an explicit
+        mixture-carrying key that shares the same component axis.
+    """
+    # Map fallback/derived keys to explicit references whose component axis can
+    # corroborate that the key should be component-sliced.
+    reference_map = {
+        "p": ("p", "phi", "p_unconstrained", "phi_unconstrained"),
+        "p_unconstrained": (
+            "p_unconstrained",
+            "p",
+            "phi_unconstrained",
+            "phi",
+        ),
+        "r": ("r", "mu", "phi", "r_unconstrained", "mu_unconstrained"),
+        "r_unconstrained": (
+            "r_unconstrained",
+            "r",
+            "mu_unconstrained",
+            "mu",
+            "phi_unconstrained",
+            "phi",
+        ),
+        "mu": ("mu", "r", "p", "mu_unconstrained", "r_unconstrained"),
+        "mu_unconstrained": (
+            "mu_unconstrained",
+            "mu",
+            "r_unconstrained",
+            "r",
+            "p_unconstrained",
+            "p",
+        ),
+        "phi": ("phi", "phi_unconstrained"),
+        "phi_unconstrained": ("phi_unconstrained", "phi"),
+        "gate": ("gate", "gate_unconstrained"),
+        "gate_unconstrained": ("gate_unconstrained", "gate"),
+    }
+    for ref_key in reference_map.get(key, ()):
+        if explicit_component_axes.get(ref_key) == component_axis:
+            return True
+    return False
+
+
+def _resolve_component_axes(
+    mixin: "ComponentMixin", samples: Dict
+) -> Dict[str, int]:
+    """Identify posterior-sample keys that carry a component axis.
+
+    Parameters
+    ----------
+    mixin : ComponentMixin
+        Result mixin instance providing model metadata.
+    samples : Dict
+        Posterior sample dictionary to inspect.
+
+    Returns
+    -------
+    Dict[str, int]
+        Mapping ``{key: component_axis}`` for keys that should be sliced by
+        component selection.
+
+    Notes
+    -----
+    This mirrors the SVI component resolver so MCMC and SVI agree on derived
+    mixture semantics. The resolver intentionally uses `DerivedParam` lineage
+    through ``derive_axis_membership`` rather than introducing new key-shape
+    heuristics.
+    """
+    from ..core.axis_layout import build_sample_layouts, derive_axis_membership
+
+    mc = getattr(mixin, "model_config", None)
+    specs = list(getattr(mc, "param_specs", None) or []) if mc else []
+    specs_by_name = {s.name: s for s in specs}
+
+    # Resolve membership using the shared derive_axis_membership cascade so
+    # derived canonical keys inherit mixture axes from their sources.
+    mp_cfg = getattr(mc, "mixture_params", None) if mc else None
+    mp_expanded, dp = (
+        derive_axis_membership(mc, samples=samples, has_sample_dim=True)
+        if mc is not None
+        else (None, None)
+    )
+    mp_final = mp_expanded if mp_cfg is not None else None
+
+    sample_layouts = build_sample_layouts(
+        specs,
+        samples,
+        n_genes=getattr(mixin, "n_genes", None),
+        n_cells=getattr(mixin, "n_cells", None),
+        n_components=getattr(mixin, "n_components", None),
+        n_datasets=getattr(mc, "n_datasets", None) if mc else None,
+        mixture_params=mp_final,
+        dataset_params=dp,
+        has_sample_dim=True,
+    )
+    # Prefer per-sample semantic layouts; fall back to the result object's stored
+    # layouts when a key is known there but not reconstructable from current
+    # sample metadata alone.
+    parent_layouts = getattr(mixin, "layouts", {})
+
+    # Pass 1: keys explicitly marked as mixture by ParamSpecs or known mixing
+    # carriers (weights/logits).
+    explicit: Dict[str, int] = {}
+    for key in samples:
+        spec = specs_by_name.get(key)
+        layout = sample_layouts.get(key, parent_layouts.get(key))
+        if layout is None or layout.component_axis is None:
+            continue
+        if (spec is not None and spec.is_mixture) or key in _MIXING_KEY_NAMES:
+            explicit[key] = layout.component_axis
+
+    # Pass 2: fallback/derived canonical keys are accepted only when explicit
+    # evidence agrees on the component axis.
+    result = dict(explicit)
+    explicit_axes = set(explicit.values())
+    for key in samples:
+        if key in result or key not in _FALLBACK_MIXTURE_KEYS:
+            continue
+        layout = sample_layouts.get(key, parent_layouts.get(key))
+        component_axis = layout.component_axis if layout is not None else None
+
+        # Accept when canonical-reference evidence matches OR when the inferred
+        # axis aligns with an explicit mixture axis observed in pass 1.
+        if component_axis is not None and (
+            _has_fallback_mixture_evidence(key, component_axis, explicit)
+            or component_axis in explicit_axes
+        ):
+            result[key] = component_axis
+
+    return result
+
+
+# ==============================================================================
 # Component Mixin
 # ==============================================================================
 
@@ -191,42 +367,22 @@ class ComponentMixin:
         if samples is None:
             return None
 
-        specs_by_name = {}
-        if getattr(self.model_config, "param_specs", None):
-            specs_by_name = {s.name: s for s in self.model_config.param_specs}
-
-        n_comp = self.n_components
+        # Resolve per-key component axes using shared axis metadata and derived
+        # lineage expansion so canonical keys are sliced consistently.
+        component_axes = _resolve_component_axes(self, samples)
         use_single = squeeze_single and int(component_indices.shape[0]) == 1
         single_index = int(component_indices[0]) if use_single else None
         new_samples: Dict = {}
 
         for key, values in samples.items():
-            spec = specs_by_name.get(key)
-            has_mixture_axis = hasattr(values, "ndim") and values.ndim > 1
-            is_named_mixture_weight = key in {
-                "mixing_weights",
-                "mixing_logits_unconstrained",
-            }
-            is_mixture = has_mixture_axis and (
-                (spec is not None and spec.is_mixture)
-                or is_named_mixture_weight
-            )
-            if not is_mixture:
+            component_axis = component_axes.get(key)
+            if (
+                component_axis is None
+                or not hasattr(values, "ndim")
+                or values.ndim <= component_axis
+            ):
                 new_samples[key] = values
                 continue
-
-            # Locate the component axis (typically axis 1)
-            component_axis = 1
-            if values.shape[component_axis] != n_comp:
-                candidates = [
-                    ax
-                    for ax in range(1, values.ndim)
-                    if values.shape[ax] == n_comp
-                ]
-                if not candidates:
-                    new_samples[key] = values
-                    continue
-                component_axis = candidates[0]
 
             slicer = [slice(None)] * values.ndim
             slicer[component_axis] = (
@@ -235,13 +391,17 @@ class ComponentMixin:
             selected = values[tuple(slicer)]
 
             if renormalize and key == "mixing_weights" and not use_single:
-                selected = renormalize_mixing_weights(selected, axis=-1)
+                selected = renormalize_mixing_weights(
+                    selected, axis=component_axis
+                )
             elif (
                 renormalize
                 and key == "mixing_logits_unconstrained"
                 and not use_single
             ):
-                selected = renormalize_mixing_logits(selected, axis=-1)
+                selected = renormalize_mixing_logits(
+                    selected, axis=component_axis
+                )
 
             new_samples[key] = selected
 

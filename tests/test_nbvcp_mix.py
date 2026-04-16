@@ -1341,9 +1341,7 @@ def test_subset_with_posterior_samples(
                     nbvcp_mix_results.n_components,
                 )
             elif "p_unconstrained" in subset.posterior_samples:
-                assert subset.posterior_samples[
-                    "p_unconstrained"
-                ].shape == (
+                assert subset.posterior_samples["p_unconstrained"].shape == (
                     3,
                     nbvcp_mix_results.n_components,
                 )
@@ -1431,9 +1429,16 @@ def test_subset_with_posterior_samples(
                     2,
                 )
             if "p" in subset.posterior_samples:
-                assert subset.posterior_samples["p"].shape == (3,)
+                # Gene subsetting preserves mixture-component structure.
+                assert subset.posterior_samples["p"].shape == (
+                    3,
+                    nbvcp_mix_results.n_components,
+                )
             elif "p_unconstrained" in subset.posterior_samples:
-                assert subset.posterior_samples["p_unconstrained"].shape == (3,)
+                assert subset.posterior_samples["p_unconstrained"].shape == (
+                    3,
+                    nbvcp_mix_results.n_components,
+                )
             if "p_capture" in subset.posterior_samples:
                 assert subset.posterior_samples["p_capture"].shape == (
                     3,
@@ -1468,7 +1473,11 @@ def test_subset_with_posterior_samples(
                 nbvcp_mix_results.n_components,
                 2,
             )
-            assert subset.posterior_samples["p"].shape == (3,)
+            # Linked p remains component-specific in subsetted mixture results.
+            assert subset.posterior_samples["p"].shape == (
+                3,
+                nbvcp_mix_results.n_components,
+            )
             assert subset.posterior_samples["p_capture"].shape == (
                 3,
                 nbvcp_mix_results.n_cells,
@@ -1514,10 +1523,15 @@ def test_subset_with_posterior_samples(
                     2,
                 )
             if "phi" in subset.posterior_samples:
-                assert subset.posterior_samples["phi"].shape == (3,)
+                # Odds-ratio phi remains component-specific after gene subsetting.
+                assert subset.posterior_samples["phi"].shape == (
+                    3,
+                    nbvcp_mix_results.n_components,
+                )
             elif "phi_unconstrained" in subset.posterior_samples:
                 assert subset.posterior_samples["phi_unconstrained"].shape == (
                     3,
+                    nbvcp_mix_results.n_components,
                 )
             if "phi_capture" in subset.posterior_samples:
                 assert subset.posterior_samples["phi_capture"].shape == (
@@ -1553,7 +1567,10 @@ def test_subset_with_posterior_samples(
                 nbvcp_mix_results.n_components,
                 2,
             )
-            assert subset.posterior_samples["phi"].shape == (3,)
+            assert subset.posterior_samples["phi"].shape == (
+                3,
+                nbvcp_mix_results.n_components,
+            )
             assert subset.posterior_samples["phi_capture"].shape == (
                 3,
                 nbvcp_mix_results.n_cells,

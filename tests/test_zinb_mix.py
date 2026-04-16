@@ -184,7 +184,9 @@ def test_parameterization_config(
             gene_param = "mu"
         # Check that guide_families has LowRankGuide for the gene parameter
         assert zinb_mix_results.model_config.guide_families is not None
-        guide_family = zinb_mix_results.model_config.guide_families.get(gene_param)
+        guide_family = zinb_mix_results.model_config.guide_families.get(
+            gene_param
+        )
         assert guide_family is not None
         from scribe.models.components.guide_families import LowRankGuide
 
@@ -1182,9 +1184,7 @@ def test_subset_with_posterior_samples(
                     zinb_mix_results.n_components,
                 )
             elif "p_unconstrained" in subset.posterior_samples:
-                assert subset.posterior_samples[
-                    "p_unconstrained"
-                ].shape == (
+                assert subset.posterior_samples["p_unconstrained"].shape == (
                     3,
                     zinb_mix_results.n_components,
                 )
@@ -1273,9 +1273,16 @@ def test_subset_with_posterior_samples(
                     2,
                 )
             if "p" in subset.posterior_samples:
-                assert subset.posterior_samples["p"].shape == (3,)
+                # Gene subsetting preserves component-specific mixture params.
+                assert subset.posterior_samples["p"].shape == (
+                    3,
+                    zinb_mix_results.n_components,
+                )
             elif "p_unconstrained" in subset.posterior_samples:
-                assert subset.posterior_samples["p_unconstrained"].shape == (3,)
+                assert subset.posterior_samples["p_unconstrained"].shape == (
+                    3,
+                    zinb_mix_results.n_components,
+                )
             if "mixing_weights" in subset.posterior_samples:
                 assert subset.posterior_samples["mixing_weights"].shape == (
                     3,
@@ -1303,7 +1310,11 @@ def test_subset_with_posterior_samples(
                 zinb_mix_results.n_components,
                 2,
             )
-            assert subset.posterior_samples["p"].shape == (3,)
+            # Linked p remains component-specific in subsetted mixture results.
+            assert subset.posterior_samples["p"].shape == (
+                3,
+                zinb_mix_results.n_components,
+            )
             assert subset.posterior_samples["mixing_weights"].shape == (
                 3,
                 zinb_mix_results.n_components,
@@ -1357,10 +1368,15 @@ def test_subset_with_posterior_samples(
                     2,
                 )
             if "phi" in subset.posterior_samples:
-                assert subset.posterior_samples["phi"].shape == (3,)
+                # Odds-ratio phi remains component-specific after gene subsetting.
+                assert subset.posterior_samples["phi"].shape == (
+                    3,
+                    zinb_mix_results.n_components,
+                )
             elif "phi_unconstrained" in subset.posterior_samples:
                 assert subset.posterior_samples["phi_unconstrained"].shape == (
                     3,
+                    zinb_mix_results.n_components,
                 )
             if "mixing_weights" in subset.posterior_samples:
                 assert subset.posterior_samples["mixing_weights"].shape == (
@@ -1389,7 +1405,10 @@ def test_subset_with_posterior_samples(
                 zinb_mix_results.n_components,
                 2,
             )
-            assert subset.posterior_samples["phi"].shape == (3,)
+            assert subset.posterior_samples["phi"].shape == (
+                3,
+                zinb_mix_results.n_components,
+            )
             assert subset.posterior_samples["mixing_weights"].shape == (
                 3,
                 zinb_mix_results.n_components,
@@ -1523,9 +1542,7 @@ def test_low_rank_guide_params(
             # Standard parameterization uses r
             if zinb_mix_results.model_config.unconstrained:
                 # Unconstrained: look for r low-rank parameters (directly on unconstrained r)
-                assert (
-                    "r_loc" in params
-                ), "Low-rank guide should have r_loc"
+                assert "r_loc" in params, "Low-rank guide should have r_loc"
                 assert (
                     "r_W" in params
                 ), "Low-rank guide should have r_W (cov_factor)"
@@ -1547,9 +1564,7 @@ def test_low_rank_guide_params(
             # Linked and odds_ratio use mu
             if zinb_mix_results.model_config.unconstrained:
                 # Unconstrained: look for mu low-rank parameters (directly on unconstrained mu)
-                assert (
-                    "mu_loc" in params
-                ), "Low-rank guide should have mu_loc"
+                assert "mu_loc" in params, "Low-rank guide should have mu_loc"
                 assert (
                     "mu_W" in params
                 ), "Low-rank guide should have mu_W (cov_factor)"

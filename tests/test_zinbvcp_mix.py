@@ -107,11 +107,26 @@ def zinbvcp_mix_results(
 
     # Set up priors based on parameterization (using new key names without "_prior" suffix)
     if parameterization == "standard":
-        priors = {"r": (2, 0.1), "p": (1, 1), "gate": (1, 1), "p_capture": (1, 1)}
+        priors = {
+            "r": (2, 0.1),
+            "p": (1, 1),
+            "gate": (1, 1),
+            "p_capture": (1, 1),
+        }
     elif parameterization == "linked":
-        priors = {"p": (1, 1), "mu": (1, 1), "gate": (1, 1), "p_capture": (1, 1)}
+        priors = {
+            "p": (1, 1),
+            "mu": (1, 1),
+            "gate": (1, 1),
+            "p_capture": (1, 1),
+        }
     elif parameterization == "odds_ratio":
-        priors = {"phi": (3, 2), "mu": (1, 1), "gate": (1, 1), "phi_capture": (3, 2)}
+        priors = {
+            "phi": (3, 2),
+            "mu": (1, 1),
+            "gate": (1, 1),
+            "phi_capture": (3, 2),
+        }
     else:
         raise ValueError(f"Unknown parameterization: {parameterization}")
 
@@ -180,7 +195,9 @@ def test_parameterization_config(
             gene_param = "mu"
         # Check that guide_families has LowRankGuide for the gene parameter
         assert zinbvcp_mix_results.model_config.guide_families is not None
-        guide_family = zinbvcp_mix_results.model_config.guide_families.get(gene_param)
+        guide_family = zinbvcp_mix_results.model_config.guide_families.get(
+            gene_param
+        )
         assert guide_family is not None
         from scribe.models.components.guide_families import LowRankGuide
 
@@ -1582,9 +1599,7 @@ def test_subset_with_posterior_samples(
                     zinbvcp_mix_results.n_components,
                 )
             elif "p_unconstrained" in subset.posterior_samples:
-                assert subset.posterior_samples[
-                    "p_unconstrained"
-                ].shape == (
+                assert subset.posterior_samples["p_unconstrained"].shape == (
                     3,
                     zinbvcp_mix_results.n_components,
                 )
@@ -1694,9 +1709,16 @@ def test_subset_with_posterior_samples(
                     2,
                 )
             if "p" in subset.posterior_samples:
-                assert subset.posterior_samples["p"].shape == (3,)
+                # Gene subsetting preserves component-specific mixture params.
+                assert subset.posterior_samples["p"].shape == (
+                    3,
+                    zinbvcp_mix_results.n_components,
+                )
             elif "p_unconstrained" in subset.posterior_samples:
-                assert subset.posterior_samples["p_unconstrained"].shape == (3,)
+                assert subset.posterior_samples["p_unconstrained"].shape == (
+                    3,
+                    zinbvcp_mix_results.n_components,
+                )
             if "p_capture" in subset.posterior_samples:
                 assert subset.posterior_samples["p_capture"].shape == (
                     3,
@@ -1737,7 +1759,11 @@ def test_subset_with_posterior_samples(
                 zinbvcp_mix_results.n_components,
                 2,
             )
-            assert subset.posterior_samples["p"].shape == (3,)
+            # Linked p remains component-specific in subsetted mixture results.
+            assert subset.posterior_samples["p"].shape == (
+                3,
+                zinbvcp_mix_results.n_components,
+            )
             assert subset.posterior_samples["p_capture"].shape == (
                 3,
                 zinbvcp_mix_results.n_cells,
@@ -1803,10 +1829,15 @@ def test_subset_with_posterior_samples(
                     2,
                 )
             if "phi" in subset.posterior_samples:
-                assert subset.posterior_samples["phi"].shape == (3,)
+                # Odds-ratio phi remains component-specific after gene subsetting.
+                assert subset.posterior_samples["phi"].shape == (
+                    3,
+                    zinbvcp_mix_results.n_components,
+                )
             elif "phi_unconstrained" in subset.posterior_samples:
                 assert subset.posterior_samples["phi_unconstrained"].shape == (
                     3,
+                    zinbvcp_mix_results.n_components,
                 )
             if "phi_capture" in subset.posterior_samples:
                 assert subset.posterior_samples["phi_capture"].shape == (
@@ -1848,7 +1879,10 @@ def test_subset_with_posterior_samples(
                 zinbvcp_mix_results.n_components,
                 2,
             )
-            assert subset.posterior_samples["phi"].shape == (3,)
+            assert subset.posterior_samples["phi"].shape == (
+                3,
+                zinbvcp_mix_results.n_components,
+            )
             assert subset.posterior_samples["phi_capture"].shape == (
                 3,
                 zinbvcp_mix_results.n_cells,
@@ -1894,9 +1928,7 @@ def test_low_rank_guide_params(
             # Standard parameterization uses r
             if zinbvcp_mix_results.model_config.unconstrained:
                 # Unconstrained: look for r low-rank parameters (directly on unconstrained r)
-                assert (
-                    "r_loc" in params
-                ), "Low-rank guide should have r_loc"
+                assert "r_loc" in params, "Low-rank guide should have r_loc"
                 assert (
                     "r_W" in params
                 ), "Low-rank guide should have r_W (cov_factor)"
@@ -1918,9 +1950,7 @@ def test_low_rank_guide_params(
             # Linked and odds_ratio use mu
             if zinbvcp_mix_results.model_config.unconstrained:
                 # Unconstrained: look for mu low-rank parameters (directly on unconstrained mu)
-                assert (
-                    "mu_loc" in params
-                ), "Low-rank guide should have mu_loc"
+                assert "mu_loc" in params, "Low-rank guide should have mu_loc"
                 assert (
                     "mu_W" in params
                 ), "Low-rank guide should have mu_W (cov_factor)"
