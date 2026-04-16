@@ -155,6 +155,8 @@ def _build_catalog_with_experiments(experiments: list[ExperimentRun]) -> Experim
     # Bypass __init__ so tests stay unit-level and avoid disk traversal.
     catalog = ExperimentCatalog.__new__(ExperimentCatalog)
     catalog.experiments = experiments
+    # Keep default behavior aligned with constructor-initialized instances.
+    catalog.verbose = True
     return catalog
 
 
@@ -530,9 +532,10 @@ def test_catalog_load_data_forwards_preprocessing_flag():
     # Monkeypatch the bound method directly on this run instance.
     captured: dict = {}
 
-    def _mock_run_load_data(return_jax, preprocessing):
+    def _mock_run_load_data(return_jax, preprocessing, verbose):
         captured["return_jax"] = return_jax
         captured["preprocessing"] = preprocessing
+        captured["verbose"] = verbose
         return "sentinel"
 
     run.load_data = _mock_run_load_data  # type: ignore[method-assign]
@@ -544,3 +547,76 @@ def test_catalog_load_data_forwards_preprocessing_flag():
     assert result == "sentinel"
     assert captured["return_jax"] is False
     assert captured["preprocessing"] is False
+    assert captured["verbose"] is True
+
+
+def test_experiment_run_load_data_verbose_false_suppresses_output(
+    monkeypatch, capsys
+):
+    """Suppress ExperimentRun.load_data print output when verbose is False.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Fixture used to replace config loading and data loader calls.
+    capsys : pytest.CaptureFixture[str]
+        Captures stdout/stderr so the test can assert print behavior.
+
+    Returns
+    -------
+    None
+        Asserts that ``verbose=False`` produces no stdout while still loading.
+    """
+    # Keep this unit test in-memory by mocking config and loader dependencies.
+    run = ExperimentRun(path="/tmp/exp", metadata={}, verbose=True)
+    mock_config = {
+        "data": {
+            "path": "relative/data.h5ad",
+            "preprocessing": {"filter_cells": {"min_counts": 1000}},
+        }
+    }
+
+    monkeypatch.setattr(run, "load_config", lambda: mock_config)
+    monkeypatch.setattr(
+        "scribe.catalog._resolve_run_data_path",
+        lambda _run_path, p: f"/abs/{p}",
+    )
+    monkeypatch.setattr(
+        "scribe.data_loader.load_and_preprocess_anndata",
+        lambda _path, **_kwargs: "sentinel",
+    )
+
+    result = run.load_data(return_jax=True, preprocessing=True, verbose=False)
+
+    assert result == "sentinel"
+    captured = capsys.readouterr()
+    assert captured.out == ""
+
+
+def test_experiment_catalog_init_verbose_false_suppresses_summary_output(
+    monkeypatch, capsys, tmp_path
+):
+    """Suppress constructor summary output when catalog verbosity is disabled.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Fixture used to stub scanning for a focused constructor unit test.
+    capsys : pytest.CaptureFixture[str]
+        Captures stdout/stderr so the test can assert print behavior.
+    tmp_path : pathlib.Path
+        Temporary directory used as a valid catalog root.
+
+    Returns
+    -------
+    None
+        Asserts ``ExperimentCatalog(..., verbose=False)`` emits no summary line.
+    """
+    # Stub scanning to keep the test deterministic and filesystem-lightweight.
+    monkeypatch.setattr(ExperimentCatalog, "_scan_experiments", lambda self: [])
+
+    catalog = ExperimentCatalog(str(tmp_path), verbose=False)
+
+    assert catalog.verbose is False
+    captured = capsys.readouterr()
+    assert captured.out == ""

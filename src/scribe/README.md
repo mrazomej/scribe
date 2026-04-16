@@ -770,6 +770,11 @@ configured data pipeline by default (`preprocessing=True`), including
 such as `filter_cells`. Pass `preprocessing=False` to load directly from
 `data.path` without applying these transformations.
 
+Catalog and run logging is configurable through a `verbose` flag. Use
+`ExperimentCatalog(..., verbose=False)` to suppress scan/refresh/match output,
+and pass `verbose=False` to `ExperimentRun.load_data(...)` or
+`ExperimentCatalog.load_data(...)` for per-call silence in scripts/notebooks.
+
 ## Dependencies
 
 ### Core Dependencies
