@@ -159,6 +159,25 @@ comparison = scribe.viz.plot_mixture_ppc_comparison(
     results=results, counts=counts
 )
 
+# Differential-expression diagnostics support mode-aware plotting.
+# All DE helpers accept mode="clr" | "bio" | "all" (default: "clr").
+# These functions consume a differential-expression results object directly.
+#
+# Example DE object:
+# de = scribe.de.compare(results_A, results_B, method="empirical")
+#
+# Single-family plots (default CLR):
+mean_expr = scribe.viz.plot_de_mean_expression(de)
+volcano = scribe.viz.plot_de_volcano(de)
+evidence = scribe.viz.plot_de_evidence(de)
+ma = scribe.viz.plot_de_ma(de)
+#
+# Biological-only:
+volcano_bio = scribe.viz.plot_de_volcano(de, mode="bio")
+#
+# Combined multi-panel CLR+BIO:
+overview_all = scribe.viz.plot_de_evidence(de, mode="all")
+
 # For new plot functions, use the @plot_function decorator to
 # eliminate boilerplate. The decorator handles PlotContext creation,
 # filename construction, saving, and finalization automatically.
@@ -178,6 +197,27 @@ def plot_custom(results, counts, *, ctx, viz_cfg=None,
 # External callers see the standard API (figs_dir, cfg, etc.):
 result = plot_custom(results, counts, figs_dir="figs", cfg=cfg)
 ```
+
+## Differential Expression Plotting
+
+SCRIBE includes mode-aware differential-expression plotting helpers in
+`scribe.viz`:
+
+- `plot_de_mean_expression(...)`
+- `plot_de_volcano(...)`
+- `plot_de_evidence(...)`
+- `plot_de_ma(...)`
+
+All four functions accept:
+
+- a DE results object (for example from `scribe.de.compare(...)`)
+- `mode="clr" | "bio" | "all"` (default is `"clr"`)
+
+Mode behavior:
+
+- `clr`: render compositional CLR view
+- `bio`: render biological LFC view
+- `all`: render combined multi-panel CLR+BIO view
 
 ## Unified Inference CLI
 

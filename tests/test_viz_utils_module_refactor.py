@@ -34,6 +34,10 @@ from scribe.viz import (
     plot_capture_anchor,
     plot_p_capture_scaling,
     plot_correlation_heatmap,
+    plot_de_evidence,
+    plot_de_ma,
+    plot_de_mean_expression,
+    plot_de_volcano,
     plot_ecdf,
     plot_loss,
     plot_mixture_composition,
@@ -83,6 +87,70 @@ def _make_mcmc_results_for_viz():
     )
 
 
+class _FakeDEResultsForViz:
+    """Small DE-results stub that mimics ``to_dataframe`` behavior.
+
+    Notes
+    -----
+    The plotting functions under test only require dataframe exports,
+    so this stub focuses on reproducing the minimum interface needed
+    for mode coverage tests.
+    """
+
+    def __init__(self):
+        """Initialize deterministic CLR and biological columns."""
+        self._n_genes = 6
+        self._gene_names = [f"gene_{idx}" for idx in range(self._n_genes)]
+
+    def to_dataframe(self, **kwargs):
+        """Return CLR or biological dataframe slices by requested metrics.
+
+        Parameters
+        ----------
+        **kwargs : dict
+            Arguments forwarded from the DE plotting layer. The key
+            ``metrics`` controls which column families are emitted.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Mock DE summary table with prefixed CLR/BIO columns.
+        """
+        import pandas as pd
+
+        metrics = kwargs.get("metrics")
+        if isinstance(metrics, str):
+            metric_set = {metrics}
+        else:
+            metric_set = set(metrics or [])
+
+        delta = np.array([-1.5, -0.9, -0.2, 0.2, 0.8, 1.4], dtype=float)
+        lfsr = np.array([0.01, 0.03, 0.10, 0.12, 0.02, 0.005], dtype=float)
+        prob_effect = np.array([0.99, 0.97, 0.70, 0.68, 0.98, 0.995], dtype=float)
+        mu_a = np.array([2.0, 4.0, 10.0, 20.0, 40.0, 80.0], dtype=float)
+        mu_b = np.array([4.0, 5.0, 9.0, 18.0, 70.0, 90.0], dtype=float)
+
+        df = pd.DataFrame({"gene": self._gene_names})
+        if "clr" in metric_set:
+            df["clr_delta_mean"] = delta
+            df["clr_lfsr"] = lfsr
+            df["clr_lfsr_tau"] = lfsr
+            df["clr_prob_effect"] = prob_effect
+            df["clr_is_de"] = lfsr < 0.05
+            df["clr_mean_expression_A"] = mu_a
+            df["clr_mean_expression_B"] = mu_b
+        if "bio_lfc" in metric_set:
+            df["bio_lfc_mean"] = delta / 2.0
+            df["bio_lfc_lfsr"] = np.clip(lfsr * 1.1, 0.0, 1.0)
+            df["bio_lfc_lfsr_tau"] = np.clip(lfsr * 1.1, 0.0, 1.0)
+            df["bio_lfc_prob_effect"] = np.clip(prob_effect * 0.98, 0.0, 1.0)
+            df["bio_lfc_is_de"] = np.clip(lfsr * 1.1, 0.0, 1.0) < 0.05
+        if "bio_aux" in metric_set:
+            df["bio_mu_A_mean"] = mu_a * 1.2
+            df["bio_mu_B_mean"] = mu_b * 0.9
+        return df
+
+
 def test_package_root_exports_expected_symbols():
     """Ensure refactor preserves key package-root imports and callables."""
     assert callable(plot_loss)
@@ -100,10 +168,54 @@ def test_package_root_exports_expected_symbols():
     assert callable(plot_capture_anchor)
     assert callable(plot_p_capture_scaling)
     assert callable(plot_mu_pairwise)
+    assert callable(plot_de_mean_expression)
+    assert callable(plot_de_volcano)
+    assert callable(plot_de_evidence)
+    assert callable(plot_de_ma)
     assert callable(_get_config_values)
     assert callable(_get_predictive_samples_for_plot)
     assert callable(_get_training_diagnostic_payload)
     assert callable(_build_umap_cache_path)
+
+
+def test_de_plot_default_mode_is_clr_single_panel():
+    """DE diagnostic plots should default to CLR mode and one panel."""
+    fake_de = _FakeDEResultsForViz()
+
+    out_mean = plot_de_mean_expression(fake_de, save=False)
+    out_volcano = plot_de_volcano(fake_de, save=False)
+    out_ma = plot_de_ma(fake_de, save=False)
+
+    assert isinstance(out_mean, PlotResult)
+    assert isinstance(out_volcano, PlotResult)
+    assert isinstance(out_ma, PlotResult)
+    assert out_mean.n_panels == 1
+    assert out_volcano.n_panels == 1
+    assert out_ma.n_panels == 1
+
+
+def test_de_plot_mode_all_uses_multi_panel_layouts():
+    """Mode='all' should produce CLR+BIO combined multi-panel figures."""
+    fake_de = _FakeDEResultsForViz()
+
+    out_mean = plot_de_mean_expression(fake_de, mode="all", save=False)
+    out_volcano = plot_de_volcano(fake_de, mode="all", save=False)
+    out_evidence = plot_de_evidence(fake_de, mode="all", save=False)
+    out_ma = plot_de_ma(fake_de, mode="all", save=False)
+
+    assert out_mean.n_panels == 2
+    assert out_volcano.n_panels == 2
+    assert out_evidence.n_panels == 4
+    assert out_ma.n_panels == 2
+
+
+def test_de_plot_mode_validation_rejects_invalid_value():
+    """DE plotting helpers should raise for unsupported mode values."""
+    import pytest
+
+    fake_de = _FakeDEResultsForViz()
+    with pytest.raises(ValueError, match="Invalid mode"):
+        plot_de_volcano(fake_de, mode="not-a-mode", save=False)
 
 
 def test_get_config_values_uses_mcmc_run_size_token():
