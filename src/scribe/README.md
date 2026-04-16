@@ -773,6 +773,12 @@ For advanced selection logic, use the callable catalog filter API:
 `catalog.filter(lambda run: "annotation_key=cell-class" in run.path)`.
 This enables custom path/name filtering or arbitrary metadata predicates.
 
+For iterative querying workflows, both `find` and `filter` support
+`return_catalog=True`, which returns a new catalog view backed by the matching
+subset instead of a plain list. This allows chaining like
+`catalog.find(model="zinbvcp", return_catalog=True).filter(...)` and still
+supports `list()`, `find()`, and `filter()` on the subset.
+
 `ExperimentRun.load_data()` and `ExperimentCatalog.load_data()` replay the run's
 configured data pipeline by default (`preprocessing=True`), including
 `filter_obs`, `subset_column`/`subset_value`, and `data.preprocessing` steps
