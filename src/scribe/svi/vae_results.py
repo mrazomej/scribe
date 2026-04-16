@@ -18,7 +18,7 @@ scribe.svi._latent_dispatch : Dispatched encoder-dependent operations.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import jax.numpy as jnp
 import numpy as np
@@ -26,6 +26,9 @@ import pandas as pd
 from jax import random
 
 from ..models.config import ModelConfig
+
+if TYPE_CHECKING:
+    from ..core.axis_layout import AxisLayout
 from ..core.serialization import make_model_config_pickle_safe
 from ._core import CoreResultsMixin
 from ._gene_subsetting import GeneSubsettingMixin
@@ -97,6 +100,10 @@ class ScribeVAEResults(
     _latent_spec : Any
         Latent specification (e.g. ``GaussianLatentSpec``), with optional
         ``.flow`` attribute for flow-based priors.
+    param_layouts : Optional[Dict[str, AxisLayout]]
+        Semantic axis metadata for each parameter key.  Built at inference
+        time or lazily reconstructed from tensor shapes via the ``layouts``
+        property.
     latent_samples : Optional[jnp.ndarray]
         Cached latent samples (set by ``get_latent_samples`` or
         ``get_latent_samples_conditioned_on_data``).
@@ -145,6 +152,12 @@ class ScribeVAEResults(
     # Internal (from GeneSubsettingMixin)
     _original_n_genes: Optional[int] = None
     _gene_axis_by_key: Optional[Dict[str, int]] = None
+    _subset_gene_index: Optional[np.ndarray] = None
+
+    # Semantic axis metadata for each parameter key.  Built from
+    # ``param_specs`` at inference time or reconstructed lazily from
+    # tensor shapes.  ``None`` on old pickles or manual construction.
+    param_layouts: Optional[Dict[str, "AxisLayout"]] = None
 
     # --- VAE-specific fields ---
     _encoder: Any = None
@@ -217,6 +230,48 @@ class ScribeVAEResults(
         self.__dict__.update(state)
 
     # ------------------------------------------------------------------
+    # Semantic axis layouts (AxisLayout integration)
+    # ------------------------------------------------------------------
+
+    @property
+    def layouts(self) -> Dict[str, "AxisLayout"]:
+        """Semantic axis layouts for every parameter key.
+
+        Returns pre-built ``param_layouts`` when available. Otherwise
+        reconstructs lazily from tensor shapes using
+        ``derive_axis_membership`` and ``reconstruct_param_layouts``,
+        mirroring the ``ScribeSVIResults.layouts`` property.
+
+        Returns
+        -------
+        dict of str to AxisLayout
+        """
+        if self.param_layouts is not None:
+            return self.param_layouts
+
+        from ..core.axis_layout import (
+            reconstruct_param_layouts,
+            derive_axis_membership,
+        )
+
+        mc = self.model_config
+        _mp, _dp = derive_axis_membership(mc)
+
+        _layouts = reconstruct_param_layouts(
+            self.params,
+            n_genes=self.n_genes,
+            n_cells=self.n_cells,
+            n_components=getattr(mc, "n_components", None),
+            n_datasets=getattr(mc, "n_datasets", None),
+            mixture_params=_mp,
+            dataset_params=_dp,
+            gene_axis_by_key=getattr(self, "_gene_axis_by_key", None),
+            has_sample_dim=False,
+        )
+        object.__setattr__(self, "param_layouts", _layouts)
+        return _layouts
+
+    # ------------------------------------------------------------------
     # Gene subsetting override
     # ------------------------------------------------------------------
 
@@ -262,12 +317,26 @@ class ScribeVAEResults(
             MultiHeadDecoder,
         )
 
-        new_n_genes = int(index.sum() if hasattr(index, "sum") else len(index))
+        # Boolean masks: count True entries via .sum().
+        # Integer arrays: count elements via len() (summing the values would
+        # give the wrong answer, e.g. [0,1,2,3,4].sum() == 10, not 5).
+        if hasattr(index, "dtype") and np.dtype(index.dtype) == np.bool_:
+            new_n_genes = int(index.sum())
+        else:
+            new_n_genes = len(index)
 
         # Track original gene count for amortizer validation
         original_n_genes = (
             getattr(self, "_original_n_genes", None) or self.n_genes
         )
+
+        # Compose gene indices when re-subsetting so the final index is
+        # always relative to the original (full) gene list.
+        prev_gene_idx = getattr(self, "_subset_gene_index", None)
+        if prev_gene_idx is not None:
+            gene_index_abs = prev_gene_idx[index]
+        else:
+            gene_index_abs = np.asarray(index)
 
         # Subset decoder output heads and params
         decoder_params = new_params.get(_DECODER_KEY, {})
@@ -325,6 +394,8 @@ class ScribeVAEResults(
             n_components=self.n_components,
             _original_n_genes=original_n_genes,
             _gene_axis_by_key=getattr(self, "_gene_axis_by_key", None),
+            _subset_gene_index=gene_index_abs,
+            param_layouts=dict(self.layouts),
             _encoder=self._encoder,
             _decoder=new_decoder,
             _latent_spec=self._latent_spec,

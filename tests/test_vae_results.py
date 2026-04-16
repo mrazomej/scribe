@@ -660,3 +660,149 @@ class TestFlowPriorResults:
         samples = flow_vae_results.get_latent_samples(n_samples=20)
         assert samples.shape == (20, LATENT_DIM)
         assert jnp.all(jnp.isfinite(samples))
+
+
+# ==============================================================================
+# AxisLayout integration tests
+# ==============================================================================
+
+
+class TestVAEResultsAxisLayout:
+    """Tests for AxisLayout integration in ScribeVAEResults.
+
+    Verifies that the ``layouts`` property, ``param_layouts`` field, and
+    layout propagation through gene subsetting all work correctly.
+    """
+
+    def test_layouts_property_returns_dict(self, vae_results):
+        """The layouts property should return a non-empty dict.
+
+        Every key in the params dict should have a corresponding layout
+        entry (including VAE module subtrees).
+        """
+        from scribe.core.axis_layout import AxisLayout
+
+        layouts = vae_results.layouts
+        assert isinstance(layouts, dict)
+        assert len(layouts) > 0
+        for key, layout in layouts.items():
+            assert isinstance(layout, AxisLayout), (
+                f"Layout for '{key}' is {type(layout)}, expected AxisLayout"
+            )
+
+    def test_layouts_caches_into_param_layouts(self, vae_results):
+        """Accessing .layouts should cache the result in param_layouts.
+
+        After the first access, param_layouts should be set so
+        subsequent calls skip reconstruction.
+        """
+        assert vae_results.param_layouts is None
+        _ = vae_results.layouts
+        assert vae_results.param_layouts is not None
+        assert vae_results.param_layouts is vae_results.layouts
+
+    def test_layouts_idempotent(self, vae_results):
+        """Repeated .layouts access should return the same dict object."""
+        first = vae_results.layouts
+        second = vae_results.layouts
+        assert first is second
+
+    def test_prebuilt_param_layouts_skip_reconstruction(
+        self, trained_vae, model_config
+    ):
+        """When param_layouts is provided at construction, .layouts returns it
+        directly without lazy reconstruction.
+        """
+        from scribe.core.axis_layout import AxisLayout
+
+        params, losses, vgf = trained_vae
+        prebuilt = {"p_alpha": AxisLayout(axes=())}
+        results = ScribeVAEResults(
+            params=params,
+            loss_history=jnp.array(losses),
+            n_cells=N_CELLS,
+            n_genes=N_GENES,
+            model_type="vae_nb",
+            model_config=model_config,
+            prior_params={},
+            param_layouts=prebuilt,
+            _encoder=vgf.encoder,
+            _decoder=vgf.decoder,
+            _latent_spec=vgf.latent_spec,
+        )
+        assert results.layouts is prebuilt
+
+    def test_subset_propagates_param_layouts(self, vae_results):
+        """Gene subsetting should carry param_layouts to the child result.
+
+        The child should have param_layouts set (not None) so that lazy
+        reconstruction is never triggered on subsetted results.
+        """
+        subset = vae_results[0:5]
+        assert subset.param_layouts is not None
+        assert isinstance(subset.param_layouts, dict)
+        assert len(subset.param_layouts) > 0
+
+    def test_subset_propagates_subset_gene_index(self, vae_results):
+        """Gene subsetting should set _subset_gene_index on the child.
+
+        The index should match the genes selected by the slice.
+        """
+        subset = vae_results[0:5]
+        assert subset._subset_gene_index is not None
+        np.testing.assert_array_equal(
+            subset._subset_gene_index, np.arange(5)
+        )
+
+    def test_re_subset_composes_gene_index(self, vae_results):
+        """Re-subsetting should compose gene indices correctly.
+
+        If we subset [0:10] then [2:5], the final _subset_gene_index
+        should be [2, 3, 4] (relative to the original gene list).
+        """
+        first = vae_results[0:10]
+        second = first[2:5]
+        assert second._subset_gene_index is not None
+        np.testing.assert_array_equal(
+            second._subset_gene_index, np.array([2, 3, 4])
+        )
+        assert second.n_genes == 3
+
+    def test_boolean_mask_subset_has_layouts(self, vae_results):
+        """Boolean-mask subsetting should also propagate layouts."""
+        mask = jnp.zeros(N_GENES, dtype=bool).at[:7].set(True)
+        subset = vae_results[mask]
+        assert subset.param_layouts is not None
+        assert subset.n_genes == 7
+
+    def test_layouts_cover_scalar_param_keys(self, vae_results):
+        """Scalar parameters should have layouts with empty axes tuples.
+
+        p_alpha and p_beta are scalars in the NBDM test fixture; their
+        layouts should exist and have axes=().
+        """
+        from scribe.core.axis_layout import AxisLayout
+
+        layouts = vae_results.layouts
+        for key in ("p_alpha", "p_beta"):
+            if key in vae_results.params:
+                assert key in layouts, (
+                    f"Expected '{key}' to have a layout entry"
+                )
+                assert layouts[key].axes == (), (
+                    f"Scalar param '{key}' should have empty axes, "
+                    f"got {layouts[key].axes}"
+                )
+
+    def test_integer_array_subset_n_genes(self, vae_results):
+        """Integer-array indexing should count elements, not sum values.
+
+        Regression test for the n_genes calculation bug where
+        index.sum() was used instead of len(index) for integer arrays.
+        """
+        subset = vae_results[np.array([0, 5, 10, 15])]
+        assert subset.n_genes == 4
+        assert subset._subset_gene_index is not None
+        np.testing.assert_array_equal(
+            subset._subset_gene_index, np.array([0, 5, 10, 15])
+        )
