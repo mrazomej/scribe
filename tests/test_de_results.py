@@ -527,6 +527,8 @@ class TestEmpiricalToDataframe:
         r_B = jnp.abs(random.normal(random.PRNGKey(124), (200, D))) + 1.5
         p_A = 0.35 * jnp.ones((200, D))
         p_B = 0.45 * jnp.ones((200, D))
+        # Biological exports require persisted NB parameter samples, so this
+        # fixture opts in explicitly via compute_biological=True.
         return compare(
             r_A,
             r_B,
@@ -535,6 +537,7 @@ class TestEmpiricalToDataframe:
             rng_key=rng,
             p_samples_A=p_A,
             p_samples_B=p_B,
+            compute_biological=True,
         )
 
     def test_includes_mean_expression(self, emp_de):
@@ -667,6 +670,56 @@ class TestEmpiricalToDataframe:
         """Requesting biological families raises when biological data is absent."""
         with pytest.raises(RuntimeError, match="Biological-level DE requires"):
             emp_de.to_dataframe(metrics="bio_lfc")
+
+    def test_compute_biological_false_disables_bio_exports(self):
+        """Explicitly disabling biological storage should block bio exports."""
+        rng = random.PRNGKey(987)
+        D = 4
+        r_A = jnp.abs(random.normal(rng, (80, D))) + 1.0
+        r_B = jnp.abs(random.normal(random.PRNGKey(988), (80, D))) + 1.2
+        p_A = 0.30 * jnp.ones((80, D))
+        p_B = 0.40 * jnp.ones((80, D))
+
+        # p_samples are provided to support composition sampling/mu_map, but
+        # biological exports remain unavailable when compute_biological=False.
+        de = compare(
+            r_A,
+            r_B,
+            method="empirical",
+            gene_names=[f"g{i}" for i in range(D)],
+            rng_key=rng,
+            p_samples_A=p_A,
+            p_samples_B=p_B,
+            compute_biological=False,
+        )
+
+        with pytest.raises(RuntimeError, match="Biological-level DE requires"):
+            de.to_dataframe(metrics="bio_lfc")
+
+    def test_compute_biological_true_enables_bio_exports(self):
+        """Explicit biological storage should enable biological dataframe columns."""
+        rng = random.PRNGKey(989)
+        D = 4
+        r_A = jnp.abs(random.normal(rng, (80, D))) + 1.0
+        r_B = jnp.abs(random.normal(random.PRNGKey(990), (80, D))) + 1.2
+        p_A = 0.30 * jnp.ones((80, D))
+        p_B = 0.40 * jnp.ones((80, D))
+
+        # compute_biological=True persists NB parameter samples needed by
+        # biological_level()/to_dataframe biological metric families.
+        de = compare(
+            r_A,
+            r_B,
+            method="empirical",
+            gene_names=[f"g{i}" for i in range(D)],
+            rng_key=rng,
+            p_samples_A=p_A,
+            p_samples_B=p_B,
+            compute_biological=True,
+        )
+
+        df = de.to_dataframe(metrics="bio_lfc")
+        assert "bio_lfc_mean" in df.columns
 
 
 # --------------------------------------------------------------------------

@@ -166,6 +166,8 @@ def compare(
         EM convergence tolerance for shrinkage.
     compute_biological : bool, default=False
         Whether to retain samples needed for biological-level DE.
+        Set this to ``True`` before calling biological metric exports such as
+        ``to_dataframe(metrics="bio_lfc")``.
     mixture_weighted : bool, default=False
         If ``True``, perform mixture-weighted DE by averaging simplex
         samples across all mixture components using the posterior
@@ -211,6 +213,19 @@ def compare(
             "mixture_weighted=True is not compatible with "
             "method='parametric'.  The CLR of a mixture of Dirichlets "
             "is not Gaussian; use method='empirical' or 'shrinkage'."
+        )
+
+    # Guard against forcing parametric ALR models through empirical/shrinkage
+    # paths.  Those paths expect posterior concentration samples (arrays) or
+    # results objects, and otherwise can fail late with type-shape errors.
+    if method in {"empirical", "shrinkage"} and (
+        _is_parametric_model(model_A) or _is_parametric_model(model_B)
+    ):
+        raise ValueError(
+            f"method='{method}' expects posterior samples arrays or results "
+            "objects, not parametric model dicts/distributions with "
+            "'loc'/'cov_factor'/'cov_diag'. Use method='parametric' for "
+            "logistic-normal model comparisons."
         )
 
     # Track mixture weights extracted from results objects
@@ -482,7 +497,7 @@ def _compare_empirical(
     gene_mask: Optional[jnp.ndarray] = None,
     p_samples_A: Optional[jnp.ndarray] = None,
     p_samples_B: Optional[jnp.ndarray] = None,
-    compute_biological: bool = True,
+    compute_biological: bool = False,
     mu_samples_A: Optional[jnp.ndarray] = None,
     mu_samples_B: Optional[jnp.ndarray] = None,
     phi_samples_A: Optional[jnp.ndarray] = None,
@@ -701,7 +716,7 @@ def _compare_empirical_mixture(
     gene_mask: Optional[jnp.ndarray] = None,
     p_samples_A: Optional[jnp.ndarray] = None,
     p_samples_B: Optional[jnp.ndarray] = None,
-    compute_biological: bool = True,
+    compute_biological: bool = False,
     mu_samples_A: Optional[jnp.ndarray] = None,
     mu_samples_B: Optional[jnp.ndarray] = None,
     phi_samples_A: Optional[jnp.ndarray] = None,
@@ -913,7 +928,7 @@ def _compare_shrinkage(
     sigma_grid: Optional[jnp.ndarray] = None,
     shrinkage_max_iter: int = 200,
     shrinkage_tol: float = 1e-8,
-    compute_biological: bool = True,
+    compute_biological: bool = False,
     mu_samples_A: Optional[jnp.ndarray] = None,
     mu_samples_B: Optional[jnp.ndarray] = None,
     phi_samples_A: Optional[jnp.ndarray] = None,

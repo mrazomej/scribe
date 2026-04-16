@@ -638,6 +638,8 @@ class TestShrinkageMaskManagement:
         p_A = 0.3 * jnp.ones((200, D))
         p_B = 0.4 * jnp.ones((200, D))
         mask = jnp.array([True] * 5 + [False] * 3)
+        # Shrinkage bio export tests expect biological metrics to be available,
+        # so keep NB samples by opting in with compute_biological=True.
         return compare(
             r_A,
             r_B,
@@ -647,6 +649,7 @@ class TestShrinkageMaskManagement:
             gene_mask=mask,
             p_samples_A=p_A,
             p_samples_B=p_B,
+            compute_biological=True,
         )
 
     def test_shrink_transfers_simplex(self, empirical_de):

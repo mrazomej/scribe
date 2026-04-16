@@ -71,7 +71,7 @@ class EmpiricalResultsMixin:
             raise RuntimeError(
                 "Biological-level DE requires stored NB parameter samples "
                 "(r_samples_A/B, p_samples_A/B).  Re-run compare() with "
-                "compute_biological=True (the default)."
+                "compute_biological=True."
             )
 
         # Include requested families in cache identity to avoid serving stale
