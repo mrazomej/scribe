@@ -348,6 +348,29 @@ def test_find_supports_flattened_dot_key_filters():
     assert matches == [experiment]
 
 
+def test_find_return_catalog_supports_iterative_chaining():
+    """Return a chainable catalog view when requested from find.
+
+    Returns
+    -------
+    None
+        Asserts ``return_catalog=True`` yields a catalog that supports
+        follow-up ``find`` and ``list`` operations without rescanning.
+    """
+    # Use representative in-memory experiments for deterministic chaining tests.
+    experiments = _sample_experiments()
+    catalog = _build_catalog_with_experiments(experiments)
+
+    subset_catalog = catalog.find(model="zinbvcp", return_catalog=True)
+
+    assert isinstance(subset_catalog, ExperimentCatalog)
+    assert len(subset_catalog) == 1
+    assert subset_catalog.find(annotation_key="cell-class") == [experiments[0]]
+    listed = subset_catalog.list()
+    assert listed.shape[0] == 1
+    assert listed["path"].iloc[0] == experiments[0].path
+
+
 def test_filter_with_lambda_over_run_name():
     """Filter experiments with a lambda operating on run path names.
 
@@ -366,6 +389,32 @@ def test_filter_with_lambda_over_run_name():
     )
 
     assert filtered == [experiments[0]]
+
+
+def test_filter_return_catalog_supports_find_and_list():
+    """Return a chainable catalog view when requested from filter.
+
+    Returns
+    -------
+    None
+        Asserts ``return_catalog=True`` enables iterative filtering workflows
+        where the resulting object supports ``find`` and ``list``.
+    """
+    # Start from a small deterministic catalog so assertions stay explicit.
+    experiments = _sample_experiments()
+    catalog = _build_catalog_with_experiments(experiments)
+
+    filtered_catalog = catalog.filter(
+        lambda exp: exp.metadata["inference"]["batch_size"] >= 2048,
+        return_catalog=True,
+    )
+
+    assert isinstance(filtered_catalog, ExperimentCatalog)
+    assert len(filtered_catalog) == 1
+    assert filtered_catalog.find(model="zinbvcp") == [experiments[0]]
+    listed = filtered_catalog.list()
+    assert listed.shape[0] == 1
+    assert listed["path"].iloc[0] == experiments[0].path
 
 
 def test_filter_accepts_pre_filtered_subsets():

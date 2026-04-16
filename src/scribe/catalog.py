@@ -334,9 +334,7 @@ class ExperimentCatalog:
     )
     """
 
-    def __init__(
-        self, base_dir: Union[str, List[str]], verbose: bool = True
-    ):
+    def __init__(self, base_dir: Union[str, List[str]], verbose: bool = True):
         """
         Initialize the experiment catalog.
 
@@ -528,7 +526,9 @@ class ExperimentCatalog:
 
         # Normalize string values like "a,b,c" into ["a", "b", "c"].
         if isinstance(value, str) and "," in value:
-            return [piece.strip() for piece in value.split(",") if piece.strip()]
+            return [
+                piece.strip() for piece in value.split(",") if piece.strip()
+            ]
 
         return value
 
@@ -756,20 +756,53 @@ class ExperimentCatalog:
 
     # --------------------------------------------------------------------------
 
-    def find(self, **filters) -> List[ExperimentRun]:
+    def _catalog_from_experiments(
+        self, experiments: List[ExperimentRun]
+    ) -> "ExperimentCatalog":
+        """Create a lightweight catalog view from an in-memory subset.
+
+        Parameters
+        ----------
+        experiments : List[ExperimentRun]
+            Experiment runs that should back the returned catalog view.
+
+        Returns
+        -------
+        ExperimentCatalog
+            A catalog instance that reuses this catalog's context (base dirs and
+            verbosity) but is backed only by ``experiments``. No filesystem scan
+            is performed.
+        """
+        # Build a subset catalog without calling __init__ to avoid rescanning.
+        chained_catalog = ExperimentCatalog.__new__(ExperimentCatalog)
+        chained_catalog.base_dirs = list(getattr(self, "base_dirs", []))
+        chained_catalog.base_dir = getattr(self, "base_dir", None)
+        chained_catalog.verbose = getattr(self, "verbose", True)
+        chained_catalog.experiments = experiments
+        return chained_catalog
+
+    def find(
+        self, return_catalog: bool = False, **filters
+    ) -> Union[List[ExperimentRun], "ExperimentCatalog"]:
         """
         Find experiments matching the given filters.
 
         Parameters
         ----------
+        return_catalog : bool, default False
+            If ``True``, return a new ``ExperimentCatalog`` backed by the
+            matching experiments so subsequent ``find``, ``filter``, and
+            ``list`` operations can be chained directly. If ``False``, return a
+            list of ``ExperimentRun`` objects.
         **filters
             Key-value pairs to filter experiments by. Supports nested keys with
             dot notation (e.g., inference.batch_size=512)
 
         Returns
         -------
-        List[ExperimentRun]
-            List of matching experiment runs
+        List[ExperimentRun] or ExperimentCatalog
+            Matching experiments either as a list or as a chainable catalog
+            view, controlled by ``return_catalog``.
         """
         matching_experiments = []
 
@@ -808,6 +841,8 @@ class ExperimentCatalog:
             if matches:
                 matching_experiments.append(exp)
 
+        if return_catalog:
+            return self._catalog_from_experiments(matching_experiments)
         return matching_experiments
 
     # --------------------------------------------------------------------------
@@ -816,7 +851,8 @@ class ExperimentCatalog:
         self,
         predicate: Callable[[ExperimentRun], bool],
         experiments: Optional[List[ExperimentRun]] = None,
-    ) -> List[ExperimentRun]:
+        return_catalog: bool = False,
+    ) -> Union[List[ExperimentRun], "ExperimentCatalog"]:
         """Filter experiments using a user-provided callable predicate.
 
         Parameters
@@ -829,11 +865,16 @@ class ExperimentCatalog:
         experiments : Optional[List[ExperimentRun]], default None
             Optional source list to filter. If ``None``, filters the full
             catalog (``self.experiments``).
+        return_catalog : bool, default False
+            If ``True``, return a new ``ExperimentCatalog`` backed by filtered
+            experiments for method chaining. If ``False``, return a list of
+            ``ExperimentRun`` objects.
 
         Returns
         -------
-        List[ExperimentRun]
-            Experiments that satisfy the predicate.
+        List[ExperimentRun] or ExperimentCatalog
+            Experiments that satisfy the predicate, either as a list or as a
+            chainable catalog view controlled by ``return_catalog``.
 
         Raises
         ------
@@ -850,7 +891,12 @@ class ExperimentCatalog:
         source_experiments = (
             self.experiments if experiments is None else experiments
         )
-        return [exp for exp in source_experiments if predicate(exp)]
+        filtered_experiments = [
+            exp for exp in source_experiments if predicate(exp)
+        ]
+        if return_catalog:
+            return self._catalog_from_experiments(filtered_experiments)
+        return filtered_experiments
 
     # --------------------------------------------------------------------------
 
@@ -885,9 +931,7 @@ class ExperimentCatalog:
             )
         elif len(experiments) > 1:
             effective_verbose = (
-                getattr(self, "verbose", True)
-                if verbose is None
-                else verbose
+                getattr(self, "verbose", True) if verbose is None else verbose
             )
             if effective_verbose:
                 print(
@@ -943,9 +987,7 @@ class ExperimentCatalog:
         experiments = self.find(**filters)
 
         effective_verbose = (
-            getattr(self, "verbose", True)
-            if verbose is None
-            else verbose
+            getattr(self, "verbose", True) if verbose is None else verbose
         )
 
         if len(experiments) == 0:
