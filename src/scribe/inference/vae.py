@@ -5,8 +5,7 @@ This module handles the execution of VAE inference. VAE inference uses the
 SVI engine but with neural network components (encoder, decoder, flow prior),
 and creates VAE-specific results via the composable factory.
 
-Uses ScribeVAEResults.from_training() from scribe.svi.vae_results — no
-dependency on legacy scribe.vae modules.
+Uses ScribeVAEResults.from_training() from scribe.svi.vae_results.
 """
 
 from typing import TYPE_CHECKING, Optional

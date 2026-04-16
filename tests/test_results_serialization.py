@@ -18,11 +18,8 @@ from scribe.mc.results import ScribeModelComparisonResults
 from scribe.mcmc.results import ScribeMCMCResults
 from scribe.models.config import ModelConfigBuilder
 from scribe.svi.results import ScribeSVIResults
-from scribe.svi.vae_results import (
-    ScribeVAEResults as ScribeComposableVAEResults,
-)
+from scribe.svi.vae_results import ScribeVAEResults
 from scribe.svi._latent_space import _ENCODER_KEY, _DECODER_KEY
-from scribe.vae.results import ScribeVAEResults as ScribeLegacyVAEResults
 
 
 class _DummyLatentSpec:
@@ -30,15 +27,6 @@ class _DummyLatentSpec:
 
     def __init__(self):
         self.flow = None
-
-
-class _DummyLegacyVAEConfig:
-    """Minimal legacy VAE config shape expected by old results class."""
-
-    def __init__(self):
-        self.inference_method = "vae"
-        self.vae_prior_type = "standard"
-        self.n_components = None
 
 
 def _roundtrip(obj):
@@ -91,27 +79,10 @@ def test_mcmc_results_pickle_roundtrip_drops_unpicklable_mcmc():
     assert "r" in restored.samples
 
 
-def test_legacy_vae_results_pickle_roundtrip():
-    """Legacy VAE results class should be pickle-safe."""
-    results = ScribeLegacyVAEResults(
-        params={},
-        loss_history=jnp.array([4.0, 2.0]),
-        n_cells=2,
-        n_genes=3,
-        model_type="nbdm",
-        model_config=_DummyLegacyVAEConfig(),
-        prior_params={},
-        _vae_model=None,
-    )
-    restored = _roundtrip(results)
-    assert isinstance(restored, ScribeLegacyVAEResults)
-    assert restored.model_config.inference_method == "vae"
-
-
 def test_composable_vae_results_pickle_roundtrip():
     """Composable SVI VAE results should survive pickle roundtrip."""
     cfg = ModelConfigBuilder().for_model("nbdm").with_inference("vae").build()
-    results = ScribeComposableVAEResults(
+    results = ScribeVAEResults(
         params={_ENCODER_KEY: {}, _DECODER_KEY: {}},
         loss_history=jnp.array([4.0, 2.0]),
         n_cells=2,
@@ -124,7 +95,7 @@ def test_composable_vae_results_pickle_roundtrip():
         _latent_spec=_DummyLatentSpec(),
     )
     restored = _roundtrip(results)
-    assert isinstance(restored, ScribeComposableVAEResults)
+    assert isinstance(restored, ScribeVAEResults)
     assert _ENCODER_KEY in restored.params
     assert _DECODER_KEY in restored.params
 

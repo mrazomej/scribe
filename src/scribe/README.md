@@ -246,9 +246,9 @@ SCRIBE is organized into specialized modules that work together seamlessly:
 ```
 scribe/
 ├── models/          # Probabilistic model definitions
-├── svi/            # Stochastic Variational Inference
+├── svi/            # Stochastic Variational Inference (incl. VAE results)
 ├── mcmc/           # Markov Chain Monte Carlo  
-├── vae/            # Variational Autoencoder
+├── flows/          # Normalizing flow layers and distributions
 ├── core/           # Shared utilities and preprocessing
 ├── stats/          # Statistical analysis functions
 ├── viz/            # Visualization tools
@@ -380,20 +380,14 @@ mcmc_results = MCMCInferenceEngine.run_inference(
 mcmc_results.mcmc.print_summary()  # R-hat, ESS, etc.
 ```
 
-#### 🧠 **VAE** (`vae/`)
-Neural network-based variational inference with representation learning:
+#### 🧠 **VAE** (composable, via `models/components/` + `svi/`)
+Neural network-based variational inference with representation learning.
+VAE encoders, decoders, and latent specs are defined in
+`models/components/vae_components.py` and wired through `VAELatentGuide`
+in the guide builder. Results are handled by `svi/vae_results.py`.
 
 ```python
-from scribe.vae import VAEConfig, create_vae
-
-# Configure VAE architecture
-vae_config = VAEConfig(
-    input_dim=n_genes,
-    latent_dim=20,
-    hidden_dims=[1024, 512, 256],
-    activation="gelu",
-    variable_capture=True,  # For VCP (variable capture) models
-)
+from scribe.models.components import GaussianEncoder, MultiHeadDecoder
 
 # Latent space analysis
 embeddings = vae_results.get_latent_embeddings(data)
@@ -606,25 +600,22 @@ derivation.
 
 ### Advanced VAE Configuration
 
+VAE architecture is configured through `ModelConfigBuilder` and the
+composable factory. Encoder/decoder components live in
+`models/components/vae_components.py`; flow priors in `flows/`.
+
 ```python
-from scribe.vae import VAEConfig
+from scribe.models.config import ModelConfigBuilder
 
-# Configure sophisticated VAE architecture (see vae module for full API)
-vae_config = VAEConfig(
-    input_dim=n_genes,
-    latent_dim=25,
-    hidden_dims=[2048, 1024, 512, 256],
-    activation="gelu",
-    input_transformation="log1p",
-    variable_capture=True,
-    variable_capture_hidden_dims=[128, 64],
-    standardize_mean=gene_means,
-    standardize_std=gene_stds,
+# VAE inference uses the composable builder with VAELatentGuide.
+# See scribe.models.config and scribe.models.components for full setup.
+config = (
+    ModelConfigBuilder()
+    .for_model("nbdm")
+    .with_inference("vae")
+    .build()
 )
-
-# Use with run_scribe: pass model_config and inference_config;
-# VAE-specific options go in model_config.vae or via ModelConfigBuilder.
-# See scribe.vae and scribe.models.config for full VAE setup.
+results = scribe.fit(adata, model_config=config)
 ```
 
 ## Integration with Single-Cell Ecosystem
@@ -750,7 +741,7 @@ Each module has comprehensive documentation with detailed examples:
   architectures
 - **[SVI](svi/README.md)**: Stochastic variational inference implementation  
 - **[MCMC](mcmc/README.md)**: NUTS sampling and exact Bayesian inference
-- **[VAE](vae/README.md)**: Neural variational autoencoders and architectures
+- **[Flows](flows/)**: Normalizing flow layers and distributions
 - **[Core](core/README.md)**: Shared preprocessing and analysis utilities
 
 ### Catalog Filtering Note

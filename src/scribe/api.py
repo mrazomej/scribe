@@ -70,7 +70,7 @@ from .core.annotation_prior import (
 # Import result types for type annotations
 from .svi.results import ScribeSVIResults
 from .mcmc.results import ScribeMCMCResults
-from .vae.results import ScribeVAEResults
+from .svi.vae_results import ScribeVAEResults
 from .models.parameterizations import PARAMETERIZATIONS
 
 # Type alias for return type

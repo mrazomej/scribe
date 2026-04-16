@@ -125,7 +125,7 @@ from .api import fit
 # Import results classes
 from .mcmc import ScribeMCMCResults
 from .svi import ScribeSVIResults
-from .vae import ScribeVAEResults
+from .svi.vae_results import ScribeVAEResults
 from .de import ScribeDEResults, compare, compare_datasets
 from .mc import ScribeModelComparisonResults, compare_models
 from . import mc

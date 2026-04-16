@@ -54,7 +54,6 @@ Examples
 # Model registry
 from .model_registry import (
     get_model_and_guide,
-    get_model_and_guide_legacy,
     get_log_likelihood_fn,
 )
 
@@ -91,7 +90,6 @@ from .config import (
 __all__ = [
     # Registry functions
     "get_model_and_guide",
-    "get_model_and_guide_legacy",
     "get_log_likelihood_fn",
     # Config system
     "ModelConfigBuilder",

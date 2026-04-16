@@ -512,4 +512,4 @@ results = run_scribe(
 - `scribe.models.parameterizations`: Parameterization strategies
 - `scribe.svi`: SVI inference engine
 - `scribe.mcmc`: MCMC inference engine
-- `scribe.vae`: VAE inference engine
+- `scribe.inference.vae`: VAE inference execution (composable factory)
