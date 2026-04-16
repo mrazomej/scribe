@@ -124,6 +124,24 @@ class ExperimentRun:
 
     path: str
     metadata: Dict[str, Any]
+    verbose: bool = True
+
+    def _log(self, message: str) -> None:
+        """Conditionally emit console logging for run-level operations.
+
+        Parameters
+        ----------
+        message : str
+            Log message to write to stdout when verbosity is enabled.
+
+        Returns
+        -------
+        None
+            This helper only performs a side effect (optional printing).
+        """
+        # Keep run-level status messaging optional for notebook/script workflows.
+        if self.verbose:
+            print(message)
 
     # --------------------------------------------------------------------------
 
@@ -181,6 +199,7 @@ class ExperimentRun:
         self,
         return_jax: bool = False,
         preprocessing: bool = True,
+        verbose: Optional[bool] = None,
     ):
         """
         Load and preprocess the original data used in this experiment.
@@ -198,6 +217,10 @@ class ExperimentRun:
             config (``filter_obs``, ``subset_column``/``subset_value``, and
             ``preprocessing``). If False, load raw data from ``data.path``
             without applying those transformations.
+        verbose : Optional[bool], default None
+            Optional per-call override for console logging. If ``None``, uses
+            ``self.verbose``. Set to ``False`` to suppress status printouts for
+            this call.
 
         Returns
         -------
@@ -243,12 +266,19 @@ class ExperimentRun:
             subset_value = None
             filter_obs = None
 
-        print(f"Loading data for experiment: {self.path}")
-        print(f"Data path: {data_path}")
+        effective_verbose = self.verbose if verbose is None else verbose
+
+        # Use a local logger so one-off calls can override instance verbosity.
+        def _log(message: str) -> None:
+            if effective_verbose:
+                print(message)
+
+        _log(f"Loading data for experiment: {self.path}")
+        _log(f"Data path: {data_path}")
         if preprocessing and prep_config:
-            print(f"Preprocessing config: {prep_config}")
+            _log(f"Preprocessing config: {prep_config}")
         elif not preprocessing:
-            print("Skipping preprocessing and subset/filter pipeline.")
+            _log("Skipping preprocessing and subset/filter pipeline.")
 
         # Load and preprocess the data
         return load_and_preprocess_anndata(
@@ -304,7 +334,9 @@ class ExperimentCatalog:
     )
     """
 
-    def __init__(self, base_dir: Union[str, List[str]]):
+    def __init__(
+        self, base_dir: Union[str, List[str]], verbose: bool = True
+    ):
         """
         Initialize the experiment catalog.
 
@@ -316,7 +348,13 @@ class ExperimentCatalog:
             Each entry may include glob metacharacters (e.g., ``"outputs/run_*"``)
             which expand to all matching directories; see
             :func:`_expand_catalog_root_paths`.
+        verbose : bool, default True
+            Whether to emit informational catalog messages to stdout while
+            scanning, refreshing, and resolving ambiguous matches.
         """
+        # Track whether catalog and run operations should print status messages.
+        self.verbose = verbose
+
         # Convert single directory to list for uniform handling
         if isinstance(base_dir, str):
             base_dir = [base_dir]
@@ -337,12 +375,29 @@ class ExperimentCatalog:
 
         self.experiments = self._scan_experiments()
         dir_summary = ", ".join(str(d) for d in self.base_dirs)
-        print(
+        self._log(
             f"Found {len(self.experiments)} experiments across "
             f"{len(self.base_dirs)} "
             f"director{'y' if len(self.base_dirs) == 1 else 'ies'}: "
             f"{dir_summary}"
         )
+
+    def _log(self, message: str) -> None:
+        """Conditionally emit console logging for catalog-level operations.
+
+        Parameters
+        ----------
+        message : str
+            Log message to write to stdout when verbosity is enabled.
+
+        Returns
+        -------
+        None
+            This helper only performs a side effect (optional printing).
+        """
+        # ``getattr`` keeps unit tests that bypass __init__ backward compatible.
+        if getattr(self, "verbose", True):
+            print(message)
 
     # --------------------------------------------------------------------------
 
@@ -512,7 +567,7 @@ class ExperimentCatalog:
                         # Load metadata from config.yaml
                         config_path = root_path / ".hydra" / "config.yaml"
                         if not config_path.exists():
-                            print(
+                            self._log(
                                 f"Warning: No config.yaml found in "
                                 f"{root_path}/.hydra/"
                             )
@@ -525,19 +580,21 @@ class ExperimentCatalog:
                         # parameters
                         metadata = self._extract_config_metadata(config)
 
-                        print(
+                        self._log(
                             f"Found experiment: {root_path} with metadata keys: "
                             f"{list(metadata.keys())}"
                         )
 
                         temp_experiments.append(
                             ExperimentRun(
-                                path=str(root_path), metadata=metadata
+                                path=str(root_path),
+                                metadata=metadata,
+                                verbose=getattr(self, "verbose", True),
                             )
                         )
 
                     except Exception as e:
-                        print(
+                        self._log(
                             f"Warning: Could not process experiment directory "
                             f"{root_path}: {e}"
                         )
@@ -643,7 +700,7 @@ class ExperimentCatalog:
             )
 
         if params_to_remove:
-            print(
+            self._log(
                 f"Filtered out {len(params_to_remove)} parameters with all "
                 f"null values: {sorted(params_to_remove)}"
             )
@@ -797,12 +854,15 @@ class ExperimentCatalog:
 
     # --------------------------------------------------------------------------
 
-    def load_results(self, **filters):
+    def load_results(self, verbose: Optional[bool] = None, **filters):
         """
         Convenience method to load scribe results directly.
 
         Parameters
         ----------
+        verbose : Optional[bool], default None
+            Optional per-call override for console logging. If ``None``, uses
+            the catalog-wide ``self.verbose`` value.
         **filters
             Key-value pairs to filter experiments by
 
@@ -824,13 +884,19 @@ class ExperimentCatalog:
                 f"No experiments found matching filters: {filters}"
             )
         elif len(experiments) > 1:
-            print(
-                f"Warning: {len(experiments)} experiments match filters. "
-                "Using the first one."
+            effective_verbose = (
+                getattr(self, "verbose", True)
+                if verbose is None
+                else verbose
             )
-            print("Matching experiments:")
-            for exp in experiments:
-                print(f"  - {exp.path}")
+            if effective_verbose:
+                print(
+                    f"Warning: {len(experiments)} experiments match filters. "
+                    "Using the first one."
+                )
+                print("Matching experiments:")
+                for exp in experiments:
+                    print(f"  - {exp.path}")
 
         return experiments[0].load_results()
 
@@ -840,6 +906,7 @@ class ExperimentCatalog:
         self,
         return_jax: bool = True,
         preprocessing: bool = True,
+        verbose: Optional[bool] = None,
         **filters,
     ):
         """
@@ -854,6 +921,10 @@ class ExperimentCatalog:
             If True, replay the experiment's configured data pipeline when
             loading. If False, bypass preprocessing/subsetting and load raw data
             from the run's ``data.path``.
+        verbose : Optional[bool], default None
+            Optional per-call override for console logging. If ``None``, uses
+            the catalog-wide ``self.verbose`` value and passes that setting to
+            ``ExperimentRun.load_data``.
         **filters
             Key-value pairs to filter experiments by
 
@@ -871,30 +942,46 @@ class ExperimentCatalog:
         """
         experiments = self.find(**filters)
 
+        effective_verbose = (
+            getattr(self, "verbose", True)
+            if verbose is None
+            else verbose
+        )
+
         if len(experiments) == 0:
             raise ValueError(
                 f"No experiments found matching filters: {filters}"
             )
         elif len(experiments) > 1:
-            print(
-                f"Warning: {len(experiments)} experiments match filters. "
-                "Using the first one."
-            )
-            print("Matching experiments:")
-            for exp in experiments:
-                print(f"  - {exp.path}")
+            if effective_verbose:
+                print(
+                    f"Warning: {len(experiments)} experiments match filters. "
+                    "Using the first one."
+                )
+                print("Matching experiments:")
+                for exp in experiments:
+                    print(f"  - {exp.path}")
 
         return experiments[0].load_data(
             return_jax=return_jax,
             preprocessing=preprocessing,
+            verbose=effective_verbose,
         )
 
     # --------------------------------------------------------------------------
 
     def refresh(self):
-        """Refresh the catalog by re-scanning the base directory."""
+        """Refresh the catalog by re-scanning the base directory.
+
+        Returns
+        -------
+        None
+            Replaces ``self.experiments`` with the latest on-disk scan results.
+        """
         self.experiments = self._scan_experiments()
-        print(f"Refreshed catalog. Found {len(self.experiments)} experiments.")
+        self._log(
+            f"Refreshed catalog. Found {len(self.experiments)} experiments."
+        )
 
     # --------------------------------------------------------------------------
     # Make the catalog indexable and iterable
