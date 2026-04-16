@@ -55,6 +55,9 @@ def test_decoder_creation(decoder):
     assert hasattr(decoder, 'decode')
     assert hasattr(decoder, '__call__')
     assert hasattr(decoder, 'decoder_layers')
+    # Guard against Flax static-list regressions by requiring an NNX-aware
+    # container for module stacks.
+    assert isinstance(decoder.decoder_layers, nnx.List)
     assert hasattr(decoder, 'decoder_output')
     assert hasattr(decoder, 'config')
 

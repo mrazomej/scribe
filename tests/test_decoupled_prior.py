@@ -53,6 +53,9 @@ def test_decoupled_prior_creation(decoupled_prior):
     assert hasattr(decoupled_prior, 'inverse')
     assert hasattr(decoupled_prior, '__call__')
     assert hasattr(decoupled_prior, 'coupling_layers')
+    # Ensure coupling stacks are represented with NNX containers so Flax does
+    # not treat module lists as static attributes.
+    assert isinstance(decoupled_prior.coupling_layers, nnx.List)
     assert len(decoupled_prior.coupling_layers) == decoupled_prior.num_layers
 
 

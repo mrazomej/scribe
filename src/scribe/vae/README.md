@@ -23,6 +23,12 @@ The VAE module provides:
 The module implements several neural network architectures for variational
 inference:
 
+#### Flax NNX Container Compatibility
+
+- Layer stacks that hold `nnx.Module` instances use `nnx.List` containers.
+- This avoids Flax 0.12+ pytree errors where Python `list` attributes that
+  contain module data are treated as invalid static fields.
+
 #### Core Classes
 
 **VAEConfig**: Configuration dataclass for VAE hyperparameters

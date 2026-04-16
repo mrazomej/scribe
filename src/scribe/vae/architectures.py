@@ -237,8 +237,9 @@ class Encoder(nnx.Module):
     """Encoder for VAE architecture."""
 
     def __init__(self, config: VAEConfig, *, rngs: nnx.Rngs):
-        # Build encoder layers dynamically based on config
-        self.encoder_layers = []
+        # Store trainable layer stacks in nnx.List so Flax NNX tracks them as
+        # data-bearing containers instead of static Python lists.
+        self.encoder_layers = nnx.List()
 
         # First layer: input_dim -> first hidden_dim
         self.encoder_layers.append(
@@ -359,8 +360,9 @@ class CaptureEncoder(nnx.Module):
     """
 
     def __init__(self, config: VAEConfig, *, rngs: nnx.Rngs):
-        # Initialize encoder layers
-        self.hidden_layers = []
+        # Use nnx.List for module stacks to avoid static-list errors on Flax
+        # 0.12+ when containers hold nnx.Module instances.
+        self.hidden_layers = nnx.List()
 
         # First layer: input_dim -> first hidden_dim
         self.hidden_layers.append(
@@ -483,8 +485,9 @@ class EncoderVCP(Encoder):
         # Initialize a CaptureEncoder
         self.capture_encoder = CaptureEncoder(config, rngs=rngs)
 
-        # Build encoder layers dynamically based on config
-        self.encoder_layers = []
+        # Use nnx.List for trainable layer stacks so Flax treats this as model
+        # data, not a static Python container.
+        self.encoder_layers = nnx.List()
 
         # First layer: input_dim -> first hidden_dim
         self.encoder_layers.append(
@@ -595,8 +598,9 @@ class Decoder(nnx.Module):
     """Decoder for VAE architecture."""
 
     def __init__(self, config: VAEConfig, *, rngs: nnx.Rngs):
-        # Build decoder layers dynamically based on config (reverse of encoder)
-        self.decoder_layers = []
+        # Keep module containers in nnx.List to satisfy Flax NNX pytree checks
+        # for data-bearing attributes.
+        self.decoder_layers = nnx.List()
 
         # First layer: latent_dim -> last hidden_dim
         self.decoder_layers.append(
@@ -999,8 +1003,9 @@ class AffineCouplingLayer(nnx.Module):
         masked_dim = int(jnp.sum(self.mask))
         unmasked_dim = input_dim - masked_dim
 
-        # Create shared hidden layers
-        self.shared_layers = []
+        # Store shared submodules in nnx.List to avoid Flax static-list
+        # regressions when this module is materialized.
+        self.shared_layers = nnx.List()
 
         # Input layer: masked_dim -> first_hidden_dim
         self.shared_layers.append(
@@ -1369,8 +1374,9 @@ class DecoupledPrior(nnx.Module):
         self.activation = activation
         self.mask_type = mask_type
 
-        # Create stack of coupling layers
-        self.coupling_layers = []
+        # Use nnx.List because coupling layers are nested modules that must be
+        # tracked as pytree data.
+        self.coupling_layers = nnx.List()
 
         # Create a new coupling layer for each layer in the stack
         for i in range(num_layers):

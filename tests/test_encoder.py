@@ -55,6 +55,9 @@ def test_encoder_creation(encoder):
     assert hasattr(encoder, 'encode')
     assert hasattr(encoder, '__call__')
     assert hasattr(encoder, 'encoder_layers')
+    # Guard against Flax static-list regressions by requiring an NNX-aware
+    # container for module stacks.
+    assert isinstance(encoder.encoder_layers, nnx.List)
     assert hasattr(encoder, 'latent_mean')
     assert hasattr(encoder, 'latent_logvar')
     assert hasattr(encoder, 'config')
