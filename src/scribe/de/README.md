@@ -646,18 +646,18 @@ DE asks "how does state *k* change?" But biologists often need to ask "how does
 this cell type *as a whole* change?" — a population-level question that
 marginalises over the mixture.
 
-The mixture-weighted pipeline answers this by sampling compositions from *all*
-K components and forming a weighted average on the simplex using the posterior
+The mixture-weighted pipeline answers this by sampling compositions from *all* K
+components and forming a weighted average on the simplex using the posterior
 mixture weights, before applying the standard CLR pipeline.
 
 ### When to use mixture-weighted vs component-level DE
 
-| Scenario | Approach |
-|----------|----------|
-| Comparing biologically distinct states (e.g. quiescent vs activated) | `component_A=`, `component_B=` (per-component DE) |
-| Cell type modeled with K components for flexibility; want population-level change | `mixture_weighted=True` (mixture-weighted DE) |
-| Single-component model | Standard `compare()` (mixture weighting is a no-op) |
-
+**| Scenario                                                                          | Approach                                            |
+| --------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Comparing biologically distinct states (e.g. quiescent vs activated)              | `component_A=`, `component_B=` (per-component DE)   |
+| Cell type modeled with K components for flexibility; want population-level change | `mixture_weighted=True` (mixture-weighted DE)       |
+| Single-component model                                                            | Standard `compare()` (mixture weighting is a no-op) |
+**
 ### Quick start
 
 ```python
@@ -716,12 +716,12 @@ delta = compute_delta_from_simplex(simplex_A, simplex_B, gene_mask=mask)
 
 ### Interaction with other features
 
-- **Gene mask**: Applied to the weighted simplex *after* mixture averaging,
-  same as the standard pipeline.
+- **Gene mask**: Applied to the weighted simplex *after* mixture averaging, same
+  as the standard pipeline.
 - **Gene-specific `p`**: The Gamma-normalise path works with mixture weighting.
-  Pass `p_samples_A` / `p_samples_B` of shape `(N, K, D)`.
-- **Biological metrics**: `compute_biological=True` computes LFC, LVR, and
-  Gamma KL from weighted NB parameters (weighted `r`, `mu`, derived `p`).
+  Pass `p_samples_A` / `p_samples_B` of shape `(N, K, D)`****.
+- **Biological metrics**: `compute_biological=True` computes LFC, LVR, and Gamma
+  KL from weighted NB parameters (weighted `r`, `mu`, derived `p`).
 - **Paired mode**: `paired=True` preserves posterior correlation for
   within-model comparisons.
 - **Parametric path**: Not supported with mixture weighting. The CLR of a
@@ -731,17 +731,15 @@ delta = compute_delta_from_simplex(simplex_A, simplex_B, gene_mask=mask)
 
 - `mixture_weighted=True` and `component_A`/`component_B` are **mutually
   exclusive** — a `ValueError` is raised if both are specified.
-- Shape mismatches between `r_samples` and `mixing_weights` raise
-  `ValueError`.
+- Shape mismatches between `r_samples` and `mixing_weights` raise `ValueError`.
 - A `UserWarning` is emitted when `K=1` (mixture weighting is a no-op).
 
 ### Mathematical details
 
 See Section 3 of the paper (`paper/_diffexp03.qmd`, "Mixture-Weighted
-Differential Expression for Heterogeneous Cell Types") for the full
-derivation, including proofs of simplex constraint preservation, why
-r-parameter averaging is incorrect, and the extension to biological-level
-metrics.
+Differential Expression for Heterogeneous Cell Types") for the full derivation,
+including proofs of simplex constraint preservation, why r-parameter averaging
+is incorrect, and the extension to biological-level metrics.
 
 ## Biological-Level Differential Expression
 

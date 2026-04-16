@@ -340,6 +340,32 @@ class TestCompareDispatch:
         de = compare(model, model)
         assert isinstance(de, ScribeParametricDEResults)
 
+    def test_empirical_rejects_parametric_models(self):
+        """Forcing empirical mode with parametric models should fail fast."""
+        D_alr = 5
+        model = {
+            "loc": jnp.zeros(D_alr),
+            "cov_factor": jnp.eye(D_alr, 2),
+            "cov_diag": jnp.ones(D_alr),
+        }
+        with pytest.raises(
+            ValueError, match="expects posterior samples arrays or results"
+        ):
+            compare(model, model, method="empirical")
+
+    def test_shrinkage_rejects_parametric_models(self):
+        """Forcing shrinkage mode with parametric models should fail fast."""
+        D_alr = 5
+        model = {
+            "loc": jnp.zeros(D_alr),
+            "cov_factor": jnp.eye(D_alr, 2),
+            "cov_diag": jnp.ones(D_alr),
+        }
+        with pytest.raises(
+            ValueError, match="expects posterior samples arrays or results"
+        ):
+            compare(model, model, method="shrinkage")
+
     def test_invalid_method_raises(self):
         """Unknown method raises ValueError."""
         with pytest.raises(ValueError, match="Unknown method"):
