@@ -63,7 +63,9 @@ The primary interface for creating configurations. Provides fluent methods:
   `"prob"`, `"gate"`) or an explicit list
 - `.with_guide_families(guide_families)`: Set per-parameter guide families
 - `.with_joint_params(joint_params)`: Specify parameters to model jointly via
-  JointLowRankGuide. Accepts same shorthands as `mixture_params`
+  JointLowRankGuide. Accepts same shorthands as `mixture_params` and
+  auto-enables unconstrained mode because joint guides run in unconstrained
+  space
 - `.with_dense_params(dense_params)`: Subset of `joint_params` for full
   cross-gene coupling (structured joint guide); non-dense params stay gene-local.
   Accepts same shorthands
@@ -150,7 +152,8 @@ For SVI with joint modeling of gene-specific parameters via a low-rank
 factorization:
 
 - `joint_params: Optional[List[str]]` — List of gene-specific parameter names
-  to model jointly via JointLowRankGuide.
+  to model jointly via JointLowRankGuide. Setting this also enables
+  `unconstrained=True` automatically.
 - `dense_params: Optional[List[str]]` — Subset of `joint_params` that receive
   full cross-gene low-rank coupling. Non-dense params get per-gene regression
   on dense params plus per-gene Cholesky among themselves. When `None` or equal

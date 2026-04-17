@@ -325,8 +325,17 @@ class ModelConfigBuilder:
             Parameter names to group into a JointLowRankGuide
             (e.g. ``["mu", "phi"]`` or ``"biological"``).  Requires
             ``guide_rank`` to be set so the rank is known.
+
+        Notes
+        -----
+        Joint guides are constructed in unconstrained space. This method
+        therefore auto-enables unconstrained mode to keep the resulting config
+        consistent with joint-guide expectations.
         """
         self._joint_params = joint_params
+        # Joint guides depend on transform-aware unconstrained specs; promoting
+        # here keeps direct builder usage aligned with preset behavior.
+        self._unconstrained = True
         return self
 
     # --------------------------------------------------------------------------

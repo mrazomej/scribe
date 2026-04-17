@@ -117,6 +117,19 @@ class TestBuildConfigFromPreset:
         assert config.guide_families is not None
         assert config.guide_families.mu is not None
 
+    def test_joint_params_auto_enable_unconstrained(self):
+        """Test that joint_params automatically enables unconstrained mode."""
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="canonical",
+            inference_method="svi",
+            guide_rank=8,
+            joint_params="biological",
+        )
+
+        assert config.joint_params == ["p", "r"]
+        assert config.unconstrained is True
+
     def test_mixture_model(self):
         """Test mixture model configuration."""
         config = build_config_from_preset(

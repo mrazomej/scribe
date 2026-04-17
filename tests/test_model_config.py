@@ -129,6 +129,18 @@ class TestModelConfigBuilder:
         assert config.priors.mu == (1.0, 1.0)
         assert config.vae.latent_dim == 5
 
+    def test_with_joint_params_auto_enables_unconstrained(self):
+        """Test that with_joint_params automatically enables unconstrained mode."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_joint_params(["p", "r"])
+            .build()
+        )
+
+        assert config.joint_params == ["p", "r"]
+        assert config.unconstrained is True
+
     def test_immutability(self):
         """Test that configs are immutable."""
         config = (

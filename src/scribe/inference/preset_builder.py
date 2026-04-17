@@ -459,6 +459,12 @@ def build_config_from_preset(
     if unconstrained:
         builder.unconstrained()
 
+    # Joint guides operate in unconstrained space and expect transform-aware
+    # parameter specs. Promote to unconstrained automatically when users request
+    # joint_params so preset calls do not fail at guide dry-run time.
+    if joint_params is not None:
+        builder.unconstrained()
+
     # Gene-level priors
     if expression_prior != "none":
         builder._expression_prior = expression_prior

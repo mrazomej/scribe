@@ -194,7 +194,9 @@ Build ModelConfig from preset parameters.
   explicit list. When set, the listed parameters share a single
   JointLowRankGuide (with `guide_rank`) or JointNormalizingFlowGuide (with
   `guide_flow`) that captures cross-parameter correlations. Requires
-  `guide_rank` or `guide_flow` to be set.
+  `guide_rank` or `guide_flow` to be set. Automatically promotes the config
+  to `unconstrained=True` because joint guides are defined in unconstrained
+  space.
   Example: `["mu", "phi"]`
   - For horseshoe-enabled parameters (for example `gate` with
     `horseshoe_gate=True`), joint modeling is applied to the corresponding
