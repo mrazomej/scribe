@@ -231,6 +231,9 @@ results = ScribeSVIResults.from_anndata(
   (shared/exclusive structure) populated when fitting with
   `annotation_key + dataset_key`.
 - **`obs`**, **`var`**, **`uns`**: Metadata from AnnData objects
+- **Interactive repr**: `repr(results)` returns a compact one-line summary
+  (`model`, `n_cells`, `n_genes`, `n_steps`, and guide summary)
+  instead of expanding the full `params` tensor dictionary.
 
 #### Key Analysis Methods
 

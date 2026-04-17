@@ -16,7 +16,12 @@ from scribe.de.results import (
 )
 from scribe.mc.results import ScribeModelComparisonResults
 from scribe.mcmc.results import ScribeMCMCResults
-from scribe.models.config import ModelConfigBuilder
+from scribe.models.config import GuideFamilyConfig, ModelConfigBuilder
+from scribe.models.components import (
+    JointLowRankGuide,
+    LowRankGuide,
+    NormalizingFlowGuide,
+)
 from scribe.svi.results import ScribeSVIResults
 from scribe.svi.vae_results import ScribeVAEResults
 from scribe.svi._latent_space import _ENCODER_KEY, _DECODER_KEY
@@ -50,6 +55,134 @@ def test_svi_results_pickle_roundtrip():
     assert isinstance(restored, ScribeSVIResults)
     assert restored.n_cells == 4
     assert restored.model_type == "nbdm"
+
+
+def test_svi_results_repr_mean_field_summary():
+    """SVI repr should be compact and report mean-field defaults."""
+    cfg = ModelConfigBuilder().for_model("nbdm").with_inference("svi").build()
+    results = ScribeSVIResults(
+        params={"p_loc": jnp.array(0.0), "r_loc": jnp.ones(3)},
+        loss_history=jnp.array([5.0, 3.0, 2.0]),
+        n_cells=4,
+        n_genes=3,
+        model_type="nbdm",
+        model_config=cfg,
+        prior_params={},
+    )
+
+    rendered = repr(results)
+    assert rendered.startswith("ScribeSVIResults(")
+    assert "model='nbdm'" in rendered
+    assert "n_cells=4" in rendered
+    assert "n_genes=3" in rendered
+    assert "n_steps=3" in rendered
+    assert "guide='mean_field'" in rendered
+    assert "params={" not in rendered
+
+
+def test_svi_results_repr_low_rank_summary():
+    """SVI repr should summarize single-family low-rank guides."""
+    cfg = (
+        ModelConfigBuilder()
+        .for_model("nbdm")
+        .with_inference("svi")
+        .with_guide_families(GuideFamilyConfig(r=LowRankGuide(rank=16)))
+        .build()
+    )
+    results = ScribeSVIResults(
+        params={"r_loc": jnp.ones(3)},
+        loss_history=jnp.array([2.0, 1.0]),
+        n_cells=4,
+        n_genes=3,
+        model_type="nbdm",
+        model_config=cfg,
+        prior_params={},
+    )
+
+    rendered = repr(results)
+    assert "guide='low_rank(k=16) on r'" in rendered
+
+
+def test_svi_results_repr_joint_low_rank_summary():
+    """SVI repr should summarize joint low-rank guides with metadata."""
+    joint = JointLowRankGuide(rank=8, group="joint")
+    cfg = (
+        ModelConfigBuilder()
+        .for_model("nbdm")
+        .with_inference("svi")
+        .with_joint_params(["p", "r"])
+        .with_dense_params(["r"])
+        .with_guide_families(GuideFamilyConfig(p=joint, r=joint))
+        .build()
+    )
+    results = ScribeSVIResults(
+        params={"joint_p_loc": jnp.array(0.0)},
+        loss_history=jnp.array([2.0, 1.0]),
+        n_cells=4,
+        n_genes=3,
+        model_type="nbdm",
+        model_config=cfg,
+        prior_params={},
+    )
+
+    rendered = repr(results)
+    assert (
+        "guide='joint_low_rank(k=8,group=joint,params=p,r,dense=r)'" in rendered
+    )
+
+
+def test_svi_results_repr_mixed_summary():
+    """SVI repr should summarize mixed guide-family overrides."""
+    cfg = (
+        ModelConfigBuilder()
+        .for_model("nbdm")
+        .with_inference("svi")
+        .with_guide_families(
+            GuideFamilyConfig(
+                r=LowRankGuide(rank=12),
+                p=NormalizingFlowGuide(flow_type="maf", num_layers=2),
+            )
+        )
+        .build()
+    )
+    results = ScribeSVIResults(
+        params={"r_loc": jnp.ones(3)},
+        loss_history=jnp.array([2.0, 1.0]),
+        n_cells=4,
+        n_genes=3,
+        model_type="nbdm",
+        model_config=cfg,
+        prior_params={},
+    )
+
+    rendered = repr(results)
+    assert "guide='mixed[" in rendered
+    assert "p=flow(type=maf,layers=2)" in rendered
+    assert "r=low_rank(k=12)" in rendered
+
+
+def test_svi_results_repr_html_compact_summary():
+    """HTML repr should be compact and include the same summary fields."""
+    cfg = ModelConfigBuilder().for_model("nbdm").with_inference("svi").build()
+    results = ScribeSVIResults(
+        params={"p_loc": jnp.array(0.0), "r_loc": jnp.ones(3)},
+        loss_history=jnp.array([5.0, 3.0, 2.0]),
+        n_cells=4,
+        n_genes=3,
+        model_type="nbdm",
+        model_config=cfg,
+        prior_params={},
+    )
+
+    rendered = results._repr_html_()
+    assert rendered.startswith("<div>")
+    assert "ScribeSVIResults" in rendered
+    assert "<td>model</td><td>nbdm</td>" in rendered
+    assert "<td>n_cells</td><td>4</td>" in rendered
+    assert "<td>n_genes</td><td>3</td>" in rendered
+    assert "<td>n_steps</td><td>3</td>" in rendered
+    assert "<td>guide</td><td>mean_field</td>" in rendered
+    assert "params={" not in rendered
 
 
 def test_mcmc_results_pickle_roundtrip_drops_unpicklable_mcmc():

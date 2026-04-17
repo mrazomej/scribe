@@ -50,7 +50,7 @@ from ._normalization import NormalizationMixin
 # ------------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(repr=False)
 class ScribeSVIResults(
     CoreResultsMixin,
     ParameterExtractionMixin,
@@ -221,6 +221,209 @@ class ScribeSVIResults(
         )
         object.__setattr__(self, "param_layouts", _layouts)
         return _layouts
+
+    def __repr__(self) -> str:
+        """Return a concise interactive representation of SVI results.
+
+        The default dataclass repr recursively expands nested dictionaries and
+        arrays (notably ``params``), which can produce very large notebook
+        outputs. This compact repr exposes only high-value summary fields and a
+        guide-family synopsis.
+
+        Returns
+        -------
+        str
+            Compact summary string with model, dataset size, optimization step
+            count, and guide-family summary.
+        """
+        n_steps = (
+            int(len(self.loss_history))
+            if self.loss_history is not None
+            else 0
+        )
+        guide_summary = self._summarize_guide_families()
+        return (
+            "ScribeSVIResults("
+            f"model={self.model_type!r}, "
+            f"n_cells={self.n_cells}, "
+            f"n_genes={self.n_genes}, "
+            f"n_steps={n_steps}, "
+            f"guide={guide_summary!r})"
+        )
+
+    def _repr_html_(self) -> str:
+        """Return a compact HTML representation for notebook frontends.
+
+        Jupyter/marimo call ``_repr_html_`` when available. This method mirrors
+        the concise text ``__repr__`` fields so interactive environments avoid
+        rendering large nested dictionaries such as ``params``.
+
+        Returns
+        -------
+        str
+            HTML snippet containing a small summary table.
+        """
+        import html
+
+        n_steps = (
+            int(len(self.loss_history))
+            if self.loss_history is not None
+            else 0
+        )
+        guide_summary = self._summarize_guide_families()
+
+        # Escape dynamic content so repr output remains safe in HTML frontends.
+        model = html.escape(str(self.model_type))
+        guide = html.escape(guide_summary)
+        return (
+            "<div>"
+            "<strong>ScribeSVIResults</strong>"
+            "<table>"
+            f"<tr><td>model</td><td>{model}</td></tr>"
+            f"<tr><td>n_cells</td><td>{self.n_cells}</td></tr>"
+            f"<tr><td>n_genes</td><td>{self.n_genes}</td></tr>"
+            f"<tr><td>n_steps</td><td>{n_steps}</td></tr>"
+            f"<tr><td>guide</td><td>{guide}</td></tr>"
+            "</table>"
+            "</div>"
+        )
+
+    def _summarize_guide_families(self) -> str:
+        """Summarize configured guide families in a stable short string.
+
+        The summary is computed from ``model_config.guide_families`` and
+        optional ``joint_params``/``dense_params`` metadata. Unspecified
+        parameters in ``GuideFamilyConfig`` default to mean-field and are not
+        emitted as explicit overrides unless needed for clarity.
+
+        Returns
+        -------
+        str
+            Human-readable guide summary suitable for compact repr output.
+        """
+        guide_families = getattr(self.model_config, "guide_families", None)
+        if guide_families is None:
+            return "mean_field"
+
+        # Collect only explicit per-parameter guide overrides from config.
+        # Unset fields imply mean-field and are omitted from the override map.
+        param_names = (
+            "gate",
+            "mixing",
+            "mu",
+            "p",
+            "p_capture",
+            "phi",
+            "phi_capture",
+            "r",
+        )
+        overrides: Dict[str, str] = {}
+        for name in param_names:
+            family = getattr(guide_families, name, None)
+            if family is None:
+                continue
+            overrides[name] = self._format_guide_descriptor(family)
+
+        # Capture amortization can be configured via capture_amortization
+        # without an explicit AmortizedGuide object on p_capture/phi_capture.
+        # Surface this explicitly in the summary for transparency.
+        amort_config = getattr(guide_families, "capture_amortization", None)
+        if amort_config is not None and getattr(amort_config, "enabled", False):
+            param_value = getattr(
+                self.model_config.parameterization,
+                "value",
+                self.model_config.parameterization,
+            )
+            param_str = str(param_value).lower()
+            capture_name = (
+                "phi_capture"
+                if param_str in {"mean_odds", "odds_ratio"}
+                else "p_capture"
+            )
+            overrides[capture_name] = "amortized_capture"
+
+        if not overrides:
+            return "mean_field"
+
+        # If all explicit overrides share one descriptor, prefer
+        # "family on a,b,c" over a verbose mixed listing.
+        grouped: Dict[str, List[str]] = {}
+        for name, descriptor in overrides.items():
+            grouped.setdefault(descriptor, []).append(name)
+        for descriptor, names in grouped.items():
+            names.sort()
+
+        if len(grouped) == 1:
+            descriptor, names = next(iter(grouped.items()))
+            if descriptor.startswith("joint_"):
+                return descriptor
+            return f"{descriptor} on {','.join(names)}"
+
+        parts = [
+            f"{name}={overrides[name]}" for name in sorted(overrides.keys())
+        ]
+        return f"mixed[{', '.join(parts)}]"
+
+    def _format_guide_descriptor(self, family: Any) -> str:
+        """Format a single guide-family object as a short descriptor.
+
+        Parameters
+        ----------
+        family : Any
+            Guide-family marker instance from ``guide_families``.
+
+        Returns
+        -------
+        str
+            Short, deterministic descriptor.
+        """
+        from ..models.components.guide_families import (
+            AmortizedGuide,
+            JointLowRankGuide,
+            JointNormalizingFlowGuide,
+            LowRankGuide,
+            MeanFieldGuide,
+            NormalizingFlowGuide,
+            VAELatentGuide,
+        )
+
+        if isinstance(family, MeanFieldGuide):
+            return "mean_field"
+        if isinstance(family, LowRankGuide):
+            return f"low_rank(k={family.rank})"
+        if isinstance(family, JointLowRankGuide):
+            joint = sorted(getattr(self.model_config, "joint_params", []) or [])
+            dense = sorted(getattr(self.model_config, "dense_params", []) or [])
+            base = (
+                "joint_low_rank("
+                f"k={family.rank},group={family.group},"
+                f"params={','.join(joint)}"
+            )
+            if dense:
+                base += f",dense={','.join(dense)}"
+            return base + ")"
+        if isinstance(family, NormalizingFlowGuide):
+            return (
+                "flow("
+                f"type={family.flow_type},layers={family.num_layers}"
+                ")"
+            )
+        if isinstance(family, JointNormalizingFlowGuide):
+            joint = sorted(getattr(self.model_config, "joint_params", []) or [])
+            dense = sorted(getattr(self.model_config, "dense_params", []) or [])
+            base = (
+                "joint_flow("
+                f"type={family.flow_type},layers={family.num_layers},"
+                f"group={family.group},params={','.join(joint)}"
+            )
+            if dense:
+                base += f",dense={','.join(dense)}"
+            return base + ")"
+        if isinstance(family, AmortizedGuide):
+            return "amortized"
+        if isinstance(family, VAELatentGuide):
+            return "vae_latent"
+        return family.__class__.__name__
 
     @classmethod
     def concat(
