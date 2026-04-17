@@ -127,6 +127,8 @@ altos/**
 # Cache folder for docs
 CACHE/
 cache/
+# Marimo session cache (local editor state, may contain local paths)
+__marimo__/
 # Figures
 **/fig/**
 !code/fig/**
