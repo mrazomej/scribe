@@ -3798,6 +3798,45 @@ class TestConvertToNumpy:
         # Object state should remain unchanged because storage is disabled.
         assert result.posterior_samples is None
 
+    def test_get_posterior_matrix_gene_filter_and_metadata(self):
+        """Posterior matrix export should honor gene selectors and metadata.
+
+        This regression-style test validates the new export utility on a
+        multi-dataset SVI result, checking that:
+        - matrix/labels/metadata are aligned,
+        - deterministic ``mu`` columns are excluded by default, and
+        - gene coordinate filters are reflected in metadata.
+        """
+        adata = self._make_adata()
+        result = self._fit_small_model(adata)
+
+        matrix, columns, metadata = result.get_posterior_matrix(
+            n_samples=3,
+            batch_size=3,
+            rng_key=random.PRNGKey(0),
+            include=["r", "mu"],
+            coords={"genes": [0, 1]},
+            exclude_deterministic=True,
+            convert_to_numpy=True,
+            store_samples=False,
+        )
+
+        # Output triplet must be internally consistent.
+        assert matrix.shape[0] == 3
+        assert matrix.shape[1] == len(columns)
+        assert len(columns) == len(metadata)
+
+        # Deterministic mu should be excluded when requested.
+        assert all(item["parameter"] != "mu" for item in metadata)
+
+        # Any feature that carries a gene axis must obey the requested subset.
+        gene_ids = {
+            item["axis_indices"]["genes"]
+            for item in metadata
+            if "genes" in item["axis_indices"]
+        }
+        assert gene_ids.issubset({0, 1})
+
 
 # ==============================================================================
 # AxisLayout dataset-axis equivalence

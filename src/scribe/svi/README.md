@@ -368,6 +368,17 @@ posterior_samples = results.get_posterior_samples(
     convert_to_numpy=True,
 )
 
+# Export posterior draws as a flat matrix for plotting or ML workflows.
+# This avoids manual reshape/concatenate boilerplate.
+matrix, columns, metadata = results.get_posterior_matrix(
+    n_samples=2_000,
+    include=["p", "r"],
+    exclude_deterministic=True,
+    coords={"genes": ["MALAT1", "ACTB"]},
+    convert_to_numpy=True,
+    store_samples=False,
+)
+
 # Generate predictive samples (uses stored posterior samples)
 predictive_samples = results.get_predictive_samples()
 

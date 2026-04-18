@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from jax import random
 
 from ..sampling import generate_predictive_samples, sample_variational_posterior
+from ..core.posterior_matrix import posterior_samples_to_matrix
 
 if TYPE_CHECKING:
     from ..core.axis_layout import AxisLayout
@@ -326,6 +327,99 @@ class PosteriorPredictiveSamplingMixin:
         from ..models.config.parameter_mapping import rename_dict_keys
 
         return rename_dict_keys(posterior_samples, descriptive_names)
+
+    def get_posterior_matrix(
+        self,
+        *,
+        rng_key: Optional[random.PRNGKey] = None,
+        n_samples: int = 100,
+        batch_size: Optional[int] = None,
+        counts: Optional[jnp.ndarray] = None,
+        store_samples: bool = False,
+        convert_to_numpy: bool = True,
+        include: Optional[List[str]] = None,
+        exclude: Optional[List[str]] = None,
+        exclude_deterministic: bool = True,
+        coords: Optional[Dict[str, Any]] = None,
+        descriptive_names: bool = False,
+    ) -> tuple[np.ndarray, List[str], List[Dict[str, Any]]]:
+        """Export posterior draws as a 2D feature matrix.
+
+        This method wraps :meth:`get_posterior_samples` and flattens all
+        selected posterior tensors into a single matrix with one row per
+        posterior draw and one column per parameter element.
+
+        Parameters
+        ----------
+        rng_key : random.PRNGKey, optional
+            JAX random key forwarded to :meth:`get_posterior_samples`.
+        n_samples : int, default=100
+            Number of posterior draws to sample.
+        batch_size : int or None, optional
+            Optional batch size for memory-efficient posterior sampling.
+        counts : jnp.ndarray or None, optional
+            Observed count matrix required for amortized capture models.
+        store_samples : bool, default=False
+            Whether sampled posterior tensors should be stored on the
+            results object before matrix conversion.
+        convert_to_numpy : bool, default=True
+            Whether posterior tensors should be converted to NumPy arrays
+            before flattening. This is recommended for downstream plotting
+            and avoids keeping JAX device memory occupied.
+        include : list of str or None, optional
+            Optional whitelist of posterior parameter keys to export.
+        exclude : list of str or None, optional
+            Optional blacklist of posterior parameter keys to skip.
+        exclude_deterministic : bool, default=True
+            Whether to exclude common deterministic/derived keys for the
+            active parameterization (for example ``mu`` in canonical mode).
+        coords : dict or None, optional
+            Optional coordinate selectors by semantic axis name. Example:
+            ``{"genes": ["GeneA", "GeneB"]}``.
+        descriptive_names : bool, default=False
+            If True, use descriptive parameter names in both sampled keys
+            and exported column labels.
+
+        Returns
+        -------
+        matrix : numpy.ndarray
+            Posterior matrix with shape ``(n_draws, n_features)``.
+        columns : list of str
+            Feature label per matrix column.
+        metadata : list of dict
+            Per-feature metadata aligned with ``columns``. Each record
+            includes parameter key and axis index/value mappings.
+        """
+        # Reuse the canonical posterior-sampling path so this method inherits
+        # all existing validation (e.g., amortized-count checks).
+        posterior_samples = self.get_posterior_samples(
+            rng_key=rng_key,
+            n_samples=n_samples,
+            batch_size=batch_size,
+            store_samples=store_samples,
+            convert_to_numpy=convert_to_numpy,
+            counts=counts,
+            descriptive_names=descriptive_names,
+        )
+
+        # Use semantic layouts to flatten tensors in a robust, axis-aware way.
+        return posterior_samples_to_matrix(
+            posterior_samples=posterior_samples,
+            base_layouts=self.layouts,
+            model_config=self.model_config,
+            n_genes=self.n_genes,
+            n_cells=self.n_cells,
+            include=include,
+            exclude=exclude,
+            exclude_deterministic=exclude_deterministic,
+            coords=coords,
+            var_index=(
+                self.var.index
+                if getattr(self, "var", None) is not None
+                else None
+            ),
+            descriptive_names=descriptive_names,
+        )
 
     def _get_posterior_samples_standard(
         self,

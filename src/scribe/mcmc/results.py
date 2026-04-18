@@ -15,10 +15,12 @@ if TYPE_CHECKING:
     from ..core.axis_layout import AxisLayout
 
 import jax.numpy as jnp
+import numpy as np
 import pandas as pd
 
 from ..models.config import ModelConfig
 from ..core.serialization import make_model_config_pickle_safe
+from ..core.posterior_matrix import posterior_samples_to_matrix
 from ._dataset import _build_cell_specific_keys
 
 # Mixin imports
@@ -519,6 +521,87 @@ class ScribeMCMCResults(
         from ..models.config.parameter_mapping import rename_dict_keys
 
         return rename_dict_keys(self.samples, descriptive_names)
+
+    def get_posterior_matrix(
+        self,
+        *,
+        include: Optional[List[str]] = None,
+        exclude: Optional[List[str]] = None,
+        exclude_deterministic: bool = True,
+        coords: Optional[Dict[str, Any]] = None,
+        descriptive_names: bool = False,
+        **kwargs,
+    ) -> tuple[np.ndarray, List[str], List[Dict[str, Any]]]:
+        """Export posterior draws as a 2D feature matrix.
+
+        MCMC results already store posterior samples, so this method does
+        not re-sample. It flattens selected posterior tensors into a matrix
+        with one row per posterior draw and one column per parameter
+        element.
+
+        Parameters
+        ----------
+        include : list of str or None, optional
+            Optional whitelist of posterior parameter keys to export.
+        exclude : list of str or None, optional
+            Optional blacklist of posterior parameter keys to skip.
+        exclude_deterministic : bool, default=True
+            Whether to exclude common deterministic/derived keys for the
+            active parameterization.
+        coords : dict or None, optional
+            Optional coordinate selectors by semantic axis name. Example:
+            ``{"genes": ["GeneA", "GeneB"]}``.
+        descriptive_names : bool, default=False
+            If True, use descriptive parameter names in both sampled keys
+            and exported column labels.
+        **kwargs
+            Rejects SVI-only sampling arguments such as ``n_samples`` and
+            ``rng_key`` with a clear error message.
+
+        Returns
+        -------
+        matrix : numpy.ndarray
+            Posterior matrix with shape ``(n_draws, n_features)``.
+        columns : list of str
+            Feature label per matrix column.
+        metadata : list of dict
+            Per-feature metadata aligned with ``columns``.
+
+        Raises
+        ------
+        ValueError
+            If unsupported sampling kwargs are provided.
+        """
+        # MCMC samples are fixed after inference; reject SVI-style sampling
+        # kwargs so callers get an explicit and actionable error.
+        unsupported = sorted(kwargs)
+        if unsupported:
+            raise ValueError(
+                "get_posterior_matrix for MCMC does not accept sampling "
+                f"kwargs: {unsupported}. Use include/exclude/coords filters "
+                "instead."
+            )
+
+        posterior_samples = self.get_posterior_samples(
+            descriptive_names=descriptive_names
+        )
+        return posterior_samples_to_matrix(
+            posterior_samples=posterior_samples,
+            base_layouts=self.layouts,
+            model_config=self.model_config,
+            n_genes=self.n_genes,
+            n_cells=self.n_cells,
+            include=include,
+            exclude=exclude,
+            exclude_deterministic=exclude_deterministic,
+            coords=coords,
+            var_index=(
+                self.var.index
+                if getattr(self, "var", None) is not None
+                else None
+            ),
+            descriptive_names=descriptive_names,
+        )
 
     def get_samples(self, group_by_chain: bool = False) -> Dict:
         """Return samples with optional chain grouping.

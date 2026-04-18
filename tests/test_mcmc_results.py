@@ -215,6 +215,62 @@ class TestPosteriorAccess:
 
 
 # --------------------------------------------------------------------------
+# Posterior matrix export
+# --------------------------------------------------------------------------
+
+
+class TestPosteriorMatrixExport:
+    """Validate matrix export from MCMC posterior samples."""
+
+    def test_get_posterior_matrix_returns_aligned_outputs(
+        self, standard_results
+    ):
+        """Matrix export should align shape, labels, and metadata."""
+        matrix, columns, metadata = standard_results.get_posterior_matrix(
+            include=["p", "r"]
+        )
+
+        # Matrix rows correspond to posterior draws.
+        assert matrix.shape[0] == standard_results.samples["p"].shape[0]
+        # Column count must align with labels and metadata entries.
+        assert matrix.shape[1] == len(columns)
+        assert len(columns) == len(metadata)
+        # Exported metadata should preserve parameter provenance.
+        assert all("parameter" in item for item in metadata)
+        assert {"p", "r"}.issubset(
+            {item["parameter"] for item in metadata}
+        )
+
+    def test_get_posterior_matrix_respects_component_coords(
+        self, mixture_results
+    ):
+        """Component selectors should restrict exported component slices."""
+        matrix, columns, metadata = mixture_results.get_posterior_matrix(
+            include=["r"],
+            coords={"components": [1]},
+            exclude_deterministic=False,
+        )
+
+        assert matrix.shape[0] == mixture_results.samples["r"].shape[0]
+        assert matrix.shape[1] == len(columns) == len(metadata)
+
+        # Every exported feature should come from the selected component.
+        component_ids = {
+            entry["axis_indices"].get("components")
+            for entry in metadata
+            if "components" in entry["axis_indices"]
+        }
+        assert component_ids == {1}
+
+    def test_get_posterior_matrix_rejects_sampling_kwargs(
+        self, standard_results
+    ):
+        """SVI-only sampling kwargs should be rejected for MCMC export."""
+        with pytest.raises(ValueError, match="does not accept sampling kwargs"):
+            standard_results.get_posterior_matrix(n_samples=10)
+
+
+# --------------------------------------------------------------------------
 # Gene subsetting
 # --------------------------------------------------------------------------
 

@@ -151,6 +151,14 @@ results = ScribeMCMCResults.from_anndata(
 # sample via TransformedDistribution in constrained space)
 samples = results.get_posterior_samples()
 
+# Export posterior draws as a flat matrix for plotting/analysis.
+# MCMC uses stored samples directly (no n_samples/rng_key arguments).
+matrix, columns, metadata = results.get_posterior_matrix(
+    include=["p", "r"],
+    exclude_deterministic=True,
+    coords={"genes": [0, 1, 2]},
+)
+
 # Get samples grouped by chain for diagnostics
 chain_samples = results.get_samples(group_by_chain=True)
 
