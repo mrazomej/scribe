@@ -24,6 +24,11 @@ likelihoods/
 | `NBWithVCPLikelihood`        | vcp.py               | NB with Variable Capture Probability    |
 | `ZINBWithVCPLikelihood`      | vcp.py               | ZINB with Variable Capture Probability  |
 
+Each concrete class implements both the **generative** side (`sample()`,
+used by NumPyro during inference) and the **evaluation** side
+(`log_prob()`, used by post-inference log-likelihood APIs).  See
+[`log_prob` Contract](#log_prob-contract) below.
+
 ## Plate Modes
 
 All likelihoods handle three plate modes for different use cases:
@@ -33,6 +38,14 @@ All likelihoods handle three plate modes for different use cases:
 | Prior Predictive | `None`   | -            | Generate synthetic data |
 | Full Sampling    | provided | `None`       | MCMC, small datasets    |
 | Batch Sampling   | provided | specified    | SVI on large datasets   |
+
+> **Note.** `batch_size` here refers to the **training-time** mini-batch
+> used by NumPyro during SVI.  It is **not** an argument of the
+> post-inference log-likelihood evaluation path
+> (`results.log_likelihood()` / `results.log_likelihood_map()` /
+> `Likelihood.log_prob()`), which now operates on full arrays under
+> JIT/`vmap` and uses `sample_chunk_size` (SVI/MCMC) or `gene_batch_size`
+> (SVI MAP path) for memory management only.
 
 ## VAE Path
 
@@ -310,6 +323,84 @@ result = scribe.inference.run_scribe(
 )
 ```
 
+## `log_prob` Contract
+
+Every concrete `Likelihood` subclass exposes a `log_prob()` method that computes
+the post-inference log-likelihood of observed counts on full arrays, fully JIT-
+and `vmap`-compatible:
+
+```python
+def log_prob(
+    self,
+    counts: jnp.ndarray,
+    params: Dict[str, jnp.ndarray],
+    param_layouts: Mapping[str, AxisLayout],
+    *,
+    return_by: str = "cell",           # or "gene"
+    cells_axis: int = 0,
+    r_floor: float = 1e-6,
+    p_floor: float = 1e-6,
+    dtype: jnp.dtype = jnp.float32,
+    split_components: bool = False,    # mixture only
+    weights: Optional[jnp.ndarray] = None,
+    weight_type: Optional[str] = None, # 'multiplicative' | 'additive'
+) -> jnp.ndarray: ...
+```
+
+### Key properties
+
+- **Single-draw semantics.** `log_prob()` evaluates the likelihood for a single
+  posterior draw or MAP point estimate.  Callers (SVI / MCMC `LikelihoodMixin`)
+  vectorise over draws via `vmap` and optionally chunk via `sample_chunk_size`.
+  There is no `batch_size` argument — the old per-cell Python loop has been
+  fully replaced by JIT-ed full-array evaluation.
+- **Canonical parameter names.** `params` is keyed by canonical names (``"p"``,
+  ``"r"``, ``"gate"``, ``"p_capture"`` / ``"phi_capture"``,
+  ``"mixing_weights"``, ``"bnb_concentration"``) — the same names used in
+  posterior samples — **not** variational parameter names (``alpha_p``,
+  ``beta_p``, ...).  SVI callers rebuild canonical layouts via
+  ``_build_canonical_layouts(posterior_samples, ...)``.
+- **`param_layouts` is required.**  Every parameter present in ``params`` must
+  have a matching ``AxisLayout`` entry.  All layouts are expected to have
+  ``has_sample_dim=False`` (the sample/draw axis is stripped by the caller
+  before JIT compilation).  There is no ``ndim``/``shape`` fallback: missing
+  entries raise ``KeyError``, mismatched component axes raise ``ValueError``.
+- **`AxisLayout` drives all broadcasting.**  Inside `_log_prob.py`, helpers such
+  as `_prepare_non_mixture_tensor`, `_prepare_mixture_tensor`,
+  `_prepare_capture_*`, `_prepare_mixing_weights`, and `_maybe_prepare_bnb`
+  dispatch on layout semantics (`gene_axis`, `component_axis`, etc.) to expand
+  parameters to the canonical shapes expected by the NB/ZINB/VCP/BNB
+  distribution constructors, without inspecting tensor shapes.
+- **Numerical floors.** ``r`` and ``p`` are clamped to ``r_floor`` and
+  ``(p_floor, 1 - p_floor)`` respectively to prevent NaN from degenerate
+  variational samples (see [Numerical Stability
+  Guards](#numerical-stability-guards)).
+
+### How callers obtain layouts
+
+- **MCMC** ([`src/scribe/mcmc/_likelihood.py`](../../../mcmc/_likelihood.py)):
+  posterior samples are keyed by canonical names directly; layouts are stripped
+  to a single draw via ``{k: v.without_sample_dim() for k, v in
+  self.layouts.items()}``.
+- **SVI posterior**
+  ([`src/scribe/svi/_likelihood.py`](../../../svi/_likelihood.py)):
+  `self.layouts` is keyed by variational parameter names, so layouts for
+  `.log_prob()` are rebuilt from the canonical posterior samples via
+  ``_build_canonical_layouts(parameter_samples, ..., has_sample_dim=True)`` and
+  then stripped with ``.without_sample_dim()``.
+- **SVI MAP** (same file, `log_likelihood_map`): layouts are built directly from
+  MAP-estimate shapes via ``_build_canonical_layouts(map_estimates, ...,
+  has_sample_dim=False)``.
+
+### Mixture evaluation
+
+For mixture models (`is_mixture=True`), ``log_prob()`` broadcasts per-component
+parameters to a canonical ``(C, N, G)`` layout using ``_prepare_mixture_tensor``
+and then applies `mixing_weights` via `_mixture_reduce`, which honours both
+``"multiplicative"`` and ``"additive"`` weights.  When
+``split_components=True``, the per-component log-probabilities are returned
+without reducing over the component axis.
+
 ## Numerical Stability Guards
 
 All likelihood components clamp `p`, `phi`, and `p_hat` away from degenerate
@@ -320,14 +411,14 @@ during SVI training when hierarchical priors produce extreme samples (e.g.
 A module-level constant `_P_EPS = 1e-6` is defined in both
 `negative_binomial.py` and `vcp.py`.  The guards applied are:
 
-| Likelihood | Parameter | Guard |
-|------------|-----------|-------|
-| `NegativeBinomialLikelihood._build_dist` | `p` | `jnp.clip(p, _P_EPS, 1 - _P_EPS)` |
-| `NegativeBinomialLikelihood._build_annotated_mixture_dist` | `p` | `jnp.clip(p, _P_EPS, 1 - _P_EPS)` |
-| `NBWithVCPLikelihood` (mean-odds path) | `phi` | `jnp.maximum(phi, _P_EPS)` before `log(phi * ...)` |
-| `NBWithVCPLikelihood` (mean-prob path) | `p_hat` | `jnp.clip(p_hat, _P_EPS, 1 - _P_EPS)` |
-| `ZINBWithVCPLikelihood` (mean-odds path) | `phi` | `jnp.maximum(phi, _P_EPS)` before `log(phi * ...)` |
-| `ZINBWithVCPLikelihood` (mean-prob path) | `p_hat` | `jnp.clip(p_hat, _P_EPS, 1 - _P_EPS)` |
+| Likelihood                                                 | Parameter | Guard                                              |
+| ---------------------------------------------------------- | --------- | -------------------------------------------------- |
+| `NegativeBinomialLikelihood._build_dist`                   | `p`       | `jnp.clip(p, _P_EPS, 1 - _P_EPS)`                  |
+| `NegativeBinomialLikelihood._build_annotated_mixture_dist` | `p`       | `jnp.clip(p, _P_EPS, 1 - _P_EPS)`                  |
+| `NBWithVCPLikelihood` (mean-odds path)                     | `phi`     | `jnp.maximum(phi, _P_EPS)` before `log(phi * ...)` |
+| `NBWithVCPLikelihood` (mean-prob path)                     | `p_hat`   | `jnp.clip(p_hat, _P_EPS, 1 - _P_EPS)`              |
+| `ZINBWithVCPLikelihood` (mean-odds path)                   | `phi`     | `jnp.maximum(phi, _P_EPS)` before `log(phi * ...)` |
+| `ZINBWithVCPLikelihood` (mean-prob path)                   | `p_hat`   | `jnp.clip(p_hat, _P_EPS, 1 - _P_EPS)`              |
 
 This mirrors the `p_floor` parameter already used in the post-hoc
 log-likelihood evaluation functions in `log_likelihood.py`.  Tests for both
@@ -349,4 +440,12 @@ To add a new likelihood:
      into `param_values`, then build distribution
    - Annotation path: if `annotation_prior_logits is not None` and this is a
      mixture, use `compute_cell_specific_mixing` inside the cell plate
-4. Export the class in `__init__.py`
+4. Implement the `log_prob` method following the [`log_prob`
+   Contract](#log_prob-contract): accept the canonical
+   `counts`/`params`/`param_layouts` signature and delegate to the appropriate
+   ``*_log_prob`` helper in [`_log_prob.py`](_log_prob.py) (or reuse a parent
+   class's implementation when the only difference is the distribution
+   constructor, as the BNB family does via ``_build_ll_count_dist``).
+5. Add parity coverage in ``tests/test_log_likelihood_parity.py`` and update the
+   ``_LAYOUT_TABLE`` there so golden outputs are checked against your new class.
+6. Export the class in `__init__.py`

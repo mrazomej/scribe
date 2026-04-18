@@ -169,9 +169,27 @@ map_estimates = results.get_map()
 
 **Model Evaluation:**
 ```python
-# Compute log-likelihood using posterior samples
+# Compute log-likelihood using posterior samples.
+# Runs on full (n_samples, n_cells, n_genes) arrays under vmap.
 log_lik = results.log_likelihood(counts=count_data)
+
+# For large workloads, bound peak memory by chunking across
+# posterior draws.  This replaces the old ``batch_size`` argument
+# (removed; it implemented a Python-level per-cell loop).
+# ``sample_chunk_size=None`` keeps the single-vmap fast path.
+log_lik = results.log_likelihood(
+    counts=count_data,
+    sample_chunk_size=64,
+)
 ```
+
+> **Note.** MCMC `log_likelihood` internally rebuilds per-draw `AxisLayout`
+> metadata by stripping the sample axis off `self.layouts` (via
+> `.without_sample_dim()`) and forwards it to the concrete `Likelihood.log_prob`
+> method returned by `_log_likelihood_fn`.  The old `log_likelihood.py` module
+> and its `batch_size` argument have been removed; see
+> [`src/scribe/models/components/likelihoods/README.md`](../models/components/likelihoods/README.md#log_prob-contract)
+> for the full contract.
 
 **Predictive Analysis:**
 ```python

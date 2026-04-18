@@ -431,16 +431,25 @@ If you experience slowdowns during SVI:
 
 ### New Likelihood
 
-1. Subclass `Likelihood` in `likelihoods.py`
-2. Implement `sample()` handling all three plate modes
-3. Add to `__init__.py` exports
-4. Add tests in `tests/models/test_likelihoods.py`
+1. Subclass `Likelihood` in `likelihoods/base.py`
+2. Implement `sample()` handling all three plate modes (prior
+   predictive, full, batch)
+3. Implement `log_prob()` following the
+   [`log_prob` Contract](likelihoods/README.md#log_prob-contract)
+   — accept `counts`, `params`, and `param_layouts` (required
+   per-parameter `AxisLayout` metadata) and delegate to the
+   appropriate helper in `likelihoods/_log_prob.py`
+4. Add to `__init__.py` exports
+5. Add tests in `tests/test_log_likelihood_parity.py` (parity) and
+   the relevant model-family test file
 
 ```python
 class MyLikelihood(Likelihood):
     def sample(self, param_values, cell_specs, counts, dims, batch_size, model_config):
-        # Handle all three modes: counts=None, batch_size=None, batch_size set
-        ...
+        ...  # Handle counts=None / batch_size=None / batch_size set
+
+    def log_prob(self, counts, params, param_layouts, *, return_by="cell", ...):
+        return my_family_log_prob(counts, params, param_layouts, return_by=return_by, ...)
 ```
 
 ### New Guide Family

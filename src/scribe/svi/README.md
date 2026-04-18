@@ -596,11 +596,34 @@ inference. For non-amortized models (standard VCP models or non-VCP models), the
 **Model Evaluation:**
 ```python
 # Compute log-likelihood for model comparison
-log_lik = results.log_likelihood()
+log_lik = results.log_likelihood(counts=count_data)
 
-# MAP-based log-likelihood (faster)
-log_lik_map = results.log_likelihood_map()
+# For large (n_samples, n_cells, n_genes) workloads, bound peak memory
+# by chunking across posterior draws.  This replaces the old
+# ``batch_size`` argument (removed; it used a Python-level per-cell
+# loop).  ``sample_chunk_size=None`` keeps the fast
+# vmap-over-all-draws behaviour.
+log_lik = results.log_likelihood(
+    counts=count_data,
+    sample_chunk_size=64,
+)
+
+# MAP-based log-likelihood (faster; operates on full arrays)
+log_lik_map = results.log_likelihood_map(counts=count_data)
+
+# Optional memory management for the ``return_by='gene'`` path
+log_lik_map = results.log_likelihood_map(
+    counts=count_data,
+    return_by="gene",
+    gene_batch_size=512,
+)
 ```
+
+> **Note.** Both `log_likelihood` and `log_prob` (the underlying
+> `Likelihood.log_prob`) operate on full arrays under JIT/`vmap`. The old
+> `batch_size` argument — which implemented a Python-level per-cell loop — has
+> been removed; use `sample_chunk_size` (posterior draws) and `gene_batch_size`
+> (MAP gene-wise path) for memory management instead.
 
 **Mixture Model Analysis:**
 ```python
@@ -867,8 +890,24 @@ ScribeSVIResults
 7. **LikelihoodMixin** (`_likelihood.py`)
    - Purpose: Log-likelihood computations
    - Methods:
-     - `log_likelihood()`: Compute using posterior samples
-     - `log_likelihood_map()`: Compute using MAP estimates
+     - `log_likelihood()`: Compute using posterior samples.  Operates
+       on full ``(n_samples, n_cells, n_genes)`` arrays under
+       ``vmap``; memory is bounded by ``sample_chunk_size`` (number of
+       draws evaluated per chunk) rather than the removed
+       ``batch_size`` argument.
+     - `log_likelihood_map()`: Compute using MAP estimates.  Memory is
+       bounded by ``gene_batch_size`` for the ``return_by="gene"``
+       path; otherwise runs on the full array.
+   - AxisLayout integration: the mixin rebuilds canonical per-draw
+     ``AxisLayout`` metadata directly from ``posterior_samples`` (for
+     ``log_likelihood``) or from ``map_estimates`` (for
+     ``log_likelihood_map``) via ``_build_canonical_layouts``, then
+     forwards it to ``Likelihood.log_prob`` through the
+     ``likelihood_fn`` returned by ``_log_likelihood_fn``.  This is
+     necessary because ``self.layouts`` is keyed by *variational*
+     parameter names (``alpha_p``, ``beta_p``, ...) whereas
+     ``Likelihood.log_prob`` requires *canonical* names (``p``, ``r``,
+     ``gate``, ...).
    - Dependencies: Uses `ModelHelpersMixin`, `ParameterExtractionMixin`
 
 8. **MixtureAnalysisMixin** (`_mixture_analysis.py`)
