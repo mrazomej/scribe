@@ -21,7 +21,6 @@ class LikelihoodMixin:
     def log_likelihood(
         self,
         counts: jnp.ndarray,
-        batch_size: Optional[int] = None,
         sample_chunk_size: Optional[int] = None,
         return_by: str = "cell",
         cells_axis: int = 0,
@@ -37,8 +36,6 @@ class LikelihoodMixin:
         ----------
         counts : jnp.ndarray
             Count data to evaluate.
-        batch_size : int or None, default=None
-            Cell mini-batch size.
         sample_chunk_size : int or None, default=None
             Posterior-sample chunk size (bounds peak memory).
         return_by : {'cell', 'gene'}, default='cell'
@@ -69,7 +66,6 @@ class LikelihoodMixin:
             counts,
             self.model_type,
             n_components=self.n_components,
-            batch_size=batch_size,
             sample_chunk_size=sample_chunk_size,
             return_by=return_by,
             cells_axis=cells_axis,
@@ -91,7 +87,6 @@ def _compute_log_likelihood(
     counts: jnp.ndarray,
     model_type: str,
     n_components: Optional[int] = None,
-    batch_size: Optional[int] = None,
     sample_chunk_size: Optional[int] = None,
     return_by: str = "cell",
     cells_axis: int = 0,
@@ -115,7 +110,6 @@ def _compute_log_likelihood(
             return likelihood_fn(
                 counts,
                 params_i,
-                batch_size=batch_size,
                 cells_axis=cells_axis,
                 return_by=return_by,
                 split_components=split_components,
@@ -126,7 +120,6 @@ def _compute_log_likelihood(
         return likelihood_fn(
             counts,
             params_i,
-            batch_size=batch_size,
             cells_axis=cells_axis,
             return_by=return_by,
             dtype=dtype,

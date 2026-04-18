@@ -29,7 +29,6 @@ Examples
 ... )
 """
 
-import importlib
 from typing import TYPE_CHECKING, Callable, Optional, Tuple
 
 if TYPE_CHECKING:
@@ -41,53 +40,121 @@ if TYPE_CHECKING:
 # ------------------------------------------------------------------------------
 
 
-def get_log_likelihood_fn(model_type: str) -> Callable:
-    """
-    Get the log likelihood function for a specified model type.
+# Mapping from ``model_type`` strings to the concrete :class:`Likelihood`
+# subclass whose ``.log_prob`` implements its count distribution.  Mixture
+# variants (``<base>_mix``) share the same class as their non-mixture
+# counterpart because ``Likelihood.log_prob`` dispatches on the presence of
+# ``"mixing_weights"`` in the params dictionary.
+#
+# The BNB family is not represented here as a separate ``model_type`` string:
+# BNB is encoded via ``OverdispersionType.BNB`` in :class:`ModelConfig` and
+# activated at inference time by placing ``"bnb_concentration"`` into the
+# parameter dictionary.  The same NB ``.log_prob`` routes to a Beta-NB
+# distribution inside :func:`_build_ll_count_dist` whenever that key is
+# present, so the four entries below cover all eight NB / BNB variants.
+_LIKELIHOOD_CLASS_BY_MODEL_TYPE: dict = {}
 
-    The log likelihood functions are now located in the dedicated
-    log_likelihood module, which is parameterization-independent.
+
+def _likelihood_class_for(model_type: str):
+    """Look up the :class:`Likelihood` subclass for a ``model_type`` string.
+
+    The lookup table is populated lazily on first call to keep
+    ``scribe.models`` importable without eagerly loading every likelihood
+    module (which in turn imports numpyro distributions and JAX).
 
     Parameters
     ----------
     model_type : str
-        The type of model to retrieve the log likelihood function for.
-        Examples: "nbdm", "zinb_mix".
+        Model-type key (e.g. ``"nbdm"``, ``"zinb_mix"``).
 
     Returns
     -------
-    Callable
-        The log likelihood function for the specified model type.
+    type
+        Concrete :class:`Likelihood` subclass whose ``.log_prob`` method
+        evaluates the model's count distribution.
 
     Raises
     ------
     ValueError
-        If the log likelihood function cannot be found.
+        If ``model_type`` is not one of the known NB / BNB variants.
     """
-    try:
-        # Import the dedicated log_likelihood module
-        log_likelihood_module = importlib.import_module(
-            ".log_likelihood", "scribe.models"
+    global _LIKELIHOOD_CLASS_BY_MODEL_TYPE
+    if not _LIKELIHOOD_CLASS_BY_MODEL_TYPE:
+        # Defer the import until first use to avoid triggering the full
+        # likelihood dependency chain at package import time.
+        from .components.likelihoods import (
+            NegativeBinomialLikelihood,
+            ZeroInflatedNBLikelihood,
+            NBWithVCPLikelihood,
+            ZINBWithVCPLikelihood,
         )
-    except ImportError as e:
-        raise ImportError(f"Could not import log_likelihood module: {e}")
 
-    # Determine the function name based on convention
-    if model_type.endswith("_mix"):
-        base_type = model_type.replace("_mix", "")
-        ll_name = f"{base_type}_mixture_log_likelihood"
-    else:
-        ll_name = f"{model_type}_log_likelihood"
+        _LIKELIHOOD_CLASS_BY_MODEL_TYPE = {
+            # Non-mixture NB / BNB variants.
+            "nbdm": NegativeBinomialLikelihood,
+            "zinb": ZeroInflatedNBLikelihood,
+            "nbvcp": NBWithVCPLikelihood,
+            "zinbvcp": ZINBWithVCPLikelihood,
+            # Mixture variants reuse the same classes (dispatch on
+            # "mixing_weights" at log_prob time).
+            "nbdm_mix": NegativeBinomialLikelihood,
+            "zinb_mix": ZeroInflatedNBLikelihood,
+            "nbvcp_mix": NBWithVCPLikelihood,
+            "zinbvcp_mix": ZINBWithVCPLikelihood,
+        }
 
-    # Retrieve the function from the log_likelihood module
-    ll_fn = getattr(log_likelihood_module, ll_name, None)
-    if ll_fn is None:
+    cls = _LIKELIHOOD_CLASS_BY_MODEL_TYPE.get(model_type)
+    if cls is None:
         raise ValueError(
-            f"Log likelihood function '{ll_name}' not found in "
-            "'log_likelihood' module."
+            f"Unknown model_type {model_type!r}. "
+            f"Expected one of "
+            f"{sorted(_LIKELIHOOD_CLASS_BY_MODEL_TYPE.keys())}."
         )
+    return cls
 
-    return ll_fn
+
+def get_log_likelihood_fn(model_type: str) -> Callable:
+    """Return a bound ``Likelihood.log_prob`` method for *model_type*.
+
+    This is the public dispatch entry point used by the SVI and MCMC
+    post-inference likelihood mixins.  The returned callable has the
+    signature
+
+        fn(counts, params, *, return_by, cells_axis, split_components,
+           weights, weight_type, r_floor, p_floor, dtype)
+
+    matching :meth:`Likelihood.log_prob`.  The legacy ``batch_size``
+    argument is gone; use ``sample_chunk_size`` (for posterior-sample
+    memory) or ``gene_batch_size`` (for gene-wise evaluation) instead.
+
+    Parameters
+    ----------
+    model_type : str
+        Model-type key.  One of
+        ``{"nbdm", "zinb", "nbvcp", "zinbvcp",
+           "nbdm_mix", "zinb_mix", "nbvcp_mix", "zinbvcp_mix"}``.
+
+        BNB-family models reuse the NB-family ``model_type`` strings; the
+        BNB base distribution is activated by the presence of
+        ``"bnb_concentration"`` in the ``params`` dictionary passed to the
+        returned callable (see :func:`_build_ll_count_dist`).
+
+    Returns
+    -------
+    Callable
+        Bound ``.log_prob`` method of a fresh instance of the matching
+        :class:`Likelihood` subclass.
+
+    Raises
+    ------
+    ValueError
+        If ``model_type`` is not recognised.
+    """
+    # Instantiate once per call; the bound method keeps a reference to the
+    # instance alive.  ``Likelihood`` subclasses are effectively stateless
+    # so the instantiation cost is negligible.
+    likelihood_cls = _likelihood_class_for(model_type)
+    return likelihood_cls().log_prob
 
 
 # ------------------------------------------------------------------------------

@@ -19,7 +19,12 @@ from scribe.mc import (
 )
 from scribe.mc._stacking import stacking_summary
 from scribe.mc._gene_level import format_gene_comparison_table
-from scribe.models.log_likelihood import nbdm_log_likelihood
+from scribe.models.components.likelihoods import NegativeBinomialLikelihood
+
+# The legacy ``nbdm_log_likelihood`` free function has been replaced by
+# ``NegativeBinomialLikelihood.log_prob``.  Bind the method on a
+# module-level instance so the tests can keep using a plain callable.
+nbdm_log_likelihood = NegativeBinomialLikelihood().log_prob
 from scribe.mcmc._likelihood import _compute_log_likelihood
 from scribe.svi._likelihood import LikelihoodMixin
 

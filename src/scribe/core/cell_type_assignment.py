@@ -398,7 +398,6 @@ def compute_cell_type_probabilities(
     # Shape: (n_samples, n_cells, n_components)
     log_liks = results.log_likelihood(
         counts,
-        batch_size=batch_size,
         return_by="cell",
         cells_axis=cells_axis,
         ignore_nans=ignore_nans,
@@ -539,7 +538,6 @@ def compute_cell_type_probabilities_map(
     # Shape: (n_cells, n_components)
     log_liks = results.log_likelihood_map(
         counts,
-        batch_size=batch_size,
         cells_axis=cells_axis,
         return_by="cell",
         split_components=True,

@@ -16,8 +16,13 @@ from types import SimpleNamespace
 import jax.numpy as jnp
 import pytest
 
-from scribe.models.log_likelihood import nbvcp_mixture_log_likelihood
+from scribe.models.components.likelihoods import NBWithVCPLikelihood
 from scribe.svi._component import ComponentMixin
+
+# Post-hoc log-likelihood evaluation is now a method on the likelihood
+# class.  Bind a module-level ``NBWithVCPLikelihood`` instance to keep the
+# assertions expressed against a plain callable.
+_NBVCP_LIK = NBWithVCPLikelihood()
 
 
 class _DummyComponentResult(ComponentMixin):
@@ -151,8 +156,11 @@ def test_nbvcp_mixture_raises_clear_error_on_component_mismatch():
         "p_capture": jnp.full((8,), 0.9, dtype=jnp.float32),
     }
 
-    with pytest.raises(ValueError, match="nbvcp_mixture_log_likelihood"):
-        nbvcp_mixture_log_likelihood(_counts, _params, batch_size=4)
+    # Error message source changed: the new full-array delegate raises from
+    # ``nbvcp_log_prob`` (the mixture / non-mixture branches share a single
+    # helper now that ``.log_prob`` dispatches on ``mixing_weights``).
+    with pytest.raises(ValueError, match="nbvcp_log_prob"):
+        _NBVCP_LIK.log_prob(_counts, _params)
 
 
 def test_fallback_does_not_subset_shared_gene_specific_p_without_evidence():

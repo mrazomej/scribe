@@ -128,7 +128,6 @@ class MixtureAnalysisMixin:
         # Compute log-likelihoods for each component
         log_liks = self.log_likelihood(
             counts,
-            batch_size=batch_size,
             cells_axis=cells_axis,
             return_by=return_by,
             ignore_nans=ignore_nans,
@@ -226,7 +225,6 @@ class MixtureAnalysisMixin:
         # Compute log-likelihood at the MAP
         log_liks = self.log_likelihood_map(
             counts,
-            batch_size=batch_size,
             cells_axis=cells_axis,
             use_mean=use_mean,
             verbose=verbose,
@@ -339,7 +337,6 @@ class MixtureAnalysisMixin:
 
         log_liks = self.log_likelihood_map(
             counts,
-            batch_size=batch_size,
             return_by="cell",
             split_components=True,
             use_mean=use_mean,

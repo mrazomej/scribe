@@ -329,8 +329,10 @@ class TestBNBLogLikelihood:
         return counts
 
     def test_nbdm_with_bnb(self, _data):
-        """nbdm_log_likelihood accepts bnb_concentration without error."""
-        from scribe.models.log_likelihood import nbdm_log_likelihood
+        """NB ``.log_prob`` accepts ``bnb_concentration`` without error."""
+        from scribe.models.components.likelihoods import (
+            NegativeBinomialLikelihood,
+        )
 
         counts = _data
         params = {
@@ -338,23 +340,27 @@ class TestBNBLogLikelihood:
             "r": jnp.ones(5),
             "bnb_concentration": jnp.full(5, 0.1),
         }
-        ll = nbdm_log_likelihood(counts, params)
+        ll = NegativeBinomialLikelihood().log_prob(counts, params)
         assert ll.shape == (20,)
         assert jnp.all(jnp.isfinite(ll))
 
     def test_nbdm_without_bnb_unchanged(self, _data):
-        """nbdm_log_likelihood without bnb_concentration is same as before."""
-        from scribe.models.log_likelihood import nbdm_log_likelihood
+        """NB ``.log_prob`` without ``bnb_concentration`` is standard NB."""
+        from scribe.models.components.likelihoods import (
+            NegativeBinomialLikelihood,
+        )
 
         counts = _data
         params = {"p": jnp.array(0.5), "r": jnp.ones(5)}
-        ll = nbdm_log_likelihood(counts, params)
+        ll = NegativeBinomialLikelihood().log_prob(counts, params)
         assert ll.shape == (20,)
         assert jnp.all(jnp.isfinite(ll))
 
     def test_zinb_with_bnb(self, _data):
-        """zinb_log_likelihood accepts bnb_concentration without error."""
-        from scribe.models.log_likelihood import zinb_log_likelihood
+        """ZINB ``.log_prob`` accepts ``bnb_concentration`` without error."""
+        from scribe.models.components.likelihoods import (
+            ZeroInflatedNBLikelihood,
+        )
 
         counts = _data
         params = {
@@ -363,7 +369,7 @@ class TestBNBLogLikelihood:
             "gate": jnp.full(5, 0.1),
             "bnb_concentration": jnp.full(5, 0.1),
         }
-        ll = zinb_log_likelihood(counts, params)
+        ll = ZeroInflatedNBLikelihood().log_prob(counts, params)
         assert ll.shape == (20,)
         assert jnp.all(jnp.isfinite(ll))
 
@@ -765,7 +771,9 @@ class TestMixtureLLBroadcasting:
     def test_mixture_specific_bnb_in_ll(self):
         """bnb_concentration (K, G) is reshaped to (1, G, K) when r is
         (1, G, K)."""
-        from scribe.models.log_likelihood import _build_ll_count_dist
+        from scribe.models.components.likelihoods._log_prob import (
+            _build_ll_count_dist,
+        )
 
         K, G = 4, 20
         r = jnp.ones((1, G, K)) * 5.0
@@ -783,7 +791,9 @@ class TestMixtureLLBroadcasting:
     def test_shared_bnb_in_mixture_ll(self):
         """bnb_concentration (G,) is reshaped to (1, G, 1) when r is
         (1, G, K)."""
-        from scribe.models.log_likelihood import _build_ll_count_dist
+        from scribe.models.components.likelihoods._log_prob import (
+            _build_ll_count_dist,
+        )
 
         K, G = 4, 20
         r = jnp.ones((1, G, K)) * 5.0
@@ -798,7 +808,9 @@ class TestMixtureLLBroadcasting:
 
     def test_no_bnb_in_mixture_ll(self):
         """Without bnb_concentration, returns NB in mixture layout."""
-        from scribe.models.log_likelihood import _build_ll_count_dist
+        from scribe.models.components.likelihoods._log_prob import (
+            _build_ll_count_dist,
+        )
 
         K, G = 4, 20
         r = jnp.ones((1, G, K)) * 5.0
@@ -812,8 +824,8 @@ class TestMixtureLLBroadcasting:
         assert jnp.all(jnp.isfinite(lp))
 
     def test_nbvcp_mixture_ll_with_bnb(self):
-        """End-to-end: nbvcp_mixture_log_likelihood with mixture BNB."""
-        from scribe.models.log_likelihood import nbvcp_mixture_log_likelihood
+        """End-to-end: NBVCP mixture ``.log_prob`` with mixture BNB."""
+        from scribe.models.components.likelihoods import NBWithVCPLikelihood
 
         n_cells, n_genes, K = 50, 10, 3
         rng = np.random.default_rng(42)
@@ -828,17 +840,15 @@ class TestMixtureLLBroadcasting:
             "bnb_concentration": jnp.ones((K, n_genes)) * 0.3,
         }
 
+        nbvcp = NBWithVCPLikelihood()
+
         # Cell-level, split by component
-        ll_split = nbvcp_mixture_log_likelihood(
-            counts, params, split_components=True
-        )
+        ll_split = nbvcp.log_prob(counts, params, split_components=True)
         assert ll_split.shape == (n_cells, K)
         assert jnp.all(jnp.isfinite(ll_split))
 
         # Cell-level, mixed
-        ll_mixed = nbvcp_mixture_log_likelihood(
-            counts, params, split_components=False
-        )
+        ll_mixed = nbvcp.log_prob(counts, params, split_components=False)
         assert ll_mixed.shape == (n_cells,)
         assert jnp.all(jnp.isfinite(ll_mixed))
 

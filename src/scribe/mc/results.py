@@ -722,7 +722,8 @@ def _get_log_liks(
         before computing the IS weights.
     r_floor : float, default=1e-6
         Minimum dispersion value passed to the underlying log-likelihood
-        function.  See :func:`~scribe.models.log_likelihood.nbdm_log_likelihood`
+        method.  See
+        :meth:`~scribe.models.components.likelihoods.base.Likelihood.log_prob`
         for details.
     p_floor : float, default=1e-6
         Epsilon clipped away from 0 and 1 for the success probability ``p``
@@ -738,7 +739,6 @@ def _get_log_liks(
     """
     return results.log_likelihood(
         counts,
-        batch_size=batch_size,
         sample_chunk_size=sample_chunk_size,
         return_by=return_by,
         cells_axis=0,

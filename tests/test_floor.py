@@ -31,23 +31,62 @@ import numpy as np
 import numpyro.distributions as dist
 import pytest
 
-from scribe.models.log_likelihood import (
-    nbdm_log_likelihood,
-    nbvcp_log_likelihood,
-    zinb_log_likelihood,
-    zinbvcp_log_likelihood,
-    nbdm_mixture_log_likelihood,
-    zinb_mixture_log_likelihood,
-    nbvcp_mixture_log_likelihood,
-    zinbvcp_mixture_log_likelihood,
+from scribe.models.components.likelihoods import (
+    NegativeBinomialLikelihood,
+    ZeroInflatedNBLikelihood,
+    NBWithVCPLikelihood,
+    ZINBWithVCPLikelihood,
 )
 from scribe.models.components.likelihoods.negative_binomial import (
-    NegativeBinomialLikelihood,
     _P_EPS as NB_P_EPS,
 )
 from scribe.models.components.likelihoods.vcp import (
     _P_EPS as VCP_P_EPS,
 )
+
+
+# Post-hoc log-likelihood evaluation now lives on ``Likelihood.log_prob``
+# rather than as free functions.  Module-level singleton instances keep the
+# tests terse - ``Likelihood`` subclasses are effectively stateless so
+# reusing one instance is safe.
+_NBDM_LIK = NegativeBinomialLikelihood()
+_ZINB_LIK = ZeroInflatedNBLikelihood()
+_NBVCP_LIK = NBWithVCPLikelihood()
+_ZINBVCP_LIK = ZINBWithVCPLikelihood()
+
+
+def nbdm_log_likelihood(counts, params, **kwargs):
+    """Shim forwarding to :meth:`NegativeBinomialLikelihood.log_prob`.
+
+    The BNB dispatch inside ``_build_ll_count_dist`` picks the right base
+    distribution based on the presence of ``bnb_concentration`` in
+    ``params``; for the NBDM case (no such key) this is identical to the
+    legacy ``nbdm_log_likelihood`` free function.
+    """
+    return _NBDM_LIK.log_prob(counts, params, **kwargs)
+
+
+def nbvcp_log_likelihood(counts, params, **kwargs):
+    """Shim forwarding to :meth:`NBWithVCPLikelihood.log_prob`."""
+    return _NBVCP_LIK.log_prob(counts, params, **kwargs)
+
+
+def zinb_log_likelihood(counts, params, **kwargs):
+    """Shim forwarding to :meth:`ZeroInflatedNBLikelihood.log_prob`."""
+    return _ZINB_LIK.log_prob(counts, params, **kwargs)
+
+
+def zinbvcp_log_likelihood(counts, params, **kwargs):
+    """Shim forwarding to :meth:`ZINBWithVCPLikelihood.log_prob`."""
+    return _ZINBVCP_LIK.log_prob(counts, params, **kwargs)
+
+
+# Mixture variants dispatch on the presence of ``"mixing_weights"`` in the
+# params dict, so we reuse the non-mixture classes here as well.
+nbdm_mixture_log_likelihood = nbdm_log_likelihood
+zinb_mixture_log_likelihood = zinb_log_likelihood
+nbvcp_mixture_log_likelihood = nbvcp_log_likelihood
+zinbvcp_mixture_log_likelihood = zinbvcp_log_likelihood
 
 
 # ===========================================================================

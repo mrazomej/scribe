@@ -648,3 +648,78 @@ class Likelihood(ABC):
             5. Sample or condition on counts
         """
         pass
+
+    # ------------------------------------------------------------------
+    # Evaluation-side contract: log-probability of observed counts.
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    def log_prob(
+        self,
+        counts: jnp.ndarray,
+        params: Dict[str, jnp.ndarray],
+        *,
+        return_by: str = "cell",
+        cells_axis: int = 0,
+        r_floor: float = 1e-6,
+        p_floor: float = 1e-6,
+        dtype: jnp.dtype = jnp.float32,
+        split_components: bool = False,
+        weights: Optional[jnp.ndarray] = None,
+        weight_type: Optional[str] = None,
+    ) -> jnp.ndarray:
+        """Evaluate the log likelihood of ``counts`` under this likelihood.
+
+        This is the evaluation-side twin of :meth:`sample`.  Both methods
+        share the same distribution-building helpers so that model
+        construction and likelihood evaluation cannot drift apart.
+
+        Implementations must be fully JIT-friendly: a single full-array
+        ``dist.log_prob(counts)`` call followed by axis reduction, with no
+        Python-level batching loops, no ``.at[...].set(...)`` scatter
+        updates, and no intermediate ``jnp.zeros`` accumulator allocations.
+
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            Observed count matrix of shape ``(n_cells, n_genes)`` (or
+            transposed when ``cells_axis=1``).
+        params : Dict[str, jnp.ndarray]
+            Posterior parameter dictionary.  Required keys depend on the
+            concrete subclass; at minimum all variants consume ``"p"`` and
+            ``"r"``.  Zero-inflated variants require ``"gate"``, VCP
+            variants require ``"p_capture"`` or ``"phi_capture"``, and
+            mixture variants require ``"mixing_weights"``.  BNB variants
+            additionally consume ``"bnb_concentration"``.
+        return_by : {"cell", "gene"}, default="cell"
+            Reduction axis for the output array.
+        cells_axis : int, default=0
+            Axis along which cells are arranged in ``counts``.  ``0`` means
+            cells are rows; ``1`` means cells are columns.
+        r_floor, p_floor : float, default=1e-6
+            Numerical floors guarding against degenerate posterior samples.
+            Set to ``0.0`` to disable.
+        dtype : jnp.dtype, default=jnp.float32
+            Working dtype.
+        split_components : bool, default=False
+            Mixture-only: if ``True`` return per-component log probs
+            instead of marginalising.
+        weights : jnp.ndarray or None, default=None
+            Mixture-only: optional per-gene (``return_by="cell"``) or
+            per-cell (``return_by="gene"``) weighting array.
+        weight_type : {"multiplicative", "additive"} or None, default=None
+            Mixture-only: how ``weights`` combine with log probabilities.
+
+        Returns
+        -------
+        jnp.ndarray
+            Log-likelihood values.  Shape contract:
+
+            - Non-mixture ``return_by="cell"``:  ``(n_cells,)``.
+            - Non-mixture ``return_by="gene"``:  ``(n_genes,)``.
+            - Mixture with ``split_components=False``: same as above.
+            - Mixture with ``split_components=True``:
+              ``(n_cells, n_components)`` or
+              ``(n_genes, n_components)``.
+        """
+        pass

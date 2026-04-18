@@ -18,6 +18,7 @@ from .base import (
     compute_cell_specific_mixing,
     index_dataset_params,
 )
+from ._log_prob import zinb_log_prob
 from ....core.axis_layout import (
     AxisLayout,
     build_param_layouts,
@@ -478,3 +479,41 @@ class ZeroInflatedNBLikelihood(Likelihood):
                     self._build_dist(param_values, param_layouts=param_layouts),
                     obs=counts,
                 )
+
+    # ------------------------------------------------------------------
+    # Evaluation-side contract: delegates to the shared JIT-friendly
+    # full-array implementation in ``_log_prob``.  The same method is
+    # inherited unchanged by :class:`ZeroInflatedBNBLikelihood`.
+    # ------------------------------------------------------------------
+
+    def log_prob(
+        self,
+        counts: jnp.ndarray,
+        params: Dict[str, jnp.ndarray],
+        *,
+        return_by: str = "cell",
+        cells_axis: int = 0,
+        r_floor: float = 1e-6,
+        p_floor: float = 1e-6,
+        dtype: jnp.dtype = jnp.float32,
+        split_components: bool = False,
+        weights: Optional[jnp.ndarray] = None,
+        weight_type: Optional[str] = None,
+    ) -> jnp.ndarray:
+        """Log-likelihood of ``counts`` under ZINB / ZINB-mixture.
+
+        Thin wrapper around :func:`scribe.models.components.likelihoods._log_prob.zinb_log_prob`.
+        See :meth:`Likelihood.log_prob` for the full parameter contract.
+        """
+        return zinb_log_prob(
+            counts,
+            params,
+            return_by=return_by,
+            cells_axis=cells_axis,
+            r_floor=r_floor,
+            p_floor=p_floor,
+            dtype=dtype,
+            split_components=split_components,
+            weights=weights,
+            weight_type=weight_type,
+        )

@@ -21,7 +21,6 @@ class LikelihoodMixin:
     def log_likelihood(
         self,
         counts: jnp.ndarray,
-        batch_size: Optional[int] = None,
         sample_chunk_size: Optional[int] = None,
         return_by: str = "cell",
         cells_axis: int = 0,
@@ -40,8 +39,6 @@ class LikelihoodMixin:
         ----------
         counts : jnp.ndarray
             Count data to evaluate likelihood on
-        batch_size : Optional[int], default=None
-            Size of mini-batches used for likelihood computation
         sample_chunk_size : Optional[int], default=None
             Number of posterior samples evaluated per chunk. When set, the
             method computes log-likelihoods in sequential chunks to bound peak
@@ -139,7 +136,6 @@ class LikelihoodMixin:
                 return likelihood_fn(
                     counts,
                     params_i,
-                    batch_size=batch_size,
                     cells_axis=cells_axis,
                     return_by=return_by,
                     split_components=split_components,
@@ -153,7 +149,6 @@ class LikelihoodMixin:
                 return likelihood_fn(
                     counts,
                     params_i,
-                    batch_size=batch_size,
                     cells_axis=cells_axis,
                     return_by=return_by,
                     r_floor=r_floor,
@@ -201,7 +196,6 @@ class LikelihoodMixin:
     def log_likelihood_map(
         self,
         counts: jnp.ndarray,
-        batch_size: Optional[int] = None,
         gene_batch_size: Optional[int] = None,
         return_by: str = "cell",
         cells_axis: int = 0,
@@ -219,8 +213,6 @@ class LikelihoodMixin:
         ----------
         counts : jnp.ndarray
             Count data to evaluate likelihood on
-        batch_size : Optional[int], default=None
-            Size of mini-batches used for likelihood computation
         gene_batch_size : Optional[int], default=None
             Size of mini-batches used for likelihood computation by gene
         return_by : str, default='cell'
@@ -261,7 +253,6 @@ class LikelihoodMixin:
         if _n_ds is not None and _ds_idx is not None:
             return self._log_likelihood_map_per_dataset(
                 counts=counts,
-                batch_size=batch_size,
                 gene_batch_size=gene_batch_size,
                 return_by=return_by,
                 cells_axis=cells_axis,
@@ -329,7 +320,6 @@ class LikelihoodMixin:
                     batch_log_liks = likelihood_fn(
                         counts_subset,
                         subset_map_estimates,
-                        batch_size=batch_size,
                         cells_axis=cells_axis,
                         return_by=return_by,
                         split_components=split_components,
@@ -341,7 +331,6 @@ class LikelihoodMixin:
                     batch_log_liks = likelihood_fn(
                         counts_subset,
                         subset_map_estimates,
-                        batch_size=batch_size,
                         cells_axis=cells_axis,
                         return_by=return_by,
                         dtype=dtype,
@@ -359,7 +348,6 @@ class LikelihoodMixin:
                 log_liks = likelihood_fn(
                     counts,
                     map_estimates,
-                    batch_size=batch_size,
                     cells_axis=cells_axis,
                     return_by=return_by,
                     split_components=split_components,
@@ -372,7 +360,6 @@ class LikelihoodMixin:
                 log_liks = likelihood_fn(
                     counts,
                     map_estimates,
-                    batch_size=batch_size,
                     cells_axis=cells_axis,
                     return_by=return_by,
                     dtype=dtype,
@@ -387,7 +374,6 @@ class LikelihoodMixin:
     def _log_likelihood_map_per_dataset(
         self,
         counts: jnp.ndarray,
-        batch_size=None,
         gene_batch_size=None,
         return_by: str = "cell",
         cells_axis: int = 0,
@@ -410,8 +396,8 @@ class LikelihoodMixin:
         ----------
         counts : jnp.ndarray
             Full count matrix, shape ``(n_cells, n_genes)``.
-        batch_size, gene_batch_size, return_by, cells_axis,
-        split_components, weights, weight_type, use_mean, verbose, dtype
+        gene_batch_size, return_by, cells_axis, split_components,
+        weights, weight_type, use_mean, verbose, dtype
             Forwarded verbatim to the single-dataset
             ``log_likelihood_map`` call.
 
@@ -434,7 +420,6 @@ class LikelihoodMixin:
             ds0 = self.get_dataset(int(unique_ds[0]))
             first_liks = ds0.log_likelihood_map(
                 first_counts,
-                batch_size=batch_size,
                 gene_batch_size=gene_batch_size,
                 return_by=return_by,
                 cells_axis=cells_axis,
@@ -464,7 +449,6 @@ class LikelihoodMixin:
                 ds_results = self.get_dataset(int(d))
                 ds_liks = ds_results.log_likelihood_map(
                     ds_counts,
-                    batch_size=batch_size,
                     gene_batch_size=gene_batch_size,
                     return_by=return_by,
                     cells_axis=cells_axis,
@@ -492,7 +476,6 @@ class LikelihoodMixin:
                 ds_results = self.get_dataset(int(d))
                 ds_liks = ds_results.log_likelihood_map(
                     ds_counts,
-                    batch_size=batch_size,
                     gene_batch_size=gene_batch_size,
                     return_by=return_by,
                     cells_axis=cells_axis,
