@@ -3766,6 +3766,38 @@ class TestConvertToNumpy:
         log_r = np.log(r + 1e-8)
         assert log_r.shape == r.shape
 
+    def test_convert_to_numpy_without_storing(self):
+        """NumPy conversion should not force in-object sample storage.
+
+        This verifies the decoupled behavior where callers can request
+        ``numpy.ndarray`` return values while leaving ``result.posterior_samples``
+        unchanged by using ``store_samples=False, convert_to_numpy=True``.
+        """
+        adata = self._make_adata()
+        result = self._fit_small_model(adata)
+
+        # Ensure baseline object state is empty before the call.
+        assert result.posterior_samples is None
+
+        samples = result.get_posterior_samples(
+            n_samples=3,
+            store_samples=False,
+            convert_to_numpy=True,
+            rng_key=random.PRNGKey(0),
+        )
+
+        # Returned samples should be NumPy arrays.
+        for key, val in samples.items():
+            if not hasattr(val, "shape"):
+                continue
+            assert isinstance(val, np.ndarray), (
+                f"samples['{key}'] is {type(val).__name__}, "
+                f"expected numpy.ndarray"
+            )
+
+        # Object state should remain unchanged because storage is disabled.
+        assert result.posterior_samples is None
+
 
 # ==============================================================================
 # AxisLayout dataset-axis equivalence

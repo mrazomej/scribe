@@ -247,13 +247,16 @@ class PosteriorPredictiveSamplingMixin:
             Whether to store samples in self.posterior_samples (default: True)
         convert_to_numpy : bool, optional
             If True, convert all sampled arrays to plain ``numpy.ndarray``
-            before storing and returning.  This frees GPU memory
+            before returning (and before optional storing). This frees GPU memory
             immediately after sampling, which is important when downstream
             operations (e.g., differential expression) need GPU headroom.
             The DE pipeline's array-backend dispatch will then use the
             NumPy/SciPy stack directly for summary statistics, avoiding
             JAX's XLA CPU backend overhead and unnecessary GPU
-            round-trips.  Implies ``store_samples=True``.  Default: False.
+            round-trips.  This flag is independent from ``store_samples``:
+            callers can request NumPy return values without mutating
+            ``self.posterior_samples`` by setting
+            ``store_samples=False, convert_to_numpy=True``. Default: False.
         counts : Optional[jnp.ndarray], optional
             Observed count matrix of shape (n_cells, n_genes). Required when
             using amortized capture probability (e.g., with
@@ -311,10 +314,10 @@ class PosteriorPredictiveSamplingMixin:
                 counts=counts,
             )
 
-        # convert_to_numpy implies store_samples — if the caller explicitly
-        # asks for NumPy-resident storage, the intent is always to persist.
+        # Convert independently from storage behavior. This enables callers
+        # to request NumPy return values while keeping results object state
+        # unchanged (store_samples=False).
         if convert_to_numpy:
-            store_samples = True
             posterior_samples = _convert_to_numpy(posterior_samples)
 
         if store_samples:
