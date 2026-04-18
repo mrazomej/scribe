@@ -12,7 +12,7 @@ ZINBWithVCPLikelihood
     Zero-Inflated NB with Variable Capture Probability.
 """
 
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, List, Mapping, Optional, Tuple
 
 import jax.numpy as jnp
 import numpyro
@@ -643,6 +643,7 @@ class NBWithVCPLikelihood(Likelihood):
         self,
         counts: jnp.ndarray,
         params: Dict[str, jnp.ndarray],
+        param_layouts: Mapping[str, "AxisLayout"],
         *,
         return_by: str = "cell",
         cells_axis: int = 0,
@@ -662,6 +663,7 @@ class NBWithVCPLikelihood(Likelihood):
         return nbvcp_log_prob(
             counts,
             params,
+            param_layouts,
             return_by=return_by,
             cells_axis=cells_axis,
             r_floor=r_floor,
@@ -1214,6 +1216,7 @@ class ZINBWithVCPLikelihood(Likelihood):
         self,
         counts: jnp.ndarray,
         params: Dict[str, jnp.ndarray],
+        param_layouts: Mapping[str, "AxisLayout"],
         *,
         return_by: str = "cell",
         cells_axis: int = 0,
@@ -1233,6 +1236,7 @@ class ZINBWithVCPLikelihood(Likelihood):
         return zinbvcp_log_prob(
             counts,
             params,
+            param_layouts,
             return_by=return_by,
             cells_axis=cells_axis,
             r_floor=r_floor,

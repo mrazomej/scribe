@@ -126,6 +126,26 @@ class LikelihoodMixin:
         # Determine if this is a mixture model
         is_mixture = self.n_components is not None and self.n_components > 1
 
+        # Build per-draw ``AxisLayout`` metadata for ``Likelihood.log_prob``.
+        # ``self.layouts`` is keyed by *variational*-parameter names
+        # (``alpha_p``, ``beta_p``, ...) whereas ``posterior_samples`` uses
+        # canonical names (``p``, ``r``, ``gate``, ...).  We therefore
+        # rebuild canonical layouts directly from the posterior samples,
+        # then strip the sample axis for per-draw evaluation.
+        from ..sampling import _build_canonical_layouts
+
+        _post_layouts = _build_canonical_layouts(
+            parameter_samples,
+            self.model_config,
+            n_genes=self.n_genes,
+            n_cells=self.n_cells,
+            n_components=self.n_components,
+            has_sample_dim=True,
+        )
+        draw_layouts = {
+            k: v.without_sample_dim() for k, v in _post_layouts.items()
+        }
+
         # Define function to compute likelihood for a single sample
         @jit
         def compute_sample_lik(i):
@@ -136,6 +156,7 @@ class LikelihoodMixin:
                 return likelihood_fn(
                     counts,
                     params_i,
+                    draw_layouts,
                     cells_axis=cells_axis,
                     return_by=return_by,
                     split_components=split_components,
@@ -149,6 +170,7 @@ class LikelihoodMixin:
                 return likelihood_fn(
                     counts,
                     params_i,
+                    draw_layouts,
                     cells_axis=cells_axis,
                     return_by=return_by,
                     r_floor=r_floor,
@@ -275,6 +297,22 @@ class LikelihoodMixin:
             use_mean=use_mean, canonical=True, verbose=verbose
         )
 
+        # Build canonical ``AxisLayout`` metadata from the MAP-estimate
+        # shapes.  ``self.layouts`` is keyed by variational parameter
+        # names, but ``log_prob`` consumes canonical names (``p``, ``r``,
+        # ``gate``, ...); we reuse the sampling helper for a consistent
+        # lookup.
+        from ..sampling import _build_canonical_layouts
+
+        map_layouts = _build_canonical_layouts(
+            map_estimates,
+            self.model_config,
+            n_genes=self.n_genes,
+            n_cells=self.n_cells,
+            n_components=self.n_components,
+            has_sample_dim=False,
+        )
+
         # If computing by gene and gene_batch_size is provided, use batched computation
         if return_by == "gene" and gene_batch_size is not None:
             # Accumulate results as JAX arrays on-device, then do a
@@ -300,6 +338,17 @@ class LikelihoodMixin:
                 subset_map_estimates = results_subset.get_map(
                     use_mean=use_mean, canonical=True, verbose=False
                 )
+                # Rebuild canonical layouts for the gene-subsetted MAP
+                # estimates so ``log_prob`` receives layouts keyed by
+                # canonical names.
+                subset_layouts = _build_canonical_layouts(
+                    subset_map_estimates,
+                    results_subset.model_config,
+                    n_genes=results_subset.n_genes,
+                    n_cells=results_subset.n_cells,
+                    n_components=results_subset.n_components,
+                    has_sample_dim=False,
+                )
 
                 # Get subset of counts for these genes
                 if cells_axis == 0:
@@ -320,6 +369,7 @@ class LikelihoodMixin:
                     batch_log_liks = likelihood_fn(
                         counts_subset,
                         subset_map_estimates,
+                        subset_layouts,
                         cells_axis=cells_axis,
                         return_by=return_by,
                         split_components=split_components,
@@ -331,6 +381,7 @@ class LikelihoodMixin:
                     batch_log_liks = likelihood_fn(
                         counts_subset,
                         subset_map_estimates,
+                        subset_layouts,
                         cells_axis=cells_axis,
                         return_by=return_by,
                         dtype=dtype,
@@ -348,6 +399,7 @@ class LikelihoodMixin:
                 log_liks = likelihood_fn(
                     counts,
                     map_estimates,
+                    map_layouts,
                     cells_axis=cells_axis,
                     return_by=return_by,
                     split_components=split_components,
@@ -360,6 +412,7 @@ class LikelihoodMixin:
                 log_liks = likelihood_fn(
                     counts,
                     map_estimates,
+                    map_layouts,
                     cells_axis=cells_axis,
                     return_by=return_by,
                     dtype=dtype,

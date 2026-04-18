@@ -4,10 +4,13 @@ Likelihood mixin for MCMC results.
 Provides log-likelihood computation using posterior samples.
 """
 
-from typing import Dict, Optional
+from typing import TYPE_CHECKING, Dict, Optional
 
 import jax.numpy as jnp
 from jax import jit, vmap
+
+if TYPE_CHECKING:
+    from ..core.axis_layout import AxisLayout
 
 
 # ==============================================================================
@@ -61,11 +64,22 @@ class LikelihoodMixin:
         """
         samples = self.get_posterior_samples()
 
+        # Build per-draw AxisLayouts: the MCMC results' ``layouts`` are at
+        # the posterior level (``has_sample_dim=True``) because samples
+        # carry a leading chain/draw axis.  ``Likelihood.log_prob`` expects
+        # layouts for a single draw, so we strip the sample dimension here
+        # once and reuse the per-draw layouts inside the JIT-ed inner
+        # function.
+        draw_layouts = {
+            k: v.without_sample_dim() for k, v in self.layouts.items()
+        }
+
         return _compute_log_likelihood(
             samples,
             counts,
             self.model_type,
             n_components=self.n_components,
+            param_layouts=draw_layouts,
             sample_chunk_size=sample_chunk_size,
             return_by=return_by,
             cells_axis=cells_axis,
@@ -87,6 +101,7 @@ def _compute_log_likelihood(
     counts: jnp.ndarray,
     model_type: str,
     n_components: Optional[int] = None,
+    param_layouts: Optional[Dict[str, "AxisLayout"]] = None,
     sample_chunk_size: Optional[int] = None,
     return_by: str = "cell",
     cells_axis: int = 0,
@@ -96,8 +111,36 @@ def _compute_log_likelihood(
     weight_type: Optional[str] = None,
     dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
-    """Compute log-likelihood of *counts* under *samples*."""
+    """Compute log-likelihood of *counts* under *samples*.
+
+    Parameters
+    ----------
+    samples : dict of str to jnp.ndarray
+        Posterior samples keyed by canonical parameter names; each
+        array carries a leading draw axis of length ``n_samples``.
+    counts : jnp.ndarray
+        Observed count matrix.
+    model_type : str
+        Model-type string dispatched via ``_get_log_likelihood_fn``.
+    n_components : int, optional
+        Number of mixture components; values > 1 activate the
+        mixture-aware evaluation path.
+    param_layouts : dict of str to AxisLayout, optional
+        Per-parameter layouts *without* a sample dimension (the sample
+        axis is stripped inside ``compute_sample_lik``).  Required by
+        the new :meth:`Likelihood.log_prob` contract.
+    sample_chunk_size : int or None
+        Chunk size over the draw axis; ``None`` evaluates all draws
+        in one ``vmap``.
+    """
     from ._model_helpers import _get_log_likelihood_fn
+
+    if param_layouts is None:
+        raise ValueError(
+            "_compute_log_likelihood now requires per-draw param_layouts. "
+            "Pass layouts obtained from ``self.layouts`` with "
+            "``without_sample_dim()`` applied."
+        )
 
     n_samples = samples[next(iter(samples))].shape[0]
     likelihood_fn = _get_log_likelihood_fn(model_type)
@@ -110,6 +153,7 @@ def _compute_log_likelihood(
             return likelihood_fn(
                 counts,
                 params_i,
+                param_layouts,
                 cells_axis=cells_axis,
                 return_by=return_by,
                 split_components=split_components,
@@ -120,6 +164,7 @@ def _compute_log_likelihood(
         return likelihood_fn(
             counts,
             params_i,
+            param_layouts,
             cells_axis=cells_axis,
             return_by=return_by,
             dtype=dtype,

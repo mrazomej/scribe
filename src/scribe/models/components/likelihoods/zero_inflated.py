@@ -6,7 +6,7 @@ zeros (from the NB distribution) and structural/technical zeros
 subclass in ``beta_negative_binomial.py``.
 """
 
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Callable, Dict, List, Mapping, Optional
 
 import jax.numpy as jnp
 import numpyro
@@ -490,6 +490,7 @@ class ZeroInflatedNBLikelihood(Likelihood):
         self,
         counts: jnp.ndarray,
         params: Dict[str, jnp.ndarray],
+        param_layouts: Mapping[str, "AxisLayout"],
         *,
         return_by: str = "cell",
         cells_axis: int = 0,
@@ -508,6 +509,7 @@ class ZeroInflatedNBLikelihood(Likelihood):
         return zinb_log_prob(
             counts,
             params,
+            param_layouts,
             return_by=return_by,
             cells_axis=cells_axis,
             r_floor=r_floor,

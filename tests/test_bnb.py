@@ -333,6 +333,7 @@ class TestBNBLogLikelihood:
         from scribe.models.components.likelihoods import (
             NegativeBinomialLikelihood,
         )
+        from scribe.core.axis_layout import AxisLayout
 
         counts = _data
         params = {
@@ -340,7 +341,12 @@ class TestBNBLogLikelihood:
             "r": jnp.ones(5),
             "bnb_concentration": jnp.full(5, 0.1),
         }
-        ll = NegativeBinomialLikelihood().log_prob(counts, params)
+        layouts = {
+            "p": AxisLayout(()),
+            "r": AxisLayout(("genes",)),
+            "bnb_concentration": AxisLayout(("genes",)),
+        }
+        ll = NegativeBinomialLikelihood().log_prob(counts, params, layouts)
         assert ll.shape == (20,)
         assert jnp.all(jnp.isfinite(ll))
 
@@ -349,10 +355,15 @@ class TestBNBLogLikelihood:
         from scribe.models.components.likelihoods import (
             NegativeBinomialLikelihood,
         )
+        from scribe.core.axis_layout import AxisLayout
 
         counts = _data
         params = {"p": jnp.array(0.5), "r": jnp.ones(5)}
-        ll = NegativeBinomialLikelihood().log_prob(counts, params)
+        layouts = {
+            "p": AxisLayout(()),
+            "r": AxisLayout(("genes",)),
+        }
+        ll = NegativeBinomialLikelihood().log_prob(counts, params, layouts)
         assert ll.shape == (20,)
         assert jnp.all(jnp.isfinite(ll))
 
@@ -361,6 +372,7 @@ class TestBNBLogLikelihood:
         from scribe.models.components.likelihoods import (
             ZeroInflatedNBLikelihood,
         )
+        from scribe.core.axis_layout import AxisLayout
 
         counts = _data
         params = {
@@ -369,7 +381,13 @@ class TestBNBLogLikelihood:
             "gate": jnp.full(5, 0.1),
             "bnb_concentration": jnp.full(5, 0.1),
         }
-        ll = ZeroInflatedNBLikelihood().log_prob(counts, params)
+        layouts = {
+            "p": AxisLayout(()),
+            "r": AxisLayout(("genes",)),
+            "gate": AxisLayout(("genes",)),
+            "bnb_concentration": AxisLayout(("genes",)),
+        }
+        ll = ZeroInflatedNBLikelihood().log_prob(counts, params, layouts)
         assert ll.shape == (20,)
         assert jnp.all(jnp.isfinite(ll))
 
@@ -769,8 +787,15 @@ class TestMixtureLLBroadcasting:
     the (1, G, K) layout used by mixture log-likelihood functions."""
 
     def test_mixture_specific_bnb_in_ll(self):
-        """bnb_concentration (K, G) is reshaped to (1, G, K) when r is
-        (1, G, K)."""
+        """Pre-shaped ``bnb_concentration`` (1, G, K) broadcasts against
+        ``r``/``p`` ``(1, G, K)`` via ``_build_ll_count_dist``.
+
+        The layout-aware refactor moved the reshape from inside
+        ``_build_ll_count_dist`` up to the delegate (where the
+        :class:`AxisLayout` information lives).  The helper now consumes
+        an already-broadcast-ready tensor, so this test feeds it the
+        pre-shaped ``(1, G, K)`` array directly.
+        """
         from scribe.models.components.likelihoods._log_prob import (
             _build_ll_count_dist,
         )
@@ -778,19 +803,19 @@ class TestMixtureLLBroadcasting:
         K, G = 4, 20
         r = jnp.ones((1, G, K)) * 5.0
         p = jnp.full((1, G, K), 0.4)
-        params = {"bnb_concentration": jnp.ones((K, G)) * 0.2}
+        # Simulate what ``_prepare_mixture_tensor`` produces from
+        # ("components", "genes")-laid-out concentration (K, G).
+        bnb = jnp.transpose(jnp.ones((K, G)) * 0.2, (1, 0)).reshape(1, G, K)
 
-        d = _build_ll_count_dist(r, p, params)
-        # Should produce a distribution that can evaluate log_prob
-        # with shape (1, G, K)
+        d = _build_ll_count_dist(r, p, bnb)
         counts = jnp.ones((1, G, K))
         lp = d.log_prob(counts)
         assert lp.shape == (1, G, K)
         assert jnp.all(jnp.isfinite(lp))
 
     def test_shared_bnb_in_mixture_ll(self):
-        """bnb_concentration (G,) is reshaped to (1, G, 1) when r is
-        (1, G, K)."""
+        """Pre-shaped ``bnb_concentration`` ``(1, G, 1)`` broadcasts in
+        the mixture layout ``(1, G, K)``."""
         from scribe.models.components.likelihoods._log_prob import (
             _build_ll_count_dist,
         )
@@ -798,16 +823,17 @@ class TestMixtureLLBroadcasting:
         K, G = 4, 20
         r = jnp.ones((1, G, K)) * 5.0
         p = jnp.full((1, G, K), 0.4)
-        params = {"bnb_concentration": jnp.ones(G) * 0.2}
+        # Shared-across-components layout: singleton component axis.
+        bnb = (jnp.ones(G) * 0.2).reshape(1, G, 1)
 
-        d = _build_ll_count_dist(r, p, params)
+        d = _build_ll_count_dist(r, p, bnb)
         counts = jnp.ones((1, G, K))
         lp = d.log_prob(counts)
         assert lp.shape == (1, G, K)
         assert jnp.all(jnp.isfinite(lp))
 
     def test_no_bnb_in_mixture_ll(self):
-        """Without bnb_concentration, returns NB in mixture layout."""
+        """Passing ``None`` for ``bnb_concentration`` yields a plain NB."""
         from scribe.models.components.likelihoods._log_prob import (
             _build_ll_count_dist,
         )
@@ -815,9 +841,8 @@ class TestMixtureLLBroadcasting:
         K, G = 4, 20
         r = jnp.ones((1, G, K)) * 5.0
         p = jnp.full((1, G, K), 0.4)
-        params = {}
 
-        d = _build_ll_count_dist(r, p, params)
+        d = _build_ll_count_dist(r, p, None)
         counts = jnp.ones((1, G, K))
         lp = d.log_prob(counts)
         assert lp.shape == (1, G, K)
@@ -826,6 +851,7 @@ class TestMixtureLLBroadcasting:
     def test_nbvcp_mixture_ll_with_bnb(self):
         """End-to-end: NBVCP mixture ``.log_prob`` with mixture BNB."""
         from scribe.models.components.likelihoods import NBWithVCPLikelihood
+        from scribe.core.axis_layout import AxisLayout
 
         n_cells, n_genes, K = 50, 10, 3
         rng = np.random.default_rng(42)
@@ -839,16 +865,27 @@ class TestMixtureLLBroadcasting:
             "mixing_weights": jnp.ones(K) / K,
             "bnb_concentration": jnp.ones((K, n_genes)) * 0.3,
         }
+        layouts = {
+            "p": AxisLayout(("components", "genes")),
+            "r": AxisLayout(("components", "genes")),
+            "p_capture": AxisLayout(("cells",)),
+            "mixing_weights": AxisLayout(("components",)),
+            "bnb_concentration": AxisLayout(("components", "genes")),
+        }
 
         nbvcp = NBWithVCPLikelihood()
 
         # Cell-level, split by component
-        ll_split = nbvcp.log_prob(counts, params, split_components=True)
+        ll_split = nbvcp.log_prob(
+            counts, params, layouts, split_components=True
+        )
         assert ll_split.shape == (n_cells, K)
         assert jnp.all(jnp.isfinite(ll_split))
 
         # Cell-level, mixed
-        ll_mixed = nbvcp.log_prob(counts, params, split_components=False)
+        ll_mixed = nbvcp.log_prob(
+            counts, params, layouts, split_components=False
+        )
         assert ll_mixed.shape == (n_cells,)
         assert jnp.all(jnp.isfinite(ll_mixed))
 

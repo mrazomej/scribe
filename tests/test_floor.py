@@ -43,6 +43,7 @@ from scribe.models.components.likelihoods.negative_binomial import (
 from scribe.models.components.likelihoods.vcp import (
     _P_EPS as VCP_P_EPS,
 )
+from scribe.core.axis_layout import AxisLayout
 
 
 # Post-hoc log-likelihood evaluation now lives on ``Likelihood.log_prob``
@@ -55,6 +56,75 @@ _NBVCP_LIK = NBWithVCPLikelihood()
 _ZINBVCP_LIK = ZINBWithVCPLikelihood()
 
 
+# Shape-derived layout helper used by the shim functions.
+#
+# The ``Likelihood.log_prob`` contract now requires an :class:`AxisLayout`
+# per parameter key.  These tests construct many small param dicts with
+# well-understood shapes (see ``_base_params`` / ``_mix_params`` et al.),
+# so we infer the layout directly from ``ndim`` and the shape of each
+# array relative to ``(N_CELLS, N_GENES, N_COMP)``.  This mirrors what
+# production code gets from ``_build_canonical_layouts`` but without
+# requiring a ``ModelConfig`` object.
+def _infer_layout(
+    key: str, arr: jnp.ndarray, *, n_components: int
+) -> AxisLayout:
+    """Return the :class:`AxisLayout` for *key* given its tensor shape.
+
+    Parameters
+    ----------
+    key : str
+        Canonical parameter name (e.g. ``"r"``, ``"gate"``, ``"p"``).
+    arr : jnp.ndarray
+        The parameter tensor.
+    n_components : int
+        Number of mixture components (``N_COMP``).  Only used to
+        disambiguate mixture vs non-mixture layouts.
+
+    Returns
+    -------
+    AxisLayout
+        Layout with ``has_sample_dim=False``.
+    """
+    shape = tuple(arr.shape)
+    ndim = len(shape)
+
+    # Scalar -> empty layout.
+    if ndim == 0:
+        return AxisLayout(())
+
+    # Cell-indexed parameters (``p_capture``, ``phi_capture``).
+    if key in ("p_capture", "phi_capture", "eta_capture"):
+        return AxisLayout(("cells",))
+
+    # Mixing weights are (n_components,).
+    if key in ("mixing_weights", "mixing_logits"):
+        return AxisLayout(("components",))
+
+    # 1-D tensors either are (n_components,) for mixture components-only
+    # params or (n_genes,) for gene-indexed ones.  The test suite uses
+    # gene-indexed 1-D tensors only for ``r``/``gate``/``p``; a pure
+    # ``(n_components,)`` ``p`` shows up in mixture cases.
+    if ndim == 1:
+        if key == "p" and shape[0] == n_components:
+            return AxisLayout(("components",))
+        return AxisLayout(("genes",))
+
+    # 2-D tensors are the mixture layouts ``(n_components, n_genes)``.
+    if ndim == 2:
+        return AxisLayout(("components", "genes"))
+
+    raise ValueError(
+        f"Cannot infer AxisLayout for key={key!r} with shape={shape}"
+    )
+
+
+def _layouts_for(params: dict) -> dict:
+    """Build a ``{key: AxisLayout}`` dict for all entries in *params*."""
+    return {
+        k: _infer_layout(k, v, n_components=N_COMP) for k, v in params.items()
+    }
+
+
 def nbdm_log_likelihood(counts, params, **kwargs):
     """Shim forwarding to :meth:`NegativeBinomialLikelihood.log_prob`.
 
@@ -63,22 +133,24 @@ def nbdm_log_likelihood(counts, params, **kwargs):
     ``params``; for the NBDM case (no such key) this is identical to the
     legacy ``nbdm_log_likelihood`` free function.
     """
-    return _NBDM_LIK.log_prob(counts, params, **kwargs)
+    return _NBDM_LIK.log_prob(counts, params, _layouts_for(params), **kwargs)
 
 
 def nbvcp_log_likelihood(counts, params, **kwargs):
     """Shim forwarding to :meth:`NBWithVCPLikelihood.log_prob`."""
-    return _NBVCP_LIK.log_prob(counts, params, **kwargs)
+    return _NBVCP_LIK.log_prob(counts, params, _layouts_for(params), **kwargs)
 
 
 def zinb_log_likelihood(counts, params, **kwargs):
     """Shim forwarding to :meth:`ZeroInflatedNBLikelihood.log_prob`."""
-    return _ZINB_LIK.log_prob(counts, params, **kwargs)
+    return _ZINB_LIK.log_prob(counts, params, _layouts_for(params), **kwargs)
 
 
 def zinbvcp_log_likelihood(counts, params, **kwargs):
     """Shim forwarding to :meth:`ZINBWithVCPLikelihood.log_prob`."""
-    return _ZINBVCP_LIK.log_prob(counts, params, **kwargs)
+    return _ZINBVCP_LIK.log_prob(
+        counts, params, _layouts_for(params), **kwargs
+    )
 
 
 # Mixture variants dispatch on the presence of ``"mixing_weights"`` in the

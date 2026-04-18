@@ -158,9 +158,20 @@ def test_nbvcp_mixture_raises_clear_error_on_component_mismatch():
 
     # Error message source changed: the new full-array delegate raises from
     # ``nbvcp_log_prob`` (the mixture / non-mixture branches share a single
-    # helper now that ``.log_prob`` dispatches on ``mixing_weights``).
+    # helper now that ``.log_prob`` dispatches on ``mixing_weights``).  Build
+    # the per-parameter layouts explicitly because ``log_prob`` now requires
+    # them; the shape mismatch between ``p`` (K=4) and ``mixing_weights``
+    # (K=3) surfaces via ``_validate_component_axis``.
+    from scribe.core.axis_layout import AxisLayout
+
+    _layouts = {
+        "mixing_weights": AxisLayout(("components",)),
+        "p": AxisLayout(("components", "genes")),
+        "r": AxisLayout(("components", "genes")),
+        "p_capture": AxisLayout(("cells",)),
+    }
     with pytest.raises(ValueError, match="nbvcp_log_prob"):
-        _NBVCP_LIK.log_prob(_counts, _params)
+        _NBVCP_LIK.log_prob(_counts, _params, _layouts)
 
 
 def test_fallback_does_not_subset_shared_gene_specific_p_without_evidence():

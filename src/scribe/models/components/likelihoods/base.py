@@ -5,7 +5,15 @@ helper functions for capture parameter sampling and cell-specific mixing.
 """
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Callable,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Tuple,
+)
 
 import jax
 import jax.numpy as jnp
@@ -658,6 +666,7 @@ class Likelihood(ABC):
         self,
         counts: jnp.ndarray,
         params: Dict[str, jnp.ndarray],
+        param_layouts: Mapping[str, "AxisLayout"],
         *,
         return_by: str = "cell",
         cells_axis: int = 0,
@@ -679,6 +688,15 @@ class Likelihood(ABC):
         Python-level batching loops, no ``.at[...].set(...)`` scatter
         updates, and no intermediate ``jnp.zeros`` accumulator allocations.
 
+        Axis handling is driven by semantic :class:`AxisLayout` metadata
+        passed in via *param_layouts*; no ``ndim`` / ``shape`` heuristics
+        are used.  Layouts should be obtained from
+        :func:`scribe.sampling._helpers._build_canonical_layouts` (or
+        equivalent :class:`~scribe.models.builders.parameter_specs.ParamSpec`
+        machinery) with ``has_sample_dim=False`` - callers that work with
+        a posterior-draw axis must strip it via
+        :meth:`AxisLayout.without_sample_dim` before dispatching here.
+
         Parameters
         ----------
         counts : jnp.ndarray
@@ -691,6 +709,12 @@ class Likelihood(ABC):
             variants require ``"p_capture"`` or ``"phi_capture"``, and
             mixture variants require ``"mixing_weights"``.  BNB variants
             additionally consume ``"bnb_concentration"``.
+        param_layouts : Mapping[str, AxisLayout]
+            Per-parameter :class:`~scribe.core.axis_layout.AxisLayout`
+            metadata keyed by canonical parameter name.  Must be supplied
+            for every parameter this likelihood consumes; missing entries
+            raise :class:`KeyError`.  All layouts are expected to have
+            ``has_sample_dim=False``.
         return_by : {"cell", "gene"}, default="cell"
             Reduction axis for the output array.
         cells_axis : int, default=0

@@ -15,20 +15,33 @@ functions are called from inside ``@jit``.  Each delegate here is a single
 full-array expression (no Python loops, no ``.at[...].set(...)`` scatter
 updates) and therefore compiles to a single XLA kernel.
 
+All axis handling is driven by semantic :class:`AxisLayout` metadata
+passed in via the ``param_layouts`` kwarg; **no** ``ndim``/``shape``
+heuristics are used anywhere in this module.  Layouts are passed by the
+caller (SVI / MCMC log-likelihood mixins) via closure so that JAX treats
+them as static during JIT compilation.
+
 Shared helpers
 ~~~~~~~~~~~~~~
-``_normalize_counts``, ``_clip_r``, ``_clip_p``, ``_extract_capture``,
-``_validate_weights``, ``_check_return_by``, ``_check_weight_type`` perform
-trivial pre-processing that every family needs.
+``_normalize_counts``, ``_clip_r``, ``_clip_p``, ``_validate_weights``,
+``_check_return_by``, ``_check_weight_type`` perform trivial pre-processing
+that every family needs.
 
-``_build_ll_count_dist`` dispatches between NB and BNB.
-``_validate_mixture_component_shapes`` guards against component-axis
-misalignment after mixture pruning.
+``_prepare_mixture_tensor`` reshapes a parameter tensor into the canonical
+``(1, n_genes, n_components)`` mixture broadcast layout using its
+:class:`AxisLayout`.  ``_prepare_capture_mixture`` does the equivalent for
+the cell-specific capture tensor.  ``_prepare_capture_non_mixture`` handles
+the non-mixture variant ``(n_cells, 1)``.
 
-``_prepare_p_mixture_layout`` handles the scalar/component/gene-specific
-broadcast reshape for ``p``.  ``_mixture_reduce`` performs the final sum
-over cells or genes, applies optional gene/cell weights, adds the log
-mixing weights, and optionally collapses over components via ``logsumexp``.
+``_build_ll_count_dist`` is now a thin wrapper over
+:func:`~scribe.models.components.likelihoods.beta_negative_binomial.build_count_dist`
+- the caller is responsible for supplying a correctly-shaped
+``bnb_concentration`` (via :func:`_prepare_mixture_tensor` in the mixture
+path).
+
+``_mixture_reduce`` performs the final sum over cells or genes, applies
+optional gene/cell weights, adds the log mixing weights, and optionally
+collapses over components via ``logsumexp``.
 
 Delegate functions
 ~~~~~~~~~~~~~~~~~~
@@ -38,7 +51,7 @@ four NB-family variants; the BNB family shares them entirely.
 """
 
 # Standard-library imports
-from typing import Dict, Optional
+from typing import Dict, Mapping, Optional
 
 # Scientific stack
 import jax.numpy as jnp
@@ -46,6 +59,10 @@ import jax.scipy as jsp
 
 # NumPyro distributions
 import numpyro.distributions as dist
+
+# Semantic axis metadata (static during JIT -- always passed via closure by
+# the caller, never as a dynamic argument).
+from ....core.axis_layout import AxisLayout
 
 # NOTE: ``build_count_dist`` lives in ``beta_negative_binomial`` which
 # imports (at module load) the four NB-family classes from
@@ -64,115 +81,85 @@ import numpyro.distributions as dist
 def _build_ll_count_dist(
     r: jnp.ndarray,
     p: jnp.ndarray,
-    params: Dict,
+    bnb_concentration: Optional[jnp.ndarray],
 ) -> dist.Distribution:
     """Build NB or BNB count distribution for log-likelihood evaluation.
 
-    The function delegates to :func:`build_count_dist` from
-    ``beta_negative_binomial``.  When ``params`` contains
-    ``"bnb_concentration"`` and ``r`` has already been reshaped to the
-    mixture broadcast layout ``(1, n_genes, n_components)``, the concentration
-    tensor is re-aligned so the resulting :class:`BetaNegativeBinomial` can
-    broadcast against ``r`` and ``p``.
+    Thin wrapper over
+    :func:`~scribe.models.components.likelihoods.beta_negative_binomial.build_count_dist`.
+    The caller is responsible for shaping ``bnb_concentration`` so that it
+    broadcasts against ``r`` and ``p``; in the mixture path this is done
+    via :func:`_prepare_mixture_tensor` using the parameter's
+    :class:`AxisLayout`.
 
     Parameters
     ----------
     r : jnp.ndarray
-        Dispersion parameter.  In mixture log-likelihood paths this has
-        already been reshaped to ``(1, n_genes, n_components)``.
+        NB dispersion, already broadcast-ready against ``p``.
     p : jnp.ndarray
-        Success probability, pre-clamped to ``(eps, 1 - eps)``.
-    params : dict
-        Full posterior parameter dictionary; may carry
-        ``"bnb_concentration"`` (per-gene excess dispersion) and, in
-        mixture settings, a component-indexed version of it.
+        Success probability, already clamped and broadcast-ready.
+    bnb_concentration : jnp.ndarray or None
+        Pre-shaped BNB concentration (``None`` selects the plain NB path).
 
     Returns
     -------
     numpyro.distributions.Distribution
         Either :class:`NegativeBinomialProbs` or
-        :class:`BetaNegativeBinomial` aligned with ``r`` and ``p`` so that
-        a subsequent ``.log_prob(counts)`` call broadcasts correctly.
+        :class:`BetaNegativeBinomial`.
     """
     # Deferred import breaks the module-load cycle with
     # beta_negative_binomial (see note at top of module).
     from .beta_negative_binomial import build_count_dist
 
-    # Look up the optional BNB concentration parameter.
-    bnb_conc = params.get("bnb_concentration")
-    # Align bnb_concentration with the mixture broadcast layout of r.
-    if bnb_conc is not None and r.ndim == 3 and bnb_conc.ndim != r.ndim:
-        # r is (1, G, K) in mixture LL paths.
-        if bnb_conc.ndim == 2:
-            # Component-specific: (K, G) -> (G, K) -> (1, G, K).
-            bnb_conc = jnp.expand_dims(jnp.transpose(bnb_conc), axis=0)
-        elif bnb_conc.ndim == 1:
-            # Shared per-gene: (G,) -> (1, G, 1) to broadcast across K.
-            bnb_conc = bnb_conc[jnp.newaxis, :, jnp.newaxis]
-    return build_count_dist(r, p, bnb_conc)
+    return build_count_dist(r, p, bnb_concentration)
 
 
 # =========================================================================
-# Validation helpers
+# Validation helpers (layout-driven; no shape heuristics)
 # =========================================================================
 
 
-def _validate_mixture_component_shapes(
-    r: jnp.ndarray,
-    probs: jnp.ndarray,
+def _validate_component_axis(
+    tensor: jnp.ndarray,
+    layout: AxisLayout,
     n_components: int,
+    *,
     context: str,
+    param_name: str,
 ) -> None:
-    """Validate component-axis alignment for mixture NB likelihood tensors.
+    """Check that a tensor's component axis has the expected size.
 
     Parameters
     ----------
-    r : jnp.ndarray
-        Dispersion tensor after mixture reshaping; trailing axis layout is
-        expected to be ``(..., n_genes, n_components)``.
-    probs : jnp.ndarray
-        Success-probability tensor (``p_hat`` after capture adjustment);
-        trailing axis layout is expected to be
-        ``(..., n_genes or 1, n_components or 1)``.
+    tensor : jnp.ndarray
+        Parameter tensor to check.
+    layout : AxisLayout
+        Semantic layout of *tensor*.
     n_components : int
-        Number of active mixture components implied by ``mixing_weights``.
+        Expected number of mixture components (from ``mixing_weights``).
     context : str
-        Human-readable caller context for error messages.
+        Caller identifier used in the error message (e.g.
+        ``"nbvcp_log_prob"``).
+    param_name : str
+        Parameter name used in the error message (e.g. ``"r"``, ``"p"``).
 
     Raises
     ------
     ValueError
-        If the trailing component axis is inconsistent with
-        ``n_components``.
-
-    Notes
-    -----
-    The explicit check surfaces a clear error when component pruning left
-    the posterior tensors inconsistent (for example, ``mixing_weights``
-    pruned to ``K=3`` while canonical ``p``/``r`` stayed at ``K=4``)
-    rather than a low-level JAX broadcasting failure downstream.
+        If the layout declares a component axis whose size does not
+        match *n_components*.
     """
-    if r.shape[-1] != n_components:
+    if layout.component_axis is None:
+        return
+    axis_size = tensor.shape[layout.component_axis]
+    if axis_size != n_components:
         raise ValueError(
-            f"{context}: dispersion tensor has incompatible component axis. "
-            f"Expected r.shape[-1] == {n_components}, got r.shape="
-            f"{tuple(r.shape)}."
-        )
-    if probs.shape[-1] not in (1, n_components):
-        # Heuristic hint: flag an axis swap when the *second-to-last* axis
-        # matches the active component count - a common accidental layout
-        # after mixture pruning.
-        hint = ""
-        if probs.ndim >= 2 and probs.shape[-2] == n_components:
-            hint = (
-                " Detected component-like size on probs.shape[-2], "
-                "suggesting a swapped or stale component axis after "
-                "mixture pruning."
-            )
-        raise ValueError(
-            f"{context}: probability tensor has incompatible component "
-            f"axis. Expected probs.shape[-1] in {{1, {n_components}}}, "
-            f"got probs.shape={tuple(probs.shape)}.{hint}"
+            f"{context}: component axis of '{param_name}' is inconsistent "
+            f"with the mixture (expected size {n_components}, got "
+            f"{axis_size}). This typically indicates that posterior "
+            f"tensors became out of sync after mixture pruning - "
+            f"mixing_weights has {n_components} active components but "
+            f"'{param_name}' still has {axis_size}."
         )
 
 
@@ -233,6 +220,46 @@ def _validate_weights(
             f"({expected_length},)"
         )
     return jnp.asarray(weights, dtype=dtype)
+
+
+def _require_layout(
+    param_layouts: Mapping[str, AxisLayout],
+    key: str,
+    *,
+    context: str,
+) -> AxisLayout:
+    """Look up *key* in *param_layouts* with a clear error on miss.
+
+    Parameters
+    ----------
+    param_layouts : Mapping[str, AxisLayout]
+        Layout dictionary (typically produced by
+        :func:`scribe.sampling._helpers._build_canonical_layouts`).
+    key : str
+        Canonical parameter name (``"p"``, ``"r"``, ``"gate"``,
+        ``"p_capture"``, ``"mixing_weights"``, ``"bnb_concentration"``).
+    context : str
+        Caller identifier used in the error message.
+
+    Returns
+    -------
+    AxisLayout
+        The layout registered under *key*.
+
+    Raises
+    ------
+    KeyError
+        If *key* is not in *param_layouts*.
+    """
+    if key not in param_layouts:
+        raise KeyError(
+            f"{context}: param_layouts is missing an entry for '{key}'. "
+            "Log-likelihood evaluation requires a semantic AxisLayout for "
+            "every consumed parameter. Build layouts via "
+            "scribe.sampling._helpers._build_canonical_layouts or pass "
+            "ParamSpec-derived layouts directly."
+        )
+    return param_layouts[key]
 
 
 # =========================================================================
@@ -297,79 +324,263 @@ def _clip_p(p: jnp.ndarray, p_floor: float) -> jnp.ndarray:
     return p
 
 
-def _extract_capture(params: Dict, dtype: jnp.dtype) -> jnp.ndarray:
-    """Return ``p_capture`` from ``params`` under either parameterisation.
+def _extract_capture(
+    params: Dict,
+    param_layouts: Mapping[str, AxisLayout],
+    dtype: jnp.dtype,
+    *,
+    context: str,
+) -> tuple:
+    """Return ``(p_capture, p_capture_layout)`` under either parameterisation.
 
     SCRIBE supports two capture parameterisations:
 
-    - Native constrained: ``p_capture`` directly (``(n_cells,)``).
+    - Native constrained: ``p_capture`` directly.
     - Odds-ratio:         ``phi_capture``; the capture probability is
       recovered as ``p = 1 / (1 + phi)``.
+
+    Both carry the same :class:`AxisLayout` (``("cells",)``) so the layout
+    is returned alongside the tensor for downstream broadcasting.
 
     Parameters
     ----------
     params : dict
-        Parameter dictionary that must contain either ``"p_capture"`` or
+        Parameter dictionary; must contain either ``"p_capture"`` or
         ``"phi_capture"``.
+    param_layouts : Mapping[str, AxisLayout]
+        Layouts for every parameter.
     dtype : jnp.dtype
         Output dtype.
+    context : str
+        Caller identifier used in error messages.
 
     Returns
     -------
-    jnp.ndarray
-        Cell-specific capture probability with shape ``(n_cells,)``.
+    tuple of (jnp.ndarray, AxisLayout)
+        Cell-specific capture probability and its layout.
     """
     if "phi_capture" in params:
-        phi_capture = jnp.squeeze(params["phi_capture"]).astype(dtype)
-        return 1.0 / (1.0 + phi_capture)
-    return jnp.squeeze(params["p_capture"]).astype(dtype)
+        layout = _require_layout(param_layouts, "phi_capture", context=context)
+        phi_capture = jnp.asarray(params["phi_capture"]).astype(dtype)
+        return 1.0 / (1.0 + phi_capture), layout
+    layout = _require_layout(param_layouts, "p_capture", context=context)
+    return jnp.asarray(params["p_capture"]).astype(dtype), layout
 
 
-def _prepare_p_mixture_layout(
-    p: jnp.ndarray,
-    n_components: int,
+def _prepare_non_mixture_tensor(
+    tensor: jnp.ndarray,
+    layout: AxisLayout,
+    dtype: jnp.dtype,
 ) -> jnp.ndarray:
-    """
-    `Reshape ``p`` to the mixture broadcast layout
-    ``(1, G, K) or (1, 1, K) or (1,1,1)``.
+    """Place a non-mixture parameter's gene axis at the trailing position.
 
-    The dispersion and count tensors in mixture log-likelihoods live in the
-    canonical ``(n_cells, n_genes, n_components)`` layout, so ``p`` must be
-    expanded accordingly depending on its original shape:
-
-    * scalar                  -> ``(1, 1, 1)``
-    * ``(n_components,)``      -> ``(1, 1, n_components)``
-    * ``(n_components, n_genes)`` -> ``(1, n_genes, n_components)``
+    The non-mixture count distributions receive counts of shape
+    ``(n_cells, n_genes)`` (after :func:`_normalize_counts`) and need
+    ``r`` / ``p`` / ``gate`` to broadcast against the gene axis.  This
+    helper moves the ``GENES`` axis to the last position and leaves any
+    leading singleton (or missing) axes to NumPy/JAX broadcasting.
 
     Parameters
     ----------
-    p : jnp.ndarray
-        Raw ``p`` tensor as stored in the posterior.
-    n_components : int
-        Active component count implied by ``mixing_weights``.
+    tensor : jnp.ndarray
+        Parameter tensor.
+    layout : AxisLayout
+        Semantic layout of *tensor*.
+    dtype : jnp.dtype
+        Target dtype.
 
     Returns
     -------
     jnp.ndarray
-        ``p`` expanded into the mixture broadcast layout.
+        Dtype-cast tensor, oriented with the gene axis (if any) at index
+        ``-1``.
     """
-    # Gene-specific, component-indexed: (K, G) - distinguishable from the
-    # (K,) case via p.shape[1] > 1.
-    p_is_gene_specific = (
-        p.ndim == 2 and p.shape[0] == n_components and p.shape[1] > 1
-    )
-    # Component-only: (K,)
-    p_is_component_specific = (
-        not p_is_gene_specific and p.ndim >= 1 and p.shape[0] == n_components
-    )
-    if p_is_gene_specific:
-        # (K, G) -> (G, K) -> (1, G, K)
-        return jnp.expand_dims(jnp.transpose(p), axis=0)
-    if p_is_component_specific:
-        # (K,) -> (1, 1, K)
-        return jnp.expand_dims(p, axis=(0, 1))
-    # Shared scalar: () -> (1, 1, 1)
-    return jnp.array(p)[None, None, None]
+    tensor = jnp.asarray(tensor).astype(dtype)
+    g_ax = layout.gene_axis
+    if g_ax is not None and g_ax != tensor.ndim - 1:
+        tensor = jnp.moveaxis(tensor, g_ax, -1)
+    return tensor
+
+
+def _prepare_mixture_tensor(
+    tensor: jnp.ndarray,
+    layout: AxisLayout,
+    dtype: jnp.dtype,
+) -> jnp.ndarray:
+    """Reshape a parameter tensor to the mixture broadcast layout.
+
+    Mixture log-likelihoods evaluate over a canonical
+    ``(n_cells, n_genes, n_components)`` grid.  This helper reshapes an
+    input parameter tensor into a grid-compatible layout using its
+    :class:`AxisLayout`:
+
+    =================================  =====================
+    Source layout                       Result shape
+    =================================  =====================
+    ``()``                              ``(1, 1, 1)``
+    ``("components",)``                 ``(1, 1, K)``
+    ``("genes",)``                      ``(1, G, 1)``
+    ``("components", "genes")``         ``(1, G, K)``
+    ``("genes", "components")``         ``(1, G, K)``
+    =================================  =====================
+
+    Any additional singleton leading axes present in *tensor* but not
+    described by *layout* raise a ``ValueError`` - callers must supply
+    layouts whose rank matches the tensor's ``ndim``.
+
+    Parameters
+    ----------
+    tensor : jnp.ndarray
+        Source parameter tensor.
+    layout : AxisLayout
+        Semantic layout (``has_sample_dim=False``).
+    dtype : jnp.dtype
+        Target dtype.
+
+    Returns
+    -------
+    jnp.ndarray
+        Tensor in the canonical mixture broadcast layout.
+    """
+    tensor = jnp.asarray(tensor).astype(dtype)
+    if layout.has_sample_dim:
+        raise ValueError(
+            "_prepare_mixture_tensor expected a per-sample layout (i.e. "
+            "has_sample_dim=False); callers must strip the sample axis "
+            "before invoking this helper."
+        )
+    if tensor.ndim != layout.rank:
+        raise ValueError(
+            f"Tensor ndim={tensor.ndim} does not match layout rank="
+            f"{layout.rank} (axes={layout.axes}). Supply a layout whose "
+            "rank matches the tensor."
+        )
+
+    g_ax = layout.gene_axis
+    k_ax = layout.component_axis
+
+    if g_ax is None and k_ax is None:
+        # Pure scalar -- treat as broadcast (1, 1, 1).
+        return jnp.reshape(tensor, (1, 1, 1))
+    if g_ax is None:
+        # Only component axis present -> (1, 1, K).  The layout is
+        # ``("components",)`` so tensor is 1D and a simple reshape
+        # suffices.
+        return jnp.reshape(tensor, (1, 1, -1))
+    if k_ax is None:
+        # Only gene axis present -> (1, G, 1).  Layout is
+        # ``("genes",)`` so tensor is 1D.
+        return jnp.reshape(tensor, (1, -1, 1))
+
+    # Both axes present: move genes to -2 and components to -1, then
+    # prepend a singleton cells axis.
+    tensor = jnp.moveaxis(tensor, (g_ax, k_ax), (-2, -1))
+    return jnp.expand_dims(tensor, axis=0)
+
+
+def _prepare_capture_non_mixture(
+    p_capture: jnp.ndarray,
+    layout: AxisLayout,
+    dtype: jnp.dtype,
+) -> jnp.ndarray:
+    """Reshape ``p_capture`` for non-mixture broadcasting.
+
+    Target layout is ``(n_cells, 1)`` so that element-wise products with
+    ``p`` (shape ``(..., n_genes)``) produce a ``(n_cells, n_genes)``
+    effective-probability grid.
+
+    Parameters
+    ----------
+    p_capture : jnp.ndarray
+        Cell-specific capture probability.
+    layout : AxisLayout
+        Layout of *p_capture* (expected ``("cells",)``).
+    dtype : jnp.dtype
+        Target dtype.
+
+    Returns
+    -------
+    jnp.ndarray
+        Reshaped tensor with shape ``(n_cells, 1)``.
+    """
+    p_capture = jnp.asarray(p_capture).astype(dtype)
+    c_ax = layout.cell_axis
+    if c_ax is None:
+        # Scalar capture probability -- broadcast over cells implicitly.
+        return jnp.reshape(p_capture, (1, 1))
+    if c_ax != 0:
+        p_capture = jnp.moveaxis(p_capture, c_ax, 0)
+    return p_capture[:, None]
+
+
+def _prepare_capture_mixture(
+    p_capture: jnp.ndarray,
+    layout: AxisLayout,
+    dtype: jnp.dtype,
+) -> jnp.ndarray:
+    """Reshape ``p_capture`` for the mixture broadcast grid.
+
+    Target layout is ``(n_cells, 1, 1)`` so the capture probability
+    broadcasts against ``(1, n_genes, n_components)``-shaped parameters.
+
+    Parameters
+    ----------
+    p_capture : jnp.ndarray
+        Cell-specific capture probability.
+    layout : AxisLayout
+        Layout of *p_capture* (expected ``("cells",)``).
+    dtype : jnp.dtype
+        Target dtype.
+
+    Returns
+    -------
+    jnp.ndarray
+        Reshaped tensor with shape ``(n_cells, 1, 1)`` (or ``(1, 1, 1)``
+        when no cell axis is present).
+    """
+    p_capture = jnp.asarray(p_capture).astype(dtype)
+    c_ax = layout.cell_axis
+    if c_ax is None:
+        return jnp.reshape(p_capture, (1, 1, 1))
+    if c_ax != 0:
+        p_capture = jnp.moveaxis(p_capture, c_ax, 0)
+    return p_capture[:, None, None]
+
+
+def _prepare_mixing_weights(
+    mixing_weights: jnp.ndarray,
+    layout: AxisLayout,
+    dtype: jnp.dtype,
+) -> jnp.ndarray:
+    """Return ``mixing_weights`` oriented so the component axis is last.
+
+    The canonical layout is ``("components",)``; any deviation (e.g.
+    stale transpose after mixture pruning) is corrected here so that
+    downstream ``logsumexp`` / reduction logic in :func:`_mixture_reduce`
+    is agnostic to the input orientation.
+
+    Parameters
+    ----------
+    mixing_weights : jnp.ndarray
+        Component mixing probabilities.
+    layout : AxisLayout
+        Semantic layout.
+    dtype : jnp.dtype
+        Target dtype.
+
+    Returns
+    -------
+    jnp.ndarray
+        Dtype-cast weights with shape ``(n_components,)``.
+    """
+    mixing_weights = jnp.asarray(mixing_weights).astype(dtype)
+    k_ax = layout.component_axis
+    if k_ax is None:
+        # No component axis -- treat as scalar (degenerate 1-component case).
+        return jnp.reshape(mixing_weights, (-1,))
+    if k_ax != mixing_weights.ndim - 1:
+        mixing_weights = jnp.moveaxis(mixing_weights, k_ax, -1)
+    return jnp.reshape(mixing_weights, (mixing_weights.shape[-1],))
 
 
 # =========================================================================
@@ -466,6 +677,59 @@ def _mixture_reduce(
 
 
 # =========================================================================
+# BNB concentration helper (shared between NB and ZINB variants)
+# =========================================================================
+
+
+def _maybe_prepare_bnb(
+    params: Dict,
+    param_layouts: Mapping[str, AxisLayout],
+    is_mixture: bool,
+    dtype: jnp.dtype,
+    *,
+    context: str,
+) -> Optional[jnp.ndarray]:
+    """Extract and reshape ``bnb_concentration`` when present.
+
+    Returns ``None`` when the parameter dictionary does not contain a
+    BNB concentration (plain NB/ZINB path).  When present, the tensor is
+    reshaped using :func:`_prepare_mixture_tensor` (mixture) or
+    :func:`_prepare_non_mixture_tensor` (non-mixture) so it broadcasts
+    against ``r`` and ``p``.
+
+    Parameters
+    ----------
+    params : dict
+        Posterior parameter dictionary.
+    param_layouts : Mapping[str, AxisLayout]
+        Layouts for every parameter.
+    is_mixture : bool
+        Whether the caller is in the mixture branch.
+    dtype : jnp.dtype
+        Target dtype.
+    context : str
+        Caller identifier used in error messages.
+
+    Returns
+    -------
+    jnp.ndarray or None
+        Reshaped concentration tensor, or ``None``.
+    """
+    if "bnb_concentration" not in params:
+        return None
+    layout = _require_layout(
+        param_layouts, "bnb_concentration", context=context
+    )
+    if is_mixture:
+        return _prepare_mixture_tensor(
+            params["bnb_concentration"], layout, dtype
+        )
+    return _prepare_non_mixture_tensor(
+        params["bnb_concentration"], layout, dtype
+    )
+
+
+# =========================================================================
 # NB family delegate functions
 # =========================================================================
 
@@ -473,6 +737,7 @@ def _mixture_reduce(
 def nb_log_prob(
     counts: jnp.ndarray,
     params: Dict,
+    param_layouts: Mapping[str, AxisLayout],
     *,
     return_by: str = "cell",
     cells_axis: int = 0,
@@ -501,6 +766,9 @@ def nb_log_prob(
         - Non-mixture: ``"p"``, ``"r"`` (and optionally
           ``"bnb_concentration"`` for BNB).
         - Mixture:     the above plus ``"mixing_weights"``.
+    param_layouts : Mapping[str, AxisLayout]
+        Semantic :class:`AxisLayout` for every parameter in *params*.
+        Must be provided with ``has_sample_dim=False``.
     return_by : {"cell", "gene"}, default="cell"
         Output reduction axis.
     cells_axis : int, default=0
@@ -528,20 +796,18 @@ def nb_log_prob(
           ``(n_genes, n_components)``.
         - Mixture marginal: ``(n_cells,)`` or ``(n_genes,)``.
     """
-    # Input validation mirrors the legacy free functions so existing
-    # callers observe identical error messages.
     _check_return_by(return_by)
     _check_weight_type(weight_type)
 
-    # Normalise layout and cast to the requested working dtype.
     counts = _normalize_counts(counts, cells_axis, dtype)
     n_cells, n_genes = counts.shape
 
-    # Extract and sanitise the shared NB parameters.
-    p = _clip_p(jnp.squeeze(params["p"]).astype(dtype), p_floor)
-    r = _clip_r(jnp.squeeze(params["r"]).astype(dtype), r_floor)
+    # Look up layouts for the consumed parameters.
+    p_layout = _require_layout(param_layouts, "p", context="nb_log_prob")
+    r_layout = _require_layout(param_layouts, "r", context="nb_log_prob")
 
     is_mixture = "mixing_weights" in params
+
     if not is_mixture:
         # -----------------------------------------------------------------
         # Non-mixture branch: single NB/BNB distribution vectorised across
@@ -549,27 +815,58 @@ def nb_log_prob(
         # computing per-cell log probs; for gene-wise output we skip
         # to_event and sum across cells explicitly.
         # -----------------------------------------------------------------
-        base_dist = _build_ll_count_dist(r, p, params)
+        p = _clip_p(
+            _prepare_non_mixture_tensor(params["p"], p_layout, dtype), p_floor
+        )
+        r = _clip_r(
+            _prepare_non_mixture_tensor(params["r"], r_layout, dtype), r_floor
+        )
+        bnb_conc = _maybe_prepare_bnb(
+            params, param_layouts, is_mixture=False, dtype=dtype,
+            context="nb_log_prob",
+        )
+        base_dist = _build_ll_count_dist(r, p, bnb_conc)
         if return_by == "cell":
             return base_dist.to_event(1).log_prob(counts)
         return jnp.sum(base_dist.log_prob(counts), axis=0)
 
-    # -----------------------------------------------------------------
+    # ---------------------------------------------------------------------
     # Mixture branch: broadcast to (n_cells, n_genes, n_components).
-    # -----------------------------------------------------------------
-    mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
-    n_components = mixing_weights.shape[0]
+    # ---------------------------------------------------------------------
+    mw_layout = _require_layout(
+        param_layouts, "mixing_weights", context="nb_log_prob"
+    )
+    mixing_weights = _prepare_mixing_weights(
+        params["mixing_weights"], mw_layout, dtype
+    )
+    n_components = int(mixing_weights.shape[0])
 
-    # Validate optional gene/cell weights up front.
+    # Defensive axis check before we reshape anything.
+    _validate_component_axis(
+        jnp.asarray(params["r"]), r_layout, n_components,
+        context="nb_log_prob", param_name="r",
+    )
+    _validate_component_axis(
+        jnp.asarray(params["p"]), p_layout, n_components,
+        context="nb_log_prob", param_name="p",
+    )
+
     weights = _validate_weights(weights, return_by, n_cells, n_genes, dtype)
 
-    # Broadcast layout: counts (n_cells, G, 1), r (1, G, K), p flexible.
     counts_b = jnp.expand_dims(counts, axis=-1)
-    r_b = jnp.expand_dims(jnp.transpose(r), axis=0)
-    p_b = _prepare_p_mixture_layout(p, n_components)
+    r_b = _clip_r(
+        _prepare_mixture_tensor(params["r"], r_layout, dtype), r_floor
+    )
+    p_b = _clip_p(
+        _prepare_mixture_tensor(params["p"], p_layout, dtype), p_floor
+    )
+    bnb_conc = _maybe_prepare_bnb(
+        params, param_layouts, is_mixture=True, dtype=dtype,
+        context="nb_log_prob",
+    )
 
     # Single full-array log_prob: shape (n_cells, n_genes, n_components).
-    gene_log_probs = _build_ll_count_dist(r_b, p_b, params).log_prob(counts_b)
+    gene_log_probs = _build_ll_count_dist(r_b, p_b, bnb_conc).log_prob(counts_b)
 
     return _mixture_reduce(
         gene_log_probs,
@@ -584,6 +881,7 @@ def nb_log_prob(
 def zinb_log_prob(
     counts: jnp.ndarray,
     params: Dict,
+    param_layouts: Mapping[str, AxisLayout],
     *,
     return_by: str = "cell",
     cells_axis: int = 0,
@@ -602,11 +900,10 @@ def zinb_log_prob(
 
     Parameters
     ----------
-    counts, params, return_by, cells_axis, r_floor, p_floor, dtype,
-    split_components, weights, weight_type
+    counts, params, param_layouts, return_by, cells_axis, r_floor, p_floor,
+    dtype, split_components, weights, weight_type
         See :func:`nb_log_prob`.  ``params`` must additionally contain
-        ``"gate"`` (shape ``(n_genes,)`` non-mixture or
-        ``(n_components, n_genes)`` mixture).
+        ``"gate"`` with a corresponding layout entry.
 
     Returns
     -------
@@ -619,38 +916,70 @@ def zinb_log_prob(
     counts = _normalize_counts(counts, cells_axis, dtype)
     n_cells, n_genes = counts.shape
 
-    p = _clip_p(jnp.squeeze(params["p"]).astype(dtype), p_floor)
-    r = _clip_r(jnp.squeeze(params["r"]).astype(dtype), r_floor)
-    gate = jnp.asarray(params["gate"]).astype(dtype)
+    p_layout = _require_layout(param_layouts, "p", context="zinb_log_prob")
+    r_layout = _require_layout(param_layouts, "r", context="zinb_log_prob")
+    gate_layout = _require_layout(
+        param_layouts, "gate", context="zinb_log_prob"
+    )
 
     is_mixture = "mixing_weights" in params
+
     if not is_mixture:
-        # Non-mixture: gate is expected to already be the squeezed
-        # per-gene tensor.  Legacy code applied ``jnp.squeeze``; keep it.
-        gate_nm = jnp.squeeze(gate)
-        base_dist = _build_ll_count_dist(r, p, params)
-        zi_dist = dist.ZeroInflatedDistribution(base_dist, gate=gate_nm)
+        p = _clip_p(
+            _prepare_non_mixture_tensor(params["p"], p_layout, dtype), p_floor
+        )
+        r = _clip_r(
+            _prepare_non_mixture_tensor(params["r"], r_layout, dtype), r_floor
+        )
+        gate = _prepare_non_mixture_tensor(params["gate"], gate_layout, dtype)
+        bnb_conc = _maybe_prepare_bnb(
+            params, param_layouts, is_mixture=False, dtype=dtype,
+            context="zinb_log_prob",
+        )
+        base_dist = _build_ll_count_dist(r, p, bnb_conc)
+        zi_dist = dist.ZeroInflatedDistribution(base_dist, gate=gate)
         if return_by == "cell":
             return zi_dist.to_event(1).log_prob(counts)
         return jnp.sum(zi_dist.log_prob(counts), axis=0)
 
     # Mixture branch.
-    mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
-    n_components = mixing_weights.shape[0]
+    mw_layout = _require_layout(
+        param_layouts, "mixing_weights", context="zinb_log_prob"
+    )
+    mixing_weights = _prepare_mixing_weights(
+        params["mixing_weights"], mw_layout, dtype
+    )
+    n_components = int(mixing_weights.shape[0])
+
+    _validate_component_axis(
+        jnp.asarray(params["r"]), r_layout, n_components,
+        context="zinb_log_prob", param_name="r",
+    )
+    _validate_component_axis(
+        jnp.asarray(params["p"]), p_layout, n_components,
+        context="zinb_log_prob", param_name="p",
+    )
+    _validate_component_axis(
+        jnp.asarray(params["gate"]), gate_layout, n_components,
+        context="zinb_log_prob", param_name="gate",
+    )
+
     weights = _validate_weights(weights, return_by, n_cells, n_genes, dtype)
 
-    # Ensure gate has at least two dims so it can be transposed into the
-    # mixture broadcast layout.
-    if gate.ndim < 2:
-        gate = gate[jnp.newaxis, :]
-
     counts_b = jnp.expand_dims(counts, axis=-1)
-    r_b = jnp.expand_dims(jnp.transpose(r), axis=0)
-    # gate: (K, G) -> (G, K) -> (1, G, K)
-    gate_b = jnp.expand_dims(jnp.transpose(gate), axis=0)
-    p_b = _prepare_p_mixture_layout(p, n_components)
+    r_b = _clip_r(
+        _prepare_mixture_tensor(params["r"], r_layout, dtype), r_floor
+    )
+    p_b = _clip_p(
+        _prepare_mixture_tensor(params["p"], p_layout, dtype), p_floor
+    )
+    gate_b = _prepare_mixture_tensor(params["gate"], gate_layout, dtype)
+    bnb_conc = _maybe_prepare_bnb(
+        params, param_layouts, is_mixture=True, dtype=dtype,
+        context="zinb_log_prob",
+    )
 
-    base_dist = _build_ll_count_dist(r_b, p_b, params)
+    base_dist = _build_ll_count_dist(r_b, p_b, bnb_conc)
     zi_dist = dist.ZeroInflatedDistribution(base_dist, gate=gate_b)
     gene_log_probs = zi_dist.log_prob(counts_b)
 
@@ -667,6 +996,7 @@ def zinb_log_prob(
 def nbvcp_log_prob(
     counts: jnp.ndarray,
     params: Dict,
+    param_layouts: Mapping[str, AxisLayout],
     *,
     return_by: str = "cell",
     cells_axis: int = 0,
@@ -688,10 +1018,10 @@ def nbvcp_log_prob(
 
     Parameters
     ----------
-    counts, params, return_by, cells_axis, r_floor, p_floor, dtype,
-    split_components, weights, weight_type
+    counts, params, param_layouts, return_by, cells_axis, r_floor, p_floor,
+    dtype, split_components, weights, weight_type
         See :func:`nb_log_prob`.  ``params`` must additionally contain
-        ``"p_capture"`` *or* ``"phi_capture"``.
+        ``"p_capture"`` *or* ``"phi_capture"`` with a corresponding layout.
 
     Returns
     -------
@@ -704,46 +1034,78 @@ def nbvcp_log_prob(
     counts = _normalize_counts(counts, cells_axis, dtype)
     n_cells, n_genes = counts.shape
 
-    p = _clip_p(jnp.squeeze(params["p"]).astype(dtype), p_floor)
-    r = _clip_r(jnp.squeeze(params["r"]).astype(dtype), r_floor)
-    p_capture = _extract_capture(params, dtype)
+    p_layout = _require_layout(param_layouts, "p", context="nbvcp_log_prob")
+    r_layout = _require_layout(param_layouts, "r", context="nbvcp_log_prob")
+    p_capture, cap_layout = _extract_capture(
+        params, param_layouts, dtype, context="nbvcp_log_prob"
+    )
 
     is_mixture = "mixing_weights" in params
+
     if not is_mixture:
-        # Non-mixture: broadcast p_capture over genes. Shape (n_cells, 1).
-        p_capture_nm = p_capture[:, None]
+        # Non-mixture: broadcast p_capture over genes -> (n_cells, 1).
+        p = _clip_p(
+            _prepare_non_mixture_tensor(params["p"], p_layout, dtype), p_floor
+        )
+        r = _clip_r(
+            _prepare_non_mixture_tensor(params["r"], r_layout, dtype), r_floor
+        )
+        p_capture_nm = _prepare_capture_non_mixture(
+            p_capture, cap_layout, dtype
+        )
         # Effective capture-adjusted success probability.
         p_hat = p * p_capture_nm / (1 - p * (1 - p_capture_nm))
-        # Guard against NaN at the endpoints of (0, 1).
         p_hat = _clip_p(p_hat, p_floor)
-        base_dist = _build_ll_count_dist(r, p_hat, params)
+        bnb_conc = _maybe_prepare_bnb(
+            params, param_layouts, is_mixture=False, dtype=dtype,
+            context="nbvcp_log_prob",
+        )
+        base_dist = _build_ll_count_dist(r, p_hat, bnb_conc)
         if return_by == "cell":
             return base_dist.to_event(1).log_prob(counts)
         return jnp.sum(base_dist.log_prob(counts), axis=0)
 
     # Mixture branch.
-    mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
-    n_components = mixing_weights.shape[0]
+    mw_layout = _require_layout(
+        param_layouts, "mixing_weights", context="nbvcp_log_prob"
+    )
+    mixing_weights = _prepare_mixing_weights(
+        params["mixing_weights"], mw_layout, dtype
+    )
+    n_components = int(mixing_weights.shape[0])
+
+    _validate_component_axis(
+        jnp.asarray(params["r"]), r_layout, n_components,
+        context="nbvcp_log_prob", param_name="r",
+    )
+    _validate_component_axis(
+        jnp.asarray(params["p"]), p_layout, n_components,
+        context="nbvcp_log_prob", param_name="p",
+    )
+
     weights = _validate_weights(weights, return_by, n_cells, n_genes, dtype)
 
     counts_b = jnp.expand_dims(counts, axis=-1)
-    r_b = jnp.expand_dims(jnp.transpose(r), axis=0)
-    # p_capture: (n_cells,) -> (n_cells, 1, 1)
-    p_capture_b = jnp.expand_dims(p_capture, axis=(-1, -2))
-    p_b = _prepare_p_mixture_layout(p, n_components)
+    r_b = _clip_r(
+        _prepare_mixture_tensor(params["r"], r_layout, dtype), r_floor
+    )
+    p_b = _clip_p(
+        _prepare_mixture_tensor(params["p"], p_layout, dtype), p_floor
+    )
+    p_capture_b = _prepare_capture_mixture(p_capture, cap_layout, dtype)
 
     # Effective probability, shape (n_cells, n_genes, n_components) or a
-    # broadcast-compatible variant like (n_cells, 1, n_components).
+    # broadcast-compatible variant.
     p_hat = p_b * p_capture_b / (1 - p_b * (1 - p_capture_b))
-    _validate_mixture_component_shapes(
-        r=r_b,
-        probs=p_hat,
-        n_components=n_components,
-        context="nbvcp_log_prob",
-    )
     p_hat = _clip_p(p_hat, p_floor)
 
-    gene_log_probs = _build_ll_count_dist(r_b, p_hat, params).log_prob(counts_b)
+    bnb_conc = _maybe_prepare_bnb(
+        params, param_layouts, is_mixture=True, dtype=dtype,
+        context="nbvcp_log_prob",
+    )
+    gene_log_probs = _build_ll_count_dist(r_b, p_hat, bnb_conc).log_prob(
+        counts_b
+    )
 
     return _mixture_reduce(
         gene_log_probs,
@@ -758,6 +1120,7 @@ def nbvcp_log_prob(
 def zinbvcp_log_prob(
     counts: jnp.ndarray,
     params: Dict,
+    param_layouts: Mapping[str, AxisLayout],
     *,
     return_by: str = "cell",
     cells_axis: int = 0,
@@ -777,10 +1140,11 @@ def zinbvcp_log_prob(
 
     Parameters
     ----------
-    counts, params, return_by, cells_axis, r_floor, p_floor, dtype,
-    split_components, weights, weight_type
+    counts, params, param_layouts, return_by, cells_axis, r_floor, p_floor,
+    dtype, split_components, weights, weight_type
         See :func:`nb_log_prob`.  ``params`` must additionally contain
-        ``"gate"`` and either ``"p_capture"`` or ``"phi_capture"``.
+        ``"gate"`` and either ``"p_capture"`` or ``"phi_capture"`` with
+        matching layout entries.
 
     Returns
     -------
@@ -793,48 +1157,82 @@ def zinbvcp_log_prob(
     counts = _normalize_counts(counts, cells_axis, dtype)
     n_cells, n_genes = counts.shape
 
-    p = _clip_p(jnp.squeeze(params["p"]).astype(dtype), p_floor)
-    r = _clip_r(jnp.squeeze(params["r"]).astype(dtype), r_floor)
-    gate = jnp.asarray(params["gate"]).astype(dtype)
-    p_capture = _extract_capture(params, dtype)
+    p_layout = _require_layout(param_layouts, "p", context="zinbvcp_log_prob")
+    r_layout = _require_layout(param_layouts, "r", context="zinbvcp_log_prob")
+    gate_layout = _require_layout(
+        param_layouts, "gate", context="zinbvcp_log_prob"
+    )
+    p_capture, cap_layout = _extract_capture(
+        params, param_layouts, dtype, context="zinbvcp_log_prob"
+    )
 
     is_mixture = "mixing_weights" in params
+
     if not is_mixture:
-        # Non-mixture: legacy code squeezed gate, broadcast p_capture.
-        gate_nm = jnp.squeeze(gate)
-        p_capture_nm = p_capture[:, None]
+        p = _clip_p(
+            _prepare_non_mixture_tensor(params["p"], p_layout, dtype), p_floor
+        )
+        r = _clip_r(
+            _prepare_non_mixture_tensor(params["r"], r_layout, dtype), r_floor
+        )
+        gate = _prepare_non_mixture_tensor(params["gate"], gate_layout, dtype)
+        p_capture_nm = _prepare_capture_non_mixture(
+            p_capture, cap_layout, dtype
+        )
         p_hat = p * p_capture_nm / (1 - p * (1 - p_capture_nm))
         p_hat = _clip_p(p_hat, p_floor)
-        base_dist = _build_ll_count_dist(r, p_hat, params)
-        zi_dist = dist.ZeroInflatedDistribution(base_dist, gate=gate_nm)
+        bnb_conc = _maybe_prepare_bnb(
+            params, param_layouts, is_mixture=False, dtype=dtype,
+            context="zinbvcp_log_prob",
+        )
+        base_dist = _build_ll_count_dist(r, p_hat, bnb_conc)
+        zi_dist = dist.ZeroInflatedDistribution(base_dist, gate=gate)
         if return_by == "cell":
             return zi_dist.to_event(1).log_prob(counts)
         return jnp.sum(zi_dist.log_prob(counts), axis=0)
 
     # Mixture branch.
-    mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
-    n_components = mixing_weights.shape[0]
+    mw_layout = _require_layout(
+        param_layouts, "mixing_weights", context="zinbvcp_log_prob"
+    )
+    mixing_weights = _prepare_mixing_weights(
+        params["mixing_weights"], mw_layout, dtype
+    )
+    n_components = int(mixing_weights.shape[0])
+
+    _validate_component_axis(
+        jnp.asarray(params["r"]), r_layout, n_components,
+        context="zinbvcp_log_prob", param_name="r",
+    )
+    _validate_component_axis(
+        jnp.asarray(params["p"]), p_layout, n_components,
+        context="zinbvcp_log_prob", param_name="p",
+    )
+    _validate_component_axis(
+        jnp.asarray(params["gate"]), gate_layout, n_components,
+        context="zinbvcp_log_prob", param_name="gate",
+    )
+
     weights = _validate_weights(weights, return_by, n_cells, n_genes, dtype)
 
-    if gate.ndim < 2:
-        gate = gate[jnp.newaxis, :]
-
     counts_b = jnp.expand_dims(counts, axis=-1)
-    r_b = jnp.expand_dims(jnp.transpose(r), axis=0)
-    gate_b = jnp.expand_dims(jnp.transpose(gate), axis=0)
-    p_capture_b = jnp.expand_dims(p_capture, axis=(-1, -2))
-    p_b = _prepare_p_mixture_layout(p, n_components)
+    r_b = _clip_r(
+        _prepare_mixture_tensor(params["r"], r_layout, dtype), r_floor
+    )
+    p_b = _clip_p(
+        _prepare_mixture_tensor(params["p"], p_layout, dtype), p_floor
+    )
+    gate_b = _prepare_mixture_tensor(params["gate"], gate_layout, dtype)
+    p_capture_b = _prepare_capture_mixture(p_capture, cap_layout, dtype)
 
     p_hat = p_b * p_capture_b / (1 - p_b * (1 - p_capture_b))
-    _validate_mixture_component_shapes(
-        r=r_b,
-        probs=p_hat,
-        n_components=n_components,
-        context="zinbvcp_log_prob",
-    )
     p_hat = _clip_p(p_hat, p_floor)
 
-    base_dist = _build_ll_count_dist(r_b, p_hat, params)
+    bnb_conc = _maybe_prepare_bnb(
+        params, param_layouts, is_mixture=True, dtype=dtype,
+        context="zinbvcp_log_prob",
+    )
+    base_dist = _build_ll_count_dist(r_b, p_hat, bnb_conc)
     zi_dist = dist.ZeroInflatedDistribution(base_dist, gate=gate_b)
     gene_log_probs = zi_dist.log_prob(counts_b)
 

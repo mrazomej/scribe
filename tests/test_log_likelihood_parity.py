@@ -48,6 +48,7 @@ from scribe.models.components.likelihoods import (
     BNBWithVCPLikelihood,
     ZIBNBWithVCPLikelihood,
 )
+from scribe.core.axis_layout import AxisLayout
 
 
 # =========================================================================
@@ -130,6 +131,87 @@ def _build_params(golden, model: str):
     }
 
 
+# Per-model semantic layouts for the golden test inputs.  These are hand-
+# encoded because the golden .npz captures only raw tensors (no
+# ``ModelConfig``) - the semantics must be declared explicitly to match
+# the shapes emitted by ``_generate_log_likelihood_golden.py``.
+#
+# Shape conventions (see the inspection of ``log_likelihood_golden.npz``):
+#     non-mixture: p=(), r=(G,), gate=(G,), p_capture=(N,)
+#     mixture:     p=(K,), r=(K,G), gate=(K,G), p_capture=(N,),
+#                  mixing_weights=(K,)
+_LAYOUT_TABLE = {
+    # Non-mixture variants.
+    "nbdm": {
+        "p": AxisLayout(()),
+        "r": AxisLayout(("genes",)),
+    },
+    "zinb": {
+        "p": AxisLayout(()),
+        "r": AxisLayout(("genes",)),
+        "gate": AxisLayout(("genes",)),
+    },
+    "nbvcp": {
+        "p": AxisLayout(()),
+        "r": AxisLayout(("genes",)),
+        "p_capture": AxisLayout(("cells",)),
+    },
+    "zinbvcp": {
+        "p": AxisLayout(()),
+        "r": AxisLayout(("genes",)),
+        "gate": AxisLayout(("genes",)),
+        "p_capture": AxisLayout(("cells",)),
+    },
+    # Mixture variants.
+    "nbdm_mix": {
+        "p": AxisLayout(("components",)),
+        "r": AxisLayout(("components", "genes")),
+        "mixing_weights": AxisLayout(("components",)),
+    },
+    "zinb_mix": {
+        "p": AxisLayout(("components",)),
+        "r": AxisLayout(("components", "genes")),
+        "gate": AxisLayout(("components", "genes")),
+        "mixing_weights": AxisLayout(("components",)),
+    },
+    "nbvcp_mix": {
+        "p": AxisLayout(("components",)),
+        "r": AxisLayout(("components", "genes")),
+        "p_capture": AxisLayout(("cells",)),
+        "mixing_weights": AxisLayout(("components",)),
+    },
+    "zinbvcp_mix": {
+        "p": AxisLayout(("components",)),
+        "r": AxisLayout(("components", "genes")),
+        "gate": AxisLayout(("components", "genes")),
+        "p_capture": AxisLayout(("cells",)),
+        "mixing_weights": AxisLayout(("components",)),
+    },
+}
+
+
+def _build_layouts(model: str, *, bnb: bool = False) -> dict:
+    """Return the per-parameter :class:`AxisLayout` dict for *model*.
+
+    Parameters
+    ----------
+    model : str
+        Model-variant key (e.g., ``"nbdm"``, ``"zinb_mix"``).
+    bnb : bool, default False
+        When ``True`` attach a ``bnb_concentration`` layout matching the
+        ``(n_genes,)`` tensor emitted by :func:`_attach_bnb_concentration`.
+
+    Returns
+    -------
+    dict of str to AxisLayout
+        Mapping ready to be forwarded to :meth:`Likelihood.log_prob`.
+    """
+    layouts = dict(_LAYOUT_TABLE[model])
+    if bnb:
+        layouts["bnb_concentration"] = AxisLayout(("genes",))
+    return layouts
+
+
 # =========================================================================
 # Non-mixture parity tests (8 cases = 4 models x 2 return_by axes).
 # =========================================================================
@@ -156,10 +238,11 @@ def test_non_mixture_log_prob_parity(golden, model, return_by):
     likelihood = _LIKELIHOOD_CLASS[model]()
     counts = jnp.asarray(golden["counts"])
     params = _build_params(golden, model)
+    layouts = _build_layouts(model)
 
     # New implementation under test.
     new_output = np.asarray(
-        likelihood.log_prob(counts, params, return_by=return_by)
+        likelihood.log_prob(counts, params, layouts, return_by=return_by)
     )
 
     # Legacy reference pinned at generation time.
@@ -200,11 +283,13 @@ def test_mixture_log_prob_parity_no_weights(
     likelihood = _LIKELIHOOD_CLASS[model]()
     counts = jnp.asarray(golden["counts"])
     params = _build_params(golden, model)
+    layouts = _build_layouts(model)
 
     new_output = np.asarray(
         likelihood.log_prob(
             counts,
             params,
+            layouts,
             return_by=return_by,
             split_components=split_components,
         )
@@ -241,12 +326,14 @@ def test_mixture_log_prob_parity_additive_gene_weights(
     likelihood = _LIKELIHOOD_CLASS[model]()
     counts = jnp.asarray(golden["counts"])
     params = _build_params(golden, model)
+    layouts = _build_layouts(model)
     weights = jnp.asarray(golden["weights_gene"])
 
     new_output = np.asarray(
         likelihood.log_prob(
             counts,
             params,
+            layouts,
             return_by="cell",
             split_components=split_components,
             weights=weights,
@@ -285,7 +372,8 @@ def test_non_mixture_output_shape(golden, model, expected_cell_shape):
     likelihood = _LIKELIHOOD_CLASS[model]()
     counts = jnp.asarray(golden["counts"])
     params = _build_params(golden, model)
-    out = likelihood.log_prob(counts, params, return_by="cell")
+    layouts = _build_layouts(model)
+    out = likelihood.log_prob(counts, params, layouts, return_by="cell")
     assert out.shape == expected_cell_shape
 
 
@@ -298,8 +386,9 @@ def test_mixture_split_components_shape(golden, model):
     likelihood = _LIKELIHOOD_CLASS[model]()
     counts = jnp.asarray(golden["counts"])
     params = _build_params(golden, model)
+    layouts = _build_layouts(model)
     out = likelihood.log_prob(
-        counts, params, return_by="cell", split_components=True
+        counts, params, layouts, return_by="cell", split_components=True
     )
     # N_CELLS=50, N_COMPONENTS=3 - see _generate_log_likelihood_golden.py.
     assert out.shape == (50, 3)
@@ -358,12 +447,16 @@ def test_bnb_non_mixture_smoke(golden, model, nb_cls, bnb_cls, return_by):
 
     nb_params = _build_params(golden, model)
     bnb_params = _attach_bnb_concentration(nb_params, n_genes)
+    nb_layouts = _build_layouts(model)
+    bnb_layouts = _build_layouts(model, bnb=True)
 
     nb_out = np.asarray(
-        nb_cls().log_prob(counts, nb_params, return_by=return_by)
+        nb_cls().log_prob(counts, nb_params, nb_layouts, return_by=return_by)
     )
     bnb_out = np.asarray(
-        bnb_cls().log_prob(counts, bnb_params, return_by=return_by)
+        bnb_cls().log_prob(
+            counts, bnb_params, bnb_layouts, return_by=return_by
+        )
     )
 
     assert nb_out.shape == bnb_out.shape
@@ -406,11 +499,14 @@ def test_bnb_mixture_smoke(
 
     nb_params = _build_params(golden, model)
     bnb_params = _attach_bnb_concentration(nb_params, n_genes)
+    nb_layouts = _build_layouts(model)
+    bnb_layouts = _build_layouts(model, bnb=True)
 
     nb_out = np.asarray(
         nb_cls().log_prob(
             counts,
             nb_params,
+            nb_layouts,
             return_by="cell",
             split_components=split_components,
         )
@@ -419,6 +515,7 @@ def test_bnb_mixture_smoke(
         bnb_cls().log_prob(
             counts,
             bnb_params,
+            bnb_layouts,
             return_by="cell",
             split_components=split_components,
         )
