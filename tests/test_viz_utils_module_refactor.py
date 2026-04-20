@@ -190,6 +190,103 @@ def test_plot_correlation_heatmap_n_genes_kwarg_overrides_heatmap_opts(
     assert captured.get("data_shape") == (1, 1)
 
 
+def test_plot_correlation_heatmap_n_samples_kwarg_thins_stored_draws(
+    monkeypatch,
+):
+    """Passing ``n_samples`` should slice stored chains before correlations."""
+    captured = {}
+
+    class _FakeClusterGrid:
+        """Minimal stand-in for ``seaborn.ClusterGrid`` (only ``.fig`` used)."""
+
+        def __init__(self):
+            self.fig = plt.figure(figsize=(2, 2))
+
+    def _fake_clustermap(_data, **_kwargs):
+        return _FakeClusterGrid()
+
+    from scribe.viz import heatmap as heatmap_module
+
+    _orig_compute = heatmap_module._compute_correlation_matrix
+
+    def _wrapped_compute(samp, n_samp):
+        captured["n_samp_arg"] = int(n_samp)
+        captured["samp_axis0"] = int(samp.shape[0])
+        return _orig_compute(samp, n_samp)
+
+    monkeypatch.setattr(
+        "scribe.viz.heatmap.sns.clustermap",
+        _fake_clustermap,
+    )
+    monkeypatch.setattr(
+        heatmap_module,
+        "_compute_correlation_matrix",
+        _wrapped_compute,
+    )
+
+    results = _make_mcmc_results_for_viz()
+    try:
+        plot_correlation_heatmap(
+            results,
+            None,
+            save=False,
+            n_samples=2,
+        )
+    finally:
+        plt.close("all")
+
+    assert captured["n_samp_arg"] == 2
+    assert captured["samp_axis0"] == 2
+
+
+def test_plot_correlation_heatmap_omitted_n_samples_uses_full_chain(
+    monkeypatch,
+):
+    """When ``n_samples`` is omitted, use every stored posterior draw."""
+    captured = {}
+
+    class _FakeClusterGrid:
+        """Minimal stand-in for ``seaborn.ClusterGrid`` (only ``.fig`` used)."""
+
+        def __init__(self):
+            self.fig = plt.figure(figsize=(2, 2))
+
+    def _fake_clustermap(_data, **_kwargs):
+        return _FakeClusterGrid()
+
+    from scribe.viz import heatmap as heatmap_module
+
+    _orig_compute = heatmap_module._compute_correlation_matrix
+
+    def _wrapped_compute(samp, n_samp):
+        captured["n_samp_arg"] = int(n_samp)
+        captured["samp_axis0"] = int(samp.shape[0])
+        return _orig_compute(samp, n_samp)
+
+    monkeypatch.setattr(
+        "scribe.viz.heatmap.sns.clustermap",
+        _fake_clustermap,
+    )
+    monkeypatch.setattr(
+        heatmap_module,
+        "_compute_correlation_matrix",
+        _wrapped_compute,
+    )
+
+    results = _make_mcmc_results_for_viz()
+    try:
+        plot_correlation_heatmap(
+            results,
+            None,
+            save=False,
+        )
+    finally:
+        plt.close("all")
+
+    assert captured["n_samp_arg"] == 3
+    assert captured["samp_axis0"] == 3
+
+
 def test_package_root_exports_expected_symbols():
     """Ensure refactor preserves key package-root imports and callables."""
     assert callable(plot_loss)

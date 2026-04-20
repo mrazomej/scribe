@@ -32,6 +32,7 @@ def plot_correlation_heatmap(
     ctx,
     viz_cfg=None,
     n_genes=None,
+    n_samples=None,
     figsize=None,
     fig=None,
     axes=None,
@@ -64,6 +65,14 @@ def plot_correlation_heatmap(
         Maximum number of genes to plot (highest correlation-variance genes).
         When ``None``, uses ``viz_cfg["heatmap_opts"]["n_genes"]`` if present,
         otherwise ``1500``. When an ``int``, overrides that config entry.
+    n_samples : int or None, optional
+        Number of posterior draws used to compute Pearson correlations. When
+        ``None`` and new samples must be drawn (SVI-style results), uses
+        ``viz_cfg["heatmap_opts"]["n_samples"]`` if present, otherwise ``512``.
+        When ``None`` and samples are already stored (e.g. MCMC), **all**
+        stored draws are used. When an ``int``, caps correlations to the
+        first that many draws and overrides the config value for **new**
+        draws.
     figsize : tuple of float, optional
         ``(width, height)`` in inches; overrides ``heatmap_opts.figsize``
         (scalar side length) when given.
@@ -87,12 +96,14 @@ def plot_correlation_heatmap(
             "`fig`/`ax`/`axes`. Call without axes."
         )
 
-    heatmap_opts = viz_cfg.get("heatmap_opts", {}) if viz_cfg is not None else {}
+    heatmap_opts = (
+        viz_cfg.get("heatmap_opts", {}) if viz_cfg is not None else {}
+    )
     # Explicit ``n_genes`` wins over viz_cfg for interactive calls; cfg alone
     # keeps backward-compatible pipeline behavior.
     _cfg_n_genes = heatmap_opts.get("n_genes", 1500)
     n_genes_to_plot = _cfg_n_genes if n_genes is None else n_genes
-    n_samples = heatmap_opts.get("n_samples", 512)
+    _cfg_n_samples = heatmap_opts.get("n_samples", 512)
     # figsize kwarg takes priority; fall back to config, then default (12, 12).
     _cfg_figsize = heatmap_opts.get("figsize", 12)
     if figsize is None:
@@ -110,18 +121,20 @@ def plot_correlation_heatmap(
         f"(parameterization: {parameterization})[/dim]"
     )
 
-    if results.posterior_samples is None:
-        console.print(f"[dim]Generating {n_samples} posterior samples...[/dim]")
+    # Whether samples were absent before this call (affects console messaging
+    # after we optionally thin the chain for correlations).
+    _posterior_was_missing = results.posterior_samples is None
+    if _posterior_was_missing:
+        n_draw = _cfg_n_samples if n_samples is None else n_samples
+        console.print(f"[dim]Generating {n_draw} posterior samples...[/dim]")
         results.get_posterior_samples(
             rng_key=random.PRNGKey(42),
-            n_samples=n_samples,
+            n_samples=n_draw,
             store_samples=True,
             counts=counts,
         )
     else:
         console.print("[dim]Using existing posterior samples...[/dim]")
-        n_samples = results.posterior_samples[param_name].shape[0]
-        console.print(f"[dim]Found {n_samples} existing samples[/dim]")
 
     if param_name not in results.posterior_samples:
         console.print(
@@ -137,9 +150,27 @@ def plot_correlation_heatmap(
     samples = results.posterior_samples[param_name]
     console.print(f"[dim]Sample shape:[/dim] {samples.shape}")
 
+    n_avail = int(samples.shape[0])
+    # Thin to the first ``n_samples`` draws when the caller sets that cap;
+    # otherwise keep every stored draw (MCMC) or the count just drawn (SVI).
+    if n_samples is not None:
+        n_draws_for_corr = min(int(n_samples), n_avail)
+        if n_draws_for_corr < n_avail:
+            console.print(
+                f"[dim]Using {n_draws_for_corr} of {n_avail} posterior draws "
+                "for correlation matrix...[/dim]"
+            )
+        samples = samples[:n_draws_for_corr]
+    else:
+        n_draws_for_corr = n_avail
+        if not _posterior_was_missing:
+            console.print(f"[dim]Found {n_avail} existing samples[/dim]")
+
     base_fname = "correlation"
     if ctx.save:
-        _fname_prefix = ctx.build_filename("correlation_heatmap", results=results)
+        _fname_prefix = ctx.build_filename(
+            "correlation_heatmap", results=results
+        )
         base_fname = _fname_prefix.rsplit("_correlation_heatmap.", 1)[0]
     output_format = ctx.output_format
 
@@ -165,7 +196,7 @@ def plot_correlation_heatmap(
         for k in range(n_components):
             comp_samples = jnp.take(samples, k, axis=_layout.component_axis)
             corr_matrix = _compute_correlation_matrix(
-                comp_samples, n_samples
+                comp_samples, n_draws_for_corr
             )
             correlation_matrices.append(corr_matrix)
             corr_var = jnp.var(corr_matrix, axis=1)
@@ -193,9 +224,7 @@ def plot_correlation_heatmap(
         component_results = []
         for k in range(n_components):
             corr_subset_np = np.array(
-                correlation_matrices[k][
-                    jnp.ix_(selected_genes, selected_genes)
-                ]
+                correlation_matrices[k][jnp.ix_(selected_genes, selected_genes)]
             )
             console.print(
                 f"[dim]Creating clustered heatmap for component "
@@ -222,7 +251,7 @@ def plot_correlation_heatmap(
                 f"{k + 1}/{n_components}\n"
                 f"Top {len(selected_genes)} Genes by Variance "
                 f"(Union Across Components)\n"
-                f"Parameter: {param_name} | Samples: {n_samples}",
+                f"Parameter: {param_name} | Samples: {n_draws_for_corr}",
                 y=1.02,
                 fontsize=12,
             )
@@ -232,22 +261,28 @@ def plot_correlation_heatmap(
                 f"component{k + 1}.{output_format}"
             )
             result = ctx.finalize(
-                fig.fig, list(fig.fig.axes), 1,
+                fig.fig,
+                list(fig.fig.axes),
+                1,
                 filename=fname if ctx.save else None,
                 save_kwargs={"bbox_inches": "tight"},
                 save_label=f"component {k + 1} heatmap",
             )
             component_results.append(result)
-        return PlotResultCollection(component_results) if component_results else None
+        return (
+            PlotResultCollection(component_results)
+            if component_results
+            else None
+        )
 
     else:
         n_genes = samples.shape[_layout.gene_axis]
         n_genes_to_plot = min(n_genes_to_plot, n_genes)
 
-        console.print(
-            "[dim]Computing pairwise Pearson correlations...[/dim]"
+        console.print("[dim]Computing pairwise Pearson correlations...[/dim]")
+        correlation_matrix = _compute_correlation_matrix(
+            samples, n_draws_for_corr
         )
-        correlation_matrix = _compute_correlation_matrix(samples, n_samples)
 
         console.print(
             f"[dim]Correlation matrix shape:[/dim] "
@@ -265,9 +300,7 @@ def plot_correlation_heatmap(
         )
 
         correlation_variance = jnp.var(correlation_matrix, axis=1)
-        top_var_indices = jnp.argsort(correlation_variance)[
-            -n_genes_to_plot:
-        ]
+        top_var_indices = jnp.argsort(correlation_variance)[-n_genes_to_plot:]
         top_var_indices = jnp.sort(top_var_indices)
 
         correlation_subset = correlation_matrix[top_var_indices, :][
@@ -305,14 +338,16 @@ def plot_correlation_heatmap(
         fig.fig.suptitle(
             f"Gene Correlation Structure "
             f"(Top {n_genes_to_plot} by Variance)\n"
-            f"Parameter: {param_name} | Samples: {n_samples}",
+            f"Parameter: {param_name} | Samples: {n_draws_for_corr}",
             y=1.02,
             fontsize=12,
         )
 
         fname = f"{base_fname}_correlation_heatmap.{output_format}"
         return ctx.finalize(
-            fig.fig, list(fig.fig.axes), 1,
+            fig.fig,
+            list(fig.fig.axes),
+            1,
             filename=fname if ctx.save else None,
             save_kwargs={"bbox_inches": "tight"},
             save_label="correlation heatmap",
