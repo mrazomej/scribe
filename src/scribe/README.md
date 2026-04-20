@@ -110,6 +110,12 @@ result = scribe.viz.plot_ppc(results, counts, n_rows=3, n_cols=3, n_samples=256)
 # Tune `umap_opts` (e.g. `spread`, `use_scale`, `scale_max_value`) as needed.
 result = scribe.viz.plot_umap(results, counts)
 
+# Correlation heatmap: set ``n_genes`` as a keyword or under
+# ``viz_cfg["heatmap_opts"]["n_genes"]`` (keyword overrides config).
+result = scribe.viz.plot_correlation_heatmap(
+    results, counts, n_genes=500, save=False
+)
+
 # All plot functions accept figsize=(width, height) to override the default
 # figure dimensions. Useful in interactive sessions to control display size.
 result = scribe.viz.plot_ppc(results, counts, n_genes=9, figsize=(12, 12))

@@ -151,6 +151,45 @@ class _FakeDEResultsForViz:
         return df
 
 
+def test_plot_correlation_heatmap_n_genes_kwarg_overrides_heatmap_opts(
+    monkeypatch,
+):
+    """Direct ``n_genes`` should override ``viz_cfg['heatmap_opts']['n_genes']``."""
+    captured = {}
+
+    class _FakeClusterGrid:
+        """Minimal stand-in for ``seaborn.ClusterGrid`` (only ``.fig`` used)."""
+
+        def __init__(self):
+            self.fig = plt.figure(figsize=(2, 2))
+
+    def _fake_clustermap(data, **_kwargs):
+        # Non-mixture path subsets to (n_genes_to_plot, n_genes_to_plot).
+        captured["data_shape"] = np.asarray(data).shape
+        return _FakeClusterGrid()
+
+    monkeypatch.setattr(
+        "scribe.viz.heatmap.sns.clustermap",
+        _fake_clustermap,
+    )
+
+    results = _make_mcmc_results_for_viz()
+    viz_cfg = {"heatmap_opts": {"n_genes": 2}}
+
+    try:
+        plot_correlation_heatmap(
+            results,
+            None,
+            save=False,
+            viz_cfg=viz_cfg,
+            n_genes=1,
+        )
+    finally:
+        plt.close("all")
+
+    assert captured.get("data_shape") == (1, 1)
+
+
 def test_package_root_exports_expected_symbols():
     """Ensure refactor preserves key package-root imports and callables."""
     assert callable(plot_loss)

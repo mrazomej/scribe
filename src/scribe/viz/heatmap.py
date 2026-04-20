@@ -31,6 +31,7 @@ def plot_correlation_heatmap(
     *,
     ctx,
     viz_cfg=None,
+    n_genes=None,
     figsize=None,
     fig=None,
     axes=None,
@@ -40,10 +41,42 @@ def plot_correlation_heatmap(
 
     For mixture models, a separate heatmap is produced for every component.
 
+    Genes are ranked by variance of their correlation matrix row (non-mixture)
+    or by the same criterion per mixture component, then the top ``n_genes``
+    (after capping by the model's gene count) are shown.
+
+    Parameters
+    ----------
+    results : object
+        Fitted results with posterior samples for the active parameterization.
+    counts : array-like or None
+        Count matrix; used when posterior samples must be generated on the fly
+        (SVI-style results).
+    figs_dir : str, optional
+        Output directory when ``save`` resolves to ``True``.
+    cfg : OmegaConf, optional
+        Run configuration used for filename generation.
+    viz_cfg : OmegaConf or dict or None
+        May include ``heatmap_opts`` with ``n_genes``, ``n_samples``,
+        ``figsize``, and ``cmap``. Used when explicit keyword arguments are
+        omitted.
+    n_genes : int or None, optional
+        Maximum number of genes to plot (highest correlation-variance genes).
+        When ``None``, uses ``viz_cfg["heatmap_opts"]["n_genes"]`` if present,
+        otherwise ``1500``. When an ``int``, overrides that config entry.
+    figsize : tuple of float, optional
+        ``(width, height)`` in inches; overrides ``heatmap_opts.figsize``
+        (scalar side length) when given.
+    fig, axes, ax : optional
+        Unsupported; correlation heatmaps use ``seaborn.clustermap``.
+    save, show, close : bool, optional
+        Rendering controls injected by ``@plot_function``.
+
     Returns
     -------
-    PlotResult
-        Wrapped result containing the figure, axes, and metadata.
+    PlotResult or PlotResultCollection
+        Single figure for a non-mixture model; one result per mixture component
+        otherwise. Each value wraps the figure, axes, and metadata.
     """
     console.print("[dim]Plotting correlation heatmap...[/dim]")
     # Seaborn clustermap owns its own figure/axes objects, so custom axis
@@ -55,7 +88,10 @@ def plot_correlation_heatmap(
         )
 
     heatmap_opts = viz_cfg.get("heatmap_opts", {}) if viz_cfg is not None else {}
-    n_genes_to_plot = heatmap_opts.get("n_genes", 1500)
+    # Explicit ``n_genes`` wins over viz_cfg for interactive calls; cfg alone
+    # keeps backward-compatible pipeline behavior.
+    _cfg_n_genes = heatmap_opts.get("n_genes", 1500)
+    n_genes_to_plot = _cfg_n_genes if n_genes is None else n_genes
     n_samples = heatmap_opts.get("n_samples", 512)
     # figsize kwarg takes priority; fall back to config, then default (12, 12).
     _cfg_figsize = heatmap_opts.get("figsize", 12)
