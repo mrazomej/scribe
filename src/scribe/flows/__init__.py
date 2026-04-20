@@ -44,7 +44,11 @@ from .coupling import AffineCoupling, SplineCoupling
 from .autoregressive import MAF, IAF, MADE
 
 # NumPyro distribution wrappers for use in probabilistic models.
-from .distributions import ComponentFlowDistribution, FlowDistribution
+from .distributions import (
+    ComponentFlowDistribution,
+    FlowDistribution,
+    SlicedTransform,
+)
 
 # RQS spline primitives (used by SplineCoupling).
 from .transforms import rqs_forward, rqs_inverse, unconstrained_to_rqs_params
@@ -62,6 +66,7 @@ __all__ = [
     # Distribution wrappers
     "FlowDistribution",
     "ComponentFlowDistribution",
+    "SlicedTransform",
     # Spline primitives
     "rqs_forward",
     "rqs_inverse",

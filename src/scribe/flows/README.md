@@ -276,6 +276,39 @@ that match the reference *nflows* library (Durkan et al.):
 | **Log-space log-det** (`log(num) - 2·log(denom)`) | Intermediate overflow in `deriv_num / denom²` |
 | **Identity-bias init** (see Conditioner Stability) | Non-zero log-det at initialization |
 
+## SlicedTransform (Per-Slice Bijections)
+
+`SlicedTransform` is a NumPyro `Transform` that splits a vector into contiguous
+slices and applies a different bijective transform to each.  The Jacobian is
+block-diagonal, so `log_abs_det_jacobian` is the sum of per-slice contributions.
+
+This is the key building block for the **concatenated joint flow guide**: the
+base distribution is a `FlowDistribution` over the full concatenated vector,
+and wrapping it in `TransformedDistribution(flow_dist, SlicedTransform(...))`
+yields a distribution whose samples live in the product of per-spec constrained
+spaces (e.g., `[sigmoid(p), softplus(r₁), …, softplus(r_G)]`) with correct
+ELBO computation — all Jacobians are handled by NumPyro's
+`TransformedDistribution` machinery.
+
+```python
+from numpyro.distributions.transforms import ExpTransform, SigmoidTransform
+from scribe.flows import SlicedTransform
+
+# Sigmoid for the first element, Exp for the remaining 20
+t = SlicedTransform(
+    transforms=[SigmoidTransform(), ExpTransform()],
+    sizes=[1, 20],
+)
+y = t(jnp.zeros(21))  # first → sigmoid, rest → exp
+
+# Use with TransformedDistribution
+import numpyro.distributions as dist
+base = dist.Normal(jnp.zeros(21), 1.0).to_event(1)
+td = dist.TransformedDistribution(base, t)
+sample = td.sample(key)    # constrained samples
+lp = td.log_prob(sample)   # includes Jacobian corrections
+```
+
 ## FlowDistribution Convenience Methods
 
 `FlowDistribution` provides two convenience methods for point estimation:

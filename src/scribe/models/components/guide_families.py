@@ -387,18 +387,31 @@ class NormalizingFlowGuide(GuideFamily):
 
 @dataclass
 class JointNormalizingFlowGuide(GuideFamily):
-    """
-    Marker for joint normalizing-flow across multiple parameter groups.
+    """Marker for joint normalizing-flow across multiple parameter groups.
 
-    Analogous to ``JointLowRankGuide`` but uses normalizing flows instead
-    of low-rank Gaussians.  Cross-parameter dependencies are captured via
-    the chain-rule decomposition:
+    Analogous to ``JointLowRankGuide`` but uses normalizing flows
+    instead of low-rank Gaussians.  Two modes are available, selected
+    by ``dense_params``:
 
-        q(θ₁, θ₂) = q(θ₁) × q(θ₂ | θ₁)
+    **Concatenated mode** (``dense_params=None``, the default):
+        All non-batch specs in the group are stacked into **one**
+        feature vector of dimension ``sum(G_i)`` and processed by a
+        single ``FlowChain``.  This ensures that every parameter —
+        including scalars — participates fully in the coupling-layer
+        bijection, creating nonlinear correlations across all
+        parameters.  For canonical ``(p, r)`` with ``n_genes`` genes
+        this produces a ``(1 + n_genes)``-dim flow.
 
-    where each factor is a full normalizing flow.  The conditional
-    ``q(θ₂ | θ₁)`` is implemented by passing the unconstrained sample
-    of θ₁ as a continuous *context* vector to the flow for θ₂.
+    **Chain-rule mode** (``dense_params`` set to a name subset):
+        Uses the decomposition:
+
+            q(θ₁, θ₂) = q(θ₁) × q(θ₂ | θ₁)
+
+        where each factor is a separate ``FlowChain``.  The
+        conditional ``q(θ₂ | θ₁)`` receives the unconstrained sample
+        of θ₁ as a continuous *context* vector.  Non-dense parameters
+        receive diagonal-Normal treatment with learned regression on
+        the dense-flow residuals.
 
     Parameters
     ----------
@@ -418,10 +431,11 @@ class JointNormalizingFlowGuide(GuideFamily):
         ``JointNormalizingFlowGuide`` with the same ``group`` are
         modeled jointly.
     dense_params : list of str, optional
-        Subset of parameter names in the group that go through the
-        flow chain.  Non-dense parameters get diagonal Normal
-        treatment with learned regression on the dense-flow
-        residuals, mirroring ``JointLowRankGuide.dense_params``.
+        When ``None`` (default), all specs are concatenated into a
+        single flow vector (concatenated mode).  When set to a list
+        of parameter names, only those names go through per-spec
+        chain-rule flows and non-dense parameters receive diagonal
+        Normal treatment with regression on dense-flow residuals.
     mixture_strategy : str, default ``"independent"``
         How to handle leading batch axes (mixture components, datasets).
         ``"independent"`` creates per-index flows; ``"shared"`` uses one
@@ -450,24 +464,36 @@ class JointNormalizingFlowGuide(GuideFamily):
 
     Advantages
     ----------
-    - Captures non-linear cross-parameter dependencies
+    - Captures non-linear cross-parameter dependencies (including
+      scalars in concatenated mode)
     - Each conditional is a full normalizing flow — more expressive than
       the Woodbury LowRankMVN conditionals
     - Natural extension to 3+ parameters via cumulative context
+      (chain-rule) or concatenated vector (concatenated mode)
 
     Disadvantages
     -------------
     - More flow parameters than ``JointLowRankGuide``
     - Context-conditioned flows add dimensionality to conditioner nets
+      (chain-rule mode only)
 
     Examples
     --------
+    Concatenated mode (default): all parameters in one flow.
+
     >>> joint = JointNormalizingFlowGuide(
     ...     flow_type="spline_coupling", num_layers=4, group="nb"
     ... )
-    >>> PositiveNormalSpec("p", (), (0.0, 1.0), guide_family=joint)
+    >>> SigmoidNormalSpec("p", (), (0.0, 1.0), guide_family=joint)
     >>> PositiveNormalSpec("r", ("n_genes",), (0.0, 1.0),
     ...     is_gene_specific=True, guide_family=joint)
+
+    Chain-rule mode: only ``r`` gets a flow, ``p`` gets diagonal Normal.
+
+    >>> joint_cr = JointNormalizingFlowGuide(
+    ...     flow_type="affine_coupling", num_layers=4, group="nb",
+    ...     dense_params=["r"],
+    ... )
 
     See Also
     --------

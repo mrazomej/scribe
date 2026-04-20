@@ -7,6 +7,7 @@ Tests cover:
 - Autoregressive flows (MAF, IAF)
 - FlowChain composition
 - FlowDistribution (NumPyro integration)
+- SlicedTransform (per-slice bijective transforms for concatenated flows)
 """
 
 import pytest
@@ -22,6 +23,7 @@ from scribe.flows import (
     IAF,
     FlowChain,
     FlowDistribution,
+    SlicedTransform,
     MADE,
     rqs_forward,
     rqs_inverse,
@@ -1182,3 +1184,150 @@ class TestLogDetF64:
             x_rec, ld_inv = chain.apply(params, y, reverse=True)
             npt.assert_allclose(x_rec, x, atol=1e-5)
             npt.assert_allclose(ld_fwd + ld_inv, jnp.zeros(4), atol=1e-5)
+
+
+# ==============================================================================
+# SlicedTransform tests
+# ==============================================================================
+
+
+class TestSlicedTransform:
+    """Tests for SlicedTransform: per-slice bijective transforms."""
+
+    @pytest.fixture
+    def rng(self):
+        return jax.random.PRNGKey(42)
+
+    def test_forward_matches_manual(self, rng):
+        """Forward pass matches applying transforms to individual slices."""
+        from numpyro.distributions.transforms import ExpTransform, SigmoidTransform
+
+        t = SlicedTransform(
+            transforms=[SigmoidTransform(), ExpTransform()],
+            sizes=[3, 5],
+        )
+        x = jax.random.normal(rng, (8,))
+
+        y = t(x)
+        expected = jnp.concatenate([
+            jax.nn.sigmoid(x[:3]),
+            jnp.exp(x[3:]),
+        ])
+        npt.assert_allclose(y, expected, atol=1e-6)
+
+    def test_inverse_roundtrip(self, rng):
+        """Inverse(Forward(x)) should recover x."""
+        from numpyro.distributions.transforms import ExpTransform, SigmoidTransform
+
+        t = SlicedTransform(
+            transforms=[SigmoidTransform(), ExpTransform()],
+            sizes=[3, 5],
+        )
+        x = jax.random.normal(rng, (8,))
+
+        y = t(x)
+        x_rec = t._inverse(y)
+        npt.assert_allclose(x_rec, x, atol=1e-5)
+
+    def test_log_abs_det_jacobian(self, rng):
+        """Log-abs-det-Jacobian matches finite-difference numerical check."""
+        from numpyro.distributions.transforms import ExpTransform, SigmoidTransform
+
+        t = SlicedTransform(
+            transforms=[SigmoidTransform(), ExpTransform()],
+            sizes=[3, 5],
+        )
+        x = jax.random.normal(rng, (8,))
+        y = t(x)
+
+        # Analytical ladj from SlicedTransform
+        ladj = t.log_abs_det_jacobian(x, y)
+
+        # Reference: sum of per-element ladj from each transform
+        sig_ladj = jnp.sum(
+            SigmoidTransform().log_abs_det_jacobian(x[:3], y[:3]),
+        )
+        exp_ladj = jnp.sum(
+            ExpTransform().log_abs_det_jacobian(x[3:], y[3:]),
+        )
+        expected_ladj = sig_ladj + exp_ladj
+
+        npt.assert_allclose(ladj, expected_ladj, atol=1e-6)
+
+    def test_batched_input(self, rng):
+        """SlicedTransform works with a leading batch dimension."""
+        from numpyro.distributions.transforms import ExpTransform, SigmoidTransform
+
+        t = SlicedTransform(
+            transforms=[SigmoidTransform(), ExpTransform()],
+            sizes=[2, 4],
+        )
+        x = jax.random.normal(rng, (10, 6))
+
+        y = t(x)
+        assert y.shape == (10, 6)
+
+        x_rec = t._inverse(y)
+        npt.assert_allclose(x_rec, x, atol=1e-5)
+
+        ladj = t.log_abs_det_jacobian(x, y)
+        assert ladj.shape == (10,)
+
+    def test_identity_slice(self, rng):
+        """IdentityTransform slices leave values unchanged."""
+        from numpyro.distributions.transforms import (
+            ExpTransform,
+            IdentityTransform,
+        )
+
+        t = SlicedTransform(
+            transforms=[IdentityTransform(), ExpTransform()],
+            sizes=[3, 5],
+        )
+        x = jax.random.normal(rng, (8,))
+        y = t(x)
+
+        # First 3 elements should be unchanged (identity)
+        npt.assert_allclose(y[:3], x[:3], atol=1e-7)
+        # Last 5 should be exp'd
+        npt.assert_allclose(y[3:], jnp.exp(x[3:]), atol=1e-6)
+
+    def test_single_slice(self, rng):
+        """SlicedTransform with a single slice behaves like the base transform."""
+        from numpyro.distributions.transforms import ExpTransform
+
+        t = SlicedTransform(transforms=[ExpTransform()], sizes=[5])
+        x = jax.random.normal(rng, (5,))
+        y = t(x)
+        npt.assert_allclose(y, jnp.exp(x), atol=1e-6)
+
+    def test_size_mismatch_raises(self):
+        """Mismatched transforms and sizes raises ValueError."""
+        from numpyro.distributions.transforms import ExpTransform
+
+        with pytest.raises(ValueError, match="len"):
+            SlicedTransform(
+                transforms=[ExpTransform(), ExpTransform()],
+                sizes=[5],
+            )
+
+    def test_with_transformed_distribution(self, rng):
+        """SlicedTransform integrates with TransformedDistribution."""
+        from numpyro.distributions.transforms import ExpTransform, SigmoidTransform
+
+        base = dist.Normal(jnp.zeros(6), jnp.ones(6)).to_event(1)
+        t = SlicedTransform(
+            transforms=[SigmoidTransform(), ExpTransform()],
+            sizes=[2, 4],
+        )
+        td = dist.TransformedDistribution(base, t)
+
+        sample = td.sample(rng)
+        assert sample.shape == (6,)
+        # First 2 dims: sigmoid output → (0, 1)
+        assert jnp.all(sample[:2] > 0) and jnp.all(sample[:2] < 1)
+        # Last 4 dims: exp output → positive
+        assert jnp.all(sample[4:] > 0)
+
+        lp = td.log_prob(sample)
+        assert jnp.isfinite(lp)

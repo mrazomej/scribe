@@ -377,6 +377,45 @@ by default; see the [flows README](../../flows/README.md) for details.
 ### Joint Normalizing Flow Guide (Cross-Parameter)
 
 Analogous to `JointLowRankGuide` but uses flows instead of Gaussians.
+`JointNormalizingFlowGuide` supports two operating modes, controlled by
+`dense_params`:
+
+#### Concatenated mode (`dense_params=None`, the default)
+
+All parameters in the joint group are stacked into a single feature vector of
+dimension `sum(G_i)` and modelled by **one** `FlowChain`.  The per-spec
+transforms (sigmoid, softplus, etc.) are applied via a `SlicedTransform` wrapped
+in `TransformedDistribution`, so NumPyro handles the Jacobian corrections
+automatically.
+
+This mode ensures that **all** parameters — including scalars like `p` that
+would be ejected from a per-block coupling flow — participate fully in the flow
+transformation and can develop nonlinear correlations.
+
+```python
+from scribe.models.components import JointNormalizingFlowGuide
+from scribe.models.builders import PositiveNormalSpec, SigmoidNormalSpec, GuideBuilder
+
+joint = JointNormalizingFlowGuide(
+    flow_type="spline_coupling",
+    num_layers=4,
+    hidden_dims=(64, 64),
+    n_bins=8,
+    group="biological",
+)
+specs = [
+    # Scalar p — fully participates in the flow
+    SigmoidNormalSpec("p", (), (0.0, 1.0),
+                  is_gene_specific=False, guide_family=joint, constrained_name="p"),
+    # Gene-specific r — jointly modelled with p
+    PositiveNormalSpec("r", ("n_genes",), (0.0, 1.0),
+                  is_gene_specific=True, guide_family=joint, constrained_name="r"),
+]
+guide = GuideBuilder().from_specs(specs).build()
+```
+
+#### Chain-rule mode (`dense_params` set to a subset)
+
 Cross-parameter dependencies are captured via a chain-rule decomposition:
 
     q(θ₁, θ₂) = q(θ₁) × q(θ₂ | θ₁)
@@ -386,47 +425,23 @@ is implemented by passing the unconstrained sample of θ₁ as a continuous
 *context* vector to the flow for θ₂.
 
 ```python
-from scribe.models.components import JointNormalizingFlowGuide
-from scribe.models.builders import PositiveNormalSpec, GuideBuilder
-
-joint = JointNormalizingFlowGuide(
-    flow_type="spline_coupling",
-    num_layers=4,
-    hidden_dims=(64, 64),
-    n_bins=8,
-    group="nb_params",
-)
-specs = [
-    # Scalar phi (not gene-specific) — uses context-conditioned Normal
-    PositiveNormalSpec("phi", (), (0.0, 1.0),
-                  is_gene_specific=False, guide_family=joint, constrained_name="phi"),
-    # Gene-specific mu — full flow conditioned on phi
-    PositiveNormalSpec("mu", ("n_genes",), (0.0, 1.0),
-                  is_gene_specific=True, guide_family=joint, constrained_name="mu"),
-]
-guide = GuideBuilder().from_specs(specs).build()
-```
-
-**Heterogeneous dimensions:** Scalar parameters in a joint flow group use a
-context-conditioned Normal (since coupling flows require ≥ 2 features). The
-scalar's distribution still depends on previously sampled parameters through a
-learned linear regression on the context.
-
-**`dense_params` support:** Like `JointLowRankGuide`, the joint flow guide
-supports a `dense_params` argument. Dense parameters go through the flow chain
-with context conditioning; non-dense parameters receive diagonal Normal
-distributions with learned regression coefficients on the dense-flow residuals
-and a per-gene autoregressive chain among themselves.
-
-```python
 joint = JointNormalizingFlowGuide(
     flow_type="spline_coupling",
     num_layers=2,
     hidden_dims=(32,),
     group="structured",
-    dense_params=["mu"],  # only mu gets a full flow
+    dense_params=["mu"],  # only mu gets a full flow; others get regression
 )
 ```
+
+Dense parameters go through the flow chain with context conditioning; non-dense
+parameters receive diagonal Normal distributions with learned regression
+coefficients on the dense-flow residuals and a per-gene autoregressive chain
+among themselves.
+
+**Heterogeneous dimensions:** In chain-rule mode, scalar parameters use a
+context-conditioned Normal (since coupling flows require >= 2 features). In
+concatenated mode, scalars participate directly in the joint flow.
 
 **When to use over `JointLowRankGuide`:** When the cross-parameter relationship
 is non-linear or the joint posterior is non-Gaussian (e.g., banana-shaped,

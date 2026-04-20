@@ -3998,7 +3998,12 @@ class TestNormalizingFlowGuide:
     # ------------------------------------------------------------------
 
     def test_joint_flow_guide_two_params(self, model_config, small_counts):
-        """Joint flow guide with two gene-specific parameters."""
+        """Joint flow guide with two gene-specific parameters.
+
+        With dense_params=None and 2+ specs, concatenated mode is used:
+        both params come from a single FlowChain and appear as
+        deterministic sites.
+        """
         from scribe.models.components import JointNormalizingFlowGuide
 
         joint = JointNormalizingFlowGuide(
@@ -4045,8 +4050,22 @@ class TestNormalizingFlowGuide:
         assert jnp.all(tr["mu"]["value"] > 0)
         assert jnp.all(tr["phi"]["value"] > 0)
 
+        # Concatenated mode: constrained sites are Delta-sample sites
+        # (required by NumPyro's replay), and a single transformed
+        # sample site covers the full 40-dim vector.
+        for name in ("mu", "phi"):
+            assert tr[name]["type"] == "sample"
+            assert isinstance(tr[name]["fn"], numpyro.distributions.Delta)
+        concat_name = "_jflow_nb_params_concat"
+        assert concat_name in tr
+        assert tr[concat_name]["value"].shape == (40,)
+
     def test_joint_flow_guide_heterogeneous(self, model_config, small_counts):
-        """Joint flow guide with scalar + gene-specific parameters."""
+        """Joint flow guide with scalar + gene-specific parameters.
+
+        Concatenated mode stacks phi (scalar, expanded to dim 1) and
+        mu (gene-specific, dim 20) into a single 21-dim flow.
+        """
         from scribe.models.components import JointNormalizingFlowGuide
 
         joint = JointNormalizingFlowGuide(
@@ -4086,18 +4105,29 @@ class TestNormalizingFlowGuide:
                     counts=small_counts,
                 )
 
-        # Scalar phi should be present (via deterministic site)
+        # Both sites are Delta-sample under concatenated mode
         assert "phi" in tr
         assert "mu" in tr
+        assert tr["mu"]["type"] == "sample"
+        assert tr["phi"]["type"] == "sample"
         # mu is gene-specific with 20 genes
         assert tr["mu"]["value"].shape == (20,)
         assert jnp.all(tr["mu"]["value"] > 0)
-        # phi is scalar
+        # phi is scalar (squeezed from the 1-dim flow slot)
         assert tr["phi"]["value"].shape == ()
         assert jnp.all(tr["phi"]["value"] > 0)
 
+        # Transformed site covers 1 (phi) + 20 (mu) = 21 features
+        concat_name = "_jflow_hetero_concat"
+        assert concat_name in tr
+        assert tr[concat_name]["value"].shape == (21,)
+
     def test_joint_flow_guide_three_params(self, model_config, small_counts):
-        """Joint flow guide with three parameters in the chain."""
+        """Joint flow guide with three parameters (concatenated mode).
+
+        All three gene-specific specs are concatenated into a single
+        60-dim flow (3 × 20 genes).
+        """
         from scribe.models.components import JointNormalizingFlowGuide
 
         joint = JointNormalizingFlowGuide(
@@ -4147,6 +4177,7 @@ class TestNormalizingFlowGuide:
 
         for name in ["mu", "phi", "gate"]:
             assert name in tr, f"Missing site: {name}"
+            assert tr[name]["type"] == "sample"
             assert tr[name]["value"].shape == (20,)
 
         # Transform-specific constraints
@@ -4154,6 +4185,11 @@ class TestNormalizingFlowGuide:
         assert jnp.all(tr["phi"]["value"] > 0)
         assert jnp.all(tr["gate"]["value"] > 0)
         assert jnp.all(tr["gate"]["value"] < 1)
+
+        # Concatenated transformed: 3 × 20 = 60 features
+        concat_name = "_jflow_tri_concat"
+        assert concat_name in tr
+        assert tr[concat_name]["value"].shape == (60,)
 
     def test_joint_flow_guide_dense_params(self, model_config, small_counts):
         """Joint flow guide with dense_params: dense get flow, nondense get diagonal."""
@@ -4205,7 +4241,12 @@ class TestNormalizingFlowGuide:
         assert jnp.all(tr["phi"]["value"] > 0)
 
     def test_joint_flow_guide_has_log_prob(self, model_config, small_counts):
-        """Joint flow guide sites have finite log_prob."""
+        """Joint flow guide: concatenated raw site has finite log_prob.
+
+        Under concatenated mode (dense_params=None), the constrained
+        sites (mu, phi) are deterministic.  The log-prob lives on the
+        concatenated raw sample site.
+        """
         from scribe.models.components import JointNormalizingFlowGuide
 
         joint = JointNormalizingFlowGuide(
@@ -4245,12 +4286,20 @@ class TestNormalizingFlowGuide:
                     counts=small_counts,
                 )
 
+        # Constrained sites are Delta-sample under concatenated mode
         for name in ["mu", "phi"]:
             assert tr[name]["type"] == "sample"
-            log_prob = tr[name]["fn"].log_prob(tr[name]["value"])
-            assert jnp.isfinite(
-                log_prob
-            ).all(), f"Site '{name}' has non-finite log_prob"
+            assert isinstance(tr[name]["fn"], numpyro.distributions.Delta)
+
+        # The TransformedDistribution site has a finite log-prob
+        # (FlowDistribution + SlicedTransform Jacobian)
+        concat_name = "_jflow_logprob_concat"
+        assert concat_name in tr
+        assert tr[concat_name]["type"] == "sample"
+        log_prob = tr[concat_name]["fn"].log_prob(tr[concat_name]["value"])
+        assert jnp.isfinite(
+            log_prob
+        ).all(), f"Concatenated site has non-finite log_prob"
 
     # ------------------------------------------------------------------
     # SVI integration
@@ -4407,6 +4456,335 @@ class TestNormalizingFlowGuide:
         assert (
             len(flow_keys) > 0
         ), f"Expected joint_flow_ prefixed params, got: {sorted(params.keys())}"
+
+    # ------------------------------------------------------------------
+    # Concatenated joint flow: new tests
+    # ------------------------------------------------------------------
+
+    def test_joint_flow_concatenated_includes_scalar(
+        self, model_config, small_counts,
+    ):
+        """Scalar spec participates in the concatenated flow.
+
+        With dense_params=None and a scalar (phi) + gene-specific (mu),
+        the raw site must have dimension 1 + n_genes, proving the
+        scalar is inside the flow rather than being ejected.
+        """
+        from scribe.models.components import JointNormalizingFlowGuide
+
+        n_genes = 20
+        joint = JointNormalizingFlowGuide(
+            flow_type="affine_coupling",
+            num_layers=2,
+            hidden_dims=(32,),
+            group="scalar_in_flow",
+        )
+        specs = [
+            SigmoidNormalSpec(
+                name="p",
+                shape_dims=(),
+                default_params=(0.0, 1.0),
+                is_gene_specific=False,
+                guide_family=joint,
+                constrained_name="p",
+            ),
+            PositiveNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="r",
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=n_genes,
+                    model_config=model_config,
+                    counts=small_counts,
+                )
+
+        # Transformed site dimension = 1 (p) + 20 (r) = 21
+        concat_name = "_jflow_scalar_in_flow_concat"
+        assert concat_name in tr
+        assert tr[concat_name]["value"].shape == (1 + n_genes,)
+
+        # Constrained sites are Delta-sample under concatenated mode
+        assert tr["p"]["type"] == "sample"
+        assert tr["p"]["value"].shape == ()
+        assert 0 < float(tr["p"]["value"]) < 1
+
+        assert tr["r"]["type"] == "sample"
+        assert tr["r"]["value"].shape == (n_genes,)
+        assert jnp.all(tr["r"]["value"] > 0)
+
+    def test_joint_flow_concatenated_svi_finite_loss(self, small_counts):
+        """SVI with concatenated flow (scalar + gene-specific) has finite loss.
+
+        Verifies that the Jacobian correction factor keeps the ELBO
+        well-defined.
+        """
+        from scribe.models.components import JointNormalizingFlowGuide
+        import numpyro.distributions as ndist
+
+        n_cells, n_genes = small_counts.shape
+
+        def model(n_cells, n_genes, model_config, counts=None, **kw):
+            p = numpyro.sample(
+                "p",
+                ndist.TransformedDistribution(
+                    ndist.Normal(0.0, 1.0),
+                    ndist.transforms.SigmoidTransform(),
+                ),
+            )
+            r = numpyro.sample(
+                "r",
+                ndist.TransformedDistribution(
+                    ndist.Normal(
+                        jnp.zeros(n_genes), jnp.ones(n_genes),
+                    ).to_event(1),
+                    ndist.transforms.ExpTransform(),
+                ),
+            )
+            with numpyro.plate("cells", n_cells):
+                numpyro.sample(
+                    "obs",
+                    ndist.Independent(
+                        ndist.NegativeBinomial2(
+                            mean=jnp.ones(n_genes) * 5.0,
+                            concentration=r,
+                        ),
+                        1,
+                    ),
+                    obs=counts,
+                )
+
+        joint = JointNormalizingFlowGuide(
+            flow_type="affine_coupling",
+            num_layers=2,
+            hidden_dims=(32,),
+            group="svi_concat",
+        )
+        specs = [
+            SigmoidNormalSpec(
+                name="p",
+                shape_dims=(),
+                default_params=(0.0, 1.0),
+                is_gene_specific=False,
+                guide_family=joint,
+                constrained_name="p",
+            ),
+            PositiveNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="r",
+            ),
+        ]
+        guide_fn = GuideBuilder().from_specs(specs).build()
+
+        from scribe.models.config import ModelConfigBuilder, ModelType
+
+        config = ModelConfigBuilder().for_model(ModelType.NBDM).build()
+        model_kwargs = dict(
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=small_counts,
+        )
+
+        svi = SVI(model, guide_fn, Adam(1e-3), loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(0), **model_kwargs)
+
+        for _ in range(5):
+            svi_state, loss = svi.update(svi_state, **model_kwargs)
+            assert jnp.isfinite(loss), f"SVI loss is non-finite: {loss}"
+
+        # Verify the concatenated flow params are present
+        params = svi.get_params(svi_state)
+        concat_keys = [k for k in params if "concat" in k]
+        assert len(concat_keys) > 0, (
+            f"Expected concat flow params, got: {sorted(params.keys())}"
+        )
+
+    def test_joint_flow_dense_params_preserves_chain_rule(
+        self, model_config, small_counts,
+    ):
+        """Setting dense_params preserves the chain-rule behaviour.
+
+        When dense_params=["r"], only r gets a per-spec flow.  p is
+        handled in Phase 2 (diagonal Normal + regression), not
+        concatenated.
+        """
+        from scribe.models.components import JointNormalizingFlowGuide
+
+        joint = JointNormalizingFlowGuide(
+            flow_type="affine_coupling",
+            num_layers=2,
+            hidden_dims=(32,),
+            group="chain_rule",
+            dense_params=["r"],
+        )
+        specs = [
+            SigmoidNormalSpec(
+                name="p",
+                shape_dims=(),
+                default_params=(0.0, 1.0),
+                is_gene_specific=False,
+                guide_family=joint,
+                constrained_name="p",
+            ),
+            PositiveNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="r",
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=model_config,
+                    counts=small_counts,
+                )
+
+        # r goes through per-spec flow (sample site, not deterministic)
+        assert "r" in tr
+        assert tr["r"]["type"] == "sample"
+        assert tr["r"]["value"].shape == (20,)
+
+        # p is nondense (Phase 2): sample site with TransformedDistribution
+        assert "p" in tr
+        assert tr["p"]["type"] == "sample"
+        assert tr["p"]["value"].shape == ()
+
+        # No concatenated sample site should exist
+        concat_sites = [
+            k for k in tr if "_concat" in k
+        ]
+        assert len(concat_sites) == 0, (
+            f"Unexpected concatenated sites: {concat_sites}"
+        )
+
+    def test_joint_flow_concatenated_single_spec_fallback(
+        self, model_config, small_counts,
+    ):
+        """A single non-batch spec does NOT trigger concatenation.
+
+        Concatenation requires >= 2 non-batch specs.  With only one
+        spec, the existing per-spec flow loop is used instead.
+        """
+        from scribe.models.components import JointNormalizingFlowGuide
+
+        joint = JointNormalizingFlowGuide(
+            flow_type="affine_coupling",
+            num_layers=2,
+            hidden_dims=(32,),
+            group="single_spec",
+        )
+        specs = [
+            PositiveNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="r",
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=model_config,
+                    counts=small_counts,
+                )
+
+        # r should be a sample site (per-spec flow), not deterministic
+        assert "r" in tr
+        assert tr["r"]["type"] == "sample"
+        assert tr["r"]["value"].shape == (20,)
+
+        # No concatenated sample site
+        concat_sites = [k for k in tr if "_concat" in k]
+        assert len(concat_sites) == 0
+
+    def test_joint_flow_concatenated_jacobian_correction(
+        self, model_config, small_counts,
+    ):
+        """The Jacobian correction factor site is present and finite.
+
+        Non-NCP specs require a numpyro.factor to correct the ELBO for
+        the missing Jacobian of per-spec transforms.
+        """
+        from scribe.models.components import JointNormalizingFlowGuide
+
+        joint = JointNormalizingFlowGuide(
+            flow_type="affine_coupling",
+            num_layers=2,
+            hidden_dims=(32,),
+            group="jac_test",
+        )
+        specs = [
+            SigmoidNormalSpec(
+                name="p",
+                shape_dims=(),
+                default_params=(0.0, 1.0),
+                is_gene_specific=False,
+                guide_family=joint,
+                constrained_name="p",
+            ),
+            PositiveNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="r",
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=model_config,
+                    counts=small_counts,
+                )
+
+        # The TransformedDistribution site embeds the Jacobian
+        # correction automatically via SlicedTransform.  Verify its
+        # log-prob is finite (it would be NaN if the transform
+        # Jacobians were not computed correctly).
+        concat_name = "_jflow_jac_test_concat"
+        assert concat_name in tr, (
+            f"Missing concat site; trace sites: {sorted(tr.keys())}"
+        )
+        log_prob = tr[concat_name]["fn"].log_prob(tr[concat_name]["value"])
+        assert jnp.isfinite(log_prob).all(), (
+            f"Concatenated site log-prob is non-finite: {log_prob}"
+        )
 
     def test_normalizing_flow_guide_validation(self):
         """NormalizingFlowGuide validation rejects invalid configs."""

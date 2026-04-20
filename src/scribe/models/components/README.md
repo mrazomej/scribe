@@ -50,15 +50,15 @@ builder.with_likelihood(likelihood)
 Guide families are **per-parameter** markers that specify which variational
 approximation to use:
 
-| Family                  | Description                     | Use Case          |
-|-------------------------|---------------------------------|-------------------|
-| `MeanFieldGuide`        | Factorized variational family   | Default, fast     |
-| `LowRankGuide(rank)`    | Low-rank MVN covariance         | Gene correlations |
-| `JointLowRankGuide(rank, group)` | Joint low-rank MVN across parameter groups | Cross-parameter correlations |
-| `NormalizingFlowGuide(...)` | Flow-based variational family | Multimodal / skewed / heavy-tailed posteriors |
-| `JointNormalizingFlowGuide(...)` | Joint normalizing flow across parameter groups | Non-linear cross-parameter dependencies |
-| `AmortizedGuide(net)`   | Neural network amortization     | High-dim params   |
-| `VAELatentGuide`        | VAE: encoder + latent_spec + decoder | Joint latent z + decoder-driven params |
+| Family                           | Description                                                                 | Use Case                                      |
+| -------------------------------- | --------------------------------------------------------------------------- | --------------------------------------------- |
+| `MeanFieldGuide`                 | Factorized variational family                                               | Default, fast                                 |
+| `LowRankGuide(rank)`             | Low-rank MVN covariance                                                     | Gene correlations                             |
+| `JointLowRankGuide(rank, group)` | Joint low-rank MVN across parameter groups                                  | Cross-parameter correlations                  |
+| `NormalizingFlowGuide(...)`      | Flow-based variational family                                               | Multimodal / skewed / heavy-tailed posteriors |
+| `JointNormalizingFlowGuide(...)` | Joint normalizing flow across parameter groups (concatenated or chain-rule) | Non-linear cross-parameter dependencies       |
+| `AmortizedGuide(net)`            | Neural network amortization                                                 | High-dim params                               |
+| `VAELatentGuide`                 | VAE: encoder + latent_spec + decoder                                        | Joint latent z + decoder-driven params        |
 
 ### Example
 
