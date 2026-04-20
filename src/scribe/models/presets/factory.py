@@ -177,9 +177,14 @@ def validate_model_guide_compatibility(
                     f"Guide validation failed during dry run: {e}"
                 ) from e
 
-    # Extract guide sample sites
+    # Extract guide sample sites, excluding auxiliary sites (e.g. the
+    # concatenated flow's TransformedDistribution site) which are
+    # guide-internal and intentionally absent from the model.
     guide_sample_sites = {
-        name for name, site in guide_trace.items() if site["type"] == "sample"
+        name
+        for name, site in guide_trace.items()
+        if site["type"] == "sample"
+        and not site.get("infer", {}).get("is_auxiliary", False)
     }
 
     # Check that guide sites are a subset of model sites
