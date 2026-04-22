@@ -957,7 +957,8 @@ class TestParameterizations:
         assert param_specs[1].name == "r"
 
         derived_params = param_strategy.build_derived_params()
-        assert len(derived_params) == 0
+        assert len(derived_params) == 1
+        assert derived_params[0].name == "mu"
 
     def test_mean_prob_parameterization(self, model_config):
         """Test MeanProbParameterization."""
@@ -1705,6 +1706,110 @@ class TestJointLowRankGuide:
 
         # cond_W should be W2 @ L_M where M = (I + 0)^{-1} = I, so L_M = I
         assert jnp.allclose(cond_W, W2, atol=1e-5)
+
+    def test_joint_scalar_registration_uses_alpha_not_scalar_w(self):
+        """Scalar+gene joint groups register alpha and omit scalar W."""
+        n_cells, n_genes = 40, 8
+        key = random.PRNGKey(101)
+        counts = random.poisson(key, lam=6.0, shape=(n_cells, n_genes))
+
+        # This configuration routes through the standard joint path with a
+        # scalar phi and gene-specific mu.
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            prob_prior="none",
+            guide_rank=2,
+            joint_params=["phi", "mu"],
+        )
+        model_fn, guide_fn, config = get_model_and_guide(config)
+        model_kwargs = dict(
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
+        )
+
+        # Initialize once to materialize guide parameters.
+        svi = SVI(model_fn, guide_fn, Adam(1e-3), loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(7), **model_kwargs)
+        params = svi.get_params(svi_state)
+
+        # Scalar phi should be diagonal-only; mu should get low-rank + alpha(phi).
+        assert "joint_joint_phi_W" not in params
+        assert "joint_joint_phi_loc" in params
+        assert "joint_joint_phi_raw_diag" in params
+        assert "joint_joint_mu_W" in params
+        assert "joint_joint_mu_alpha_phi" in params
+        assert params["joint_joint_mu_alpha_phi"].shape == (n_genes,)
+
+    def test_scalar_alpha_regression_shifts_gene_conditional_mean(self):
+        """Alpha regression adds the expected scalar residual shift."""
+        from scribe.models.builders.guide_builder import setup_joint_guide
+        from scribe.models.components import JointLowRankGuide
+
+        # Build a minimal scalar(phi)+gene(mu) group for direct guide testing.
+        specs = [
+            PositiveNormalSpec(
+                name="phi",
+                shape_dims=(),
+                default_params=(0.0, 1.0),
+                is_gene_specific=False,
+                constrained_name="phi",
+            ),
+            PositiveNormalSpec(
+                name="mu",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                constrained_name="mu",
+            ),
+        ]
+        guide = JointLowRankGuide(rank=2, group="alpha_unit")
+        dims = {"n_genes": 3, "n_cells": 10}
+
+        # Keep low-rank and diagonal terms fixed so runs differ only by alpha.
+        base_params = {
+            "joint_alpha_unit_phi_loc": jnp.array([0.4]),
+            "joint_alpha_unit_phi_raw_diag": jnp.array([-10.0]),
+            "joint_alpha_unit_mu_loc": jnp.array([0.1, -0.2, 0.3]),
+            "joint_alpha_unit_mu_W": jnp.zeros((3, 2)),
+            "joint_alpha_unit_mu_raw_diag": jnp.array([-10.0, -10.0, -10.0]),
+        }
+
+        def _sample_mu_with_alpha(alpha_value):
+            # Set all guide params explicitly so only alpha changes.
+            params = {
+                **base_params,
+                "joint_alpha_unit_mu_alpha_phi": alpha_value,
+            }
+            seeded = numpyro.handlers.seed(
+                numpyro.handlers.substitute(setup_joint_guide, data=params),
+                rng_seed=0,
+            )
+            values = seeded(specs, guide, dims, model_config=None)
+            return values[0], values[1]
+
+        phi_zero, mu_zero = _sample_mu_with_alpha(jnp.zeros((3,)))
+        phi_alpha, mu_alpha = _sample_mu_with_alpha(
+            jnp.array([1.5, -0.5, 2.0])
+        )
+
+        # Same RNG seed and unchanged phi parameters imply the same phi sample.
+        assert jnp.allclose(phi_zero, phi_alpha)
+
+        # PositiveNormalSpec uses an exponential transform, so log-space values
+        # are the unconstrained samples used by alpha regression.
+        phi_unconstrained = jnp.log(phi_zero)
+        mu_unconstrained_zero = jnp.log(mu_zero)
+        mu_unconstrained_alpha = jnp.log(mu_alpha)
+        observed_shift = mu_unconstrained_alpha - mu_unconstrained_zero
+
+        expected_shift = jnp.array([1.5, -0.5, 2.0]) * (
+            phi_unconstrained - base_params["joint_alpha_unit_phi_loc"][0]
+        )
+        assert jnp.allclose(observed_shift, expected_shift, atol=1e-5)
 
 
 # ==============================================================================
@@ -2607,6 +2712,12 @@ class TestJointLowRankIntegration:
             svi_state, loss = svi.update(svi_state, **model_kwargs)
             assert jnp.isfinite(loss), f"SVI loss is not finite: {loss}"
 
+        # Scalar phi now uses diagonal Normal params only (no _W), while
+        # gene-specific mu receives alpha regression on phi residuals.
+        params = svi.get_params(svi_state)
+        assert "joint_joint_phi_W" not in params
+        assert "joint_joint_mu_alpha_phi" in params
+
     def test_posterior_extraction_heterogeneous_joint(self):
         """MAP and distributions work for heterogeneous joint groups."""
         from scribe.models.builders.posterior import get_posterior_distributions
@@ -2618,11 +2729,13 @@ class TestJointLowRankIntegration:
         # Simulate variational params for scalar phi (G=1) and gene mu (G=n_genes)
         params = {
             "joint_joint_phi_loc": jnp.zeros((1,)),
-            "joint_joint_phi_W": 0.01 * jnp.ones((1, k)),
             "joint_joint_phi_raw_diag": -3.0 * jnp.ones((1,)),
             "joint_joint_mu_loc": jnp.zeros((n_genes,)),
             "joint_joint_mu_W": 0.01 * jnp.ones((n_genes, k)),
             "joint_joint_mu_raw_diag": -3.0 * jnp.ones((n_genes,)),
+            # Alpha params affect conditional coupling only; posterior marginals
+            # are still reconstructed from loc/W/raw_diag.
+            "joint_joint_mu_alpha_phi": jnp.zeros((n_genes,)),
         }
 
         config = (
@@ -2649,9 +2762,11 @@ class TestJointLowRankIntegration:
         # Full joint distribution should exist
         assert "joint:joint" in distributions
         joint_dist = distributions["joint:joint"]
-        assert joint_dist["param_sizes"] == [1, n_genes]
+        # The stacked joint includes only specs with low-rank factors, so scalar
+        # phi is excluded while mu remains in the joint block.
+        assert joint_dist["param_sizes"] == [n_genes]
         assert isinstance(joint_dist["base"], dist.LowRankMultivariateNormal)
-        assert joint_dist["base"].loc.shape == (1 + n_genes,)
+        assert joint_dist["base"].loc.shape == (n_genes,)
 
 
 class TestPosteriorContractExtraction:
@@ -3839,7 +3954,8 @@ class TestStructuredJointGuide:
             assert jnp.isfinite(loss)
 
         params = svi.get_params(svi_state)
-        # Both should have _W (fully dense)
+        # In this configuration phi is gene-specific (prob_prior='gaussian'),
+        # so both mu and phi remain full low-rank members of the joint block.
         assert "joint_joint_mu_W" in params
         assert "joint_joint_phi_W" in params
 

@@ -1148,6 +1148,118 @@ of the conditioning parameter's dimension (1 for $\phi$ or $G$ for
 $\underline{\mu}$), so the total cost remains
 $O(nG_{\max}k^2 + nk^3)$ where $G_{\max} = G$.
 
+## Decoupled scalar coupling via alpha regression {#sec-jlr-scalar-alpha}
+
+The heterogeneous Woodbury construction above is exact and expressive, but in
+the specific scalar-plus-gene case it can be unnecessarily restrictive during
+optimization.  Let $\theta_\phi^* \in \mathbb{R}$ and $\underline{\theta}_\mu^*
+\in \mathbb{R}^G$ with joint low-rank factor
+
+$$
+\underline{\underline{W}} =
+\begin{pmatrix}
+\underline{w}_\phi^\top \\
+\underline{\underline{W}}_\mu
+\end{pmatrix},
+\qquad
+\underline{w}_\phi \in \mathbb{R}^k,\;
+\underline{\underline{W}}_\mu \in \mathbb{R}^{G \times k}.
+$${#eq-jlr-scalar-coupled-W}
+
+From @eq-jlr-hetero-example-cond-mean, the Woodbury conditional mean is
+
+$$
+\underline{\mu}_{\mu \mid \phi}
+=
+\text{loc}_\mu
++
+\underbrace{
+\underline{\underline{W}}_\mu
+\underline{\underline{M}}
+\frac{\underline{w}_\phi}{d_\phi}
+}_{\underline{\alpha}_{\text{WB}} \in \mathbb{R}^G}
+(\theta_\phi^* - \text{loc}_\phi),
+$${#eq-jlr-scalar-woodbury-alpha}
+
+with
+$\underline{\underline{M}} =
+\left(
+\underline{\underline{I}}_k +
+\underline{w}_\phi \underline{w}_\phi^\top / d_\phi
+\right)^{-1}$.
+The scalar-to-gene sensitivity vector
+$\underline{\alpha}_{\text{WB}}$ is therefore constrained to the column space of
+$\underline{\underline{W}}_\mu$ and tied to the scalar row $\underline{w}_\phi$.
+
+This creates an optimization coupling: the same low-rank parameters must
+simultaneously encode (i) gene-gene covariance and (ii) scalar-to-gene
+regression.  In practice, we decouple these objectives by using
+
+$$
+q(\theta_\phi^*) = \mathcal{N}(\text{loc}_\phi, d_\phi),
+$${#eq-jlr-scalar-diag-marginal}
+
+and
+
+$$
+q(\underline{\theta}_\mu^* \mid \theta_\phi^*) =
+\text{LowRankMVN}\!\left(
+\text{loc}_\mu +
+\underline{\alpha}\,(\theta_\phi^* - \text{loc}_\phi),
+\;
+\underline{\underline{W}}_\mu,\;
+\underline{d}_\mu
+\right),
+$${#eq-jlr-scalar-decoupled-conditional}
+
+where $\underline{\alpha} \in \mathbb{R}^G$ is learned directly (one coefficient
+per gene).  Equivalently, for each gene $g$:
+
+$$
+\text{loc}_{\mu,g}^{\text{cond}}
+=
+\text{loc}_{\mu,g} + \alpha_g(\theta_\phi^* - \text{loc}_\phi).
+$${#eq-jlr-scalar-alpha-per-gene}
+
+### Relation to Woodbury and why this is less restrictive
+
+The decoupled form strictly contains the Woodbury mean as a special case: if we
+set
+
+$$
+\underline{\alpha} = \underline{\alpha}_{\text{WB}}
+=
+\underline{\underline{W}}_\mu
+\underline{\underline{M}}
+\frac{\underline{w}_\phi}{d_\phi},
+$${#eq-jlr-scalar-alpha-equivalence}
+
+then @eq-jlr-scalar-decoupled-conditional recovers the Woodbury conditional mean
+@eq-jlr-scalar-woodbury-alpha exactly.  However, the decoupled guide does not
+require $\underline{\alpha}$ to factor through $\underline{\underline{W}}_\mu
+\underline{\underline{M}} \underline{w}_\phi/d_\phi$, so scalar coupling is no
+longer constrained by the rank-$k$ subspace used for gene-gene covariance.
+
+Under this decoupling, the conditional covariance is simply
+
+$$
+\operatorname{Cov}(\underline{\theta}_\mu^* \mid \theta_\phi^*)
+=
+\underline{\underline{W}}_\mu
+\underline{\underline{W}}_\mu^\top
++
+\operatorname{diag}(\underline{d}_\mu),
+$${#eq-jlr-scalar-decoupled-cov}
+
+which is independent of $\theta_\phi^*$ and dedicated purely to gene-gene
+structure.  In summary:
+
+1. $\underline{\alpha}$ controls scalar-to-gene coupling.
+2. $(\underline{\underline{W}}_\mu, \underline{d}_\mu)$ control gene-gene
+   covariance.
+3. The two objectives are optimized separately, reducing the geometric tension
+   that appears when a scalar must share the same low-rank factor directions.
+
 ## Applicability across parameterizations {#sec-jlr-parameterizations}
 
 The joint low-rank guide applies to all parameterizations of the negative

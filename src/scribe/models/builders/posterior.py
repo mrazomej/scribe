@@ -421,12 +421,15 @@ def _build_base_skip_set(
     return skip
 
 
-def _flow_guided_param_names(params: Dict[str, Any]) -> set[str]:
+def _flow_guided_param_names(
+    params: Dict[str, Any],
+    model_config: Any = None,
+) -> set[str]:
     """Return the set of base parameter names that are flow-guided.
 
     Scans the variational parameter dict for flow keys and extracts the
     logical parameter name so that earlier passes can skip those
-    parameters.  Detects three kinds of flow-managed parameters:
+    parameters.  Detects four kinds of flow-managed parameters:
 
     1. **Per-param flows**: ``flow_{name}$params`` /
        ``flow_{name}_idx{k}$params``.
@@ -437,6 +440,8 @@ def _flow_guided_param_names(params: Dict[str, Any]) -> set[str]:
        matching ``_raw_diag`` key) but have no ``$params`` key of their
        own.  These are the diagonal-regression parameters created by
        ``JointNormalizingFlowGuide`` when ``dense_params`` is set.
+    4. **Concatenated joint flows**: ``joint_flow_{group}_concat$params``
+       — all parameters in ``model_config.joint_params`` are flow-guided.
 
     Without (3), nondense params like ``p`` in ``dense_params=r,
     joint_param=r,p`` would be missed by ``flow_skip`` and incorrectly
@@ -447,6 +452,9 @@ def _flow_guided_param_names(params: Dict[str, Any]) -> set[str]:
     ----------
     params : dict
         Variational parameter dictionary.
+    model_config : ModelConfig, optional
+        Model configuration.  Needed to resolve which parameter names
+        belong to a concatenated joint flow (pattern 4).
 
     Returns
     -------
@@ -467,6 +475,10 @@ def _flow_guided_param_names(params: Dict[str, Any]) -> set[str]:
 
         elif key.startswith("joint_flow_"):
             inner = key[len("joint_flow_") : -len("$params")]
+            # Concatenated flow: joint_flow_{group}_concat$params
+            # — handled separately below via model_config.joint_params.
+            if inner.endswith("_concat") or inner == "concat":
+                continue
             # Independent mixture: joint_flow_{group}_{name}_idx{k}$params
             if "_idx" in inner:
                 inner = inner.rsplit("_idx", 1)[0]
@@ -491,6 +503,32 @@ def _flow_guided_param_names(params: Dict[str, Any]) -> set[str]:
             raw_diag_key = key.replace("_loc", "_raw_diag")
             if raw_diag_key in params:
                 names.add(name)
+
+    # Detect concatenated joint flows: joint_flow_{group}_concat$params.
+    # Scan guide_families (from model_config) to find all params in the
+    # concat group.
+    concat_groups: set = set()
+    for key in params:
+        if key.endswith("_concat$params") and key.startswith("joint_flow_"):
+            inner = key[len("joint_flow_") : -len("_concat$params")]
+            concat_groups.add(inner)
+
+    if concat_groups and model_config is not None:
+        from ..components.guide_families import JointNormalizingFlowGuide
+
+        guide_families = getattr(model_config, "guide_families", None)
+        if guide_families is not None:
+            families_dict = (
+                guide_families.__dict__
+                if hasattr(guide_families, "__dict__")
+                else {}
+            )
+            for pname, guide in families_dict.items():
+                if (
+                    isinstance(guide, JointNormalizingFlowGuide)
+                    and guide.group in concat_groups
+                ):
+                    names.add(pname)
 
     return names
 
@@ -1577,7 +1615,7 @@ def get_posterior_distributions(
     # let pass 10 (_apply_flow_posteriors) reconstruct them.
     # Keep the flow set separate so hierarchy passes only skip flow params,
     # not params they are responsible for overriding.
-    flow_skip = _flow_guided_param_names(params)
+    flow_skip = _flow_guided_param_names(params, model_config)
     skip |= flow_skip
 
     # --- Execute the pipeline (ordering matters — see docstring) ----------
@@ -1883,6 +1921,17 @@ def _apply_flow_posteriors(
             distributions[name] = flow_dist
 
     # ------------------------------------------------------------------
+    # Concatenated joint flows: joint_flow_{group}_concat$params
+    # ------------------------------------------------------------------
+    # All parameters in the group share a single FlowChain +
+    # SlicedTransform.  Individual parameter distributions cannot be
+    # extracted independently, so we mark each as "conditional" to
+    # force sampling-based MAP.
+    _apply_concatenated_joint_flow(
+        distributions, params, model_config, guide_families, pos_transform
+    )
+
+    # ------------------------------------------------------------------
     # Joint flow nondense / scalar fallback
     # ------------------------------------------------------------------
     # Nondense params use joint_flow_{group}_{name}_loc which
@@ -1892,6 +1941,67 @@ def _apply_flow_posteriors(
     _apply_joint_flow_nondense_fallback(
         distributions, params, guide_families, pos_transform
     )
+
+
+def _apply_concatenated_joint_flow(
+    distributions: Dict[str, Any],
+    params: Dict[str, jnp.ndarray],
+    model_config: Any,
+    guide_families: Any,
+    pos_transform,
+) -> None:
+    """Handle concatenated joint flows (``dense_params=None``).
+
+    When all parameters in a joint flow group are modeled by a single
+    ``FlowChain`` + ``SlicedTransform``, the individual parameter
+    distributions are not separable.  We mark each as ``"conditional"``
+    so that ``get_map`` uses sampling-based MAP (running the guide to
+    produce correlated samples).
+
+    Detection strategy: find ``joint_flow_{group}_concat$params`` keys,
+    then scan ``guide_families`` for all parameters whose guide is a
+    ``JointNormalizingFlowGuide`` with matching group name.
+
+    Parameters
+    ----------
+    distributions : dict
+        Accumulated distributions dict (mutated in-place).
+    params : dict
+        Optimized variational parameters.
+    model_config : ModelConfig
+        Model configuration.
+    guide_families : GuideFamilyConfig or None
+        Guide family configuration.
+    pos_transform : Transform
+        Positive-value transform.
+    """
+    if guide_families is None:
+        return
+
+    from ..components.guide_families import JointNormalizingFlowGuide
+
+    # Collect groups that have a concatenated flow key
+    concat_groups: set = set()
+    for key in params:
+        if key.endswith("_concat$params") and key.startswith("joint_flow_"):
+            # Extract group: joint_flow_{group}_concat$params
+            inner = key[len("joint_flow_") : -len("_concat$params")]
+            concat_groups.add(inner)
+
+    if not concat_groups:
+        return
+
+    # Scan guide_families for params belonging to these concat groups
+    families_dict = (
+        guide_families.__dict__
+        if hasattr(guide_families, "__dict__")
+        else {}
+    )
+    for pname, guide in families_dict.items():
+        if not isinstance(guide, JointNormalizingFlowGuide):
+            continue
+        if guide.group in concat_groups and pname not in distributions:
+            distributions[pname] = {"conditional": True}
 
 
 def _reconstruct_per_param_flow(

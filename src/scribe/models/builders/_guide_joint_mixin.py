@@ -4,7 +4,7 @@ This module contains Woodbury-based conditional utilities and the
 `setup_joint_guide` implementation used by `GuideBuilder`.
 """
 
-from typing import TYPE_CHECKING, Dict, List, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -386,11 +386,22 @@ def setup_joint_guide(
 
     Supports **heterogeneous dimensions**: specs may mix gene-specific
     vectors (shape ``(G,)`` or ``(C, G)``) with scalar parameters (shape
-    ``()`` or ``(C,)``).  Scalar specs are internally expanded by
-    appending a trailing dimension of 1, so the Woodbury chain operates
-    uniformly on ``(..., G_i, k)`` tensors.  At sampling time, scalar
-    specs are collapsed back to a ``Normal`` distribution matching the
-    model's event shape.
+    ``()`` or ``(C,)``).
+
+    For scalar + gene-specific groups, this implementation uses a
+    *decoupled* treatment:
+
+    1. Scalar specs are sampled from independent Normal marginals
+       parameterized only by ``loc`` and ``diag`` (no ``W`` factor).
+    2. Each downstream gene-specific spec registers per-gene ``alpha``
+       coefficients for every previously sampled scalar, and shifts its
+       location by ``alpha * (scalar_sample - scalar_loc)``.
+    3. The Woodbury chain rule is then applied **only among
+       gene-specific specs**, reserving rank-``k`` directions for
+       gene-gene correlations.
+
+    This avoids entangling scalar-to-gene coupling with gene-gene
+    covariance in a shared low-rank factor.
 
     Mixed batch-rank groups are allowed when each shorter batch shape is a
     prefix of the longest batch shape in the group (for example ``()`` with
@@ -483,9 +494,13 @@ def setup_joint_guide(
     # ------------------------------------------------------------------
     # Register per-parameter variational params using expanded shapes
     # ------------------------------------------------------------------
-    locs = []
-    Ws = []
-    Ds = []
+    #
+    # Scalar specs intentionally do not receive a low-rank factor W. This
+    # decouples scalar-to-gene coupling (handled by alpha regression) from
+    # gene-gene covariance (handled by Woodbury only over gene-specific specs).
+    locs: List[jnp.ndarray] = []
+    Ws: List[Optional[jnp.ndarray]] = []
+    Ds: List[jnp.ndarray] = []
     for idx, spec in enumerate(specs):
         exp_shape = expanded_shapes[idx]
 
@@ -493,15 +508,21 @@ def setup_joint_guide(
             f"joint_{guide.group}_{spec.name}_loc",
             jnp.zeros(exp_shape),
         )
-        W_i = numpyro.param(
-            f"joint_{guide.group}_{spec.name}_W",
-            0.01 * jnp.ones((*exp_shape, k)),
-        )
         raw_diag_i = numpyro.param(
             f"joint_{guide.group}_{spec.name}_raw_diag",
             -3.0 * jnp.ones(exp_shape),
         )
         D_i = jax.nn.softplus(raw_diag_i) + 1e-4
+
+        # Only gene-specific specs receive a low-rank factor matrix.
+        if is_scalar_flags[idx]:
+            W_i = None
+        else:
+            W_i = numpyro.param(
+                f"joint_{guide.group}_{spec.name}_W",
+                0.01 * jnp.ones((*exp_shape, k)),
+            )
+
         locs.append(loc_i)
         Ws.append(W_i)
         Ds.append(D_i)
@@ -512,103 +533,131 @@ def setup_joint_guide(
     unconstrained_samples = []
     constrained_samples = []
 
-    # Current conditional factor and loc for each parameter, updated as
-    # we condition on earlier parameters in the chain.
-    current_Ws = list(Ws)
-    current_locs = list(locs)
+    # Track previously sampled scalar latents in expanded (..., 1) space so
+    # gene-specific specs can regress on scalar residuals.
+    scalar_indices: List[int] = []
+    scalar_unconstrained_by_index: Dict[int, jnp.ndarray] = {}
+
+    # Maintain the conditioned chain state for previously sampled
+    # gene-specific specs only. This is the state used in Woodbury updates.
+    conditioned_gene_Ws: List[jnp.ndarray] = []
+    conditioned_gene_Ds: List[jnp.ndarray] = []
+    conditioned_gene_locs: List[jnp.ndarray] = []
+    conditioned_gene_samples: List[jnp.ndarray] = []
 
     for i, spec in enumerate(specs):
         n_batch_dims_i = len(expanded_shapes[i]) - 1
         is_scalar = is_scalar_flags[i]
 
-        if i == 0:
-            # First parameter: sample from its marginal distribution
-            # Horseshoe/NEG specs are parameterized with an explicit NCP raw
-            # latent site in the model (e.g., gate_raw). The joint block must
-            # sample that raw site directly to keep model/guide sample-site
-            # alignment.
+        if is_scalar:
+            # Scalar specs are always diagonal-Normal in joint groups. Their
+            # unconstrained residuals drive alpha-regression shifts in
+            # downstream gene-specific specs.
+            scalar_loc = locs[i][..., 0]
+            scalar_scale = jnp.sqrt(Ds[i][..., 0])
+            scalar_base: dist.Distribution = dist.Normal(
+                scalar_loc, scalar_scale
+            )
+            if n_batch_dims_i > 0:
+                scalar_base = scalar_base.to_event(n_batch_dims_i)
+
             if _is_joint_ncp_spec(spec):
-                base = _build_base_distribution_for_joint_spec(
-                    current_locs[0],
-                    current_Ws[0],
-                    Ds[0],
-                    is_scalar,
-                    n_batch_dims_i,
-                )
-                unconstrained = numpyro.sample(spec.raw_name, base)
+                unconstrained = numpyro.sample(spec.raw_name, scalar_base)
                 constrained = spec.transform(unconstrained)
                 numpyro.deterministic(spec.constrained_name, constrained)
             else:
-                transformed = _build_distribution_for_spec(
-                    current_locs[0],
-                    current_Ws[0],
-                    Ds[0],
-                    spec,
-                    is_scalar,
-                    n_batch_dims_i,
+                transformed = dist.TransformedDistribution(
+                    scalar_base, spec.transform
                 )
-                constrained = numpyro.sample(spec.constrained_name, transformed)
+                constrained = numpyro.sample(
+                    spec.constrained_name, transformed
+                )
                 unconstrained = spec.transform.inv(constrained)
+
+            # Re-expand to (..., 1) so scalar tensors align with gene vectors
+            # in alpha-shift broadcasts.
+            unconstrained_expanded = unconstrained[..., None]
+            scalar_indices.append(i)
+            scalar_unconstrained_by_index[i] = unconstrained_expanded
+            unconstrained_samples.append(unconstrained_expanded)
             constrained_samples.append(constrained)
+            continue
 
-            # The Woodbury chain always works in expanded unconstrained space.
-            # Re-expand scalar samples so later conditioning has shape (..., 1).
-            if is_scalar:
-                unconstrained = unconstrained[..., None]
-            unconstrained_samples.append(unconstrained)
+        # Gene-specific specs use (1) scalar alpha shifts and (2) Woodbury
+        # conditioning only against earlier gene-specific specs.
+        cond_loc = locs[i]
+        cond_W = Ws[i]
+        cond_D = Ds[i]
+        if cond_W is None:
+            raise ValueError(
+                f"Expected low-rank factor for gene-specific spec '{spec.name}'."
+            )
 
+        # Apply per-gene scalar regression before Woodbury conditioning.
+        for scalar_idx in scalar_indices:
+            scalar_spec = specs[scalar_idx]
+            alpha_name = (
+                f"joint_{guide.group}_{spec.name}_alpha_{scalar_spec.name}"
+            )
+            alpha = numpyro.param(alpha_name, jnp.zeros(expanded_shapes[i]))
+
+            # Align scalar residual batch shape to this gene-specific target.
+            scalar_residual = (
+                scalar_unconstrained_by_index[scalar_idx] - locs[scalar_idx]
+            )
+            scalar_residual = _broadcast_to_batch_prefix(
+                scalar_residual,
+                target_batch=cond_loc.shape[:-1],
+                keep_last_dims=1,
+                name=f"{spec.name}_residual_{scalar_spec.name}",
+            )
+            cond_loc = cond_loc + alpha * scalar_residual
+
+        # Chain only across previously sampled gene-specific specs so rank-k
+        # capacity is dedicated to gene-gene covariance.
+        for j in range(len(conditioned_gene_samples)):
+            cond_loc, cond_W, cond_D = _woodbury_conditional_params(
+                W1=conditioned_gene_Ws[j],
+                D1=conditioned_gene_Ds[j],
+                W2=cond_W,
+                D2=cond_D,
+                loc1=conditioned_gene_locs[j],
+                loc2=cond_loc,
+                theta1_sample=conditioned_gene_samples[j],
+            )
+
+        # As above: horseshoe/NEG specs in joint groups must sample raw NCP
+        # latents so guide/model sample sites match exactly.
+        if _is_joint_ncp_spec(spec):
+            base = _build_base_distribution_for_joint_spec(
+                cond_loc,
+                cond_W,
+                cond_D,
+                is_scalar_in_joint=False,
+                n_batch_dims=n_batch_dims_i,
+            )
+            unconstrained = numpyro.sample(spec.raw_name, base)
+            constrained = spec.transform(unconstrained)
+            numpyro.deterministic(spec.constrained_name, constrained)
         else:
-            # Condition on all previously sampled parameters via
-            # iterated Woodbury updates.  For the common case n=2 this
-            # is a single conditioning step.
-            cond_loc = current_locs[i]
-            cond_W = current_Ws[i]
-            cond_D = Ds[i]
+            transformed = _build_distribution_for_spec(
+                cond_loc,
+                cond_W,
+                cond_D,
+                spec,
+                is_scalar_in_joint=False,
+                n_batch_dims=n_batch_dims_i,
+            )
+            constrained = numpyro.sample(spec.constrained_name, transformed)
+            unconstrained = spec.transform.inv(constrained)
 
-            for j in range(i):
-                cond_loc, cond_W, cond_D = _woodbury_conditional_params(
-                    W1=current_Ws[j],
-                    D1=Ds[j],
-                    W2=cond_W,
-                    D2=cond_D,
-                    loc1=current_locs[j],
-                    loc2=cond_loc,
-                    theta1_sample=unconstrained_samples[j],
-                )
-
-            # As above: horseshoe/NEG specs in joint groups must sample raw NCP
-            # latents so guide/model sample sites match exactly.
-            if _is_joint_ncp_spec(spec):
-                base = _build_base_distribution_for_joint_spec(
-                    cond_loc,
-                    cond_W,
-                    cond_D,
-                    is_scalar,
-                    n_batch_dims_i,
-                )
-                unconstrained = numpyro.sample(spec.raw_name, base)
-                constrained = spec.transform(unconstrained)
-                numpyro.deterministic(spec.constrained_name, constrained)
-            else:
-                transformed = _build_distribution_for_spec(
-                    cond_loc,
-                    cond_W,
-                    cond_D,
-                    spec,
-                    is_scalar,
-                    n_batch_dims_i,
-                )
-                constrained = numpyro.sample(spec.constrained_name, transformed)
-                unconstrained = spec.transform.inv(constrained)
-            constrained_samples.append(constrained)
-
-            if is_scalar:
-                unconstrained = unconstrained[..., None]
-            unconstrained_samples.append(unconstrained)
-
-            # Update this parameter's conditional W and loc for use by
-            # subsequent parameters in the chain (needed for n > 2)
-            current_Ws[i] = cond_W
-            current_locs[i] = cond_loc
+        # Persist conditioned state so later gene-specific specs can continue
+        # the Woodbury chain among gene-specific variables only.
+        conditioned_gene_Ws.append(cond_W)
+        conditioned_gene_Ds.append(cond_D)
+        conditioned_gene_locs.append(cond_loc)
+        conditioned_gene_samples.append(unconstrained)
+        unconstrained_samples.append(unconstrained)
+        constrained_samples.append(constrained)
 
     return constrained_samples

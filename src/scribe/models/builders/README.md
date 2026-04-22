@@ -282,8 +282,18 @@ distribution while maintaining separate NumPyro sample sites.
 
 **Heterogeneous dimensions** are supported: scalar parameters (e.g., `phi` when
 `hierarchical_p=False`) can be mixed with gene-specific parameters in the same
-joint group. Scalar specs are internally expanded with a trailing dimension of 1
-and collapsed back to a `Normal` at sampling time.
+joint group.
+
+For these mixed scalar + gene groups, the standard joint path uses a decoupled
+design:
+
+- Scalar specs are sampled from independent diagonal Normals (`loc` +
+  `raw_diag`) and do **not** register `*_W` factors.
+- Each gene-specific spec registers per-gene `*_alpha_{scalar}` coefficients
+  that shift its unconstrained location by `alpha * (scalar_sample -
+  scalar_loc)`.
+- The Woodbury chain is run only among gene-specific specs, so rank-`k`
+  covariance capacity is used exclusively for gene-gene correlations.
 
 **Mixed dataset batch ranks** are also supported when one parameter is shared
 across datasets and another is dataset-specific. The joint group requires

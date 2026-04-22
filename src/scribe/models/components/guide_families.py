@@ -181,11 +181,18 @@ class JointLowRankGuide(GuideFamily):
 
     **Heterogeneous dimensions**: parameters in a joint group may have
     different trailing dimensions (e.g., scalar phi with G=1 alongside
-    gene-specific mu with G=n_genes).  Scalar parameters are internally
-    expanded with a trailing dimension of 1 so the Woodbury chain operates
-    uniformly, then collapsed back to a scalar ``Normal`` at sampling time
-    to match the model's event shape.  Only batch dimensions (all dims
-    except the trailing one) must be consistent.
+    gene-specific mu with G=n_genes). When scalar and gene-specific specs
+    coexist, the implementation uses a decoupled scalar treatment:
+
+    - Scalar specs use independent diagonal Normal marginals
+      (``loc`` + ``raw_diag`` only, no ``W`` factor).
+    - Gene-specific specs receive per-gene ``alpha`` coefficients that
+      regress on scalar residuals ``(scalar_sample - scalar_loc)``.
+    - The Woodbury chain is applied only among gene-specific specs, so
+      rank-``k`` factors are reserved for gene-gene covariance.
+
+    This avoids forcing scalar-to-gene coupling and gene-gene structure to
+    compete for the same low-rank subspace.
 
     Implementation uses the chain rule decomposition:
 
@@ -210,7 +217,7 @@ class JointLowRankGuide(GuideFamily):
 
     Advantages
     ----------
-    - Captures cross-parameter correlations (e.g., scalar phi and gene mu)
+    - Captures cross-parameter correlations (including scalar-to-gene coupling)
     - Each conditional in the chain is itself a LowRankMVN (same rank)
     - Computational overhead is O(G_i * k^2 + k^3) per conditioning step
     - Natural extension to 3+ parameters (e.g., ZINB with gate)
