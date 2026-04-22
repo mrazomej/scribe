@@ -8,6 +8,7 @@ focused internal sub-mixins.
 
 from ._sampling_anndata import DenoisedAnnDataMixin
 from ._sampling_biological import BiologicalSamplingMixin
+from ._sampling_compositional import CompositionalSamplingMixin
 from ._sampling_denoising import (
     DenoisingSamplingMixin,
     _denoise_per_dataset,
@@ -21,6 +22,7 @@ class SamplingMixin(
     PosteriorPredictiveSamplingMixin,
     MapPredictiveSamplingMixin,
     BiologicalSamplingMixin,
+    CompositionalSamplingMixin,
     DenoisingSamplingMixin,
     DenoisedAnnDataMixin,
 ):

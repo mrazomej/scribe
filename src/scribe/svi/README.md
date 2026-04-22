@@ -397,6 +397,40 @@ ppc_samples = results.get_ppc_samples(
 )
 ```
 
+**Compositional Samples:**
+
+The simplex (compositional) representation of gene expression is core to the
+Dirichlet-Multinomial model. `get_compositional_samples` draws compositions
+directly from the posterior in a single call, without requiring manual
+extraction of `r` and `p` or calling `scribe.de.sample_compositions` by hand.
+
+The path is chosen automatically from the `AxisLayout` of `p`:
+
+- **Dirichlet** (standard models with shared `p`): draws
+  `ρ ~ Dir(r)` per posterior sample.
+- **Gamma-normalize** (hierarchical-p models with gene-specific `p`): draws
+  `γ_g ~ Γ(r_g, 1)`, scales by `p_g / (1 - p_g)`, and normalizes.
+
+```python
+# Standard model — Dirichlet path (auto-detected)
+simplex = results.get_compositional_samples(n_samples=200)
+# shape: (200, n_genes), each row sums to 1
+
+# Hierarchical-p model — Gamma-normalize path (auto-detected)
+simplex = results_hier.get_compositional_samples(n_samples=200)
+
+# Mixture model — component index required
+simplex = results_mix.get_compositional_samples(n_samples=200, component=0)
+
+# Multiple Dirichlet draws per posterior sample
+simplex = results.get_compositional_samples(n_samples=100, n_samples_dirichlet=3)
+# shape: (300, n_genes)
+```
+
+Posterior samples are generated automatically if they do not yet exist
+(`self.posterior_samples is None`). Pass `store_samples=False` to avoid
+caching the result on `self.compositional_samples`.
+
 **Biological (Denoised) Posterior Predictive Checks:**
 
 Standard PPCs include technical noise parameters (capture probability, zero-
@@ -883,6 +917,9 @@ ScribeSVIResults
    - Methods:
      - `get_posterior_samples()`: Sample from variational posterior
        (supports `convert_to_numpy=True` to convert arrays to NumPy)
+     - `get_compositional_samples()`: Draw simplex compositions from the
+       posterior — auto-detects Dirichlet vs Gamma-normalize path from the
+       `AxisLayout` of `p`; auto-generates posterior samples when missing
      - `get_predictive_samples()`: Generate predictive samples
      - `get_ppc_samples()`: Posterior predictive check samples
      - `get_map_ppc_samples()`: MAP-based predictive samples with batching

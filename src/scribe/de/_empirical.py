@@ -574,6 +574,118 @@ def sample_compositions(
     return simplex_A, simplex_B
 
 
+def sample_composition(
+    r_samples: Array,
+    p_samples: Optional[Array] = None,
+    component: Optional[int] = None,
+    n_samples_dirichlet: int = 1,
+    rng_key=None,
+    batch_size: int = 2048,
+    param_layouts: Optional[dict] = None,
+) -> np.ndarray:
+    """Draw full-dimensional simplex samples from a single condition's posterior.
+
+    Single-condition counterpart of :func:`sample_compositions`.  Given
+    posterior samples of the Dirichlet concentration parameters ``r`` (and
+    optionally gene-specific ``p``), it returns a ``(N_total, D)`` array of
+    simplex compositions on the host (CPU).
+
+    The sampling path is chosen automatically:
+
+    - **Dirichlet** (``r`` only, or scalar ``p``): draws
+      :math:`\\rho^{(s)} \\sim \\mathrm{Dir}(r^{(s)})` for each posterior
+      sample.  Scalar ``p`` cancels in the normalization and is silently
+      dropped, reducing to the Dirichlet path.
+    - **Gamma-normalize** (gene-specific ``p``): draws
+      :math:`\\gamma_g \\sim \\Gamma(r_g, 1)`, scales by
+      :math:`p_g / (1 - p_g)`, and normalizes.  Matches the hierarchical-p
+      model (see :doc:`paper/_hierarchical_p`).
+
+    Parameters
+    ----------
+    r_samples : numpy.ndarray or jax.Array, shape ``(N, D)`` or ``(N, K, D)``
+        Posterior samples of Dirichlet concentration parameters.  If 3D,
+        ``K`` is the number of mixture components and ``component`` must be
+        specified.
+    p_samples : numpy.ndarray or jax.Array, optional
+        Posterior success-probability samples.  When gene-specific (shape
+        ``(N, D)`` or ``(N, K, D)``), Gamma-based sampling is used.  Scalar
+        ``p`` (shape ``(N,)`` or ``(N, K)``) is dropped automatically
+        because the constant scaling factor cancels in the normalization.
+    component : int, optional
+        Mixture component index to extract from 3D ``r_samples`` (and
+        ``p_samples``).  Required when the arrays have a component axis.
+    n_samples_dirichlet : int, default=1
+        Number of simplex draws per posterior sample.  The returned array
+        has shape ``(N * n_samples_dirichlet, D)``.
+    rng_key : jax.random.PRNGKey, optional
+        JAX PRNG key.  Defaults to ``jax.random.PRNGKey(0)``.
+    batch_size : int, default=2048
+        Upper-bound cap on chunk size.  The adaptive memory layer may use a
+        larger chunk when GPU memory allows; this acts as a safety net.
+    param_layouts : dict of str to AxisLayout, optional
+        Semantic axis layouts keyed by parameter name (e.g. ``"r"``,
+        ``"p"``).  When provided, component slicing and gene-axis checks use
+        layout metadata instead of ``ndim`` heuristics.
+
+    Returns
+    -------
+    numpy.ndarray, shape ``(N_total, D)``
+        Simplex compositions for this condition on CPU.  ``N_total`` equals
+        ``N * n_samples_dirichlet``.
+
+    Raises
+    ------
+    ValueError
+        If a 3D input is given without specifying ``component``.
+
+    See Also
+    --------
+    sample_compositions : Two-condition version used by the DE pipeline.
+
+    Examples
+    --------
+    >>> simplex = sample_composition(results.posterior_samples["r"])
+    >>> # shape: (N_posterior_samples, n_genes)
+    """
+    if rng_key is None:
+        rng_key = random.PRNGKey(0)
+
+    # Resolve per-parameter layouts
+    r_layout = param_layouts.get("r") if param_layouts else None
+    p_layout = param_layouts.get("p") if param_layouts else None
+
+    # Slice mixture component when component index is provided.
+    # _slice_component returns (array, post_layout); post_layout has the
+    # component axis removed.
+    r, _ = _slice_component(r_samples, component, "A", layout=r_layout)
+
+    # Slice and possibly drop scalar p
+    if p_samples is not None:
+        p, p_post_layout = _slice_component(
+            p_samples, component, "A", layout=p_layout
+        )
+        p = _drop_scalar_p(p, p_post_layout)
+    else:
+        p = None
+
+    # Choose sampling path: Gamma-normalize for gene-specific p, else Dirichlet
+    use_gamma = p is not None
+
+    from ..core._array_dispatch import _gpu_memory_budget
+
+    budget = _gpu_memory_budget()
+
+    if use_gamma:
+        return _batched_gamma_normalize(
+            r, p, n_samples_dirichlet, rng_key, batch_size, budget
+        )
+    else:
+        return _batched_dirichlet(
+            r, n_samples_dirichlet, rng_key, batch_size, budget
+        )
+
+
 # --------------------------------------------------------------------------
 # CLR aggregation + differencing (Stage 2 of CLR pipeline)
 # --------------------------------------------------------------------------

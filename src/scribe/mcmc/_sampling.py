@@ -224,6 +224,122 @@ class SamplingMixin:
         return bio_samples
 
     # --------------------------------------------------------------------------
+    # Compositional sampling
+    # --------------------------------------------------------------------------
+
+    def get_compositional_samples(
+        self,
+        n_samples_dirichlet: int = 1,
+        component: Optional[int] = None,
+        rng_key=None,
+        batch_size: int = 2048,
+        store_samples: bool = True,
+    ) -> np.ndarray:
+        """Draw simplex compositions from the MCMC posterior.
+
+        Produces a ``(N_total, n_genes)`` array of compositions on the
+        simplex, automatically choosing the correct sampling path:
+
+        - **Dirichlet** (default / shared ``p``): draws
+          :math:`\\rho^{(s)} \\sim \\mathrm{Dir}(r^{(s)})` per MCMC
+          sample.  A scalar ``p`` (shared across genes) cancels in the
+          normalization and is silently dropped, reducing to this path.
+        - **Gamma-normalize** (hierarchical / gene-specific ``p``): draws
+          :math:`\\gamma_g \\sim \\Gamma(r_g, 1)`, scales by
+          :math:`p_g / (1 - p_g)`, and normalizes.  Automatically
+          detected from the shape of ``p`` in the MCMC samples.
+
+        Unlike the SVI variant, MCMC samples are already available via
+        ``self.samples``; this method never needs to generate them.
+
+        Parameters
+        ----------
+        n_samples_dirichlet : int, default=1
+            Number of simplex draws per MCMC sample.  The returned array
+            has shape ``(N * n_samples_dirichlet, n_genes)`` where ``N``
+            is the number of MCMC samples.
+        component : int, optional
+            Mixture component index to extract from 3-D ``r`` (and ``p``)
+            arrays produced by mixture models.  Required when the model has
+            a component axis; pass the component index of interest.
+        rng_key : jax.random.PRNGKey, optional
+            JAX PRNG key used for the Dirichlet / Gamma draws.  Defaults to
+            ``jax.random.PRNGKey(0)``.
+        batch_size : int, default=2048
+            Upper-bound chunk size for GPU-batched composition sampling.
+            The adaptive memory layer may use a larger chunk when GPU memory
+            allows.
+        store_samples : bool, default=True
+            If ``True``, stores the returned array in
+            ``self.compositional_samples`` so it can be reused without
+            re-sampling.
+
+        Returns
+        -------
+        numpy.ndarray, shape ``(N_total, n_genes)``
+            Simplex compositions on the CPU, one row per draw.
+            ``N_total = N_mcmc_samples * n_samples_dirichlet``.
+
+        Raises
+        ------
+        ValueError
+            If the model has a component axis but ``component`` is ``None``.
+
+        See Also
+        --------
+        scribe.de.sample_composition : Underlying single-condition sampler.
+        sample_compositions : Two-condition version used by the DE pipeline.
+        get_posterior_samples : Returns MCMC parameter samples.
+
+        Examples
+        --------
+        Standard (Dirichlet) path:
+
+        >>> simplex = mcmc_results.get_compositional_samples()
+        >>> simplex.shape  # (N_mcmc_samples, n_genes)
+
+        Mixture model, component 0:
+
+        >>> simplex = mcmc_results.get_compositional_samples(component=0)
+        """
+        # MCMC samples are always available via get_posterior_samples()
+        samples = self.get_posterior_samples()
+
+        r_samples = samples["r"]
+        p_samples = samples.get("p")
+
+        # Build semantic axis layouts for the MCMC sample tensors.
+        # _build_canonical_layouts handles both directly-sampled parameters
+        # (from param_specs) and derived keys like "r" and "p" registered
+        # via numpyro.deterministic.  has_sample_dim=True because MCMC
+        # sample tensors carry a leading draw axis.
+        param_layouts = _build_canonical_layouts(
+            samples,
+            self.model_config,
+            n_genes=self.n_genes,
+            n_cells=self.n_cells,
+            n_components=self.n_components,
+            has_sample_dim=True,
+        )
+
+        from ..de._empirical import sample_composition
+
+        simplex = sample_composition(
+            r_samples=r_samples,
+            p_samples=p_samples,
+            component=component,
+            n_samples_dirichlet=n_samples_dirichlet,
+            rng_key=rng_key,
+            batch_size=batch_size,
+            param_layouts=param_layouts,
+        )
+
+        if store_samples:
+            self.compositional_samples = simplex
+
+        return simplex
+
+    # --------------------------------------------------------------------------
     # Bayesian denoising
     # --------------------------------------------------------------------------
 

@@ -22,6 +22,7 @@ from scribe.de import (
     ScribeEmpiricalDEResults,
     compare,
     compute_clr_differences,
+    sample_composition,
     sample_compositions,
     sample_mixture_compositions,
     compute_delta_from_simplex,
@@ -2721,3 +2722,359 @@ class TestMixtureWeightedDE:
                 weights_B=w,
                 rng_key=rng,
             )
+
+
+# ==============================================================================
+# Tests: sample_composition (single-condition)
+# ==============================================================================
+
+
+class TestSampleComposition:
+    """Tests for the single-condition ``sample_composition`` function."""
+
+    # -------------------------------------------------------------------------
+    # Dirichlet (r-only) path
+    # -------------------------------------------------------------------------
+
+    def test_dirichlet_shape(self, simple_r_samples, rng):
+        """Output has shape (N * n_dirichlet, D) on the Dirichlet path."""
+        N, D = simple_r_samples.shape
+        simplex = sample_composition(
+            r_samples=simple_r_samples,
+            rng_key=rng,
+        )
+        assert simplex.shape == (N, D)
+
+    def test_dirichlet_multiple_draws_shape(self, simple_r_samples, rng):
+        """n_samples_dirichlet > 1 expands the row count correctly."""
+        N, D = simple_r_samples.shape
+        M = 3
+        simplex = sample_composition(
+            r_samples=simple_r_samples,
+            n_samples_dirichlet=M,
+            rng_key=rng,
+        )
+        assert simplex.shape == (N * M, D)
+
+    def test_dirichlet_rows_sum_to_one(self, simple_r_samples, rng):
+        """Every row of the returned simplex sums to 1."""
+        simplex = sample_composition(r_samples=simple_r_samples, rng_key=rng)
+        np.testing.assert_allclose(simplex.sum(axis=1), 1.0, atol=1e-6)
+
+    def test_dirichlet_non_negative(self, simple_r_samples, rng):
+        """All simplex values are non-negative."""
+        simplex = sample_composition(r_samples=simple_r_samples, rng_key=rng)
+        assert np.all(simplex >= 0.0)
+
+    def test_dirichlet_returns_numpy(self, simple_r_samples, rng):
+        """Function always returns a numpy.ndarray (host array)."""
+        simplex = sample_composition(r_samples=simple_r_samples, rng_key=rng)
+        assert isinstance(simplex, np.ndarray)
+
+    def test_scalar_p_reduces_to_dirichlet(self, simple_r_samples, rng):
+        """Scalar p (shape (N,)) is dropped and Dirichlet path is used."""
+        N, D = simple_r_samples.shape
+        # Scalar p has no gene axis — should be silently dropped
+        p_scalar = jnp.full((N,), 0.4)
+        simplex = sample_composition(
+            r_samples=simple_r_samples,
+            p_samples=p_scalar,
+            rng_key=rng,
+        )
+        assert simplex.shape == (N, D)
+        np.testing.assert_allclose(simplex.sum(axis=1), 1.0, atol=1e-6)
+
+    # -------------------------------------------------------------------------
+    # Gamma-normalize (r + gene-specific p) path
+    # -------------------------------------------------------------------------
+
+    def test_gamma_path_shape(self, simple_r_samples, rng):
+        """Gene-specific p triggers Gamma-normalize path; shape is correct."""
+        N, D = simple_r_samples.shape
+        p_gene = jax.nn.sigmoid(random.normal(rng, (N, D)))
+        simplex = sample_composition(
+            r_samples=simple_r_samples,
+            p_samples=p_gene,
+            rng_key=rng,
+        )
+        assert simplex.shape == (N, D)
+
+    def test_gamma_path_rows_sum_to_one(self, simple_r_samples, rng):
+        """Gamma-normalized rows also sum to 1."""
+        N, D = simple_r_samples.shape
+        p_gene = jax.nn.sigmoid(random.normal(rng, (N, D)))
+        simplex = sample_composition(
+            r_samples=simple_r_samples,
+            p_samples=p_gene,
+            rng_key=rng,
+        )
+        np.testing.assert_allclose(simplex.sum(axis=1), 1.0, atol=1e-6)
+
+    def test_gamma_path_non_negative(self, simple_r_samples, rng):
+        """All Gamma-path simplex values are non-negative."""
+        N, D = simple_r_samples.shape
+        p_gene = jax.nn.sigmoid(random.normal(rng, (N, D)))
+        simplex = sample_composition(
+            r_samples=simple_r_samples,
+            p_samples=p_gene,
+            rng_key=rng,
+        )
+        assert np.all(simplex >= 0.0)
+
+    # -------------------------------------------------------------------------
+    # Mixture component slicing
+    # -------------------------------------------------------------------------
+
+    def test_mixture_component_slicing_shape(self, mixture_r_samples, rng):
+        """Specifying component extracts the correct slice from 3D r."""
+        N, K, D = mixture_r_samples.shape
+        simplex = sample_composition(
+            r_samples=mixture_r_samples,
+            component=0,
+            rng_key=rng,
+        )
+        assert simplex.shape == (N, D)
+
+    def test_mixture_different_components_differ(self, mixture_r_samples, rng):
+        """Different component indices produce different (typically) simplices."""
+        s0 = sample_composition(
+            r_samples=mixture_r_samples, component=0, rng_key=rng
+        )
+        s1 = sample_composition(
+            r_samples=mixture_r_samples, component=1, rng_key=rng
+        )
+        # Shapes match
+        assert s0.shape == s1.shape
+        # The two arrays are not identical (different component concentrations)
+        assert not np.allclose(s0, s1)
+
+    def test_mixture_3d_without_component_raises(self, mixture_r_samples, rng):
+        """3D r without specifying component should raise ValueError."""
+        with pytest.raises(ValueError):
+            sample_composition(r_samples=mixture_r_samples, rng_key=rng)
+
+    # -------------------------------------------------------------------------
+    # Default rng_key
+    # -------------------------------------------------------------------------
+
+    def test_default_rng_key_runs(self, simple_r_samples):
+        """Calling without rng_key should use a default key and not error."""
+        simplex = sample_composition(r_samples=simple_r_samples)
+        assert simplex.shape[0] == simple_r_samples.shape[0]
+
+
+# ==============================================================================
+# Tests: get_compositional_samples on SVI results
+# ==============================================================================
+
+
+class TestSVIGetCompositionalSamples:
+    """Integration tests for ``ScribeSVIResults.get_compositional_samples``."""
+
+    @pytest.fixture(scope="class")
+    def svi_results(self):
+        """Minimal SVI-fitted NBDM results for compositional sampling tests."""
+        from scribe.models.config import InferenceConfig, SVIConfig
+        from scribe.inference import run_scribe
+        from scribe.inference.preset_builder import build_config_from_preset
+
+        np.random.seed(0)
+        counts = jnp.array(
+            np.random.negative_binomial(5, 0.3, (15, 8))
+        )
+        cfg = build_config_from_preset(
+            model="nbdm",
+            parameterization="standard",
+            inference_method="svi",
+            unconstrained=False,
+            priors={"r": (2, 0.1), "p": (1, 1)},
+        )
+        inf = InferenceConfig.from_svi(SVIConfig(n_steps=5, batch_size=5))
+        return run_scribe(counts=counts, model_config=cfg, inference_config=inf, seed=0)
+
+    @pytest.fixture(scope="class")
+    def svi_results_hier(self):
+        """SVI-fitted hierarchical-p (gene-specific p) NBDM results."""
+        from scribe.models.config import InferenceConfig, SVIConfig
+        from scribe.models.config import ModelConfigBuilder
+        from scribe.inference import run_scribe
+
+        np.random.seed(1)
+        counts = jnp.array(
+            np.random.negative_binomial(5, 0.3, (15, 8))
+        )
+        cfg = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("canonical")
+            .with_hierarchical_p()
+            .build()
+        )
+        inf = InferenceConfig.from_svi(SVIConfig(n_steps=5, batch_size=5))
+        return run_scribe(counts=counts, model_config=cfg, inference_config=inf, seed=0)
+
+    @pytest.fixture(scope="class")
+    def svi_results_mix(self):
+        """SVI-fitted mixture NBDM results (2 components)."""
+        from scribe.models.config import InferenceConfig, SVIConfig
+        from scribe.inference import run_scribe
+        from scribe.inference.preset_builder import build_config_from_preset
+
+        np.random.seed(2)
+        counts = jnp.array(
+            np.random.negative_binomial(5, 0.3, (15, 8))
+        )
+        cfg = build_config_from_preset(
+            model="nbdm",
+            parameterization="standard",
+            inference_method="svi",
+            unconstrained=False,
+            priors={"r": (2, 0.1), "p": (1, 1)},
+            n_components=2,
+        )
+        inf = InferenceConfig.from_svi(SVIConfig(n_steps=5, batch_size=5))
+        return run_scribe(counts=counts, model_config=cfg, inference_config=inf, seed=0)
+
+    def test_basic_shape(self, svi_results):
+        """Returns (N_posterior, n_genes) array."""
+        n_samples, n_genes = 10, 8
+        simplex = svi_results.get_compositional_samples(
+            n_samples=n_samples, store_samples=False
+        )
+        assert simplex.shape == (n_samples, n_genes)
+
+    def test_rows_sum_to_one(self, svi_results):
+        """Every composition row sums to 1."""
+        simplex = svi_results.get_compositional_samples(
+            n_samples=10, store_samples=False
+        )
+        np.testing.assert_allclose(simplex.sum(axis=1), 1.0, atol=1e-6)
+
+    def test_non_negative(self, svi_results):
+        """All composition values are non-negative."""
+        simplex = svi_results.get_compositional_samples(
+            n_samples=10, store_samples=False
+        )
+        assert np.all(simplex >= 0.0)
+
+    def test_returns_numpy(self, svi_results):
+        """Result is a host numpy array."""
+        simplex = svi_results.get_compositional_samples(
+            n_samples=5, store_samples=False
+        )
+        assert isinstance(simplex, np.ndarray)
+
+    def test_auto_generates_posterior_samples(self, svi_results):
+        """Method auto-generates posterior samples when none exist."""
+        # Clear cached samples to test auto-generation
+        saved = svi_results.posterior_samples
+        svi_results.posterior_samples = None
+        try:
+            simplex = svi_results.get_compositional_samples(
+                n_samples=5, store_samples=False
+            )
+            assert simplex.shape[1] == svi_results.n_genes
+            # Posterior samples should have been re-created
+            assert svi_results.posterior_samples is not None
+        finally:
+            svi_results.posterior_samples = saved
+
+    def test_store_samples_attribute(self, svi_results):
+        """store_samples=True saves result to compositional_samples."""
+        svi_results.get_compositional_samples(
+            n_samples=5, store_samples=True
+        )
+        assert hasattr(svi_results, "compositional_samples")
+        assert svi_results.compositional_samples is not None
+
+    def test_multiple_dirichlet_draws(self, svi_results):
+        """n_samples_dirichlet multiplies the output row count."""
+        n_samples, M = 10, 3
+        simplex = svi_results.get_compositional_samples(
+            n_samples=n_samples, n_samples_dirichlet=M, store_samples=False
+        )
+        assert simplex.shape == (n_samples * M, svi_results.n_genes)
+
+    def test_hierarchical_p_gamma_path(self, svi_results_hier):
+        """Hierarchical-p results use Gamma-normalize path; rows still sum to 1."""
+        simplex = svi_results_hier.get_compositional_samples(
+            n_samples=10, store_samples=False
+        )
+        assert simplex.shape[1] == svi_results_hier.n_genes
+        np.testing.assert_allclose(simplex.sum(axis=1), 1.0, atol=1e-5)
+
+    def test_mixture_component_slicing(self, svi_results_mix):
+        """Mixture models require component argument."""
+        simplex = svi_results_mix.get_compositional_samples(
+            n_samples=5, component=0, store_samples=False
+        )
+        assert simplex.shape[1] == svi_results_mix.n_genes
+        np.testing.assert_allclose(simplex.sum(axis=1), 1.0, atol=1e-6)
+
+
+# ==============================================================================
+# Tests: get_compositional_samples on MCMC results
+# ==============================================================================
+
+
+class TestMCMCGetCompositionalSamples:
+    """Integration tests for ``ScribeMCMCResults.get_compositional_samples``."""
+
+    @pytest.fixture(scope="class")
+    def mcmc_results(self):
+        """Minimal MCMC-fitted NBDM results for compositional sampling tests."""
+        from scribe.models.config import InferenceConfig, MCMCConfig
+        from scribe.inference import run_scribe
+        from scribe.inference.preset_builder import build_config_from_preset
+
+        np.random.seed(3)
+        counts = jnp.array(
+            np.random.negative_binomial(5, 0.3, (15, 8))
+        )
+        cfg = build_config_from_preset(
+            model="nbdm",
+            parameterization="standard",
+            inference_method="mcmc",
+            unconstrained=False,
+            priors={"r": (2, 0.1), "p": (1, 1)},
+        )
+        inf = InferenceConfig.from_mcmc(
+            MCMCConfig(n_warmup=2, n_samples=4, n_chains=1)
+        )
+        return run_scribe(counts=counts, model_config=cfg, inference_config=inf, seed=0)
+
+    def test_basic_shape(self, mcmc_results):
+        """Returns (N_mcmc, n_genes) array."""
+        simplex = mcmc_results.get_compositional_samples(store_samples=False)
+        n_mcmc = mcmc_results.get_posterior_samples()["r"].shape[0]
+        assert simplex.shape == (n_mcmc, mcmc_results.n_genes)
+
+    def test_rows_sum_to_one(self, mcmc_results):
+        """Every MCMC composition row sums to 1."""
+        simplex = mcmc_results.get_compositional_samples(store_samples=False)
+        np.testing.assert_allclose(simplex.sum(axis=1), 1.0, atol=1e-6)
+
+    def test_non_negative(self, mcmc_results):
+        """All MCMC composition values are non-negative."""
+        simplex = mcmc_results.get_compositional_samples(store_samples=False)
+        assert np.all(simplex >= 0.0)
+
+    def test_returns_numpy(self, mcmc_results):
+        """Result is a host numpy array."""
+        simplex = mcmc_results.get_compositional_samples(store_samples=False)
+        assert isinstance(simplex, np.ndarray)
+
+    def test_store_samples_attribute(self, mcmc_results):
+        """store_samples=True saves result to compositional_samples."""
+        mcmc_results.get_compositional_samples(store_samples=True)
+        assert hasattr(mcmc_results, "compositional_samples")
+        assert mcmc_results.compositional_samples is not None
+
+    def test_multiple_dirichlet_draws(self, mcmc_results):
+        """n_samples_dirichlet multiplies the output row count."""
+        M = 3
+        simplex = mcmc_results.get_compositional_samples(
+            n_samples_dirichlet=M, store_samples=False
+        )
+        n_mcmc = mcmc_results.get_posterior_samples()["r"].shape[0]
+        assert simplex.shape == (n_mcmc * M, mcmc_results.n_genes)

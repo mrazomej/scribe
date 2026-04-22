@@ -226,8 +226,9 @@ from scribe.de import (
     # Component matching (multi-dataset)
     match_components_by_label,
     get_shared_labels,
-    # Empirical composition pipeline (two-stage)
-    sample_compositions,
+    # Empirical composition pipeline
+    sample_composition,        # single-condition simplex samples
+    sample_compositions,       # two-condition (DE) simplex samples
     compute_delta_from_simplex,
     compute_clr_differences,         # convenience wrapper
     # Set-level (parametric)
@@ -596,9 +597,32 @@ de = compare(
 )
 ```
 
+### Single-condition compositional samples
+
+To draw simplex compositions for a **single condition** (not a DE comparison),
+use `sample_composition` from the `de` module, or call `get_compositional_samples`
+directly on any results object — which is the recommended interface:
+
+```python
+# Recommended: directly from results (auto-detects model type, auto-generates
+# posterior samples if missing)
+simplex = results.get_compositional_samples(n_samples=200)
+# shape: (200, n_genes), each row sums to 1
+
+# Low-level: call the standalone function with explicit arrays
+from scribe.de import sample_composition
+simplex = sample_composition(r_samples=post["r"], p_samples=post.get("p"))
+```
+
+The sampling path is chosen automatically from the `AxisLayout` of `p`:
+
+- **Dirichlet** (shared `p`): `rho ~ Dir(r)` — standard NBDM models.
+- **Gamma-normalize** (gene-specific `p`): `gamma_g ~ Gamma(r_g, 1)`, scaled
+  by `p_g / (1 - p_g)`, then normalized — hierarchical-p models.
+
 ### How it works
 
-The pipeline is split into two stages for reusability:
+The two-condition DE pipeline is split into two stages for reusability:
 
 1. **Stage 1 — Composition sampling** (`sample_compositions()`): Draw
    `rho ~ Dirichlet(r)` in the full D-dimensional simplex (GPU-batched).
@@ -1023,11 +1047,13 @@ All public entry points validate that mixture-component indices are
 provided when the data has a component axis.  This prevents confusing
 errors deep inside internal helpers like `_slice_component`.
 
-| Entry point             | Detection method                    | Guard                                    |
-| ----------------------- | ----------------------------------- | ---------------------------------------- |
-| `compare_datasets()`    | `model_config.n_components > 1`     | Requires `component=` parameter          |
-| `compare()`             | Layout `component_axis` on `"r"`    | Requires `component_A` and `component_B` |
-| `sample_compositions()` | Layout `component_axis` on `"r"`    | Requires `component_A` and `component_B` |
+| Entry point                          | Detection method                    | Guard                                    |
+| ------------------------------------ | ----------------------------------- | ---------------------------------------- |
+| `compare_datasets()`                 | `model_config.n_components > 1`     | Requires `component=` parameter          |
+| `compare()`                          | Layout `component_axis` on `"r"`    | Requires `component_A` and `component_B` |
+| `sample_compositions()`              | Layout `component_axis` on `"r"`    | Requires `component_A` and `component_B` |
+| `sample_composition()`               | Layout `component_axis` on `"r"`    | Requires `component=` parameter          |
+| `results.get_compositional_samples`  | Layout via `_build_canonical_layouts` | Requires `component=` parameter        |
 
 The shared validation logic lives in `_require_mixture_components()` in
 `_empirical.py` and relies solely on semantic layout metadata.  When
