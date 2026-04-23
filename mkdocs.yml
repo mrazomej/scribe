@@ -161,6 +161,7 @@ nav:
     - Differential Expression: guide/differential-expression.md
     - Model Comparison: guide/model-comparison.md
   - Tutorials:
-    - tutorials/5050_jurkat_293t.md
+    - Modeling Assumptions for scRNA-seq: tutorials/jurkat_cells.md
+    - Mixture Models & Differential Expression: tutorials/5050_jurkat_293t.md
   - API Reference: reference/
   - Contributing: contributing.md
