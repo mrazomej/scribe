@@ -40,7 +40,7 @@ $\underline{\rho} \mid \underline{r} \sim \text{Dirichlet}(\underline{r})$.
 The expected composition for gene $g$ is
 
 $$
-\mathbb{E}[\rho_g \mid \underline{r}] = \frac{r_g}{r_T},
+\langle \rho_g \mid \underline{r} \rangle = \frac{r_g}{r_T},
 $${#eq-why-model-comp-shared}
 
 where $r_T = \sum_{g'} r_{g'}$. The expected count per gene under the negative
@@ -50,7 +50,7 @@ count is $\mu_T = r_T(1 - \hat{p})/\hat{p}$. Since the shared factor $(1 -
 
 $$
 \frac{\mu_g}{\mu_T} = \frac{r_g(1-\hat{p})/\hat{p}}{r_T(1-\hat{p})/\hat{p}}
-= \frac{r_g}{r_T} = \mathbb{E}[\rho_g \mid \underline{r}].
+= \frac{r_g}{r_T} = \langle \rho_g \mid \underline{r} \rangle.
 $${#eq-why-model-mean-ratio-shared}
 
 The expected composition is identically the ratio of expected counts.
@@ -72,7 +72,7 @@ $${#eq-why-model-gamma-comp}
 The expected value of $\gamma_g \cdot (1 - p_g)/p_g$ is
 
 $$
-\mathbb{E}[\gamma_g] \cdot \frac{1-p_g}{p_g} = r_g \cdot \frac{1-p_g}{p_g}
+\langle \gamma_g \rangle \cdot \frac{1-p_g}{p_g} = r_g \cdot \frac{1-p_g}{p_g}
 = \mu_g,
 $${#eq-why-model-gamma-mean}
 
@@ -81,7 +81,7 @@ By a standard result on ratios of independent random variables with shared
 normalizer, the expected composition is
 
 $$
-\mathbb{E}[\rho_g] \approx \frac{\mu_g}{\mu_T},
+\langle \rho_g \rangle \approx \frac{\mu_g}{\mu_T},
 $${#eq-why-model-mean-ratio-hier}
 
 where the approximation becomes exact in the limit $r_g \to \infty$ (the
@@ -100,7 +100,7 @@ $${#eq-why-model-sample-mean}
 
 With $C$ cells, the relative precision of $\bar{u}_g$ as an estimator of
 $\mu_g$ is of order $1/\sqrt{C}$. For typical single-cell datasets with
-$C \sim 10^3$--$10^5$ cells per condition, this precision is $0.1$--$3\%$. The
+$C \sim 10^3$--$10^5$ cells per condition, this precision is $0.3$--$3\%$. The
 sample mean is the most tightly constrained quantity in any count model---it is
 a sufficient statistic for the Poisson family, and the NB likelihood
 inherits this property for the mean direction.
@@ -133,17 +133,17 @@ where $u_T = \sum_{g'} u_{g'}$ is the total UMI count for the cell. This
 estimator has the property
 
 $$
-\mathbb{E}\!\left[\hat{\rho}_g^{\text{norm}} \mid u_T\right]
-= \frac{\mathbb{E}[u_g \mid u_T]}{u_T},
+\left\langle \hat{\rho}_g^{\text{norm}} \mid u_T \right\rangle
+= \frac{\langle u_g \mid u_T \rangle}{u_T},
 $${#eq-why-model-naive-cond-mean}
 
 and under the multinomial distribution conditional on $u_T$,
 
 $$
-\mathbb{E}[u_g \mid u_T] = u_T \cdot \rho_g,
+\langle u_g \mid u_T \rangle = u_T \cdot \rho_g,
 $${#eq-why-model-multinomial-mean}
 
-giving $\mathbb{E}[\hat{\rho}_g^{\text{norm}} \mid u_T] = \rho_g$. The
+giving $\left\langle \hat{\rho}_g^{\text{norm}} \mid u_T \right\rangle = \rho_g$. The
 estimator is conditionally unbiased. Averaging over cells, the sample-level
 composition estimate
 
@@ -234,8 +234,8 @@ ranges in single-cell RNA-seq:
   $500$--$5{,}000$, depending on the gene set and cell type.
 
 For these values, the overdispersion factor @eq-why-model-overdispersion-factor
-ranges from approximately $2\times$ (when $r_T$ is large relative to $u_T$) to
-$5$--$10\times$ (when $r_T$ is comparable to $u_T$). The DM-model composition
+ranges from approximately $2\times$ (when $r_T$ is comparable to $u_T$) to
+$5$--$10\times$ (when $r_T$ is small relative to $u_T$). The DM-model composition
 variance can be **an order of magnitude larger** than the multinomial-model
 variance.
 
