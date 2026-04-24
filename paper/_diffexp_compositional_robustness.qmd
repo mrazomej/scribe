@@ -289,6 +289,82 @@ $z^* = 3$ (a nominal two-sided $p$-value of $0.003$), the actual false positive
 rate is $2\Phi(-3/\sqrt{5}) = 2\Phi(-1.34) \approx 18\%$---a $60\times$
 inflation.
 
+#### Multiple testing corrections cannot rescue anti-conservative p-values {#sec-diffexp-why-model-mtc}
+
+A natural response to the false positive inflation above is to invoke
+*multiple testing corrections*---standard machinery in genome-wide analyses
+that adjusts significance thresholds to account for the large number of
+simultaneous tests. The two most widely used corrections are:
+
+- **Bonferroni correction**: reject the null for gene $g$ if $p_g <
+  \alpha / D$, where $D$ is the number of genes tested and $\alpha$ is the
+  family-wise error rate (FWER). This guarantees that the probability of *any*
+  false rejection is at most $\alpha$.
+
+- **Benjamini-Hochberg (BH) procedure**: rank the p-values
+  $p_{(1)} \leq p_{(2)} \leq \cdots \leq p_{(D)}$, find the largest index
+  $k$ such that $p_{(k)} \leq k \cdot q / D$, and reject all genes with rank
+  $\leq k$. This controls the false discovery rate (FDR)---the expected
+  fraction of rejections that are false---at level $q$.
+
+Both methods are technically correct: they provide exactly the guarantees they
+promise, *provided that the input p-values are valid under the null*. Validity
+means that for a truly non-DE gene, the p-value is uniformly distributed on
+$[0, 1]$ (or at least super-uniform, i.e., $P(p_g \leq t) \leq t$ for all
+$t$). The overdispersion problem violates this assumption at its root: the
+inflated $z$-scores produce p-values that are *anti-conservative*---too small
+under the null. No downstream correction can repair an input that is already
+miscalibrated.
+
+To see this concretely, consider the Bonferroni correction with $D = 20{,}000$
+genes and FWER $\alpha = 0.05$. The per-gene threshold is $\alpha / D = 2.5
+\times 10^{-6}$, corresponding to a z-score cutoff of
+
+$$
+z^* = \Phi^{-1}\!\left(1 - \frac{\alpha}{2D}\right) \approx 4.71.
+$${#eq-why-model-bonf-z}
+
+Without overdispersion, a null gene exceeds this threshold with probability
+$2.5 \times 10^{-6}$. Across $D$ null genes, the expected number of false
+positives is $D \times 2.5 \times 10^{-6} = 0.05$, and the FWER guarantee
+holds.
+
+With overdispersion factor $\omega = 5$, the test computes
+$z_{\text{Mult}} = \sqrt{5}\, z_{\text{DM}}$, so a null gene exceeds the
+Bonferroni threshold when
+
+$$
+|z_{\text{DM}}| > z^* / \sqrt{\omega} = 4.71 / \sqrt{5} \approx 2.11.
+$${#eq-why-model-bonf-effective}
+
+The probability of this event is $2\Phi(-2.11) \approx 0.035$---roughly
+$3.5\%$ per gene, which is $14{,}000$ times larger than the $2.5 \times
+10^{-6}$ that Bonferroni assumed. Across $20{,}000$ null genes, the expected
+number of false positives is
+
+$$
+20{,}000 \times 0.035 = 700 \;\text{false positives},
+$${#eq-why-model-bonf-fp}
+
+instead of the $0.05$ that the FWER guarantee promised. Bonferroni ``corrected''
+nothing---it applied a perfectly valid correction to perfectly invalid inputs.
+
+The Benjamini-Hochberg procedure fares no better. BH is deliberately *less
+conservative* than Bonferroni (rejecting more genes to gain power), so it
+admits even more false positives than the Bonferroni count above. The FDR
+guarantee of ``at most $q$ fraction of discoveries are false'' is void because
+BH assumes $P(p_g \leq t \mid \text{null}) \leq t$, which fails catastrophically
+when the p-values are anti-conservative.
+
+The lesson is general: **multiple testing corrections address the problem of
+testing many genes simultaneously; they do not and cannot address the problem
+of each individual test being miscalibrated.** The overdispersion error enters
+at the per-gene level---in the variance estimate used to compute the test
+statistic. No amount of threshold adjustment at the genome-wide level can
+compensate for a systematic $\sqrt{\omega}$-fold inflation that occurs before
+the p-value is ever computed. It is, in the analogy of security, putting an
+excellent lock on a door with no walls.
+
 #### What the scribe posterior provides
 
 The scribe model computes the full posterior over $\underline{r}$ for each
@@ -321,7 +397,9 @@ the full probabilistic model:
 | Robustness to variable capture | Robust | Robust |
 | Variance model | Multinomial ($\propto 1/u_T$) | Dirichlet-Multinomial (overdispersed) |
 | Overdispersion captured | No | Yes ($r_T$-dependent inflation) |
-| False positive control under DE | Anti-conservative ($2$--$10\times$ inflated) | Calibrated |
+| Per-gene test calibration | Anti-conservative ($\sqrt{\omega}$ z-inflation) | Calibrated (posterior sampling) |
+| MTC (Bonferroni/BH) effectiveness | Void (input p-values invalid) | N/A (Bayesian PEFP instead) |
+| Error control | Nominal only; actual FP $\sim 700$ at FWER $0.05$ | PEFP at specified level |
 | Full posterior over compositions | No | Yes |
 | Gene-gene correlations | No | Yes (via low-rank guide) |
 | Denoising (count-scale recovery) | No | Yes (Bayesian posterior means) |
