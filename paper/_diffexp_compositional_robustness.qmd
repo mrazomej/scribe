@@ -1,0 +1,343 @@
+---
+editor:
+    render-on-save: true
+csl: ieee.csl
+format:
+  html:
+    filters: [tikz.lua, strip-yaml-frontmatter.lua, maintext-filter.lua, sitext-filter.lua]
+---
+
+## Why Compositional Robustness Does Not Obviate the Probabilistic Model {#sec-diffexp-why-model}
+
+The preceding section established a powerful result: CLR-based compositional
+inference is exactly invariant to capture probability misspecification. Combined
+with the well-known fact that library-size normalization produces unbiased
+composition estimates, a natural question arises:
+
+> *If gene compositions are so robust that even simple normalization recovers
+> them correctly, why do we need a probabilistic model at all? Is the entire
+> framework just an elaborate way to compute $u_g / u_T$?*
+
+This section addresses this question head-on. We show that the robustness of
+compositional *point estimates* is a mathematical inevitability---a consequence
+of compositions being ratios of expected counts, which are tightly constrained
+by the data regardless of the model. But we then demonstrate that point
+estimates without calibrated uncertainty are scientifically useless for
+differential expression, and that the gap between naive normalization and the
+Dirichlet-Multinomial model is precisely the *overdispersion structure* that
+makes single-cell biology interesting.
+
+### Compositions are ratios of expected counts {#sec-diffexp-why-model-means}
+
+We first establish a unified principle that explains why compositions are
+robust across all model variants considered in this work.
+
+#### Shared-$p$ model
+
+Under the standard Dirichlet-Multinomial factorization
+(@eq-hier-factorization-recap), the compositional distribution is
+$\underline{\rho} \mid \underline{r} \sim \text{Dirichlet}(\underline{r})$.
+The expected composition for gene $g$ is
+
+$$
+\mathbb{E}[\rho_g \mid \underline{r}] = \frac{r_g}{r_T},
+$${#eq-why-model-comp-shared}
+
+where $r_T = \sum_{g'} r_{g'}$. The expected count per gene under the negative
+binomial model is $\mu_g = r_g(1 - \hat{p})/\hat{p}$, and the total expected
+count is $\mu_T = r_T(1 - \hat{p})/\hat{p}$. Since the shared factor $(1 -
+\hat{p})/\hat{p}$ cancels in the ratio,
+
+$$
+\frac{\mu_g}{\mu_T} = \frac{r_g(1-\hat{p})/\hat{p}}{r_T(1-\hat{p})/\hat{p}}
+= \frac{r_g}{r_T} = \mathbb{E}[\rho_g \mid \underline{r}].
+$${#eq-why-model-mean-ratio-shared}
+
+The expected composition is identically the ratio of expected counts.
+
+#### Gene-specific $p_g$ model
+
+Under the hierarchical model developed in @sec-hierarchical-p, compositions are
+generated via the Gamma-based procedure (@eq-hier-summary-composition):
+
+$$
+\gamma_g \sim \text{Gamma}(r_g, 1), \qquad
+\rho_g = \frac{
+    \gamma_g \cdot (1-p_g)/p_g
+}{
+    \sum_{j} \gamma_j \cdot (1-p_j)/p_j
+}.
+$${#eq-why-model-gamma-comp}
+
+The expected value of $\gamma_g \cdot (1 - p_g)/p_g$ is
+
+$$
+\mathbb{E}[\gamma_g] \cdot \frac{1-p_g}{p_g} = r_g \cdot \frac{1-p_g}{p_g}
+= \mu_g,
+$${#eq-why-model-gamma-mean}
+
+which is exactly the expected count for gene $g$ under $\text{NB}(r_g, p_g)$.
+By a standard result on ratios of independent random variables with shared
+normalizer, the expected composition is
+
+$$
+\mathbb{E}[\rho_g] \approx \frac{\mu_g}{\mu_T},
+$${#eq-why-model-mean-ratio-hier}
+
+where the approximation becomes exact in the limit $r_g \to \infty$ (the
+Dirichlet concentration limit). For the parameter ranges encountered in
+single-cell data, the approximation is excellent.
+
+#### The mean calibration constraint
+
+In both model variants, the expected composition is determined by the ratio
+$\mu_g / \mu_T$. The per-gene expected count $\mu_g$ is pinned by the data
+through the sample mean:
+
+$$
+\bar{u}_g = \frac{1}{C} \sum_{c=1}^C u_{gc} \xrightarrow{C \to \infty} \mu_g.
+$${#eq-why-model-sample-mean}
+
+With $C$ cells, the relative precision of $\bar{u}_g$ as an estimator of
+$\mu_g$ is of order $1/\sqrt{C}$. For typical single-cell datasets with
+$C \sim 10^3$--$10^5$ cells per condition, this precision is $0.1$--$3\%$. The
+sample mean is the most tightly constrained quantity in any count model---it is
+a sufficient statistic for the Poisson family, and the NB likelihood
+inherits this property for the mean direction.
+
+This has a profound consequence: **any model that fits the data will match the
+per-gene means, and therefore the composition point estimates, regardless of
+its internal parameterization.** The model may decompose $\mu_g$ into $r_g$ and
+$\hat{p}$ (shared-$p$), or into $r_g$ and $p_g$ (gene-specific), or into
+entirely different parameter combinations---but the product must always
+reproduce $\mu_g$, and the composition $\mu_g / \mu_T$ is invariant to the
+decomposition.
+
+This explains a striking empirical observation from synthetic validation
+studies: even when a model is severely misspecified (e.g., fitting a
+shared-parameter model to data generated with per-cell heterogeneity), the
+compositional recovery remains excellent despite catastrophic failure in
+absolute parameter recovery. The absolute parameters $r_g$ and $p$ can be
+badly wrong, but $r_g(1-p)/p$ must still match $\mu_g$, so the ratios
+$\mu_g / \mu_T$ are preserved.
+
+### Simple normalization recovers the same point estimates {#sec-diffexp-why-model-normalization}
+
+The standard library-size normalization computes
+
+$$
+\hat{\rho}_g^{\text{norm}} = \frac{u_g}{u_T},
+$${#eq-why-model-naive-norm}
+
+where $u_T = \sum_{g'} u_{g'}$ is the total UMI count for the cell. This
+estimator has the property
+
+$$
+\mathbb{E}\!\left[\hat{\rho}_g^{\text{norm}} \mid u_T\right]
+= \frac{\mathbb{E}[u_g \mid u_T]}{u_T},
+$${#eq-why-model-naive-cond-mean}
+
+and under the multinomial distribution conditional on $u_T$,
+
+$$
+\mathbb{E}[u_g \mid u_T] = u_T \cdot \rho_g,
+$${#eq-why-model-multinomial-mean}
+
+giving $\mathbb{E}[\hat{\rho}_g^{\text{norm}} \mid u_T] = \rho_g$. The
+estimator is conditionally unbiased. Averaging over cells, the sample-level
+composition estimate
+
+$$
+\hat{\rho}_g = \frac{1}{C}\sum_{c=1}^C \frac{u_{gc}}{u_{T,c}}
+$${#eq-why-model-sample-comp}
+
+converges to the true composition $\rho_g$ as $C \to \infty$. Under variable
+capture, the multinomial conditioning on $u_T$ automatically integrates out
+$\nu_c$, so $\hat{\rho}_g^{\text{norm}}$ is robust to variable capture for the
+same structural reason as the model-based estimate.
+
+**We therefore concede the point**: for *point estimation* of compositions,
+simple normalization and the full probabilistic model produce the same answer.
+This is not an accident or an approximation---it is a mathematical necessity
+flowing from the mean calibration constraint.
+
+### The gap: overdispersion and the variance of compositions {#sec-diffexp-why-model-gap}
+
+If the point estimates are the same, what does the probabilistic model provide?
+The answer is: **calibrated uncertainty**. And the critical distinction is
+between the *multinomial* model (which simple normalization implicitly assumes)
+and the *Dirichlet-Multinomial* model (which scribe uses).
+
+#### The multinomial model of compositions
+
+Library-size normalization, followed by a standard test (e.g., a $t$-test or
+Wilcoxon test on $u_g / u_T$ across cells), implicitly treats the count vector
+$\underline{u}$ as drawn from a Multinomial distribution conditional on $u_T$:
+
+$$
+\underline{u} \mid u_T \sim \text{Multinomial}(u_T, \underline{\rho}).
+$${#eq-why-model-multinomial}
+
+Under this model, the variance of the per-cell composition estimate for gene
+$g$ is
+
+$$
+\text{Var}_{\text{Mult}}(\hat{\rho}_g) = \frac{\rho_g(1-\rho_g)}{u_T}.
+$${#eq-why-model-multinomial-var}
+
+This is pure *sampling noise*: if the cell had more UMIs, the estimate would
+be more precise. The multinomial treats all cells as having the same underlying
+composition $\underline{\rho}$, with variation arising solely from the discrete
+sampling of molecules.
+
+#### The Dirichlet-Multinomial model of compositions
+
+The scribe model, by contrast, recognizes that the composition itself is a
+random variable drawn from a Dirichlet distribution:
+
+$$
+\underline{\rho} \sim \text{Dirichlet}(\underline{r}), \qquad
+\underline{u} \mid u_T, \underline{\rho} \sim
+\text{Multinomial}(u_T, \underline{\rho}).
+$${#eq-why-model-dm}
+
+Marginalizing over $\underline{\rho}$, the count vector follows the
+Dirichlet-Multinomial distribution $\text{DM}(\underline{u} \mid u_T,
+\underline{r})$, and the marginal variance of the per-cell composition becomes
+
+$$
+\text{Var}_{\text{DM}}(\hat{\rho}_g) =
+\frac{\rho_g(1-\rho_g)}{u_T}
+\cdot \frac{u_T + r_T}{1 + r_T}.
+$${#eq-why-model-dm-var}
+
+The variance is inflated relative to the multinomial by the factor
+
+$$
+\text{overdispersion factor} = \frac{u_T + r_T}{1 + r_T}.
+$${#eq-why-model-overdispersion-factor}
+
+This factor captures the *biological cell-to-cell heterogeneity* in
+transcriptional programs that is the very reason single-cell experiments are
+performed. It reflects the fact that different cells of the same type do not
+have identical transcriptional compositions---they vary according to the
+Dirichlet distribution governed by $\underline{r}$.
+
+#### Magnitude of the overdispersion gap
+
+The overdispersion factor depends on the concentration parameter $r_T$ relative
+to the library size $u_T$. To build intuition, consider the typical parameter
+ranges in single-cell RNA-seq:
+
+- **Library size**: $u_T \sim 2{,}000$--$20{,}000$ UMIs per cell.
+- **Concentration**: $r_T = \sum_g r_g$ is typically in the range
+  $500$--$5{,}000$, depending on the gene set and cell type.
+
+For these values, the overdispersion factor @eq-why-model-overdispersion-factor
+ranges from approximately $2\times$ (when $r_T$ is large relative to $u_T$) to
+$5$--$10\times$ (when $r_T$ is comparable to $u_T$). The DM-model composition
+variance can be **an order of magnitude larger** than the multinomial-model
+variance.
+
+In the limit $r_T \to \infty$ (no biological overdispersion), the factor
+converges to 1 and the DM reduces to the multinomial. In the limit $r_T \to 0$
+(extreme overdispersion), it diverges, reflecting maximally heterogeneous
+compositions. Single-cell data live in the intermediate regime where the
+correction is substantial but finite---precisely the regime where getting it
+right matters.
+
+### Consequences for differential expression {#sec-diffexp-why-model-de}
+
+The overdispersion gap has immediate and catastrophic consequences for
+differential expression analysis when the wrong model is used.
+
+#### False positive inflation under the multinomial
+
+Consider a gene $g$ that is *not* differentially expressed between conditions A
+and B ($\rho_g^A = \rho_g^B$). A two-sample test on the per-cell normalized
+values $u_{gc}/u_{T,c}$ computes a test statistic based on the estimated
+variance. Under the multinomial model, this variance is
+@eq-why-model-multinomial-var. Under the DM model, the true variance is
+@eq-why-model-dm-var, which is larger by the overdispersion factor.
+
+A test that uses the multinomial variance---as any test based on simple
+normalization implicitly does---will produce a test statistic that is inflated
+by the square root of the overdispersion factor. For a $5\times$ overdispersion
+factor, this translates to a $\sqrt{5} \approx 2.2\times$ inflation in the
+$z$-score. In genome-wide testing with $D \sim 20{,}000$ genes, this inflation
+turns a controlled false discovery rate into a flood of false positives.
+
+Quantitatively, suppose the true DM effect is zero and the overdispersion factor
+is $\omega$. A test based on the multinomial variance computes
+
+$$
+z_{\text{Mult}} = \frac{\bar{\rho}_g^A - \bar{\rho}_g^B}{
+    \sqrt{\text{Var}_{\text{Mult}}^A / C_A +
+          \text{Var}_{\text{Mult}}^B / C_B}
+} = \sqrt{\omega} \; z_{\text{DM}}.
+$${#eq-why-model-z-inflation}
+
+Under the null, $z_{\text{DM}} \sim \mathcal{N}(0,1)$, but $z_{\text{Mult}}
+\sim \mathcal{N}(0, \omega)$. The tail probability at threshold $z^*$ is
+
+$$
+P(|z_{\text{Mult}}| > z^*) = 2\,\Phi\!\left(-z^*/\sqrt{\omega}\right),
+$${#eq-why-model-fpr}
+
+which can be vastly larger than the nominal $2\Phi(-z^*)$. For $\omega = 5$ and
+$z^* = 3$ (a nominal two-sided $p$-value of $0.003$), the actual false positive
+rate is $2\Phi(-3/\sqrt{5}) = 2\Phi(-1.34) \approx 18\%$---a $60\times$
+inflation.
+
+#### What the scribe posterior provides
+
+The scribe model computes the full posterior over $\underline{r}$ for each
+condition. Drawing Dirichlet samples $\underline{\rho}^{(s)} \sim
+\text{Dirichlet}(\underline{r}^{(s)})$ (or Gamma-ratio samples under the
+gene-specific $p_g$ model, @sec-hier-gamma-sampling), transforming to CLR, and
+computing paired differences $\Delta_g^{(s)} = z_{\text{CLR},g}^{A,(s)} -
+z_{\text{CLR},g}^{B,(s)}$, the empirical pipeline automatically propagates the
+correct DM variance through every downstream quantity:
+
+- **lfsr**: The local false sign rate is computed by counting the fraction of
+  posterior samples with the minority sign, directly reflecting the DM-model
+  uncertainty.
+- **PEFP**: The genome-wide error control (@sec-diffexp-pefp) operates on these
+  calibrated lfsr values.
+- **Credible intervals**: The 68\% or 95\% intervals on $\Delta_g$ span the
+  correct DM-model width, not the artificially narrow multinomial width.
+
+No distributional assumption is needed---the Monte Carlo procedure inherits
+the overdispersion directly from the Dirichlet (or Gamma-ratio) sampling step.
+
+### Summary: what each approach provides {#sec-diffexp-why-model-summary}
+
+The following table distills the comparison between simple normalization and
+the full probabilistic model:
+
+| Quantity | Simple normalization | Probabilistic model (scribe) |
+|----------|---------------------|------|
+| Composition point estimates | Correct (via $u_g/u_T$) | Correct (via posterior mean) |
+| Robustness to variable capture | Robust | Robust |
+| Variance model | Multinomial ($\propto 1/u_T$) | Dirichlet-Multinomial (overdispersed) |
+| Overdispersion captured | No | Yes ($r_T$-dependent inflation) |
+| False positive control under DE | Anti-conservative ($2$--$10\times$ inflated) | Calibrated |
+| Full posterior over compositions | No | Yes |
+| Gene-gene correlations | No | Yes (via low-rank guide) |
+| Denoising (count-scale recovery) | No | Yes (Bayesian posterior means) |
+| Capture efficiency estimation | No | Yes |
+| Gene-specific $p_g$ detection | No | Yes (hierarchical model, $\sigma_p$ diagnostic) |
+
+The value of the probabilistic model is not in producing better composition
+point estimates---both approaches get these right. **The value is in
+everything that comes after**: calibrated uncertainty quantification,
+overdispersion-aware differential expression, principled error control, and
+the full suite of downstream inferences (denoising, gene-set analysis, capture
+estimation) that require a generative model of the measurement process.
+
+Compositions being robust is not a threat to the scribe framework---it is a
+*feature*. It means that the core quantity of interest (gene compositions) is
+well-identified and stable across model variants, providing a solid foundation
+on which to build reliable differential expression analysis. The probabilistic
+model does not improve the first decimal place of the composition estimate;
+it tells you how many decimal places you can trust.

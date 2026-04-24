@@ -47,6 +47,20 @@ component-specific capture scalings. The argument rests on the
 thinning-invariance of the NB shape parameter and the uniform cancellation of
 capture probability in compositional ratios.
 
+**Why the probabilistic model matters** (@sec-diffexp-why-model). A pedagogical
+section establishing that while compositional *point estimates* are the same
+under simple normalization and the full model (both are determined by the ratio
+of expected counts, which the sample means pin at $O(1/\sqrt{C})$ precision),
+the *variance model* is fundamentally different. The Dirichlet-Multinomial
+captures biological overdispersion with a variance inflation factor of $(u_T +
+r_T)/(1 + r_T)$---typically $2$--$10\times$ larger than the multinomial variance
+assumed by normalization-based tests. This gap translates directly into false
+positive inflation under the multinomial: a test that ignores the overdispersion
+can inflate $z$-scores by $\sqrt{\omega}$, producing false positive rates up to
+$60\times$ the nominal level. The probabilistic model does not improve the
+composition point estimate; **it tells you how many decimal places you can
+trust**.
+
 **Biological-level metrics** (@sec-diffexp-biological). Three complementary
 metrics---biological log-fold change, log-variance ratio, and Gamma Jeffreys
 divergence---that quantify differential expression in the denoised NB

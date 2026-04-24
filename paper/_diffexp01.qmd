@@ -154,6 +154,20 @@ argument rests on the thinning-invariance of the negative binomial shape
 parameter and the uniform cancellation of capture probability in compositional
 ratios.
 
+**Why the probabilistic model matters** (@sec-diffexp-why-model): After
+establishing the robustness of compositional point estimates, we address the
+natural counter-argument: if simple normalization recovers the same
+compositions, why use a probabilistic model at all? We show that the
+*point estimates* are indeed equivalent---both are determined by the ratio of
+expected counts, which the data pin at $O(1/\sqrt{C})$ precision. The critical
+difference lies in *uncertainty quantification*: the Dirichlet-Multinomial
+variance of compositions is inflated by a factor of $(u_T + r_T)/(1 + r_T)$
+relative to the multinomial variance that simple normalization implicitly
+assumes. This overdispersion factor, typically $2$--$10\times$ in single-cell
+data, captures biological cell-to-cell heterogeneity. Ignoring it (as any
+normalization-based test does) inflates false positive rates by up to $60\times$
+at conventional significance thresholds.
+
 **Biological-level differential expression** (@sec-diffexp-biological): Three
 complementary metrics—biological log-fold change, log-variance ratio, and Gamma
 Jeffreys divergence—that quantify differential expression directly in the space

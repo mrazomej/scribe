@@ -122,6 +122,9 @@ repository](https://github.com/mrazomej/scribe)
 <!-- Robustness of CLR inference to capture probability misspecification -->
 {{< include _diffexp06.qmd >}}
 
+<!-- Why compositional robustness does not obviate the probabilistic model -->
+{{< include _diffexp_compositional_robustness.qmd >}}
+
 <!-- Biological-level differential expression (complementary metrics) -->
 {{< include _diffexp07.qmd >}}
 
