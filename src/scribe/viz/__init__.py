@@ -77,6 +77,7 @@ _LAZY_EXPORTS = {
     "plot_de_volcano": ("scribe.viz.de", "plot_de_volcano"),
     "plot_de_evidence": ("scribe.viz.de", "plot_de_evidence"),
     "plot_de_ma": ("scribe.viz.de", "plot_de_ma"),
+    "plot_de_mask_threshold": ("scribe.viz.de", "plot_de_mask_threshold"),
 }
 
 

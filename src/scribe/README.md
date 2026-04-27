@@ -178,6 +178,7 @@ mean_expr = scribe.viz.plot_de_mean_expression(de)
 volcano = scribe.viz.plot_de_volcano(de)
 evidence = scribe.viz.plot_de_evidence(de)
 ma = scribe.viz.plot_de_ma(de)
+mask_diag = scribe.viz.plot_de_mask_threshold(de, threshold_mode="coverage", coverage=0.95)
 #
 # Biological-only:
 volcano_bio = scribe.viz.plot_de_volcano(de, mode="bio")
@@ -214,6 +215,7 @@ SCRIBE includes mode-aware differential-expression plotting helpers in
 - `plot_de_volcano(...)`
 - `plot_de_evidence(...)`
 - `plot_de_ma(...)`
+- `plot_de_mask_threshold(...)`
 
 All four functions accept:
 

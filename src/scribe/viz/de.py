@@ -1,11 +1,15 @@
 """Differential-expression diagnostic plotting with CLR/BIO mode selection.
 
-This module exposes four DE plotting entrypoints that all accept a
-``ScribeDEResults``-style object and a shared ``mode`` selector:
+This module exposes five DE plotting entrypoints that accept a
+``ScribeDEResults``-style object. Four are mode-aware and share the
+``mode`` selector:
 
 - ``"clr"``: compositional CLR metrics
 - ``"bio"``: biological LFC metrics
 - ``"all"``: combined multi-panel figure with CLR and biological panels
+
+In addition, ``plot_de_mask_threshold`` provides a dedicated two-panel
+mask-threshold diagnostic for composition-coverage and related filters.
 
 The plotting API is dual-mode via :func:`scribe.viz._interactive.plot_function`,
 so these functions work consistently in both notebook and CLI contexts.
@@ -30,6 +34,9 @@ _LOG10_EPS = 1e-30
 
 # Shared type alias for mode validation and editor autocompletion.
 DEPlotMode = Literal["clr", "bio", "all"]
+
+# Supported threshold strategies for the mask diagnostic plot.
+MaskThresholdMode = Literal["coverage", "min_expression", "custom"]
 
 
 def _validate_mode(mode: str) -> DEPlotMode:
@@ -287,6 +294,87 @@ def _scatter_de_split(
     ax.set_xlabel(x_label)
     ax.set_ylabel(y_label)
     ax.set_title(title)
+
+
+def _build_mask_for_threshold_plot(
+    mu_A: np.ndarray,
+    mu_B: np.ndarray,
+    *,
+    threshold_mode: MaskThresholdMode,
+    coverage: float,
+    min_expression: float,
+    custom_mask: np.ndarray | None,
+) -> tuple[np.ndarray, dict[str, float]]:
+    """Build a boolean mask and metadata for threshold diagnostics.
+
+    Parameters
+    ----------
+    mu_A : numpy.ndarray
+        Mean-expression vector for condition A over the active gene set.
+    mu_B : numpy.ndarray
+        Mean-expression vector for condition B over the active gene set.
+    threshold_mode : {"coverage", "min_expression", "custom"}
+        Thresholding strategy used to construct the boolean mask.
+    coverage : float
+        Cumulative composition target used when ``threshold_mode="coverage"``.
+    min_expression : float
+        Absolute mean-expression cutoff used when
+        ``threshold_mode="min_expression"``.
+    custom_mask : numpy.ndarray or None
+        User-supplied boolean mask used when ``threshold_mode="custom"``.
+
+    Returns
+    -------
+    tuple of (numpy.ndarray, dict)
+        ``mask`` and a metadata dictionary with values used for plot
+        annotations.
+
+    Raises
+    ------
+    ValueError
+        If parameters are invalid for the selected threshold mode.
+    """
+    # Use existing DE helpers so the plotting logic matches model-side masking.
+    from scribe.de._empirical import _coverage_mask_from_mu
+
+    if threshold_mode == "coverage":
+        if not (0.0 < float(coverage) <= 1.0):
+            raise ValueError(
+                "coverage must satisfy 0 < coverage <= 1.0 for "
+                "threshold_mode='coverage'."
+            )
+        # Match set_composition_coverage semantics: union of per-condition masks.
+        mask_A = _coverage_mask_from_mu(mu_A, coverage=coverage)
+        mask_B = _coverage_mask_from_mu(mu_B, coverage=coverage)
+        mask = mask_A | mask_B
+        return mask, {"coverage": float(coverage)}
+
+    if threshold_mode == "min_expression":
+        if float(min_expression) < 0.0:
+            raise ValueError(
+                "min_expression must be non-negative for "
+                "threshold_mode='min_expression'."
+            )
+        mask = (mu_A >= float(min_expression)) | (mu_B >= float(min_expression))
+        return mask, {"min_expression": float(min_expression)}
+
+    if threshold_mode == "custom":
+        if custom_mask is None:
+            raise ValueError(
+                "custom_mask is required when threshold_mode='custom'."
+            )
+        mask = np.asarray(custom_mask, dtype=bool).ravel()
+        if mask.shape[0] != mu_A.shape[0]:
+            raise ValueError(
+                "custom_mask length does not match active DE gene count "
+                f"({mask.shape[0]} vs {mu_A.shape[0]})."
+            )
+        return mask, {}
+
+    raise ValueError(
+        "Invalid threshold_mode. Expected one of "
+        "{'coverage', 'min_expression', 'custom'}."
+    )
 
 
 @plot_function(
@@ -929,9 +1017,208 @@ def plot_de_ma(
     return fig, axes_flat, len(axes_flat), {"suffix": f"de_ma_{resolved_mode}"}
 
 
+@plot_function(
+    suffix="de_mask_threshold",
+    save_label="DE mask-threshold diagnostic plot",
+    save_kwargs={"bbox_inches": "tight", "dpi": 150},
+)
+def plot_de_mask_threshold(
+    de_results,
+    *,
+    ctx,
+    viz_cfg=None,
+    threshold_mode: MaskThresholdMode = "coverage",
+    coverage: float = 0.95,
+    min_expression: float = 1.0,
+    custom_mask=None,
+    title_suffix: str | None = None,
+    figsize=None,
+    fig=None,
+    axes=None,
+    ax=None,
+):
+    """Plot a two-panel diagnostic for gene-mask thresholding.
+
+    The left panel shows cumulative compositional mass against ranked genes.
+    The right panel shows per-gene composition (log scale) colored by whether
+    each gene is retained by the selected threshold strategy.
+
+    Parameters
+    ----------
+    de_results : object
+        Differential-expression results object with ``to_dataframe`` support.
+        The object must expose CLR mean-expression vectors either through
+        ``to_dataframe(metrics="clr")`` columns or via ``mu_map_A`` /
+        ``mu_map_B`` fallback.
+    viz_cfg : OmegaConf or None, optional
+        Visualization config kept for API compatibility with other plotting
+        helpers.
+    threshold_mode : {"coverage", "min_expression", "custom"}, default="coverage"
+        Threshold strategy used to derive the keep/discard mask.
+    coverage : float, default=0.95
+        Cumulative composition target used by ``threshold_mode="coverage"``.
+    min_expression : float, default=1.0
+        Absolute mean-expression cutoff used by
+        ``threshold_mode="min_expression"``.
+    custom_mask : array-like of bool, optional
+        Explicit mask used when ``threshold_mode="custom"``.
+    title_suffix : str or None, optional
+        Optional suffix appended to panel titles.
+    figsize : tuple, optional
+        Figure size override.
+    fig : matplotlib.figure.Figure, optional
+        Existing figure host.
+    axes : array-like of Axes, optional
+        Existing axes container with exactly two axes.
+    ax : matplotlib.axes.Axes, optional
+        Not supported for this two-panel figure. Use ``fig``/``axes``.
+
+    Returns
+    -------
+    PlotResult
+        Wrapped plotting result with figure, axes, and output metadata.
+
+    Raises
+    ------
+    ValueError
+        If invalid threshold arguments are provided or if ``ax`` is supplied.
+    """
+    del viz_cfg  # Kept for decorator-compatible public signature.
+    if ax is not None:
+        raise ValueError(
+            "plot_de_mask_threshold requires `fig`/`axes`, not a single `ax`."
+        )
+
+    title_tail = f" ({title_suffix})" if title_suffix else ""
+    fig, _, axes_flat = _create_or_validate_grid_axes(
+        n_rows=1,
+        n_cols=2,
+        fig=fig,
+        axes=axes,
+        figsize=figsize or (12.0, 4.8),
+    )
+    ax_cum, ax_gene = axes_flat
+
+    # Use CLR exports so we stay aligned with the currently active gene mask.
+    clr_df = _extract_clr_df(
+        de_results,
+        tau=0.0,
+        target_pefp=None,
+        use_lfsr_tau=True,
+    )
+    mu_A, mu_B = _resolve_clr_mean_expression(clr_df, de_results)
+
+    # Convert to compositions; this is the quantity that is scale-invariant.
+    total_A = float(np.sum(mu_A))
+    total_B = float(np.sum(mu_B))
+    if total_A <= 0.0 or total_B <= 0.0:
+        raise ValueError(
+            "Mean-expression vectors must have positive total mass to build "
+            "composition threshold diagnostics."
+        )
+    rho_A = np.asarray(mu_A, dtype=float) / total_A
+    rho_B = np.asarray(mu_B, dtype=float) / total_B
+
+    mask, mask_meta = _build_mask_for_threshold_plot(
+        np.asarray(mu_A, dtype=float),
+        np.asarray(mu_B, dtype=float),
+        threshold_mode=threshold_mode,
+        coverage=coverage,
+        min_expression=min_expression,
+        custom_mask=custom_mask,
+    )
+
+    # Rank by average composition to provide a stable shared x-axis ordering.
+    rho_mean = 0.5 * (rho_A + rho_B)
+    order = np.argsort(-rho_mean)
+    ranks = np.arange(1, rho_mean.shape[0] + 1, dtype=int)
+    rho_A_sorted = rho_A[order]
+    rho_B_sorted = rho_B[order]
+    rho_mean_sorted = rho_mean[order]
+    mask_sorted = np.asarray(mask, dtype=bool)[order]
+
+    cum_A = np.cumsum(rho_A_sorted)
+    cum_B = np.cumsum(rho_B_sorted)
+
+    # Use keep-count as the vertical marker; this generalizes to custom masks.
+    n_kept = int(np.sum(mask_sorted))
+    n_discarded = int(mask_sorted.shape[0] - n_kept)
+    x_cut = max(n_kept, 1)
+
+    # Panel 1: cumulative composition curves and threshold boundary markers.
+    ax_cum.plot(ranks, cum_A, linewidth=2.0, color="#1565C0", label="Condition A")
+    ax_cum.plot(ranks, cum_B, linewidth=2.0, color="#C62828", label="Condition B")
+    ax_cum.axvline(
+        x_cut,
+        linestyle="--",
+        color="black",
+        linewidth=1.0,
+        label=f"keep boundary (n={n_kept})",
+    )
+    if "coverage" in mask_meta:
+        ax_cum.axhline(
+            mask_meta["coverage"],
+            linestyle=":",
+            color="gray",
+            linewidth=1.0,
+            label=f"coverage={mask_meta['coverage']:.2f}",
+        )
+    ax_cum.set_xlim(1, ranks[-1])
+    ax_cum.set_ylim(0.0, 1.01)
+    ax_cum.set_xlabel("gene rank (descending mean composition)")
+    ax_cum.set_ylabel("cumulative fraction of transcriptome")
+    ax_cum.set_title(f"Cumulative composition threshold{title_tail}")
+    ax_cum.legend(loc="lower right", fontsize=8)
+    kept_pct = 100.0 * (float(n_kept) / float(ranks.shape[0]))
+    ax_cum.text(
+        0.02,
+        0.98,
+        (
+            f"kept: {n_kept}\n"
+            f"discarded: {n_discarded}\n"
+            f"kept %: {kept_pct:.1f}%"
+        ),
+        transform=ax_cum.transAxes,
+        va="top",
+        ha="left",
+        fontsize=8,
+        bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "alpha": 0.8},
+    )
+
+    # Panel 2: per-gene composition values with keep/discard coloring.
+    discarded = ~mask_sorted
+    ax_gene.scatter(
+        ranks[discarded],
+        rho_mean_sorted[discarded],
+        s=8,
+        alpha=0.35,
+        color="lightgray",
+        label=f"discarded (n={n_discarded})",
+    )
+    ax_gene.scatter(
+        ranks[mask_sorted],
+        rho_mean_sorted[mask_sorted],
+        s=10,
+        alpha=0.75,
+        color="#2E7D32",
+        label=f"kept (n={n_kept})",
+    )
+    ax_gene.axvline(x_cut, linestyle="--", color="black", linewidth=1.0)
+    ax_gene.set_xlim(1, ranks[-1])
+    ax_gene.set_yscale("log")
+    ax_gene.set_xlabel("gene rank (descending mean composition)")
+    ax_gene.set_ylabel("mean composition per gene")
+    ax_gene.set_title(f"Per-gene composition by mask status{title_tail}")
+    ax_gene.legend(loc="upper right", fontsize=8)
+
+    plot_suffix = f"de_mask_threshold_{threshold_mode}"
+    return fig, axes_flat, 2, {"suffix": plot_suffix}
+
+
 __all__ = [
     "plot_de_mean_expression",
     "plot_de_volcano",
     "plot_de_evidence",
     "plot_de_ma",
+    "plot_de_mask_threshold",
 ]

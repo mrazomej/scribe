@@ -36,6 +36,7 @@ from scribe.viz import (
     plot_correlation_heatmap,
     plot_de_evidence,
     plot_de_ma,
+    plot_de_mask_threshold,
     plot_de_mean_expression,
     plot_de_volcano,
     plot_ecdf,
@@ -308,6 +309,7 @@ def test_package_root_exports_expected_symbols():
     assert callable(plot_de_volcano)
     assert callable(plot_de_evidence)
     assert callable(plot_de_ma)
+    assert callable(plot_de_mask_threshold)
     assert callable(_get_config_values)
     assert callable(_get_predictive_samples_for_plot)
     assert callable(_get_training_diagnostic_payload)
@@ -352,6 +354,57 @@ def test_de_plot_mode_validation_rejects_invalid_value():
     fake_de = _FakeDEResultsForViz()
     with pytest.raises(ValueError, match="Invalid mode"):
         plot_de_volcano(fake_de, mode="not-a-mode", save=False)
+
+
+def test_de_mask_threshold_plot_default_two_panel():
+    """Mask-threshold diagnostic should render a fixed two-panel figure."""
+    fake_de = _FakeDEResultsForViz()
+
+    out = plot_de_mask_threshold(fake_de, save=False)
+
+    assert isinstance(out, PlotResult)
+    assert out.n_panels == 2
+
+
+def test_de_mask_threshold_plot_supports_multiple_threshold_modes():
+    """Mask diagnostic should accept coverage, min-expression, and custom masks."""
+    fake_de = _FakeDEResultsForViz()
+
+    out_cov = plot_de_mask_threshold(
+        fake_de,
+        threshold_mode="coverage",
+        coverage=0.90,
+        save=False,
+    )
+    out_min = plot_de_mask_threshold(
+        fake_de,
+        threshold_mode="min_expression",
+        min_expression=25.0,
+        save=False,
+    )
+    out_custom = plot_de_mask_threshold(
+        fake_de,
+        threshold_mode="custom",
+        custom_mask=np.array([True, True, False, False, False, False]),
+        save=False,
+    )
+
+    assert out_cov.n_panels == 2
+    assert out_min.n_panels == 2
+    assert out_custom.n_panels == 2
+
+
+def test_de_mask_threshold_plot_custom_mode_requires_custom_mask():
+    """Custom threshold mode should raise when the mask is omitted."""
+    import pytest
+
+    fake_de = _FakeDEResultsForViz()
+    with pytest.raises(ValueError, match="custom_mask"):
+        plot_de_mask_threshold(
+            fake_de,
+            threshold_mode="custom",
+            save=False,
+        )
 
 
 def test_get_config_values_uses_mcmc_run_size_token():
