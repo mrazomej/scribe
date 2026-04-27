@@ -1186,16 +1186,16 @@ def plot_de_mask_threshold(
     ax_cum.legend(loc="lower right", fontsize=8)
     kept_pct = 100.0 * (float(n_kept) / float(ranks.shape[0]))
     ax_cum.text(
-        0.02,
         0.98,
+        0.50,
         (
             f"kept: {n_kept}\n"
             f"discarded: {n_discarded}\n"
             f"kept %: {kept_pct:.1f}%"
         ),
         transform=ax_cum.transAxes,
-        va="top",
-        ha="left",
+        va="center",
+        ha="right",
         fontsize=8,
         bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "alpha": 0.8},
     )
