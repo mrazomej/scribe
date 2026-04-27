@@ -109,6 +109,7 @@ from ._empirical import (
     compute_clr_differences,
     empirical_differential_expression,
     compute_expression_mask,
+    compute_composition_coverage_mask,
 )
 
 # Empirical Bayes shrinkage
@@ -166,6 +167,7 @@ __all__ = [
     "compute_clr_differences",
     "empirical_differential_expression",
     "compute_expression_mask",
+    "compute_composition_coverage_mask",
     # Empirical Bayes shrinkage
     "fit_scale_mixture_prior",
     "shrinkage_differential_expression",

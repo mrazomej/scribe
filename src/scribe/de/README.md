@@ -107,15 +107,16 @@ When results objects are passed, `compare()`:
 
 **Empirical/Shrinkage-only methods:**
 
-| Method | Description |
-|--------|-------------|
-| `de.biological_level(tau_lfc, tau_var, tau_kl)` | Biological-level DE (LFC, variance ratio, Gamma KL) |
-| `de.test_pathway_perturbation(indices, n_permutations)` | Within-pathway compositional perturbation test |
-| `de.test_multiple_gene_sets(gene_sets, tau, target_pefp)` | Batch pathway testing with PEFP control |
-| `de.set_gene_mask(mask)` | Change expression mask and recompute CLR (from stored simplex) |
-| `de.set_expression_threshold(min_expression)` | Build mask from MAP mu and apply |
-| `de.clear_mask()` | Remove mask, restore all genes |
-| `de.shrink(sigma_grid, ...)` | Wrap empirical results with shrinkage layer (zero-copy) |
+| Method                                                    | Description                                                    |
+| --------------------------------------------------------- | -------------------------------------------------------------- |
+| `de.biological_level(tau_lfc, tau_var, tau_kl)`           | Biological-level DE (LFC, variance ratio, Gamma KL)            |
+| `de.test_pathway_perturbation(indices, n_permutations)`   | Within-pathway compositional perturbation test                 |
+| `de.test_multiple_gene_sets(gene_sets, tau, target_pefp)` | Batch pathway testing with PEFP control                        |
+| `de.set_gene_mask(mask)`                                  | Change expression mask and recompute CLR (from stored simplex) |
+| `de.set_expression_threshold(min_expression)`             | Build mask from MAP mu and apply                               |
+| `de.set_composition_coverage(coverage)`                   | Build mask from cumulative MAP composition coverage and apply  |
+| `de.clear_mask()`                                         | Remove mask, restore all genes                                 |
+| `de.shrink(sigma_grid, ...)`                              | Wrap empirical results with shrinkage layer (zero-copy)        |
 
 > **Note on `tau`-aware caching**: All methods that depend on gene-level results
 > accept a `tau` parameter. Results are cached and automatically recomputed when
@@ -391,7 +392,11 @@ sampling.
 ### Quick start
 
 ```python
-from scribe.de import compare, compute_expression_mask
+from scribe.de import (
+    compare,
+    compute_expression_mask,
+    compute_composition_coverage_mask,
+)
 
 # Build a boolean mask from MAP mean expression (mu)
 mask = compute_expression_mask(
@@ -432,6 +437,29 @@ Builds a mask from MAP mean expression (`mu`):
 - Alternatively, users can pass any boolean mask (e.g. based on raw count
   quantiles) directly to `compare()`.
 
+### `compute_composition_coverage_mask()`
+
+Builds a mask from cumulative MAP composition coverage (capture-invariant):
+
+- Convert MAP means to composition proportions: `rho = mu / sum(mu)`.
+- Per condition, sort genes by descending `rho` and keep the smallest prefix
+  whose cumulative mass reaches `coverage`.
+- Final mask is the **union** of the two condition-specific masks, preserving
+  genes that are compositionally prominent in either condition.
+
+```python
+mask = compute_composition_coverage_mask(
+    results_A,
+    results_B,
+    component_A=0,
+    component_B=0,
+    coverage=0.95,
+)
+```
+
+Use this when you need a single robust rule across many comparisons and want
+to avoid dataset-specific absolute `mu` thresholds.
+
 ### Interactive mask exploration
 
 After calling `compare()`, the results object stores the full-dimensional
@@ -455,11 +483,15 @@ df1 = de.to_dataframe(tau=0.5)
 de.set_expression_threshold(min_expression=3.0)
 df2 = de.to_dataframe(tau=0.5)
 
-# 3. Apply a custom boolean mask
-de.set_gene_mask(my_custom_mask)
+# 3. Or use a capture-invariant compositional coverage rule
+de.set_composition_coverage(coverage=0.95)
 df3 = de.to_dataframe(tau=0.5)
 
-# 4. Restore all genes (no mask)
+# 4. Apply a custom boolean mask
+de.set_gene_mask(my_custom_mask)
+df4 = de.to_dataframe(tau=0.5)
+
+# 5. Restore all genes (no mask)
 de.clear_mask()
 df_all = de.to_dataframe(tau=0.5)
 ```
@@ -469,12 +501,13 @@ that storing full simplex samples and re-aggregating afterwards is
 mathematically identical to aggregating the concentration parameters and
 sampling the lower-dimensional Dirichlet.
 
-| Method | Description |
-|--------|-------------|
-| `de.set_gene_mask(mask)` | Apply a boolean mask and recompute CLR differences |
-| `de.set_expression_threshold(min_expression)` | Build a mask from stored MAP mu and apply it |
-| `de.clear_mask()` | Remove the mask and restore all genes |
-| `de.has_simplex` | Whether simplex samples are available for re-masking |
+| Method                                        | Description                                                        |
+| --------------------------------------------- | ------------------------------------------------------------------ |
+| `de.set_gene_mask(mask)`                      | Apply a boolean mask and recompute CLR differences                 |
+| `de.set_expression_threshold(min_expression)` | Build a mask from stored MAP mu and apply it                       |
+| `de.set_composition_coverage(coverage)`       | Build a mask from cumulative MAP composition coverage and apply it |
+| `de.clear_mask()`                             | Remove the mask and restore all genes                              |
+| `de.has_simplex`                              | Whether simplex samples are available for re-masking               |
 
 ### `to_dataframe()` — exporting results
 
@@ -718,7 +751,7 @@ mixture weights, before applying the standard CLR pipeline.
 
 ### When to use mixture-weighted vs component-level DE
 
-**| Scenario                                                                          | Approach                                            |
+| **                                                                                | Scenario                                            | Approach |
 | --------------------------------------------------------------------------------- | --------------------------------------------------- |
 | Comparing biologically distinct states (e.g. quiescent vs activated)              | `component_A=`, `component_B=` (per-component DE)   |
 | Cell type modeled with K components for flexibility; want population-level change | `mixture_weighted=True` (mixture-weighted DE)       |
@@ -816,10 +849,10 @@ lowly expressed genes where CLR artifacts dominate.
 
 Three complementary metrics are computed from the posterior NB parameters:
 
-| Metric | What it captures |
-|--------|-----------------|
-| **Biological LFC** | Mean expression shift: `log(mu_A / mu_B)` |
-| **Log-variance ratio** | Dispersion shift: `log(var_A / var_B)` |
+| Metric                        | What it captures                                                      |
+| ----------------------------- | --------------------------------------------------------------------- |
+| **Biological LFC**            | Mean expression shift: `log(mu_A / mu_B)`                             |
+| **Log-variance ratio**        | Dispersion shift: `log(var_A / var_B)`                                |
 | **Gamma Jeffreys divergence** | Full distributional shift via symmetrised KL on the latent Gamma rate |
 
 ### Parameterization-aware computation
@@ -827,11 +860,11 @@ Three complementary metrics are computed from the posterior NB parameters:
 The biological DE pipeline automatically detects the model's parameterization
 and uses the most numerically stable computation path:
 
-| Parameterization | `mu` | `beta` (Gamma rate) | `var` |
-|---|---|---|---|
-| `mean_odds` | Sampled directly | `1 / phi` (no subtraction) | `mu * (1 + phi)` |
-| `mean_prob` | Sampled directly | `p / (1 - p)` | `mu / p` |
-| `canonical` | `r * p / (1 - p)` | `p / (1 - p)` | `mu / p` |
+| Parameterization | `mu`              | `beta` (Gamma rate)        | `var`            |
+| ---------------- | ----------------- | -------------------------- | ---------------- |
+| `mean_odds`      | Sampled directly  | `1 / phi` (no subtraction) | `mu * (1 + phi)` |
+| `mean_prob`      | Sampled directly  | `p / (1 - p)`              | `mu / p`         |
+| `canonical`      | `r * p / (1 - p)` | `p / (1 - p)`              | `mu / p`         |
 
 The `mean_odds` path is the most stable: it avoids the catastrophic `1 - p`
 subtraction when `p -> 1` (near-zero expression), since `beta = 1/phi` never
@@ -1065,13 +1098,13 @@ _needs_gene_broadcast()    ← uses layout.gene_axis for p/phi broadcast decisio
 
 ### Where layouts replace heuristics
 
-| Location | Old heuristic | New layout-based decision |
-|----------|--------------|--------------------------|
-| `_slice_component()` in `_empirical.py` | `ndim` 3-tier ladder (3D/2D/1D) | `layout.component_axis` via `jnp.take`; returns `layout.subset_axis("components")` |
-| `_drop_scalar_p()` in `_empirical.py` | `p.ndim < 2` | `post_layout.gene_axis is None` |
-| `_needs_gene_broadcast()` in `_biological.py` | `ndim == 1` | `layout.gene_axis is None` |
-| `_extract_de_inputs()` in `_results_factory.py` | — | Extracts `param_layouts` from `results.layouts` |
-| `ScribeEmpiricalDEResults` | — | Stores `p_post_layout` and `phi_post_layout` for `biological_level()` |
+| Location                                        | Old heuristic                   | New layout-based decision                                                          |
+| ----------------------------------------------- | ------------------------------- | ---------------------------------------------------------------------------------- |
+| `_slice_component()` in `_empirical.py`         | `ndim` 3-tier ladder (3D/2D/1D) | `layout.component_axis` via `jnp.take`; returns `layout.subset_axis("components")` |
+| `_drop_scalar_p()` in `_empirical.py`           | `p.ndim < 2`                    | `post_layout.gene_axis is None`                                                    |
+| `_needs_gene_broadcast()` in `_biological.py`   | `ndim == 1`                     | `layout.gene_axis is None`                                                         |
+| `_extract_de_inputs()` in `_results_factory.py` | —                               | Extracts `param_layouts` from `results.layouts`                                    |
+| `ScribeEmpiricalDEResults`                      | —                               | Stores `p_post_layout` and `phi_post_layout` for `biological_level()`              |
 
 ### Backward compatibility
 
@@ -1089,13 +1122,13 @@ All public entry points validate that mixture-component indices are
 provided when the data has a component axis.  This prevents confusing
 errors deep inside internal helpers like `_slice_component`.
 
-| Entry point                          | Detection method                    | Guard                                    |
-| ------------------------------------ | ----------------------------------- | ---------------------------------------- |
-| `compare_datasets()`                 | `model_config.n_components > 1`     | Requires `component=` parameter          |
-| `compare()`                          | Layout `component_axis` on `"r"`    | Requires `component_A` and `component_B` |
-| `sample_compositions()`              | Layout `component_axis` on `"r"`    | Requires `component_A` and `component_B` |
-| `sample_composition()`               | Layout `component_axis` on `"r"`    | Requires `component=` parameter          |
-| `results.get_compositional_samples`  | Layout via `_build_canonical_layouts` | Requires `component=` parameter        |
+| Entry point                         | Detection method                      | Guard                                    |
+| ----------------------------------- | ------------------------------------- | ---------------------------------------- |
+| `compare_datasets()`                | `model_config.n_components > 1`       | Requires `component=` parameter          |
+| `compare()`                         | Layout `component_axis` on `"r"`      | Requires `component_A` and `component_B` |
+| `sample_compositions()`             | Layout `component_axis` on `"r"`      | Requires `component_A` and `component_B` |
+| `sample_composition()`              | Layout `component_axis` on `"r"`      | Requires `component=` parameter          |
+| `results.get_compositional_samples` | Layout via `_build_canonical_layouts` | Requires `component=` parameter          |
 
 The shared validation logic lives in `_require_mixture_components()` in
 `_empirical.py` and relies solely on semantic layout metadata.  When
@@ -1187,11 +1220,11 @@ gd = fitted["gaussianity"]      # dict with skewness, kurtosis, etc.
 
 ### Interpretation and suggested thresholds
 
-| Statistic | Gaussian value | Flag if |
-|---|---|---|
-| \|skewness\| | 0 | > 0.5 |
-| \|excess kurtosis\| | 0 | > 1.0 |
-| Jarque-Bera | 0 | continuous score (use for ranking) |
+| Statistic           | Gaussian value | Flag if                            |
+| ------------------- | -------------- | ---------------------------------- |
+| \|skewness\|        | 0              | > 0.5                              |
+| \|excess kurtosis\| | 0              | > 1.0                              |
+| Jarque-Bera         | 0              | continuous score (use for ranking) |
 
 The skewness and kurtosis thresholds are **descriptive flags** — not
 frequentist hypothesis tests.  Since the DE analysis is fully Bayesian,

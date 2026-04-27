@@ -27,6 +27,7 @@ from scribe.de import (
     sample_mixture_compositions,
     compute_delta_from_simplex,
     empirical_differential_expression,
+    compute_composition_coverage_mask,
 )
 from scribe.de._empirical import (
     _aggregate_genes,
@@ -223,6 +224,107 @@ class TestEmpiricalDE:
 
         assert np.all(prob_effect[:, 1] <= prob_effect[:, 0] + 1e-10)
         assert np.all(prob_effect[:, 2] <= prob_effect[:, 1] + 1e-10)
+
+
+# --------------------------------------------------------------------------
+# Tests: composition-coverage mask helper
+# --------------------------------------------------------------------------
+
+
+class _DummyComponent:
+    """Minimal component stub that returns pre-defined MAP estimates."""
+
+    def __init__(self, map_estimates: dict):
+        self._map_estimates = map_estimates
+
+    def get_map(self, use_mean, canonical, verbose, counts=None):
+        """Return the configured MAP dictionary for helper testing."""
+        return self._map_estimates
+
+
+class _DummyResults:
+    """Minimal results stub exposing a single component."""
+
+    def __init__(self, map_estimates: dict):
+        self._component = _DummyComponent(map_estimates)
+
+    def get_component(self, component_idx: int):
+        """Return the same dummy component for any requested index."""
+        _ = component_idx
+        return self._component
+
+
+class TestCompositionCoverageMask:
+    """Tests for ``compute_composition_coverage_mask``."""
+
+    def test_keeps_top_genes(self):
+        """Coverage masking should keep the minimal prefix by composition."""
+        results_A = _DummyResults({"mu": np.array([60.0, 25.0, 10.0, 5.0])})
+        results_B = _DummyResults({"mu": np.array([60.0, 25.0, 10.0, 5.0])})
+
+        mask = compute_composition_coverage_mask(
+            results_A,
+            results_B,
+            component_A=0,
+            component_B=0,
+            coverage=0.90,
+        )
+
+        expected = np.array([True, True, True, False])
+        np.testing.assert_array_equal(mask, expected)
+
+    def test_union_across_conditions(self):
+        """Union rule should keep genes dominant in either condition."""
+        results_A = _DummyResults({"mu": np.array([90.0, 5.0, 4.0, 1.0])})
+        results_B = _DummyResults({"mu": np.array([1.0, 4.0, 5.0, 90.0])})
+
+        mask = compute_composition_coverage_mask(
+            results_A,
+            results_B,
+            component_A=0,
+            component_B=0,
+            coverage=0.90,
+        )
+
+        expected = np.array([True, False, False, True])
+        np.testing.assert_array_equal(mask, expected)
+
+    def test_full_coverage_keeps_all_genes(self):
+        """coverage=1.0 should retain every gene."""
+        results_A = _DummyResults({"mu": np.array([6.0, 3.0, 1.0])})
+        results_B = _DummyResults({"mu": np.array([1.0, 3.0, 6.0])})
+
+        mask = compute_composition_coverage_mask(
+            results_A,
+            results_B,
+            component_A=0,
+            component_B=0,
+            coverage=1.0,
+        )
+
+        np.testing.assert_array_equal(mask, np.array([True, True, True]))
+
+    def test_invariant_to_uniform_mu_scaling(self):
+        """Uniform scaling of mu should not change the selected genes."""
+        base_A = np.array([12.0, 6.0, 2.0, 0.5])
+        base_B = np.array([8.0, 4.0, 3.0, 0.5])
+
+        mask_ref = compute_composition_coverage_mask(
+            _DummyResults({"mu": base_A}),
+            _DummyResults({"mu": base_B}),
+            component_A=0,
+            component_B=0,
+            coverage=0.95,
+        )
+        mask_scaled = compute_composition_coverage_mask(
+            _DummyResults({"mu": base_A * 17.0}),
+            _DummyResults({"mu": base_B * 17.0}),
+            component_A=0,
+            component_B=0,
+            coverage=0.95,
+        )
+
+        np.testing.assert_array_equal(mask_ref, mask_scaled)
 
 
 # --------------------------------------------------------------------------

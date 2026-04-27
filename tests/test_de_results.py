@@ -5,6 +5,7 @@ analysis, gene-set testing, error control, and formatting.
 """
 
 import pytest
+import numpy as np
 import jax.numpy as jnp
 from jax import random
 
@@ -909,6 +910,59 @@ class TestMaskManagement:
         )
         with pytest.raises(ValueError, match="mu_map"):
             de.set_expression_threshold(1.0)
+
+    def test_set_composition_coverage_basic(self, masked_de):
+        """set_composition_coverage applies a union mask and clears caches."""
+        # Use deterministic MAP means so the selected genes are predictable.
+        masked_de.clear_mask()
+        masked_de.mu_map_A = np.array([90.0, 5.0, 3.0, 2.0, 1.0, 1.0, 1.0, 1.0])
+        masked_de.mu_map_B = np.array([1.0, 1.0, 1.0, 1.0, 2.0, 3.0, 5.0, 90.0])
+
+        # Prime cache before remasking, then verify invalidation.
+        masked_de.gene_level(tau=0.0)
+        assert masked_de._gene_results is not None
+
+        masked_de.set_composition_coverage(coverage=0.90)
+        assert masked_de._gene_results is None
+        assert masked_de._cached_tau is None
+        assert masked_de.D == 4
+        assert masked_de.gene_names == ["g0", "g1", "g6", "g7"]
+
+    def test_set_composition_coverage_full_coverage(self, masked_de):
+        """coverage=1.0 should keep all genes."""
+        masked_de.clear_mask()
+        masked_de.set_composition_coverage(coverage=1.0)
+        assert masked_de.D == 8
+
+    def test_set_composition_coverage_raises_without_mu_map(self):
+        """set_composition_coverage raises when mu_map is unavailable."""
+        from scribe.de import ScribeEmpiricalDEResults
+
+        de = ScribeEmpiricalDEResults(
+            delta_samples=jnp.ones((10, 5)),
+            simplex_A=jnp.ones((10, 5)) / 5,
+            simplex_B=jnp.ones((10, 5)) / 5,
+        )
+        with pytest.raises(ValueError, match="mu_map"):
+            de.set_composition_coverage(0.95)
+
+    @pytest.mark.parametrize("bad_coverage", [0.0, -0.1, 1.1])
+    def test_set_composition_coverage_invalid_coverage_raises(
+        self, masked_de, bad_coverage
+    ):
+        """Coverage outside (0, 1] should raise ValueError."""
+        masked_de.clear_mask()
+        with pytest.raises(ValueError, match="coverage"):
+            masked_de.set_composition_coverage(bad_coverage)
+
+    def test_set_composition_coverage_gene_level_after(self, masked_de):
+        """gene_level should work after coverage-based remasking."""
+        masked_de.clear_mask()
+        masked_de.set_composition_coverage(coverage=0.95)
+        result = masked_de.gene_level(tau=0.0)
+        assert result["delta_mean"].shape == (masked_de.D,)
+        assert result["lfsr"].shape == (masked_de.D,)
+        assert len(result["gene_names"]) == masked_de.D
 
     def test_gene_level_after_remask(self, masked_de):
         """gene_level works correctly after changing the mask."""

@@ -289,6 +289,131 @@ def compute_expression_mask(
 # ------------------------------------------------------------------------------
 
 
+def _coverage_mask_from_mu(mu: Array, coverage: float) -> np.ndarray:
+    """Build a per-condition mask from cumulative compositional coverage.
+
+    This helper converts a non-negative mean-expression vector into
+    composition proportions and keeps the smallest set of genes whose
+    cumulative mass reaches the requested coverage target.  The retained
+    set is therefore invariant to any uniform scaling of ``mu``.
+
+    Parameters
+    ----------
+    mu : numpy.ndarray or jax.Array, shape ``(D,)``
+        Mean-expression vector for one condition.
+    coverage : float
+        Target cumulative compositional coverage in ``(0, 1]``.
+
+    Returns
+    -------
+    np.ndarray, shape ``(D,)``
+        Boolean mask selecting genes retained by the coverage rule.
+
+    Raises
+    ------
+    ValueError
+        If coverage is outside ``(0, 1]``, if ``mu`` is not one-dimensional,
+        if negative values are present, or if the total mass is not positive.
+    """
+    mu_arr = np.asarray(mu, dtype=float).ravel()
+
+    if not (0.0 < float(coverage) <= 1.0):
+        raise ValueError(
+            "coverage must satisfy 0 < coverage <= 1.0, "
+            f"got {coverage!r}."
+        )
+
+    if mu_arr.ndim != 1:
+        raise ValueError(
+            "mu must be one-dimensional for coverage masking, "
+            f"got shape {np.asarray(mu).shape}."
+        )
+
+    if np.any(~np.isfinite(mu_arr)):
+        raise ValueError("mu contains non-finite values.")
+    if np.any(mu_arr < 0.0):
+        raise ValueError("mu must be non-negative for coverage masking.")
+
+    total = float(mu_arr.sum())
+    if total <= 0.0:
+        raise ValueError("mu must have positive total mass.")
+
+    # Convert to composition space so the rule is capture-scale invariant.
+    rho = mu_arr / total
+    order = np.argsort(-rho)
+    cumulative = np.cumsum(rho[order])
+
+    # Keep the smallest prefix whose cumulative mass reaches `coverage`.
+    n_keep = int(np.searchsorted(cumulative, float(coverage), side="left")) + 1
+    n_keep = min(max(n_keep, 1), rho.shape[0])
+
+    mask = np.zeros(rho.shape[0], dtype=bool)
+    mask[order[:n_keep]] = True
+    return mask
+
+
+def compute_composition_coverage_mask(
+    results_A,
+    results_B,
+    component_A: int,
+    component_B: int,
+    coverage: float = 0.95,
+    counts_A: Optional[Array] = None,
+    counts_B: Optional[Array] = None,
+) -> np.ndarray:
+    """Build a gene mask from cumulative MAP compositional coverage.
+
+    Unlike absolute mean-expression thresholding, this rule is based on
+    composition mass and is therefore invariant to uniform rescaling of
+    per-cell capture efficiency.  For each condition separately, genes are
+    sorted by descending MAP composition and retained until their
+    cumulative proportion reaches ``coverage``.  The final mask is the
+    union of the two condition-specific masks so condition-specific genes
+    are preserved.
+
+    Parameters
+    ----------
+    results_A : ScribeSVIResults
+        Fitted model for condition A.
+    results_B : ScribeSVIResults
+        Fitted model for condition B.
+    component_A : int
+        Mixture-component index for condition A.
+    component_B : int
+        Mixture-component index for condition B.
+    coverage : float, default=0.95
+        Cumulative compositional coverage target in ``(0, 1]``.
+    counts_A : numpy.ndarray or jax.Array, optional
+        Count matrix for condition A. Required when the model uses
+        amortized capture probability.
+    counts_B : numpy.ndarray or jax.Array, optional
+        Count matrix for condition B. Required when the model uses
+        amortized capture probability.
+
+    Returns
+    -------
+    np.ndarray, shape ``(D,)``
+        Boolean mask in full gene space. A gene is retained if it is in
+        the coverage set of either condition.
+    """
+    map_A = results_A.get_component(component_A).get_map(
+        use_mean=True, canonical=True, verbose=False, counts=counts_A
+    )
+    map_B = results_B.get_component(component_B).get_map(
+        use_mean=True, canonical=True, verbose=False, counts=counts_B
+    )
+
+    mu_A = np.asarray(_extract_mu(map_A))
+    mu_B = np.asarray(_extract_mu(map_B))
+
+    mask_A = _coverage_mask_from_mu(mu_A, coverage=coverage)
+    mask_B = _coverage_mask_from_mu(mu_B, coverage=coverage)
+    return mask_A | mask_B
+
+
+# ------------------------------------------------------------------------------
+
+
 def _extract_mu(map_estimates: dict) -> Array:
     """Extract or derive mean expression ``mu`` from MAP estimates.
 

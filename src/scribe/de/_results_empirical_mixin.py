@@ -397,6 +397,51 @@ class EmpiricalResultsMixin:
         self.set_gene_mask(mask)
         return self
 
+    def set_composition_coverage(
+        self, coverage: float = 0.95
+    ) -> "ScribeEmpiricalDEResults":
+        """Construct and apply a mask from cumulative MAP composition.
+
+        This method derives composition vectors from the stored MAP mean
+        expression (`mu_map_A` and `mu_map_B`) and keeps the smallest set
+        of genes that reaches the requested cumulative proportion in each
+        condition.  The final mask is the union of both per-condition
+        masks, preserving genes that are prominent in either condition.
+
+        Parameters
+        ----------
+        coverage : float, default=0.95
+            Cumulative compositional coverage target in ``(0, 1]``.
+
+        Returns
+        -------
+        ScribeEmpiricalDEResults
+            Returns ``self`` for method chaining.
+
+        Raises
+        ------
+        ValueError
+            If MAP mean expression vectors are unavailable or if coverage
+            is outside ``(0, 1]``.
+        """
+        import numpy as np
+        from ._empirical import _coverage_mask_from_mu
+
+        if self.mu_map_A is None or self.mu_map_B is None:
+            raise ValueError(
+                "Cannot set composition coverage: MAP mean expression "
+                "(mu_map_A / mu_map_B) was not stored in the results object."
+            )
+
+        # Build condition-specific coverage masks and preserve genes that
+        # are compositionally important in either condition.
+        mu_A = np.asarray(self.mu_map_A)
+        mu_B = np.asarray(self.mu_map_B)
+        mask_A = _coverage_mask_from_mu(mu_A, coverage=coverage)
+        mask_B = _coverage_mask_from_mu(mu_B, coverage=coverage)
+        self.set_gene_mask(mask_A | mask_B)
+        return self
+
     def clear_mask(self) -> "ScribeEmpiricalDEResults":
         """Clear active mask and restore full-gene CLR differences.
 
