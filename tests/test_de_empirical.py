@@ -106,6 +106,7 @@ class TestEmpiricalDE:
             "lfsr_tau",
         ]:
             assert result[key].shape == (D,), f"{key} has wrong shape"
+        assert result["tau_values"] == (0.0,)
         assert len(result["gene_names"]) == D
 
     def test_lfsr_range(self, gaussian_delta_samples):
@@ -175,6 +176,53 @@ class TestEmpiricalDE:
         """Default gene names are gene_0, gene_1, ..."""
         result = empirical_differential_expression(gaussian_delta_samples)
         assert result["gene_names"][0] == "gene_0"
+
+    def test_multi_tau_shapes(self, gaussian_delta_samples):
+        """Multi-tau inputs should return a tau axis for tau-dependent stats."""
+        taus = [0.0, 0.2, 0.5]
+        result = empirical_differential_expression(gaussian_delta_samples, tau=taus)
+        D = gaussian_delta_samples.shape[1]
+
+        assert result["delta_mean"].shape == (D,)
+        assert result["lfsr"].shape == (D,)
+        assert result["prob_effect"].shape == (D, len(taus))
+        assert result["lfsr_tau"].shape == (D, len(taus))
+        np.testing.assert_allclose(
+            np.asarray(result["tau_values"]),
+            np.asarray(taus, dtype=float),
+        )
+
+    def test_multi_tau_scalar_compat(self, gaussian_delta_samples):
+        """Single-value tau sequences should match scalar outputs exactly."""
+        tau_value = 0.3
+        scalar_result = empirical_differential_expression(
+            gaussian_delta_samples, tau=tau_value
+        )
+        seq_result = empirical_differential_expression(
+            gaussian_delta_samples, tau=[tau_value]
+        )
+
+        np.testing.assert_allclose(
+            np.asarray(seq_result["prob_effect"]),
+            np.asarray(scalar_result["prob_effect"]),
+        )
+        np.testing.assert_allclose(
+            np.asarray(seq_result["lfsr_tau"]),
+            np.asarray(scalar_result["lfsr_tau"]),
+        )
+        np.testing.assert_allclose(
+            np.asarray(seq_result["tau_values"]),
+            np.asarray([tau_value], dtype=float),
+        )
+
+    def test_multi_tau_prob_effect_monotonic(self, gaussian_delta_samples):
+        """prob_effect should decrease or stay constant as tau increases."""
+        taus = [0.0, 0.5, 1.0]
+        result = empirical_differential_expression(gaussian_delta_samples, tau=taus)
+        prob_effect = np.asarray(result["prob_effect"])
+
+        assert np.all(prob_effect[:, 1] <= prob_effect[:, 0] + 1e-10)
+        assert np.all(prob_effect[:, 2] <= prob_effect[:, 1] + 1e-10)
 
 
 # --------------------------------------------------------------------------
@@ -428,6 +476,7 @@ class TestEmpiricalResultsMethods:
             "prob_effect",
             "lfsr",
             "lfsr_tau",
+            "tau_values",
             "gene_names",
         }
         assert set(result.keys()) == expected_keys
@@ -461,11 +510,11 @@ class TestEmpiricalResultsMethods:
         _ = empirical_de.gene_level(tau=0.0)
         cached_0 = empirical_de._gene_results
         assert cached_0 is not None
-        assert empirical_de._cached_tau == 0.0
+        assert empirical_de._cached_tau == (0.0,)
 
         # Calling with different tau should update the cache
         _ = empirical_de.gene_level(tau=0.5)
-        assert empirical_de._cached_tau == 0.5
+        assert empirical_de._cached_tau == (0.5,)
         cached_05 = empirical_de._gene_results
         # lfsr_tau should differ between tau=0 and tau=0.5
         assert not jnp.allclose(cached_0["lfsr_tau"], cached_05["lfsr_tau"])

@@ -94,16 +94,16 @@ When results objects are passed, `compare()`:
 
 **Common methods (all subclasses):**
 
-| Method | Description |
-|--------|-------------|
-| `de.gene_level(tau)` | Per-gene posterior summaries (returns `lfsr` and `lfsr_tau`) |
-| `de.call_genes(tau, lfsr_threshold, prob_effect_threshold)` | Bayesian gene calling (tau-aware caching) |
-| `de.test_contrast(contrast, tau)` | Custom linear contrast |
-| `de.test_gene_set(indices, tau)` | Pathway enrichment via ILR balance (parametric: Gaussian; empirical: Monte Carlo) |
-| `de.compute_pefp(threshold, tau, use_lfsr_tau)` | Posterior expected FDP |
-| `de.find_threshold(target_pefp, tau, use_lfsr_tau)` | Find lfsr threshold for PEFP control |
-| `de.summary(tau, sort_by, top_n)` | Formatted results table |
-| `de.to_dataframe(tau, target_pefp, use_lfsr_tau, target_pefp_lfc, use_lfsr_tau_lfc, target_pefp_lvr, use_lfsr_tau_lvr, target_pefp_kl, metrics, tau_lfc, tau_var, tau_kl, column_naming)` | Export selected metric families and optional per-metric call columns |
+| Method                                                                                                                                                                                                | Description                                                                       |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `de.gene_level(tau)`                                                                                                                                                                                  | Per-gene posterior summaries (scalar tau or multi-tau arrays)                     |
+| `de.call_genes(tau, lfsr_threshold, prob_effect_threshold)`                                                                                                                                           | Bayesian gene calling (tau-aware caching)                                         |
+| `de.test_contrast(contrast, tau)`                                                                                                                                                                     | Custom linear contrast                                                            |
+| `de.test_gene_set(indices, tau)`                                                                                                                                                                      | Pathway enrichment via ILR balance (parametric: Gaussian; empirical: Monte Carlo) |
+| `de.compute_pefp(threshold, tau, use_lfsr_tau)`                                                                                                                                                       | Posterior expected FDP                                                            |
+| `de.find_threshold(target_pefp, tau, use_lfsr_tau)`                                                                                                                                                   | Find lfsr threshold for PEFP control                                              |
+| `de.summary(tau, sort_by, top_n)`                                                                                                                                                                     | Formatted results table                                                           |
+| `de.to_dataframe(tau, target_pefp, use_lfsr_tau, target_pefp_lfc, use_lfsr_tau_lfc, target_pefp_lvr, use_lfsr_tau_lvr, target_pefp_kl, metrics, tau_lfc, tau_var, tau_kl, column_naming, tau_format)` | Export selected metric families and optional per-metric call columns              |
 
 **Empirical/Shrinkage-only methods:**
 
@@ -122,6 +122,30 @@ When results objects are passed, `compare()`:
 > `tau` changes. This prevents the stale-cache bug where calling
 > `de.call_genes(tau=0.5)` after `de.gene_level(tau=0.1)` would silently use
 > results from the wrong tau.
+
+### Multi-Tau analysis
+
+`tau` accepts either a scalar or a sequence of thresholds. This lets you reuse
+the same posterior computation and evaluate practical-significance summaries for
+multiple cutoffs in one pass.
+
+```python
+taus = [jnp.log(1.1), jnp.log(1.25), jnp.log(1.5)]
+results = de.gene_level(tau=taus)
+
+# tau-independent metrics stay 1-D
+results["delta_mean"].shape    # (D,)
+results["lfsr"].shape          # (D,)
+
+# tau-dependent metrics gain a tau axis
+results["prob_effect"].shape   # (D, 3)
+results["lfsr_tau"].shape      # (D, 3)
+results["tau_values"]          # (0.0953..., 0.2231..., 0.4054...)
+```
+
+Single-threshold methods (`call_genes`, `compute_pefp`, `find_threshold`,
+`summary`) still take a scalar `tau` and transparently select the requested
+threshold from the cache.
 
 ### Full Pipeline Example
 
@@ -464,6 +488,24 @@ metrics:
 df = de.to_dataframe(tau=0.5)
 # Columns: gene, clr_delta_mean, clr_delta_sd, clr_lfsr, clr_lfsr_tau,
 #          clr_prob_effect, clr_prob_positive
+```
+
+With multiple tau values, use `tau_format` to choose column layout:
+
+```python
+taus = [0.0, 0.2, 0.5]
+
+# Default: flat columns with tau suffixes.
+df_suffix = de.to_dataframe(tau=taus, tau_format="suffix")
+# Example columns:
+# clr_lfsr_tau_tau0, clr_lfsr_tau_tau0.2, clr_lfsr_tau_tau0.5
+# clr_prob_effect_tau0, clr_prob_effect_tau0.2, clr_prob_effect_tau0.5
+
+# Alternative: MultiIndex columns with a dedicated tau level.
+df_multi = de.to_dataframe(tau=taus, tau_format="multiindex")
+# Example columns:
+# ("clr_lfsr_tau", "0"), ("clr_lfsr_tau", "0.2"), ("clr_lfsr_tau", "0.5")
+# ("clr_prob_effect", "0"), ("clr_prob_effect", "0.2"), ("clr_prob_effect", "0.5")
 ```
 
 For empirical and shrinkage results, the `metrics` argument allows composable
@@ -1107,6 +1149,10 @@ There are two approaches to incorporating practical significance thresholds:
 
 Both approaches are valid; the two-threshold method is more conservative and
 is the default.
+
+`tau` can be a scalar or an ordered sequence of thresholds. For sequence input,
+`prob_effect` and `lfsr_tau` are returned with shape `(D, K)` where `K` is the
+number of thresholds, and `tau_values` records the thresholds used.
 
 ## Gaussianity Diagnostics
 

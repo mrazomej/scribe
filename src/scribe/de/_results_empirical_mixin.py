@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import jax.numpy as jnp
 
+from ._results_base_mixin import _normalize_tau
 from ._set_level import (
     empirical_test_gene_set,
     empirical_test_multiple_gene_sets,
@@ -117,15 +120,15 @@ class EmpiricalResultsMixin:
 
     def gene_level(
         self,
-        tau: float = 0.0,
+        tau: float | Sequence[float] = 0.0,
         coordinate: str = "clr",
     ) -> dict:
         """Compute gene-level DE via empirical Monte Carlo counting.
 
         Parameters
         ----------
-        tau : float, default=0.0
-            Practical significance threshold.
+        tau : float or sequence of float, default=0.0
+            Practical significance threshold(s).
         coordinate : str, default='clr'
             Coordinate system. Only ``'clr'`` is supported.
 
@@ -136,10 +139,13 @@ class EmpiricalResultsMixin:
         """
         from ._empirical import empirical_differential_expression
 
-        self._cached_tau = tau
+        # Normalize thresholds before caching so equivalent orderings map to
+        # the same cache key and deterministic output ordering.
+        tau_values = _normalize_tau(tau)
+        self._cached_tau = tau_values
         self._gene_results = empirical_differential_expression(
             self.delta_samples,
-            tau=tau,
+            tau=tau_values,
             gene_names=self.gene_names,
         )
         return self._gene_results
@@ -429,7 +435,7 @@ class EmpiricalResultsMixin:
 
     def to_dataframe(
         self,
-        tau: float = 0.0,
+        tau: float | Sequence[float] = 0.0,
         target_pefp: float | None = None,
         use_lfsr_tau: bool = True,
         target_pefp_lfc: float | None = None,
@@ -442,13 +448,14 @@ class EmpiricalResultsMixin:
         tau_var: float = 0.0,
         tau_kl: float = 0.0,
         column_naming: str = "prefixed",
+        tau_format: str = "suffix",
     ):
         """Export selected CLR/biological metric families to a DataFrame.
 
         Parameters
         ----------
-        tau : float, default=0.0
-            Practical significance threshold.
+        tau : float or sequence of float, default=0.0
+            Practical significance threshold(s) for CLR metrics.
         target_pefp : float, optional
             Optional PEFP target for ``is_de`` column.
         use_lfsr_tau : bool, default=True
@@ -491,6 +498,9 @@ class EmpiricalResultsMixin:
             Column naming convention. ``'prefixed'`` produces explicit family
             namespaces (for example ``clr_*``, ``bio_lfc_*``). ``'legacy'``
             preserves historical un-prefixed biological names and CLR names.
+        tau_format : {'suffix', 'multiindex'}, default='suffix'
+            Layout used for CLR multi-tau columns when ``tau`` contains more
+            than one threshold.
 
         Returns
         -------
@@ -529,6 +539,7 @@ class EmpiricalResultsMixin:
                 use_lfsr_tau=use_lfsr_tau,
                 metrics="clr",
                 column_naming=column_naming,
+                tau_format=tau_format,
             )
         else:
             # Build a valid gene index when users request only biological blocks.

@@ -7,7 +7,7 @@ specialized mixins. The public API is unchanged.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 import jax.numpy as jnp
 
@@ -42,7 +42,9 @@ class ScribeDEResults(BaseResultsMixin):
 
     # Caches keyed by tau to avoid stale re-use of gene-level statistics.
     _gene_results: Optional[dict] = field(default=None, repr=False, init=False)
-    _cached_tau: Optional[float] = field(default=None, repr=False, init=False)
+    _cached_tau: Optional[tuple[float, ...]] = field(
+        default=None, repr=False, init=False
+    )
 
     @property
     def D(self) -> int:
@@ -56,15 +58,16 @@ class ScribeDEResults(BaseResultsMixin):
 
     def gene_level(
         self,
-        tau: float = 0.0,
+        tau: float | Sequence[float] = 0.0,
         coordinate: str = "clr",
     ) -> dict:
         """Compute gene-level DE statistics in the requested coordinate system.
 
         Parameters
         ----------
-        tau : float, default=0.0
-            Practical-significance threshold.
+        tau : float or sequence of float, default=0.0
+            Practical-significance threshold(s) used to compute practical
+            effect probabilities and ``lfsr_tau``.
         coordinate : str, default='clr'
             Coordinate system for effect summaries.
 

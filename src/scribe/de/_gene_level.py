@@ -7,7 +7,7 @@ fitted logistic-normal models and returns per-gene posterior summaries
 including effect sizes, posterior probabilities, and local false sign rates.
 """
 
-from typing import Optional
+from typing import Optional, Sequence
 
 import jax.numpy as jnp
 from jax.scipy.stats import norm
@@ -24,7 +24,7 @@ from ._extract import extract_alr_params
 def differential_expression(
     model_A,
     model_B,
-    tau: float = 0.0,
+    tau: float | Sequence[float] = 0.0,
     coordinate: str = "clr",
     gene_names: Optional[list] = None,
 ) -> dict:
@@ -55,9 +55,11 @@ def differential_expression(
         or D-dim embedded ALR -- ``extract_alr_params`` handles both.
     model_B : dict or LowRankLogisticNormal or SoftmaxNormal
         Fitted logistic-normal model for condition B.
-    tau : float, default=0.0
-        Practical significance threshold in log-scale.
-        For example, ``log(1.1) ~ 0.095`` for 10 % fold-change.
+    tau : float or sequence of float, default=0.0
+        Practical significance threshold(s) in log scale. For example,
+        ``log(1.1) ~ 0.095`` for 10 % fold-change. Passing a sequence
+        computes practical-significance metrics for every threshold in one
+        vectorized pass.
     coordinate : str, default='clr'
         Coordinate system for results.  Currently only ``'clr'`` is
         supported.
@@ -76,13 +78,14 @@ def differential_expression(
         - **prob_positive** : ndarray, shape ``(D,)``
             ``P(Delta > 0 | data)`` -- posterior probability of positive
             effect.
-        - **prob_effect** : ndarray, shape ``(D,)``
+        - **prob_effect** : ndarray, shape ``(D,)`` or ``(D, K)``
             ``P(|Delta| > tau | data)`` -- posterior probability of
-            practical effect.
+            practical effect. Uses ``(D, K)`` when ``K`` tau values are
+            provided.
         - **lfsr** : ndarray, shape ``(D,)``
             Local false sign rate = ``min(P(Delta <= 0), P(Delta >= 0))``.
             This is the Bayesian error rate (NOT FDR).
-        - **lfsr_tau** : ndarray, shape ``(D,)``
+        - **lfsr_tau** : ndarray, shape ``(D,)`` or ``(D, K)``
             Modified local false sign rate incorporating practical
             significance, as defined in the paper::
 
@@ -91,6 +94,8 @@ def differential_expression(
             When ``tau=0`` this equals ``lfsr``.  Use this with
             ``compute_pefp(use_lfsr_tau=True)`` for the paper's
             practical-significance-aware error control.
+        - **tau_values** : tuple of float
+            Practical-significance thresholds used by this computation.
         - **gene_names** : list of str
             Gene names (input or generated).
 
@@ -148,10 +153,26 @@ def differential_expression(
     z_scores = delta_mean / delta_sd
     # P(Delta > 0 | data) via standard normal CDF
     prob_positive = norm.cdf(z_scores)
+    # Normalize tau to a 1-D vector so we can evaluate all thresholds with
+    # broadcasted Gaussian CDF calls.
+    tau_values = tuple(float(v) for v in jnp.atleast_1d(jnp.asarray(tau)))
+    tau_arr = jnp.asarray(tau_values)
+    n_tau = int(tau_arr.shape[0])
+    tau_expanded = tau_arr[None, :]
+    delta_mean_expanded = delta_mean[:, None]
+    delta_sd_expanded = delta_sd[:, None]
 
     # P(Delta > tau | data) and P(Delta < -tau | data)
-    prob_up = 1 - norm.cdf(tau, loc=delta_mean, scale=delta_sd)
-    prob_down = norm.cdf(-tau, loc=delta_mean, scale=delta_sd)
+    prob_up = 1 - norm.cdf(
+        tau_expanded,
+        loc=delta_mean_expanded,
+        scale=delta_sd_expanded,
+    )
+    prob_down = norm.cdf(
+        -tau_expanded,
+        loc=delta_mean_expanded,
+        scale=delta_sd_expanded,
+    )
 
     # P(|Delta| > tau | data) = P(Delta > tau) + P(Delta < -tau)
     prob_effect = prob_up + prob_down
@@ -165,6 +186,10 @@ def differential_expression(
     #   lfsr_g(tau) = 1 - max(P(Delta_g > tau | data), P(Delta_g < -tau | data))
     # When tau=0 this reduces to standard lfsr.
     lfsr_tau = 1.0 - jnp.maximum(prob_up, prob_down)
+    # Keep scalar tau behavior backward-compatible by returning 1-D arrays.
+    if n_tau == 1:
+        prob_effect = prob_effect[:, 0]
+        lfsr_tau = lfsr_tau[:, 0]
 
     # Generate gene names if not provided
     if gene_names is None:
@@ -178,6 +203,7 @@ def differential_expression(
         "prob_effect": prob_effect,
         "lfsr": lfsr,
         "lfsr_tau": lfsr_tau,
+        "tau_values": tau_values,
         "gene_names": gene_names,
     }
 

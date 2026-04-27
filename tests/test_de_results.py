@@ -173,6 +173,7 @@ def test_gene_level_returns_dict(de_results):
         "prob_effect",
         "lfsr",
         "lfsr_tau",
+        "tau_values",
         "gene_names",
     }
     assert set(results.keys()) == expected_keys
@@ -288,11 +289,11 @@ def test_call_genes_different_tau_invalidates_cache(de_results):
     """
     # Compute with tau=0
     is_de_0 = de_results.call_genes(tau=0.0)
-    assert de_results._cached_tau == 0.0
+    assert de_results._cached_tau == (0.0,)
 
     # Compute with a large tau -- should recompute, not reuse cache
     is_de_large = de_results.call_genes(tau=5.0)
-    assert de_results._cached_tau == 5.0
+    assert de_results._cached_tau == (5.0,)
 
     # A large tau should yield fewer (or equal) DE genes
     assert int(is_de_large.sum()) <= int(is_de_0.sum())
@@ -301,11 +302,11 @@ def test_call_genes_different_tau_invalidates_cache(de_results):
 def test_gene_level_caching_with_tau(de_results):
     """gene_level() should update cached_tau and recompute on change."""
     r1 = de_results.gene_level(tau=0.0)
-    assert de_results._cached_tau == 0.0
+    assert de_results._cached_tau == (0.0,)
     assert de_results._gene_results is r1
 
     r2 = de_results.gene_level(tau=1.0)
-    assert de_results._cached_tau == 1.0
+    assert de_results._cached_tau == (1.0,)
     assert de_results._gene_results is r2
     assert r2 is not r1  # should be a new dict
 
@@ -314,11 +315,11 @@ def test_compute_pefp_tau_propagation(de_results):
     """compute_pefp(tau=...) should recompute when tau differs."""
     # First call with tau=0
     pefp_0 = de_results.compute_pefp(threshold=0.05, tau=0.0)
-    assert de_results._cached_tau == 0.0
+    assert de_results._cached_tau == (0.0,)
 
     # Second call with a different tau
     pefp_1 = de_results.compute_pefp(threshold=0.05, tau=2.0)
-    assert de_results._cached_tau == 2.0
+    assert de_results._cached_tau == (2.0,)
 
     # Results may or may not differ, but the cache must have been refreshed
     assert isinstance(pefp_0, float)
@@ -328,10 +329,10 @@ def test_compute_pefp_tau_propagation(de_results):
 def test_find_threshold_tau_propagation(de_results):
     """find_threshold(tau=...) should recompute when tau differs."""
     t0 = de_results.find_threshold(target_pefp=0.05, tau=0.0)
-    assert de_results._cached_tau == 0.0
+    assert de_results._cached_tau == (0.0,)
 
     t1 = de_results.find_threshold(target_pefp=0.05, tau=2.0)
-    assert de_results._cached_tau == 2.0
+    assert de_results._cached_tau == (2.0,)
 
     assert isinstance(t0, float)
     assert isinstance(t1, float)
@@ -340,14 +341,32 @@ def test_find_threshold_tau_propagation(de_results):
 def test_summary_tau_propagation(de_results):
     """summary(tau=...) should recompute when tau differs."""
     s0 = de_results.summary(tau=0.0)
-    assert de_results._cached_tau == 0.0
+    assert de_results._cached_tau == (0.0,)
 
     s1 = de_results.summary(tau=2.0)
-    assert de_results._cached_tau == 2.0
+    assert de_results._cached_tau == (2.0,)
 
     # Both should be valid non-empty strings
     assert isinstance(s0, str) and len(s0) > 0
     assert isinstance(s1, str) and len(s1) > 0
+
+
+def test_gene_level_multi_tau_cache(de_results):
+    """gene_level should cache a normalized tuple for multi-tau inputs."""
+    results = de_results.gene_level(tau=[0.5, 0.0, 1.0])
+    assert de_results._cached_tau == (0.0, 0.5, 1.0)
+    assert results["tau_values"] == (0.0, 0.5, 1.0)
+    assert results["prob_effect"].shape == (de_results.D, 3)
+    assert results["lfsr_tau"].shape == (de_results.D, 3)
+
+
+def test_call_genes_with_multi_tau_cache(de_results):
+    """Scalar calls should slice the requested tau from a multi-tau cache."""
+    de_results.gene_level(tau=[0.0, 0.5, 1.0])
+    is_de_from_cache = de_results.call_genes(tau=0.5)
+    is_de_direct = de_results.call_genes(tau=0.5)
+    assert is_de_from_cache.shape == (de_results.D,)
+    assert jnp.array_equal(is_de_from_cache, is_de_direct)
 
 
 # --------------------------------------------------------------------------
@@ -493,6 +512,51 @@ def test_to_dataframe_pefp_stringent_fewer_calls(de_results):
     df_lenient = de_results.to_dataframe(tau=0.0, target_pefp=0.20)
     df_stringent = de_results.to_dataframe(tau=0.0, target_pefp=0.01)
     assert df_stringent["clr_is_de"].sum() <= df_lenient["clr_is_de"].sum()
+
+
+def test_to_dataframe_multi_tau_suffix(de_results):
+    """Suffix mode should emit tau-specific flat CLR columns."""
+    df = de_results.to_dataframe(tau=[0.0, 0.5], tau_format="suffix")
+    assert "clr_lfsr_tau_tau0" in df.columns
+    assert "clr_lfsr_tau_tau0.5" in df.columns
+    assert "clr_prob_effect_tau0" in df.columns
+    assert "clr_prob_effect_tau0.5" in df.columns
+
+
+def test_to_dataframe_multi_tau_multiindex(de_results):
+    """MultiIndex mode should create a tau level for tau-dependent metrics."""
+    import pandas as pd
+
+    df = de_results.to_dataframe(tau=[0.0, 0.5], tau_format="multiindex")
+    assert isinstance(df.columns, pd.MultiIndex)
+    assert ("clr_lfsr_tau", "0") in df.columns
+    assert ("clr_lfsr_tau", "0.5") in df.columns
+    assert ("clr_prob_effect", "0") in df.columns
+    assert ("clr_prob_effect", "0.5") in df.columns
+
+
+def test_to_dataframe_multi_tau_pefp(de_results):
+    """PEFP calls should be generated per tau in multi-tau suffix mode."""
+    df = de_results.to_dataframe(
+        tau=[0.0, 0.5],
+        tau_format="suffix",
+        target_pefp=0.10,
+        use_lfsr_tau=True,
+    )
+    assert "clr_is_de_tau0" in df.columns
+    assert "clr_is_de_tau0.5" in df.columns
+    assert df["clr_is_de_tau0"].dtype == bool
+    assert df["clr_is_de_tau0.5"].dtype == bool
+
+
+def test_to_dataframe_single_tau_backward_compat(de_results):
+    """Single tau with any format should preserve legacy scalar column names."""
+    df_suffix = de_results.to_dataframe(tau=[0.1], tau_format="suffix")
+    df_multi = de_results.to_dataframe(tau=[0.1], tau_format="multiindex")
+    assert "clr_lfsr_tau" in df_suffix.columns
+    assert "clr_prob_effect" in df_suffix.columns
+    assert "clr_lfsr_tau" in df_multi.columns
+    assert "clr_prob_effect" in df_multi.columns
 
 
 # --------------------------------------------------------------------------

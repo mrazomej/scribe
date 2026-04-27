@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import jax.numpy as jnp
 
 from ._gene_level import differential_expression
+from ._results_base_mixin import _normalize_tau
 from ._set_level import test_contrast, test_gene_set
 
 
@@ -30,15 +33,15 @@ class ParametricResultsMixin:
 
     def gene_level(
         self,
-        tau: float = 0.0,
+        tau: float | Sequence[float] = 0.0,
         coordinate: str = "clr",
     ) -> dict:
         """Compute gene-level DE via analytic Gaussian posteriors.
 
         Parameters
         ----------
-        tau : float, default=0.0
-            Practical significance threshold (log-scale).
+        tau : float or sequence of float, default=0.0
+            Practical significance threshold(s) (log-scale).
         coordinate : str, default='clr'
             Coordinate system. Only ``'clr'`` is supported.
 
@@ -60,11 +63,14 @@ class ParametricResultsMixin:
             "cov_diag": self.d_B,
         }
 
-        self._cached_tau = tau
+        # Normalize thresholds so cache identity is stable across equivalent
+        # sequence inputs (for example [0.0, 0.5] vs (0.5, 0.0)).
+        tau_values = _normalize_tau(tau)
+        self._cached_tau = tau_values
         results = differential_expression(
             model_A_dict,
             model_B_dict,
-            tau=tau,
+            tau=tau_values,
             coordinate=coordinate,
             gene_names=None,
         )

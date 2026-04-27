@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import jax.numpy as jnp
+
+from ._results_base_mixin import _normalize_tau
 
 
 class ShrinkageResultsMixin:
@@ -10,15 +14,15 @@ class ShrinkageResultsMixin:
 
     def gene_level(
         self,
-        tau: float = 0.0,
+        tau: float | Sequence[float] = 0.0,
         coordinate: str = "clr",
     ) -> dict:
         """Compute gene-level DE via empirical Bayes shrinkage.
 
         Parameters
         ----------
-        tau : float, default=0.0
-            Practical significance threshold.
+        tau : float or sequence of float, default=0.0
+            Practical significance threshold(s).
         coordinate : str, default='clr'
             Coordinate system. Only ``'clr'`` is supported.
 
@@ -35,11 +39,14 @@ class ShrinkageResultsMixin:
         raw_mean = xp.mean(self.delta_samples, axis=0)
         raw_sd = xp.std(self.delta_samples, axis=0, ddof=1)
 
-        self._cached_tau = tau
+        # Normalize thresholds before caching so multi-tau requests are cached
+        # deterministically independent of sequence ordering.
+        tau_values = _normalize_tau(tau)
+        self._cached_tau = tau_values
         self._gene_results = shrinkage_differential_expression(
             delta_mean=raw_mean,
             delta_sd=raw_sd,
-            tau=tau,
+            tau=tau_values,
             gene_names=self.gene_names,
             sigma_grid=self.sigma_grid,
             max_iter=self.shrinkage_max_iter,

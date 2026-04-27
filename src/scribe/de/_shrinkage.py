@@ -25,7 +25,7 @@ Mathematical details are in Section 10 of the paper
 (``paper/_diffexp10.qmd``).
 """
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Sequence
 
 import numpy as _np
 import jax.numpy as jnp
@@ -324,7 +324,7 @@ def shrinkage_posterior(
 def shrinkage_differential_expression(
     delta_mean: jnp.ndarray,
     delta_sd: jnp.ndarray,
-    tau: float = 0.0,
+    tau: float | Sequence[float] = 0.0,
     gene_names=None,
     sigma_grid: Optional[jnp.ndarray] = None,
     max_iter: int = 200,
@@ -342,8 +342,10 @@ def shrinkage_differential_expression(
         Posterior mean CLR difference per gene.
     delta_sd : jnp.ndarray, shape ``(D,)``
         Posterior standard deviation per gene.
-    tau : float, default=0.0
-        Practical significance threshold (log-scale).
+    tau : float or sequence of float, default=0.0
+        Practical significance threshold(s) on the log scale. Passing a
+        sequence computes practical-significance statistics for every
+        threshold in one vectorized pass.
     gene_names : list of str, optional
         Gene names.  If ``None``, generic names are generated.
     sigma_grid : jnp.ndarray, shape ``(K+1,)``, optional
@@ -358,7 +360,8 @@ def shrinkage_differential_expression(
     dict
         Dictionary with all standard DE keys (``delta_mean``,
         ``delta_sd``, ``prob_positive``, ``prob_effect``, ``lfsr``,
-        ``lfsr_tau``, ``gene_names``) plus shrinkage-specific extras:
+        ``lfsr_tau``, ``tau_values``, ``gene_names``) plus
+        shrinkage-specific extras:
 
         - **null_proportion** : float
             Estimated fraction of truly null genes.
@@ -410,14 +413,35 @@ def shrinkage_differential_expression(
 
     # Step 4: Shrunk lfsr
     lfsr = xp.minimum(prob_positive, 1.0 - prob_positive)
+    # Normalize scalar or vector tau inputs so practical-significance metrics
+    # can be computed in a single broadcasted mixture-CDF evaluation.
+    tau_values = tuple(float(v) for v in jnp.atleast_1d(jnp.asarray(tau)))
+    tau_arr = xp.asarray(tau_values)
+    n_tau = int(tau_arr.shape[0])
+    m_expanded = m[:, :, None]
+    sqrt_v_expanded = sqrt_v[:, :, None]
+    tau_expanded = tau_arr[None, None, :]
+    gamma_expanded = gamma[:, :, None]
 
     # Step 5: Practical significance
     # P(beta_g > tau) = sum_k gamma_{gk} Phi((m_{gk} - tau) / sqrt(v_{gk}))
-    prob_up = xp.sum(gamma * norm.cdf((m - tau) / sqrt_v), axis=1)
+    prob_up = xp.sum(
+        gamma_expanded
+        * norm.cdf((m_expanded - tau_expanded) / sqrt_v_expanded),
+        axis=1,
+    )
     # P(beta_g < -tau) = sum_k gamma_{gk} Phi(-(m_{gk} + tau) / sqrt(v_{gk}))
-    prob_down = xp.sum(gamma * norm.cdf(-(m + tau) / sqrt_v), axis=1)
+    prob_down = xp.sum(
+        gamma_expanded
+        * norm.cdf(-(m_expanded + tau_expanded) / sqrt_v_expanded),
+        axis=1,
+    )
     prob_effect = prob_up + prob_down
     lfsr_tau = 1.0 - xp.maximum(prob_up, prob_down)
+    # Maintain backward-compatible 1-D arrays when only one tau is requested.
+    if n_tau == 1:
+        prob_effect = prob_effect[:, 0]
+        lfsr_tau = lfsr_tau[:, 0]
 
     # Gene names
     if gene_names is None:
@@ -432,6 +456,7 @@ def shrinkage_differential_expression(
         "prob_effect": prob_effect,
         "lfsr": lfsr,
         "lfsr_tau": lfsr_tau,
+        "tau_values": tau_values,
         "gene_names": gene_names,
         # Shrinkage-specific extras
         "null_proportion": em_result["null_proportion"],

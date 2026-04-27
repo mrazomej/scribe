@@ -6,7 +6,7 @@ implementations, independent of how gene-level statistics are produced.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Optional, TYPE_CHECKING
 
 from ._error_control import compute_pefp, find_lfsr_threshold, format_de_table
@@ -15,6 +15,51 @@ from ._gene_level import call_de_genes
 if TYPE_CHECKING:
     import jax.numpy as jnp
     import pandas
+
+
+def _normalize_tau(tau: float | Sequence[float]) -> tuple[float, ...]:
+    """Normalize scalar/sequence tau input to a sorted tuple of floats.
+
+    Parameters
+    ----------
+    tau : float or sequence of float
+        Practical-significance threshold(s) requested by the caller.
+
+    Returns
+    -------
+    tuple of float
+        Sorted thresholds used as a stable cache key.
+
+    Raises
+    ------
+    ValueError
+        If the sequence is empty.
+    """
+    if isinstance(tau, Sequence) and not isinstance(tau, (str, bytes)):
+        tau_values = tuple(float(value) for value in tau)
+    else:
+        tau_values = (float(tau),)
+
+    if not tau_values:
+        raise ValueError("tau must contain at least one value.")
+
+    return tuple(sorted(tau_values))
+
+
+def _format_tau_label(tau: float) -> str:
+    """Format tau values into compact, deterministic column labels.
+
+    Parameters
+    ----------
+    tau : float
+        Practical-significance threshold.
+
+    Returns
+    -------
+    str
+        Compact string representation suitable for column naming.
+    """
+    return format(float(tau), ".6g")
 
 
 class BaseResultsMixin:
@@ -78,9 +123,7 @@ class BaseResultsMixin:
         # Expand aliases and preserve order while removing duplicates.
         for metric in metric_values:
             if metric == "all":
-                resolved.extend(
-                    m for m in metric_order if m not in resolved
-                )
+                resolved.extend(m for m in metric_order if m not in resolved)
                 continue
 
             if metric not in supported:
@@ -93,18 +136,65 @@ class BaseResultsMixin:
 
         return tuple(resolved)
 
-    def _ensure_gene_results(self, tau: float = 0.0) -> None:
+    def _ensure_gene_results(self, tau: float | Sequence[float] = 0.0) -> None:
         """Recompute gene-level results when the cache is stale.
 
         Parameters
         ----------
-        tau : float, default=0.0
-            Practical-significance threshold. A cache miss is triggered
-            when this differs from the threshold used for the current
+        tau : float or sequence of float, default=0.0
+            Practical-significance threshold(s). A cache miss is triggered
+            when this differs from the threshold set used for the current
             cached results.
         """
-        if self._gene_results is None or self._cached_tau != tau:
-            self.gene_level(tau=tau)
+        tau_values = _normalize_tau(tau)
+        if self._gene_results is None or self._cached_tau != tau_values:
+            # Recompute with normalized tau ordering so cache identity and
+            # output column ordering stay deterministic across callers.
+            self.gene_level(tau=tau_values)
+
+    def _slice_gene_results_for_tau(self, tau: float) -> dict:
+        """Extract a single-threshold view from cached gene-level results.
+
+        Parameters
+        ----------
+        tau : float
+            Practical-significance threshold to extract.
+
+        Returns
+        -------
+        dict
+            Gene-level summary with scalar-threshold fields represented as
+            ``(D,)`` vectors.
+        """
+        gs = self._gene_results
+        if gs is None:
+            raise RuntimeError("Gene-level results are not initialized.")
+
+        tau_values = tuple(
+            float(value) for value in gs.get("tau_values", _normalize_tau(tau))
+        )
+        if len(tau_values) == 1:
+            return gs
+
+        target = float(tau)
+        tau_idx = None
+        for idx, value in enumerate(tau_values):
+            if abs(value - target) <= 1e-12:
+                tau_idx = idx
+                break
+        if tau_idx is None:
+            raise ValueError(
+                f"Requested tau={target} is not present in cached tau_values "
+                f"{tau_values}."
+            )
+
+        sliced = dict(gs)
+        if getattr(sliced.get("prob_effect"), "ndim", 1) == 2:
+            sliced["prob_effect"] = sliced["prob_effect"][:, tau_idx]
+        if getattr(sliced.get("lfsr_tau"), "ndim", 1) == 2:
+            sliced["lfsr_tau"] = sliced["lfsr_tau"][:, tau_idx]
+        sliced["tau_values"] = (tau_values[tau_idx],)
+        return sliced
 
     def _compute_is_de_mask_from_scores(
         self,
@@ -126,9 +216,7 @@ class BaseResultsMixin:
         tuple of (jnp.ndarray, float)
             Boolean mask of called genes and the selected threshold.
         """
-        threshold = find_lfsr_threshold(
-            error_scores, target_pefp=target_pefp
-        )
+        threshold = find_lfsr_threshold(error_scores, target_pefp=target_pefp)
         is_de = error_scores < threshold
         return is_de, threshold
 
@@ -155,8 +243,9 @@ class BaseResultsMixin:
             Boolean mask of DE genes with shape ``(D,)``.
         """
         self._ensure_gene_results(tau=tau)
+        gene_results = self._slice_gene_results_for_tau(tau=tau)
         return call_de_genes(
-            self._gene_results,
+            gene_results,
             lfsr_threshold=lfsr_threshold,
             prob_effect_threshold=prob_effect_threshold,
         )
@@ -184,8 +273,9 @@ class BaseResultsMixin:
             Expected false discovery proportion among called genes.
         """
         self._ensure_gene_results(tau=tau)
+        gene_results = self._slice_gene_results_for_tau(tau=tau)
         lfsr_key = "lfsr_tau" if use_lfsr_tau else "lfsr"
-        return compute_pefp(self._gene_results[lfsr_key], threshold=threshold)
+        return compute_pefp(gene_results[lfsr_key], threshold=threshold)
 
     def find_threshold(
         self,
@@ -210,9 +300,10 @@ class BaseResultsMixin:
             Threshold value for the selected lfsr variant.
         """
         self._ensure_gene_results(tau=tau)
+        gene_results = self._slice_gene_results_for_tau(tau=tau)
         lfsr_key = "lfsr_tau" if use_lfsr_tau else "lfsr"
         return find_lfsr_threshold(
-            self._gene_results[lfsr_key], target_pefp=target_pefp
+            gene_results[lfsr_key], target_pefp=target_pefp
         )
 
     def summary(
@@ -238,22 +329,24 @@ class BaseResultsMixin:
             Formatted table representation.
         """
         self._ensure_gene_results(tau=tau)
-        return format_de_table(self._gene_results, sort_by=sort_by, top_n=top_n)
+        gene_results = self._slice_gene_results_for_tau(tau=tau)
+        return format_de_table(gene_results, sort_by=sort_by, top_n=top_n)
 
     def to_dataframe(
         self,
-        tau: float = 0.0,
+        tau: float | Sequence[float] = 0.0,
         target_pefp: Optional[float] = None,
         use_lfsr_tau: bool = True,
         metrics: str | Iterable[str] | None = None,
         column_naming: str = "prefixed",
+        tau_format: str = "suffix",
     ) -> "pandas.DataFrame":
         """Export cached gene-level statistics to a pandas DataFrame.
 
         Parameters
         ----------
-        tau : float, default=0.0
-            Practical significance threshold used for gene-level metrics.
+        tau : float or sequence of float, default=0.0
+            Practical significance threshold(s) used for gene-level metrics.
         target_pefp : float, optional
             If provided, add an ``is_de`` column based on the threshold
             from :meth:`find_threshold`.
@@ -284,6 +377,10 @@ class BaseResultsMixin:
             explicit namespaced columns (for example ``clr_delta_mean`` and
             ``clr_is_de``). ``'legacy'`` preserves historical names
             (for example ``delta_mean`` and ``is_de``).
+        tau_format : {'suffix', 'multiindex'}, default='suffix'
+            Output layout used when multiple tau values are provided.
+            ``'suffix'`` appends tau values to flat column names; ``'multiindex'``
+            adds a tau level for tau-dependent columns.
 
         Returns
         -------
@@ -298,6 +395,10 @@ class BaseResultsMixin:
             raise ValueError(
                 "column_naming must be one of {'prefixed', 'legacy'}."
             )
+        if tau_format not in {"suffix", "multiindex"}:
+            raise ValueError(
+                "tau_format must be one of {'suffix', 'multiindex'}."
+            )
 
         # Base results objects only provide CLR gene-level summaries.
         if "clr" not in metric_families:
@@ -308,42 +409,171 @@ class BaseResultsMixin:
 
         self._ensure_gene_results(tau=tau)
         gs = self._gene_results
+        tau_values = tuple(
+            float(value) for value in gs.get("tau_values", _normalize_tau(tau))
+        )
+        has_multi_tau = (
+            len(tau_values) > 1
+            and getattr(gs.get("prob_effect"), "ndim", 1) == 2
+            and getattr(gs.get("lfsr_tau"), "ndim", 1) == 2
+        )
         # Keep CLR column naming explicit while retaining a legacy mode.
-        if column_naming == "prefixed":
-            clr_columns = {
-                "clr_delta_mean": np.asarray(gs["delta_mean"]),
-                "clr_delta_sd": np.asarray(gs["delta_sd"]),
-                "clr_lfsr": np.asarray(gs["lfsr"]),
-                "clr_lfsr_tau": np.asarray(gs["lfsr_tau"]),
-                "clr_prob_effect": np.asarray(gs["prob_effect"]),
-                "clr_prob_positive": np.asarray(gs["prob_positive"]),
-            }
-            lfsr_col = "clr_lfsr_tau" if use_lfsr_tau else "clr_lfsr"
-            is_de_col = "clr_is_de"
-        else:
-            clr_columns = {
-                "delta_mean": np.asarray(gs["delta_mean"]),
-                "delta_sd": np.asarray(gs["delta_sd"]),
-                "lfsr": np.asarray(gs["lfsr"]),
-                "lfsr_tau": np.asarray(gs["lfsr_tau"]),
-                "prob_effect": np.asarray(gs["prob_effect"]),
-                "prob_positive": np.asarray(gs["prob_positive"]),
-            }
-            lfsr_col = "lfsr_tau" if use_lfsr_tau else "lfsr"
-            is_de_col = "is_de"
+        if not has_multi_tau:
+            if column_naming == "prefixed":
+                clr_columns = {
+                    "clr_delta_mean": np.asarray(gs["delta_mean"]),
+                    "clr_delta_sd": np.asarray(gs["delta_sd"]),
+                    "clr_lfsr": np.asarray(gs["lfsr"]),
+                    "clr_lfsr_tau": np.asarray(gs["lfsr_tau"]),
+                    "clr_prob_effect": np.asarray(gs["prob_effect"]),
+                    "clr_prob_positive": np.asarray(gs["prob_positive"]),
+                }
+                lfsr_col = "clr_lfsr_tau" if use_lfsr_tau else "clr_lfsr"
+                is_de_col = "clr_is_de"
+            else:
+                clr_columns = {
+                    "delta_mean": np.asarray(gs["delta_mean"]),
+                    "delta_sd": np.asarray(gs["delta_sd"]),
+                    "lfsr": np.asarray(gs["lfsr"]),
+                    "lfsr_tau": np.asarray(gs["lfsr_tau"]),
+                    "prob_effect": np.asarray(gs["prob_effect"]),
+                    "prob_positive": np.asarray(gs["prob_positive"]),
+                }
+                lfsr_col = "lfsr_tau" if use_lfsr_tau else "lfsr"
+                is_de_col = "is_de"
 
-        df = pd.DataFrame(
-            {
-                "gene": gs["gene_names"],
-                **clr_columns,
+            df = pd.DataFrame(
+                {
+                    "gene": gs["gene_names"],
+                    **clr_columns,
+                }
+            )
+
+            # Use a PEFP-controlled threshold when requested.
+            if target_pefp is not None:
+                threshold = self.find_threshold(
+                    target_pefp=target_pefp,
+                    tau=tau_values[0],
+                    use_lfsr_tau=use_lfsr_tau,
+                )
+                df[is_de_col] = df[lfsr_col].to_numpy() < threshold
+            return df
+
+        # The multi-tau export keeps tau-independent quantities flat while
+        # expanding practical-significance metrics across the tau axis.
+        lfsr_tau_matrix = np.asarray(gs["lfsr_tau"])
+        prob_effect_matrix = np.asarray(gs["prob_effect"])
+
+        if tau_format == "suffix":
+            if column_naming == "prefixed":
+                clr_columns = {
+                    "clr_delta_mean": np.asarray(gs["delta_mean"]),
+                    "clr_delta_sd": np.asarray(gs["delta_sd"]),
+                    "clr_lfsr": np.asarray(gs["lfsr"]),
+                    "clr_prob_positive": np.asarray(gs["prob_positive"]),
+                }
+                lfsr_base = "clr_lfsr_tau_tau"
+                prob_effect_base = "clr_prob_effect_tau"
+                is_de_base = "clr_is_de_tau"
+                lfsr_col = "clr_lfsr"
+                is_de_col = "clr_is_de"
+            else:
+                clr_columns = {
+                    "delta_mean": np.asarray(gs["delta_mean"]),
+                    "delta_sd": np.asarray(gs["delta_sd"]),
+                    "lfsr": np.asarray(gs["lfsr"]),
+                    "prob_positive": np.asarray(gs["prob_positive"]),
+                }
+                lfsr_base = "lfsr_tau_tau"
+                prob_effect_base = "prob_effect_tau"
+                is_de_base = "is_de_tau"
+                lfsr_col = "lfsr"
+                is_de_col = "is_de"
+
+            for idx, tau_value in enumerate(tau_values):
+                tau_label = _format_tau_label(tau_value)
+                clr_columns[f"{lfsr_base}{tau_label}"] = lfsr_tau_matrix[:, idx]
+                clr_columns[f"{prob_effect_base}{tau_label}"] = (
+                    prob_effect_matrix[:, idx]
+                )
+
+            df = pd.DataFrame(
+                {
+                    "gene": gs["gene_names"],
+                    **clr_columns,
+                }
+            )
+
+            if target_pefp is not None:
+                if use_lfsr_tau:
+                    for idx, tau_value in enumerate(tau_values):
+                        tau_label = _format_tau_label(tau_value)
+                        score = lfsr_tau_matrix[:, idx]
+                        is_de, _ = self._compute_is_de_mask_from_scores(
+                            score, target_pefp=target_pefp
+                        )
+                        df[f"{is_de_base}{tau_label}"] = np.asarray(
+                            is_de, dtype=bool
+                        )
+                else:
+                    is_de, _ = self._compute_is_de_mask_from_scores(
+                        np.asarray(gs["lfsr"]),
+                        target_pefp=target_pefp,
+                    )
+                    df[is_de_col] = np.asarray(is_de, dtype=bool)
+            return df
+
+        # MultiIndex mode: keep the tau level empty for scalar columns and set
+        # it only on practical-significance metrics that vary with tau.
+        if column_naming == "prefixed":
+            base_cols = {
+                ("gene", ""): gs["gene_names"],
+                ("clr_delta_mean", ""): np.asarray(gs["delta_mean"]),
+                ("clr_delta_sd", ""): np.asarray(gs["delta_sd"]),
+                ("clr_lfsr", ""): np.asarray(gs["lfsr"]),
+                ("clr_prob_positive", ""): np.asarray(gs["prob_positive"]),
             }
+            lfsr_tau_name = "clr_lfsr_tau"
+            prob_effect_name = "clr_prob_effect"
+            is_de_name = "clr_is_de"
+        else:
+            base_cols = {
+                ("gene", ""): gs["gene_names"],
+                ("delta_mean", ""): np.asarray(gs["delta_mean"]),
+                ("delta_sd", ""): np.asarray(gs["delta_sd"]),
+                ("lfsr", ""): np.asarray(gs["lfsr"]),
+                ("prob_positive", ""): np.asarray(gs["prob_positive"]),
+            }
+            lfsr_tau_name = "lfsr_tau"
+            prob_effect_name = "prob_effect"
+            is_de_name = "is_de"
+
+        for idx, tau_value in enumerate(tau_values):
+            tau_label = _format_tau_label(tau_value)
+            base_cols[(lfsr_tau_name, tau_label)] = lfsr_tau_matrix[:, idx]
+            base_cols[(prob_effect_name, tau_label)] = prob_effect_matrix[
+                :, idx
+            ]
+
+        df = pd.DataFrame(base_cols)
+        df.columns = pd.MultiIndex.from_tuples(
+            df.columns, names=("metric", "tau")
         )
 
-        # Use a PEFP-controlled threshold when requested.
         if target_pefp is not None:
-            threshold = self.find_threshold(
-                target_pefp=target_pefp, tau=tau, use_lfsr_tau=use_lfsr_tau
-            )
-            df[is_de_col] = df[lfsr_col].to_numpy() < threshold
+            if use_lfsr_tau:
+                for idx, tau_value in enumerate(tau_values):
+                    tau_label = _format_tau_label(tau_value)
+                    score = lfsr_tau_matrix[:, idx]
+                    is_de, _ = self._compute_is_de_mask_from_scores(
+                        score, target_pefp=target_pefp
+                    )
+                    df[(is_de_name, tau_label)] = np.asarray(is_de, dtype=bool)
+            else:
+                is_de, _ = self._compute_is_de_mask_from_scores(
+                    np.asarray(gs["lfsr"]),
+                    target_pefp=target_pefp,
+                )
+                df[(is_de_name, "")] = np.asarray(is_de, dtype=bool)
 
         return df

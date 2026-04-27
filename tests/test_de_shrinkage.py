@@ -301,6 +301,7 @@ class TestShrinkageDifferentialExpression:
             "prob_effect",
             "lfsr",
             "lfsr_tau",
+            "tau_values",
             "gene_names",
             "null_proportion",
             "prior_weights",
@@ -354,6 +355,59 @@ class TestShrinkageDifferentialExpression:
         mean_null_lfsr = float(jnp.mean(result["lfsr"][:180]))
         mean_de_lfsr = float(jnp.mean(result["lfsr"][180:]))
         assert mean_null_lfsr > mean_de_lfsr
+
+    def test_multi_tau_shapes(self, null_dominated_data):
+        """Multi-tau calls should return tau-dependent metrics with shape (D, K)."""
+        delta_mean, delta_sd = null_dominated_data
+        taus = [0.0, 0.2, 0.5]
+        result = shrinkage_differential_expression(
+            delta_mean, delta_sd, tau=taus
+        )
+        D = delta_mean.shape[0]
+
+        assert result["delta_mean"].shape == (D,)
+        assert result["lfsr"].shape == (D,)
+        assert result["prob_effect"].shape == (D, len(taus))
+        assert result["lfsr_tau"].shape == (D, len(taus))
+        np.testing.assert_allclose(
+            np.asarray(result["tau_values"]),
+            np.asarray(taus, dtype=float),
+        )
+
+    def test_multi_tau_scalar_compat(self, null_dominated_data):
+        """Single-value tau sequences should match scalar outputs."""
+        delta_mean, delta_sd = null_dominated_data
+        tau_value = 0.4
+        scalar_result = shrinkage_differential_expression(
+            delta_mean, delta_sd, tau=tau_value
+        )
+        seq_result = shrinkage_differential_expression(
+            delta_mean, delta_sd, tau=[tau_value]
+        )
+
+        np.testing.assert_allclose(
+            np.asarray(seq_result["prob_effect"]),
+            np.asarray(scalar_result["prob_effect"]),
+        )
+        np.testing.assert_allclose(
+            np.asarray(seq_result["lfsr_tau"]),
+            np.asarray(scalar_result["lfsr_tau"]),
+        )
+        np.testing.assert_allclose(
+            np.asarray(seq_result["tau_values"]),
+            np.asarray([tau_value], dtype=float),
+        )
+
+    def test_multi_tau_prob_effect_monotonic(self, null_dominated_data):
+        """prob_effect should decrease or remain constant with larger taus."""
+        delta_mean, delta_sd = null_dominated_data
+        result = shrinkage_differential_expression(
+            delta_mean, delta_sd, tau=[0.0, 0.5, 1.0]
+        )
+        prob_effect = np.asarray(result["prob_effect"])
+
+        assert np.all(prob_effect[:, 1] <= prob_effect[:, 0] + 1e-10)
+        assert np.all(prob_effect[:, 2] <= prob_effect[:, 1] + 1e-10)
 
 
 # --------------------------------------------------------------------------
@@ -462,6 +516,7 @@ class TestShrinkageResultsMethods:
             "prob_effect",
             "lfsr",
             "lfsr_tau",
+            "tau_values",
             "gene_names",
             "null_proportion",
             "prior_weights",

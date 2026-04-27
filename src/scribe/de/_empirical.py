@@ -841,7 +841,7 @@ def compute_clr_differences(
 
 def empirical_differential_expression(
     delta_samples: Array,
-    tau: float = 0.0,
+    tau: float | Sequence[float] = 0.0,
     gene_names: Optional[List[str]] = None,
 ) -> dict:
     """Compute gene-level DE statistics from CLR difference samples.
@@ -861,26 +861,31 @@ def empirical_differential_expression(
     delta_samples : array-like, shape ``(N, D)``
         Posterior CLR-space differences
         ``Delta_g^(s) = CLR(rho_A)_g^(s) - CLR(rho_B)_g^(s)``.
-    tau : float, default=0.0
-        Practical significance threshold (log-scale).
+    tau : float or sequence of float, default=0.0
+        Practical significance threshold(s) on the log scale. A scalar
+        computes a single practical-significance summary. A sequence computes
+        all thresholds in one vectorized pass and stores them under
+        ``tau_values``.
     gene_names : list of str, optional
         Gene names.  If ``None``, generic names are generated.
 
     Returns
     -------
     dict
-        Dictionary with the following keys, each of shape ``(D,)``:
+        Dictionary with the following keys:
 
-        - **delta_mean** : Posterior mean effect per gene.
-        - **delta_sd** : Posterior standard deviation per gene.
-        - **prob_positive** : ``P(Delta_g > 0 | data)`` estimated as
+        - **delta_mean** : ``(D,)`` posterior mean effect per gene.
+        - **delta_sd** : ``(D,)`` posterior standard deviation per gene.
+        - **prob_positive** : ``(D,)``, ``P(Delta_g > 0 | data)`` estimated as
           the fraction of positive samples.
-        - **prob_effect** : ``P(|Delta_g| > tau | data)`` estimated as
-          the fraction of samples exceeding the threshold.
-        - **lfsr** : Local false sign rate =
+        - **prob_effect** : ``(D,)`` for scalar tau, or ``(D, K)`` for
+          ``K`` tau values. Stores ``P(|Delta_g| > tau | data)``.
+        - **lfsr** : ``(D,)`` local false sign rate
           ``min(P(Delta_g > 0), P(Delta_g < 0))``.
-        - **lfsr_tau** : Practical-significance lfsr =
+        - **lfsr_tau** : ``(D,)`` for scalar tau, or ``(D, K)`` for
+          ``K`` tau values. Stores
           ``1 - max(P(Delta_g > tau), P(Delta_g < -tau))``.
+        - **tau_values** : tuple of float with the threshold(s) used.
         - **gene_names** : list of str.
 
     Notes
@@ -896,6 +901,11 @@ def empirical_differential_expression(
     from ..core._array_dispatch import _array_module
 
     xp = _array_module(delta_samples)
+    # Normalize scalar and vector thresholds to a uniform 1-D backend array so
+    # we can evaluate every threshold in one vectorized reduction.
+    tau_values = tuple(float(v) for v in jnp.atleast_1d(jnp.asarray(tau)))
+    tau_arr = xp.asarray(tau_values)
+    n_tau = int(tau_arr.shape[0])
 
     # Posterior mean and standard deviation per gene
     delta_mean = xp.mean(delta_samples, axis=0)
@@ -907,15 +917,22 @@ def empirical_differential_expression(
     # Local false sign rate: posterior probability of the minority sign
     lfsr = xp.minimum(prob_positive, 1.0 - prob_positive)
 
-    # Probability of practical effect: fraction of samples where
-    # |Delta_g| > tau
-    prob_up = xp.mean(delta_samples > tau, axis=0)
-    prob_down = xp.mean(delta_samples < -tau, axis=0)
+    # Evaluate practical-significance probabilities for all taus in one pass.
+    # Broadcasting gives shape (N, D, K) before reducing over posterior draws.
+    delta_expanded = delta_samples[:, :, None]
+    tau_expanded = tau_arr[None, None, :]
+    prob_up = xp.mean(delta_expanded > tau_expanded, axis=0)
+    prob_down = xp.mean(delta_expanded < -tau_expanded, axis=0)
     prob_effect = prob_up + prob_down
 
     # Practical-significance lfsr (paper definition):
     # lfsr_tau = 1 - max(P(Delta > tau), P(Delta < -tau))
     lfsr_tau = 1.0 - xp.maximum(prob_up, prob_down)
+    # Preserve the original 1-D output contract for callers that pass a scalar
+    # tau, while keeping the K-axis for multi-threshold queries.
+    if n_tau == 1:
+        prob_effect = prob_effect[:, 0]
+        lfsr_tau = lfsr_tau[:, 0]
 
     # Generate gene names if not provided
     if gene_names is None:
@@ -929,6 +946,7 @@ def empirical_differential_expression(
         "prob_effect": prob_effect,
         "lfsr": lfsr,
         "lfsr_tau": lfsr_tau,
+        "tau_values": tau_values,
         "gene_names": gene_names,
     }
 

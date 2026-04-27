@@ -98,6 +98,7 @@ def test_differential_expression_output_keys(sample_models):
         "prob_effect",
         "lfsr",
         "lfsr_tau",
+        "tau_values",
         "gene_names",
     }
 
@@ -295,6 +296,62 @@ def test_differential_expression_tau_effect():
     assert jnp.all(
         results_large_tau["prob_effect"] <= results_small_tau["prob_effect"]
     )
+
+
+def test_differential_expression_multi_tau_shapes(sample_models):
+    """Multi-tau calls should expose a tau axis on tau-dependent outputs."""
+    model_A, model_B = sample_models
+    D_clr = model_A["loc"].shape[0] + 1
+    taus = [0.0, jnp.log(1.1), jnp.log(2.0)]
+
+    results = differential_expression(model_A, model_B, tau=taus, coordinate="clr")
+
+    assert results["delta_mean"].shape == (D_clr,)
+    assert results["lfsr"].shape == (D_clr,)
+    assert results["prob_effect"].shape == (D_clr, len(taus))
+    assert results["lfsr_tau"].shape == (D_clr, len(taus))
+    assert results["tau_values"] == tuple(sorted(float(t) for t in taus))
+
+
+def test_differential_expression_multi_tau_scalar_compat(sample_models):
+    """A single-element tau sequence should match scalar behavior exactly."""
+    model_A, model_B = sample_models
+    tau_value = float(jnp.log(1.1))
+
+    scalar_results = differential_expression(
+        model_A,
+        model_B,
+        tau=tau_value,
+        coordinate="clr",
+    )
+    sequence_results = differential_expression(
+        model_A,
+        model_B,
+        tau=[tau_value],
+        coordinate="clr",
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(sequence_results["prob_effect"]),
+        np.asarray(scalar_results["prob_effect"]),
+    )
+    np.testing.assert_allclose(
+        np.asarray(sequence_results["lfsr_tau"]),
+        np.asarray(scalar_results["lfsr_tau"]),
+    )
+    assert sequence_results["tau_values"] == (tau_value,)
+
+
+def test_differential_expression_multi_tau_monotonicity(sample_models):
+    """Per-gene prob_effect should be non-increasing as tau increases."""
+    model_A, model_B = sample_models
+    taus = [0.0, float(jnp.log(1.2)), float(jnp.log(2.0))]
+    results = differential_expression(model_A, model_B, tau=taus, coordinate="clr")
+
+    prob_effect = np.asarray(results["prob_effect"])
+    assert prob_effect.shape[1] == len(taus)
+    assert np.all(prob_effect[:, 1] <= prob_effect[:, 0] + 1e-10)
+    assert np.all(prob_effect[:, 2] <= prob_effect[:, 1] + 1e-10)
 
 
 def test_differential_expression_invalid_coordinate():
