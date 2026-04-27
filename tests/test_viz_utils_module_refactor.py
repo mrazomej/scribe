@@ -407,6 +407,47 @@ def test_de_mask_threshold_plot_custom_mode_requires_custom_mask():
         )
 
 
+def test_de_mask_threshold_plot_uses_full_unmasked_mu():
+    """Plot must use full mu_map vectors even when a gene mask is active.
+
+    When ``mu_map_A`` / ``mu_map_B`` are present on the DE object alongside a
+    ``_gene_mask``, the diagnostic should reflect ALL genes in the model (the
+    full mu vectors), not just the ones that survived the current mask.
+    """
+
+    class _MaskedDEStub:
+        """DE stub with 10 genes where a mask keeps only 4."""
+
+        def __init__(self):
+            # 10 genes total — full mu vectors.
+            self.mu_map_A = np.array(
+                [1.0, 2.0, 3.0, 5.0, 10.0, 20.0, 40.0, 80.0, 100.0, 200.0]
+            )
+            self.mu_map_B = np.array(
+                [2.0, 3.0, 4.0, 6.0, 12.0, 22.0, 45.0, 85.0, 110.0, 210.0]
+            )
+            # Mask keeps only the last 4 genes (the 4 most expressed).
+            self._gene_mask = np.array(
+                [False, False, False, False, False, False, True, True, True, True]
+            )
+
+    stub = _MaskedDEStub()
+    out = plot_de_mask_threshold(stub, save=False, coverage=0.80)
+
+    assert isinstance(out, PlotResult)
+    assert out.n_panels == 2
+
+    # The left-panel cumulative curve must span all 10 genes, not the 4
+    # that survive the mask.  Verify via the x-axis limit on the cumulative
+    # axes (first axes).
+    ax_cum = out.axes[0]
+    x_right = ax_cum.get_xlim()[1]
+    assert x_right >= 10, (
+        f"Expected cumulative curve to cover all 10 genes but x-axis "
+        f"right limit is {x_right} — likely only masked genes were used."
+    )
+
+
 def test_get_config_values_uses_mcmc_run_size_token():
     """MCMC config metadata should generate samples/warmup filename tokens."""
     cfg = OmegaConf.create(

@@ -310,9 +310,12 @@ def _build_mask_for_threshold_plot(
     Parameters
     ----------
     mu_A : numpy.ndarray
-        Mean-expression vector for condition A over the active gene set.
+        Mean-expression vector for condition A.  Should span the full gene
+        space (all genes from the model, not just the currently masked set)
+        so the diagnostic is accurate.
     mu_B : numpy.ndarray
-        Mean-expression vector for condition B over the active gene set.
+        Mean-expression vector for condition B.  Same dimensionality
+        requirement as ``mu_A``.
     threshold_mode : {"coverage", "min_expression", "custom"}
         Thresholding strategy used to construct the boolean mask.
     coverage : float
@@ -366,7 +369,7 @@ def _build_mask_for_threshold_plot(
         mask = np.asarray(custom_mask, dtype=bool).ravel()
         if mask.shape[0] != mu_A.shape[0]:
             raise ValueError(
-                "custom_mask length does not match active DE gene count "
+                "custom_mask length does not match gene count "
                 f"({mask.shape[0]} vs {mu_A.shape[0]})."
             )
         return mask, {}
@@ -1046,10 +1049,11 @@ def plot_de_mask_threshold(
     Parameters
     ----------
     de_results : object
-        Differential-expression results object with ``to_dataframe`` support.
-        The object must expose CLR mean-expression vectors either through
-        ``to_dataframe(metrics="clr")`` columns or via ``mu_map_A`` /
-        ``mu_map_B`` fallback.
+        Differential-expression results object.  The plot uses the **full,
+        unmasked** ``mu_map_A`` / ``mu_map_B`` vectors stored on the object so
+        the diagnostic reflects every gene in the model, regardless of the
+        currently active gene mask.  Falls back to masked CLR exports only when
+        ``mu_map_A`` / ``mu_map_B`` are unavailable.
     viz_cfg : OmegaConf or None, optional
         Visualization config kept for API compatibility with other plotting
         helpers.
@@ -1099,14 +1103,25 @@ def plot_de_mask_threshold(
     )
     ax_cum, ax_gene = axes_flat
 
-    # Use CLR exports so we stay aligned with the currently active gene mask.
-    clr_df = _extract_clr_df(
-        de_results,
-        tau=0.0,
-        target_pefp=None,
-        use_lfsr_tau=True,
-    )
-    mu_A, mu_B = _resolve_clr_mean_expression(clr_df, de_results)
+    # Retrieve the FULL (unmasked) mean-expression vectors so the diagnostic
+    # reflects every gene in the model, not just those that survived an
+    # earlier mask.  If mu_map is unavailable, fall back to the masked CLR
+    # export (better than failing entirely).
+    mu_A_full = getattr(de_results, "mu_map_A", None)
+    mu_B_full = getattr(de_results, "mu_map_B", None)
+    if mu_A_full is not None and mu_B_full is not None:
+        mu_A = np.asarray(mu_A_full, dtype=float).ravel()
+        mu_B = np.asarray(mu_B_full, dtype=float).ravel()
+    else:
+        clr_df = _extract_clr_df(
+            de_results,
+            tau=0.0,
+            target_pefp=None,
+            use_lfsr_tau=True,
+        )
+        mu_A, mu_B = _resolve_clr_mean_expression(clr_df, de_results)
+        mu_A = np.asarray(mu_A, dtype=float)
+        mu_B = np.asarray(mu_B, dtype=float)
 
     # Convert to compositions; this is the quantity that is scale-invariant.
     total_A = float(np.sum(mu_A))
@@ -1120,8 +1135,8 @@ def plot_de_mask_threshold(
     rho_B = np.asarray(mu_B, dtype=float) / total_B
 
     mask, mask_meta = _build_mask_for_threshold_plot(
-        np.asarray(mu_A, dtype=float),
-        np.asarray(mu_B, dtype=float),
+        mu_A,
+        mu_B,
         threshold_mode=threshold_mode,
         coverage=coverage,
         min_expression=min_expression,
