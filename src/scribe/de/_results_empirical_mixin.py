@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 import jax.numpy as jnp
 
-from ._results_base_mixin import _normalize_tau
+from ._results_base_mixin import _format_tau_label, _normalize_tau
 from ._set_level import (
     empirical_test_gene_set,
     empirical_test_multiple_gene_sets,
@@ -46,21 +46,21 @@ class EmpiricalResultsMixin:
 
     def biological_level(
         self,
-        tau_lfc: float = 0.0,
-        tau_var: float = 0.0,
-        tau_kl: float = 0.0,
+        tau_lfc: float | Sequence[float] = 0.0,
+        tau_var: float | Sequence[float] = 0.0,
+        tau_kl: float | Sequence[float] = 0.0,
         metric_families: tuple[str, ...] | None = None,
     ) -> dict:
         """Compute biological-level DE statistics from NB parameters.
 
         Parameters
         ----------
-        tau_lfc : float, default=0.0
-            Practical threshold for biological log-fold change.
-        tau_var : float, default=0.0
-            Practical threshold for log-variance ratio.
-        tau_kl : float, default=0.0
-            Practical threshold for Jeffreys divergence.
+        tau_lfc : float or sequence of float, default=0.0
+            Practical threshold(s) for biological log-fold change.
+        tau_var : float or sequence of float, default=0.0
+            Practical threshold(s) for log-variance ratio.
+        tau_kl : float or sequence of float, default=0.0
+            Practical threshold(s) for Jeffreys divergence.
         metric_families : tuple of {'bio_lfc', 'bio_lvr', 'bio_kl', 'bio_aux'}, optional
             Biological families to compute. ``None`` computes all families for
             backward compatibility.
@@ -84,7 +84,10 @@ class EmpiricalResultsMixin:
             if metric_families is not None
             else ("bio_lfc", "bio_lvr", "bio_kl", "bio_aux")
         )
-        cache_key = (tau_lfc, tau_var, tau_kl, family_key)
+        tau_lfc_values = _normalize_tau(tau_lfc)
+        tau_var_values = _normalize_tau(tau_var)
+        tau_kl_values = _normalize_tau(tau_kl)
+        cache_key = (tau_lfc_values, tau_var_values, tau_kl_values, family_key)
         if (
             self._biological_results is None
             or self._cached_bio_taus != cache_key
@@ -108,9 +111,9 @@ class EmpiricalResultsMixin:
                 mu_samples_B=self.mu_samples_B,
                 phi_samples_A=self.phi_samples_A,
                 phi_samples_B=self.phi_samples_B,
-                tau_lfc=tau_lfc,
-                tau_var=tau_var,
-                tau_kl=tau_kl,
+                tau_lfc=tau_lfc_values,
+                tau_var=tau_var_values,
+                tau_kl=tau_kl_values,
                 gene_names=self.gene_names,
                 metric_families=family_key,
                 p_layout=_p_layout,
@@ -478,6 +481,58 @@ class EmpiricalResultsMixin:
 
         return self
 
+    def _resolve_dataframe_tau_grids(
+        self,
+        tau: float | Sequence[float],
+        tau_lfc: float | Sequence[float] | None,
+        tau_var: float | Sequence[float] | None,
+        tau_kl: float | Sequence[float] | None,
+    ) -> dict[str, tuple[float, ...]]:
+        """Resolve effective tau grids for CLR and biological exports.
+
+        Parameters
+        ----------
+        tau : float or sequence of float
+            Caller-requested CLR practical threshold(s).
+        tau_lfc : float, sequence of float, or None
+            Optional explicit threshold(s) for biological LFC.
+        tau_var : float, sequence of float, or None
+            Optional explicit threshold(s) for biological LVR.
+        tau_kl : float, sequence of float, or None
+            Optional explicit threshold(s) for biological KL.
+
+        Returns
+        -------
+        dict[str, tuple[float, ...]]
+            Effective sorted tau tuples for ``clr``, ``bio_lfc``,
+            ``bio_lvr``, and ``bio_kl``.
+
+        Notes
+        -----
+        Broadcasting is intentionally conservative for backward compatibility:
+        biological families inherit the CLR tau grid only when CLR receives
+        multiple tau values and the corresponding metric-specific tau was not
+        explicitly provided.
+        """
+
+        clr_tau_values = _normalize_tau(tau)
+
+        def _resolve_metric_tau(
+            metric_tau: float | Sequence[float] | None,
+        ) -> tuple[float, ...]:
+            if metric_tau is not None:
+                return _normalize_tau(metric_tau)
+            if len(clr_tau_values) > 1:
+                return clr_tau_values
+            return (0.0,)
+
+        return {
+            "clr": clr_tau_values,
+            "bio_lfc": _resolve_metric_tau(tau_lfc),
+            "bio_lvr": _resolve_metric_tau(tau_var),
+            "bio_kl": _resolve_metric_tau(tau_kl),
+        }
+
     def to_dataframe(
         self,
         tau: float | Sequence[float] = 0.0,
@@ -489,9 +544,9 @@ class EmpiricalResultsMixin:
         use_lfsr_tau_lvr: bool = True,
         target_pefp_kl: float | None = None,
         metrics: str | list[str] | tuple[str, ...] | None = None,
-        tau_lfc: float = 0.0,
-        tau_var: float = 0.0,
-        tau_kl: float = 0.0,
+        tau_lfc: float | Sequence[float] | None = None,
+        tau_var: float | Sequence[float] | None = None,
+        tau_kl: float | Sequence[float] | None = None,
         column_naming: str = "prefixed",
         tau_format: str = "suffix",
     ):
@@ -533,19 +588,23 @@ class EmpiricalResultsMixin:
               (``mu_*``, ``var_*``, ``max_bio_expr``).
             - ``'all'``: alias that expands to all families supported by
               empirical/shrinkage results.
-        tau_lfc : float, default=0.0
-            Practical threshold passed to :meth:`biological_level` for LFC.
-        tau_var : float, default=0.0
-            Practical threshold passed to :meth:`biological_level` for LVR.
-        tau_kl : float, default=0.0
-            Practical threshold passed to :meth:`biological_level` for KL.
+        tau_lfc : float, sequence of float, or None, default=None
+            Practical threshold(s) for biological LFC. If ``None`` and ``tau``
+            contains multiple values, the biological LFC block inherits the CLR
+            tau grid. Otherwise it defaults to ``0.0``.
+        tau_var : float, sequence of float, or None, default=None
+            Practical threshold(s) for biological LVR with the same broadcast
+            rule as ``tau_lfc``.
+        tau_kl : float, sequence of float, or None, default=None
+            Practical threshold(s) for biological KL with the same broadcast
+            rule as ``tau_lfc``.
         column_naming : {'prefixed', 'legacy'}, default='prefixed'
             Column naming convention. ``'prefixed'`` produces explicit family
             namespaces (for example ``clr_*``, ``bio_lfc_*``). ``'legacy'``
             preserves historical un-prefixed biological names and CLR names.
         tau_format : {'suffix', 'multiindex'}, default='suffix'
-            Layout used for CLR multi-tau columns when ``tau`` contains more
-            than one threshold.
+            Layout used for multi-tau exports across CLR and biological
+            tau-dependent columns.
 
         Returns
         -------
@@ -557,6 +616,12 @@ class EmpiricalResultsMixin:
 
         metric_families = self._resolve_dataframe_metrics(metrics)
         include_clr = "clr" in metric_families
+        tau_grids = self._resolve_dataframe_tau_grids(
+            tau=tau,
+            tau_lfc=tau_lfc,
+            tau_var=tau_var,
+            tau_kl=tau_kl,
+        )
 
         # Keep PEFP semantics explicit: thresholding uses CLR lfsr columns.
         if target_pefp is not None and not include_clr:
@@ -579,7 +644,7 @@ class EmpiricalResultsMixin:
 
         if include_clr:
             df = super().to_dataframe(
-                tau=tau,
+                tau=tau_grids["clr"],
                 target_pefp=target_pefp,
                 use_lfsr_tau=use_lfsr_tau,
                 metrics="clr",
@@ -615,16 +680,17 @@ class EmpiricalResultsMixin:
             "bio_kl",
             "bio_aux",
         }
-        if any(family in metric_families for family in bio_families):
+        include_any_bio = any(family in metric_families for family in bio_families)
+        if include_any_bio:
             requested_bio_families = tuple(
                 family
                 for family in self._DATAFRAME_METRIC_ORDER
                 if family in bio_families and family in metric_families
             )
             bio = self.biological_level(
-                tau_lfc=tau_lfc,
-                tau_var=tau_var,
-                tau_kl=tau_kl,
+                tau_lfc=tau_grids["bio_lfc"],
+                tau_var=tau_grids["bio_lvr"],
+                tau_kl=tau_grids["bio_kl"],
                 metric_families=requested_bio_families,
             )
             mask = None
@@ -661,71 +727,201 @@ class EmpiricalResultsMixin:
                     return legacy_map[metric]
                 return f"{metric}_is_de"
 
+            def _using_multiindex_columns() -> bool:
+                return isinstance(df.columns, pd.MultiIndex)
+
+            def _ensure_multiindex_columns() -> None:
+                """Convert flat columns to (metric, tau) MultiIndex in-place."""
+                nonlocal df
+                if _using_multiindex_columns():
+                    return
+                tuples = [(str(col), "") for col in df.columns]
+                df.columns = pd.MultiIndex.from_tuples(
+                    tuples, names=("metric", "tau")
+                )
+
+            def _assign_scalar_column(name: str, values: np.ndarray) -> None:
+                """Assign tau-independent values under current naming mode."""
+                if tau_format == "multiindex" and _using_multiindex_columns():
+                    df[(name, "")] = np.asarray(values)
+                else:
+                    df[name] = np.asarray(values)
+
+            def _assign_tau_series(
+                base_name: str,
+                values: np.ndarray,
+                tau_values: tuple[float, ...],
+            ) -> None:
+                """Assign tau-dependent arrays in suffix or MultiIndex layout."""
+                arr = np.asarray(values)
+                if arr.ndim == 1:
+                    _assign_scalar_column(base_name, arr)
+                    return
+                if arr.ndim != 2:
+                    raise ValueError(
+                        f"Expected 1D or 2D tau-dependent values for {base_name}, "
+                        f"got shape {arr.shape}."
+                    )
+                if arr.shape[1] != len(tau_values):
+                    raise ValueError(
+                        f"Tau-dependent value shape {arr.shape} does not match "
+                        f"tau grid length {len(tau_values)} for {base_name}."
+                    )
+                if len(tau_values) == 1:
+                    _assign_scalar_column(base_name, arr[:, 0])
+                    return
+                if tau_format == "multiindex":
+                    _ensure_multiindex_columns()
+                    for idx, tau_value in enumerate(tau_values):
+                        tau_label = _format_tau_label(tau_value)
+                        df[(base_name, tau_label)] = arr[:, idx]
+                else:
+                    for idx, tau_value in enumerate(tau_values):
+                        tau_label = _format_tau_label(tau_value)
+                        df[f"{base_name}_tau{tau_label}"] = arr[:, idx]
+
+            def _assign_metric_specific_calls(
+                *,
+                score_values: np.ndarray,
+                tau_values: tuple[float, ...],
+                target_pefp_metric: float,
+                call_base_name: str,
+            ) -> None:
+                """Create PEFP-controlled DE calls for scalar or tau-grid scores."""
+                score_arr = np.asarray(score_values)
+                if score_arr.ndim == 1 or len(tau_values) == 1:
+                    score_vec = (
+                        score_arr
+                        if score_arr.ndim == 1
+                        else np.asarray(score_arr)[:, 0]
+                    )
+                    is_de, _ = self._compute_is_de_mask_from_scores(
+                        score_vec,
+                        target_pefp=target_pefp_metric,
+                    )
+                    _assign_scalar_column(call_base_name, np.asarray(is_de, dtype=bool))
+                    return
+                if score_arr.ndim != 2:
+                    raise ValueError(
+                        f"Expected 2D score matrix for multi-tau calls, got "
+                        f"shape {score_arr.shape}."
+                    )
+                if score_arr.shape[1] != len(tau_values):
+                    raise ValueError(
+                        f"Score matrix shape {score_arr.shape} does not match "
+                        f"tau grid length {len(tau_values)}."
+                    )
+                if tau_format == "multiindex":
+                    _ensure_multiindex_columns()
+                    for idx, tau_value in enumerate(tau_values):
+                        tau_label = _format_tau_label(tau_value)
+                        is_de, _ = self._compute_is_de_mask_from_scores(
+                            score_arr[:, idx],
+                            target_pefp=target_pefp_metric,
+                        )
+                        df[(call_base_name, tau_label)] = np.asarray(
+                            is_de, dtype=bool
+                        )
+                else:
+                    for idx, tau_value in enumerate(tau_values):
+                        tau_label = _format_tau_label(tau_value)
+                        is_de, _ = self._compute_is_de_mask_from_scores(
+                            score_arr[:, idx],
+                            target_pefp=target_pefp_metric,
+                        )
+                        df[f"{call_base_name}_tau{tau_label}"] = np.asarray(
+                            is_de, dtype=bool
+                        )
+
             # Keep each biological block grouped so callers can request subsets.
             if "bio_lfc" in metric_families:
+                lfc_tau_values = tuple(float(v) for v in bio["lfc_tau_values"])
                 for key in (
                     "lfc_mean",
                     "lfc_sd",
                     "lfc_prob_positive",
                     "lfc_lfsr",
+                ):
+                    _assign_scalar_column(_bio_column_name(key), _bio_values(key))
+                for key in (
                     "lfc_prob_up",
                     "lfc_prob_down",
                     "lfc_prob_effect",
                     "lfc_lfsr_tau",
                 ):
-                    df[_bio_column_name(key)] = _bio_values(key)
+                    _assign_tau_series(
+                        _bio_column_name(key),
+                        _bio_values(key),
+                        lfc_tau_values,
+                    )
                 if target_pefp_lfc is not None:
                     lfc_score_key = (
                         "lfc_lfsr_tau" if use_lfsr_tau_lfc else "lfc_lfsr"
                     )
-                    lfc_is_de, _ = self._compute_is_de_mask_from_scores(
-                        _bio_values(lfc_score_key),
-                        target_pefp=target_pefp_lfc,
-                    )
-                    df[_call_column_name("bio_lfc")] = np.asarray(
-                        lfc_is_de, dtype=bool
+                    _assign_metric_specific_calls(
+                        score_values=_bio_values(lfc_score_key),
+                        tau_values=lfc_tau_values,
+                        target_pefp_metric=target_pefp_lfc,
+                        call_base_name=_call_column_name("bio_lfc"),
                     )
 
             if "bio_lvr" in metric_families:
+                lvr_tau_values = tuple(float(v) for v in bio["lvr_tau_values"])
                 for key in (
                     "lvr_mean",
                     "lvr_sd",
                     "lvr_prob_positive",
                     "lvr_lfsr",
+                ):
+                    _assign_scalar_column(_bio_column_name(key), _bio_values(key))
+                for key in (
                     "lvr_prob_up",
                     "lvr_prob_down",
                     "lvr_prob_effect",
                     "lvr_lfsr_tau",
                 ):
-                    df[_bio_column_name(key)] = _bio_values(key)
+                    _assign_tau_series(
+                        _bio_column_name(key),
+                        _bio_values(key),
+                        lvr_tau_values,
+                    )
                 if target_pefp_lvr is not None:
                     lvr_score_key = (
                         "lvr_lfsr_tau" if use_lfsr_tau_lvr else "lvr_lfsr"
                     )
-                    lvr_is_de, _ = self._compute_is_de_mask_from_scores(
-                        _bio_values(lvr_score_key),
-                        target_pefp=target_pefp_lvr,
-                    )
-                    df[_call_column_name("bio_lvr")] = np.asarray(
-                        lvr_is_de, dtype=bool
+                    _assign_metric_specific_calls(
+                        score_values=_bio_values(lvr_score_key),
+                        tau_values=lvr_tau_values,
+                        target_pefp_metric=target_pefp_lvr,
+                        call_base_name=_call_column_name("bio_lvr"),
                     )
 
             if "bio_kl" in metric_families:
-                for key in ("kl_mean", "kl_sd", "kl_prob_effect"):
-                    df[_bio_column_name(key)] = _bio_values(key)
+                kl_tau_values = tuple(float(v) for v in bio["kl_tau_values"])
+                for key in ("kl_mean", "kl_sd"):
+                    _assign_scalar_column(_bio_column_name(key), _bio_values(key))
+                _assign_tau_series(
+                    _bio_column_name("kl_prob_effect"),
+                    _bio_values("kl_prob_effect"),
+                    kl_tau_values,
+                )
                 if target_pefp_kl is not None:
                     # KL is non-negative and non-directional, so we map
                     # ``prob_effect`` to an error score via lfer.
                     kl_lfer = 1.0 - _bio_values("kl_prob_effect")
-                    kl_is_de, _ = self._compute_is_de_mask_from_scores(
-                        kl_lfer, target_pefp=target_pefp_kl
+                    kl_lfer_name = (
+                        "kl_lfer" if column_naming == "legacy" else "bio_kl_lfer"
                     )
-                    if column_naming == "legacy":
-                        df["kl_lfer"] = kl_lfer
-                    else:
-                        df["bio_kl_lfer"] = kl_lfer
-                    df[_call_column_name("bio_kl")] = np.asarray(
-                        kl_is_de, dtype=bool
+                    _assign_tau_series(
+                        kl_lfer_name,
+                        kl_lfer,
+                        kl_tau_values,
+                    )
+                    _assign_metric_specific_calls(
+                        score_values=kl_lfer,
+                        tau_values=kl_tau_values,
+                        target_pefp_metric=target_pefp_kl,
+                        call_base_name=_call_column_name("bio_kl"),
                     )
 
             if "bio_aux" in metric_families:
@@ -736,7 +932,7 @@ class EmpiricalResultsMixin:
                     "var_B_mean",
                     "max_bio_expr",
                 ):
-                    df[_bio_column_name(key)] = _bio_values(key)
+                    _assign_scalar_column(_bio_column_name(key), _bio_values(key))
 
         return df
 

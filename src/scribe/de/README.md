@@ -541,6 +541,37 @@ df_multi = de.to_dataframe(tau=taus, tau_format="multiindex")
 # ("clr_prob_effect", "0"), ("clr_prob_effect", "0.2"), ("clr_prob_effect", "0.5")
 ```
 
+When biological families are requested, a multi-tau CLR input now broadcasts to
+biological practical-significance metrics by default:
+
+```python
+taus = [0.0, 0.2, 0.5]
+
+# Broadcasts taus to CLR + biological families
+df = de.to_dataframe(
+    metrics=["clr", "bio_lfc", "bio_lvr", "bio_kl"],
+    tau=taus,
+    tau_format="suffix",
+)
+
+# Example biological columns:
+# bio_lfc_lfsr_tau_tau0, bio_lfc_lfsr_tau_tau0.2, ...
+# bio_lfc_prob_effect_tau0, bio_lvr_prob_effect_tau0.2, ...
+# bio_kl_prob_effect_tau0.5
+```
+
+Use metric-specific tau arguments to override broadcast behavior per family:
+
+```python
+df = de.to_dataframe(
+    metrics=["bio_lfc", "bio_lvr", "bio_kl"],
+    tau=[0.0, 0.2, 0.5],  # default grid
+    tau_lfc=0.15,         # explicit LFC override (scalar)
+    # tau_var omitted -> inherits CLR grid
+    tau_kl=[0.1, 0.3],    # explicit KL override (custom grid)
+)
+```
+
 For empirical and shrinkage results, the `metrics` argument allows composable
 selection of CLR and biological metric families:
 
@@ -594,6 +625,20 @@ df = de.to_dataframe(
 # Emits: bio_lfc_is_de, bio_lvr_is_de, bio_kl_is_de
 ```
 
+Under multi-tau exports, metric-specific call columns follow the same layout as
+their corresponding score columns:
+
+- `tau_format="suffix"`:
+  - `bio_lfc_is_de_tau0`, `bio_lfc_is_de_tau0.2`, ...
+  - `bio_lvr_is_de_tau0`, ...
+  - `bio_kl_is_de_tau0`, ...
+- `tau_format="multiindex"`:
+  - `("bio_lfc_is_de", "0")`, `("bio_lfc_is_de", "0.2")`, ...
+  - analogous for `bio_lvr_is_de` and `bio_kl_is_de`.
+
+If `use_lfsr_tau_lfc=False` or `use_lfsr_tau_lvr=False`, calls use the scalar
+`lfsr` score and remain a single `*_is_de` column.
+
 LFC/LVR calls use lfsr-based error scores (or lfsr_tau variants):
 
 - `target_pefp_lfc`, `use_lfsr_tau_lfc`
@@ -603,6 +648,9 @@ KL calls are non-directional, so PEFP is controlled via local false effect rate:
 
 - `bio_kl_lfer = 1 - bio_kl_prob_effect`
 - `target_pefp_kl` thresholds `bio_kl_lfer` with the same PEFP algorithm.
+
+In multi-tau mode, `bio_kl_lfer` is also emitted per tau (suffix or MultiIndex)
+when `target_pefp_kl` is requested.
 
 #### PEFP-controlled DE calls
 

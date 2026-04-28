@@ -731,6 +731,102 @@ class TestEmpiricalToDataframe:
             avg_lfer = np.mean(called["bio_kl_lfer"].to_numpy())
             assert avg_lfer <= target + 1e-8
 
+    def test_multi_tau_broadcasts_to_bio_suffix(self, emp_de_bio):
+        """Multi-tau CLR input should broadcast to biological families by default."""
+        df = emp_de_bio.to_dataframe(
+            metrics=["clr", "bio_lfc", "bio_kl"],
+            tau=[0.0, 0.2],
+            tau_format="suffix",
+            target_pefp_lfc=0.10,
+            target_pefp_kl=0.10,
+        )
+
+        # CLR still exports multi-tau columns.
+        assert "clr_lfsr_tau_tau0" in df.columns
+        assert "clr_lfsr_tau_tau0.2" in df.columns
+
+        # Biological practical-effect columns should also expand by tau.
+        lfc_prob_effect_cols = [
+            col
+            for col in df.columns
+            if col.startswith("bio_lfc_prob_effect_tau")
+        ]
+        kl_prob_effect_cols = [
+            col
+            for col in df.columns
+            if col.startswith("bio_kl_prob_effect_tau")
+        ]
+        assert len(lfc_prob_effect_cols) == 2
+        assert len(kl_prob_effect_cols) == 2
+        assert "bio_lfc_prob_effect" not in df.columns
+        assert "bio_kl_prob_effect" not in df.columns
+
+        # PEFP call columns should follow the same per-tau expansion.
+        lfc_is_de_cols = [
+            col for col in df.columns if col.startswith("bio_lfc_is_de_tau")
+        ]
+        kl_is_de_cols = [
+            col for col in df.columns if col.startswith("bio_kl_is_de_tau")
+        ]
+        assert len(lfc_is_de_cols) == 2
+        assert len(kl_is_de_cols) == 2
+
+    def test_multi_tau_broadcast_respects_metric_overrides(self, emp_de_bio):
+        """Explicit metric taus should override CLR broadcast per family."""
+        df = emp_de_bio.to_dataframe(
+            metrics=["bio_lfc", "bio_lvr"],
+            tau=[0.0, 0.2, 0.4],
+            tau_lfc=0.15,
+            tau_format="suffix",
+        )
+
+        # LFC has an explicit scalar tau override, so its tau-dependent
+        # outputs stay scalar.
+        assert "bio_lfc_prob_effect" in df.columns
+        assert not any(
+            col.startswith("bio_lfc_prob_effect_tau") for col in df.columns
+        )
+
+        # LVR inherits CLR multi-tau grid because no explicit tau_var was given.
+        lvr_prob_effect_cols = [
+            col
+            for col in df.columns
+            if col.startswith("bio_lvr_prob_effect_tau")
+        ]
+        assert len(lvr_prob_effect_cols) == 3
+
+    def test_multi_tau_broadcast_multiindex_layout(self, emp_de_bio):
+        """MultiIndex output should carry tau labels for bio practical columns."""
+        import pandas as pd
+
+        df = emp_de_bio.to_dataframe(
+            metrics=["bio_lfc"],
+            tau=[0.0, 0.2],
+            tau_format="multiindex",
+            target_pefp_lfc=0.10,
+        )
+        assert isinstance(df.columns, pd.MultiIndex)
+
+        # Collect tau labels for one practical-significance metric.
+        lfc_tau_labels = sorted(
+            {
+                tau_label
+                for metric, tau_label in df.columns
+                if metric == "bio_lfc_prob_effect" and tau_label != ""
+            }
+        )
+        assert lfc_tau_labels == ["0", "0.2"]
+
+        # The per-tau call column should use the same labels.
+        call_tau_labels = sorted(
+            {
+                tau_label
+                for metric, tau_label in df.columns
+                if metric == "bio_lfc_is_de" and tau_label != ""
+            }
+        )
+        assert call_tau_labels == ["0", "0.2"]
+
     def test_bio_metrics_require_biological_samples(self, emp_de):
         """Requesting biological families raises when biological data is absent."""
         with pytest.raises(RuntimeError, match="Biological-level DE requires"):

@@ -55,6 +55,7 @@ computation path based on which posterior samples are supplied:
 """
 
 import warnings
+from collections.abc import Sequence
 from typing import Optional, List, Iterable, Set, TYPE_CHECKING
 
 import jax.numpy as jnp
@@ -226,9 +227,9 @@ def biological_differential_expression(
     mu_samples_B: Optional[jnp.ndarray] = None,
     phi_samples_A: Optional[jnp.ndarray] = None,
     phi_samples_B: Optional[jnp.ndarray] = None,
-    tau_lfc: float = 0.0,
-    tau_var: float = 0.0,
-    tau_kl: float = 0.0,
+    tau_lfc: float | Sequence[float] = 0.0,
+    tau_var: float | Sequence[float] = 0.0,
+    tau_kl: float | Sequence[float] = 0.0,
     gene_names: Optional[List[str]] = None,
     metric_families: Optional[Iterable[str]] = None,
     p_layout: Optional["AxisLayout"] = None,
@@ -264,12 +265,12 @@ def biological_differential_expression(
         When provided, the Gamma rate is ``1 / phi`` (avoids ``p/(1-p)``).
     phi_samples_B : jnp.ndarray, optional, shape ``(N, D)`` or ``(N,)``
         Same as above for condition B.
-    tau_lfc : float, default=0.0
-        Practical significance threshold for the biological LFC.
-    tau_var : float, default=0.0
-        Practical significance threshold for the log-variance ratio.
-    tau_kl : float, default=0.0
-        Practical significance threshold for the Jeffreys divergence.
+    tau_lfc : float or sequence of float, default=0.0
+        Practical significance threshold(s) for biological LFC summaries.
+    tau_var : float or sequence of float, default=0.0
+        Practical significance threshold(s) for log-variance-ratio summaries.
+    tau_kl : float or sequence of float, default=0.0
+        Practical significance threshold(s) for Jeffreys-divergence summaries.
     gene_names : list of str, optional
         Gene names.  If ``None``, generic names are generated.
     metric_families : iterable of {'bio_lfc', 'bio_lvr', 'bio_kl', 'bio_aux'}, optional
@@ -298,19 +299,25 @@ def biological_differential_expression(
         - ``lfc_prob_down`` : ``P(LFC_g < -tau_lfc | data)``.
         - ``lfc_prob_effect`` : ``P(|LFC_g| > tau_lfc | data)``.
         - ``lfc_lfsr_tau`` : Practical-significance lfsr for LFC.
+          When multiple tau values are provided, these tau-dependent fields
+          have shape ``(D, K)`` and ``lfc_tau_values`` stores the thresholds.
 
         **Variance shift (LVR)**
 
         - ``lvr_mean``, ``lvr_sd``, ``lvr_prob_positive``,
           ``lvr_lfsr``, ``lvr_prob_up``, ``lvr_prob_down``,
           ``lvr_prob_effect``, ``lvr_lfsr_tau`` : Analogous
-          statistics for the log-variance ratio.
+          statistics for the log-variance ratio. Tau-dependent fields use
+          shape ``(D, K)`` when multiple thresholds are requested and
+          ``lvr_tau_values`` stores the thresholds.
 
         **Distributional shift (Jeffreys divergence)**
 
         - ``kl_mean`` : Posterior mean Jeffreys divergence.
         - ``kl_sd`` : Posterior standard deviation.
         - ``kl_prob_effect`` : ``P(J_g > tau_kl | data)``.
+          With multiple thresholds this has shape ``(D, K)`` and
+          ``kl_tau_values`` stores the thresholds.
 
         **Auxiliary**
 
@@ -481,6 +488,7 @@ def biological_differential_expression(
                 "lfc_prob_down": lfc_stats["prob_down"],
                 "lfc_prob_effect": lfc_stats["prob_effect"],
                 "lfc_lfsr_tau": lfc_stats["lfsr_tau"],
+                "lfc_tau_values": lfc_stats["tau_values"],
             }
         )
     if include_lvr and lvr_stats is not None:
@@ -494,6 +502,7 @@ def biological_differential_expression(
                 "lvr_prob_down": lvr_stats["prob_down"],
                 "lvr_prob_effect": lvr_stats["prob_effect"],
                 "lvr_lfsr_tau": lvr_stats["lfsr_tau"],
+                "lvr_tau_values": lvr_stats["tau_values"],
             }
         )
     if include_kl and kl_stats is not None:
@@ -502,6 +511,7 @@ def biological_differential_expression(
                 "kl_mean": kl_stats["mean"],
                 "kl_sd": kl_stats["sd"],
                 "kl_prob_effect": kl_stats["prob_effect"],
+                "kl_tau_values": kl_stats["tau_values"],
             }
         )
     if include_aux:
@@ -560,7 +570,7 @@ def _resolve_biological_metric_families(
 
 def _summarise_signed_metric(
     samples: jnp.ndarray,
-    tau: float,
+    tau: float | Sequence[float],
 ) -> dict:
     """Summarise a signed per-gene metric (LFC or LVR) across samples.
 
@@ -570,8 +580,8 @@ def _summarise_signed_metric(
     ----------
     samples : array-like, shape ``(N, D)``
         Per-sample values of the signed metric.
-    tau : float
-        Practical significance threshold.
+    tau : float or sequence of float
+        Practical significance threshold(s).
 
     Returns
     -------
@@ -589,10 +599,26 @@ def _summarise_signed_metric(
     prob_positive = xp.mean(samples > 0, axis=0)
     lfsr = xp.minimum(prob_positive, 1.0 - prob_positive)
 
-    prob_up = xp.mean(samples > tau, axis=0)
-    prob_down = xp.mean(samples < -tau, axis=0)
-    prob_effect = prob_up + prob_down
-    lfsr_tau = 1.0 - xp.maximum(prob_up, prob_down)
+    # Normalize tau so we can support both scalar and multi-threshold output.
+    tau_values = _normalize_metric_tau(tau)
+    if len(tau_values) == 1:
+        tau_scalar = tau_values[0]
+        prob_up = xp.mean(samples > tau_scalar, axis=0)
+        prob_down = xp.mean(samples < -tau_scalar, axis=0)
+        prob_effect = prob_up + prob_down
+        lfsr_tau = 1.0 - xp.maximum(prob_up, prob_down)
+    else:
+        tau_array = xp.asarray(tau_values)
+        # Evaluate all thresholds in one broadcasted pass:
+        # samples (N, D) -> (N, D, 1), tau (K,) -> (1, 1, K).
+        prob_up = xp.mean(
+            samples[:, :, None] > tau_array[None, None, :], axis=0
+        )
+        prob_down = xp.mean(
+            samples[:, :, None] < -tau_array[None, None, :], axis=0
+        )
+        prob_effect = prob_up + prob_down
+        lfsr_tau = 1.0 - xp.maximum(prob_up, prob_down)
 
     return {
         "mean": mean,
@@ -603,12 +629,13 @@ def _summarise_signed_metric(
         "prob_down": prob_down,
         "prob_effect": prob_effect,
         "lfsr_tau": lfsr_tau,
+        "tau_values": tau_values,
     }
 
 
 def _summarise_nonneg_metric(
     samples: jnp.ndarray,
-    tau: float,
+    tau: float | Sequence[float],
 ) -> dict:
     """Summarise a non-negative per-gene metric (KL) across samples.
 
@@ -618,8 +645,8 @@ def _summarise_nonneg_metric(
     ----------
     samples : array-like, shape ``(N, D)``
         Per-sample values of the non-negative metric.
-    tau : float
-        Practical significance threshold.
+    tau : float or sequence of float
+        Practical significance threshold(s).
 
     Returns
     -------
@@ -632,10 +659,45 @@ def _summarise_nonneg_metric(
 
     mean = xp.mean(samples, axis=0)
     sd = xp.std(samples, axis=0, ddof=1)
-    prob_effect = xp.mean(samples > tau, axis=0)
+    tau_values = _normalize_metric_tau(tau)
+    if len(tau_values) == 1:
+        prob_effect = xp.mean(samples > tau_values[0], axis=0)
+    else:
+        tau_array = xp.asarray(tau_values)
+        prob_effect = xp.mean(
+            samples[:, :, None] > tau_array[None, None, :], axis=0
+        )
 
     return {
         "mean": mean,
         "sd": sd,
         "prob_effect": prob_effect,
+        "tau_values": tau_values,
     }
+
+
+def _normalize_metric_tau(tau: float | Sequence[float]) -> tuple[float, ...]:
+    """Normalize practical thresholds into a sorted tuple.
+
+    Parameters
+    ----------
+    tau : float or sequence of float
+        Practical significance threshold(s) for one metric family.
+
+    Returns
+    -------
+    tuple of float
+        Sorted thresholds used to produce deterministic output ordering.
+
+    Raises
+    ------
+    ValueError
+        If no threshold values are provided.
+    """
+    if isinstance(tau, Sequence) and not isinstance(tau, (str, bytes)):
+        tau_values = tuple(float(value) for value in tau)
+    else:
+        tau_values = (float(tau),)
+    if not tau_values:
+        raise ValueError("tau must contain at least one value.")
+    return tuple(sorted(tau_values))

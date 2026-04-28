@@ -834,6 +834,28 @@ class TestShrinkageMaskManagement:
         assert "bio_lvr_mean" not in df.columns
         assert "bio_kl_mean" not in df.columns
 
+    def test_shrinkage_multi_tau_broadcasts_to_bio(self, empirical_de):
+        """Shrinkage bio exports inherit CLR tau grids when overrides are unset."""
+        de_s = empirical_de.shrink()
+        df = de_s.to_dataframe(
+            metrics=["bio_lfc", "bio_lvr"],
+            tau=[0.0, 0.2],
+            tau_format="suffix",
+        )
+
+        lfc_prob_effect_cols = [
+            col
+            for col in df.columns
+            if col.startswith("bio_lfc_prob_effect_tau")
+        ]
+        lvr_prob_effect_cols = [
+            col
+            for col in df.columns
+            if col.startswith("bio_lvr_prob_effect_tau")
+        ]
+        assert len(lfc_prob_effect_cols) == 2
+        assert len(lvr_prob_effect_cols) == 2
+
     def test_shrinkage_method_chaining(self, empirical_de):
         """Mask management methods return self for chaining on shrinkage."""
         de_s = empirical_de.shrink()

@@ -319,6 +319,33 @@ class TestResultsObjectIntegration:
         assert "kl_mean" not in bio_lfc
         assert "kl_mean" in bio_kl
 
+    def test_multi_tau_outputs_and_normalized_cache_key(self):
+        """Multi-tau biological summaries should be 2D and cache order-invariant."""
+        N, D = 100, 3
+        r = jnp.ones((N, D)) * 5.0
+        p = jnp.ones((N, D)) * 0.3
+        results = ScribeEmpiricalDEResults(
+            delta_samples=jnp.zeros((N, D)),
+            gene_names=["a", "b", "c"],
+            label_A="A",
+            label_B="B",
+            r_samples_A=r,
+            r_samples_B=r,
+            p_samples_A=p,
+            p_samples_B=p,
+        )
+
+        # First call uses unsorted tau order.
+        bio1 = results.biological_level(tau_lfc=[0.5, 0.1], tau_var=[0.2, 0.0])
+        assert bio1["lfc_prob_effect"].shape == (D, 2)
+        assert bio1["lvr_prob_effect"].shape == (D, 2)
+        assert bio1["lfc_tau_values"] == (0.1, 0.5)
+        assert bio1["lvr_tau_values"] == (0.0, 0.2)
+
+        # Same thresholds in sorted order should hit the cache.
+        bio2 = results.biological_level(tau_lfc=[0.1, 0.5], tau_var=[0.0, 0.2])
+        assert bio1 is bio2
+
 
 class TestSelectiveMetricFamilies:
     """Validate family-selective biological computation behavior."""
