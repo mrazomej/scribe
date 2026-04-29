@@ -996,38 +996,78 @@ from $O(Gk)$ to $O(k)$ per cell.
 ### The diagonal $\underline{d}$ in this view {#sec-lnm-vae-d}
 
 The reparameterisation @eq-lnm-vae-reparam admits two practical regimes
-for the diagonal residual noise.
+for the diagonal residual noise. A subtle but important consequence of
+the VAE formulation is that the marginal covariance of
+$\underline{y}^{(c)}$ never has to be inverted: the ELBO involves only
+the standard Gaussian prior $\mathcal{N}(\underline{0},\,
+\underline{\underline{I}}_k)$ on $\underline{z}^{(c)}$ and the
+Multinomial likelihood on $\underline{u}^{(c)}$, neither of which
+requires $\text{Cov}(\underline{y}^{(c)})^{-1}$ or
+$\log |\text{Cov}(\underline{y}^{(c)})|$. The marginal covariance of
+$\underline{y}^{(c)}$ is therefore allowed to be **singular** without
+any numerical penalty---a freedom we did not have in the direct
+$(G-1)$-dim formulation of @sec-lnm-strategy-a, which evaluates
+$\log \mathcal{N}(\underline{y} \mid \underline{\mu},\,
+\underline{\underline{\Sigma}})$ as a density and therefore requires
+$\underline{\underline{\Sigma}}$ to be positive definite.
 
-**Fixed jitter mode.** Replace $\underline{d}$ with a small constant
-$d_0 > 0$ (e.g., $d_0 = 10^{-3}$) applied uniformly across genes. This
-skips the $\underline{\epsilon}^{(c)}$ sampling entirely and treats the
-model as $\underline{y}^{(c)} = \underline{\mu} +
-\underline{\underline{W}}\,\underline{z}^{(c)}$ with marginal covariance
-$\underline{\underline{W}}\,\underline{\underline{W}}^\top + d_0\,
-\underline{\underline{I}}_{G-1}$. The jitter regularises the rank-$k$
-structure numerically (positive-definiteness is automatic) but does not
-introduce an additional learnable degree of freedom. This is the
-simplest and cheapest mode and is sufficient when the $k$-dimensional
-bottleneck already explains essentially all of the compositional
-variance.
+**Strictly low-rank mode.** Drop the residual-noise term
+$\underline{\epsilon}^{(c)}$ entirely (equivalently, set $\underline{d}
+= \underline{0}$). The generative path becomes the deterministic linear
+decoder
+
+$$
+\underline{y}^{(c)} = \underline{\mu} + \underline{\underline{W}}\,\underline{z}^{(c)},
+\qquad \underline{z}^{(c)} \sim \mathcal{N}(\underline{0},\, \underline{\underline{I}}_k),
+$${#eq-lnm-vae-low-rank}
+
+with marginal covariance *exactly*
+$\underline{\underline{W}}\,\underline{\underline{W}}^\top$. This
+covariance is rank-deficient---rank $k$ in an ambient $(G-1)$-dimensional
+space---but, by the argument above, this is harmless: no part of the
+loss inverts it. Compositions in ALR space genuinely live on a
+$k$-dimensional affine manifold up to multinomial sampling noise, and
+the model is internally consistent. This is the simplest and cheapest
+mode: no per-cell stochastic node beyond $\underline{z}^{(c)}$, no
+encoder output for residual noise, and the encoder still emits only
+$2k$ variational parameters per cell. It is sufficient whenever the
+$k$-dimensional bottleneck already explains essentially all of the
+compositional variance.
 
 **Learned mode.** Treat $\underline{d}$ as a positive learnable per-gene
 parameter, with $\underline{\epsilon}^{(c)}$ a per-cell stochastic node
-whose variational posterior equals its prior. The KL contribution from
-$\underline{\epsilon}^{(c)}$ is exactly zero, so the gradient on
-$\underline{d}$ comes entirely from the multinomial log-likelihood
-through the reparameterised path $\underline{y}^{(c)} = \underline{\mu}
-+ \underline{\underline{W}}\,\underline{z}^{(c)} +
-\text{diag}(\sqrt{\underline{d}})\,\underline{\epsilon}^{(c)}$. This
-recovers the full $\underline{\underline{W}}\,
-\underline{\underline{W}}^\top + \text{diag}(\underline{d})$ marginal
-from @eq-lnm-vae-marginal at the cost of one additional $(G-1)$-vector
-of stochastic noise per cell---cheap, since $\underline{\epsilon}^{(c)}$
-has no posterior and no encoder output.
+whose variational posterior is set equal to its prior. The KL
+contribution from $\underline{\epsilon}^{(c)}$ is exactly zero, so the
+gradient on $\underline{d}$ comes entirely from the multinomial
+log-likelihood through the reparameterised path
 
-In both regimes, the rank-$k$ structure---the part of the covariance
-that captures cross-gene correlations and is the object of scientific
-interest---lives entirely in the decoder weights $\underline{\underline{W}}$.
+$$
+\underline{y}^{(c)} = \underline{\mu} +
+\underline{\underline{W}}\,\underline{z}^{(c)} +
+\text{diag}(\sqrt{\underline{d}})\,\underline{\epsilon}^{(c)}.
+$${#eq-lnm-vae-learned}
+
+This recovers the full $\underline{\underline{W}}\,
+\underline{\underline{W}}^\top + \text{diag}(\underline{d})$ marginal of
+@eq-lnm-vae-marginal at the cost of one additional $(G-1)$-vector of
+stochastic noise per cell---cheap, since $\underline{\epsilon}^{(c)}$
+has no posterior and no encoder output. The mode is appropriate when
+the data exhibits gene-specific compositional fluctuations that the
+$k$-rank shared factor cannot absorb.
+
+A *fixed*, non-zero diagonal (i.e., $\underline{d} = d_0\,
+\underline{1}$ with $d_0$ chosen rather than learned) is also possible,
+but it requires sampling $\underline{\epsilon}^{(c)}$ exactly as in the
+learned mode and trades the gain of a learnable per-gene scale for a
+single hyperparameter. In the VAE form there is no numerical
+justification for such a fixed jitter---it cannot serve the
+positive-definiteness role it played in the direct formulation---so we
+do not develop it as a separate mode.
+
+In both modes, the rank-$k$ structure---the part of the covariance that
+captures cross-gene correlations and is the object of scientific
+interest---lives entirely in the decoder weights
+$\underline{\underline{W}}$.
 
 ### Comparison to nonlinear-decoder VAEs {#sec-lnm-vae-vs-scvi}
 
@@ -1330,8 +1370,10 @@ implementation artefacts are:
   `scribe.models.components.likelihoods.lnm`). Implements the joint
   observation $\text{NB}(u_T \mid r_T, \hat{p})$ on totals plus
   $\text{Multinomial}(u_T,\, \text{ALR}^{-1}(\underline{y}))$ on counts,
-  with `d_mode in {"fixed", "learned"}` selecting between the two
-  regimes from @sec-lnm-vae-d.
+  with `d_mode in {"low_rank", "learned"}` selecting between the two
+  regimes from @sec-lnm-vae-d (strictly rank-$k$ marginal vs full
+  $\underline{\underline{W}}\,\underline{\underline{W}}^\top +
+  \text{diag}(\underline{d})$).
 - **Parameterisation**: `LogisticNormalParameterization` (in
   `scribe.models.parameterizations`). Declares
   $r_T,\,\hat{p},\,[\underline{d}]$ as core numpyro sites; the
