@@ -37,7 +37,11 @@ In this section, we develop an alternative compositional model---the
 **Logistic-Normal Multinomial** (LNM)---that replaces the Dirichlet prior on
 compositions with a logistic-normal distribution. This substitution introduces
 an explicit, parameterizable covariance structure in log-ratio space, enabling
-the model to represent arbitrary cross-gene correlations. The trade-off is that
+the model to represent arbitrary cross-gene correlations. Beyond the statistical
+motivation, the logistic-normal has a direct biophysical justification: it is
+the steady-state distribution of a system of interacting genes under the linear
+noise approximation, with the covariance determined by the gene regulatory
+network's Jacobian (see @sec-lnm-biophysical). The trade-off is that
 the Dirichlet-Multinomial's closed-form integral is lost, requiring approximate
 inference techniques for the per-cell composition latent variable.
 
@@ -92,7 +96,11 @@ demonstrated in our synthetic validation experiments, the low-rank guide's $W$
 factor captures **likelihood-induced coupling**---generic posterior
 correlations arising from shared data and model structure---which overwhelms
 any true generative correlation signal and makes direct extraction of
-gene-gene dependencies unreliable.
+gene-gene dependencies unreliable. This statistical limitation also
+has a biophysical counterpart: the Dirichlet arises from the assumption
+that genes transcribe independently, whereas real genes form regulatory
+networks that induce the very correlations the Dirichlet cannot represent
+(see @sec-lnm-biophysical for the full derivation).
 
 ### In log-ratio space, the limitation is even clearer {#sec-lnm-dirichlet-logr}
 
@@ -337,6 +345,378 @@ genes in log-ratio space), while $k = G - 1$ recovers the full covariance.
 The critical row is the last one: the Dirichlet-Multinomial integral has a
 closed form, but the logistic-normal-multinomial does not. This is the
 fundamental trade-off between the two approaches.
+
+## Biophysical justification: steady-state gene regulatory networks {#sec-lnm-biophysical}
+
+The preceding section established a *statistical* motivation for the
+logistic-normal: the Dirichlet has zero free correlation parameters,
+while the logistic-normal has $O(G^2)$ (or $O(Gk)$ in low-rank form).
+This section develops a *biophysical* motivation. We show that the
+logistic-normal on gene compositions is the natural steady-state
+distribution of a system of interacting genes under standard stochastic
+gene expression theory, whereas the Dirichlet-Multinomial arises only
+under the assumption that genes are transcriptionally independent.
+
+### Recap: the biophysics of the Dirichlet-Multinomial {#sec-lnm-bio-dm-recap}
+
+In @sec-dirichlet-multinomial, the Dirichlet-Multinomial was derived from
+a biophysical starting point: each gene $g$ undergoes independent bursty
+transcription, with the steady-state mRNA production rate following a
+Gamma distribution,
+
+$$
+\lambda_g \sim \text{Gamma}(r_g,\, \beta),
+\quad g = 1, \ldots, G,
+$${#eq-lnm-bio-gamma}
+
+where $r_g$ is the burst frequency (related to the promoter switching
+rate) and $\beta$ is the burst size. The independence of the $\lambda_g$
+across genes is a direct consequence of the assumption that each
+promoter operates autonomously: the on/off kinetics of gene $g$ do not
+depend on the expression level of any other gene $g'$.
+
+Normalising these independent rates to a composition yields the
+Dirichlet:
+
+$$
+\rho_g = \frac{\lambda_g}{\sum_{j=1}^G \lambda_j},
+\quad \underline{\rho} \sim \text{Dir}(\underline{r}).
+$${#eq-lnm-bio-dirichlet}
+
+The key property inherited from the independence assumption is that the
+composition's covariance structure is fully determined by the
+concentration vector $\underline{r}$, with no free parameters for
+cross-gene correlations (as shown in @sec-lnm-dirichlet-limitations).
+This is not a deficiency of the mathematical formalism---it is a correct
+consequence of the physical model of non-interacting promoters.
+
+### Gene regulatory networks: genes are not isolated {#sec-lnm-bio-grn}
+
+In reality, genes do not transcribe in isolation. They form **gene
+regulatory networks** (GRNs) in which the product of one gene (typically
+a transcription factor) modulates the transcription rate of another.
+Activation, repression, and more complex regulatory motifs (feed-forward
+loops, toggle switches, cascades) create coupling between the expression
+dynamics of different genes. This coupling is the physical origin of the
+cross-gene correlations that the Dirichlet model cannot represent.
+
+To formalise this, let $\underline{\lambda}(t) = (\lambda_1(t), \ldots,
+\lambda_G(t))$ be the vector of mRNA production rates (or abundances) at
+time $t$. The deterministic dynamics of the GRN can be written as a
+system of ordinary differential equations,
+
+$$
+\frac{d\lambda_g}{dt} = b_g(\underline{\lambda}) - \gamma_g \lambda_g,
+\quad g = 1, \ldots, G,
+$${#eq-lnm-bio-grn-ode}
+
+where $b_g(\underline{\lambda})$ is the **production rate** of gene $g$,
+which in general depends on the abundances of all other genes (through
+transcription factor binding, signalling cascades, etc.), and $\gamma_g$
+is the first-order degradation rate. The function
+$b_g(\underline{\lambda})$ encodes the full regulatory logic of the
+network.
+
+In the independent-gene model underlying the DM,
+$b_g(\underline{\lambda}) = b_g$ is a constant: the production rate of
+each gene is independent of all others. The GRN model relaxes this to
+allow $b_g$ to depend on $\underline{\lambda}$, introducing the
+cross-gene coupling that generates correlations.
+
+### Stochastic dynamics: the Chemical Langevin Equation {#sec-lnm-bio-cle}
+
+In a single cell, the dynamics of @eq-lnm-bio-grn-ode are stochastic:
+mRNA molecules are produced in discrete bursts and degraded
+stochastically. For sufficiently high molecular counts---the regime
+relevant to most genes detected in scRNA-seq---the Chemical Langevin
+Equation (CLE) provides a continuous-time stochastic approximation to
+the discrete Chemical Master Equation:
+
+$$
+d\lambda_g = \left[b_g(\underline{\lambda}) - \gamma_g \lambda_g\right] dt
++ \sigma_g(\underline{\lambda})\, dW_g(t),
+\quad g = 1, \ldots, G,
+$${#eq-lnm-bio-cle}
+
+where $dW_g(t)$ are independent Wiener increments and
+$\sigma_g(\underline{\lambda})$ is the state-dependent noise amplitude.
+For bursty transcription, $\sigma_g^2(\underline{\lambda}) \propto
+\lambda_g$ (Poisson-like scaling at the burst level), possibly with
+burst-size corrections.
+
+### Working in log-abundance space {#sec-lnm-bio-log-space}
+
+The logistic-normal places a Gaussian distribution on **log-ratios** of
+abundances, not on abundances themselves. It is therefore natural to
+transform the CLE to log-abundance space. Define
+
+$$
+x_g = \log \lambda_g, \quad g = 1, \ldots, G.
+$${#eq-lnm-bio-log-def}
+
+Applying Itô's lemma to @eq-lnm-bio-cle yields the dynamics of $x_g$:
+
+$$
+dx_g =
+\left[
+\frac{b_g(\underline{\lambda})}{\lambda_g}
+- \gamma_g
+- \frac{\sigma_g^2(\underline{\lambda})}{2\lambda_g^2}
+\right] dt
++ \frac{\sigma_g(\underline{\lambda})}{\lambda_g}\, dW_g(t).
+$${#eq-lnm-bio-ito}
+
+The Itô correction term $-\sigma_g^2 / (2\lambda_g^2)$ is a standard
+consequence of the nonlinear transformation. Two properties of
+@eq-lnm-bio-ito are important:
+
+1. **The drift depends on $\underline{\lambda}$** (i.e., on
+   $\underline{x}$ through $\lambda_g = e^{x_g}$). This is where the
+   GRN coupling enters.
+2. **The noise amplitude in log-space** is $\sigma_g / \lambda_g$. For
+   Poisson-like scaling $\sigma_g \propto \sqrt{\lambda_g}$, this
+   becomes $1 / \sqrt{\lambda_g}$: the noise in log-space is
+   state-dependent but *decreasing* in abundance. For moderately to
+   highly expressed genes, $\lambda_g$ fluctuates around its steady-state
+   mean $\bar{\lambda}_g$, and the noise amplitude can be approximated as
+   the constant $1 / \sqrt{\bar{\lambda}_g}$. This is the key
+   approximation that yields additive noise in log-space.
+
+### The Linear Noise Approximation in log-space {#sec-lnm-bio-lna}
+
+Suppose the system has a stable steady state
+$\underline{\bar{x}} = (\log\bar{\lambda}_1, \ldots,
+\log\bar{\lambda}_G)$, defined by setting the deterministic drift to
+zero in @eq-lnm-bio-ito. The **Linear Noise Approximation** (LNA)
+linearises the dynamics around this steady state. We expand the drift to
+first order in $\delta\underline{x} = \underline{x} - \underline{\bar{x}}$:
+
+$$
+\text{drift}_g \approx
+\sum_{g'=1}^{G} J_{gg'}\, \delta x_{g'},
+$${#eq-lnm-bio-drift-linear}
+
+where $J_{gg'} = \partial(\text{drift}_g) / \partial x_{g'}$ evaluated
+at $\underline{\bar{x}}$ is the $(g,g')$ entry of the **Jacobian matrix**
+of the GRN dynamics in log-space. The Jacobian encodes the biophysics of
+the network directly: $J_{gg'} > 0$ means gene $g'$ activates gene $g$
+(increasing $g'$ increases the drift of $g$), and $J_{gg'} < 0$ means
+repression. The diagonal entries $J_{gg}$ encode each gene's intrinsic
+restoring force (degradation plus autoregulation).
+
+Combining the linearised drift with the constant-noise approximation,
+the SDE becomes a multivariate **Ornstein--Uhlenbeck** (OU) process:
+
+$$
+d\underline{x} =
+\underline{\underline{J}}\,
+(\underline{x} - \underline{\bar{x}})\, dt
++ \underline{\underline{B}}\, d\underline{W}(t),
+$${#eq-lnm-bio-ou}
+
+where $\underline{\underline{B}} = \text{diag}(1/\sqrt{\bar{\lambda}_1},
+\ldots, 1/\sqrt{\bar{\lambda}_G})$ is the (now constant) noise matrix
+in log-space.
+
+Two approximations have been made to arrive at @eq-lnm-bio-ou, and
+their validity should be noted:
+
+1. **Linearisation of the drift** around the deterministic steady state.
+   This is valid when the fluctuations $\delta\underline{x}$ are small
+   relative to the scale on which the nonlinear regulatory functions
+   change appreciably---a standard and well-justified assumption for most
+   genes in single-cell data, where the coefficient of variation in
+   log-space is typically modest.
+2. **Freezing the noise amplitude** at its steady-state value. This is
+   valid when $\lambda_g$ does not fluctuate too far from
+   $\bar{\lambda}_g$---the same regime where the drift linearisation
+   holds. For lowly expressed genes with very few molecules, both
+   approximations degrade, and the exact Gamma steady-state of the
+   birth-death process (i.e., the DM-side model) may be more
+   appropriate.
+
+### Steady-state distribution: the Lyapunov equation {#sec-lnm-bio-lyapunov}
+
+A fundamental result in the theory of stochastic processes is that the
+steady-state distribution of a multivariate OU process with stable drift
+matrix $\underline{\underline{J}}$ (all eigenvalues with negative real
+part, guaranteeing stability) and constant diffusion is a **multivariate
+Gaussian**:
+
+$$
+\underline{x} \sim \mathcal{N}(\underline{\bar{x}},\,
+\underline{\underline{\Sigma}}).
+$${#eq-lnm-bio-mvn}
+
+The steady-state covariance $\underline{\underline{\Sigma}}$ is
+determined by the GRN Jacobian $\underline{\underline{J}}$ and the
+diffusion matrix $\underline{\underline{D}} = \frac{1}{2}
+\underline{\underline{B}}\,\underline{\underline{B}}^\top$ through the
+**continuous Lyapunov equation**:
+
+$$
+\underline{\underline{J}}\,\underline{\underline{\Sigma}}
++ \underline{\underline{\Sigma}}\,\underline{\underline{J}}^\top
++ 2\underline{\underline{D}} = 0.
+$${#eq-lnm-bio-lyapunov}
+
+This equation states that the covariance is at a balance between two
+forces: the drift $\underline{\underline{J}}$ contracts the distribution
+toward the steady state (the terms involving $\underline{\underline{J}}$),
+while the noise $\underline{\underline{D}}$ broadens it. The solution
+
+$$
+\underline{\underline{\Sigma}} =
+-\int_0^\infty
+e^{\underline{\underline{J}} t}\,
+(2\underline{\underline{D}})\,
+e^{\underline{\underline{J}}^\top t}\, dt
+$${#eq-lnm-bio-sigma-integral}
+
+(valid when $\underline{\underline{J}}$ is stable) shows that
+$\underline{\underline{\Sigma}}$ is a nonlinear but deterministic
+function of the network topology ($\underline{\underline{J}}$) and the
+noise structure ($\underline{\underline{D}}$). Crucially, **the
+off-diagonal entries of $\underline{\underline{\Sigma}}$ are nonzero
+whenever $\underline{\underline{J}}$ has off-diagonal entries**, i.e.,
+whenever genes regulate each other.
+
+### From multivariate normal log-abundances to the logistic-normal {#sec-lnm-bio-to-ln}
+
+We have arrived at @eq-lnm-bio-mvn: the steady-state distribution of
+log-abundances is multivariate Gaussian. The passage to gene
+compositions now follows by definition.
+
+In single-cell RNA-seq, the observed count vector
+$\underline{u}^{(c)}$ for a cell $c$ is a sample from a capture
+process applied to the cell's mRNA pool. The composition vector
+$\underline{\rho}^{(c)}$ represents the relative abundance of each
+gene's mRNA:
+
+$$
+\rho_g^{(c)} = \frac{\lambda_g^{(c)}}{\sum_{j=1}^G \lambda_j^{(c)}}
+= \frac{e^{x_g^{(c)}}}{\sum_{j=1}^G e^{x_j^{(c)}}}.
+$${#eq-lnm-bio-composition}
+
+This is exactly the softmax (inverse ALR) transformation applied to the
+log-abundances $\underline{x}^{(c)}$. Since $\underline{x}^{(c)}$ is
+Gaussian by @eq-lnm-bio-mvn, $\underline{\rho}^{(c)}$ follows a
+**logistic-normal distribution** by definition
+(cf.\ @sec-lnm-logistic-normal-def):
+
+$$
+\underline{\rho}^{(c)} \sim
+\text{LogisticNormal}(\underline{\mu}_{\text{ALR}},\,
+\underline{\underline{\Sigma}}_{\text{ALR}}),
+$${#eq-lnm-bio-logistic-normal}
+
+where $\underline{\mu}_{\text{ALR}}$ and
+$\underline{\underline{\Sigma}}_{\text{ALR}}$ are the mean and
+covariance of the ALR-transformed log-abundances (a linear
+transformation of $\underline{\bar{x}}$ and
+$\underline{\underline{\Sigma}}$; see @sec-lnm-alr-to-clr for the
+ALR-to-CLR algebra).
+
+This is the central result of this section: **the logistic-normal on
+gene compositions is the steady-state distribution of a gene regulatory
+network under the linear noise approximation in log-abundance space.**
+The covariance $\underline{\underline{\Sigma}}$ is not an arbitrary
+statistical object---it is the Lyapunov solution to the OU process
+governing the GRN, and its entries are direct consequences of the
+regulatory interactions encoded in $\underline{\underline{J}}$ and the
+bursty-transcription noise encoded in $\underline{\underline{D}}$.
+
+### The low-rank covariance as regulatory architecture {#sec-lnm-bio-low-rank}
+
+The low-rank factorisation
+$\underline{\underline{\Sigma}} = \underline{\underline{W}}\,
+\underline{\underline{W}}^\top + \text{diag}(\underline{d})$ from
+@eq-lnm-low-rank-cov acquires a natural interpretation in this
+biophysical framework.
+
+**The rank-$k$ factor $\underline{\underline{W}}$.** Gene regulatory
+networks are sparse and modular: a small number of master regulators
+(transcription factors, signalling pathway effectors) control large
+programs of downstream genes. In the language of the Lyapunov solution
+@eq-lnm-bio-sigma-integral, the dominant eigenvectors of
+$\underline{\underline{\Sigma}}$ correspond to the most energetic modes
+of the network---the transcription factor programs that explain the
+largest fraction of the compositional variance. The columns of
+$\underline{\underline{W}}$ approximate these dominant modes. Clustering
+on the rows of $\underline{\underline{W}}$ (each row corresponding to a
+gene) therefore groups genes by shared regulatory control, not by
+artefactual likelihood coupling.
+
+**The diagonal $\underline{d}$.** The residual diagonal captures the
+gene-intrinsic noise: the component of each gene's variance that is not
+explained by the shared regulatory programs in
+$\underline{\underline{W}}$. In terms of the Lyapunov equation, this is
+the variance arising from each gene's own burst noise
+($\underline{\underline{D}}$) and degradation ($J_{gg}$), after
+subtracting the variance propagated through the network.
+
+The assumption that $\underline{\underline{\Sigma}}$ is approximately
+low-rank is therefore not merely a computational convenience for
+handling $G = 20{,}000$ genes---it is a biological expectation. The
+number of independent transcription-factor programs driving
+compositional variation within a cell type is vastly smaller than the
+number of genes. Typical estimates of the number of active
+transcription-factor programs in a mammalian cell type range from tens to
+low hundreds, precisely the range of $k$ used in practice.
+
+### Connecting the two models: the independent-gene limit {#sec-lnm-bio-connection}
+
+The biophysical derivation clarifies the relationship between the
+Dirichlet-Multinomial and the logistic-normal models. They arise from
+different approximation regimes applied to the same underlying
+stochastic gene expression process.
+
+**The DM regime (exact, independent genes).** When genes are
+transcriptionally independent, $b_g(\underline{\lambda}) = b_g$ in
+@eq-lnm-bio-grn-ode, and the Jacobian $\underline{\underline{J}}$ is
+diagonal (each gene's dynamics depend only on itself). The exact
+steady-state of the birth-death process for each gene is Gamma-distributed
+(@eq-lnm-bio-gamma), and normalising yields the Dirichlet. This is the
+derivation in @sec-dirichlet-multinomial. No linear noise approximation
+is involved; the result is exact given the birth-death model.
+
+**The LNM regime (approximate, interacting genes).** When genes
+interact, $\underline{\underline{J}}$ has off-diagonal entries, and the
+exact joint steady-state distribution of $G$ coupled birth-death
+processes has no tractable closed form. The LNA in log-space gives the
+multivariate Gaussian approximation @eq-lnm-bio-mvn, from which the
+logistic-normal on compositions follows.
+
+**The two regimes converge for non-interacting, high-expression genes.**
+When $\underline{\underline{J}}$ is diagonal and $r_g$ is large, the
+Gamma distribution for $\lambda_g$ is well approximated by a log-normal
+(by the central limit theorem applied to the log of a Gamma with large
+shape parameter). In this limit, both models produce approximately the
+same marginal distributions and the same (negative, simplex-constrained)
+pairwise correlations. The DM and the diagonal-$\Sigma$ LNM are not
+mathematically identical, but they are asymptotically equivalent in the
+high-expression regime.
+
+The key difference emerges for **interacting genes**: the Dirichlet
+model has no mechanism to represent the cross-gene correlations generated
+by $\underline{\underline{J}}$, regardless of how large $r_g$ is. The
+logistic-normal does, through the off-diagonal entries of
+$\underline{\underline{\Sigma}}$.
+
+In summary:
+
+| Model | Biophysical assumption | Steady-state | Correlation structure |
+|-------|------------------------|--------------|----------------------|
+| DM | Independent promoters ($\underline{\underline{J}}$ diagonal) | Product of Gammas (exact) | Fixed by $\underline{r}$; always negative on simplex |
+| LNM | Interacting genes ($\underline{\underline{J}}$ general) | Multivariate Gaussian in log-space (LNA) | Free $\underline{\underline{\Sigma}}$, determined by GRN via Lyapunov |
+
+The logistic-normal model does not abandon the biophysics underlying the
+Dirichlet-Multinomial; it extends it to the physically realistic setting
+of interacting genes. The covariance matrix $\underline{\underline{\Sigma}}$
+that we learn (via its low-rank factorisation $\underline{\underline{W}}\,
+\underline{\underline{W}}^\top + \text{diag}(\underline{d})$) is a
+direct steady-state consequence of the cell's underlying gene regulatory
+network.
 
 ## The Logistic-Normal Multinomial model {#sec-lnm-model}
 
