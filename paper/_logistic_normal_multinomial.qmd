@@ -567,7 +567,7 @@ while the noise $\underline{\underline{D}}$ broadens it. The solution
 
 $$
 \underline{\underline{\Sigma}} =
--\int_0^\infty
+\int_0^\infty
 e^{\underline{\underline{J}} t}\,
 (2\underline{\underline{D}})\,
 e^{\underline{\underline{J}}^\top t}\, dt
