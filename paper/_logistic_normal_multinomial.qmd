@@ -592,11 +592,99 @@ per-cell parameters are only $(G-1)$-dimensional vectors (or low-rank
 structured).
 
 **(A2) Amortized inference.** An encoder network
-$f_\phi(\underline{u}^{(c)}) \to (\underline{m}^{(c)},
-\underline{s}^{(c)})$ maps the observed counts to the variational parameters.
+$f_\phi(\underline{u}^{(c)}) \to (\underline{m}_\phi(\underline{u}^{(c)}),\,
+\underline{s}_\phi^2(\underline{u}^{(c)}))$ maps the observed counts to the
+parameters of a diagonal Gaussian variational posterior
+
+$$
+q_\phi(\underline{y}^{(c)} \mid \underline{u}^{(c)}) =
+\mathcal{N}\!\left(
+\underline{m}_\phi(\underline{u}^{(c)}),\,
+\text{diag}(\underline{s}_\phi^2(\underline{u}^{(c)}))
+\right).
+$${#eq-lnm-strategy-a2-encoder}
+
 This reduces the variational parameter count to the size of the encoder
-network (independent of $C$) and naturally generalizes to unseen cells. SCRIBE
-already implements amortized guides via the `AmortizedGuide` family.
+network (independent of $C$) and naturally generalises to held-out cells.
+
+**Why a diagonal $q_\phi$ suffices despite correlated genes.** That
+$q_\phi$ is diagonal does *not* mean the model has lost cross-gene
+correlations. Those correlations live in the **prior**
+$\mathcal{N}(\underline{\mu}, \underline{\underline{\Sigma}})$, whose
+low-rank covariance $\underline{\underline{\Sigma}} =
+\underline{\underline{W}}\,\underline{\underline{W}}^\top +
+\text{diag}(\underline{d})$ is a population parameter learned from the
+data. The encoder's only job is to locate each cell's posterior mean in
+log-ratio space and a diagonal width around it; the KL term in the ELBO
+ties the spread of those per-cell posteriors back to the population
+covariance, so $\underline{\underline{W}}$ and $\underline{d}$ receive a
+direct gradient from the data even though the per-cell $q_\phi$ is
+factorised. A diagonal posterior is therefore not a model of independent
+genes---it is the natural amortised approximation to a Gaussian whose
+*structured* correlations are encoded once, globally, in the prior.
+
+**Closed-form Gaussian--Gaussian KL.** Because both $q_\phi(\underline{y}^{(c)}
+\mid \underline{u}^{(c)})$ and the prior $\mathcal{N}(\underline{\mu},
+\underline{\underline{\Sigma}})$ are Gaussian, the KL term in the ELBO has
+a closed form:
+
+$$
+\text{KL}\!\left(
+q_\phi(\underline{y}^{(c)} \mid \underline{u}^{(c)})
+\;\big\|\;
+\mathcal{N}(\underline{\mu},\, \underline{\underline{\Sigma}})
+\right) =
+\frac{1}{2} \left[
+\text{tr}\!\left(\underline{\underline{\Sigma}}^{-1}\,
+\text{diag}(\underline{s}_\phi^2)\right)
++ (\underline{m}_\phi - \underline{\mu})^\top
+\underline{\underline{\Sigma}}^{-1}
+(\underline{m}_\phi - \underline{\mu})
+- (G - 1)
++ \log \frac{|\underline{\underline{\Sigma}}|}{\prod_{g=1}^{G-1} s_{\phi,g}^2}
+\right].
+$${#eq-lnm-closed-form-kl}
+
+Both $\underline{\underline{\Sigma}}^{-1}$ and $\log|\underline{\underline{\Sigma}}|$
+are computed in $O(Gk^2 + k^3)$ via the Woodbury identity
+(@eq-lnm-woodbury) and the matrix determinant lemma (@eq-lnm-log-det).
+Only the multinomial expectation
+$\mathbb{E}_{q_\phi}[\log \text{Mult}(\underline{u}^{(c)} \mid u_T^{(c)},
+\text{ALR}^{-1}(\underline{y}^{(c)}))]$ requires reparameterised
+sampling. This is a meaningful variance-reduction win and should be built
+into the loss from the outset rather than letting the framework sample
+the KL term too.
+
+**Mapping onto SCRIBE's existing infrastructure.** SCRIBE has *two*
+amortisation primitives that should not be confused:
+
+- The `AmortizedGuide` family is designed to amortise a per-data-point
+  *parameter* whose prior is fixed at the model level (e.g., the
+  cell-specific capture probability $p_{\text{capture}}^{(c)}$).
+- The `VAELatentGuide` family (with its `GaussianEncoder`,
+  `MultiHeadDecoder`, and `GaussianLatentSpec`) is designed for per-cell
+  *latent variables* that are sampled in the guide and consumed downstream
+  in the model.
+
+The LNM matches the second pattern, so the natural fit is
+`VAELatentGuide` with a Gaussian latent of dimension $G - 1$. Two small
+but important extensions to the existing VAE pipeline are required:
+
+1. The prior on the latent is a *learnable, low-rank* Gaussian
+   $\mathcal{N}(\underline{\mu},\, \underline{\underline{W}}\,
+   \underline{\underline{W}}^\top + \text{diag}(\underline{d}))$, with
+   $\underline{\mu}$, $\underline{\underline{W}}$, $\underline{d}$
+   registered as ordinary population parameters (each carrying its own
+   variational guide). The default `GaussianLatentSpec` assumes a fixed
+   $\mathcal{N}(\underline{0}, \underline{\underline{I}})$ prior and
+   must be generalised to read its prior parameters from the model graph.
+2. The "decoder" path is the deterministic map
+   $\underline{y} \mapsto \text{ALR}^{-1}(\underline{y}) =
+   \underline{\rho}$, fed straight into the multinomial likelihood. There
+   is no neural decoder to train; the simplest implementation is a
+   passthrough that lets the
+   `LogisticNormalMultinomialLikelihood` consume $\underline{y}^{(c)}$
+   directly and apply the inverse ALR internally.
 
 **Advantages:**
 
@@ -689,11 +777,18 @@ $\underline{r}_{\text{proxy}}$ that match these moments.
 
 **Disadvantages:**
 
-- The moment-matching discards the cross-gene correlation information in the
-  likelihood: the DM cannot represent the full logistic-normal correlation
-  structure. The correlations are only captured in the
-  $\underline{\underline{\Sigma}}$ parameters, not in the likelihood
-  evaluation.
+- **The likelihood gradient on $\underline{\underline{W}}$ is structurally
+  zero.** Because the moment-matched DM is parameterised only by the
+  concentrations $\underline{r}_{\text{proxy}}$, which depend solely on the
+  *marginal* moments of the logistic-normal (not on the off-diagonal entries
+  of $\underline{\underline{\Sigma}}$), the likelihood term in the ELBO
+  carries no information about the cross-gene correlation factor
+  $\underline{\underline{W}}$. Any signal in $\underline{\underline{W}}$
+  comes purely from prior regularisation, not from the data---which puts
+  this strategy in essentially the same regime that already produced the
+  null cluster-recovery results on synthetic data with the standard DM
+  model. Strategy D therefore inherits the very problem the LNM was
+  designed to fix.
 - The quality of the Dirichlet approximation depends on how close the
   logistic-normal is to a Dirichlet---which is precisely the setting where
   the logistic-normal is most needed (i.e., when correlations are strong).
@@ -709,10 +804,16 @@ $\underline{r}_{\text{proxy}}$ that match these moments.
 | D: DM proxy | None | Approximate (DM) | Standard | High |
 
 The choice between strategies depends on the balance between statistical
-fidelity and computational cost. Strategy A2 (amortized) is the most natural
-fit for SCRIBE's existing architecture, as the framework already supports
-amortized variational inference. Strategy D is the least invasive but provides
-the weakest coupling between the logistic-normal parameters and the likelihood.
+fidelity and computational cost. Strategy A2 (amortised) is the most
+natural fit for SCRIBE's existing architecture, as the framework already
+supports VAE-style amortised inference for per-cell latents through the
+`VAELatentGuide` family (see the implementation notes in
+@sec-lnm-strategy-a). Strategy D is the least invasive but, as noted
+above, its likelihood gradient on $\underline{\underline{W}}$ is
+structurally zero, so it cannot recover correlations from data---it only
+retains the prior on $\underline{\underline{W}}$. Strategies B and C are
+included for completeness; neither is competitive with A2 at the dataset
+scales of interest.
 
 ## Connection to the existing SCRIBE framework {#sec-lnm-connections}
 
@@ -765,15 +866,23 @@ a different limitation of the standard model: it allowed the success
 probability to vary across genes, breaking the DM factorization but enabling
 the data to determine the degree of gene-to-gene variation in $p_g$.
 
-The logistic-normal model is complementary: it addresses the **compositional
-correlation structure** rather than the **total-count model**. In principle,
-the two extensions can be combined: gene-specific $p_g$ for the total count
-model, and a logistic-normal for the composition model. However, the
-interaction between the two requires careful consideration, as the composition
-$\underline{\rho}^{(c)}$ under the hierarchical model depends on both
-$\underline{r}$ and $\underline{p}$ (see @sec-hier-gamma-sampling), while
-under the logistic-normal model, $\underline{\rho}^{(c)}$ is drawn from an
-independent logistic-normal prior.
+The logistic-normal model is complementary: it addresses the
+**compositional correlation structure** rather than the **total-count
+model**. In principle, the two extensions can be combined---gene-specific
+$p_g$ for the total count and a logistic-normal for the composition---but
+they do *not* compose cleanly. Under the hierarchical $p_g$ model the
+per-cell composition $\underline{\rho}^{(c)}$ is induced by the joint draw
+$\lambda_g^{(c)} \sim \text{Gamma}(r_g, p_g/(1-p_g))$ followed by
+normalisation $\underline{\rho}^{(c)} = \underline{\lambda}^{(c)} /
+\lambda_T^{(c)}$ (see @sec-hier-gamma-sampling), so $\underline{\rho}^{(c)}$
+is *not* a free parameter that can simply be replaced by an independent
+logistic-normal draw. A principled combination would either (a) couple the
+LNM compositional prior to a separate scalar total-count model with a
+single $\hat{p}$ (losing per-gene over-dispersion in $u_T$), or (b)
+introduce a fresh generative path that models cell- and gene-level
+over-dispersion *jointly* in log-ratio space. We defer this design
+question to a follow-up; in the present chapter we work with the
+shared-$\hat{p}$ total-count model from @sec-lnm-model.
 
 ## Computational considerations {#sec-lnm-computational}
 
@@ -847,17 +956,36 @@ per-cell variational state---the encoder generalizes to all cells.
 
 ### Cost comparison
 
-| Operation | Standard DM | LNM (Strategy A) |
+The table below compares the standard Dirichlet-Multinomial model with the
+LNM under Strategy A2 (amortised encoder, diagonal $q_\phi$, closed-form
+KL). $H$ denotes the encoder hidden width.
+
+| Operation | Standard DM | LNM (Strategy A2) |
 |-----------|-------------|-------------------|
 | Likelihood per cell | $O(G)$ (DM formula) | $O(G)$ (log-softmax + Multinomial) |
-| Latent sampling per cell | None (marginalized) | $O(Gk)$ (low-rank MVN sample) |
-| Guide parameters | $O(Gk)$ (low-rank over $\log r$) | $O(Gk)$ (population) + $O(G)$ per cell or encoder |
-| Total ELBO per mini-batch | $O(BG + Gk)$ | $O(BG + BGk)$ |
+| Latent sampling per cell | None (marginalised) | $O(G)$ (diagonal $q_\phi$ reparam) |
+| Population guide params | $O(Gk)$ over $\log\underline{r}$ | $O(Gk)$ over $\underline{\mu},\,\underline{\underline{W}},\,\underline{d}$ |
+| Per-cell guide params | None | None (replaced by encoder weights, $O(GH)$) |
+| KL per cell | --- | $O(Gk + k^2)$ closed form, given precomputed $\underline{\underline{\Sigma}}^{-1}$ factors |
+| Per-batch precompute | --- | $O(Gk^2 + k^3)$ for Woodbury factors of $\underline{\underline{\Sigma}}^{-1}$ |
+| Total ELBO per mini-batch | $O(BG + Gk)$ | $O(BGH + BGk + Gk^2 + k^3)$ |
 
-The dominant additional cost is the $O(BGk)$ term for sampling the per-cell
-latent from the low-rank MVN. For $B = 256$, $G = 20{,}000$, and $k = 128$,
-this is $\sim 6.6 \times 10^8$ floating-point operations per gradient
-step---large but within reach of modern GPU hardware.
+Two things are worth flagging in this comparison. First, sampling from
+$q_\phi$ is now $O(G)$ rather than $O(Gk)$ because $q_\phi$ is diagonal;
+the low-rank cost reappears only in the (closed-form) KL evaluation, not
+in reparameterised sampling. Second, the encoder is *not* a small
+add-on at the absolute scale of $G \approx 20{,}000$: with input and
+output layers both of size $\sim G$ and a hidden width $H$, the encoder
+contributes $O(GH)$ parameters per layer, comparable in magnitude to a
+single column of the population low-rank factor $\underline{\underline{W}}$.
+
+For $B = 256$, $G = 20{,}000$, $k = 128$, and $H = 512$, the encoder
+forward pass contributes $\sim 2.6 \times 10^9$ operations per gradient
+step and the closed-form KL contributes $\sim 6.6 \times 10^8$ ---both
+within reach of modern GPU hardware. The DM-side ELBO is recovered in the
+limit where the encoder collapses to a constant (no per-cell adaptation)
+and $\underline{\underline{\Sigma}}$ is moment-matched to a Dirichlet,
+which is exactly Strategy D.
 
 ## What the logistic-normal model buys us {#sec-lnm-what-it-buys}
 
