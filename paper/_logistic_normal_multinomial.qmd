@@ -1,7 +1,7 @@
 ---
 editor:
     render-on-save: true
-bibliography: references.bib
+# bibliography: references.bib
 csl: ieee.csl
 ---
 
@@ -375,7 +375,7 @@ across genes is a direct consequence of the assumption that each
 promoter operates autonomously: the on/off kinetics of gene $g$ do not
 depend on the expression level of any other gene $g'$.
 
-Normalising these independent rates to a composition yields the
+Normalizing these independent rates to a composition yields the
 Dirichlet:
 
 $$
@@ -400,7 +400,7 @@ loops, toggle switches, cascades) create coupling between the expression
 dynamics of different genes. This coupling is the physical origin of the
 cross-gene correlations that the Dirichlet model cannot represent.
 
-To formalise this, let $\underline{\lambda}(t) = (\lambda_1(t), \ldots,
+To formalize this, let $\underline{\lambda}(t) = (\lambda_1(t), \ldots,
 \lambda_G(t))$ be the vector of mRNA production rates (or abundances) at
 time $t$. The deterministic dynamics of the GRN can be written as a
 system of ordinary differential equations,
@@ -412,7 +412,7 @@ $${#eq-lnm-bio-grn-ode}
 
 where $b_g(\underline{\lambda})$ is the **production rate** of gene $g$,
 which in general depends on the abundances of all other genes (through
-transcription factor binding, signalling cascades, etc.), and $\gamma_g$
+transcription factor binding, signaling cascades, etc.), and $\gamma_g$
 is the first-order degradation rate. The function
 $b_g(\underline{\lambda})$ encodes the full regulatory logic of the
 network.
@@ -488,7 +488,7 @@ Suppose the system has a stable steady state
 $\underline{\bar{x}} = (\log\bar{\lambda}_1, \ldots,
 \log\bar{\lambda}_G)$, defined by setting the deterministic drift to
 zero in @eq-lnm-bio-ito. The **Linear Noise Approximation** (LNA)
-linearises the dynamics around this steady state. We expand the drift to
+linearizes the dynamics around this steady state. We expand the drift to
 first order in $\delta\underline{x} = \underline{x} - \underline{\bar{x}}$:
 
 $$
@@ -504,7 +504,7 @@ the network directly: $J_{gg'} > 0$ means gene $g'$ activates gene $g$
 repression. The diagonal entries $J_{gg}$ encode each gene's intrinsic
 restoring force (degradation plus autoregulation).
 
-Combining the linearised drift with the constant-noise approximation,
+Combining the linearized drift with the constant-noise approximation,
 the SDE becomes a multivariate **Ornstein--Uhlenbeck** (OU) process:
 
 $$
@@ -521,7 +521,7 @@ in log-space.
 Two approximations have been made to arrive at @eq-lnm-bio-ou, and
 their validity should be noted:
 
-1. **Linearisation of the drift** around the deterministic steady state.
+1. **Linearization of the drift** around the deterministic steady state.
    This is valid when the fluctuations $\delta\underline{x}$ are small
    relative to the scale on which the nonlinear regulatory functions
    change appreciably---a standard and well-justified assumption for most
@@ -529,7 +529,7 @@ their validity should be noted:
    log-space is typically modest.
 2. **Freezing the noise amplitude** at its steady-state value. This is
    valid when $\lambda_g$ does not fluctuate too far from
-   $\bar{\lambda}_g$---the same regime where the drift linearisation
+   $\bar{\lambda}_g$---the same regime where the drift linearization
    holds. For lowly expressed genes with very few molecules, both
    approximations degrade, and the exact Gamma steady-state of the
    birth-death process (i.e., the DM-side model) may be more
@@ -628,7 +628,7 @@ bursty-transcription noise encoded in $\underline{\underline{D}}$.
 
 ### The low-rank covariance as regulatory architecture {#sec-lnm-bio-low-rank}
 
-The low-rank factorisation
+The low-rank factorization
 $\underline{\underline{\Sigma}} = \underline{\underline{W}}\,
 \underline{\underline{W}}^\top + \text{diag}(\underline{d})$ from
 @eq-lnm-low-rank-cov acquires a natural interpretation in this
@@ -636,7 +636,7 @@ biophysical framework.
 
 **The rank-$k$ factor $\underline{\underline{W}}$.** Gene regulatory
 networks are sparse and modular: a small number of master regulators
-(transcription factors, signalling pathway effectors) control large
+(transcription factors, signaling pathway effectors) control large
 programs of downstream genes. In the language of the Lyapunov solution
 @eq-lnm-bio-sigma-integral, the dominant eigenvectors of
 $\underline{\underline{\Sigma}}$ correspond to the most energetic modes
@@ -664,6 +664,39 @@ number of genes. Typical estimates of the number of active
 transcription-factor programs in a mammalian cell type range from tens to
 low hundreds, precisely the range of $k$ used in practice.
 
+**Identifiability of $\underline{\underline{W}}$ up to rotation.** A
+caveat that affects the biological interpretation of
+$\underline{\underline{W}}$ is that the likelihood depends on
+$\underline{\underline{W}}$ only through the product
+$\underline{\underline{W}}\,\underline{\underline{W}}^\top$. For any
+$k \times k$ orthogonal matrix $\underline{\underline{R}}$ (i.e.,
+$\underline{\underline{R}}\,\underline{\underline{R}}^\top =
+\underline{\underline{I}}_k$), the substitution
+$\underline{\underline{W}} \to
+\underline{\underline{W}}\,\underline{\underline{R}}$ leaves
+$\underline{\underline{W}}\,\underline{\underline{W}}^\top$ invariant
+and produces an identical model. Consequently:
+
+- The **column space** of $\underline{\underline{W}}$ (equivalently, the
+  rank-$k$ subspace of log-ratio space spanned by the regulatory
+  programs) is identifiable from the data.
+- **Specific columns** of $\underline{\underline{W}}$ (e.g., "program
+  1" vs "program 2") are *not* identifiable without an additional
+  constraint such as sparsity, orthogonality of gene loadings, or
+  varimax-style rotation.
+
+For downstream uses that are rotation-invariant---clustering genes by
+the rows of $\underline{\underline{W}}$, computing gene--gene similarity
+via $\underline{\underline{W}}\,\underline{\underline{W}}^\top$,
+extracting the rank-$k$ correlation structure---the lack of
+column-level identification is harmless. For uses that require
+*interpretable* programs (e.g., naming columns of
+$\underline{\underline{W}}$ as TF activities), an additional rotation
+or sparsification step is required as a post-processing operation. We
+flag this here so that the "transcription-factor program" reading of
+$\underline{\underline{W}}$ is understood at the level of the column
+*space*, not the column *basis*.
+
 ### Connecting the two models: the independent-gene limit {#sec-lnm-bio-connection}
 
 The biophysical derivation clarifies the relationship between the
@@ -676,7 +709,7 @@ transcriptionally independent, $b_g(\underline{\lambda}) = b_g$ in
 @eq-lnm-bio-grn-ode, and the Jacobian $\underline{\underline{J}}$ is
 diagonal (each gene's dynamics depend only on itself). The exact
 steady-state of the birth-death process for each gene is Gamma-distributed
-(@eq-lnm-bio-gamma), and normalising yields the Dirichlet. This is the
+(@eq-lnm-bio-gamma), and normalizing yields the Dirichlet. This is the
 derivation in @sec-dirichlet-multinomial. No linear noise approximation
 is involved; the result is exact given the birth-death model.
 
@@ -703,6 +736,32 @@ by $\underline{\underline{J}}$, regardless of how large $r_g$ is. The
 logistic-normal does, through the off-diagonal entries of
 $\underline{\underline{\Sigma}}$.
 
+**The asymmetry of "extending" DM.** It is tempting to describe the LNM
+as a strict generalization of the DM (with the DM recovered as the
+diagonal-$\underline{\underline{\Sigma}}$, high-expression limit). The
+relationship is not actually symmetric, and it is worth being precise
+about the direction of the trade-off:
+
+- For **non-interacting genes**, the DM is the *exact* steady-state of
+  the underlying birth-death process, regardless of expression level.
+  The LNM is the LNA approximation of the same process and degrades for
+  genes with very low counts, where neither the drift linearization nor
+  the constant-noise approximation is reliable
+  (see @sec-lnm-bio-lna).
+- For **interacting genes**, the DM cannot represent the cross-gene
+  correlations generated by off-diagonal entries of
+  $\underline{\underline{J}}$ at all, while the LNM does so through
+  $\underline{\underline{\Sigma}}$.
+
+The LNM therefore trades *exactness for the non-interacting,
+low-expression regime* against *expressivity in the coupled regime*.
+This is the correct trade-off for our scientific goal (recovering
+gene-gene structure), but it does mean that for genes that are both
+weakly coupled and lowly expressed, the DM remains the better marginal
+model. The LNM is a generalization only in the sense of admitting a
+broader class of *covariance structures*, not in the sense of being a
+uniformly better description of the underlying biophysics.
+
 In summary:
 
 | Model | Biophysical assumption | Steady-state | Correlation structure |
@@ -711,12 +770,15 @@ In summary:
 | LNM | Interacting genes ($\underline{\underline{J}}$ general) | Multivariate Gaussian in log-space (LNA) | Free $\underline{\underline{\Sigma}}$, determined by GRN via Lyapunov |
 
 The logistic-normal model does not abandon the biophysics underlying the
-Dirichlet-Multinomial; it extends it to the physically realistic setting
-of interacting genes. The covariance matrix $\underline{\underline{\Sigma}}$
-that we learn (via its low-rank factorisation $\underline{\underline{W}}\,
-\underline{\underline{W}}^\top + \text{diag}(\underline{d})$) is a
-direct steady-state consequence of the cell's underlying gene regulatory
-network.
+Dirichlet-Multinomial; it adopts a different approximation regime that
+admits the cross-gene correlations the DM cannot represent. The
+covariance matrix $\underline{\underline{\Sigma}}$ that we learn (via
+its low-rank factorization $\underline{\underline{W}}\,
+\underline{\underline{W}}^\top + \text{diag}(\underline{d})$) is, under
+the LNA, a direct steady-state consequence of the cell's underlying
+gene regulatory network. The price of this expressivity is the
+linearization and constant-noise approximations of @sec-lnm-bio-lna,
+which limit the model's faithfulness for weakly expressed genes.
 
 ## The Logistic-Normal Multinomial model {#sec-lnm-model}
 
@@ -770,6 +832,34 @@ $$
 \underline{u}^{(c)} \mid u_T^{(c)},\, \underline{\rho}^{(c)} \sim
 \text{Multinomial}(u_T^{(c)},\, \underline{\rho}^{(c)}).
 $${#eq-lnm-multinomial}
+
+**Note: scale--composition decoupling is a modeling choice.** The
+generative process above factorizes the per-cell count vector into an
+independent total $u_T^{(c)} \sim \text{NB}(r_T, \hat p)$ and an
+independent compositional latent $\underline{y}^{(c)} \sim
+\mathcal{N}(\underline{\mu},\,\underline{\underline{\Sigma}})$. This is
+the same factorization that the DM uses, and it inherits the same
+limitation: it is **not** strictly derivable from the GRN biophysics of
+@sec-lnm-biophysical. Under the LNA on log-abundances
+$\underline{x}^{(c)}$, the total abundance $\Lambda^{(c)} = \sum_g
+\lambda_g^{(c)}$ and the composition $\underline{\rho}^{(c)} =
+\underline{\lambda}^{(c)} / \Lambda^{(c)}$ are in general correlated,
+because both are functionals of the same Gaussian
+$\underline{x}^{(c)}$.
+
+We adopt the decoupled factorization here for two reasons. First, it
+isolates the contribution of the LNM (the compositional model) from the
+total-count model, allowing the chapter to focus exclusively on the
+correlation structure that motivated the development. Second, in
+practice the per-cell total count is dominated by capture efficiency
+(the technical scaling factor introduced when mRNA molecules are
+sampled into UMIs), which is approximately orthogonal to which genes a
+cell expresses. The bias introduced by treating $u_T$ and
+$\underline{\rho}$ as independent is therefore expected to be small for
+the inferential targets of this work. A principled coupling of the two
+---either by deriving the joint $(u_T, \underline{\rho})$ distribution
+from the LNA directly, or by introducing a hierarchical link between
+$r_T$ and $\underline{\mu}$---is left for future development.
 
 ### Joint distribution and the marginalization problem {#sec-lnm-joint}
 
@@ -985,7 +1075,7 @@ q_\phi(\underline{y}^{(c)} \mid \underline{u}^{(c)}) =
 $${#eq-lnm-strategy-a2-encoder}
 
 This reduces the variational parameter count to the size of the encoder
-network (independent of $C$) and naturally generalises to held-out cells.
+network (independent of $C$) and naturally generalizes to held-out cells.
 
 **Why a diagonal $q_\phi$ suffices despite correlated genes.** That
 $q_\phi$ is diagonal does *not* mean the model has lost cross-gene
@@ -999,8 +1089,8 @@ log-ratio space and a diagonal width around it; the KL term in the ELBO
 ties the spread of those per-cell posteriors back to the population
 covariance, so $\underline{\underline{W}}$ and $\underline{d}$ receive a
 direct gradient from the data even though the per-cell $q_\phi$ is
-factorised. A diagonal posterior is therefore not a model of independent
-genes---it is the natural amortised approximation to a Gaussian whose
+factorized. A diagonal posterior is therefore not a model of independent
+genes---it is the natural amortized approximation to a Gaussian whose
 *structured* correlations are encoded once, globally, in the prior.
 
 **Closed-form Gaussian--Gaussian KL.** Because both $q_\phi(\underline{y}^{(c)}
@@ -1030,19 +1120,19 @@ are computed in $O(Gk^2 + k^3)$ via the Woodbury identity
 (@eq-lnm-woodbury) and the matrix determinant lemma (@eq-lnm-log-det).
 Only the multinomial expectation
 $\mathbb{E}_{q_\phi}[\log \text{Mult}(\underline{u}^{(c)} \mid u_T^{(c)},
-\text{ALR}^{-1}(\underline{y}^{(c)}))]$ requires reparameterised
+\text{ALR}^{-1}(\underline{y}^{(c)}))]$ requires reparameterized
 sampling. This is a meaningful variance-reduction win and should be built
 into the loss from the outset rather than letting the framework sample
-the KL term too. Under the linear-decoder reparameterisation developed
+the KL term too. Under the linear-decoder reparameterization developed
 in @sec-lnm-linear-vae-equivalence, this expression collapses further to
 the canonical Kingma--Welling VAE KL between two diagonal Gaussians
 (@eq-lnm-vae-standard-kl), with $O(k)$ cost per cell and no Woodbury
 precompute required.
 
 **Mapping onto SCRIBE's existing infrastructure.** SCRIBE has *two*
-amortisation primitives that should not be confused:
+amortization primitives that should not be confused:
 
-- The `AmortizedGuide` family is designed to amortise a per-data-point
+- The `AmortizedGuide` family is designed to amortize a per-data-point
   *parameter* whose prior is fixed at the model level (e.g., the
   cell-specific capture probability $p_{\text{capture}}^{(c)}$).
 - The `VAELatentGuide` family (with its `GaussianEncoder`,
@@ -1061,7 +1151,7 @@ naively, this would require two extensions to the existing VAE pipeline:
    registered as ordinary population parameters (each carrying its own
    variational guide). The default `GaussianLatentSpec` assumes a fixed
    $\mathcal{N}(\underline{0},\, \underline{\underline{I}})$ prior and
-   would need to be generalised to read its prior parameters from the
+   would need to be generalized to read its prior parameters from the
    model graph.
 2. The "decoder" path would be the deterministic map
    $\underline{y} \mapsto \text{ALR}^{-1}(\underline{y}) =
@@ -1072,8 +1162,8 @@ naively, this would require two extensions to the existing VAE pipeline:
    directly and apply the inverse ALR internally.
 
 Both extensions can be avoided by adopting an equivalent
-reparameterisation of the LNM as a linear-decoder VAE with a
-$k$-dimensional bottleneck. Under that reparameterisation, the standard
+reparameterization of the LNM as a linear-decoder VAE with a
+$k$-dimensional bottleneck. Under that reparameterization, the standard
 $\mathcal{N}(\underline{0},\, \underline{\underline{I}}_k)$ prior and a
 single $\text{Dense}(G-1)$ decoder layer with identity activation
 recover the same generative model with no changes to the existing VAE
@@ -1172,13 +1262,13 @@ $\underline{r}_{\text{proxy}}$ that match these moments.
 **Disadvantages:**
 
 - **The likelihood gradient on $\underline{\underline{W}}$ is structurally
-  zero.** Because the moment-matched DM is parameterised only by the
+  zero.** Because the moment-matched DM is parameterized only by the
   concentrations $\underline{r}_{\text{proxy}}$, which depend solely on the
   *marginal* moments of the logistic-normal (not on the off-diagonal entries
   of $\underline{\underline{\Sigma}}$), the likelihood term in the ELBO
   carries no information about the cross-gene correlation factor
   $\underline{\underline{W}}$. Any signal in $\underline{\underline{W}}$
-  comes purely from prior regularisation, not from the data---which puts
+  comes purely from prior regularization, not from the data---which puts
   this strategy in essentially the same regime that already produced the
   null cluster-recovery results on synthetic data with the standard DM
   model. Strategy D therefore inherits the very problem the LNM was
@@ -1198,9 +1288,9 @@ $\underline{r}_{\text{proxy}}$ that match these moments.
 | D: DM proxy | None | Approximate (DM) | Standard | High |
 
 The choice between strategies depends on the balance between statistical
-fidelity and computational cost. Strategy A2 (amortised) is the most
+fidelity and computational cost. Strategy A2 (amortized) is the most
 natural fit for SCRIBE's existing architecture, as the framework already
-supports VAE-style amortised inference for per-cell latents through the
+supports VAE-style amortized inference for per-cell latents through the
 `VAELatentGuide` family (see the implementation notes in
 @sec-lnm-strategy-a). Strategy D is the least invasive but, as noted
 above, its likelihood gradient on $\underline{\underline{W}}$ is
@@ -1221,7 +1311,7 @@ $2(G-1)$ variational parameters per cell, the KL involves the Woodbury
 inverse of the population covariance, and the inference framework must
 support a learnable prior on its latent.
 
-There is an equivalent reparameterised view---fully isomorphic to the
+There is an equivalent reparameterized view---fully isomorphic to the
 original LNM under a deterministic affine map---in which the model is a
 *linear-decoder VAE* with a $k$-dimensional bottleneck. In this view, the
 rank-$k$ structure of $\underline{\underline{\Sigma}}$ migrates from "a
@@ -1231,10 +1321,10 @@ The two formulations are exactly the same generative model, but the
 second is dramatically cheaper to implement and maps onto pre-existing
 VAE infrastructure essentially as-is.
 
-### Reparameterising the rank-$k$ Gaussian {#sec-lnm-reparam}
+### Reparameterizing the rank-$k$ Gaussian {#sec-lnm-reparam}
 
 The low-rank Gaussian on $\underline{y}$ admits the affine
-reparameterisation
+reparameterization
 
 $$
 \underline{z} \sim \mathcal{N}(\underline{0},\, \underline{\underline{I}}_k),
@@ -1304,7 +1394,7 @@ additive Gaussian noise at the layer's output. The latent
 $\underline{z}^{(c)}$ is the bottleneck of the VAE, with dimension $k$
 rather than $G - 1$.
 
-The variational posterior is also reparameterised. Instead of
+The variational posterior is also reparameterized. Instead of
 approximating a posterior over $\underline{y}^{(c)} \in \mathbb{R}^{G-1}$,
 we approximate a posterior over $\underline{z}^{(c)} \in \mathbb{R}^k$:
 
@@ -1324,9 +1414,34 @@ contributes zero to the KL while still allowing the diagonal
 $\underline{d}$ to be identified through its effect on the marginal
 multinomial likelihood.
 
+**A subtle gain in posterior expressivity.** A diagonal posterior on
+$\underline{z}^{(c)} \in \mathbb{R}^k$ is *not* equivalent to a diagonal
+posterior on $\underline{y}^{(c)} \in \mathbb{R}^{G-1}$. The deterministic
+linear decoder propagates the diagonal posterior on $\underline{z}^{(c)}$
+into a structured low-rank-plus-diagonal posterior on $\underline{y}^{(c)}$:
+
+$$
+\text{Cov}(\underline{y}^{(c)} \mid \underline{u}^{(c)}) =
+\underline{\underline{W}}\,
+\text{diag}(\underline{s}_\phi^2(\underline{u}^{(c)}))\,
+\underline{\underline{W}}^\top
++ \text{diag}(\underline{d}).
+$${#eq-lnm-vae-induced-posterior}
+
+This is strictly more expressive than the diagonal $q_\phi(\underline{y}
+\mid \underline{u})$ posited by the direct $(G-1)$-dimensional
+formulation of @sec-lnm-strategy-a. The VAE reparameterization
+therefore delivers two distinct improvements simultaneously: it
+*reduces* the encoder's output dimension from $2(G-1)$ to $2k$ (a
+computational win), *and* it *upgrades* the implied posterior on
+$\underline{y}^{(c)}$ from diagonal to rank-$k$-plus-diagonal (a
+statistical win). Both advantages stem from pushing the rank-$k$
+structure from "a learnable prior on a $(G-1)$-dim latent" to "a
+deterministic linear decoder from a $k$-dim latent".
+
 ### Closed-form KL is now the standard VAE KL {#sec-lnm-vae-kl}
 
-Because the reparameterised prior on $\underline{z}^{(c)}$ is the
+Because the reparameterized prior on $\underline{z}^{(c)}$ is the
 standard isotropic Gaussian $\mathcal{N}(\underline{0},\,
 \underline{\underline{I}}_k)$, the KL term @eq-lnm-closed-form-kl
 collapses to the standard VAE KL between two diagonal Gaussians:
@@ -1375,7 +1490,7 @@ from $O(Gk)$ to $O(k)$ per cell.
 
 ### The diagonal $\underline{d}$ in this view {#sec-lnm-vae-d}
 
-The reparameterisation @eq-lnm-vae-reparam admits two practical regimes
+The reparameterization @eq-lnm-vae-reparam admits two practical regimes
 for the diagonal residual noise. A subtle but important consequence of
 the VAE formulation is that the marginal covariance of
 $\underline{y}^{(c)}$ never has to be inverted: the ELBO involves only
@@ -1419,7 +1534,7 @@ parameter, with $\underline{\epsilon}^{(c)}$ a per-cell stochastic node
 whose variational posterior is set equal to its prior. The KL
 contribution from $\underline{\epsilon}^{(c)}$ is exactly zero, so the
 gradient on $\underline{d}$ comes entirely from the multinomial
-log-likelihood through the reparameterised path
+log-likelihood through the reparameterized path
 
 $$
 \underline{y}^{(c)} = \underline{\mu} +
@@ -1453,7 +1568,7 @@ $\underline{\underline{W}}$.
 
 A natural and important question is what we lose by insisting on a
 *linear* decoder, given that nonlinear-decoder VAEs (most prominently
-scVI) have proven highly effective at modelling single-cell counts.
+scVI) have proven highly effective at modeling single-cell counts.
 
 A linear decoder gives the marginal covariance an exact, globally valid,
 low-rank-plus-diagonal form. A nonlinear decoder $f_\theta : \mathbb{R}^k
@@ -1510,7 +1625,7 @@ written differently. We adopt the linear-decoder view because:
 4. **It clarifies the relationship to the broader VAE literature.** The
    LNM is, in this view, a linear analogue of scVI with a multinomial
    likelihood and an inverse-ALR transformation in place of scVI's
-   softmax-with-NB factorisation. This positions the model concretely on
+   softmax-with-NB factorization. This positions the model concretely on
    the spectrum of existing single-cell generative models.
 
 The remaining sections of this chapter were developed in the direct
@@ -1576,7 +1691,7 @@ $p_g$ for the total count and a logistic-normal for the composition---but
 they do *not* compose cleanly. Under the hierarchical $p_g$ model the
 per-cell composition $\underline{\rho}^{(c)}$ is induced by the joint draw
 $\lambda_g^{(c)} \sim \text{Gamma}(r_g, p_g/(1-p_g))$ followed by
-normalisation $\underline{\rho}^{(c)} = \underline{\lambda}^{(c)} /
+normalization $\underline{\rho}^{(c)} = \underline{\lambda}^{(c)} /
 \lambda_T^{(c)}$ (see @sec-hier-gamma-sampling), so $\underline{\rho}^{(c)}$
 is *not* a free parameter that can simply be replaced by an independent
 logistic-normal draw. A principled combination would either (a) couple the
@@ -1661,7 +1776,7 @@ per-cell variational state---the encoder generalizes to all cells.
 
 The table below compares the standard Dirichlet-Multinomial model with
 the LNM under Strategy A2, in both its direct $(G-1)$-dimensional form
-and its linear-decoder VAE reparameterisation
+and its linear-decoder VAE reparameterization
 (@sec-lnm-linear-vae-equivalence). $H$ denotes the encoder hidden
 width.
 
@@ -1670,7 +1785,7 @@ width.
 | Likelihood per cell | $O(G)$ (DM formula) | $O(G)$ (log-softmax + Multinomial) | $O(G)$ (log-softmax + Multinomial) |
 | Per-cell latent dim | --- | $G - 1$ | $k$ |
 | Encoder output dim | --- | $2(G-1)$ | $2k$ |
-| Latent sampling per cell | None (marginalised) | $O(G)$ (diagonal $q_\phi$ reparam) | $O(k)$ (diagonal $q_\phi$ reparam) |
+| Latent sampling per cell | None (marginalized) | $O(G)$ (diagonal $q_\phi$ reparam) | $O(k)$ (diagonal $q_\phi$ reparam) |
 | Linear decoder per cell | --- | --- | $O(Gk)$ ($\underline{\mu} + \underline{\underline{W}}\,\underline{z}$) |
 | Population guide params | $O(Gk)$ over $\log\underline{r}$ | $O(Gk)$ over $\underline{\mu},\,\underline{\underline{W}},\,\underline{d}$ | $O(Gk)$ over decoder kernel/bias and $\underline{d}$ |
 | Per-cell guide params | None | None (encoder weights, $O(GH)$) | None (encoder weights, $O(GH)$) |
@@ -1740,9 +1855,146 @@ The cost is the loss of conjugacy and the need for approximate inference over
 per-cell latent variables. The following sections develop the implementation
 within SCRIBE's modular inference framework.
 
+## Theoretical limitations and open questions {#sec-lnm-limitations}
+
+The logistic-normal multinomial model resolves a structural limitation
+of the Dirichlet-Multinomial (zero free correlation parameters) at the
+cost of introducing approximations and modeling choices that are worth
+making explicit. We collect the main theoretical caveats here, both as
+a guide to where the model is expected to be reliable and as a record
+of design decisions that may warrant revisiting in future work.
+
+### The LNA approximation in low-count regimes {#sec-lnm-lim-lna}
+
+The biophysical derivation of @sec-lnm-biophysical relies on two
+approximations applied to the Chemical Langevin Equation: the linear
+noise approximation (linearizing the drift around the deterministic
+steady state) and the freezing of the noise amplitude at its
+steady-state value (see @sec-lnm-bio-lna). Both approximations are
+controlled by the same small parameter---the relative size of
+fluctuations $\delta\underline{x}$ around the steady state in
+log-abundance space---and both degrade for genes with very low molecular
+counts.
+
+In the low-count regime, the exact steady-state of an *independent*
+birth-death process is Gamma-distributed, and the resulting compositional
+prior is the Dirichlet of @sec-dirichlet-multinomial. The DM is therefore
+the better marginal model for genes that are both lowly expressed *and*
+weakly coupled to the rest of the network. The LNM should be understood
+as the model of choice when (a) cross-gene correlations are the
+inferential target, and (b) the genes carrying the relevant signal are
+expressed at counts where the LNA is reliable. Pragmatically, this
+covers the bulk of genes that drive cell-type structure in scRNA-seq,
+but it does not cover every gene equally well.
+
+### Identifiability of $\underline{\underline{W}}$ {#sec-lnm-lim-identifiability}
+
+As discussed in @sec-lnm-bio-low-rank, the likelihood depends on
+$\underline{\underline{W}}$ only through
+$\underline{\underline{W}}\,\underline{\underline{W}}^\top$, so
+$\underline{\underline{W}}$ is identified only up to a $k \times k$
+orthogonal rotation. The biological reading of "columns of
+$\underline{\underline{W}}$ as transcription-factor programs" is
+therefore valid only at the level of the rank-$k$ subspace they span,
+not at the level of individual columns. Downstream uses that depend on
+$\underline{\underline{W}}\,\underline{\underline{W}}^\top$ (clustering,
+similarity, eigenvalue spectrum) are unaffected; uses that require
+named, sparse, or otherwise distinguished columns require a
+post-processing step (e.g., varimax rotation, sparse-PCA, or imposing
+sparsity in $\underline{\underline{W}}$ at training time).
+
+A related but distinct identifiability question concerns the
+**inverse problem** $\underline{\underline{\Sigma}} \to
+\underline{\underline{J}}$ implied by the Lyapunov equation
+@eq-lnm-bio-lyapunov. Multiple Jacobians $\underline{\underline{J}}$
+can produce the same steady-state covariance
+$\underline{\underline{\Sigma}}$, so even if
+$\underline{\underline{\Sigma}}$ is recovered exactly from data, the
+underlying GRN topology is not uniquely determined. This is a
+well-known limitation of static (steady-state) data; resolving it
+typically requires perturbation experiments or temporal information.
+The LNM thus recovers the *consequences* of the GRN, not the GRN
+itself.
+
+### Scale--composition decoupling {#sec-lnm-lim-decoupling}
+
+The generative model of @sec-lnm-generative factorizes the per-cell
+count vector into an independent NB total $u_T^{(c)}$ and an
+independent compositional latent $\underline{y}^{(c)}$. As noted in
+@sec-lnm-generative, this factorization is not derivable from the LNA
+on log-abundances: under the underlying GRN dynamics, the total
+$\Lambda^{(c)} = \sum_g \lambda_g^{(c)}$ and the composition
+$\underline{\rho}^{(c)}$ are functionals of the same Gaussian and are
+in general correlated. The decoupled form is adopted here for clarity
+and tractability; the relevant question for future work is whether the
+small correlations introduced by full coupling materially affect
+inference of $\underline{\underline{W}}$, or whether the technical
+scaling factor (capture efficiency) dominates the per-cell total to
+the point where decoupling is empirically harmless.
+
+### Identifiability of off-diagonal $\underline{\underline{\Sigma}}$ from data {#sec-lnm-lim-data-id}
+
+The structural argument against the moment-matched DM proxy
+(Strategy D, @sec-lnm-strategy-d) is that its likelihood gradient on
+$\underline{\underline{W}}$ is identically zero. Strategy A2 avoids
+this failure mode: its multinomial likelihood depends on $\rho_g(\underline{y})
+= \text{ALR}^{-1}(\underline{y})_g$, which depends on the full vector
+$\underline{y}$, so the ELBO gradient on $\underline{\underline{W}}$
+is non-zero in general.
+
+A separate question---distinct from the *existence* of gradient
+signal---is the **strength** of that signal in finite-data regimes. The
+off-diagonal entries of $\underline{\underline{\Sigma}}$ are identified
+through cell-to-cell co-variation of compositions in log-ratio space,
+and the per-cell signal-to-noise on individual $\rho_g$ scales with
+$\sqrt{u_T^{(c)} \rho_g}$. For low-expression genes in cells with
+modest UMI depth, the multinomial sampling noise can be large relative
+to the compositional fluctuations of interest. This is an empirical
+question rather than a theoretical one, and we defer it to the
+synthetic-data validation that motivates the development. The
+theoretical statement we can make here is conditional: *if* the data
+identify $\underline{\underline{\Sigma}}$, the LNM provides the
+correct generative path through which $\underline{\underline{W}}$
+absorbs that identifiability.
+
+### Fidelity of the diagonal amortized posterior {#sec-lnm-lim-amortized}
+
+In the linear-decoder VAE form, the encoder produces a diagonal
+$q_\phi(\underline{z}^{(c)} \mid \underline{u}^{(c)})$, which induces
+the structured posterior on $\underline{y}^{(c)}$ given by
+@eq-lnm-vae-induced-posterior. This is more expressive than a diagonal
+posterior on $\underline{y}^{(c)}$ would be, but it is still a
+restricted family: the per-cell posterior covariance has rank at most
+$k$ in its low-rank component, with the column space pinned to that of
+$\underline{\underline{W}}$. If the true per-cell posterior over
+$\underline{y}^{(c)}$ has correlations along directions outside the
+column space of $\underline{\underline{W}}$, the variational family
+cannot represent them. Whether this matters in practice depends on how
+well-aligned the likelihood-induced per-cell coupling is with the
+population-level rank-$k$ structure---an alignment that holds
+asymptotically (the prior dominates as $u_T^{(c)} \to 0$) but
+degrades in high-count cells (where the likelihood dominates and may
+prefer different directions).
+
+### Summary
+
+These caveats do not undermine the LNM's central claim---that placing
+cross-gene correlations in the *generative* model rather than the
+*variational guide* is the structural fix to the Dirichlet's
+zero-correlation-freedom limitation. They do, however, delineate the
+regime in which the model is expected to be informative: cell-type
+contexts where the genes of interest are expressed at counts
+compatible with the LNA, where the rank-$k$ low-rank assumption on
+$\underline{\underline{\Sigma}}$ matches the true regulatory
+architecture, and where downstream interpretation respects the
+identifiability constraints on $\underline{\underline{W}}$. The next
+step in this program is empirical: validating that, within this
+regime, the LNM recovers cross-gene correlations that the
+Dirichlet-Multinomial model with a low-rank guide could not.
+
 ## Implementation map {#sec-lnm-implementation-map}
 
-The mathematical model developed above is realised in SCRIBE through the
+The mathematical model developed above is realized in SCRIBE through the
 linear-decoder VAE form of @sec-lnm-linear-vae-equivalence. The
 implementation artefacts are:
 
@@ -1754,7 +2006,7 @@ implementation artefacts are:
   regimes from @sec-lnm-vae-d (strictly rank-$k$ marginal vs full
   $\underline{\underline{W}}\,\underline{\underline{W}}^\top +
   \text{diag}(\underline{d})$).
-- **Parameterisation**: `LogisticNormalParameterization` (in
+- **Parameterization**: `LogisticNormalParameterization` (in
   `scribe.models.parameterizations`). Declares
   $r_T,\,\hat{p},\,[\underline{d}]$ as core numpyro sites; the
   population mean $\underline{\mu}$ and low-rank factor
