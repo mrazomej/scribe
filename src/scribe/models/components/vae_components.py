@@ -58,11 +58,141 @@ from .covariate_embedding import CovariateEmbedding, CovariateSpec
 # Input transformations (matching legacy VAE)
 # ---------------------------------------------------------------------------
 
+# NOTE:
+# Use named callables (instead of lambdas) for debuggability and safer
+# serialization in toolchains that pickle Python callables.
+
+
+def _log1p_transform(x: jnp.ndarray) -> jnp.ndarray:
+    """Apply element-wise ``log(1 + x)`` transform.
+
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Non-negative count-like input array.
+
+    Returns
+    -------
+    jnp.ndarray
+        Transformed array with the same shape as ``x``.
+    """
+    return jnp.log1p(x)
+
+
+def _log_transform(x: jnp.ndarray) -> jnp.ndarray:
+    """Apply numerically safe element-wise natural logarithm.
+
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Input array.
+
+    Returns
+    -------
+    jnp.ndarray
+        ``log(x + 1e-8)`` evaluated element-wise.
+    """
+    return jnp.log(x + 1e-8)
+
+
+def _sqrt_transform(x: jnp.ndarray) -> jnp.ndarray:
+    """Apply element-wise square-root transform.
+
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Non-negative input array.
+
+    Returns
+    -------
+    jnp.ndarray
+        ``sqrt(x)`` evaluated element-wise.
+    """
+    return jnp.sqrt(x)
+
+
+def _identity_transform(x: jnp.ndarray) -> jnp.ndarray:
+    """Return the input unchanged.
+
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Input array.
+
+    Returns
+    -------
+    jnp.ndarray
+        The same input values with no transformation.
+    """
+    return x
+
+
+def _log1p_prop_transform(x: jnp.ndarray) -> jnp.ndarray:
+    """Apply compositional ``log1p`` transform on row-wise proportions.
+
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Count matrix with genes on the last axis (``..., n_genes``).
+
+    Returns
+    -------
+    jnp.ndarray
+        ``log1p(x / row_total)`` where ``row_total = sum(x, axis=-1)``.
+        The denominator is clamped to at least ``1.0`` to avoid division
+        by zero for empty rows.
+    """
+    row_total = jnp.maximum(x.sum(axis=-1, keepdims=True), 1.0)
+    return jnp.log1p(x / row_total)
+
+
+def _clr_transform(x: jnp.ndarray) -> jnp.ndarray:
+    """Apply centered log-ratio transform with pseudocount ``0.5``.
+
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Count matrix with genes on the last axis (``..., n_genes``).
+
+    Returns
+    -------
+    jnp.ndarray
+        ``log(x + 0.5) - mean(log(x + 0.5), axis=-1)`` so each row is
+        centered in log-ratio coordinates.
+    """
+    log_x = jnp.log(x + 0.5)
+    return log_x - log_x.mean(axis=-1, keepdims=True)
+
+
+_LOG1P_NORM_TARGET_SIZE = 1e4
+
+
+def _log1p_norm_transform(x: jnp.ndarray) -> jnp.ndarray:
+    """Apply library-size normalization to ``1e4`` followed by ``log1p``.
+
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Count matrix with genes on the last axis (``..., n_genes``).
+
+    Returns
+    -------
+    jnp.ndarray
+        ``log1p(x * 1e4 / row_total)`` with ``row_total`` clamped to at
+        least ``1.0`` for numerical safety.
+    """
+    row_total = jnp.maximum(x.sum(axis=-1, keepdims=True), 1.0)
+    return jnp.log1p(x * _LOG1P_NORM_TARGET_SIZE / row_total)
+
+
 INPUT_TRANSFORMS: Dict[str, Callable[[jnp.ndarray], jnp.ndarray]] = {
-    "log1p": jnp.log1p,
-    "log": lambda x: jnp.log(x + 1e-8),
-    "sqrt": jnp.sqrt,
-    "identity": lambda x: x,
+    "log1p": _log1p_transform,
+    "log": _log_transform,
+    "sqrt": _sqrt_transform,
+    "identity": _identity_transform,
+    "log1p_prop": _log1p_prop_transform,
+    "clr": _clr_transform,
+    "log1p_norm": _log1p_norm_transform,
 }
 
 

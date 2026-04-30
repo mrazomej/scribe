@@ -464,9 +464,18 @@ def build_config_from_preset(
     )
 
     if inference_method == "vae":
+        # LNM models are compositional by construction, so use a compositional
+        # encoder input by default. Respect explicit user overrides.
+        resolved_vae_input_transform = vae_input_transform
+        if (
+            model_lower in ("lnm", "lnmvcp")
+            and vae_input_transform == "log1p"
+        ):
+            resolved_vae_input_transform = "log1p_prop"
+
         vae_kwargs = {
             "latent_dim": vae_latent_dim,
-            "input_transform": vae_input_transform,
+            "input_transform": resolved_vae_input_transform,
             "standardize": vae_standardize,
             "decoder_transforms": vae_decoder_transforms,
             "flow_type": vae_flow_type,

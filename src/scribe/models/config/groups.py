@@ -167,6 +167,13 @@ class GuideFamilyConfig(BaseModel):
         None,
         description="Guide family for LNM total-count NB dispersion r_T",
     )
+    y_alr: Optional[GuideFamily] = Field(
+        None,
+        description=(
+            "Guide family for ALR compositional coordinates "
+            "(LNM gene-level parameter, typically low-rank or joint)"
+        ),
+    )
     d_lnm: Optional[GuideFamily] = Field(
         None,
         description=(
@@ -251,7 +258,8 @@ class AmortizationConfig(BaseModel):
         "silu", "tanh", "sigmoid", etc.
     input_transformation : str, default="log1p"
         Transformation applied to input data before computing sufficient
-        statistic. Options: "log1p", "log", "sqrt", "identity".
+        statistic. Options: "log1p", "log", "sqrt", "identity",
+        "log1p_prop", "clr", and "log1p_norm".
 
     Examples
     --------
@@ -285,7 +293,10 @@ class AmortizationConfig(BaseModel):
     )
     input_transformation: str = Field(
         "log1p",
-        description="Transformation for input data (log1p, log, sqrt, identity)",
+        description=(
+            "Transformation for input data (log1p, log, sqrt, identity, "
+            "log1p_prop, clr, log1p_norm)"
+        ),
     )
     output_transform: str = Field(
         "softplus",
@@ -359,7 +370,15 @@ class AmortizationConfig(BaseModel):
     @classmethod
     def validate_input_transformation(cls, v: str) -> str:
         """Validate input transformation is supported."""
-        valid_transforms = {"log1p", "log", "sqrt", "identity"}
+        valid_transforms = {
+            "log1p",
+            "log",
+            "sqrt",
+            "identity",
+            "log1p_prop",
+            "clr",
+            "log1p_norm",
+        }
         if v.lower() not in valid_transforms:
             raise ValueError(
                 f"Unknown transformation '{v}'. "
@@ -445,7 +464,10 @@ class VAEConfig(BaseModel):
     activation: str = Field("relu", description="Activation function")
     input_transform: str = Field(
         "log1p",
-        description="Input transformation before encoder (log1p, log, sqrt, identity)",
+        description=(
+            "Input transformation before encoder "
+            "(log1p, log, sqrt, identity, log1p_prop, clr, log1p_norm)"
+        ),
     )
     standardize: bool = Field(
         False, description="Whether to standardize input data"
@@ -504,7 +526,15 @@ class VAEConfig(BaseModel):
     @field_validator("input_transform")
     @classmethod
     def validate_input_transform(cls, v):
-        valid = {"log1p", "log", "sqrt", "identity"}
+        valid = {
+            "log1p",
+            "log",
+            "sqrt",
+            "identity",
+            "log1p_prop",
+            "clr",
+            "log1p_norm",
+        }
         if v.lower() not in valid:
             raise ValueError(
                 f"Invalid input_transform: {v}. Must be one of {valid}"

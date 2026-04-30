@@ -427,7 +427,8 @@ class ModelConfigBuilder:
         activation : str
             Activation function (relu, gelu, silu, tanh, elu, leaky_relu).
         input_transform : str
-            Input transformation before encoder (log1p, log, sqrt, identity).
+            Input transformation before encoder (log1p, log, sqrt, identity,
+            log1p_prop, clr, log1p_norm).
         standardize : bool
             Whether to standardize input data.
         decoder_transforms : Dict[str, str], optional

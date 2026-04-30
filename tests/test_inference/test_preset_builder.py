@@ -179,3 +179,24 @@ class TestBuildConfigFromPreset:
                 inference_method="svi",
             )
             assert config.base_model == model
+
+    def test_lnm_defaults_to_log1p_prop_input_transform(self):
+        """LNM models should default to compositional encoder inputs."""
+        config = build_config_from_preset(
+            model="lnm",
+            parameterization="logistic_normal",
+            inference_method="vae",
+        )
+        assert config.vae is not None
+        assert config.vae.input_transform == "log1p_prop"
+
+    def test_lnm_respects_explicit_input_transform_override(self):
+        """Explicit user overrides must take precedence for LNM."""
+        config = build_config_from_preset(
+            model="lnm",
+            parameterization="logistic_normal",
+            inference_method="vae",
+            vae_input_transform="clr",
+        )
+        assert config.vae is not None
+        assert config.vae.input_transform == "clr"

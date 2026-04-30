@@ -205,9 +205,18 @@ latent z. Decoder-driven parameter names are derived from `decoder.output_heads`
 ### Input transforms and standardization
 
 Encoders support configurable **input transformation** (`input_transformation`):
-`"log1p"`, `"log"`, `"sqrt"`, `"identity"`. Optional **standardization** via
-`standardize_mean` and `standardize_std` (per feature); decoders can apply the
-inverse with the same arrays for reconstruction in original scale.
+`"log1p"`, `"log"`, `"sqrt"`, `"identity"`, `"log1p_prop"`, `"clr"`,
+`"log1p_norm"`.
+
+- `"log1p_prop"` computes `log1p(u_g / u_T)` row-wise and is the default input
+  transform for `lnm`/`lnmvcp` when not explicitly overridden.
+- `"clr"` computes centered log-ratios `log(u_g + 0.5) - mean_g(log(u_g + 0.5))`.
+- `"log1p_norm"` computes scVI-style library-size normalization
+  `log1p(u_g * 1e4 / u_T)`.
+
+Optional **standardization** via `standardize_mean` and `standardize_std` (per
+feature); decoders can apply the inverse with the same arrays for
+reconstruction in original scale.
 
 ### Optional covariate conditioning
 

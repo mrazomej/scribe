@@ -375,10 +375,18 @@ def fit(
         implied when neither flag nor ``model`` is specified, since the
         default model is ``"nbvcp"``):
 
+        For standard (NBDM-family) parameterizations:
+
             - ``variable_capture=False, zero_inflation=False`` -> ``"nbdm"``
             - ``variable_capture=True, zero_inflation=False`` -> ``"nbvcp"``
             - ``variable_capture=False, zero_inflation=True`` -> ``"zinb"``
             - ``variable_capture=True, zero_inflation=True`` -> ``"zinbvcp"``
+
+        For ``parameterization="logistic_normal"`` (LNM family):
+
+            - ``variable_capture=False`` -> ``"lnm"``
+            - ``variable_capture=True``  -> ``"lnmvcp"``
+            - ``zero_inflation=True`` raises ``ValueError`` (not supported)
 
         An explicit ``model=`` that conflicts with the flags raises
         ``ValueError``.
@@ -726,8 +734,11 @@ def fit(
 
     vae_input_transform : str, default="log1p"
         Input transform applied to counts before entering the VAE
-        encoder.  Supported options include ``"log1p"``, ``"log"``,
-        ``"sqrt"``, and ``"identity"``.
+        encoder. Supported options include ``"log1p"``, ``"log"``,
+        ``"sqrt"``, ``"identity"``, ``"log1p_prop"``, ``"clr"``, and
+        ``"log1p_norm"``. For ``model in {"lnm", "lnmvcp"}``, the
+        effective default is ``"log1p_prop"`` when this argument is not
+        explicitly overridden.
 
     vae_standardize : bool, default=False
         Whether to standardize transformed VAE inputs to zero mean and
@@ -1039,16 +1050,31 @@ def fit(
     # model string from the flags.  An explicit model= that conflicts with
     # the flags raises an error.  When neither flag is set, the model=
     # default ("nbvcp") is used as-is.
+    #
+    # The resolution table depends on the parameterization family:
+    #   logistic_normal  -> lnm / lnmvcp  (ZI not supported)
+    #   all others       -> nbdm / nbvcp / zinb / zinbvcp
+    _is_lnm_param = parameterization.lower() == "logistic_normal"
     _default_model = "nbvcp"
     if variable_capture is not None or zero_inflation is not None:
         _zi = zero_inflation if zero_inflation is not None else False
         _vc = variable_capture if variable_capture is not None else True
-        _resolved = (
-            "zinbvcp" if _zi and _vc
-            else "zinb" if _zi
-            else "nbvcp" if _vc
-            else "nbdm"
-        )
+
+        if _is_lnm_param:
+            if _zi:
+                raise ValueError(
+                    "Zero-inflation is not supported for logistic_normal "
+                    "parameterization. Use variable_capture alone or set "
+                    "model='lnm'/'lnmvcp' explicitly."
+                )
+            _resolved = "lnmvcp" if _vc else "lnm"
+        else:
+            _resolved = (
+                "zinbvcp" if _zi and _vc
+                else "zinb" if _zi
+                else "nbvcp" if _vc
+                else "nbdm"
+            )
         # If the user also passed an explicit model= that differs, raise.
         if model.lower() != _default_model and model.lower() != _resolved:
             raise ValueError(

@@ -97,6 +97,39 @@ class TestInputTransforms:
         transform = _get_input_transform("identity")
         npt.assert_allclose(transform(x), x)
 
+    def test_log1p_prop_transform_matches_definition(self):
+        """log1p_prop must equal log1p of row-wise proportions."""
+        x = jnp.array([[1.0, 3.0], [2.0, 2.0]])
+        transform = _get_input_transform("log1p_prop")
+        totals = jnp.sum(x, axis=-1, keepdims=True)
+        expected = jnp.log1p(x / totals)
+        npt.assert_allclose(transform(x), expected)
+
+    def test_log1p_prop_is_total_scale_invariant(self):
+        """log1p_prop should be invariant to per-row count scaling."""
+        x = jnp.array([[1.0, 2.0, 3.0], [2.0, 4.0, 6.0]])
+        transform = _get_input_transform("log1p_prop")
+        out = transform(x)
+        npt.assert_allclose(out[0], out[1], rtol=1e-6, atol=1e-6)
+
+    def test_clr_has_zero_row_mean_and_matches_definition(self):
+        """clr rows should be centered and match the implemented formula."""
+        x = jnp.array([[1.0, 2.0, 4.0], [10.0, 20.0, 40.0]])
+        transform = _get_input_transform("clr")
+        out = transform(x)
+        log_x = jnp.log(x + 0.5)
+        expected = log_x - jnp.mean(log_x, axis=-1, keepdims=True)
+        npt.assert_allclose(jnp.mean(out, axis=-1), jnp.zeros(2), atol=1e-6)
+        npt.assert_allclose(out, expected, rtol=1e-6, atol=1e-6)
+
+    def test_log1p_norm_matches_scvi_style_definition(self):
+        """log1p_norm should match log1p(x * 1e4 / row_total)."""
+        x = jnp.array([[1.0, 3.0], [2.0, 2.0]])
+        transform = _get_input_transform("log1p_norm")
+        totals = jnp.sum(x, axis=-1, keepdims=True)
+        expected = jnp.log1p(x * 1e4 / totals)
+        npt.assert_allclose(transform(x), expected)
+
     def test_invalid_transform_raises(self):
         with pytest.raises(ValueError, match="Unknown input_transformation"):
             _get_input_transform("nonexistent")
@@ -269,7 +302,15 @@ class TestGaussianEncoder:
     ):
         """Different input transforms should all produce valid outputs."""
         x = jnp.ones((2, input_dim)) * 5.0  # positive counts
-        for transform_name in ["log1p", "sqrt", "identity"]:
+        for transform_name in [
+            "log1p",
+            "log",
+            "sqrt",
+            "identity",
+            "log1p_prop",
+            "clr",
+            "log1p_norm",
+        ]:
             enc = GaussianEncoder(
                 input_dim=input_dim,
                 latent_dim=latent_dim,

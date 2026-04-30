@@ -345,6 +345,7 @@ vae_results = scribe.fit(
 lnm_results = scribe.fit(
     data,
     model="lnm",
+    # LNM defaults to vae_input_transform="log1p_prop" unless overridden.
     n_steps=50000,
 )
 

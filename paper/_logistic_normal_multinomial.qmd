@@ -1888,6 +1888,14 @@ implementation artefacts are:
   $\text{Dense}(G-1)$ identity-transformed decoder head and a
   $k$-dimensional `GaussianLatentSpec` with the standard
   $\mathcal{N}(\underline{0},\, \underline{\underline{I}}_k)$ prior.
+- **Encoder preprocessing**: for `lnm`/`lnmvcp`, the effective default
+  VAE encoder input transform is `log1p_prop`, i.e.
+  $\log(1 + u_g^{(c)} / u_T^{(c)})$. This follows the compositional
+  structure of the model: the multinomial likelihood is driven by
+  proportions, while the total-count scale is handled by the separate
+  NB submodel on $u_T$. Using proportions at the encoder input removes a
+  nuisance total-count factor that would otherwise need to be learned as
+  an invariance by the amortizer.
 - **Bottleneck dimension**: set via `VAEConfig.latent_dim = k`. This is
   the rank of the population covariance
   $\underline{\underline{\Sigma}}$.
