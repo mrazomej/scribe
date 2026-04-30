@@ -133,44 +133,44 @@ $G$-simplex to $\mathbb{R}^{G-1}$ by taking log-ratios with respect to a
 reference component (conventionally the last one):
 
 $$
-y_g = \log \frac{x_g}{x_G}, \quad g = 1, 2, \ldots, G-1,
+z_g = \log \frac{\rho_g}{\rho_G}, \quad g = 1, 2, \ldots, G-1,
 $${#eq-lnm-alr-forward}
 
-where $\underline{x} = (x_1, \ldots, x_G)$ satisfies $x_g > 0$ and
-$\sum_{g=1}^G x_g = 1$. The inverse transformation recovers the simplex point
+where $\underline{\rho} = (\rho_1, \ldots, \rho_G)$ satisfies $\rho_g > 0$ and
+$\sum_{g=1}^G \rho_g = 1$. The inverse transformation recovers the simplex point
 from the log-ratios:
 
 $$
-x_g = \frac{\exp(y_g)}{1 + \sum_{j=1}^{G-1} \exp(y_j)},
+\rho_g = \frac{\exp(z_g)}{1 + \sum_{j=1}^{G-1} \exp(z_j)},
 \quad g = 1, \ldots, G-1,
 $${#eq-lnm-alr-inverse-first}
 
 $$
-x_G = \frac{1}{1 + \sum_{j=1}^{G-1} \exp(y_j)}.
+\rho_G = \frac{1}{1 + \sum_{j=1}^{G-1} \exp(z_j)}.
 $${#eq-lnm-alr-inverse-last}
 
 This is a bijection between the interior of the $G$-simplex and
 $\mathbb{R}^{G-1}$. The ALR is closely related to the CLR used in
-@sec-diffexp-gaussianity. Given ALR coordinates $\underline{y} \in
+@sec-diffexp-gaussianity. Given ALR coordinates $\underline{z} \in
 \mathbb{R}^{G-1}$, the CLR coordinates are obtained by the linear centering
 operation (see @sec-lnm-alr-to-clr below).
 
 ### Definition of the logistic-normal {#sec-lnm-logistic-normal-def}
 
-A random vector $\underline{x}$ on the $G$-simplex follows a **logistic-normal
-distribution** if its ALR transform $\underline{y}$ follows a multivariate
+A random vector $\underline{\rho}$ on the $G$-simplex follows a **logistic-normal
+distribution** if its ALR transform $\underline{z}$ follows a multivariate
 normal distribution:
 
 $$
-\underline{y} \sim
+\underline{z} \sim
 \mathcal{N}(\underline{\mu},\,
 \underline{\underline{\Sigma}}),
-\quad \underline{y} \in \mathbb{R}^{G-1},
+\quad \underline{z} \in \mathbb{R}^{G-1},
 $${#eq-lnm-base-mvn}
 
 $$
-\underline{x} = \text{ALR}^{-1}(\underline{y}),
-\quad \underline{x} \in \Delta^G,
+\underline{\rho} = \text{ALR}^{-1}(\underline{z}),
+\quad \underline{\rho} \in \Delta^G,
 $${#eq-lnm-simplex-map}
 
 where $\underline{\mu} \in \mathbb{R}^{G-1}$ is the location (mean
@@ -178,7 +178,7 @@ composition in log-ratio space) and $\underline{\underline{\Sigma}}$ is a
 $(G-1) \times (G-1)$ positive-definite covariance matrix. We write
 
 $$
-\underline{x} \sim
+\underline{\rho} \sim
 \text{LogisticNormal}(\underline{\mu},\,
 \underline{\underline{\Sigma}}).
 $${#eq-lnm-distribution-def}
@@ -189,19 +189,19 @@ The density of the logistic-normal with respect to Lebesgue measure on the
 simplex is obtained by applying the change-of-variables formula to the
 multivariate normal density. We need the Jacobian of the ALR transformation.
 
-The ALR maps $\underline{x} \in \Delta^G$ to
-$\underline{y} \in \mathbb{R}^{G-1}$ via $y_g = \log(x_g / x_G)$. The
+The ALR maps $\underline{\rho} \in \Delta^G$ to
+$\underline{z} \in \mathbb{R}^{G-1}$ via $z_g = \log(\rho_g / \rho_G)$. The
 Jacobian matrix of this transformation has entries
 
 $$
-\frac{\partial y_g}{\partial x_j} =
+\frac{\partial z_g}{\partial \rho_j} =
 \begin{cases}
-1 / x_g & \text{if } j = g, \\
+1 / \rho_g & \text{if } j = g, \\
 0 & \text{if } j \neq g \text{ and } j < G.
 \end{cases}
 $${#eq-lnm-jacobian-entries}
 
-However, the simplex constraint $x_G = 1 - \sum_{j=1}^{G-1} x_j$ introduces
+However, the simplex constraint $\rho_G = 1 - \sum_{j=1}^{G-1} \rho_j$ introduces
 additional dependencies. Taking into account the constraint (and applying the
 standard change-of-variables formula for the simplex-to-$\mathbb{R}^{G-1}$
 map), the log-determinant of the Jacobian evaluates to
@@ -209,42 +209,42 @@ map), the log-determinant of the Jacobian evaluates to
 $$
 \log \left| \det
 \underline{\underline{J}} \right| =
--\sum_{g=1}^{G} \log x_g.
+-\sum_{g=1}^{G} \log \rho_g.
 $${#eq-lnm-log-det-jacobian}
 
 The proof of @eq-lnm-log-det-jacobian follows from recognizing that the
-Jacobian of the **inverse** ALR (from $\underline{y}$ to $\underline{x}$) is a
-softmax Jacobian, whose log-determinant is $\sum_{g=1}^G \log x_g$. Inverting
+Jacobian of the **inverse** ALR (from $\underline{z}$ to $\underline{\rho}$) is a
+softmax Jacobian, whose log-determinant is $\sum_{g=1}^G \log \rho_g$. Inverting
 gives the sign flip.
 
 Combining the multivariate normal density with the Jacobian correction, the
 logistic-normal density on the simplex is
 
 $$
-\pi(\underline{x} \mid \underline{\mu},
+\pi(\underline{\rho} \mid \underline{\mu},
 \underline{\underline{\Sigma}}) =
 \frac{1}{(2\pi)^{(G-1)/2}
 |\underline{\underline{\Sigma}}|^{1/2}}
 \exp\!\left(
 -\frac{1}{2}
-(\underline{y} - \underline{\mu})^\top
+(\underline{z} - \underline{\mu})^\top
 \underline{\underline{\Sigma}}^{-1}
-(\underline{y} - \underline{\mu})
+(\underline{z} - \underline{\mu})
 \right)
-\prod_{g=1}^{G} \frac{1}{x_g},
+\prod_{g=1}^{G} \frac{1}{\rho_g},
 $${#eq-lnm-density}
 
-where $\underline{y}$ is the ALR transform of $\underline{x}$, i.e.,
-$y_g = \log(x_g / x_G)$ for $g = 1, \ldots, G-1$.
+where $\underline{z}$ is the ALR transform of $\underline{\rho}$, i.e.,
+$z_g = \log(\rho_g / \rho_G)$ for $g = 1, \ldots, G-1$.
 
 Equivalently, in log-probability form:
 
 $$
-\log \pi(\underline{x} \mid \underline{\mu},
+\log \pi(\underline{\rho} \mid \underline{\mu},
 \underline{\underline{\Sigma}}) =
-\log \mathcal{N}(\underline{y} \mid \underline{\mu},
+\log \mathcal{N}(\underline{z} \mid \underline{\mu},
 \underline{\underline{\Sigma}})
-- \sum_{g=1}^{G} \log x_g.
+- \sum_{g=1}^{G} \log \rho_g.
 $${#eq-lnm-log-density}
 
 The first term is the standard multivariate normal log-density evaluated at the
@@ -253,27 +253,27 @@ change of variables.
 
 ### Connection to CLR coordinates {#sec-lnm-alr-to-clr}
 
-The ALR transformation treats the last component $x_G$ as a reference, which
+The ALR transformation treats the last component $\rho_G$ as a reference, which
 introduces an asymmetry: permuting the gene labels changes the distribution.
 The **centered log-ratio** (CLR) transformation removes this asymmetry by
 centering:
 
 $$
-z_{g,\text{CLR}} = \log x_g - \frac{1}{G} \sum_{j=1}^G \log x_j,
+z_{g,\text{CLR}} = \log \rho_g - \frac{1}{G} \sum_{j=1}^G \log \rho_j,
 \quad g = 1, \ldots, G.
 $${#eq-lnm-clr-from-simplex}
 
-Given ALR coordinates $\underline{y} \in \mathbb{R}^{G-1}$, the CLR
+Given ALR coordinates $\underline{z} \in \mathbb{R}^{G-1}$, the CLR
 coordinates are obtained by the linear transformation
 
 $$
 \underline{z}_{\text{CLR}} =
-\underline{\underline{A}}\, \underline{y},
+\underline{\underline{A}}\, \underline{z},
 $${#eq-lnm-alr-to-clr}
 
 where $\underline{\underline{A}}$ is a $G \times (G-1)$ matrix (see the
 detailed derivation in the ALR-to-CLR transformation used in the differential
-expression framework). Since $\underline{y}$ is Gaussian under the
+expression framework). Since $\underline{z}$ is Gaussian under the
 logistic-normal, $\underline{z}_{\text{CLR}}$ is also Gaussian:
 
 $$
@@ -290,6 +290,161 @@ This is the property that connects the logistic-normal model to the
 Gaussianity diagnostics in @sec-diffexp-gaussianity: under the logistic-normal,
 the CLR coordinates are **exactly** Gaussian by construction, rather than
 approximately Gaussian as tested by the Jarque-Bera diagnostic.
+
+## Equivalent parameterisations: ALR, CLR, and softmax-normal {#sec-lnm-equivalent-params}
+
+The logistic-normal distribution defined in @sec-lnm-logistic-normal-def
+is a probability distribution on the simplex $\Delta^{G-1}$, but it
+admits several equivalent parameterisations. Each corresponds to a
+different convention for removing the one redundant degree of freedom
+inherent to compositional data: the simplex is a $(G-1)$-dimensional
+manifold embedded in $\mathbb{R}^G$, so any natural ambient
+representation will overcount dimensions by one. Because the
+biophysical derivation of @sec-lnm-biophysical naturally produces a
+$G$-dimensional Gaussian on log-abundances (not a $(G-1)$-dimensional
+ALR object), and because the chapter on post-hoc fitting
+(@sec-normalization) is restricted to the ALR form for reasons that do
+not carry over to the present setting, we collect the three relevant
+parameterisations here and clarify which simplex distribution they
+each describe.
+
+### The three parameterisations
+
+Let $\underline{x} \in \mathbb{R}^G$ denote log-abundances, as produced
+by the LNA. The composition is $\underline{\rho} =
+\text{softmax}(\underline{x}) \in \Delta^{G-1}$. Three equivalent
+parameterisations of the resulting distribution on $\underline{\rho}$
+are:
+
+**ALR ($G - 1$ dims, asymmetric, full-rank covariance).** Work with
+the contrasts $\underline{z}_{\text{ALR}} = (x_1 - x_G,\,\ldots,\,x_{G-1} - x_G)
+\in \mathbb{R}^{G-1}$. Place
+$$
+\underline{z}_{\text{ALR}} \sim \mathcal{N}(\underline{\mu}_{\text{ALR}},\,
+\underline{\underline{\Sigma}}_{\text{ALR}}),
+$${#eq-lnm-param-alr}
+with $\underline{\underline{\Sigma}}_{\text{ALR}}$ full-rank in
+$\mathbb{R}^{(G-1)\times(G-1)}$. This is the formulation used in the
+rest of this chapter.
+
+**CLR ($G$ dims, symmetric, rank-deficient covariance).** Work with
+the centered log-abundances $\underline{z}_{\text{CLR}} = \underline{x} -
+\bar{x}\,\underline{1}$, where $\bar{x} = G^{-1}\sum_g x_g$. Place
+$$
+\underline{z}_{\text{CLR}} \sim \mathcal{N}(\underline{\mu}_{\text{CLR}},\,
+\underline{\underline{\Sigma}}_{\text{CLR}}),
+$${#eq-lnm-param-clr}
+with the constraint $\underline{1}^\top \underline{\mu}_{\text{CLR}}
+= 0$ and $\underline{\underline{\Sigma}}_{\text{CLR}}\,\underline{1} =
+\underline{0}$. The covariance is rank-deficient (rank $G-1$ in $G$
+dims), with $\underline{1}$ in its null space.
+
+**Unconstrained softmax-normal ($G$ dims, symmetric, with gauge
+freedom).** Work directly with $\underline{x} \in \mathbb{R}^G$
+without any constraint. Place
+$$
+\underline{x} \sim \mathcal{N}(\underline{\mu}_{\text{full}},\,
+\underline{\underline{\Sigma}}_{\text{full}}).
+$${#eq-lnm-param-softmax}
+The simplex distribution is invariant under
+$\underline{\mu}_{\text{full}} \to \underline{\mu}_{\text{full}} + c\,
+\underline{1}$, so this parameterisation has a one-dimensional
+**gauge freedom**: parameters along the $\underline{1}$ direction are
+not determined by any data.
+
+### These describe the same simplex distribution
+
+The three forms are linked by linear maps. Let $\underline{\underline{A}}
+\in \mathbb{R}^{(G-1) \times G}$ be the contrast matrix from
+@eq-lnm-alr-forward and $\underline{\underline{H}} =
+\underline{\underline{I}}_G - G^{-1}\,\underline{1}\,\underline{1}^\top$
+be the centering projector. Then:
+
+$$
+\underline{\underline{\Sigma}}_{\text{ALR}} =
+\underline{\underline{A}}\,\underline{\underline{\Sigma}}_{\text{full}}\,
+\underline{\underline{A}}^\top,
+\qquad
+\underline{\underline{\Sigma}}_{\text{CLR}} =
+\underline{\underline{H}}\,\underline{\underline{\Sigma}}_{\text{full}}\,
+\underline{\underline{H}}^\top.
+$${#eq-lnm-param-equivalence}
+
+Both maps are many-to-one (the ALR map collapses one dimension; the
+CLR projector annihilates the $\underline{1}$ direction), reflecting
+the gauge freedom. The induced distribution on $\underline{\rho}$ is
+the same in all three cases.
+
+### Why ALR for this chapter
+
+The three parameterisations are *generatively* equivalent but differ
+in their fit to standard variational machinery:
+
+| Parameterisation | Covariance rank | Constraints to enforce | Density on simplex | Variational machinery |
+|------------------|-----------------|------------------------|--------------------|-----------------------|
+| ALR | Full | None | Closed form via Jacobian | `LowRankMVN` direct |
+| CLR | $G - 1$ in $G$ dims | $\sum_g \mu_g = 0$, $\Sigma\,\underline{1} = \underline{0}$ | Closed form via pseudoinverse | Requires manual projection |
+| Softmax-normal | Full | None | Not well-defined (gauge freedom) | Optimizer drifts along $\underline{1}$ |
+
+For the **inference machinery** of @sec-lnm-strategy-a, all three are
+in principle usable: the ELBO never requires evaluating
+$\pi(\underline{\rho})$ as a density on the simplex (the multinomial
+likelihood treats $\underline{\rho}$ as a parameter, not a random
+variable with a density), so the singular-Jacobian obstruction that
+applies to the post-hoc fitting in @sec-normalization does not
+apply here. What does matter is operational simplicity:
+
+- **ALR** has full-rank covariance, no constraints, and integrates
+  directly with NumPyro's `LowRankMultivariateNormal`. It is the
+  lowest-friction choice.
+- **CLR** is more interpretable (symmetric across genes, matches the
+  CLR coordinates used in the differential expression pipeline of
+  @sec-diffexp-gaussianity) but requires either projection
+  steps after each gradient update or a pseudoinverse-aware Gaussian
+  density implementation.
+- **Unconstrained softmax-normal** is the most natural fit to the
+  biophysics but introduces a one-dimensional unidentified direction
+  along which the optimizer wanders, slowing convergence and
+  producing parameters that are interpretable only modulo the gauge.
+  A soft penalty of the form $\lambda\,(\underline{1}^\top
+  \underline{\mu})^2$ can fix the gauge stochastically, but it is
+  just a softer version of what ALR/CLR enforce by construction.
+
+We adopt the **ALR parameterisation** for the rest of the chapter on
+the basis of these computational considerations. The choice does not
+affect:
+
+1. The simplex distribution being modelled (identical in all three
+   forms, as established by @eq-lnm-param-equivalence).
+2. The biophysical interpretation of the rank-$k$ structure (the
+   column space of the loading matrix is gauge-invariant up to a
+   known linear map).
+3. The multinomial likelihood, the ELBO, or any quantity intrinsic
+   to compositions.
+
+After fitting, the ALR loading matrix can be translated into CLR
+coordinates --- which are typically the more natural ones for biological
+interpretation, since they treat all genes symmetrically --- via
+
+$$
+\underline{\underline{W}}_{\text{CLR}} = \underline{\underline{H}}\,
+\begin{bmatrix}
+\underline{\underline{W}}_{\text{ALR}} \\ \underline{0}^\top
+\end{bmatrix},
+$${#eq-lnm-W-alr-to-clr}
+
+i.e., extending $\underline{\underline{W}}_{\text{ALR}}$ with a
+zero row for the reference gene and then row-centering. Clustering on
+the rows of $\underline{\underline{W}}_{\text{CLR}}$ provides a
+gauge-symmetric grouping of genes by shared regulatory program,
+removing the asymmetry inherited from the choice of reference gene
+in the ALR step.
+
+In short: **the ALR is best understood as a gauge-fixing convention,
+not as a substantive modelling decision.** The biophysics, the
+generative model, and the simplex distribution are unchanged under
+the equivalent CLR or unconstrained softmax-normal forms; only the
+operational cost of fitting differs.
 
 ## Contrasting the Dirichlet and the logistic-normal {#sec-lnm-contrast}
 
@@ -626,6 +781,21 @@ governing the GRN, and its entries are direct consequences of the
 regulatory interactions encoded in $\underline{\underline{J}}$ and the
 bursty-transcription noise encoded in $\underline{\underline{D}}$.
 
+It is worth being explicit about where the biophysics ends and the
+parameterisation begins. The LNA produces an unconstrained
+$G$-dimensional Gaussian on log-abundances $\underline{x}^{(c)} \in
+\mathbb{R}^G$; the compositional distribution follows by applying the
+softmax map $\underline{\rho}^{(c)} = \text{softmax}(\underline{x}^{(c)})$,
+which collapses the $G$-dimensional space onto the
+$(G-1)$-dimensional simplex. The further step from "Gaussian on
+$\mathbb{R}^G$" to "ALR parameters $\underline{\mu}_{\text{ALR}},\,
+\underline{\underline{\Sigma}}_{\text{ALR}}$" is **not** a step in
+the biophysics: it is a downstream gauge-fixing convention that
+removes the one redundant degree of freedom inherent to compositional
+data. Several equivalent gauge-fixing choices (ALR, CLR, unconstrained
+softmax-normal) describe the same simplex distribution; we lay them
+out and motivate the ALR choice in @sec-lnm-equivalent-params.
+
 ### The low-rank covariance as regulatory architecture {#sec-lnm-bio-low-rank}
 
 The low-rank factorization
@@ -805,7 +975,7 @@ unchanged from the Dirichlet-Multinomial model.
 latent in ALR space from the population distribution:
 
 $$
-\underline{y}^{(c)} \sim
+\underline{z}^{(c)} \sim
 \mathcal{N}(\underline{\mu},\,
 \underline{\underline{\Sigma}}),
 $${#eq-lnm-cell-latent}
@@ -815,7 +985,7 @@ composition in log-ratio space, and $\underline{\underline{\Sigma}} =
 \underline{\underline{W}}\,\underline{\underline{W}}^\top +
 \text{diag}(\underline{d})$ is the population covariance. These are **shared
 parameters** (constant across cells), analogous to $\underline{r}$ in the
-Dirichlet model. The per-cell latent $\underline{y}^{(c)}$ plays the role that
+Dirichlet model. The per-cell latent $\underline{z}^{(c)}$ plays the role that
 the Dirichlet draw $\underline{\rho}^{(c)} \sim
 \text{Dir}(\underline{r})$ plays in the standard model: it represents the
 cell-specific composition before multinomial sampling.
@@ -825,7 +995,7 @@ to allocate the total count across genes:
 
 $$
 \underline{\rho}^{(c)} =
-\text{ALR}^{-1}(\underline{y}^{(c)}),
+\text{ALR}^{-1}(\underline{z}^{(c)}),
 $${#eq-lnm-cell-composition}
 
 $$
@@ -836,7 +1006,7 @@ $${#eq-lnm-multinomial}
 **Note: scale--composition decoupling is a modeling choice.** The
 generative process above factorizes the per-cell count vector into an
 independent total $u_T^{(c)} \sim \text{NB}(r_T, \hat p)$ and an
-independent compositional latent $\underline{y}^{(c)} \sim
+independent compositional latent $\underline{z}^{(c)} \sim
 \mathcal{N}(\underline{\mu},\,\underline{\underline{\Sigma}})$. This is
 the same factorization that the DM uses, and it inherits the same
 limitation: it is **not** strictly derivable from the GRN biophysics of
@@ -864,11 +1034,11 @@ $r_T$ and $\underline{\mu}$---is left for future development.
 ### Joint distribution and the marginalization problem {#sec-lnm-joint}
 
 The joint distribution of the observed counts $\underline{u}^{(c)}$, the
-composition latent $\underline{y}^{(c)}$, and the total count $u_T^{(c)}$ for
+composition latent $\underline{z}^{(c)}$, and the total count $u_T^{(c)}$ for
 a single cell is
 
 $$
-\pi(\underline{u}^{(c)},\, \underline{y}^{(c)} \mid u_T^{(c)},\,
+\pi(\underline{u}^{(c)},\, \underline{z}^{(c)} \mid u_T^{(c)},\,
 \underline{\mu},\, \underline{\underline{\Sigma}}) =
 \underbrace{
 \pi(\underline{u}^{(c)} \mid u_T^{(c)},\,
@@ -876,13 +1046,13 @@ $$
 }_{\text{Multinomial}}
 \times
 \underbrace{
-\pi(\underline{y}^{(c)} \mid \underline{\mu},\,
+\pi(\underline{z}^{(c)} \mid \underline{\mu},\,
 \underline{\underline{\Sigma}})
 }_{\text{Multivariate Normal}},
 $${#eq-lnm-joint}
 
-where $\underline{\rho}^{(c)} = \text{ALR}^{-1}(\underline{y}^{(c)})$ is a
-deterministic function of $\underline{y}^{(c)}$.
+where $\underline{\rho}^{(c)} = \text{ALR}^{-1}(\underline{z}^{(c)})$ is a
+deterministic function of $\underline{z}^{(c)}$.
 
 To obtain the marginal likelihood of the observed counts (integrating out the
 latent composition), we would need to evaluate
@@ -890,14 +1060,14 @@ latent composition), we would need to evaluate
 $$
 \pi(\underline{u}^{(c)} \mid u_T^{(c)},\, \underline{\mu},\,
 \underline{\underline{\Sigma}}) =
-\int_{\mathbb{R}^{G-1}} d\underline{y}^{(c)} \;
+\int_{\mathbb{R}^{G-1}} d\underline{z}^{(c)} \;
 \underbrace{
 \pi(\underline{u}^{(c)} \mid u_T^{(c)},\,
-\text{ALR}^{-1}(\underline{y}^{(c)}))
+\text{ALR}^{-1}(\underline{z}^{(c)}))
 }_{\text{Multinomial}}
 \times
 \underbrace{
-\pi(\underline{y}^{(c)} \mid \underline{\mu},\,
+\pi(\underline{z}^{(c)} \mid \underline{\mu},\,
 \underline{\underline{\Sigma}})
 }_{\text{MVN}}.
 $${#eq-lnm-marginal-integral}
@@ -931,32 +1101,32 @@ For the logistic-normal, the analogous product is
 
 $$
 \text{Mult}(\underline{u} \mid u_T,
-\text{ALR}^{-1}(\underline{y})) \times
-\mathcal{N}(\underline{y} \mid \underline{\mu},
+\text{ALR}^{-1}(\underline{z})) \times
+\mathcal{N}(\underline{z} \mid \underline{\mu},
 \underline{\underline{\Sigma}})
 \;\propto\;
 \exp\!\left(
-\sum_{g=1}^{G} u_g \log \rho_g(\underline{y})
+\sum_{g=1}^{G} u_g \log \rho_g(\underline{z})
 - \frac{1}{2}
-(\underline{y} - \underline{\mu})^\top
+(\underline{z} - \underline{\mu})^\top
 \underline{\underline{\Sigma}}^{-1}
-(\underline{y} - \underline{\mu})
+(\underline{z} - \underline{\mu})
 \right),
 $${#eq-lnm-integrand}
 
-where $\rho_g(\underline{y})$ is the nonlinear softmax function of
-$\underline{y}$ (from @eq-lnm-alr-inverse-first and
+where $\rho_g(\underline{z})$ is the nonlinear softmax function of
+$\underline{z}$ (from @eq-lnm-alr-inverse-first and
 @eq-lnm-alr-inverse-last). The first term in the exponent---the multinomial
-log-likelihood---is a **nonlinear** function of $\underline{y}$ (it involves
+log-likelihood---is a **nonlinear** function of $\underline{z}$ (it involves
 the log-softmax), and the second term is a **quadratic** function of
-$\underline{y}$. The product of an exponential-of-nonlinear with an
+$\underline{z}$. The product of an exponential-of-nonlinear with an
 exponential-of-quadratic does not reduce to any standard family, and the
-integral over $\underline{y}$ has no known closed form.
+integral over $\underline{z}$ has no known closed form.
 
 This is the fundamental difference between the Dirichlet-Multinomial and the
 Logistic-Normal Multinomial: **conjugacy is lost**. The price of a richer
 correlation structure is the need for approximate inference over the per-cell
-latent $\underline{y}^{(c)}$.
+latent $\underline{z}^{(c)}$.
 
 ## Full Bayesian model {#sec-lnm-full-model}
 
@@ -966,16 +1136,16 @@ matrix $\underline{\underline{U}}$ is
 
 $$
 \pi(\underline{\underline{U}},\,
-\{\underline{y}^{(c)}\}_{c=1}^{C} \mid
+\{\underline{z}^{(c)}\}_{c=1}^{C} \mid
 r_T, \hat{p}, \underline{\mu},
 \underline{\underline{\Sigma}}) =
 \prod_{c=1}^{C} \left[
     \pi(u_T^{(c)} \mid r_T, \hat{p})
     \times
     \pi(\underline{u}^{(c)} \mid u_T^{(c)},
-    \text{ALR}^{-1}(\underline{y}^{(c)}))
+    \text{ALR}^{-1}(\underline{z}^{(c)}))
     \times
-    \pi(\underline{y}^{(c)} \mid \underline{\mu},
+    \pi(\underline{z}^{(c)} \mid \underline{\mu},
     \underline{\underline{\Sigma}})
 \right],
 $${#eq-lnm-full-joint}
@@ -1001,11 +1171,11 @@ The posterior of interest is
 $$
 \pi(r_T, \hat{p}, \underline{\mu},
 \underline{\underline{\Sigma}},
-\{\underline{y}^{(c)}\}_{c=1}^{C} \mid
+\{\underline{z}^{(c)}\}_{c=1}^{C} \mid
 \underline{\underline{U}})
 \propto
 \pi(\underline{\underline{U}},\,
-\{\underline{y}^{(c)}\}_{c=1}^{C} \mid
+\{\underline{z}^{(c)}\}_{c=1}^{C} \mid
 r_T, \hat{p}, \underline{\mu},
 \underline{\underline{\Sigma}})
 \times \pi(r_T, \hat{p}, \underline{\mu},
@@ -1017,7 +1187,7 @@ Note the distinction between two types of latent variables:
 - **Population parameters** ($r_T$, $\hat{p}$, $\underline{\mu}$,
   $\underline{\underline{W}}$, $\underline{d}$): shared across all cells,
   analogous to $\underline{r}$ and $\hat{p}$ in the standard model.
-- **Per-cell latents** ($\underline{y}^{(c)}$ for $c = 1, \ldots, C$): the
+- **Per-cell latents** ($\underline{z}^{(c)}$ for $c = 1, \ldots, C$): the
   composition of each individual cell in log-ratio space. These play the role
   that $\underline{\rho}^{(c)} \sim \text{Dir}(\underline{r})$ plays in the
   DM model, except that they could not be marginalized analytically and must
@@ -1026,32 +1196,32 @@ Note the distinction between two types of latent variables:
 ## Inference strategies {#sec-lnm-inference}
 
 The loss of conjugacy means that the per-cell latent
-$\underline{y}^{(c)}$ cannot be marginalized out analytically. Several
+$\underline{z}^{(c)}$ cannot be marginalized out analytically. Several
 strategies exist for handling this integral within the SCRIBE variational
 inference framework. We present them in order of increasing approximation,
 discussing the trade-offs of each.
 
 ### Strategy A: Explicit per-cell latent variable {#sec-lnm-strategy-a}
 
-The most direct approach is to treat each $\underline{y}^{(c)}$ as an explicit
+The most direct approach is to treat each $\underline{z}^{(c)}$ as an explicit
 latent variable in the probabilistic model and provide a variational posterior
 for it.
 
-**Model.** In NumPyro notation, the model samples $\underline{y}^{(c)}$ inside
+**Model.** In NumPyro notation, the model samples $\underline{z}^{(c)}$ inside
 a cell plate:
 
 $$
-\underline{y}^{(c)} \sim
+\underline{z}^{(c)} \sim
 \mathcal{N}(\underline{\mu},\,
 \underline{\underline{\Sigma}}),
 \quad c = 1, \ldots, C,
 $${#eq-lnm-strategy-a-prior}
 
 and then observes $\underline{u}^{(c)}$ conditioned on
-$\text{ALR}^{-1}(\underline{y}^{(c)})$ via the Multinomial.
+$\text{ALR}^{-1}(\underline{z}^{(c)})$ via the Multinomial.
 
 **Guide.** The variational guide provides an approximate posterior
-$q(\underline{y}^{(c)})$ for each cell. Two sub-strategies are possible:
+$q(\underline{z}^{(c)})$ for each cell. Two sub-strategies are possible:
 
 **(A1) Per-cell variational parameters.** Each cell has its own variational
 mean $\underline{m}^{(c)}$ and (diagonal or low-rank) variational covariance.
@@ -1067,7 +1237,7 @@ $f_\phi(\underline{u}^{(c)}) \to (\underline{m}_\phi(\underline{u}^{(c)}),\,
 parameters of a diagonal Gaussian variational posterior
 
 $$
-q_\phi(\underline{y}^{(c)} \mid \underline{u}^{(c)}) =
+q_\phi(\underline{z}^{(c)} \mid \underline{u}^{(c)}) =
 \mathcal{N}\!\left(
 \underline{m}_\phi(\underline{u}^{(c)}),\,
 \text{diag}(\underline{s}_\phi^2(\underline{u}^{(c)}))
@@ -1093,14 +1263,14 @@ factorized. A diagonal posterior is therefore not a model of independent
 genes---it is the natural amortized approximation to a Gaussian whose
 *structured* correlations are encoded once, globally, in the prior.
 
-**Closed-form Gaussian--Gaussian KL.** Because both $q_\phi(\underline{y}^{(c)}
+**Closed-form Gaussian--Gaussian KL.** Because both $q_\phi(\underline{z}^{(c)}
 \mid \underline{u}^{(c)})$ and the prior $\mathcal{N}(\underline{\mu},
 \underline{\underline{\Sigma}})$ are Gaussian, the KL term in the ELBO has
 a closed form:
 
 $$
 \text{KL}\!\left(
-q_\phi(\underline{y}^{(c)} \mid \underline{u}^{(c)})
+q_\phi(\underline{z}^{(c)} \mid \underline{u}^{(c)})
 \;\big\|\;
 \mathcal{N}(\underline{\mu},\, \underline{\underline{\Sigma}})
 \right) =
@@ -1120,7 +1290,7 @@ are computed in $O(Gk^2 + k^3)$ via the Woodbury identity
 (@eq-lnm-woodbury) and the matrix determinant lemma (@eq-lnm-log-det).
 Only the multinomial expectation
 $\mathbb{E}_{q_\phi}[\log \text{Mult}(\underline{u}^{(c)} \mid u_T^{(c)},
-\text{ALR}^{-1}(\underline{y}^{(c)}))]$ requires reparameterized
+\text{ALR}^{-1}(\underline{z}^{(c)}))]$ requires reparameterized
 sampling. This is a meaningful variance-reduction win and should be built
 into the loss from the outset rather than letting the framework sample
 the KL term too. Under the linear-decoder reparameterization developed
@@ -1154,11 +1324,11 @@ naively, this would require two extensions to the existing VAE pipeline:
    would need to be generalized to read its prior parameters from the
    model graph.
 2. The "decoder" path would be the deterministic map
-   $\underline{y} \mapsto \text{ALR}^{-1}(\underline{y}) =
+   $\underline{z} \mapsto \text{ALR}^{-1}(\underline{z}) =
    \underline{\rho}$, fed straight into the multinomial likelihood. With
    no neural decoder to train, the simplest implementation would be a
    passthrough that lets the
-   `LogisticNormalMultinomialLikelihood` consume $\underline{y}^{(c)}$
+   `LogisticNormalMultinomialLikelihood` consume $\underline{z}^{(c)}$
    directly and apply the inverse ALR internally.
 
 Both extensions can be avoided by adopting an equivalent
@@ -1187,17 +1357,17 @@ infrastructure. We develop this view in
 ### Strategy B: Laplace approximation {#sec-lnm-strategy-b}
 
 Instead of maintaining per-cell variational parameters, we can approximate the
-posterior $\pi(\underline{y}^{(c)} \mid \underline{u}^{(c)}, \underline{\mu},
+posterior $\pi(\underline{z}^{(c)} \mid \underline{u}^{(c)}, \underline{\mu},
 \underline{\underline{\Sigma}})$ using a Laplace approximation centered at
 the mode.
 
 **Procedure.** For each cell $c$, find the MAP estimate
 
 $$
-\underline{y}^{(c)}_\star = \arg\max_{\underline{y}} \left[
+\underline{z}^{(c)}_\star = \arg\max_{\underline{z}} \left[
 \log \pi(\underline{u}^{(c)} \mid u_T^{(c)},
-\text{ALR}^{-1}(\underline{y}))
-+ \log \pi(\underline{y} \mid \underline{\mu},
+\text{ALR}^{-1}(\underline{z}))
++ \log \pi(\underline{z} \mid \underline{\mu},
 \underline{\underline{\Sigma}})
 \right],
 $${#eq-lnm-laplace-map}
@@ -1205,13 +1375,13 @@ $${#eq-lnm-laplace-map}
 and approximate the posterior as
 
 $$
-q(\underline{y}^{(c)}) =
-\mathcal{N}(\underline{y}^{(c)}_\star,\,
+q(\underline{z}^{(c)}) =
+\mathcal{N}(\underline{z}^{(c)}_\star,\,
 \underline{\underline{H}}^{(c)^{-1}}),
 $${#eq-lnm-laplace-approx}
 
 where $\underline{\underline{H}}^{(c)}$ is the Hessian of the negative
-log-posterior at $\underline{y}^{(c)}_\star$.
+log-posterior at $\underline{z}^{(c)}_\star$.
 
 **Advantages:**
 
@@ -1232,8 +1402,8 @@ log-posterior at $\underline{y}^{(c)}_\star$.
 The logistic-normal-multinomial has a connection to the Pólya-Gamma
 augmentation scheme developed for logistic regression models. By introducing
 auxiliary Pólya-Gamma random variables, the nonlinear log-softmax term in
-@eq-lnm-integrand can be replaced by a quadratic form in $\underline{y}$,
-making the conditional posterior of $\underline{y}$ Gaussian.
+@eq-lnm-integrand can be replaced by a quadratic form in $\underline{z}$,
+making the conditional posterior of $\underline{z}$ Gaussian.
 
 This strategy is well-developed for binary and multi-class logistic regression
 but becomes computationally expensive for large $G$, as it requires one
@@ -1302,7 +1472,7 @@ scales of interest.
 ## Equivalence to a linear-decoder VAE {#sec-lnm-linear-vae-equivalence}
 
 The Strategy A2 picture developed in @sec-lnm-strategy-a treats the
-per-cell latent $\underline{y}^{(c)}$ as living directly in
+per-cell latent $\underline{z}^{(c)}$ as living directly in
 $\mathbb{R}^{G-1}$ (ALR space), with a learnable low-rank Gaussian prior
 $\mathcal{N}(\underline{\mu},\, \underline{\underline{W}}\,
 \underline{\underline{W}}^\top + \text{diag}(\underline{d}))$. This view
@@ -1323,26 +1493,26 @@ VAE infrastructure essentially as-is.
 
 ### Reparameterizing the rank-$k$ Gaussian {#sec-lnm-reparam}
 
-The low-rank Gaussian on $\underline{y}$ admits the affine
+The low-rank Gaussian on $\underline{z}$ admits the affine
 reparameterization
 
 $$
-\underline{z} \sim \mathcal{N}(\underline{0},\, \underline{\underline{I}}_k),
+\underline{h} \sim \mathcal{N}(\underline{0},\, \underline{\underline{I}}_k),
 \qquad
 \underline{\epsilon} \sim \mathcal{N}(\underline{0},\, \underline{\underline{I}}_{G-1}),
 \qquad
-\underline{y} = \underline{\mu} + \underline{\underline{W}}\,\underline{z}
+\underline{z} = \underline{\mu} + \underline{\underline{W}}\,\underline{h}
 + \text{diag}(\sqrt{\underline{d}})\,\underline{\epsilon},
 $${#eq-lnm-vae-reparam}
 
-with $\underline{z}$ and $\underline{\epsilon}$ independent. Pushing this
+with $\underline{h}$ and $\underline{\epsilon}$ independent. Pushing this
 affine map through the standard rule for transformations of Gaussians
 yields
 
 $$
-\mathbb{E}[\underline{y}] = \underline{\mu},
+\mathbb{E}[\underline{z}] = \underline{\mu},
 \qquad
-\text{Cov}(\underline{y}) =
+\text{Cov}(\underline{z}) =
 \underline{\underline{W}}\,\underline{\underline{I}}_k\,\underline{\underline{W}}^\top
 + \text{diag}(\sqrt{\underline{d}})\,\underline{\underline{I}}_{G-1}\,
 \text{diag}(\sqrt{\underline{d}})
@@ -1350,12 +1520,12 @@ $$
 \underline{\underline{W}}\,\underline{\underline{W}}^\top + \text{diag}(\underline{d}).
 $${#eq-lnm-vae-marginal}
 
-So the marginal distribution of $\underline{y}$ in @eq-lnm-vae-reparam is
+So the marginal distribution of $\underline{z}$ in @eq-lnm-vae-reparam is
 identical to the prior $\mathcal{N}(\underline{\mu},\,
 \underline{\underline{W}}\,\underline{\underline{W}}^\top +
 \text{diag}(\underline{d}))$ used in @eq-lnm-cell-latent. This is just
 the standard "factor model" decomposition of a low-rank Gaussian:
-$\underline{z}$ carries the rank-$k$ shared variation, and
+$\underline{h}$ carries the rank-$k$ shared variation, and
 $\underline{\epsilon}$ carries the gene-independent residuals.
 
 ### The linear-decoder VAE form {#sec-lnm-linear-vae-form}
@@ -1368,18 +1538,18 @@ u_T^{(c)} \sim \text{NB}(r_T,\, \hat{p}),
 $${#eq-lnm-vae-uT}
 
 $$
-\underline{z}^{(c)} \sim \mathcal{N}(\underline{0},\, \underline{\underline{I}}_k),
+\underline{h}^{(c)} \sim \mathcal{N}(\underline{0},\, \underline{\underline{I}}_k),
 \qquad
 \underline{\epsilon}^{(c)} \sim \mathcal{N}(\underline{0},\, \underline{\underline{I}}_{G-1}),
 $${#eq-lnm-vae-latents}
 
 $$
-\underline{y}^{(c)} = \underline{\mu} + \underline{\underline{W}}\,\underline{z}^{(c)}
+\underline{z}^{(c)} = \underline{\mu} + \underline{\underline{W}}\,\underline{h}^{(c)}
 + \text{diag}(\sqrt{\underline{d}})\,\underline{\epsilon}^{(c)},
 $${#eq-lnm-vae-decode}
 
 $$
-\underline{\rho}^{(c)} = \text{ALR}^{-1}(\underline{y}^{(c)}),
+\underline{\rho}^{(c)} = \text{ALR}^{-1}(\underline{z}^{(c)}),
 \qquad
 \underline{u}^{(c)} \mid u_T^{(c)},\, \underline{\rho}^{(c)} \sim
 \text{Multinomial}(u_T^{(c)},\, \underline{\rho}^{(c)}).
@@ -1388,18 +1558,18 @@ $${#eq-lnm-vae-multinomial}
 Equation @eq-lnm-vae-decode is precisely the forward pass of a single
 linear neural-network layer: the matrix $\underline{\underline{W}}$ plays
 the role of the **kernel** (weights) and $\underline{\mu}$ plays the role
-of the **bias**, with input $\underline{z}^{(c)}$ and output
-$\underline{y}^{(c)}$. The diagonal-$\underline{d}$ component appears as
+of the **bias**, with input $\underline{h}^{(c)}$ and output
+$\underline{z}^{(c)}$. The diagonal-$\underline{d}$ component appears as
 additive Gaussian noise at the layer's output. The latent
-$\underline{z}^{(c)}$ is the bottleneck of the VAE, with dimension $k$
+$\underline{h}^{(c)}$ is the bottleneck of the VAE, with dimension $k$
 rather than $G - 1$.
 
 The variational posterior is also reparameterized. Instead of
-approximating a posterior over $\underline{y}^{(c)} \in \mathbb{R}^{G-1}$,
-we approximate a posterior over $\underline{z}^{(c)} \in \mathbb{R}^k$:
+approximating a posterior over $\underline{z}^{(c)} \in \mathbb{R}^{G-1}$,
+we approximate a posterior over $\underline{h}^{(c)} \in \mathbb{R}^k$:
 
 $$
-q_\phi(\underline{z}^{(c)} \mid \underline{u}^{(c)}) =
+q_\phi(\underline{h}^{(c)} \mid \underline{u}^{(c)}) =
 \mathcal{N}\!\left(
 \underline{m}_\phi(\underline{u}^{(c)}),\,
 \text{diag}(\underline{s}_\phi^2(\underline{u}^{(c)}))
@@ -1415,40 +1585,40 @@ $\underline{d}$ to be identified through its effect on the marginal
 multinomial likelihood.
 
 **A subtle gain in posterior expressivity.** A diagonal posterior on
-$\underline{z}^{(c)} \in \mathbb{R}^k$ is *not* equivalent to a diagonal
-posterior on $\underline{y}^{(c)} \in \mathbb{R}^{G-1}$. The deterministic
-linear decoder propagates the diagonal posterior on $\underline{z}^{(c)}$
-into a structured low-rank-plus-diagonal posterior on $\underline{y}^{(c)}$:
+$\underline{h}^{(c)} \in \mathbb{R}^k$ is *not* equivalent to a diagonal
+posterior on $\underline{z}^{(c)} \in \mathbb{R}^{G-1}$. The deterministic
+linear decoder propagates the diagonal posterior on $\underline{h}^{(c)}$
+into a structured low-rank-plus-diagonal posterior on $\underline{z}^{(c)}$:
 
 $$
-\text{Cov}(\underline{y}^{(c)} \mid \underline{u}^{(c)}) =
+\text{Cov}(\underline{z}^{(c)} \mid \underline{u}^{(c)}) =
 \underline{\underline{W}}\,
 \text{diag}(\underline{s}_\phi^2(\underline{u}^{(c)}))\,
 \underline{\underline{W}}^\top
 + \text{diag}(\underline{d}).
 $${#eq-lnm-vae-induced-posterior}
 
-This is strictly more expressive than the diagonal $q_\phi(\underline{y}
+This is strictly more expressive than the diagonal $q_\phi(\underline{z}
 \mid \underline{u})$ posited by the direct $(G-1)$-dimensional
 formulation of @sec-lnm-strategy-a. The VAE reparameterization
 therefore delivers two distinct improvements simultaneously: it
 *reduces* the encoder's output dimension from $2(G-1)$ to $2k$ (a
 computational win), *and* it *upgrades* the implied posterior on
-$\underline{y}^{(c)}$ from diagonal to rank-$k$-plus-diagonal (a
+$\underline{z}^{(c)}$ from diagonal to rank-$k$-plus-diagonal (a
 statistical win). Both advantages stem from pushing the rank-$k$
 structure from "a learnable prior on a $(G-1)$-dim latent" to "a
 deterministic linear decoder from a $k$-dim latent".
 
 ### Closed-form KL is now the standard VAE KL {#sec-lnm-vae-kl}
 
-Because the reparameterized prior on $\underline{z}^{(c)}$ is the
+Because the reparameterized prior on $\underline{h}^{(c)}$ is the
 standard isotropic Gaussian $\mathcal{N}(\underline{0},\,
 \underline{\underline{I}}_k)$, the KL term @eq-lnm-closed-form-kl
 collapses to the standard VAE KL between two diagonal Gaussians:
 
 $$
 \text{KL}\!\left(
-q_\phi(\underline{z}^{(c)} \mid \underline{u}^{(c)})
+q_\phi(\underline{h}^{(c)} \mid \underline{u}^{(c)})
 \;\big\|\;
 \mathcal{N}(\underline{0},\, \underline{\underline{I}}_k)
 \right) =
@@ -1493,16 +1663,16 @@ from $O(Gk)$ to $O(k)$ per cell.
 The reparameterization @eq-lnm-vae-reparam admits two practical regimes
 for the diagonal residual noise. A subtle but important consequence of
 the VAE formulation is that the marginal covariance of
-$\underline{y}^{(c)}$ never has to be inverted: the ELBO involves only
+$\underline{z}^{(c)}$ never has to be inverted: the ELBO involves only
 the standard Gaussian prior $\mathcal{N}(\underline{0},\,
-\underline{\underline{I}}_k)$ on $\underline{z}^{(c)}$ and the
+\underline{\underline{I}}_k)$ on $\underline{h}^{(c)}$ and the
 Multinomial likelihood on $\underline{u}^{(c)}$, neither of which
-requires $\text{Cov}(\underline{y}^{(c)})^{-1}$ or
-$\log |\text{Cov}(\underline{y}^{(c)})|$. The marginal covariance of
-$\underline{y}^{(c)}$ is therefore allowed to be **singular** without
+requires $\text{Cov}(\underline{z}^{(c)})^{-1}$ or
+$\log |\text{Cov}(\underline{z}^{(c)})|$. The marginal covariance of
+$\underline{z}^{(c)}$ is therefore allowed to be **singular** without
 any numerical penalty---a freedom we did not have in the direct
 $(G-1)$-dim formulation of @sec-lnm-strategy-a, which evaluates
-$\log \mathcal{N}(\underline{y} \mid \underline{\mu},\,
+$\log \mathcal{N}(\underline{z} \mid \underline{\mu},\,
 \underline{\underline{\Sigma}})$ as a density and therefore requires
 $\underline{\underline{\Sigma}}$ to be positive definite.
 
@@ -1512,8 +1682,8 @@ $\underline{\epsilon}^{(c)}$ entirely (equivalently, set $\underline{d}
 decoder
 
 $$
-\underline{y}^{(c)} = \underline{\mu} + \underline{\underline{W}}\,\underline{z}^{(c)},
-\qquad \underline{z}^{(c)} \sim \mathcal{N}(\underline{0},\, \underline{\underline{I}}_k),
+\underline{z}^{(c)} = \underline{\mu} + \underline{\underline{W}}\,\underline{h}^{(c)},
+\qquad \underline{h}^{(c)} \sim \mathcal{N}(\underline{0},\, \underline{\underline{I}}_k),
 $${#eq-lnm-vae-low-rank}
 
 with marginal covariance *exactly*
@@ -1523,7 +1693,7 @@ space---but, by the argument above, this is harmless: no part of the
 loss inverts it. Compositions in ALR space genuinely live on a
 $k$-dimensional affine manifold up to multinomial sampling noise, and
 the model is internally consistent. This is the simplest and cheapest
-mode: no per-cell stochastic node beyond $\underline{z}^{(c)}$, no
+mode: no per-cell stochastic node beyond $\underline{h}^{(c)}$, no
 encoder output for residual noise, and the encoder still emits only
 $2k$ variational parameters per cell. It is sufficient whenever the
 $k$-dimensional bottleneck already explains essentially all of the
@@ -1537,8 +1707,8 @@ gradient on $\underline{d}$ comes entirely from the multinomial
 log-likelihood through the reparameterized path
 
 $$
-\underline{y}^{(c)} = \underline{\mu} +
-\underline{\underline{W}}\,\underline{z}^{(c)} +
+\underline{z}^{(c)} = \underline{\mu} +
+\underline{\underline{W}}\,\underline{h}^{(c)} +
 \text{diag}(\sqrt{\underline{d}})\,\underline{\epsilon}^{(c)}.
 $${#eq-lnm-vae-learned}
 
@@ -1573,11 +1743,11 @@ scVI) have proven highly effective at modeling single-cell counts.
 A linear decoder gives the marginal covariance an exact, globally valid,
 low-rank-plus-diagonal form. A nonlinear decoder $f_\theta : \mathbb{R}^k
 \to \mathbb{R}^{G-1}$ does not. Under a nonlinear $f_\theta$, the
-induced covariance of $\underline{y}^{(c)}$ at a given posterior mean
+induced covariance of $\underline{z}^{(c)}$ at a given posterior mean
 $\underline{\bar{z}}^{(c)}$ is approximately
 
 $$
-\text{Cov}(\underline{y}^{(c)} \mid \underline{u}^{(c)}) \approx
+\text{Cov}(\underline{z}^{(c)} \mid \underline{u}^{(c)}) \approx
 \underline{\underline{J}}_{f_\theta}(\underline{\bar{z}}^{(c)})\,
 \underline{\underline{J}}_{f_\theta}(\underline{\bar{z}}^{(c)})^\top
 + \cdots,
@@ -1766,7 +1936,7 @@ The product-over-cells structure of @eq-lnm-full-joint is naturally compatible
 with stochastic variational inference via mini-batching. In each gradient step,
 a random subset of cells is selected, and the ELBO contribution from those
 cells is scaled by $C / B$ (where $B$ is the batch size). The per-cell latent
-$\underline{y}^{(c)}$ is sampled only for cells in the current mini-batch.
+$\underline{z}^{(c)}$ is sampled only for cells in the current mini-batch.
 
 For Strategy A2 (amortized inference), the encoder network maps each cell's
 counts to variational parameters, so there is no need to maintain persistent
@@ -1786,7 +1956,7 @@ width.
 | Per-cell latent dim | --- | $G - 1$ | $k$ |
 | Encoder output dim | --- | $2(G-1)$ | $2k$ |
 | Latent sampling per cell | None (marginalized) | $O(G)$ (diagonal $q_\phi$ reparam) | $O(k)$ (diagonal $q_\phi$ reparam) |
-| Linear decoder per cell | --- | --- | $O(Gk)$ ($\underline{\mu} + \underline{\underline{W}}\,\underline{z}$) |
+| Linear decoder per cell | --- | --- | $O(Gk)$ ($\underline{\mu} + \underline{\underline{W}}\,\underline{h}$) |
 | Population guide params | $O(Gk)$ over $\log\underline{r}$ | $O(Gk)$ over $\underline{\mu},\,\underline{\underline{W}},\,\underline{d}$ | $O(Gk)$ over decoder kernel/bias and $\underline{d}$ |
 | Per-cell guide params | None | None (encoder weights, $O(GH)$) | None (encoder weights, $O(GH)$) |
 | KL per cell | --- | $O(Gk + k^2)$ closed form (Woodbury) | $O(k)$ closed form (standard VAE KL) |
@@ -1916,11 +2086,21 @@ typically requires perturbation experiments or temporal information.
 The LNM thus recovers the *consequences* of the GRN, not the GRN
 itself.
 
+A third (and benign) form of non-uniqueness is the **gauge freedom**
+documented in @sec-lnm-equivalent-params. The simplex distribution is
+invariant under the choice of ALR, CLR, or unconstrained
+softmax-normal parameterisation, so any of these forms produces the
+same model. We adopt ALR for computational reasons; the ALR-vs-CLR
+choice does not introduce an additional identifiability question
+beyond the rotation invariance discussed above, since the two are
+related by a fixed linear map and the column space of
+$\underline{\underline{W}}$ is preserved.
+
 ### Scale--composition decoupling {#sec-lnm-lim-decoupling}
 
 The generative model of @sec-lnm-generative factorizes the per-cell
 count vector into an independent NB total $u_T^{(c)}$ and an
-independent compositional latent $\underline{y}^{(c)}$. As noted in
+independent compositional latent $\underline{z}^{(c)}$. As noted in
 @sec-lnm-generative, this factorization is not derivable from the LNA
 on log-abundances: under the underlying GRN dynamics, the total
 $\Lambda^{(c)} = \sum_g \lambda_g^{(c)}$ and the composition
@@ -1937,9 +2117,9 @@ the point where decoupling is empirically harmless.
 The structural argument against the moment-matched DM proxy
 (Strategy D, @sec-lnm-strategy-d) is that its likelihood gradient on
 $\underline{\underline{W}}$ is identically zero. Strategy A2 avoids
-this failure mode: its multinomial likelihood depends on $\rho_g(\underline{y})
-= \text{ALR}^{-1}(\underline{y})_g$, which depends on the full vector
-$\underline{y}$, so the ELBO gradient on $\underline{\underline{W}}$
+this failure mode: its multinomial likelihood depends on $\rho_g(\underline{z})
+= \text{ALR}^{-1}(\underline{z})_g$, which depends on the full vector
+$\underline{z}$, so the ELBO gradient on $\underline{\underline{W}}$
 is non-zero in general.
 
 A separate question---distinct from the *existence* of gradient
@@ -1960,14 +2140,14 @@ absorbs that identifiability.
 ### Fidelity of the diagonal amortized posterior {#sec-lnm-lim-amortized}
 
 In the linear-decoder VAE form, the encoder produces a diagonal
-$q_\phi(\underline{z}^{(c)} \mid \underline{u}^{(c)})$, which induces
-the structured posterior on $\underline{y}^{(c)}$ given by
+$q_\phi(\underline{h}^{(c)} \mid \underline{u}^{(c)})$, which induces
+the structured posterior on $\underline{z}^{(c)}$ given by
 @eq-lnm-vae-induced-posterior. This is more expressive than a diagonal
-posterior on $\underline{y}^{(c)}$ would be, but it is still a
+posterior on $\underline{z}^{(c)}$ would be, but it is still a
 restricted family: the per-cell posterior covariance has rank at most
 $k$ in its low-rank component, with the column space pinned to that of
 $\underline{\underline{W}}$. If the true per-cell posterior over
-$\underline{y}^{(c)}$ has correlations along directions outside the
+$\underline{z}^{(c)}$ has correlations along directions outside the
 column space of $\underline{\underline{W}}$, the variational family
 cannot represent them. Whether this matters in practice depends on how
 well-aligned the likelihood-induced per-cell coupling is with the
@@ -2001,7 +2181,7 @@ implementation artefacts are:
 - **Likelihood**: `LogisticNormalMultinomialLikelihood` (in
   `scribe.models.components.likelihoods.lnm`). Implements the joint
   observation $\text{NB}(u_T \mid r_T, \hat{p})$ on totals plus
-  $\text{Multinomial}(u_T,\, \text{ALR}^{-1}(\underline{y}))$ on counts,
+  $\text{Multinomial}(u_T,\, \text{ALR}^{-1}(\underline{z}))$ on counts,
   with `d_mode in {"low_rank", "learned"}` selecting between the two
   regimes from @sec-lnm-vae-d (strictly rank-$k$ marginal vs full
   $\underline{\underline{W}}\,\underline{\underline{W}}^\top +
