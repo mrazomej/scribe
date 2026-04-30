@@ -76,6 +76,8 @@ result = scribe.viz.plot_loss(results=results)
 # ``plot_loss``, ``plot_ppc``, and other ``scribe.viz`` helpers that take a
 # results object support ``ScribeSVIResults``, ``ScribeVAEResults`` (VAE), and
 # ``ScribeMCMCResults`` (where applicable).
+# Internally, variational plot dispatch is unified through
+# ``ScribeVariationalResults`` to avoid duplicate SVI/VAE dispatch branches.
 result.fig      # underlying matplotlib Figure
 result.axes     # tuple of Axes used
 result.n_panels # number of logical panels

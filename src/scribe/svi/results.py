@@ -44,6 +44,7 @@ from ._sampling import SamplingMixin
 from ._likelihood import LikelihoodMixin
 from ._mixture_analysis import MixtureAnalysisMixin
 from ._normalization import NormalizationMixin
+from .variational_results_base import ScribeVariationalResults
 
 # ------------------------------------------------------------------------------
 # Base class for inference results
@@ -62,6 +63,7 @@ class ScribeSVIResults(
     LikelihoodMixin,
     MixtureAnalysisMixin,
     NormalizationMixin,
+    ScribeVariationalResults,
 ):
     """
     Base class for SCRIBE variational inference results.

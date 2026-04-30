@@ -10,6 +10,7 @@ from .inference_engine import SVIInferenceEngine, SVIRunResult
 from .results_factory import SVIResultsFactory
 from .results import ScribeSVIResults
 from .vae_results import ScribeVAEResults
+from .variational_results_base import ScribeVariationalResults
 from .checkpoint import (
     checkpoint_exists,
     save_svi_checkpoint,
@@ -22,6 +23,7 @@ __all__ = [
     "SVIInferenceEngine",
     "SVIRunResult",
     "SVIResultsFactory",
+    "ScribeVariationalResults",
     "ScribeSVIResults",
     "ScribeVAEResults",
     # Checkpoint utilities

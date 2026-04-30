@@ -21,6 +21,7 @@ from scribe.mcmc.results import ScribeMCMCResults
 from scribe.inference.preset_builder import build_config_from_preset
 from scribe.models import get_model_and_guide
 from scribe.models.config import ModelConfig
+from scribe.svi import ScribeVariationalResults
 from scribe.svi.results import ScribeSVIResults
 from scribe.svi.vae_results import ScribeVAEResults
 import scribe.viz.config as viz_config
@@ -545,6 +546,57 @@ def test_training_payload_includes_vae_loss_history():
     payload = _get_training_diagnostic_payload(results)
     assert payload["plot_kind"] == "loss"
     assert np.allclose(payload["loss_history"], [3.0, 2.0, 1.0])
+
+
+def test_predictive_samples_dispatch_accepts_vae_results():
+    """``_get_predictive_samples_for_plot`` should dispatch on ``ScribeVAEResults``."""
+    encoder = MagicMock()
+    decoder = MagicMock()
+    latent_spec = MagicMock()
+    latent_spec.flow = None
+
+    results = ScribeVAEResults(
+        params={"vae_encoder$params": {}, "vae_decoder$params": {}},
+        loss_history=jnp.array([1.0], dtype=jnp.float32),
+        n_cells=2,
+        n_genes=3,
+        model_type="lnmvcp",
+        model_config=ModelConfig(base_model="nbdm"),
+        prior_params={},
+        _encoder=encoder,
+        _decoder=decoder,
+        _latent_spec=latent_spec,
+    )
+    fake_post = {"k": jnp.zeros((1,))}
+    fake_pred = jnp.ones((4, 2, 3), dtype=jnp.float32)
+
+    def _fake_posterior(**kwargs):
+        _ = kwargs
+        return fake_post
+
+    def _fake_predictive(**kwargs):
+        _ = kwargs
+        return fake_pred
+
+    results.get_posterior_samples = _fake_posterior
+    results.get_predictive_samples = _fake_predictive
+
+    out = _get_predictive_samples_for_plot(
+        results,
+        rng_key=random.PRNGKey(0),
+        n_samples=4,
+        counts=np.zeros((2, 3), dtype=np.int32),
+        store_samples=False,
+    )
+    assert out.shape == (4, 2, 3)
+
+
+def test_predictive_dispatch_registers_variational_base_signature():
+    """Predictive dispatch should register the shared variational base type."""
+    # The dispatcher should expose one shared variational registration so both
+    # SVI and VAE resolve through the same runtime dispatch key.
+    dispatch_key = (ScribeVariationalResults,)
+    assert dispatch_key in _get_predictive_samples_for_plot.funcs
 
 
 def test_map_dispatch_forwards_targets_for_svi():

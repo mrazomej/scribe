@@ -12,9 +12,10 @@ if TYPE_CHECKING:
     from ..core.axis_layout import AxisLayout
 
 
-@dispatch(scribe.ScribeSVIResults, object)
+@dispatch(scribe.ScribeVariationalResults, object)
 def _get_inference_metadata_for_filenames(results, cfg):
-    """Get filename metadata for SVI runs."""
+    """Get filename metadata for variational runs (SVI/VAE)."""
+    _ = results
     if hasattr(cfg, "inference") and hasattr(cfg.inference, "n_steps"):
         n_steps = cfg.inference.n_steps
     else:
@@ -78,11 +79,20 @@ def _get_inference_metadata_for_filenames(results, cfg):
     }
 
 
-@dispatch(scribe.ScribeSVIResults)
+@dispatch(scribe.ScribeVariationalResults)
 def _get_predictive_samples_for_plot(
-    results, *, rng_key, n_samples, counts, store_samples=True
+    results,
+    *,
+    rng_key,
+    n_samples,
+    counts,
+    batch_size=None,
+    store_samples=True,
 ):
-    """Get PPC samples for plotting from SVI results."""
+    """Get PPC samples for plotting from variational results."""
+    # Keep full-cell posterior draws for plotting consistency; the keyword is
+    # accepted for API compatibility with existing call sites/tests.
+    _ = batch_size
     # Generate posterior draws explicitly for this plotting call so we can run
     # one PPC batch at a time without relying on persistent cached samples.
     posterior_samples = results.get_posterior_samples(
@@ -117,10 +127,17 @@ def _get_predictive_samples_for_plot(
 
 @dispatch(scribe.ScribeMCMCResults)
 def _get_predictive_samples_for_plot(
-    results, *, rng_key, n_samples, counts, store_samples=True
+    results,
+    *,
+    rng_key,
+    n_samples,
+    counts,
+    batch_size=None,
+    store_samples=True,
 ):
     """Get PPC samples for plotting from MCMC results."""
     _ = counts
+    _ = batch_size
     predictive_samples = results.get_ppc_samples(
         rng_key=rng_key,
         store_samples=store_samples,
@@ -139,7 +156,7 @@ def _get_predictive_samples_for_plot(
     return predictive_np
 
 
-@dispatch(scribe.ScribeSVIResults)
+@dispatch(scribe.ScribeVariationalResults)
 def _get_map_like_predictive_samples_for_plot(
     results,
     *,
@@ -151,7 +168,7 @@ def _get_map_like_predictive_samples_for_plot(
     verbose=True,
     counts=None,
 ):
-    """Generate MAP-based predictive samples for SVI plotting."""
+    """Generate MAP-based predictive samples for variational plotting."""
     return np.array(
         results.get_map_ppc_samples(
             rng_key=rng_key,
@@ -190,11 +207,11 @@ def _get_map_like_predictive_samples_for_plot(
     )
 
 
-@dispatch(scribe.ScribeSVIResults)
+@dispatch(scribe.ScribeVariationalResults)
 def _get_map_estimates_for_plot(
     results, *, counts=None, use_mean=True, targets=None
 ):
-    """Get plot-ready MAP estimates from SVI results."""
+    """Get plot-ready MAP estimates from variational results."""
     return results.get_map(
         targets=targets,
         use_mean=use_mean,
@@ -220,9 +237,9 @@ def _get_map_estimates_for_plot(
 # ---------------------------------------------------------------------------
 
 
-@dispatch(scribe.ScribeSVIResults)
+@dispatch(scribe.ScribeVariationalResults)
 def _get_layouts_for_plot(results) -> dict[str, "AxisLayout"]:
-    """Get canonical MAP-level AxisLayout metadata from SVI results.
+    """Get canonical MAP-level AxisLayout metadata from variational results.
 
     Builds layouts keyed by canonical parameter names (``r``, ``p``,
     ``gate``, ``mixing_weights``, …) with ``has_sample_dim=False``
@@ -230,7 +247,7 @@ def _get_layouts_for_plot(results) -> dict[str, "AxisLayout"]:
     """
     from ..sampling import _build_canonical_layouts
 
-    # SVI variational params use internal names (e.g. p_alpha, p_beta);
+    # Variational params can use internal names (e.g. p_alpha, p_beta);
     # the viz layer needs layouts keyed by canonical names.  Build them
     # from the canonical MAP dict, falling back to the raw variational
     # layouts when MAP extraction is unavailable (e.g. in unit tests
@@ -265,7 +282,7 @@ def _get_layouts_for_plot(results) -> dict[str, "AxisLayout"]:
 def _get_cell_assignment_probabilities_for_plot(
     results, *, counts, batch_size=None, use_mean=False
 ):
-    """Get MAP component-assignment probabilities from SVI results."""
+    """Get MAP component-assignment probabilities from SVI mixture results."""
     # Use optional batching to avoid OOM on large cell counts.
     assignment_info = results.cell_type_probabilities_map(
         counts=counts,
@@ -297,11 +314,11 @@ def _get_cell_assignment_probabilities_for_plot(
 # ---------------------------------------------------------------------------
 
 
-@dispatch(scribe.ScribeSVIResults)
+@dispatch(scribe.ScribeVariationalResults)
 def _get_biological_ppc_samples_for_plot(
     results, *, rng_key, n_samples, counts, batch_size=None, store_samples=True
 ):
-    """Get biological PPC samples from SVI results.
+    """Get biological PPC samples from variational results.
 
     Samples from NB(r, p) only, stripping capture probability and
     zero-inflation gate.  Follows the same save/restore pattern as
@@ -354,11 +371,11 @@ def _get_biological_ppc_samples_for_plot(
 # ---------------------------------------------------------------------------
 
 
-@dispatch(scribe.ScribeSVIResults)
+@dispatch(scribe.ScribeVariationalResults)
 def _get_denoised_counts_for_plot(
     results, *, counts, rng_key, method=("mean", "sample"), cell_batch_size=None
 ):
-    """MAP-denoise observed counts for SVI results.
+    """MAP-denoise observed counts for variational results.
 
     Returns a 2-D ``(n_cells, n_genes)`` numpy array.
     """
@@ -398,22 +415,9 @@ def _get_denoised_counts_for_plot(
 # ---------------------------------------------------------------------------
 
 
-@dispatch(scribe.ScribeSVIResults)
+@dispatch(scribe.ScribeVariationalResults)
 def _get_training_diagnostic_payload(results):
-    """Build training diagnostics payload for SVI loss plots."""
-    return {
-        "plot_kind": "loss",
-        "loss_history": np.array(results.loss_history),
-    }
-
-
-@dispatch(scribe.ScribeVAEResults)
-def _get_training_diagnostic_payload(results):
-    """Build training diagnostics payload for VAE (ELBO) loss plots.
-
-    ``ScribeVAEResults`` is a distinct type from ``ScribeSVIResults`` but
-    exposes the same ``loss_history`` field populated during SVI training.
-    """
+    """Build training diagnostics payload for variational (ELBO) loss plots."""
     return {
         "plot_kind": "loss",
         "loss_history": np.array(results.loss_history),

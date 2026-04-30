@@ -44,6 +44,7 @@ from ._model_helpers import ModelHelpersMixin
 from ._normalization import NormalizationMixin
 from ._parameter_extraction import ParameterExtractionMixin
 from ._sampling import SamplingMixin
+from .variational_results_base import ScribeVariationalResults
 
 # ==============================================================================
 # ScribeVAEResults
@@ -62,6 +63,7 @@ class ScribeVAEResults(
     MixtureAnalysisMixin,
     NormalizationMixin,
     LNMExtractionMixin,
+    ScribeVariationalResults,
 ):
     """Results from VAE-based variational inference.
 
