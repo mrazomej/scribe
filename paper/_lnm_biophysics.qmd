@@ -1053,3 +1053,326 @@ consequence of the cell's underlying gene regulatory network. The price of this
 expressivity is the linearization and constant-noise approximations of
 @sec-lnm-bio-lna, which limit the model's faithfulness for weakly expressed
 genes.
+
+## Universality: the one-state bursty promoter route {#sec-lnm-bio-bursty}
+
+The derivation in the preceding sections started from the **two-state promoter**
+model, in which the promoter switches between ON and OFF states and the
+stochasticity of $\lambda_g$ arises from the promoter switching dynamics. A
+natural question is whether the logistic-normal result depends on this
+particular choice of microscopic model, or whether it is more general.
+
+In this section, we argue that the logistic-normal is a **necessary consequence
+of two physical facts**---first-order mRNA degradation and coarse-grainable
+production---rather than an artifact of a specific promoter model. The argument
+is deductive: any microscopic model satisfying these two conditions produces the
+same mesoscopic ODE, from which the logistic-normal follows. We then verify
+this general claim by working through a concrete alternative microscopic
+model---the **one-state bursty promoter**---and showing that it does indeed
+converge to the same mesoscopic dynamics.
+
+### The one-state bursty promoter model {#sec-lnm-bio-bursty-model}
+
+Consider a gene $g$ whose promoter is **constitutively active**: there is no
+OFF state. Instead of continuous production at a fixed rate, transcription
+occurs in discrete **bursts**. Each burst arrives at rate $k_{i,g}$ (the burst
+initiation rate) and deposits a random number of mRNA molecules, where the
+burst size $B$ follows a geometric distribution with mean $b_g$:
+
+$$
+\text{Prob}(B = n) = \frac{1}{1 + b_g} \left(\frac{b_g}{1 + b_g}\right)^n,
+\quad n = 0, 1, 2, \ldots
+$${#eq-lnm-bio-burst-size}
+
+Between bursts, mRNA molecules degrade independently at rate $\gamma_g$, as
+before. The key difference from the two-state model is that there is no promoter
+switching---the stochasticity comes entirely from the random timing and random
+sizes of the bursts.
+
+### The shot-noise representation {#sec-lnm-bio-shot-noise}
+
+Let $\{t_j\}$ be the (random) arrival times of bursts, forming a Poisson
+process with rate $k_{i,g}$, and let $B_j$ be the (random) size of the $j$-th
+burst. Conditioned on a specific realization of this burst process, the mRNA
+count evolves deterministically between bursts (decaying at rate $\gamma_g$)
+and jumps upward by $B_j$ at each burst time $t_j$:
+
+$$
+\frac{dm_g}{dt} = \sum_j B_j \, \delta(t - t_j) - \gamma_g \, m_g,
+$${#eq-lnm-bio-shot-noise-ode}
+
+where $\delta(\cdot)$ is the Dirac delta function. The solution to this ODE is
+the **shot-noise process**:
+
+$$
+m_g(t) = \sum_{j:\, t_j < t} B_j \, e^{-\gamma_g(t - t_j)}.
+$${#eq-lnm-bio-shot-noise-solution}
+
+Each burst deposits $B_j$ molecules at time $t_j$, and these molecules decay
+exponentially with rate $\gamma_g$. The current mRNA count is the sum of all
+surviving contributions from past bursts. This is the one-state analogue of the
+exponential moving average we saw in the two-state model---but instead of
+averaging over a binary switching signal, we are summing exponentially decaying
+contributions from discrete burst events.
+
+### Steady-state distribution: exact Gamma {#sec-lnm-bio-bursty-gamma}
+
+A classical result in the theory of shot-noise processes (and independently
+derivable via the Chemical Master Equation and generating functions; see e.g.
+Shahrezaei & Swain, *PNAS* 2008) is that the steady-state distribution of the
+shot-noise process @eq-lnm-bio-shot-noise-solution with Poisson burst arrivals
+and geometric burst sizes is **exactly** a Gamma distribution:
+
+$$
+m_g \sim \text{Gamma}\!\left(\frac{k_{i,g}}{\gamma_g},\, b_g\right),
+$${#eq-lnm-bio-bursty-gamma}
+
+where $k_{i,g}/\gamma_g$ is the shape parameter (dimensionless burst frequency)
+and $b_g$ is the rate parameter (mean burst size). This is a continuous
+approximation to the exact discrete NB distribution; the two coincide in the
+regime where molecular counts are not too small, which is precisely the regime
+where the CLE and LNA are valid.
+
+No approximation beyond the continuous relaxation is involved: the Gamma is the
+**exact** steady-state of the one-state bursty promoter. Comparing with the
+two-state promoter, where the Gamma arises as the distribution of
+$\lambda_g = \hat{r}_g \cdot p_g$ with $p_g \sim \text{Beta}$, we see that
+both microscopic models produce Gamma-distributed effective Poisson rates for
+independent genes. This is the first hint of universality.
+
+### The effective Poisson rate as a shot-noise variable {#sec-lnm-bio-bursty-lambda}
+
+In the Poisson-Gamma mixture representation of the NB, we identify the
+effective Poisson rate $\lambda_g$ with the (continuous) mRNA abundance at
+steady state. From the shot-noise solution @eq-lnm-bio-shot-noise-solution,
+the dynamics of $\lambda_g$ between and during burst events are:
+
+- **Between bursts**: $\lambda_g$ decays deterministically,
+  $$
+  \frac{d\lambda_g}{dt} = -\gamma_g \lambda_g.
+  $${#eq-lnm-bio-bursty-decay}
+
+- **At a burst event** at time $t_j$: $\lambda_g$ jumps upward by $B_j$,
+  $$
+  \lambda_g(t_j^+) = \lambda_g(t_j^-) + B_j.
+  $${#eq-lnm-bio-bursty-jump}
+
+This defines a **piecewise-deterministic Markov process** (PDMP), just as in the
+two-state promoter case, but with a different structure:
+
+| Feature | Two-state PDMP | One-state bursty PDMP |
+|---------|---------------|----------------------|
+| Driving signal | Binary indicator $\mathbb{1}_g(t) \in \{0, 1\}$ | Compound Poisson burst train |
+| Drift (ON / between bursts) | $\dot{p}_g = \gamma_g(1 - p_g)$ | $\dot{\lambda}_g = -\gamma_g \lambda_g$ |
+| Drift (OFF / N/A) | $\dot{p}_g = -\gamma_g p_g$ | N/A (always "ON") |
+| Jumps | Continuous relaxation, no jumps in $\lambda$ | Additive jumps $+B_j$ at burst arrivals |
+| Steady-state | $p_g \sim \text{Beta}$, hence $\lambda_g \sim \text{Gamma}$ | $\lambda_g \sim \text{Gamma}$ directly |
+
+Despite the very different microscopic mechanisms, both PDMPs produce a
+Gamma-distributed $\lambda_g$ at steady state.
+
+### Coarse-graining the burst process {#sec-lnm-bio-bursty-coarse}
+
+To connect the one-state bursty promoter to the GRN framework, we need to
+replace the discrete burst process with a continuous approximation---the
+analogue of replacing the binary indicator $\mathbb{1}_g$ with the continuous
+function $h_g(\underline{\lambda})$ in the two-state derivation.
+
+The mean production rate from the burst process is the product of the burst
+arrival rate and the mean burst size:
+
+$$
+\langle \text{production rate} \rangle = k_{i,g} \cdot b_g.
+$${#eq-lnm-bio-mean-production}
+
+When the burst rate $k_{i,g}$ is sufficiently high relative to the mRNA
+degradation rate $\gamma_g$ (i.e., many bursts arrive within one mRNA
+lifetime), the discrete burst train is well approximated by its mean---a
+continuous, deterministic production flow. This is the **fluid limit** of the
+compound Poisson process: the sum of many small, frequent bursts looks like a
+continuous stream.
+
+In this limit, the ODE for $\lambda_g$ becomes
+
+$$
+\frac{d\lambda_g}{dt} = k_{i,g} \cdot b_g - \gamma_g \lambda_g.
+$${#eq-lnm-bio-bursty-ode-independent}
+
+This is the one-state bursty promoter analogue of the two-state result
+$d\lambda_g/dt = r_g \, \mathbb{1}_g - \gamma_g \lambda_g$
+(@eq-lnm-bio-lambda-ode-boxed), with the role of the maximal production rate
+$r_g$ times the switching indicator $\mathbb{1}_g$ replaced by the mean
+burst production rate $k_{i,g} \cdot b_g$.
+
+### Gene regulatory coupling in the bursty model {#sec-lnm-bio-bursty-grn}
+
+In a gene regulatory network, the burst initiation rate $k_{i,g}$ depends on
+the concentrations of the transcription factors that regulate gene $g$. If
+transcription factor $g'$ activates gene $g$, then when $\lambda_{g'}$ is high
+(more TF protein is available), gene $g$ initiates bursts more frequently. We
+therefore write
+
+$$
+k_{i,g} \longrightarrow k_{i,g}(\underline{\lambda}),
+$${#eq-lnm-bio-bursty-coupling}
+
+making the burst rate a function of the entire expression vector. This is the
+bursty-promoter analogue of the two-state model's coarse-graining
+$\mathbb{1}_g \to h_g(\underline{\lambda})$.
+
+Substituting into @eq-lnm-bio-bursty-ode-independent, we obtain the coupled
+ODE:
+
+$$
+\frac{d\lambda_g}{dt} =
+\underbrace{k_{i,g}(\underline{\lambda}) \cdot b_g}_{b_g(\underline{\lambda})}
+- \gamma_g \lambda_g,
+\quad g = 1, \ldots, G.
+$${#eq-lnm-bio-bursty-grn-ode}
+
+This is **identical in form** to the GRN ODE derived from the two-state
+promoter (@eq-lnm-bio-grn-ode):
+
+$$
+\frac{d\lambda_g}{dt} =
+b_g(\underline{\lambda}) - \gamma_g \lambda_g.
+$$
+
+The only difference is the physical interpretation of the production term
+$b_g(\underline{\lambda})$:
+
+| Route | $b_g(\underline{\lambda})$ | Physical meaning |
+|-------|---------------------------|-----------------|
+| Two-state | $r_g \cdot h_g(\underline{\lambda})$ | Maximal rate $\times$ GRN-modulated effective ON-fraction |
+| One-state bursty | $k_{i,g}(\underline{\lambda}) \cdot b_g$ | GRN-modulated burst rate $\times$ mean burst size |
+
+The degradation term $\gamma_g \lambda_g$ has **exactly the same origin and
+meaning** in both cases: it is first-order mRNA degradation. The mRNA
+degradation rate $\gamma_g$ sets the memory timescale of the effective Poisson
+rate $\lambda_g$, regardless of whether the production mechanism is promoter
+switching or discrete bursting.
+
+### The assumptions for the bursty route {#sec-lnm-bio-bursty-assumptions}
+
+The coarse-graining from the discrete burst process to the continuous ODE
+@eq-lnm-bio-bursty-grn-ode requires a set of assumptions analogous to those
+listed in @sec-lnm-bio-assumptions for the two-state route:
+
+1. **Fluid limit (many bursts per mRNA lifetime).** The burst arrival rate
+   $k_{i,g}$ must be high relative to $\gamma_g$, so that the discrete burst
+   train is well approximated by its mean production rate. This is the
+   bursty-model analogue of the "promoter coarse-graining" assumption in the
+   two-state case. For genes with very low burst rates (rare, large bursts),
+   the continuous approximation breaks down and the discrete shot-noise
+   description is needed.
+
+2. **Protein tracks mRNA.** As in the two-state route, the regulatory effect of
+   gene $g'$ on gene $g$ is mediated through protein, but protein abundance is
+   proportional to mRNA: $\text{[protein]}_{g'} \propto \lambda_{g'}$. This
+   allows writing the burst rate as $k_{i,g}(\underline{\lambda})$.
+
+3. **Constant burst size.** The mean burst size $b_g$ is treated as a
+   gene-specific constant, not modulated by the GRN. This is a simplification:
+   in principle, burst size could also depend on TF concentrations. Relaxing
+   this assumption would allow $b_g$ to depend on $\underline{\lambda}$, which
+   simply redefines $b_g(\underline{\lambda})$ without changing the form of the
+   ODE.
+
+4. **First-order mRNA degradation.** Identical to the two-state assumption.
+
+### Convergence of both routes {#sec-lnm-bio-convergence}
+
+From @eq-lnm-bio-bursty-grn-ode onward, the derivation is **identical** to the
+two-state route. The GRN ODE has the same form, so the same chain of
+approximations applies:
+
+1. The Chemical Langevin Equation adds stochastic noise to the ODE
+   (@sec-lnm-bio-cle). The noise amplitude differs slightly between the two
+   microscopic models:
+   - **Two-state**: $\sigma_g^2(\lambda_g) \propto \lambda_g$ (Poisson-like
+     scaling from the telegraph process).
+   - **One-state bursty**: $\sigma_g^2(\lambda_g) \propto \lambda_g (1 + b_g)$
+     (the factor $(1 + b_g)$ is the Fano factor correction from burst-size
+     variability; when bursts produce more than one molecule on average, the
+     variance is super-Poissonian).
+
+2. Itô's lemma transforms to log-space (@sec-lnm-bio-log-space).
+
+3. The LNA linearizes the drift and freezes the noise at its steady-state
+   value (@sec-lnm-bio-lna), yielding a multivariate OU process.
+
+4. The Lyapunov equation gives the steady-state covariance
+   (@sec-lnm-bio-lyapunov).
+
+5. The softmax map yields the logistic-normal on compositions
+   (@sec-lnm-bio-to-ln).
+
+The only place the microscopic model enters the final result is in the
+**diffusion matrix** $\underline{\underline{D}}$. For the two-state model,
+$D_{gg} = 1/(2\bar{\lambda}_g)$; for the one-state bursty model,
+$D_{gg} = (1 + b_g)/(2\bar{\lambda}_g)$. This affects the *diagonal* entries
+of the steady-state covariance $\underline{\underline{\Sigma}}$ (each gene's
+marginal variance in log-space), but **not the qualitative structure**: the
+covariance is still determined by the Lyapunov equation, the off-diagonal
+entries are still generated by the GRN Jacobian
+$\underline{\underline{J}}$, and the logistic-normal form is unchanged.
+
+### Why the convergence is not a coincidence {#sec-lnm-bio-universality}
+
+The fact that two very different microscopic models produce the same mesoscopic
+ODE is not an empirical coincidence discovered by checking models one at a time.
+It is a **necessary consequence of two physical ingredients** that any model of
+mRNA dynamics must satisfy:
+
+1. **First-order mRNA degradation.** Each mRNA molecule is independently
+   degraded at rate $\gamma_g$. This is unimolecular chemistry: the
+   degradation flux from a pool of expected abundance $\lambda_g$ is always
+   $\gamma_g \lambda_g$, regardless of how those molecules were produced. No
+   model of transcription changes this term.
+
+2. **Coarse-grainable production.** Whatever the microscopic production
+   mechanism---promoter switching, discrete bursting, polymerase kinetics,
+   chromatin remodeling, or any combination thereof---once the fast production
+   dynamics are averaged out (under an appropriate timescale separation), the
+   effective production rate is *some* function $b_g(\underline{\lambda})$ of
+   the current regulatory state.
+
+Given these two ingredients, conservation of mass dictates the ODE:
+
+$$
+\frac{d\lambda_g}{dt} =
+\underbrace{b_g(\underline{\lambda})}_{\text{production (any mechanism)}}
+- \underbrace{\gamma_g \lambda_g}_{\text{first-order degradation}}.
+$${#eq-lnm-bio-universal-ode}
+
+This is not a model-specific result; it is the unique ODE consistent with
+linear degradation and an arbitrary production function. The two-state and
+one-state bursty derivations above are **concrete verifications** that the
+coarse-graining step (ingredient 2) succeeds for specific, well-studied
+microscopic models. But the ODE form itself is guaranteed by ingredient 1 alone.
+
+The downstream chain of approximations (CLE $\to$ log-space $\to$ LNA $\to$ OU
+$\to$ Lyapunov $\to$ logistic-normal) depends only on this mesoscopic ODE, not
+on the microscopic details that produced it. The microscopic model affects only
+the noise amplitude $\sigma_g$, which determines the diagonal of the diffusion
+matrix $\underline{\underline{D}}$---a quantitative detail that influences each
+gene's marginal variance but not the qualitative structure of the result.
+
+We may therefore state the result precisely:
+
+> **The logistic-normal distribution on gene compositions is the steady-state
+> distribution of any gene regulatory network whose effective dynamics satisfy
+> (i) first-order mRNA degradation and (ii) a production rate that, after
+> coarse-graining the fast transcription kinetics, depends on the expression
+> levels of other genes. Under the linear noise approximation in log-abundance
+> space, these two conditions are sufficient to produce a multivariate Gaussian
+> on log-abundances and hence a logistic-normal on compositions. The
+> microscopic promoter model enters only through the noise structure, not
+> through the form of the result.**
+
+This strengthens the biophysical justification for the logistic-normal: the
+result does not depend on committing to a particular model of promoter kinetics.
+The two-state promoter and the one-state bursty promoter are the two most widely
+studied microscopic models in the gene expression literature, and both converge
+to the same mesoscopic ODE. Any other microscopic model satisfying first-order
+degradation and coarse-grainable production will do the same.
