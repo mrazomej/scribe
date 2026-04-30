@@ -21,10 +21,19 @@ class ModelHelpersMixin:
     # --------------------------------------------------------------------------
 
     def _model_and_guide(self) -> Tuple[Callable, Optional[Callable]]:
-        """Get the model and guide functions based on model type."""
+        """Get the model and guide functions based on model type.
+
+        Notes
+        -----
+        VAE model construction requires ``n_genes`` to size the encoder and
+        decoder modules. Results objects store this value, so forward it when
+        available. Non-VAE paths ignore it.
+        """
         from ..models.model_registry import get_model_and_guide
 
-        model, guide, _ = get_model_and_guide(self.model_config)
+        model, guide, _ = get_model_and_guide(
+            self.model_config, n_genes=getattr(self, "n_genes", None)
+        )
         return model, guide
 
     # --------------------------------------------------------------------------

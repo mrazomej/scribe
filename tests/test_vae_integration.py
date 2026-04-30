@@ -17,6 +17,8 @@ from jax import random
 import numpyro
 import numpyro.distributions as dist
 from numpyro.infer import SVI, Trace_ELBO, Predictive
+from numpyro.contrib.module import flax_module
+from flax import linen as nn
 
 from scribe.flows import FlowChain
 from scribe.models.builders import (
@@ -37,6 +39,8 @@ from scribe.models.components import (
 )
 from scribe.models.components.guide_families import VAELatentGuide
 from scribe.models.config import ModelConfigBuilder
+from scribe.sampling import sample_variational_posterior
+from scribe.svi._model_helpers import ModelHelpersMixin
 
 
 # ==============================================================================
@@ -204,6 +208,88 @@ class TestVAEModelBuilderDetection:
         # r should be a sample site (from prior), not deterministic
         assert "r" in trace
         assert trace["r"]["type"] == "sample"
+
+
+class TestVAEPredictiveParamBinding:
+    """Regression tests for VAE parameter substitution during replay."""
+
+    def test_model_replay_uses_trained_decoder_params(self):
+        """Posterior replay must use provided decoder params, not random init."""
+
+        class _LinearDecoder(nn.Module):
+            @nn.compact
+            def __call__(self, x):
+                return nn.Dense(1, use_bias=True, name="head")(x)
+
+        def model():
+            z = numpyro.sample("z", dist.Normal(0.0, 1.0))
+            decoder = flax_module(
+                "vae_decoder",
+                _LinearDecoder(),
+                input_shape=(1,),
+            )
+            y = decoder(jnp.array([z]))[0]
+            numpyro.sample("y_alr", dist.Delta(y))
+
+        def guide():
+            numpyro.sample("z", dist.Normal(0.0, 1.0))
+
+        # Build explicit decoder params: y = 0 * z + 3.
+        init_params = _LinearDecoder().init(
+            random.PRNGKey(0), jnp.zeros((1,))
+        )["params"]
+        decoder_params = {
+            "head": {
+                "kernel": jnp.zeros_like(init_params["head"]["kernel"]),
+                "bias": jnp.full_like(init_params["head"]["bias"], 3.0),
+            }
+        }
+
+        samples = sample_variational_posterior(
+            guide=guide,
+            params={"vae_decoder$params": decoder_params},
+            model=model,
+            model_args={},
+            rng_key=random.PRNGKey(1),
+            n_samples=16,
+        )
+
+        # If replay ignores params, y_alr will follow random module init.
+        # Correct behavior is exact y_alr == 3 for all draws.
+        assert "y_alr" in samples
+        assert samples["y_alr"].shape == (16,)
+        assert jnp.allclose(samples["y_alr"], 3.0)
+
+    def test_model_helpers_forward_n_genes_to_registry(self, monkeypatch):
+        """VAE model reconstruction must forward stored n_genes."""
+
+        class _DummyResults(ModelHelpersMixin):
+            pass
+
+        captured = {}
+
+        def _fake_get_model_and_guide(
+            model_config, unconstrained=None, guide_families=None, n_genes=None
+        ):
+            del unconstrained, guide_families
+            captured["model_config"] = model_config
+            captured["n_genes"] = n_genes
+            return (lambda **kwargs: None), None, model_config
+
+        monkeypatch.setattr(
+            "scribe.models.model_registry.get_model_and_guide",
+            _fake_get_model_and_guide,
+        )
+
+        dummy = _DummyResults()
+        dummy.model_config = {"kind": "vae"}
+        dummy.n_genes = 77
+
+        model, guide = dummy._model_and_guide()
+        assert callable(model)
+        assert guide is None
+        assert captured["model_config"] == {"kind": "vae"}
+        assert captured["n_genes"] == 77
 
 
 class TestVAEPriorPredictive:

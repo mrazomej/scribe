@@ -105,3 +105,17 @@ variance array is discarded when the caller did not request it.
 - **`models.components.likelihoods.beta_negative_binomial`** provides
   `build_count_dist`, used by PPC and denoising to construct the
   appropriate NB/BNB distribution objects.
+
+## VAE Parameter Replay Requirement
+
+For VAE-backed models, model replay must receive the trained parameter
+dictionary (the same one used for guide sampling) so `numpyro.param` /
+`flax_module` sites are substituted during `Predictive` calls.
+
+- `sample_variational_posterior` passes `params` to both the guide and
+  model-replay `Predictive` steps.
+- `generate_predictive_samples` accepts optional `params` and forwards
+  them to `Predictive`.
+
+Without this wiring, decoder parameters (e.g. `vae_decoder$params`) can
+be re-initialized during replay, producing incorrect predictive samples.

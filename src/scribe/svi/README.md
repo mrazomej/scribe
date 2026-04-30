@@ -397,6 +397,12 @@ ppc_samples = results.get_ppc_samples(
 )
 ```
 
+For VAE-backed models, posterior/predictive replay uses the trained
+parameter dictionary during both guide and model `Predictive` passes.
+This ensures `flax_module` sites (for example `vae_decoder$params`) are
+substituted from fitted values rather than re-initialized at replay
+time.
+
 **Compositional Samples:**
 
 The simplex (compositional) representation of gene expression is core to the

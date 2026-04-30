@@ -569,6 +569,7 @@ class PosteriorPredictiveSamplingMixin:
             self.model_config,
             unconstrained=False,
             guide_families=GuideFamilyConfig(),
+            n_genes=self.n_genes,
         )
 
         # Use model_config_for_pred (which has param_specs populated) so
@@ -600,6 +601,7 @@ class PosteriorPredictiveSamplingMixin:
             self.posterior_samples,
             model_args,
             rng_key=rng_key,
+            params=self.params,
         )
 
         # Store samples if requested

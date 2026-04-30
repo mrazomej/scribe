@@ -69,7 +69,7 @@ def sample_variational_posterior(
     # which avoids a potentially huge memory allocation.
     blocked_model = block(model, hide=["counts"])
     predictive_model = Predictive(
-        blocked_model, posterior_samples=posterior_samples
+        blocked_model, posterior_samples=posterior_samples, params=params
     )
     model_samples = predictive_model(rng_key, **model_args)
 
@@ -83,6 +83,7 @@ def generate_predictive_samples(
     posterior_samples: Dict,
     model_args: Dict,
     rng_key: random.PRNGKey,
+    params: Optional[Dict] = None,
 ) -> jnp.ndarray:
     """Generate predictive samples using posterior parameter samples.
 
@@ -104,6 +105,10 @@ def generate_predictive_samples(
         via ``Predictive``.
     rng_key : random.PRNGKey
         JAX random number generator key.
+    params : Dict, optional
+        Optional trained parameter dictionary used to substitute model-side
+        ``numpyro.param`` / ``flax_module`` weights during replay. This is
+        required for VAE models so decoder parameters are not re-initialized.
 
     Returns
     -------
@@ -130,6 +135,7 @@ def generate_predictive_samples(
         posterior_samples,
         num_samples=num_samples,
         exclude_deterministic=False,
+        params=params if params is not None else {},
     )
 
     # NumPyro's Predictive.__call__ passes **kwargs directly to the
@@ -191,6 +197,7 @@ def generate_ppc_samples(
         posterior_param_samples,
         model_args,
         key_pred,
+        params=params,
     )
 
     return {
