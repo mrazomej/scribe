@@ -72,17 +72,88 @@ where $\delta(\cdot)$ is the Dirac delta function. The first term is the
 production: each burst deposits $B_j$ molecules instantaneously at time $t_j$.
 The second term is first-order mRNA degradation.
 
-The solution to this ODE is the **shot-noise process**:
+### Solving the shot-noise ODE {#sec-lnm-bio-shot-noise-solve}
+
+We now solve @eq-lnm-bio-shot-noise-ode step by step. The ODE is linear in
+$m_g$, so we can use the same integrating factor technique that appears in the
+two-state promoter derivation (see @sec-lnm-bio-two-state-ode). Writing the
+ODE in standard form,
 
 $$
+\dot{m}_g(t) + \gamma_g \, m_g(t) =
+\sum_j B_j \, \delta(t - t_j).
+$${#eq-lnm-bio-shot-standard}
+
+Multiply both sides by the integrating factor $e^{\gamma_g t}$:
+
+$$
+e^{\gamma_g t}
+\left[\dot{m}_g(t) + \gamma_g \, m_g(t)\right] =
+e^{\gamma_g t} \sum_j B_j \, \delta(t - t_j).
+$${#eq-lnm-bio-shot-if-mult}
+
+The left-hand side is a total derivative, since by the product rule
+
+$$
+\frac{d}{dt}\!\left(m_g(t)\, e^{\gamma_g t}\right) =
+\dot{m}_g(t)\, e^{\gamma_g t} +
+\gamma_g \, m_g(t)\, e^{\gamma_g t}.
+$${#eq-lnm-bio-shot-product-rule}
+
+We therefore have
+
+$$
+\frac{d}{dt}\!\left(m_g(t)\, e^{\gamma_g t}\right) =
+e^{\gamma_g t} \sum_j B_j \, \delta(t - t_j).
+$${#eq-lnm-bio-shot-total-deriv}
+
+Integrating both sides from an initial time $t_0$ to $t$:
+
+$$
+m_g(t)\, e^{\gamma_g t} - m_g(t_0)\, e^{\gamma_g t_0} =
+\sum_j B_j \int_{t_0}^{t} ds\; e^{\gamma_g s}\, \delta(s - t_j).
+$${#eq-lnm-bio-shot-integrated}
+
+By the sifting property of the Dirac delta,
+$\int_{t_0}^{t} ds\; e^{\gamma_g s}\, \delta(s - t_j) =
+e^{\gamma_g t_j}$ whenever $t_j \in (t_0, t)$, and zero otherwise.
+Substituting:
+
+$$
+m_g(t)\, e^{\gamma_g t} - m_g(t_0)\, e^{\gamma_g t_0} =
+\sum_{j:\, t_0 < t_j < t} B_j \, e^{\gamma_g t_j}.
+$${#eq-lnm-bio-shot-sifted}
+
+Solving for $m_g(t)$ by multiplying both sides by $e^{-\gamma_g t}$:
+
+$$
+m_g(t) =
+m_g(t_0)\, e^{-\gamma_g(t - t_0)} +
+\sum_{j:\, t_0 < t_j < t} B_j \, e^{-\gamma_g(t - t_j)}.
+$${#eq-lnm-bio-shot-full-solution}
+
+The first term is the contribution from the initial condition, which decays
+exponentially with time constant $1/\gamma_g$---exactly as in the two-state
+case. The second term sums the surviving contributions from all bursts that
+arrived between $t_0$ and $t$.
+
+Letting $t_0 \to -\infty$ (so that the initial-condition term vanishes), we
+reach the steady-state **shot-noise process**:
+
+$$
+\boxed{
 m_g(t) = \sum_{j:\, t_j < t} B_j \, e^{-\gamma_g(t - t_j)}.
+}
 $${#eq-lnm-bio-shot-noise-solution}
 
 Each burst deposits $B_j$ molecules at time $t_j$, and these molecules decay
 exponentially with rate $\gamma_g$. The current mRNA count is the sum of all
-surviving contributions from past bursts---a natural exponential moving
-average over the gene's production history, with memory timescale
-$1/\gamma_g$ set by mRNA degradation.
+surviving contributions from past bursts---a natural **exponential moving
+average** over the gene's production history, with memory timescale
+$1/\gamma_g$ set by mRNA degradation. This is the one-state bursty analogue
+of the exponential moving average that appears in the two-state model
+(@eq-lnm-bio-ss-convolution), with discrete burst events replacing the
+continuous binary switching signal.
 
 ### Steady-state distribution: exact Gamma {#sec-lnm-bio-bursty-gamma}
 
