@@ -22,6 +22,9 @@ MeanProbParameterization
     Samples p (probability) and mu (mean), derives r.
 MeanOddsParameterization
     Samples phi (odds ratio) and mu (mean), derives p and r.
+LogisticNormalParameterization
+    Population total-count parameters (``r_T``, ``p``) plus VAE-decoded
+    ALR coordinates ``y_alr`` for compositional multinomial structure.
 
 Examples
 --------
@@ -34,7 +37,7 @@ Examples
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Optional, Tuple
+from typing import List, Literal, Optional, Tuple
 
 import jax.numpy as jnp
 
@@ -167,6 +170,17 @@ class Parameterization(ABC):
         """
         # Default: no transformation
         return param_name
+
+    @property
+    def requires_vae(self) -> bool:
+        """Whether this parameterization is only supported with VAE inference.
+
+        Returns
+        -------
+        bool
+            False for standard parameterizations; subclasses may override.
+        """
+        return False
 
 
 # ==============================================================================
@@ -500,6 +514,136 @@ class MeanOddsParameterization(Parameterization):
         return param_name
 
 
+# ------------------------------------------------------------------------------
+# Logistic-Normal Multinomial Parameterization
+# ------------------------------------------------------------------------------
+
+
+class LogisticNormalParameterization(Parameterization):
+    """Logistic-normal multinomial parameterization for VAE-only models.
+
+    Population-level total UMI counts follow a Negative Binomial with
+    dispersion ``r_T`` and base success probability ``p`` (NumPyro ``probs``,
+    before any VCP modulation on totals).  Per-cell gene compositions use a
+    multinomial on the simplex after an ALR map from decoder outputs ``y_alr``
+    (length ``G-1``).  Optional learned diagonal ALR noise is controlled at the
+    model level via ``ModelConfig.d_mode``; the extra parameter ``d_lnm`` is
+    wired in the VAE factory when ``d_mode=\"learned\"``.
+
+    Core parameters (global, not gene-specific):
+
+    - ``r_T``: Total-count NB dispersion (LogNormal or PositiveNormal).
+    - ``p``: Total-count NB success probability (Beta or SigmoidNormal).
+
+    The ``d_lnm`` vector is **not** included in :meth:`core_parameters`; it
+    is appended by the preset factory when ``d_mode=\"learned\"``.
+    """
+
+    def __init__(self, d_mode: Literal["low_rank", "learned"] = "low_rank"):
+        """Store diagonal mode for introspection (factory uses ``ModelConfig``).
+
+        Parameters
+        ----------
+        d_mode : {\"low_rank\", \"learned\"}, default=\"low_rank\"
+            Mirrors ``ModelConfig.d_mode``.  The singleton registry instance
+            uses the default; the preset factory reads runtime config.
+        """
+        self._init_d_mode: Literal["low_rank", "learned"] = d_mode
+
+    @property
+    def name(self) -> str:
+        return "logistic_normal"
+
+    @property
+    def core_parameters(self) -> List[str]:
+        return ["r_T", "p"]
+
+    @property
+    def gene_param_name(self) -> str:
+        return "y_alr"
+
+    @property
+    def requires_vae(self) -> bool:
+        return True
+
+    def build_param_specs(
+        self,
+        unconstrained: bool,
+        guide_families: GuideFamilyConfig,
+        n_components: Optional[int] = None,
+        mixture_params: Optional[List[str]] = None,
+    ) -> List[ParamSpec]:
+        """Build specs for ``r_T`` (LogNormal or PositiveNormal) and ``p``."""
+        r_family = guide_families.get("r_T")
+        p_family = guide_families.get("p")
+
+        # Mixture-aware flags mirror canonical p/r handling.
+        if n_components is not None:
+            if mixture_params is None:
+                mixture_params = ["r_T", "p"]
+            is_r_mixture = "r_T" in mixture_params
+            is_p_mixture = "p" in mixture_params
+        else:
+            is_r_mixture = False
+            is_p_mixture = False
+
+        if unconstrained:
+            return [
+                PositiveNormalSpec(
+                    name="r_T",
+                    shape_dims=(),
+                    default_params=(0.0, 1.0),
+                    guide_family=r_family,
+                    is_mixture=is_r_mixture,
+                ),
+                SigmoidNormalSpec(
+                    name="p",
+                    shape_dims=(),
+                    default_params=(0.0, 1.0),
+                    guide_family=p_family,
+                    is_mixture=is_p_mixture,
+                ),
+            ]
+        return [
+            LogNormalSpec(
+                name="r_T",
+                shape_dims=(),
+                default_params=(0.0, 1.0),
+                guide_family=r_family,
+                is_mixture=is_r_mixture,
+            ),
+            BetaSpec(
+                name="p",
+                shape_dims=(),
+                default_params=(1.0, 1.0),
+                guide_family=p_family,
+                is_mixture=is_p_mixture,
+            ),
+        ]
+
+    def build_derived_params(self) -> List[DerivedParam]:
+        """No closed-form derived parameters for this parameterization."""
+        return []
+
+    def decoder_output_spec(self, base_model: str) -> List[Tuple[str, str]]:
+        """Return a single identity head for ALR coordinates ``y_alr``.
+
+        Parameters
+        ----------
+        base_model : str
+            Ignored; included for API compatibility with other
+            parameterizations.
+
+        Returns
+        -------
+        list of tuple
+            One identity head: ``("y_alr", "identity")``, i.e. a linear map from
+            latent ``z`` to ALR coordinates without an extra output nonlinearity.
+        """
+        del base_model
+        return [("y_alr", "identity")]
+
+
 # ==============================================================================
 # NOTE: Hierarchical parameterization classes have been removed.
 # Hierarchical priors on p/phi and gate are now controlled via boolean flags
@@ -589,7 +733,6 @@ def _compute_r_from_mu_p(p: jnp.ndarray, mu: jnp.ndarray) -> jnp.ndarray:
     return mu * (1 - p) / p
 
 
-
 # ==============================================================================
 # Parameterization Registry
 # ==============================================================================
@@ -598,6 +741,7 @@ def _compute_r_from_mu_p(p: jnp.ndarray, mu: jnp.ndarray) -> jnp.ndarray:
 _canonical = CanonicalParameterization()
 _mean_prob = MeanProbParameterization()
 _mean_odds = MeanOddsParameterization()
+_logistic_normal = LogisticNormalParameterization()
 
 # Registry mapping names to parameterization instances
 PARAMETERIZATIONS = {
@@ -605,6 +749,7 @@ PARAMETERIZATIONS = {
     "canonical": _canonical,
     "mean_prob": _mean_prob,
     "mean_odds": _mean_odds,
+    "logistic_normal": _logistic_normal,
     # Backward compatibility
     "standard": _canonical,
     "linked": _mean_prob,
@@ -617,6 +762,7 @@ __all__ = [
     "CanonicalParameterization",
     "MeanProbParameterization",
     "MeanOddsParameterization",
+    "LogisticNormalParameterization",
     "PARAMETERIZATIONS",
     # Derived parameter compute functions (pure math, alignment-free)
     "_compute_mu_from_r_p",

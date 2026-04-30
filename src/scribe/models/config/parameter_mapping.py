@@ -196,6 +196,29 @@ PARAMETERIZATION_MAPPINGS = {
             "mu": "Mean parameter (LogNormal distribution)",
         },
     ),
+    Parameterization.LOGISTIC_NORMAL: ParameterizationMapping(
+        parameterization=Parameterization.LOGISTIC_NORMAL,
+        core_parameters={"r_T", "p"},
+        optional_parameters={"d_lnm", "y_alr", "z"},
+        parameter_descriptions={
+            "r_T": (
+                "NB dispersion for total UMI counts per cell "
+                "(LogNormal / PositiveNormal)"
+            ),
+            "p": (
+                "NB success probability for total counts "
+                "(Beta / SigmoidNormal)"
+            ),
+            "y_alr": (
+                "ALR coordinates from VAE decoder (G-1, reference gene "
+                "determined by alr_reference_idx)"
+            ),
+            "d_lnm": (
+                "Optional per-coordinate ALR variance scale (learned d_mode)"
+            ),
+            "z": "VAE latent code",
+        },
+    ),
 }
 
 # ==============================================================================

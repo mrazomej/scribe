@@ -59,6 +59,8 @@ from .results import (
     compare_datasets,
 )
 
+from ..models.components.likelihoods.lnm import select_alr_reference
+
 # Parameter extraction
 from ._extract import extract_alr_params
 
@@ -104,6 +106,7 @@ from ._gaussianity import gaussianity_diagnostics
 from ._empirical import (
     sample_composition,
     sample_compositions,
+    sample_lnm_compositions,
     sample_mixture_compositions,
     compute_delta_from_simplex,
     compute_clr_differences,
@@ -111,6 +114,8 @@ from ._empirical import (
     compute_expression_mask,
     compute_composition_coverage_mask,
 )
+
+from ._lnm_diagnostics import effective_per_gene_nb
 
 # Empirical Bayes shrinkage
 from ._shrinkage import (
@@ -134,6 +139,7 @@ __all__ = [
     "compare_datasets",
     # Extraction
     "extract_alr_params",
+    "select_alr_reference",
     # Transformations
     "alr_to_clr",
     "transform_gaussian_alr_to_clr",
@@ -162,12 +168,15 @@ __all__ = [
     # Empirical (non-parametric) DE
     "sample_composition",
     "sample_compositions",
+    "sample_lnm_compositions",
     "sample_mixture_compositions",
     "compute_delta_from_simplex",
     "compute_clr_differences",
     "empirical_differential_expression",
     "compute_expression_mask",
     "compute_composition_coverage_mask",
+    # LNM diagnostics
+    "effective_per_gene_nb",
     # Empirical Bayes shrinkage
     "fit_scale_mixture_prior",
     "shrinkage_differential_expression",

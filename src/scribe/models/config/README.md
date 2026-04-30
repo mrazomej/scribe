@@ -146,6 +146,46 @@ columns can be auto-downgraded via
 single-dataset downgrades are applied. Setting
 `auto_downgrade_single_dataset_hierarchy=False` preserves strict validation.
 
+#### Logistic-Normal Multinomial Configuration
+
+For the `lnm` model type, the following field controls the diagonal
+covariance mode:
+
+- `d_mode: str` — Either `"low_rank"` (default) or `"learned"`.
+  - **`"low_rank"`**: Strictly rank-k covariance `Σ = WW^T`. No `epsilon`
+    sampling; the generative path is `y = mu + W z`. Singular covariance is
+    harmless because the VAE never inverts it.
+  - **`"learned"`**: Adds a learnable per-gene positive diagonal `d`, giving
+    `Σ = WW^T + diag(d)`. The `epsilon` nuisance node uses `q(ε) = p(ε)`
+    (prior-matched), contributing zero KL while enabling `d` to be learned
+    via likelihood gradients.
+
+When `d_mode="learned"`, a `LogNormalSpec("d_lnm", shape_dims=("n_alr",))`
+is added to the model's parameter specs automatically.
+
+- `alr_reference_idx: int` — Index of the gene used as the ALR reference
+  (denominator in the log-ratio transform). Default `-1` means the last gene.
+  When calling `scribe.fit()` with `model="lnm"`, this is auto-selected
+  from the data as the gene with the highest geometric mean expression,
+  improving numerical conditioning during VAE training. Can be overridden
+  explicitly via `alr_reference_idx=<int>` in `scribe.fit()`.
+
+The `lnm` model forces `parameterization="logistic_normal"`,
+`inference_method="vae"`, and `overdispersion="none"`.
+
+```python
+# Logistic-Normal Multinomial with low-rank covariance
+config = (ModelConfigBuilder()
+    .for_model("lnm")
+    .build())
+
+# LNM with learned diagonal
+config = ModelConfig(
+    base_model="lnm",
+    d_mode="learned",
+)
+```
+
 #### Joint Low-Rank Parameters
 
 For SVI with joint modeling of gene-specific parameters via a low-rank
@@ -419,9 +459,9 @@ errors = validate_parameter_consistency(
 
 ### Enums
 
-- `ModelType`: NBDM, ZINB, NBVCP, ZINBVCP
-- `Parameterization`: CANONICAL, MEAN_PROB, MEAN_ODDS (plus backward-compat
-  aliases STANDARD, LINKED, ODDS_RATIO)
+- `ModelType`: NBDM, ZINB, NBVCP, ZINBVCP, LNM, LNMVCP
+- `Parameterization`: CANONICAL, MEAN_PROB, MEAN_ODDS, LOGISTIC_NORMAL (plus
+  backward-compat aliases STANDARD, LINKED, ODDS_RATIO)
 - `InferenceMethod`: SVI, MCMC, VAE
 - `VAEPriorType`: STANDARD, DECOUPLED
 - `VAEMaskType`: ALTERNATING, SEQUENTIAL

@@ -93,7 +93,8 @@ class GuideFamilyConfig(BaseModel):
     Parameters
     ----------
     p : GuideFamily, optional
-        Guide family for the success probability parameter.
+        Guide family for the success probability parameter (canonical, linked,
+        mean_prob) or LNM total-count NB probability (logistic_normal).
     r : GuideFamily, optional
         Guide family for the dispersion parameter.
     mu : GuideFamily, optional
@@ -135,7 +136,11 @@ class GuideFamilyConfig(BaseModel):
 
     # All possible parameters - None means use default MeanFieldGuide
     p: Optional[GuideFamily] = Field(
-        None, description="Guide family for success probability"
+        None,
+        description=(
+            "Guide family for success probability (canonical / linked / "
+            "mean_prob) or LNM total-count NB probability (logistic_normal)"
+        ),
     )
     r: Optional[GuideFamily] = Field(
         None, description="Guide family for dispersion"
@@ -157,6 +162,16 @@ class GuideFamilyConfig(BaseModel):
     )
     mixing: Optional[GuideFamily] = Field(
         None, description="Guide family for mixture weights"
+    )
+    r_T: Optional[GuideFamily] = Field(
+        None,
+        description="Guide family for LNM total-count NB dispersion r_T",
+    )
+    d_lnm: Optional[GuideFamily] = Field(
+        None,
+        description=(
+            "Guide family for LNM learned diagonal ALR scales (d_mode=learned)"
+        ),
     )
 
     # --------------------------------------------------------------------------

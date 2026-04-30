@@ -28,6 +28,8 @@ class ModelType(str, Enum):
     """Supported model types."""
 
     NBDM = "nbdm"
+    LNM = "lnm"
+    LNMVCP = "lnmvcp"
     ZINB = "zinb"
     NBVCP = "nbvcp"
     ZINBVCP = "zinbvcp"
@@ -63,6 +65,7 @@ class Parameterization(str, Enum):
     CANONICAL = "canonical"
     MEAN_PROB = "mean_prob"
     MEAN_ODDS = "mean_odds"
+    LOGISTIC_NORMAL = "logistic_normal"
     # Backward compatibility
     STANDARD = "standard"
     LINKED = "linked"

@@ -324,10 +324,13 @@ class LowRankLogisticNormal(Distribution):
 
     Asymmetry and Reference Component
     ----------------------------------
-    The ALR transformation treats the last component (x_D) as a reference.
-    This means the distribution is NOT symmetric under permutation of
-    components. If you need symmetry, use SoftmaxNormal instead (but note
-    that SoftmaxNormal cannot compute log_prob).
+    The ALR transformation uses one simplex component as the reference
+    (denominator in log-ratios).  By default (``reference_idx=-1``) this is
+    the last component.  A non-default index places that component at the
+    chosen axis position without reordering latent rows (the Gaussian always
+    has dimension ``D-1``).  The distribution is not symmetric under
+    arbitrary relabeling unless you use ``SoftmaxNormal`` (which cannot
+    compute ``log_prob``).
 
     Parameters
     ----------
@@ -337,6 +340,9 @@ class LowRankLogisticNormal(Distribution):
         Low-rank factor matrix W of shape (D-1, rank)
     cov_diag : jnp.ndarray
         Diagonal component D of shape (D-1,)
+    reference_idx : int, default=-1
+        Zero-based index of the simplex component used as the ALR reference.
+        ``-1`` means the last component (legacy default).
     validate_args : bool, optional
         Whether to validate input arguments
 
@@ -383,7 +389,9 @@ class LowRankLogisticNormal(Distribution):
     support = constraints.simplex
     has_rsample = False
 
-    def __init__(self, loc, cov_factor, cov_diag, validate_args=None):
+    def __init__(
+        self, loc, cov_factor, cov_diag, reference_idx=-1, validate_args=None
+    ):
         loc = jnp.asarray(loc)
         cov_factor = jnp.asarray(cov_factor)
         cov_diag = jnp.asarray(cov_diag)
@@ -392,6 +400,7 @@ class LowRankLogisticNormal(Distribution):
         self.loc = loc
         self.cov_factor = cov_factor
         self.cov_diag = cov_diag
+        self._reference_idx = int(reference_idx)
 
         # Infer dimensions
         self.n_dims_unconstrained = loc.shape[-1]  # D - 1
@@ -407,6 +416,11 @@ class LowRankLogisticNormal(Distribution):
             event_shape=(self.n_dims_simplex,),
             validate_args=validate_args,
         )
+
+    @property
+    def reference_idx(self) -> int:
+        """Index of the ALR reference component on the simplex (zero-based)."""
+        return self._reference_idx
 
     # --------------------------------------------------------------------------
 
@@ -431,15 +445,22 @@ class LowRankLogisticNormal(Distribution):
         # Sample from base MVN in log-ratio space
         y = self.base_dist.sample(key, sample_shape)  # (..., D-1)
 
-        # Apply ALR transformation
+        # Map ALR latent y to simplex probabilities (reference index controls layout)
         exp_y = jnp.exp(y)
+        g = self.n_dims_simplex
+        ref = self._reference_idx if self._reference_idx >= 0 else g - 1
+
         sum_exp = 1.0 + jnp.sum(exp_y, axis=-1, keepdims=True)
+        x_alr = exp_y / sum_exp
+        x_ref = 1.0 / sum_exp
 
-        # Compute simplex coordinates
-        x_first = exp_y / sum_exp  # (..., D-1)
-        x_last = 1.0 / sum_exp  # (..., 1)
-
-        return jnp.concatenate([x_first, x_last], axis=-1)  # (..., D)
+        if ref == g - 1:
+            return jnp.concatenate([x_alr, x_ref], axis=-1)
+        if ref == 0:
+            return jnp.concatenate([x_ref, x_alr], axis=-1)
+        return jnp.concatenate(
+            [x_alr[..., :ref], x_ref, x_alr[..., ref:]], axis=-1
+        )
 
     # --------------------------------------------------------------------------
 
@@ -458,13 +479,21 @@ class LowRankLogisticNormal(Distribution):
         jnp.ndarray
             Log probability density of shape (...)
         """
-        # Inverse ALR: x -> y
-        # yᵢ = log(xᵢ / x_D)
-        x_first = value[..., :-1]  # (..., D-1)
-        x_last = value[..., -1:]  # (..., 1)
+        # Inverse ALR: extract reference and non-reference simplex components
+        g = self.n_dims_simplex
+        ref = self._reference_idx if self._reference_idx >= 0 else g - 1
 
-        # Compute log-ratio coordinates (avoid log(0))
-        y = jnp.log(x_first + 1e-20) - jnp.log(x_last + 1e-20)  # (..., D-1)
+        x_ref = value[..., ref : ref + 1]
+        if ref == g - 1:
+            x_nonref = value[..., :-1]
+        elif ref == 0:
+            x_nonref = value[..., 1:]
+        else:
+            x_nonref = jnp.concatenate(
+                [value[..., :ref], value[..., ref + 1 :]], axis=-1
+            )
+
+        y = jnp.log(x_nonref + 1e-20) - jnp.log(x_ref + 1e-20)
 
         # Log probability in unconstrained space
         log_prob_unconstrained = self.base_dist.log_prob(y)  # (...)

@@ -812,8 +812,8 @@ settings where all `r_g > 1`. For gene-specific `p_g`/`phi_g` cases, use
 #### Mixin Architecture
 
 The `ScribeSVIResults` class is implemented using a mixin-based architecture to
-improve maintainability and code organization. The class inherits from 9
-specialized mixins, each handling a specific domain of functionality. This
+improve maintainability and code organization. The class inherits from specialized
+mixins, each handling a specific domain of functionality. This
 design allows for better code organization, easier maintenance, and clearer
 separation of concerns.
 
@@ -830,6 +830,10 @@ ScribeSVIResults
 ├── LikelihoodMixin            # Log-likelihood computation
 ├── MixtureAnalysisMixin       # Mixture model analysis
 └── NormalizationMixin         # Count normalization
+
+ScribeVAEResults (extends ScribeSVIResults)
+├── LatentSpaceMixin          # Encode/decode/embed via VAE
+└── LNMExtractionMixin        # LNM population parameter extraction (mu, W, d)
 ```
 
 **Mixin Details:**
@@ -1001,6 +1005,7 @@ ScribeSVIResults
 ```
 src/scribe/svi/
 ├── results.py              # Main class (composed of mixins, ~108 lines)
+├── vae_results.py          # ScribeVAEResults (extends ScribeSVIResults for VAE)
 ├── _core.py                # CoreResultsMixin
 ├── _parameter_extraction.py # ParameterExtractionMixin
 ├── _gene_subsetting.py     # GeneSubsettingMixin
@@ -1008,6 +1013,7 @@ src/scribe/svi/
 ├── _model_helpers.py       # ModelHelpersMixin
 ├── _sampling.py            # SamplingMixin
 ├── _likelihood.py          # LikelihoodMixin
+├── _lnm_extraction.py     # LNMExtractionMixin (mu, W, d, correlation)
 ├── _mixture_analysis.py    # MixtureAnalysisMixin
 └── _normalization.py       # NormalizationMixin
 ```
@@ -1015,6 +1021,36 @@ src/scribe/svi/
 **Note:** Mixin files use the `_` prefix to indicate they are internal
 implementation details. Users should interact with `ScribeSVIResults` directly;
 the mixin structure is transparent to the public API.
+
+#### LNM Parameter Extraction (VAE Results)
+
+For `lnm` / `lnmvcp` models, `ScribeVAEResults` provides convenience methods to
+extract the fitted Logistic-Normal Multinomial parameters directly from the
+linear-decoder VAE:
+
+```python
+# mu: ALR-space mean (decoder bias), shape (G-1,)
+mu = vae_results.get_lnm_mu()
+
+# W: low-rank factor (decoder kernel), shape (G-1, k)
+W = vae_results.get_lnm_W()
+
+# d: learned diagonal (or None for low_rank mode), shape (G-1,)
+d = vae_results.get_lnm_d()
+
+# Full covariance Sigma = WW^T + diag(d), shape (G-1, G-1)
+sigma = vae_results.get_lnm_sigma()
+
+# Gene-gene correlation in CLR space, shape (G, G)
+corr = vae_results.get_lnm_compositional_correlation()
+```
+
+These methods abstract away the decoder weight extraction and ALR-to-CLR
+coordinate transformations, providing the natural statistical parameters of the
+fitted LNM model.  The ALR reference gene index is stored in
+`vae_results.model_config.alr_reference_idx` (auto-selected from data as the
+gene with the highest geometric mean expression).  All coordinate transforms
+(ALR-to-CLR, simplex sampling, etc.) respect this index.
 
 ### SVIResultsFactory (`results_factory.py`)
 

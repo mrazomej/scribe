@@ -60,6 +60,23 @@ config = (ModelConfigBuilder()
     .build())
 ```
 
+### Logistic-Normal Multinomial (LNM)
+
+```python
+# LNM with strictly low-rank covariance (default)
+config = (ModelConfigBuilder()
+    .for_model("lnm")
+    .build())
+
+# LNM with learned diagonal d
+config = ModelConfig(base_model="lnm", d_mode="learned")
+
+# LNMVCP: LNM + per-cell capture
+config = (ModelConfigBuilder()
+    .for_model("lnmvcp")
+    .build())
+```
+
 ## Key Concepts
 
 ### Immutability

@@ -39,6 +39,7 @@ from ..builders.parameter_specs import (
     DatasetHierarchicalPositiveNormalSpec,
     DatasetHierarchicalSigmoidNormalSpec,
     DirichletSpec,
+    LogNormalSpec,
     PositiveNormalSpec,
     GaussianLatentSpec,
     GammaSpec,
@@ -58,6 +59,7 @@ from ..builders.parameter_specs import (
     SoftplusNormalSpec,
 )
 from ..components.guide_families import VAELatentGuide
+from ..components.likelihoods import LogisticNormalMultinomialLikelihood
 from ..components.vae_components import (
     DecoderOutputHead,
     GaussianEncoder,
@@ -218,6 +220,13 @@ def _create_vae_model(
     param_key = _get_parameterization_key(model_config.parameterization)
     param_strategy = PARAMETERIZATIONS[param_key]
     guide_families = model_config.guide_families or GuideFamilyConfig()
+
+    # LNM: strictly linear decoder (no hidden MLP) so ``y_alr = bias + W @ z``.
+    if param_key == "logistic_normal":
+        decoder_hidden_override: Tuple[int, ...] = ()
+    else:
+        decoder_hidden_override = None
+
     # Resolve positive transform for unconstrained positive-valued parameters.
     # Fallback to "exp" preserves behavior for legacy configs missing the field.
     _pt = getattr(model_config, "positive_transform", "exp")
@@ -235,8 +244,17 @@ def _create_vae_model(
             (name, vae.decoder_transforms.get(name, transform))
             for name, transform in output_spec
         ]
+    # ALR head has G-1 coordinates (last gene is the reference category).
     output_heads = tuple(
-        DecoderOutputHead(name, n_genes, transform)
+        DecoderOutputHead(
+            name,
+            (
+                (n_genes - 1)
+                if param_key == "logistic_normal" and name == "y_alr"
+                else n_genes
+            ),
+            transform,
+        )
         for name, transform in output_spec
     )
 
@@ -249,11 +267,16 @@ def _create_vae_model(
         input_transformation=vae.input_transform,
     )
 
-    # 3. Build decoder
+    # 3. Build decoder (LNM may override hidden dims to () for a linear map).
+    _dec_hidden = (
+        decoder_hidden_override
+        if decoder_hidden_override is not None
+        else vae.decoder_hidden_dims
+    )
     decoder = MultiHeadDecoder(
         output_dim=0,
         latent_dim=vae.latent_dim,
-        hidden_dims=vae.decoder_hidden_dims,
+        hidden_dims=_dec_hidden,
         output_heads=output_heads,
         activation=vae.activation,
     )
@@ -320,7 +343,26 @@ def _create_vae_model(
             )
             extra_specs.extend(specs)
 
-    param_specs = [latent_marker] + non_decoder_specs + extra_specs
+    # Learned diagonal ALR noise: per-coordinate scale ``d_lnm`` (positive).
+    lnm_d_specs: List = []
+    if (
+        param_key == "logistic_normal"
+        and getattr(model_config, "d_mode", "low_rank") == "learned"
+    ):
+        d_lnm_family = guide_families.get("d_lnm")
+        lnm_d_specs = [
+            LogNormalSpec(
+                name="d_lnm",
+                shape_dims=("n_alr",),
+                default_params=(-4.6, 1.0),
+                is_gene_specific=True,
+                guide_family=d_lnm_family,
+            )
+        ]
+
+    param_specs = (
+        [latent_marker] + non_decoder_specs + lnm_d_specs + extra_specs
+    )
 
     # 7. Split derived params into pre-plate and in-plate
     all_derived = param_strategy.build_derived_params()
@@ -352,18 +394,47 @@ def _create_vae_model(
         )
 
     # 9. Build model
-    # Select BNB likelihood class when overdispersion is active
-    if model_config.is_bnb:
+    # Select LNM / LNMVCP likelihood or BNB / standard registry entry.
+    if param_key == "logistic_normal":
+        d_mode = getattr(model_config, "d_mode", "low_rank")
+        ref_idx = getattr(model_config, "alr_reference_idx", -1)
+        if base_model == "lnmvcp":
+            # VCP variant: per-cell capture on the totals NB submodel.
+            from ..components.likelihoods import LNMWithVCPLikelihood
+            capture_param_name = param_strategy.transform_model_param(
+                "p_capture"
+            )
+            likelihood_instance = LNMWithVCPLikelihood(
+                d_mode=d_mode,
+                reference_idx=ref_idx,
+                capture_param_name=capture_param_name,
+            )
+        else:
+            likelihood_instance = LogisticNormalMultinomialLikelihood(
+                d_mode=d_mode, reference_idx=ref_idx
+            )
+    elif model_config.is_bnb:
         likelihood_class = BNB_LIKELIHOOD_REGISTRY[base_model]
+        if base_model in ("nbvcp", "zinbvcp"):
+            capture_param_name = param_strategy.transform_model_param(
+                "p_capture"
+            )
+            likelihood_instance = likelihood_class(
+                capture_param_name=capture_param_name
+            )
+        else:
+            likelihood_instance = likelihood_class()
     else:
         likelihood_class = LIKELIHOOD_REGISTRY[base_model]
-    if base_model in ("nbvcp", "zinbvcp"):
-        capture_param_name = param_strategy.transform_model_param("p_capture")
-        likelihood_instance = likelihood_class(
-            capture_param_name=capture_param_name
-        )
-    else:
-        likelihood_instance = likelihood_class()
+        if base_model in ("nbvcp", "zinbvcp"):
+            capture_param_name = param_strategy.transform_model_param(
+                "p_capture"
+            )
+            likelihood_instance = likelihood_class(
+                capture_param_name=capture_param_name
+            )
+        else:
+            likelihood_instance = likelihood_class()
 
     model_builder = ModelBuilder()
     for spec in param_specs:
@@ -990,6 +1061,7 @@ def _get_parameterization_key(param: Union[str, ParamEnum]) -> str:
             ParamEnum.STANDARD: "canonical",
             ParamEnum.LINKED: "mean_prob",
             ParamEnum.ODDS_RATIO: "mean_odds",
+            ParamEnum.LOGISTIC_NORMAL: "logistic_normal",
         }
         return enum_to_key.get(param, param.value)
     return param

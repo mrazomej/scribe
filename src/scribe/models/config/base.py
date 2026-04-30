@@ -224,6 +224,8 @@ class ModelConfig(BaseModel):
         d.setdefault("overdispersion_dataset_prior", "none")
         d.setdefault("expression_anchor", False)
         d.setdefault("expression_anchor_sigma", 0.3)
+        d.setdefault("d_mode", "low_rank")
+        d.setdefault("alr_reference_idx", -1)
 
         # Migrate legacy top-level capture prior fields into priors dict.
         old_capture = d.pop("capture_prior", "default")
@@ -413,6 +415,26 @@ class ModelConfig(BaseModel):
         ),
     )
 
+    #: Diagonal mode for LNM ALR noise (``lnm`` / ``lnmvcp`` only; ignored otherwise).
+    d_mode: str = Field(
+        "low_rank",
+        description=(
+            "Diagonal mode for logistic-normal multinomial (LNM) models: "
+            "'low_rank' uses only the VAE decoder mean in ALR space; "
+            "'learned' adds per-coordinate positive scale d_lnm and IID "
+            "standard normal noise inside each cell."
+        ),
+    )
+    alr_reference_idx: int = Field(
+        -1,
+        description=(
+            "Index of the gene used as ALR reference (denominator) for LNM "
+            "models.  ``-1`` means the last gene (default / backward compat).  "
+            "Set automatically from data by ``scribe.fit()`` when "
+            "``model='lnm'``; can be overridden explicitly."
+        ),
+    )
+
     # Gene-specific overdispersion beyond the NB family.
     overdispersion: OverdispersionType = Field(
         OverdispersionType.NONE,
@@ -592,6 +614,17 @@ class ModelConfig(BaseModel):
     # Validation Methods
     # --------------------------------------------------------------------------
 
+    @field_validator("d_mode")
+    @classmethod
+    def validate_d_mode(cls, v: str) -> str:
+        """Restrict ``d_mode`` to supported LNM regimes."""
+        allowed = {"low_rank", "learned"}
+        if v not in allowed:
+            raise ValueError(f"d_mode must be one of {allowed}, got {v!r}.")
+        return v
+
+    # --------------------------------------------------------------------------
+
     @field_validator("base_model")
     @classmethod
     def validate_base_model(cls, v: str) -> str:
@@ -637,6 +670,23 @@ class ModelConfig(BaseModel):
         - ``positive_transform`` must be ``"softplus"`` or ``"exp"``.
         """
         _NONE = HierarchicalPriorType.NONE
+
+        if self.base_model in ("lnm", "lnmvcp"):
+            if self.inference_method != InferenceMethod.VAE:
+                raise ValueError(
+                    f"{self.base_model} requires inference_method=VAE "
+                    f"(got {self.inference_method!r})."
+                )
+            if self.parameterization != Parameterization.LOGISTIC_NORMAL:
+                raise ValueError(
+                    f"{self.base_model} requires parameterization=LOGISTIC_NORMAL "
+                    f"(got {self.parameterization!r})."
+                )
+            if self.overdispersion != OverdispersionType.NONE:
+                raise ValueError(
+                    "Gene-level BNB overdispersion is not supported for "
+                    f"{self.base_model} (got overdispersion={self.overdispersion!r})."
+                )
 
         # --- positive_transform validation ------------------------------------
         valid_transforms = {"softplus", "exp"}
@@ -806,7 +856,10 @@ class ModelConfig(BaseModel):
                 "hierarchy subsumes gene-level."
             )
         # Gene-level gate + dataset-level gate are mutually exclusive
-        if self.zero_inflation_prior != _NONE and self.zero_inflation_dataset_prior != _NONE:
+        if (
+            self.zero_inflation_prior != _NONE
+            and self.zero_inflation_dataset_prior != _NONE
+        ):
             raise ValueError(
                 f"zero_inflation_prior={self.zero_inflation_prior.value!r} and "
                 f"zero_inflation_dataset_prior={self.zero_inflation_dataset_prior.value!r} "
@@ -816,9 +869,7 @@ class ModelConfig(BaseModel):
         # shared_components validation: requires multi-dataset mixture setup
         if self.shared_components is not None:
             if self.n_datasets is None:
-                raise ValueError(
-                    "shared_components requires n_datasets >= 2."
-                )
+                raise ValueError("shared_components requires n_datasets >= 2.")
         if self.dataset_mixing:
             if self.n_datasets is None:
                 raise ValueError(
@@ -975,9 +1026,7 @@ class ModelConfig(BaseModel):
             return self
 
         if self.joint_params is None:
-            raise ValueError(
-                "dense_params requires joint_params to be set."
-            )
+            raise ValueError("dense_params requires joint_params to be set.")
 
         if not self.dense_params:
             raise ValueError(
@@ -1110,7 +1159,9 @@ class ModelConfig(BaseModel):
         .. deprecated::
             Use ``zero_inflation_dataset_prior`` instead.
         """
-        return self.zero_inflation_dataset_prior == HierarchicalPriorType.HORSESHOE
+        return (
+            self.zero_inflation_dataset_prior == HierarchicalPriorType.HORSESHOE
+        )
 
     @property
     def hierarchical_datasets(self) -> bool:
@@ -1122,8 +1173,7 @@ class ModelConfig(BaseModel):
         """
         _NONE = HierarchicalPriorType.NONE
         return any(
-            getattr(self, f)
-            != _NONE
+            getattr(self, f) != _NONE
             for f in (
                 "expression_dataset_prior",
                 "prob_dataset_prior",

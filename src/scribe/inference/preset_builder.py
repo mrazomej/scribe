@@ -76,6 +76,9 @@ def build_config_from_preset(
     expression_anchor_sigma: float = 0.3,
     overdispersion: str = "none",
     overdispersion_prior: str = "horseshoe",
+    # LNM diagonal mode (``lnm`` / ``lnmvcp`` only; see ``ModelConfig.d_mode``)
+    d_mode: str = "low_rank",
+    alr_reference_idx: int = -1,
     guide_rank: Optional[int] = None,
     joint_params: Optional[Union[str, List[str]]] = None,
     dense_params: Optional[Union[str, List[str]]] = None,
@@ -133,14 +136,26 @@ def build_config_from_preset(
     Parameters
     ----------
     model : str
-        Model type: "nbdm", "zinb", "nbvcp", or "zinbvcp".
+        Model type: ``"nbdm"``, ``"lnm"``, ``"lnmvcp"``, ``"zinb"``,
+        ``"nbvcp"``, or ``"zinbvcp"``.  ``"lnm"`` and ``"lnmvcp"`` force
+        parameterization ``"logistic_normal"`` and upgrade default
+        ``inference_method="svi"`` to ``"vae"``.
     parameterization : str, default="canonical"
         Parameterization scheme: "canonical", "mean_prob", "mean_odds"
-        (backward compat: "standard", "linked", "odds_ratio").
+        (backward compat: "standard", "linked", "odds_ratio"), or
+        ``"logistic_normal"`` for ``lnm`` / ``lnmvcp``.
     inference_method : str, default="svi"
         Inference method: "svi", "mcmc", or "vae".
     unconstrained : bool, default=False
         Whether to use unconstrained parameterization (Normal+transform).
+    d_mode : str, default="low_rank"
+        For ``model="lnm"`` / ``"lnmvcp"`` only: ``"low_rank"`` (decoder-only
+        ALR mean) or ``"learned"`` (adds ``d_lnm`` and IID Gaussian noise in
+        ALR space). Ignored for other models.
+    alr_reference_idx : int, default=-1
+        For ``model="lnm"`` / ``"lnmvcp"`` only: zero-based index of the ALR
+        reference gene. ``-1`` selects the last gene (legacy default). Ignored
+        for other models.
     guide_rank : Optional[int], default=None
         Rank for low-rank guide on gene-specific parameter. If provided,
         creates a LowRankGuide for the appropriate parameter (r or mu).
@@ -274,6 +289,17 @@ def build_config_from_preset(
     --------
     scribe.models.presets.factory.create_model : Creates model/guide from config.
     """
+    # --- LNM family: fixed parameterization + VAE inference (SVI default -> VAE)
+    model_lower = model.lower()
+    if model_lower in ("lnm", "lnmvcp"):
+        parameterization = "logistic_normal"
+        if inference_method.lower() == "svi":
+            inference_method = "vae"
+    if d_mode not in ("low_rank", "learned"):
+        raise ValueError(
+            f"d_mode must be 'low_rank' or 'learned', got {d_mode!r}."
+        )
+
     # ==========================================================================
     # Validate parameterization
     # ==========================================================================
@@ -432,7 +458,7 @@ def build_config_from_preset(
     # ==========================================================================
     builder = (
         ModelConfigBuilder()
-        .for_model(model)
+        .for_model(model_lower)
         .with_parameterization(parameterization)
         .with_inference(inference_method)
     )
@@ -533,6 +559,10 @@ def build_config_from_preset(
 
     if priors:
         builder.with_priors(**priors)
+
+    if model_lower in ("lnm", "lnmvcp"):
+        builder._d_mode = d_mode
+        builder._alr_reference_idx = alr_reference_idx
 
     return builder.build()
 

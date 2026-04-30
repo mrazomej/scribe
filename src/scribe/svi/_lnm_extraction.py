@@ -1,0 +1,270 @@
+"""
+Mixin for extracting LNM (Logistic-Normal Multinomial) population parameters.
+
+Extracts the low-rank compositional covariance structure (mu, W, d) from the
+VAE decoder weights and NumPyro parameter store.  Applicable to both ``lnm``
+and ``lnmvcp`` base models.
+
+Methods are guarded by :meth:`_require_lnm` which raises ``ValueError`` when
+the model config is not an LNM variant.
+
+Classes
+-------
+LNMExtractionMixin
+    Mixin providing ``get_lnm_mu``, ``get_lnm_W``, ``get_lnm_d``,
+    ``get_lnm_sigma``, and ``get_lnm_compositional_correlation``.
+
+See Also
+--------
+scribe.svi.vae_results : ScribeVAEResults that composes this mixin.
+scribe.de._transforms : ALR-to-CLR transformations used for the
+    correlation extraction.
+"""
+
+from typing import Any, Optional, Tuple, cast
+
+import jax.numpy as jnp
+
+from ._latent_space import _DECODER_KEY
+
+
+class LNMExtractionMixin:
+    """Mixin providing LNM population parameter extraction from VAE results.
+
+    Requires ``self.params``, ``self.model_config``, and ``self.n_genes`` to
+    be present on the host class (satisfied by ``ScribeVAEResults``).
+    """
+
+    # ------------------------------------------------------------------
+    # Guard
+    # ------------------------------------------------------------------
+
+    def _require_lnm(self) -> None:
+        """Raise ``ValueError`` if the model is not an LNM variant."""
+        bm = getattr(self.model_config, "base_model", None)
+        if bm not in ("lnm", "lnmvcp"):
+            raise ValueError(
+                "LNM extraction methods require model_config.base_model in "
+                "{'lnm', 'lnmvcp'}, "
+                f"got {bm!r}."
+            )
+
+    # ------------------------------------------------------------------
+    # Decoder parameter helpers
+    # ------------------------------------------------------------------
+
+    def _y_alr_head_dense_params(self) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        """Return ``(kernel, bias)`` for the decoder's ``y_alr`` head.
+
+        Navigates the Flax parameter tree to locate the linear dense layer
+        that produces ALR coordinates.
+
+        Returns
+        -------
+        kernel : jnp.ndarray
+            Shape ``(k, G-1)`` — Flax Dense kernel (in_features, out_features).
+        bias : jnp.ndarray
+            Shape ``(G-1,)`` — dense bias vector.
+
+        Raises
+        ------
+        KeyError
+            If the decoder parameter subtree is missing or has unexpected
+            structure.
+        """
+        dec_params = self.params.get(_DECODER_KEY)
+        if not isinstance(dec_params, dict):
+            raise KeyError(
+                f"params['{_DECODER_KEY}'] must be a dict, "
+                f"got {type(dec_params)}."
+            )
+        subtree = dec_params.get("head_y_alr")
+        if subtree is None:
+            raise KeyError(
+                "Decoder params missing 'head_y_alr'. "
+                "Expected a MultiHeadDecoder head with param_name 'y_alr'."
+            )
+        if not isinstance(subtree, dict):
+            raise TypeError(
+                f"head_y_alr params must be a dict, got {type(subtree)}."
+            )
+        # Flax may store params flat or under a Dense_0 sublayer
+        if "kernel" in subtree and "bias" in subtree:
+            return cast(jnp.ndarray, subtree["kernel"]), cast(
+                jnp.ndarray, subtree["bias"]
+            )
+        dense0 = subtree.get("Dense_0")
+        if isinstance(dense0, dict) and "kernel" in dense0 and "bias" in dense0:
+            return cast(jnp.ndarray, dense0["kernel"]), cast(
+                jnp.ndarray, dense0["bias"]
+            )
+        raise KeyError(
+            "Could not find Dense kernel/bias under head_y_alr "
+            "(expected Flax {'kernel','bias'} or nested Dense_0)."
+        )
+
+    # ------------------------------------------------------------------
+    # Public extraction methods
+    # ------------------------------------------------------------------
+
+    def get_lnm_mu(self) -> jnp.ndarray:
+        """Extract the LNM population mean mu from the decoder bias.
+
+        The ``y_alr`` head of the VAE decoder stores the ALR-space mean
+        in the final dense bias vector (no output transform, or ``identity``
+        transform).
+
+        Returns
+        -------
+        jnp.ndarray
+            Shape ``(G-1,)`` — ALR coordinates; reference gene index is
+            ``model_config.alr_reference_idx`` (``-1`` means last gene).
+        """
+        self._require_lnm()
+        _, bias = self._y_alr_head_dense_params()
+        mu = jnp.asarray(bias)
+        g1 = int(self.n_genes) - 1
+        if mu.shape != (g1,):
+            raise ValueError(
+                f"Expected ALR bias shape (G-1,) = ({g1},), got {mu.shape}."
+            )
+        return mu
+
+    def get_lnm_W(self) -> jnp.ndarray:
+        """Extract the LNM low-rank factor ``W`` from the decoder kernel.
+
+        Flax :class:`flax.linen.Dense` stores ``kernel`` with shape
+        ``(in_features, out_features)`` = ``(k, G-1)`` for this head.
+        The generative ALR covariance uses ``W`` with shape ``(G-1, k)``.
+
+        Returns
+        -------
+        jnp.ndarray
+            Shape ``(G-1, k)`` with ``k`` the latent dimension.
+        """
+        self._require_lnm()
+        kernel, bias = self._y_alr_head_dense_params()
+        k_mat = jnp.asarray(kernel)
+        g1 = int(self.n_genes) - 1
+        if k_mat.shape[-1] != g1:
+            raise ValueError(
+                f"Expected kernel out_features G-1 = {g1}, "
+                f"got kernel shape {k_mat.shape}."
+            )
+        W = k_mat.T
+        if W.shape[0] != g1:
+            raise ValueError(f"Internal shape error: W.shape = {W.shape}.")
+        return W
+
+    def get_lnm_d(self) -> Optional[jnp.ndarray]:
+        """Extract the learned diagonal ``d`` from NumPyro / SVI params.
+
+        When :attr:`~scribe.models.config.ModelConfig.d_mode` is
+        ``'learned'``, the population ALR covariance includes
+        :math:`\\mathrm{diag}(d)` with :math:`d` a learned positive vector of
+        length ``G-1`` (site ``d_lnm``).  If ``d_mode='low_rank'``, this
+        method returns ``None``.
+
+        When ``d_lnm`` is present in :attr:`params` but ``d_mode`` is still the
+        default ``low_rank``, the explicit ``d_mode`` flag takes precedence
+        (returns ``None`` unless ``learned``).
+
+        Returns
+        -------
+        jnp.ndarray or None
+            Shape ``(G-1,)`` when ``d`` is learned and found in ``params``;
+            ``None`` for low-rank-only compositional uncertainty.
+        """
+        self._require_lnm()
+
+        def _recursive_find_d_lnm(obj: Any) -> Optional[jnp.ndarray]:
+            if isinstance(obj, dict):
+                if "d_lnm" in obj:
+                    raw = obj["d_lnm"]
+                    if isinstance(raw, dict) and "loc" in raw:
+                        return jnp.asarray(raw["loc"])
+                    return jnp.asarray(raw)
+                for v in obj.values():
+                    got = _recursive_find_d_lnm(v)
+                    if got is not None:
+                        return got
+            return None
+
+        explicit_mode = getattr(self.model_config, "d_mode", "low_rank")
+        d_arr = _recursive_find_d_lnm(self.params)
+
+        if explicit_mode == "low_rank":
+            return None
+        if explicit_mode != "learned":
+            raise ValueError(
+                f"model_config.d_mode must be 'low_rank' or 'learned', "
+                f"got {explicit_mode!r}."
+            )
+        if d_arr is None:
+            raise ValueError(
+                "model_config.d_mode is 'learned' but no 'd_lnm' "
+                "parameter was found in params."
+            )
+        g1 = int(self.n_genes) - 1
+        if d_arr.shape != (g1,):
+            raise ValueError(
+                f"Expected d_lnm shape (G-1,) = ({g1},), got {d_arr.shape}."
+            )
+        return d_arr
+
+    def get_lnm_sigma(self) -> jnp.ndarray:
+        """Reconstruct full ALR covariance ``Sigma = W W^T + diag(d)``.
+
+        Returns
+        -------
+        jnp.ndarray
+            Shape ``(G-1, G-1)``. Useful only for small ``G``; for large
+            ``G`` prefer :meth:`get_lnm_W` and :meth:`get_lnm_d`.
+
+        Notes
+        -----
+        In ``low_rank`` mode, ``d`` is treated as zero on the diagonal.
+        """
+        self._require_lnm()
+        W = self.get_lnm_W()
+        d_opt = self.get_lnm_d()
+        d_alr = (
+            jnp.asarray(d_opt)
+            if d_opt is not None
+            else jnp.zeros(W.shape[0], dtype=W.dtype)
+        )
+        return W @ W.T + jnp.diag(d_alr)
+
+    def _lnm_reference_idx(self) -> int:
+        """Return the ALR reference gene index from model config."""
+        return getattr(self.model_config, "alr_reference_idx", -1)
+
+    def get_lnm_compositional_correlation(self) -> jnp.ndarray:
+        """Compositional correlation matrix in CLR space.
+
+        Transforms the low-rank Gaussian in ALR coordinates to CLR using
+        :func:`scribe.de._transforms.transform_gaussian_alr_to_clr`, builds
+        the full CLR covariance, then converts to a correlation matrix.
+
+        Returns
+        -------
+        jnp.ndarray
+            Shape ``(G, G)`` correlation matrix in CLR coordinates.
+        """
+        self._require_lnm()
+        from ..de._transforms import transform_gaussian_alr_to_clr
+
+        mu_alr = self.get_lnm_mu()
+        W_alr = self.get_lnm_W()
+        d_opt = self.get_lnm_d()
+        d_alr = (
+            jnp.asarray(d_opt)
+            if d_opt is not None
+            else jnp.zeros(mu_alr.shape[0], dtype=mu_alr.dtype)
+        )
+        _mu_clr, W_clr, d_clr = transform_gaussian_alr_to_clr(
+            mu_alr, W_alr, d_alr, reference_idx=self._lnm_reference_idx()
+        )
+        sigma_clr = W_clr @ W_clr.T + jnp.diag(d_clr)
+        std = jnp.sqrt(jnp.maximum(jnp.diag(sigma_clr), 1e-30))
+        return sigma_clr / (std[:, None] * std[None, :])

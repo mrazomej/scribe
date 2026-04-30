@@ -812,6 +812,128 @@ def sample_composition(
 
 
 # --------------------------------------------------------------------------
+# LNM (logistic-normal) composition sampling
+# --------------------------------------------------------------------------
+
+
+def _batched_lnm_sample(
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: Optional[jnp.ndarray],
+    n_samples: int,
+    key: random.PRNGKey,
+    floor_var: float = 1e-12,
+    reference_idx: int = -1,
+) -> jnp.ndarray:
+    """Sample simplex points from the LNM's low-rank logistic-normal.
+
+    Wraps :class:`scribe.stats.distributions.LowRankLogisticNormal`, which
+    draws Gaussian ALR vectors :math:`y \\sim \\mathcal{N}(\\mu, WW^T +
+    \\mathrm{diag}(d))` and maps them to the probability simplex via the ALR
+    link.  When ``d is None`` (pure low-rank path), a small positive
+    ``floor_var`` is placed on the ALR diagonal so the NumPyro distribution's
+    positive diagonal constraint is satisfied.
+
+    Parameters
+    ----------
+    mu : jnp.ndarray
+        ALR-space mean, shape ``(G-1,)``.
+    W : jnp.ndarray
+        Low-rank factor, shape ``(G-1, k)``.
+    d : jnp.ndarray or None
+        Diagonal ALR variance vector, shape ``(G-1,)``.  If ``None``, uses
+        ``floor_var`` on every coordinate (degenerate / numerical covariance).
+    n_samples : int
+        Number of Monte Carlo draws.
+    key : jax.random.PRNGKey
+        JAX PRNG key.
+    floor_var : float, default=1e-12
+        Minimum diagonal entry when ``d`` is ``None`` or to clip small values.
+    reference_idx : int, default=-1
+        ALR reference simplex index passed to :class:`LowRankLogisticNormal`
+        (``-1`` = last gene; matches :attr:`ModelConfig.alr_reference_idx`).
+
+    Returns
+    -------
+    jnp.ndarray
+        Simplex samples of shape ``(n_samples, G)`` with rows summing to one.
+    """
+    from ..stats.distributions import LowRankLogisticNormal
+
+    mu = jnp.asarray(mu)
+    W = jnp.asarray(W)
+    g1 = mu.shape[0]
+    if d is None:
+        cov_diag = jnp.full((g1,), floor_var, dtype=mu.dtype)
+    else:
+        cov_diag = jnp.maximum(jnp.asarray(d), floor_var)
+
+    dist_ln = LowRankLogisticNormal(
+        loc=mu,
+        cov_factor=W,
+        cov_diag=cov_diag,
+        reference_idx=reference_idx,
+    )
+    return dist_ln.sample(key, (n_samples,))
+
+
+def sample_lnm_compositions(
+    mu: Array,
+    W: Array,
+    d: Optional[Array] = None,
+    n_samples: int = 1,
+    rng_key=None,
+    floor_var: float = 1e-12,
+    reference_idx: int = -1,
+) -> np.ndarray:
+    """Draw simplex compositions from pooled LNM parameters (``lnm`` / ``lnmvcp``).
+
+    Standalone entry point for differential-expression pipelines when
+    posterior summaries are expressed as an ALR Gaussian :math:`(mu, W, d)`
+    instead of Dirichlet ``r`` samples — for example after reading
+    :meth:`scribe.svi.vae_results.ScribeVAEResults.get_lnm_mu` and related
+    helpers.
+
+    Parameters
+    ----------
+    mu : array_like
+        ALR mean, shape ``(G-1,)``.
+    W : array_like
+        Factor with shape ``(G-1, k)`` (same convention as
+        ``get_lnm_W``).
+    d : array_like, optional
+        Learned diagonal, shape ``(G-1,)``.  Omit for low-rank-only noise.
+    n_samples : int, default=1
+        Number of simplex draws.
+    rng_key : jax.random.PRNGKey, optional
+        Random key; default ``PRNGKey(0)``.
+    floor_var : float, default=1e-12
+        Floor for the diagonal when ``d`` is absent.
+    reference_idx : int, default=-1
+        Index of the ALR reference gene on the simplex; ``-1`` is the last
+        gene.
+
+    Returns
+    -------
+    numpy.ndarray
+        Shape ``(n_samples, G)`` on the host (NumPy float array).
+    """
+    if rng_key is None:
+        rng_key = random.PRNGKey(0)
+    d_jax = None if d is None else jnp.asarray(d)
+    out = _batched_lnm_sample(
+        jnp.asarray(mu),
+        jnp.asarray(W),
+        d_jax,
+        int(n_samples),
+        rng_key,
+        floor_var=floor_var,
+        reference_idx=reference_idx,
+    )
+    return np.asarray(out)
+
+
+# --------------------------------------------------------------------------
 # CLR aggregation + differencing (Stage 2 of CLR pipeline)
 # --------------------------------------------------------------------------
 

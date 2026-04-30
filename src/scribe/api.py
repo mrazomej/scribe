@@ -77,7 +77,10 @@ from .models.parameterizations import PARAMETERIZATIONS
 ScribeResults = Union[ScribeSVIResults, ScribeMCMCResults, ScribeVAEResults]
 
 # Valid model types
-VALID_MODELS = {"nbdm", "zinb", "nbvcp", "zinbvcp"}
+VALID_MODELS = {"nbdm", "zinb", "nbvcp", "zinbvcp", "lnm", "lnmvcp"}
+
+# Deprecated aliases mapped to their canonical names.
+_DEPRECATED_MODEL_ALIASES = {"nbdm_lnm": "lnm"}
 
 # Derive valid parameterizations from the single source of truth
 VALID_PARAMETERIZATIONS = set(PARAMETERIZATIONS.keys())
@@ -261,6 +264,9 @@ def fit(
     # Gene-specific overdispersion beyond the NB family
     overdispersion: str = "none",
     overdispersion_prior: str = "horseshoe",
+    # LNM-only: diagonal noise mode for ALR (see ``ModelConfig.d_mode``)
+    d_mode: str = "low_rank",
+    alr_reference_idx: Optional[int] = None,
     n_components: Optional[int] = None,
     mixture_params: Optional[Union[str, List[str]]] = "all",
     guide_rank: Optional[int] = None,
@@ -355,6 +361,10 @@ def fit(
         strings:
 
             - ``"nbdm"``: Negative Binomial (base, no capture channel)
+            - ``"lnm"``: NB total counts × logistic-normal multinomial
+              compositions (VAE-only; uses parameterization ``logistic_normal``)
+            - ``"lnmvcp"``: Like ``"lnm"`` but with per-cell variable capture
+              probability on the totals NB submodel
             - ``"zinb"``: Zero-Inflated NB
             - ``"nbvcp"``: NB with Variable Capture Probability
             - ``"zinbvcp"``: ZINB with Variable Capture Probability
@@ -444,6 +454,17 @@ def fit(
         (``kappa_g``).  Controls shrinkage toward the NB limit.
         Only used when ``overdispersion`` is not ``"none"``.
         Accepted values: ``"horseshoe"``, ``"neg"``.
+
+    d_mode : str, default="low_rank"
+        Only for ``model="lnm"`` / ``"lnmvcp"``: ``"low_rank"`` or ``"learned"``
+        (see ``ModelConfig.d_mode``).  Ignored for other models.
+
+    alr_reference_idx : int or None, default=None
+        Only for ``model="lnm"`` / ``"lnmvcp"``: zero-based index of the ALR reference
+        gene (denominator). ``None`` selects automatically from the count
+        matrix (gene with highest mean ``log1p`` expression). Pass an
+        explicit integer to override; ``-1`` keeps the legacy last-gene
+        reference. Ignored for other models.
 
     Multi-dataset hierarchy
     -----------------------
@@ -1042,8 +1063,21 @@ def fit(
     # Step 1: Validate inputs
     # ==========================================================================
     if model_config is None:
-        # Validate model type
+        # Normalize deprecated aliases before validation.
         model_lower = model.lower()
+        if model_lower in _DEPRECATED_MODEL_ALIASES:
+            import warnings
+            canonical = _DEPRECATED_MODEL_ALIASES[model_lower]
+            warnings.warn(
+                f"Model name '{model_lower}' is deprecated; "
+                f"use '{canonical}' instead.",
+                FutureWarning,
+                stacklevel=2,
+            )
+            model = canonical
+            model_lower = canonical
+
+        # Validate model type
         if model_lower not in VALID_MODELS:
             raise ValueError(
                 f"Unknown model: '{model}'. "
@@ -1089,6 +1123,17 @@ def fit(
     count_data, adata, n_cells, n_genes = process_counts_data(
         counts, data_config
     )
+
+    # Auto-select ALR reference for LNM from data (overridable via kwarg).
+    if alr_reference_idx is None and model.lower() in ("lnm", "lnmvcp"):
+        from .models.components.likelihoods.lnm import select_alr_reference
+        import logging
+
+        alr_reference_idx = select_alr_reference(count_data)
+        logging.getLogger(__name__).info(
+            "LNM: auto-selected gene %d as ALR reference (highest geometric mean).",
+            alr_reference_idx,
+        )
 
     # ==========================================================================
     # Step 2b: Build dataset indices (if multi-dataset model)
@@ -1361,6 +1406,10 @@ def fit(
             expression_anchor_sigma=expression_anchor_sigma,
             overdispersion=overdispersion,
             overdispersion_prior=overdispersion_prior,
+            d_mode=d_mode,
+            alr_reference_idx=alr_reference_idx
+            if alr_reference_idx is not None
+            else -1,
             guide_rank=guide_rank,
             joint_params=joint_params,
             dense_params=dense_params,

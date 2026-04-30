@@ -11,12 +11,14 @@ Unified factory for creating SCRIBE models.
 
 ## Supported Models
 
-| Model Type | Description                            |
-|------------|----------------------------------------|
-| `nbdm`     | Negative Binomial Dropout Model        |
-| `zinb`     | Zero-Inflated Negative Binomial        |
-| `nbvcp`    | NB with Variable Capture Probability   |
-| `zinbvcp`  | ZINB with Variable Capture Probability |
+| Model Type | Description                                                                             |
+| ---------- | --------------------------------------------------------------------------------------- |
+| `nbdm`     | Negative Binomial Dropout Model                                                         |
+| `zinb`     | Zero-Inflated Negative Binomial                                                         |
+| `nbvcp`    | NB with Variable Capture Probability                                                    |
+| `zinbvcp`  | ZINB with Variable Capture Probability                                                  |
+| `lnm`      | Logistic-Normal Multinomial (NB total × multinomial composition via linear-decoder VAE) |
+| `lnmvcp`   | LNM with per-cell variable capture probability on the totals NB submodel                |
 
 ## Configuration Options
 
@@ -50,11 +52,12 @@ to keep one global mixing vector shared by all datasets.
 
 ### Parameterization Options
 
-| Name          | Parameters | Derived                   |
-|---------------|------------|---------------------------|
-| `"canonical"` | p, r       | -                         |
-| `"mean_prob"` | p, mu      | r = mu*(1-p)/p            |
-| `"mean_odds"` | phi, mu    | r = mu*phi, p = 1/(1+phi) |
+| Name                | Parameters | Derived                                                                      |
+| ------------------- | ---------- | ---------------------------------------------------------------------------- |
+| `"canonical"`       | p, r       | -                                                                            |
+| `"mean_prob"`       | p, mu      | r = mu*(1-p)/p                                                               |
+| `"mean_odds"`       | phi, mu    | r = mu*phi, p = 1/(1+phi)                                                    |
+| `"logistic_normal"` | r_T, p | y_alr (via VAE decoder, reference gene configurable via `alr_reference_idx`) |
 
 **Aliases**: `"standard"` = `"canonical"`, `"linked"` = `"mean_prob"`, `"odds_ratio"` = `"mean_odds"`
 
@@ -310,6 +313,8 @@ MODEL_EXTRA_PARAMS = {
     "zinb": ["gate"],
     "nbvcp": ["p_capture"],
     "zinbvcp": ["gate", "p_capture"],
+    "lnm": [],
+    "lnmvcp": ["p_capture"],
 }
 
 # Which likelihood class each model uses
@@ -318,6 +323,8 @@ LIKELIHOOD_REGISTRY = {
     "zinb": ZeroInflatedNBLikelihood,
     "nbvcp": NBWithVCPLikelihood,
     "zinbvcp": ZINBWithVCPLikelihood,
+    "lnm": LogisticNormalMultinomialLikelihood,
+    "lnmvcp": LNMWithVCPLikelihood,
 }
 ```
 

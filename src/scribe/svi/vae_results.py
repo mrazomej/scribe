@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
-from jax import random
 
 from ..models.config import ModelConfig
 
@@ -39,6 +38,7 @@ from ._latent_space import (
     _FLOW_KEY,
 )
 from ._likelihood import LikelihoodMixin
+from ._lnm_extraction import LNMExtractionMixin
 from ._mixture_analysis import MixtureAnalysisMixin
 from ._model_helpers import ModelHelpersMixin
 from ._normalization import NormalizationMixin
@@ -61,6 +61,7 @@ class ScribeVAEResults(
     LikelihoodMixin,
     MixtureAnalysisMixin,
     NormalizationMixin,
+    LNMExtractionMixin,
 ):
     """Results from VAE-based variational inference.
 

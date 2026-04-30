@@ -23,19 +23,25 @@ import jax.numpy as jnp
 # --------------------------------------------------------------------------
 
 
-def alr_to_clr(z_alr: jnp.ndarray) -> jnp.ndarray:
+def alr_to_clr(z_alr: jnp.ndarray, reference_idx: int = -1) -> jnp.ndarray:
     """Map ALR coordinates to CLR (centered log-ratio) coordinates.
 
     The CLR transformation centers the log-ratios::
 
         CLR_i = log(rho_i) - (1/D) * sum_j log(rho_j)
 
-    This is computed from ALR by embedding ``[z_alr, 0]`` and then centering.
+    This is computed from ALR by embedding a zero at the reference index
+    (the omitted ALR component) and then subtracting the mean along the
+    component axis.
 
     Parameters
     ----------
     z_alr : jnp.ndarray
         ALR coordinates, shape ``(..., D-1)``.
+    reference_idx : int, default=-1
+        Zero-based index where the reference component (zero log-ratio) is
+        inserted before centering. ``-1`` is equivalent to the last component
+        (legacy default).
 
     Returns
     -------
@@ -48,11 +54,19 @@ def alr_to_clr(z_alr: jnp.ndarray) -> jnp.ndarray:
     >>> clr = alr_to_clr(z_alr)
     >>> assert jnp.allclose(clr.sum(), 0.0)
     """
-    # Embed: [z_alr, 0] to get D-dimensional log-ratios
-    z_full = jnp.concatenate(
-        [z_alr, jnp.zeros_like(z_alr[..., :1])], axis=-1
-    )
-    # Center: subtract mean to get CLR
+    d = z_alr.shape[-1] + 1
+    ref = reference_idx if reference_idx >= 0 else d - 1
+
+    # Embed a 0 at the reference position, then center (CLR).
+    zero = jnp.zeros_like(z_alr[..., :1])
+    if ref == d - 1:
+        z_full = jnp.concatenate([z_alr, zero], axis=-1)
+    elif ref == 0:
+        z_full = jnp.concatenate([zero, z_alr], axis=-1)
+    else:
+        z_full = jnp.concatenate(
+            [z_alr[..., :ref], zero, z_alr[..., ref:]], axis=-1
+        )
     return z_full - z_full.mean(axis=-1, keepdims=True)
 
 
@@ -61,11 +75,14 @@ def alr_to_clr(z_alr: jnp.ndarray) -> jnp.ndarray:
 # --------------------------------------------------------------------------
 
 
-def _exact_diag_after_centering(d_alr: jnp.ndarray) -> jnp.ndarray:
+def _exact_diag_after_centering(
+    d_alr: jnp.ndarray, reference_idx: int = -1
+) -> jnp.ndarray:
     """Compute exact diagonal of centered covariance.
 
-    For ``d_full = [d_alr, 0]`` and centering matrix
-    ``C = I - (1/D) 1 1^T``, the diagonal of ``C diag(d_full) C^T`` is::
+    For ``d_full`` with a zero at the ALR reference position and
+    centering matrix ``C = I - (1/D) 1 1^T``, the diagonal of
+    ``C diag(d_full) C^T`` is::
 
         (C diag(d) C^T)_{ii} = d_full_i (1 - 2/D) + (1/D^2) sum_j d_full_j
 
@@ -76,6 +93,8 @@ def _exact_diag_after_centering(d_alr: jnp.ndarray) -> jnp.ndarray:
     ----------
     d_alr : jnp.ndarray
         Diagonal entries of covariance in ALR space, shape ``(D-1,)``.
+    reference_idx : int, default=-1
+        Index in full ``D``-space where the reference (zero ALR variance) sits.
 
     Returns
     -------
@@ -84,16 +103,25 @@ def _exact_diag_after_centering(d_alr: jnp.ndarray) -> jnp.ndarray:
 
     Notes
     -----
-    The reference component (last) has zero variance in ALR, which
-    contributes to all components after centering.
+    The reference component has zero variance in ALR, which contributes to
+    all components after centering.
     """
-    # Embed: d_full = [d_alr, 0] (reference has zero variance)
-    d_full = jnp.concatenate([d_alr, jnp.array([0.0])], axis=0)
-    D = d_full.shape[0]
+    d = d_alr.shape[0] + 1
+    ref = reference_idx if reference_idx >= 0 else d - 1
+
+    # Insert zero variance at the reference gene position.
+    if ref == d - 1:
+        d_full = jnp.concatenate([d_alr, jnp.array([0.0])], axis=0)
+    elif ref == 0:
+        d_full = jnp.concatenate([jnp.array([0.0]), d_alr], axis=0)
+    else:
+        d_full = jnp.concatenate(
+            [d_alr[:ref], jnp.array([0.0]), d_alr[ref:]], axis=0
+        )
 
     # Exact formula for diagonal after centering
-    mean_sum_over_D2 = jnp.sum(d_full) / (D * D)
-    d_clr = d_full * (1.0 - 2.0 / D) + mean_sum_over_D2
+    mean_sum_over_D2 = jnp.sum(d_full) / (d * d)
+    d_clr = d_full * (1.0 - 2.0 / d) + mean_sum_over_D2
 
     return d_clr
 
@@ -104,7 +132,10 @@ def _exact_diag_after_centering(d_alr: jnp.ndarray) -> jnp.ndarray:
 
 
 def transform_gaussian_alr_to_clr(
-    mu_alr: jnp.ndarray, W_alr: jnp.ndarray, d_alr: jnp.ndarray
+    mu_alr: jnp.ndarray,
+    W_alr: jnp.ndarray,
+    d_alr: jnp.ndarray,
+    reference_idx: int = -1,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Transform low-rank Gaussian from ALR to CLR space (exact).
 
@@ -113,7 +144,8 @@ def transform_gaussian_alr_to_clr(
 
     Here:
 
-    - **E** embeds (D-1)-dimensional ALR to D dimensions by appending 0.
+    - **E** embeds (D-1)-dimensional ALR to D dimensions by inserting a zero
+      at ``reference_idx`` (omitted reference component).
     - **C** = ``I - (1/D) 1 1^T`` is the centering matrix.
 
     The transformation preserves the low-rank structure and gives exact
@@ -127,6 +159,9 @@ def transform_gaussian_alr_to_clr(
         Low-rank factor in ALR space, shape ``(D-1, k)``.
     d_alr : jnp.ndarray
         Diagonal in ALR space, shape ``(D-1,)``.
+    reference_idx : int, default=-1
+        Zero-based full index of the ALR reference component. ``-1`` uses
+        the last component (legacy default).
 
     Returns
     -------
@@ -150,19 +185,35 @@ def transform_gaussian_alr_to_clr(
     """
     # Number of components in CLR space
     k = W_alr.shape[-1]
+    d_full_dim = mu_alr.shape[-1] + 1
+    ref = reference_idx if reference_idx >= 0 else d_full_dim - 1
 
-    # 1. Transform mean: embed [mu_alr, 0], then center
-    mu_full = jnp.concatenate([mu_alr, jnp.array([0.0])], axis=-1)
-    mu_clr = mu_full - mu_full.mean()
+    # 1. Mean: embed zero at reference, then center along components.
+    zero_mu = jnp.array([0.0], dtype=mu_alr.dtype)
+    if ref == d_full_dim - 1:
+        mu_full = jnp.concatenate([mu_alr, zero_mu], axis=-1)
+    elif ref == 0:
+        mu_full = jnp.concatenate([zero_mu, mu_alr], axis=-1)
+    else:
+        mu_full = jnp.concatenate(
+            [mu_alr[:ref], zero_mu, mu_alr[ref:]], axis=-1
+        )
+    mu_clr = mu_full - mu_full.mean(axis=-1, keepdims=True)
 
-    # 2. Transform W: embed [W_alr; 0_row], then apply centering to each col
-    W_full = jnp.concatenate([W_alr, jnp.zeros((1, k))], axis=0)  # (D, k)
-    # Centering matrix C = I - (1/D) 1 1^T applied to W gives W_clr = C W_full
+    # 2. Low-rank factor: same embedding, then center each column.
+    zero_row = jnp.zeros((1, k), dtype=W_alr.dtype)
+    if ref == d_full_dim - 1:
+        W_full = jnp.concatenate([W_alr, zero_row], axis=0)
+    elif ref == 0:
+        W_full = jnp.concatenate([zero_row, W_alr], axis=0)
+    else:
+        W_full = jnp.concatenate(
+            [W_alr[:ref], zero_row, W_alr[ref:]], axis=0
+        )
     W_clr = W_full - W_full.mean(axis=0, keepdims=True)
 
-    # 3. Transform diagonal: exact formula for marginal variances after
-    #    centering
-    d_clr = _exact_diag_after_centering(d_alr)
+    # 3. Diagonal: exact marginal variances after centering
+    d_clr = _exact_diag_after_centering(d_alr, reference_idx=reference_idx)
 
     return mu_clr, W_clr, d_clr
 

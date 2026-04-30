@@ -117,6 +117,8 @@ class ModelConfigBuilder:
             {}
         )  # For backward compatibility with with_guides()
         self._vae_params: Dict[str, Any] = {}
+        self._d_mode: str = "low_rank"
+        self._alr_reference_idx: int = -1
 
     # --------------------------------------------------------------------------
 
@@ -479,6 +481,7 @@ class ModelConfigBuilder:
                 if param in [
                     "p",
                     "r",
+                    "r_T",
                     "mu",
                     "gate",
                     "p_capture",
@@ -495,7 +498,7 @@ class ModelConfigBuilder:
             for param in required_params:
                 if param in ["p", "gate", "p_capture"]:
                     defaults[param] = (1.0, 1.0)  # Beta(1,1) = Uniform
-                elif param in ["r", "mu"]:
+                elif param in ["r", "mu", "r_T"]:
                     defaults[param] = (0.0, 1.0)  # LogNormal(0,1)
                 elif param in ["phi", "phi_capture"]:
                     defaults[param] = (1.0, 1.0)  # BetaPrime(1,1)
@@ -551,12 +554,21 @@ class ModelConfigBuilder:
         """
         # Params that expect 2-tuples (Beta, LogNormal, BetaPrime)
         SCALAR_2_PARAMS = frozenset(
-            {"p", "r", "mu", "gate", "p_capture", "phi", "phi_capture"}
+            {
+                "p",
+                "r",
+                "r_T",
+                "mu",
+                "gate",
+                "p_capture",
+                "phi",
+                "phi_capture",
+            }
         )
         # Beta-like: both must be > 0
         BETA_PARAMS = frozenset({"p", "gate", "p_capture"})
         # LogNormal: scale (second) must be > 0
-        LOGNORMAL_PARAMS = frozenset({"r", "mu"})
+        LOGNORMAL_PARAMS = frozenset({"r", "mu", "r_T"})
         # BetaPrime: both must be > 0
         BETAPRIME_PARAMS = frozenset({"phi", "phi_capture"})
 
@@ -627,6 +639,7 @@ class ModelConfigBuilder:
         for name in (
             "p",
             "r",
+            "r_T",
             "mu",
             "phi",
             "gate",
@@ -731,4 +744,6 @@ class ModelConfigBuilder:
             param_specs=param_specs,
             priors=priors,
             vae=vae_config,
+            d_mode=self._d_mode,
+            alr_reference_idx=getattr(self, "_alr_reference_idx", -1),
         )
