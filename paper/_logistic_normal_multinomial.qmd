@@ -515,50 +515,47 @@ genes are transcriptionally independent.
 
 ### The effective Poisson rate and its dynamics
 
-A key conceptual result developed in @sec-lnm-bio-filter is the precise
+A key conceptual result developed in @sec-lnm-bio-bursty is the precise
 identity of the variable $\lambda_g$ that appears in both models.
-Starting from the two-state promoter model, one can show (via an
-integrating-factor solution of the mRNA ODE and a change of variables)
-that the mRNA abundance acts as an **exponential moving average** of the
-promoter's switching history. The effective Poisson rate,
+Starting from the one-state bursty promoter---a constitutively active
+promoter producing mRNA in geometrically-distributed bursts---the
+effective Poisson rate $\lambda_g$ is the **expected mRNA abundance**,
+and its exact steady-state distribution is a Gamma
+(@sec-lnm-bio-bursty-gamma).
+
+The dynamics of $\lambda_g$ follow from **mass balance**
+(@sec-lnm-bio-mass-balance): the rate of change of the mRNA pool equals
+production minus first-order degradation,
 
 $$
-\lambda_g(t) = \frac{r_g}{\gamma_g} \cdot p_g(t),
-$${#eq-lnm-bio-lambda-summary}
-
-where $p_g(t)$ is the memory-weighted fraction of time the promoter has
-been ON (weighted by the mRNA survival kernel with timescale
-$1/\gamma_g$), satisfies the ODE
-
-$$
-\frac{d\lambda_g}{dt} = r_g \, \mathbb{1}_g(t) - \gamma_g \lambda_g,
+\frac{d\lambda_g}{dt} = k_{i,g} \cdot b_g - \gamma_g \lambda_g,
 $${#eq-lnm-bio-lambda-ode-summary}
 
-where $\mathbb{1}_g(t)$ is the promoter indicator function (1 if ON, 0
-if OFF). Every term has an unambiguous physical meaning:
-$r_g \, \mathbb{1}_g$ is the instantaneous mRNA production, and
-$\gamma_g \lambda_g$ is first-order mRNA degradation. The degradation
-rate $\gamma_g$ is the mRNA degradation rate---the same $\gamma$ that
-appears in every birth-death model of gene expression. It simultaneously
-sets the memory timescale of the promoter-activity filter.
+where $k_{i,g}$ is the burst initiation rate, $b_g$ the mean burst
+size, and $\gamma_g$ the mRNA degradation rate. Every term has
+unambiguous physical meaning: $k_{i,g} \cdot b_g$ is the mean mRNA
+production rate, and $\gamma_g \lambda_g$ is first-order mRNA
+degradation---the same $\gamma$ that appears in every birth-death model
+of gene expression.
 
 This resolves a potential confusion: $\lambda_g$ is **not** a
 "transcription rate" (a kinetic parameter with units molecules/time),
 but rather the **expected mRNA abundance** conditional on the regulatory
-state. The derivation is given in full in @sec-lnm-bio-lambda-dynamics.
+state. The full derivation is given in @sec-lnm-bio-lambda-def.
 
 ### Gene regulatory coupling
 
-In a gene regulatory network (GRN), the promoter of gene $g$ is no
-longer autonomous: its switching rates depend on the concentrations of
-transcription factors encoded by other genes. Coarse-graining the fast
-promoter switching (see @sec-lnm-bio-grn-coupling), the discrete
-indicator $\mathbb{1}_g$ is replaced by a continuous regulatory function
-$h_g(\underline{\lambda})$, yielding the coupled ODE system
+In a gene regulatory network (GRN), the burst initiation rate of gene
+$g$ is no longer autonomous: it depends on the concentrations of
+transcription factors encoded by other genes. Making the burst rate a
+function of the expression vector,
+$k_{i,g} \to k_{i,g}(\underline{\lambda})$
+(see @sec-lnm-bio-grn-coupling), yields the coupled ODE system
 
 $$
 \frac{d\lambda_g}{dt} =
-\underbrace{r_g \, h_g(\underline{\lambda})}_{b_g(\underline{\lambda})}
+\underbrace{k_{i,g}(\underline{\lambda}) \cdot
+b_g}_{b_g(\underline{\lambda})}
 - \gamma_g \lambda_g,
 \quad g = 1, \ldots, G.
 $${#eq-lnm-bio-grn-ode}
@@ -567,8 +564,8 @@ The production term $b_g(\underline{\lambda})$ encodes the full
 regulatory logic of the network. The degradation term
 $\gamma_g \lambda_g$ is the same mRNA degradation as in the single-gene
 case---it does not change upon introducing gene-gene interactions. This
-derivation rests on several explicit assumptions (mRNA equilibrium,
-protein-tracks-mRNA proportionality, promoter coarse-graining, and
+derivation rests on several explicit assumptions (fluid limit,
+protein-tracks-mRNA proportionality, constant burst size, and
 first-order degradation), which are enumerated and discussed in
 @sec-lnm-bio-assumptions.
 
@@ -606,6 +603,18 @@ noise approximation in log-abundance space.** The covariance
 $\underline{\underline{\Sigma}}$ is the Lyapunov solution encoding the
 regulatory interactions in $\underline{\underline{J}}$ and the
 bursty-transcription noise in $\underline{\underline{D}}$.
+
+### Universality across microscopic models
+
+The GRN ODE above is not specific to the one-state bursty promoter.
+As argued deductively in @sec-lnm-bio-deductive, the form
+$\dot{\lambda}_g = b_g(\underline{\lambda}) - \gamma_g \lambda_g$ is a
+necessary consequence of two physical ingredients: first-order mRNA
+degradation and coarse-grainable production. In
+@sec-lnm-bio-two-state, we verify this claim explicitly by deriving the
+same ODE from the **two-state promoter** (promoter ON/OFF switching),
+a completely different microscopic model. The microscopic model enters
+only through the noise amplitude, not through the form of the result.
 
 ### The low-rank covariance as regulatory architecture
 
