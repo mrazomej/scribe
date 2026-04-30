@@ -22,6 +22,7 @@ from scribe.inference.preset_builder import build_config_from_preset
 from scribe.models import get_model_and_guide
 from scribe.models.config import ModelConfig
 from scribe.svi.results import ScribeSVIResults
+from scribe.svi.vae_results import ScribeVAEResults
 import scribe.viz.config as viz_config
 from scribe.viz import (
     PlotResult,
@@ -520,6 +521,30 @@ def test_training_payload_includes_mcmc_diagnostics():
     assert payload["potential_energy"].shape == (3,)
     assert payload["diverging"].shape == (3,)
     assert payload["trace_by_chain"].shape == (2, 3)
+
+
+def test_training_payload_includes_vae_loss_history():
+    """VAE results should expose the same loss payload as SVI for ``plot_loss``."""
+    encoder = MagicMock()
+    decoder = MagicMock()
+    latent_spec = MagicMock()
+    latent_spec.flow = None
+
+    results = ScribeVAEResults(
+        params={"vae_encoder$params": {}, "vae_decoder$params": {}},
+        loss_history=jnp.array([3.0, 2.0, 1.0], dtype=jnp.float32),
+        n_cells=10,
+        n_genes=20,
+        model_type="lnmvcp",
+        model_config=ModelConfig(base_model="nbdm"),
+        prior_params={},
+        _encoder=encoder,
+        _decoder=decoder,
+        _latent_spec=latent_spec,
+    )
+    payload = _get_training_diagnostic_payload(results)
+    assert payload["plot_kind"] == "loss"
+    assert np.allclose(payload["loss_history"], [3.0, 2.0, 1.0])
 
 
 def test_map_dispatch_forwards_targets_for_svi():

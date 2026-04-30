@@ -261,7 +261,6 @@ def _get_layouts_for_plot(results) -> dict[str, "AxisLayout"]:
     return {k: v.without_sample_dim() for k, v in raw.items()}
 
 
-
 @dispatch(scribe.ScribeSVIResults)
 def _get_cell_assignment_probabilities_for_plot(
     results, *, counts, batch_size=None, use_mean=False
@@ -341,7 +340,9 @@ def _get_biological_ppc_samples_for_plot(
         key_parts = np.asarray(rng_key, dtype=np.uint64).ravel()
         seed = int(key_parts[0] * np.uint64(2**32) + key_parts[1])
         draw_rng = np.random.default_rng(seed)
-        idx = draw_rng.choice(bio_np.shape[0], size=int(n_samples), replace=False)
+        idx = draw_rng.choice(
+            bio_np.shape[0], size=int(n_samples), replace=False
+        )
         bio_np = bio_np[idx]
     if store_samples:
         results.predictive_samples = bio_np
@@ -406,6 +407,19 @@ def _get_training_diagnostic_payload(results):
     }
 
 
+@dispatch(scribe.ScribeVAEResults)
+def _get_training_diagnostic_payload(results):
+    """Build training diagnostics payload for VAE (ELBO) loss plots.
+
+    ``ScribeVAEResults`` is a distinct type from ``ScribeSVIResults`` but
+    exposes the same ``loss_history`` field populated during SVI training.
+    """
+    return {
+        "plot_kind": "loss",
+        "loss_history": np.array(results.loss_history),
+    }
+
+
 @dispatch(scribe.ScribeMCMCResults)
 def _get_training_diagnostic_payload(results):
     """Build training diagnostics payload for MCMC diagnostics plots."""
@@ -417,9 +431,9 @@ def _get_training_diagnostic_payload(results):
         "potential_energy": (
             np.array(potential_energy) if potential_energy is not None else None
         ),
-        "diverging": np.array(diverging).astype(int)
-        if diverging is not None
-        else None,
+        "diverging": (
+            np.array(diverging).astype(int) if diverging is not None else None
+        ),
         "trace_by_chain": None,
         "trace_param_name": None,
     }
