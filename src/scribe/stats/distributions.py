@@ -234,9 +234,9 @@ class BetaNegativeBinomial(Distribution):
         at their native (G,) shape rather than the broadcast (C, G).
         JAX broadcasting handles the addition with the (C, G) terms.
         """
-        c1 = self.concentration1   # alpha — (C, G) or full batch
-        c0 = self._c0_raw          # kappa — original shape, e.g. (G,)
-        n = self._n_raw            # r     — original shape, e.g. (G,)
+        c1 = self.concentration1  # alpha — (C, G) or full batch
+        c0 = self._c0_raw  # kappa — original shape, e.g. (G,)
+        n = self._n_raw  # r     — original shape, e.g. (G,)
 
         # Gene-only terms: 3 gammaln at the smaller (G,) shape.
         gene_terms = gammaln(c0 + n) - gammaln(n) - gammaln(c0)

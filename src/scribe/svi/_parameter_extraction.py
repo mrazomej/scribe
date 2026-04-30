@@ -14,6 +14,7 @@ import numpyro.distributions as dist
 from jax import random
 
 from ..utils import numpyro_to_scipy
+from ..stats.distributions import LowRankLogisticNormal
 from ..models.config.parameter_mapping import rename_dict_keys
 from ..core.axis_layout import (
     AxisLayout,
@@ -1030,6 +1031,44 @@ class ParameterExtractionMixin:
             params_to_use, self.model_config, split=split
         )
 
+        # For logistic-normal VAE results, include decoder-derived
+        # compositional distributions that are not explicit guide sites:
+        # - y_alr: ALR-space low-rank MVN
+        # - rho: simplex-space LowRankLogisticNormal (ALR-inverse map)
+        # This is NumPyro-only because scipy conversion has no equivalent for
+        # the custom LowRankLogisticNormal distribution class.
+        _parameterization = getattr(self.model_config, "parameterization", None)
+        _param_value = getattr(_parameterization, "value", _parameterization)
+        _param_name = getattr(_parameterization, "name", None)
+        _is_logistic_normal = (
+            _param_value == "logistic_normal"
+            or _param_name == "LOGISTIC_NORMAL"
+        )
+        if (
+            backend == "numpyro"
+            and _is_logistic_normal
+            and hasattr(self, "get_lnm_mu")
+            and hasattr(self, "get_lnm_W")
+            and hasattr(self, "get_lnm_d")
+        ):
+            # Pull low-rank Gaussian parameters from trained decoder weights.
+            mu = self.get_lnm_mu()
+            W = self.get_lnm_W()
+            d_opt = self.get_lnm_d()
+            d = (
+                d_opt
+                if d_opt is not None
+                else jnp.zeros(mu.shape[0], dtype=mu.dtype)
+            )
+            ref_idx = getattr(self.model_config, "alr_reference_idx", -1)
+
+            distributions["y_alr"] = dist.LowRankMultivariateNormal(
+                loc=mu, cov_factor=W, cov_diag=d
+            )
+            distributions["rho"] = LowRankLogisticNormal(
+                loc=mu, cov_factor=W, cov_diag=d, reference_idx=ref_idx
+            )
+
         if backend == "scipy":
             # Handle conversion to scipy, accounting for split distributions
             scipy_distributions = {}
@@ -1274,6 +1313,15 @@ class ParameterExtractionMixin:
             # Skip full joint distributions (keyed as "joint:{group}");
             # individual per-parameter marginals are already in the dict.
             if param.startswith("joint:"):
+                continue
+
+            # The exact simplex mode of a LowRankLogisticNormal requires
+            # numerical optimization (the Jacobian correction couples the
+            # nonlinear softmax with the Gaussian log-density).  Rather than
+            # returning a misleading approximation, omit it from MAP output.
+            # Users can still access the full distribution via
+            # get_distributions()["rho"].
+            if isinstance(dist_obj, LowRankLogisticNormal):
                 continue
 
             # Defer flow-guided params to the sampling-based handler

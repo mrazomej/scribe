@@ -254,6 +254,16 @@ rp_map = results.get_map(["r", "p"])
 distributions = results.get_distributions()
 ```
 
+For logistic-normal VAE models (LNM/LNMVCP), `get_distributions()` now also
+includes decoder-derived compositional entries:
+
+- `y_alr`: `LowRankMultivariateNormal` in ALR space (shape `(G-1,)`)
+- `rho`: `LowRankLogisticNormal` on the simplex (shape `(G,)`)
+
+These are built from trained decoder parameters (`mu`, `W`, `d`) and therefore
+represent the learned population composition distribution in addition to
+guide-site marginals such as `r_T` and `p`.
+
 **Flow Guide MAP Estimation:**
 
 When using normalizing flow guides (`guide_flow` parameter in `scribe.fit()` or
@@ -414,6 +424,15 @@ VAE posterior sampling has two modes:
     flow prior.
   - For non-LNM VAEs without flow prior, SCRIBE warns that `z` is being
     sampled from the uninformative `N(0, I)` prior.
+
+For LNM/LNMVCP models, `get_map()` includes:
+
+- `y_alr` MAP: the low-rank Gaussian location (`mu`) in ALR space (exact MVN mode).
+- `rho` is **not** included in `get_map()` because the exact simplex mode of a
+  logistic-normal distribution has no closed-form solution (the Jacobian
+  correction couples the nonlinear softmax with the Gaussian log-density).
+  Access the full `rho` distribution via `get_distributions()["rho"]` to
+  sample or evaluate log-probabilities.
 
 **Compositional Samples:**
 

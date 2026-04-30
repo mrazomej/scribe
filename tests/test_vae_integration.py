@@ -41,6 +41,8 @@ from scribe.models.components import (
 from scribe.models.components.guide_families import VAELatentGuide
 from scribe.models.config import ModelConfigBuilder
 from scribe.sampling import sample_variational_posterior
+from scribe.stats.distributions import LowRankLogisticNormal
+from scribe.svi._parameter_extraction import ParameterExtractionMixin
 from scribe.svi._model_helpers import ModelHelpersMixin
 from scribe.svi._sampling_posterior_predictive import (
     PosteriorPredictiveSamplingMixin,
@@ -393,6 +395,69 @@ class TestVAEPosteriorPriorPath:
             in str(w.message)
             for w in caught
         )
+
+
+class TestLNMDistributionExtraction:
+    """Regression tests for LNM compositional distribution extraction."""
+
+    def test_lnm_get_distributions_and_map_include_y_alr_and_rho(self):
+        """LNM get_distributions should include decoder-derived terms.
+
+        get_map() must include y_alr (exact MVN mode) but must NOT include rho
+        because the exact simplex mode of a logistic-normal has no closed form.
+        """
+
+        class _DummyLNMResults(ParameterExtractionMixin):
+            # Minimal test double exposing the decoder extraction API expected by
+            # get_distributions() for logistic-normal VAE results.
+            def get_lnm_mu(self):
+                return jnp.log(jnp.array([2.0, 3.0]))
+
+            def get_lnm_W(self):
+                return jnp.array([[0.1], [0.2]])
+
+            def get_lnm_d(self):
+                return jnp.array([0.5, 0.7])
+
+        dummy = _DummyLNMResults()
+        # Use the real config builder so posterior extraction sees the full
+        # config surface expected by get_posterior_distributions().
+        dummy.model_config = (
+            ModelConfigBuilder()
+            .for_model("lnm")
+            .with_inference("vae")
+            .with_parameterization("logistic_normal")
+            .build()
+        )
+        dummy.params = {
+            "r_T_loc": jnp.array(0.2),
+            "r_T_scale": jnp.array(0.1),
+            "p_alpha": jnp.array(2.0),
+            "p_beta": jnp.array(5.0),
+        }
+        dummy.n_cells = 1
+        dummy.n_genes = 3
+        dummy.n_components = 1
+
+        distributions = dummy.get_distributions(backend="numpyro")
+        assert "y_alr" in distributions
+        assert "rho" in distributions
+        assert isinstance(distributions["y_alr"], dist.LowRankMultivariateNormal)
+        assert isinstance(distributions["rho"], LowRankLogisticNormal)
+        assert distributions["y_alr"].event_shape == (2,)
+        assert distributions["rho"].event_shape == (3,)
+
+        map_estimates = dummy.get_map(canonical=False, verbose=False)
+        assert "y_alr" in map_estimates
+        assert map_estimates["y_alr"].shape == (2,)
+        assert jnp.allclose(map_estimates["y_alr"], jnp.log(jnp.array([2.0, 3.0])))
+        # rho must NOT appear in MAP output: the exact simplex mode of a
+        # logistic-normal requires numerical optimization.
+        assert "rho" not in map_estimates
+
+
+class TestVAEPosteriorPriorPathWarnings:
+    """Warning behavior for VAE prior-path sampling when counts are missing."""
 
     def test_non_lnm_non_flow_vae_warns_when_counts_missing(self):
         """Non-LNM VAEs without flow prior should emit guidance warning."""
