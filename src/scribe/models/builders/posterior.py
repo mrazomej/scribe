@@ -384,7 +384,9 @@ def _build_base_skip_set(
     Returns
     -------
     set of str
-        Parameter names to skip in base extraction.
+        Parameter names to skip in base extraction. For logistic-normal
+        models this includes ``r_T`` (total-count dispersion) rather than
+        canonical ``r`` when expression hierarchies are active.
     """
     skip: set[str] = set()
 
@@ -416,6 +418,11 @@ def _build_base_skip_set(
             Parameterization.STANDARD,
         ):
             skip.add("r")
+        elif parameterization == Parameterization.LOGISTIC_NORMAL:
+            # Logistic-normal models use r_T (total-count dispersion)
+            # instead of r (gene-level NB dispersion), so hierarchy
+            # overrides must skip r_T in the base pass.
+            skip.add("r_T")
         else:
             skip.add("mu")
     return skip
@@ -548,10 +555,9 @@ def _apply_base_parameterization(
     """Pass 1: build posteriors for the core model parameters.
 
     Dispatches to the parameterization-specific builder (canonical,
-    mean_prob, or mean_odds) which populates ``distributions`` with the
-    primary model parameters (``r``/``p``, ``mu``/``p``, or ``mu``/``phi``).
-    Parameters in *skip* are omitted because a horseshoe pass will handle
-    them later.
+    mean_prob, mean_odds, or logistic_normal) which populates
+    ``distributions`` with the primary model parameters. Parameters in
+    *skip* are omitted because hierarchy passes will handle them later.
     """
     if parameterization in (
         Parameterization.CANONICAL,
@@ -589,6 +595,18 @@ def _apply_base_parameterization(
     ):
         distributions.update(
             _build_mean_odds_posteriors(
+                params,
+                unconstrained,
+                is_mixture,
+                low_rank,
+                split,
+                skip,
+                pos_transform=pos_transform,
+            )
+        )
+    elif parameterization == Parameterization.LOGISTIC_NORMAL:
+        distributions.update(
+            _build_logistic_normal_posteriors(
                 params,
                 unconstrained,
                 is_mixture,
@@ -2538,6 +2556,83 @@ def _build_canonical_posteriors(
             else:
                 distributions["r"] = _build_lognormal_posterior(
                     params, "r", is_mixture, split
+                )
+
+    return distributions
+
+
+def _build_logistic_normal_posteriors(
+    params: Dict[str, jnp.ndarray],
+    unconstrained: bool,
+    is_mixture: bool,
+    low_rank: bool,
+    split: bool,
+    skip: Optional[set] = None,
+    *,
+    pos_transform=None,
+) -> Dict[str, Any]:
+    """Build posteriors for logistic-normal parameterization.
+
+    Notes
+    -----
+    Logistic-normal models use the same guide families as canonical models
+    for total-count parameters, but with ``r_T`` (total-count NB dispersion)
+    instead of ``r`` (gene-level dispersion). This helper mirrors
+    ``_build_canonical_posteriors`` and only swaps the dispersion key.
+    """
+    distributions = {}
+    skip = skip or set()
+
+    if unconstrained:
+        if "p" not in skip:
+            jp = _find_joint_prefix(params, "p")
+            if jp:
+                distributions["p"] = _build_joint_low_rank_posterior(
+                    params, "p", jp, split
+                )
+            else:
+                distributions["p"] = _build_sigmoid_normal_posterior(
+                    params, "p", is_scalar=True, split=split
+                )
+        if "r_T" not in skip:
+            jp = _find_joint_prefix(params, "r_T")
+            if jp:
+                distributions["r_T"] = _build_joint_low_rank_posterior(
+                    params, "r_T", jp, split, transform=pos_transform
+                )
+            elif "r_T_W" in params:
+                distributions["r_T"] = (
+                    _build_low_rank_positive_normal_posterior(
+                        params,
+                        "r_T",
+                        is_mixture,
+                        split,
+                        transform=pos_transform,
+                    )
+                )
+            else:
+                distributions["r_T"] = _build_positive_normal_posterior(
+                    params,
+                    "r_T",
+                    is_mixture,
+                    split,
+                    transform=pos_transform,
+                )
+    else:
+        if "p" not in skip:
+            distributions["p"] = _build_beta_posterior(
+                params, "p", is_scalar=True, is_mixture=False, split=split
+            )
+        if "r_T" not in skip:
+            # Constrained low-rank guides store log-space MVN params
+            # (e.g., log_r_T_W), while unconstrained guides use r_T_W.
+            if "r_T_W" in params or "log_r_T_W" in params:
+                distributions["r_T"] = _build_low_rank_lognormal_posterior(
+                    params, "r_T", is_mixture, split
+                )
+            else:
+                distributions["r_T"] = _build_lognormal_posterior(
+                    params, "r_T", is_mixture, split
                 )
 
     return distributions

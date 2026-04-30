@@ -403,6 +403,18 @@ This ensures `flax_module` sites (for example `vae_decoder$params`) are
 substituted from fitted values rather than re-initialized at replay
 time.
 
+VAE posterior sampling has two modes:
+
+- **Encoder path (`counts` provided):** draws latent samples from
+  `q(z|counts)` using the encoder guide, then replays the model.
+- **Prior path (`counts=None`):** bypasses the guide and draws `z` from
+  the model prior while still replaying with trained params.
+  - For LNM/LNMVCP, this is the intended population-level sampling mode.
+  - For VAEs with a learned flow prior, `z` is drawn from the fitted
+    flow prior.
+  - For non-LNM VAEs without flow prior, SCRIBE warns that `z` is being
+    sampled from the uninformative `N(0, I)` prior.
+
 **Compositional Samples:**
 
 The simplex (compositional) representation of gene expression is core to the

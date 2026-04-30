@@ -11,6 +11,7 @@ Tests that the full VAE pipeline works:
 
 import numpy as np
 import pytest
+import warnings
 import jax
 import jax.numpy as jnp
 from jax import random
@@ -41,6 +42,9 @@ from scribe.models.components.guide_families import VAELatentGuide
 from scribe.models.config import ModelConfigBuilder
 from scribe.sampling import sample_variational_posterior
 from scribe.svi._model_helpers import ModelHelpersMixin
+from scribe.svi._sampling_posterior_predictive import (
+    PosteriorPredictiveSamplingMixin,
+)
 
 
 # ==============================================================================
@@ -290,6 +294,213 @@ class TestVAEPredictiveParamBinding:
         assert guide is None
         assert captured["model_config"] == {"kind": "vae"}
         assert captured["n_genes"] == 77
+
+
+class TestVAEPosteriorPriorPath:
+    """Regression tests for prior-based VAE posterior sampling."""
+
+    def test_lnm_prior_path_uses_trained_decoder_when_counts_missing(self):
+        """LNM posterior draws should bypass encoder and use decoder params.
+
+        When ``counts=None`` and the result object is VAE-backed, posterior
+        sampling should skip the guide/encoder path and sample ``z`` from the
+        model prior while replaying the model with trained decoder parameters.
+        This test verifies that the decoded site uses the supplied
+        ``vae_decoder$params`` exactly.
+        """
+
+        class _LinearDecoder(nn.Module):
+            @nn.compact
+            def __call__(self, x):
+                return nn.Dense(1, use_bias=True, name="head")(x)
+
+        def model(
+            n_cells,
+            n_genes,
+            model_config,
+            dataset_indices=None,
+            batch_size=None,
+            counts=None,
+        ):
+            del (
+                n_cells,
+                n_genes,
+                model_config,
+                dataset_indices,
+                batch_size,
+                counts,
+            )
+            z = numpyro.sample("z", dist.Normal(0.0, 1.0))
+            decoder = flax_module(
+                "vae_decoder",
+                _LinearDecoder(),
+                input_shape=(1,),
+            )
+            y = decoder(jnp.array([z]))[0]
+            numpyro.sample("y_alr", dist.Delta(y))
+
+        def guide(**kwargs):
+            del kwargs
+            raise AssertionError(
+                "Guide must not run for VAE prior-path sampling."
+            )
+
+        class _DummyVAEPosterior(PosteriorPredictiveSamplingMixin):
+            def _model_and_guide(self):
+                return model, guide
+
+        class _DummyModelConfig:
+            base_model = "lnm"
+            parameterization = "logistic_normal"
+
+        init_params = _LinearDecoder().init(
+            random.PRNGKey(0), jnp.zeros((1,))
+        )["params"]
+        decoder_params = {
+            "head": {
+                "kernel": jnp.zeros_like(init_params["head"]["kernel"]),
+                "bias": jnp.full_like(init_params["head"]["bias"], 3.0),
+            }
+        }
+
+        dummy = _DummyVAEPosterior()
+        dummy.n_cells = 1
+        dummy.n_genes = 1
+        # VAE results typically use a generic model_type (e.g. "vae"), so
+        # LNM detection must rely on model_config metadata as well.
+        dummy.model_type = "vae"
+        dummy.model_config = _DummyModelConfig()
+        dummy.params = {"vae_decoder$params": decoder_params}
+        dummy._encoder = object()
+        dummy._latent_spec = GaussianLatentSpec(latent_dim=1)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            samples = dummy._get_posterior_samples_standard(
+                rng_key=random.PRNGKey(1),
+                n_samples=16,
+                batch_size=None,
+                counts=None,
+            )
+
+        assert "z" in samples
+        assert samples["z"].shape == (16,)
+        assert "y_alr" in samples
+        assert samples["y_alr"].shape == (16,)
+        assert jnp.allclose(samples["y_alr"], 3.0)
+        assert not any(
+            "No counts provided for VAE posterior sampling"
+            in str(w.message)
+            for w in caught
+        )
+
+    def test_non_lnm_non_flow_vae_warns_when_counts_missing(self):
+        """Non-LNM VAEs without flow prior should emit guidance warning."""
+
+        def model(
+            n_cells,
+            n_genes,
+            model_config,
+            dataset_indices=None,
+            batch_size=None,
+            counts=None,
+        ):
+            del (
+                n_cells,
+                n_genes,
+                model_config,
+                dataset_indices,
+                batch_size,
+                counts,
+            )
+            numpyro.sample("z", dist.Normal(0.0, 1.0))
+
+        def guide(**kwargs):
+            del kwargs
+            raise AssertionError(
+                "Guide must not run for VAE prior-path sampling."
+            )
+
+        class _DummyVAEPosterior(PosteriorPredictiveSamplingMixin):
+            def _model_and_guide(self):
+                return model, guide
+
+        dummy = _DummyVAEPosterior()
+        dummy.n_cells = 1
+        dummy.n_genes = 1
+        dummy.model_type = "vae_nb"
+        dummy.model_config = object()
+        dummy.params = {}
+        dummy._encoder = object()
+        dummy._latent_spec = GaussianLatentSpec(latent_dim=1)
+
+        with pytest.warns(UserWarning, match="No counts provided for VAE"):
+            dummy._get_posterior_samples_standard(
+                rng_key=random.PRNGKey(2),
+                n_samples=4,
+                batch_size=None,
+                counts=None,
+            )
+
+    def test_flow_prior_vae_does_not_warn_when_counts_missing(self):
+        """Flow-prior VAEs should use prior path without warning noise."""
+
+        def model(
+            n_cells,
+            n_genes,
+            model_config,
+            dataset_indices=None,
+            batch_size=None,
+            counts=None,
+        ):
+            del (
+                n_cells,
+                n_genes,
+                model_config,
+                dataset_indices,
+                batch_size,
+                counts,
+            )
+            numpyro.sample("z", dist.Normal(0.0, 1.0))
+
+        def guide(**kwargs):
+            del kwargs
+            raise AssertionError(
+                "Guide must not run for VAE prior-path sampling."
+            )
+
+        class _DummyLatentSpec:
+            flow = object()
+
+        class _DummyVAEPosterior(PosteriorPredictiveSamplingMixin):
+            def _model_and_guide(self):
+                return model, guide
+
+        dummy = _DummyVAEPosterior()
+        dummy.n_cells = 1
+        dummy.n_genes = 1
+        dummy.model_type = "vae_nb"
+        dummy.model_config = object()
+        dummy.params = {}
+        dummy._encoder = object()
+        dummy._latent_spec = _DummyLatentSpec()
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            samples = dummy._get_posterior_samples_standard(
+                rng_key=random.PRNGKey(3),
+                n_samples=4,
+                batch_size=None,
+                counts=None,
+            )
+
+        assert "z" in samples
+        assert samples["z"].shape == (4,)
+        assert not any(
+            "No counts provided for VAE posterior sampling"
+            in str(w.message)
+            for w in caught
+        )
 
 
 class TestVAEPriorPredictive:

@@ -237,9 +237,7 @@ class ScribeSVIResults(
             count, and guide-family summary.
         """
         n_steps = (
-            int(len(self.loss_history))
-            if self.loss_history is not None
-            else 0
+            int(len(self.loss_history)) if self.loss_history is not None else 0
         )
         guide_summary = self._summarize_guide_families()
         return (
@@ -266,9 +264,7 @@ class ScribeSVIResults(
         import html
 
         n_steps = (
-            int(len(self.loss_history))
-            if self.loss_history is not None
-            else 0
+            int(len(self.loss_history)) if self.loss_history is not None else 0
         )
         guide_summary = self._summarize_guide_families()
 

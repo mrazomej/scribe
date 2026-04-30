@@ -66,9 +66,7 @@ class SVIResultsFactory:
             # Forward path: gene axes from ``AxisLayout`` (SVI ``layouts`` /
             # ``reconstruct_param_layouts`` stay consistent).  Legacy pickles
             # without ``param_layouts`` still rely on stored ``_gene_axis_by_key``.
-            gene_axis_by_key = (
-                gene_axes_from_layouts(param_layouts) or None
-            )
+            gene_axis_by_key = gene_axes_from_layouts(param_layouts) or None
 
         if adata is not None:
             results = ScribeSVIResults.from_anndata(

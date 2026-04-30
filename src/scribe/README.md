@@ -73,8 +73,9 @@ scribe.viz.plot_loss(
 # via _repr_png_ / _repr_html_ — no duplicate display in notebooks.
 # figs_dir, cfg, and viz_cfg are always optional.
 result = scribe.viz.plot_loss(results=results)
-# ``plot_loss`` supports ``ScribeSVIResults``, ``ScribeVAEResults`` (VAE), and
-# ``ScribeMCMCResults`` (diagnostics panels).
+# ``plot_loss``, ``plot_ppc``, and other ``scribe.viz`` helpers that take a
+# results object support ``ScribeSVIResults``, ``ScribeVAEResults`` (VAE), and
+# ``ScribeMCMCResults`` (where applicable).
 result.fig      # underlying matplotlib Figure
 result.axes     # tuple of Axes used
 result.n_panels # number of logical panels

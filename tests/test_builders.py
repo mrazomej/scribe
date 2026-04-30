@@ -3461,6 +3461,39 @@ class TestPosteriorPositiveTransform:
             phi_capture_dist.transforms[-1], dist.transforms.ExpTransform
         ), "Missing positive_transform should default phi_capture to ExpTransform"
 
+    def test_logistic_normal_returns_r_T_and_p_posteriors(self):
+        """Logistic-normal extraction should build r_T and p without errors.
+
+        This regression test covers the LNM/LNMVCP base extraction path in
+        ``get_posterior_distributions``. The logistic-normal branch should
+        construct the total-count dispersion posterior (``r_T``) and the
+        total-count probability posterior (``p``) directly from variational
+        parameters.
+        """
+        import numpyro.distributions as dist
+        from scribe.models.builders.posterior import get_posterior_distributions
+
+        # Minimal constrained variational parameters for LNM totals:
+        # r_T ~ LogNormal(r_T_loc, r_T_scale), p ~ Beta(p_alpha, p_beta).
+        params = {
+            "r_T_loc": jnp.array(0.0),
+            "r_T_scale": jnp.array(1.0),
+            "p_alpha": jnp.array(2.0),
+            "p_beta": jnp.array(3.0),
+        }
+        config = self._make_config(
+            parameterization=ParameterizationEnum.LOGISTIC_NORMAL,
+            unconstrained=False,
+        )
+
+        distributions = get_posterior_distributions(params, config, split=False)
+
+        # Logistic-normal totals must be extractable under canonical API keys.
+        assert "r_T" in distributions
+        assert "p" in distributions
+        assert isinstance(distributions["r_T"], dist.LogNormal)
+        assert isinstance(distributions["p"], dist.Beta)
+
     def test_joint_softplus_transform_on_phi_and_mu(self):
         """Joint low-rank posteriors respect positive_transform='softplus'."""
         import numpyro.distributions as dist
