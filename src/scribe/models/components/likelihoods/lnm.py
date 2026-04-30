@@ -38,8 +38,8 @@ if TYPE_CHECKING:
     from ...builders.parameter_specs import ParamSpec
     from ...config import ModelConfig
 
-# Minimum epsilon for clamping NB ``probs`` away from 0 and 1 so that NB log-prob
-# and sampling stay numerically stable (mirrors ``negative_binomial``).
+# Minimum epsilon for clamping NB ``probs`` away from 0 and 1 so that NB
+# log-prob and sampling stay numerically stable (mirrors ``negative_binomial``).
 _P_EPS = 1e-6
 
 # Floor for diagonal ``d`` in ``learned`` mode when mapping to ``sqrt(d)``.
@@ -565,9 +565,7 @@ class LNMWithVCPLikelihood(LogisticNormalMultinomialLikelihood):
         if self._capture_param_name is not None:
             use_phi = self._capture_param_name == "phi_capture"
         else:
-            use_phi = any(
-                spec.name == "phi_capture" for spec in cell_specs
-            )
+            use_phi = any(spec.name == "phi_capture" for spec in cell_specs)
 
         # Resolve capture prior (alpha, beta) from model config param specs.
         capture_prior_params = (1.0, 1.0)
@@ -606,7 +604,8 @@ class LNMWithVCPLikelihood(LogisticNormalMultinomialLikelihood):
             p_hat_cell = self._compute_cell_p_hat(p_pop, p_capture)
             nb_cell = dist.NegativeBinomialProbs(r_T, p_hat_cell)
             u_T_obs_local = (
-                u_T_obs[idx] if (u_T_obs is not None and idx is not None)
+                u_T_obs[idx]
+                if (u_T_obs is not None and idx is not None)
                 else u_T_obs
             )
             u_T_val = numpyro.sample("u_T", nb_cell, obs=u_T_obs_local)
