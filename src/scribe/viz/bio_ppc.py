@@ -28,7 +28,11 @@ from .dispatch import (
     _get_biological_ppc_samples_for_plot,
     _get_denoised_counts_for_plot,
 )
-from .gene_selection import _coerce_counts, _get_gene_names, _select_genes
+from .gene_selection import (
+    _coerce_and_align_counts_to_results,
+    _get_gene_names,
+    _select_genes,
+)
 from .ppc_rendering import (
     compute_adaptive_max_bin,
     get_ppc_render_options,
@@ -98,7 +102,9 @@ def plot_bio_ppc(
             "Biological PPC requires multiple axes; provide `fig` or `axes`."
         )
     console.print("[dim]Plotting biological PPC (denoised)...[/dim]")
-    counts = _coerce_counts(counts)
+    counts = _coerce_and_align_counts_to_results(
+        counts, results, context="plot_bio_ppc"
+    )
     render_opts = get_ppc_render_options(viz_cfg)
 
     # Resolve grid dimensions: explicit kwargs > viz_cfg > defaults
@@ -135,6 +141,7 @@ def plot_bio_ppc(
     # ------------------------------------------------------------------
     # Keep subset ordering aligned with plotting traversal and denoising logic.
     results_subset = results[selected_idx_sorted]
+    counts_subset = counts[:, selected_idx_sorted]
 
     rng_key = random.PRNGKey(42)
 
@@ -145,7 +152,7 @@ def plot_bio_ppc(
         results_subset,
         rng_key=rng_key,
         n_samples=n_samples,
-        counts=counts,
+        counts=counts_subset,
         batch_size=None,
         store_samples=False,
     )
@@ -165,7 +172,6 @@ def plot_bio_ppc(
         _bio_opts.get("denoise_cell_batch_size", 256) if hasattr(_bio_opts, "get") else 256
     )
     # Keep denoising order aligned with ``results_subset`` and plotting.
-    counts_subset = counts[:, selected_idx_sorted]
     denoised_subset = _get_denoised_counts_for_plot(
         results_subset,
         counts=counts_subset,

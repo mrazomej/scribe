@@ -7,7 +7,11 @@ from ._common import console
 from ._interactive import PlotResultCollection, _resolve_ppc_grid, plot_function
 from .config import _get_config_values
 from .dispatch import _get_map_like_predictive_samples_for_plot
-from .gene_selection import _coerce_counts, _get_gene_names, _select_genes
+from .gene_selection import (
+    _coerce_and_align_counts_to_results,
+    _get_gene_names,
+    _select_genes,
+)
 from .mixture_ppc import _plot_ppc_figure
 from .ppc_rendering import get_ppc_render_options
 
@@ -119,7 +123,9 @@ def plot_annotation_ppc(
         raise ValueError(
             "Annotation PPC requires multiple axes; provide `fig` or `axes`."
         )
-    counts = _coerce_counts(counts)
+    counts = _coerce_and_align_counts_to_results(
+        counts, results, context="plot_annotation_ppc"
+    )
     render_opts = get_ppc_render_options(viz_cfg)
 
     n_components = results.n_components
@@ -165,6 +171,7 @@ def plot_annotation_ppc(
 
     gene_names = _get_gene_names(results)
     selected_idx, _mean_counts = _select_genes(counts, n_rows, n_cols)
+    counts_selected = counts[:, selected_idx]
     n_genes_selected = len(selected_idx)
     console.print(
         f"[dim]Selected {n_genes_selected} genes across {n_rows} "
@@ -224,11 +231,11 @@ def plot_annotation_ppc(
             cell_batch_size=500,
             store_samples=False,
             verbose=True,
-            counts=counts,
+            counts=counts_selected,
         )
 
         component_samples_np = np.array(component_samples[:, cell_mask, :])
-        counts_label = counts[cell_mask, :]
+        counts_label = counts_selected[cell_mask, :]
 
         safe_label = (
             str(label).replace(" ", "_").replace("/", "-").replace("\\", "-")

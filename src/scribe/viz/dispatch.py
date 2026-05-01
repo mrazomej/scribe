@@ -8,6 +8,8 @@ import numpy as np
 from multipledispatch import dispatch
 import scribe
 
+from .gene_selection import _coerce_and_align_counts_to_results
+
 if TYPE_CHECKING:
     from ..core.axis_layout import AxisLayout
 
@@ -82,7 +84,10 @@ def _get_inference_metadata_for_filenames(results, cfg):
 def _get_predictive_samples_for_plot(
     results, *, rng_key, n_samples, counts, store_samples=True
 ):
-    """Get PPC samples for plotting from SVI results."""
+    """Get PPC samples for plotting from variational results."""
+    counts = _coerce_and_align_counts_to_results(
+        counts, results, context="_get_predictive_samples_for_plot"
+    )
     # Generate posterior draws explicitly for this plotting call so we can run
     # one PPC batch at a time without relying on persistent cached samples.
     posterior_samples = results.get_posterior_samples(
@@ -151,7 +156,11 @@ def _get_map_like_predictive_samples_for_plot(
     verbose=True,
     counts=None,
 ):
-    """Generate MAP-based predictive samples for SVI plotting."""
+    """Generate MAP-based predictive samples for variational plotting."""
+    if counts is not None:
+        counts = _coerce_and_align_counts_to_results(
+            counts, results, context="_get_map_like_predictive_samples_for_plot"
+        )
     return np.array(
         results.get_map_ppc_samples(
             rng_key=rng_key,
@@ -194,7 +203,11 @@ def _get_map_like_predictive_samples_for_plot(
 def _get_map_estimates_for_plot(
     results, *, counts=None, use_mean=True, targets=None
 ):
-    """Get plot-ready MAP estimates from SVI results."""
+    """Get plot-ready MAP estimates from variational results."""
+    if counts is not None:
+        counts = _coerce_and_align_counts_to_results(
+            counts, results, context="_get_map_estimates_for_plot"
+        )
     return results.get_map(
         targets=targets,
         use_mean=use_mean,
@@ -266,7 +279,10 @@ def _get_layouts_for_plot(results) -> dict[str, "AxisLayout"]:
 def _get_cell_assignment_probabilities_for_plot(
     results, *, counts, batch_size=None, use_mean=False
 ):
-    """Get MAP component-assignment probabilities from SVI results."""
+    """Get MAP component-assignment probabilities from SVI mixture results."""
+    counts = _coerce_and_align_counts_to_results(
+        counts, results, context="_get_cell_assignment_probabilities_for_plot"
+    )
     # Use optional batching to avoid OOM on large cell counts.
     assignment_info = results.cell_type_probabilities_map(
         counts=counts,
@@ -283,6 +299,9 @@ def _get_cell_assignment_probabilities_for_plot(
 ):
     """Get component-assignment probabilities from MCMC results."""
     _ = use_mean
+    counts = _coerce_and_align_counts_to_results(
+        counts, results, context="_get_cell_assignment_probabilities_for_plot"
+    )
     # Use optional batching to avoid OOM on large cell counts.
     assignment_info = results.cell_type_probabilities(
         counts=counts, batch_size=batch_size, verbose=False
@@ -308,6 +327,9 @@ def _get_biological_ppc_samples_for_plot(
     zero-inflation gate.  Follows the same save/restore pattern as
     ``_get_predictive_samples_for_plot``.
     """
+    counts = _coerce_and_align_counts_to_results(
+        counts, results, context="_get_biological_ppc_samples_for_plot"
+    )
     bio_result = results.get_ppc_samples_biological(
         rng_key=rng_key,
         n_samples=n_samples,
@@ -361,6 +383,9 @@ def _get_denoised_counts_for_plot(
 
     Returns a 2-D ``(n_cells, n_genes)`` numpy array.
     """
+    counts = _coerce_and_align_counts_to_results(
+        counts, results, context="_get_denoised_counts_for_plot"
+    )
     denoised = results.denoise_counts_map(
         counts=counts,
         method=method,
@@ -381,6 +406,9 @@ def _get_denoised_counts_for_plot(
     Averages over posterior samples to produce a single 2-D
     ``(n_cells, n_genes)`` numpy array.
     """
+    counts = _coerce_and_align_counts_to_results(
+        counts, results, context="_get_denoised_counts_for_plot"
+    )
     denoised = results.denoise_counts(
         counts=counts,
         method=method,

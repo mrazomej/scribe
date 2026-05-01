@@ -10,6 +10,7 @@ import jax.numpy as jnp
 from ._common import console
 from ._interactive import PlotResultCollection, plot_function
 from .dispatch import _get_layouts_for_plot
+from .gene_selection import _coerce_and_align_counts_to_results
 
 
 def _compute_correlation_matrix(samples, n_samples):
@@ -88,6 +89,10 @@ def plot_correlation_heatmap(
         otherwise. Each value wraps the figure, axes, and metadata.
     """
     console.print("[dim]Plotting correlation heatmap...[/dim]")
+    if counts is not None:
+        counts = _coerce_and_align_counts_to_results(
+            counts, results, context="plot_correlation_heatmap"
+        )
     # Seaborn clustermap owns its own figure/axes objects, so custom axis
     # injection is intentionally unsupported for this entry point.
     if fig is not None or ax is not None or axes is not None:

@@ -31,7 +31,7 @@ from ._interactive import (
     plot_function,
 )
 from .dispatch import _get_layouts_for_plot, _get_map_estimates_for_plot
-from .gene_selection import _coerce_counts
+from .gene_selection import _coerce_and_align_counts_to_results, _coerce_counts
 
 
 # =========================================================================
@@ -331,7 +331,9 @@ def _prepare_calibration_data(
         - ``annotations``: list of annotation strings
         Returns ``None`` when r/p are unavailable.
     """
-    counts = _coerce_counts(counts)
+    counts = _coerce_and_align_counts_to_results(
+        counts, results, context="_prepare_calibration_data"
+    )
     # Request only required keys up front so this diagnostic works for
     # non-mixture and non-BNB models without forcing optional parameters.
     required_targets = ["r", "p"]

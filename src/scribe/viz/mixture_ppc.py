@@ -33,7 +33,10 @@ from .dispatch import (
     _get_map_like_predictive_samples_for_plot,
     _get_cell_assignment_probabilities_for_plot,
 )
-from .gene_selection import _coerce_counts, _get_gene_names
+from .gene_selection import (
+    _coerce_and_align_counts_to_results,
+    _get_gene_names,
+)
 from .ppc_rendering import (
     compute_adaptive_max_bin,
     get_ppc_render_options,
@@ -44,7 +47,9 @@ from .ppc_rendering import (
 
 def _select_divergent_genes(results, counts, n_rows, n_cols):
     """Select genes with highest divergence across components, binned by expression."""
-    counts = _coerce_counts(counts)
+    counts = _coerce_and_align_counts_to_results(
+        counts, results, context="_select_divergent_genes"
+    )
     parameterization = results.model_config.parameterization
     if parameterization in ["linked", "mean_prob", "odds_ratio", "mean_odds"]:
         param_name = "mu"
@@ -732,6 +737,7 @@ def _prepare_mixture_ppc_data(
     )
 
     results_subset = results[top_gene_indices]
+    counts_subset = counts[:, top_gene_indices]
 
     rng_key = random.PRNGKey(42)
 
@@ -747,7 +753,7 @@ def _prepare_mixture_ppc_data(
             cell_batch_size=500,
             store_samples=False,
             verbose=True,
-            counts=counts,
+            counts=counts_subset,
         )
         mixture_samples_np = np.array(mixture_samples)
         del mixture_samples
@@ -782,7 +788,7 @@ def _prepare_mixture_ppc_data(
                 rng_key=subkey,
                 cell_batch_size=500,
                 verbose=True,
-                counts=counts,
+                counts=counts_subset,
             )
 
             component_samples_np = np.array(component_samples)
@@ -1068,7 +1074,9 @@ def plot_mixture_ppc(
         close=close,
     )
 
-    counts = _coerce_counts(counts)
+    counts = _coerce_and_align_counts_to_results(
+        counts, results, context="plot_mixture_ppc"
+    )
 
     # Resolve grid dimensions: explicit kwargs > viz_cfg > defaults
     # Mixture PPC defaults to 1500 samples (heavier computation).
