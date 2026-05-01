@@ -251,14 +251,23 @@ class LogisticNormalMultinomialLikelihood(Likelihood):
                     sample_prior(spec, dims, model_config)
 
                 # (c)/(d) Optional diagonal Gaussian noise in ALR space.
+                # When d_mode="learned", the noise eps ~ N(0, I) is a
+                # reparameterization artifact whose variational posterior
+                # equals its prior (zero KL contribution).  We sample it
+                # outside the ELBO's trace via ``block`` so that
+                # TraceMeanField_ELBO does not require a guide site for it
+                # (see @sec-lnm-linear-vae-form in the paper).
                 if self._d_mode == "learned":
                     d_vec = param_values[self._d_param_name]
                     d_vec = jnp.maximum(jnp.asarray(d_vec), _D_EPS)
                     sigma = jnp.sqrt(d_vec)
-                    eps = numpyro.sample(
-                        "lnm_eps",
-                        dist.Normal(0.0, 1.0).expand([g_minus_1]).to_event(1),
-                    )
+                    with numpyro.handlers.block():
+                        eps = numpyro.sample(
+                            "lnm_eps",
+                            dist.Normal(0.0, 1.0)
+                            .expand([g_minus_1])
+                            .to_event(1),
+                        )
                     y = y_decoded + sigma * eps
                 else:
                     y = y_decoded
@@ -300,10 +309,13 @@ class LogisticNormalMultinomialLikelihood(Likelihood):
                 d_vec = param_values[self._d_param_name]
                 d_vec = jnp.maximum(jnp.asarray(d_vec), _D_EPS)
                 sigma = jnp.sqrt(d_vec)
-                eps = numpyro.sample(
-                    "lnm_eps",
-                    dist.Normal(0.0, 1.0).expand([g_minus_1]).to_event(1),
-                )
+                with numpyro.handlers.block():
+                    eps = numpyro.sample(
+                        "lnm_eps",
+                        dist.Normal(0.0, 1.0)
+                        .expand([g_minus_1])
+                        .to_event(1),
+                    )
                 y = y_decoded + sigma * eps
             else:
                 y = y_decoded
@@ -638,14 +650,19 @@ class LNMWithVCPLikelihood(LogisticNormalMultinomialLikelihood):
                 sample_prior(spec, dims, model_config)
 
             # (d) Optional diagonal Gaussian noise in ALR space.
+            # See comment in the base class sample() for the block()
+            # rationale: q(eps) = p(eps), so KL = 0 by construction.
             if self._d_mode == "learned":
                 d_vec = jnp.maximum(
                     jnp.asarray(param_values[self._d_param_name]), _D_EPS
                 )
-                eps = numpyro.sample(
-                    "lnm_eps",
-                    dist.Normal(0.0, 1.0).expand([g_minus_1]).to_event(1),
-                )
+                with numpyro.handlers.block():
+                    eps = numpyro.sample(
+                        "lnm_eps",
+                        dist.Normal(0.0, 1.0)
+                        .expand([g_minus_1])
+                        .to_event(1),
+                    )
                 y = y_decoded + jnp.sqrt(d_vec) * eps
             else:
                 y = y_decoded

@@ -148,10 +148,10 @@ def test_sample_traces_expected_sites(d_mode: str, tiny_lnm_model_config):
     assert "u_T" in tr
     assert "z" in tr
     assert "counts" in tr
-    if d_mode == "low_rank":
-        assert "lnm_eps" not in tr
-    else:
-        assert "lnm_eps" in tr
+    # lnm_eps is wrapped in numpyro.handlers.block() so that
+    # TraceMeanField_ELBO does not require a guide site for it (the
+    # variational posterior equals the prior, contributing zero KL).
+    assert "lnm_eps" not in tr
 
 
 def test_sample_requires_vae_cell_fn(tiny_lnm_model_config):

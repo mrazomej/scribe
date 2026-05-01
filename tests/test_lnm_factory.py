@@ -198,7 +198,8 @@ def test_create_model_lnmvcp_learned():
         counts=counts,
     )
     assert "p_capture" in model_trace
-    assert "lnm_eps" in model_trace
+    # lnm_eps is blocked from the trace (q = p, KL = 0 by construction).
+    assert "lnm_eps" not in model_trace
 
 
 def test_svi_smoke_fit_lnmvcp():
