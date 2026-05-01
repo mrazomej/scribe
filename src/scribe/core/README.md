@@ -14,6 +14,8 @@ The core module provides:
    profiling
 3. **Cell Type Assignment**: Advanced methods for mixture model analysis and
    cell classification
+4. **Gene Coverage Filtering**: Pre-fit gene selection and pooled "other"
+   aggregation for stable compositional modeling
 
 ## Key Components
 
@@ -145,6 +147,31 @@ is what `scribe.api.fit` calls. See the qmd section
 "Training stability: practical considerations" for the motivation.
 
 ### Cell Type Assignment (`cell_type_assignment.py`)
+### Gene Coverage Filtering (`gene_coverage.py`)
+
+Pre-fit helpers for selecting genes by cumulative empirical transcriptome
+coverage and pooling excluded genes into a trailing "other" pseudo-gene:
+
+```python
+from scribe.core import (
+    compute_empirical_gene_coverage_mask,
+    aggregate_counts_by_mask,
+)
+
+# Counts shape: (n_cells, n_genes)
+mask = compute_empirical_gene_coverage_mask(
+    counts=count_data,
+    coverage=0.95,
+    dataset_indices=dataset_indices,  # optional multi-dataset union mode
+)
+
+filtered_counts = aggregate_counts_by_mask(count_data, mask)
+# filtered_counts shape: (n_cells, n_kept + 1) when any genes are excluded
+```
+
+In multi-dataset mode, masks are computed per dataset and unioned so genes
+abundant in any dataset are retained globally.
+
 
 Advanced utilities for analyzing mixture models and assigning cell types:
 

@@ -381,8 +381,9 @@ de = compare(
 )
 ```
 
-**Note**: Combining `gene_mask` with `p_samples` raises a `ValueError` because
-gene aggregation under gene-specific probabilities is ill-defined.
+`gene_mask` can be combined with gene-specific `p_samples`. In that case, the
+pipeline samples compositions first (Gamma-normalize path) and then applies
+mask aggregation in simplex space before CLR differencing.
 
 ## Gene Expression Filter (`gene_mask`)
 
@@ -785,6 +786,22 @@ ScribeDEResults (base)
 ```
 
 The `compare()` factory returns the appropriate subclass based on `method=`.
+### Interaction with pre-fit `gene_coverage` filtering
+
+When a model was fit with pre-fit gene coverage filtering (for example,
+`scribe.fit(..., gene_coverage=0.95)`), excluded genes are already pooled into a
+trailing "other" pseudo-gene in model space.
+
+- **Empirical compare**: passing results objects with stored pre-filter metadata
+  automatically drops the trailing pooled coordinate from gene-level outputs.
+- **Parametric compare**: fitted logistic-normal dicts carry a
+  `"_has_coverage_prefilter"` marker; `compare(..., method="parametric")`
+  automatically treats the last coordinate as pooled "other" and excludes it
+  from reported gene-level results.
+
+An explicit `gene_mask` still works and is applied on top of this pre-filtered
+space when provided.
+
 All shared methods (`call_genes`, `compute_pefp`, `find_threshold`, `summary`)
 work identically on all three.
 

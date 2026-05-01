@@ -149,6 +149,11 @@ class ScribeSVIResults(
     # sufficient statistics (e.g., total UMI count) by summing across ALL genes.
     _original_n_genes: Optional[int] = None
 
+    # Optional pre-fit gene-coverage metadata populated by fit().
+    _gene_coverage: Optional[float] = None
+    _gene_coverage_mask: Optional[np.ndarray] = None
+    _excluded_gene_names: Optional[List[str]] = None
+
     # Internal: gene axis per param key for metadata-based subsetting (when
     # param_specs set). When present, _subset_params and
     # _subset_posterior_samples use this instead of heuristics.
@@ -651,6 +656,24 @@ class ScribeSVIResults(
             _n_cells_per_dataset=n_cells_per_dataset,
             _dataset_indices=dataset_indices,
             _original_n_genes=_merge_original_n_genes(aligned_results),
+            _gene_coverage=_merge_optional_scalar(
+                [
+                    getattr(res, "_gene_coverage", None)
+                    for res in aligned_results
+                ]
+            ),
+            _gene_coverage_mask=_merge_optional_equal_array(
+                [
+                    getattr(res, "_gene_coverage_mask", None)
+                    for res in aligned_results
+                ]
+            ),
+            _excluded_gene_names=_merge_optional_equal_list(
+                [
+                    getattr(res, "_excluded_gene_names", None)
+                    for res in aligned_results
+                ]
+            ),
             _gene_axis_by_key=getattr(first, "_gene_axis_by_key", None),
             _promoted_dataset_keys=promoted_dataset_keys,
         )
@@ -775,6 +798,9 @@ def _reorder_svi_result_genes(
         _n_cells_per_dataset=getattr(result, "_n_cells_per_dataset", None),
         _dataset_indices=getattr(result, "_dataset_indices", None),
         _original_n_genes=getattr(result, "_original_n_genes", None),
+        _gene_coverage=getattr(result, "_gene_coverage", None),
+        _gene_coverage_mask=getattr(result, "_gene_coverage_mask", None),
+        _excluded_gene_names=getattr(result, "_excluded_gene_names", None),
         _gene_axis_by_key=param_gene_axis
         or getattr(result, "_gene_axis_by_key", None),
     )
@@ -966,6 +992,44 @@ def _merge_original_n_genes(
             f"_original_n_genes mismatch across inputs: {non_null}"
         )
     return int(non_null[0])
+
+
+def _merge_optional_scalar(values: List[Optional[Any]]) -> Optional[Any]:
+    """Merge optional scalar-like metadata with strict equality checks."""
+    non_null = [v for v in values if v is not None]
+    if not non_null:
+        return None
+    if len(set(non_null)) != 1:
+        raise ValueError(f"Scalar metadata mismatch across inputs: {non_null}")
+    return non_null[0]
+
+
+def _merge_optional_equal_array(
+    values: List[Optional[np.ndarray]],
+) -> Optional[np.ndarray]:
+    """Merge optional array metadata requiring exact equality when present."""
+    non_null = [v for v in values if v is not None]
+    if not non_null:
+        return None
+    first = np.asarray(non_null[0])
+    for other in non_null[1:]:
+        if not np.array_equal(first, np.asarray(other)):
+            raise ValueError("Array metadata mismatch across inputs.")
+    return first.copy()
+
+
+def _merge_optional_equal_list(
+    values: List[Optional[List[str]]],
+) -> Optional[List[str]]:
+    """Merge optional list metadata requiring exact equality when present."""
+    non_null = [v for v in values if v is not None]
+    if not non_null:
+        return None
+    first = list(non_null[0])
+    for other in non_null[1:]:
+        if list(other) != first:
+            raise ValueError("List metadata mismatch across inputs.")
+    return first
 
 
 def _all_equal(values: List[Any]) -> bool:

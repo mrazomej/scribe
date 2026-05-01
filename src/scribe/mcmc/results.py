@@ -131,6 +131,11 @@ class ScribeMCMCResults(
     # lack ``is_dataset`` in their ParamSpec.
     _promoted_dataset_keys: Optional[set] = None
 
+    # Optional pre-fit gene-coverage metadata populated by fit().
+    _gene_coverage: Optional[float] = None
+    _gene_coverage_mask: Optional[np.ndarray] = None
+    _excluded_gene_names: Optional[List[str]] = None
+
     # -- wrapped MCMC object (None on subsets) -------------------------------
     _mcmc: Optional[Any] = field(default=None, repr=False)
 
@@ -380,6 +385,24 @@ class ScribeMCMCResults(
             _n_cells_per_dataset=n_cells_per_dataset,
             _dataset_indices=dataset_indices,
             _promoted_dataset_keys=promoted_dataset_keys,
+            _gene_coverage=_merge_optional_scalar(
+                [
+                    getattr(res, "_gene_coverage", None)
+                    for res in aligned_results
+                ]
+            ),
+            _gene_coverage_mask=_merge_optional_equal_array(
+                [
+                    getattr(res, "_gene_coverage_mask", None)
+                    for res in aligned_results
+                ]
+            ),
+            _excluded_gene_names=_merge_optional_equal_list(
+                [
+                    getattr(res, "_excluded_gene_names", None)
+                    for res in aligned_results
+                ]
+            ),
             _mcmc=None,
         )
 
@@ -798,6 +821,9 @@ def _reorder_mcmc_result_genes(
         denoised_counts=None,
         _n_cells_per_dataset=getattr(result, "_n_cells_per_dataset", None),
         _dataset_indices=getattr(result, "_dataset_indices", None),
+        _gene_coverage=getattr(result, "_gene_coverage", None),
+        _gene_coverage_mask=getattr(result, "_gene_coverage_mask", None),
+        _excluded_gene_names=getattr(result, "_excluded_gene_names", None),
         _mcmc=None,
     )
 
@@ -951,3 +977,41 @@ def _value_equal(left: Any, right: Any) -> bool:
     if hasattr(left, "shape") and hasattr(right, "shape"):
         return bool(jnp.array_equal(jnp.asarray(left), jnp.asarray(right)))
     return left == right
+
+
+def _merge_optional_scalar(values: List[Optional[Any]]) -> Optional[Any]:
+    """Merge optional scalar-like metadata with strict equality checks."""
+    non_null = [v for v in values if v is not None]
+    if not non_null:
+        return None
+    if len(set(non_null)) != 1:
+        raise ValueError(f"Scalar metadata mismatch across inputs: {non_null}")
+    return non_null[0]
+
+
+def _merge_optional_equal_array(
+    values: List[Optional[np.ndarray]],
+) -> Optional[np.ndarray]:
+    """Merge optional array metadata requiring exact equality when present."""
+    non_null = [v for v in values if v is not None]
+    if not non_null:
+        return None
+    first = np.asarray(non_null[0])
+    for other in non_null[1:]:
+        if not np.array_equal(first, np.asarray(other)):
+            raise ValueError("Array metadata mismatch across inputs.")
+    return first.copy()
+
+
+def _merge_optional_equal_list(
+    values: List[Optional[List[str]]],
+) -> Optional[List[str]]:
+    """Merge optional list metadata requiring exact equality when present."""
+    non_null = [v for v in values if v is not None]
+    if not non_null:
+        return None
+    first = list(non_null[0])
+    for other in non_null[1:]:
+        if list(other) != first:
+            raise ValueError("List metadata mismatch across inputs.")
+    return first

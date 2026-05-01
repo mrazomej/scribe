@@ -26,6 +26,26 @@ class CoreResultsMixin:
         ):
             self.n_components = self.model_config.n_components
 
+    @property
+    def gene_coverage(self) -> float | None:
+        """Coverage threshold used for pre-fit gene filtering, if any."""
+        return getattr(self, "_gene_coverage", None)
+
+    @property
+    def gene_coverage_mask(self):
+        """Boolean mask over original genes used for coverage filtering."""
+        return getattr(self, "_gene_coverage_mask", None)
+
+    @property
+    def excluded_gene_names(self):
+        """Gene names pooled into the trailing 'other' pseudo-gene."""
+        return getattr(self, "_excluded_gene_names", None)
+
+    @property
+    def has_gene_coverage_filter(self) -> bool:
+        """Whether this result was fit with pre-fit gene coverage filtering."""
+        return getattr(self, "_gene_coverage_mask", None) is not None
+
     # --------------------------------------------------------------------------
     # Create ScribeSVIResults from AnnData object
     # --------------------------------------------------------------------------

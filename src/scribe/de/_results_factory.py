@@ -291,6 +291,22 @@ def compare(
         _phi_samples_A = phi_A
         _phi_samples_B = phi_B
 
+        # If models were pre-filtered upstream and no explicit gene_mask is
+        # provided, treat the trailing pooled dimension as "other" by default.
+        if gene_mask is None:
+            _has_prefilter_A = (
+                getattr(model_A, "_gene_coverage_mask", None) is not None
+            )
+            _has_prefilter_B = (
+                getattr(model_B, "_gene_coverage_mask", None) is not None
+            )
+            if _has_prefilter_A and _has_prefilter_B:
+                _d_current = int(r_A.shape[-1])
+                if _d_current >= 2:
+                    gene_mask = jnp.asarray(
+                        [True] * (_d_current - 1) + [False], dtype=bool
+                    )
+
         # Use layouts from condition A (both conditions share the same
         # model structure, so layouts are identical).
         _param_layouts = layouts_A
@@ -453,7 +469,9 @@ def _compare_parametric(
         )
 
     D_full = mu_A.shape[-1] + 1
-    drop_last = gene_mask is not None
+    drop_last = gene_mask is not None or _has_coverage_prefilter(
+        model_A, model_B
+    )
     D_user = D_full - 1 if drop_last else D_full
 
     if gene_mask is not None and gene_names is not None:
@@ -479,6 +497,27 @@ def _compare_parametric(
         label_A=label_A,
         label_B=label_B,
         _drop_last_gene=drop_last,
+    )
+
+
+def _has_coverage_prefilter(model_A, model_B) -> bool:
+    """Return True when both parametric model inputs indicate pooled coverage.
+
+    Parameters
+    ----------
+    model_A, model_B : object
+        Parametric inputs accepted by ``extract_alr_params``.
+
+    Returns
+    -------
+    bool
+        ``True`` when both models are dicts carrying
+        ``"_has_coverage_prefilter" == True``.
+    """
+    if not (isinstance(model_A, dict) and isinstance(model_B, dict)):
+        return False
+    return bool(model_A.get("_has_coverage_prefilter")) and bool(
+        model_B.get("_has_coverage_prefilter")
     )
 
 

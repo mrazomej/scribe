@@ -323,6 +323,7 @@ def fit(
     # Data options
     cells_axis: int = 0,
     layer: Optional[str] = None,
+    gene_coverage: Optional[float] = None,
     seed: int = 42,
     # Annotation prior options (for mixture models)
     annotation_key: Optional[Union[str, List[str]]] = None,
@@ -1070,7 +1071,6 @@ def fit(
     if variable_capture is not None or zero_inflation is not None:
         _zi = zero_inflation if zero_inflation is not None else False
         _vc = variable_capture if variable_capture is not None else True
-
         if _is_lnm_param:
             if _zi:
                 raise ValueError(
@@ -1081,10 +1081,9 @@ def fit(
             _resolved = "lnmvcp" if _vc else "lnm"
         else:
             _resolved = (
-                "zinbvcp" if _zi and _vc
-                else "zinb" if _zi
-                else "nbvcp" if _vc
-                else "nbdm"
+                "zinbvcp"
+                if _zi and _vc
+                else "zinb" if _zi else "nbvcp" if _vc else "nbdm"
             )
         # If the user also passed an explicit model= that differs, raise.
         if model.lower() != _default_model and model.lower() != _resolved:
@@ -1103,7 +1102,6 @@ def fit(
         # Normalize deprecated aliases before validation.
         model_lower = model.lower()
         if model_lower in _DEPRECATED_MODEL_ALIASES:
-            import warnings
             canonical = _DEPRECATED_MODEL_ALIASES[model_lower]
             warnings.warn(
                 f"Model name '{model_lower}' is deprecated; "
@@ -1160,17 +1158,7 @@ def fit(
     count_data, adata, n_cells, n_genes = process_counts_data(
         counts, data_config
     )
-
-    # Auto-select ALR reference for LNM from data (overridable via kwarg).
-    if alr_reference_idx is None and model.lower() in ("lnm", "lnmvcp"):
-        from .models.components.likelihoods.lnm import select_alr_reference
-        import logging
-
-        alr_reference_idx = select_alr_reference(count_data)
-        logging.getLogger(__name__).info(
-            "LNM: auto-selected gene %d as ALR reference (highest geometric mean).",
-            alr_reference_idx,
-        )
+    import numpy as np
 
     # ==========================================================================
     # Step 2c (LNM-only): data-driven r_T prior
@@ -1339,6 +1327,158 @@ def fit(
         )
 
     # ==========================================================================
+    # Step 2b: Optional pre-fit gene coverage filtering
+    # ==========================================================================
+    _gene_coverage_mask = None
+    _gene_coverage_rank = None
+    _excluded_gene_names = None
+    _filtered_gene_names = None
+    _original_n_genes = n_genes
+    _adata_for_inference = adata
+
+    if gene_coverage is not None:
+        from .core.gene_coverage import (
+            aggregate_counts_by_mask,
+            build_filtered_gene_names,
+            compute_empirical_gene_coverage_mask,
+            compute_gene_coverage_rank,
+        )
+        import numpy as np
+
+        # Compute the keep mask using pooled cells (single dataset) or
+        # union-of-per-dataset masks (multi-dataset).
+        _gene_coverage_mask = compute_empirical_gene_coverage_mask(
+            count_data,
+            coverage=gene_coverage,
+            dataset_indices=dataset_indices,
+        )
+        _gene_coverage_rank = compute_gene_coverage_rank(count_data)
+        _count_data_precoverage = np.asarray(count_data)
+
+        # Annotate AnnData gene metadata in the original gene space.
+        if adata is not None:
+            adata.var["scribe_gene_coverage_included"] = _gene_coverage_mask
+            adata.var["scribe_gene_coverage_rank"] = _gene_coverage_rank
+            full_gene_names = [str(name) for name in adata.var_names.tolist()]
+            _filtered_gene_names, _excluded_gene_names = (
+                build_filtered_gene_names(
+                    gene_names=full_gene_names,
+                    mask=_gene_coverage_mask,
+                )
+            )
+
+            # AnnData var does not naturally represent the pooled synthetic
+            # "other" gene row, so results metadata is attached manually after
+            # inference. Passing adata into the factories would mismatch n_genes.
+            if int(np.asarray(~_gene_coverage_mask, dtype=int).sum()) > 0:
+                _adata_for_inference = None
+
+        # Aggregate excluded genes into a trailing "other" column and update
+        # model-space gene count for all downstream configuration/inference.
+        count_data = aggregate_counts_by_mask(
+            count_data, mask=_gene_coverage_mask
+        )
+        n_genes = int(count_data.shape[1])
+        n_kept = int(np.asarray(_gene_coverage_mask, dtype=bool).sum())
+
+        # Log global summary and per-dataset breakdown for transparency.
+        if dataset_indices is not None:
+            _ds = np.asarray(dataset_indices).ravel()
+            _per_dataset = []
+            for _dataset_id in np.unique(_ds):
+                _ds_mask = _ds == _dataset_id
+                _orig_ds_counts = _count_data_precoverage[_ds_mask, :]
+                _ds_keep_mask = compute_empirical_gene_coverage_mask(
+                    _orig_ds_counts,
+                    coverage=gene_coverage,
+                    dataset_indices=None,
+                )
+                _per_dataset.append(
+                    f"{_dataset_id}:{int(_ds_keep_mask.sum())}/{_original_n_genes}"
+                )
+            warnings.warn(
+                "Applied gene_coverage pre-filtering with union across datasets. "
+                f"Kept {n_kept}/{_original_n_genes} genes; "
+                f"per-dataset keep counts: {', '.join(_per_dataset)}.",
+                UserWarning,
+                stacklevel=2,
+            )
+        else:
+            warnings.warn(
+                "Applied gene_coverage pre-filtering. "
+                f"Kept {n_kept}/{_original_n_genes} genes and pooled "
+                f"{_original_n_genes - n_kept} genes into 'other'.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    # Resolve ALR reference for LNM after optional gene coverage filtering so
+    # the final index always matches the model-space count matrix.
+    if model.lower() in ("lnm", "lnmvcp"):
+        from .models.components.likelihoods.lnm import select_alr_reference
+        import logging
+
+        _has_pooled_other = bool(
+            _gene_coverage_mask is not None
+            and np.any(~np.asarray(_gene_coverage_mask, dtype=bool))
+        )
+        _candidate_counts = (
+            count_data[:, :-1] if _has_pooled_other else count_data
+        )
+
+        if alr_reference_idx is None:
+            # Auto-selection only considers original genes. The pooled "other"
+            # pseudo-gene is excluded by construction when present.
+            alr_reference_idx = int(select_alr_reference(_candidate_counts))
+            logging.getLogger(__name__).info(
+                "LNM: auto-selected gene %d as ALR reference (%s).",
+                alr_reference_idx,
+                (
+                    "highest geometric mean among retained genes "
+                    "(excluding pooled 'other')"
+                    if _has_pooled_other
+                    else "highest geometric mean"
+                ),
+            )
+        else:
+            _ref_input = int(alr_reference_idx)
+            if gene_coverage is None:
+                if not (0 <= _ref_input < n_genes):
+                    raise ValueError(
+                        f"alr_reference_idx must be in [0, {n_genes - 1}], "
+                        f"got {_ref_input}."
+                    )
+                alr_reference_idx = _ref_input
+            else:
+                if not (0 <= _ref_input < _original_n_genes):
+                    raise ValueError(
+                        "With gene_coverage enabled, alr_reference_idx is "
+                        "interpreted in the original gene space and must be "
+                        f"in [0, {_original_n_genes - 1}], got {_ref_input}."
+                    )
+                if _gene_coverage_mask is not None and not bool(
+                    _gene_coverage_mask[_ref_input]
+                ):
+                    raise ValueError(
+                        "alr_reference_idx points to a gene excluded by "
+                        "gene_coverage filtering (pooled into 'other'). "
+                        "Choose a retained gene index."
+                    )
+                if _gene_coverage_mask is not None and _has_pooled_other:
+                    # Map original-gene index -> filtered-gene index.
+                    alr_reference_idx = int(
+                        np.asarray(_gene_coverage_mask[:_ref_input]).sum()
+                    )
+                else:
+                    alr_reference_idx = _ref_input
+
+            if _has_pooled_other and alr_reference_idx == (n_genes - 1):
+                raise ValueError(
+                    "alr_reference_idx resolved to the pooled 'other' gene. "
+                    "Please select a retained original gene."
+                )
+
+    # ==========================================================================
     # Step 2c: Build annotation prior logits (if requested)
     # ==========================================================================
     annotation_prior_logits = None
@@ -1381,7 +1521,9 @@ def fit(
                 _normalize_prior_type_name(expression_prior)
                 != HierarchicalPriorType.NONE.value
             ):
-                _expression_prior_old = _normalize_prior_type_name(expression_prior)
+                _expression_prior_old = _normalize_prior_type_name(
+                    expression_prior
+                )
                 expression_prior = HierarchicalPriorType.NONE.value
                 downgraded_messages.append(
                     f"expression_prior='{_expression_prior_old}' -> 'none'"
@@ -1537,6 +1679,12 @@ def fit(
             capture_clamp_min=capture_clamp_min,
             capture_clamp_max=capture_clamp_max,
             capture_amortization=effective_capture_amortization,
+        )
+
+    # Persist gene coverage threshold in model_config for reproducibility.
+    if gene_coverage is not None:
+        model_config = model_config.model_copy(
+            update={"gene_coverage": gene_coverage}
         )
 
     # ==========================================================================
@@ -1800,7 +1948,7 @@ def fit(
         model_config=model_config,
         count_data=count_data,
         inference_config=inference_config,
-        adata=adata,
+        adata=_adata_for_inference,
         n_cells=n_cells,
         n_genes=n_genes,
         data_config=data_config,
@@ -1809,6 +1957,41 @@ def fit(
         dataset_indices=dataset_indices,
         enable_x64=effective_x64,
     )
+
+    # Attach gene-coverage metadata and reconstruct result-level gene metadata
+    # when an "other" pseudo-gene was introduced during pre-filtering.
+    if _gene_coverage_mask is not None:
+        import pandas as pd
+        import numpy as np
+
+        object.__setattr__(results, "_gene_coverage", float(gene_coverage))
+        object.__setattr__(
+            results,
+            "_gene_coverage_mask",
+            np.asarray(_gene_coverage_mask, dtype=bool),
+        )
+        object.__setattr__(results, "_original_n_genes", int(_original_n_genes))
+        object.__setattr__(
+            results,
+            "_excluded_gene_names",
+            (
+                list(_excluded_gene_names)
+                if _excluded_gene_names is not None
+                else None
+            ),
+        )
+
+        # When AnnData could not be forwarded into factories (due to the
+        # pooled "other" pseudo-gene), restore equivalent metadata on results.
+        if adata is not None and _adata_for_inference is None:
+            if _filtered_gene_names is None:
+                _filtered_gene_names = [f"gene_{i}" for i in range(n_genes)]
+            _var = pd.DataFrame(index=pd.Index(_filtered_gene_names))
+            object.__setattr__(results, "var", _var)
+            object.__setattr__(results, "n_vars", int(_var.shape[0]))
+            object.__setattr__(results, "obs", adata.obs.copy())
+            object.__setattr__(results, "uns", adata.uns.copy())
+            object.__setattr__(results, "n_obs", int(adata.n_obs))
 
     # Attach annotation metadata to the results for downstream use
     # (e.g. label-based component matching in DE).

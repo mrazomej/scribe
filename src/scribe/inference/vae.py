@@ -120,4 +120,9 @@ def _run_vae_inference(
         n_genes=n_genes,
         model_config=model_config_for_results,
         vae_guide_family=vae_guide_family,
+        obs=adata.obs.copy() if adata is not None else None,
+        var=adata.var.copy() if adata is not None else None,
+        uns=adata.uns.copy() if adata is not None else None,
+        n_obs=adata.n_obs if adata is not None else None,
+        n_vars=adata.n_vars if adata is not None else None,
     )

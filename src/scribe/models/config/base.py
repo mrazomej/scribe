@@ -226,6 +226,7 @@ class ModelConfig(BaseModel):
         d.setdefault("expression_anchor_sigma", 0.3)
         d.setdefault("d_mode", "low_rank")
         d.setdefault("alr_reference_idx", -1)
+        d.setdefault("gene_coverage", None)
 
         # Migrate legacy top-level capture prior fields into priors dict.
         old_capture = d.pop("capture_prior", "default")
@@ -533,6 +534,18 @@ class ModelConfig(BaseModel):
             "moderate values (0.3-0.5) are recommended; large values "
             "(>1.0) give weak anchoring. Default 0.3 allows ~1.35x "
             "fold variation around the anchor."
+        ),
+    )
+
+    # Optional pre-fit gene-coverage filtering threshold.
+    # When set, fit() may reduce the modeled gene space by keeping genes
+    # that explain this cumulative abundance fraction and pooling the rest.
+    gene_coverage: Optional[float] = Field(
+        None,
+        description=(
+            "Optional cumulative abundance coverage threshold in (0, 1] used "
+            "for pre-fit gene filtering. Genes outside the retained set may "
+            "be aggregated into a trailing 'other' pseudo-gene."
         ),
     )
 

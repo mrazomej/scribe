@@ -349,7 +349,7 @@ class NormalizationMixin:
             rng_key = random.PRNGKey(42)
 
         # Use the shared fitting function with distribution class
-        return fit_logistic_normal_from_posterior(
+        fitted = fit_logistic_normal_from_posterior(
             posterior_samples=self.posterior_samples,
             n_components=self.n_components,
             rng_key=rng_key,
@@ -362,3 +362,13 @@ class NormalizationMixin:
             verbose=verbose,
             gene_mask=gene_mask,
         )
+
+        # Carry pre-fit coverage metadata forward so downstream DE utilities
+        # can treat the trailing pooled dimension as "other" automatically.
+        if isinstance(fitted, dict):
+            fitted["_has_coverage_prefilter"] = bool(
+                getattr(self, "_gene_coverage_mask", None) is not None
+            )
+            fitted["_gene_coverage"] = getattr(self, "_gene_coverage", None)
+
+        return fitted
