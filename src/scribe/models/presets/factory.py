@@ -32,6 +32,13 @@ from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import jax.numpy as jnp
 import numpyro
+# ``flax.linen`` is hoisted to module scope (rather than locally imported
+# inside ``_create_vae_model``) so that the closures defined in this file
+# can safely reference ``nn.initializers``. A function-local import would
+# otherwise force Python to treat ``nn`` as a local variable in the
+# enclosing scope, breaking any inner closure that references it before
+# the local import statement is reached.
+from flax import linen as nn
 
 from ..builders import GuideBuilder, ModelBuilder
 from ..builders.parameter_specs import (
@@ -274,10 +281,11 @@ def _create_vae_model(
         # ``(rng, shape, dtype) -> array`` callable, not an array.
         bias_init = None
         if is_y_alr and _empirical_alr_bias is not None:
-            from flax import linen as nn  # local import: lightweight
-
             # Cast to float32 so the constant matches the layer's dtype
             # without forcing a JAX-trace-time conversion at every step.
+            # ``nn`` and ``jnp`` are both module-level imports — see the
+            # note on the import at the top of this file for why they
+            # cannot be re-imported inside this enclosing function.
             _bias_arr = jnp.asarray(_empirical_alr_bias, dtype=jnp.float32)
             bias_init = nn.initializers.constant(_bias_arr)
         return DecoderOutputHead(
@@ -509,10 +517,12 @@ def _create_vae_model(
     # 10. Build guide
     guide = GuideBuilder().from_specs(param_specs).build()
 
-    # 11. Validate (optional) — VAE guide requires counts; use dummy data
+    # 11. Validate (optional) — VAE guide requires counts; use dummy data.
+    # ``jnp`` is already imported at module scope; re-importing it inside
+    # the function would promote it to a local variable for Python's
+    # entire scope analysis of ``_create_vae_model``, breaking inner
+    # closures that reference ``jnp`` before this branch is reached.
     if validate:
-        import jax.numpy as jnp
-
         dummy_counts = jnp.zeros((10, n_genes))
         try:
             with numpyro.handlers.seed(rng_seed=0):

@@ -2057,13 +2057,46 @@ $$
 $${#eq-lnm-stability-rT-mom}
 
 SCRIBE automatically replaces the default $\text{LogNormal}(0, 1)$ prior
-on $r_T$ with $\text{LogNormal}(\log \hat{r}_T,\,1)$ when the user fits
-an `lnm`/`lnmvcp` model and does not pass an explicit override through
-the `priors` keyword. The prior median therefore starts at the data's
-center of mass; the spread of $\sigma = 1$ in log-space remains generous
-(a factor of $e \approx 2.7$ on each side) so the prior does not
-over-constrain the posterior. User-supplied priors always take
-precedence (see the LNM block of `scribe.api.fit`).
+on $r_T$ with $\text{LogNormal}(\log \hat{r}_T,\,\sigma_{\log})$ when the
+user fits an `lnm`/`lnmvcp` model and does not pass an explicit override
+through the `priors` keyword. The prior median therefore starts at the
+data's centre of mass; the spread $\sigma_{\log}$ in log-space remains
+generous so the prior does not over-constrain the posterior.
+User-supplied priors always take precedence (see the LNM block of
+`scribe.api.fit`).
+
+**LNM versus LNMVCP: an asymmetry in the estimator.** For the base
+`lnm` model, $u_T^{(c)} \sim \text{NB}(r_T, \hat{p})$ for every cell,
+so @eq-lnm-stability-rT-mom is the *exact* method-of-moments inversion
+and $\sigma_{\log} = 1$ is appropriate. For `lnmvcp`, however, the
+generative model places a per-cell capture probability
+$p_{\text{capture}}^{(c)} \sim \text{Beta}(a, b)$ that modulates
+$\hat{p}$ to $\hat p^{(c)} = \hat{p}\,p_{\text{capture}}^{(c)} / (1 -
+\hat{p}(1 - p_{\text{capture}}^{(c)}))$, so the marginal of $u_T^{(c)}$
+is a Beta--NB compound rather than a pure NB. By the law of total
+variance,
+
+$$
+\operatorname{Var}[u_T^{(c)}] \,=\,
+\underbrace{\mathbb{E}\!\left[\operatorname{Var}[u_T \mid p_{\text{capture}}]\right]}_{\text{pure-NB variance averaged over } p_{\text{capture}}}
+\,+\,
+\underbrace{\operatorname{Var}\!\left[\mathbb{E}[u_T \mid p_{\text{capture}}]\right]}_{\text{extra variance from cell-to-cell capture variability}},
+$${#eq-lnm-stability-rT-vcp-decomp}
+
+so the empirical variance is **larger** than what a pure NB at the
+observed mean would predict, and @eq-lnm-stability-rT-mom returns an
+$\hat{r}_T$ smaller than the true $r_T$. The bias is bounded (typically
+within a factor of $\sim\!5$ in realistic single-cell regimes) but does
+shift the prior median below the truth. To compensate, SCRIBE applies
+$\sigma_{\log} = 1.5$ for `lnmvcp` and $\sigma_{\log} = 1$ for `lnm`.
+The wider LNMVCP prior covers $\hat{r}_T$ within roughly two orders of
+magnitude on either side of the median --- comfortably enough to
+absorb the downward bias without giving up the close-to-data anchoring
+the data-driven mean provides. A more sophisticated alternative would
+fit the full Beta--NB compound moments (jointly recovering
+$r_T,\,\hat{p}$ and the Beta hyperparameters $a,\,b$) before setting
+the prior, but the order-of-magnitude correctness from the cheap
+estimator plus a wider spread is sufficient in practice.
 
 ### Why clamp the encoder $\log\sigma$ head? {#sec-lnm-stability-log-sigma}
 

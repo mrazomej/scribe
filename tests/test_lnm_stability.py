@@ -162,6 +162,17 @@ class TestMomentsToLogNormalRT:
         # test; the point is it is not stuck near the prior default of 1.
         assert 5.0 < r_T_estimate < 500.0
 
+    def test_sigma_log_kwarg_propagates(self):
+        # The helper exposes ``sigma_log`` as a kwarg; ``api.py`` uses
+        # this to widen the prior for LNMVCP (where the moment-of-moments
+        # estimator is biased downward by capture-variability noise).
+        rng = np.random.default_rng(2)
+        counts = rng.negative_binomial(n=50, p=0.005, size=(200, 5))
+        _, sigma_a = moments_to_lognormal_r_T(counts, sigma_log=1.0)
+        _, sigma_b = moments_to_lognormal_r_T(counts, sigma_log=1.5)
+        assert sigma_a == 1.0
+        assert sigma_b == 1.5
+
     def test_under_dispersed_falls_back_to_floor(self):
         # When var(u_T) <= mean(u_T), the moment-of-moments inversion
         # is undefined; the helper must fall back to ``min_r_T``.
@@ -376,6 +387,30 @@ class TestInjectLNMVAEDataInit:
         new_cfg = inject_lnm_vae_data_init(cfg, counts)
         assert cfg.vae.empirical_alr_bias_init is None
         assert new_cfg is not cfg
+
+    def test_factory_creates_lnm_model_with_data_init(self):
+        # Regression test for the closure-scoping bug discovered when
+        # the y_alr ``bias_init`` branch was first wired in: a redundant
+        # ``import jax.numpy as jnp`` inside ``_create_vae_model``
+        # promoted ``jnp`` to a function-local variable, breaking the
+        # inner ``_build_head`` closure that referenced it before the
+        # local import was reached. The fix removed the redundant
+        # import and hoisted ``flax.linen`` to module scope. This test
+        # exercises the full factory build path with empirical-bias
+        # init populated, which is exactly the path that failed.
+        from scribe.models.presets.factory import create_model
+
+        cfg = self._toy_lnm_config()
+        rng = np.random.default_rng(7)
+        counts = jnp.asarray(
+            rng.integers(1, 50, size=(20, 6)), dtype=jnp.float32
+        )
+        new_cfg = inject_lnm_vae_data_init(cfg, counts)
+        # ``validate=False`` because the dry-run path requires more
+        # plumbing than this minimal smoke test provides; the closure
+        # bug we are guarding against fires *before* validation.
+        model, guide, _ = create_model(new_cfg, n_genes=6, validate=False)
+        assert callable(model) and callable(guide)
 
     def test_uses_input_transform_from_config(self):
         # If the config's ``input_transform`` changes, the

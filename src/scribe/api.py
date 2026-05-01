@@ -1198,7 +1198,20 @@ def fit(
     ):
         from .core.lnm_data_init import moments_to_lognormal_r_T
 
-        _r_T_mu_log, _r_T_sigma_log = moments_to_lognormal_r_T(count_data)
+        # For LNMVCP, the per-cell capture variability inflates
+        # ``var(u_T)`` beyond what a fixed-``p_hat`` NB would predict.
+        # The method-of-moments inversion attributes this extra
+        # variance to ``r_T``, biasing the point estimate downward
+        # (typically by a factor of ~5 in realistic regimes). To keep
+        # the prior permissive enough that the posterior can recover
+        # the true ``r_T``, we widen ``sigma_log`` for LNMVCP. The
+        # base LNM model has no such bias and uses the default
+        # ``sigma_log=1.0``. See the qmd "Why a data-driven prior on
+        # r_T?" subsection for the derivation.
+        _sigma_log = 1.5 if model.lower() == "lnmvcp" else 1.0
+        _r_T_mu_log, _r_T_sigma_log = moments_to_lognormal_r_T(
+            count_data, sigma_log=_sigma_log
+        )
         # Ensure ``priors`` is a fresh dict; never mutate a caller's dict
         # (the user may reuse it across multiple ``fit`` calls).
         priors = dict(priors) if priors is not None else {}
