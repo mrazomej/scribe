@@ -184,6 +184,12 @@ class LNMExtractionMixin:
                     if isinstance(raw, dict) and "loc" in raw:
                         return jnp.asarray(raw["loc"])
                     return jnp.asarray(raw)
+                # The mean-field guide builder stores variational parameters
+                # as ``{name}_loc`` / ``{name}_scale`` via numpyro.param
+                # (see _guide_meanfield_mixin), so the MAP estimate lives
+                # at ``d_lnm_loc`` rather than a nested ``d_lnm`` dict.
+                if "d_lnm_loc" in obj:
+                    return jnp.asarray(obj["d_lnm_loc"])
                 for v in obj.values():
                     got = _recursive_find_d_lnm(v)
                     if got is not None:

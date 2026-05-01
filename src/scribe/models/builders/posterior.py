@@ -2635,6 +2635,13 @@ def _build_logistic_normal_posteriors(
                     params, "r_T", is_mixture, split
                 )
 
+    # Learned diagonal ALR noise vector d_lnm (positive, LogNormal guide).
+    # Present only when d_mode="learned".
+    if "d_lnm_loc" in params and "d_lnm_scale" in params:
+        distributions["d_lnm"] = _build_lognormal_posterior(
+            params, "d_lnm", is_mixture, split
+        )
+
     return distributions
 
 
