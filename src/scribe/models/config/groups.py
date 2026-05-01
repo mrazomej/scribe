@@ -473,6 +473,53 @@ class VAEConfig(BaseModel):
         False, description="Whether to standardize input data"
     )
 
+    # --------------------------------------------------------------------------
+    # LNM-specific data-derived fields
+    # --------------------------------------------------------------------------
+    # The three optional fields below carry data-derived constants that
+    # the Logistic-Normal Multinomial (LNM) factory consumes to anchor
+    # encoder / decoder initialization to the dataset. They are filled
+    # by the public API (``scribe.api.fit``) for ``model in {"lnm",
+    # "lnmvcp"}`` and remain ``None`` for every other model, so the
+    # default behavior of standard NBDM/ZINB pipelines is unchanged.
+    #
+    # Each field is typed as ``Optional[Any]`` because Pydantic does not
+    # natively understand ``jnp.ndarray``; runtime enforcement of the
+    # array shape is handled by the consuming factory code, which is
+    # the source of truth for the contract anyway.
+
+    empirical_alr_bias_init: Optional[Any] = Field(
+        None,
+        description=(
+            "Optional ALR bias used to initialize the LNM linear-decoder "
+            "``y_alr`` head. Shape ``(n_genes - 1,)``. When set, the "
+            "decoder bias is anchored to the empirical ALR mean of the "
+            "training counts so the very first forward pass already "
+            "reproduces the dataset's marginal composition. None for "
+            "non-LNM models."
+        ),
+    )
+    standardize_mean: Optional[Any] = Field(
+        None,
+        description=(
+            "Per-feature mean to subtract from the (transformed) "
+            "encoder input when ``standardize=True``. Shape "
+            "``(n_genes,)``. Computed in the same input-transform space "
+            "the encoder uses (e.g. ``log1p_prop`` for LNM). None for "
+            "models that do not request input standardization or for "
+            "which standardization stats are not pre-computed."
+        ),
+    )
+    standardize_std: Optional[Any] = Field(
+        None,
+        description=(
+            "Per-feature standard deviation paired with "
+            "``standardize_mean``. Shape ``(n_genes,)``. Floored to a "
+            "small epsilon at consumption time to avoid division by "
+            "zero on constant features."
+        ),
+    )
+
     # Decoder output transforms (optional per-param overrides)
     decoder_transforms: Optional[Dict[str, str]] = Field(
         None,

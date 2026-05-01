@@ -115,6 +115,143 @@ def _apply_alr_transform(
 # ------------------------------------------------------------------------------
 
 
+def empirical_alr_mean_from_counts(
+    counts,
+    reference_idx: int = -1,
+    pseudocount: float = 0.5,
+) -> jnp.ndarray:
+    """Compute the empirical ALR (additive log-ratio) mean of a count matrix.
+
+    The population-level mean of the ALR transform is precisely what the
+    Logistic-Normal Multinomial model treats as the **decoder bias**
+    ``mu_ALR``: the location of the latent Gaussian on log-ratio
+    coordinates. Initializing the decoder bias of the linear-decoder VAE
+    to this empirical mean removes the burden on early training of having
+    to discover the data's marginal composition through gradient descent
+    on the multinomial likelihood — a notoriously ill-conditioned starting
+    point for high-dimensional softmax outputs.
+
+    Estimator
+    ---------
+    To avoid per-cell ``log(0)`` instabilities for genes with zero counts
+    in some cells, the function uses the **pooled** estimator: it sums
+    counts across all cells per gene and computes a single ALR vector
+    from the resulting marginal totals. Concretely, for reference index
+    ``r``,
+
+    The estimator is:
+        𝜇̂ᴬᴸᴿ_g = log(ū_g + c) − log(ū_r + c),  g ≠ r,
+
+    where ū_g = ∑_c u_g^(c) are the total counts per gene across all cells and c
+    is a small pseudocount (default 0.5) that tames genes with no observed
+    counts.
+
+    Pooling cells is statistically equivalent (up to the pseudocount) to a
+    weighted average of per-cell ALR vectors with weights proportional to
+    each cell's total count, which is the natural multinomial likelihood
+    target.
+
+    Parameters
+    ----------
+    counts : array_like
+        Count matrix of shape ``(n_cells, n_genes)``. Accepts numpy or
+        JAX arrays; non-negative integer or float entries are tolerated
+        (floats are coerced via :func:`jnp.asarray`).
+    reference_idx : int, default=-1
+        Zero-based index of the ALR reference gene (the denominator in
+        each log-ratio). ``-1`` (default) refers to the last gene, which
+        matches the legacy convention used elsewhere in the LNM code.
+    pseudocount : float, default=0.5
+        Additive pseudocount applied to the per-gene totals before
+        taking the logarithm. ``0.5`` is the common Bayesian-Dirichlet
+        choice (Jeffreys / Krichevsky-Trofimov prior on multinomial
+        proportions) and is small enough to leave the bias at well-
+        observed genes essentially unchanged while keeping the log
+        finite for genes with zero observed counts.
+
+    Returns
+    -------
+    jnp.ndarray
+        Empirical ALR mean of shape ``(n_genes - 1,)``. The reference
+        gene is removed; non-reference genes appear in their original
+        order, with the reference position skipped.
+
+    Raises
+    ------
+    ValueError
+        If ``counts`` does not have rank 2, has fewer than two genes, or
+        if ``reference_idx`` is out of range.
+
+    Examples
+    --------
+    Pooled estimator on a tiny synthetic count matrix:
+
+    >>> import jax.numpy as jnp
+    >>> counts = jnp.array([[10, 5, 0], [12, 6, 1], [11, 4, 0]])
+    >>> empirical_alr_mean_from_counts(counts, reference_idx=-1)
+    Array([..., ...], dtype=float32)
+
+    See Also
+    --------
+    _apply_alr_transform : Per-sample ALR (operates on log-simplex inputs).
+    _inverse_alr : Inverse map from ALR coordinates back to the simplex.
+    """
+    # Coerce to JAX so downstream math is dtype-consistent. We use
+    # float32 because the bias is consumed by a flax linear layer which
+    # is float32 by default; promoting to float64 here would force a
+    # mixed-precision boundary at every forward pass.
+    counts_j = jnp.asarray(counts, dtype=jnp.float32)
+
+    if counts_j.ndim != 2:
+        raise ValueError(
+            "counts must be a 2-D matrix (n_cells, n_genes), "
+            f"got rank {counts_j.ndim} array with shape {counts_j.shape}."
+        )
+
+    n_genes = counts_j.shape[-1]
+    if n_genes < 2:
+        raise ValueError(
+            "ALR requires at least 2 genes; " f"got n_genes={n_genes}."
+        )
+
+    # Resolve the reference index against the gene axis. We allow Python's
+    # negative-index convention so callers can write ``reference_idx=-1``
+    # for "last gene" without having to materialize the integer.
+    ref = reference_idx if reference_idx >= 0 else n_genes + reference_idx
+    if not (0 <= ref < n_genes):
+        raise ValueError(
+            "reference_idx out of range: "
+            f"got {reference_idx}, expected in [-{n_genes}, {n_genes - 1}]."
+        )
+
+    # Pooled per-gene total counts. Summing along axis=0 (cells) gives a
+    # length-n_genes vector. We then add the pseudocount BEFORE log so
+    # the operation is well-defined for genes with zero observed counts.
+    totals = counts_j.sum(axis=0)
+    log_totals = jnp.log(totals + pseudocount)
+
+    # The ALR-transformed mean is the difference of log-totals against
+    # the chosen reference gene. We compute the full G-vector of
+    # log-ratios first, then drop the reference column.
+    log_ratios = log_totals - log_totals[ref]  # shape (n_genes,)
+
+    # Drop the reference component to obtain the (n_genes - 1)-vector
+    # that matches the decoder's `head_y_alr` output dimension.
+    if ref == n_genes - 1:
+        alr_mean = log_ratios[:-1]
+    elif ref == 0:
+        alr_mean = log_ratios[1:]
+    else:
+        alr_mean = jnp.concatenate(
+            [log_ratios[:ref], log_ratios[ref + 1 :]], axis=-1
+        )
+
+    return alr_mean
+
+
+# ------------------------------------------------------------------------------
+
+
 def _inverse_alr(
     z: jnp.ndarray, reference_index: Optional[int] = None
 ) -> jnp.ndarray:
@@ -269,9 +406,7 @@ def _batched_dirichlet_sample(
             chunks.append(batch_samples)
         else:
             # (B, D, S) → transpose to (B, S, D) → flatten to (B*S, D)
-            chunks.append(
-                batch_samples.transpose(0, 2, 1).reshape(-1, D)
-            )
+            chunks.append(batch_samples.transpose(0, 2, 1).reshape(-1, D))
 
     # Concatenate all batches along the sample axis
     return jnp.concatenate(chunks, axis=0)
@@ -557,9 +692,7 @@ def fit_logistic_normal_from_posterior(
         elif r_samples.ndim == 3:
             # Mixture: (N, K, D) -> (N, K, D_kept + 1)
             r_kept = r_samples[:, :, gene_mask]
-            r_other = r_samples[:, :, ~gene_mask].sum(
-                axis=2, keepdims=True
-            )
+            r_other = r_samples[:, :, ~gene_mask].sum(axis=2, keepdims=True)
             r_samples = jnp.concatenate([r_kept, r_other], axis=2)
 
     # Process mixture model
@@ -697,6 +830,7 @@ def _fit_logistic_normal_non_mixture(
     # (computed before optional mean-removal so we test the actual
     #  marginal distribution that the Gaussian will approximate)
     from ..de._gaussianity import gaussianity_diagnostics
+
     gauss_diag = gaussianity_diagnostics(alr_samples)
 
     # Step 2b: Optionally remove grand mean to focus on co-variation
@@ -726,8 +860,10 @@ def _fit_logistic_normal_non_mixture(
     # independent of the Dirichlet sampling key.
     svd_rng_key = random.fold_in(rng_key, 999)
     alr_loc, alr_cov_factor, alr_cov_diag = _fit_low_rank_mvn(
-        alr_samples_centered, rank=rank,
-        svd_method=svd_method, rng_key=svd_rng_key,
+        alr_samples_centered,
+        rank=rank,
+        svd_method=svd_method,
+        rng_key=svd_rng_key,
         verbose=verbose,
     )
 
@@ -906,6 +1042,7 @@ def _fit_logistic_normal_mixture(
 
         # Step 2a: Gaussianity diagnostics on raw ALR marginals
         from ..de._gaussianity import gaussianity_diagnostics
+
         gauss_diag_c = gaussianity_diagnostics(alr_samples)
 
         # Step 2b: Optionally remove grand mean
@@ -923,8 +1060,10 @@ def _fit_logistic_normal_mixture(
         # from the per-component key so each component is independent.
         svd_rng_key = random.fold_in(key_c, 999)
         alr_loc, alr_cov_factor, alr_cov_diag = _fit_low_rank_mvn(
-            alr_samples_centered, rank=rank,
-            svd_method=svd_method, rng_key=svd_rng_key,
+            alr_samples_centered,
+            rank=rank,
+            svd_method=svd_method,
+            rng_key=svd_rng_key,
             verbose=False,
         )
 
@@ -938,9 +1077,7 @@ def _fit_logistic_normal_mixture(
             [alr_cov_factor, jnp.zeros((1, alr_cov_factor.shape[1]))],
             axis=0,
         )
-        cov_diag = jnp.concatenate(
-            [alr_cov_diag, jnp.array([0.0])], axis=0
-        )
+        cov_diag = jnp.concatenate([alr_cov_diag, jnp.array([0.0])], axis=0)
 
         locs.append(loc)
         cov_factors.append(cov_factor)
@@ -1090,9 +1227,9 @@ def _randomized_svd(
         # Re-orthogonalise to prevent numerical blow-up
         Y, _ = jnp.linalg.qr(Y)
         # One step of the power method: Y <- X @ X^T @ Y
-        Z = X.T @ Y    # (p, k)
+        Z = X.T @ Y  # (p, k)
         Z, _ = jnp.linalg.qr(Z)
-        Y = X @ Z       # (n, k)
+        Y = X @ Z  # (n, k)
 
     # Step 3: Orthonormal basis for the column space approximation
     Q, _ = jnp.linalg.qr(Y)  # (n, k)
@@ -1101,7 +1238,9 @@ def _randomized_svd(
     B = Q.T @ X  # (k, p)
 
     # Step 5: Exact (small) SVD of the projected matrix
-    U_hat, S, Vt = jnp.linalg.svd(B, full_matrices=False)  # (k, k), (k,), (k, p)
+    U_hat, S, Vt = jnp.linalg.svd(
+        B, full_matrices=False
+    )  # (k, k), (k,), (k, p)
 
     # Recover left singular vectors in the original space
     U = Q @ U_hat  # (n, k)
@@ -1190,7 +1329,8 @@ def _fit_low_rank_mvn_core(
         # ---- Randomized truncated SVD (Halko et al. 2011) ----
         # Cost: O(N * D * k) instead of O(N^2 * D)
         _U, singular_values, Vt = _randomized_svd(
-            centered, rank=rank,
+            centered,
+            rank=rank,
             n_oversamples=n_oversamples,
             n_power_iter=n_power_iter,
             rng_key=rng_key,
@@ -1199,7 +1339,7 @@ def _fit_low_rank_mvn_core(
         # Vt: (effective_rank, n_features)
 
         # Convert singular values to eigenvalues of the covariance
-        eigenvalues = (singular_values ** 2) / (n_samples - 1)
+        eigenvalues = (singular_values**2) / (n_samples - 1)
 
         # Eigenvectors as columns
         eigenvectors = Vt.T  # (n_features, effective_rank)
@@ -1219,28 +1359,24 @@ def _fit_low_rank_mvn_core(
 
         # Residual variance estimated from the trace (cheap: O(ND))
         # total_var = trace(X^T X) / (N - 1) = sum of ALL eigenvalues
-        total_var = jnp.sum(centered ** 2) / (n_samples - 1)
+        total_var = jnp.sum(centered**2) / (n_samples - 1)
         # Variance captured by the top-k components
         explained_var = jnp.sum(top_k_eigenvalues)
         # Remaining variance spread uniformly across (D - k) dimensions
         n_residual = max(n_features - effective_rank, 1)
-        diag_value = jnp.maximum(
-            (total_var - explained_var) / n_residual, 0.0
-        )
+        diag_value = jnp.maximum((total_var - explained_var) / n_residual, 0.0)
         cov_diag = jnp.full(n_features, diag_value) + 1e-4
 
     else:
         # ---- Full thin SVD ----
         # Cost: O(N^2 * D)
         # X = U @ diag(S) @ Vt  →  Cov = V @ diag(S²/(n-1)) @ V.T
-        _U, singular_values, Vt = jnp.linalg.svd(
-            centered, full_matrices=False
-        )
+        _U, singular_values, Vt = jnp.linalg.svd(centered, full_matrices=False)
         # singular_values: (min(n_samples, n_features),)
         # Vt: (min(n_samples, n_features), n_features)
 
         # Convert singular values to eigenvalues of the covariance
-        eigenvalues = (singular_values ** 2) / (n_samples - 1)
+        eigenvalues = (singular_values**2) / (n_samples - 1)
 
         # Eigenvectors as columns
         eigenvectors = Vt.T  # (n_features, min(n_samples, n_features))
@@ -1344,7 +1480,8 @@ def _fit_low_rank_mvn(
 
     # --- Delegate to the pure-JAX core ---
     loc, cov_factor, cov_diag, eigenvalues = _fit_low_rank_mvn_core(
-        samples, rank,
+        samples,
+        rank,
         svd_method=svd_method,
         n_oversamples=n_oversamples,
         n_power_iter=n_power_iter,
@@ -1365,7 +1502,7 @@ def _fit_low_rank_mvn(
             # With randomized SVD we only have the top-k eigenvalues.
             # Estimate total variance from the trace (cheap: O(ND)).
             centered = samples - jnp.mean(samples, axis=0)
-            total_var = jnp.sum(centered ** 2) / (n_samples - 1)
+            total_var = jnp.sum(centered**2) / (n_samples - 1)
         else:
             # Full SVD: sum of all eigenvalues is exact total variance.
             total_var = jnp.sum(eigenvalues)

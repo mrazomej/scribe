@@ -63,6 +63,7 @@ from ..components.likelihoods import LogisticNormalMultinomialLikelihood
 from ..components.vae_components import (
     DecoderOutputHead,
     GaussianEncoder,
+    LNMGaussianEncoder,
     MultiHeadDecoder,
 )
 from ..config import GuideFamilyConfig, ModelConfig
@@ -245,27 +246,87 @@ def _create_vae_model(
             for name, transform in output_spec
         ]
     # ALR head has G-1 coordinates (last gene is the reference category).
-    output_heads = tuple(
-        DecoderOutputHead(
-            name,
-            (
-                (n_genes - 1)
-                if param_key == "logistic_normal" and name == "y_alr"
-                else n_genes
-            ),
-            transform,
+    # For LNM we additionally honour the optional empirical-ALR bias init
+    # carried by ``model_config.vae.empirical_alr_bias_init``. When the
+    # public API has computed an empirical ALR mean from the training
+    # counts (see ``empirical_alr_mean_from_counts`` and the LNM block in
+    # ``scribe.api.fit``), this anchors the decoder's ``y_alr`` head bias
+    # to the dataset's marginal composition, eliminating the
+    # multi-thousand-step warm-up the optimizer would otherwise need to
+    # spend rediscovering it from gradient descent on the multinomial.
+    _empirical_alr_bias = getattr(vae, "empirical_alr_bias_init", None)
+
+    def _build_head(name: str, transform: str) -> DecoderOutputHead:
+        """Construct a single :class:`DecoderOutputHead` with LNM-aware sizing.
+
+        Encapsulates the per-head logic so the comprehension below stays
+        readable while still making the LNM-only special-case (custom
+        output dim and optional bias initializer) obvious.
+        """
+        is_y_alr = (
+            param_key == "logistic_normal" and name == "y_alr"
         )
-        for name, transform in output_spec
+        head_dim = (n_genes - 1) if is_y_alr else n_genes
+        # Only the LNM ``y_alr`` head ever receives a custom bias init;
+        # every other model uses the flax default of zero bias. We wrap
+        # the empirical ALR mean in ``nn.initializers.constant`` because
+        # flax's ``nn.Dense.bias_init`` argument is contractually a
+        # ``(rng, shape, dtype) -> array`` callable, not an array.
+        bias_init = None
+        if is_y_alr and _empirical_alr_bias is not None:
+            from flax import linen as nn  # local import: lightweight
+
+            # Cast to float32 so the constant matches the layer's dtype
+            # without forcing a JAX-trace-time conversion at every step.
+            _bias_arr = jnp.asarray(_empirical_alr_bias, dtype=jnp.float32)
+            bias_init = nn.initializers.constant(_bias_arr)
+        return DecoderOutputHead(
+            param_name=name,
+            output_dim=head_dim,
+            transform=transform,
+            bias_init=bias_init,
+        )
+
+    output_heads = tuple(
+        _build_head(name, transform) for name, transform in output_spec
     )
 
-    # 2. Build encoder
-    encoder = GaussianEncoder(
+    # 2. Build encoder. The LNM family uses a clamped log-scale variant
+    # to prevent ``σ → 0`` / ``σ → ∞`` instability under the sharp
+    # multinomial likelihood. All other models retain the unclamped
+    # baseline encoder so their bit-level training behavior is unchanged.
+    encoder_cls = (
+        LNMGaussianEncoder
+        if param_key == "logistic_normal"
+        else GaussianEncoder
+    )
+
+    # Optional pre-computed input-standardization stats. These are filled
+    # in by the public API for LNM models when ``vae.standardize`` is on,
+    # using the same input transform the encoder applies (so the
+    # standardization happens in the transformed space, not raw counts).
+    # Outside of LNM these remain ``None`` and the encoder's ``_preprocess``
+    # method falls through without standardizing.
+    _stand_mean = getattr(vae, "standardize_mean", None)
+    _stand_std = getattr(vae, "standardize_std", None)
+
+    encoder_kwargs: Dict = dict(
         input_dim=n_genes,
         latent_dim=vae.latent_dim,
         hidden_dims=vae.encoder_hidden_dims,
         activation=vae.activation,
         input_transformation=vae.input_transform,
     )
+    if _stand_mean is not None and _stand_std is not None:
+        # Cast both to float32 to match the encoder's compute dtype and
+        # avoid silent upcasts inside ``_preprocess``.
+        encoder_kwargs["standardize_mean"] = jnp.asarray(
+            _stand_mean, dtype=jnp.float32
+        )
+        encoder_kwargs["standardize_std"] = jnp.asarray(
+            _stand_std, dtype=jnp.float32
+        )
+    encoder = encoder_cls(**encoder_kwargs)
 
     # 3. Build decoder (LNM may override hidden dims to () for a linear map).
     _dec_hidden = (

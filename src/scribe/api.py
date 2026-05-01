@@ -292,7 +292,7 @@ def fit(
     vae_decoder_hidden_dims: Optional[List[int]] = None,
     vae_activation: Optional[str] = None,
     vae_input_transform: str = "log1p",
-    vae_standardize: bool = False,
+    vae_standardize: Optional[bool] = None,
     vae_decoder_transforms: Optional[Dict[str, str]] = None,
     vae_flow_type: str = "none",
     vae_flow_num_layers: int = 4,
@@ -740,9 +740,20 @@ def fit(
         effective default is ``"log1p_prop"`` when this argument is not
         explicitly overridden.
 
-    vae_standardize : bool, default=False
+    vae_standardize : bool or None, default=None
         Whether to standardize transformed VAE inputs to zero mean and
-        unit variance.
+        unit variance per gene. ``None`` (the default) is a *sentinel*
+        meaning "auto-pick based on model": ``True`` for the LNM family
+        (``model in {"lnm", "lnmvcp"}``) and ``False`` for every other
+        VAE model. Explicit ``True`` / ``False`` always wins over the
+        auto-default. Standardization happens in the same input-transform
+        space the encoder uses (e.g. ``log1p_prop`` for LNM), so the
+        per-feature stats are computed on the *transformed* counts
+        rather than raw counts. For LNM specifically, sparse
+        ``log1p_prop`` inputs are mostly tiny non-negative values which
+        leaves the encoder's first Dense layer near-rank-deficient at
+        init; standardizing fixes the preconditioning at essentially
+        zero compute cost.
 
     vae_decoder_transforms : Dict[str, str], optional
         Optional mapping from decoder output names to transform names.
@@ -1162,6 +1173,48 @@ def fit(
         )
 
     # ==========================================================================
+    # Step 2c (LNM-only): data-driven r_T prior
+    # ==========================================================================
+    # The default LogNormal(0, 1) prior on the total-count NB dispersion
+    # ``r_T`` has median 1.0 and 95% CI ~[0.14, 7.4] — orders of magnitude
+    # below the values appropriate for typical 10x library sizes
+    # (r_T routinely in the tens-to-hundreds). Without this anchor, the
+    # KL on r_T fights the data throughout early training and is a major
+    # contributor to the spiky LNM ELBO trajectory observed prior to
+    # this fix.
+    #
+    # We invert the NB moment relations on the empirical total-count
+    # distribution to obtain a point estimate, then realize it as the
+    # median of a LogNormal prior with moderate spread (sigma=1.0). The
+    # estimate is *only* applied if the user did not pass an explicit
+    # ``r_T`` override via the ``priors`` argument — user intent always
+    # wins.
+    #
+    # This block is gated on the LNM family so non-LNM models keep their
+    # existing prior calibration unchanged.
+    if (
+        model.lower() in ("lnm", "lnmvcp")
+        and (priors is None or "r_T" not in priors)
+    ):
+        from .core.lnm_data_init import moments_to_lognormal_r_T
+
+        _r_T_mu_log, _r_T_sigma_log = moments_to_lognormal_r_T(count_data)
+        # Ensure ``priors`` is a fresh dict; never mutate a caller's dict
+        # (the user may reuse it across multiple ``fit`` calls).
+        priors = dict(priors) if priors is not None else {}
+        priors["r_T"] = (_r_T_mu_log, _r_T_sigma_log)
+        import logging as _logging
+
+        _logging.getLogger(__name__).info(
+            "LNM: auto-set r_T prior to LogNormal(mu=%.3f, sigma=%.3f) "
+            "(method-of-moments inversion on observed total counts; "
+            "median r_T ~ %.1f).",
+            _r_T_mu_log,
+            _r_T_sigma_log,
+            float(jnp.exp(_r_T_mu_log)),
+        )
+
+    # ==========================================================================
     # Step 2b: Build dataset indices (if multi-dataset model)
     # ==========================================================================
     dataset_indices = None
@@ -1524,6 +1577,58 @@ def fit(
 
         model_config = model_config.model_copy(
             update={"priors": PriorOverrides(**_updated_priors)}
+        )
+
+    # ==========================================================================
+    # Step 3d (LNM-only): inject data-derived VAE initializers
+    # ==========================================================================
+    # For Logistic-Normal Multinomial models, two further data-derived
+    # constants stabilise early training:
+    #
+    #   1. ``empirical_alr_bias_init``: the empirical ALR mean of the
+    #      counts. The factory wires this into the linear-decoder's
+    #      ``y_alr`` head bias so the very first forward pass already
+    #      reproduces the dataset's marginal composition. Without this,
+    #      ``softmax(y_alr) ≈ 1/G`` at step 0 and the optimizer must
+    #      back-propagate large multinomial gradients through ``W`` for
+    #      thousands of steps just to discover what the marginals are.
+    #
+    #   2. ``standardize_mean`` / ``standardize_std``: per-feature
+    #      statistics of the *transformed* encoder input (e.g. the
+    #      ``log1p_prop`` of raw counts). When ``vae.standardize`` is
+    #      true, these z-standardize the encoder input before the first
+    #      Dense layer. Sparse log1p_prop inputs are mostly tiny
+    #      non-negative values, which leaves the first Dense layer
+    #      near-rank-deficient at init; standardizing fixes the
+    #      preconditioning at essentially zero compute cost.
+    #
+    # All three constants live on ``model_config.vae`` (see
+    # ``VAEConfig``). Because ``VAEConfig`` is a frozen Pydantic model,
+    # we inject by ``model_copy``, mirroring the ``mu_anchor_centers``
+    # pattern in Step 3c above. Non-LNM paths skip this block entirely.
+    if (
+        model_config.inference_method.value == "vae"
+        and model_config.parameterization.value == "logistic_normal"
+    ):
+        # Delegate to the centralized helper so the same transformation
+        # is exercised by the unit tests for the LNM stability pass.
+        # The helper is side-effect-free and returns a new ModelConfig
+        # whose .vae carries the data-derived initializers.
+        from .core.lnm_data_init import inject_lnm_vae_data_init
+
+        _ref = alr_reference_idx if alr_reference_idx is not None else -1
+        model_config = inject_lnm_vae_data_init(
+            model_config, count_data, alr_reference_idx=_ref
+        )
+
+        import logging as _lnm_logging
+
+        _lnm_logging.getLogger(__name__).info(
+            "LNM: injected empirical ALR bias init (length %d, "
+            "ref idx %d) and per-feature encoder standardization "
+            "stats into VAEConfig.",
+            int(model_config.vae.empirical_alr_bias_init.shape[0]),
+            int(_ref),
         )
 
     # ==========================================================================

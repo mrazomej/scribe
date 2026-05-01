@@ -350,7 +350,15 @@ vae_results = scribe.fit(
 lnm_results = scribe.fit(
     data,
     model="lnm",
-    # LNM defaults to vae_input_transform="log1p_prop" unless overridden.
+    # For lnm/lnmvcp the API automatically applies several stability
+    # defaults that are *only* active for these models:
+    #   - vae_input_transform     -> "log1p_prop" (compositional input)
+    #   - vae_standardize         -> True         (z-standardize encoder input)
+    #   - r_T LogNormal prior     -> data-driven  (method-of-moments inversion)
+    #   - decoder bias init       -> empirical ALR mean of the count matrix
+    #   - encoder log_scale clamp -> [-7, 2]      (clamped LNMGaussianEncoder)
+    # All of these are overridable; see the qmd "Training stability"
+    # section in paper/_logistic_normal_multinomial.qmd for the rationale.
     n_steps=50000,
 )
 

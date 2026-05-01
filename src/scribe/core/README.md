@@ -123,6 +123,27 @@ distributions = normalized["distributions"]  # List of Dirichlet objects
 - **Flexible Sampling**: Control number of Dirichlet samples per posterior
   sample
 
+### LNM Data-Init Helpers (`lnm_data_init.py`)
+
+Data-derived initializers used by the public API exclusively for the
+Logistic-Normal Multinomial family (`model in {"lnm", "lnmvcp"}`). These
+helpers are computed once, up front, from the count matrix and folded
+into `model_config.vae` (and the `r_T` prior) before model construction
+so that the very first SVI step sees a well-conditioned starting point.
+
+```python
+from scribe.core.lnm_data_init import (
+    empirical_alr_mean_from_counts,   # → decoder bias init for y_alr
+    compute_encoder_standardization,  # → per-feature mean/std in transform space
+    moments_to_lognormal_r_T,         # → method-of-moments NB inversion
+    inject_lnm_vae_data_init,         # one-shot ModelConfig transformer
+)
+```
+
+Each function is small and side-effect-free; `inject_lnm_vae_data_init`
+is what `scribe.api.fit` calls. See the qmd section
+"Training stability: practical considerations" for the motivation.
+
 ### Cell Type Assignment (`cell_type_assignment.py`)
 
 Advanced utilities for analyzing mixture models and assigning cell types:

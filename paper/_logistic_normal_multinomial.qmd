@@ -989,8 +989,8 @@ Both $\underline{\underline{\Sigma}}^{-1}$ and $\log|\underline{\underline{\Sigm
 are computed in $O(Gk^2 + k^3)$ via the Woodbury identity
 (@eq-lnm-woodbury) and the matrix determinant lemma (@eq-lnm-log-det).
 Only the multinomial expectation
-$\mathbb{E}_{q_\phi}[\log \text{Mult}(\underline{u}^{(c)} \mid u_T^{(c)},
-\text{ALR}^{-1}(\underline{z}^{(c)}))]$ requires reparameterized
+$\left\langle \log \text{Mult}(\underline{u}^{(c)} \mid u_T^{(c)},
+\text{ALR}^{-1}(\underline{z}^{(c)})) \right\rangle_{q_\phi}$ requires reparameterized
 sampling. This is a meaningful variance-reduction win and should be built
 into the loss from the outset rather than letting the framework sample
 the KL term too. Under the linear-decoder reparameterization developed
@@ -1210,7 +1210,7 @@ affine map through the standard rule for transformations of Gaussians
 yields
 
 $$
-\mathbb{E}[\underline{z}] = \underline{\mu},
+\langle \underline{z} \rangle = \underline{\mu},
 \qquad
 \text{Cov}(\underline{z}) =
 \underline{\underline{W}}\,\underline{\underline{I}}_k\,\underline{\underline{W}}^\top
@@ -1919,3 +1919,287 @@ $\underline{\underline{\Sigma}} = \underline{\underline{W}}\,
 \underline{\underline{W}}^\top + \text{diag}(\underline{d})$ is
 available as a first-class object for downstream clustering, pathway,
 or differential-expression analyses.
+
+## Training stability: practical considerations {#sec-lnm-training-stability}
+
+The mathematics of @sec-lnm-strategy-a, @sec-lnm-linear-vae-equivalence and the
+implementation map above leave the model fully specified up to parameter
+initialization and optimizer hyperparameters. In a setting where the likelihood
+is a Gaussian reconstruction over a few hundred real-valued features, those last
+few choices are usually invisible: any reasonable initialization works, and the
+loss surface is gentle enough that the optimizer smooths out the rest. The
+Logistic-Normal Multinomial is *not* such a setting. The combination of (i) a
+$G\!-\!1$-dimensional softmax likelihood with $G \approx 20{,}000$, (ii) a
+per-cell latent sampled from an amortized Gaussian, and (iii) sparse count
+inputs with median library size in the thousands of UMIs, produces an objective
+whose landscape is exquisitely sensitive to initialization. Empirically, naïve
+training of an LNM-VAE produces ELBO trajectories that drop by an order of
+magnitude in the first few hundred steps and then oscillate at roughly
+$5{-}10\times$ the converged value for tens of thousands of steps, even when the
+underlying model is correct.
+
+This section is a pedagogical companion to that observation. It explains, from
+first principles, why a particular set of small modifications to the standard
+VAE recipe makes a dramatic practical difference for LNM training, and documents
+the defaults SCRIBE applies automatically for `lnm`/`lnmvcp` models. None of
+these modifications change the model itself --- they only change the corner of
+parameter space the optimizer starts in.
+
+### Why anchor the decoder bias to the empirical ALR mean? {#sec-lnm-stability-bias}
+
+Recall from @eq-lnm-vae-decode that the linear decoder produces ALR coordinates
+as
+
+$$
+\underline{z}^{(c)} \,=\, \underline{\mu} \,+\,
+\underline{\underline{W}}\, \underline{h}^{(c)} \,+\,
+\text{diag}(\sqrt{\underline{d}})\, \underline{\epsilon}^{(c)}.
+$${#eq-lnm-stability-bias-recap}
+
+Here $\underline{\mu}$ is the **bias** of the decoder's `Dense(G-1)`
+layer. The standard flax initialization sets this bias to
+$\underline{0}$, which means that at training step zero,
+
+$$
+\underline{\rho}^{(c)} \,=\, \text{ALR}^{-1}\bigl( \underline{\underline{W}}\,
+\underline{h}^{(c)} + \text{diag}(\sqrt{\underline{d}})\,
+\underline{\epsilon}^{(c)}\bigr) \,\approx\, \frac{1}{G}\,\underline{1}_G,
+$$
+
+a near-uniform composition over $G$ genes. The expected log-likelihood
+contribution of a single cell $c$ at step zero is therefore
+approximately
+
+$$
+\left\langle \log \text{Mult}\!\left(\underline{u}^{(c)} \mid u_T^{(c)},
+\underline{\rho}^{(c)}\right) \right\rangle \,\approx\, -\, u_T^{(c)} \log G +
+\text{const},
+$$
+
+which for a typical droplet-scRNA-seq cell with $u_T^{(c)} \sim 5000$
+and $G \sim 20{,}000$ is on the order of $-5 \times 10^4$ nats. Multiplied
+by the cell count of a moderate experiment, the **first** ELBO
+evaluation lands in the $-10^7$ to $-10^8$ range.
+
+This is not a problem in itself --- gradient descent converges from
+arbitrary starting points in convex problems and from reasonable
+starting points in non-convex ones. The problem is the *path* the
+optimizer must take. Every gradient on $\underline{\underline{W}}$ in
+this regime is dominated by the multinomial residual
+$\underline{u}^{(c)} - u_T^{(c)} \underline{\rho}^{(c)}$, which has the
+*same* shape across cells (because $\underline{\rho}^{(c)}$ is
+approximately uniform regardless of $\underline{h}^{(c)}$). The
+optimizer is effectively averaging the same residual across the entire
+mini-batch and has very little bottleneck-dependent signal to learn
+from. Useful learning of the rank-$k$ structure cannot begin until
+$\underline{\mu}$ has shifted enough mass off uniformity for
+$\underline{\rho}^{(c)}$ to depend non-trivially on
+$\underline{h}^{(c)}$. That migration takes thousands of steps because
+the gradient on $\underline{\mu}$ itself is the *sum* across cells of
+the same residual that is failing to drive $\underline{\underline{W}}$.
+
+The remedy is straightforward: initialize $\underline{\mu}$ at the
+empirical ALR mean of the training data. Concretely, given a count
+matrix $\underline{\underline{U}} \in \mathbb{N}^{C \times G}$ and a
+reference index $r$,
+
+$$
+\hat{\mu}^{\text{ALR}}_g \,=\, \log\!\bigl(\bar{u}_g + c\bigr) -
+\log\!\bigl(\bar{u}_r + c\bigr), \qquad g \neq r,
+$${#eq-lnm-stability-empirical-alr}
+
+with $\bar{u}_g = \sum_c u_g^{(c)}$ the pooled per-gene total and $c = 0.5$ a
+Jeffreys-style pseudocount. Pooling across cells is statistically equivalent (up
+to the pseudocount) to a weighted average of per-cell ALR vectors with weights
+proportional to each cell's total, which is exactly the multinomial likelihood
+target. Setting the bias to @eq-lnm-stability-empirical-alr produces a step-zero
+$\underline{\rho}^{(c)}$ that already matches the dataset's marginal
+composition, so the very first multinomial likelihood evaluation is within a
+constant of its asymptotic value and the multinomial residual becomes
+immediately informative about the cell-to-cell variation that
+$\underline{\underline{W}}$ exists to capture. SCRIBE applies this
+initialization automatically for `lnm`/`lnmvcp` (see
+`scribe.core.normalization_logistic.empirical_alr_mean_from_counts` and
+`DecoderOutputHead.bias_init` in `scribe.models.components.vae_components`).
+
+### Why a data-driven prior on $r_T$? {#sec-lnm-stability-rT-prior}
+
+The total-count submodel $u_T^{(c)} \sim \text{NB}(r_T, \hat{p})$ introduces two
+scalar parameters whose joint posterior the variational guide must match. The
+default constrained-prior choice in SCRIBE is $r_T \sim \text{LogNormal}(0, 1)$,
+which has median $1.0$ and a 95\% prior interval of approximately
+$[0.14,\,7.4]$. For 10x Chromium data with median library size in the low
+thousands, the posterior on $r_T$ typically lives in the tens to low hundreds.
+The KL term $\text{KL}(q(r_T) \,\|\, p(r_T))$ therefore subtracts a substantial,
+quasi-constant contribution from the ELBO at every gradient step until the
+variational mean has migrated several log units away from the prior median.
+Because the optimizer updates $r_T$ via reparameterized Gaussian gradients, that
+migration is slow and contributes substantially to the spiky early-training
+loss.
+
+The fix is to use the data to set an informative prior. The negative binomial
+moment relations are
+
+$$
+\langle u_T \rangle \,=\, r_T\,\frac{\hat{p}}{1-\hat{p}},
+\qquad
+\operatorname{Var}[u_T] \,=\, r_T\,\frac{\hat{p}}{(1-\hat{p})^2}.
+$$
+
+Letting $m = \widehat{\langle u_T \rangle}$ and $v =
+\widehat{\operatorname{Var}}[u_T]$ be the empirical first two moments of the row
+sums of $\underline{\underline{U}}$, the method-of-moments inversion gives
+
+$$
+\hat{r}_T \,=\, \frac{m^2}{v - m},
+\qquad
+1 - \hat{p} \,=\, \frac{m}{v}.
+$${#eq-lnm-stability-rT-mom}
+
+SCRIBE automatically replaces the default $\text{LogNormal}(0, 1)$ prior
+on $r_T$ with $\text{LogNormal}(\log \hat{r}_T,\,1)$ when the user fits
+an `lnm`/`lnmvcp` model and does not pass an explicit override through
+the `priors` keyword. The prior median therefore starts at the data's
+center of mass; the spread of $\sigma = 1$ in log-space remains generous
+(a factor of $e \approx 2.7$ on each side) so the prior does not
+over-constrain the posterior. User-supplied priors always take
+precedence (see the LNM block of `scribe.api.fit`).
+
+### Why clamp the encoder $\log\sigma$ head? {#sec-lnm-stability-log-sigma}
+
+The variational posterior on the bottleneck is
+$q_\phi(\underline{h}^{(c)} \mid \underline{u}^{(c)}) =
+\mathcal{N}(\underline{m}_\phi(\underline{u}^{(c)}),\,
+\text{diag}(\underline{s}^2_\phi(\underline{u}^{(c)})))$, where the
+encoder's two output heads emit $\underline{m}_\phi$ and
+$\log \underline{s}^2_\phi = 2 \log \underline{s}_\phi$. The KL term of
+@eq-lnm-vae-standard-kl is
+
+$$
+\text{KL} \,=\, \tfrac{1}{2}\sum_{j=1}^k\! \bigl(s_{\phi,j}^2 + m_{\phi,j}^2 - 1
+- 2 \log s_{\phi,j}\bigr).
+$$
+
+This expression has finite gradients only for $s_{\phi,j} \in (0,
+\infty)$. Two failure modes are common with an unrestricted Dense head
+on $\log s_{\phi,j}$:
+
+1. **$\log s_{\phi,j} \to -\infty$**: the variational posterior
+   collapses to a delta at $\underline{m}_\phi$, the term
+   $-2 \log s_{\phi,j}$ diverges to $+\infty$, and the KL becomes
+   numerically infinite. In practice this manifests as `nan` losses
+   propagated through every subsequent step.
+2. **$\log s_{\phi,j} \to +\infty$**: the variational posterior becomes
+   arbitrarily wide; the reparameterized sample
+   $\underline{h}^{(c)} = \underline{m}_\phi + \underline{s}_\phi \odot
+   \underline{\xi}$ saturates the linear decoder's argument and
+   collapses $\underline{\rho}^{(c)}$ to a one-hot configuration on the
+   single ALR coordinate with the largest $|W_{g,j}|$, after which the
+   multinomial likelihood produces enormous gradients that destabilize
+   training.
+
+Both modes are well-known to practitioners of Gaussian-prior VAEs and
+are handled by the same idiom: clamp the raw $\log s$ output to a fixed
+range. SCRIBE's `LNMGaussianEncoder` (see
+`scribe.models.components.vae_components`) clamps $\log s$ to
+$[-7,\,2]$, corresponding to $s \in [\,9.1\times10^{-4},\,7.4\,]$. The
+lower end is tight enough to keep the KL finite without forcing the
+posterior to be artificially diffuse; the upper end is loose enough that
+no realistic posterior ever binds against it. Crucially, the clamp is
+**only** applied for `lnm`/`lnmvcp` models. Other SCRIBE VAEs use the
+standard unclamped `GaussianEncoder` so their training behavior remains
+bit-identical to pre-stability-pass code.
+
+### Why standardize the encoder input? {#sec-lnm-stability-standardize}
+
+The default encoder input transform for `lnm`/`lnmvcp` is `log1p_prop`,
+defined as
+
+$$
+x_g^{(c)} \,=\, \log\!\bigl(1 + u_g^{(c)} / u_T^{(c)}\bigr),
+$$
+
+a per-cell compositional log-transform. For a cell with
+$u_T^{(c)} \sim 5000$ and a typical gene with $u_g^{(c)} \in \{0,1,2\}$,
+$u_g^{(c)} / u_T^{(c)}$ is on the order of $10^{-4}$, and $\log1p$ of a
+small positive value is approximately the value itself. The encoder
+therefore sees a sparse, near-zero input vector with a long tail of
+slightly larger values for the few highly-expressed genes. The first
+Dense layer applies a LeCun-normal-initialized weight matrix to this
+input; the resulting pre-activation vector is dominated by the few
+non-zero coordinates and is essentially noise for everything else.
+Until the network has learned to amplify the signal in the right
+coordinates, the encoder output --- and therefore the per-cell
+$q_\phi(\underline{h}^{(c)} \mid \underline{u}^{(c)})$ --- is largely
+indistinguishable across cells.
+
+Z-standardizing the encoder input fixes the preconditioning at
+essentially zero cost. Concretely, given the per-feature mean
+$\bar{x}_g = C^{-1} \sum_c x_g^{(c)}$ and standard deviation
+$\sigma_{x,g}$ computed *in the same `log1p_prop` space* the encoder
+uses, the encoder applies
+
+$$
+\tilde{x}_g^{(c)} \,=\, \frac{x_g^{(c)} - \bar{x}_g}{\sigma_{x,g}}
+$$
+
+before the first Dense layer. The standardized input has per-feature
+mean zero and unit variance, restoring the LeCun-normal initialization
+to its intended operating regime. Because the standardization is a pure
+preprocessing transformation that does not depend on any learned
+parameter, it does not change the model class --- only the basis in
+which the encoder learns its weights.
+
+SCRIBE computes $\bar{x}_g, \sigma_{x,g}$ once from the training count
+matrix and stores them on `model_config.vae`, then defaults
+`vae_standardize=True` for `lnm`/`lnmvcp` (see
+`scribe.core.lnm_data_init.compute_encoder_standardization` and the LNM
+sentinel resolution in `scribe.inference.preset_builder`). The user can
+override either the flag or the stats via the public API.
+
+### A note on what is *not* automated {#sec-lnm-stability-future-work}
+
+A natural next step --- not currently automated by SCRIBE --- is **KL
+annealing**: linearly ramping the weight $\beta$ on the
+$\text{KL}(q_\phi(\underline{h}^{(c)})\, \|\, p(\underline{h}^{(c)}))$
+term from $0$ at step zero to $1$ over the first $\sim\!10^4$ steps.
+Annealing is a well-studied remedy for *posterior collapse*, the failure
+mode in which the encoder learns to ignore $\underline{u}^{(c)}$ and
+emit a dataset-independent prior-like posterior because doing so makes
+the KL term vanish while the likelihood term is still uninformative.
+With the four stability modifications above in place, posterior collapse
+is rare in practice for LNM models on real scRNA-seq data --- the
+empirical-bias and data-driven prior together leave the likelihood
+informative from step one, so the encoder has a real signal to fit.
+Users who do encounter collapse, or who simply want a smoother
+early-training trajectory, can implement annealing manually by wrapping
+the relevant `numpyro.sample` sites with `numpyro.handlers.scale`. A
+first-class API for KL annealing is left as future work.
+
+A second deferred item is **gradient-clip-norm tuning**. The
+implementation exposes `optimizer_config={"name": "clipped_adam",
+"grad_clip_norm": ...}` directly to the user. The default of
+`grad_clip_norm=1.0` is appropriate for small NBDM models with
+$O(10^4)$ parameters, but for a linear-decoder LNM with $G \sim 20{,}000$
+the global gradient norm at step zero is dominated by the multinomial
+residual on the decoder bias and frequently exceeds $10^2$. Clipping
+this aggressively at $1.0$ stretches early training without changing the
+eventual fit. We recommend $\text{grad\_clip\_norm} \in [10,\,100]$ for
+`lnm`/`lnmvcp` models --- but because the user passes the optimizer
+configuration explicitly through the public API, SCRIBE deliberately
+does not silently rewrite their choice. The clipping threshold appears
+in this section so the recommendation is discoverable.
+
+### Summary
+
+The five practical considerations in this section --- empirical ALR
+bias, data-driven $r_T$ prior, $\log s$ clamp, standardized encoder
+input, and the deferred KL-annealing/grad-clip recommendations --- are
+the difference between an LNM-VAE that converges cleanly and one that
+oscillates noisily for tens of thousands of steps. None of them modifies
+the generative model: each is a different facet of starting the
+optimizer from a corner of parameter space where the multinomial
+gradient already carries information about the dataset's structure
+rather than pressing the model toward uniformity. The first four are
+applied automatically for `lnm`/`lnmvcp` models in SCRIBE; the fifth is
+documented here as a recommended user setting.

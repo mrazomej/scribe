@@ -104,7 +104,10 @@ def build_config_from_preset(
     vae_decoder_hidden_dims: Optional[List[int]] = None,
     vae_activation: Optional[str] = None,
     vae_input_transform: str = "log1p",
-    vae_standardize: bool = False,
+    # ``None`` (the default) is a sentinel meaning "auto-pick based on
+    # model": ``True`` for ``lnm`` / ``lnmvcp`` and ``False`` everywhere
+    # else. Pass an explicit boolean to opt in or out unconditionally.
+    vae_standardize: Optional[bool] = None,
     vae_decoder_transforms: Optional[Dict[str, str]] = None,
     vae_flow_type: str = "none",
     vae_flow_num_layers: int = 4,
@@ -473,10 +476,21 @@ def build_config_from_preset(
         ):
             resolved_vae_input_transform = "log1p_prop"
 
+        # Resolve the ``vae_standardize`` sentinel. ``None`` means "pick a
+        # sensible per-model default": LNM models (which use sparse
+        # ``log1p_prop`` inputs whose first Dense layer is otherwise
+        # near-rank-deficient at init) benefit from standardization, while
+        # every other VAE model preserves its historical default of
+        # ``False`` to remain bit-identical to pre-stability-pass training.
+        if vae_standardize is None:
+            resolved_vae_standardize = model_lower in ("lnm", "lnmvcp")
+        else:
+            resolved_vae_standardize = bool(vae_standardize)
+
         vae_kwargs = {
             "latent_dim": vae_latent_dim,
             "input_transform": resolved_vae_input_transform,
-            "standardize": vae_standardize,
+            "standardize": resolved_vae_standardize,
             "decoder_transforms": vae_decoder_transforms,
             "flow_type": vae_flow_type,
             "flow_num_layers": vae_flow_num_layers,
