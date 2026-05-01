@@ -5,13 +5,22 @@ count matrix against the predicted gene mean from the model's MAP
 parameters.  This is the single most informative diagnostic for mean
 calibration.
 
+For NB-family models (DM, NBVCP, ZINB, etc.) the predicted mean is
+``r * p / (1 - p)`` scaled by VCP capture probability when applicable.
+
+For LNM (Logistic Normal Multinomial) models the predicted mean is
+``rho_g * mean(u_T_obs)`` where ``rho`` is the compositional simplex
+from the inverse-ALR of the MAP ``y_alr``, and ``mean(u_T_obs)`` is
+the observed mean total UMI per cell.  We use the observed total
+rather than the NB model's ``r_T * p / (1 - p)`` because the
+composition and total-count are separate sub-models in LNM and the
+NB MAP point estimates can be unreliable for this purpose; the
+diagnostic therefore isolates the compositional fit quality.
+
 For mixture models the predicted mean is the marginal (weighted)
 average across components, which is directly comparable to the
 sample-wide observed mean regardless of whether cell labels are
 available.
-
-For VCP models the biological NB mean is scaled by the average
-capture probability to yield the predicted *observed* mean.
 
 The BNB uses a mean-preserving parameterization, so the predicted
 mean formula ``r * p / (1 - p)`` is valid whether BNB is active or
@@ -47,7 +56,7 @@ def _compute_predicted_mean(
     *,
     layouts,
 ):
-    """Compute predicted per-gene observed mean from MAP parameters.
+    """Compute predicted per-gene observed mean from NB MAP parameters.
 
     Parameters
     ----------
@@ -107,6 +116,71 @@ def _compute_predicted_mean(
         mean_nu = 1.0
 
     return mu_bio * mean_nu
+
+
+def _compute_predicted_mean_lnm(
+    y_alr,
+    counts,
+    *,
+    alr_reference_idx=-1,
+):
+    """Compute predicted per-gene observed mean for LNM models.
+
+    The LNM predicted mean per gene is ``rho_g * mean(u_T)`` where
+    ``rho`` is the compositional simplex from the inverse-ALR of the
+    MAP ``y_alr``, and ``mean(u_T)`` is the observed mean total UMI
+    count per cell.
+
+    We use the observed mean total rather than the NB model's
+    ``r_T * p / (1 - p)`` because the composition (``rho``) and
+    total-count (``NB(r_T, p)``) are separate sub-models in LNM.
+    The NB MAP point estimates can lie in extreme regions of the
+    parameter space (small ``r_T``, ``p`` near 1) where the formula
+    produces unreliable values, even though posterior predictive
+    samples are fine.  Using the observed total isolates this
+    diagnostic to test the compositional model only.
+
+    Parameters
+    ----------
+    y_alr : ndarray, shape ``(G-1,)``
+        MAP ALR coordinates from the VAE decoder.
+    counts : ndarray, shape ``(C, G)``
+        Observed UMI count matrix (already aligned to model gene space).
+    alr_reference_idx : int
+        Index of the ALR reference gene (default ``-1`` = last gene).
+
+    Returns
+    -------
+    pred : ndarray, shape ``(G,)``
+        Predicted per-gene observed mean.
+    """
+    from ..core.normalization_logistic import _inverse_alr
+    import jax.numpy as jnp
+
+    # Recover the full simplex rho from ALR coordinates
+    y_alr_arr = jnp.asarray(y_alr, dtype=jnp.float32)
+    if y_alr_arr.ndim == 1:
+        y_alr_arr = y_alr_arr[None, :]
+    rho = np.asarray(
+        _inverse_alr(y_alr_arr, reference_index=alr_reference_idx)
+    ).squeeze(axis=0)
+
+    # Use the observed mean total UMI per cell as the scale factor.
+    # This isolates the diagnostic to the compositional sub-model.
+    counts_arr = np.asarray(counts, dtype=float)
+    obs_mean_total = float(np.mean(np.sum(counts_arr, axis=1)))
+
+    return rho * obs_mean_total
+
+
+def _is_lnm_model(results) -> bool:
+    """Return True if the results use a logistic-normal parameterization."""
+    param = getattr(
+        getattr(results, "model_config", None), "parameterization", None
+    )
+    param_value = getattr(param, "value", param)
+    param_name = getattr(param, "name", None)
+    return param_value == "logistic_normal" or param_name == "LOGISTIC_NORMAL"
 
 
 def _compute_per_dataset_means(
@@ -334,8 +408,49 @@ def _prepare_calibration_data(
     counts = _coerce_and_align_counts_to_results(
         counts, results, context="_prepare_calibration_data"
     )
-    # Request only required keys up front so this diagnostic works for
-    # non-mixture and non-BNB models without forcing optional parameters.
+
+    _use_lnm = _is_lnm_model(results)
+
+    # ---- LNM path: predicted mean = rho * obs_mean_total ---------------------
+    if _use_lnm:
+        lnm_targets = ["y_alr"]
+        if bool(getattr(results.model_config, "uses_variable_capture", False)):
+            lnm_targets.append("p_capture")
+        map_estimates = _get_map_estimates_for_plot(
+            results, counts=counts, targets=lnm_targets
+        )
+        y_alr = map_estimates.get("y_alr")
+        if y_alr is None:
+            console.print(
+                "[yellow]Skipping mean calibration: y_alr unavailable "
+                "in MAP estimates for LNM model.[/yellow]"
+            )
+            return None
+
+        alr_ref = getattr(results.model_config, "alr_reference_idx", -1)
+        p_capture = map_estimates.get("p_capture")
+
+        _annotations = []
+        if p_capture is not None:
+            mean_nu = float(np.mean(np.asarray(p_capture, dtype=float)))
+            _annotations.append(f"$\\bar{{\\nu}} = {mean_nu:.4f}$")
+        _annotations.append("LNM (composition)")
+
+        obs_mean = np.mean(np.asarray(counts, dtype=float), axis=0)
+        pred_mean = _compute_predicted_mean_lnm(
+            y_alr, counts,
+            alr_reference_idx=alr_ref,
+        )
+        return {
+            "mode": "single",
+            "ds_results": None,
+            "obs_mean": obs_mean,
+            "pred_mean": pred_mean,
+            "is_mixture": False,
+            "annotations": _annotations,
+        }
+
+    # ---- NB-family path: predicted mean = r * p / (1 - p) -------------------
     required_targets = ["r", "p"]
     if bool(getattr(results.model_config, "uses_variable_capture", False)):
         required_targets.append("p_capture")
@@ -369,7 +484,6 @@ def _prepare_calibration_data(
     bnb_kappa = None
     bnb_concentration = None
     if bool(getattr(results.model_config, "is_bnb", False)):
-        # BNB-specific annotations are optional and should never block plotting.
         try:
             bnb_map = _get_map_estimates_for_plot(
                 results, counts=counts, targets=["bnb_kappa"]
