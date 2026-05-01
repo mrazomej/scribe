@@ -686,6 +686,13 @@ the selected gene/component semantics.
 inference. For non-amortized models (standard VCP models or non-VCP models), the
 `counts` parameter is optional and can be omitted.
 
+For gene-subset result objects, treat counts in two roles:
+
+- **sampling role**: amortized subset results require full original-gene counts
+  (validated against `_original_n_genes`),
+- **plotting role**: visualization code can subset/aligned counts to panel
+  genes after predictive samples are generated.
+
 **Model Evaluation:**
 ```python
 # Compute log-likelihood for model comparison
@@ -897,6 +904,7 @@ ScribeVAEResults (extends ScribeSVIResults)
    - Purpose: Internal helpers for model/guide access
    - Methods:
      - `_model_and_guide()`: Returns model and guide functions
+       with explicit VAE `n_genes` threading
      - `_parameterization()`: Returns parameterization type string
      - `_unconstrained()`: Returns whether parameterization is unconstrained
      - `_log_likelihood_fn()`: Returns log-likelihood function for model type

@@ -58,11 +58,16 @@ def sample_variational_posterior(
     if counts is not None:
         model_args = {**model_args, "counts": counts}
 
+    # Separate model-only kwargs that the guide does not accept (e.g.
+    # total_count_max used by the Multinomial likelihood).
+    guide_args = {k: v for k, v in model_args.items()
+                  if k != "total_count_max"}
+
     # Create predictive object for posterior parameter samples
     predictive_param = Predictive(guide, params=params, num_samples=n_samples)
 
     # Sample parameters from the variational posterior
-    posterior_samples = predictive_param(rng_key, **model_args)
+    posterior_samples = predictive_param(rng_key, **guide_args)
 
     # Also run the model to get deterministic sites.
     # We block the 'counts' site to prevent Predictive from sampling it,

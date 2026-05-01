@@ -1101,9 +1101,19 @@ def test_plot_ppc_auto_aligns_counts_before_preparation(monkeypatch):
     class _FakeSubset:
         predictive_samples = np.zeros((1, 1, 1), dtype=float)
 
-    def _fake_prepare(_results, prep_counts, _viz_cfg, **kwargs):
+    def _fake_prepare(
+        _results,
+        prep_counts,
+        _viz_cfg,
+        *,
+        counts_for_sampling=None,
+        **kwargs,
+    ):
         # If alignment runs, prep receives model-space counts (3 genes), not 5.
         seen["counts_n_genes"] = int(prep_counts.shape[1])
+        seen["counts_for_sampling_n_genes"] = int(
+            counts_for_sampling.shape[1]
+        )
         _ = kwargs
         return {
             "n_rows": 1,
@@ -1124,7 +1134,82 @@ def test_plot_ppc_auto_aligns_counts_before_preparation(monkeypatch):
     )
     assert isinstance(result, PlotResult)
     assert seen["counts_n_genes"] == 3
+    assert seen["counts_for_sampling_n_genes"] == 3
     plt.close(result.fig)
+
+
+def test_prepare_ppc_data_samples_full_space_for_vae(monkeypatch):
+    """VAE PPC should sample in full gene space before plot subsetting."""
+    import scribe.viz.ppc as ppc_module
+
+    n_cells, n_genes = 6, 10
+    counts = np.arange(n_cells * n_genes, dtype=float).reshape(
+        n_cells, n_genes
+    ) + 1.0
+    seen = {}
+
+    class _FakeResults:
+        def __init__(self, n_genes_local):
+            self.n_genes = int(n_genes_local)
+            self.model_config = types.SimpleNamespace(
+                inference_method="vae", vae=object()
+            )
+            self.predictive_samples = None
+
+        def __getitem__(self, index):
+            subset = _FakeResults(len(index))
+            if self.predictive_samples is not None:
+                idx = np.asarray(index, dtype=int)
+                subset.predictive_samples = self.predictive_samples[:, :, idx]
+            return subset
+
+    def _fake_predictive(
+        sampling_results, *, rng_key, n_samples, counts, store_samples
+    ):
+        _ = rng_key, store_samples
+        seen["sampling_results_n_genes"] = int(sampling_results.n_genes)
+        seen["sampling_counts_n_genes"] = int(counts.shape[1])
+        sampling_results.predictive_samples = np.zeros(
+            (n_samples, counts.shape[0], sampling_results.n_genes), dtype=float
+        )
+        return sampling_results.predictive_samples
+
+    monkeypatch.setattr(
+        ppc_module, "_get_predictive_samples_for_plot", _fake_predictive
+    )
+    prep = ppc_module._prepare_ppc_data(
+        _FakeResults(n_genes),
+        counts,
+        viz_cfg=None,
+        counts_for_sampling=counts,
+        n_rows=1,
+        n_cols=3,
+        n_samples=4,
+    )
+
+    assert seen["sampling_results_n_genes"] == n_genes
+    assert seen["sampling_counts_n_genes"] == n_genes
+    assert prep["results_subset"].n_genes <= 3
+
+
+def test_resolve_ppc_sampling_counts_prefers_full_counts_for_amortized_subset():
+    """Amortized subset PPC must preserve original full-gene count matrix."""
+    import scribe.viz.ppc as ppc_module
+
+    class _FakeResults:
+        n_genes = 4
+        _original_n_genes = 7
+
+        @staticmethod
+        def _uses_amortized_capture():
+            return True
+
+    raw_counts = np.zeros((5, 7), dtype=float)
+    aligned_counts = np.zeros((5, 4), dtype=float)
+    resolved = ppc_module._resolve_ppc_sampling_counts(
+        _FakeResults(), raw_counts, aligned_counts
+    )
+    assert resolved.shape == (5, 7)
 
 
 def test_plot_bio_ppc_aligns_counts_subset_with_results_order(

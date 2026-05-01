@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from ..core.axis_layout import AxisLayout
 from ..core.serialization import make_model_config_pickle_safe
 from ._core import CoreResultsMixin
-from ._gene_subsetting import GeneSubsettingMixin
+from ._gene_subsetting import GeneSubsettingMixin, _has_flow_params
 from ._latent_space import (
     LatentSpaceMixin,
     _DECODER_KEY,
@@ -399,7 +399,7 @@ class ScribeVAEResults(
         ScribeVAEResults
             A new results object with subset decoder.
         """
-        from dataclasses import replace as dc_replace
+        from dataclasses import fields as dc_fields
         from ..models.components.vae_components import (
             DecoderOutputHead,
             MultiHeadDecoder,
@@ -426,31 +426,91 @@ class ScribeVAEResults(
         else:
             gene_index_abs = np.asarray(index)
 
-        # Subset decoder output heads and params
+        # Subset decoder output heads and params.
+        # Keep this logic explicit instead of relying on generic dict slicing:
+        # each decoder head is a separate Flax Dense module keyed as
+        # "head_<param_name>" with shape semantics
+        #   kernel: (hidden_dim, n_genes)
+        #   bias:   (n_genes,)
+        # and must remain synchronized with DecoderOutputHead.output_dim.
         decoder_params = new_params.get(_DECODER_KEY, {})
+        if not isinstance(decoder_params, dict):
+            raise ValueError(
+                "Expected 'vae_decoder$params' to be a dict when "
+                "subsetting VAE results."
+            )
         new_heads = []
         new_dec_params = dict(decoder_params)
+        head_field_names = {f.name for f in dc_fields(DecoderOutputHead)}
 
         for head in self._decoder.output_heads:
-            # Update the output_dim to the new gene count
-            new_head = DecoderOutputHead(
+            head_key = f"head_{head.param_name}"
+            if head_key not in decoder_params:
+                raise ValueError(
+                    "Decoder params missing required head key "
+                    f"'{head_key}' during VAE subset creation."
+                )
+            head_params = dict(decoder_params[head_key])
+
+            # Validate expected tensor ranks before slicing to surface corrupt
+            # states early with actionable errors.
+            kernel = head_params.get("kernel")
+            if kernel is not None and (
+                not hasattr(kernel, "ndim") or int(kernel.ndim) != 2
+            ):
+                raise ValueError(
+                    f"Expected '{head_key}.kernel' to be rank-2; "
+                    f"got shape {getattr(kernel, 'shape', None)}."
+                )
+            bias = head_params.get("bias")
+            if bias is not None and (
+                not hasattr(bias, "ndim") or int(bias.ndim) != 1
+            ):
+                raise ValueError(
+                    f"Expected '{head_key}.bias' to be rank-1; "
+                    f"got shape {getattr(bias, 'shape', None)}."
+                )
+
+            # Build kwargs dynamically so this logic remains compatible with
+            # DecoderOutputHead extensions (e.g., optional bias_init vectors).
+            new_head_kwargs = dict(
                 param_name=head.param_name,
                 output_dim=new_n_genes,
                 transform=head.transform,
             )
-            new_heads.append(new_head)
+            if "bias_init" in head_field_names and hasattr(head, "bias_init"):
+                bias_init = getattr(head, "bias_init")
+                if hasattr(bias_init, "shape") and len(bias_init.shape) == 1:
+                    new_head_kwargs["bias_init"] = bias_init[index]
+                else:
+                    new_head_kwargs["bias_init"] = bias_init
+            new_heads.append(DecoderOutputHead(**new_head_kwargs))
 
-            # Subset head kernel and bias in decoder params
-            head_key = f"head_{head.param_name}"
-            if head_key in decoder_params:
-                head_params = dict(decoder_params[head_key])
-                if "kernel" in head_params:
-                    # kernel shape: (hidden_dim, output_dim) -> subset axis 1
-                    head_params["kernel"] = head_params["kernel"][:, index]
-                if "bias" in head_params:
-                    # bias shape: (output_dim,) -> subset axis 0
-                    head_params["bias"] = head_params["bias"][index]
-                new_dec_params[head_key] = head_params
+            # Slice the decoder head parameters along the gene output axis.
+            if "kernel" in head_params:
+                head_params["kernel"] = head_params["kernel"][:, index]
+            if "bias" in head_params:
+                head_params["bias"] = head_params["bias"][index]
+
+            # Validate the post-slice widths so model/guide reconstruction can
+            # safely reuse this subsetted params dict.
+            if "kernel" in head_params and int(
+                head_params["kernel"].shape[1]
+            ) != int(new_n_genes):
+                raise ValueError(
+                    f"Subsetted '{head_key}.kernel' width "
+                    f"{int(head_params['kernel'].shape[1])} does not match "
+                    f"expected n_genes={int(new_n_genes)}."
+                )
+            if "bias" in head_params and int(
+                head_params["bias"].shape[0]
+            ) != int(new_n_genes):
+                raise ValueError(
+                    f"Subsetted '{head_key}.bias' width "
+                    f"{int(head_params['bias'].shape[0])} does not match "
+                    f"expected n_genes={int(new_n_genes)}."
+                )
+            new_dec_params[head_key] = head_params
 
         # Update decoder params in the full params dict
         new_params = dict(new_params)
@@ -464,7 +524,7 @@ class ScribeVAEResults(
             output_heads=tuple(new_heads),
         )
 
-        return ScribeVAEResults(
+        subset = ScribeVAEResults(
             params=new_params,
             loss_history=self.loss_history,
             n_cells=self.n_cells,
@@ -487,11 +547,27 @@ class ScribeVAEResults(
             _total_count_max=getattr(self, "_total_count_max", None),
             _gene_axis_by_key=getattr(self, "_gene_axis_by_key", None),
             _subset_gene_index=gene_index_abs,
-            param_layouts=dict(self.layouts),
+            # Keep only layouts that are still present in the subsetted params
+            # dict to avoid dangling metadata entries from removed keys.
+            param_layouts={
+                key: value
+                for key, value in self.layouts.items()
+                if key in new_params
+            },
             _encoder=self._encoder,
             _decoder=new_decoder,
             _latent_spec=self._latent_spec,
         )
+
+        # Preserve full-dimension params for flow-based guides.
+        # Re-use the existing cached copy when re-subsetting.
+        original_params = getattr(self, "_original_params", None)
+        if original_params is None and _has_flow_params(self.params):
+            original_params = self.params
+        if original_params is not None:
+            subset._original_params = original_params
+
+        return subset
 
     # ------------------------------------------------------------------
     # Classmethod factory

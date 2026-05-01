@@ -30,6 +30,11 @@ plotting from raw `adata` counts against filtered model results.
 
 - Do not manually re-implement pooled-gene aggregation in each plotting module.
   Use `scribe.viz.gene_selection._coerce_and_align_counts_to_results(...)`.
-- When a plotting path subsets `results` to specific genes, pass a matching
-  column-subset of counts into predictive/MAP calls to keep array shapes
-  consistent.
+- Distinguish **plotting counts** from **sampling counts**:
+  - plotting counts must match `results.n_genes` for gene selection/panel
+    histograms,
+  - sampling counts may need the original full-gene matrix for amortized
+    subset results.
+- For VAE PPC paths, generate predictive samples in full result-space first,
+  then subset samples for plotting panels. This avoids rebuilding VAE
+  model/guide callables with inconsistent decoder head widths.

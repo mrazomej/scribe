@@ -8,16 +8,60 @@ import numpy as np
 from multipledispatch import dispatch
 import scribe
 
-from .gene_selection import _coerce_and_align_counts_to_results
+from .gene_selection import (
+    _coerce_and_align_counts_to_results,
+    _coerce_counts,
+)
 
 if TYPE_CHECKING:
     from ..core.axis_layout import AxisLayout
 
 
+def _coerce_counts_for_sampling(results, counts, *, context):
+    """Coerce plot counts for inference-time sampling calls.
+
+    Parameters
+    ----------
+    results : object
+        Fitted results object.
+    counts : array-like
+        Counts provided by the caller.
+    context : str
+        Error-context label for alignment helpers.
+
+    Returns
+    -------
+    numpy.ndarray
+        Count matrix suited for downstream sampling methods.
+
+    Notes
+    -----
+    Gene-subset results with amortized capture require full original-gene
+    counts when available. In that specific case this helper preserves the
+    full matrix and skips model-space realignment.
+    """
+    counts_arr = _coerce_counts(counts)
+    uses_amortized = bool(
+        hasattr(results, "_uses_amortized_capture")
+        and results._uses_amortized_capture()
+    )
+    original_n_genes = getattr(results, "_original_n_genes", None)
+    if (
+        uses_amortized
+        and original_n_genes is not None
+        and int(original_n_genes) > int(getattr(results, "n_genes", 0))
+        and counts_arr.ndim == 2
+        and int(counts_arr.shape[1]) == int(original_n_genes)
+    ):
+        return counts_arr
+    return _coerce_and_align_counts_to_results(
+        counts_arr, results, context=context
+    )
+
+
 @dispatch(scribe.ScribeVariationalResults, object)
 def _get_inference_metadata_for_filenames(results, cfg):
-    """Get filename metadata for variational runs (SVI/VAE)."""
-    _ = results
+    """Get filename metadata for SVI runs."""
     if hasattr(cfg, "inference") and hasattr(cfg.inference, "n_steps"):
         n_steps = cfg.inference.n_steps
     else:
@@ -92,12 +136,10 @@ def _get_predictive_samples_for_plot(
     store_samples=True,
 ):
     """Get PPC samples for plotting from variational results."""
-    counts = _coerce_and_align_counts_to_results(
-        counts, results, context="_get_predictive_samples_for_plot"
-    )
-    # Keep full-cell posterior draws for plotting consistency; the keyword is
-    # accepted for API compatibility with existing call sites/tests.
     _ = batch_size
+    counts = _coerce_counts_for_sampling(
+        results, counts, context="_get_predictive_samples_for_plot"
+    )
     # Generate posterior draws explicitly for this plotting call so we can run
     # one PPC batch at a time without relying on persistent cached samples.
     posterior_samples = results.get_posterior_samples(
@@ -175,8 +217,10 @@ def _get_map_like_predictive_samples_for_plot(
 ):
     """Generate MAP-based predictive samples for variational plotting."""
     if counts is not None:
-        counts = _coerce_and_align_counts_to_results(
-            counts, results, context="_get_map_like_predictive_samples_for_plot"
+        counts = _coerce_counts_for_sampling(
+            results,
+            counts,
+            context="_get_map_like_predictive_samples_for_plot",
         )
     return np.array(
         results.get_map_ppc_samples(
@@ -222,8 +266,8 @@ def _get_map_estimates_for_plot(
 ):
     """Get plot-ready MAP estimates from variational results."""
     if counts is not None:
-        counts = _coerce_and_align_counts_to_results(
-            counts, results, context="_get_map_estimates_for_plot"
+        counts = _coerce_counts_for_sampling(
+            results, counts, context="_get_map_estimates_for_plot"
         )
     return results.get_map(
         targets=targets,
@@ -252,7 +296,7 @@ def _get_map_estimates_for_plot(
 
 @dispatch(scribe.ScribeVariationalResults)
 def _get_layouts_for_plot(results) -> dict[str, "AxisLayout"]:
-    """Get canonical MAP-level AxisLayout metadata from variational results.
+    """Get canonical MAP-level AxisLayout metadata from SVI results.
 
     Builds layouts keyed by canonical parameter names (``r``, ``p``,
     ``gate``, ``mixing_weights``, …) with ``has_sample_dim=False``
@@ -260,7 +304,7 @@ def _get_layouts_for_plot(results) -> dict[str, "AxisLayout"]:
     """
     from ..sampling import _build_canonical_layouts
 
-    # Variational params can use internal names (e.g. p_alpha, p_beta);
+    # SVI variational params use internal names (e.g. p_alpha, p_beta);
     # the viz layer needs layouts keyed by canonical names.  Build them
     # from the canonical MAP dict, falling back to the raw variational
     # layouts when MAP extraction is unavailable (e.g. in unit tests
@@ -291,13 +335,15 @@ def _get_layouts_for_plot(results) -> dict[str, "AxisLayout"]:
     return {k: v.without_sample_dim() for k, v in raw.items()}
 
 
-@dispatch(scribe.ScribeSVIResults)
+@dispatch(scribe.ScribeVariationalResults)
 def _get_cell_assignment_probabilities_for_plot(
     results, *, counts, batch_size=None, use_mean=False
 ):
     """Get MAP component-assignment probabilities from SVI mixture results."""
-    counts = _coerce_and_align_counts_to_results(
-        counts, results, context="_get_cell_assignment_probabilities_for_plot"
+    counts = _coerce_counts_for_sampling(
+        results,
+        counts,
+        context="_get_cell_assignment_probabilities_for_plot",
     )
     # Use optional batching to avoid OOM on large cell counts.
     assignment_info = results.cell_type_probabilities_map(
@@ -315,8 +361,10 @@ def _get_cell_assignment_probabilities_for_plot(
 ):
     """Get component-assignment probabilities from MCMC results."""
     _ = use_mean
-    counts = _coerce_and_align_counts_to_results(
-        counts, results, context="_get_cell_assignment_probabilities_for_plot"
+    counts = _coerce_counts_for_sampling(
+        results,
+        counts,
+        context="_get_cell_assignment_probabilities_for_plot",
     )
     # Use optional batching to avoid OOM on large cell counts.
     assignment_info = results.cell_type_probabilities(
@@ -337,14 +385,14 @@ def _get_cell_assignment_probabilities_for_plot(
 def _get_biological_ppc_samples_for_plot(
     results, *, rng_key, n_samples, counts, batch_size=None, store_samples=True
 ):
-    """Get biological PPC samples from variational results.
+    """Get biological PPC samples from SVI results.
 
     Samples from NB(r, p) only, stripping capture probability and
     zero-inflation gate.  Follows the same save/restore pattern as
     ``_get_predictive_samples_for_plot``.
     """
-    counts = _coerce_and_align_counts_to_results(
-        counts, results, context="_get_biological_ppc_samples_for_plot"
+    counts = _coerce_counts_for_sampling(
+        results, counts, context="_get_biological_ppc_samples_for_plot"
     )
     bio_result = results.get_ppc_samples_biological(
         rng_key=rng_key,
@@ -397,12 +445,12 @@ def _get_biological_ppc_samples_for_plot(
 def _get_denoised_counts_for_plot(
     results, *, counts, rng_key, method=("mean", "sample"), cell_batch_size=None
 ):
-    """MAP-denoise observed counts for variational results.
+    """MAP-denoise observed counts for SVI results.
 
     Returns a 2-D ``(n_cells, n_genes)`` numpy array.
     """
-    counts = _coerce_and_align_counts_to_results(
-        counts, results, context="_get_denoised_counts_for_plot"
+    counts = _coerce_counts_for_sampling(
+        results, counts, context="_get_denoised_counts_for_plot"
     )
     denoised = results.denoise_counts_map(
         counts=counts,
@@ -424,8 +472,8 @@ def _get_denoised_counts_for_plot(
     Averages over posterior samples to produce a single 2-D
     ``(n_cells, n_genes)`` numpy array.
     """
-    counts = _coerce_and_align_counts_to_results(
-        counts, results, context="_get_denoised_counts_for_plot"
+    counts = _coerce_counts_for_sampling(
+        results, counts, context="_get_denoised_counts_for_plot"
     )
     denoised = results.denoise_counts(
         counts=counts,
@@ -445,7 +493,7 @@ def _get_denoised_counts_for_plot(
 
 @dispatch(scribe.ScribeVariationalResults)
 def _get_training_diagnostic_payload(results):
-    """Build training diagnostics payload for variational (ELBO) loss plots."""
+    """Build training diagnostics payload for SVI loss plots."""
     return {
         "plot_kind": "loss",
         "loss_history": np.array(results.loss_history),

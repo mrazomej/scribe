@@ -3,13 +3,11 @@ Posterior and constrained predictive sampling mixin for SVI results.
 """
 
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
-import warnings
 
 import numpy as np
 import jax.numpy as jnp
 from jax import random
-from numpyro.handlers import block
-from numpyro.infer import Predictive
+import warnings
 
 from ..sampling import generate_predictive_samples, sample_variational_posterior
 from ..core.posterior_matrix import posterior_samples_to_matrix
@@ -433,53 +431,8 @@ class PosteriorPredictiveSamplingMixin:
     ) -> Dict:
         """Standard posterior sampling via NumPyro Predictive."""
         model, guide = self._model_and_guide()
-        # VAE results support two posterior-sampling modes:
-        # 1) counts provided -> encoder-based q(z|counts) guide path.
-        # 2) counts omitted  -> prior-based model sampling with trained params.
-        # The prior path preserves learned decoder (and optional flow-prior)
-        # weights without requiring observed counts.
-        _is_vae_result = (
-            hasattr(self, "_encoder")
-            and getattr(self, "_encoder", None) is not None
-        )
-        _use_vae_prior_path = _is_vae_result and counts is None
 
-        if _use_vae_prior_path:
-            _latent_spec = getattr(self, "_latent_spec", None)
-            _has_flow_prior = (
-                _latent_spec is not None
-                and getattr(_latent_spec, "flow", None) is not None
-            )
-            _base_model = getattr(self.model_config, "base_model", None)
-            _base_model = (
-                _base_model.value
-                if hasattr(_base_model, "value")
-                else _base_model
-            )
-            _parameterization = getattr(
-                self.model_config, "parameterization", None
-            )
-            _parameterization = (
-                _parameterization.value
-                if hasattr(_parameterization, "value")
-                else _parameterization
-            )
-            _is_lnm_model = (
-                self.model_type in ("lnm", "lnmvcp")
-                or _base_model in ("lnm", "lnmvcp")
-                or _parameterization == "logistic_normal"
-            )
-            if not _is_lnm_model and not _has_flow_prior:
-                warnings.warn(
-                    "No counts provided for VAE posterior sampling. "
-                    "Sampling z from the uninformative N(0, I) prior "
-                    "instead of the encoder-based posterior q(z|counts). "
-                    "Pass counts= for encoder-based inference.",
-                    UserWarning,
-                    stacklevel=3,
-                )
-
-        if guide is None and not _use_vae_prior_path:
+        if guide is None:
             raise ValueError(
                 f"Could not find a guide for model '{self.model_type}'."
             )
@@ -504,11 +457,45 @@ class PosteriorPredictiveSamplingMixin:
             and _gene_idx is not None
             and _has_flow_params(self.params)
         )
-        n_genes_for_guide = _orig_ng if _full_dim else self.n_genes
+        base_n_genes = self._factory_n_genes() or self.n_genes
+        n_genes_for_guide = _orig_ng if _full_dim else int(base_n_genes)
         params_for_guide = (
-            _orig_params if (_full_dim and _orig_params is not None)
+            _orig_params
+            if (_full_dim and _orig_params is not None)
             else self.params
         )
+
+        if counts is not None and int(counts.shape[1]) != int(
+            n_genes_for_guide
+        ):
+            # VAE results may legitimately receive counts with one extra
+            # trailing column (the pooled "other" gene from gene-coverage
+            # filtering) because the decoder was trained on the narrower
+            # gene set.  Trim it only when we can confirm this is a VAE
+            # result so non-VAE paths never silently drop data.
+            _is_vae = (
+                hasattr(self, "_encoder")
+                and getattr(self, "_encoder", None) is not None
+            )
+            if (
+                _is_vae
+                and int(counts.shape[1]) == int(n_genes_for_guide) + 1
+            ):
+                warnings.warn(
+                    "Posterior sampling received counts with one extra gene "
+                    f"column ({int(counts.shape[1])}) relative to the VAE "
+                    f"reconstruction width ({int(n_genes_for_guide)}). "
+                    "Dropping trailing column (pooled 'other' gene).",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                counts = counts[:, : int(n_genes_for_guide)]
+            else:
+                raise ValueError(
+                    "Posterior sampling counts width does not match model "
+                    f"reconstruction width: counts.shape[1]={int(counts.shape[1])}, "
+                    f"expected {int(n_genes_for_guide)}."
+                )
 
         # Include dataset_indices so that when the model is replayed to
         # compute deterministic sites, index_dataset_params can convert
@@ -518,49 +505,38 @@ class PosteriorPredictiveSamplingMixin:
             "n_genes": n_genes_for_guide,
             "model_config": self.model_config,
         }
-        # Preserve the traced multinomial allocation ceiling captured at fit
-        # time so Predictive can sample when total_count is dynamic.
-        _total_count_max = getattr(self, "_total_count_max", None)
-        if _total_count_max is not None:
-            model_args["total_count_max"] = int(_total_count_max)
         ds_idx = getattr(self, "_dataset_indices", None)
         if ds_idx is not None:
             model_args["dataset_indices"] = ds_idx
+        _tcm = getattr(self, "_total_count_max", None)
+        if _tcm is not None:
+            model_args["total_count_max"] = int(_tcm)
 
         # Add batch_size to model_args if provided for memory-efficient sampling
         if batch_size is not None:
             model_args["batch_size"] = batch_size
 
-        if _use_vae_prior_path:
-            blocked_model = block(model, hide=["counts"])
-            predictive = Predictive(
-                blocked_model,
-                num_samples=n_samples,
-                params=self.params,
-                exclude_deterministic=False,
-            )
-            posterior_samples = predictive(rng_key, **model_args)
-        else:
-            posterior_samples = sample_variational_posterior(
-                guide,
-                params_for_guide,
-                model,
-                model_args,
-                rng_key=rng_key,
-                n_samples=n_samples,
-                counts=counts,
-            )
+        posterior_samples = sample_variational_posterior(
+            guide,
+            params_for_guide,
+            model,
+            model_args,
+            rng_key=rng_key,
+            n_samples=n_samples,
+            counts=counts,
+        )
 
         # Slice full-dim flow samples down to the gene subset.
         # Build sample-level layouts (with_sample_dim) so that gene_axis
         # accounts for the leading posterior-draw dimension.
         if _full_dim:
             _sample_layouts = {
-                k: v.with_sample_dim()
-                for k, v in self.layouts.items()
+                k: v.with_sample_dim() for k, v in self.layouts.items()
             }
             posterior_samples = _subset_gene_dim_samples(
-                posterior_samples, _gene_idx, _orig_ng,
+                posterior_samples,
+                _gene_idx,
+                _orig_ng,
                 layouts=_sample_layouts,
             )
 
@@ -632,8 +608,9 @@ class PosteriorPredictiveSamplingMixin:
             self.model_config,
             unconstrained=False,
             guide_families=GuideFamilyConfig(),
-            n_genes=self.n_genes,
+            n_genes=self._factory_n_genes(),
         )
+        n_genes_for_model = int(self._factory_n_genes() or self.n_genes)
 
         # Use model_config_for_pred (which has param_specs populated) so
         # index_dataset_params in the likelihood can correctly identify
@@ -641,12 +618,15 @@ class PosteriorPredictiveSamplingMixin:
         # params are indexed to per-cell layout.
         model_args = {
             "n_cells": self.n_cells,
-            "n_genes": self.n_genes,
+            "n_genes": n_genes_for_model,
             "model_config": model_config_for_pred,
         }
         ds_idx = getattr(self, "_dataset_indices", None)
         if ds_idx is not None:
             model_args["dataset_indices"] = ds_idx
+        _tcm = getattr(self, "_total_count_max", None)
+        if _tcm is not None:
+            model_args["total_count_max"] = int(_tcm)
 
         # Check if posterior samples exist
         if self.posterior_samples is None:
@@ -664,7 +644,6 @@ class PosteriorPredictiveSamplingMixin:
             self.posterior_samples,
             model_args,
             rng_key=rng_key,
-            params=self.params,
         )
 
         # Store samples if requested

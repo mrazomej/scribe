@@ -139,6 +139,14 @@ config.vae.hidden_dims  # VAE hidden layer sizes
 config.guides.p  # Guide for p parameter
 ```
 
+### VAE Factory Gene-Width Contract
+
+When reconstructing VAE model/guide callables via `get_model_and_guide(...)`
+or `create_model(...)`, the `n_genes` argument must match the effective
+decoder-head width in the parameter state. Mismatched widths can surface as
+decoder `Dense` shape/broadcast errors during factory dry-run validation and
+posterior predictive sampling.
+
 ## API Reference
 
 See individual class docstrings for complete API documentation:

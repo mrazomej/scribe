@@ -212,6 +212,55 @@ def validate_model_guide_compatibility(
 # ==============================================================================
 
 
+def _summarize_vae_decoder_heads(decoder: MultiHeadDecoder) -> str:
+    """Summarize decoder output-head dimensions for diagnostics.
+
+    Parameters
+    ----------
+    decoder : MultiHeadDecoder
+        Decoder module instance used in VAE model construction.
+
+    Returns
+    -------
+    str
+        Human-readable comma-separated summary string.
+    """
+    parts = []
+    for head in decoder.output_heads:
+        parts.append(f"{head.param_name}:{int(head.output_dim)}")
+    return ", ".join(parts) if parts else "<no decoder heads>"
+
+
+def _format_vae_dry_run_error(
+    *,
+    err: Exception,
+    n_genes: int,
+    decoder: MultiHeadDecoder,
+) -> str:
+    """Build an actionable dry-run validation error for VAE factories.
+
+    Parameters
+    ----------
+    err : Exception
+        Original exception raised during model/guide dry run.
+    n_genes : int
+        Gene width used to build VAE encoder/decoder modules.
+    decoder : MultiHeadDecoder
+        Decoder module built by the factory.
+
+    Returns
+    -------
+    str
+        Expanded error message including likely shape-mismatch context.
+    """
+    head_summary = _summarize_vae_decoder_heads(decoder)
+    return (
+        "VAE model/guide validation failed during dry run. "
+        f"factory_n_genes={int(n_genes)}; decoder_heads=[{head_summary}]. "
+        f"Original error: {err}"
+    )
+
+
 def _create_vae_model(
     model_config: ModelConfig,
     priors: Optional[Dict[str, Tuple[float, ...]]] = None,
@@ -541,7 +590,11 @@ def _create_vae_model(
                 )
         except Exception as e:
             raise RuntimeError(
-                f"VAE model/guide validation failed during dry run: {e}"
+                _format_vae_dry_run_error(
+                    err=e,
+                    n_genes=n_genes,
+                    decoder=decoder,
+                )
             ) from e
 
     return model, guide, param_specs
