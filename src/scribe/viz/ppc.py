@@ -20,7 +20,11 @@ from ._interactive import (
     plot_function,
 )
 from .dispatch import _get_predictive_samples_for_plot
-from .gene_selection import _coerce_counts, _get_gene_names, _select_genes
+from .gene_selection import (
+    _coerce_and_align_counts_to_results,
+    _get_gene_names,
+    _select_genes,
+)
 from .ppc_rendering import (
     compute_adaptive_max_bin,
     get_ppc_render_options,
@@ -74,6 +78,7 @@ def _prepare_ppc_data(results, counts, viz_cfg, *, n_rows, n_cols, n_samples):
     )
 
     results_subset = results[selected_idx]
+    counts_subset = counts[:, selected_idx]
 
     console.print(
         f"[dim]Generating {n_samples} posterior predictive samples...[/dim]"
@@ -82,7 +87,7 @@ def _prepare_ppc_data(results, counts, viz_cfg, *, n_rows, n_cols, n_samples):
         results_subset,
         rng_key=random.PRNGKey(42),
         n_samples=n_samples,
-        counts=counts,
+        counts=counts_subset,
         store_samples=True,
     )
 
@@ -164,7 +169,9 @@ def plot_ppc(
         Wrapped result containing the figure, axes, and metadata.
     """
     console.print("[dim]Plotting PPC...[/dim]")
-    counts = _coerce_counts(counts)
+    counts = _coerce_and_align_counts_to_results(
+        counts, results, context="plot_ppc"
+    )
     if ax is not None:
         raise ValueError(
             "PPC requires multiple axes; provide `fig` or `axes` instead of `ax`."

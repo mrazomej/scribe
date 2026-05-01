@@ -791,7 +791,11 @@ def test_plot_umap_subsets_ppc_to_hvg_genes(monkeypatch):
     )
 
     # Keep test deterministic and focused on indexing semantics.
-    monkeypatch.setattr(umap_module, "_coerce_counts", lambda x: x)
+    monkeypatch.setattr(
+        umap_module,
+        "_coerce_and_align_counts_to_results",
+        lambda c, _r, context=None: c,
+    )
 
     class _DummyReducer:
         def fit_transform(self, x):
@@ -919,6 +923,208 @@ def test_apply_scale_to_synth_scanpy_matches_manual():
     expected = (synth_norm - mean) / std
     expected = np.clip(expected, -10.0, 10.0)
     np.testing.assert_allclose(out, expected)
+
+
+def test_align_counts_to_results_auto_aggregates_gene_coverage_mask():
+    """Alignment helper should aggregate excluded genes into pooled column."""
+    from scribe.viz.gene_selection import _coerce_and_align_counts_to_results
+
+    class _FakeResults:
+        # Keep three model-space genes: original indices 0 and 2, plus pooled.
+        n_genes = 3
+        gene_coverage_mask = np.array([True, False, True, False, False])
+
+    counts = np.array(
+        [
+            [10, 2, 6, 1, 1],
+            [4, 3, 2, 5, 6],
+        ],
+        dtype=float,
+    )
+    aligned = _coerce_and_align_counts_to_results(
+        counts, _FakeResults(), context="test"
+    )
+    expected = np.array(
+        [
+            [10, 6, 4],
+            [4, 2, 14],
+        ],
+        dtype=float,
+    )
+    np.testing.assert_array_equal(aligned, expected)
+
+
+def test_plot_umap_auto_aligns_original_gene_space_counts(monkeypatch):
+    """UMAP should auto-align raw counts before PPC subsetting."""
+    import scribe.viz.umap as umap_module
+
+    n_cells, n_genes = 5, 6
+    counts = np.array(
+        [
+            [1, 1, 0, 0, 1, 0],
+            [1, 0, 0, 0, 1, 0],
+            [1, 1, 1, 0, 0, 0],
+            [0, 1, 1, 0, 0, 0],
+            [0, 0, 1, 0, 1, 0],
+        ],
+        dtype=float,
+    )
+    # Keep genes [0, 2, 4] and pool [1, 3, 5] to simulate prefit coverage.
+    coverage_mask = np.array([True, False, True, False, True, False])
+
+    class _DummyReducer:
+        def fit_transform(self, x):
+            return np.stack([x[:, 0], x[:, 1]], axis=1)
+
+        def transform(self, x):
+            return np.stack([x[:, 0], x[:, 1]], axis=1)
+
+    class _DummyUMAP:
+        def __init__(self, **kwargs):
+            _ = kwargs
+
+        def fit_transform(self, x):
+            return _DummyReducer().fit_transform(x)
+
+        def transform(self, x):
+            return _DummyReducer().transform(x)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "umap",
+        types.SimpleNamespace(UMAP=_DummyUMAP),
+    )
+
+    class _DummyAnnData:
+        def __init__(self, X):
+            self.X = X
+            self.var = {}
+
+    def _dummy_hvg(adata_hvg, n_top_genes, flavor, inplace):
+        _ = flavor, inplace
+        mask = np.zeros(adata_hvg.X.shape[1], dtype=bool)
+        mask[:n_top_genes] = True
+        adata_hvg.var["highly_variable"] = mask
+
+    monkeypatch.setitem(
+        sys.modules,
+        "anndata",
+        types.SimpleNamespace(AnnData=_DummyAnnData),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "scanpy",
+        types.SimpleNamespace(
+            pp=types.SimpleNamespace(highly_variable_genes=_dummy_hvg)
+        ),
+    )
+
+    class _DummyPCA:
+        def __init__(self, n_components, random_state):
+            self.n_components = int(n_components)
+            _ = random_state
+
+        def fit_transform(self, x):
+            return x[:, : self.n_components]
+
+        def transform(self, x):
+            return x[:, : self.n_components]
+
+    monkeypatch.setitem(
+        sys.modules,
+        "sklearn.decomposition",
+        types.SimpleNamespace(PCA=_DummyPCA),
+    )
+
+    seen = {}
+
+    def _fake_predictive(results_sub, **kwargs):
+        seen["subset_n_genes"] = int(results_sub.n_genes)
+        seen["counts_n_genes"] = int(kwargs["counts"].shape[1])
+        n_cells_local = kwargs["counts"].shape[0]
+        return np.zeros((1, n_cells_local, results_sub.n_genes), dtype=float)
+
+    monkeypatch.setattr(
+        umap_module, "_get_predictive_samples_for_plot", _fake_predictive
+    )
+
+    class _FakeResults:
+        def __init__(self, n_genes, mask):
+            self.n_genes = int(n_genes)
+            self.gene_coverage_mask = np.asarray(mask, dtype=bool)
+
+        def __getitem__(self, index):
+            return _FakeResults(len(index), self.gene_coverage_mask)
+
+    result = umap_module.plot_umap(
+        _FakeResults(n_genes=4, mask=coverage_mask),
+        counts,
+        save=False,
+        viz_cfg=OmegaConf.create(
+            {
+                "umap_opts": {
+                    "gene_filter_min_cells": 1,
+                    "hvg_n_top_genes": 2,
+                    "use_hvg": True,
+                    "use_pca": False,
+                    "cache_umap": False,
+                    "n_ppc_samples": 1,
+                }
+            }
+        ),
+    )
+
+    assert isinstance(result, PlotResult)
+    # Ensure PPC receives counts already subset to the same UMAP genes.
+    assert seen["subset_n_genes"] == 2
+    assert seen["counts_n_genes"] == 2
+    plt.close(result.fig)
+
+
+def test_plot_ppc_auto_aligns_counts_before_preparation(monkeypatch):
+    """PPC should align raw counts to model gene-space before prep."""
+    import scribe.viz.ppc as ppc_module
+
+    class _FakeResults:
+        n_genes = 3
+        gene_coverage_mask = np.array([True, False, True, False, False])
+
+    counts = np.array(
+        [
+            [10, 2, 6, 1, 1],
+            [4, 3, 2, 5, 6],
+        ],
+        dtype=float,
+    )
+    seen = {}
+
+    class _FakeSubset:
+        predictive_samples = np.zeros((1, 1, 1), dtype=float)
+
+    def _fake_prepare(_results, prep_counts, _viz_cfg, **kwargs):
+        # If alignment runs, prep receives model-space counts (3 genes), not 5.
+        seen["counts_n_genes"] = int(prep_counts.shape[1])
+        _ = kwargs
+        return {
+            "n_rows": 1,
+            "n_cols": 1,
+            "selected_idx_sorted": np.array([], dtype=int),
+            "subset_positions": {},
+            "n_genes_selected": 0,
+            "render_opts": {},
+            "results_subset": _FakeSubset(),
+        }
+
+    monkeypatch.setattr(ppc_module, "_prepare_ppc_data", _fake_prepare)
+    result = ppc_module.plot_ppc(
+        _FakeResults(),
+        counts,
+        save=False,
+        viz_cfg=OmegaConf.create({"ppc_opts": {"n_rows": 1, "n_cols": 1}}),
+    )
+    assert isinstance(result, PlotResult)
+    assert seen["counts_n_genes"] == 3
+    plt.close(result.fig)
 
 
 def test_plot_bio_ppc_aligns_counts_subset_with_results_order(

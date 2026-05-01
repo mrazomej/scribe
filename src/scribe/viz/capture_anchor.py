@@ -28,7 +28,7 @@ from .dispatch import (
     _get_map_estimates_for_plot,
     _get_cell_assignment_probabilities_for_plot,
 )
-from .gene_selection import _coerce_counts
+from .gene_selection import _coerce_and_align_counts_to_results
 
 
 def _resolve_expected_log_m0(cfg):
@@ -94,7 +94,9 @@ def _prepare_capture_anchor_data(results, counts, cfg, viz_cfg):
         ``scatter_size``, ``scatter_alpha``.  Returns ``None`` when
         the anchor or eta values are unavailable.
     """
-    counts = _coerce_counts(counts)
+    counts = _coerce_and_align_counts_to_results(
+        counts, results, context="_prepare_capture_anchor_data"
+    )
     expected_log_m0 = _resolve_expected_log_m0(cfg)
     if expected_log_m0 is None:
         console.print(
@@ -389,7 +391,9 @@ def _prepare_p_capture_data(
         and optionally ``component_ids``, ``component_probs``.
         Returns ``None`` when p_capture is unavailable.
     """
-    counts = _coerce_counts(counts)
+    counts = _coerce_and_align_counts_to_results(
+        counts, results, context="_prepare_p_capture_data"
+    )
     map_estimates = _get_map_estimates_for_plot(
         results, counts=counts, targets=["p_capture"]
     )

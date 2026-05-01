@@ -14,7 +14,7 @@ from ._interactive import (
     _create_or_validate_single_axis,
     plot_function,
 )
-from .gene_selection import _coerce_counts
+from .gene_selection import _coerce_and_align_counts_to_results
 
 
 def _scanpy_umap_pipeline_available(sc_module):
@@ -140,6 +140,9 @@ def plot_umap(
         Wrapped result containing the figure, axes, and metadata.
     """
     console.print("[dim]Plotting UMAP projection...[/dim]")
+    counts = _coerce_and_align_counts_to_results(
+        counts, results, context="plot_umap"
+    )
 
     umap_opts = viz_cfg.get("umap_opts", {}) if viz_cfg is not None else {}
 
@@ -340,7 +343,7 @@ def plot_umap(
         console.print(
             "[dim]Preparing experimental data with Scanpy-style preprocessing...[/dim]"
         )
-        counts_np = np.asarray(_coerce_counts(counts), dtype=np.float64)
+        counts_np = np.asarray(counts, dtype=np.float64)
 
         detected_cells_per_gene = np.sum(counts_np > 0, axis=0)
         gene_mask = detected_cells_per_gene >= gene_filter_min_cells
@@ -565,6 +568,7 @@ def plot_umap(
     detected_gene_indices = np.where(gene_mask)[0]
     umap_gene_indices = detected_gene_indices[np.asarray(hvg_mask, dtype=bool)]
     results_sub = results[umap_gene_indices]
+    counts_sub = np.asarray(counts, dtype=np.float64)[:, umap_gene_indices]
 
     console.print(
         f"[dim]Gene-subsetted results to {len(umap_gene_indices)} UMAP genes "
@@ -578,7 +582,7 @@ def plot_umap(
             rng_key=random.PRNGKey(42 + i),
             n_samples=1,
             store_samples=False,
-            counts=counts,
+            counts=counts_sub,
         )
 
         synth_i = np.array(sample_arr[0, :, :], dtype=np.float64)

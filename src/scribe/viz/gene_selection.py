@@ -1,6 +1,7 @@
 """Gene selection utilities for ECDF and PPC plots."""
 
 import numpy as np
+import warnings
 
 
 def _get_gene_names(results):
@@ -34,6 +35,61 @@ def _coerce_counts(counts):
     if hasattr(counts, "toarray"):
         counts = counts.toarray()
     return np.asarray(counts)
+
+
+def _coerce_and_align_counts_to_results(counts, results, *, context="viz"):
+    """Coerce counts and align them to the fitted results gene space.
+
+    Parameters
+    ----------
+    counts : array-like or AnnData
+        Observed count matrix in either original or model-space gene axes.
+    results : object
+        Fitted SCRIBE results object.
+    context : str, default="viz"
+        Caller context used to make mismatch errors easier to diagnose.
+
+    Returns
+    -------
+    numpy.ndarray
+        Dense count matrix aligned to ``results.n_genes``.
+
+    Raises
+    ------
+    ValueError
+        If counts cannot be aligned to the model gene-space.
+    """
+    counts_arr = _coerce_counts(counts)
+    n_genes_results = int(getattr(results, "n_genes", counts_arr.shape[1]))
+    if int(counts_arr.shape[1]) == n_genes_results:
+        return counts_arr
+
+    mask = getattr(results, "gene_coverage_mask", None)
+    if mask is None:
+        mask = getattr(results, "_gene_coverage_mask", None)
+
+    if mask is not None:
+        mask_arr = np.asarray(mask, dtype=bool).ravel()
+        if int(mask_arr.shape[0]) == int(counts_arr.shape[1]):
+            from ..core.gene_coverage import aggregate_counts_by_mask
+
+            aligned = np.asarray(
+                aggregate_counts_by_mask(counts_arr, mask_arr)
+            )
+            if int(aligned.shape[1]) == n_genes_results:
+                warnings.warn(
+                    f"[{context}] Auto-aligned counts from original gene "
+                    "space to model gene space using gene_coverage_mask.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                return aligned
+
+    raise ValueError(
+        f"[{context}] counts gene dimension ({counts_arr.shape[1]}) does not "
+        f"match results.n_genes ({n_genes_results}) and could not be aligned "
+        "with results.gene_coverage_mask."
+    )
 
 
 def _select_genes_simple(counts, n_genes):
