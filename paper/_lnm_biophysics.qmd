@@ -3,6 +3,11 @@ editor:
     render-on-save: true
 # bibliography: references.bib
 csl: ieee.csl
+format:
+  html:
+    theme:
+      light: cosmo
+      dark: superhero 
 ---
 
 # Biophysical foundation of the Logistic-Normal Multinomial {#sec-lnm-biophysics}
@@ -151,25 +156,188 @@ surviving contributions from past bursts---a natural **exponential moving
 average** over the gene's production history, with memory timescale
 $1/\gamma_g$ set by mRNA degradation.
 
-### Steady-state distribution: exact Gamma {#sec-lnm-bio-bursty-gamma}
+### Steady-state distribution: from the Chemical Master Equation to the Gamma {#sec-lnm-bio-bursty-gamma}
 
-A classical result in the theory of shot-noise processes (and independently
-derivable via the Chemical Master Equation and generating functions; see e.g.
-Shahrezaei & Swain, *PNAS* 2008) is that the steady-state distribution of the
-shot-noise process @eq-lnm-bio-shot-noise-solution with Poisson burst arrivals
-and geometric burst sizes is **exactly** a Gamma distribution:
+We now derive the steady-state distribution of the one-state bursty promoter
+from first principles using the Chemical Master Equation (CME) and the
+probability generating function (PGF).
+
+#### The Chemical Master Equation {#sec-lnm-bio-cme}
+
+Let $P(n, t) = \text{Prob}(m_g = n \text{ at time } t)$ be the probability
+that gene $g$ has exactly $n$ mRNA molecules at time $t$. Two processes change
+the mRNA count: degradation (which decreases $n$ by 1) and bursts (which
+increase $n$ by the burst size $B$). The CME is
 
 $$
+\frac{dP(n)}{dt} =
+\underbrace{\gamma_g (n+1) P(n+1) - \gamma_g n \, P(n)}_{\text{degradation}}
++ \underbrace{k_{i,g} \sum_{m=0}^{n} q_m \, P(n-m) - k_{i,g} \, P(n)}_{\text{bursts}},
+$${#eq-lnm-bio-cme}
+
+where $q_m = \text{Prob}(B = m)$ is the burst size probability mass function
+from @eq-lnm-bio-burst-size. The degradation terms account for molecules
+leaving state $n+1$ (entering $n$) and leaving state $n$. The burst terms
+account for arriving at state $n$ from any state $n - m$ via a burst of size
+$m$, minus leaving state $n$ by any burst event (including bursts of size 0).
+
+#### Converting to the probability generating function {#sec-lnm-bio-pgf}
+
+Define the probability generating function
+
+$$
+G(z, t) = \sum_{n=0}^{\infty} z^n P(n, t) = \langle z^{m_g} \rangle.
+$${#eq-lnm-bio-pgf-def}
+
+To convert the CME to an equation for $G$, we multiply both sides of
+@eq-lnm-bio-cme by $z^n$ and sum over $n \geq 0$. Each group of terms
+transforms as follows.
+
+**Degradation terms.** The "gain" term (molecules entering state $n$ from
+$n+1$) gives
+
+$$
+\sum_{n=0}^{\infty} z^n \, \gamma_g(n+1) P(n+1) =
+\gamma_g \frac{\partial G}{\partial z},
+$${#eq-lnm-bio-pgf-deg-gain}
+
+since $(n+1)P(n+1)$ is the coefficient of $z^n$ in $\partial G / \partial z$.
+The "loss" term (molecules leaving state $n$) gives
+
+$$
+\sum_{n=0}^{\infty} z^n \, \gamma_g \, n \, P(n) =
+\gamma_g \, z \frac{\partial G}{\partial z},
+$${#eq-lnm-bio-pgf-deg-loss}
+
+since $n P(n)$ is the coefficient of $z^n$ in $z \, \partial G / \partial z$.
+Together, the degradation contribution is
+
+$$
+\gamma_g (1 - z) \frac{\partial G}{\partial z}.
+$${#eq-lnm-bio-pgf-deg-total}
+
+**Burst terms.** The "gain" term is a convolution sum
+$\sum_{m=0}^{n} q_m P(n-m)$, which, after multiplying by $z^n$ and summing
+over $n$, becomes the product of the PGFs:
+
+$$
+\sum_{n=0}^{\infty} z^n \sum_{m=0}^{n} q_m \, P(n-m) =
+Q(z) \cdot G(z),
+$${#eq-lnm-bio-pgf-burst-conv}
+
+where $Q(z) = \sum_{m=0}^{\infty} q_m z^m$ is the PGF of the burst size
+distribution. The "loss" term is simply $k_{i,g} G(z)$. Together, the burst
+contribution is
+
+$$
+k_{i,g}\left[Q(z) - 1\right] G(z).
+$${#eq-lnm-bio-pgf-burst-total}
+
+**The PGF of the geometric burst size.** From @eq-lnm-bio-burst-size,
+
+$$
+Q(z) = \sum_{m=0}^{\infty} \frac{1}{1+b_g}
+\left(\frac{b_g z}{1+b_g}\right)^m =
+\frac{1}{1 + b_g(1 - z)},
+$${#eq-lnm-bio-pgf-geom}
+
+where the geometric series converges for $|z| \leq 1$ (since
+$b_g / (1 + b_g) < 1$). Therefore,
+
+$$
+Q(z) - 1 = \frac{1}{1 + b_g(1 - z)} - 1 =
+\frac{-b_g(1 - z)}{1 + b_g(1 - z)}.
+$${#eq-lnm-bio-pgf-Qminus1}
+
+#### The steady-state PGF equation {#sec-lnm-bio-pgf-ode}
+
+At steady state, $\partial G / \partial t = 0$. Collecting the degradation
+(@eq-lnm-bio-pgf-deg-total) and burst (@eq-lnm-bio-pgf-burst-total) terms:
+
+$$
+0 = \gamma_g(1 - z)\frac{\partial G}{\partial z}
++ k_{i,g} \cdot \frac{-b_g(1 - z)}{1 + b_g(1 - z)} \, G(z).
+$${#eq-lnm-bio-pgf-ss-raw}
+
+Dividing both sides by $(1 - z)$ (valid for $z \neq 1$):
+
+$$
+\gamma_g \frac{\partial G}{\partial z} =
+\frac{k_{i,g} \, b_g}{1 + b_g(1 - z)} \, G(z).
+$${#eq-lnm-bio-pgf-ss}
+
+This is a first-order **separable ODE** in $z$.
+
+#### Solving the separable ODE {#sec-lnm-bio-pgf-solve}
+
+Separating variables:
+
+$$
+\frac{dG}{G} =
+\frac{k_{i,g} \, b_g}{\gamma_g} \cdot
+\frac{dz}{1 + b_g(1 - z)}.
+$${#eq-lnm-bio-pgf-separated}
+
+To evaluate the right-hand side, substitute $w = 1 + b_g(1 - z)$, so
+$dw = -b_g \, dz$, i.e., $dz = -dw / b_g$:
+
+$$
+\frac{k_{i,g} \, b_g}{\gamma_g} \cdot \frac{-dw / b_g}{w} =
+-\frac{k_{i,g}}{\gamma_g} \cdot \frac{dw}{w}.
+$${#eq-lnm-bio-pgf-substitution}
+
+Integrating both sides:
+
+$$
+\ln G = -\frac{k_{i,g}}{\gamma_g} \ln w + C =
+-\frac{k_{i,g}}{\gamma_g} \ln\!\left[1 + b_g(1 - z)\right] + C.
+$${#eq-lnm-bio-pgf-integrated}
+
+Exponentiating:
+
+$$
+G(z) = A \cdot \left[1 + b_g(1 - z)\right]^{-k_{i,g}/\gamma_g}.
+$${#eq-lnm-bio-pgf-general}
+
+The constant $A$ is fixed by the normalization condition $G(1) = 1$ (since
+$\sum_{n=0}^{\infty} P(n) = 1$):
+
+$$
+G(1) = A \cdot \left[1 + b_g(1 - 1)\right]^{-k_{i,g}/\gamma_g} =
+A \cdot 1 = A.
+$${#eq-lnm-bio-pgf-normalization}
+
+Therefore $A = 1$, and the steady-state PGF is
+
+$$
+\boxed{
+G(z) = \left[1 + b_g(1 - z)\right]^{-k_{i,g}/\gamma_g}.
+}
+$${#eq-lnm-bio-pgf-result}
+
+#### Identifying the distribution {#sec-lnm-bio-pgf-identify}
+
+The PGF @eq-lnm-bio-pgf-result is exactly the PGF of the **negative binomial**
+distribution with shape $r_g = k_{i,g}/\gamma_g$ and success probability
+$p = 1/(1 + b_g)$. This confirms that the exact discrete steady-state is
+$m_g \sim \text{NB}(r_g, p)$, as stated in @eq-lnm-bio-nb-exact.
+
+The Gamma distribution for the effective Poisson rate $\lambda_g$ now follows
+immediately from the Poisson-Gamma mixture representation of the NB, which was
+derived in @sec-dirichlet-multinomial: the NB is the marginal distribution of
+$m_g \mid \lambda_g \sim \text{Poisson}(\lambda_g)$ when
+$\lambda_g \sim \text{Gamma}(r_g, b_g)$. Since we have just shown that the
+steady-state is $\text{NB}(r_g, p)$ with $r_g = k_{i,g}/\gamma_g$ and
+$p = 1/(1 + b_g)$, the effective Poisson rate is
+
+$$
+\boxed{
 \lambda_g \sim \text{Gamma}\!\left(\frac{k_{i,g}}{\gamma_g},\, b_g\right),
+}
 $${#eq-lnm-bio-bursty-gamma}
 
-where we use $\lambda_g$ to denote the continuous mRNA abundance (the effective
-Poisson rate in the Poisson-Gamma mixture representation of the NB), with
-$k_{i,g}/\gamma_g$ as the shape parameter (dimensionless burst frequency) and
-$b_g$ as the scale parameter (mean burst size). The Gamma is a continuous
-approximation to the exact discrete NB; the two coincide in the regime where
-molecular counts are not too small, which is precisely the regime where the
-downstream approximations (CLE, LNA) are valid.
+with $k_{i,g}/\gamma_g$ as the shape parameter (dimensionless burst frequency)
+and $b_g$ as the scale parameter (mean burst size).
 
 ### The effective Poisson rate and its physical meaning {#sec-lnm-bio-lambda-def}
 
