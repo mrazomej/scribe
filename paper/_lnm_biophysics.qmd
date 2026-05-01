@@ -75,9 +75,8 @@ The second term is first-order mRNA degradation.
 ### Solving the shot-noise ODE {#sec-lnm-bio-shot-noise-solve}
 
 We now solve @eq-lnm-bio-shot-noise-ode step by step. The ODE is linear in
-$m_g$, so we can use the same integrating factor technique that appears in the
-two-state promoter derivation (see @sec-lnm-bio-two-state-ode). Writing the
-ODE in standard form,
+$m_g$, so we use the integrating factor method. Writing the ODE in standard
+form,
 
 $$
 \dot{m}_g(t) + \gamma_g \, m_g(t) =
@@ -150,10 +149,7 @@ Each burst deposits $B_j$ molecules at time $t_j$, and these molecules decay
 exponentially with rate $\gamma_g$. The current mRNA count is the sum of all
 surviving contributions from past bursts---a natural **exponential moving
 average** over the gene's production history, with memory timescale
-$1/\gamma_g$ set by mRNA degradation. This is the one-state bursty analogue
-of the exponential moving average that appears in the two-state model
-(@eq-lnm-bio-ss-convolution), with discrete burst events replacing the
-continuous binary switching signal.
+$1/\gamma_g$ set by mRNA degradation.
 
 ### Steady-state distribution: exact Gamma {#sec-lnm-bio-bursty-gamma}
 
