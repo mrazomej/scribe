@@ -15,6 +15,13 @@ The SVI module provides:
 4. **Results Management**: Comprehensive results class with analysis methods
 5. **Results Factory**: Streamlined creation and packaging of results objects
 
+SVI result objects can also carry pre-fit gene coverage metadata when
+`scribe.fit(..., gene_coverage=...)` is used:
+
+- `_gene_coverage`: coverage threshold used during fitting
+- `_gene_coverage_mask`: keep-mask over the original gene space
+- `_excluded_gene_names`: names pooled into the trailing "other" pseudo-gene
+
 For multi-dataset mixture models, post-fit empirical mixing replacement now
 computes dataset-specific soft counts and updates mixing parameters per dataset
 instead of collapsing all cells into one global correction.

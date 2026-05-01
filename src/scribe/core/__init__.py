@@ -5,6 +5,12 @@ This module contains shared functionality used by both SVI and MCMC inference me
 """
 
 from .input_processor import InputProcessor
+from .gene_coverage import (
+    aggregate_counts_by_mask,
+    build_filtered_gene_names,
+    compute_empirical_gene_coverage_mask,
+    compute_gene_coverage_rank,
+)
 from .normalization import normalize_counts_from_posterior
 from .normalization_logistic import fit_logistic_normal_from_posterior
 from .annotation_prior import (
@@ -52,6 +58,10 @@ from .axis_layout import (
 
 __all__ = [
     "InputProcessor",
+    "aggregate_counts_by_mask",
+    "build_filtered_gene_names",
+    "compute_empirical_gene_coverage_mask",
+    "compute_gene_coverage_rank",
     "normalize_counts_from_posterior",
     "fit_logistic_normal_from_posterior",
     "build_annotation_prior_logits",

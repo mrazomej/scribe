@@ -81,6 +81,12 @@ unconstrained parameterizations via the `unconstrained` boolean field. Prior and
 guide hyperparameters are stored in `param_specs` (list of `ParamSpec`); see
 `scribe.models.builders.parameter_specs`.
 
+Additional reproducibility fields may be populated by `scribe.fit(...)` at
+runtime, including:
+
+- `gene_coverage: Optional[float]` — cumulative abundance threshold used for
+  pre-fit gene filtering (when enabled).
+
 #### Gene-Level Prior Fields
 
 - `prob_prior: HierarchicalPriorType` — Gene-level prior for p/phi
