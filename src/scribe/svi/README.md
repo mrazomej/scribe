@@ -1096,6 +1096,14 @@ fitted LNM model.  The ALR reference gene index is stored in
 gene with the highest geometric mean expression).  All coordinate transforms
 (ALR-to-CLR, simplex sampling, etc.) respect this index.
 
+#### VAE Serialization Note
+
+`ScribeVAEResults` is stdlib-`pickle` compatible, including LNM/LNMVCP models
+whose decoder heads may carry Flax initializer closures (for example from
+`nn.initializers.constant`). During `__getstate__`, non-picklable per-head
+`bias_init` callables are stripped from the serialized decoder copy while
+preserving trained parameter tensors and all runtime analysis behavior.
+
 ### SVIResultsFactory (`results_factory.py`)
 
 Factory class for creating and packaging SVI results:

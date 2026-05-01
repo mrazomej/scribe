@@ -17,8 +17,9 @@ scribe.svi._latent_space : LatentSpaceMixin providing latent operations.
 scribe.svi._latent_dispatch : Dispatched encoder-dependent operations.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as dc_replace
 from typing import TYPE_CHECKING, Any, Dict, Optional
+import pickle
 
 import jax.numpy as jnp
 import numpy as np
@@ -45,6 +46,77 @@ from ._normalization import NormalizationMixin
 from ._parameter_extraction import ParameterExtractionMixin
 from ._sampling import SamplingMixin
 from .variational_results_base import ScribeVariationalResults
+
+
+def _is_pickle_serializable(value: Any) -> bool:
+    """Return ``True`` when ``value`` can be serialized by ``pickle``.
+
+    Parameters
+    ----------
+    value : Any
+        Arbitrary Python object to probe for stdlib ``pickle`` support.
+
+    Returns
+    -------
+    bool
+        ``True`` when ``pickle.dumps(value)`` succeeds, ``False`` otherwise.
+    """
+    try:
+        pickle.dumps(value)
+        return True
+    except Exception:
+        return False
+
+
+def _sanitize_decoder_for_pickle(decoder: Any) -> Any:
+    """Return a pickle-safe decoder copy when head initializers are closures.
+
+    Parameters
+    ----------
+    decoder : Any
+        Decoder module carried by ``ScribeVAEResults._decoder``.
+
+    Returns
+    -------
+    Any
+        Original decoder when no sanitization is needed, otherwise a shallow
+        copy with non-picklable ``bias_init`` callables replaced by ``None``.
+
+    Notes
+    -----
+    Flax initializers such as ``nn.initializers.constant`` are runtime-local
+    closures (e.g. ``constant.<locals>.init``). Those closures are only needed
+    when layers are initialized, not for inference on already-trained params.
+    During serialization we therefore drop only unpicklable head initializers,
+    preserving every other decoder attribute.
+    """
+    # Preserve behavior for non-decoder or legacy objects that do not expose
+    # ``output_heads``.
+    output_heads = getattr(decoder, "output_heads", None)
+    if output_heads is None:
+        return decoder
+
+    sanitized_heads = []
+    changed = False
+
+    # Rewrite only the problematic per-head initializer closures so that
+    # stdlib pickle can serialize the VAE results object.
+    for head in output_heads:
+        bias_init = getattr(head, "bias_init", None)
+        if bias_init is not None and not _is_pickle_serializable(bias_init):
+            sanitized_heads.append(dc_replace(head, bias_init=None))
+            changed = True
+        else:
+            sanitized_heads.append(head)
+
+    if not changed:
+        return decoder
+
+    sanitized_heads_tuple = tuple(sanitized_heads)
+    if hasattr(decoder, "replace"):
+        return decoder.replace(output_heads=sanitized_heads_tuple)
+    return dc_replace(decoder, output_heads=sanitized_heads_tuple)
+
 
 # ==============================================================================
 # ScribeVAEResults
@@ -224,11 +296,20 @@ class ScribeVAEResults(
             )
 
     def __getstate__(self) -> Dict[str, Any]:
-        """Return pickle-safe state for composable VAE results."""
+        """Return pickle-safe state for composable VAE results.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Instance state with a serialization-safe ``model_config`` and a
+            decoder copy whose non-picklable ``bias_init`` closures have been
+            removed from output heads.
+        """
         state = dict(self.__dict__)
         state["model_config"] = make_model_config_pickle_safe(
             state.get("model_config")
         )
+        state["_decoder"] = _sanitize_decoder_for_pickle(state.get("_decoder"))
         return state
 
     def __setstate__(self, state: Dict[str, Any]) -> None:

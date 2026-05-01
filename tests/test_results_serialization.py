@@ -6,6 +6,7 @@ deserialized with ``pickle`` without raising errors.
 
 import pickle
 
+import flax.linen as nn
 import jax.numpy as jnp
 import numpy as np
 
@@ -18,8 +19,10 @@ from scribe.mc.results import ScribeModelComparisonResults
 from scribe.mcmc.results import ScribeMCMCResults
 from scribe.models.config import GuideFamilyConfig, ModelConfigBuilder
 from scribe.models.components import (
+    DecoderOutputHead,
     JointLowRankGuide,
     LowRankGuide,
+    MultiHeadDecoder,
     NormalizingFlowGuide,
 )
 from scribe.svi.results import ScribeSVIResults
@@ -231,6 +234,53 @@ def test_composable_vae_results_pickle_roundtrip():
     assert isinstance(restored, ScribeVAEResults)
     assert _ENCODER_KEY in restored.params
     assert _DECODER_KEY in restored.params
+
+
+def test_composable_vae_results_pickle_roundtrip_with_constant_bias_init():
+    """VAE results should pickle even with LNM-style constant bias initializer.
+
+    Notes
+    -----
+    ``nn.initializers.constant`` returns a local closure
+    (``constant.<locals>.init``) that stdlib ``pickle`` cannot serialize.
+    This test mirrors the LNM decoder-head construction path and verifies
+    ``ScribeVAEResults.__getstate__`` sanitizes the closure during dump.
+    """
+    cfg = ModelConfigBuilder().for_model("nbdm").with_inference("vae").build()
+
+    # Build a decoder with a per-head flax constant initializer so this test
+    # exercises the same unpicklable closure shape that appears in LNM runs.
+    head = DecoderOutputHead(
+        param_name="y_alr",
+        output_dim=2,
+        transform="identity",
+        bias_init=nn.initializers.constant(jnp.asarray([0.1, -0.2])),
+    )
+    decoder = MultiHeadDecoder(
+        output_dim=0,
+        latent_dim=2,
+        hidden_dims=[],
+        output_heads=(head,),
+        activation="relu",
+    )
+
+    results = ScribeVAEResults(
+        params={_ENCODER_KEY: {}, _DECODER_KEY: {}},
+        loss_history=jnp.array([4.0, 2.0]),
+        n_cells=2,
+        n_genes=3,
+        model_type="nbdm",
+        model_config=cfg,
+        prior_params={},
+        _encoder=object(),
+        _decoder=decoder,
+        _latent_spec=_DummyLatentSpec(),
+    )
+
+    restored = _roundtrip(results)
+    assert isinstance(restored, ScribeVAEResults)
+    assert restored._decoder is not None
+    assert restored._decoder.output_heads[0].bias_init is None
 
 
 def test_de_results_pickle_roundtrip():
