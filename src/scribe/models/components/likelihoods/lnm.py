@@ -173,6 +173,7 @@ class LogisticNormalMultinomialLikelihood(Likelihood):
         dims: Dict[str, int],
         batch_size: Optional[int],
         model_config: "ModelConfig",
+        total_count_max: Optional[int] = None,
         vae_cell_fn: Optional[
             Callable[[Optional[jnp.ndarray]], Dict[str, jnp.ndarray]]
         ] = None,
@@ -269,7 +270,11 @@ class LogisticNormalMultinomialLikelihood(Likelihood):
                 counts_batch = counts[idx] if counts is not None else None
                 numpyro.sample(
                     "counts",
-                    dist.Multinomial(total_count=u_T_batch, probs=rho),
+                    dist.Multinomial(
+                        total_count=u_T_batch,
+                        probs=rho,
+                        total_count_max=total_count_max,
+                    ),
                     obs=counts_batch,
                 )
             return
@@ -307,7 +312,11 @@ class LogisticNormalMultinomialLikelihood(Likelihood):
 
             numpyro.sample(
                 "counts",
-                dist.Multinomial(total_count=u_T_batch, probs=rho),
+                dist.Multinomial(
+                    total_count=u_T_batch,
+                    probs=rho,
+                    total_count_max=total_count_max,
+                ),
                 obs=counts,
             )
 
@@ -529,6 +538,7 @@ class LNMWithVCPLikelihood(LogisticNormalMultinomialLikelihood):
         dims: Dict[str, int],
         batch_size: Optional[int],
         model_config: "ModelConfig",
+        total_count_max: Optional[int] = None,
         vae_cell_fn: Optional[
             Callable[[Optional[jnp.ndarray]], Dict[str, jnp.ndarray]]
         ] = None,
@@ -646,7 +656,11 @@ class LNMWithVCPLikelihood(LogisticNormalMultinomialLikelihood):
             # (f) Multinomial observation model.
             numpyro.sample(
                 "counts",
-                dist.Multinomial(total_count=u_T_val, probs=rho),
+                dist.Multinomial(
+                    total_count=u_T_val,
+                    probs=rho,
+                    total_count_max=total_count_max,
+                ),
                 obs=obs_counts,
             )
 

@@ -172,6 +172,12 @@ filtered_counts = aggregate_counts_by_mask(count_data, mask)
 In multi-dataset mode, masks are computed per dataset and unioned so genes
 abundant in any dataset are retained globally.
 
+When used through `scribe.fit`, the same preprocessing pass also stores a
+serialization-safe multinomial sampling ceiling on the results object:
+`_total_count_max = int(1.5 * max(per_cell_total_count))`. This value is used
+later by posterior predictive samplers that require a static
+`total_count_max` under traced JAX execution.
+
 
 Advanced utilities for analyzing mixture models and assigning cell types:
 

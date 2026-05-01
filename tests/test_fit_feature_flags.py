@@ -31,11 +31,18 @@ def _capture_model_kwarg(**kwargs):
         patch.object(api, "process_counts_data") as mock_data,
         patch.object(api, "_run_inference") as mock_run,
     ):
-        mock_data.return_value = (MagicMock(), None, 10, 5)
+        # Return a concrete numeric matrix so fit() preprocessing paths that
+        # compute count-derived metadata can execute without type errors.
+        import jax.numpy as jnp
+
+        mock_data.return_value = (
+            jnp.zeros((10, 5), dtype=jnp.int32),
+            None,
+            10,
+            5,
+        )
         mock_preset.return_value = MagicMock()
         mock_run.return_value = MagicMock()
-
-        import jax.numpy as jnp
 
         dummy = jnp.zeros((10, 5), dtype=jnp.int32)
         try:

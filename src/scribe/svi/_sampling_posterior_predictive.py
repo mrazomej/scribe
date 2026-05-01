@@ -518,6 +518,11 @@ class PosteriorPredictiveSamplingMixin:
             "n_genes": n_genes_for_guide,
             "model_config": self.model_config,
         }
+        # Preserve the traced multinomial allocation ceiling captured at fit
+        # time so Predictive can sample when total_count is dynamic.
+        _total_count_max = getattr(self, "_total_count_max", None)
+        if _total_count_max is not None:
+            model_args["total_count_max"] = int(_total_count_max)
         ds_idx = getattr(self, "_dataset_indices", None)
         if ds_idx is not None:
             model_args["dataset_indices"] = ds_idx

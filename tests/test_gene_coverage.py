@@ -139,6 +139,10 @@ def test_fit_gene_coverage_attaches_metadata(monkeypatch):
     assert result.gene_coverage == pytest.approx(0.8)
     assert result.gene_coverage_mask is not None
     assert hasattr(result, "_excluded_gene_names")
+    # The stored multinomial allocation ceiling is based on the observed
+    # maximum per-cell total count with a 1.5x safety buffer.
+    assert result.total_count_max == 70
+    assert int(result._total_count_max) == 70
     assert "scribe_gene_coverage_included" in adata.var.columns
     assert "scribe_gene_coverage_rank" in adata.var.columns
 

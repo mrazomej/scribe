@@ -254,6 +254,7 @@ class ZeroInflatedNBLikelihood(Likelihood):
         dims: Dict[str, int],
         batch_size: Optional[int],
         model_config: "ModelConfig",
+        total_count_max: Optional[int] = None,
         vae_cell_fn: Optional[
             Callable[[Optional[jnp.ndarray]], Dict[str, jnp.ndarray]]
         ] = None,
@@ -276,6 +277,7 @@ class ZeroInflatedNBLikelihood(Likelihood):
         # Determine whether we need cell-specific mixing (annotation path)
         is_mixture = "mixing_weights" in param_values
         use_annotation = annotation_prior_logits is not None and is_mixture
+        del total_count_max
 
         # Multi-dataset: determine n_datasets for indexing
         n_datasets = getattr(model_config, "n_datasets", None)

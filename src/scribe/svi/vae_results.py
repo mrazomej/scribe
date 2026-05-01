@@ -229,6 +229,7 @@ class ScribeVAEResults(
     _gene_coverage: Optional[float] = None
     _gene_coverage_mask: Optional[np.ndarray] = None
     _excluded_gene_names: Optional[list[str]] = None
+    _total_count_max: Optional[int] = None
     _gene_axis_by_key: Optional[Dict[str, int]] = None
     _subset_gene_index: Optional[np.ndarray] = None
 
@@ -483,6 +484,7 @@ class ScribeVAEResults(
             _gene_coverage=getattr(self, "_gene_coverage", None),
             _gene_coverage_mask=getattr(self, "_gene_coverage_mask", None),
             _excluded_gene_names=getattr(self, "_excluded_gene_names", None),
+            _total_count_max=getattr(self, "_total_count_max", None),
             _gene_axis_by_key=getattr(self, "_gene_axis_by_key", None),
             _subset_gene_index=gene_index_abs,
             param_layouts=dict(self.layouts),

@@ -299,6 +299,7 @@ class ModelBuilder:
             model_config: "ModelConfig",
             counts: Optional[jnp.ndarray] = None,
             batch_size: Optional[int] = None,
+            total_count_max: Optional[int] = None,
             annotation_prior_logits: Optional[jnp.ndarray] = None,
             dataset_indices: Optional[jnp.ndarray] = None,
         ):
@@ -317,6 +318,9 @@ class ModelBuilder:
                 predictive).
             batch_size : Optional[int]
                 Mini-batch size for stochastic VI. If None, uses all cells.
+            total_count_max : Optional[int]
+                Optional multinomial allocation ceiling used by likelihoods
+                that need a static upper bound during traced sampling.
             annotation_prior_logits : Optional[jnp.ndarray], shape (n_cells,
             n_components)
                 Per-cell logit offsets for mixture component assignment priors.
@@ -645,6 +649,7 @@ class ModelBuilder:
                 dims=dims,
                 batch_size=batch_size,
                 model_config=model_config,
+                total_count_max=total_count_max,
                 vae_cell_fn=vae_cell_fn,
                 annotation_prior_logits=annotation_prior_logits,
                 dataset_indices=dataset_indices,

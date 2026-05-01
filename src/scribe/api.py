@@ -1160,6 +1160,13 @@ def fit(
     )
     import numpy as np
 
+    # Cache a concrete upper bound for multinomial total counts used by
+    # posterior predictive sampling. The 1.5x buffer protects against
+    # truncation when predictive NB draws exceed the observed maximum.
+    _total_count_max = int(
+        1.5 * float(np.asarray(count_data).sum(axis=1).max())
+    )
+
     # ==========================================================================
     # Step 2c (LNM-only): data-driven r_T prior
     # ==========================================================================
@@ -1957,6 +1964,10 @@ def fit(
         dataset_indices=dataset_indices,
         enable_x64=effective_x64,
     )
+
+    # Persist the multinomial allocation ceiling so predictive sampling does
+    # not depend on re-accessing the original count matrix.
+    object.__setattr__(results, "_total_count_max", int(_total_count_max))
 
     # Attach gene-coverage metadata and reconstruct result-level gene metadata
     # when an "other" pseudo-gene was introduced during pre-filtering.

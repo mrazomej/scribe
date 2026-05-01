@@ -60,6 +60,25 @@ def test_svi_results_pickle_roundtrip():
     assert restored.model_type == "nbdm"
 
 
+def test_svi_results_pickle_roundtrip_preserves_total_count_max():
+    """SVI pickle roundtrip should preserve total-count allocation metadata."""
+    cfg = ModelConfigBuilder().for_model("nbdm").with_inference("svi").build()
+    results = ScribeSVIResults(
+        params={"p_loc": jnp.array(0.0)},
+        loss_history=jnp.array([5.0, 3.0, 2.0]),
+        n_cells=4,
+        n_genes=3,
+        model_type="nbdm",
+        model_config=cfg,
+        prior_params={},
+        _total_count_max=123,
+    )
+    restored = _roundtrip(results)
+    assert isinstance(restored, ScribeSVIResults)
+    assert isinstance(restored.total_count_max, int)
+    assert restored.total_count_max == 123
+
+
 def test_svi_results_repr_mean_field_summary():
     """SVI repr should be compact and report mean-field defaults."""
     cfg = ModelConfigBuilder().for_model("nbdm").with_inference("svi").build()

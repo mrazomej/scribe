@@ -135,6 +135,7 @@ class ScribeMCMCResults(
     _gene_coverage: Optional[float] = None
     _gene_coverage_mask: Optional[np.ndarray] = None
     _excluded_gene_names: Optional[List[str]] = None
+    _total_count_max: Optional[int] = None
 
     # -- wrapped MCMC object (None on subsets) -------------------------------
     _mcmc: Optional[Any] = field(default=None, repr=False)
@@ -400,6 +401,12 @@ class ScribeMCMCResults(
             _excluded_gene_names=_merge_optional_equal_list(
                 [
                     getattr(res, "_excluded_gene_names", None)
+                    for res in aligned_results
+                ]
+            ),
+            _total_count_max=_merge_optional_scalar(
+                [
+                    getattr(res, "_total_count_max", None)
                     for res in aligned_results
                 ]
             ),
@@ -824,6 +831,7 @@ def _reorder_mcmc_result_genes(
         _gene_coverage=getattr(result, "_gene_coverage", None),
         _gene_coverage_mask=getattr(result, "_gene_coverage_mask", None),
         _excluded_gene_names=getattr(result, "_excluded_gene_names", None),
+        _total_count_max=getattr(result, "_total_count_max", None),
         _mcmc=None,
     )
 

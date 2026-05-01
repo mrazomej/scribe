@@ -21,6 +21,8 @@ SVI result objects can also carry pre-fit gene coverage metadata when
 - `_gene_coverage`: coverage threshold used during fitting
 - `_gene_coverage_mask`: keep-mask over the original gene space
 - `_excluded_gene_names`: names pooled into the trailing "other" pseudo-gene
+- `_total_count_max`: int ceiling used for traced multinomial predictive
+  sampling, computed as `int(1.5 * max(per_cell_total_count))`
 
 For multi-dataset mixture models, post-fit empirical mixing replacement now
 computes dataset-specific soft counts and updates mixing parameters per dataset
@@ -237,6 +239,8 @@ results = ScribeSVIResults.from_anndata(
 - **`_component_mapping`**: Optional multi-dataset component metadata
   (shared/exclusive structure) populated when fitting with
   `annotation_key + dataset_key`.
+- **`_total_count_max`**: Optional integer upper bound used when sampling
+  multinomial observations under posterior predictive tracing.
 - **`obs`**, **`var`**, **`uns`**: Metadata from AnnData objects
 - **Interactive repr**: `repr(results)` returns a compact one-line summary
   (`model`, `n_cells`, `n_genes`, `n_steps`, and guide summary)

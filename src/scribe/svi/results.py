@@ -153,6 +153,7 @@ class ScribeSVIResults(
     _gene_coverage: Optional[float] = None
     _gene_coverage_mask: Optional[np.ndarray] = None
     _excluded_gene_names: Optional[List[str]] = None
+    _total_count_max: Optional[int] = None
 
     # Internal: gene axis per param key for metadata-based subsetting (when
     # param_specs set). When present, _subset_params and
@@ -674,6 +675,12 @@ class ScribeSVIResults(
                     for res in aligned_results
                 ]
             ),
+            _total_count_max=_merge_optional_scalar(
+                [
+                    getattr(res, "_total_count_max", None)
+                    for res in aligned_results
+                ]
+            ),
             _gene_axis_by_key=getattr(first, "_gene_axis_by_key", None),
             _promoted_dataset_keys=promoted_dataset_keys,
         )
@@ -801,6 +808,7 @@ def _reorder_svi_result_genes(
         _gene_coverage=getattr(result, "_gene_coverage", None),
         _gene_coverage_mask=getattr(result, "_gene_coverage_mask", None),
         _excluded_gene_names=getattr(result, "_excluded_gene_names", None),
+        _total_count_max=getattr(result, "_total_count_max", None),
         _gene_axis_by_key=param_gene_axis
         or getattr(result, "_gene_axis_by_key", None),
     )

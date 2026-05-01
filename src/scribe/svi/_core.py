@@ -5,7 +5,7 @@ This mixin provides basic initialization and construction methods for
 ScribeSVIResults.
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import jax.numpy as jnp
 from ..models.config import ModelConfig
 
@@ -45,6 +45,11 @@ class CoreResultsMixin:
     def has_gene_coverage_filter(self) -> bool:
         """Whether this result was fit with pre-fit gene coverage filtering."""
         return getattr(self, "_gene_coverage_mask", None) is not None
+
+    @property
+    def total_count_max(self) -> Optional[int]:
+        """Upper bound used for multinomial total-count sampling allocations."""
+        return getattr(self, "_total_count_max", None)
 
     # --------------------------------------------------------------------------
     # Create ScribeSVIResults from AnnData object
