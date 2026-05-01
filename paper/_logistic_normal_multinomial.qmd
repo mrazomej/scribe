@@ -3,6 +3,11 @@ editor:
     render-on-save: true
 # bibliography: references.bib
 csl: ieee.csl
+format:
+  html:
+    theme:
+      light: cosmo
+      dark: superhero 
 ---
 
 # Logistic-Normal Multinomial model {#sec-logistic-normal-multinomial}
@@ -2078,9 +2083,9 @@ variance,
 
 $$
 \operatorname{Var}[u_T^{(c)}] \,=\,
-\underbrace{\mathbb{E}\!\left[\operatorname{Var}[u_T \mid p_{\text{capture}}]\right]}_{\text{pure-NB variance averaged over } p_{\text{capture}}}
+\underbrace{\left\langle \operatorname{Var}[u_T \mid p_{\text{capture}}] \right\rangle}_{\text{pure-NB variance averaged over } p_{\text{capture}}}
 \,+\,
-\underbrace{\operatorname{Var}\!\left[\mathbb{E}[u_T \mid p_{\text{capture}}]\right]}_{\text{extra variance from cell-to-cell capture variability}},
+\underbrace{\operatorname{Var}\!\left[\left\langle u_T \mid p_{\text{capture}} \right\rangle\right]}_{\text{extra variance from cell-to-cell capture variability}},
 $${#eq-lnm-stability-rT-vcp-decomp}
 
 so the empirical variance is **larger** than what a pure NB at the
@@ -2190,6 +2195,69 @@ matrix and stores them on `model_config.vae`, then defaults
 sentinel resolution in `scribe.inference.preset_builder`). The user can
 override either the flag or the stats via the public API.
 
+### Bayesian status of the stability modifications {#sec-lnm-stability-bayesian}
+
+The preceding subsections present the stability modifications through an
+optimization lens --- each one moves the optimizer's starting point to a region
+where gradients are immediately informative. But the modifications are not all
+of the same *inferential* type, and it is worth distinguishing them explicitly
+because the distinction matters for calibration and for the formal status of the
+posterior.
+
+**Optimizer-side interventions (do not change the target posterior).** The
+decoder bias initialization (@sec-lnm-stability-bias), the encoder $\log s$
+clamp (@sec-lnm-stability-log-sigma), and the encoder input standardization
+(@sec-lnm-stability-standardize) all leave the generative model and its priors
+untouched. They affect the *path* the optimizer takes through parameter space,
+not the *destination*. Two runs with different initializations but the same model
+specification converge (given sufficient steps) to the same ELBO landscape.
+
+**Model-side intervention (changes the prior, hence the posterior).** The
+data-driven prior on $r_T$ (@sec-lnm-stability-rT-prior) is different in kind:
+it uses the empirical moments of the row sums to set the prior hyperparameters
+$(\log \hat{r}_T, \sigma_{\log})$ and therefore modifies the Bayesian target.
+This is **empirical Bayes** in the classical sense --- the prior is estimated
+from the same data that the posterior is conditioned on. The justification
+follows the same logic applied to the mean-anchoring prior for the NBDM model
+(see @sec-mean-relationship-eb): the row sums $u_T^{(c)}$ are a low-dimensional
+summary statistic (two scalars: sample mean and variance) that is approximately
+sufficient for the hyperparameters and approximately independent of the
+high-dimensional compositional latents $\underline{z}^{(c)}$ that dominate the
+posterior. The formal "double-use" of the data inflates posterior certainty by an
+amount proportional to the ratio of hyperparameter dimensions to data dimensions
+--- two scalars versus $C \times G$ observations --- which is negligible in any
+realistic single-cell experiment.
+
+**Why empirical Bayes is both necessary and safe here.** Single-cell genomics is
+emphatically *not* a data-scarce regime: a typical experiment delivers
+$10^3$--$10^5$ cells, each contributing $\sim\!10^3$--$10^4$ UMIs across
+$\sim\!2 \times 10^4$ genes. In this data-rich setting the likelihood dominates
+the prior for all well-identified parameters, and the posterior is insensitive
+to moderate perturbations of the prior center. The practical influence of the
+data-driven $r_T$ prior on the converged posterior is therefore small --- it is
+not "choosing the answer." However, the variational inference problem lives in a
+high-dimensional parameter space ($G - 1$ softmax coordinates per cell, plus
+population-level covariance structure), and the ELBO objective is non-convex with
+many saddle points and plateaux. In this landscape, **proper, informative priors
+are not a luxury but a computational necessity**: they constrain the feasible
+region enough for stochastic gradient methods to make progress during the
+critical early-training phase when the likelihood surface is still nearly flat.
+A vague or improper prior on $r_T$ does not bias the eventual answer
+appreciably --- but it *does* place the optimizer in a region where the KL
+penalty dominates for thousands of steps before the likelihood becomes
+informative, producing the oscillatory training curves documented at the start
+of this section. The empirical Bayes choice resolves the tension: it supplies
+the computational regularization the optimizer needs while remaining
+asymptotically irrelevant to the posterior as the number of cells grows.
+
+This pattern --- using cheap, closed-form moment estimators to center priors in
+high-dimensional variational models --- is the same strategy that makes DESeq2's
+dispersion shrinkage, edgeR's empirical Bayes common dispersion, and
+limma-voom's mean--variance trend estimation both practical and theoretically
+sound. The distinguishing feature is that the hyperparameter space is always
+low-dimensional relative to the data, so the information leak is bounded and
+decreases with sample size.
+
 ### A note on what is *not* automated {#sec-lnm-stability-future-work}
 
 A natural next step --- not currently automated by SCRIBE --- is **KL
@@ -2229,10 +2297,15 @@ The five practical considerations in this section --- empirical ALR
 bias, data-driven $r_T$ prior, $\log s$ clamp, standardized encoder
 input, and the deferred KL-annealing/grad-clip recommendations --- are
 the difference between an LNM-VAE that converges cleanly and one that
-oscillates noisily for tens of thousands of steps. None of them modifies
-the generative model: each is a different facet of starting the
-optimizer from a corner of parameter space where the multinomial
-gradient already carries information about the dataset's structure
-rather than pressing the model toward uniformity. The first four are
-applied automatically for `lnm`/`lnmvcp` models in SCRIBE; the fifth is
+oscillates noisily for tens of thousands of steps. Four of them are
+purely optimizer-side: they change the starting point or the feasible
+trajectory without altering the Bayesian target. One --- the data-driven
+$r_T$ prior --- is an empirical Bayes modification that formally changes
+the prior and therefore the posterior, but whose influence on the
+converged posterior is negligible in the data-rich regime of single-cell
+experiments (see @sec-lnm-stability-bayesian). Together, they place the
+optimizer in a corner of parameter space where the multinomial gradient
+already carries information about the dataset's structure rather than
+pressing the model toward uniformity. The first four are applied
+automatically for `lnm`/`lnmvcp` models in SCRIBE; the fifth is
 documented here as a recommended user setting.
