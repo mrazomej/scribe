@@ -1925,6 +1925,233 @@ $\underline{\underline{\Sigma}} = \underline{\underline{W}}\,
 available as a first-class object for downstream clustering, pathway,
 or differential-expression analyses.
 
+## Parameterizations of the totals NB submodel {#sec-lnm-totals-parameterizations}
+
+The compositional path of the LNM
+(@sec-lnm-linear-vae-equivalence) — encoder, linear decoder,
+softmax, multinomial likelihood — is the same regardless of how the
+totals submodel
+$u_T^{(c)} \sim \text{NB}(r_T,\, \hat p^{(c)})$
+is parameterized. The totals NB has a two-dimensional parameter
+space, however, and just as in the Dirichlet--Multinomial family
+(@sec-dirichlet-multinomial), there are several natural ways to
+slice that space into a sampled pair plus derived quantities. Each
+slicing leads to a different posterior geometry — and, more
+practically, to a different identifiability story under the capture
+anchor of @sec-lnm-stability-rT-anchor-gating. SCRIBE exposes the
+same trio of parameterizations the user is already familiar with
+from the DM family: ``canonical``, ``mean_prob``, and ``mean_odds``.
+
+### The three slicings
+
+For the LNMVCP totals submodel, the per-cell mean factorizes as
+
+$$
+\langle u_T^{(c)} \rangle \,=\, r_T \cdot \frac{\hat p^{(c)}}{1 - \hat p^{(c)}}
+\,=\, \mu_T \cdot p_{\text{capture}}^{(c)},
+$${#eq-lnm-totals-mean-factorization}
+
+where $\mu_T \,=\, r_T \cdot p / (1-p)$ is the population-level
+expected mRNA count per cell (before per-cell capture modulation)
+and the per-cell mean follows the standard Poisson-thinning
+relation. The variance is
+
+$$
+\operatorname{Var}[u_T^{(c)}]
+\,=\, \langle u_T^{(c)} \rangle \cdot
+\frac{1}{1 - \hat p^{(c)}}.
+$${#eq-lnm-totals-variance-factorization}
+
+Three equivalent representations of the totals NB are immediate:
+
+**``canonical``**: sample $(r_T,\, p)$ directly. Faithful to the
+Poisson-thinning derivation in @sec-capture-prior; $r_T$ is the
+intrinsic dispersion of the underlying mRNA pool and $p$ is the
+global NB success probability. The per-cell $\hat p^{(c)}$ is
+computed from $(p,\, p_{\text{capture}}^{(c)})$ via the standard
+Poisson-thinning formula. *No derived parameters.*
+
+**``mean_prob``**: sample $(\mu_T,\, p)$. Derive the dispersion as
+
+$$
+r_T \,=\, \mu_T \cdot \frac{1 - p}{p}.
+$${#eq-lnm-totals-r-from-mu-p}
+
+The mean of the totals NB is now a primary parameter, directly
+identified by the empirical mean of $u_T$.
+
+**``mean_odds``**: sample $(\mu_T,\, \phi_T)$ where the totals
+odds-ratio is $\phi_T \,=\, (1-p)/p$. Derive both
+
+$$
+p \,=\, \frac{1}{1 + \phi_T},
+\qquad
+r_T \,=\, \mu_T \cdot \phi_T.
+$${#eq-lnm-totals-mean-odds-derived}
+
+Both sampled scalars retain independent identifying signal in the
+data: $\mu_T$ is the empirical first moment of $u_T$, and $\phi_T$
+is identified by the variance-to-mean ratio.
+
+The three slicings are *generatively* identical — they all describe
+the same NB$(r_T, \hat p^{(c)})$ — and differ only in what scalars
+are *sampled* by the variational guide versus *derived* from those
+samples.
+
+### Identifiability under the capture anchor
+
+The choice of slicing matters when the capture anchor is active
+(@sec-lnm-stability-rT-anchor-gating). Recall that under the
+deterministic capture anchor, $p_{\text{capture}}^{(c)} \approx
+L_c / M_0$ is pinned by the data, leaving the totals submodel with
+one less degree of freedom than the parameter space appears to
+have. Each parameterization handles this differently:
+
+| Variant | Sampled | Derived | Identified under anchor |
+|---------|---------|---------|-------------------------|
+| ``canonical`` | $r_T,\, p$ | --- | $r_T$ ✓; $p$ ✗ (drifts to boundary) |
+| ``mean_prob`` | $\mu_T,\, p$ | $r_T$ | $\mu_T$ ✓; $p$ ✗ |
+| ``mean_odds`` | $\mu_T,\, \phi_T$ | $r_T,\, p$ | $\mu_T$ ✓; $\phi_T$ ✓ |
+
+In the ``canonical`` and ``mean_prob`` variants, the global $p$ has
+no remaining identifying signal once $p_{\text{capture}}^{(c)}$ is
+anchored: the per-cell $\hat p^{(c)}$ is fully determined by
+$(p,\, p_{\text{capture}}^{(c)})$, and any path through parameter
+space that varies $p$ can be matched by an equal-and-opposite
+adjustment to the implied $\hat p^{(c)}$ (which the anchor pins
+externally). The variational posterior on $p$ therefore drifts
+freely along the $(p,\, p_{\text{capture}})$ ridge until it hits
+the upper boundary $p \to 1$, leaving $p_{\text{hat}}^{(c)} \to
+1$ and a degenerate NB on $u_T$.
+
+The ``mean_odds`` variant **eliminates** this aliasing. Under the
+anchor:
+
+- $\langle u_T^{(c)} \rangle \,=\, \mu_T \cdot p_{\text{capture}}^{(c)}$
+  is identified by the empirical mean of the row sums of
+  $\underline{\underline{U}}$, weighted by the anchor's $L_c / M_0$.
+  Both $\mu_T$ and $p_{\text{capture}}^{(c)}$ contribute to this
+  product, but $p_{\text{capture}}^{(c)}$ is pinned by the anchor
+  (a sharp prior, not a diffuse one), so $\mu_T$ inherits a sharp
+  posterior centered on $\langle u_T \rangle / \langle
+  p_{\text{capture}} \rangle$.
+
+- $\phi_T \,=\, \operatorname{Var}[u_T^{(c)}] / \langle u_T^{(c)}
+  \rangle - 1$ is identified by the per-cell variance of $u_T$
+  *around its predicted mean*. With the mean fixed by $\mu_T$ and
+  the anchor, the residual variance is what $\phi_T$ alone
+  controls.
+
+Crucially, the derived $p \,=\, 1 / (1 + \phi_T)$ is a deterministic
+function of the well-identified $\phi_T$, so it cannot drift to the
+boundary the way it does in the canonical variant. The model
+remains numerically well-conditioned no matter how close the
+capture anchor pins $p_{\text{capture}}^{(c)}$ to $1$.
+
+### Default priors per variant
+
+For each variant, SCRIBE sets sensible auto-defaults on the sampled
+scalars when the user does not override them, mirroring the
+mean-anchoring framework of @sec-mean-anchoring:
+
+- ``canonical``: $r_T \sim \text{LogNormal}(\log
+  \hat r_T^{\text{MoM}},\, 1.5)$ via the moment-of-moments
+  inversion $\hat r_T^{\text{MoM}} \,=\, m^2 / (v - m)$ on the
+  empirical totals. Under the capture anchor, this is replaced by
+  the biology-informed default $r_T \sim \text{LogNormal}(\log 50,\,
+  1.5)$ (@sec-lnm-stability-rT-anchor-biology-default).
+
+- ``mean_prob``: $\mu_T \sim \text{LogNormal}(\log \langle u_T
+  \rangle,\, 1.0)$, where $\langle u_T \rangle$ is the empirical
+  mean library size. The empirical mean has CV $\propto 1/\sqrt{C}$
+  so the prior median is precisely placed; $\sigma_{\log} = 1.0$
+  remains generous enough for the posterior to wander. $p$ is left
+  at its default $\text{Beta}(1, 1)$ (uniform).
+
+- ``mean_odds``: same $\mu_T$ prior as ``mean_prob``, plus
+  $\phi_T \sim \text{LogNormal}(\log \hat \phi_T^{\text{MoM}},\,
+  1.5)$, where the empirical odds-ratio estimate is $\hat
+  \phi_T^{\text{MoM}} \,=\, (v - m) / m$ (algebraically
+  ${\hat r_T^{\text{MoM}}}^{-1} \cdot \langle u_T \rangle$). The
+  wider $\sigma_{\log} = 1.5$ reflects the slightly noisier
+  identification of $\phi_T$ relative to $\mu_T$.
+
+User overrides via the ``priors`` dict of ``scribe.fit`` always win.
+The override keys mirror the DM family's symmetry:
+
+| Internal | Descriptive alias |
+|----------|-------------------|
+| ``r_T`` | ``total_dispersion`` |
+| ``mu_T`` | ``total_mean`` |
+| ``phi_T`` | ``total_odds_ratio`` |
+| ``p`` | ``prob`` |
+
+### Recommendation and decision rule
+
+The default for the LNM family is ``canonical``, matching the
+historical SCRIBE behavior and the Poisson-thinning derivation. For
+new fits, however, the recommended choice depends on whether the
+capture anchor is active:
+
+- **No capture anchor**: ``canonical``. All three globals
+  ($r_T,\, p,\, p_{\text{capture}}^{(c)}$) are identified by the
+  data; the canonical parameterization is numerically simplest and
+  has the cleanest biophysical interpretation.
+- **Capture anchor active** (``priors`` contains ``eta_capture`` /
+  ``mu_eta`` / ``organism`` / ``capture_efficiency``):
+  ``mean_odds``. Eliminates the $(p,\, p_{\text{capture}})$
+  aliasing; both $\mu_T$ and $\phi_T$ retain independent
+  identifying signal; $p$ and $r_T$ become well-behaved derived
+  quantities.
+
+The ``mean_prob`` variant exists for symmetry with the DM family
+but is rarely the right pragmatic choice for the LNM under a
+capture anchor — it inherits the $p$ aliasing of ``canonical``
+without the simplicity of treating $r_T$ as primary. It is most
+useful when ``mu_T`` has a strong prior from independent biology
+(e.g., a known target library size for a planned experiment) and
+one wants ``mu_T`` to be the primary inferential target.
+
+### API symmetry with the DM family
+
+In SCRIBE, the LNM parameterizations are selected exactly as for
+the DM family:
+
+```python
+# DM family
+scribe.fit(adata, model="nbvcp", parameterization="canonical")
+scribe.fit(adata, model="nbvcp", parameterization="mean_prob")
+scribe.fit(adata, model="nbvcp", parameterization="mean_odds")
+
+# LNM family — same vocabulary, distinct totals-NB parameterizations
+scribe.fit(adata, model="lnmvcp", parameterization="canonical")
+scribe.fit(adata, model="lnmvcp", parameterization="mean_prob")
+scribe.fit(adata, model="lnmvcp", parameterization="mean_odds")
+```
+
+The dispatch is handled by the helper
+``resolve_user_parameterization_for_model`` in
+``scribe.models.parameterizations``, which maps the user-facing
+short name to the internal LNM-family key when the model is
+``lnm`` / ``lnmvcp``. All three variants are registered in
+``PARAMETERIZATIONS`` under
+``logistic_normal_canonical`` /
+``logistic_normal_mean_prob`` /
+``logistic_normal_mean_odds`` respectively. Internally, the same
+``LogisticNormalParameterization`` class instances all three
+variants via a ``variant=`` constructor argument; the three are
+exposed as singletons for registry lookup.
+
+The same compositional path —
+``LNMWithVCPLikelihood`` reading $r_T$ and $p$ from the model's
+parameter dict — serves all three variants. The likelihood does not
+need to know which parameterization is in effect because the model
+builder evaluates the variant's ``DerivedParam`` declarations
+*before* invoking the likelihood, so by the time
+``LNMWithVCPLikelihood.sample`` reads ``param_values["r_T"]`` and
+``param_values["p"]``, both are present regardless of which scalars
+were sampled directly.
+
 ## Training stability: practical considerations {#sec-lnm-training-stability}
 
 The mathematics of @sec-lnm-strategy-a, @sec-lnm-linear-vae-equivalence and the
