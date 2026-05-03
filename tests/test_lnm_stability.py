@@ -677,6 +677,71 @@ class TestUserRTPriorEndToEnd:
         assert DESCRIPTIVE_NAMES["r"] == "dispersion"
         assert PRIOR_KEY_ALIASES["dispersion"] == "r"
 
+    def test_lnmvcp_capture_anchor_e2e(self):
+        # Regression test for the user-reported failure
+        # ``RuntimeError: Site p_capture must be sampled in trace.``
+        # which fired when ``priors={"capture_efficiency": ...}`` was
+        # passed to LNMVCP. Without the fix in
+        # ``LNMWithVCPLikelihood.sample`` (and the matching factory
+        # wiring of ``biology_informed_spec``), the guide sampled the
+        # anchored ``eta_capture`` site while the model still sampled
+        # the flat ``p_capture``, and SVI's replay handler failed.
+        # This test exercises the whole config-build → factory →
+        # SVI.init path with the capture anchor active and asserts
+        # that initialisation succeeds and a single SVI step produces
+        # a finite loss.
+        import math
+
+        import numpyro
+        from numpyro.infer import SVI, TraceMeanField_ELBO
+
+        from scribe.models.model_registry import get_model_and_guide
+
+        n_cells, n_genes = 32, 20
+        rng = np.random.default_rng(7)
+        counts = jnp.asarray(
+            rng.negative_binomial(
+                n=20, p=0.005, size=(n_cells, n_genes)
+            ),
+            dtype=jnp.float32,
+        )
+        # ``capture_efficiency`` is the descriptive alias for
+        # ``eta_capture``; (log M_0, sigma_M) tuple. We use M_0 = 2e5,
+        # the typical mammalian-cell value documented in the
+        # capture-prior qmd.
+        capture_efficiency = (math.log(2e5), 0.05)
+
+        cfg = build_config_from_preset(
+            model="lnmvcp",
+            vae_latent_dim=4,
+            vae_encoder_hidden_dims=[16],
+            priors={"capture_efficiency": capture_efficiency},
+        )
+        model, guide, _ = get_model_and_guide(cfg, n_genes=n_genes)
+
+        # The classic failure was at SVI init — the replay handler
+        # asserted ``"Site p_capture must be sampled in trace."``.
+        # With the fix, init must succeed and the model and guide
+        # both sample ``eta_capture`` instead.
+        svi = SVI(
+            model, guide, numpyro.optim.Adam(1e-3),
+            loss=TraceMeanField_ELBO(),
+        )
+        svi_state = svi.init(
+            jax.random.PRNGKey(0),
+            n_cells=n_cells, n_genes=n_genes,
+            model_config=cfg, counts=counts,
+        )
+        # One update to confirm the gradient path executes end-to-end.
+        svi_state, loss = svi.update(
+            svi_state, n_cells=n_cells, n_genes=n_genes,
+            model_config=cfg, counts=counts,
+        )
+        assert jnp.isfinite(loss), (
+            f"Expected finite SVI loss after one update with the "
+            f"capture anchor active; got loss={float(loss)!r}."
+        )
+
     def test_r_and_r_T_are_disjoint_keys(self):
         # Sanity: passing ``priors={"r": (...)}`` (the DM-family
         # gene-level dispersion key) must not silently land on

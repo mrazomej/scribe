@@ -467,6 +467,24 @@ class LNMWithVCPLikelihood(LogisticNormalMultinomialLikelihood):
     capture_param_name : str or None, default=None
         Name of the capture site (``\"p_capture\"`` or ``\"phi_capture\"``).
         When ``None``, auto-detected from ``cell_specs`` at sample time.
+    biology_informed_spec : BiologyInformedCaptureSpec or None, default=None
+        When set, the per-cell capture parameter is sampled from the
+        biology-informed prior of ``_capture_prior.qmd`` instead of the
+        flat Beta(α, β). This requires the user to have activated the
+        capture anchor by passing one of ``eta_capture`` /
+        ``mu_eta`` / ``organism`` / ``capture_efficiency`` in the
+        ``priors`` dict to ``scribe.fit``; the unified factory
+        constructs the spec and threads it here so the model and the
+        guide both sample the same anchored sites
+        (``eta_capture`` / ``mu_eta_pop``) rather than the flat-prior
+        ``p_capture``.
+
+        Without this wiring, the LNMVCP guide is built from
+        ``BiologyInformedCaptureSpec`` (so it samples ``eta_capture``)
+        but the model would sample the flat-prior ``p_capture``, and
+        SVI's replay handler raises
+        ``RuntimeError: Site p_capture must be sampled in trace.``
+        — the symptom we are explicitly preventing here.
     """
 
     def __init__(
@@ -475,6 +493,7 @@ class LNMWithVCPLikelihood(LogisticNormalMultinomialLikelihood):
         d_param_name: str = "d_lnm",
         reference_idx: int = -1,
         capture_param_name: Optional[str] = None,
+        biology_informed_spec: Optional[object] = None,
     ) -> None:
         super().__init__(
             d_mode=d_mode,
@@ -482,6 +501,13 @@ class LNMWithVCPLikelihood(LogisticNormalMultinomialLikelihood):
             reference_idx=reference_idx,
         )
         self._capture_param_name = capture_param_name
+        # Stored as ``Optional[object]`` (not the concrete
+        # ``BiologyInformedCaptureSpec`` type) to avoid an import cycle
+        # between this likelihood module and the parameter-spec module
+        # that defines the spec class. The factory passes either the
+        # spec instance or ``None``; runtime duck-typing inside the
+        # ``sample()`` body reads ``log_M0``, ``sigma_M``, etc.
+        self.biology_informed_spec = biology_informed_spec
 
     # ------------------------------------------------------------------
     # Capture sampling helpers (reuse from base likelihood module)
@@ -604,14 +630,96 @@ class LNMWithVCPLikelihood(LogisticNormalMultinomialLikelihood):
             else None
         )
 
+        # ------------------------------------------------------------------
+        # Biology-informed capture pre-compute (only when the user has
+        # activated the capture anchor via ``priors={"eta_capture": ...}``
+        # / ``"organism"`` / ``"mu_eta"`` / ``"capture_efficiency"`` in
+        # ``scribe.fit``). The factory threads the resulting
+        # ``BiologyInformedCaptureSpec`` into this likelihood so the
+        # model samples the *same* anchored sites
+        # (``eta_capture`` / ``mu_eta_pop``) the guide expects.
+        # Without this branch, SVI's replay handler would raise
+        # ``RuntimeError: Site p_capture must be sampled in trace.`` —
+        # the model would sample the flat ``p_capture`` while the guide
+        # samples ``eta_capture``, and the two never line up.
+        # ------------------------------------------------------------------
+        bio_spec = self.biology_informed_spec
+        bio_log_lib_sizes = None
+        bio_log_M0 = None
+        if bio_spec is not None:
+            # Per-cell log library size: anchor for the
+            # TruncatedNormal(log_M0 - log_L_c, sigma_M, low=0) prior on
+            # ``eta_c``. Computed outside the cell plate so each cell
+            # gets the right anchor at sampling time.
+            if counts is not None:
+                bio_log_lib_sizes = jnp.log(
+                    jnp.maximum(
+                        counts.sum(axis=-1), 1.0
+                    ).astype(jnp.float32)
+                )
+            else:
+                # Prior predictive mode: no observed library sizes.
+                # Fall back to a conservative default that places every
+                # cell ~1 log-unit below ``log_M0`` (i.e. ``p_capture``
+                # near 1) so the synthetic samples land in a
+                # biologically plausible range.
+                bio_log_lib_sizes = jnp.full(
+                    n_cells, bio_spec.log_M0 - 1.0
+                )
+
+            # Sample population-level ``mu_eta_pop`` when ``data_driven``
+            # is set; otherwise ``log_M0`` is treated as a fixed
+            # hyperparameter. We do not currently support hierarchical
+            # multi-dataset ``mu_eta`` for the LNMVCP path because the
+            # LNMVCP factory does not yet route ``dataset_indices``
+            # through this likelihood; callers using multi-dataset LNM
+            # should fall back to the flat capture prior or set
+            # ``data_driven=False`` on the spec until that wiring lands.
+            if getattr(bio_spec, "data_driven", False):
+                bio_log_M0 = numpyro.sample(
+                    "mu_eta",
+                    dist.Normal(bio_spec.log_M0, bio_spec.sigma_mu),
+                )
+            else:
+                bio_log_M0 = bio_spec.log_M0
+
         def _cell_body(idx, obs_counts):
             """Shared logic for each cell-plate variant."""
             # (a) Per-cell capture.
             if target_name in param_values:
+                # Pre-supplied (e.g., posterior-predictive sampling
+                # via ``Predictive`` with a fixed ``p_capture`` array).
                 capture_value = param_values[target_name]
                 if idx is not None:
                     capture_value = capture_value[idx]
+            elif bio_log_lib_sizes is not None and bio_log_M0 is not None:
+                # Biology-informed capture path: sample ``eta_c`` from
+                # the library-size-anchored TruncatedNormal prior and
+                # transform exactly to ``p_capture`` (or
+                # ``phi_capture``). Implemented in ``base.py`` and
+                # reused verbatim from the NBVCP/ZINBVCP path so a
+                # single helper drives both code paths.
+                from .base import _sample_capture_biology_informed
+
+                # Subset the per-cell log-library-size anchor to the
+                # current mini-batch when ``batch_size`` is set; the
+                # prior's mean shifts with each cell's library size so
+                # this slicing is load-bearing for batched SVI.
+                log_lib_batch = (
+                    bio_log_lib_sizes[idx]
+                    if idx is not None
+                    else bio_log_lib_sizes
+                )
+                capture_value = _sample_capture_biology_informed(
+                    log_lib_batch,
+                    bio_log_M0,
+                    bio_spec.sigma_M,
+                    use_phi,
+                )
             else:
+                # Standard flat-prior fallback (no capture anchor).
+                # Used when the user did not opt into the biology-
+                # informed prior; preserves the pre-anchor behaviour.
                 capture_value = self._sample_capture(
                     use_phi, capture_prior_params
                 )

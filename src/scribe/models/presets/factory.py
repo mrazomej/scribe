@@ -519,13 +519,37 @@ def _create_vae_model(
         if base_model == "lnmvcp":
             # VCP variant: per-cell capture on the totals NB submodel.
             from ..components.likelihoods import LNMWithVCPLikelihood
+            from ..builders.parameter_specs import (
+                BiologyInformedCaptureSpec,
+            )
+
             capture_param_name = param_strategy.transform_model_param(
                 "p_capture"
+            )
+
+            # Detect the biology-informed capture spec (built upstream by
+            # ``build_extra_param_spec`` when the user opts into the
+            # capture anchor via ``priors={"eta_capture": ...}`` or any
+            # of the activation aliases). We thread it into the
+            # likelihood so the model samples the *same* anchored sites
+            # the guide produces, avoiding the
+            # "Site p_capture must be sampled in trace." replay error.
+            # When no anchor is active, this resolves to ``None`` and
+            # the likelihood falls back to the flat-Beta capture path —
+            # bit-identical to pre-anchor behavior.
+            lnmvcp_capture_spec = next(
+                (
+                    s
+                    for s in param_specs
+                    if isinstance(s, BiologyInformedCaptureSpec)
+                ),
+                None,
             )
             likelihood_instance = LNMWithVCPLikelihood(
                 d_mode=d_mode,
                 reference_idx=ref_idx,
                 capture_param_name=capture_param_name,
+                biology_informed_spec=lnmvcp_capture_spec,
             )
         else:
             likelihood_instance = LogisticNormalMultinomialLikelihood(
