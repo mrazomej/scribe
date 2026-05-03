@@ -61,12 +61,27 @@ class Parameterization(str, Enum):
     compatibility.
     """
 
-    # Standard parameterizations
+    # Standard (DM-family) parameterizations
     CANONICAL = "canonical"
     MEAN_PROB = "mean_prob"
     MEAN_ODDS = "mean_odds"
-    LOGISTIC_NORMAL = "logistic_normal"
-    # Backward compatibility
+    # LNM-family parameterizations. The three variants mirror the
+    # DM-family trio: ``canonical`` keeps ``(r_T, p)`` as sampled
+    # globals, ``mean_prob`` keeps ``(p, mu_T)``, and ``mean_odds``
+    # keeps ``(phi_T, mu_T)`` and derives both ``r_T`` and ``p``.
+    # The user-facing API maps ``parameterization="canonical"`` etc.
+    # to one of these LNM-family enum values when the model is
+    # ``"lnm"`` / ``"lnmvcp"``.
+    LOGISTIC_NORMAL_CANONICAL = "logistic_normal_canonical"
+    LOGISTIC_NORMAL_MEAN_PROB = "logistic_normal_mean_prob"
+    LOGISTIC_NORMAL_MEAN_ODDS = "logistic_normal_mean_odds"
+    # Internal alias of LOGISTIC_NORMAL_CANONICAL kept so that internal
+    # code still comparing against ``Parameterization.LOGISTIC_NORMAL``
+    # resolves to canonical (the historical default). No longer
+    # accepted from the user-facing API — that path raises a clear
+    # error directing users to the three variants.
+    LOGISTIC_NORMAL = "logistic_normal_canonical"
+    # Backward compatibility aliases for the DM family
     STANDARD = "standard"
     LINKED = "linked"
     ODDS_RATIO = "odds_ratio"
@@ -80,10 +95,19 @@ class Parameterization(str, Enum):
 
     @classmethod
     def _missing_(cls, value: object) -> "Parameterization | None":
+        # Legacy values from older pickles / configs. The
+        # ``hierarchical_*`` variants were removed long ago; the
+        # ``logistic_normal`` value was retired in favor of three
+        # LNM-family variants (canonical / mean_prob / mean_odds) and
+        # we map the legacy single-key form to ``canonical`` so old
+        # pickles still load. Users hitting this path via the API get
+        # an explicit error from
+        # ``resolve_user_parameterization_for_model``.
         _legacy = {
             "hierarchical_canonical": "canonical",
             "hierarchical_mean_prob": "mean_prob",
             "hierarchical_mean_odds": "mean_odds",
+            "logistic_normal": "logistic_normal_canonical",
         }
         if isinstance(value, str):
             base = _legacy.get(value)

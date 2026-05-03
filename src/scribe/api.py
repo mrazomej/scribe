@@ -394,7 +394,9 @@ def fit(
             - ``variable_capture=False, zero_inflation=True`` -> ``"zinb"``
             - ``variable_capture=True, zero_inflation=True`` -> ``"zinbvcp"``
 
-        For ``parameterization="logistic_normal"`` (LNM family):
+        For the LNM family (``model="lnm"`` / ``"lnmvcp"`` — choose
+        the totals-NB ``parameterization=`` separately from
+        ``"canonical"`` / ``"mean_prob"`` / ``"mean_odds"``):
 
             - ``variable_capture=False`` -> ``"lnm"``
             - ``variable_capture=True``  -> ``"lnmvcp"``
@@ -1074,20 +1076,26 @@ def fit(
     # the flags raises an error.  When neither flag is set, the model=
     # default ("nbvcp") is used as-is.
     #
-    # The resolution table depends on the parameterization family:
-    #   logistic_normal  -> lnm / lnmvcp  (ZI not supported)
-    #   all others       -> nbdm / nbvcp / zinb / zinbvcp
-    _is_lnm_param = parameterization.lower() == "logistic_normal"
+    # The resolution table depends on the model family — note that the
+    # ``parameterization`` argument is no longer the family selector for
+    # LNM (it now selects among canonical / mean_prob / mean_odds, all
+    # valid for both DM and LNM families). The family is selected by
+    # ``model=`` (or by the ``variable_capture`` / ``zero_inflation``
+    # flags when ``model=`` is left at its default):
+    #   model in {lnm, lnmvcp}                       -> LNM family
+    #   anything else                                -> DM-family
+    # Within the LNM family, ZI is not supported.
+    _is_lnm_model = model.lower() in ("lnm", "lnmvcp")
     _default_model = "nbvcp"
     if variable_capture is not None or zero_inflation is not None:
         _zi = zero_inflation if zero_inflation is not None else False
         _vc = variable_capture if variable_capture is not None else True
-        if _is_lnm_param:
+        if _is_lnm_model:
             if _zi:
                 raise ValueError(
-                    "Zero-inflation is not supported for logistic_normal "
-                    "parameterization. Use variable_capture alone or set "
-                    "model='lnm'/'lnmvcp' explicitly."
+                    "Zero-inflation is not supported for the LNM family "
+                    "(model='lnm' / 'lnmvcp'). Drop zero_inflation=True "
+                    "or pick a DM-family model."
                 )
             _resolved = "lnmvcp" if _vc else "lnm"
         else:
@@ -1217,48 +1225,45 @@ def fit(
     #
     # This block is gated on the LNM family so non-LNM models keep their
     # existing prior calibration unchanged.
-    # Delegate to the centralized resolver so the same branching logic is
-    # unit-testable in isolation. ``resolve_r_T_prior`` returns ``None``
-    # for non-LNM models, when the user already supplied an explicit
-    # ``r_T`` prior, or when no automatic assignment is appropriate.
-    from .core.lnm_data_init import resolve_r_T_prior, CAPTURE_ANCHOR_KEYS
+    # Delegate to the centralized resolver. ``resolve_lnm_priors``
+    # returns a (possibly empty) dict of auto-defaults keyed by the
+    # *sampled* scalar names of the chosen LNM-family parameterization
+    # (canonical → ``r_T``; mean_prob → ``mu_T``; mean_odds → ``mu_T``,
+    # ``phi_T``). It returns ``{}`` for non-LNM models, when the user
+    # has already supplied each scalar's prior, or when the
+    # parameterization is unrecognized.
+    from .core.lnm_data_init import resolve_lnm_priors, CAPTURE_ANCHOR_KEYS
 
-    _r_T_resolved = resolve_r_T_prior(model, count_data, priors)
-    if _r_T_resolved is not None:
-        _r_T_mu_log, _r_T_sigma_log = _r_T_resolved
-
-        # Never mutate a caller's dict — make a fresh copy. The user may
-        # reuse the dict across multiple ``fit`` calls and would not
-        # expect ours to silently grow an ``r_T`` key.
+    _resolved_priors = resolve_lnm_priors(
+        model, parameterization, count_data, priors
+    )
+    if _resolved_priors:
+        # Never mutate a caller's dict — make a fresh copy. The user
+        # may reuse the dict across multiple ``fit`` calls and would
+        # not expect ours to silently grow new keys.
         priors = dict(priors) if priors is not None else {}
-        priors["r_T"] = (_r_T_mu_log, _r_T_sigma_log)
+        priors.update(_resolved_priors)
 
-        # Log which branch fired so the user can confirm the auto-default
-        # at a glance. The capture-anchor branch and the MoM branch
-        # produce different log lines so downstream debugging is easy.
+        # Log a single summary line documenting the auto-defaults that
+        # fired, so the user can confirm them at a glance.
         import logging as _logging
 
-        _capture_active = isinstance(priors, dict) and any(
+        _capture_active = any(
             k in priors for k in CAPTURE_ANCHOR_KEYS
         )
-        if _capture_active:
-            _logging.getLogger(__name__).info(
-                "LNM: capture anchor active; using biology-informed r_T "
-                "prior LogNormal(mu=%.3f, sigma=%.3f) "
-                '(median r_T ~ %.1f). Override by passing priors["r_T"].',
-                _r_T_mu_log,
-                _r_T_sigma_log,
-                float(jnp.exp(_r_T_mu_log)),
+        _summary_parts = []
+        for _k, (_mu_log, _sigma_log) in _resolved_priors.items():
+            _summary_parts.append(
+                f"{_k}=LogNormal(mu={_mu_log:.3f}, "
+                f"sigma={_sigma_log:.3f}, median={float(jnp.exp(_mu_log)):.1f})"
             )
-        else:
-            _logging.getLogger(__name__).info(
-                "LNM: auto-set r_T prior to LogNormal(mu=%.3f, sigma=%.3f) "
-                "(method-of-moments inversion on observed total counts; "
-                "median r_T ~ %.1f).",
-                _r_T_mu_log,
-                _r_T_sigma_log,
-                float(jnp.exp(_r_T_mu_log)),
-            )
+        _logging.getLogger(__name__).info(
+            "LNM[%s]: auto-set priors (%s anchor): %s. "
+            "Override any of these via priors=…",
+            parameterization,
+            "capture" if _capture_active else "no capture",
+            ", ".join(_summary_parts),
+        )
 
     # ==========================================================================
     # Step 2b: Build dataset indices (if multi-dataset model)
@@ -1814,7 +1819,7 @@ def fit(
     # pattern in Step 3c above. Non-LNM paths skip this block entirely.
     if (
         model_config.inference_method.value == "vae"
-        and model_config.parameterization.value == "logistic_normal"
+        and model_config.parameterization.value.startswith("logistic_normal")
     ):
         # Delegate to the centralized helper so the same transformation
         # is exercised by the unit tests for the LNM stability pass.

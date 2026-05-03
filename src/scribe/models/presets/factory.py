@@ -77,7 +77,7 @@ from ..config import GuideFamilyConfig, ModelConfig
 from ..config.enums import HierarchicalPriorType, InferenceMethod
 from ..config.enums import Parameterization as ParamEnum
 from ..config.groups import VAEConfig
-from ..parameterizations import PARAMETERIZATIONS
+from ..parameterizations import PARAMETERIZATIONS, is_logistic_normal_family
 import numpyro.distributions as npdist
 from scribe.flows import FlowChain
 from .registry import (
@@ -279,7 +279,7 @@ def _create_vae_model(
     guide_families = model_config.guide_families or GuideFamilyConfig()
 
     # LNM: strictly linear decoder (no hidden MLP) so ``y_alr = bias + W @ z``.
-    if param_key == "logistic_normal":
+    if is_logistic_normal_family(param_key):
         decoder_hidden_override: Tuple[int, ...] = ()
     else:
         decoder_hidden_override = None
@@ -320,7 +320,7 @@ def _create_vae_model(
         output dim and optional bias initializer) obvious.
         """
         is_y_alr = (
-            param_key == "logistic_normal" and name == "y_alr"
+            is_logistic_normal_family(param_key) and name == "y_alr"
         )
         head_dim = (n_genes - 1) if is_y_alr else n_genes
         # Only the LNM ``y_alr`` head ever receives a custom bias init;
@@ -354,7 +354,7 @@ def _create_vae_model(
     # baseline encoder so their bit-level training behavior is unchanged.
     encoder_cls = (
         LNMGaussianEncoder
-        if param_key == "logistic_normal"
+        if is_logistic_normal_family(param_key)
         else GaussianEncoder
     )
 
@@ -464,7 +464,7 @@ def _create_vae_model(
     # Learned diagonal ALR noise: per-coordinate scale ``d_lnm`` (positive).
     lnm_d_specs: List = []
     if (
-        param_key == "logistic_normal"
+        is_logistic_normal_family(param_key)
         and getattr(model_config, "d_mode", "low_rank") == "learned"
     ):
         d_lnm_family = guide_families.get("d_lnm")
@@ -513,7 +513,7 @@ def _create_vae_model(
 
     # 9. Build model
     # Select LNM / LNMVCP likelihood or BNB / standard registry entry.
-    if param_key == "logistic_normal":
+    if is_logistic_normal_family(param_key):
         d_mode = getattr(model_config, "d_mode", "low_rank")
         ref_idx = getattr(model_config, "alr_reference_idx", -1)
         if base_model == "lnmvcp":
@@ -1203,13 +1203,18 @@ def create_model_from_params(
 
 
 def _get_parameterization_key(param: Union[str, ParamEnum]) -> str:
-    """Convert parameterization enum or string to registry key."""
+    """Convert parameterization enum or string to registry key.
+
+    The DM-family ``STANDARD`` / ``LINKED`` / ``ODDS_RATIO`` legacy
+    aliases are mapped to the modern names. The LNM-family enum
+    members already carry the registry-key-equivalent string in
+    their ``.value``, so they fall through to the default branch.
+    """
     if isinstance(param, ParamEnum):
         enum_to_key = {
             ParamEnum.STANDARD: "canonical",
             ParamEnum.LINKED: "mean_prob",
             ParamEnum.ODDS_RATIO: "mean_odds",
-            ParamEnum.LOGISTIC_NORMAL: "logistic_normal",
         }
         return enum_to_key.get(param, param.value)
     return param

@@ -81,6 +81,17 @@ import numpyro.distributions as dist
 # Import Parameterization and HierarchicalPriorType enums directly to avoid
 # circular import
 from ..config.enums import HierarchicalPriorType, Parameterization
+
+# Set of LNM-family enum values. The compositional path is identical
+# across canonical / mean_prob / mean_odds, so any check that needs
+# "is this the LNM family?" can membership-test against this set.
+_LNM_FAMILY_ENUMS = frozenset(
+    {
+        Parameterization.LOGISTIC_NORMAL_CANONICAL,
+        Parameterization.LOGISTIC_NORMAL_MEAN_PROB,
+        Parameterization.LOGISTIC_NORMAL_MEAN_ODDS,
+    }
+)
 from scribe.stats.distributions import BetaPrime
 
 if TYPE_CHECKING:
@@ -418,7 +429,7 @@ def _build_base_skip_set(
             Parameterization.STANDARD,
         ):
             skip.add("r")
-        elif parameterization == Parameterization.LOGISTIC_NORMAL:
+        elif parameterization in _LNM_FAMILY_ENUMS:
             # Logistic-normal models use r_T (total-count dispersion)
             # instead of r (gene-level NB dispersion), so hierarchy
             # overrides must skip r_T in the base pass.
@@ -604,7 +615,7 @@ def _apply_base_parameterization(
                 pos_transform=pos_transform,
             )
         )
-    elif parameterization == Parameterization.LOGISTIC_NORMAL:
+    elif parameterization in _LNM_FAMILY_ENUMS:
         distributions.update(
             _build_logistic_normal_posteriors(
                 params,

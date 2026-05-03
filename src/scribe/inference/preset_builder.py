@@ -292,10 +292,27 @@ def build_config_from_preset(
     --------
     scribe.models.presets.factory.create_model : Creates model/guide from config.
     """
-    # --- LNM family: fixed parameterization + VAE inference (SVI default -> VAE)
+    # --- LNM family: VAE-only + variant-aware parameterization dispatch
     model_lower = model.lower()
     if model_lower in ("lnm", "lnmvcp"):
-        parameterization = "logistic_normal"
+        # The LNM family accepts the same DM-family parameterization
+        # vocabulary the user is already familiar with: ``"canonical"``,
+        # ``"mean_prob"``, ``"mean_odds"`` (plus the legacy aliases
+        # ``"standard"`` / ``"linked"`` / ``"odds_ratio"``). We
+        # translate these to the LNM-family internal keys
+        # ``"logistic_normal_canonical"`` etc. via the centralized
+        # resolver in ``scribe.models.parameterizations`` so any
+        # future variant additions only need to land in one place.
+        from ..models.parameterizations import (
+            resolve_user_parameterization_for_model,
+        )
+
+        # The user may not have specified ``parameterization=`` at all;
+        # in that case the api.py layer leaves the default of
+        # ``"canonical"``, which resolves to the canonical LNM variant.
+        parameterization = resolve_user_parameterization_for_model(
+            model_lower, parameterization
+        )
         if inference_method.lower() == "svi":
             inference_method = "vae"
     if d_mode not in ("low_rank", "learned"):

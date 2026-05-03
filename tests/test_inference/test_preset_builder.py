@@ -182,9 +182,13 @@ class TestBuildConfigFromPreset:
 
     def test_lnm_defaults_to_log1p_prop_input_transform(self):
         """LNM models should default to compositional encoder inputs."""
+        # ``parameterization="canonical"`` is the LNM default (mirrors
+        # the historical ``logistic_normal`` behavior). The legacy
+        # ``"logistic_normal"`` string is no longer accepted; users
+        # pass one of canonical / mean_prob / mean_odds explicitly.
         config = build_config_from_preset(
             model="lnm",
-            parameterization="logistic_normal",
+            parameterization="canonical",
             inference_method="vae",
         )
         assert config.vae is not None
@@ -194,7 +198,7 @@ class TestBuildConfigFromPreset:
         """Explicit user overrides must take precedence for LNM."""
         config = build_config_from_preset(
             model="lnm",
-            parameterization="logistic_normal",
+            parameterization="canonical",
             inference_method="vae",
             vae_input_transform="clr",
         )

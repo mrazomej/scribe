@@ -690,10 +690,20 @@ class ModelConfig(BaseModel):
                     f"{self.base_model} requires inference_method=VAE "
                     f"(got {self.inference_method!r})."
                 )
-            if self.parameterization != Parameterization.LOGISTIC_NORMAL:
+            # LNM family supports three parameterizations of the totals
+            # NB submodel: canonical, mean_prob, mean_odds. All three
+            # share the same compositional path; only the sampled-vs-
+            # derived split among (r_T, p, mu_T, phi_T) differs.
+            _lnm_variants = {
+                Parameterization.LOGISTIC_NORMAL_CANONICAL,
+                Parameterization.LOGISTIC_NORMAL_MEAN_PROB,
+                Parameterization.LOGISTIC_NORMAL_MEAN_ODDS,
+            }
+            if self.parameterization not in _lnm_variants:
                 raise ValueError(
-                    f"{self.base_model} requires parameterization=LOGISTIC_NORMAL "
-                    f"(got {self.parameterization!r})."
+                    f"{self.base_model} requires one of the LNM-family "
+                    f"parameterizations (canonical / mean_prob / "
+                    f"mean_odds); got {self.parameterization!r}."
                 )
             if self.overdispersion != OverdispersionType.NONE:
                 raise ValueError(

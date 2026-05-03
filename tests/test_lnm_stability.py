@@ -32,6 +32,7 @@ from scribe.core.lnm_data_init import (
     empirical_alr_mean_from_counts,
     inject_lnm_vae_data_init,
     moments_to_lognormal_r_T,
+    resolve_lnm_priors,
     resolve_r_T_prior,
 )
 from scribe.inference.preset_builder import build_config_from_preset
@@ -765,3 +766,178 @@ class TestUserRTPriorEndToEnd:
             f"Expected priors.r_T to fall through to its declared "
             f"default (0.0, 1.0); got {r_T_value!r}."
         )
+
+
+# ---------------------------------------------------------------------------
+# resolve_lnm_priors: parameterization-aware auto-defaults
+# ---------------------------------------------------------------------------
+
+
+class TestResolveLNMPriors:
+    """Tests for the parameterization-aware LNM prior resolver.
+
+    ``resolve_lnm_priors`` returns the auto-default priors for the
+    *sampled* scalars of the chosen LNM-family parameterization:
+    canonical → r_T; mean_prob → mu_T; mean_odds → mu_T + phi_T. Each
+    test exercises one branch of the dispatch and pins the resulting
+    keys.
+    """
+
+    @staticmethod
+    def _toy_counts(seed: int = 0):
+        rng = np.random.default_rng(seed)
+        return rng.negative_binomial(n=50, p=0.005, size=(200, 5))
+
+    def test_returns_empty_for_non_lnm_models(self):
+        # Non-LNM models always return ``{}`` so DM-family fits stay
+        # bit-identical to pre-parameterization-pass behavior.
+        for model in ("nbdm", "nbvcp", "zinb", "zinbvcp"):
+            assert resolve_lnm_priors(
+                model, "canonical", self._toy_counts(), None
+            ) == {}
+
+    def test_canonical_returns_r_T_only(self):
+        out = resolve_lnm_priors(
+            "lnmvcp", "canonical", self._toy_counts(), priors=None
+        )
+        assert set(out.keys()) == {"r_T"}
+        # MoM mode (no anchor) should produce sigma_log=1.5 for LNMVCP.
+        _mu, sigma = out["r_T"]
+        assert sigma == 1.5
+
+    def test_mean_prob_returns_mu_T_only(self):
+        out = resolve_lnm_priors(
+            "lnmvcp", "mean_prob", self._toy_counts(), priors=None
+        )
+        assert set(out.keys()) == {"mu_T"}
+        # mu_T's median should be the empirical mean library size.
+        mu, sigma = out["mu_T"]
+        assert sigma == 1.0
+        assert mu > 0.0  # log of a positive estimate
+
+    def test_mean_odds_returns_mu_T_and_phi_T(self):
+        out = resolve_lnm_priors(
+            "lnmvcp", "mean_odds", self._toy_counts(), priors=None
+        )
+        # Both scalars get auto-defaults — exactly what we want for
+        # mean_odds, which has no aliasing under the capture anchor.
+        assert set(out.keys()) == {"mu_T", "phi_T"}
+
+    def test_user_override_skips_internal_name(self):
+        # Setting the internal name short-circuits that scalar's
+        # auto-default. Other scalars are still set automatically.
+        out = resolve_lnm_priors(
+            "lnmvcp",
+            "mean_odds",
+            self._toy_counts(),
+            priors={"mu_T": (10.0, 0.5)},
+        )
+        assert "mu_T" not in out
+        assert "phi_T" in out
+
+    def test_user_override_skips_descriptive_alias(self):
+        # ``total_mean`` is the descriptive alias for ``mu_T``; the
+        # resolver must respect it as a user override even though the
+        # internal name is what gets stored.
+        out = resolve_lnm_priors(
+            "lnmvcp",
+            "mean_odds",
+            self._toy_counts(),
+            priors={"total_mean": (10.0, 0.5)},
+        )
+        assert "mu_T" not in out
+
+    def test_canonical_capture_anchor_uses_biology_default(self):
+        # When the capture anchor is active under the canonical
+        # variant, r_T falls back to the biology-informed default —
+        # mirrors the existing resolve_r_T_prior behavior.
+        out = resolve_lnm_priors(
+            "lnmvcp",
+            "canonical",
+            self._toy_counts(),
+            priors={"organism": "human"},
+        )
+        assert "r_T" in out
+        mu, sigma = out["r_T"]
+        assert np.isclose(np.exp(mu), BIOLOGY_DEFAULT_R_T_MEDIAN)
+        assert sigma == BIOLOGY_DEFAULT_R_T_SIGMA_LOG
+
+    def test_accepts_internal_or_user_facing_param_names(self):
+        # The resolver accepts both ``"canonical"`` (user-facing) and
+        # ``"logistic_normal_canonical"`` (internal). Same outcome.
+        counts = self._toy_counts(seed=2)
+        out_user = resolve_lnm_priors(
+            "lnmvcp", "canonical", counts, priors=None
+        )
+        out_internal = resolve_lnm_priors(
+            "lnmvcp", "logistic_normal_canonical", counts, priors=None
+        )
+        assert out_user == out_internal
+
+    def test_explicit_user_priors_for_all_scalars_yield_empty(self):
+        # If the user supplied every scalar's prior, the resolver has
+        # nothing to do and returns ``{}``.
+        out = resolve_lnm_priors(
+            "lnmvcp",
+            "mean_odds",
+            self._toy_counts(),
+            priors={"mu_T": (10.0, 0.5), "phi_T": (1.0, 0.5)},
+        )
+        assert out == {}
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: each parameterization round-trips through scribe.fit's setup
+# ---------------------------------------------------------------------------
+
+
+class TestLNMParameterizationDispatch:
+    """End-to-end smoke tests for the three LNM parameterizations.
+
+    These exercise the dispatch from user-facing
+    ``parameterization=canonical/mean_prob/mean_odds`` all the way to
+    a fully-built ``ModelConfig`` and a runnable model+guide pair.
+    Catches regressions in any of the wiring layers (preset_builder,
+    factory, parameterization classes, base.py validator).
+    """
+
+    @staticmethod
+    def _build_lnm_config(parameterization: str):
+        return build_config_from_preset(
+            model="lnm",
+            parameterization=parameterization,
+            vae_latent_dim=2,
+            vae_encoder_hidden_dims=[8],
+        )
+
+    def test_canonical_resolves_to_internal_key(self):
+        cfg = self._build_lnm_config("canonical")
+        assert cfg.parameterization.value == "logistic_normal_canonical"
+
+    def test_mean_prob_resolves_to_internal_key(self):
+        cfg = self._build_lnm_config("mean_prob")
+        assert cfg.parameterization.value == "logistic_normal_mean_prob"
+
+    def test_mean_odds_resolves_to_internal_key(self):
+        cfg = self._build_lnm_config("mean_odds")
+        assert cfg.parameterization.value == "logistic_normal_mean_odds"
+
+    def test_each_variant_builds_model_and_guide(self):
+        # The factory must produce a runnable model+guide for every
+        # variant. Skipping validate=False would let
+        # parameterization-specific bugs slip through; we want the
+        # smoke test to exercise the full path.
+        from scribe.models.model_registry import get_model_and_guide
+
+        for p in ("canonical", "mean_prob", "mean_odds"):
+            cfg = self._build_lnm_config(p)
+            model, guide, _ = get_model_and_guide(cfg, n_genes=6)
+            assert callable(model) and callable(guide)
+
+    def test_legacy_logistic_normal_string_raises(self):
+        # The user-facing API no longer accepts ``"logistic_normal"``;
+        # users should pass one of the three explicit variants.
+        with pytest.raises(ValueError, match="logistic_normal"):
+            build_config_from_preset(
+                model="lnm", parameterization="logistic_normal"
+            )

@@ -1040,9 +1040,16 @@ class ParameterExtractionMixin:
         _parameterization = getattr(self.model_config, "parameterization", None)
         _param_value = getattr(_parameterization, "value", _parameterization)
         _param_name = getattr(_parameterization, "name", None)
+        # Match any of the LNM-family variants (canonical / mean_prob /
+        # mean_odds). The compositional path is identical across the
+        # three variants, so the same downstream extraction logic
+        # applies to all of them.
         _is_logistic_normal = (
-            _param_value == "logistic_normal"
-            or _param_name == "LOGISTIC_NORMAL"
+            isinstance(_param_value, str)
+            and _param_value.startswith("logistic_normal")
+        ) or (
+            isinstance(_param_name, str)
+            and _param_name.startswith("LOGISTIC_NORMAL")
         )
         if (
             backend == "numpyro"

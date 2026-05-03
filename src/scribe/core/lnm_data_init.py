@@ -40,7 +40,7 @@ them into ``model_config.vae`` (bias / standardize stats) and
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import jax.numpy as jnp
 import numpy as np
@@ -56,6 +56,7 @@ __all__ = [
     "compute_encoder_standardization",
     "moments_to_lognormal_r_T",
     "resolve_r_T_prior",
+    "resolve_lnm_priors",
     "inject_lnm_vae_data_init",
     "CAPTURE_ANCHOR_KEYS",
     "BIOLOGY_DEFAULT_R_T_MEDIAN",
@@ -478,3 +479,228 @@ def resolve_r_T_prior(
     # a wider prior absorbs that bias. Plain LNM has no such inflation.
     sigma_log = 1.5 if model.lower() == "lnmvcp" else 1.0
     return moments_to_lognormal_r_T(counts, sigma_log=sigma_log)
+
+
+# ------------------------------------------------------------------------------
+# Per-parameterization prior resolver
+# ------------------------------------------------------------------------------
+
+
+def _empirical_mu_T_prior(
+    counts, sigma_log: float = 1.0
+) -> Tuple[float, float]:
+    """Empirical-mean LogNormal prior for the LNM totals mean ``mu_T``.
+
+    The population-level expected library size is one of the most
+    precisely identified data quantities — its sampling CV scales as
+    ``1/sqrt(C)`` with the cell count. We therefore center a LogNormal
+    on the empirical mean ``mean(u_T)`` and use a moderately tight
+    log-spread by default. Under the capture anchor in particular,
+    ``mu_T`` should land near ``M_0 * mean(p_capture)`` ≈ ``mean(L_c)``,
+    which this prior places at the center.
+
+    Parameters
+    ----------
+    counts : array_like, shape (n_cells, n_genes)
+        Raw count matrix; the row sums are taken as ``u_T^{(c)}``.
+    sigma_log : float, default=1.0
+        Log-scale spread of the resulting prior. ``1.0`` is generous
+        (factor of e on each side of the median); the empirical mean
+        is precise enough that the prior is informative even at this
+        width.
+
+    Returns
+    -------
+    mu_log : float
+        ``log(mean(u_T))`` — the LogNormal location.
+    sigma_log : float
+        Echoed input.
+    """
+    counts_np = np.asarray(counts)
+    if counts_np.ndim != 2:
+        raise ValueError(
+            "counts must be a 2-D matrix (n_cells, n_genes), "
+            f"got rank {counts_np.ndim} array with shape {counts_np.shape}."
+        )
+    u_T = counts_np.sum(axis=-1).astype(np.float64)
+    mu_T_estimate = float(u_T.mean())
+    mu_T_estimate = max(mu_T_estimate, 1.0)  # floor for log
+    mu_log = float(np.log(mu_T_estimate))
+    return mu_log, float(sigma_log)
+
+
+def _empirical_phi_T_prior(
+    counts, sigma_log: float = 1.5, min_phi_T: float = 1e-3
+) -> Tuple[float, float]:
+    """Empirical odds-ratio LogNormal prior for ``phi_T``.
+
+    The DM relation ``phi = (1 - p) / p`` gives ``phi_T = mean / r_T``
+    when expressed in the totals NB. Inverting moments,
+    ``phi_T = (v - m) / m^2 * mean = (v - m) / m`` after substitution,
+    which equals the variance-to-mean ratio minus 1. We use this as the
+    prior median, with a generous log-spread because under the capture
+    anchor ``v`` is inflated by capture variability and the empirical
+    estimate is biased.
+
+    Parameters
+    ----------
+    counts : array_like, shape (n_cells, n_genes)
+        Raw count matrix.
+    sigma_log : float, default=1.5
+        Log-scale spread; wider than mu_T's because phi_T is less
+        precisely identified by the data.
+    min_phi_T : float, default=1e-3
+        Floor on the point estimate to handle the under-dispersed
+        corner case ``var(u_T) <= mean(u_T)``.
+
+    Returns
+    -------
+    mu_log : float
+        ``log(phi_T_estimate)`` — the LogNormal location.
+    sigma_log : float
+        Echoed input.
+    """
+    counts_np = np.asarray(counts)
+    if counts_np.ndim != 2:
+        raise ValueError(
+            "counts must be a 2-D matrix (n_cells, n_genes), "
+            f"got rank {counts_np.ndim} array with shape {counts_np.shape}."
+        )
+    u_T = counts_np.sum(axis=-1).astype(np.float64)
+    m = float(u_T.mean())
+    v = float(u_T.var(ddof=0))
+    # ``phi_T = (v - m) / m`` from the NB second-moment inversion.
+    if v > m and m > 0:
+        phi_T_estimate = (v - m) / m
+    else:
+        phi_T_estimate = min_phi_T
+    phi_T_estimate = max(float(phi_T_estimate), float(min_phi_T))
+    mu_log = float(np.log(phi_T_estimate))
+    return mu_log, float(sigma_log)
+
+
+def resolve_lnm_priors(
+    model: str,
+    parameterization: str,
+    counts,
+    priors,
+) -> Dict[str, Tuple[float, float]]:
+    """Resolve auto-default priors for the LNM-family scalars.
+
+    This is the parameterization-aware generalization of
+    :func:`resolve_r_T_prior`. It returns a dict keyed by the *sampled*
+    scalars of the chosen LNM-family parameterization (``r_T`` and
+    ``p`` for canonical, ``mu_T`` and ``p`` for mean_prob, ``mu_T`` and
+    ``phi_T`` for mean_odds), populated with sensible auto-defaults
+    derived from the empirical totals and the capture-anchor regime.
+
+    User-supplied priors always win: any key the user already set in
+    their ``priors`` dict (whether by internal name or descriptive
+    alias) is excluded from the returned dict so the caller does not
+    accidentally clobber it.
+
+    Parameters
+    ----------
+    model : str
+        Model name; only ``"lnm"`` / ``"lnmvcp"`` produce non-empty
+        results. Other models return ``{}``.
+    parameterization : str
+        Internal LNM-family parameterization key, one of
+        ``"logistic_normal_canonical"``, ``"logistic_normal_mean_prob"``,
+        ``"logistic_normal_mean_odds"``.
+    counts : array_like, shape (n_cells, n_genes)
+        Count matrix used for empirical estimates.
+    priors : dict or None
+        User-supplied priors dict; read-only.
+
+    Returns
+    -------
+    dict
+        Mapping from parameter name (``r_T`` / ``mu_T`` / ``p`` /
+        ``phi_T``) to a ``(mu_log, sigma_log)`` LogNormal pair. Empty
+        when ``model`` is non-LNM, or when the user already overrode
+        every relevant key. The caller is responsible for merging
+        these into the user's priors dict via a non-mutating copy.
+
+    Notes
+    -----
+    The legacy :func:`resolve_r_T_prior` is preserved for
+    backwards-compatible call sites that only know about ``r_T``;
+    new code should prefer this function because it correctly
+    handles ``mean_prob`` and ``mean_odds`` variants.
+    """
+    if model.lower() not in ("lnm", "lnmvcp"):
+        return {}
+
+    # Accept either the internal key (``logistic_normal_canonical``
+    # etc.) or the user-facing short form (``canonical``,
+    # ``mean_prob``, ``mean_odds``). The function is called from both
+    # the public API path and from internal tests; normalizing here
+    # keeps both call sites simple.
+    param_lower = parameterization.lower()
+    if param_lower in ("canonical", "mean_prob", "mean_odds"):
+        param_lower = f"logistic_normal_{param_lower}"
+
+    priors_dict: Dict[str, Any] = {} if not isinstance(priors, dict) else priors
+    capture_anchor_active = any(k in priors_dict for k in CAPTURE_ANCHOR_KEYS)
+
+    # Resolve each scalar by parameterization, skipping anything the
+    # user already set (under either the internal name or its
+    # descriptive alias). The descriptive alias check is what lets
+    # ``priors={"total_mean": ...}`` short-circuit auto-assignment of
+    # ``mu_T``, mirroring the symmetric behavior on the DM family.
+    from ..models.config.parameter_mapping import PRIOR_KEY_ALIASES
+
+    def _user_set(internal_name: str) -> bool:
+        # Internal name directly set?
+        if internal_name in priors_dict:
+            return True
+        # One of its descriptive aliases set?
+        for alias, target in PRIOR_KEY_ALIASES.items():
+            if target == internal_name and alias in priors_dict:
+                return True
+        return False
+
+    out: Dict[str, Tuple[float, float]] = {}
+
+    if param_lower == "logistic_normal_canonical":
+        # Same logic as resolve_r_T_prior, but written here for parity.
+        if not _user_set("r_T"):
+            if capture_anchor_active:
+                out["r_T"] = (
+                    float(np.log(BIOLOGY_DEFAULT_R_T_MEDIAN)),
+                    float(BIOLOGY_DEFAULT_R_T_SIGMA_LOG),
+                )
+            else:
+                sigma_log = (
+                    1.5 if model.lower() == "lnmvcp" else 1.0
+                )
+                out["r_T"] = moments_to_lognormal_r_T(
+                    counts, sigma_log=sigma_log
+                )
+        return out
+
+    if param_lower == "logistic_normal_mean_prob":
+        # Sampled scalars: (mu_T, p). r_T is derived. We set mu_T from
+        # the empirical mean library size and leave p at its default
+        # Beta(1, 1) — under the anchor, p remains aliased with
+        # p_capture, which is unavoidable for this variant. (Switch to
+        # mean_odds to eliminate the aliasing.)
+        if not _user_set("mu_T"):
+            out["mu_T"] = _empirical_mu_T_prior(counts, sigma_log=1.0)
+        return out
+
+    if param_lower == "logistic_normal_mean_odds":
+        # Sampled scalars: (mu_T, phi_T). p is derived as 1/(1+phi_T)
+        # and r_T as mu_T*phi_T, so neither has the boundary-collapse
+        # problem of the canonical / mean_prob variants. We set both
+        # mu_T and phi_T from empirical moments.
+        if not _user_set("mu_T"):
+            out["mu_T"] = _empirical_mu_T_prior(counts, sigma_log=1.0)
+        if not _user_set("phi_T"):
+            out["phi_T"] = _empirical_phi_T_prior(counts, sigma_log=1.5)
+        return out
+
+    # Fallback: parameterization not recognized — return empty rather
+    # than risk a wrong auto-assignment.
+    return {}

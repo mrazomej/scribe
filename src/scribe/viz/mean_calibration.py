@@ -180,7 +180,16 @@ def _is_lnm_model(results) -> bool:
     )
     param_value = getattr(param, "value", param)
     param_name = getattr(param, "name", None)
-    return param_value == "logistic_normal" or param_name == "LOGISTIC_NORMAL"
+    # Match any of the LNM-family variants (canonical / mean_prob /
+    # mean_odds). All three share the compositional path for which the
+    # mean-calibration plot is meaningful.
+    return (
+        isinstance(param_value, str)
+        and param_value.startswith("logistic_normal")
+    ) or (
+        isinstance(param_name, str)
+        and param_name.startswith("LOGISTIC_NORMAL")
+    )
 
 
 def _compute_per_dataset_means(

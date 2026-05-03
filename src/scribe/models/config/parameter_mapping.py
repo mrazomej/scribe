@@ -196,8 +196,15 @@ PARAMETERIZATION_MAPPINGS = {
             "mu": "Mean parameter (LogNormal distribution)",
         },
     ),
-    Parameterization.LOGISTIC_NORMAL: ParameterizationMapping(
-        parameterization=Parameterization.LOGISTIC_NORMAL,
+    # ------------------------------------------------------------------
+    # LNM family: three parameterizations of the totals NB submodel.
+    # Each maps the same compositional path (y_alr, multinomial,
+    # decoder/encoder) to a different choice of which scalar globals
+    # are sampled directly. Mirrors the DM-family
+    # canonical / mean_prob / mean_odds pattern.
+    # ------------------------------------------------------------------
+    Parameterization.LOGISTIC_NORMAL_CANONICAL: ParameterizationMapping(
+        parameterization=Parameterization.LOGISTIC_NORMAL_CANONICAL,
         core_parameters={"r_T", "p"},
         optional_parameters={"d_lnm", "y_alr", "z"},
         parameter_descriptions={
@@ -217,7 +224,84 @@ PARAMETERIZATION_MAPPINGS = {
             ),
             "p": (
                 "NB success probability for total counts "
-                "(Beta / SigmoidNormal)"
+                "(Beta / SigmoidNormal). Note: under the capture "
+                "anchor with the canonical LNM parameterization, ``p`` "
+                "becomes aliased with ``p_capture`` and may drift to "
+                "the upper boundary; switch to ``mean_odds`` to "
+                "eliminate the aliasing."
+            ),
+            "y_alr": (
+                "ALR coordinates from VAE decoder (G-1, reference gene "
+                "determined by alr_reference_idx)"
+            ),
+            "d_lnm": (
+                "Optional per-coordinate ALR variance scale (learned d_mode)"
+            ),
+            "z": "VAE latent code",
+        },
+    ),
+    Parameterization.LOGISTIC_NORMAL_MEAN_PROB: ParameterizationMapping(
+        parameterization=Parameterization.LOGISTIC_NORMAL_MEAN_PROB,
+        core_parameters={"mu_T", "p"},
+        optional_parameters={"d_lnm", "y_alr", "z", "r_T"},
+        parameter_descriptions={
+            "mu_T": (
+                "Population-level expected library size (LogNormal / "
+                "PositiveNormal). A scalar — one value per dataset — "
+                "describing the average ``u_T^(c)`` before per-cell "
+                "capture modulation. Descriptive alias: "
+                "``total_mean``. ``r_T`` is derived as "
+                "``mu_T * (1 - p) / p``."
+            ),
+            "p": (
+                "NB success probability for total counts "
+                "(Beta / SigmoidNormal). Same caveat as the canonical "
+                "variant: aliased with ``p_capture`` under the "
+                "anchor; ``mean_odds`` eliminates the aliasing."
+            ),
+            "r_T": (
+                "DERIVED: dispersion ``r_T = mu_T * (1 - p) / p``."
+            ),
+            "y_alr": (
+                "ALR coordinates from VAE decoder (G-1, reference gene "
+                "determined by alr_reference_idx)"
+            ),
+            "d_lnm": (
+                "Optional per-coordinate ALR variance scale (learned d_mode)"
+            ),
+            "z": "VAE latent code",
+        },
+    ),
+    Parameterization.LOGISTIC_NORMAL_MEAN_ODDS: ParameterizationMapping(
+        parameterization=Parameterization.LOGISTIC_NORMAL_MEAN_ODDS,
+        core_parameters={"mu_T", "phi_T"},
+        optional_parameters={"d_lnm", "y_alr", "z", "r_T", "p"},
+        parameter_descriptions={
+            "mu_T": (
+                "Population-level expected library size "
+                "(LogNormal / PositiveNormal). Same as in mean_prob; "
+                "directly identified by the empirical mean of ``u_T``. "
+                "Descriptive alias: ``total_mean``."
+            ),
+            "phi_T": (
+                "Totals-NB odds ratio ``phi_T = (1 - p) / p`` "
+                "(BetaPrime / PositiveNormal). Identified by the "
+                "per-cell variance of ``u_T`` around its predicted "
+                "mean. Under the capture anchor, both ``mu_T`` and "
+                "``phi_T`` retain independent identifying signal in "
+                "the data — the ``(p, p_capture)`` aliasing of the "
+                "other two variants is gone. Descriptive alias: "
+                "``total_odds_ratio``."
+            ),
+            "r_T": (
+                "DERIVED: dispersion ``r_T = mu_T * phi_T``."
+            ),
+            "p": (
+                "DERIVED: success probability ``p = 1 / (1 + phi_T)``. "
+                "Because ``p`` is derived rather than sampled, it "
+                "cannot drift to the boundary as it does in the "
+                "canonical / mean_prob variants under the capture "
+                "anchor."
             ),
             "y_alr": (
                 "ALR coordinates from VAE decoder (G-1, reference gene "
@@ -561,6 +645,8 @@ DESCRIPTIVE_NAMES: Dict[str, str] = {
     # Core NB parameters
     "r": "dispersion",
     "r_T": "total_dispersion",
+    "mu_T": "total_mean",
+    "phi_T": "total_odds_ratio",
     "p": "prob",
     "mu": "mean_expression",
     "phi": "odds_ratio",
@@ -600,6 +686,8 @@ PRIOR_KEY_ALIASES: Dict[str, str] = {
     "prob": "p",
     "dispersion": "r",
     "total_dispersion": "r_T",
+    "total_mean": "mu_T",
+    "total_odds_ratio": "phi_T",
     "expression": "mu",
     "odds": "phi",
     "zero_inflation": "gate",

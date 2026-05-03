@@ -522,41 +522,112 @@ class MeanOddsParameterization(Parameterization):
 class LogisticNormalParameterization(Parameterization):
     """Logistic-normal multinomial parameterization for VAE-only models.
 
-    Population-level total UMI counts follow a Negative Binomial with
-    dispersion ``r_T`` and base success probability ``p`` (NumPyro ``probs``,
-    before any VCP modulation on totals).  Per-cell gene compositions use a
-    multinomial on the simplex after an ALR map from decoder outputs ``y_alr``
-    (length ``G-1``).  Optional learned diagonal ALR noise is controlled at the
-    model level via ``ModelConfig.d_mode``; the extra parameter ``d_lnm`` is
-    wired in the VAE factory when ``d_mode=\"learned\"``.
+    The compositional path is identical across all variants: a per-cell
+    latent ``z`` produces ALR coordinates ``y_alr`` via a linear decoder,
+    then ``softmax(y_alr)`` gives the multinomial probabilities. The
+    optional learned diagonal ALR noise (``d_lnm``) is controlled by
+    ``ModelConfig.d_mode`` and wired in the VAE factory.
 
-    Core parameters (global, not gene-specific):
+    The **totals NB submodel** ``u_T^{(c)} ~ NB(r_T, p_hat^{(c)})`` is
+    the same NB distribution under all three variants below — the
+    variants differ only in *which* parameter pair is sampled directly
+    versus derived. This mirrors the DM family's
+    ``canonical`` / ``mean_prob`` / ``mean_odds`` trio.
 
-    - ``r_T``: Total-count NB dispersion (LogNormal or PositiveNormal).
-    - ``p``: Total-count NB success probability (Beta or SigmoidNormal).
+    Variants
+    --------
+    ``"canonical"``: samples ``(r_T, p)`` directly.
 
-    The ``d_lnm`` vector is **not** included in :meth:`core_parameters`; it
-    is appended by the preset factory when ``d_mode=\"learned\"``.
+        - Faithful to the Poisson-thinning derivation in
+          ``_capture_prior.qmd``.
+        - Has a known ``(p, p_capture)`` aliasing under the capture
+          anchor: with ``p_capture^{(c)}`` pinned by the anchor, the
+          global ``p`` has no remaining identifying signal and drifts
+          to its boundary.
+
+    ``"mean_prob"``: samples ``(p, mu_T)``; derives ``r_T = mu_T (1-p)/p``.
+
+        - ``mu_T`` is the population-level expected library size,
+          directly identified by the empirical mean of ``u_T``.
+        - Reduces but does not eliminate the ``p`` aliasing.
+
+    ``"mean_odds"``: samples ``(phi_T, mu_T)``; derives
+    ``p = 1/(1+phi_T)`` and ``r_T = mu_T * phi_T``.
+
+        - ``mu_T`` identified by the empirical mean of ``u_T``;
+          ``phi_T`` identified by the per-cell variance around the
+          predicted mean. Both have independent identifying signal.
+        - **Eliminates the ``(p, p_capture)`` aliasing entirely.**
+          Recommended whenever the capture anchor is active.
+
+    The compositional path (``y_alr``, multinomial likelihood,
+    decoder/encoder architecture) is **identical** across the three
+    variants. The variant choice only affects the totals NB submodel.
+
+    Parameters
+    ----------
+    variant : {"canonical", "mean_prob", "mean_odds"}, default="canonical"
+        Selects the totals-NB parameterization. See the per-variant
+        notes above. The factory and registry expose three singletons
+        under the keys ``"logistic_normal_canonical"``,
+        ``"logistic_normal_mean_prob"``, and
+        ``"logistic_normal_mean_odds"`` so the dispatch is purely by
+        string lookup at config-build time.
+    d_mode : {"low_rank", "learned"}, default="low_rank"
+        Mirrors ``ModelConfig.d_mode``. Same meaning across variants.
     """
 
-    def __init__(self, d_mode: Literal["low_rank", "learned"] = "low_rank"):
-        """Store diagonal mode for introspection (factory uses ``ModelConfig``).
+    def __init__(
+        self,
+        variant: Literal["canonical", "mean_prob", "mean_odds"] = "canonical",
+        d_mode: Literal["low_rank", "learned"] = "low_rank",
+    ):
+        """Store variant + diagonal mode for introspection.
 
         Parameters
         ----------
-        d_mode : {\"low_rank\", \"learned\"}, default=\"low_rank\"
-            Mirrors ``ModelConfig.d_mode``.  The singleton registry instance
-            uses the default; the preset factory reads runtime config.
+        variant : {"canonical", "mean_prob", "mean_odds"}, default="canonical"
+            Totals-NB parameterization selection.
+        d_mode : {"low_rank", "learned"}, default="low_rank"
+            See class docstring.
         """
+        if variant not in ("canonical", "mean_prob", "mean_odds"):
+            raise ValueError(
+                f"variant must be 'canonical', 'mean_prob', or "
+                f"'mean_odds'; got {variant!r}."
+            )
+        self._variant: Literal["canonical", "mean_prob", "mean_odds"] = variant
         self._init_d_mode: Literal["low_rank", "learned"] = d_mode
+
+    # ------------------------------------------------------------------
+    # Identity / introspection
+    # ------------------------------------------------------------------
 
     @property
     def name(self) -> str:
-        return "logistic_normal"
+        # The ``name`` property is used as a registry key, so each
+        # variant gets its own canonical name. The shared
+        # "logistic_normal" prefix is what the factory's family check
+        # matches against.
+        return f"logistic_normal_{self._variant}"
+
+    @property
+    def variant(self) -> str:
+        """The totals-NB variant: ``canonical`` / ``mean_prob`` / ``mean_odds``."""
+        return self._variant
 
     @property
     def core_parameters(self) -> List[str]:
-        return ["r_T", "p"]
+        # Each variant samples a different pair of scalars. The ones
+        # *not* listed here are derived (computed via
+        # ``build_derived_params``) so the model builder still produces
+        # ``r_T`` and ``p`` for the likelihood downstream.
+        if self._variant == "canonical":
+            return ["r_T", "p"]
+        if self._variant == "mean_prob":
+            return ["mu_T", "p"]
+        # mean_odds
+        return ["mu_T", "phi_T"]
 
     @property
     def gene_param_name(self) -> str:
@@ -566,6 +637,10 @@ class LogisticNormalParameterization(Parameterization):
     def requires_vae(self) -> bool:
         return True
 
+    # ------------------------------------------------------------------
+    # Param spec construction
+    # ------------------------------------------------------------------
+
     def build_param_specs(
         self,
         unconstrained: bool,
@@ -573,19 +648,47 @@ class LogisticNormalParameterization(Parameterization):
         n_components: Optional[int] = None,
         mixture_params: Optional[List[str]] = None,
     ) -> List[ParamSpec]:
-        """Build specs for ``r_T`` (LogNormal or PositiveNormal) and ``p``."""
+        """Build specs for the variant's *sampled* scalars.
+
+        Returns specs for the two sampled scalars only; the remaining
+        NB parameters (``r_T`` / ``p``) are produced by
+        :meth:`build_derived_params`.
+        """
+        # Resolve mixture-aware flags. The variant determines which
+        # parameter names appear; ``mixture_params`` defaults to the
+        # full sampled-core list so users get sensible mixture behavior
+        # without re-specifying.
+        if n_components is not None:
+            default_mix = self.core_parameters
+            if mixture_params is None:
+                mixture_params = default_mix
+            mixture_set = set(mixture_params)
+        else:
+            mixture_set = set()
+
+        if self._variant == "canonical":
+            return self._build_canonical_specs(
+                unconstrained, guide_families, mixture_set
+            )
+        if self._variant == "mean_prob":
+            return self._build_mean_prob_specs(
+                unconstrained, guide_families, mixture_set
+            )
+        return self._build_mean_odds_specs(
+            unconstrained, guide_families, mixture_set
+        )
+
+    def _build_canonical_specs(
+        self,
+        unconstrained: bool,
+        guide_families: GuideFamilyConfig,
+        mixture_set: set,
+    ) -> List[ParamSpec]:
+        """Specs for ``(r_T, p)`` — the historical LNM canonical path."""
         r_family = guide_families.get("r_T")
         p_family = guide_families.get("p")
-
-        # Mixture-aware flags mirror canonical p/r handling.
-        if n_components is not None:
-            if mixture_params is None:
-                mixture_params = ["r_T", "p"]
-            is_r_mixture = "r_T" in mixture_params
-            is_p_mixture = "p" in mixture_params
-        else:
-            is_r_mixture = False
-            is_p_mixture = False
+        is_r_mixture = "r_T" in mixture_set
+        is_p_mixture = "p" in mixture_set
 
         if unconstrained:
             return [
@@ -621,24 +724,152 @@ class LogisticNormalParameterization(Parameterization):
             ),
         ]
 
+    def _build_mean_prob_specs(
+        self,
+        unconstrained: bool,
+        guide_families: GuideFamilyConfig,
+        mixture_set: set,
+    ) -> List[ParamSpec]:
+        """Specs for ``(mu_T, p)`` — mean-probability LNM totals.
+
+        ``mu_T`` is a *scalar* (one value per dataset), unlike the DM
+        family's per-gene ``mu_g``. This is intentional: the LNM keeps
+        all gene-level structure on the compositional path
+        (``y_alr``), so the totals submodel needs only the population
+        expected library size.
+        """
+        mu_family = guide_families.get("mu_T")
+        p_family = guide_families.get("p")
+        is_mu_mixture = "mu_T" in mixture_set
+        is_p_mixture = "p" in mixture_set
+
+        if unconstrained:
+            return [
+                PositiveNormalSpec(
+                    name="mu_T",
+                    shape_dims=(),
+                    default_params=(0.0, 1.0),
+                    guide_family=mu_family,
+                    is_mixture=is_mu_mixture,
+                ),
+                SigmoidNormalSpec(
+                    name="p",
+                    shape_dims=(),
+                    default_params=(0.0, 1.0),
+                    guide_family=p_family,
+                    is_mixture=is_p_mixture,
+                ),
+            ]
+        return [
+            LogNormalSpec(
+                name="mu_T",
+                shape_dims=(),
+                default_params=(0.0, 1.0),
+                guide_family=mu_family,
+                is_mixture=is_mu_mixture,
+            ),
+            BetaSpec(
+                name="p",
+                shape_dims=(),
+                default_params=(1.0, 1.0),
+                guide_family=p_family,
+                is_mixture=is_p_mixture,
+            ),
+        ]
+
+    def _build_mean_odds_specs(
+        self,
+        unconstrained: bool,
+        guide_families: GuideFamilyConfig,
+        mixture_set: set,
+    ) -> List[ParamSpec]:
+        """Specs for ``(mu_T, phi_T)`` — mean-odds LNM totals.
+
+        Most importantly, ``p`` is *not* sampled here; it is derived
+        downstream as ``p = 1/(1+phi_T)``. Under the capture anchor,
+        this eliminates the ``(p, p_capture)`` aliasing — both ``mu_T``
+        and ``phi_T`` retain independent identifying signal in the
+        data (mean and per-cell variance, respectively).
+        """
+        mu_family = guide_families.get("mu_T")
+        phi_family = guide_families.get("phi_T")
+        is_mu_mixture = "mu_T" in mixture_set
+        is_phi_mixture = "phi_T" in mixture_set
+
+        if unconstrained:
+            return [
+                PositiveNormalSpec(
+                    name="mu_T",
+                    shape_dims=(),
+                    default_params=(0.0, 1.0),
+                    guide_family=mu_family,
+                    is_mixture=is_mu_mixture,
+                ),
+                PositiveNormalSpec(
+                    name="phi_T",
+                    shape_dims=(),
+                    default_params=(0.0, 1.0),
+                    guide_family=phi_family,
+                    is_mixture=is_phi_mixture,
+                ),
+            ]
+        return [
+            LogNormalSpec(
+                name="mu_T",
+                shape_dims=(),
+                default_params=(0.0, 1.0),
+                guide_family=mu_family,
+                is_mixture=is_mu_mixture,
+            ),
+            BetaPrimeSpec(
+                name="phi_T",
+                shape_dims=(),
+                default_params=(1.0, 1.0),
+                guide_family=phi_family,
+                is_mixture=is_phi_mixture,
+            ),
+        ]
+
+    # ------------------------------------------------------------------
+    # Derived parameters
+    # ------------------------------------------------------------------
+
     def build_derived_params(self) -> List[DerivedParam]:
-        """No closed-form derived parameters for this parameterization."""
-        return []
+        """Derive the NB parameters not directly sampled by this variant.
+
+        The likelihood always reads ``r_T`` and ``p`` from the model's
+        parameter dict, so non-canonical variants must declare these as
+        derived. The model builder evaluates derived parameters before
+        invoking the likelihood, so by the time
+        ``LNMWithVCPLikelihood.sample`` reads them, both are present.
+        """
+        if self._variant == "canonical":
+            # Both ``r_T`` and ``p`` are sampled directly; nothing to
+            # derive. (We don't declare a "mu_T" derived here because
+            # the likelihood doesn't need it.)
+            return []
+        if self._variant == "mean_prob":
+            # r_T = mu_T * (1-p) / p
+            return [
+                DerivedParam(
+                    "r_T", _compute_r_T_from_mu_T_p, ["p", "mu_T"]
+                ),
+            ]
+        # mean_odds: derive p from phi_T, then r_T from mu_T and phi_T.
+        return [
+            DerivedParam(
+                "p", _compute_p_from_phi_T, ["phi_T"]
+            ),
+            DerivedParam(
+                "r_T", _compute_r_T_from_mu_T_phi_T, ["phi_T", "mu_T"]
+            ),
+        ]
 
     def decoder_output_spec(self, base_model: str) -> List[Tuple[str, str]]:
         """Return a single identity head for ALR coordinates ``y_alr``.
 
-        Parameters
-        ----------
-        base_model : str
-            Ignored; included for API compatibility with other
-            parameterizations.
-
-        Returns
-        -------
-        list of tuple
-            One identity head: ``("y_alr", "identity")``, i.e. a linear map from
-            latent ``z`` to ALR coordinates without an extra output nonlinearity.
+        The compositional path is unchanged across variants — only the
+        totals NB submodel differs.
         """
         del base_model
         return [("y_alr", "identity")]
@@ -733,28 +964,220 @@ def _compute_r_from_mu_p(p: jnp.ndarray, mu: jnp.ndarray) -> jnp.ndarray:
     return mu * (1 - p) / p
 
 
+# ------------------------------------------------------------------------------
+# LNM-totals derived computations.
+# ------------------------------------------------------------------------------
+#
+# These are the LNM-totals analogs of the DM-family ``_compute_r_from_*``
+# helpers above. They live in this module so the parameterization classes
+# can declare them as ``DerivedParam(name, fn, deps)`` without importing
+# anything else; the model builder picks them up through the standard
+# derived-param dispatch.
+
+
+def _compute_r_T_from_mu_T_p(
+    p: jnp.ndarray, mu_T: jnp.ndarray
+) -> jnp.ndarray:
+    """LNM mean-prob: ``r_T = mu_T * (1 - p) / p``.
+
+    Mirrors :func:`_compute_r_from_mu_p` for the LNM totals NB. ``mu_T``
+    is a scalar (population-level expected library size); ``p`` is the
+    scalar global NB success probability.
+    """
+    return mu_T * (1 - p) / p
+
+
+def _compute_r_T_from_mu_T_phi_T(
+    phi_T: jnp.ndarray, mu_T: jnp.ndarray
+) -> jnp.ndarray:
+    """LNM mean-odds: ``r_T = mu_T * phi_T``.
+
+    Same algebraic form as :func:`_compute_r_from_mu_phi`; both
+    arguments are scalars in the LNM totals submodel.
+    """
+    return mu_T * phi_T
+
+
+def _compute_p_from_phi_T(phi_T: jnp.ndarray) -> jnp.ndarray:
+    """LNM mean-odds: ``p = 1 / (1 + phi_T)``.
+
+    Mirrors the DM family's ``p = 1/(1+phi)`` derivation but applies
+    to the totals NB success probability rather than the per-gene one.
+    Provided as a top-level (rather than ``lambda``) so that
+    ``DerivedParam`` instances are picklable.
+    """
+    return 1.0 / (1.0 + phi_T)
+
+
 # ==============================================================================
 # Parameterization Registry
 # ==============================================================================
 
-# Create singleton instances
+# Create singleton instances. The LNM family has three variants
+# mirroring the DM trio (canonical / mean_prob / mean_odds) — the
+# user-facing ``parameterization=`` string in ``scribe.fit`` is mapped
+# to one of these LNM-family keys by the preset builder when the model
+# is ``"lnm"`` / ``"lnmvcp"``.
 _canonical = CanonicalParameterization()
 _mean_prob = MeanProbParameterization()
 _mean_odds = MeanOddsParameterization()
-_logistic_normal = LogisticNormalParameterization()
+_logistic_normal_canonical = LogisticNormalParameterization(variant="canonical")
+_logistic_normal_mean_prob = LogisticNormalParameterization(variant="mean_prob")
+_logistic_normal_mean_odds = LogisticNormalParameterization(variant="mean_odds")
 
-# Registry mapping names to parameterization instances
+# Registry mapping internal parameterization keys to singleton instances.
+# The LNM family appears under three keys mirroring the DM-family trio.
+# User-facing strings ``"canonical"`` / ``"mean_prob"`` / ``"mean_odds"``
+# from ``scribe.fit`` are mapped to the right LNM-family key by the
+# preset builder when the model is ``"lnm"`` / ``"lnmvcp"``.
 PARAMETERIZATIONS = {
-    # Standard parameterizations
+    # DM-family parameterizations
     "canonical": _canonical,
     "mean_prob": _mean_prob,
     "mean_odds": _mean_odds,
-    "logistic_normal": _logistic_normal,
-    # Backward compatibility
+    # LNM-family parameterizations (variants of the totals NB)
+    "logistic_normal_canonical": _logistic_normal_canonical,
+    "logistic_normal_mean_prob": _logistic_normal_mean_prob,
+    "logistic_normal_mean_odds": _logistic_normal_mean_odds,
+    # Backward compatibility for the DM family
     "standard": _canonical,
     "linked": _mean_prob,
     "odds_ratio": _mean_odds,
 }
+
+
+# ------------------------------------------------------------------------------
+# LNM-family helpers
+# ------------------------------------------------------------------------------
+
+
+# Set of internal parameterization keys belonging to the LNM family.
+# Used by the factory and by ``resolve_lnm_priors`` to detect the LNM
+# path without comparing against a hardcoded ``"logistic_normal"`` string
+# (which now no longer exists as a single key).
+_LNM_FAMILY_KEYS: frozenset = frozenset(
+    {
+        "logistic_normal_canonical",
+        "logistic_normal_mean_prob",
+        "logistic_normal_mean_odds",
+    }
+)
+
+
+def is_logistic_normal_family(param_key: str) -> bool:
+    """Return ``True`` for any LNM-family parameterization key.
+
+    Used by the unified factory and the prior resolver to dispatch on
+    the LNM family without enumerating every variant. Comparing against
+    a single ``"logistic_normal"`` string is no longer meaningful since
+    we now have three distinct LNM-family keys, so this helper is the
+    canonical way to ask "is this an LNM parameterization?" anywhere
+    in the codebase.
+
+    Parameters
+    ----------
+    param_key : str
+        Internal parameterization key (lowercased), e.g.
+        ``"canonical"``, ``"logistic_normal_mean_odds"``, ``"linked"``.
+
+    Returns
+    -------
+    bool
+        ``True`` if the key is one of ``"logistic_normal_canonical"``,
+        ``"logistic_normal_mean_prob"``, or
+        ``"logistic_normal_mean_odds"``; ``False`` otherwise.
+
+    Examples
+    --------
+    >>> is_logistic_normal_family("logistic_normal_canonical")
+    True
+    >>> is_logistic_normal_family("logistic_normal_mean_odds")
+    True
+    >>> is_logistic_normal_family("canonical")  # DM-family
+    False
+    >>> is_logistic_normal_family("nbdm")
+    False
+    """
+    return param_key in _LNM_FAMILY_KEYS
+
+
+def resolve_user_parameterization_for_model(
+    model: str,
+    parameterization: str,
+) -> str:
+    """Map a user-facing ``parameterization=`` string to an internal key.
+
+    The user calls ``scribe.fit(model="lnm", parameterization="mean_odds")``;
+    internally we want to dispatch to the
+    ``"logistic_normal_mean_odds"`` parameterization. Conversely, for
+    DM-family models, ``parameterization="mean_odds"`` should resolve
+    to the DM-family key ``"mean_odds"`` unchanged. This helper
+    encapsulates that mapping.
+
+    Parameters
+    ----------
+    model : str
+        Model name passed to ``scribe.fit`` (case-insensitive).
+    parameterization : str
+        User-facing parameterization string, one of
+        ``"canonical"`` / ``"mean_prob"`` / ``"mean_odds"`` (or one of
+        the legacy aliases ``"standard"`` / ``"linked"`` /
+        ``"odds_ratio"``) for both families.
+
+    Returns
+    -------
+    str
+        Internal parameterization key suitable for indexing
+        :data:`PARAMETERIZATIONS`.
+
+    Raises
+    ------
+    ValueError
+        If ``parameterization`` is not a recognized DM-family value
+        (when the model is non-LNM) or one of the three LNM variants
+        (when the model is ``"lnm"`` / ``"lnmvcp"``).
+    """
+    model_lower = model.lower()
+    param_lower = parameterization.lower()
+
+    # Backward-compat: the legacy DM-family aliases collapse to the
+    # canonical short names before we branch on the model family.
+    legacy_dm_aliases = {
+        "standard": "canonical",
+        "linked": "mean_prob",
+        "odds_ratio": "mean_odds",
+    }
+    param_lower = legacy_dm_aliases.get(param_lower, param_lower)
+
+    if model_lower in ("lnm", "lnmvcp"):
+        # The LNM family accepts only the three variant names. Emit a
+        # specific error for the legacy ``"logistic_normal"`` string
+        # so users who upgrade get a clear migration message rather
+        # than a generic "unknown parameterization" failure.
+        if param_lower == "logistic_normal":
+            raise ValueError(
+                "parameterization='logistic_normal' is no longer "
+                "accepted for LNM models. Choose one of "
+                "'canonical' (legacy default; faithful to "
+                "Poisson-thinning), 'mean_prob', or 'mean_odds' "
+                "(recommended under capture anchor)."
+            )
+        if param_lower not in ("canonical", "mean_prob", "mean_odds"):
+            raise ValueError(
+                f"parameterization={parameterization!r} not supported "
+                f"for LNM models. Choose 'canonical', 'mean_prob', or "
+                f"'mean_odds'."
+            )
+        return f"logistic_normal_{param_lower}"
+
+    # DM-family path. The legacy "logistic_normal" string would never
+    # have made sense here, so we don't special-case it.
+    if param_lower not in ("canonical", "mean_prob", "mean_odds"):
+        raise ValueError(
+            f"parameterization={parameterization!r} not recognized."
+        )
+    return param_lower
+
 
 __all__ = [
     "Parameterization",
@@ -764,8 +1187,14 @@ __all__ = [
     "MeanOddsParameterization",
     "LogisticNormalParameterization",
     "PARAMETERIZATIONS",
+    # Family helpers
+    "is_logistic_normal_family",
+    "resolve_user_parameterization_for_model",
     # Derived parameter compute functions (pure math, alignment-free)
     "_compute_mu_from_r_p",
     "_compute_r_from_mu_phi",
     "_compute_r_from_mu_p",
+    "_compute_r_T_from_mu_T_p",
+    "_compute_r_T_from_mu_T_phi_T",
+    "_compute_p_from_phi_T",
 ]
