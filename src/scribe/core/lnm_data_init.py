@@ -61,6 +61,8 @@ __all__ = [
     "CAPTURE_ANCHOR_KEYS",
     "BIOLOGY_DEFAULT_R_T_MEDIAN",
     "BIOLOGY_DEFAULT_R_T_SIGMA_LOG",
+    "BIOLOGY_DEFAULT_PHI_T_MEDIAN",
+    "BIOLOGY_DEFAULT_PHI_T_SIGMA_LOG",
 ]
 
 
@@ -78,6 +80,25 @@ CAPTURE_ANCHOR_KEYS: Tuple[str, ...] = ("eta_capture", "mu_eta", "organism")
 # roughly [2.5, 1000], wide enough not to fight the posterior.
 BIOLOGY_DEFAULT_R_T_MEDIAN: float = 50.0
 BIOLOGY_DEFAULT_R_T_SIGMA_LOG: float = 1.5
+
+
+# Biology-informed soft floor for the LogNormal prior on ``phi_T`` (the
+# totals odds ratio in the LNM mean_odds variant) when the capture anchor
+# is active. Under the deterministic capture anchor, the per-cell mean of
+# ``u_T^(c)`` is pinned at ``L_c`` and the per-cell variance signal that
+# would identify ``phi_T`` is consumed by the anchor itself, leaving the
+# optimizer free to drive ``phi_T -> 0`` (which gives r_T -> infinity, a
+# delta-distribution NB on totals). The biology default below regularizes
+# ``phi_T`` away from that boundary without strongly anchoring it; the
+# data can still move the posterior freely if there is genuine residual
+# variance to fit.
+#
+# Median ``phi_T = 0.01`` corresponds to ``r_T = mu_T / phi_T = 100 *
+# mu_T`` — a relatively sharp NB whose variance/mean ratio is ``1 + 1/phi
+# = 101``. For typical mu_T ~ 10^4 this gives a believable per-cell
+# variance budget without saturating either boundary.
+BIOLOGY_DEFAULT_PHI_T_MEDIAN: float = 0.01
+BIOLOGY_DEFAULT_PHI_T_SIGMA_LOG: float = 1.0
 
 
 # Floor applied to the per-feature standard deviation before the encoder
@@ -534,13 +555,17 @@ def _empirical_phi_T_prior(
 ) -> Tuple[float, float]:
     """Empirical odds-ratio LogNormal prior for ``phi_T``.
 
-    The DM relation ``phi = (1 - p) / p`` gives ``phi_T = mean / r_T``
-    when expressed in the totals NB. Inverting moments,
-    ``phi_T = (v - m) / m^2 * mean = (v - m) / m`` after substitution,
-    which equals the variance-to-mean ratio minus 1. We use this as the
-    prior median, with a generous log-spread because under the capture
-    anchor ``v`` is inflated by capture variability and the empirical
-    estimate is biased.
+    Derivation (works under either convention; ``phi_T`` is convention-
+    invariant). In the paper's failure-probability convention,
+    ``mean = r * (1-p) / p`` and ``var = r * (1-p) / p^2 = mean / p``,
+    so ``var/mean = 1/p`` and ``p = m/v``. The totals odds ratio (per
+    the LNM mean_odds parameterization, ``phi_T = p/(1-p)``) is then
+
+        phi_T = (m/v) / ((v-m)/v) = m / (v - m).
+
+    The same number falls out of the NumPyro success-probability
+    convention because ``phi_T = (1 - probs) / probs`` with
+    ``probs = (v-m)/v``, giving ``phi_T = (m/v) / ((v-m)/v) = m / (v - m)``.
 
     Parameters
     ----------
@@ -569,9 +594,11 @@ def _empirical_phi_T_prior(
     u_T = counts_np.sum(axis=-1).astype(np.float64)
     m = float(u_T.mean())
     v = float(u_T.var(ddof=0))
-    # ``phi_T = (v - m) / m`` from the NB second-moment inversion.
+    # ``phi_T = m / (v - m)`` from the NB second-moment inversion in
+    # the paper's convention. Equivalently, ``phi_T`` in the NumPyro
+    # convention since the odds ratio is convention-invariant.
     if v > m and m > 0:
-        phi_T_estimate = (v - m) / m
+        phi_T_estimate = m / (v - m)
     else:
         phi_T_estimate = min_phi_T
     phi_T_estimate = max(float(phi_T_estimate), float(min_phi_T))
@@ -642,14 +669,30 @@ def resolve_lnm_priors(
         param_lower = f"logistic_normal_{param_lower}"
 
     priors_dict: Dict[str, Any] = {} if not isinstance(priors, dict) else priors
-    capture_anchor_active = any(k in priors_dict for k in CAPTURE_ANCHOR_KEYS)
+    # Recognize the capture anchor under either the internal key
+    # (``eta_capture`` / ``mu_eta`` / ``organism``) or any of its
+    # descriptive aliases (``capture_efficiency`` / ``capture_scaling``,
+    # registered in ``PRIOR_KEY_ALIASES``). The user passes whichever
+    # form they prefer; the dispatch should not depend on which.
+    from ..models.config.parameter_mapping import PRIOR_KEY_ALIASES
+
+    _capture_alias_set = {
+        alias
+        for alias, target in PRIOR_KEY_ALIASES.items()
+        if target in CAPTURE_ANCHOR_KEYS
+    }
+    capture_anchor_active = any(
+        k in priors_dict
+        for k in tuple(CAPTURE_ANCHOR_KEYS) + tuple(_capture_alias_set)
+    )
 
     # Resolve each scalar by parameterization, skipping anything the
     # user already set (under either the internal name or its
     # descriptive alias). The descriptive alias check is what lets
     # ``priors={"total_mean": ...}`` short-circuit auto-assignment of
     # ``mu_T``, mirroring the symmetric behavior on the DM family.
-    from ..models.config.parameter_mapping import PRIOR_KEY_ALIASES
+    # ``PRIOR_KEY_ALIASES`` was already imported above for the
+    # capture-anchor alias check.
 
     def _user_set(internal_name: str) -> bool:
         # Internal name directly set?
@@ -691,14 +734,26 @@ def resolve_lnm_priors(
         return out
 
     if param_lower == "logistic_normal_mean_odds":
-        # Sampled scalars: (mu_T, phi_T). p is derived as 1/(1+phi_T)
-        # and r_T as mu_T*phi_T, so neither has the boundary-collapse
-        # problem of the canonical / mean_prob variants. We set both
-        # mu_T and phi_T from empirical moments.
+        # Sampled scalars: (mu_T, phi_T). p and r_T are derived
+        # downstream. Under the deterministic capture anchor, the
+        # per-cell mean is pinned by the anchor and there is no
+        # residual variance for ``phi_T`` to fit, so the empirical
+        # MoM estimate is unreliable and the optimizer can drive
+        # ``phi_T -> 0`` along the resulting ridge. We protect against
+        # that with a biology-informed soft floor on ``phi_T`` when
+        # the anchor is active; without the anchor, the empirical MoM
+        # is the right thing to do (the data identifies ``phi_T``
+        # through the per-cell totals variance).
         if not _user_set("mu_T"):
             out["mu_T"] = _empirical_mu_T_prior(counts, sigma_log=1.0)
         if not _user_set("phi_T"):
-            out["phi_T"] = _empirical_phi_T_prior(counts, sigma_log=1.5)
+            if capture_anchor_active:
+                out["phi_T"] = (
+                    float(np.log(BIOLOGY_DEFAULT_PHI_T_MEDIAN)),
+                    float(BIOLOGY_DEFAULT_PHI_T_SIGMA_LOG),
+                )
+            else:
+                out["phi_T"] = _empirical_phi_T_prior(counts, sigma_log=1.5)
         return out
 
     # Fallback: parameterization not recognized — return empty rather

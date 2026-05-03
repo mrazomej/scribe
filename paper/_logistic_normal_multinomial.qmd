@@ -1942,16 +1942,43 @@ anchor of @sec-lnm-stability-rT-anchor-gating. SCRIBE exposes the
 same trio of parameterizations the user is already familiar with
 from the DM family: ``canonical``, ``mean_prob``, and ``mean_odds``.
 
+### Convention note on the negative-binomial parameter $p$
+
+Throughout this paper (consistent with @sec-dirichlet-multinomial),
+the negative-binomial parameter $p$ is the **failure probability** in
+the standard birth--death derivation: the moments are
+
+$$
+\langle X \rangle \,=\, r\,\frac{1-p}{p},
+\qquad
+\operatorname{Var}[X] \,=\, r\,\frac{1-p}{p^{2}}.
+$${#eq-lnm-totals-nb-conv}
+
+We flag this because NumPyro's
+``NegativeBinomialProbs(total\_count, probs)`` distribution uses the
+*conjugate* convention --- its ``probs`` argument is the success
+probability, with mean ``total_count * probs / (1 - probs)``. The two
+$p$'s are related by ``probs = 1 - p`` (paper). All equations in this
+section are in the paper's failure-probability convention; the codebase
+(and the values returned by ``ScribeResults.get_map()``) report the
+NumPyro-convention ``probs`` instead. Translate via ``p_paper = 1 -
+p_numpyro`` whenever moving between the two.
+
+The odds ratio $\phi_T$ is convention-invariant: defined as the odds
+of failure $\phi_T = p/(1-p)$ in the paper's convention, this equals
+$(1-{\text{probs}})/\text{probs}$ in the NumPyro convention --- the
+same number under both conventions. Only $p$ itself flips.
+
 ### The three slicings
 
 For the LNMVCP totals submodel, the per-cell mean factorizes as
 
 $$
-\langle u_T^{(c)} \rangle \,=\, r_T \cdot \frac{\hat p^{(c)}}{1 - \hat p^{(c)}}
+\langle u_T^{(c)} \rangle \,=\, r_T \cdot \frac{1 - \hat p^{(c)}}{\hat p^{(c)}}
 \,=\, \mu_T \cdot p_{\text{capture}}^{(c)},
 $${#eq-lnm-totals-mean-factorization}
 
-where $\mu_T \,=\, r_T \cdot p / (1-p)$ is the population-level
+where $\mu_T \,=\, r_T \cdot (1-p) / p$ is the population-level
 expected mRNA count per cell (before per-cell capture modulation)
 and the per-cell mean follows the standard Poisson-thinning
 relation. The variance is
@@ -1959,7 +1986,7 @@ relation. The variance is
 $$
 \operatorname{Var}[u_T^{(c)}]
 \,=\, \langle u_T^{(c)} \rangle \cdot
-\frac{1}{1 - \hat p^{(c)}}.
+\frac{1}{\hat p^{(c)}}.
 $${#eq-lnm-totals-variance-factorization}
 
 Three equivalent representations of the totals NB are immediate:
@@ -1967,31 +1994,34 @@ Three equivalent representations of the totals NB are immediate:
 **``canonical``**: sample $(r_T,\, p)$ directly. Faithful to the
 Poisson-thinning derivation in @sec-capture-prior; $r_T$ is the
 intrinsic dispersion of the underlying mRNA pool and $p$ is the
-global NB success probability. The per-cell $\hat p^{(c)}$ is
+global NB failure probability. The per-cell $\hat p^{(c)}$ is
 computed from $(p,\, p_{\text{capture}}^{(c)})$ via the standard
 Poisson-thinning formula. *No derived parameters.*
 
 **``mean_prob``**: sample $(\mu_T,\, p)$. Derive the dispersion as
 
 $$
-r_T \,=\, \mu_T \cdot \frac{1 - p}{p}.
+r_T \,=\, \mu_T \cdot \frac{p}{1 - p}.
 $${#eq-lnm-totals-r-from-mu-p}
 
 The mean of the totals NB is now a primary parameter, directly
 identified by the empirical mean of $u_T$.
 
 **``mean_odds``**: sample $(\mu_T,\, \phi_T)$ where the totals
-odds-ratio is $\phi_T \,=\, (1-p)/p$. Derive both
+odds-ratio is $\phi_T \,=\, p/(1-p)$ (odds of failure, in the
+paper's convention). Derive both
 
 $$
-p \,=\, \frac{1}{1 + \phi_T},
+p \,=\, \frac{\phi_T}{1 + \phi_T},
 \qquad
 r_T \,=\, \mu_T \cdot \phi_T.
 $${#eq-lnm-totals-mean-odds-derived}
 
 Both sampled scalars retain independent identifying signal in the
 data: $\mu_T$ is the empirical first moment of $u_T$, and $\phi_T$
-is identified by the variance-to-mean ratio.
+is identified by the variance-to-mean ratio (specifically,
+$\phi_T = \langle u_T \rangle / (\operatorname{Var}[u_T] - \langle
+u_T \rangle)$ from inverting @eq-lnm-totals-variance-factorization).
 
 The three slicings are *generatively* identical — they all describe
 the same NB$(r_T, \hat p^{(c)})$ — and differ only in what scalars
@@ -2021,11 +2051,14 @@ space that varies $p$ can be matched by an equal-and-opposite
 adjustment to the implied $\hat p^{(c)}$ (which the anchor pins
 externally). The variational posterior on $p$ therefore drifts
 freely along the $(p,\, p_{\text{capture}})$ ridge until it hits
-the upper boundary $p \to 1$, leaving $p_{\text{hat}}^{(c)} \to
-1$ and a degenerate NB on $u_T$.
+the boundary $p \to 0$ (paper convention; equivalently
+``probs`` $\to 1$ in NumPyro convention), leaving
+$p_{\text{hat}}^{(c)} \to 0$ and a degenerate NB on $u_T$ whose
+mean diverges.
 
-The ``mean_odds`` variant **eliminates** this aliasing. Under the
-anchor:
+The ``mean_odds`` variant **softens** this aliasing by reparameterising
+the global degrees of freedom along directions that the data identifies
+better. Under the anchor:
 
 - $\langle u_T^{(c)} \rangle \,=\, \mu_T \cdot p_{\text{capture}}^{(c)}$
   is identified by the empirical mean of the row sums of
@@ -2036,17 +2069,39 @@ anchor:
   posterior centered on $\langle u_T \rangle / \langle
   p_{\text{capture}} \rangle$.
 
-- $\phi_T \,=\, \operatorname{Var}[u_T^{(c)}] / \langle u_T^{(c)}
-  \rangle - 1$ is identified by the per-cell variance of $u_T$
-  *around its predicted mean*. With the mean fixed by $\mu_T$ and
-  the anchor, the residual variance is what $\phi_T$ alone
-  controls.
+- $\phi_T$ is the totals NB's overdispersion knob. The derived
+  $r_T = \mu_T \,\phi_T$ then takes its identifying signal from the
+  *residual* variance of $u_T$ around the capture-predicted mean.
 
-Crucially, the derived $p \,=\, 1 / (1 + \phi_T)$ is a deterministic
-function of the well-identified $\phi_T$, so it cannot drift to the
-boundary the way it does in the canonical variant. The model
-remains numerically well-conditioned no matter how close the
-capture anchor pins $p_{\text{capture}}^{(c)}$ to $1$.
+Crucially, the derived $p \,=\, \phi_T / (1 + \phi_T)$ is a
+deterministic function of $\phi_T$, so it cannot drift along the
+$p$-axis as in the canonical / mean_prob variants. **However**, the
+``mean_odds`` reparameterisation does *not* eliminate the boundary
+collapse altogether under the **deterministic** capture anchor: it
+relocates it to the $\phi_T \to 0$ corner instead. To see why, note
+that the deterministic anchor pins the per-cell mean of $u_T^{(c)}$
+exactly at $L_c$, and each cell is observed once. The likelihood
+$\log \text{NB}(u_T^{(c)} \mid r_T,\,\hat p^{(c)})$ evaluated at the
+predicted mean is maximized when the NB is sharpest --- i.e., when
+the variance is smallest --- i.e., when $r_T \to \infty$
+($\phi_T \to 0$). The optimizer then drives $\phi_T$ to zero
+because there is no residual variance for the totals NB to fit. The
+collapse migrates from $p$ to $\phi_T$ but does not vanish.
+
+The fix for this residual pathology is *not* a different
+parameterisation: it is to loosen the capture anchor away from the
+strict deterministic limit, so that $p_{\text{capture}}^{(c)}$
+retains some posterior slack and $\phi_T$ has variance to fit. We
+develop this point in
+@sec-lnm-stability-rT-anchor-stochastic below; for the
+``mean_odds`` variant under a moderately informative anchor
+($\sigma_M \approx 0.2$ rather than the deterministic limit
+$\sigma_M \to 0$), $\phi_T$ recovers identifying signal and the
+collapse disappears. With $\sigma_M \approx 0.05$ (the default we
+documented), the collapse is still possible — and SCRIBE therefore
+ships a biology-informed soft floor on $\phi_T$ when the capture
+anchor is active, so that even in the deterministic limit the
+posterior stays in a numerically well-conditioned region.
 
 ### Default priors per variant
 
@@ -2070,11 +2125,21 @@ mean-anchoring framework of @sec-mean-anchoring:
 
 - ``mean_odds``: same $\mu_T$ prior as ``mean_prob``, plus
   $\phi_T \sim \text{LogNormal}(\log \hat \phi_T^{\text{MoM}},\,
-  1.5)$, where the empirical odds-ratio estimate is $\hat
-  \phi_T^{\text{MoM}} \,=\, (v - m) / m$ (algebraically
-  ${\hat r_T^{\text{MoM}}}^{-1} \cdot \langle u_T \rangle$). The
-  wider $\sigma_{\log} = 1.5$ reflects the slightly noisier
-  identification of $\phi_T$ relative to $\mu_T$.
+  1.5)$, where the empirical odds-ratio estimate (in the paper's
+  failure-probability convention) is $\hat
+  \phi_T^{\text{MoM}} \,=\, m / (v - m)$. Algebraically this equals
+  $\langle u_T \rangle / (\operatorname{Var}[u_T] - \langle u_T
+  \rangle)$, the inverse of the over-dispersion excess. When the
+  capture anchor is active, this empirical estimate is unreliable
+  (the capture variability inflates $v$ but the deterministic anchor
+  predicts most of that inflation directly, leaving little residual
+  for $\phi_T$ to absorb); SCRIBE substitutes a biology-informed
+  soft floor $\phi_T \sim \text{LogNormal}(\log \phi_T^{\text{biol}},\,
+  1.0)$ in that regime, with $\phi_T^{\text{biol}} = 0.01$
+  (corresponding to $r_T \approx \mu_T / 0.01$, a relatively sharp
+  NB) chosen to keep the variational posterior away from the
+  $\phi_T \to 0$ degenerate limit while letting the data move it
+  freely if there is genuine identifying signal.
 
 User overrides via the ``priors`` dict of ``scribe.fit`` always win.
 The override keys mirror the DM family's symmetry:
@@ -2269,23 +2334,25 @@ Because the optimizer updates $r_T$ via reparameterized Gaussian gradients, that
 migration is slow and contributes substantially to the spiky early-training
 loss.
 
-The fix is to use the data to set an informative prior. The negative binomial
-moment relations are
+The fix is to use the data to set an informative prior. The negative
+binomial moment relations (in the paper's failure-probability
+convention; see @eq-lnm-totals-nb-conv) are
 
 $$
-\langle u_T \rangle \,=\, r_T\,\frac{\hat{p}}{1-\hat{p}},
+\langle u_T \rangle \,=\, r_T\,\frac{1-\hat{p}}{\hat{p}},
 \qquad
-\operatorname{Var}[u_T] \,=\, r_T\,\frac{\hat{p}}{(1-\hat{p})^2}.
+\operatorname{Var}[u_T] \,=\, r_T\,\frac{1-\hat{p}}{\hat{p}^{2}}.
 $$
 
 Letting $m = \widehat{\langle u_T \rangle}$ and $v =
-\widehat{\operatorname{Var}}[u_T]$ be the empirical first two moments of the row
-sums of $\underline{\underline{U}}$, the method-of-moments inversion gives
+\widehat{\operatorname{Var}}[u_T]$ be the empirical first two moments
+of the row sums of $\underline{\underline{U}}$, the method-of-moments
+inversion gives
 
 $$
 \hat{r}_T \,=\, \frac{m^2}{v - m},
 \qquad
-1 - \hat{p} \,=\, \frac{m}{v}.
+\hat{p} \,=\, \frac{m}{v}.
 $${#eq-lnm-stability-rT-mom}
 
 SCRIBE automatically replaces the default $\text{LogNormal}(0, 1)$ prior
@@ -2303,10 +2370,13 @@ so @eq-lnm-stability-rT-mom is the *exact* method-of-moments inversion
 and $\sigma_{\log} = 1$ is appropriate. For `lnmvcp`, however, the
 generative model places a per-cell capture probability
 $p_{\text{capture}}^{(c)} \sim \text{Beta}(a, b)$ that modulates
-$\hat{p}$ to $\hat p^{(c)} = \hat{p}\,p_{\text{capture}}^{(c)} / (1 -
-\hat{p}(1 - p_{\text{capture}}^{(c)}))$, so the marginal of $u_T^{(c)}$
-is a Beta--NB compound rather than a pure NB. By the law of total
-variance,
+$\hat{p}$ via the standard Poisson-thinning relation (see
+@sec-dirichlet-multinomial @eq-umicounts-marginal-nb-p, paper
+convention)
+$\hat p^{(c)} \,=\, \hat{p} \,/\, [\,p_{\text{capture}}^{(c)} +
+\hat{p}\,(1 - p_{\text{capture}}^{(c)})\,]$, so the marginal of
+$u_T^{(c)}$ is a Beta--NB compound rather than a pure NB. By the
+law of total variance,
 
 $$
 \operatorname{Var}[u_T^{(c)}] \,=\,
@@ -2428,6 +2498,69 @@ data support. The $\sigma_{\log} = 1.5$ width is wide enough to cover
 $[\hat{r}_T^{\text{biol}} / 20,\, 20 \, \hat{r}_T^{\text{biol}}]$, which
 encompasses essentially every reported NB dispersion estimate in the published
 10x literature.
+
+#### From deterministic to stochastic capture anchor {#sec-lnm-stability-rT-anchor-stochastic}
+
+The discussion in
+@sec-lnm-stability-rT-anchor-consumed shows why the totals NB has no
+identifying signal *under the deterministic capture anchor* — the
+per-cell mean is pinned exactly at $L_c$, leaving zero residual
+variance for $r_T$ (or $\phi_T$) to fit. In practice this manifests
+as the variational posterior on $\phi_T$ collapsing to the boundary
+$\phi_T \to 0$ (equivalently $r_T \to \infty$, a delta-distribution
+NB on totals), even when the data clearly has finite per-cell
+variability that the model could in principle express through the
+totals NB.
+
+The fix that *does* preserve identifying signal for the totals
+NB — without sacrificing the qualitative role of the capture anchor
+in pinning the cell-to-cell library-size variation — is to operate
+in the **stochastic** anchor regime. Concretely, the capture prior
+is
+
+$$
+\eta_c \,\sim\, \mathcal{N}\!\left(\log M_0 - \log L_c,\,
+\sigma_M\right),
+$$
+
+with $\sigma_M$ controlling how tightly $\eta_c$ is pinned to its
+data-implied mean. The default $\sigma_M = 0.05$ that ships with
+SCRIBE is *very* tight ---near-deterministic --- and reproduces the
+pathology described above. Loosening to $\sigma_M \approx 0.2$ gives
+the per-cell capture probability roughly $\pm 20\%$ posterior slack
+around its $L_c / M_0$ anchor, which leaves enough residual variance
+in the totals for $\phi_T$ to identify. This is the recommended
+configuration whenever the user activates the capture anchor and
+selects the ``mean_odds`` parameterization:
+
+```python
+scribe.fit(
+    adata,
+    model="lnmvcp",
+    parameterization="mean_odds",
+    priors={
+        "capture_efficiency": (math.log(2e5), 0.2),  # sigma_M = 0.2
+    },
+)
+```
+
+With $\sigma_M \approx 0.2$, the capture-vs-library-size scaling
+remains visibly linear (verifiable from the
+``p_capture^(c)`` posterior plot) and ``phi_T`` settles in the
+interior of its support rather than at the boundary. The biology
+default ``mu_T``-anchor of @sec-lnm-stability-rT-anchor-biology-default
+continues to apply as the safety net regardless of $\sigma_M$.
+
+For users who want the original deterministic regime --- e.g.,
+because the capture variability really is negligible and they want
+to test that hypothesis explicitly --- the biology-informed soft
+floor on $\phi_T$ (median $\phi_T^{\text{biol}} = 0.01$, see
+@sec-lnm-totals-parameterizations) is automatically applied when
+SCRIBE detects the capture anchor in the ``priors`` dict, preventing
+the boundary collapse without imposing a sharp data-driven
+constraint. The model trains; the posterior on $\phi_T$ may be near
+the prior; downstream PPCs will show whether the fit is good enough
+for the intended use.
 
 #### User override {#sec-lnm-stability-rT-anchor-user-override}
 

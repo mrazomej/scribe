@@ -25,6 +25,8 @@ import pytest
 from flax import linen as nn
 
 from scribe.core.lnm_data_init import (
+    BIOLOGY_DEFAULT_PHI_T_MEDIAN,
+    BIOLOGY_DEFAULT_PHI_T_SIGMA_LOG,
     BIOLOGY_DEFAULT_R_T_MEDIAN,
     BIOLOGY_DEFAULT_R_T_SIGMA_LOG,
     CAPTURE_ANCHOR_KEYS,
@@ -822,6 +824,56 @@ class TestResolveLNMPriors:
         # Both scalars get auto-defaults — exactly what we want for
         # mean_odds, which has no aliasing under the capture anchor.
         assert set(out.keys()) == {"mu_T", "phi_T"}
+
+    def test_mean_odds_phi_T_uses_empirical_mom_without_anchor(self):
+        # Without the capture anchor, phi_T's prior comes from the
+        # NB second-moment inversion phi_T = m / (v - m). That value
+        # is data-driven; the constant biology default should NOT be
+        # used here.
+        out = resolve_lnm_priors(
+            "lnmvcp", "mean_odds", self._toy_counts(), priors=None
+        )
+        mu_log, sigma_log = out["phi_T"]
+        # No-anchor branch uses sigma_log = 1.5.
+        assert sigma_log == 1.5
+        # The empirical estimate is *not* the biology default.
+        assert not np.isclose(
+            np.exp(mu_log), BIOLOGY_DEFAULT_PHI_T_MEDIAN, rtol=1e-3
+        )
+
+    def test_mean_odds_phi_T_uses_biology_floor_with_anchor(self):
+        # Under the capture anchor, the per-cell mean is pinned and
+        # phi_T loses identifying signal under the deterministic
+        # limit. The resolver substitutes the biology-informed soft
+        # floor instead of the empirical MoM, with sigma_log = 1.0.
+        out = resolve_lnm_priors(
+            "lnmvcp",
+            "mean_odds",
+            self._toy_counts(),
+            priors={"organism": "human"},
+        )
+        assert "phi_T" in out
+        mu_log, sigma_log = out["phi_T"]
+        assert np.isclose(np.exp(mu_log), BIOLOGY_DEFAULT_PHI_T_MEDIAN)
+        assert sigma_log == BIOLOGY_DEFAULT_PHI_T_SIGMA_LOG
+
+    def test_empirical_phi_T_mom_uses_correct_formula(self):
+        # Regression: the helper computed (v-m)/m at one point, which
+        # is the *reciprocal* of the correct phi_T = m/(v-m). Pin the
+        # right formula so the bug cannot return.
+        from scribe.core.lnm_data_init import _empirical_phi_T_prior
+
+        counts = self._toy_counts()
+        u_T = counts.sum(axis=-1).astype(np.float64)
+        m = float(u_T.mean())
+        v = float(u_T.var(ddof=0))
+        expected = m / (v - m)
+
+        mu_log, _sigma_log = _empirical_phi_T_prior(counts)
+        assert np.isclose(np.exp(mu_log), expected, rtol=1e-5), (
+            f"Expected phi_T MoM = m/(v-m) = {expected:.5g}; "
+            f"got {np.exp(mu_log):.5g}."
+        )
 
     def test_user_override_skips_internal_name(self):
         # Setting the internal name short-circuits that scalar's
