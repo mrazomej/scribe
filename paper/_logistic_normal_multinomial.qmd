@@ -2065,7 +2065,7 @@ SCRIBE automatically replaces the default $\text{LogNormal}(0, 1)$ prior
 on $r_T$ with $\text{LogNormal}(\log \hat{r}_T,\,\sigma_{\log})$ when the
 user fits an `lnm`/`lnmvcp` model and does not pass an explicit override
 through the `priors` keyword. The prior median therefore starts at the
-data's centre of mass; the spread $\sigma_{\log}$ in log-space remains
+data's center of mass; the spread $\sigma_{\log}$ in log-space remains
 generous so the prior does not over-constrain the posterior.
 User-supplied priors always take precedence (see the LNM block of
 `scribe.api.fit`).
@@ -2102,6 +2102,139 @@ fit the full Beta--NB compound moments (jointly recovering
 $r_T,\,\hat{p}$ and the Beta hyperparameters $a,\,b$) before setting
 the prior, but the order-of-magnitude correctness from the cheap
 estimator plus a wider spread is sufficient in practice.
+
+### Why the data-driven $r_T$ prior is gated on the capture anchor {#sec-lnm-stability-rT-anchor-gating}
+
+The argument of the previous subsection presumes that the cell-to-cell variation
+in $u_T$ comes from a *combination* of intrinsic NB sampling noise and
+capture-probability variation, with the moment-of-moments inversion conflating
+the two and the wider $\sigma_{\log}$ absorbing the resulting bias. This
+presumption fails — in a clean and instructive way — once the user activates the
+**capture anchor**: the biology-informed prior on $p_{\text{capture}}^{(c)}$
+that pins the per-cell capture probability to its data-implied value
+$\hat{\nu}_c \approx L_c / M_0$ (see @sec-mean-anchoring). When this anchor is
+active, the moment-of-moments inversion stops being merely biased and becomes
+**mathematically uninformative**.
+
+#### The cell-to-cell variance in $u_T$ is consumed by the anchor {#sec-lnm-stability-rT-anchor-consumed}
+
+Under the capture anchor, the conditional mean of the library size is
+
+$$
+\langle u_T^{(c)} \mid p_{\text{capture}}^{(c)} \rangle
+\,=\, M_{\text{pop}} \cdot p_{\text{capture}}^{(c)},
+$${#eq-lnm-stability-rT-anchor-conditional-mean}
+
+where $M_{\text{pop}} = r_T \cdot p / (1 - p)$ is the population-level
+expected mRNA count per cell. The anchor sets
+$p_{\text{capture}}^{(c)} = L_c / M_0$, and at convergence the global
+$p$ is tuned so that $M_{\text{pop}} \approx M_0$ (this is what the
+constant $M_0$ definitionally represents in @sec-capture-prior). Both
+together give
+
+$$
+\langle u_T^{(c)} \rangle \,\approx\, M_0 \cdot \frac{L_c}{M_0} \,=\, L_c \,=\,
+u_T^{(c)}, $${#eq-lnm-stability-rT-anchor-tautology}
+
+i.e. the anchor places the model's expected library size *exactly* at the
+observed library size, cell by cell. There is no residual across-cell variance
+left over for the totals submodel to explain.
+
+Concretely, the empirical "intrinsic" variance after subtracting the
+capture-prediction $L_c$ is
+
+$$
+\widehat{\text{Var}}_{\text{intrinsic}} \,=\,
+\frac{1}{C} \sum_{c=1}^C \left(u_T^{(c)} - L_c\right)^2 \,=\, 0,
+$${#eq-lnm-stability-rT-anchor-zero-residual}
+
+since $L_c \equiv u_T^{(c)}$. The moment-of-moments inversion
+$\hat{r}_T = m^2 / (v - m)$ applied to this capture-corrected variance
+returns $0/0$. Even in the *stochastic* anchor regime (with $\sigma_M >
+0$, the slack of the capture prior), the residual variance scales
+linearly with $\sigma_M$ and vanishes in the deterministic limit. The
+estimator is consistent: it is simply telling us that there is no
+information about $r_T$ in the totals once the capture is anchored.
+
+#### Where $r_T$'s identifiability migrates to {#sec-lnm-stability-rT-anchor-migration}
+
+This is not a problem for the model — it is a relocation of the
+identifying signal. With the capture anchor in place, the
+$(p_{\text{capture}}, r_T)$ identifiability ridge that the qmd warned
+about in @sec-mean-residual-identifiability has been collapsed. The
+totals submodel is fully pinned by the capture prior; $r_T$ is no
+longer needed to explain library-size variation. Its remaining role is
+to control the per-gene **Fano factor** through the underlying NB
+shape that gives rise to the multinomial composition. In practice
+this means $r_T$ is now identified by the *gene-level* fluctuations
+in $u_g^{(c)}$ around their cell-conditional means, mediated through
+the multinomial likelihood — not by anything in the totals.
+
+The totals-side moment-of-moments has nothing to say about that
+quantity; it is the wrong sufficient statistic. Continuing to use it
+under the anchor would either (a) inject a strongly biased point
+estimate into the prior, or (b) collapse to the under-dispersed
+fall-back $r_T = \min_{r_T}$, neither of which is desirable.
+
+#### The biology-informed default {#sec-lnm-stability-rT-anchor-biology-default}
+
+Given that no totals-side data-driven prior is available under the
+anchor, we substitute a fixed prior whose median reflects a typical
+order of magnitude for the NB dispersion in mammalian
+single-cell sequencing experiments. Empirically, $r_T$ for 10x Chromium
+data settles in the tens to low hundreds across most healthy mammalian
+tissues; the choice $\hat{r}_T^{\text{biol}} = 50$ sits comfortably in
+the center of that range. We pair it with a generous log-spread
+$\sigma_{\log}^{\text{biol}} = 1.5$, giving a prior 95\% interval of
+roughly $[2.5,\,1000]$:
+
+$$
+\boxed{ r_T \,\sim\, \text{LogNormal}\!\left(\log 50,\; 1.5\right) \quad
+\text{(LNMVCP under capture anchor, default).} }
+$${#eq-lnm-stability-rT-anchor-biology-default}
+
+This prior does not anchor $r_T$ to any particular value — it merely keeps the
+variational posterior from drifting through the order-of-magnitude regions that
+are biologically implausible. The multinomial-side likelihood, now the sole
+source of identifying information for $r_T$, pulls the posterior to wherever the
+data support. The $\sigma_{\log} = 1.5$ width is wide enough to cover
+$[\hat{r}_T^{\text{biol}} / 20,\, 20 \, \hat{r}_T^{\text{biol}}]$, which
+encompasses essentially every reported NB dispersion estimate in the published
+10x literature.
+
+#### User override {#sec-lnm-stability-rT-anchor-user-override}
+
+The biology-informed default is, by construction, an *uninformative* choice in
+the strong sense: it is the SCRIBE author's best guess at a sensible
+order-of-magnitude prior in the absence of other information. For datasets where
+the user has independent reason to believe a specific value of $r_T$ (e.g., a
+previous fit on a related dataset, a literature-reported value for the cell type
+in question, or a strong prior belief about the regulatory regime), the override
+mechanism is the standard one: pass `priors={"r_T": (mu_log, sigma_log)}` to
+`scribe.fit`. The user-supplied value takes precedence over both the biology
+default *and* the moment-of-moments fall-back, regardless of whether the capture
+anchor is active.
+
+#### Decision summary {#sec-lnm-stability-rT-anchor-decision}
+
+The combined `r_T`-prior policy across all four LNM regimes can be expressed as
+a single decision table:
+
+| Model | Capture anchor in `priors`? | User-supplied `priors["r_T"]`? | Resulting prior |
+|-------|------|-------------|-------------------------------------------------|
+| `lnm` | --- | yes | user value |
+| `lnm` | --- | no | $\text{LogNormal}\!\bigl(\log \hat{r}_T^{\text{MoM}},\,1.0\bigr)$ |
+| `lnmvcp` | no | yes | user value |
+| `lnmvcp` | no | no | $\text{LogNormal}\!\bigl(\log \hat{r}_T^{\text{MoM}},\,1.5\bigr)$ |
+| `lnmvcp` | yes | yes | user value |
+| `lnmvcp` | yes | no | $\text{LogNormal}\!\bigl(\log 50,\,1.5\bigr)$ (biology default) |
+
+The capture-anchor activation keys are `eta_capture`, `mu_eta`, and `organism`,
+mirroring the keys consumed by the mean-anchoring injection in
+@sec-mean-multi-dataset. The full implementation is the helper
+`scribe.core.lnm_data_init.resolve_r_T_prior`, which is exercised in isolation
+by the tests in `tests/test_lnm_stability.py` so the policy is
+regression-protected against any future drift.
 
 ### Why clamp the encoder $\log\sigma$ head? {#sec-lnm-stability-log-sigma}
 

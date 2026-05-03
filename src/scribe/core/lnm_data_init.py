@@ -40,7 +40,7 @@ them into ``model_config.vae`` (bias / standardize stats) and
 
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 import jax.numpy as jnp
 import numpy as np
@@ -55,8 +55,28 @@ __all__ = [
     "empirical_alr_mean_from_counts",
     "compute_encoder_standardization",
     "moments_to_lognormal_r_T",
+    "resolve_r_T_prior",
     "inject_lnm_vae_data_init",
+    "CAPTURE_ANCHOR_KEYS",
+    "BIOLOGY_DEFAULT_R_T_MEDIAN",
+    "BIOLOGY_DEFAULT_R_T_SIGMA_LOG",
 ]
+
+
+# Single source of truth for the priors-dict keys that signal the user has
+# activated the biology-informed capture-probability prior. Kept here (not
+# in ``api.py``) so the main API layer and the LNM helpers agree on what
+# "the user opted into the capture anchor" means.
+CAPTURE_ANCHOR_KEYS: Tuple[str, ...] = ("eta_capture", "mu_eta", "organism")
+
+
+# Biology-informed default for the LogNormal prior on the total-count NB
+# dispersion ``r_T`` when the capture anchor is active. See
+# ``resolve_r_T_prior`` for the full justification. Median 50 is a typical
+# 10x-Chromium-scale value; sigma_log = 1.5 gives a 95 % prior interval of
+# roughly [2.5, 1000], wide enough not to fight the posterior.
+BIOLOGY_DEFAULT_R_T_MEDIAN: float = 50.0
+BIOLOGY_DEFAULT_R_T_SIGMA_LOG: float = 1.5
 
 
 # Floor applied to the per-feature standard deviation before the encoder
@@ -338,3 +358,123 @@ def inject_lnm_vae_data_init(
         }
     )
     return model_config.model_copy(update={"vae": new_vae})
+
+
+def resolve_r_T_prior(
+    model: str,
+    counts,
+    priors,
+) -> "Optional[Tuple[float, float]]":
+    """Resolve the LNM ``r_T`` LogNormal prior under both anchor regimes.
+
+    This is the single decision-making helper invoked by ``scribe.api.fit``
+    for LNM-family models when populating an automatic prior on the
+    total-count NB dispersion ``r_T``. The function returns either a
+    ``(mu_log, sigma_log)`` tuple to be inserted into the user's priors
+    dict, or ``None`` when no automatic prior should be set (i.e., the
+    user already supplied one explicitly, or the model is not LNM).
+
+    Two regimes are handled:
+
+    1. **No capture anchor active.** No ``eta_capture`` / ``mu_eta`` /
+       ``organism`` key in ``priors``. The cell-to-cell variation in
+       ``u_T`` ends up partly absorbed by the totals NB itself, so a
+       method-of-moments inversion on the empirical totals gives a
+       sensible (slightly biased-low for LNMVCP) ballpark for ``r_T``.
+       We use it, with ``sigma_log = 1.5`` for LNMVCP to absorb the
+       bias and ``sigma_log = 1.0`` for plain LNM where the inversion
+       is exact.
+
+    2. **Capture anchor active.** The user opted into the capture prior
+       by passing one of :data:`CAPTURE_ANCHOR_KEYS` in their priors
+       dict. With ``p_capture^{(c)}`` pinned to ``L_c / M_0``, the
+       cell-to-cell variation in ``u_T`` is consumed by the per-cell
+       capture and there is essentially no residual variance from
+       which to estimate ``r_T`` via totals moments. We skip the MoM
+       and substitute a fixed, biology-informed default
+       ``LogNormal(log BIOLOGY_DEFAULT_R_T_MEDIAN,
+       BIOLOGY_DEFAULT_R_T_SIGMA_LOG)``.
+
+    In both regimes, an explicit user override via ``priors["r_T"]``
+    always wins: this helper short-circuits to ``None`` when ``"r_T"``
+    is already present in ``priors``.
+
+    Parameters
+    ----------
+    model : str
+        The model string passed to :func:`scribe.api.fit`. Only ``"lnm"``
+        and ``"lnmvcp"`` trigger the helper; every other value returns
+        ``None``.
+    counts : array_like, shape (n_cells, n_genes)
+        Raw count matrix used for the method-of-moments branch. Ignored
+        when the capture anchor is active.
+    priors : dict or None
+        The user-supplied priors dict (or ``None``). Read-only here; the
+        caller is responsible for cloning and inserting the returned
+        tuple into a fresh dict.
+
+    Returns
+    -------
+    tuple of (mu_log, sigma_log) or None
+        The location and scale of a LogNormal prior to assign to
+        ``priors["r_T"]``, or ``None`` when no automatic assignment
+        should occur.
+
+    Examples
+    --------
+    No capture anchor → MoM-derived prior:
+
+    >>> import numpy as np
+    >>> rng = np.random.default_rng(0)
+    >>> counts = rng.negative_binomial(n=50, p=0.005, size=(200, 5))
+    >>> mu, sigma = resolve_r_T_prior("lnm", counts, priors=None)
+    >>> sigma == 1.0
+    True
+
+    Capture anchor active → biology-informed default:
+
+    >>> mu, sigma = resolve_r_T_prior(
+    ...     "lnmvcp", counts, priors={"organism": "human"}
+    ... )
+    >>> bool(np.isclose(np.exp(mu), BIOLOGY_DEFAULT_R_T_MEDIAN))
+    True
+
+    User explicit override → no auto-assignment:
+
+    >>> resolve_r_T_prior(
+    ...     "lnmvcp", counts, priors={"r_T": (3.0, 0.5)}
+    ... ) is None
+    True
+
+    Non-LNM model → no auto-assignment:
+
+    >>> resolve_r_T_prior("nbdm", counts, priors=None) is None
+    True
+
+    See Also
+    --------
+    moments_to_lognormal_r_T : The MoM helper used in regime (1).
+    """
+    # Only act on LNM-family models. Every other model leaves r_T alone.
+    if model.lower() not in ("lnm", "lnmvcp"):
+        return None
+
+    # User-supplied ``r_T`` always wins. The caller's intent is to fix the
+    # prior; we never silently override that choice.
+    if isinstance(priors, dict) and "r_T" in priors:
+        return None
+
+    # Branch (2): capture anchor active → biology-informed default.
+    capture_anchor_active = isinstance(priors, dict) and any(
+        k in priors for k in CAPTURE_ANCHOR_KEYS
+    )
+    if capture_anchor_active:
+        mu_log = float(np.log(BIOLOGY_DEFAULT_R_T_MEDIAN))
+        return mu_log, float(BIOLOGY_DEFAULT_R_T_SIGMA_LOG)
+
+    # Branch (1): no capture anchor → MoM on totals.
+    # LNMVCP gets a wider sigma_log because the empirical variance
+    # includes capture variability that biases the MoM estimate downward;
+    # a wider prior absorbs that bias. Plain LNM has no such inflation.
+    sigma_log = 1.5 if model.lower() == "lnmvcp" else 1.0
+    return moments_to_lognormal_r_T(counts, sigma_log=sigma_log)

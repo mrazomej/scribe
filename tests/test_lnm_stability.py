@@ -25,10 +25,14 @@ import pytest
 from flax import linen as nn
 
 from scribe.core.lnm_data_init import (
+    BIOLOGY_DEFAULT_R_T_MEDIAN,
+    BIOLOGY_DEFAULT_R_T_SIGMA_LOG,
+    CAPTURE_ANCHOR_KEYS,
     compute_encoder_standardization,
     empirical_alr_mean_from_counts,
     inject_lnm_vae_data_init,
     moments_to_lognormal_r_T,
+    resolve_r_T_prior,
 )
 from scribe.inference.preset_builder import build_config_from_preset
 from scribe.models.components.vae_components import (
@@ -435,3 +439,174 @@ class TestInjectLNMVAEDataInit:
         assert not jnp.allclose(
             new_a.vae.standardize_mean, new_b.vae.standardize_mean
         )
+
+
+# ---------------------------------------------------------------------------
+# resolve_r_T_prior: branching between MoM and biology default
+# ---------------------------------------------------------------------------
+
+
+class TestResolveRTPrior:
+    """Tests for the capture-anchor-aware ``r_T`` prior resolver.
+
+    The resolver decides between (a) a method-of-moments inversion on the
+    empirical totals, (b) a biology-informed default when the user has
+    activated the capture anchor, or (c) no auto-assignment when the user
+    supplied an explicit ``r_T`` override or the model is non-LNM. Each
+    of those branches is exercised individually here so a regression in
+    any single one is immediately localized.
+    """
+
+    @staticmethod
+    def _toy_counts(seed: int = 0):
+        """Return a ``(200, 5)`` count matrix sampled from NB(50, 0.005).
+
+        The shape is chosen so the moment-of-moments inversion has enough
+        data to be meaningful but the test runs in milliseconds.
+        """
+        rng = np.random.default_rng(seed)
+        return rng.negative_binomial(n=50, p=0.005, size=(200, 5))
+
+    # -- Non-LNM short-circuit ---------------------------------------------
+
+    def test_returns_none_for_non_lnm_models(self):
+        # Every non-LNM model must short-circuit to ``None`` so the
+        # existing prior calibration of NBDM/NBVCP/ZINB/ZINBVCP is
+        # bit-identical to pre-stability behaviour.
+        for model in ("nbdm", "nbvcp", "zinb", "zinbvcp"):
+            assert resolve_r_T_prior(model, self._toy_counts(), None) is None
+
+    # -- User explicit override always wins --------------------------------
+
+    def test_explicit_r_T_short_circuits(self):
+        # The caller's intent is to fix the prior — never silently
+        # override that. This must hold regardless of model and regardless
+        # of whether the capture anchor is active.
+        priors = {"r_T": (3.0, 0.5)}
+        assert resolve_r_T_prior("lnm", self._toy_counts(), priors) is None
+        assert resolve_r_T_prior("lnmvcp", self._toy_counts(), priors) is None
+
+    def test_explicit_r_T_wins_over_capture_anchor(self):
+        # Composite case: the user has activated the capture anchor *and*
+        # supplied an explicit ``r_T``. Explicit wins.
+        priors = {"organism": "human", "r_T": (3.0, 0.5)}
+        assert resolve_r_T_prior("lnmvcp", self._toy_counts(), priors) is None
+
+    # -- Branch 1: no capture anchor → MoM ---------------------------------
+
+    def test_lnm_no_anchor_uses_mom_with_sigma_one(self):
+        # Plain LNM: the moment-of-moments inversion is exact (no capture
+        # variability to bias it), so we tighten ``sigma_log = 1.0``.
+        out = resolve_r_T_prior("lnm", self._toy_counts(), priors=None)
+        assert out is not None
+        _mu, sigma = out
+        assert sigma == 1.0
+
+    def test_lnmvcp_no_anchor_uses_mom_with_sigma_one_point_five(self):
+        # LNMVCP without the anchor: MoM is biased downward by capture
+        # variability; widening ``sigma_log = 1.5`` lets the prior cover
+        # the bias. Documented in the qmd.
+        out = resolve_r_T_prior("lnmvcp", self._toy_counts(), priors={})
+        assert out is not None
+        _mu, sigma = out
+        assert sigma == 1.5
+
+    # -- Branch 2: capture anchor active → biology default -----------------
+
+    def test_capture_anchor_via_organism_uses_biology_default(self):
+        # ``organism`` is one of the canonical capture-anchor activation
+        # keys (along with ``eta_capture`` and ``mu_eta``). Any of them
+        # should trigger the biology-default branch.
+        out = resolve_r_T_prior(
+            "lnmvcp", self._toy_counts(), priors={"organism": "human"}
+        )
+        assert out is not None
+        mu, sigma = out
+        assert np.isclose(np.exp(mu), BIOLOGY_DEFAULT_R_T_MEDIAN)
+        assert sigma == BIOLOGY_DEFAULT_R_T_SIGMA_LOG
+
+    def test_capture_anchor_via_eta_capture_uses_biology_default(self):
+        # ``eta_capture`` is the lower-level knob; the API exposes both.
+        # We test it explicitly so accidental removal of either key from
+        # the activation list is caught.
+        out = resolve_r_T_prior(
+            "lnmvcp",
+            self._toy_counts(),
+            priors={"eta_capture": (12.2, 0.05)},
+        )
+        assert out is not None
+        mu, sigma = out
+        assert np.isclose(np.exp(mu), BIOLOGY_DEFAULT_R_T_MEDIAN)
+        assert sigma == BIOLOGY_DEFAULT_R_T_SIGMA_LOG
+
+    def test_capture_anchor_via_mu_eta_uses_biology_default(self):
+        # ``mu_eta`` is the multi-dataset hierarchical-capture key; same
+        # contract.
+        out = resolve_r_T_prior(
+            "lnmvcp",
+            self._toy_counts(),
+            priors={"mu_eta": (12.2, 0.05)},
+        )
+        assert out is not None
+        mu, sigma = out
+        assert np.isclose(np.exp(mu), BIOLOGY_DEFAULT_R_T_MEDIAN)
+
+    def test_capture_anchor_keys_are_exposed(self):
+        # Sanity-check that the public constant matches what the resolver
+        # actually consumes. If somebody adds a new key to one without
+        # updating the other, this catches the drift.
+        assert "eta_capture" in CAPTURE_ANCHOR_KEYS
+        assert "mu_eta" in CAPTURE_ANCHOR_KEYS
+        assert "organism" in CAPTURE_ANCHOR_KEYS
+
+    # -- Branch ordering: MoM and biology give different answers -----------
+
+    def test_branches_are_distinct(self):
+        # The two branches must produce different priors (otherwise the
+        # branching is pointless). On the same counts, MoM gives whatever
+        # ``m^2/(v-m)`` returns; biology gives 50. They should differ
+        # except on a measure-zero coincidence we skip past.
+        counts = self._toy_counts()
+        out_mom = resolve_r_T_prior("lnmvcp", counts, priors={})
+        out_anchor = resolve_r_T_prior(
+            "lnmvcp", counts, priors={"organism": "human"}
+        )
+        assert out_mom is not None and out_anchor is not None
+        # The medians should differ — sigma_log happens to coincide at 1.5
+        # so we compare ``mu`` only.
+        assert not np.isclose(out_mom[0], out_anchor[0], atol=1e-2)
+
+    # -- Sigma_log of biology default is the documented value --------------
+
+    def test_biology_default_sigma_log_value(self):
+        # Documented in the qmd as 1.5. Tests pin both ends of the
+        # contract: the constant exposed in the module *and* the value
+        # the resolver returns.
+        assert BIOLOGY_DEFAULT_R_T_SIGMA_LOG == 1.5
+        out = resolve_r_T_prior(
+            "lnmvcp", self._toy_counts(), priors={"organism": "human"}
+        )
+        assert out is not None
+        assert out[1] == 1.5
+
+    # -- Biology default median is the documented value -------------------
+
+    def test_biology_default_median_value(self):
+        # Documented in the qmd as 50. The constant and the resolver
+        # output must agree.
+        assert BIOLOGY_DEFAULT_R_T_MEDIAN == 50.0
+        out = resolve_r_T_prior(
+            "lnmvcp", self._toy_counts(), priors={"organism": "human"}
+        )
+        assert out is not None
+        assert np.isclose(np.exp(out[0]), 50.0)
+
+    # -- Caller's priors dict is not mutated ------------------------------
+
+    def test_resolver_does_not_mutate_priors(self):
+        # The resolver is read-only on its ``priors`` argument; the
+        # caller in api.py is responsible for cloning before insertion.
+        priors = {"organism": "human"}
+        before = dict(priors)
+        _ = resolve_r_T_prior("lnmvcp", self._toy_counts(), priors)
+        assert priors == before

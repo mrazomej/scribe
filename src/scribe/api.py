@@ -89,6 +89,17 @@ VALID_PARAMETERIZATIONS = set(PARAMETERIZATIONS.keys())
 VALID_INFERENCE_METHODS = {"svi", "mcmc", "vae"}
 
 
+# ------------------------------------------------------------------------------
+# LNMVCP: biology-informed default r_T prior under capture anchor
+# ------------------------------------------------------------------------------
+# The constants and resolver for the LNM ``r_T`` prior live in
+# :mod:`scribe.core.lnm_data_init` so a single source of truth governs both
+# the API layer and the unit tests. See ``resolve_r_T_prior`` for the full
+# branching logic and the qmd subsection
+# "Why the data-driven r_T prior is gated on the capture anchor" for the
+# derivation.
+
+
 # ==============================================================================
 # Internal helpers
 # ==============================================================================
@@ -1168,59 +1179,86 @@ def fit(
     )
 
     # ==========================================================================
-    # Step 2c (LNM-only): data-driven r_T prior
+    # Step 2c (LNM-only): auto-set r_T prior
     # ==========================================================================
     # The default LogNormal(0, 1) prior on the total-count NB dispersion
     # ``r_T`` has median 1.0 and 95% CI ~[0.14, 7.4] — orders of magnitude
     # below the values appropriate for typical 10x library sizes
-    # (r_T routinely in the tens-to-hundreds). Without this anchor, the
-    # KL on r_T fights the data throughout early training and is a major
-    # contributor to the spiky LNM ELBO trajectory observed prior to
-    # this fix.
+    # (r_T routinely in the tens to hundreds). Without an anchor, the KL
+    # on r_T fights the data throughout early training and contributes
+    # heavily to the spiky LNM ELBO trajectory observed prior to this fix.
     #
-    # We invert the NB moment relations on the empirical total-count
-    # distribution to obtain a point estimate, then realize it as the
-    # median of a LogNormal prior with moderate spread (sigma=1.0). The
-    # estimate is *only* applied if the user did not pass an explicit
-    # ``r_T`` override via the ``priors`` argument — user intent always
-    # wins.
+    # Two regimes have to be handled separately:
+    #
+    #   (1) **No capture anchor active.** The user has not opted into the
+    #       biology-informed prior on ``p_capture^{(c)} ~ L_c / M_0`` (no
+    #       ``eta_capture`` / ``mu_eta`` / ``organism`` key in ``priors``).
+    #       In this regime, library-size variation ends up partly absorbed
+    #       by the totals NB itself, so a moment-of-moments inversion on
+    #       the empirical totals gives a sensible (slightly biased-low for
+    #       LNMVCP) ballpark for ``r_T``. We use it, with a wider
+    #       ``sigma_log`` for LNMVCP to absorb the bias.
+    #
+    #   (2) **Capture anchor active.** Once ``p_capture^{(c)}`` is pinned
+    #       to ``L_c / M_0`` by the capture prior, the cell-to-cell
+    #       variation in ``u_T`` is consumed by the per-cell ``p_capture``
+    #       and there is essentially no residual variance from which to
+    #       estimate ``r_T`` via totals moments — the method-of-moments
+    #       inversion becomes mathematically uninformative (the
+    #       capture-corrected ``var(u_T)`` collapses to zero in the
+    #       deterministic-anchor limit). In this regime we *skip* the
+    #       MoM and instead use a fixed, biology-informed default prior.
+    #       The qmd subsection
+    #       "Why the data-driven r_T prior is gated on the capture anchor"
+    #       develops the derivation.
+    #
+    # In both regimes, an explicit user override via ``priors["r_T"]``
+    # always wins.
     #
     # This block is gated on the LNM family so non-LNM models keep their
     # existing prior calibration unchanged.
-    if (
-        model.lower() in ("lnm", "lnmvcp")
-        and (priors is None or "r_T" not in priors)
-    ):
-        from .core.lnm_data_init import moments_to_lognormal_r_T
+    # Delegate to the centralized resolver so the same branching logic is
+    # unit-testable in isolation. ``resolve_r_T_prior`` returns ``None``
+    # for non-LNM models, when the user already supplied an explicit
+    # ``r_T`` prior, or when no automatic assignment is appropriate.
+    from .core.lnm_data_init import resolve_r_T_prior, CAPTURE_ANCHOR_KEYS
 
-        # For LNMVCP, the per-cell capture variability inflates
-        # ``var(u_T)`` beyond what a fixed-``p_hat`` NB would predict.
-        # The method-of-moments inversion attributes this extra
-        # variance to ``r_T``, biasing the point estimate downward
-        # (typically by a factor of ~5 in realistic regimes). To keep
-        # the prior permissive enough that the posterior can recover
-        # the true ``r_T``, we widen ``sigma_log`` for LNMVCP. The
-        # base LNM model has no such bias and uses the default
-        # ``sigma_log=1.0``. See the qmd "Why a data-driven prior on
-        # r_T?" subsection for the derivation.
-        _sigma_log = 1.5 if model.lower() == "lnmvcp" else 1.0
-        _r_T_mu_log, _r_T_sigma_log = moments_to_lognormal_r_T(
-            count_data, sigma_log=_sigma_log
-        )
-        # Ensure ``priors`` is a fresh dict; never mutate a caller's dict
-        # (the user may reuse it across multiple ``fit`` calls).
+    _r_T_resolved = resolve_r_T_prior(model, count_data, priors)
+    if _r_T_resolved is not None:
+        _r_T_mu_log, _r_T_sigma_log = _r_T_resolved
+
+        # Never mutate a caller's dict — make a fresh copy. The user may
+        # reuse the dict across multiple ``fit`` calls and would not
+        # expect ours to silently grow an ``r_T`` key.
         priors = dict(priors) if priors is not None else {}
         priors["r_T"] = (_r_T_mu_log, _r_T_sigma_log)
+
+        # Log which branch fired so the user can confirm the auto-default
+        # at a glance. The capture-anchor branch and the MoM branch
+        # produce different log lines so downstream debugging is easy.
         import logging as _logging
 
-        _logging.getLogger(__name__).info(
-            "LNM: auto-set r_T prior to LogNormal(mu=%.3f, sigma=%.3f) "
-            "(method-of-moments inversion on observed total counts; "
-            "median r_T ~ %.1f).",
-            _r_T_mu_log,
-            _r_T_sigma_log,
-            float(jnp.exp(_r_T_mu_log)),
+        _capture_active = isinstance(priors, dict) and any(
+            k in priors for k in CAPTURE_ANCHOR_KEYS
         )
+        if _capture_active:
+            _logging.getLogger(__name__).info(
+                "LNM: capture anchor active; using biology-informed r_T "
+                "prior LogNormal(mu=%.3f, sigma=%.3f) "
+                '(median r_T ~ %.1f). Override by passing priors["r_T"].',
+                _r_T_mu_log,
+                _r_T_sigma_log,
+                float(jnp.exp(_r_T_mu_log)),
+            )
+        else:
+            _logging.getLogger(__name__).info(
+                "LNM: auto-set r_T prior to LogNormal(mu=%.3f, sigma=%.3f) "
+                "(method-of-moments inversion on observed total counts; "
+                "median r_T ~ %.1f).",
+                _r_T_mu_log,
+                _r_T_sigma_log,
+                float(jnp.exp(_r_T_mu_log)),
+            )
 
     # ==========================================================================
     # Step 2b: Build dataset indices (if multi-dataset model)

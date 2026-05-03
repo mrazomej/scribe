@@ -56,13 +56,20 @@ def _setup_grouped_amortized_latent(
     Used when guide has encoder and latent_spec set. Encoder is registered
     as flax_module and run on counts (or batch); latent_spec.make_guide_dist
     turns encoder output into the guide distribution for z.
+
+    When ``counts`` is ``None`` (e.g. prior predictive sampling or
+    posterior parameter extraction without observed data), the encoder
+    is bypassed and ``z`` is sampled from the latent prior instead.
     """
-    if counts is None:
-        raise ValueError("VAELatentGuide with encoder requires counts")
     if guide.encoder is None or guide.latent_spec is None:
         raise ValueError(
             "VAELatentGuide VAE path requires encoder and latent_spec"
         )
+    # Fall back to the prior when no observed data is available.
+    if counts is None:
+        prior_dist = guide.latent_spec.make_prior_dist()
+        return numpyro.sample(guide.latent_spec.sample_site, prior_dist)
+
     n_genes = dims["n_genes"]
     net = flax_module(
         "vae_encoder",
