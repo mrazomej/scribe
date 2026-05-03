@@ -616,6 +616,11 @@ def _apply_base_parameterization(
             )
         )
     elif parameterization in _LNM_FAMILY_ENUMS:
+        # The three LNM variants share the compositional path but
+        # differ in which scalars of the totals NB are sampled vs
+        # derived. The single ``_build_logistic_normal_posteriors``
+        # helper dispatches on the variant internally, so the call
+        # site stays shape-agnostic.
         distributions.update(
             _build_logistic_normal_posteriors(
                 params,
@@ -624,6 +629,7 @@ def _apply_base_parameterization(
                 low_rank,
                 split,
                 skip,
+                parameterization=parameterization,
                 pos_transform=pos_transform,
             )
         )
@@ -2580,20 +2586,143 @@ def _build_logistic_normal_posteriors(
     split: bool,
     skip: Optional[set] = None,
     *,
+    parameterization: Optional[Parameterization] = None,
     pos_transform=None,
 ) -> Dict[str, Any]:
-    """Build posteriors for logistic-normal parameterization.
+    """Build variational posteriors for the LNM totals NB submodel.
 
-    Notes
-    -----
-    Logistic-normal models use the same guide families as canonical models
-    for total-count parameters, but with ``r_T`` (total-count NB dispersion)
-    instead of ``r`` (gene-level dispersion). This helper mirrors
-    ``_build_canonical_posteriors`` and only swaps the dispersion key.
+    Dispatches on the LNM-family ``parameterization`` to extract the
+    posteriors of the *sampled* scalars (the ones the variational
+    guide actually fits). Derived scalars — e.g. ``r_T`` and ``p``
+    under ``mean_odds`` — are not in ``params`` and are not built
+    here; they are computed downstream by the post-extraction logic
+    that already handles the DM-family analogues
+    (``_compute_mu_from_r_p`` etc.).
+
+    Per-variant sampled scalars
+    ---------------------------
+    - ``logistic_normal_canonical``: ``(r_T, p)``
+    - ``logistic_normal_mean_prob``: ``(mu_T, p)``
+    - ``logistic_normal_mean_odds``: ``(mu_T, phi_T)``
+
+    The compositional path (``y_alr``, ``z``, ``d_lnm``) lives outside
+    the totals NB submodel and is handled identically across variants
+    by the shared trailing block below.
+
+    Parameters
+    ----------
+    parameterization : Parameterization, optional
+        LNM-family enum value selecting the variant. Defaults to
+        ``LOGISTIC_NORMAL_CANONICAL`` if not provided, mirroring the
+        historical (variant-less) entry-point semantics so any legacy
+        caller still gets the correct posteriors.
     """
     distributions = {}
     skip = skip or set()
 
+    # Variant resolution. ``LOGISTIC_NORMAL`` (the legacy alias) and
+    # ``LOGISTIC_NORMAL_CANONICAL`` are the same enum member, so the
+    # default catches both. We compare via ``.value`` to be robust
+    # against future enum refactors.
+    if parameterization is None:
+        variant = "canonical"
+    else:
+        variant = parameterization.value.replace("logistic_normal_", "")
+
+    # ------------------------------------------------------------------
+    # Variant-specific posterior extraction for the *sampled* scalars.
+    # ------------------------------------------------------------------
+    if variant == "canonical":
+        # Sampled: (r_T, p). r_T uses LogNormal / PositiveNormal guide;
+        # p uses Beta / SigmoidNormal.
+        _build_lnm_p_and_dispersion_pair(
+            distributions,
+            params,
+            dispersion_name="r_T",
+            unconstrained=unconstrained,
+            is_mixture=is_mixture,
+            split=split,
+            skip=skip,
+            pos_transform=pos_transform,
+        )
+    elif variant == "mean_prob":
+        # Sampled: (mu_T, p). mu_T uses LogNormal / PositiveNormal;
+        # p uses Beta / SigmoidNormal. r_T is derived downstream.
+        _build_lnm_p_and_dispersion_pair(
+            distributions,
+            params,
+            dispersion_name="mu_T",
+            unconstrained=unconstrained,
+            is_mixture=is_mixture,
+            split=split,
+            skip=skip,
+            pos_transform=pos_transform,
+        )
+    elif variant == "mean_odds":
+        # Sampled: (mu_T, phi_T). Both are positive scalars — mu_T uses
+        # LogNormal / PositiveNormal as in mean_prob; phi_T uses
+        # BetaPrime / PositiveNormal (mirroring DM mean_odds for phi).
+        # p and r_T are derived downstream.
+        if "mu_T" not in skip:
+            distributions["mu_T"] = _build_lnm_positive_scalar_posterior(
+                params,
+                "mu_T",
+                unconstrained=unconstrained,
+                is_mixture=is_mixture,
+                split=split,
+                pos_transform=pos_transform,
+            )
+        if "phi_T" not in skip:
+            distributions["phi_T"] = _build_lnm_positive_scalar_posterior(
+                params,
+                "phi_T",
+                unconstrained=unconstrained,
+                is_mixture=is_mixture,
+                split=split,
+                pos_transform=pos_transform,
+                # phi_T's constrained guide is BetaPrime (positive
+                # support, supports the odds-ratio interpretation
+                # 0 < phi_T < ∞). The unconstrained path uses the
+                # standard PositiveNormal/positive-transform pair.
+                constrained_is_beta_prime=True,
+            )
+    else:
+        raise ValueError(
+            f"Unknown LNM-family variant {variant!r}. Expected one of "
+            f"'canonical', 'mean_prob', 'mean_odds'."
+        )
+
+    # ------------------------------------------------------------------
+    # Compositional-path trailing block (variant-independent).
+    # ------------------------------------------------------------------
+    # Learned diagonal ALR noise vector d_lnm (positive, LogNormal guide).
+    # Present only when d_mode="learned".
+    if "d_lnm_loc" in params and "d_lnm_scale" in params:
+        distributions["d_lnm"] = _build_lognormal_posterior(
+            params, "d_lnm", is_mixture, split
+        )
+
+    return distributions
+
+
+def _build_lnm_p_and_dispersion_pair(
+    distributions: Dict[str, Any],
+    params: Dict[str, jnp.ndarray],
+    *,
+    dispersion_name: str,
+    unconstrained: bool,
+    is_mixture: bool,
+    split: bool,
+    skip: set,
+    pos_transform,
+) -> None:
+    """LNM canonical / mean_prob posterior pair: ``p`` + a positive scalar.
+
+    Both variants sample a Beta / SigmoidNormal ``p`` plus a positive
+    scalar (``r_T`` for canonical, ``mu_T`` for mean_prob) with the
+    same guide family pair. Sharing this code keeps the dispatch in
+    ``_build_logistic_normal_posteriors`` readable.
+    """
     if unconstrained:
         if "p" not in skip:
             jp = _find_joint_prefix(params, "p")
@@ -2605,55 +2734,119 @@ def _build_logistic_normal_posteriors(
                 distributions["p"] = _build_sigmoid_normal_posterior(
                     params, "p", is_scalar=True, split=split
                 )
-        if "r_T" not in skip:
-            jp = _find_joint_prefix(params, "r_T")
+        if dispersion_name not in skip:
+            jp = _find_joint_prefix(params, dispersion_name)
             if jp:
-                distributions["r_T"] = _build_joint_low_rank_posterior(
-                    params, "r_T", jp, split, transform=pos_transform
+                distributions[dispersion_name] = (
+                    _build_joint_low_rank_posterior(
+                        params,
+                        dispersion_name,
+                        jp,
+                        split,
+                        transform=pos_transform,
+                    )
                 )
-            elif "r_T_W" in params:
-                distributions["r_T"] = (
+            elif f"{dispersion_name}_W" in params:
+                distributions[dispersion_name] = (
                     _build_low_rank_positive_normal_posterior(
                         params,
-                        "r_T",
+                        dispersion_name,
                         is_mixture,
                         split,
                         transform=pos_transform,
                     )
                 )
             else:
-                distributions["r_T"] = _build_positive_normal_posterior(
-                    params,
-                    "r_T",
-                    is_mixture,
-                    split,
-                    transform=pos_transform,
+                distributions[dispersion_name] = (
+                    _build_positive_normal_posterior(
+                        params,
+                        dispersion_name,
+                        is_mixture,
+                        split,
+                        transform=pos_transform,
+                    )
                 )
     else:
         if "p" not in skip:
             distributions["p"] = _build_beta_posterior(
                 params, "p", is_scalar=True, is_mixture=False, split=split
             )
-        if "r_T" not in skip:
+        if dispersion_name not in skip:
             # Constrained low-rank guides store log-space MVN params
-            # (e.g., log_r_T_W), while unconstrained guides use r_T_W.
-            if "r_T_W" in params or "log_r_T_W" in params:
-                distributions["r_T"] = _build_low_rank_lognormal_posterior(
-                    params, "r_T", is_mixture, split
+            # (e.g., log_r_T_W), while unconstrained guides use the
+            # un-prefixed variant. Either layout is supported.
+            low_rank_keys = (
+                f"{dispersion_name}_W",
+                f"log_{dispersion_name}_W",
+            )
+            if any(k in params for k in low_rank_keys):
+                distributions[dispersion_name] = (
+                    _build_low_rank_lognormal_posterior(
+                        params, dispersion_name, is_mixture, split
+                    )
                 )
             else:
-                distributions["r_T"] = _build_lognormal_posterior(
-                    params, "r_T", is_mixture, split
+                distributions[dispersion_name] = (
+                    _build_lognormal_posterior(
+                        params, dispersion_name, is_mixture, split
+                    )
                 )
 
-    # Learned diagonal ALR noise vector d_lnm (positive, LogNormal guide).
-    # Present only when d_mode="learned".
-    if "d_lnm_loc" in params and "d_lnm_scale" in params:
-        distributions["d_lnm"] = _build_lognormal_posterior(
-            params, "d_lnm", is_mixture, split
+
+def _build_lnm_positive_scalar_posterior(
+    params: Dict[str, jnp.ndarray],
+    name: str,
+    *,
+    unconstrained: bool,
+    is_mixture: bool,
+    split: bool,
+    pos_transform,
+    constrained_is_beta_prime: bool = False,
+) -> Any:
+    """Build a posterior for a positive scalar in the LNM totals submodel.
+
+    Used for ``mu_T`` and ``phi_T`` in the mean_odds variant. Selects
+    between LogNormal / BetaPrime (constrained) and
+    PositiveNormal-with-transform (unconstrained), with low-rank /
+    joint guide variants as for the canonical scalars.
+
+    Parameters
+    ----------
+    constrained_is_beta_prime : bool, default=False
+        When ``True``, the constrained guide is BetaPrime (used for
+        ``phi_T``). When ``False`` (default), it's LogNormal (used
+        for ``mu_T``). The unconstrained path is identical for both.
+    """
+    if unconstrained:
+        jp = _find_joint_prefix(params, name)
+        if jp:
+            return _build_joint_low_rank_posterior(
+                params, name, jp, split, transform=pos_transform
+            )
+        if f"{name}_W" in params:
+            return _build_low_rank_positive_normal_posterior(
+                params, name, is_mixture, split, transform=pos_transform
+            )
+        return _build_positive_normal_posterior(
+            params, name, is_mixture, split, transform=pos_transform
         )
 
-    return distributions
+    if constrained_is_beta_prime:
+        # phi_T's constrained guide is BetaPrime(alpha, beta). Same
+        # storage convention as the DM family's ``phi`` parameter,
+        # which uses ``_build_betaprime_posterior``.
+        return _build_betaprime_posterior(
+            params, name, is_scalar=True, is_mixture=is_mixture, split=split
+        )
+
+    # Default constrained path: LogNormal, with optional low-rank
+    # variant when log-MVN guide params are present.
+    low_rank_keys = (f"{name}_W", f"log_{name}_W")
+    if any(k in params for k in low_rank_keys):
+        return _build_low_rank_lognormal_posterior(
+            params, name, is_mixture, split
+        )
+    return _build_lognormal_posterior(params, name, is_mixture, split)
 
 
 def _build_mean_prob_posteriors(
