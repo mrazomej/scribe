@@ -203,7 +203,17 @@ PARAMETERIZATION_MAPPINGS = {
         parameter_descriptions={
             "r_T": (
                 "NB dispersion for total UMI counts per cell "
-                "(LogNormal / PositiveNormal)"
+                "(LogNormal / PositiveNormal). Descriptive alias: "
+                "``total_dispersion``. Override the prior via "
+                "``priors={'r_T': (mu_log, sigma_log)}`` (or "
+                "equivalently ``priors={'total_dispersion': "
+                "(mu_log, sigma_log)}``) in ``scribe.fit``; an "
+                "explicit value short-circuits the auto-defaults "
+                "(MoM inversion when no capture anchor; "
+                "biology-informed LogNormal(log 50, 1.5) when the "
+                "capture anchor is active). Distinct from the "
+                "DM-family gene-level ``r`` parameter (descriptive "
+                "alias ``dispersion``), which has shape ``(n_genes,)``."
             ),
             "p": (
                 "NB success probability for total counts "
@@ -550,6 +560,7 @@ def get_parameterization_summary() -> Dict[str, Dict[str, any]]:
 DESCRIPTIVE_NAMES: Dict[str, str] = {
     # Core NB parameters
     "r": "dispersion",
+    "r_T": "total_dispersion",
     "p": "prob",
     "mu": "mean_expression",
     "phi": "odds_ratio",
@@ -558,6 +569,9 @@ DESCRIPTIVE_NAMES: Dict[str, str] = {
     "p_capture": "capture_prob",
     "phi_capture": "capture_odds_ratio",
     "eta_capture": "capture_efficiency",
+    # LNM compositional parameters
+    "y_alr": "alr_coordinates",
+    "d_lnm": "alr_residual_scale",
     # Already descriptive (identity)
     "bnb_concentration": "bnb_concentration",
     "mixing_weights": "mixing_weights",
@@ -585,6 +599,7 @@ PRIOR_KEY_ALIASES: Dict[str, str] = {
     # Core parameter priors (descriptive -> internal)
     "prob": "p",
     "dispersion": "r",
+    "total_dispersion": "r_T",
     "expression": "mu",
     "odds": "phi",
     "zero_inflation": "gate",

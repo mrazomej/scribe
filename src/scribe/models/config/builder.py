@@ -378,12 +378,41 @@ class ModelConfigBuilder:
     def with_priors(self, **priors) -> "ModelConfigBuilder":
         """Set prior parameters.
 
+        Accepts both internal short names (``p``, ``r``, ``r_T``,
+        ``mu``, ...) and their descriptive aliases (``prob``,
+        ``dispersion``, ``total_dispersion``, ``expression``, ...).
+        Descriptive aliases are resolved to internal names *here*, at
+        insertion time, so the rest of the builder pipeline only ever
+        sees canonical keys. This is what allows
+        :meth:`_apply_defaults` to correctly recognize that an alias
+        already covers a given parameter (the alias would otherwise
+        slip past the default-filling logic, leading to "ambiguous
+        priors" errors at build time when both the alias and the
+        auto-default landed in the dict).
+
         Parameters
         ----------
         **priors
-            Prior parameters (e.g., p=(1.0, 1.0), r=(2.0, 0.5))
+            Prior parameters (e.g., ``p=(1.0, 1.0)``, ``r=(2.0, 0.5)``,
+            or equivalently ``prob=(1.0, 1.0)``,
+            ``dispersion=(2.0, 0.5)``).
+
+        Raises
+        ------
+        ValueError
+            If both an internal name and one of its descriptive
+            aliases are passed (e.g., ``r=...`` and ``dispersion=...``
+            in the same call).
         """
-        self._priors.update(priors)
+        # Normalize at insertion so that the rest of the builder operates
+        # on internal names only. ``normalize_prior_keys`` itself raises
+        # the "ambiguous priors" ValueError if the caller passes both
+        # forms, which is the desired contract — we don't want to
+        # silently pick one.
+        from .parameter_mapping import normalize_prior_keys
+
+        normalized = normalize_prior_keys(priors)
+        self._priors.update(normalized)
         return self
 
     # --------------------------------------------------------------------------

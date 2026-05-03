@@ -610,3 +610,93 @@ class TestResolveRTPrior:
         before = dict(priors)
         _ = resolve_r_T_prior("lnmvcp", self._toy_counts(), priors)
         assert priors == before
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: user-supplied r_T prior survives the full preset-builder path
+# ---------------------------------------------------------------------------
+
+
+class TestUserRTPriorEndToEnd:
+    """Verify the user-facing override path for the ``r_T`` prior.
+
+    These tests pin the user-visible contract: ``priors={"r_T": ...}``
+    or ``priors={"total_dispersion": ...}`` lands on
+    ``model_config.priors.r_T`` after ``build_config_from_preset``.
+    The downstream propagation to the final ``ParamSpec`` is the
+    factory's responsibility and is exercised by the existing
+    LNM smoke tests in ``test_lnm_factory.py``; here we focus on the
+    public-API entry point.
+    """
+
+    @staticmethod
+    def _build_lnm_config(priors):
+        """Run the builder for an LNM config and return it for inspection."""
+        return build_config_from_preset(
+            model="lnm",
+            vae_latent_dim=2,
+            vae_encoder_hidden_dims=[8],
+            priors=priors,
+        )
+
+    def test_explicit_r_T_lands_on_priors_overrides(self):
+        # The canonical user override. After ``build_config_from_preset``
+        # processes ``priors={"r_T": (3.5, 0.5)}``, the value must be
+        # accessible via ``model_config.priors.r_T`` — the official
+        # storage point for user-supplied prior hyperparameters.
+        cfg = self._build_lnm_config({"r_T": (3.5, 0.5)})
+        assert cfg.priors.r_T == (3.5, 0.5), (
+            f"Expected user-supplied r_T prior (3.5, 0.5) to land on "
+            f"model_config.priors.r_T; got {cfg.priors.r_T!r}."
+        )
+
+    def test_descriptive_alias_resolves_to_r_T(self):
+        # The descriptive alias ``total_dispersion`` registered in
+        # PRIOR_KEY_ALIASES should be normalized to ``r_T`` during
+        # build, so the value lands at the same canonical location
+        # as if the user had passed the internal name directly.
+        cfg = self._build_lnm_config({"total_dispersion": (2.0, 0.3)})
+        assert cfg.priors.r_T == (2.0, 0.3), (
+            f"Expected descriptive alias 'total_dispersion' to "
+            f"resolve to r_T; got priors.r_T={cfg.priors.r_T!r}."
+        )
+
+    def test_descriptive_name_registered(self):
+        # Pin the registry contract: r_T must have a descriptive name,
+        # symmetric with how r has 'dispersion'. If the registry drops
+        # this entry, the alias path silently breaks.
+        from scribe.models.config.parameter_mapping import (
+            DESCRIPTIVE_NAMES,
+            PRIOR_KEY_ALIASES,
+        )
+
+        assert DESCRIPTIVE_NAMES["r_T"] == "total_dispersion"
+        assert PRIOR_KEY_ALIASES["total_dispersion"] == "r_T"
+        # And the DM gene-level r retains its independent descriptive
+        # name; the two parameters are distinct in the public API.
+        assert DESCRIPTIVE_NAMES["r"] == "dispersion"
+        assert PRIOR_KEY_ALIASES["dispersion"] == "r"
+
+    def test_r_and_r_T_are_disjoint_keys(self):
+        # Sanity: passing ``priors={"r": (...)}`` (the DM-family
+        # gene-level dispersion key) must not silently land on
+        # ``r_T``. The two parameters have different shapes and
+        # distinct registry entries; the API treats them as disjoint.
+        # We check this by verifying that the user's ``r`` value does
+        # not *equal* the value that lands on ``r_T`` — ``r_T`` should
+        # take its declared default ``(0.0, 1.0)`` since the user did
+        # not override it, NOT the user's ``r`` value.
+        user_r = (4.2, 0.7)
+        cfg = self._build_lnm_config({"r": user_r})
+        r_T_value = getattr(cfg.priors, "r_T", None)
+        assert r_T_value != user_r, (
+            f"Setting priors['r'] = {user_r} should not silently land "
+            f"on r_T; got priors.r_T={r_T_value!r}."
+        )
+        # Optional positive check: r_T should be at the default for
+        # the LNM parameterization. This pins the disjointness more
+        # strongly: the user's r value left no fingerprint on r_T.
+        assert r_T_value == (0.0, 1.0), (
+            f"Expected priors.r_T to fall through to its declared "
+            f"default (0.0, 1.0); got {r_T_value!r}."
+        )
