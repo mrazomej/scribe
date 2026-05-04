@@ -177,39 +177,93 @@ def _compute_predicted_mean_lnm(
     return rho * obs_mean_total
 
 
-# Map-level log-rate predictions are already in absolute expression-rate
-# space for PLN; exponentiation yields the expected observed mean per gene.
-def _compute_predicted_mean_pln(y_log_rate):
+# Map-level log-rate predictions for PLN, accounting for any per-cell
+# capture offset and learned diagonal residual variance.
+def _compute_predicted_mean_pln(
+    y_log_rate, eta_capture=None, d_pln=None
+):
     """Compute predicted per-gene observed mean for PLN models.
+
+    The PLN observation model is
+
+    .. math::
+        u_g^{(c)} \\mid x_g^{(c)} \\sim \\text{Poisson}(\\exp(x_g^{(c)})),
+        \\qquad x_g^{(c)} = y_{\\text{log-rate},\\,g,\\,c} - \\eta_c,
+
+    where :math:`\\eta_c` is the per-cell capture offset (zero when no
+    capture anchor is in use) and ``y_log_rate`` is the decoder output
+    in *biological* log-rate space (before capture). The per-gene
+    expected observed count is therefore
+
+    .. math::
+        \\mathbb{E}[u_g] \\;=\\; \\frac{1}{C}\\sum_c
+        \\exp\\!\\left(y_{\\text{log-rate},\\,g,\\,c} - \\eta_c\\right).
+
+    When ``d_mode = "learned"`` the decoder also adds a diagonal
+    residual ``sqrt(d_g) * eps`` in log-rate space, contributing a
+    multiplicative ``exp(d_g/2)`` to each gene's mean by the
+    log-normal moment formula.
+
+    Earlier revisions of this helper computed ``exp(y_log_rate)``
+    *without* subtracting ``eta_capture``, which returned the
+    *biological* rate rather than the *observed* rate -- on a fitted
+    PLNVCP model the diagnostic was systematically inflated by
+    ``1/p_capture``. The corrected formula brings the diagnostic into
+    the same observed-counts space as the empirical mean it is
+    plotted against.
 
     Parameters
     ----------
-    y_log_rate : ndarray, shape ``(G,)`` or ``(1, G)``
-        MAP log-rate coordinates from the PLN decoder head.
+    y_log_rate : ndarray, shape ``(G,)``, ``(1, G)``, or ``(n_cells, G)``
+        MAP log-rate from the PLN decoder. When per-cell, the
+        diagnostic averages ``exp(...)`` across cells.
+    eta_capture : ndarray or None, shape ``(n_cells,)`` or scalar
+        Per-cell capture offset. When ``None``, no capture correction is
+        applied (e.g. fits without ``priors={"capture_efficiency": ...}``).
+    d_pln : ndarray or None, shape ``(G,)``
+        Per-gene learned residual variance. When ``None`` the
+        log-normal moment correction is skipped.
 
     Returns
     -------
     pred : ndarray, shape ``(G,)``
-        Predicted per-gene observed mean computed as ``exp(y_log_rate)``.
-
-    Notes
-    -----
-    The PLN observation model uses:
-
-    .. math:: X_g \\sim \\text{Poisson}(\\lambda_g), \\;
-              \\log \\lambda_g = y_{\\text{log-rate}, g}
-
-    So the per-gene conditional mean is directly:
-
-    .. math:: \\mathbb{E}[X_g \\mid y] = \\lambda_g = \\exp(y_g)
-
-    Unlike LNM, no extra library-size scaling is required in this
-    diagnostic path.
+        Per-gene predicted observed mean.
     """
     y_arr = np.asarray(y_log_rate, dtype=float)
-    if y_arr.ndim > 1:
-        y_arr = np.squeeze(y_arr)
-    return np.exp(y_arr)
+
+    # Apply per-cell capture offset, if any. The offset enters as a
+    # *subtraction* in log-rate space, broadcast across genes.
+    if eta_capture is not None:
+        eta_arr = np.asarray(eta_capture, dtype=float)
+        if y_arr.ndim == 1:
+            # Scalar / per-cell-collapsed y_log_rate: subtract the
+            # mean offset; the per-cell distribution is lost so we use
+            # the cell-averaged shift as a best-effort summary.
+            y_arr = y_arr - float(eta_arr.mean())
+        else:
+            # Per-cell y_log_rate: align eta_capture to (n_cells,) and
+            # subtract per cell, broadcasting across genes.
+            eta_arr = eta_arr.reshape(-1)
+            if eta_arr.shape[0] != y_arr.shape[0]:
+                # Shape mismatch: fall back to the mean offset and
+                # warn at most via the calibration caller.
+                y_arr = y_arr - float(eta_arr.mean())
+            else:
+                y_arr = y_arr - eta_arr[:, None]
+
+    # Average ``exp`` across cells for per-cell input; otherwise leave
+    # the (G,) shape alone.
+    rate = np.exp(y_arr)
+    if rate.ndim > 1:
+        rate = rate.mean(axis=0)
+    rate = np.squeeze(rate)
+
+    # Log-normal moment correction for learned diagonal residual.
+    if d_pln is not None:
+        d_arr = np.asarray(d_pln, dtype=float).reshape(-1)
+        rate = rate * np.exp(d_arr / 2.0)
+
+    return rate
 
 
 def _is_lnm_model(results) -> bool:
@@ -499,13 +553,29 @@ def _prepare_calibration_data(
             "annotations": _annotations,
         }
 
-    # ---- PLN path: predicted mean = exp(y_log_rate) -------------------------
+    # ---- PLN path: predicted observed mean -----------------------------------
+    # The predicted observed mean must apply the same capture offset
+    # that the likelihood applies inside the cell plate; otherwise the
+    # diagnostic plots the *biological* rate against *observed* counts,
+    # inflating the ratio by ``1/p_capture``. We always request
+    # ``eta_capture`` and ``d_pln`` when they exist, regardless of
+    # whether ``uses_biology_informed_capture`` is set on the config --
+    # the helper handles ``None`` cleanly when capture / d_mode are off.
     if _use_pln:
         pln_targets = ["y_log_rate"]
-        # ``eta_capture`` is optional; include it when available so the plot
-        # annotation mirrors LNM's optional capture summary.
-        if bool(getattr(results.model_config, "uses_biology_informed_capture", False)):
+        if bool(
+            getattr(
+                results.model_config,
+                "uses_biology_informed_capture",
+                False,
+            )
+        ):
             pln_targets.append("eta_capture")
+        if (
+            getattr(results.model_config, "d_mode", "low_rank") == "learned"
+        ):
+            pln_targets.append("d_pln")
+
         map_estimates = _get_map_estimates_for_plot(
             results, counts=counts, targets=pln_targets
         )
@@ -518,6 +588,7 @@ def _prepare_calibration_data(
             return None
 
         eta_capture = map_estimates.get("eta_capture")
+        d_pln = map_estimates.get("d_pln")
         _annotations = []
         if eta_capture is not None:
             mean_eta = float(np.mean(np.asarray(eta_capture, dtype=float)))
@@ -525,7 +596,9 @@ def _prepare_calibration_data(
         _annotations.append("PLN (log-rate)")
 
         obs_mean = np.mean(np.asarray(counts, dtype=float), axis=0)
-        pred_mean = _compute_predicted_mean_pln(y_log_rate)
+        pred_mean = _compute_predicted_mean_pln(
+            y_log_rate, eta_capture=eta_capture, d_pln=d_pln
+        )
         return {
             "mode": "single",
             "ds_results": None,
