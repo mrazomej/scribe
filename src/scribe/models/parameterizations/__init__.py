@@ -707,8 +707,22 @@ class LogisticNormalParameterization(Parameterization):
                     is_mixture=is_p_mixture,
                 ),
             ]
+        # Constrained LNM defaults intentionally use natural priors:
+        #
+        #   * ``p`` lives in (0, 1)         → ``BetaSpec``
+        #   * ``r_T`` lives in (0, ∞)       → ``PositiveNormalSpec``
+        #
+        # ``PositiveNormalSpec`` is a Normal in log-space passed through a
+        # configurable positive transform. The factory rewrites the
+        # transform from ``model_config.positive_transform`` (default
+        # ``"softplus"``) at spec-application time, so the semantics of
+        # this branch track the user's chosen transform without hardcoding
+        # it here. This avoids the LogNormal mode-vs-median trap where
+        # ``LogNormal(μ, σ)`` with large ``σ`` has its mode at
+        # ``exp(μ - σ²)`` — far from the median ``exp(μ)`` — and MAP
+        # optimization underflows to zero on float32.
         return [
-            LogNormalSpec(
+            PositiveNormalSpec(
                 name="r_T",
                 shape_dims=(),
                 default_params=(0.0, 1.0),
@@ -760,8 +774,17 @@ class LogisticNormalParameterization(Parameterization):
                     is_mixture=is_p_mixture,
                 ),
             ]
+        # Constrained LNM defaults intentionally use natural priors:
+        #
+        #   * ``p``    lives in (0, 1)      → ``BetaSpec``
+        #   * ``mu_T`` lives in (0, ∞)      → ``PositiveNormalSpec``
+        #
+        # See ``_build_canonical_specs`` for the reasoning behind
+        # ``PositiveNormalSpec`` (configurable transform via
+        # ``model_config.positive_transform``, avoiding the LogNormal
+        # mode-vs-median trap that lets MAP underflow to zero).
         return [
-            LogNormalSpec(
+            PositiveNormalSpec(
                 name="mu_T",
                 shape_dims=(),
                 default_params=(0.0, 1.0),
@@ -813,8 +836,19 @@ class LogisticNormalParameterization(Parameterization):
                     is_mixture=is_phi_mixture,
                 ),
             ]
+        # Constrained LNM defaults intentionally use natural priors:
+        #
+        #   * ``phi_T`` lives in (0, ∞)     → ``BetaPrimeSpec`` (mode at
+        #     ``(α-1)/(β+1)`` for ``α≥1``, density ``∝ x^{α-1}`` near
+        #     zero — actively discourages the boundary that LogNormal
+        #     priors fall into when the user picks a wide ``σ``).
+        #   * ``mu_T``  lives in (0, ∞)     → ``PositiveNormalSpec``
+        #
+        # See ``_build_canonical_specs`` for the reasoning behind
+        # ``PositiveNormalSpec`` (configurable transform via
+        # ``model_config.positive_transform``).
         return [
-            LogNormalSpec(
+            PositiveNormalSpec(
                 name="mu_T",
                 shape_dims=(),
                 default_params=(0.0, 1.0),

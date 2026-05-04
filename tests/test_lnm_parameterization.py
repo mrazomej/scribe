@@ -141,7 +141,10 @@ def test_build_param_specs_canonical_constrained(lnm_canonical):
         guide_families=GuideFamilyConfig(),
     )
     assert len(specs) == 2
-    assert isinstance(specs[0], LogNormalSpec) and specs[0].name == "r_T"
+    # r_T uses PositiveNormalSpec so that the factory can route the
+    # transform through ``model_config.positive_transform`` (softplus
+    # by default), avoiding the LogNormal mode-vs-median trap.
+    assert isinstance(specs[0], PositiveNormalSpec) and specs[0].name == "r_T"
     assert isinstance(specs[1], BetaSpec) and specs[1].name == "p"
 
 
@@ -151,8 +154,9 @@ def test_build_param_specs_mean_prob_constrained(lnm_mean_prob):
         guide_families=GuideFamilyConfig(),
     )
     assert len(specs) == 2
-    # mu_T uses LogNormal — population-level mean is positive.
-    assert isinstance(specs[0], LogNormalSpec) and specs[0].name == "mu_T"
+    # mu_T uses PositiveNormalSpec — the factory rewrites the transform
+    # from ``model_config.positive_transform`` (softplus default).
+    assert isinstance(specs[0], PositiveNormalSpec) and specs[0].name == "mu_T"
     # p uses Beta — same as canonical.
     assert isinstance(specs[1], BetaSpec) and specs[1].name == "p"
 
@@ -163,9 +167,11 @@ def test_build_param_specs_mean_odds_constrained(lnm_mean_odds):
         guide_families=GuideFamilyConfig(),
     )
     assert len(specs) == 2
-    # mu_T: LogNormal (positive scalar).
-    assert isinstance(specs[0], LogNormalSpec) and specs[0].name == "mu_T"
-    # phi_T: BetaPrime (positive odds-ratio scalar).
+    # mu_T: PositiveNormalSpec (positive scalar; transform configured).
+    assert isinstance(specs[0], PositiveNormalSpec) and specs[0].name == "mu_T"
+    # phi_T: BetaPrime (positive odds-ratio scalar — natural prior with
+    # density vanishing at zero, blocking the boundary collapse the
+    # LogNormal-with-large-σ prior was prone to).
     assert isinstance(specs[1], BetaPrimeSpec) and specs[1].name == "phi_T"
 
 
@@ -327,3 +333,100 @@ def test_resolve_user_parameterization_invalid_raises():
         resolve_user_parameterization_for_model("lnm", "definitely_not_real")
     with pytest.raises(ValueError):
         resolve_user_parameterization_for_model("nbdm", "definitely_not_real")
+
+
+# ---------------------------------------------------------------------------
+# Regression: natural-prior defaults for LNM constrained mode.
+#
+# These three tests lock in the invariant that the ``unconstrained=False``
+# default for LNM uses *natural* priors for bounded parameters and a
+# config-driven Normal+positive-transform for positive scalars — never the
+# bare ``LogNormalSpec`` that previously sat in this branch.
+#
+# Background: ``LogNormal(μ, σ)`` has mode at ``exp(μ - σ²)``. For wide
+# user-supplied priors (e.g. ``(5.0, 5.0)``) the mode underflows to
+# essentially zero in float32, so MAP-based optimization collapses to the
+# boundary regardless of the median the user typed. ``BetaPrime`` /
+# ``Beta`` have density vanishing at the boundary and don't suffer from
+# this trap; ``PositiveNormalSpec`` lets the factory pick an appropriate
+# transform (``softplus`` by default, smoother than ``exp``).
+# ---------------------------------------------------------------------------
+
+
+def test_constrained_lnm_uses_betaprime_not_lognormal_for_phi_T(lnm_mean_odds):
+    """Mean-odds constrained must use BetaPrime for phi_T, not LogNormal.
+
+    With user prior ``total_odds_ratio=(5.0, 5.0)`` (a natural pick when
+    a user thinks in BetaPrime ``α/β``-space), this regression keeps the
+    resulting spec a ``BetaPrimeSpec`` so the prior tuple has the
+    semantics the user expects: mode at ``(α-1)/(β+1) = 0.67``, density
+    ``∝ x^{α-1}`` near zero — actively repelling the boundary collapse
+    that bit users under the old ``LogNormalSpec`` branch.
+    """
+    specs = lnm_mean_odds.build_param_specs(
+        unconstrained=False,
+        guide_families=GuideFamilyConfig(),
+    )
+    spec_by_name = {s.name: s for s in specs}
+    assert isinstance(spec_by_name["phi_T"], BetaPrimeSpec)
+    # And explicitly NOT a LogNormalSpec — the regression we are guarding.
+    assert not isinstance(spec_by_name["phi_T"], LogNormalSpec)
+    # ``mu_T`` should be PositiveNormalSpec (configurable transform), not
+    # LogNormalSpec (which silently fixes the transform to exp).
+    assert isinstance(spec_by_name["mu_T"], PositiveNormalSpec)
+    assert not isinstance(spec_by_name["mu_T"], LogNormalSpec)
+
+
+def test_unconstrained_lnm_unchanged_uses_positive_normal_throughout(
+    lnm_canonical, lnm_mean_prob, lnm_mean_odds
+):
+    """Opt-in unconstrained mode must preserve the all-Normal-with-transform
+    reparameterization. Joint guides and other downstream consumers depend
+    on this — they require vector-space parameter specs because a
+    multivariate-Normal guide cannot be defined on a bounded manifold.
+
+    This test guards against accidentally letting the new constrained-mode
+    natural-prior change leak across the boundary.
+    """
+    for strat in (lnm_canonical, lnm_mean_prob, lnm_mean_odds):
+        specs = strat.build_param_specs(
+            unconstrained=True,
+            guide_families=GuideFamilyConfig(),
+        )
+        # Every positive-valued sampled scalar must remain a
+        # PositiveNormalSpec (Normal-in-log-space → transform). No
+        # natural-prior leakage.
+        positive_names = {s.name for s in specs} & {
+            "r_T",
+            "mu_T",
+            "phi_T",
+        }
+        for s in specs:
+            if s.name in positive_names:
+                assert isinstance(s, PositiveNormalSpec), (
+                    f"{strat.variant}/{s.name} must be PositiveNormalSpec "
+                    f"in unconstrained mode, got {type(s).__name__}"
+                )
+                # Not BetaPrime — that's reserved for constrained mode.
+                assert not isinstance(s, BetaPrimeSpec)
+
+
+def test_dm_canonical_constrained_still_uses_lognormal_for_r():
+    """DM-family scoped invariant: the LNM-only spec change must NOT have
+    perturbed the DM family. The DM ``canonical`` parameterization still
+    uses ``LogNormalSpec`` for the per-gene dispersion ``r`` because
+    DM-family training is well-validated under those defaults and we
+    don't want behavioral drift on an unrelated codepath.
+    """
+    canonical = PARAMETERIZATIONS["canonical"]
+    specs = canonical.build_param_specs(
+        unconstrained=False,
+        guide_families=GuideFamilyConfig(),
+    )
+    spec_by_name = {s.name: s for s in specs}
+    # DM canonical samples (p, r). ``r`` is the per-gene dispersion.
+    assert isinstance(spec_by_name["r"], LogNormalSpec), (
+        "DM canonical r must remain LogNormalSpec; spec change should be "
+        "scoped to the LNM family only."
+    )
+    assert isinstance(spec_by_name["p"], BetaSpec)
