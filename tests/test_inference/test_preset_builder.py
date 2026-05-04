@@ -205,21 +205,41 @@ class TestBuildConfigFromPreset:
         assert config.vae is not None
         assert config.vae.input_transform == "clr"
 
-    def test_pln_defaults_to_log1p_prop_input_transform(self):
-        """PLN models should default to compositional encoder inputs.
+    def test_pln_without_capture_anchor_defaults_to_log1p(self):
+        """PLN without a capture anchor must keep ``log1p`` (raw counts).
 
-        Even though the PLN likelihood operates in absolute log-rate
-        space, the encoder input is a separate design choice. Using a
-        *compositional* input keeps library-size information out of
-        the latent ``z`` so it cannot compete with ``eta_capture``
-        for explaining per-cell scale -- a known identifiability
-        ridge in PLN+capture-anchor that produces useless gene-level
-        diagnostics when ``log1p`` is used instead.
+        Without a per-cell capture parameter, the latent ``z`` is the
+        *only* place per-cell library-size variation can be encoded.
+        Stripping that signal from the encoder input would force
+        every cell to predict the same total counts -- a guaranteed
+        bad fit. So the default falls back to ``log1p`` in this
+        regime.
         """
         config = build_config_from_preset(
             model="pln",
             parameterization="poisson_lognormal",
             inference_method="vae",
+        )
+        assert config.vae is not None
+        assert config.vae.input_transform == "log1p"
+
+    def test_pln_with_capture_anchor_defaults_to_log1p_prop(self):
+        """PLN with a capture-anchor prior must default to ``log1p_prop``.
+
+        With ``eta_capture`` available as a per-cell scale parameter
+        anchored by the biology-informed prior, library-size
+        variation has a dedicated home -- and stripping it from the
+        encoder input prevents the identifiability ridge between
+        ``z`` and ``eta_capture`` (the failure mode that pushed
+        ``\\bar{\\eta}`` to ~10 on the jurkat data). The capture
+        anchor is detected by the presence of any capture-related
+        prior key.
+        """
+        config = build_config_from_preset(
+            model="pln",
+            parameterization="poisson_lognormal",
+            inference_method="vae",
+            priors={"capture_efficiency": (11.5, 0.5)},
         )
         assert config.vae is not None
         assert config.vae.input_transform == "log1p_prop"
@@ -232,10 +252,9 @@ class TestBuildConfigFromPreset:
         default (``log1p``). Passing ``log1p`` explicitly is
         indistinguishable from the function default and therefore
         gets resolved to the per-model recommendation
-        (``log1p_prop``). Users who want strict ``log1p`` would need
-        to bypass ``build_config_from_preset`` or pass an alternative
-        explicit transform name (here we use ``clr``, mirroring LNM's
-        override test).
+        (``log1p_prop`` when capture anchor is on, ``log1p``
+        otherwise). Users who want a non-default transform pass it
+        explicitly (here ``clr``, mirroring LNM's override test).
         """
         config = build_config_from_preset(
             model="pln",

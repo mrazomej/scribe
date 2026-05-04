@@ -483,26 +483,51 @@ def build_config_from_preset(
     )
 
     if inference_method == "vae":
-        # Both LNM and PLN models default to a *compositional* encoder
-        # input (``log1p_prop``) regardless of the likelihood's
-        # underlying parameterization. The two design choices --
-        # encoder input space and generative-model space -- are
-        # independent. The compositional input keeps cell-level scale
-        # information out of the latent ``z`` so it cannot compete
-        # with the per-cell capture parameter (``eta_capture``) for
-        # explaining library-size variation. Without this, PLN with
-        # capture anchor exhibits an identifiability ridge where
-        # ``z_c`` and ``eta_capture_c`` both shift in the same
-        # direction by ~10 units, defeating the prior anchor and
-        # giving "good per-cell PPCs but useless gene-level
-        # diagnostics" -- the failure mode we tracked down on the
-        # jurkat data. Respect explicit user overrides via
-        # ``vae_input_transform``.
+        # Encoder input transform defaults to ``log1p_prop``
+        # (compositional) for LNM and for PLN-with-capture-anchor; it
+        # stays at ``log1p`` (raw counts on log scale) for
+        # PLN-without-capture-anchor. The asymmetry is structural:
+        #
+        # * LNM's multinomial likelihood is intrinsically
+        #   scale-invariant (only the simplex ``ρ`` matters), so the
+        #   encoder being compositional is always fine.
+        # * PLN's likelihood is in absolute log-rate space. With a
+        #   capture anchor, the per-cell scale parameter
+        #   ``eta_capture`` carries library-size variation, so a
+        #   compositional encoder *helps* (it keeps scale
+        #   information out of the latent ``z``, eliminating the
+        #   identifiability ridge between ``z`` and
+        #   ``eta_capture``).
+        # * PLN *without* a capture anchor has no per-cell scale
+        #   parameter at all -- the only place library size can be
+        #   encoded is in the latent ``z`` via the decoder. A
+        #   compositional encoder would strip that signal, forcing
+        #   every cell to predict the same total counts. So the
+        #   default falls back to ``log1p`` in that regime.
+        #
+        # The capture-anchor signal is the presence of any
+        # capture-related prior key (canonical or alias) in
+        # ``priors``. We check the small canonical set plus the
+        # registered aliases ``capture_efficiency``,
+        # ``capture_scaling``, ``capture_anchor``, ``organism``.
         resolved_vae_input_transform = vae_input_transform
-        if (
-            model_lower in ("lnm", "lnmvcp", "pln")
-            and vae_input_transform == "log1p"
-        ):
+
+        _CAPTURE_ANCHOR_PRIOR_KEYS = frozenset({
+            "eta_capture",
+            "mu_eta",
+            "organism",
+            "capture_efficiency",
+            "capture_scaling",
+            "capture_anchor",
+        })
+        _has_capture_anchor = bool(priors) and any(
+            k in _CAPTURE_ANCHOR_PRIOR_KEYS for k in priors.keys()
+        )
+
+        _wants_compositional_input = model_lower in ("lnm", "lnmvcp") or (
+            model_lower == "pln" and _has_capture_anchor
+        )
+        if _wants_compositional_input and vae_input_transform == "log1p":
             resolved_vae_input_transform = "log1p_prop"
 
         # Resolve the ``vae_standardize`` sentinel. ``None`` means "pick a
