@@ -573,13 +573,54 @@ appropriate.
 
 ## Working in log-abundance space {#sec-grn-bio-log-space}
 
-The logistic-normal places a Gaussian distribution on **log-ratios** of
-abundances, not on abundances themselves. It is therefore natural to transform
-the CLE to log-abundance space. Define
+Our goal is to derive the steady-state distribution of gene expression in a
+gene regulatory network. This requires transforming the CLE to a space where
+the Linear Noise Approximation produces a well-defined, physically meaningful
+result. We now transform to log-abundance space. Define
 
 $$
 x_g = \log \lambda_g, \quad g = 1, \ldots, G.
 $${#eq-grn-bio-log-def}
+
+### Why log-abundances? {#sec-grn-bio-why-log}
+
+Before proceeding with the mathematical transformation, it is worth pausing to
+ask: why work in log-abundance space at all? Is this a biophysical necessity, or
+merely a mathematical convenience? The answer is that it is a highly principled
+mathematical convenience---one that allows us to model complex gene-gene
+interactions while respecting the fundamental physical constraints of the cell.
+
+If we were to apply the Linear Noise Approximation directly to the linear
+abundances $\underline{\lambda}$, we would obtain a multivariate Gaussian
+distribution on linear molecule counts. This presents a severe physical problem:
+a Gaussian distribution has support from $-\infty$ to $\infty$. Because
+single-cell data is characterized by low molecule counts, a Gaussian on linear
+abundances would assign significant probability mass to negative mRNA counts,
+which is physically impossible. 
+
+Transforming to log-abundance space resolves this by mapping the physical domain
+of $(0, \infty)$ to the mathematical domain of $(-\infty, \infty)$. A Gaussian
+in log-space (which corresponds to a log-normal distribution in linear space)
+strictly enforces the constraint that mRNA counts must be positive. 
+
+Furthermore, there is a strong biological justification for this choice. Gene
+regulation is fundamentally multiplicative, not additive. Transcription factors
+act via fold-changes, and thermodynamic binding models operate on relative
+scales. By taking the logarithm, these multiplicative regulatory effects become
+additive. Since the LNA relies on taking a first-order Taylor expansion (the
+Jacobian) of the regulatory dynamics, linearizing a system that is naturally
+additive (log-space) is vastly more accurate over a wide dynamic range than
+attempting to linearize a highly non-linear multiplicative system.
+
+However, this convenience comes at a biophysical cost, which will become
+apparent when we apply Itô's lemma in the next section. The transformation will
+cause the noise amplitude to become inversely proportional to the abundance. To
+obtain a tractable solution, we will be forced to "freeze" this noise at its
+steady-state mean. This approximation works beautifully for highly expressed
+genes but breaks down for lowly expressed genes where the abundance frequently
+approaches zero. We accept this breakdown at the extreme low end of expression
+as a necessary trade-off to obtain a tractable, positive-definite model of
+gene-gene correlations.
 
 ### Itô's lemma for the transformation {#sec-grn-bio-ito-lemma}
 
@@ -831,21 +872,51 @@ $\underline{\underline{\Sigma}}$ are nonzero whenever
 $\underline{\underline{J}}$ has off-diagonal entries**, i.e., whenever genes
 regulate each other.
 
-## From multivariate normal log-abundances to the logistic-normal {#sec-grn-bio-to-ln}
+## The central biophysical result {#sec-grn-bio-to-ln}
 
 We have arrived at @eq-grn-bio-mvn: the steady-state distribution of
 log-abundances is multivariate Gaussian. This is the **central biophysical
-result** of this chapter---it holds independently of how one subsequently
-models the observation process (i.e., how counts are generated from these
-latent abundances). Different choices of observation model are discussed in
-@sec-grn-bio-observation-models.
+result** of this chapter:
 
-One natural path from @eq-grn-bio-mvn to an observation model is through
-gene compositions. In single-cell RNA-seq, the observed count vector
-$\underline{u}^{(c)}$ for a cell $c$ is a sample from a capture process
-applied to the cell's mRNA pool. The composition vector
-$\underline{\rho}^{(c)}$ represents the relative abundance of each gene's
-mRNA:
+$$
+\boxed{
+\underline{x}^{(c)} \sim \mathcal{N}(\underline{\bar{x}},\,
+\underline{\underline{\Sigma}}),
+\quad x_g = \log \lambda_g.
+}
+$${#eq-grn-bio-central-result}
+
+This result holds independently of how one subsequently models the observation
+process (i.e., how discrete counts are generated from these latent
+abundances). The covariance $\underline{\underline{\Sigma}}$ is not an
+arbitrary statistical object---it is the Lyapunov solution to the OU process
+governing the GRN, and its entries are direct consequences of the regulatory
+interactions encoded in $\underline{\underline{J}}$ and the
+bursty-transcription noise encoded in $\underline{\underline{D}}$.
+
+Different statistical observation models can be constructed atop this
+biophysical foundation. Each constitutes a different choice for how to connect
+the continuous latent log-abundances $\underline{x}^{(c)}$ to the discrete
+observed count vector $\underline{u}^{(c)}$. The two natural paths are:
+
+1. **The compositional path (Logistic-Normal Multinomial).** Transform
+   log-abundances to compositions via the softmax map, yielding the
+   logistic-normal distribution on the simplex, then model counts as
+   Multinomial draws from these compositions.
+
+2. **The direct emission path (Poisson-LogNormal).** Model each gene's count
+   directly as a Poisson draw from the exponentiated log-abundance
+   $e^{x_g}$, without an intervening compositional factorization.
+
+Both observation models inherit the same biophysical foundation; they differ
+only in how the latent abundances map to observed counts. We develop both
+paths fully in @sec-grn-bio-observation-models.
+
+### Compositions as a downstream consequence {#sec-grn-bio-compositions}
+
+To see how the compositional path arises, note that the composition vector
+$\underline{\rho}^{(c)}$ representing the relative abundance of each gene's
+mRNA is
 
 $$
 \rho_g^{(c)} = \frac{\lambda_g^{(c)}}{\sum_{j=1}^G \lambda_j^{(c)}}
@@ -854,8 +925,9 @@ $${#eq-grn-bio-composition}
 
 This is exactly the softmax (inverse ALR) transformation applied to the
 log-abundances $\underline{x}^{(c)}$. Since $\underline{x}^{(c)}$ is Gaussian
-by @eq-grn-bio-mvn, $\underline{\rho}^{(c)}$ follows a **logistic-normal
-distribution** by definition (cf.\ @sec-lnm-logistic-normal-def):
+by @eq-grn-bio-central-result, $\underline{\rho}^{(c)}$ follows a
+**logistic-normal distribution** by definition
+(cf.\ @sec-lnm-logistic-normal-def):
 
 $$
 \underline{\rho}^{(c)} \sim
@@ -868,25 +940,6 @@ $\underline{\underline{\Sigma}}_{\text{ALR}}$ are the mean and covariance of
 the ALR-transformed log-abundances (a linear transformation of
 $\underline{\bar{x}}$ and $\underline{\underline{\Sigma}}$; see
 @sec-lnm-alr-to-clr for the ALR-to-CLR algebra).
-
-This is the central result of this chapter: **the steady-state distribution of
-log-abundances in a gene regulatory network under the linear noise
-approximation is a multivariate Gaussian**
-(@eq-grn-bio-mvn), and consequently the **gene compositions follow a
-logistic-normal distribution**. The covariance
-$\underline{\underline{\Sigma}}$ is not an arbitrary statistical object---it is
-the Lyapunov solution to the OU process governing the GRN, and its entries are
-direct consequences of the regulatory interactions encoded in
-$\underline{\underline{J}}$ and the bursty-transcription noise encoded in
-$\underline{\underline{D}}$.
-
-The multivariate Gaussian on log-abundances is the universal result; the
-logistic-normal on compositions is one consequence (obtained by applying the
-softmax map). An alternative path---modeling each gene's count directly as a
-Poisson draw from the exponentiated log-abundance---leads to the
-Poisson-LogNormal model. Both observation models inherit the same biophysical
-foundation; they differ only in how the latent abundances map to observed
-counts (see @sec-grn-bio-observation-models).
 
 It is worth being explicit about where the biophysics ends and the
 parameterisation begins. The LNA produces an unconstrained $G$-dimensional
@@ -904,9 +957,8 @@ redundant degree of freedom inherent to compositional data.
 
 The low-rank factorization
 $\underline{\underline{\Sigma}} = \underline{\underline{W}}\,
-\underline{\underline{W}}^\top + \text{diag}(\underline{d})$ from
-@eq-lnm-low-rank-cov acquires a natural interpretation in this biophysical
-framework.
+\underline{\underline{W}}^\top + \text{diag}(\underline{d})$ acquires a
+natural interpretation in this biophysical framework.
 
 **The rank-$k$ factor $\underline{\underline{W}}$.** Gene regulatory networks
 are sparse and modular: a small number of master regulators (transcription
@@ -914,7 +966,7 @@ factors, signaling pathway effectors) control large programs of downstream
 genes. In the language of the Lyapunov solution @eq-grn-bio-sigma-integral,
 the dominant eigenvectors of $\underline{\underline{\Sigma}}$ correspond to
 the most energetic modes of the network---the transcription factor programs
-that explain the largest fraction of the compositional variance. The columns
+that explain the largest fraction of the expression variance. The columns
 of $\underline{\underline{W}}$ approximate these dominant modes. Clustering on
 the rows of $\underline{\underline{W}}$ (each row corresponding to a gene)
 therefore groups genes by shared regulatory control, not by artefactual
@@ -962,12 +1014,12 @@ harmless. For uses that require *interpretable* programs (e.g., naming columns
 of $\underline{\underline{W}}$ as TF activities), an additional rotation or
 sparsification step is required as a post-processing operation.
 
-## Connecting the two models: the independent-gene limit {#sec-grn-bio-connection}
+## Connecting the two regimes: the independent-gene limit {#sec-grn-bio-connection}
 
 The biophysical derivation clarifies the relationship between the
-Dirichlet-Multinomial and the logistic-normal models. They arise from different
-approximation regimes applied to the same underlying stochastic gene expression
-process.
+Dirichlet-Multinomial model and the multivariate Gaussian on log-abundances.
+They arise from different approximation regimes applied to the same underlying
+stochastic gene expression process.
 
 **The DM regime (exact, independent genes).** When genes are transcriptionally
 independent, $b_g(\underline{\lambda}) = k_{i,g} \cdot b_g$ (a constant) in
@@ -978,49 +1030,51 @@ birth-death process for each gene is Gamma-distributed
 the derivation in @sec-dirichlet-multinomial. No linear noise approximation is
 involved; the result is exact given the birth-death model.
 
-**The LNM regime (approximate, interacting genes).** When genes interact,
+**The GRN regime (approximate, interacting genes).** When genes interact,
 $\underline{\underline{J}}$ has off-diagonal entries, and the exact joint
 steady-state distribution of $G$ coupled birth-death processes has no tractable
 closed form. The LNA in log-space gives the multivariate Gaussian approximation
-@eq-grn-bio-mvn, from which the logistic-normal on compositions follows.
+@eq-grn-bio-mvn, which can then be connected to observed counts via either of
+the two observation models described in @sec-grn-bio-observation-models.
 
 **The two regimes converge for non-interacting, high-expression genes.** When
 $\underline{\underline{J}}$ is diagonal and $r_g$ is large, the Gamma
 distribution for $\lambda_g$ is well approximated by a log-normal (by the
 central limit theorem applied to the log of a Gamma with large shape
-parameter). In this limit, both models produce approximately the same marginal
-distributions and the same (negative, simplex-constrained) pairwise
-correlations. The DM and the diagonal-$\Sigma$ LNM are not mathematically
+parameter). In this limit, the DM and the diagonal-$\Sigma$ Gaussian model
+produce approximately the same marginal distributions and the same (negative,
+simplex-constrained) pairwise correlations. They are not mathematically
 identical, but they are asymptotically equivalent in the high-expression regime.
 
 The key difference emerges for **interacting genes**: the Dirichlet model has no
 mechanism to represent the cross-gene correlations generated by
-$\underline{\underline{J}}$, regardless of how large $r_g$ is. The
-logistic-normal does, through the off-diagonal entries of
+$\underline{\underline{J}}$, regardless of how large $r_g$ is. The Gaussian
+log-abundance model does, through the off-diagonal entries of
 $\underline{\underline{\Sigma}}$.
 
-**The asymmetry of "extending" DM.** It is tempting to describe the LNM as a
-strict generalization of the DM (with the DM recovered as the
-diagonal-$\underline{\underline{\Sigma}}$, high-expression limit). The
-relationship is not actually symmetric, and it is worth being precise about the
-direction of the trade-off:
+**The asymmetry of "extending" the DM.** It is tempting to describe the
+Gaussian log-abundance model as a strict generalization of the DM (with the DM
+recovered as the diagonal-$\underline{\underline{\Sigma}}$, high-expression
+limit). The relationship is not actually symmetric, and it is worth being
+precise about the direction of the trade-off:
 
 - For **non-interacting genes**, the DM is the *exact* steady-state of the
-  underlying birth-death process, regardless of expression level. The LNM is the
-  LNA approximation of the same process and degrades for genes with very low
-  counts, where neither the drift linearization nor the constant-noise
-  approximation is reliable (see @sec-grn-bio-lna).
+  underlying birth-death process, regardless of expression level. The Gaussian
+  log-abundance model is the LNA approximation of the same process and degrades
+  for genes with very low counts, where neither the drift linearization nor the
+  constant-noise approximation is reliable (see @sec-grn-bio-lna).
 - For **interacting genes**, the DM cannot represent the cross-gene correlations
   generated by off-diagonal entries of $\underline{\underline{J}}$ at all, while
-  the LNM does so through $\underline{\underline{\Sigma}}$.
+  the Gaussian model does so through $\underline{\underline{\Sigma}}$.
 
-The LNM therefore trades *exactness for the non-interacting, low-expression
-regime* against *expressivity in the coupled regime*. This is the correct
-trade-off for our scientific goal (recovering gene-gene structure), but it does
-mean that for genes that are both weakly coupled and lowly expressed, the DM
-remains the better marginal model. The LNM is a generalization only in the sense
-of admitting a broader class of *covariance structures*, not in the sense of
-being a uniformly better description of the underlying biophysics.
+The Gaussian log-abundance model therefore trades *exactness for the
+non-interacting, low-expression regime* against *expressivity in the coupled
+regime*. This is the correct trade-off for our scientific goal (recovering
+gene-gene structure), but it does mean that for genes that are both weakly
+coupled and lowly expressed, the DM remains the better marginal model. The
+Gaussian model is a generalization only in the sense of admitting a broader
+class of *covariance structures*, not in the sense of being a uniformly better
+description of the underlying biophysics.
 
 ## Summary of the derivation {#sec-grn-bio-summary}
 
@@ -1033,11 +1087,12 @@ steady-state distributions:
 | Interacting genes (GRN) | Gene regulatory network ($\underline{\underline{J}}$ general) | Multivariate Gaussian in log-space (LNA) | Free $\underline{\underline{\Sigma}}$, determined by GRN via Lyapunov |
 
 The GRN regime produces the multivariate Gaussian on log-abundances
-(@eq-grn-bio-mvn), which is the universal biophysical result. Different
-observation models can then be constructed atop this foundation: the
-Logistic-Normal Multinomial (LNM) for compositional analysis, and the
-Poisson-LogNormal (PLN) for absolute expression modeling (see
-@sec-grn-bio-observation-models).
+(@eq-grn-bio-mvn), which is the universal biophysical result. This Gaussian
+is the endpoint of the biophysical derivation. Different observation
+models---the Logistic-Normal Multinomial (LNM) for compositional analysis, and
+the Poisson-LogNormal (PLN) for absolute expression modeling---can then be
+constructed atop this foundation as separate statistical modeling decisions
+(see @sec-grn-bio-observation-models).
 
 The derivation proceeded through the following chain of reasoning:
 
@@ -1061,8 +1116,10 @@ The derivation proceeded through the following chain of reasoning:
    process in log-space.
 8. **Steady-state** (@sec-grn-bio-lyapunov): The OU steady-state is a
    multivariate Gaussian, with covariance given by the Lyapunov equation.
-9. **Composition** (@sec-grn-bio-to-ln): The softmax map from log-abundances to
-   compositions yields the logistic-normal.
+9. **Observation models** (@sec-grn-bio-observation-models): The Gaussian
+   log-abundances connect to observed counts via two paths: (i) applying
+   softmax to obtain logistic-normal compositions (LNM), or (ii) Poisson
+   emission from exponentiated log-abundances (PLN).
 
 The multivariate Gaussian on log-abundances does not abandon the biophysics
 underlying the Dirichlet-Multinomial; it adopts a different approximation regime
@@ -1085,7 +1142,7 @@ counts---through a compositional model (LNM) or a direct count model
 The derivation above started from the one-state bursty promoter because it
 provides the cleanest path: the Gamma on $\lambda_g$ is exact, the mass-balance
 ODE is self-evident, and the Dirichlet recovery is exact. A natural question
-is whether the logistic-normal result depends on this particular choice of
+is whether the multivariate Gaussian result depends on this particular choice of
 microscopic model, or whether it is more general.
 
 ### A deductive argument for universality {#sec-grn-bio-deductive}
@@ -1128,8 +1185,8 @@ derivation above is a **concrete verification** that the coarse-graining step
 ODE form itself is guaranteed by ingredient 1 alone.
 
 The downstream chain of approximations (CLE $\to$ log-space $\to$ LNA $\to$ OU
-$\to$ Lyapunov $\to$ logistic-normal) depends only on this mesoscopic ODE, not
-on the microscopic details that produced it. The microscopic model affects only
+$\to$ Lyapunov $\to$ multivariate Gaussian) depends only on this mesoscopic
+ODE, not on the microscopic details that produced it. The microscopic model affects only
 the noise amplitude $\sigma_g$, which determines the diagonal of the diffusion
 matrix $\underline{\underline{D}}$---a quantitative detail that influences each
 gene's marginal variance but not the qualitative structure of the result.
@@ -1265,9 +1322,10 @@ In this regime, the scaled Beta and the Gamma are both well approximated by a
 log-normal, and the Dirichlet recovery from independent Gammas holds
 approximately.
 
-This subtlety does not affect the LNM derivation, because the downstream chain
-(CLE $\to$ LNA $\to$ OU $\to$ Lyapunov) depends only on the **ODE form**, not
-on the exact marginal distribution of $\lambda_g$ in the independent-gene limit.
+This subtlety does not affect the derivation of the multivariate Gaussian,
+because the downstream chain (CLE $\to$ LNA $\to$ OU $\to$ Lyapunov) depends
+only on the **ODE form**, not on the exact marginal distribution of $\lambda_g$
+in the independent-gene limit.
 
 ### The universality result {#sec-grn-bio-universality}
 
@@ -1289,10 +1347,12 @@ models in the gene expression literature---both converge to the same mesoscopic
 ODE. Any other microscopic model satisfying first-order degradation and
 coarse-grainable production will do the same.
 
-The downstream consequence for gene compositions---the logistic-normal
-distribution---follows from applying the softmax map to the Gaussian
-log-abundances. But the Gaussian itself is the fundamental result, and it
-supports other observation models as well (see @sec-grn-bio-observation-models).
+The multivariate Gaussian on log-abundances is the fundamental result. From it,
+different observation models can be constructed: applying the softmax map yields
+the logistic-normal distribution on compositions (the LNM path), while direct
+Poisson emission from the exponentiated log-abundances yields the PLN path.
+Both inherit the same biophysical foundation (see
+@sec-grn-bio-observation-models).
 
 ## From log-abundances to observed counts: two observation models {#sec-grn-bio-observation-models}
 
