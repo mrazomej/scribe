@@ -37,7 +37,9 @@ class TestRegistryContents:
 
     def test_model_extra_params_contains_all_models(self):
         """Test MODEL_EXTRA_PARAMS has entries for all model types."""
-        expected_models = {"nbdm", "lnm", "lnmvcp", "zinb", "nbvcp", "zinbvcp"}
+        expected_models = {
+            "nbdm", "lnm", "lnmvcp", "pln", "zinb", "nbvcp", "zinbvcp"
+        }
         assert set(MODEL_EXTRA_PARAMS.keys()) == expected_models
 
     def test_model_extra_params_values(self):
@@ -45,13 +47,19 @@ class TestRegistryContents:
         assert MODEL_EXTRA_PARAMS["nbdm"] == []
         assert MODEL_EXTRA_PARAMS["lnm"] == []
         assert MODEL_EXTRA_PARAMS["lnmvcp"] == ["p_capture"]
+        # PLN has no totals submodel and no separate capture site:
+        # capture is folded into the per-cell log-rate offset directly
+        # in the likelihood, so no extra global param is registered.
+        assert MODEL_EXTRA_PARAMS["pln"] == []
         assert MODEL_EXTRA_PARAMS["zinb"] == ["gate"]
         assert MODEL_EXTRA_PARAMS["nbvcp"] == ["p_capture"]
         assert MODEL_EXTRA_PARAMS["zinbvcp"] == ["gate", "p_capture"]
 
     def test_likelihood_registry_contains_all_models(self):
         """Test LIKELIHOOD_REGISTRY has entries for all model types."""
-        expected_models = {"nbdm", "lnm", "lnmvcp", "zinb", "nbvcp", "zinbvcp"}
+        expected_models = {
+            "nbdm", "lnm", "lnmvcp", "pln", "zinb", "nbvcp", "zinbvcp"
+        }
         assert set(LIKELIHOOD_REGISTRY.keys()) == expected_models
 
     def test_likelihood_registry_classes(self):

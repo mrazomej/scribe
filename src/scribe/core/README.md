@@ -146,6 +146,28 @@ Each function is small and side-effect-free; `inject_lnm_vae_data_init`
 is what `scribe.api.fit` calls. See the qmd section
 "Training stability: practical considerations" for the motivation.
 
+### PLN Data-Init Helpers (`pln_data_init.py`)
+
+Data-derived initializers for the Poisson-LogNormal family (`model="pln"`).
+Analogous to `lnm_data_init.py` but for G-dimensional log-rate space
+rather than (G-1)-dimensional ALR space.
+
+```python
+from scribe.core.pln_data_init import (
+    empirical_log_mean_from_counts,  # → decoder bias init for y_log_rate
+    pca_loadings_init,               # → PCA-based W init from truncated SVD
+    inject_pln_vae_data_init,        # one-shot ModelConfig transformer
+)
+```
+
+Key differences from LNM data-init:
+- Bias is G-dimensional `log(mean(u_g) + pseudocount)` (not G-1 ALR).
+- PCA uses randomized SVD (Halko et al. 2011) on centered
+  `log(counts + pseudocount)` to initialize the decoder kernel `W`.
+  For large datasets (> 50k cells), cells are subsampled to cap memory.
+  All intermediates are float32.
+- Encoder standardization is reused from `lnm_data_init`.
+
 ### Cell Type Assignment (`cell_type_assignment.py`)
 ### Gene Coverage Filtering (`gene_coverage.py`)
 

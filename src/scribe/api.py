@@ -77,7 +77,7 @@ from .models.parameterizations import PARAMETERIZATIONS
 ScribeResults = Union[ScribeSVIResults, ScribeMCMCResults, ScribeVAEResults]
 
 # Valid model types
-VALID_MODELS = {"nbdm", "zinb", "nbvcp", "zinbvcp", "lnm", "lnmvcp"}
+VALID_MODELS = {"nbdm", "zinb", "nbvcp", "zinbvcp", "lnm", "lnmvcp", "pln"}
 
 # Deprecated aliases mapped to their canonical names.
 _DEPRECATED_MODEL_ALIASES = {"nbdm_lnm": "lnm"}
@@ -1840,6 +1840,39 @@ def fit(
             "stats into VAEConfig.",
             int(model_config.vae.empirical_alr_bias_init.shape[0]),
             int(_ref),
+        )
+
+    # ==========================================================================
+    # Step 3e (PLN-only): inject data-derived VAE initializers
+    # ==========================================================================
+    # For Poisson-LogNormal models, we inject:
+    #   1. ``empirical_log_mean_bias_init``: per-gene log(mean + c) for
+    #      decoder bias initialization.
+    #   2. ``pca_loadings_init``: PCA-based initialization for decoder W.
+    #   3. ``standardize_mean`` / ``standardize_std``: encoder z-standardization.
+    if (
+        model_config.inference_method.value == "vae"
+        and model_config.parameterization.value == "poisson_lognormal"
+    ):
+        from .core.pln_data_init import inject_pln_vae_data_init
+
+        _latent_dim = model_config.vae.latent_dim
+        model_config = inject_pln_vae_data_init(
+            model_config, count_data, latent_dim=_latent_dim
+        )
+
+        import logging as _pln_logging
+
+        _pln_logging.getLogger(__name__).info(
+            "PLN: injected empirical log-mean bias init (length %d), "
+            "PCA loadings init %s, and encoder standardization stats "
+            "into VAEConfig.",
+            int(model_config.vae.empirical_log_mean_bias_init.shape[0]),
+            (
+                model_config.vae.pca_loadings_init.shape
+                if model_config.vae.pca_loadings_init is not None
+                else "None"
+            ),
         )
 
     # ==========================================================================

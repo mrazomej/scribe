@@ -12,21 +12,23 @@ likelihoods/
 ├── zero_inflated.py     # Zero-Inflated NB likelihood
 ├── vcp.py               # VCP variants (NB and ZINB with capture probability)
 ├── lnm.py               # Logistic-Normal Multinomial (NB total × multinomial)
+├── pln.py               # Poisson-LogNormal (per-gene Poisson from log-normal rates)
 └── README.md            # This file
 ```
 
 ## Classes
 
-| Class                                 | File                 | Description                                                         |
-| ------------------------------------- | -------------------- | ------------------------------------------------------------------- |
-| `Likelihood`                          | base.py              | Abstract base class for all likelihoods                             |
-| `NegativeBinomialLikelihood`          | negative_binomial.py | Standard Negative Binomial                                          |
-| `ZeroInflatedNBLikelihood`            | zero_inflated.py     | Zero-Inflated Negative Binomial                                     |
-| `NBWithVCPLikelihood`                 | vcp.py               | NB with Variable Capture Probability                                |
-| `ZINBWithVCPLikelihood`               | vcp.py               | ZINB with Variable Capture Probability                              |
-| `LogisticNormalMultinomialLikelihood` | lnm.py               | NB total × Multinomial composition via ALR-space linear-decoder VAE |
-| `LNMWithVCPLikelihood`                | lnm.py               | LNM with per-cell VCP on the totals NB submodel                     |
-| `select_alr_reference`                | lnm.py               | Data-adaptive ALR reference gene selection (highest geometric mean) |
+| Class                                 | File                 | Description                                                              |
+| ------------------------------------- | -------------------- | ------------------------------------------------------------------------ |
+| `Likelihood`                          | base.py              | Abstract base class for all likelihoods                                  |
+| `NegativeBinomialLikelihood`          | negative_binomial.py | Standard Negative Binomial                                               |
+| `ZeroInflatedNBLikelihood`            | zero_inflated.py     | Zero-Inflated Negative Binomial                                          |
+| `NBWithVCPLikelihood`                 | vcp.py               | NB with Variable Capture Probability                                     |
+| `ZINBWithVCPLikelihood`               | vcp.py               | ZINB with Variable Capture Probability                                   |
+| `LogisticNormalMultinomialLikelihood` | lnm.py               | NB total × Multinomial composition via ALR-space linear-decoder VAE      |
+| `LNMWithVCPLikelihood`                | lnm.py               | LNM with per-cell VCP on the totals NB submodel                          |
+| `select_alr_reference`                | lnm.py               | Data-adaptive ALR reference gene selection (highest geometric mean)      |
+| `PoissonLogNormalLikelihood`          | pln.py               | Per-gene Poisson from correlated log-normal rates via linear-decoder VAE |
 
 Each concrete class implements both the **generative** side (`sample()`,
 used by NumPyro during inference) and the **evaluation** side

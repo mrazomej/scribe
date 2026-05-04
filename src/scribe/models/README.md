@@ -77,6 +77,32 @@ config = (ModelConfigBuilder()
     .build())
 ```
 
+### Poisson-LogNormal (PLN)
+
+```python
+# PLN with low-rank covariance (default)
+config = (ModelConfigBuilder()
+    .for_model("pln")
+    .with_parameterization("poisson_lognormal")
+    .with_inference("vae")
+    .with_vae(latent_dim=10, encoder_hidden_dims=[128], decoder_hidden_dims=[128])
+    .build())
+
+# PLN with learned diagonal noise
+config = (ModelConfigBuilder()
+    .for_model("pln")
+    .with_parameterization("poisson_lognormal")
+    .with_inference("vae")
+    .with_vae(latent_dim=10)
+    .build()
+    .model_copy(update={"d_mode": "learned"}))
+```
+
+**When to use PLN vs LNM**: Use PLN when you care about absolute expression
+levels and want total counts to emerge from shared gene-gene correlations
+rather than a separate NB. Use LNM when compositional DE in ALR/CLR
+coordinates is the primary goal.
+
 ## Key Concepts
 
 ### Immutability

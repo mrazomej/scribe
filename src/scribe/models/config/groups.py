@@ -520,6 +520,28 @@ class VAEConfig(BaseModel):
         ),
     )
 
+    # PLN-specific data-derived initialization fields.
+    empirical_log_mean_bias_init: Optional[Any] = Field(
+        None,
+        description=(
+            "Optional per-gene log-mean bias for PLN decoder "
+            "initialization. Shape ``(n_genes,)``. When set, the "
+            "decoder bias is anchored to ``log(mean(u_g) + c)`` so "
+            "that the initial Poisson rates are at the right order of "
+            "magnitude. None for non-PLN models."
+        ),
+    )
+    pca_loadings_init: Optional[Any] = Field(
+        None,
+        description=(
+            "Optional PCA-based initialization for the PLN decoder "
+            "weight matrix W. Shape ``(n_genes, latent_dim)``. "
+            "Derived from truncated SVD of the centered log-count "
+            "matrix. None for non-PLN models or when PCA init is "
+            "disabled."
+        ),
+    )
+
     # Decoder output transforms (optional per-param overrides)
     decoder_transforms: Optional[Dict[str, str]] = Field(
         None,

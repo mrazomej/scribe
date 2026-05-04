@@ -30,6 +30,7 @@ class ModelType(str, Enum):
     NBDM = "nbdm"
     LNM = "lnm"
     LNMVCP = "lnmvcp"
+    PLN = "pln"
     ZINB = "zinb"
     NBVCP = "nbvcp"
     ZINBVCP = "zinbvcp"
@@ -75,6 +76,8 @@ class Parameterization(str, Enum):
     LOGISTIC_NORMAL_CANONICAL = "logistic_normal_canonical"
     LOGISTIC_NORMAL_MEAN_PROB = "logistic_normal_mean_prob"
     LOGISTIC_NORMAL_MEAN_ODDS = "logistic_normal_mean_odds"
+    # PLN parameterization (single variant, no totals submodel)
+    POISSON_LOGNORMAL = "poisson_lognormal"
     # Internal alias of LOGISTIC_NORMAL_CANONICAL kept so that internal
     # code still comparing against ``Parameterization.LOGISTIC_NORMAL``
     # resolves to canonical (the historical default). No longer

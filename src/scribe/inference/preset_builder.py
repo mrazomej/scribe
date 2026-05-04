@@ -292,24 +292,23 @@ def build_config_from_preset(
     --------
     scribe.models.presets.factory.create_model : Creates model/guide from config.
     """
-    # --- LNM family: VAE-only + variant-aware parameterization dispatch
+    # --- LNM / PLN family: VAE-only + variant-aware parameterization dispatch
     model_lower = model.lower()
     if model_lower in ("lnm", "lnmvcp"):
-        # The LNM family accepts the same DM-family parameterization
-        # vocabulary the user is already familiar with: ``"canonical"``,
-        # ``"mean_prob"``, ``"mean_odds"`` (plus the legacy aliases
-        # ``"standard"`` / ``"linked"`` / ``"odds_ratio"``). We
-        # translate these to the LNM-family internal keys
-        # ``"logistic_normal_canonical"`` etc. via the centralized
-        # resolver in ``scribe.models.parameterizations`` so any
-        # future variant additions only need to land in one place.
         from ..models.parameterizations import (
             resolve_user_parameterization_for_model,
         )
+        parameterization = resolve_user_parameterization_for_model(
+            model_lower, parameterization
+        )
+        if inference_method.lower() == "svi":
+            inference_method = "vae"
 
-        # The user may not have specified ``parameterization=`` at all;
-        # in that case the api.py layer leaves the default of
-        # ``"canonical"``, which resolves to the canonical LNM variant.
+    # --- PLN family: single parameterization, VAE-only
+    if model_lower == "pln":
+        from ..models.parameterizations import (
+            resolve_user_parameterization_for_model,
+        )
         parameterization = resolve_user_parameterization_for_model(
             model_lower, parameterization
         )
@@ -484,8 +483,9 @@ def build_config_from_preset(
     )
 
     if inference_method == "vae":
-        # LNM models are compositional by construction, so use a compositional
-        # encoder input by default. Respect explicit user overrides.
+        # LNM models are compositional, so use a compositional encoder
+        # input by default. PLN models use log1p (absolute counts, not
+        # proportions). Respect explicit user overrides.
         resolved_vae_input_transform = vae_input_transform
         if (
             model_lower in ("lnm", "lnmvcp")
@@ -493,14 +493,17 @@ def build_config_from_preset(
         ):
             resolved_vae_input_transform = "log1p_prop"
 
+        # PLN keeps log1p (not log1p_prop) since it models absolute
+        # counts, not compositions. No override needed.
+
         # Resolve the ``vae_standardize`` sentinel. ``None`` means "pick a
-        # sensible per-model default": LNM models (which use sparse
-        # ``log1p_prop`` inputs whose first Dense layer is otherwise
-        # near-rank-deficient at init) benefit from standardization, while
-        # every other VAE model preserves its historical default of
-        # ``False`` to remain bit-identical to pre-stability-pass training.
+        # sensible per-model default": LNM and PLN models benefit from
+        # standardization, while every other VAE model preserves its
+        # historical default of ``False``.
         if vae_standardize is None:
-            resolved_vae_standardize = model_lower in ("lnm", "lnmvcp")
+            resolved_vae_standardize = model_lower in (
+                "lnm", "lnmvcp", "pln"
+            )
         else:
             resolved_vae_standardize = bool(vae_standardize)
 
@@ -603,6 +606,9 @@ def build_config_from_preset(
     if model_lower in ("lnm", "lnmvcp"):
         builder._d_mode = d_mode
         builder._alr_reference_idx = alr_reference_idx
+
+    if model_lower == "pln":
+        builder._d_mode = d_mode
 
     return builder.build()
 

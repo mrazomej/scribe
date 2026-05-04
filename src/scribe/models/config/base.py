@@ -940,14 +940,24 @@ class ModelConfig(BaseModel):
         data_driven = self.capture_scaling_prior != _NONE
         has_capture_priors = eta_capture is not None or mu_eta is not None
 
-        # VCP model required for capture priors or data-driven mu_eta
+        # Capture priors require either a VCP model (nbvcp / zinbvcp /
+        # lnmvcp) OR the PLN model. PLN doesn't carry the "vcp" suffix
+        # because its capture is structurally different -- it folds
+        # capture into a per-cell additive log-rate offset rather than
+        # introducing a separate ``p_capture`` global parameter -- but
+        # it is still a *capture-aware* model and accepts the same
+        # biology-informed prior tuple.
+        capture_aware = (
+            self.uses_variable_capture or self.base_model == "pln"
+        )
         if has_capture_priors or data_driven:
-            if not self.uses_variable_capture:
+            if not capture_aware:
                 raise ValueError(
                     "Biology-informed capture priors (priors.organism, "
                     "priors.eta_capture, priors.mu_eta) or "
-                    "capture_scaling_prior != 'none' requires a VCP model "
-                    "(nbvcp or zinbvcp)."
+                    "capture_scaling_prior != 'none' requires a "
+                    "capture-aware model (nbvcp, zinbvcp, lnmvcp, or "
+                    "pln)."
                 )
 
         # capture_scaling_prior requires an eta_capture anchor

@@ -28,6 +28,9 @@ $\hat{p}_g^{(c)}$ that absorbs the capture efficiency.
   inference methods
 - **Compositional Models**: Four constructive likelihoods -- from the base
   Negative Binomial up to zero-inflated models with variable capture probability
+- **Poisson-LogNormal (PLN)**: Direct Poisson emission from correlated
+  log-normal rates, coupling composition and total counts through a shared
+  covariance
 - **Compositional Differential Expression**: Bayesian DE in log-ratio
   coordinates with proper uncertainty propagation and error control (lfsr, PEFP)
 - **Model Comparison**: WAIC, PSIS-LOO, stacking weights, and goodness-of-fit
@@ -59,8 +62,8 @@ $\hat{p}_g^{(c)}$ that absorbs the capture efficiency.
 - **Model Comparison**: WAIC, PSIS-LOO, stacking, per-gene elpd, and
   goodness-of-fit via randomized quantile residuals
 - **Seamless Integration**: Works with AnnData and the scanpy ecosystem
-- **Custom Distributions**: BetaPrime, LowRankLogisticNormal, SoftmaxNormal with
-  registered KL divergences
+- **Custom Distributions**: BetaPrime, LowRankLogisticNormal,
+  LowRankPoissonLogNormal, SoftmaxNormal with registered KL divergences
 
 ## Model Construction Space
 
@@ -76,10 +79,16 @@ graph TD
         ZINB["Zero-Inflated NB"]
         NBcapture["NB + variable capture"]
         ZINBcapture["ZINB + variable capture"]
+        LNM["LNM<br/><i>NB totals + ALR composition</i>"]
+        LNMcapture["LNM + variable capture"]
+        PLN["PLN<br/><i>Poisson-LogNormal</i>"]
         NB -->|"+ zero inflation"| ZINB
         NB -->|"+ variable capture"| NBcapture
         ZINB -->|"+ variable capture"| ZINBcapture
         NBcapture -->|"+ zero inflation"| ZINBcapture
+        NB -->|"+ VAE composition"| LNM
+        LNM -->|"+ variable capture"| LNMcapture
+        NB -->|"+ direct Poisson"| PLN
     end
 
     subgraph parameterization ["2 - Parameterization"]
@@ -124,9 +133,10 @@ graph TD
     VAE_node --> guide
 ```
 
-This compositional design means you can combine **4 likelihoods x 3
+This compositional design means you can combine **4 DM likelihoods x 3
 parameterizations x 2 constraint modes** as a starting point, then layer on
 mixture components, hierarchical priors, multi-dataset structure, and more.
+The LNM and PLN families extend this with VAE-based compositional inference.
 
 ## Available Models
 
@@ -141,6 +151,35 @@ can be extended with zero inflation and/or variable capture probability:
 | **Zero-Inflated NB**        | `"zinb"`    | NB + zero inflation        | `gate`              | Data with excess zeros      |
 | **NB + variable capture**   | `"nbvcp"`   | NB + capture probability   | `p_capture`         | Variable sequencing depth   |
 | **ZINB + variable capture** | `"zinbvcp"` | ZINB + capture probability | `gate`, `p_capture` | Complex technical variation |
+
+#### Logistic-Normal Multinomial (LNM) Family
+
+The LNM models extend the NB models with a VAE-decoded compositional structure
+using the additive log-ratio (ALR) transform. Counts are factored into total
+counts (NB) and composition (Multinomial), with gene-gene correlations captured
+by a low-rank Gaussian in ALR space.
+
+| Likelihood           | Code string | Construction       | When to Use                         |
+| -------------------- | ----------- | ------------------ | ----------------------------------- |
+| **LNM**              | `"lnm"`     | NB totals + VAE    | Compositional inference with DE     |
+| **LNM + var capture** | `"lnmvcp"` | LNM + capture prob | LNM with variable sequencing depth  |
+
+#### Poisson-LogNormal (PLN) Family
+
+The PLN model emits per-gene Poisson counts from correlated log-normal rates.
+Unlike LNM, it does **not** factorize into total counts and composition -- total
+counts emerge naturally as the sum of per-gene Poissons. This coupling through
+the shared covariance eliminates the leftward PPC bias observed with separate
+NB totals.
+
+| Likelihood | Code string | Construction     | When to Use                              |
+| ---------- | ----------- | ---------------- | ---------------------------------------- |
+| **PLN**    | `"pln"`     | Poisson + VAE    | Absolute counts, no totals decomposition |
+
+**When to use PLN vs LNM**: Use PLN when you care about absolute expression
+levels and want to avoid the composition/totals decoupling assumption. Use LNM
+when you need compositional DE in ALR/CLR coordinates or when the data naturally
+separates into composition and library size.
 
 ### Parameterizations
 
@@ -242,6 +281,23 @@ results = scribe.fit(
     n_components=3,
     n_steps=150000,
 )
+```
+
+### Poisson-LogNormal for Absolute Counts
+
+```python
+# PLN model -- no composition/totals factorization
+results = scribe.fit(
+    adata,
+    model="pln",
+    n_steps=50000,
+    batch_size=512,
+)
+
+# Extract learned covariance structure
+mu = results.get_pln_mu()     # (G,) mean log-rates
+W = results.get_pln_W()       # (G, k) low-rank factor
+corr = results.get_pln_correlation()  # (G, G) gene-gene correlations
 ```
 
 ### Choose Your Inference Method
@@ -646,7 +702,7 @@ Comprehensive documentation is available in each module:
 - **[Components](src/scribe/models/components/README.md)**: Likelihoods, guides,
   VAE architectures
 - **[Likelihoods](src/scribe/models/components/likelihoods/README.md)**: NB,
-  ZINB, variable capture likelihood details
+  ZINB, variable capture, LNM, and PLN likelihood details
 
 ### Inference Engines
 

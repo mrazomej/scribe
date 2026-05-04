@@ -65,6 +65,7 @@ from .lnm import (
     LNMWithVCPLikelihood,
     select_alr_reference,
 )
+from .pln import PoissonLogNormalLikelihood
 
 __all__ = [
     "Likelihood",
@@ -83,4 +84,6 @@ __all__ = [
     "LogisticNormalMultinomialLikelihood",
     "LNMWithVCPLikelihood",
     "select_alr_reference",
+    # PLN
+    "PoissonLogNormalLikelihood",
 ]

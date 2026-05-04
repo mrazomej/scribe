@@ -313,6 +313,26 @@ PARAMETERIZATION_MAPPINGS = {
             "z": "VAE latent code",
         },
     ),
+    # ------------------------------------------------------------------
+    # PLN (Poisson-LogNormal) — single variant, no totals submodel
+    # ------------------------------------------------------------------
+    Parameterization.POISSON_LOGNORMAL: ParameterizationMapping(
+        parameterization=Parameterization.POISSON_LOGNORMAL,
+        core_parameters=set(),
+        optional_parameters={"d_pln", "y_log_rate", "z"},
+        parameter_descriptions={
+            "y_log_rate": (
+                "Per-gene log Poisson rates from VAE decoder "
+                "(G-dimensional, identity transform). Exponentiated "
+                "inside the likelihood to obtain Poisson rates."
+            ),
+            "d_pln": (
+                "Optional per-gene residual variance scale in "
+                "log-rate space (learned d_mode, G-dimensional)"
+            ),
+            "z": "VAE latent code",
+        },
+    ),
 }
 
 # ==============================================================================
@@ -658,6 +678,9 @@ DESCRIPTIVE_NAMES: Dict[str, str] = {
     # LNM compositional parameters
     "y_alr": "alr_coordinates",
     "d_lnm": "alr_residual_scale",
+    # PLN log-rate parameters
+    "y_log_rate": "log_expression_rate",
+    "d_pln": "expression_residual_scale",
     # Already descriptive (identity)
     "bnb_concentration": "bnb_concentration",
     "mixing_weights": "mixing_weights",
@@ -693,6 +716,9 @@ PRIOR_KEY_ALIASES: Dict[str, str] = {
     "zero_inflation": "gate",
     "capture_prob": "p_capture",
     "capture_odds": "phi_capture",
+    # PLN parameter priors
+    "log_expression_rate": "y_log_rate",
+    "expression_residual_scale": "d_pln",
     # Capture-specific priors
     "capture_efficiency": "eta_capture",
     "capture_scaling": "mu_eta",

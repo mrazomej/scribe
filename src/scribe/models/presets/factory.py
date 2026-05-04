@@ -77,7 +77,11 @@ from ..config import GuideFamilyConfig, ModelConfig
 from ..config.enums import HierarchicalPriorType, InferenceMethod
 from ..config.enums import Parameterization as ParamEnum
 from ..config.groups import VAEConfig
-from ..parameterizations import PARAMETERIZATIONS, is_logistic_normal_family
+from ..parameterizations import (
+    PARAMETERIZATIONS,
+    is_logistic_normal_family,
+    is_poisson_lognormal_family,
+)
 import numpyro.distributions as npdist
 from scribe.flows import FlowChain
 from .registry import (
@@ -278,8 +282,16 @@ def _create_vae_model(
     param_strategy = PARAMETERIZATIONS[param_key]
     guide_families = model_config.guide_families or GuideFamilyConfig()
 
-    # LNM: strictly linear decoder (no hidden MLP) so ``y_alr = bias + W @ z``.
-    if is_logistic_normal_family(param_key):
+    # LNM and PLN: strictly linear decoder (no hidden MLP). For LNM,
+    # this gives ``y_alr = bias + W @ z`` so that the ALR-space mean is
+    # the bias and the loadings are the kernel. For PLN, the analogous
+    # statement is ``y_log_rate = bias + W @ z`` with ``Sigma = W W^T +
+    # diag(d)`` -- without the linear constraint the decoder is no
+    # longer the matrix W of the generative model and the
+    # PCA-loadings + log-mean-bias data init become meaningless.
+    if is_logistic_normal_family(param_key) or is_poisson_lognormal_family(
+        param_key
+    ):
         decoder_hidden_override: Tuple[int, ...] = ()
     else:
         decoder_hidden_override = None
@@ -311,37 +323,72 @@ def _create_vae_model(
     # multi-thousand-step warm-up the optimizer would otherwise need to
     # spend rediscovering it from gradient descent on the multinomial.
     _empirical_alr_bias = getattr(vae, "empirical_alr_bias_init", None)
+    # PLN counterparts: per-gene log-mean expression for the
+    # ``y_log_rate`` head bias, plus PCA loadings of the centered
+    # log-count matrix for that head's kernel. Both are populated by the
+    # PLN branch in ``scribe.api.fit`` via
+    # ``inject_pln_vae_data_init``. When absent (any non-PLN run, or PLN
+    # with the data-init disabled), the head falls back to flax's
+    # default initializers, preserving pre-PLN behavior elsewhere.
+    _empirical_log_mean_bias = getattr(
+        vae, "empirical_log_mean_bias_init", None
+    )
+    _pca_loadings_init = getattr(vae, "pca_loadings_init", None)
 
     def _build_head(name: str, transform: str) -> DecoderOutputHead:
-        """Construct a single :class:`DecoderOutputHead` with LNM-aware sizing.
+        """Construct a single :class:`DecoderOutputHead` with LNM/PLN-aware sizing.
 
         Encapsulates the per-head logic so the comprehension below stays
-        readable while still making the LNM-only special-case (custom
-        output dim and optional bias initializer) obvious.
+        readable while still making the LNM-only and PLN-only
+        special-cases (custom output dim, optional bias init, optional
+        kernel init) obvious. Every non-LNM/non-PLN head retains its
+        original behavior bit-for-bit.
         """
         is_y_alr = (
             is_logistic_normal_family(param_key) and name == "y_alr"
         )
+        is_y_log_rate = (
+            is_poisson_lognormal_family(param_key)
+            and name == "y_log_rate"
+        )
         head_dim = (n_genes - 1) if is_y_alr else n_genes
-        # Only the LNM ``y_alr`` head ever receives a custom bias init;
-        # every other model uses the flax default of zero bias. We wrap
-        # the empirical ALR mean in ``nn.initializers.constant`` because
-        # flax's ``nn.Dense.bias_init`` argument is contractually a
-        # ``(rng, shape, dtype) -> array`` callable, not an array.
+        # Only the LNM ``y_alr`` and PLN ``y_log_rate`` heads ever
+        # receive custom bias / kernel initializers; every other model
+        # uses the flax defaults. We wrap arrays in
+        # ``nn.initializers.constant`` because flax's ``nn.Dense``
+        # ``bias_init`` / ``kernel_init`` arguments are contractually
+        # ``(rng, shape, dtype) -> array`` callables, not arrays.
         bias_init = None
+        kernel_init = None
         if is_y_alr and _empirical_alr_bias is not None:
             # Cast to float32 so the constant matches the layer's dtype
             # without forcing a JAX-trace-time conversion at every step.
-            # ``nn`` and ``jnp`` are both module-level imports — see the
-            # note on the import at the top of this file for why they
-            # cannot be re-imported inside this enclosing function.
             _bias_arr = jnp.asarray(_empirical_alr_bias, dtype=jnp.float32)
             bias_init = nn.initializers.constant(_bias_arr)
+        if is_y_log_rate:
+            # PLN bias: empirical log-mean expression per gene.
+            if _empirical_log_mean_bias is not None:
+                _bias_arr = jnp.asarray(
+                    _empirical_log_mean_bias, dtype=jnp.float32
+                )
+                bias_init = nn.initializers.constant(_bias_arr)
+            # PLN kernel: PCA loadings of the centered log-count matrix.
+            # ``pca_loadings_init`` lives in (G, k) "generative-model"
+            # convention so that ``Sigma = W W^T + diag(d)``. flax
+            # ``nn.Dense`` stores its kernel in (in_features,
+            # out_features) = (k, G) layout, so we transpose at the
+            # boundary between the two conventions.
+            if _pca_loadings_init is not None:
+                _w_arr = jnp.asarray(
+                    _pca_loadings_init, dtype=jnp.float32
+                ).T
+                kernel_init = nn.initializers.constant(_w_arr)
         return DecoderOutputHead(
             param_name=name,
             output_dim=head_dim,
             transform=transform,
             bias_init=bias_init,
+            kernel_init=kernel_init,
         )
 
     output_heads = tuple(
@@ -350,11 +397,20 @@ def _create_vae_model(
 
     # 2. Build encoder. The LNM family uses a clamped log-scale variant
     # to prevent ``σ → 0`` / ``σ → ∞`` instability under the sharp
-    # multinomial likelihood. All other models retain the unclamped
-    # baseline encoder so their bit-level training behavior is unchanged.
+    # multinomial likelihood; the PLN family inherits the same
+    # log-scale clamp because the Poisson-with-exp-rate likelihood
+    # exhibits the same numerical pathology (large ``log_scale`` blows
+    # up the rate via ``exp``, small ``log_scale`` collapses the
+    # encoder posterior). The clamp class itself is likelihood-
+    # agnostic. All non-LNM/non-PLN models retain the unclamped
+    # baseline encoder so their bit-level training behavior is
+    # unchanged.
     encoder_cls = (
         LNMGaussianEncoder
-        if is_logistic_normal_family(param_key)
+        if (
+            is_logistic_normal_family(param_key)
+            or is_poisson_lognormal_family(param_key)
+        )
         else GaussianEncoder
     )
 
@@ -461,7 +517,13 @@ def _create_vae_model(
             )
             extra_specs.extend(specs)
 
-    # Learned diagonal ALR noise: per-coordinate scale ``d_lnm`` (positive).
+    # Learned diagonal residual noise. Both LNM and PLN expose a
+    # per-coordinate positive scale that lets the model carry residual
+    # variance the linear decoder cannot fit -- ``d_lnm`` in ALR space
+    # for LNM (G-1 dimensional) and ``d_pln`` in log-rate space for PLN
+    # (G dimensional, since PLN has no reference gene). The two specs
+    # are structurally identical apart from name, dimensionality, and
+    # the model-config field that toggles them on.
     lnm_d_specs: List = []
     if (
         is_logistic_normal_family(param_key)
@@ -477,9 +539,31 @@ def _create_vae_model(
                 guide_family=d_lnm_family,
             )
         ]
+    pln_d_specs: List = []
+    if (
+        is_poisson_lognormal_family(param_key)
+        and getattr(model_config, "d_mode", "low_rank") == "learned"
+    ):
+        d_pln_family = guide_families.get("d_pln")
+        pln_d_specs = [
+            LogNormalSpec(
+                name="d_pln",
+                # PLN keeps the *full* G-dimensional log-rate space
+                # (no reference gene) so the diagonal residual is
+                # also G-dimensional.
+                shape_dims=("n_genes",),
+                default_params=(-4.6, 1.0),
+                is_gene_specific=True,
+                guide_family=d_pln_family,
+            )
+        ]
 
     param_specs = (
-        [latent_marker] + non_decoder_specs + lnm_d_specs + extra_specs
+        [latent_marker]
+        + non_decoder_specs
+        + lnm_d_specs
+        + pln_d_specs
+        + extra_specs
     )
 
     # 7. Split derived params into pre-plate and in-plate
@@ -512,8 +596,70 @@ def _create_vae_model(
         )
 
     # 9. Build model
-    # Select LNM / LNMVCP likelihood or BNB / standard registry entry.
-    if is_logistic_normal_family(param_key):
+    # Select LNM / LNMVCP / PLN likelihood or BNB / standard registry entry.
+    if is_poisson_lognormal_family(param_key):
+        # PLN: per-gene Poisson on log-normal rates. Capture is folded
+        # into a per-cell additive offset in log-rate space, which is
+        # *internal* to the likelihood -- there is no separate global
+        # capture parameter (unlike LNMVCP). When the user supplies a
+        # capture-anchor prior via ``priors={"capture_efficiency":
+        # (log_M0, sigma_M)}`` (or any of the registered aliases), we
+        # construct a minimal BiologyInformedCaptureSpec carrying just
+        # the two scalars the likelihood actually reads, and switch the
+        # likelihood into capture-anchor mode. Without such a prior the
+        # likelihood's capture branch is simply not executed.
+        from ..components.likelihoods import PoissonLogNormalLikelihood
+        from ..builders.parameter_specs import BiologyInformedCaptureSpec
+
+        d_mode = getattr(model_config, "d_mode", "low_rank")
+
+        # Detect whether the user activated the capture anchor. We
+        # look in the model_config's stored priors (which carry the
+        # canonical ``eta_capture`` key after ``PRIOR_KEY_ALIASES``
+        # resolution) so that aliases like ``"capture_efficiency"``
+        # work uniformly with the LNMVCP path.
+        priors_extra: Dict = {}
+        if model_config is not None and getattr(
+            model_config, "priors", None
+        ) is not None:
+            priors_extra = (
+                getattr(
+                    model_config.priors, "__pydantic_extra__", None
+                )
+                or {}
+            )
+        eta_capture = priors_extra.get("eta_capture")
+
+        pln_capture_spec: Optional[BiologyInformedCaptureSpec] = None
+        if eta_capture is not None:
+            _log_m0, _sigma_m = eta_capture
+            pln_capture_spec = BiologyInformedCaptureSpec(
+                # ``name`` and ``shape_dims`` are required by the
+                # ParamSpec base. PLN does not register ``p_capture``
+                # as a sampled global so the name only matters for
+                # introspection / debugging, not for the trace; the
+                # helper inside the likelihood samples its own
+                # ``eta_capture`` site directly.
+                name="p_capture",
+                shape_dims=("n_cells",),
+                default_params=(_log_m0, _sigma_m),
+                is_cell_specific=True,
+                guide_family=None,
+                log_M0=_log_m0,
+                sigma_M=_sigma_m,
+                # PLN's per-cell offset is in log-rate space, so the
+                # helper returns ``p_capture`` directly (the likelihood
+                # converts to ``eta = -log(p_capture)`` on its own).
+                use_phi_capture=False,
+            )
+
+        likelihood_instance = PoissonLogNormalLikelihood(
+            d_mode=d_mode,
+            d_param_name="d_pln",
+            capture_anchor=pln_capture_spec is not None,
+            biology_informed_spec=pln_capture_spec,
+        )
+    elif is_logistic_normal_family(param_key):
         d_mode = getattr(model_config, "d_mode", "low_rank")
         ref_idx = getattr(model_config, "alr_reference_idx", -1)
         if base_model == "lnmvcp":

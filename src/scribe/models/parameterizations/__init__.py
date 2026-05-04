@@ -909,6 +909,116 @@ class LogisticNormalParameterization(Parameterization):
         return [("y_alr", "identity")]
 
 
+class PoissonLogNormalParameterization(Parameterization):
+    """Poisson-LogNormal parameterization for VAE-only models.
+
+    Each gene's count is Poisson with rate = exp(y_log_rate_g), where
+    y_log_rate is the G-dimensional output of a linear-decoder VAE.
+    There is no totals NB submodel -- total counts emerge naturally as
+    the sum of per-gene Poissons.
+
+    Unlike the LNM, the PLN has a **single natural parameterization**:
+    the Gaussian parameters (mu, Sigma) in log-rate space, encoded via
+    the linear decoder.  There are no canonical/mean_prob/mean_odds
+    variants because there is no NB to reparameterize.
+
+    Parameters
+    ----------
+    d_mode : {"low_rank", "learned"}, default="low_rank"
+        Controls the diagonal noise model.  Same semantics as the LNM.
+    """
+
+    def __init__(self) -> None:
+        """No-op constructor.
+
+        The PLN parameterization carries no per-instance state. The
+        diagonal-noise mode (``low_rank`` vs ``learned``) is read off
+        ``model_config.d_mode`` at factory time, not from this class,
+        because mode changes must propagate to the spec list and the
+        likelihood instance simultaneously -- both of which take
+        ``model_config`` directly. Keeping this constructor argument-
+        free avoids the foot-gun of a stale per-instance ``d_mode``
+        diverging from the active config.
+        """
+        # No per-instance state. See docstring above for the rationale.
+        return
+
+    # ------------------------------------------------------------------
+    # Identity / introspection
+    # ------------------------------------------------------------------
+
+    @property
+    def name(self) -> str:
+        return "poisson_lognormal"
+
+    @property
+    def core_parameters(self) -> List[str]:
+        # PLN has no totals submodel -- no r_T, p, mu_T, phi_T.
+        return []
+
+    @property
+    def gene_param_name(self) -> str:
+        return "y_log_rate"
+
+    @property
+    def requires_vae(self) -> bool:
+        return True
+
+    # ------------------------------------------------------------------
+    # Param spec construction
+    # ------------------------------------------------------------------
+
+    def build_param_specs(
+        self,
+        unconstrained: bool,
+        guide_families: GuideFamilyConfig,
+        n_components: Optional[int] = None,
+        mixture_params: Optional[List[str]] = None,
+    ) -> List[ParamSpec]:
+        """Build specs for PLN parameters.
+
+        PLN has no sampled scalar parameters (no totals submodel).
+        The optional diagonal noise ``d_pln`` is wired by the factory
+        when ``d_mode="learned"``, analogous to ``d_lnm`` in LNM.
+
+        Raises
+        ------
+        NotImplementedError
+            If ``n_components > 1`` -- mixtures are deferred for PLN v1.
+        """
+        if n_components is not None and n_components > 1:
+            raise NotImplementedError(
+                "PLN v1 does not support mixture models "
+                f"(n_components={n_components}). Mixtures are "
+                "deferred to future work."
+            )
+        # No sampled core parameters for PLN.
+        return []
+
+    def build_derived_params(self) -> List[DerivedParam]:
+        """No derived parameters for PLN (no totals submodel)."""
+        return []
+
+    def decoder_output_spec(self, base_model: str) -> List[Tuple[str, str]]:
+        """Return a single identity head for log-rates ``y_log_rate``.
+
+        The exponentiation to Poisson rates happens inside the
+        likelihood, not on the decoder head.
+
+        Parameters
+        ----------
+        base_model : str
+            Base model type (expected to be ``"pln"``).
+
+        Returns
+        -------
+        list of (str, str)
+            ``[("y_log_rate", "identity")]``.
+        """
+        del base_model
+        return [("y_log_rate", "identity")]
+
+
 # ==============================================================================
 # NOTE: Hierarchical parameterization classes have been removed.
 # Hierarchical priors on p/phi and gate are now controlled via boolean flags
@@ -1058,6 +1168,7 @@ _mean_odds = MeanOddsParameterization()
 _logistic_normal_canonical = LogisticNormalParameterization(variant="canonical")
 _logistic_normal_mean_prob = LogisticNormalParameterization(variant="mean_prob")
 _logistic_normal_mean_odds = LogisticNormalParameterization(variant="mean_odds")
+_poisson_lognormal = PoissonLogNormalParameterization()
 
 # Registry mapping internal parameterization keys to singleton instances.
 # The LNM family appears under three keys mirroring the DM-family trio.
@@ -1073,6 +1184,8 @@ PARAMETERIZATIONS = {
     "logistic_normal_canonical": _logistic_normal_canonical,
     "logistic_normal_mean_prob": _logistic_normal_mean_prob,
     "logistic_normal_mean_odds": _logistic_normal_mean_odds,
+    # PLN parameterization (single variant, no totals submodel)
+    "poisson_lognormal": _poisson_lognormal,
     # Backward compatibility for the DM family
     "standard": _canonical,
     "linked": _mean_prob,
@@ -1096,6 +1209,22 @@ _LNM_FAMILY_KEYS: frozenset = frozenset(
         "logistic_normal_mean_odds",
     }
 )
+
+
+def is_poisson_lognormal_family(param_key: str) -> bool:
+    """Return ``True`` for the PLN parameterization key.
+
+    Parameters
+    ----------
+    param_key : str
+        Internal parameterization key.
+
+    Returns
+    -------
+    bool
+        ``True`` if ``param_key == "poisson_lognormal"``.
+    """
+    return param_key == "poisson_lognormal"
 
 
 def is_logistic_normal_family(param_key: str) -> bool:
@@ -1172,6 +1301,12 @@ def resolve_user_parameterization_for_model(
         (when the model is ``"lnm"`` / ``"lnmvcp"``).
     """
     model_lower = model.lower()
+
+    # PLN has a single parameterization -- always resolve to it
+    # regardless of the user-supplied parameterization string.
+    if model_lower == "pln":
+        return "poisson_lognormal"
+
     param_lower = parameterization.lower()
 
     # Backward-compat: the legacy DM-family aliases collapse to the
@@ -1220,9 +1355,11 @@ __all__ = [
     "MeanProbParameterization",
     "MeanOddsParameterization",
     "LogisticNormalParameterization",
+    "PoissonLogNormalParameterization",
     "PARAMETERIZATIONS",
     # Family helpers
     "is_logistic_normal_family",
+    "is_poisson_lognormal_family",
     "resolve_user_parameterization_for_model",
     # Derived parameter compute functions (pure math, alignment-free)
     "_compute_mu_from_r_p",

@@ -888,7 +888,8 @@ ScribeSVIResults
 
 ScribeVAEResults (extends ScribeSVIResults)
 ├── LatentSpaceMixin          # Encode/decode/embed via VAE
-└── LNMExtractionMixin        # LNM population parameter extraction (mu, W, d)
+├── LNMExtractionMixin        # LNM population parameter extraction (mu, W, d)
+└── PLNExtractionMixin        # PLN population parameter extraction (mu, W, d)
 ```
 
 **Mixin Details:**
@@ -1070,6 +1071,7 @@ src/scribe/svi/
 ├── _sampling.py            # SamplingMixin
 ├── _likelihood.py          # LikelihoodMixin
 ├── _lnm_extraction.py     # LNMExtractionMixin (mu, W, d, correlation)
+├── _pln_extraction.py     # PLNExtractionMixin (mu, W, d, correlation)
 ├── _mixture_analysis.py    # MixtureAnalysisMixin
 └── _normalization.py       # NormalizationMixin
 ```
@@ -1107,6 +1109,32 @@ fitted LNM model.  The ALR reference gene index is stored in
 `vae_results.model_config.alr_reference_idx` (auto-selected from data as the
 gene with the highest geometric mean expression).  All coordinate transforms
 (ALR-to-CLR, simplex sampling, etc.) respect this index.
+
+#### PLN Parameter Extraction (VAE Results)
+
+For `pln` models, `ScribeVAEResults` provides analogous methods to extract the
+fitted Poisson-LogNormal parameters directly from the linear-decoder VAE:
+
+```python
+# mu: log-rate-space mean (decoder bias), shape (G,)
+mu = vae_results.get_pln_mu()
+
+# W: low-rank factor (decoder kernel), shape (G, k)
+W = vae_results.get_pln_W()
+
+# d: learned diagonal (or None for low_rank mode), shape (G,)
+d = vae_results.get_pln_d()
+
+# Full covariance Sigma = WW^T + diag(d), shape (G, G)
+sigma = vae_results.get_pln_sigma()
+
+# Gene-gene correlation in log-rate space, shape (G, G)
+corr = vae_results.get_pln_correlation()
+```
+
+Unlike LNM, PLN parameters are G-dimensional (not G-1) and live in log-rate
+space rather than ALR coordinates.  No ALR-to-CLR transformation is needed
+since log-rate space treats all genes symmetrically.
 
 #### VAE Serialization Note
 

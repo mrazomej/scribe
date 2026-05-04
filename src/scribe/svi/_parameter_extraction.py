@@ -14,7 +14,7 @@ import numpyro.distributions as dist
 from jax import random
 
 from ..utils import numpyro_to_scipy
-from ..stats.distributions import LowRankLogisticNormal
+from ..stats.distributions import LowRankLogisticNormal, LowRankPoissonLogNormal
 from ..models.config.parameter_mapping import rename_dict_keys
 from ..core.axis_layout import (
     AxisLayout,
@@ -837,7 +837,9 @@ def _build_map_layouts(
     # that was previously missing (latent bug for non-canonical
     # parameterizations like mean_odds).
     _mp, ds_params = derive_axis_membership(
-        model_config, samples=map_estimates, has_sample_dim=False,
+        model_config,
+        samples=map_estimates,
+        has_sample_dim=False,
     )
 
     # Use the explicit n_components if provided, otherwise fall back to
@@ -1074,6 +1076,40 @@ class ParameterExtractionMixin:
             )
             distributions["rho"] = LowRankLogisticNormal(
                 loc=mu, cov_factor=W, cov_diag=d, reference_idx=ref_idx
+            )
+
+        # For PLN VAE results, include decoder-derived log-rate distributions:
+        # - y_log_rate: G-dimensional low-rank MVN in log-rate space
+        # - lambda_rate: LowRankPoissonLogNormal for generating count-space PPCs
+        _is_poisson_lognormal = (
+            isinstance(_param_value, str)
+            and _param_value == "poisson_lognormal"
+        ) or (
+            isinstance(_param_name, str) and _param_name == "POISSON_LOGNORMAL"
+        )
+        if (
+            backend == "numpyro"
+            and _is_poisson_lognormal
+            and hasattr(self, "get_pln_mu")
+            and hasattr(self, "get_pln_W")
+            and hasattr(self, "get_pln_d")
+        ):
+            from ..stats.distributions import LowRankPoissonLogNormal
+
+            mu = self.get_pln_mu()
+            W = self.get_pln_W()
+            d_opt = self.get_pln_d()
+            d = (
+                d_opt
+                if d_opt is not None
+                else jnp.zeros(mu.shape[0], dtype=mu.dtype)
+            )
+
+            distributions["y_log_rate"] = dist.LowRankMultivariateNormal(
+                loc=mu, cov_factor=W, cov_diag=d
+            )
+            distributions["lambda_rate"] = LowRankPoissonLogNormal(
+                loc=mu, cov_factor=W, cov_diag=d
             )
 
         if backend == "scipy":
@@ -1328,7 +1364,9 @@ class ParameterExtractionMixin:
             # returning a misleading approximation, omit it from MAP output.
             # Users can still access the full distribution via
             # get_distributions()["rho"].
-            if isinstance(dist_obj, LowRankLogisticNormal):
+            if isinstance(
+                dist_obj, (LowRankLogisticNormal, LowRankPoissonLogNormal)
+            ):
                 continue
 
             # Defer flow-guided params to the sampling-based handler

@@ -269,7 +269,25 @@ class DecoderOutputHead:
         at training step 0 — dramatically reducing the gradient pressure
         on the rest of the decoder during the first few thousand
         iterations. See ``empirical_alr_mean_from_counts`` in
-        :mod:`scribe.core.normalization_logistic`.
+        :mod:`scribe.core.normalization_logistic`. The PLN
+        ``"y_log_rate"`` head reuses the same hook to anchor its bias
+        to the empirical per-gene log-mean expression.
+    kernel_init : Optional[Callable]
+        Optional flax-style kernel initializer for the head's
+        :class:`nn.Dense`. Same ``(rng_key, shape, dtype) -> array``
+        contract as ``bias_init``. When ``None`` (default), the layer
+        uses flax's standard initializer (Lecun normal).
+
+        This hook exists for the PLN linear-decoder head
+        (``"y_log_rate"``), where initializing the kernel to the
+        principal components of the centered log-count matrix gives the
+        optimizer a warm start on the covariance structure (the kernel
+        of a linear decoder *is* the loadings matrix ``W`` in the
+        generative model ``Sigma = W W^T + diag(d)``). Only meaningful
+        for linear-decoder heads; with a hidden-MLP decoder the kernel
+        of the final dense maps a hidden representation to the output,
+        not the latent ``z`` itself, and PCA loadings would be the
+        wrong shape.
     """
 
     param_name: str
@@ -281,6 +299,10 @@ class DecoderOutputHead:
     # wrap it via ``nn.initializers.constant(arr)``; the factory does
     # exactly this for the LNM ``y_alr`` head.
     bias_init: Optional[Callable] = None
+    # Same contract as ``bias_init`` but for the dense kernel — used by
+    # the PLN ``y_log_rate`` head to seed ``W`` from PCA loadings of the
+    # centered log-count matrix.
+    kernel_init: Optional[Callable] = None
 
     def __post_init__(self):
         if self.transform not in OUTPUT_TRANSFORMS:
@@ -690,6 +712,12 @@ class MultiHeadDecoder(AbstractDecoder):
             dense_kwargs: Dict[str, Any] = {"name": f"head_{head.param_name}"}
             if head.bias_init is not None:
                 dense_kwargs["bias_init"] = head.bias_init
+            if head.kernel_init is not None:
+                # Same lazy assembly as ``bias_init``: only forward the
+                # initializer when the caller supplied one, so heads
+                # without a custom kernel init keep flax's default Lecun
+                # normal scheme bit-for-bit.
+                dense_kwargs["kernel_init"] = head.kernel_init
             raw = nn.Dense(head.output_dim, **dense_kwargs)(h)
             transform_fn = _get_output_transform(head.transform)
             result[head.param_name] = transform_fn(raw)

@@ -40,6 +40,7 @@ from ._latent_space import (
 )
 from ._likelihood import LikelihoodMixin
 from ._lnm_extraction import LNMExtractionMixin
+from ._pln_extraction import PLNExtractionMixin
 from ._mixture_analysis import MixtureAnalysisMixin
 from ._model_helpers import ModelHelpersMixin
 from ._normalization import NormalizationMixin
@@ -135,6 +136,7 @@ class ScribeVAEResults(
     MixtureAnalysisMixin,
     NormalizationMixin,
     LNMExtractionMixin,
+    PLNExtractionMixin,
     ScribeVariationalResults,
 ):
     """Results from VAE-based variational inference.
