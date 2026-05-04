@@ -46,7 +46,7 @@ the model to represent arbitrary cross-gene correlations. Beyond the statistical
 motivation, the logistic-normal has a direct biophysical justification: it is
 the steady-state distribution of a system of interacting genes under the linear
 noise approximation, with the covariance determined by the gene regulatory
-network's Jacobian (see @sec-lnm-biophysical). The trade-off is that
+network's Jacobian (see @sec-grn-biophysical). The trade-off is that
 the Dirichlet-Multinomial's closed-form integral is lost, requiring approximate
 inference techniques for the per-cell composition latent variable.
 
@@ -105,7 +105,7 @@ gene-gene dependencies unreliable. This statistical limitation also
 has a biophysical counterpart: the Dirichlet arises from the assumption
 that genes transcribe independently, whereas real genes form regulatory
 networks that induce the very correlations the Dirichlet cannot represent
-(see @sec-lnm-biophysical for the full derivation).
+(see @sec-grn-biophysical for the full derivation).
 
 ### In log-ratio space, the limitation is even clearer {#sec-lnm-dirichlet-logr}
 
@@ -305,7 +305,7 @@ different convention for removing the one redundant degree of freedom
 inherent to compositional data: the simplex is a $(G-1)$-dimensional
 manifold embedded in $\mathbb{R}^G$, so any natural ambient
 representation will overcount dimensions by one. Because the
-biophysical derivation of @sec-lnm-biophysical naturally produces a
+biophysical derivation of @sec-grn-biophysical naturally produces a
 $G$-dimensional Gaussian on log-abundances (not a $(G-1)$-dimensional
 ALR object), and because the chapter on post-hoc fitting
 (@sec-normalization) is restricted to the ALR form for reasons that do
@@ -506,13 +506,13 @@ The critical row is the last one: the Dirichlet-Multinomial integral has a
 closed form, but the logistic-normal-multinomial does not. This is the
 fundamental trade-off between the two approaches.
 
-## Biophysical justification: steady-state gene regulatory networks {#sec-lnm-biophysical}
+## Biophysical justification: steady-state gene regulatory networks {#sec-grn-biophysical}
 
 The preceding section established a *statistical* motivation for the
 logistic-normal: the Dirichlet has zero free correlation parameters,
 while the logistic-normal has $O(G^2)$ (or $O(Gk)$ in low-rank form).
 This section summarizes the *biophysical* motivation developed in full
-detail in @sec-lnm-biophysics. We show that the logistic-normal on gene
+detail in @sec-grn-biophysics. We show that the logistic-normal on gene
 compositions is the natural steady-state distribution of a system of
 interacting genes under standard stochastic gene expression theory,
 whereas the Dirichlet-Multinomial arises only under the assumption that
@@ -520,16 +520,16 @@ genes are transcriptionally independent.
 
 ### The effective Poisson rate and its dynamics
 
-A key conceptual result developed in @sec-lnm-bio-bursty is the precise
+A key conceptual result developed in @sec-grn-bio-bursty is the precise
 identity of the variable $\lambda_g$ that appears in both models.
 Starting from the one-state bursty promoter---a constitutively active
 promoter producing mRNA in geometrically-distributed bursts---the
 effective Poisson rate $\lambda_g$ is the **expected mRNA abundance**,
 and its exact steady-state distribution is a Gamma
-(@sec-lnm-bio-bursty-gamma).
+(@sec-grn-bio-bursty-gamma).
 
 The dynamics of $\lambda_g$ follow from **mass balance**
-(@sec-lnm-bio-mass-balance): the rate of change of the mRNA pool equals
+(@sec-grn-bio-mass-balance): the rate of change of the mRNA pool equals
 production minus first-order degradation,
 
 $$
@@ -546,7 +546,7 @@ of gene expression.
 This resolves a potential confusion: $\lambda_g$ is **not** a
 "transcription rate" (a kinetic parameter with units molecules/time),
 but rather the **expected mRNA abundance** conditional on the regulatory
-state. The full derivation is given in @sec-lnm-bio-lambda-def.
+state. The full derivation is given in @sec-grn-bio-lambda-def.
 
 ### Gene regulatory coupling
 
@@ -555,7 +555,7 @@ $g$ is no longer autonomous: it depends on the concentrations of
 transcription factors encoded by other genes. Making the burst rate a
 function of the expression vector,
 $k_{i,g} \to k_{i,g}(\underline{\lambda})$
-(see @sec-lnm-bio-grn-coupling), yields the coupled ODE system
+(see @sec-grn-bio-grn-coupling), yields the coupled ODE system
 
 $$
 \frac{d\lambda_g}{dt} =
@@ -572,23 +572,23 @@ case---it does not change upon introducing gene-gene interactions. This
 derivation rests on several explicit assumptions (fluid limit,
 protein-tracks-mRNA proportionality, constant burst size, and
 first-order degradation), which are enumerated and discussed in
-@sec-lnm-bio-assumptions.
+@sec-grn-bio-assumptions.
 
 ### From coupled stochastic dynamics to the logistic-normal
 
 The derivation then proceeds through a standard chain of approximations,
-each developed in full in @sec-lnm-biophysics:
+each developed in full in @sec-grn-biophysics:
 
-1. **Chemical Langevin Equation** (@sec-lnm-bio-cle): stochastic noise
+1. **Chemical Langevin Equation** (@sec-grn-bio-cle): stochastic noise
    is added to the coupled ODE, modeling intrinsic gene expression
    fluctuations.
-2. **Log-space transformation** (@sec-lnm-bio-log-space): Itô's lemma
+2. **Log-space transformation** (@sec-grn-bio-log-space): Itô's lemma
    transforms the CLE to log-abundance coordinates $x_g = \log \lambda_g$.
-3. **Linear Noise Approximation** (@sec-lnm-bio-lna): the drift is
+3. **Linear Noise Approximation** (@sec-grn-bio-lna): the drift is
    linearized around the deterministic steady state, and the noise
    amplitude is frozen at its steady-state value. The result is a
    multivariate Ornstein--Uhlenbeck (OU) process in log-space.
-4. **Lyapunov equation** (@sec-lnm-bio-lyapunov): the OU steady-state
+4. **Lyapunov equation** (@sec-grn-bio-lyapunov): the OU steady-state
    distribution is a multivariate Gaussian,
    $\underline{x} \sim \mathcal{N}(\underline{\bar{x}},
    \underline{\underline{\Sigma}})$, where the covariance
@@ -597,7 +597,7 @@ each developed in full in @sec-lnm-biophysics:
    $\underline{\underline{J}}\,\underline{\underline{\Sigma}} +
    \underline{\underline{\Sigma}}\,\underline{\underline{J}}^\top +
    2\underline{\underline{D}} = 0$.
-5. **Softmax to compositions** (@sec-lnm-bio-to-ln): since
+5. **Softmax to compositions** (@sec-grn-bio-to-ln): since
    $\underline{x}$ is Gaussian, the gene composition
    $\underline{\rho} = \text{softmax}(\underline{x})$ follows a
    logistic-normal distribution by definition.
@@ -612,11 +612,11 @@ bursty-transcription noise in $\underline{\underline{D}}$.
 ### Universality across microscopic models
 
 The GRN ODE above is not specific to the one-state bursty promoter.
-As argued deductively in @sec-lnm-bio-deductive, the form
+As argued deductively in @sec-grn-bio-deductive, the form
 $\dot{\lambda}_g = b_g(\underline{\lambda}) - \gamma_g \lambda_g$ is a
 necessary consequence of two physical ingredients: first-order mRNA
 degradation and coarse-grainable production. In
-@sec-lnm-bio-two-state, we verify this claim explicitly by deriving the
+@sec-grn-bio-two-state, we verify this claim explicitly by deriving the
 same ODE from the **two-state promoter** (promoter ON/OFF switching),
 a completely different microscopic model. The microscopic model enters
 only through the noise amplitude, not through the form of the result.
@@ -627,7 +627,7 @@ The low-rank factorization
 $\underline{\underline{\Sigma}} = \underline{\underline{W}}\,
 \underline{\underline{W}}^\top + \text{diag}(\underline{d})$ from
 @eq-lnm-low-rank-cov has a natural biophysical interpretation
-(@sec-lnm-bio-low-rank): the columns of $\underline{\underline{W}}$
+(@sec-grn-bio-low-rank): the columns of $\underline{\underline{W}}$
 approximate the dominant transcription-factor programs driving
 compositional variance, while $\underline{d}$ captures gene-intrinsic
 noise. This low-rank structure is not merely a computational convenience
@@ -641,7 +641,7 @@ individually named programs.
 
 The DM and LNM arise from different approximation regimes applied to the
 same underlying stochastic gene expression process
-(@sec-lnm-bio-connection):
+(@sec-grn-bio-connection):
 
 | Model | Biophysical assumption | Steady-state | Correlation structure |
 |-------|------------------------|--------------|----------------------|
@@ -715,7 +715,7 @@ independent compositional latent $\underline{z}^{(c)} \sim
 \mathcal{N}(\underline{\mu},\,\underline{\underline{\Sigma}})$. This is
 the same factorization that the DM uses, and it inherits the same
 limitation: it is **not** strictly derivable from the GRN biophysics of
-@sec-lnm-biophysical. Under the LNA on log-abundances
+@sec-grn-biophysical. Under the LNA on log-abundances
 $\underline{x}^{(c)}$, the total abundance $\Lambda^{(c)} = \sum_g
 \lambda_g^{(c)}$ and the composition $\underline{\rho}^{(c)} =
 \underline{\lambda}^{(c)} / \Lambda^{(c)}$ are in general correlated,
@@ -1741,11 +1741,11 @@ of design decisions that may warrant revisiting in future work.
 
 ### The LNA approximation in low-count regimes {#sec-lnm-lim-lna}
 
-The biophysical derivation of @sec-lnm-biophysical relies on two
+The biophysical derivation of @sec-grn-biophysical relies on two
 approximations applied to the Chemical Langevin Equation: the linear
 noise approximation (linearizing the drift around the deterministic
 steady state) and the freezing of the noise amplitude at its
-steady-state value (see @sec-lnm-bio-lna). Both approximations are
+steady-state value (see @sec-grn-bio-lna). Both approximations are
 controlled by the same small parameter---the relative size of
 fluctuations $\delta\underline{x}$ around the steady state in
 log-abundance space---and both degrade for genes with very low molecular
@@ -1764,7 +1764,7 @@ but it does not cover every gene equally well.
 
 ### Identifiability of $\underline{\underline{W}}$ {#sec-lnm-lim-identifiability}
 
-As discussed in @sec-lnm-bio-low-rank, the likelihood depends on
+As discussed in @sec-grn-bio-low-rank, the likelihood depends on
 $\underline{\underline{W}}$ only through
 $\underline{\underline{W}}\,\underline{\underline{W}}^\top$, so
 $\underline{\underline{W}}$ is identified only up to a $k \times k$
@@ -1781,7 +1781,7 @@ sparsity in $\underline{\underline{W}}$ at training time).
 A related but distinct identifiability question concerns the
 **inverse problem** $\underline{\underline{\Sigma}} \to
 \underline{\underline{J}}$ implied by the Lyapunov equation
-@eq-lnm-bio-lyapunov. Multiple Jacobians $\underline{\underline{J}}$
+@eq-grn-bio-lyapunov. Multiple Jacobians $\underline{\underline{J}}$
 can produce the same steady-state covariance
 $\underline{\underline{\Sigma}}$, so even if
 $\underline{\underline{\Sigma}}$ is recovered exactly from data, the

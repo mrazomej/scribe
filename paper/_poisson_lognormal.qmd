@@ -1,0 +1,636 @@
+---
+editor:
+    render-on-save: true
+# bibliography: references.bib
+csl: ieee.csl
+format:
+  html:
+    theme:
+      light: cosmo
+      dark: superhero 
+---
+
+# Poisson-LogNormal model {#sec-poisson-lognormal}
+
+In @sec-grn-biophysics, we established that the steady-state distribution of
+log-abundances in a gene regulatory network under the linear noise
+approximation is a multivariate Gaussian:
+
+$$
+\underline{x}^{(c)} \sim \mathcal{N}(\underline{\mu},\,
+\underline{\underline{\Sigma}}),
+\quad x_g = \log \lambda_g,
+\quad \underline{x} \in \mathbb{R}^G.
+$${#eq-pln-mvn-recap}
+
+In @sec-logistic-normal-multinomial, this result was connected to observed
+scRNA-seq counts via the **Logistic-Normal Multinomial** (LNM) model, which
+factorizes the count vector into a Negative Binomial for the total count and a
+Multinomial for the composition. While this factorization is elegant and
+computationally convenient, it introduces two modeling assumptions that are not
+mandated by the biophysics: (i) a specific parametric distribution (NB) for the
+total count, and (ii) independence between total count and composition given the
+model parameters. As discussed in @sec-grn-bio-observation-models, both of
+these are additional approximations beyond the LNA itself.
+
+In this section, we develop an alternative observation model---the
+**Poisson-LogNormal** (PLN) model---that avoids the total-composition
+factorization entirely. Each gene's count is modeled as a Poisson draw from the
+exponentiated log-abundance, which is the most direct connection to the
+Poisson-Gamma mixture representation that underlies the birth-death process
+(@sec-grn-bio-bursty-gamma). The PLN model naturally couples total counts and
+composition, produces heavier-tailed total count distributions, and yields a
+log-concave posterior that is more amenable to variational approximation.
+
+## Motivation: why an alternative to the LNM {#sec-pln-motivation}
+
+The LNM model has several properties that motivate the search for an
+alternative:
+
+1. **Left-biased posterior predictive checks.** Empirically, the LNM's PPCs for
+   total counts show a systematic leftward shift relative to the observed data.
+   This arises because the NB total-count submodel underestimates the tail
+   weight: the true total count (a sum of correlated log-normal Poissons) has
+   heavier tails than any NB with matched mean and variance.
+
+2. **Total-composition independence.** The LNM treats total count $u_T$ and
+   composition $\underline{\rho}$ as independent given the model parameters.
+   Under the biophysics, however, $u_T$ and $\underline{\rho}$ are coupled
+   through the shared covariance $\underline{\underline{\Sigma}}$: cells with
+   high expression of one gene program will tend to have both different
+   compositions and different total counts. This coupling is lost in the
+   LNM's factorization.
+
+3. **The NB total-count model is an additional assumption.** The NB for $u_T$
+   is exact only in the independent-gene limit (where each gene's abundance is
+   Gamma-distributed). For interacting genes, the sum of correlated log-normal
+   variables does not follow an NB distribution. The LNM inherits a mismatch
+   between the biophysics (correlated log-normals) and the statistical model
+   (NB totals).
+
+The PLN addresses all three issues by modeling the count vector directly, without
+the total-composition split.
+
+## The Poisson-LogNormal distribution {#sec-pln-distribution}
+
+### Definition {#sec-pln-definition}
+
+The Poisson-LogNormal (PLN) distribution is a hierarchical model in which a
+$G$-dimensional count vector $\underline{u}$ is generated as follows:
+
+$$
+\underline{x} \sim \mathcal{N}(\underline{\mu},\,
+\underline{\underline{\Sigma}}),
+\quad
+u_g \mid x_g \sim \text{Poisson}(e^{x_g}),
+\quad g = 1, \ldots, G,
+$${#eq-pln-definition}
+
+where the Poisson draws are conditionally independent given
+$\underline{x}$. The latent variable $\underline{x} \in \mathbb{R}^G$ is
+the vector of log-abundances (log Poisson rates), and
+$\underline{\underline{\Sigma}}$ is the $G \times G$ covariance matrix
+encoding cross-gene correlations in log-rate space.
+
+The marginal distribution of $\underline{u}$ (integrating out
+$\underline{x}$) is
+
+$$
+\pi(\underline{u} \mid \underline{\mu},\,
+\underline{\underline{\Sigma}}) =
+\int_{\mathbb{R}^G}
+\left[\prod_{g=1}^G
+\frac{e^{u_g x_g - e^{x_g}}}{u_g!}\right]
+\cdot
+\mathcal{N}(\underline{x};\, \underline{\mu},\,
+\underline{\underline{\Sigma}})
+\, d\underline{x}.
+$${#eq-pln-marginal}
+
+This integral has no closed-form solution in general, paralleling the situation
+for the LNM (@sec-lnm-no-closed-form). However, the integrand has more
+favorable analytical properties than the LNM's (see @sec-pln-log-concavity).
+
+### Moments {#sec-pln-moments}
+
+The PLN has tractable moment expressions. From the law of iterated expectations
+and the moment-generating function of the Gaussian:
+
+**Mean:**
+$$
+\mathbb{E}[u_g] = \mathbb{E}[\mathbb{E}[u_g \mid x_g]]
+= \mathbb{E}[e^{x_g}]
+= \exp\!\left(\mu_g + \tfrac{1}{2}\Sigma_{gg}\right).
+$${#eq-pln-mean}
+
+**Variance:**
+$$
+\text{Var}(u_g) =
+\exp(2\mu_g + \Sigma_{gg})\left[\exp(\Sigma_{gg}) - 1\right]
++ \exp\!\left(\mu_g + \tfrac{1}{2}\Sigma_{gg}\right),
+$${#eq-pln-variance}
+
+where the first term is the variance of the log-normal rate and the second
+is the Poisson variance (from the law of total variance:
+$\text{Var}(u_g) = \mathbb{E}[\text{Var}(u_g \mid x_g)] +
+\text{Var}(\mathbb{E}[u_g \mid x_g]) = \mathbb{E}[e^{x_g}] +
+\text{Var}(e^{x_g})$).
+
+**Covariance (between genes):**
+$$
+\text{Cov}(u_g, u_{g'}) =
+\exp\!\left(\mu_g + \mu_{g'} + \tfrac{1}{2}(\Sigma_{gg} + \Sigma_{g'g'})
+\right)
+\left[\exp(\Sigma_{gg'}) - 1\right],
+\quad g \neq g'.
+$${#eq-pln-covariance}
+
+These moment expressions are in closed form, enabling method-of-moments
+initialization of $\underline{\mu}$ and $\underline{\underline{\Sigma}}$
+from empirical count data.
+
+### Contrast with the LNM {#sec-pln-contrast}
+
+The PLN and LNM share the same biophysical foundation
+(@sec-grn-biophysics) but differ in the observation layer:
+
+| Property | LNM | PLN |
+|----------|-----|-----|
+| Latent space | $\mathbb{R}^{G-1}$ (ALR coordinates) | $\mathbb{R}^G$ (log-rates) |
+| Observation | $\underline{u} \mid u_T \sim \text{Multinomial}(u_T, \text{softmax}(\underline{y}_{\text{ALR}}))$ | $u_g \mid x_g \sim \text{Poisson}(e^{x_g})$, independently |
+| Total count | Separate NB model for $u_T$ | Emergent: $u_T = \sum_g u_g$ |
+| Scale information | Lost (softmax normalizes) | Retained in $\underline{\mu}$ |
+| Reference gene | Required (ALR reference) | Not needed |
+| Posterior geometry | Non-log-concave | Log-concave |
+
+An important conceptual connection: the marginal compositions
+$\rho_g = u_g / \sum_j u_j$ under the PLN are approximately
+logistic-normal. This follows because $\lambda_g / \sum_j \lambda_j =
+\text{softmax}(\underline{x})_g$ applied to a Gaussian $\underline{x}$
+gives a logistic-normal by definition (@sec-lnm-logistic-normal-def). The
+two models share compositional structure; they differ in whether
+composition is modeled directly (LNM) or emerges as a by-product (PLN).
+
+## The PLN generative model {#sec-pln-generative}
+
+### Generative process for a single cell {#sec-pln-generative-process}
+
+For a single cell $c$ with gene panel $g = 1, \ldots, G$:
+
+1. **Draw log-abundances** from the GRN steady-state:
+   $$
+   \underline{x}^{(c)} \sim
+   \mathcal{N}(\underline{\mu},\,
+   \underline{\underline{\Sigma}}).
+   $${#eq-pln-gen-latent}
+
+2. **Emit counts** via independent Poisson channels:
+   $$
+   u_g^{(c)} \mid x_g^{(c)} \sim
+   \text{Poisson}\!\left(e^{x_g^{(c)}}\right),
+   \quad g = 1, \ldots, G.
+   $${#eq-pln-gen-counts}
+
+### Low-rank covariance {#sec-pln-low-rank}
+
+Following the same reasoning as for the LNM (@sec-grn-bio-low-rank), we
+parameterize the covariance with a low-rank-plus-diagonal structure:
+
+$$
+\underline{\underline{\Sigma}} =
+\underline{\underline{W}}\,\underline{\underline{W}}^\top
++ \text{diag}(\underline{d}),
+\quad
+\underline{\underline{W}} \in \mathbb{R}^{G \times k},
+\quad
+\underline{d} \in \mathbb{R}_{>0}^G.
+$${#eq-pln-low-rank}
+
+The columns of $\underline{\underline{W}}$ capture the $k$ dominant
+regulatory programs, and $\underline{d}$ captures gene-intrinsic residual
+variance. Crucially, the latent has dimension $G$ (not $G-1$ as in the LNM),
+so $\underline{\underline{W}}$ is $G \times k$ and $\underline{d}$ is
+$G$-dimensional.
+
+### Capture probability as a log-rate offset {#sec-pln-capture}
+
+In scRNA-seq, each cell's mRNA pool is sampled with a cell-specific capture
+efficiency. In the LNM framework, variable capture probability (VCP) is
+modeled through an NB-thinning convolution that modifies the total-count
+distribution (@sec-lnm-lim-decoupling). In the PLN, capture enters much
+more naturally as an **additive offset in log-rate space**.
+
+Let $e^{-\eta^{(c)}}$ denote the capture efficiency of cell $c$, where
+$\eta^{(c)} > 0$ is the log-capture-loss. The observed count is a Poisson
+draw from the captured rate:
+
+$$
+u_g^{(c)} \mid x_g^{(c)}, \eta^{(c)} \sim
+\text{Poisson}\!\left(e^{x_g^{(c)} - \eta^{(c)}}\right).
+$${#eq-pln-capture}
+
+The capture loss is shared across all genes in a cell (all $G$ channels are
+thinned by the same factor), so $\eta^{(c)}$ is a scalar per-cell offset.
+Following the biology-informed capture anchor of @sec-grn-bio-bursty, we
+place a truncated normal prior on $\eta$:
+
+$$
+\eta^{(c)} \sim \text{TruncN}\!\left(\log M_0 - \log L_c,\;
+\sigma_M^2,\; \text{low} = 0\right),
+$${#eq-pln-capture-prior}
+
+where $L_c$ is the observed library size of cell $c$, $M_0$ is the
+prior median total mRNA per cell, and $\sigma_M$ captures uncertainty in
+$M_0$. This is the same biology-informed anchor used in the LNMVCP model,
+but the downstream mathematics is simpler: in PLN, capture is pure addition
+in log-space, with no NB-thinning convolution.
+
+When capture variation is negligible or the user prefers a simpler model, the
+capture offset can be disabled (equivalent to setting
+$\eta^{(c)} = 0$ for all cells).
+
+## Joint distribution and the marginalization problem {#sec-pln-joint}
+
+The joint distribution of the observed counts $\underline{u}$ and the latent
+log-abundances $\underline{x}$ for a single cell is
+
+$$
+\pi(\underline{u}, \underline{x} \mid \underline{\mu},\,
+\underline{\underline{\Sigma}}) =
+\underbrace{
+\prod_{g=1}^G \frac{e^{u_g x_g - e^{x_g}}}{u_g!}
+}_{\text{Poisson likelihood}}
+\cdot
+\underbrace{
+\mathcal{N}(\underline{x};\, \underline{\mu},\,
+\underline{\underline{\Sigma}})
+}_{\text{Gaussian prior on log-rates}}.
+$${#eq-pln-joint}
+
+As with the LNM, the marginal likelihood requires integrating out the
+$G$-dimensional latent $\underline{x}$, and this integral has no closed form.
+The key difference from the LNM is the structure of the integrand: the Poisson
+factor is a product of independent terms (one per gene), whereas the LNM's
+Multinomial factor couples all genes through the constraint
+$\sum_g u_g = u_T$. This factorization makes the PLN's integral more amenable
+to coordinate-wise approximations and is the structural reason behind the
+log-concavity result of the next section.
+
+## Log-concavity of the posterior {#sec-pln-log-concavity}
+
+A key analytical advantage of the PLN over the LNM is that the conditional
+posterior $\pi(\underline{x} \mid \underline{u})$ is **log-concave** in
+$\underline{x}$.
+
+**Proof.** The log-posterior is (up to a constant independent of
+$\underline{x}$)
+
+$$
+\log \pi(\underline{x} \mid \underline{u}) =
+\sum_{g=1}^G \left[u_g x_g - e^{x_g}\right]
+- \frac{1}{2}(\underline{x} - \underline{\mu})^\top
+\underline{\underline{\Sigma}}^{-1}
+(\underline{x} - \underline{\mu}).
+$${#eq-pln-log-posterior}
+
+The Hessian with respect to $\underline{x}$ is
+
+$$
+\nabla^2_{\underline{x}} \log \pi =
+-\text{diag}(e^{x_1}, \ldots, e^{x_G})
+- \underline{\underline{\Sigma}}^{-1}.
+$${#eq-pln-hessian}
+
+Both terms are negative semi-definite (the first is a diagonal matrix with
+strictly negative entries; the second is the negative of a positive definite
+matrix). Therefore the Hessian is strictly negative definite for all
+$\underline{x}$, proving that the log-posterior is strictly concave.
+$\square$
+
+**Consequences:**
+
+- **Unique MAP.** The posterior has a single mode, making optimization-based
+  approximations (e.g., Laplace) well-defined and efficient.
+- **Better variational fit.** Log-concave distributions are more
+  accurately approximated by Gaussian variational families than non-log-concave
+  ones. The LNM's Multinomial factor introduces non-log-concavity (the
+  softmax-Multinomial interaction creates multiple near-modes in high
+  dimensions), which can lead to amortization gap in the VAE.
+- **Laplace feasibility.** The Laplace approximation (a Gaussian centered at
+  the MAP with covariance equal to the negative inverse Hessian) is a
+  natural inference strategy for log-concave posteriors. While we adopt the
+  amortized VAE approach for consistency with the LNM pipeline, the Laplace
+  approximation is a viable alternative for PLN and may be explored in future
+  work.
+
+## Inference via amortized variational inference {#sec-pln-inference}
+
+### The ELBO objective {#sec-pln-elbo}
+
+We adopt the same amortized variational inference framework used for the LNM
+(@sec-lnm-strategy-a). The evidence lower bound (ELBO) for a single cell $c$
+is
+
+$$
+\mathcal{L}(\theta, \phi; \underline{u}^{(c)}) =
+\mathbb{E}_{q_\phi(\underline{x} \mid \underline{u}^{(c)})}
+\!\left[
+\log \pi(\underline{u}^{(c)} \mid \underline{x})
+\right]
+- D_{\text{KL}}\!\left(
+q_\phi(\underline{x} \mid \underline{u}^{(c)})
+\;\|\;
+\pi(\underline{x} \mid \theta)
+\right),
+$${#eq-pln-elbo}
+
+where $\theta = (\underline{\mu}, \underline{\underline{W}},
+\underline{d})$ are the generative model parameters and
+$q_\phi(\underline{x} \mid \underline{u}^{(c)})$ is the amortized
+variational posterior parameterized by the encoder network $\phi$.
+
+### Reconstruction term {#sec-pln-reconstruction}
+
+The expected log-likelihood under the variational posterior decomposes across
+genes:
+
+$$
+\mathbb{E}_q\!\left[\log \pi(\underline{u} \mid \underline{x})\right] =
+\sum_{g=1}^G \mathbb{E}_q\!\left[
+u_g x_g - e^{x_g} - \log(u_g!)
+\right].
+$${#eq-pln-reconstruction}
+
+Each term involves only the marginal $q(x_g)$, and the expectations can be
+estimated via the reparameterization trick: sample
+$\underline{x} = \underline{\mu}_q + \underline{\sigma}_q \odot
+\underline{\epsilon}$, $\underline{\epsilon} \sim \mathcal{N}(0, I)$,
+and evaluate the Poisson log-likelihood. The term $u_g x_g$ is linear in
+$x_g$ and has an exact expectation $u_g \mu_{q,g}$; the term $-e^{x_g}$
+requires Monte Carlo estimation (or the closed-form
+$-\exp(\mu_{q,g} + \sigma_{q,g}^2/2)$ for a diagonal variational family).
+
+### KL divergence {#sec-pln-kl}
+
+The KL term is the standard Gaussian-to-Gaussian KL, which has a closed form
+when the variational family is Gaussian. This is identical to the LNM case
+(@sec-lnm-vae-kl) with the latent dimension changed from $G-1$ to $G$.
+
+### Encoder-decoder architecture {#sec-pln-architecture}
+
+The PLN uses the same VAE architecture as the LNM
+(@sec-lnm-linear-vae-equivalence), with two key differences:
+
+1. **Encoder input transform**: `log1p(counts)` instead of
+   `log1p(proportions)`. Since the PLN models absolute counts (not
+   compositions), the encoder receives log-transformed counts directly,
+   preserving scale information that would be lost by normalization to
+   proportions.
+
+2. **Decoder output**: The decoder produces `y_log_rate` with dimension $G$
+   (not $G-1$). The output head uses the identity transform (no softmax or
+   other nonlinearity); the exponentiation to Poisson rates occurs inside
+   the likelihood.
+
+As with the LNM, the decoder is a **linear map** (no hidden layers):
+$\underline{y}_{\text{log\_rate}} = \underline{\underline{W}}^\top
+\underline{z} + \underline{b}$, where $\underline{z}$ is the latent code
+(dimension $k$), $\underline{\underline{W}}$ is the $G \times k$ loadings
+matrix, and $\underline{b}$ is the bias (encoding $\underline{\mu}$). The
+optional learned diagonal noise $\underline{d}_{\text{PLN}}$ adds
+gene-specific variance: if $d_{\text{mode}} = \text{learned}$, a sampled
+noise $\sqrt{d_g} \cdot \epsilon_g$ is added to $y_{\text{log\_rate},g}$
+before exponentiation.
+
+## Connection to the LNM {#sec-pln-connection-to-lnm}
+
+The PLN and LNM are two observation layers built on the same biophysical
+foundation. Their relationship can be stated precisely:
+
+**Shared structure.** Both models:
+
+- Start from the multivariate Gaussian on log-abundances (@eq-pln-mvn-recap)
+- Use the same low-rank covariance parameterization
+  $\underline{\underline{\Sigma}} =
+  \underline{\underline{W}}\,\underline{\underline{W}}^\top +
+  \text{diag}(\underline{d})$
+- Employ amortized variational inference with a linear-decoder VAE
+- Interpret the columns of $\underline{\underline{W}}$ as regulatory programs
+
+**Divergence at the observation layer.** The LNM applies softmax to obtain
+compositions, then draws from a Multinomial conditioned on a separately modeled
+total count. The PLN exponentiates to obtain per-gene rates, then draws from
+independent Poissons. The LNM's factorization introduces two additional
+approximations (NB totals and total-composition independence) that the PLN
+avoids.
+
+**Compositional recovery.** Despite not modeling compositions directly, the PLN
+recovers compositional information through the softmax map applied to the
+Gaussian latent: $\rho_g = e^{x_g} / \sum_j e^{x_j} =
+\text{softmax}(\underline{x})_g$. Since $\underline{x}$ is Gaussian, these
+compositions are logistic-normal---the same distribution used as the
+compositional prior in the LNM. The key difference is that the PLN does not
+enforce this compositional structure through the likelihood; it emerges as a
+by-product.
+
+## When to use PLN vs LNM {#sec-pln-when-to-use}
+
+Both models are supported indefinitely in the SCRIBE framework. Existing LNM
+and LNMVCP fits continue to work without breaking changes. The choice between
+them depends on the analysis goals:
+
+**Prefer PLN when:**
+
+- The primary interest is in **absolute expression levels** and gene-gene
+  covariance in log-rate space.
+- **Posterior predictive checks** of total counts matter---the PLN's emergent
+  total count distribution has the correct tail weight.
+- **Capture probability modeling** is important---the PLN's additive
+  log-offset is cleaner than the LNM's NB-thinning convolution.
+- The dataset is **well-powered** (many cells, moderate gene panel)---the PLN's
+  $G$-dimensional latent is well-identified.
+
+**Prefer LNM when:**
+
+- The primary interest is in **compositional analysis** (differential
+  composition, compositional distance, etc.)---the LNM models compositions
+  directly and its ALR/CLR coordinates have natural compositional
+  interpretations.
+- **Scale invariance** is desired---the LNM's softmax automatically absorbs
+  library-size differences, while the PLN must learn these through
+  $\underline{\mu}$ or the capture offset.
+- The analysis inherits from or extends existing DM results---the LNM is a
+  strict generalization of the DM in the compositional domain.
+
+## Computational considerations {#sec-pln-computational}
+
+### Dimensionality: $G$ vs $G-1$ {#sec-pln-dim}
+
+The PLN latent is $G$-dimensional (one log-rate per gene), compared to the
+LNM's $G-1$ (ALR coordinates with one reference gene). For typical gene panels
+($G = 50$--$2000$), this difference is negligible. The decoder weight matrix
+$\underline{\underline{W}}$ is $G \times k$ instead of $(G-1) \times k$, and
+the diagonal $\underline{d}$ has $G$ instead of $G-1$ entries.
+
+### Per-gene Poisson vs Multinomial {#sec-pln-poisson-vs-multi}
+
+The Poisson log-likelihood $u_g x_g - e^{x_g} - \log(u_g!)$ decomposes across
+genes and is cheaper to evaluate than the Multinomial's
+$\log\Gamma(u_T + 1) - \sum_g \log\Gamma(u_g + 1) + \sum_g u_g \log \rho_g$,
+which involves the constraint $\sum_g \rho_g = 1$ and the combinatorial
+prefactor. In practice, the computational bottleneck is the encoder forward
+pass, not the likelihood evaluation, so the difference is minor.
+
+### No separate total-count model {#sec-pln-no-totals}
+
+The PLN has no NB submodel for $u_T$, eliminating the need to sample or
+optimize the NB parameters $(r_T, p)$ (or their reparameterized forms
+$\mu_T, \phi_T$). This removes 2--3 scalar parameters per model and simplifies
+the parameter mapping and prior specification. The total count distribution is
+an emergent consequence of the per-gene Poissons and the Gaussian covariance.
+
+### Mini-batching {#sec-pln-minibatch}
+
+Mini-batching works identically to the LNM: the cell plate subsample controls
+which cells are included in each gradient step, and the ELBO scales by the
+ratio $N / |\text{batch}|$. The per-gene structure of the Poisson likelihood
+makes mini-batching straightforward---each cell's contribution to the ELBO is
+independent.
+
+## Numerical stability {#sec-pln-stability}
+
+### Log-rate clamping {#sec-pln-clamp}
+
+The Poisson rate $e^{x_g}$ overflows `float32` at $x_g \approx 88$ and
+underflows to zero below $x_g \approx -103$. To prevent numerical issues during
+training, the log-rate is clamped to $[-30, 30]$ before exponentiation. This
+range is generous for biological data: $e^{30} \approx 10^{13}$ exceeds any
+plausible per-gene count in scRNA-seq, and $e^{-30} \approx 10^{-13}$ is
+negligibly small.
+
+### Diagonal noise floor {#sec-pln-d-floor}
+
+When $d_{\text{mode}} = \text{learned}$, the diagonal entries $d_g$ are
+clamped to a minimum of $10^{-8}$ before computing $\sqrt{d_g}$, consistent
+with the `_D_EPS` constant used in the LNM.
+
+### Encoder log-scale bounds {#sec-pln-encoder-clamp}
+
+The encoder's log-scale head is clamped to $[-7, 2]$, following the same
+convention used for the LNM encoder. This prevents the variational posterior
+from collapsing to a point mass ($\sigma \to 0$) or exploding
+($\sigma \to \infty$) during early training.
+
+## Data-driven initialization {#sec-pln-data-init}
+
+### Decoder bias initialization {#sec-pln-bias-init}
+
+The decoder bias $\underline{b}$ encodes the population mean log-rate
+$\underline{\mu}$. It is initialized from the empirical log-mean expression:
+
+$$
+b_g = \log(\bar{u}_g + c),
+\quad \bar{u}_g = \frac{1}{N} \sum_{c=1}^N u_g^{(c)},
+$${#eq-pln-bias-init}
+
+where $c$ is a pseudocount (default $c = 1$, i.e., `log1p`). This places
+the initial rates at the right order of magnitude, avoiding the need for the
+optimizer to discover the gene-level baselines from scratch.
+
+**Pseudocount choice.** The default $c = 1$ is standard and makes
+$\log(\bar{u}_g + 1) \approx \log(\bar{u}_g)$ for $\bar{u}_g \gg 1$, which
+covers most genes retained after quality control. For very sparse datasets
+where many genes have $\bar{u}_g < 1$, alternative pseudocounts ($c = 0.5$
+or data-derived values) may be more appropriate. The choice is documented
+and configurable.
+
+### PCA-based loadings initialization {#sec-pln-pca-init}
+
+The decoder weight matrix $\underline{\underline{W}}$ is initialized from a
+truncated SVD of the log-transformed count matrix, following standard practice
+in the PLN literature. Concretely:
+
+1. Compute $\underline{\underline{X}} = \log(\underline{\underline{U}} + c)$,
+   where $\underline{\underline{U}}$ is the $N \times G$ count matrix.
+2. Center per gene: $\tilde{X}_{cg} = X_{cg} - \bar{X}_g$.
+3. Compute the rank-$k$ truncated SVD:
+   $\tilde{\underline{\underline{X}}} \approx
+   \underline{\underline{U}}_k\,
+   \underline{\underline{S}}_k\,
+   \underline{\underline{V}}_k^\top$.
+4. Initialize
+   $\underline{\underline{W}} \leftarrow
+   \underline{\underline{V}}_k \,
+   \underline{\underline{S}}_k / \sqrt{N}$.
+
+This initialization places the decoder loadings in the subspace of the
+$k$ principal components of the log-count matrix. Without it, the optimizer
+must rediscover the leading principal components from random initialization,
+which can add thousands of gradient steps to the warm-up phase.
+
+### Encoder standardization {#sec-pln-encoder-standardize}
+
+The encoder input is standardized per gene using the empirical mean and
+standard deviation of the log-transformed counts (under the same input
+transform used during training, e.g., `log1p`). This ensures that the
+encoder receives inputs with approximately zero mean and unit variance,
+improving gradient conditioning and convergence speed. The same approach is
+used for the LNM encoder (@sec-lnm-stability-standardize).
+
+## Limitations and future work {#sec-pln-limitations}
+
+### The LNA approximation {#sec-pln-lim-lna}
+
+The PLN inherits the same LNA limitations as the LNM: the linearization and
+constant-noise approximations degrade for lowly expressed genes with few
+molecules (@sec-grn-bio-lna). For such genes, the exact Gamma steady-state
+of the birth-death process (captured by the DM) may be more faithful.
+
+### Identifiability of $\underline{\underline{W}}$ {#sec-pln-lim-identifiability}
+
+The same rotational non-identifiability that affects the LNM
+(@sec-lnm-lim-identifiability) applies here: the likelihood depends on
+$\underline{\underline{W}}$ only through
+$\underline{\underline{W}}\,\underline{\underline{W}}^\top$. The column
+space of $\underline{\underline{W}}$ is identifiable; individual columns are
+not, without additional constraints (sparsity, varimax rotation, etc.).
+
+### Mixture support {#sec-pln-lim-mixtures}
+
+PLN v1 does not support mixture models ($n_{\text{components}} > 1$). The
+LNM supports mixtures on the totals-NB parameters; extending this to the PLN
+(where there are no totals parameters) requires rethinking what "mixture
+components" mean in the PLN context (e.g., mixture of Gaussian priors on
+$\underline{x}$). This is deferred to future work.
+
+### Absolute scale vs compositional invariance {#sec-pln-lim-scale}
+
+The PLN retains absolute scale information in $\underline{\mu}$, which
+means that technical scale factors (library size, capture efficiency) must
+be explicitly accounted for (e.g., via the capture offset). The LNM's
+softmax provides automatic scale invariance, which can be advantageous when
+the capture model is uncertain or when the analysis focuses on relative
+rather than absolute expression.
+
+## Implementation map {#sec-pln-implementation-map}
+
+The PLN model is implemented in the SCRIBE framework following the same
+modular architecture as the LNM:
+
+| Component | File | Key class/function |
+|-----------|------|--------------------|
+| Likelihood | `models/components/likelihoods/pln.py` | `PoissonLogNormalLikelihood` |
+| Parameterization | `models/parameterizations/__init__.py` | `PoissonLogNormalParameterization` |
+| Enums/config | `models/config/enums.py`, `base.py`, `groups.py` | `ModelType.PLN`, `Parameterization.POISSON_LOGNORMAL` |
+| Parameter mapping | `models/config/parameter_mapping.py` | `POISSON_LOGNORMAL` entry |
+| Registry | `models/presets/registry.py` | `LIKELIHOOD_REGISTRY["pln"]` |
+| Factory | `models/presets/factory.py` | PLN branch in `_create_vae_model` |
+| Data initialization | `core/pln_data_init.py` | `inject_pln_vae_data_init` |
+| Posterior extraction | `svi/_pln_extraction.py` | `PLNExtractionMixin` |
+| Stats distribution | `stats/distributions.py` | `LowRankPoissonLogNormal` |
+| API | `api.py` | `"pln"` in `VALID_MODELS` |
+
+The PLN has a **single parameterization** (no canonical/mean_prob/mean_odds
+variants). The DM/LNM three-way split exists to reparameterize the NB
+total-count submodel; since the PLN has no such submodel, the split is
+unnecessary.
