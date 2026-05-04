@@ -204,3 +204,44 @@ class TestBuildConfigFromPreset:
         )
         assert config.vae is not None
         assert config.vae.input_transform == "clr"
+
+    def test_pln_defaults_to_log1p_prop_input_transform(self):
+        """PLN models should default to compositional encoder inputs.
+
+        Even though the PLN likelihood operates in absolute log-rate
+        space, the encoder input is a separate design choice. Using a
+        *compositional* input keeps library-size information out of
+        the latent ``z`` so it cannot compete with ``eta_capture``
+        for explaining per-cell scale -- a known identifiability
+        ridge in PLN+capture-anchor that produces useless gene-level
+        diagnostics when ``log1p`` is used instead.
+        """
+        config = build_config_from_preset(
+            model="pln",
+            parameterization="poisson_lognormal",
+            inference_method="vae",
+        )
+        assert config.vae is not None
+        assert config.vae.input_transform == "log1p_prop"
+
+    def test_pln_respects_explicit_input_transform_override(self):
+        """Explicit non-``log1p`` user overrides must take precedence for PLN.
+
+        Note: the override path matches LNM's -- it can only detect a
+        user-supplied transform when it differs from the function
+        default (``log1p``). Passing ``log1p`` explicitly is
+        indistinguishable from the function default and therefore
+        gets resolved to the per-model recommendation
+        (``log1p_prop``). Users who want strict ``log1p`` would need
+        to bypass ``build_config_from_preset`` or pass an alternative
+        explicit transform name (here we use ``clr``, mirroring LNM's
+        override test).
+        """
+        config = build_config_from_preset(
+            model="pln",
+            parameterization="poisson_lognormal",
+            inference_method="vae",
+            vae_input_transform="clr",
+        )
+        assert config.vae is not None
+        assert config.vae.input_transform == "clr"

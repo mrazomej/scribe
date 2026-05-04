@@ -483,18 +483,27 @@ def build_config_from_preset(
     )
 
     if inference_method == "vae":
-        # LNM models are compositional, so use a compositional encoder
-        # input by default. PLN models use log1p (absolute counts, not
-        # proportions). Respect explicit user overrides.
+        # Both LNM and PLN models default to a *compositional* encoder
+        # input (``log1p_prop``) regardless of the likelihood's
+        # underlying parameterization. The two design choices --
+        # encoder input space and generative-model space -- are
+        # independent. The compositional input keeps cell-level scale
+        # information out of the latent ``z`` so it cannot compete
+        # with the per-cell capture parameter (``eta_capture``) for
+        # explaining library-size variation. Without this, PLN with
+        # capture anchor exhibits an identifiability ridge where
+        # ``z_c`` and ``eta_capture_c`` both shift in the same
+        # direction by ~10 units, defeating the prior anchor and
+        # giving "good per-cell PPCs but useless gene-level
+        # diagnostics" -- the failure mode we tracked down on the
+        # jurkat data. Respect explicit user overrides via
+        # ``vae_input_transform``.
         resolved_vae_input_transform = vae_input_transform
         if (
-            model_lower in ("lnm", "lnmvcp")
+            model_lower in ("lnm", "lnmvcp", "pln")
             and vae_input_transform == "log1p"
         ):
             resolved_vae_input_transform = "log1p_prop"
-
-        # PLN keeps log1p (not log1p_prop) since it models absolute
-        # counts, not compositions. No override needed.
 
         # Resolve the ``vae_standardize`` sentinel. ``None`` means "pick a
         # sensible per-model default": LNM and PLN models benefit from
