@@ -430,6 +430,24 @@ This mirrors the `p_floor` parameter already used in the post-hoc
 log-likelihood evaluation functions in `log_likelihood.py`.  Tests for both
 layers live in `tests/test_floor.py`.
 
+### PLN numerical stability
+
+| Likelihood                   | Parameter | Guard                                             |
+| ---------------------------- | --------- | ------------------------------------------------- |
+| `PoissonLogNormalLikelihood` | log-rate  | `jnp.clip(y, _LOG_RATE_MIN, _LOG_RATE_MAX)` (±30) |
+| `PoissonLogNormalLikelihood` | `d_pln`   | `jnp.maximum(d, _D_EPS)` (1e-8 floor)             |
+
+### PLN capture probability
+
+PLN does not have a separate model string for variable capture (unlike
+`lnmvcp`).  Capture is activated internally by supplying a capture prior
+(e.g. `priors={"capture_efficiency": (log_M0, sigma_M)}`) and is handled
+as a per-cell additive offset in log-rate space.  The factory appends a
+`BiologyInformedCaptureSpec` to `param_specs` so the `GuideBuilder` emits
+a matching `eta_capture` variational site.  Using `variable_capture=True`
+with `model="pln"` without capture priors emits a warning and runs PLN
+without capture correction.
+
 ## Adding New Likelihoods
 
 To add a new likelihood:

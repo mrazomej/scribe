@@ -312,12 +312,12 @@ def test_pln_factory_consumes_pca_and_log_mean_data_init():
 
 def test_pln_factory_wires_capture_anchor_when_prior_supplied():
     """Supplying ``priors={"capture_efficiency": ...}`` activates capture
-    anchor on the PLN likelihood and registers an ``eta_capture`` site.
+    anchor on the PLN likelihood and registers an ``eta_capture`` site
+    in *both* the model and guide traces.
 
-    This is the integration test the previous review flagged as
-    missing. Without it the entire capture-offset code path in
-    ``PoissonLogNormalLikelihood._cell_body`` was unreachable from
-    the public API.
+    Without the ``param_specs.append(pln_capture_spec)`` in the factory,
+    the guide would lack ``eta_capture`` and ``TraceMeanField_ELBO`` would
+    raise ``KeyError: 'eta_capture'`` during KL computation.
     """
     import numpy as np
 
@@ -341,25 +341,83 @@ def test_pln_factory_wires_capture_anchor_when_prior_supplied():
 
     model, guide, _ = create_model(config, n_genes=n_genes, validate=False)
 
-    model_trace = numpyro.handlers.trace(
-        numpyro.handlers.seed(model, key)
-    ).get_trace(
+    trace_kwargs = dict(
         n_cells=n_cells,
         n_genes=n_genes,
         model_config=config,
         counts=counts,
     )
-    # The capture anchor sets up an ``eta_capture`` site inside the
-    # cell plate.
+
+    # Model trace: eta_capture must be present.
+    model_trace = numpyro.handlers.trace(
+        numpyro.handlers.seed(model, key)
+    ).get_trace(**trace_kwargs)
+
     assert "eta_capture" in model_trace, (
         "Capture-anchor did not activate; eta_capture site missing. "
         "Check factory wiring for is_poisson_lognormal_family."
     )
-    # The Poisson observation is still present.
     assert "counts" in model_trace
-    # And the totals NB site is *not* present -- PLN has no totals
-    # submodel. Distinguishes PLN's capture path from LNMVCP's.
+    # PLN has no totals NB submodel.
     assert "u_T" not in model_trace
+
+    # Guide trace: must also contain eta_capture so ELBO can compute KL.
+    guide_trace = numpyro.handlers.trace(
+        numpyro.handlers.seed(guide, key)
+    ).get_trace(**trace_kwargs)
+
+    assert "eta_capture" in guide_trace, (
+        "Guide is missing eta_capture site. The BiologyInformedCaptureSpec "
+        "must be appended to param_specs so GuideBuilder emits a matching "
+        "variational distribution."
+    )
+
+
+def test_svi_smoke_fit_pln_with_capture():
+    """Run a few SVI steps with PLN + capture anchor to confirm training
+    does not crash with ``TraceMeanField_ELBO``.
+    """
+    import numpy as np
+
+    n_cells, n_genes, k = 16, 8, 2
+    key = random.PRNGKey(12)
+    counts = random.poisson(key, 4.0, shape=(n_cells, n_genes))
+
+    config = (
+        ModelConfigBuilder()
+        .for_model("pln")
+        .with_parameterization("poisson_lognormal")
+        .with_inference("vae")
+        .with_vae(
+            latent_dim=k,
+            encoder_hidden_dims=[16],
+            decoder_hidden_dims=[16],
+        )
+        .with_priors(capture_efficiency=(float(np.log(1e5)), 0.5))
+        .build()
+    )
+
+    model, guide, _ = create_model(config, n_genes=n_genes, validate=False)
+    optimizer = numpyro.optim.Adam(1e-3)
+    svi = SVI(model, guide, optimizer, loss=TraceMeanField_ELBO())
+    svi_state = svi.init(
+        key,
+        n_cells=n_cells,
+        n_genes=n_genes,
+        model_config=config,
+        counts=counts,
+    )
+    for _ in range(5):
+        svi_state, loss = svi.update(
+            svi_state,
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
+        )
+    assert jnp.isfinite(loss), (
+        f"PLN + capture SVI loss diverged to {loss}."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -435,3 +493,70 @@ def test_api_fit_pln_end_to_end_learned_d():
     assert d.shape == (n_genes,)
     # All entries strictly positive after the LogNormal->guide path.
     assert jnp.all(d > 0)
+
+
+def test_api_fit_pln_end_to_end_with_capture():
+    """``scribe.fit(model='pln', priors={'capture_efficiency': ...})``
+    runs end-to-end through the full inference pipeline.
+
+    This exercises the complete path that was previously hitting
+    ``KeyError: 'eta_capture'`` because the guide lacked the
+    matching variational site.
+    """
+    import anndata as ad
+    import numpy as np
+
+    import scribe
+
+    n_cells, n_genes, k = 32, 12, 3
+    counts = np.asarray(
+        random.poisson(random.PRNGKey(5), 5.0, shape=(n_cells, n_genes))
+    ).astype(np.float32)
+    adata = ad.AnnData(counts)
+
+    results = scribe.fit(
+        adata,
+        model="pln",
+        vae_latent_dim=k,
+        vae_encoder_hidden_dims=[16],
+        priors={"capture_efficiency": (float(np.log(1e5)), 0.5)},
+        n_steps=50,
+        seed=0,
+    )
+    mu = results.get_pln_mu()
+    W = results.get_pln_W()
+    assert mu.shape == (n_genes,)
+    assert W.shape == (n_genes, k)
+
+
+def test_api_fit_pln_with_variable_capture_and_priors():
+    """``model='pln', variable_capture=True`` with capture priors works
+    end-to-end without errors or warnings.
+    """
+    import anndata as ad
+    import numpy as np
+    import warnings
+
+    import scribe
+
+    n_cells, n_genes, k = 32, 12, 3
+    counts = np.asarray(
+        random.poisson(random.PRNGKey(6), 5.0, shape=(n_cells, n_genes))
+    ).astype(np.float32)
+    adata = ad.AnnData(counts)
+
+    # No warning should be emitted because capture priors are provided.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        results = scribe.fit(
+            adata,
+            model="pln",
+            variable_capture=True,
+            vae_latent_dim=k,
+            vae_encoder_hidden_dims=[16],
+            priors={"capture_efficiency": (float(np.log(1e5)), 0.5)},
+            n_steps=50,
+            seed=0,
+        )
+    mu = results.get_pln_mu()
+    assert mu.shape == (n_genes,)

@@ -32,6 +32,7 @@ from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import jax.numpy as jnp
 import numpyro
+
 # ``flax.linen`` is hoisted to module scope (rather than locally imported
 # inside ``_create_vae_model``) so that the closures defined in this file
 # can safely reference ``nn.initializers``. A function-local import would
@@ -336,7 +337,8 @@ def _create_vae_model(
     _pca_loadings_init = getattr(vae, "pca_loadings_init", None)
 
     def _build_head(name: str, transform: str) -> DecoderOutputHead:
-        """Construct a single :class:`DecoderOutputHead` with LNM/PLN-aware sizing.
+        """
+        Construct a single :class:`DecoderOutputHead` with LNM/PLN-aware sizing.
 
         Encapsulates the per-head logic so the comprehension below stays
         readable while still making the LNM-only and PLN-only
@@ -344,12 +346,9 @@ def _create_vae_model(
         kernel init) obvious. Every non-LNM/non-PLN head retains its
         original behavior bit-for-bit.
         """
-        is_y_alr = (
-            is_logistic_normal_family(param_key) and name == "y_alr"
-        )
+        is_y_alr = is_logistic_normal_family(param_key) and name == "y_alr"
         is_y_log_rate = (
-            is_poisson_lognormal_family(param_key)
-            and name == "y_log_rate"
+            is_poisson_lognormal_family(param_key) and name == "y_log_rate"
         )
         head_dim = (n_genes - 1) if is_y_alr else n_genes
         # Only the LNM ``y_alr`` and PLN ``y_log_rate`` heads ever
@@ -379,9 +378,7 @@ def _create_vae_model(
             # out_features) = (k, G) layout, so we transpose at the
             # boundary between the two conventions.
             if _pca_loadings_init is not None:
-                _w_arr = jnp.asarray(
-                    _pca_loadings_init, dtype=jnp.float32
-                ).T
+                _w_arr = jnp.asarray(_pca_loadings_init, dtype=jnp.float32).T
                 kernel_init = nn.initializers.constant(_w_arr)
         return DecoderOutputHead(
             param_name=name,
@@ -619,14 +616,12 @@ def _create_vae_model(
         # resolution) so that aliases like ``"capture_efficiency"``
         # work uniformly with the LNMVCP path.
         priors_extra: Dict = {}
-        if model_config is not None and getattr(
-            model_config, "priors", None
-        ) is not None:
+        if (
+            model_config is not None
+            and getattr(model_config, "priors", None) is not None
+        ):
             priors_extra = (
-                getattr(
-                    model_config.priors, "__pydantic_extra__", None
-                )
-                or {}
+                getattr(model_config.priors, "__pydantic_extra__", None) or {}
             )
         eta_capture = priors_extra.get("eta_capture")
 
@@ -634,12 +629,6 @@ def _create_vae_model(
         if eta_capture is not None:
             _log_m0, _sigma_m = eta_capture
             pln_capture_spec = BiologyInformedCaptureSpec(
-                # ``name`` and ``shape_dims`` are required by the
-                # ParamSpec base. PLN does not register ``p_capture``
-                # as a sampled global so the name only matters for
-                # introspection / debugging, not for the trace; the
-                # helper inside the likelihood samples its own
-                # ``eta_capture`` site directly.
                 name="p_capture",
                 shape_dims=("n_cells",),
                 default_params=(_log_m0, _sigma_m),
@@ -652,6 +641,12 @@ def _create_vae_model(
                 # converts to ``eta = -log(p_capture)`` on its own).
                 use_phi_capture=False,
             )
+            # Register the spec so GuideBuilder emits a matching
+            # ``eta_capture`` site in the guide. Without this, the
+            # TraceMeanField_ELBO raises a KeyError because the model
+            # samples ``eta_capture`` but the guide has no
+            # corresponding variational distribution.
+            param_specs.append(pln_capture_spec)
 
         likelihood_instance = PoissonLogNormalLikelihood(
             d_mode=d_mode,

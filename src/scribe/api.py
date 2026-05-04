@@ -402,6 +402,16 @@ def fit(
             - ``variable_capture=True``  -> ``"lnmvcp"``
             - ``zero_inflation=True`` raises ``ValueError`` (not supported)
 
+        For the PLN family (``model="pln"``):
+
+            - Capture is an internal flag, not a separate model string.
+              If ``variable_capture=True`` and capture priors are provided
+              (``priors={"capture_efficiency": ...}`` or
+              ``priors={"organism": ...}``), capture is silently activated.
+            - If ``variable_capture=True`` but *no* capture prior is
+              provided, a warning is emitted and PLN runs without capture.
+            - ``zero_inflation=True`` raises ``ValueError`` (not supported).
+
         An explicit ``model=`` that conflicts with the flags raises
         ``ValueError``.
 
@@ -1086,11 +1096,52 @@ def fit(
     #   anything else                                -> DM-family
     # Within the LNM family, ZI is not supported.
     _is_lnm_model = model.lower() in ("lnm", "lnmvcp")
+    _is_pln_model = model.lower() == "pln"
     _default_model = "nbvcp"
     if variable_capture is not None or zero_inflation is not None:
         _zi = zero_inflation if zero_inflation is not None else False
         _vc = variable_capture if variable_capture is not None else True
-        if _is_lnm_model:
+        if _is_pln_model:
+            # PLN handles capture as an internal flag on the likelihood,
+            # activated by supplying capture priors (capture_efficiency /
+            # eta_capture / organism).  There is no separate "plnvcp"
+            # model string.
+            if _zi:
+                raise ValueError(
+                    "Zero-inflation is not supported for the PLN family "
+                    "(model='pln'). Drop zero_inflation=True "
+                    "or pick a DM-family model."
+                )
+            if _vc:
+                # Check whether the user supplied capture priors that
+                # would actually activate the capture anchor.
+                from .core.lnm_data_init import CAPTURE_ANCHOR_KEYS
+                from .models.config.parameter_mapping import PRIOR_KEY_ALIASES
+
+                _capture_alias_set = {
+                    alias
+                    for alias, target in PRIOR_KEY_ALIASES.items()
+                    if target in CAPTURE_ANCHOR_KEYS
+                }
+                _all_capture_keys = (
+                    set(CAPTURE_ANCHOR_KEYS) | _capture_alias_set
+                )
+                _has_capture_prior = isinstance(priors, dict) and any(
+                    k in priors for k in _all_capture_keys
+                )
+                if not _has_capture_prior:
+                    warnings.warn(
+                        "variable_capture=True with model='pln' has no "
+                        "effect unless you also supply a capture prior "
+                        "(e.g. priors={'capture_efficiency': (log_M0, "
+                        "sigma_M)} or priors={'organism': 'human'}). "
+                        "The PLN model will be fitted without capture "
+                        "correction.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+            # PLN stays "pln" regardless of variable_capture.
+        elif _is_lnm_model:
             if _zi:
                 raise ValueError(
                     "Zero-inflation is not supported for the LNM family "
@@ -1098,21 +1149,28 @@ def fit(
                     "or pick a DM-family model."
                 )
             _resolved = "lnmvcp" if _vc else "lnm"
+            if model.lower() != _default_model and model.lower() != _resolved:
+                raise ValueError(
+                    f"model='{model}' conflicts with the feature flags "
+                    f"(zero_inflation={zero_inflation}, "
+                    f"variable_capture={variable_capture}) which resolve to "
+                    f"'{_resolved}'. Use one or the other, not both."
+                )
+            model = _resolved
         else:
             _resolved = (
                 "zinbvcp"
                 if _zi and _vc
                 else "zinb" if _zi else "nbvcp" if _vc else "nbdm"
             )
-        # If the user also passed an explicit model= that differs, raise.
-        if model.lower() != _default_model and model.lower() != _resolved:
-            raise ValueError(
-                f"model='{model}' conflicts with the feature flags "
-                f"(zero_inflation={zero_inflation}, "
-                f"variable_capture={variable_capture}) which resolve to "
-                f"'{_resolved}'. Use one or the other, not both."
-            )
-        model = _resolved
+            if model.lower() != _default_model and model.lower() != _resolved:
+                raise ValueError(
+                    f"model='{model}' conflicts with the feature flags "
+                    f"(zero_inflation={zero_inflation}, "
+                    f"variable_capture={variable_capture}) which resolve to "
+                    f"'{_resolved}'. Use one or the other, not both."
+                )
+            model = _resolved
 
     # ==========================================================================
     # Step 1: Validate inputs

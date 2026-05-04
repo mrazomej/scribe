@@ -158,7 +158,24 @@ class PoissonLogNormalLikelihood(Likelihood):
         vae_cell_fn : callable
             Decoder function producing y_log_rate inside the plate.
         """
-        # (a) Optionally sample per-cell capture offset.
+        # (a) Run the decoder to get y_log_rate. This samples ``z``
+        # inside the VAE encoder/decoder and must come *before* the
+        # capture-anchor sampling so that trace site ordering (z then
+        # eta_capture) matches the guide's ordering and satisfies
+        # ``TraceMeanField_ELBO``'s mean-field check.
+        param_values.update(vae_cell_fn(idx))
+        if "y_log_rate" not in param_values:
+            raise ValueError(
+                "vae_cell_fn must return a 'y_log_rate' tensor "
+                "(decoder log-rate head), shape (batch, G)."
+            )
+        y_decoded = param_values["y_log_rate"]
+
+        # (b) Sample any additional cell-plate priors.
+        for spec in cell_specs:
+            sample_prior(spec, dims, model_config)
+
+        # (c) Optionally sample per-cell capture offset.
         # In PLN, capture is a per-cell additive offset in log-rate
         # space:
         #
@@ -176,13 +193,9 @@ class PoissonLogNormalLikelihood(Likelihood):
             and self._biology_informed_spec is not None
             and counts is not None
         ):
-            # We deliberately *only* execute the capture path when
-            # ``counts`` is observed: the biology anchor is built from
-            # ``log L_c`` for each cell, and there is no meaningful
-            # ``L_c`` in prior-predictive simulation
-            # (``counts is None``). Skipping here cleanly returns to
-            # the no-capture log-rate prior in that mode rather than
-            # silently anchoring at ``L_c = 1``.
+            # Only execute the capture path when ``counts`` is observed:
+            # the biology anchor needs ``log L_c`` per cell, which is
+            # meaningless in prior-predictive simulation (counts is None).
             bio_spec = self._biology_informed_spec
             counts_batch = counts[idx] if idx is not None else counts
             log_lib_batch = jnp.log(
@@ -193,13 +206,9 @@ class PoissonLogNormalLikelihood(Likelihood):
 
             # ``_sample_capture_biology_informed`` samples ``eta_capture``
             # from a TruncatedNormal anchored to ``log(M_0) - log(L_c)``
-            # and returns ``p_capture = exp(-eta_capture)`` (in
-            # ``(0, 1)``) when ``use_phi_capture=False``. The convention
-            # is consistent with the LNMVCP path; we just unwind it
-            # back to ``eta`` for the additive log-rate offset that PLN
-            # actually consumes. The ``maximum(..., 1e-12)`` guards
-            # against ``p_capture`` underflow before the log -- a
-            # numerical safety net, not a modeling choice.
+            # and returns ``p_capture = exp(-eta_capture)`` (in (0, 1))
+            # when ``use_phi_capture=False``. We unwind it back to
+            # ``eta`` for the additive log-rate offset PLN consumes.
             p_capture = _sample_capture_biology_informed(
                 log_lib_batch,
                 bio_spec.log_M0,
@@ -207,19 +216,6 @@ class PoissonLogNormalLikelihood(Likelihood):
                 use_phi_capture=False,
             )
             capture_offset = -jnp.log(jnp.maximum(p_capture, 1e-12))
-
-        # (b) Run the decoder to get y_log_rate.
-        param_values.update(vae_cell_fn(idx))
-        if "y_log_rate" not in param_values:
-            raise ValueError(
-                "vae_cell_fn must return a 'y_log_rate' tensor "
-                "(decoder log-rate head), shape (batch, G)."
-            )
-        y_decoded = param_values["y_log_rate"]
-
-        # (c) Sample any additional cell-plate priors.
-        for spec in cell_specs:
-            sample_prior(spec, dims, model_config)
 
         # (d) Optional diagonal noise in log-rate space (G-dimensional).
         if self._d_mode == "learned":

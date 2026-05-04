@@ -146,3 +146,56 @@ class TestFeatureFlagConflict:
         """Default model with ``variable_capture=False`` resolves to ``nbdm``."""
         result = _capture_model_kwarg(variable_capture=False)
         assert result == "nbdm"
+
+
+class TestPLNFeatureFlags:
+    """PLN-specific feature-flag resolution.
+
+    PLN does not have a separate 'plnvcp' model string. Capture is
+    activated internally by supplying capture priors. The model string
+    always stays ``"pln"``.
+    """
+
+    def test_pln_stays_pln_with_vc_true(self):
+        """``model='pln', variable_capture=True`` resolves to ``pln``."""
+        assert _capture_model_kwarg(model="pln", variable_capture=True) == "pln"
+
+    def test_pln_stays_pln_with_vc_false(self):
+        """``model='pln', variable_capture=False`` resolves to ``pln``."""
+        assert _capture_model_kwarg(model="pln", variable_capture=False) == "pln"
+
+    def test_pln_stays_pln_with_vc_true_and_capture_prior(self):
+        """``model='pln', variable_capture=True`` with capture prior stays ``pln``."""
+        import numpy as np
+
+        result = _capture_model_kwarg(
+            model="pln",
+            variable_capture=True,
+            priors={"capture_efficiency": (float(np.log(1e5)), 0.5)},
+        )
+        assert result == "pln"
+
+    def test_pln_vc_true_no_priors_warns(self):
+        """``model='pln', variable_capture=True`` without capture priors warns."""
+        import jax.numpy as jnp
+
+        dummy = jnp.zeros((10, 5), dtype=jnp.int32)
+        with pytest.warns(UserWarning, match="variable_capture=True with model='pln'"):
+            try:
+                api.fit(dummy, model="pln", variable_capture=True, n_steps=1)
+            except Exception:
+                pass
+
+    def test_pln_zi_true_raises(self):
+        """``model='pln', zero_inflation=True`` raises ``ValueError``."""
+        import jax.numpy as jnp
+
+        dummy = jnp.zeros((10, 5), dtype=jnp.int32)
+        with pytest.raises(
+            ValueError, match="Zero-inflation is not supported for the PLN"
+        ):
+            api.fit(dummy, model="pln", zero_inflation=True, n_steps=1)
+
+    def test_pln_no_flags_stays_pln(self):
+        """``model='pln'`` without any flags stays ``pln``."""
+        assert _capture_model_kwarg(model="pln") == "pln"
