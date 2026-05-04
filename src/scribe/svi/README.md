@@ -1138,11 +1138,12 @@ since log-rate space treats all genes symmetrically.
 
 #### VAE Serialization Note
 
-`ScribeVAEResults` is stdlib-`pickle` compatible, including LNM/LNMVCP models
-whose decoder heads may carry Flax initializer closures (for example from
-`nn.initializers.constant`). During `__getstate__`, non-picklable per-head
-`bias_init` callables are stripped from the serialized decoder copy while
-preserving trained parameter tensors and all runtime analysis behavior.
+`ScribeVAEResults` is stdlib-`pickle` compatible, including LNM/LNMVCP/PLN
+models whose decoder heads may carry Flax initializer closures (for example
+from `nn.initializers.constant`). During `__getstate__`, non-picklable
+per-head `bias_init` and `kernel_init` callables are stripped from the
+serialized decoder copy while preserving trained parameter tensors and all
+runtime analysis behavior.
 
 ### SVIResultsFactory (`results_factory.py`)
 

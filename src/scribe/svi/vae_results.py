@@ -81,15 +81,17 @@ def _sanitize_decoder_for_pickle(decoder: Any) -> Any:
     -------
     Any
         Original decoder when no sanitization is needed, otherwise a shallow
-        copy with non-picklable ``bias_init`` callables replaced by ``None``.
+        copy with non-picklable ``bias_init`` / ``kernel_init`` callables
+        replaced by ``None``.
 
     Notes
     -----
     Flax initializers such as ``nn.initializers.constant`` are runtime-local
     closures (e.g. ``constant.<locals>.init``). Those closures are only needed
     when layers are initialized, not for inference on already-trained params.
-    During serialization we therefore drop only unpicklable head initializers,
-    preserving every other decoder attribute.
+    During serialization we therefore drop any unpicklable head initializers
+    (``bias_init`` from LNM/PLN log-mean bias, ``kernel_init`` from PLN PCA
+    loadings), preserving every other decoder attribute.
     """
     # Preserve behavior for non-decoder or legacy objects that do not expose
     # ``output_heads``.
@@ -100,12 +102,18 @@ def _sanitize_decoder_for_pickle(decoder: Any) -> Any:
     sanitized_heads = []
     changed = False
 
-    # Rewrite only the problematic per-head initializer closures so that
-    # stdlib pickle can serialize the VAE results object.
+    # Rewrite any non-picklable per-head initializer closures so that
+    # stdlib pickle can serialize the VAE results object.  Both
+    # ``bias_init`` and ``kernel_init`` can be ``nn.initializers.constant``
+    # closures (PLN sets both; LNM only sets ``bias_init``).
     for head in output_heads:
-        bias_init = getattr(head, "bias_init", None)
-        if bias_init is not None and not _is_pickle_serializable(bias_init):
-            sanitized_heads.append(dc_replace(head, bias_init=None))
+        replacements: dict = {}
+        for attr in ("bias_init", "kernel_init"):
+            init_fn = getattr(head, attr, None)
+            if init_fn is not None and not _is_pickle_serializable(init_fn):
+                replacements[attr] = None
+        if replacements:
+            sanitized_heads.append(dc_replace(head, **replacements))
             changed = True
         else:
             sanitized_heads.append(head)

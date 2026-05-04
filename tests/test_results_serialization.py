@@ -302,6 +302,50 @@ def test_composable_vae_results_pickle_roundtrip_with_constant_bias_init():
     assert restored._decoder.output_heads[0].bias_init is None
 
 
+def test_composable_vae_results_pickle_roundtrip_with_constant_kernel_init():
+    """VAE results should pickle even with PLN-style constant kernel initializer.
+
+    PLN sets *both* ``bias_init`` (empirical log-mean) and ``kernel_init``
+    (PCA loadings) via ``nn.initializers.constant``. The earlier LNM-only
+    fix only stripped ``bias_init``; ``kernel_init`` must also be sanitized.
+    """
+    cfg = ModelConfigBuilder().for_model("nbdm").with_inference("vae").build()
+
+    head = DecoderOutputHead(
+        param_name="y_log_rate",
+        output_dim=3,
+        transform="identity",
+        bias_init=nn.initializers.constant(jnp.asarray([0.1, -0.2, 0.3])),
+        kernel_init=nn.initializers.constant(jnp.ones((2, 3))),
+    )
+    decoder = MultiHeadDecoder(
+        output_dim=0,
+        latent_dim=2,
+        hidden_dims=[],
+        output_heads=(head,),
+        activation="relu",
+    )
+
+    results = ScribeVAEResults(
+        params={_ENCODER_KEY: {}, _DECODER_KEY: {}},
+        loss_history=jnp.array([4.0, 2.0]),
+        n_cells=2,
+        n_genes=3,
+        model_type="nbdm",
+        model_config=cfg,
+        prior_params={},
+        _encoder=object(),
+        _decoder=decoder,
+        _latent_spec=_DummyLatentSpec(),
+    )
+
+    restored = _roundtrip(results)
+    assert isinstance(restored, ScribeVAEResults)
+    assert restored._decoder is not None
+    assert restored._decoder.output_heads[0].bias_init is None
+    assert restored._decoder.output_heads[0].kernel_init is None
+
+
 def test_de_results_pickle_roundtrip():
     """DE result subclasses should be pickle-safe."""
     parametric = ScribeParametricDEResults(
