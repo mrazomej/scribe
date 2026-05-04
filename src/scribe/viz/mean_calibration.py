@@ -17,6 +17,10 @@ composition and total-count are separate sub-models in LNM and the
 NB MAP point estimates can be unreliable for this purpose; the
 diagnostic therefore isolates the compositional fit quality.
 
+For PLN (Poisson-LogNormal) models the predicted mean is
+``exp(y_log_rate)`` where ``y_log_rate`` is the MAP decoder output in
+log-rate space.
+
 For mixture models the predicted mean is the marginal (weighted)
 average across components, which is directly comparable to the
 sample-wide observed mean regardless of whether cell labels are
@@ -33,7 +37,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats as sp_stats
 
-from ._common import console
+from ._common import _is_pln_model, console
 from ._interactive import (
     _create_or_validate_grid_axes,
     _create_or_validate_single_axis,
@@ -171,6 +175,41 @@ def _compute_predicted_mean_lnm(
     obs_mean_total = float(np.mean(np.sum(counts_arr, axis=1)))
 
     return rho * obs_mean_total
+
+
+# Map-level log-rate predictions are already in absolute expression-rate
+# space for PLN; exponentiation yields the expected observed mean per gene.
+def _compute_predicted_mean_pln(y_log_rate):
+    """Compute predicted per-gene observed mean for PLN models.
+
+    Parameters
+    ----------
+    y_log_rate : ndarray, shape ``(G,)`` or ``(1, G)``
+        MAP log-rate coordinates from the PLN decoder head.
+
+    Returns
+    -------
+    pred : ndarray, shape ``(G,)``
+        Predicted per-gene observed mean computed as ``exp(y_log_rate)``.
+
+    Notes
+    -----
+    The PLN observation model uses:
+
+    .. math:: X_g \\sim \\text{Poisson}(\\lambda_g), \\;
+              \\log \\lambda_g = y_{\\text{log-rate}, g}
+
+    So the per-gene conditional mean is directly:
+
+    .. math:: \\mathbb{E}[X_g \\mid y] = \\lambda_g = \\exp(y_g)
+
+    Unlike LNM, no extra library-size scaling is required in this
+    diagnostic path.
+    """
+    y_arr = np.asarray(y_log_rate, dtype=float)
+    if y_arr.ndim > 1:
+        y_arr = np.squeeze(y_arr)
+    return np.exp(y_arr)
 
 
 def _is_lnm_model(results) -> bool:
@@ -412,13 +451,14 @@ def _prepare_calibration_data(
         - ``obs_mean``, ``pred_mean``: arrays (single-dataset)
         - ``is_mixture``: bool
         - ``annotations``: list of annotation strings
-        Returns ``None`` when r/p are unavailable.
+        Returns ``None`` when required MAP parameters are unavailable.
     """
     counts = _coerce_and_align_counts_to_results(
         counts, results, context="_prepare_calibration_data"
     )
 
     _use_lnm = _is_lnm_model(results)
+    _use_pln = _is_pln_model(results)
 
     # ---- LNM path: predicted mean = rho * obs_mean_total ---------------------
     if _use_lnm:
@@ -450,6 +490,42 @@ def _prepare_calibration_data(
             y_alr, counts,
             alr_reference_idx=alr_ref,
         )
+        return {
+            "mode": "single",
+            "ds_results": None,
+            "obs_mean": obs_mean,
+            "pred_mean": pred_mean,
+            "is_mixture": False,
+            "annotations": _annotations,
+        }
+
+    # ---- PLN path: predicted mean = exp(y_log_rate) -------------------------
+    if _use_pln:
+        pln_targets = ["y_log_rate"]
+        # ``eta_capture`` is optional; include it when available so the plot
+        # annotation mirrors LNM's optional capture summary.
+        if bool(getattr(results.model_config, "uses_biology_informed_capture", False)):
+            pln_targets.append("eta_capture")
+        map_estimates = _get_map_estimates_for_plot(
+            results, counts=counts, targets=pln_targets
+        )
+        y_log_rate = map_estimates.get("y_log_rate")
+        if y_log_rate is None:
+            console.print(
+                "[yellow]Skipping mean calibration: y_log_rate unavailable "
+                "in MAP estimates for PLN model.[/yellow]"
+            )
+            return None
+
+        eta_capture = map_estimates.get("eta_capture")
+        _annotations = []
+        if eta_capture is not None:
+            mean_eta = float(np.mean(np.asarray(eta_capture, dtype=float)))
+            _annotations.append(f"$\\bar{{\\eta}} = {mean_eta:.4f}$")
+        _annotations.append("PLN (log-rate)")
+
+        obs_mean = np.mean(np.asarray(counts, dtype=float), axis=0)
+        pred_mean = _compute_predicted_mean_pln(y_log_rate)
         return {
             "mode": "single",
             "ds_results": None,

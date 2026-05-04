@@ -42,3 +42,20 @@ plotting from raw `adata` counts against filtered model results.
   mean as `rho * E[u_T]` (compositional probability times expected total
   count) instead of the NB formula `r * p / (1-p)`. The ALR reference index
   is read from `model_config.alr_reference_idx`.
+- `plot_mean_calibration` also auto-detects PLN models and computes the
+  predicted mean as `exp(y_log_rate)` from the MAP decoder log-rate head.
+  This keeps the diagnostic in the model's native log-rate space.
+
+## PLN Compatibility Notes
+
+The viz module supports PLN runs with model-aware behavior:
+
+- **Supported**
+  - `plot_mean_calibration` (PLN branch via `y_log_rate`)
+  - `plot_ppc` and `plot_ecdf` (generic count-space diagnostics)
+  - `plot_capture_anchor` / `plot_p_capture_scaling` when capture priors are active
+- **Gracefully skipped for PLN**
+  - `plot_correlation_heatmap` (expects NB-family posterior samples such as
+    `r` / `mu`; use `get_pln_correlation()` / `get_pln_sigma()` instead)
+  - `plot_bio_ppc` (defined as NB `r,p` biological bands)
+  - `plot_mixture_ppc` (PLN mixtures are not supported in v1)

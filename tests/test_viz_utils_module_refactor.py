@@ -3299,6 +3299,12 @@ from scribe.viz.mu_pairwise import (
     _collapse_mixture_axis,
     _get_dataset_count,
 )
+from scribe.models.config.enums import Parameterization
+from scribe.viz._common import _is_pln_model
+from scribe.viz.mean_calibration import (
+    _compute_predicted_mean_pln,
+    _prepare_calibration_data,
+)
 
 
 class TestGetLayoutsForPlot:
@@ -3383,6 +3389,118 @@ class TestComputePredictedMeanWithLayouts:
         pred_no_vcp = _compute_predicted_mean(r, p, w, layouts=layouts)
         # VCP scales by mean(pc) = 0.8; all predictions should shrink.
         np.testing.assert_allclose(pred_vcp, pred_no_vcp * np.mean(pc))
+
+
+# =========================================================================
+# PLN viz compatibility tests
+# =========================================================================
+
+
+def test_is_pln_model_detects_enum_and_string_forms():
+    """PLN detector should handle both enum and plain-string configs."""
+
+    class _Fake:
+        """Small results stub exposing only model_config.parameterization."""
+
+        def __init__(self, parameterization):
+            self.model_config = types.SimpleNamespace(
+                parameterization=parameterization
+            )
+
+    assert _is_pln_model(_Fake(Parameterization.POISSON_LOGNORMAL))
+    assert _is_pln_model(_Fake("poisson_lognormal"))
+    assert not _is_pln_model(_Fake(Parameterization.CANONICAL))
+
+
+def test_compute_predicted_mean_pln_matches_exp():
+    """PLN predicted mean helper should return exp(y_log_rate)."""
+    y_log_rate = np.array([0.0, np.log(2.0), np.log(0.5)], dtype=float)
+    pred = _compute_predicted_mean_pln(y_log_rate)
+    np.testing.assert_allclose(pred, np.exp(y_log_rate), rtol=1e-8)
+
+
+def test_prepare_calibration_data_pln_uses_y_log_rate(monkeypatch):
+    """Mean-calibration data prep should use PLN branch and annotations."""
+    y_log_rate = np.log(np.array([1.0, 3.0, 5.0], dtype=float))
+
+    class _FakeResults:
+        """Minimal results stub for `_prepare_calibration_data`."""
+
+        def __init__(self):
+            self.model_config = types.SimpleNamespace(
+                parameterization=Parameterization.POISSON_LOGNORMAL,
+                uses_biology_informed_capture=False,
+                uses_variable_capture=False,
+            )
+            self.n_genes = 3
+
+    def _fake_get_map(*_args, **_kwargs):
+        return {"y_log_rate": y_log_rate}
+
+    import scribe.viz.mean_calibration as mc_module
+
+    monkeypatch.setattr(mc_module, "_get_map_estimates_for_plot", _fake_get_map)
+
+    counts = np.array([[1, 2, 3], [2, 1, 4], [1, 3, 2]], dtype=float)
+    payload = _prepare_calibration_data(_FakeResults(), counts)
+
+    assert payload is not None
+    assert payload["mode"] == "single"
+    assert "PLN (log-rate)" in payload["annotations"]
+    np.testing.assert_allclose(
+        payload["pred_mean"], np.exp(y_log_rate), rtol=1e-8
+    )
+
+
+def test_plot_correlation_heatmap_skips_for_pln():
+    """Correlation heatmap should skip gracefully for PLN runs."""
+    results = types.SimpleNamespace(
+        model_config=types.SimpleNamespace(
+            parameterization=Parameterization.POISSON_LOGNORMAL
+        ),
+        posterior_samples=None,
+    )
+    out = plot_correlation_heatmap(results, None, save=False)
+    assert out is None
+
+
+def test_plot_bio_ppc_skips_for_pln(monkeypatch):
+    """Biological PPC should skip gracefully for PLN runs."""
+    import scribe.viz.bio_ppc as bio_module
+
+    # Keep the test focused on model-type gating, not count alignment.
+    monkeypatch.setattr(
+        bio_module, "_coerce_and_align_counts_to_results", lambda c, *_a, **_k: c
+    )
+
+    results = types.SimpleNamespace(
+        model_config=types.SimpleNamespace(
+            parameterization=Parameterization.POISSON_LOGNORMAL
+        )
+    )
+    counts = np.array([[1, 2], [3, 4]], dtype=float)
+    out = plot_bio_ppc(results, counts, save=False)
+    assert out is None
+
+
+def test_plot_mixture_ppc_skips_for_pln(monkeypatch):
+    """Mixture PPC should skip gracefully for PLN runs."""
+    import scribe.viz.mixture_ppc as mix_module
+
+    # Keep the test focused on model-type gating, not count alignment.
+    monkeypatch.setattr(
+        mix_module, "_coerce_and_align_counts_to_results", lambda c, *_a, **_k: c
+    )
+
+    results = types.SimpleNamespace(
+        model_config=types.SimpleNamespace(
+            parameterization=Parameterization.POISSON_LOGNORMAL
+        ),
+        n_components=2,
+    )
+    counts = np.array([[1, 2], [3, 4]], dtype=float)
+    out = plot_mixture_ppc(results, counts, save=False)
+    assert out is None
 
 
 class TestPerDatasetMeansWithLayouts:

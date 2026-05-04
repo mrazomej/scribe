@@ -7,7 +7,7 @@ import seaborn as sns
 from jax import random
 import jax.numpy as jnp
 
-from ._common import console
+from ._common import _is_pln_model, console
 from ._interactive import PlotResultCollection, plot_function
 from .dispatch import _get_layouts_for_plot
 from .gene_selection import _coerce_and_align_counts_to_results
@@ -114,6 +114,17 @@ def plot_correlation_heatmap(
     if figsize is None:
         figsize = (_cfg_figsize, _cfg_figsize)
     cmap = heatmap_opts.get("cmap", "RdBu_r")
+
+    # PLN does not expose NB-style per-gene scalar posteriors (r/mu) used by
+    # this posterior-sample correlation heatmap implementation.
+    if _is_pln_model(results):
+        console.print(
+            "[yellow]Skipping correlation heatmap for PLN: this plot expects "
+            "NB-family posterior samples ('r' or 'mu'). Use PLN extraction "
+            "methods (e.g. get_pln_correlation/get_pln_sigma) instead."
+            "[/yellow]"
+        )
+        return
 
     parameterization = results.model_config.parameterization
     if parameterization in ["linked", "mean_prob", "odds_ratio", "mean_odds"]:
