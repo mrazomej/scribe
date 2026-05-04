@@ -554,15 +554,30 @@ def _prepare_calibration_data(
         }
 
     # ---- PLN path: predicted observed mean -----------------------------------
-    # The predicted observed mean must apply the same capture offset
-    # that the likelihood applies inside the cell plate; otherwise the
-    # diagnostic plots the *biological* rate against *observed* counts,
-    # inflating the ratio by ``1/p_capture``. We always request
-    # ``eta_capture`` and ``d_pln`` when they exist, regardless of
-    # whether ``uses_biology_informed_capture`` is set on the config --
-    # the helper handles ``None`` cleanly when capture / d_mode are off.
+    # The honest population-level prediction uses the *registered*
+    # LowRankPoissonLogNormal distribution (which already encodes
+    # ``mu_g + 0.5·(||W_g||² + d_g)`` via the log-normal moment
+    # formula) times the empirical mean capture factor
+    # ``mean_c[exp(-eta_c)]``. The earlier approach -- read the
+    # ``y_log_rate`` MAP and exponentiate it directly -- silently
+    # dropped the encoder's per-cell contribution because the MAP of
+    # ``y_log_rate`` is just the decoder *bias* ``mu_g`` (i.e., the
+    # ``loc`` of the registered ``LowRankMultivariateNormal``); the
+    # ``W·z_c`` term is recovered only via a full Predictive forward
+    # pass through the encoder.
+    #
+    # Tradeoff: this still does not include encoder bias (the
+    # aggregate posterior ``q(z)`` may drift from the ``N(0, I)``
+    # prior in practice). The PPC plots remain the gold standard for
+    # capturing that drift; this calibration plot is a *population-
+    # level* sanity check on whether the decoder bias / loadings /
+    # diagonal residual are jointly placed correctly relative to the
+    # empirical capture scale.
     if _use_pln:
-        pln_targets = ["y_log_rate"]
+        # Pull eta_capture and d_pln when available; we'll combine
+        # them with the registered population distribution rather
+        # than the y_log_rate MAP.
+        pln_targets = []
         if bool(
             getattr(
                 results.model_config,
@@ -575,30 +590,55 @@ def _prepare_calibration_data(
             getattr(results.model_config, "d_mode", "low_rank") == "learned"
         ):
             pln_targets.append("d_pln")
-
-        map_estimates = _get_map_estimates_for_plot(
-            results, counts=counts, targets=pln_targets
+        map_estimates = (
+            _get_map_estimates_for_plot(
+                results, counts=counts, targets=pln_targets
+            )
+            if pln_targets
+            else {}
         )
-        y_log_rate = map_estimates.get("y_log_rate")
-        if y_log_rate is None:
+
+        # Population-level predicted biological-rate mean per gene,
+        # using the closed-form ``LowRankPoissonLogNormal.mean``. This
+        # already includes ``exp(mu_g + 0.5·(||W_g||² + d_g))``.
+        try:
+            distributions = results.get_distributions(
+                backend="numpyro", split=False
+            )
+        except (TypeError, AttributeError):
+            # Older results signatures may not support kwargs.
+            distributions = results.get_distributions()
+        lambda_dist = distributions.get("lambda_rate")
+        if lambda_dist is None:
             console.print(
-                "[yellow]Skipping mean calibration: y_log_rate unavailable "
-                "in MAP estimates for PLN model.[/yellow]"
+                "[yellow]Skipping mean calibration: ``lambda_rate`` "
+                "(LowRankPoissonLogNormal) unavailable for this PLN "
+                "result.[/yellow]"
             )
             return None
+        pop_mean_bio = np.asarray(lambda_dist.mean, dtype=float)
 
+        # Empirical capture factor: ``mean_c[exp(-eta_c)]``. With the
+        # capture anchor on, this equals roughly ``mean(L_c) / M_0``.
+        # Without the anchor, eta_capture is absent and we set the
+        # factor to 1 (no capture correction).
         eta_capture = map_estimates.get("eta_capture")
-        d_pln = map_estimates.get("d_pln")
-        _annotations = []
         if eta_capture is not None:
-            mean_eta = float(np.mean(np.asarray(eta_capture, dtype=float)))
+            eta_arr = np.asarray(eta_capture, dtype=float).reshape(-1)
+            mean_capture = float(np.mean(np.exp(-eta_arr)))
+            mean_eta = float(np.mean(eta_arr))
+        else:
+            mean_capture = 1.0
+            mean_eta = None
+
+        pred_mean = pop_mean_bio * mean_capture
+
+        _annotations = []
+        if mean_eta is not None:
             _annotations.append(f"$\\bar{{\\eta}} = {mean_eta:.4f}$")
         _annotations.append("PLN (log-rate)")
 
         obs_mean = np.mean(np.asarray(counts, dtype=float), axis=0)
-        pred_mean = _compute_predicted_mean_pln(
-            y_log_rate, eta_capture=eta_capture, d_pln=d_pln
-        )
         return {
             "mode": "single",
             "ds_results": None,
