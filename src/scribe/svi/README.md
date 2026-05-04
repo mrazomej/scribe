@@ -1136,6 +1136,12 @@ Unlike LNM, PLN parameters are G-dimensional (not G-1) and live in log-rate
 space rather than ALR coordinates.  No ALR-to-CLR transformation is needed
 since log-rate space treats all genes symmetrically.
 
+`get_distributions()` includes `y_log_rate` (low-rank MVN), `lambda_rate`
+(`LowRankPoissonLogNormal`), and optionally `d_pln` (when `d_mode="learned"`)
+and `eta_capture` (when capture is active).  `get_map()` returns point
+estimates for `y_log_rate`, `d_pln`, and `eta_capture`; `lambda_rate` is
+excluded because its mode is intractable.
+
 #### VAE Serialization Note
 
 `ScribeVAEResults` is stdlib-`pickle` compatible, including LNM/LNMVCP/PLN

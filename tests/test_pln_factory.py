@@ -240,14 +240,12 @@ def test_pln_factory_uses_linear_decoder():
         )
         .build()
     )
-    counts = random.poisson(
-        random.PRNGKey(0), 3.0, shape=(n_cells, n_genes)
-    )
+    counts = random.poisson(random.PRNGKey(0), 3.0, shape=(n_cells, n_genes))
     params = _init_pln_svi_params(config, n_cells, n_genes, counts)
     head = _walk_for_head_kernel(params)
-    assert head["kernel"] is not None, (
-        "Could not locate head_y_log_rate kernel in SVI params."
-    )
+    assert (
+        head["kernel"] is not None
+    ), "Could not locate head_y_log_rate kernel in SVI params."
     assert head["kernel"].shape == (k, n_genes), (
         "Expected linear-decoder kernel shape (latent_dim, n_genes) = "
         f"({k}, {n_genes}); got {head['kernel'].shape}. The PLN branch "
@@ -277,23 +275,16 @@ def test_pln_factory_consumes_pca_and_log_mean_data_init():
     ).astype(np.float32)
 
     config = _pln_config().model_copy(
-        update={
-            "vae": _pln_config().vae.model_copy(
-                update={"latent_dim": k}
-            )
-        }
+        update={"vae": _pln_config().vae.model_copy(update={"latent_dim": k})}
     )
     config = inject_pln_vae_data_init(config, counts, latent_dim=k)
     expected_bias = jnp.asarray(config.vae.empirical_log_mean_bias_init)
     expected_kernel = jnp.asarray(config.vae.pca_loadings_init).T  # (k, G)
 
-    params = _init_pln_svi_params(
-        config, n_cells, n_genes, jnp.asarray(counts)
-    )
+    params = _init_pln_svi_params(config, n_cells, n_genes, jnp.asarray(counts))
     head = _walk_for_head_kernel(params)
     assert head["bias"] is not None, (
-        "Decoder bias for y_log_rate was not initialized from "
-        "PLN data-init."
+        "Decoder bias for y_log_rate was not initialized from " "PLN data-init."
     )
     assert head["kernel"] is not None, (
         "Decoder kernel for y_log_rate was not initialized from "
@@ -415,9 +406,7 @@ def test_svi_smoke_fit_pln_with_capture():
             model_config=config,
             counts=counts,
         )
-    assert jnp.isfinite(loss), (
-        f"PLN + capture SVI loss diverged to {loss}."
-    )
+    assert jnp.isfinite(loss), f"PLN + capture SVI loss diverged to {loss}."
 
 
 # ---------------------------------------------------------------------------
@@ -560,3 +549,163 @@ def test_api_fit_pln_with_variable_capture_and_priors():
         )
     mu = results.get_pln_mu()
     assert mu.shape == (n_genes,)
+
+
+# ---------------------------------------------------------------------------
+# get_distributions() and get_map() for PLN
+# ---------------------------------------------------------------------------
+
+
+def test_pln_get_distributions_low_rank():
+    """``get_distributions()`` returns decoder-derived log-rate and
+    Poisson-LogNormal distributions for a basic PLN fit.
+    """
+    import anndata as ad
+    import numpy as np
+
+    import scribe
+
+    n_cells, n_genes, k = 32, 12, 3
+    counts = np.asarray(
+        random.poisson(random.PRNGKey(7), 5.0, shape=(n_cells, n_genes))
+    ).astype(np.float32)
+    adata = ad.AnnData(counts)
+
+    results = scribe.fit(
+        adata,
+        model="pln",
+        vae_latent_dim=k,
+        vae_encoder_hidden_dims=[16],
+        n_steps=50,
+        seed=0,
+    )
+    dists = results.get_distributions()
+
+    assert (
+        "y_log_rate" in dists
+    ), "get_distributions() must include 'y_log_rate' for PLN."
+    assert (
+        "lambda_rate" in dists
+    ), "get_distributions() must include 'lambda_rate' for PLN."
+
+
+def test_pln_get_distributions_with_learned_d():
+    """``get_distributions()`` includes ``d_pln`` when ``d_mode='learned'``."""
+    import anndata as ad
+    import numpy as np
+
+    import scribe
+
+    n_cells, n_genes, k = 32, 12, 3
+    counts = np.asarray(
+        random.poisson(random.PRNGKey(8), 5.0, shape=(n_cells, n_genes))
+    ).astype(np.float32)
+    adata = ad.AnnData(counts)
+
+    results = scribe.fit(
+        adata,
+        model="pln",
+        vae_latent_dim=k,
+        vae_encoder_hidden_dims=[16],
+        d_mode="learned",
+        n_steps=50,
+        seed=0,
+    )
+    dists = results.get_distributions()
+
+    assert (
+        "d_pln" in dists
+    ), "get_distributions() must include 'd_pln' when d_mode='learned'."
+    assert "y_log_rate" in dists
+    assert "lambda_rate" in dists
+
+
+def test_pln_get_distributions_with_capture():
+    """``get_distributions()`` includes ``eta_capture`` when capture is active."""
+    import anndata as ad
+    import numpy as np
+
+    import scribe
+
+    n_cells, n_genes, k = 32, 12, 3
+    counts = np.asarray(
+        random.poisson(random.PRNGKey(9), 5.0, shape=(n_cells, n_genes))
+    ).astype(np.float32)
+    adata = ad.AnnData(counts)
+
+    results = scribe.fit(
+        adata,
+        model="pln",
+        vae_latent_dim=k,
+        vae_encoder_hidden_dims=[16],
+        priors={"capture_efficiency": (float(np.log(1e5)), 0.5)},
+        n_steps=50,
+        seed=0,
+    )
+    dists = results.get_distributions()
+
+    assert (
+        "eta_capture" in dists
+    ), "get_distributions() must include 'eta_capture' for PLN with capture."
+    assert "y_log_rate" in dists
+    assert "lambda_rate" in dists
+
+
+def test_pln_get_map_low_rank():
+    """``get_map()`` returns ``y_log_rate`` MAP estimate for basic PLN."""
+    import anndata as ad
+    import numpy as np
+
+    import scribe
+
+    n_cells, n_genes, k = 32, 12, 3
+    counts = np.asarray(
+        random.poisson(random.PRNGKey(10), 5.0, shape=(n_cells, n_genes))
+    ).astype(np.float32)
+    adata = ad.AnnData(counts)
+
+    results = scribe.fit(
+        adata,
+        model="pln",
+        vae_latent_dim=k,
+        vae_encoder_hidden_dims=[16],
+        n_steps=50,
+        seed=0,
+    )
+    map_est = results.get_map()
+
+    assert (
+        "y_log_rate" in map_est
+    ), "get_map() must include 'y_log_rate' for PLN."
+    assert map_est["y_log_rate"].shape == (n_genes,)
+    # lambda_rate should be excluded (intractable mode).
+    assert "lambda_rate" not in map_est
+
+
+def test_pln_get_map_with_capture():
+    """``get_map()`` includes ``eta_capture`` MAP for PLN with capture."""
+    import anndata as ad
+    import numpy as np
+
+    import scribe
+
+    n_cells, n_genes, k = 32, 12, 3
+    counts = np.asarray(
+        random.poisson(random.PRNGKey(11), 5.0, shape=(n_cells, n_genes))
+    ).astype(np.float32)
+    adata = ad.AnnData(counts)
+
+    results = scribe.fit(
+        adata,
+        model="pln",
+        vae_latent_dim=k,
+        vae_encoder_hidden_dims=[16],
+        priors={"capture_efficiency": (float(np.log(1e5)), 0.5)},
+        n_steps=50,
+        seed=0,
+    )
+    map_est = results.get_map()
+
+    assert "y_log_rate" in map_est
+    assert "eta_capture" in map_est
+    assert map_est["eta_capture"].shape == (n_cells,)

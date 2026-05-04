@@ -633,6 +633,14 @@ def _apply_base_parameterization(
                 pos_transform=pos_transform,
             )
         )
+    elif parameterization == Parameterization.POISSON_LOGNORMAL:
+        # PLN has no core NB scalars — log-rates come from the VAE
+        # decoder and are added as decoder-derived distributions in
+        # ``get_distributions()``. The only guide-level parameter is
+        # ``d_pln`` (diagonal noise, learned mode only).
+        distributions.update(
+            _build_poisson_lognormal_posteriors(params, is_mixture, split)
+        )
     else:
         raise ValueError(f"Unknown parameterization: {parameterization}")
 
@@ -1372,12 +1380,20 @@ def _apply_capture(
 ) -> None:
     """Pass 7: add the per-cell capture probability posterior.
 
-    Active for VCP models.  Three variants:
+    Active for VCP models and PLN with capture anchor.  Three variants:
     - Biology-informed / data-driven mu_eta: posterior on ``eta_capture``.
     - Mean-odds parameterization: posterior on ``phi_capture``.
     - Other parameterizations: posterior on ``p_capture``.
     """
-    if not model_config.uses_variable_capture:
+    # PLN uses capture as an internal flag (no separate 'plnvcp' model),
+    # so ``uses_variable_capture`` is False. We still need to extract
+    # the ``eta_capture`` posterior when the biology-informed anchor is
+    # active.
+    _has_capture = model_config.uses_variable_capture or (
+        model_config.base_model == "pln"
+        and getattr(model_config, "uses_biology_informed_capture", False)
+    )
+    if not _has_capture:
         return
 
     from ..config.enums import HierarchicalPriorType
@@ -2700,6 +2716,44 @@ def _build_logistic_normal_posteriors(
     if "d_lnm_loc" in params and "d_lnm_scale" in params:
         distributions["d_lnm"] = _build_lognormal_posterior(
             params, "d_lnm", is_mixture, split
+        )
+
+    return distributions
+
+
+def _build_poisson_lognormal_posteriors(
+    params: Dict[str, jnp.ndarray],
+    is_mixture: bool,
+    split: bool,
+) -> Dict[str, Any]:
+    """Build variational posteriors for PLN guide-level parameters.
+
+    PLN's log-rates are produced by the VAE decoder and are *not*
+    explicit guide sites — they are added as decoder-derived
+    distributions in ``get_distributions()``.  The only guide-level
+    parameter that this function handles is the learned diagonal noise
+    ``d_pln`` (present when ``d_mode="learned"``).
+
+    Parameters
+    ----------
+    params : dict
+        NumPyro variational parameters (``{name}_loc``, ``{name}_scale``).
+    is_mixture : bool
+        Whether the model uses mixture components.
+    split : bool
+        Whether to split per-gene posteriors into a list.
+
+    Returns
+    -------
+    dict
+        Posterior distributions keyed by parameter name.
+    """
+    distributions: Dict[str, Any] = {}
+
+    # Learned diagonal noise vector d_pln (positive, LogNormal guide).
+    if "d_pln_loc" in params and "d_pln_scale" in params:
+        distributions["d_pln"] = _build_lognormal_posterior(
+            params, "d_pln", is_mixture, split
         )
 
     return distributions
