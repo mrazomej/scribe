@@ -429,7 +429,39 @@ class LaplaceInferenceEngine:
         Returns
         -------
         LaplaceRunResult
+
+        Raises
+        ------
+        NotImplementedError
+            If ``model_config.base_model`` is supported only as a
+            stub (currently LNM — the kernel layer is in place at
+            :mod:`scribe.laplace._newton_lnm`; the outer training
+            loop integration is the remaining piece of the LNM
+            Laplace plan).
         """
+        # Top-level dispatch on the generative model. The PLN flow
+        # is the original implementation below. LNM dispatches to
+        # ``_run_lnm_inference`` once that's wired up; for now it
+        # raises a clear error that points the user at the kernel
+        # tests so they can verify the inner pieces are in place.
+        bm = getattr(model_config, "base_model", "pln")
+        if bm == "lnm":
+            raise NotImplementedError(
+                "LNM Laplace engine integration is in progress. The "
+                "Newton kernels (z-space and y_alr-space) are "
+                "implemented and tested in "
+                "scribe.laplace._newton_lnm; the engine wiring + "
+                "end-to-end integration is the remaining piece of "
+                "Part 3 of the LNM Laplace plan. See "
+                "tests/test_laplace_newton_lnm.py for the kernel-"
+                "level correctness guarantees."
+            )
+        if bm != "pln":
+            raise NotImplementedError(
+                f"Laplace inference is supported for PLN; "
+                f"got base_model={bm!r}."
+            )
+
         counts = jnp.asarray(count_data, dtype=jnp.float32)
         rng = random.PRNGKey(seed)
 
