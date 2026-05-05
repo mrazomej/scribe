@@ -107,7 +107,12 @@ def _run_laplace_inference(
         log_progress_lines=laplace_config.log_progress_lines,
     )
 
-    # Pack into ScribeLaplaceResults.
+    # Pack into ScribeLaplaceResults. Fields populated here are
+    # PLN-specific (``x_loc``, ``eta_loc``); LNM-specific slots
+    # (``z_loc`` / ``y_alr_loc`` / ``alr_reference_idx``) stay at
+    # their dataclass defaults of ``None``. The single-class
+    # design relies on these defaults so the engine can populate
+    # whichever subset matches the model that ran.
     g = run_result.globals
     return ScribeLaplaceResults(
         model_config=run_result.model_config,
@@ -120,6 +125,9 @@ def _run_laplace_inference(
         losses=run_result.losses,
         n_genes=int(n_genes),
         n_cells=int(n_cells),
+        early_stopped=run_result.early_stopped,
+        best_loss=run_result.best_loss,
+        stopped_at_step=run_result.stopped_at_step,
     )
 
 

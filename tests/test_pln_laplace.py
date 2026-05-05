@@ -11,8 +11,10 @@ These tests cover the surrounding plumbing:
 3. Capture-anchor activation when the user passes
    ``priors={"capture_efficiency": ...}``.
 4. ``inference_method="laplace"`` is rejected for non-PLN models.
-5. ``ScribeLaplaceResults`` exposes the same ``get_pln_*`` accessors
-   as the VAE results so downstream plotting code works on either.
+5. ``ScribeLaplaceResults`` exposes the model-agnostic ``get_mu`` /
+   ``get_W`` / ``get_d`` / ``get_sigma`` / ``get_correlation``
+   surface, with the per-cell MAP exposed via ``x_loc`` / ``eta_loc``
+   fields directly.
 """
 
 from __future__ import annotations
@@ -90,7 +92,7 @@ class TestLaplaceEndToEnd:
             n_steps=100,
             seed=0,
         )
-        mu_recovered = np.asarray(result.get_pln_mu())
+        mu_recovered = np.asarray(result.get_mu())
         assert mu_recovered.shape == (6,)
         # Mean of mu should track mu_true within 0.1.
         assert abs(float(mu_recovered.mean()) - float(mu_true.mean())) < 0.1
@@ -189,11 +191,11 @@ class TestCaptureAnchor:
             priors={"capture_efficiency": (np.log(M_0), 0.5)},
             seed=3,
         )
-        eta = result.get_laplace_eta_loc()
+        eta = result.eta_loc
         assert eta is not None
         assert eta.shape == (40,)
         # ``p_capture = exp(-eta_c) ∈ (0, 1]``.
-        p_cap = result.get_laplace_p_capture()
+        p_cap = result.get_p_capture()
         assert p_cap is not None
         assert jnp.all(jnp.isfinite(p_cap))
         assert jnp.all((p_cap > 0) & (p_cap <= 1.0))
@@ -239,7 +241,13 @@ class TestNonPLNRejection:
 
 
 class TestResultsAccessors:
-    """``ScribeLaplaceResults`` exposes the same get_pln_* surface as VAE results."""
+    """``ScribeLaplaceResults`` exposes a model-agnostic accessor surface.
+
+    All accessors return tensors with the right shape regardless of
+    which model produced the fit; the per-cell MAP is read directly
+    from the typed dataclass slots (``x_loc`` / ``eta_loc`` for PLN,
+    ``z_loc`` / ``y_alr_loc`` for LNM).
+    """
 
     @pytest.fixture
     def result(self):
@@ -257,23 +265,23 @@ class TestResultsAccessors:
             seed=4,
         )
 
-    def test_get_pln_mu_W_d_shapes(self, result):
-        mu = result.get_pln_mu()
-        W = result.get_pln_W()
-        d = result.get_pln_d()
+    def test_get_mu_W_d_shapes(self, result):
+        mu = result.get_mu()
+        W = result.get_W()
+        d = result.get_d()
         assert mu.shape == (5,)
         assert W.shape == (5, 2)
         assert d.shape == (5,)
         assert jnp.all(d > 0)
 
-    def test_get_pln_sigma_is_pd(self, result):
-        sigma = result.get_pln_sigma()
+    def test_get_sigma_is_pd(self, result):
+        sigma = result.get_sigma()
         assert sigma.shape == (5, 5)
         # PD check via Cholesky.
         jnp.linalg.cholesky(sigma)
 
-    def test_get_pln_correlation_diag_one(self, result):
-        corr = result.get_pln_correlation()
+    def test_get_correlation_diag_one(self, result):
+        corr = result.get_correlation()
         assert jnp.allclose(jnp.diag(corr), 1.0, atol=1e-5)
 
     def test_get_map(self, result):
@@ -287,12 +295,17 @@ class TestResultsAccessors:
         dists = result.get_distributions(backend="numpyro")
         assert isinstance(dists["lambda_rate"], LowRankPoissonLogNormal)
 
-    def test_laplace_x_loc_shape(self, result):
-        x_loc = result.get_laplace_x_loc()
-        assert x_loc.shape == (30, 5)
+    def test_x_loc_shape(self, result):
+        # Per-cell MAP read directly from the dataclass slot.
+        assert result.x_loc.shape == (30, 5)
 
-    def test_laplace_eta_loc_none_without_anchor(self, result):
-        assert result.get_laplace_eta_loc() is None
+    def test_eta_loc_none_without_anchor(self, result):
+        assert result.eta_loc is None
+
+    def test_get_p_capture_none_without_anchor(self, result):
+        # No capture anchor → eta_loc is None and p_capture_loc is
+        # None too, so the dispatched accessor returns None.
+        assert result.get_p_capture() is None
 
 
 # =====================================================================
