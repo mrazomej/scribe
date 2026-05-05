@@ -156,9 +156,15 @@ def _get_predictive_samples_for_plot(
     predictive_samples = None
     try:
         results.posterior_samples = posterior_samples
+        # Forward ``counts`` so LNM-family results trigger
+        # conditional PPC (per-cell ``u_T`` fixed at observed
+        # library size). For non-LNM models this kwarg is ignored
+        # in get_predictive_samples, so the call is safe across
+        # all result types.
         predictive_samples = results.get_predictive_samples(
             rng_key=rng_key,
             store_samples=False,
+            counts=counts,
         )
     finally:
         if store_samples:

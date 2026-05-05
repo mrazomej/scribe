@@ -1,11 +1,11 @@
 """Variational and prior predictive sampling via NumPyro ``Predictive``."""
 
-from typing import Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from jax import random
 import jax.numpy as jnp
 from numpyro.infer import Predictive
-from numpyro.handlers import block
+from numpyro.handlers import block, condition
 
 
 def sample_variational_posterior(
@@ -89,6 +89,7 @@ def generate_predictive_samples(
     model_args: Dict,
     rng_key: random.PRNGKey,
     params: Optional[Dict] = None,
+    condition_data: Optional[Dict[str, Any]] = None,
 ) -> jnp.ndarray:
     """Generate predictive samples using posterior parameter samples.
 
@@ -114,6 +115,21 @@ def generate_predictive_samples(
         Optional trained parameter dictionary used to substitute model-side
         ``numpyro.param`` / ``flax_module`` weights during replay. This is
         required for VAE models so decoder parameters are not re-initialized.
+    condition_data : Dict[str, Any], optional
+        Per-site values to condition on during the predictive replay,
+        passed through ``numpyro.handlers.condition``. Use this to fix
+        certain latent sites at observed values *while still sampling
+        downstream sites freshly*. The canonical example is the
+        **conditional PPC** for LNM-family models: pass
+        ``{"u_T": observed_totals}`` so the predictive replay uses the
+        per-cell observed library sizes rather than re-drawing them
+        from the global NB. Sites listed here are not present in
+        ``posterior_samples`` (they were ``obs=``-tagged during
+        training and so are not stored in the variational posterior);
+        ``condition`` injects them into the replay's trace before
+        ``Predictive`` substitutes the posterior-sampled latents.
+        ``None`` (the default) reproduces the original behaviour:
+        every latent gets sampled from the model.
 
     Returns
     -------
@@ -134,9 +150,21 @@ def generate_predictive_samples(
             "No array values found (all values are nested dicts?)."
         )
 
+    # When the caller supplies ``condition_data``, wrap the model so
+    # those sites are fixed before NumPyro's ``Predictive`` runs. The
+    # wrapped model is what ``Predictive`` traces. The order matters:
+    # ``condition`` substitutes its sites at sample time; ``Predictive``
+    # then substitutes the posterior-sampled latents for the remaining
+    # sites; the still-free sites (e.g. ``counts``) are sampled fresh
+    # from their distributions, conditioned on whatever upstream values
+    # the conditioning + posterior-sample chain has fixed.
+    model_to_use = model
+    if condition_data is not None and len(condition_data) > 0:
+        model_to_use = condition(model, data=condition_data)
+
     # Create predictive object for generating new data
     predictive = Predictive(
-        model,
+        model_to_use,
         posterior_samples,
         num_samples=num_samples,
         exclude_deterministic=False,
