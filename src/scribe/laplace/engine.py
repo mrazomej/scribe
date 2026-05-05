@@ -1232,21 +1232,38 @@ def _run_lnm_inference(
     )
     d_log_init = jnp.full((g_minus1,), jnp.log(0.01), dtype=jnp.float32)
 
-    # Globals dict. For LNMVCP we additionally fit (log_mu_T, log_r_T)
-    # for the NB-on-totals; for plain LNM these are unused.
+    # Globals dict. Both plain LNM and LNMVCP fit the NB-on-totals
+    # parameters (log_mu_T, log_r_T) so the engine fits the FULL
+    # generative model documented in
+    # paper/_logistic_normal_multinomial.qmd, not just the
+    # composition block conditioned on observed totals.
+    #
+    # For plain LNM:
+    #   u_T_c ~ NB(r_T, mu_T)
+    # contributes a global log-likelihood at observed u_T (no per-
+    # cell latent — Adam fits both scalars directly).
+    #
+    # For LNMVCP, the NB mean is per-cell:
+    #   u_T_c ~ NB(r_T, mu_T · exp(-eta_c))
+    # where eta_c is the per-cell capture-offset latent (handled by
+    # the η-block Newton). The same (mu_T, r_T) globals are fitted.
     params = {"mu": mu_init, "W": W_init, "d_log": d_log_init}
+
+    # Initial values for the NB globals.
+    # mu_T: prior anchor when LNMVCP supplies log_M_0; otherwise the
+    #   data-driven empirical mean of observed totals.
+    # r_T: moderate-dispersion init; the data will refine quickly.
     if capture_anchor is not None:
-        # log_mu_T initialised at the user's prior anchor (M_0); r_T
-        # at a moderate value (CV ~0.5 → r_T ≈ 4) that the data will
-        # quickly refine. Both are stored as log-transformed scalars
-        # so Adam optimises in unconstrained space; the engine
-        # exponentiates at every use site.
         log_M0_user, sigma_M = capture_anchor
-        params["log_mu_T"] = jnp.asarray(float(log_M0_user), dtype=jnp.float32)
-        params["log_r_T"] = jnp.asarray(jnp.log(4.0), dtype=jnp.float32)
+        log_mu_T_init = float(log_M0_user)
     else:
         log_M0_user = None
         sigma_M = 1.0  # placeholder; never read in the no-capture branch
+        log_mu_T_init = float(
+            jnp.log(jnp.maximum(jnp.mean(n_total_per_cell), 1.0))
+        )
+    params["log_mu_T"] = jnp.asarray(log_mu_T_init, dtype=jnp.float32)
+    params["log_r_T"] = jnp.asarray(jnp.log(4.0), dtype=jnp.float32)
 
     # ---- Per-cell latent state (warm-started near a sensible value) ----
     # For low_rank: warm-start z = 0. For learned: warm-start y_alr = mu
@@ -1393,15 +1410,18 @@ def _run_lnm_inference(
             latent_new = y_new
             gn_comp = _gn_y
 
-        # ----- Capture (eta) block — LNMVCP only -----
-        # The η-block is decoupled from the composition block, so we
-        # run a separate scalar Newton per cell. Globals
-        # ``log_mu_T``, ``log_r_T`` enter the NB likelihood and the
-        # log-det correction; their gradients flow through the
-        # outer Adam step.
+        # ----- Totals block (always present) -----
+        # Plain LNM:    u_T_c ~ NB(r_T, mu_T)         — global, no latent
+        # LNMVCP:       u_T_c ~ NB(r_T, mu_T·exp(-η_c)) — η_c is per-cell
+        # Both contribute a NB log-likelihood term to the loss; only
+        # the LNMVCP path additionally adds the η Laplace correction.
+        from jax.scipy.special import gammaln
+        mu_T = jnp.exp(params["log_mu_T"])
+        r_T = jnp.exp(params["log_r_T"])
+
         if capture_anchor is not None:
-            mu_T = jnp.exp(params["log_mu_T"])
-            r_T = jnp.exp(params["log_r_T"])
+            # LNMVCP: scalar Newton on per-cell η, decoupled from the
+            # composition block (block-diagonal Hessian).
             mu_T_sg = jax.lax.stop_gradient(mu_T)
             r_T_sg = jax.lax.stop_gradient(r_T)
             eta_init_sg = jax.lax.stop_gradient(eta_init)
@@ -1419,27 +1439,19 @@ def _run_lnm_inference(
             )
             eta_new = jax.lax.stop_gradient(eta_new)
 
-            # NB log-likelihood at the η-MAP, with live (mu_T, r_T)
-            # so their gradient enters the outer step. Clamp -η in
-            # the same range the LNM kernel uses (see
-            # _newton_lnm._LOGITS_MIN / _LOGITS_MAX).
-            from jax.scipy.special import gammaln
             exp_neg_eta = jnp.exp(jnp.clip(-eta_new, -30.0, 30.0))
-            rate_T = mu_T * exp_neg_eta
+            rate_T = mu_T * exp_neg_eta  # per-cell NB mean
             v = r_T + rate_T
-            # NB log-pmf (drop lgamma(u_T+1) constant in u_T).
             nb_lp = (
                 gammaln(n_total_batch + r_T) - gammaln(r_T)
                 + r_T * jnp.log(r_T / v)
                 + n_total_batch * jnp.log(rate_T / v)
             )
-            # TruncN(eta_anchor, sigma_M, low=0) log-prob on η. The
-            # normaliser depends only on (eta_anchor_batch, sigma_M),
-            # which are fixed → constant in θ → drops out.
+            # TruncN(η; eta_anchor, σ_M, low=0) log-prob (normaliser
+            # is constant in θ when M_0, σ_M are fixed prior knobs;
+            # drops out of the gradient).
             eta_diff = eta_new - eta_anchor_batch
-            eta_lp = (
-                -0.5 * (eta_diff * eta_diff) / (sigma_M * sigma_M)
-            )
+            eta_prior_lp = -0.5 * (eta_diff * eta_diff) / (sigma_M * sigma_M)
 
             log_det_eta = laplace_log_det_neg_H_batch_eta(
                 eta_new,
@@ -1448,17 +1460,25 @@ def _run_lnm_inference(
                 mu_T,
                 sigma_M,
             )
-            eta_loss = data_scale * jnp.sum(
-                -(nb_lp + eta_lp) + 0.5 * log_det_eta
+            totals_loss = data_scale * jnp.sum(
+                -(nb_lp + eta_prior_lp) + 0.5 * log_det_eta
             )
         else:
-            eta_new = eta_init  # passthrough; never read in plain LNM
+            # Plain LNM: NB mean is the global mu_T (no per-cell
+            # variation); the NB log-likelihood at observed totals
+            # contributes directly to the loss with no per-cell
+            # Laplace correction.
+            v = r_T + mu_T
+            nb_lp = (
+                gammaln(n_total_batch + r_T) - gammaln(r_T)
+                + r_T * jnp.log(r_T / v)
+                + n_total_batch * jnp.log(mu_T / v)
+            )
+            totals_loss = data_scale * jnp.sum(-nb_lp)
+            eta_new = eta_init  # passthrough; not used by plain LNM
             _gn_eta = jnp.zeros_like(gn_comp)
-            eta_loss = jnp.array(0.0, dtype=comp_loss.dtype)
 
-        loss = comp_loss + eta_loss
-        # Combine grad norms by max so the diagnostic represents
-        # the worst-converging block.
+        loss = comp_loss + totals_loss
         gn = jnp.maximum(gn_comp, _gn_eta)
         return loss, (latent_new, eta_new, gn)
 

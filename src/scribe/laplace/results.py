@@ -192,6 +192,17 @@ class ScribeLaplaceResults:
     p_capture_loc: Optional[jnp.ndarray] = None  # LNMVCP capture: (n_cells,)
     alr_reference_idx: Optional[int] = None    # LNM/LNMVCP only
 
+    # NB-on-totals parameters for the LNM family (mean-NB
+    # parameterization: ``E[u_T] = mu_T`` for plain LNM,
+    # ``E[u_T | eta_c] = mu_T·exp(-eta_c)`` for LNMVCP, with shape
+    # parameter ``r_T``). These reflect the FULL LNM generative
+    # model from paper/_logistic_normal_multinomial.qmd; without
+    # them, sampling fell back to a placeholder ``total_counts=1000``
+    # in PPCs (which silently mismatched the data). Both are scalar
+    # JAX arrays.
+    mu_T: Optional[jnp.ndarray] = None
+    r_T: Optional[jnp.ndarray] = None
+
     # --- AnnData-style metadata; populated by ``scribe.fit`` post-run
     # alongside the standard VAE/SVI pickles ---
     var: Optional[Any] = None
@@ -333,7 +344,7 @@ class ScribeLaplaceResults:
         bm = _base_model(self.model_config)
         if bm == "pln":
             return self.x_loc
-        if bm == "lnm":
+        if bm in ("lnm", "lnmvcp"):
             if self.z_loc is not None:
                 return self.z_loc
             return self.y_alr_loc
@@ -386,7 +397,7 @@ class ScribeLaplaceResults:
                 out["eta_capture"] = self.eta_loc
                 out["p_capture"] = jnp.exp(-self.eta_loc)
             return out
-        if bm == "lnm":
+        if bm in ("lnm", "lnmvcp"):
             out = {
                 "mu": self.mu,
                 "W": self.W,
@@ -452,7 +463,7 @@ class ScribeLaplaceResults:
                     loc=self.mu, cov_factor=self.W, cov_diag=self.d
                 ),
             }
-        if bm == "lnm":
+        if bm in ("lnm", "lnmvcp"):
             # Until a registered LowRankMultinomialLogisticNormal
             # exists, surface the Gaussian over y_alr — downstream
             # multinomial sampling can be done by softmax + Multinomial.
@@ -523,7 +534,7 @@ class ScribeLaplaceResults:
             return _ppc_pln_population(
                 rng_key, n_samples, self.mu, self.W, self.d
             )
-        if bm == "lnm":
+        if bm in ("lnm", "lnmvcp"):
             return _ppc_lnm_population(
                 rng_key,
                 n_samples,
@@ -531,6 +542,8 @@ class ScribeLaplaceResults:
                 self.W,
                 self.d,
                 self.alr_reference_idx,
+                mu_T=self.mu_T,
+                r_T=self.r_T,
                 **kwargs,
             )
         raise NotImplementedError(
@@ -587,7 +600,7 @@ class ScribeLaplaceResults:
             return _ppc_pln_per_cell(
                 rng_key, n_samples, self.x_loc, self.eta_loc
             )
-        if bm == "lnm":
+        if bm in ("lnm", "lnmvcp"):
             return _ppc_lnm_per_cell(
                 rng_key,
                 n_samples,
@@ -597,6 +610,9 @@ class ScribeLaplaceResults:
                 self.z_loc,
                 self.y_alr_loc,
                 self.alr_reference_idx,
+                mu_T=self.mu_T,
+                r_T=self.r_T,
+                p_capture_loc=self.p_capture_loc,
                 **kwargs,
             )
         raise NotImplementedError(
@@ -660,7 +676,7 @@ class ScribeLaplaceResults:
         bm = _base_model(self.model_config)
         if bm == "pln":
             return _ll_pln(counts, self.x_loc, self.eta_loc, return_by)
-        if bm == "lnm":
+        if bm in ("lnm", "lnmvcp"):
             return _ll_lnm(
                 counts,
                 self.mu,
@@ -731,7 +747,7 @@ class ScribeLaplaceResults:
         bm = _base_model(self.model_config)
         if bm == "pln":
             return self._subset_pln(idx)
-        if bm == "lnm":
+        if bm in ("lnm", "lnmvcp"):
             return self._subset_lnm(idx)
         raise NotImplementedError(
             f"__getitem__ not implemented for base_model={bm!r}"
@@ -981,16 +997,32 @@ def _ppc_lnm_population(
     W: jnp.ndarray,
     d: jnp.ndarray,
     alr_reference_idx: Optional[int],
-    total_counts: Union[int, jnp.ndarray] = 1000,
+    mu_T: Optional[jnp.ndarray] = None,
+    r_T: Optional[jnp.ndarray] = None,
+    total_counts: Optional[Union[int, jnp.ndarray]] = None,
     **_kwargs,
 ) -> jnp.ndarray:
-    """Population-level multinomial PPC for LNM.
+    """Population-level full LNM PPC.
 
-    Process per sample: draw ``y_alr ~ N(mu, W W^T + diag(d))``,
-    softmax to probabilities, then ``Multinomial(N, p)``. ``N``
-    defaults to ``1000`` per drawn cell when not specified —
-    population-level PPCs are often used for *shape* comparison,
-    where the total count is a scaling artefact.
+    Generative process per sample:
+      1. ``y_alr ~ N(mu, W W^T + diag(d))``  — composition.
+      2. ``u_T ~ NB(r_T, mu_T)``               — total mRNA per cell.
+      3. ``u ~ Multinomial(u_T, softmax_full(y_alr))``.
+
+    Step 2 uses the fitted ``(mu_T, r_T)`` from the result. When
+    those are absent (legacy callers, or models that do not store
+    them) the function falls back to ``total_counts`` (default
+    1000), preserving backward-compat for shape-only comparisons.
+
+    Parameters
+    ----------
+    mu_T, r_T : Optional
+        Fitted NB-on-totals globals. When both are provided, totals
+        are drawn from ``NB(r_T, mu_T)``; otherwise the function
+        falls back to the explicit ``total_counts`` argument.
+    total_counts : Optional
+        Override for the fallback path. Ignored when ``mu_T`` and
+        ``r_T`` are present.
     """
     if alr_reference_idx is None:
         raise ValueError(
@@ -1002,15 +1034,24 @@ def _ppc_lnm_population(
     g_minus1 = mu.shape[0]
     n_genes = g_minus1 + 1
     mvn = dist.LowRankMultivariateNormal(loc=mu, cov_factor=W, cov_diag=d)
-    k1, k2 = jax.random.split(rng_key)
+    k1, k2, k3 = jax.random.split(rng_key, 3)
     y_alr = mvn.sample(k1, sample_shape=(n_samples,))  # (n_samples, G-1)
     p = _alr_to_softmax(y_alr, alr_reference_idx, n_genes)  # (n_samples, G)
-    # Total counts: scalar broadcast or per-sample array.
-    n_arr = jnp.broadcast_to(
-        jnp.asarray(total_counts, dtype=jnp.int32), (n_samples,)
-    )
-    # Multinomial sampling per sample.
-    return _multinomial_sample(k2, n_arr, p)
+
+    # Total counts: prefer the fitted NB; fall back to scalar.
+    if mu_T is not None and r_T is not None:
+        # NegativeBinomial2(mean=mu_T, concentration=r_T): variance
+        # = mu_T + mu_T^2 / r_T. Per-sample independent draws.
+        nb = dist.NegativeBinomial2(
+            mean=jnp.asarray(mu_T), concentration=jnp.asarray(r_T)
+        )
+        n_arr = nb.sample(k2, sample_shape=(n_samples,)).astype(jnp.int32)
+    else:
+        fallback = 1000 if total_counts is None else total_counts
+        n_arr = jnp.broadcast_to(
+            jnp.asarray(fallback, dtype=jnp.int32), (n_samples,)
+        )
+    return _multinomial_sample(k3, n_arr, p)
 
 
 def _ppc_lnm_per_cell(
@@ -1022,20 +1063,39 @@ def _ppc_lnm_per_cell(
     z_loc: Optional[jnp.ndarray],
     y_alr_loc: Optional[jnp.ndarray],
     alr_reference_idx: Optional[int],
+    mu_T: Optional[jnp.ndarray] = None,
+    r_T: Optional[jnp.ndarray] = None,
+    p_capture_loc: Optional[jnp.ndarray] = None,
+    counts: Optional[jnp.ndarray] = None,
     total_counts: Optional[jnp.ndarray] = None,
     **_kwargs,
 ) -> jnp.ndarray:
-    """Per-cell multinomial PPC at the LNM MAP.
+    """Per-cell PPC for the full LNM(VCP) generative model.
 
-    Computes per-cell logits ``mu + W z_c`` (low_rank) or reads
-    ``y_alr_c`` directly (learned), softmaxes to probabilities,
-    then draws ``n_samples`` multinomial vectors per cell.
+    For each observed cell ``c``:
+      1. Composition logits ``y_alr_c = mu + W z_c`` (low_rank) or
+         ``y_alr_c`` directly (learned).
+      2. Per-cell totals:
+           * **counts provided** → ``u_T_c = sum(counts_c)`` exactly
+             (per-cell *conditional* PPC; matches the ``counts``-
+             aware path used by the encoder VAE side via
+             ``viz.dispatch._get_predictive_samples_for_plot``).
+           * **counts None and (mu_T, r_T) provided** → draw
+             ``u_T_c ~ NB(r_T, mu_T_c)`` where ``mu_T_c =
+             mu_T·p_capture_loc[c]`` for LNMVCP and ``mu_T``
+             everywhere for plain LNM.
+           * **explicit total_counts** → use those values.
+           * **otherwise** fall back to ``1000`` (legacy compat).
+      3. Sample ``u_c ~ Multinomial(u_T_c, softmax_full(y_alr_c))``
+         independently for each PPC sample.
     """
     if alr_reference_idx is None:
         raise ValueError(
             "LNM PPC requires alr_reference_idx; this result "
             "appears to have been constructed without it."
         )
+    import numpyro.distributions as dist
+
     g_minus1 = mu.shape[0]
     n_genes = g_minus1 + 1
 
@@ -1050,15 +1110,43 @@ def _ppc_lnm_per_cell(
 
     p_per_cell = _alr_to_softmax(y_alr, alr_reference_idx, n_genes)
     n_cells = p_per_cell.shape[0]
-    if total_counts is None:
-        # Default total counts = 1000 per cell (PPC shape comparison).
-        n_arr = jnp.full((n_cells,), 1000, dtype=jnp.int32)
+
+    # Resolve per-cell totals — see docstring decision table.
+    if counts is not None:
+        # Conditional PPC: per-cell total fixed at observed.
+        observed_totals = jnp.asarray(counts).sum(axis=-1).astype(jnp.int32)
+        n_arr_cells = observed_totals
+        # Broadcast across PPC samples (same totals every sample).
+        k_pred = rng_key
+        n_b = jnp.broadcast_to(n_arr_cells, (n_samples,) + n_arr_cells.shape)
+    elif total_counts is not None:
+        n_arr_cells = jnp.asarray(total_counts, dtype=jnp.int32)
+        k_pred = rng_key
+        n_b = jnp.broadcast_to(n_arr_cells, (n_samples,) + n_arr_cells.shape)
+    elif mu_T is not None and r_T is not None:
+        # Fitted-NB generative PPC with per-cell mean
+        # mu_T_c = mu_T (plain LNM) or mu_T * p_capture_c (LNMVCP).
+        if p_capture_loc is not None:
+            mu_T_per_cell = jnp.asarray(mu_T) * jnp.asarray(p_capture_loc)
+        else:
+            mu_T_per_cell = jnp.broadcast_to(
+                jnp.asarray(mu_T), (n_cells,)
+            )
+        nb = dist.NegativeBinomial2(
+            mean=mu_T_per_cell, concentration=jnp.asarray(r_T)
+        )
+        k_nb, k_pred = jax.random.split(rng_key)
+        # (n_samples, n_cells) draws; each (sample, cell) gets its
+        # own NB draw conditional on the per-cell mean.
+        n_b = nb.sample(k_nb, sample_shape=(n_samples,)).astype(jnp.int32)
     else:
-        n_arr = jnp.asarray(total_counts, dtype=jnp.int32)
-    # Broadcast to (n_samples, n_cells, G).
+        # Legacy fallback.
+        n_arr_cells = jnp.full((n_cells,), 1000, dtype=jnp.int32)
+        k_pred = rng_key
+        n_b = jnp.broadcast_to(n_arr_cells, (n_samples,) + n_arr_cells.shape)
+
     p_b = jnp.broadcast_to(p_per_cell, (n_samples,) + p_per_cell.shape)
-    n_b = jnp.broadcast_to(n_arr, (n_samples,) + n_arr.shape)
-    return _multinomial_sample(rng_key, n_b, p_b)
+    return _multinomial_sample(k_pred, n_b, p_b)
 
 
 def _multinomial_sample(

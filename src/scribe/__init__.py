@@ -126,6 +126,7 @@ from .api import fit
 from .mcmc import ScribeMCMCResults
 from .svi import ScribeSVIResults, ScribeVariationalResults
 from .svi.vae_results import ScribeVAEResults
+from .laplace import ScribeLaplaceResults
 from .de import ScribeDEResults, compare, compare_datasets
 from .mc import ScribeModelComparisonResults, compare_models
 from . import mc
@@ -149,6 +150,7 @@ __all__ = [
     "ScribeVariationalResults",
     "ScribeMCMCResults",
     "ScribeVAEResults",
+    "ScribeLaplaceResults",
     "ScribeDEResults",
     "compare",
     # Model comparison

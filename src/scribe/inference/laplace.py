@@ -92,6 +92,21 @@ def _run_laplace_inference(
         if eta_capture is not None:
             capture_anchor = (float(eta_capture[0]), float(eta_capture[1]))
 
+    # LNMVCP is a *capture-aware* model by definition; running Laplace
+    # without a biology-informed capture prior would silently degrade
+    # to the plain LNM path and the user would lose the per-cell
+    # capture latent without warning. Fail loudly with a constructive
+    # error pointing at the right priors invocation.
+    if base_model == "lnmvcp" and capture_anchor is None:
+        raise ValueError(
+            "model='lnmvcp' with inference_method='laplace' requires a "
+            "biology-informed capture prior. Pass\n"
+            "    priors={'capture_efficiency': (np.log(M_0), sigma_M)}\n"
+            "where M_0 is your guess of total mRNA per cell and sigma_M "
+            "controls the prior tightness. If you actually want the no-"
+            "capture variant, use model='lnm' instead."
+        )
+
     run_result = LaplaceInferenceEngine.run_inference(
         model_config=model_config,
         count_data=count_data,
@@ -107,11 +122,22 @@ def _run_laplace_inference(
     )
 
     g = run_result.globals
+    # For LNM low_rank d_mode the loss does not optimise ``d`` (the
+    # latent prior is N(0, I_k) and the decoder has no diagonal
+    # residual); store ``d`` as zeros so downstream PPCs and
+    # distribution accessors don't multiply in an un-fitted variance
+    # term. For PLN and LNM learned, ``d`` is fitted as usual.
+    d_mode = getattr(model_config, "d_mode", "learned") or "learned"
+    if base_model in ("lnm", "lnmvcp") and d_mode == "low_rank":
+        d_value = jnp.zeros_like(g["mu"])
+    else:
+        d_value = jnp.exp(g["d_log"])
+
     common_kwargs = dict(
         model_config=run_result.model_config,
         mu=g["mu"],
         W=g["W"],
-        d=jnp.exp(g["d_log"]),
+        d=d_value,
         final_grad_norms=run_result.final_grad_norms,
         losses=run_result.losses,
         n_genes=int(n_genes),
@@ -120,6 +146,13 @@ def _run_laplace_inference(
         best_loss=run_result.best_loss,
         stopped_at_step=run_result.stopped_at_step,
     )
+
+    # Populate NB-on-totals globals when the LNM family fitted them
+    # (which is now always the case after the v1.1 audit fixes; PLN
+    # has no log_mu_T / log_r_T).
+    if "log_mu_T" in g and "log_r_T" in g:
+        common_kwargs["mu_T"] = jnp.exp(g["log_mu_T"])
+        common_kwargs["r_T"] = jnp.exp(g["log_r_T"])
 
     if base_model == "pln":
         # PLN: latent is x_c; eta_c populated when capture anchor on.

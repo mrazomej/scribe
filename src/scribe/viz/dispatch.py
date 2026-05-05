@@ -178,6 +178,48 @@ def _get_predictive_samples_for_plot(
     return np.array(predictive_samples)
 
 
+@dispatch(scribe.ScribeLaplaceResults)
+def _get_predictive_samples_for_plot(
+    results,
+    *,
+    rng_key,
+    n_samples,
+    counts,
+    batch_size=None,
+    store_samples=True,
+):
+    """Get PPC samples for plotting from Laplace results.
+
+    Laplace results have no encoder; per-cell Laplace posteriors
+    are precomputed at fit time. The PPC reads the per-cell MAP +
+    inverse-Hessian-derived spread directly. When ``counts`` is
+    provided we route through the *per-cell* PPC sampler so each
+    predicted cell uses its own MAP (analogous to the encoder VAE
+    path's conditional PPC, just without the encoder forward
+    pass). When ``counts`` is None we fall back to the population
+    PPC (samples cells from the prior + decoder).
+    """
+    _ = batch_size
+    if counts is not None:
+        # Per-cell PPC at the stored MAP, with totals fixed at
+        # observed library sizes (conditional PPC).
+        predictive_samples = results.get_per_cell_predictive_samples(
+            rng_key=rng_key,
+            n_samples=int(n_samples) if n_samples is not None else 100,
+            counts=counts,
+        )
+    else:
+        predictive_samples = results.get_ppc_samples(
+            rng_key=rng_key,
+            n_samples=int(n_samples) if n_samples is not None else 100,
+            per_cell=False,
+        )
+    predictive_np = np.array(predictive_samples)
+    if store_samples:
+        results.predictive_samples = predictive_np
+    return predictive_np
+
+
 @dispatch(scribe.ScribeMCMCResults)
 def _get_predictive_samples_for_plot(
     results,
