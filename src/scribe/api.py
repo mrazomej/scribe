@@ -505,15 +505,18 @@ def fit(
 
     d_mode : str or None, default=None
         Diagonal residual-noise mode for models that decompose the
-        latent log-rate as ``y = mu + W z`` (LNM) or
+        latent log-rate as ``y = mu + W z`` (LNM, LNMVCP) or
         ``x = mu + W z`` (PLN). ``"low_rank"`` skips the diagonal
         residual (singular ``W W'`` covariance); ``"learned"`` adds
         a learnable per-gene ``diag(d)`` term so the covariance is
         ``W W' + diag(d)``. When ``None`` (the default), ``api.fit``
-        picks a sensible per-model default: ``"learned"`` for PLN
-        (so the VAE and Laplace inference paths fit the same
-        generative model), ``"low_rank"`` for LNM/LNMVCP (legacy).
-        Ignored for models that do not decompose log-rates this way.
+        resolves to ``"learned"`` for all models that consume
+        ``d_mode``: a proper full-rank prior is the right modeling
+        choice in every case where the latent log-rate has a low-
+        rank-plus-diagonal decomposition. Pass ``"low_rank"``
+        explicitly to opt into the legacy singular-covariance
+        regime. Ignored for models that do not decompose log-rates
+        this way.
 
     alr_reference_idx : int or None, default=None
         Only for ``model="lnm"`` / ``"lnmvcp"``: zero-based index of the ALR reference
@@ -1726,17 +1729,28 @@ def fit(
     # ==========================================================================
     # Step 3: Build or use ModelConfig
     # ==========================================================================
-    # Resolve ``d_mode=None`` to the per-model default. PLN's
-    # generative covariance is ``W W' + diag(d)`` (see
-    # paper/_poisson_lognormal.qmd), and the Laplace inference path
-    # has always learned ``d``. Without this resolution, the VAE
-    # path defaulted to ``"low_rank"`` (singular ``W W'`` with no
-    # residual diagonal) — fitting a strictly different generative
-    # model than Laplace. Aligning the default makes the two
-    # inference paths consistent. LNM/LNMVCP keep the ``"low_rank"``
-    # default for backward compatibility.
+    # Resolve ``d_mode=None`` to the per-model default.
+    #
+    # All models that decompose the latent log-rate as ``y = mu + W z``
+    # (LNM, LNMVCP) or ``x = mu + W z`` (PLN) now default to a learned
+    # diagonal residual:
+    #
+    #   * PLN: generative covariance ``W W' + diag(d)`` matches the
+    #     paper's derivation (paper/_poisson_lognormal.qmd) and the
+    #     Laplace inference path which has always learned ``d``.
+    #   * LNM/LNMVCP: under low-rank ``Σ = W W'`` the prior on
+    #     y_alr has no support outside ``colspan(W)``, which silently
+    #     constrains the posterior in ways amortized inference can't
+    #     recover. Adding a learned diagonal residual makes the prior
+    #     proper and is also a prerequisite for an LNM Laplace
+    #     inference path (see plan in docs/).
+    #
+    # Non-decomposing models ignore ``d_mode`` entirely; passing
+    # ``"low_rank"`` for them is harmless. Power users who specifically
+    # want the singular-covariance regime can pass
+    # ``d_mode="low_rank"`` explicitly.
     if d_mode is None:
-        d_mode = "learned" if model.lower() == "pln" else "low_rank"
+        d_mode = "learned"
     if model_config is None:
         # Single config object: prefer capture_amortization; else build from 6
         # params
