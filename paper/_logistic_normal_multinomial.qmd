@@ -1174,6 +1174,466 @@ retains the prior on $\underline{\underline{W}}$. Strategies B and C are
 included for completeness; neither is competitive with A2 at the dataset
 scales of interest.
 
+## Inference via Laplace approximation {#sec-lnm-laplace-inference}
+
+In addition to the encoder-based variational path (Strategy A2,
+@sec-lnm-strategy-a), SCRIBE exposes a parallel encoder-free
+inference path under ``inference_method="laplace"``. This section
+derives the LNM analogue of the PLN Laplace inference described
+in [@sec-pln-laplace-inference] of the Poisson--LogNormal chapter,
+working out the ALR-space gauge fix that makes the Laplace
+approximation well-defined for the multinomial likelihood and the
+two Newton variants that scribe implements (one for each
+``d_mode``).
+
+### Why Laplace? {#sec-lnm-laplace-motivation}
+
+The encoder VAE on the LNM has a known empirical failure mode on
+single-cell data: **encoder collapse on per-cell capture or library-
+size latents**. With the biology-informed prior on capture
+efficiency (@sec-lnm-totals-parameterizations), the variational
+posterior $q_\phi(p_{\text{capture},c} \mid \underline{u}^{(c)})$
+can collapse to a near-delta at the prior mean
+$L_c / M_0$. This is a local optimum on the ELBO: the KL term
+vanishes when $q$ matches the prior, and the reconstruction loss
+is locally optimal because $E[N_c] = L_c$ already gives correct
+per-cell means. The encoder therefore has no gradient pressure to
+keep $q$ wide, and the residual cell-to-cell variability gets
+absorbed into the global NB-on-totals dispersion parameter
+$r_T$, which collapses small. The downstream consequence is a
+posterior-predictive distribution whose right-skewed NB tail
+spreads counts over a wider range than the data actually exhibits,
+even though per-cell means match observed values.
+
+The Laplace path is *structurally* immune to this failure mode
+because it has no encoder. Each cell's posterior approximation is
+computed locally from a per-cell Newton-iterated MAP and the
+inverse-Hessian curvature at that MAP, producing an automatically
+right-sized Gaussian. There is no parametric variational family
+that can collapse, no amortizer with limited capacity, and no
+aggregate-posterior drift across cells. The price is that
+inference for new cells (held-out generalisation) requires
+running Newton on demand rather than a single encoder forward
+pass --- see [@sec-lnm-laplace-tradeoffs] below.
+
+### Gauge fix in ALR coordinates {#sec-lnm-laplace-gauge}
+
+A direct Laplace approximation in the *full* $G$-logit space
+fails: the multinomial likelihood
+$$
+\ell(\underline{a}) =
+\underline{u}^\top \underline{a}
+- u_T \cdot \mathrm{logsumexp}(\underline{a})
+$${#eq-lnm-laplace-multinomial-loglik}
+is invariant under adding a common scalar to every component of
+$\underline{a}$ (because $\mathrm{softmax}(\underline{a} + c \mathbf{1})
+= \mathrm{softmax}(\underline{a})$). The corresponding Hessian
+$$
+-\nabla^2_{\underline{a}}\,\ell =
+u_T\!\left(
+\mathrm{diag}(\underline{\rho}) - \underline{\rho}\,\underline{\rho}^\top
+\right),
+\qquad
+\underline{\rho} = \mathrm{softmax}(\underline{a}),
+$${#eq-lnm-laplace-fisher-full}
+has $\mathbf{1}$ as an exact null vector (verify: $\mathbf{1}$
+times the bracketed expression equals $\sum_g \rho_g \mathbf{1}
+- \mathbf{1}\,(\sum_g \rho_g) = 0$). If the prior covariance $\underline{\underline{\Sigma}}$
+also fails to penalise the $\mathbf{1}$-direction --- which
+happens whenever $\underline{\underline{W}}\,\mathbf{1}_k$ has a
+non-zero component along $\mathbf{1}$, common with low-rank-only
+priors --- then the joint Hessian is singular and the Laplace
+determinant blows up.
+
+The remedy is the gauge fix already built into SCRIBE's LNM
+parameterisation: the additive log-ratio (ALR) representation
+$\underline{y} \in \mathbb{R}^{G-1}$ that fixes the reference
+gene's logit at zero (@sec-lnm-equivalent-params). In ALR
+coordinates the redundant $\mathbf{1}$-direction is gone by
+construction, and with a proper Gaussian prior on $\underline{y}$,
+the conditional posterior $\pi(\underline{y} \mid \underline{u})$
+is log-concave and the negative Hessian is strictly positive
+definite. Laplace is well-defined.
+
+This argument leaves one design choice: **which variable to do
+Laplace over.** Three candidates are mathematically valid:
+
+1. The factor scores $\underline{z} \in \mathbb{R}^k$ with the
+   linear-decoder relation $\underline{y} = \underline{\mu} +
+   \underline{\underline{W}}\,\underline{z}$ (and no diagonal
+   residual). Hessian is $k \times k$. Cheap but only valid
+   when ``d_mode='low_rank'``.
+2. The ALR logits $\underline{y} \in \mathbb{R}^{G-1}$ with
+   prior $\underline{y} \sim \mathcal{N}(\underline{\mu},
+   \underline{\underline{W}}\,\underline{\underline{W}}^\top +
+   \mathrm{diag}(\underline{d}))$. Hessian is $(G-1) \times (G-1)$.
+   Needs Woodbury but accommodates ``d_mode='learned'``.
+3. The joint $(\underline{z}, \underline{\epsilon})$ with
+   $\underline{y} = \underline{\mu} + \underline{\underline{W}}\,
+   \underline{z} + \sqrt{\underline{d}} \odot
+   \underline{\epsilon}$. Higher-dimensional than (2) for no gain;
+   mentioned for completeness.
+
+SCRIBE implements the first two and dispatches at engine setup on
+``model_config.d_mode``. We work out both below.
+
+### Per-cell joint log-density {#sec-lnm-laplace-density}
+
+Throughout, $\underline{u}^{(c)} \in \mathbb{N}^G$ denotes the
+observed counts for cell $c$, $u_T^{(c)} = \sum_g u_g^{(c)}$ the
+observed total, $\underline{u}_{\text{alr}}^{(c)}$ the
+non-reference subvector (length $G-1$), and we drop the cell
+index when it is unambiguous.
+
+#### Variant A: Laplace over $\underline{z}$ ($\mathtt{d\_mode='low\_rank'}$) {#sec-lnm-laplace-density-z}
+
+The per-cell joint log-density (up to additive constants in
+$\underline{z}$) is
+
+$$
+f(\underline{z}) =
+\underline{u}_{\text{alr}}^\top
+(\underline{\mu} + \underline{\underline{W}}\,\underline{z})
+- u_T \cdot \mathrm{logsumexp}(\underline{a}_{\text{full}}(\underline{z}))
+- \tfrac{1}{2}\,\underline{z}^\top \underline{z},
+$${#eq-lnm-laplace-joint-density-z}
+
+where $\underline{a}_{\text{full}}(\underline{z}) \in \mathbb{R}^G$
+is the augmented logit vector built by inserting a zero at the
+reference position into $\underline{\mu} +
+\underline{\underline{W}}\,\underline{z}$. The gradient is
+
+$$
+\nabla_{\underline{z}}\,f =
+\underline{\underline{W}}^\top
+\bigl(
+\underline{u}_{\text{alr}} - u_T\,\underline{\rho}_{\text{alr}}(\underline{z})
+\bigr)
+- \underline{z},
+$${#eq-lnm-laplace-gradient-z}
+
+with $\underline{\rho}_{\text{alr}}(\underline{z}) =
+\mathrm{softmax}(\underline{a}_{\text{full}}(\underline{z}))$
+restricted to the $G-1$ non-reference coordinates. The Hessian is
+
+$$
+-\underline{\underline{H}}_z =
+\underline{\underline{W}}^\top \underline{\underline{M}}_{\text{alr}}\,
+\underline{\underline{W}} + \underline{\underline{I}}_k,
+\qquad
+\underline{\underline{M}}_{\text{alr}} =
+u_T\!\left(
+\mathrm{diag}(\underline{\rho}_{\text{alr}})
+- \underline{\rho}_{\text{alr}}\,\underline{\rho}_{\text{alr}}^\top
+\right),
+$${#eq-lnm-laplace-hessian-z}
+
+which is strictly positive definite ($\underline{\underline{I}}_k$
+contributes a strictly-positive-definite term;
+$\underline{\underline{W}}^\top \underline{\underline{M}}_{\text{alr}}\,
+\underline{\underline{W}}$ is positive semi-definite as a
+covariance-like matrix). Newton solves
+$-\underline{\underline{H}}_z\,\underline{\delta} =
+\nabla_{\underline{z}}\,f$ via a $k \times k$ Cholesky --- no
+Woodbury needed --- so the per-step cost is $O(k^3)$ per cell.
+
+#### Variant B: Laplace over $\underline{y}_{\text{alr}}$ ($\mathtt{d\_mode='learned'}$) {#sec-lnm-laplace-density-y}
+
+When the generative model carries a learned diagonal residual
+($\underline{\underline{\Sigma}} = \underline{\underline{W}}\,
+\underline{\underline{W}}^\top + \mathrm{diag}(\underline{d})$
+with $\underline{d} > 0$), Laplace over $\underline{z}$ alone
+misses the residual. The natural Laplace target is $\underline{y}
+\in \mathbb{R}^{G-1}$ with the full prior covariance:
+
+$$
+f(\underline{y}) =
+\underline{u}_{\text{alr}}^\top \underline{y}
+- u_T \cdot \mathrm{logsumexp}(\underline{a}_{\text{full}}(\underline{y}))
+- \tfrac{1}{2}\,(\underline{y} - \underline{\mu})^\top
+\underline{\underline{\Sigma}}^{-1}\,(\underline{y} - \underline{\mu}).
+$${#eq-lnm-laplace-joint-density-y}
+
+The gradient is
+
+$$
+\nabla_{\underline{y}}\,f =
+\underline{u}_{\text{alr}} - u_T\,\underline{\rho}_{\text{alr}}(\underline{y})
+- \underline{\underline{\Sigma}}^{-1}\,(\underline{y} - \underline{\mu}),
+$${#eq-lnm-laplace-gradient-y}
+
+and the negative Hessian decomposes as
+
+$$
+-\underline{\underline{H}}_y =
+\underline{\underline{M}}_{\text{alr}}
++ \underline{\underline{\Sigma}}^{-1}.
+$${#eq-lnm-laplace-hessian-y}
+
+We rewrite this in the form scribe's PLN Newton kernel already
+handles, plus a rank-1 correction:
+
+$$
+-\underline{\underline{H}}_y =
+\underbrace{
+u_T\,\mathrm{diag}(\underline{\rho}_{\text{alr}})
++ \underline{\underline{\Sigma}}^{-1}
+}_{\displaystyle \underline{\underline{A}}_y}
+- u_T\,\underline{\rho}_{\text{alr}}\,\underline{\rho}_{\text{alr}}^\top.
+$${#eq-lnm-laplace-A-y-decomp}
+
+The matrix $\underline{\underline{A}}_y$ has the same low-rank-
+plus-diagonal structure as PLN's $\underline{\underline{A}}$
+(@sec-pln-laplace-woodbury), with the diagonal entries
+$u_T\,\underline{\rho}_{\text{alr}} + 1/\underline{d}$ replacing
+PLN's $\underline{\lambda} + 1/\underline{d}$. We can therefore
+reuse the same Woodbury factorisation:
+
+$$
+\underline{\underline{A}}_y^{-1}\,\underline{v} =
+\underline{m}^{-1} \odot \underline{v}
++ (\underline{m}^{-1} \odot \underline{\underline{V}})\,
+\underline{\underline{S}}^{-1}\,
+\underline{\underline{V}}^\top\,
+(\underline{m}^{-1} \odot \underline{v}),
+$${#eq-lnm-laplace-A-y-inv}
+
+with $\underline{m} = u_T\,\underline{\rho}_{\text{alr}} + 1/
+\underline{d}$, $\underline{\underline{V}} =
+\mathrm{diag}(1/\underline{d})\,\underline{\underline{W}}$, and
+$\underline{\underline{S}} =
+\underline{\underline{K}}_{\text{LNM}} -
+\underline{\underline{V}}^\top \mathrm{diag}(\underline{m}^{-1})\,
+\underline{\underline{V}}$ where
+$\underline{\underline{K}}_{\text{LNM}} = \underline{\underline{I}}_k
++ \underline{\underline{W}}^\top \mathrm{diag}(1/\underline{d})\,
+\underline{\underline{W}}$. The cost is $O(G \cdot k + k^3)$ per
+solve, identical to the PLN scaling.
+
+The rank-1 correction $-u_T\,\underline{\rho}_{\text{alr}}\,
+\underline{\rho}_{\text{alr}}^\top$ is handled by **one
+Sherman--Morrison step** on top of $\underline{\underline{A}}_y^{-1}$:
+
+$$
+(-\underline{\underline{H}}_y)^{-1}\,\underline{v} =
+\underline{\underline{A}}_y^{-1}\,\underline{v}
++ \frac{
+(\underline{\underline{A}}_y^{-1}\,\underline{\rho}_{\text{alr}})
+\,(\underline{\rho}_{\text{alr}}^\top
+\underline{\underline{A}}_y^{-1}\,\underline{v})
+}{
+1/u_T - \underline{\rho}_{\text{alr}}^\top
+\underline{\underline{A}}_y^{-1}\,\underline{\rho}_{\text{alr}}
+}.
+$${#eq-lnm-laplace-sherman-morrison}
+
+The Sherman--Morrison denominator is strictly positive whenever
+$-\underline{\underline{H}}_y$ is positive definite (a Schur-
+complement consequence of the joint log-concavity), and scribe
+floors it numerically to guard against float32 cancellation. By
+the matrix-determinant lemma,
+
+$$
+\log \det(-\underline{\underline{H}}_y) =
+\log \det \underline{\underline{A}}_y
++ \log\!\bigl(
+1 - u_T\,\underline{\rho}_{\text{alr}}^\top
+\underline{\underline{A}}_y^{-1}\,\underline{\rho}_{\text{alr}}
+\bigr),
+$${#eq-lnm-laplace-logdet-y}
+
+which is what the outer Laplace ELBO uses as the curvature
+correction below.
+
+### Joint log-concavity {#sec-lnm-laplace-concavity}
+
+The conditional log-density in @eq-lnm-laplace-joint-density-y is
+strictly concave in $\underline{y}$. The multinomial term
+$\underline{u}_{\text{alr}}^\top \underline{y} - u_T\,
+\mathrm{logsumexp}(\underline{a}_{\text{full}}(\underline{y}))$ is
+linear-minus-convex (logsumexp is convex), so it is concave; the
+Gaussian-prior term $-\tfrac{1}{2}(\underline{y} -
+\underline{\mu})^\top \underline{\underline{\Sigma}}^{-1}
+(\underline{y} - \underline{\mu})$ is strictly concave because
+$\underline{\underline{\Sigma}}^{-1}$ is positive definite (which
+requires $\underline{d} > 0$, i.e., ``d_mode='learned'``; see
+@sec-lnm-laplace-gauge for why ``low_rank`` is handled
+separately via Variant A). Sum of concave + strictly-concave =
+strictly concave, so the MAP is unique and Newton converges to it
+from any starting point in the convex domain. The same conclusion
+holds in $\underline{z}$-space for Variant A
+(@eq-lnm-laplace-joint-density-z), with the
+$-\tfrac{1}{2}\underline{z}^\top \underline{z}$ prior playing the
+role of the strictly-concave term.
+
+### Outer ELBO {#sec-lnm-laplace-elbo}
+
+Plugging the Gaussian Laplace approximation into the marginal
+$\log \pi(\underline{u}^{(c)})$ gives
+
+$$
+\log \pi(\underline{u}^{(c)}) \approx
+\log \pi(\underline{u}^{(c)}, \underline{\xi}_c^{*})
++ \tfrac{1}{2} (k\text{ or }G\!-\!1) \log(2\pi)
+- \tfrac{1}{2} \log \det(-\underline{\underline{H}}_c),
+$${#eq-lnm-laplace-marginal}
+
+where $\underline{\xi}_c^{*}$ is the per-cell MAP --- $\underline{z}_c^{*}$
+under Variant A and $\underline{y}_c^{*}$ under Variant B --- and
+$-\underline{\underline{H}}_c$ is the corresponding negative-Hessian
+matrix at that MAP. The constant
+$\tfrac{1}{2} (k\text{ or }G\!-\!1) \log(2\pi)$ does not depend on
+the global parameters $\underline{\theta} = (\underline{\mu},
+\underline{\underline{W}}, \underline{d}, r_T, p)$ and can be
+dropped during optimization. The outer loss summed over cells is
+therefore
+
+$$
+\mathcal{L}_{\text{Laplace}}^{\text{LNM}}(\underline{\theta}) =
+- \sum_{c=1}^{N}\!\left[
+\log \pi(\underline{u}^{(c)}, \underline{\xi}_c^{*})
+- \tfrac{1}{2} \log \det(-\underline{\underline{H}}_c)
+\right],
+$${#eq-lnm-laplace-outer-loss}
+
+and SCRIBE minimises this with Adam (or any
+``optimizer_config``-compatible choice such as ``clipped_adam``).
+
+**Mini-batch estimator.** For large $N$ the engine optimises
+@eq-lnm-laplace-outer-loss with stochastic gradients on a uniform
+random subset $\mathcal{B} \subset \{1, \ldots, N\}$ of size $B$.
+Following @hoffman2013stochastic, the unbiased single-step
+estimator is
+
+$$
+\widehat{\mathcal{L}}_{\text{Laplace}}^{\text{LNM}}
+(\underline{\theta}; \mathcal{B}) =
+- \frac{N}{B} \sum_{c \in \mathcal{B}}\!\left[
+\log \pi(\underline{u}^{(c)}, \underline{\xi}_c^{*})
+- \tfrac{1}{2} \log \det(-\underline{\underline{H}}_c)
+\right].
+$${#eq-lnm-laplace-minibatch}
+
+Setting $B = N$ recovers @eq-lnm-laplace-outer-loss exactly. Inner
+Newton remains per-cell and is unaffected by the scaling --- only
+outer gradients on $\underline{\theta}$ inherit it.
+
+### Variational-EM training scheme {#sec-lnm-laplace-variational-em}
+
+Training alternates two steps per outer iteration, in the
+variational-EM tradition:
+
+1. **Inner Newton** on per-cell $\underline{\xi}_c$
+   (= $\underline{z}_c$ for Variant A, $\underline{y}_c$ for
+   Variant B), holding $\underline{\theta}$ fixed. Five Newton
+   iterations from the previous outer step's MAP are typically
+   enough for quadratic-convergence-grade accuracy.
+2. **Outer Adam step** on $\underline{\theta}$ using the gradient
+   of @eq-lnm-laplace-outer-loss with the inner MAPs treated as
+   ``stop_gradient`` constants. This is the standard
+   implicit-function-theorem approximation: at the MAP, the
+   gradient of the inner objective with respect to the latents
+   is zero, so the indirect dependence of $\underline{\xi}_c^{*}$
+   on $\underline{\theta}$ contributes only higher-order terms
+   that we drop.
+
+The MAP arrays $\underline{\underline{Z}}^{*}_{\text{loc}}$ (or
+$\underline{\underline{Y}}^{*}_{\text{loc}}$) persist across
+outer steps and serve as warm starts; the engine writes the post-
+Newton values back to them after every step. Mini-batched runs
+update only the sampled cells per step, so cells that are not
+sampled in a given outer iteration retain their previous warm
+start.
+
+The Laplace-correction term $-\tfrac{1}{2} \log
+\det(-\underline{\underline{H}}_c)$ in
+@eq-lnm-laplace-outer-loss is recomputed *outside* the Newton
+kernel against the **live** globals $(\underline{\underline{W}},
+\underline{d})$ with damping=0 (the inner Newton's Tikhonov
+damping is a solver stabiliser and should not bias the reported
+log-determinant). This keeps the outer Adam gradient consistent
+with the documented Laplace ELBO; see [@sec-pln-laplace-elbo]
+for the analogous discussion on the PLN side.
+
+### Constraints and stabilisation {#sec-lnm-laplace-stabilisation}
+
+The LNM Newton kernel applies the same three numerical-safety
+mechanisms used by PLN:
+
+1. **Tikhonov damping** ($10^{-2}$ default) added to the diagonal
+   of $-\underline{\underline{H}}$ during the Newton step. The
+   damping affects only the inner solver; the Laplace correction
+   in the outer ELBO uses the un-damped Hessian
+   (@sec-lnm-laplace-elbo).
+2. **Step-size cap** at $\|\underline{\delta}\|_\infty \le 5$
+   prevents runaway iterates on degenerate cells (e.g., a single
+   dominant gene where $\underline{\rho}_{\text{alr}}$ is sharply
+   peaked).
+3. **Logit clamp** at $|y_g| \le 30$ before each
+   ``softmax`` evaluation prevents float32 overflow in
+   $\exp$.
+
+No projection is required: the multinomial likelihood lives in an
+unconstrained $\underline{z}$- or $\underline{y}$-space (the
+softmax simplex is enforced automatically by the augmented-logit
+construction) and the prior on $\underline{z}$ or $\underline{y}$
+is unbounded Gaussian. This is simpler than the PLN side, which
+must project $\eta_c$ back into $\eta_c \ge 0$ to enforce the
+TruncatedNormal capture prior.
+
+### Tradeoffs vs the encoder VAE {#sec-lnm-laplace-tradeoffs}
+
+| Aspect | Encoder VAE (Strategy A2) | Laplace (this section) |
+|---|---|---|
+| Per-cell variational form | Diagonal Gaussian via encoder | Gaussian centred at MAP, covariance $-\underline{\underline{H}}^{-1}$ |
+| Encoder collapse risk | Real (observed in LNMVCP fits with biology-informed capture priors) | None (no parametric $q$ family) |
+| Aggregate-posterior drift | Yes (encoder's $q(\underline{z})$ aggregated may not match prior $\mathcal{N}(0, \underline{\underline{I}}_k)$) | None (no aggregate posterior) |
+| Inference for new cells | Single forward pass through encoder | Newton (5--10 iterations per cell) |
+| Per-step compute | Encoder $\to$ decoder $\to$ likelihood | Newton ($O(k^3)$ or $O(G \cdot k + k^3)$ per cell) + outer Adam |
+| Latent dim flexibility | Up to encoder capacity | $k$ for $\mathtt{low\_rank}$, $G-1$ for $\mathtt{learned}$ |
+| LNMVCP capture support | Yes (encoder amortises $p_{\text{capture}}$) | Not yet (joint Newton on $(\underline{z}, p_{\text{capture}})$ is a planned extension) |
+
+The natural use cases are different: the encoder VAE is the right
+choice when the user needs amortised inference (held-out cells,
+cells streaming through a pipeline), whereas Laplace is the right
+choice when fidelity of the per-cell posterior on the *training
+cells* is what matters (downstream PPC checks, differential
+expression, posterior-uncertainty propagation).
+
+### Implementation {#sec-lnm-laplace-implementation}
+
+Activated via:
+
+```python
+result = scribe.fit(
+    adata,
+    model="lnm",
+    inference_method="laplace",
+    d_mode="learned",     # or "low_rank" for Variant A
+    vae_latent_dim=K,
+    n_steps=N,
+    optimizer_config={"name": "clipped_adam",
+                      "step_size": 1e-4,
+                      "grad_clip_norm": 10.0},
+)
+```
+
+The inference path lives in :mod:`scribe.laplace`, with the
+Newton kernels in :mod:`scribe.laplace._newton_lnm` and the
+training-loop orchestration in :mod:`scribe.laplace.engine`
+(function ``_run_lnm_inference``). Results are returned as a
+:class:`scribe.laplace.ScribeLaplaceResults` --- the same single
+class used for the PLN Laplace path --- with the per-cell MAP
+populated under either ``z_loc`` (Variant A) or ``y_alr_loc``
+(Variant B), and ``alr_reference_idx`` recording the gauge-fix
+gene.
+
+LNMVCP capture-anchor support is not yet wired (joint Newton on
+$(\underline{z}_c, p_{\text{capture},c})$ is a straightforward
+extension by analogy with PLN's joint $(\underline{x}_c, \eta_c)$
+Newton, but unimplemented in v1). Users with capture-aware data
+should stay on ``inference_method="vae"`` for ``model="lnmvcp"``.
+
 ## Equivalence to a linear-decoder VAE {#sec-lnm-linear-vae-equivalence}
 
 The Strategy A2 picture developed in @sec-lnm-strategy-a treats the
