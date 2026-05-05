@@ -318,10 +318,12 @@ $\square$
   dimensions), which can lead to amortization gap in the VAE.
 - **Laplace feasibility.** The Laplace approximation (a Gaussian centered at
   the MAP with covariance equal to the negative inverse Hessian) is a
-  natural inference strategy for log-concave posteriors. While we adopt the
-  amortized VAE approach for consistency with the LNM pipeline, the Laplace
-  approximation is a viable alternative for PLN and may be explored in future
-  work.
+  natural inference strategy for log-concave posteriors. SCRIBE exposes
+  this as ``inference_method="laplace"``; see
+  @sec-pln-laplace-inference for the full derivation, the Newton +
+  Woodbury construction used to keep each step at $O(G \cdot k + k^3)$
+  per cell, and the connection to the variational-EM scheme used by
+  the R package ``PLNmodels``.
 
 ## Inference via amortized variational inference {#sec-pln-inference}
 
@@ -401,6 +403,301 @@ optional learned diagonal noise $\underline{d}_{\text{PLN}}$ adds
 gene-specific variance: if $d_{\text{mode}} = \text{learned}$, a sampled
 noise $\sqrt{d_g} \cdot \epsilon_g$ is added to $y_{\text{log\_rate},g}$
 before exponentiation.
+
+## Inference via Laplace approximation {#sec-pln-laplace-inference}
+
+The amortized VAE in @sec-pln-inference is the *default* inference path, but it
+is not the only option. Because the PLN's per-cell joint posterior
+$\pi(\underline{x}, \eta \mid \underline{u})$ is globally log-concave
+(@sec-pln-log-concavity), the **Laplace approximation** — a Gaussian centered at
+the MAP with covariance equal to the negative inverse Hessian — is
+well-justified and converges in 5--10 Newton iterations from a sensible warm
+start. SCRIBE exposes this as ``inference_method="laplace"``; this section
+derives the math and documents the implementation.
+
+### Why Laplace? {#sec-pln-laplace-motivation}
+
+The encoder VAE has a known structural failure mode on linear-decoder PLN fits:
+**aggregate-posterior drift**. The encoder learns a parametric variational
+family $q_\phi(\underline{z} \mid \underline{u})$, and even when each per-cell
+posterior is well-fit the *aggregate* $\bar q_\phi(\underline{z}) = \langle
+q_\phi(\underline{z} \mid \underline{u}^{(c)})\rangle_c$ can drift from the
+prior $\mathcal{N}(0, \mathbf{I})$. Convex decoder paths (e.g.
+$\exp(\underline{\underline{W}} \underline{z})$ in PLN) amplify the drift via
+Jensen's inequality into prediction bias at sampling time. This is what produced
+the factor-of-4 disagreement between population-level and per-cell PPCs we
+tracked down on the jurkat dataset.
+
+The Laplace path is *structurally* immune to aggregate-posterior drift because
+it has no encoder. Each cell's posterior approximation is computed locally from
+the data and the prior; there is no parametric family bounded by network
+capacity, and no aggregate posterior to compare to the prior. The trade-off —
+see @sec-pln-laplace-tradeoffs below — is that scoring new cells at inference
+time requires running Newton on demand rather than a single encoder forward
+pass.
+
+This is the same scheme used by the R package ``PLNmodels``
+[@chiquet2018variational]: outer SGD on the global parameters, inner Newton (or
+quasi-Newton) on the per-cell latent.
+
+### Per-cell joint log-density {#sec-pln-laplace-density}
+
+Letting $\eta_c \in \mathbb{R}_{>0}$ be the per-cell capture offset introduced
+in @sec-pln-capture (set $\eta_c \equiv 0$ when no capture anchor is active),
+the per-cell joint log-density (up to additive constants in $(\underline{x},
+\eta)$) is
+
+$$
+f(\underline{x}, \eta) =
+\underline{u}^\top (\underline{x} - \eta\,\mathbf{1})
+- \mathbf{1}^\top \exp(\underline{x} - \eta\,\mathbf{1})
+- \tfrac{1}{2}(\underline{x} - \underline{\mu})^\top
+  \underline{\underline{\Sigma}}^{-1}(\underline{x} - \underline{\mu})
+- \tfrac{1}{2}(\eta - \eta_{\text{anchor}})^2 / \sigma_M^2,
+$${#eq-pln-laplace-joint-density}
+
+with $\underline{\underline{\Sigma}} = \underline{\underline{W}}\,
+\underline{\underline{W}}^\top + \mathrm{diag}(\underline{d})$ and
+$\eta_{\text{anchor}} = \log M_0 - \log L_c$ from the
+biology-informed prior. The gradient is
+
+$$
+\partial_{\underline{x}} f = \underline{u} - \exp(\underline{x} -
+\eta\,\mathbf{1})
+- \underline{\underline{\Sigma}}^{-1}(\underline{x} - \underline{\mu}), \qquad
+\partial_\eta f = -\mathbf{1}^\top \underline{u}
++ \mathbf{1}^\top \exp(\underline{x} - \eta\,\mathbf{1})
+- (\eta - \eta_{\text{anchor}})/\sigma_M^2, $${#eq-pln-laplace-gradient}
+
+and the Hessian decomposes into blocks
+
+$$
+\underline{\underline{H}}_{xx} =
+-\mathrm{diag}(\exp(\underline{x} - \eta\,\mathbf{1}))
+- \underline{\underline{\Sigma}}^{-1},
+\qquad
+\underline{H}_{x\eta} = \exp(\underline{x} - \eta\,\mathbf{1}),
+\qquad
+H_{\eta\eta} =
+-\mathbf{1}^\top \exp(\underline{x} - \eta\,\mathbf{1})
+- 1/\sigma_M^2.
+$${#eq-pln-laplace-hessian-blocks}
+
+The full $(G+1) \times (G+1)$ Hessian is symmetric negative definite
+(@sec-pln-log-concavity), so $-\underline{\underline{H}}$ is symmetric
+positive definite and the Newton step
+
+$$
+\begin{bmatrix} \underline{\delta}_x \\ \delta_\eta \end{bmatrix} =
+-\underline{\underline{H}}^{-1}\,\nabla f $${#eq-pln-laplace-newton-step}
+
+is well-defined.
+
+### Solving the Newton step in $O(G \cdot k + k^3)$ {#sec-pln-laplace-woodbury}
+
+A naive solve would cost $O(G^3)$ per cell — prohibitive for $G \sim 10^4$. We
+exploit the low-rank structure of $\underline{\underline{\Sigma}}$ via two
+nested applications of the Woodbury identity.
+
+Let $\underline{\underline{A}} = -\underline{\underline{H}}_{xx} =
+\mathrm{diag}(\underline{\lambda}) + \underline{\underline{\Sigma}}^{-1}$ where
+$\lambda_g = \exp(x_g - \eta)$. We need $\underline{\underline{A}}^{-1}
+\underline{y}$ and $\log \det \underline{\underline{A}}$ for the block Schur
+solve and the determinant correction below.
+
+**Step 1: $\underline{\underline{\Sigma}}^{-1}$ via Woodbury.** Setting
+$\underline{\underline{D}} = \mathrm{diag}(1/\underline{d})$ and
+$\underline{\underline{K}} = \underline{\underline{I}}_k +
+\underline{\underline{W}}^\top \underline{\underline{D}}\,
+\underline{\underline{W}}$,
+
+$$
+\underline{\underline{\Sigma}}^{-1} =
+\underline{\underline{D}}
+- \underline{\underline{D}}\,\underline{\underline{W}}\,
+\underline{\underline{K}}^{-1}\,
+\underline{\underline{W}}^\top \underline{\underline{D}}.
+$${#eq-pln-laplace-sigma-inv-woodbury}
+
+**Step 2: $\underline{\underline{A}}^{-1}$ via Woodbury again.**
+Substituting into $\underline{\underline{A}}$ and grouping,
+
+$$
+\underline{\underline{A}} = \underbrace{\mathrm{diag}(\underline{\lambda} +
+1/\underline{d})}_{\tilde{\underline{\underline{M}}}}
+- \underline{\underline{V}}\, \underline{\underline{K}}^{-1}\,
+\underline{\underline{V}}^\top, \qquad \underline{\underline{V}} =
+\underline{\underline{D}}\, \underline{\underline{W}}.
+$${#eq-pln-laplace-A-decomp}
+
+A second Woodbury yields
+
+$$
+\underline{\underline{A}}^{-1} =
+\tilde{\underline{\underline{M}}}^{-1}
++ \tilde{\underline{\underline{M}}}^{-1}\,
+\underline{\underline{V}}\,
+\underline{\underline{S}}^{-1}\,
+\underline{\underline{V}}^\top\,
+\tilde{\underline{\underline{M}}}^{-1},
+\qquad
+\underline{\underline{S}} = \underline{\underline{K}}
+- \underline{\underline{V}}^\top\,
+\tilde{\underline{\underline{M}}}^{-1}\,
+\underline{\underline{V}},
+$${#eq-pln-laplace-A-inv}
+
+with $\underline{\underline{S}}$ symmetric positive definite. One
+$k \times k$ Cholesky on $\underline{\underline{S}}$ is the only
+nonscalar matrix operation, giving total cost $O(G \cdot k + k^3)$.
+By the matrix-determinant lemma,
+
+$$
+\log \det \underline{\underline{A}} = \sum_g \log(\lambda_g + 1/d_g)
++ \log \det \underline{\underline{S}}
+- \log \det \underline{\underline{K}}, $${#eq-pln-laplace-A-logdet}
+
+reusing the same Cholesky factors.
+
+**Block Schur for the joint step.** Let $\underline{g}_x =
+\partial_{\underline{x}} f$, $g_\eta = \partial_\eta f$, $\underline{B} =
+-\underline{H}_{x\eta} = -\exp(\underline{x} - \eta)$ (column vector), and $C =
+-H_{\eta\eta}$. Then
+
+$$
+s = C - \underline{B}^\top \underline{\underline{A}}^{-1} \underline{B},
+\qquad
+\delta_\eta = (g_\eta - \underline{B}^\top \underline{\underline{A}}^{-1}
+\underline{g}_x)/s,
+\qquad
+\underline{\delta}_x = \underline{\underline{A}}^{-1}(\underline{g}_x
+- \underline{B}\,\delta_\eta),
+$${#eq-pln-laplace-block-schur}
+
+so a single Cholesky factorization of $\underline{\underline{S}}$
+serves all three solves.
+
+### Outer ELBO {#sec-pln-laplace-elbo}
+
+Plugging the Gaussian Laplace approximation into the marginal
+$\log \pi(\underline{u})$ gives
+
+$$
+\log \pi(\underline{u}_c) \approx \log \pi(\underline{u}_c, \underline{x}_c^{*},
+\eta_c^{*})
++ \tfrac{1}{2}(G+1)\log(2\pi)
+- \tfrac{1}{2} \log \det(-\underline{\underline{H}}_c),
+$${#eq-pln-laplace-marginal}
+
+where $(\underline{x}_c^{*}, \eta_c^{*})$ is the per-cell MAP. The constant
+$\tfrac{1}{2}(G+1)\log(2\pi)$ does not depend on the global parameters $\theta =
+(\underline{\mu}, \underline{\underline{W}}, \underline{d})$ and can be dropped
+during optimisation. The outer loss summed over cells is therefore
+
+$$
+\mathcal{L}_{\text{Laplace}}(\theta) =
+- \sum_c \left[
+\log \pi(\underline{u}_c, \underline{x}_c^{*}, \eta_c^{*})
+- \tfrac{1}{2} \log \det(-\underline{\underline{H}}_c)
+\right],
+$${#eq-pln-laplace-outer-loss}
+
+and SCRIBE minimises this with Adam (or any
+``optimizer_config``-compatible choice such as ``clipped_adam``).
+
+### Variational-EM training scheme {#sec-pln-laplace-variational-em}
+
+Training alternates two steps per outer iteration, in the
+variational-EM tradition:
+
+1. **Inner Newton** on per-cell $(\underline{x}_c, \eta_c)$ for each
+   cell in the current minibatch, holding $\theta$ fixed. Five Newton
+   iterations from the previous outer step's MAP are typically enough
+   for quadratic-convergence-grade accuracy.
+2. **Outer Adam step** on $\theta$ using the gradient of
+   @eq-pln-laplace-outer-loss with the inner MAPs treated as
+   ``stop_gradient`` constants. This is the standard
+   implicit-function-theorem approximation: at the MAP, the gradient
+   of the inner objective with respect to the latents is zero, so the
+   indirect dependence of $(\underline{x}_c^{*}, \eta_c^{*})$ on
+   $\theta$ contributes only higher-order terms that we drop.
+
+The MAP arrays $\underline{\underline{X}}^{*}_{\text{loc}}$ and
+$\underline{\eta}^{*}_{\text{loc}}$ persist across outer steps and
+serve as warm starts; the engine writes the post-Newton values back
+to them after every step.
+
+### Constraints and stabilisation {#sec-pln-laplace-stabilisation}
+
+Three small additions to the textbook Newton iteration are needed for
+robust training on real data:
+
+1. **Tikhonov damping.** A small $\alpha$ (default $10^{-2}$) is added
+   to the diagonal of $-\underline{\underline{H}}_{xx}$ and to the
+   $\eta$-block scalar $-H_{\eta\eta}$. This stabilises Newton when
+   the Schur complement on the $\eta$ block is small (typically early
+   in training when $\theta$ is far from the MAP). The kernel itself
+   converges with $\alpha = 0$ on well-conditioned problems — verified
+   against ``scipy.optimize`` — but a small floor prevents Cholesky
+   failures on pathological cells.
+
+2. **Step-size cap.** $\|\underline{\delta}_x\|_\infty,\,|\delta_\eta|
+   \leq \delta_{\max}$ (default 5.0). Prevents runaway iterates when
+   the joint Hessian is poorly conditioned in the early iterations of
+   training. The MAP is still found in 5--10 iterations because
+   subsequent steps are well-conditioned once we are inside the basin
+   of attraction.
+
+3. **Truncation projection.** The TruncatedNormal prior on $\eta$ has
+   support $[0, \infty)$ — Newton uses the unconstrained gradient,
+   which can step into $\eta < 0$ (corresponding to $p_{\text{capture}}
+   > 1$, physically impossible). After each step we project
+   $\eta_{\text{new}} \leftarrow \max(\eta_{\text{new}}, 10^{-3})$.
+
+### Tradeoffs vs the encoder VAE {#sec-pln-laplace-tradeoffs}
+
+| Aspect | Encoder VAE | Laplace |
+|---|---|---|
+| Aggregate-posterior drift | Possible (network-bounded family) | Eliminated structurally |
+| Inference for new cells | Single forward pass through encoder | Newton (5--10 iterations per cell) |
+| Per-cell posterior | Gaussian via encoder | Gaussian centered at MAP |
+| Convergence guarantees | Local optima possible | Global optimum (log-concave $f$) |
+| Training cost per outer step | One encoder forward + one decoder backward | $n_{\text{cells}}$ × Newton + decoder backward |
+| Best fit for | Production scoring of new cells | Research-scale analysis on training cells |
+
+The Laplace path is recommended when the goal is rigorous diagnostic
+analysis on the cells used to fit the model (PPCs, calibration plots,
+regulatory-program inference). The encoder is recommended for
+production pipelines where new cells must be scored at high
+throughput.
+
+### Implementation {#sec-pln-laplace-implementation}
+
+In SCRIBE the Laplace path is selected via
+
+```python
+results = scribe.fit(
+    adata, model="pln",
+    inference_method="laplace",
+    priors={"capture_efficiency": (np.log(M_0), sigma_M)},
+    optimizer_config={
+        "name": "clipped_adam",
+        "step_size": 1e-4,
+        "grad_clip_norm": 10.0,
+    },
+    n_steps=50_000,
+)
+```
+
+The pure-JAX Newton kernel lives at
+``src/scribe/svi/_laplace_newton.py`` and is unit-tested against
+``scipy.optimize`` in ``tests/test_laplace_newton.py``. The outer
+training loop lives at ``src/scribe/svi/laplace_engine.py``; results
+are returned as a ``ScribeLaplaceResults`` (see
+``src/scribe/svi/laplace_results.py``) which exposes the same
+``get_pln_*`` accessors as ``ScribeVAEResults`` plus Laplace-specific
+methods ``get_laplace_x_loc``, ``get_laplace_eta_loc``,
+``get_laplace_p_capture``, and per-cell predictive sampling.
 
 ## Connection to the LNM {#sec-pln-connection-to-lnm}
 
