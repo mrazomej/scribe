@@ -1400,7 +1400,14 @@ class LaplaceConfig(BaseModel):
             "Newton on real data can produce explosive first steps "
             "when the Schur complement on the η block is small. "
             "Power users can drop this below 1e-4 if they observe "
-            "the MAP being biased away from the data."
+            "the MAP being biased away from the data. NOTE: this "
+            "damping only affects the *Newton solver*. The Laplace "
+            "correction ``-½ log det(-H)`` in the outer ELBO is "
+            "computed at damping=0 against the true posterior "
+            "Hessian (see ``laplace_log_det_neg_H`` in "
+            "``scribe.svi._laplace_newton``) — so increasing this "
+            "knob trades Newton-step stability for solve quality "
+            "without biasing the reported ELBO."
         ),
     )
     optimizer: Optional[Any] = Field(
