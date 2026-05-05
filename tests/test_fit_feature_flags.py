@@ -199,3 +199,70 @@ class TestPLNFeatureFlags:
     def test_pln_no_flags_stays_pln(self):
         """``model='pln'`` without any flags stays ``pln``."""
         assert _capture_model_kwarg(model="pln") == "pln"
+
+
+class TestLNMFeatureFlags:
+    """LNM-family feature-flag resolution.
+
+    LNM has two member names: ``"lnm"`` (no capture) and ``"lnmvcp"``
+    (variable capture probability). The base name auto-promotes via
+    ``variable_capture``; an explicit composite name must agree with
+    the flag if both are passed.
+
+    Regression tests for the bug where the family-default comparison
+    used ``_default_model = "nbvcp"`` (a DM-family name), which made
+    ``model="lnm" + variable_capture=True`` raise instead of
+    promoting to ``"lnmvcp"``.
+    """
+
+    def test_lnm_promotes_to_lnmvcp_with_vc_true(self):
+        """``model='lnm', variable_capture=True`` promotes to ``"lnmvcp"``."""
+        assert (
+            _capture_model_kwarg(model="lnm", variable_capture=True)
+            == "lnmvcp"
+        )
+
+    def test_lnm_stays_lnm_with_vc_false(self):
+        """``model='lnm', variable_capture=False`` stays ``"lnm"``."""
+        assert (
+            _capture_model_kwarg(model="lnm", variable_capture=False)
+            == "lnm"
+        )
+
+    def test_lnmvcp_with_matching_vc_true(self):
+        """``model='lnmvcp', variable_capture=True`` stays ``"lnmvcp"``."""
+        assert (
+            _capture_model_kwarg(model="lnmvcp", variable_capture=True)
+            == "lnmvcp"
+        )
+
+    def test_lnmvcp_with_conflicting_vc_false_raises(self):
+        """``model='lnmvcp', variable_capture=False`` is a conflict."""
+        import jax.numpy as jnp
+
+        dummy = jnp.zeros((10, 5), dtype=jnp.int32)
+        with pytest.raises(
+            ValueError, match="conflicts with the feature flags"
+        ):
+            api.fit(
+                dummy, model="lnmvcp", variable_capture=False, n_steps=1
+            )
+
+    def test_lnm_no_flag_stays_lnm(self):
+        """``model='lnm'`` with no flags stays ``"lnm"`` (no auto-promotion)."""
+        assert _capture_model_kwarg(model="lnm") == "lnm"
+
+    def test_lnmvcp_no_flag_stays_lnmvcp(self):
+        """``model='lnmvcp'`` with no flags stays ``"lnmvcp"``."""
+        assert _capture_model_kwarg(model="lnmvcp") == "lnmvcp"
+
+    def test_lnm_zi_true_raises(self):
+        """``model='lnm', zero_inflation=True`` raises (LNM family doesn't support ZI)."""
+        import jax.numpy as jnp
+
+        dummy = jnp.zeros((10, 5), dtype=jnp.int32)
+        with pytest.raises(
+            ValueError,
+            match="Zero-inflation is not supported for the LNM",
+        ):
+            api.fit(dummy, model="lnm", zero_inflation=True, n_steps=1)

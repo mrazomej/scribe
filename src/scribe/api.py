@@ -1176,12 +1176,26 @@ def fit(
                     "or pick a DM-family model."
                 )
             _resolved = "lnmvcp" if _vc else "lnm"
-            if model.lower() != _default_model and model.lower() != _resolved:
+            # Within the LNM family: ``model="lnm"`` is the base name
+            # that promotes via ``variable_capture`` (so
+            # ``model="lnm" + variable_capture=True`` → ``"lnmvcp"``);
+            # ``model="lnmvcp"`` is an explicit name that must agree
+            # with the flag if both are passed. Mismatched explicit
+            # name + flag is a conflict; ``"lnm"`` is always accepted
+            # because the flag selects the variant.
+            #
+            # NOTE: the previous version compared against
+            # ``_default_model = "nbvcp"`` (a DM-family name), which
+            # made the check pass for nobody and effectively rejected
+            # the natural ``"lnm" + variable_capture=True`` promotion.
+            if model.lower() != "lnm" and model.lower() != _resolved:
                 raise ValueError(
                     f"model='{model}' conflicts with the feature flags "
                     f"(zero_inflation={zero_inflation}, "
                     f"variable_capture={variable_capture}) which resolve to "
-                    f"'{_resolved}'. Use one or the other, not both."
+                    f"'{_resolved}'. Pass model='lnm' to let "
+                    f"variable_capture select the variant, or set "
+                    f"variable_capture to match the model name."
                 )
             model = _resolved
         else:
