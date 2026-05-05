@@ -87,7 +87,7 @@ _DEPRECATED_MODEL_ALIASES = {"nbdm_lnm": "lnm"}
 VALID_PARAMETERIZATIONS = set(PARAMETERIZATIONS.keys())
 
 # Valid inference methods
-VALID_INFERENCE_METHODS = {"svi", "mcmc", "vae"}
+VALID_INFERENCE_METHODS = {"svi", "mcmc", "vae", "laplace"}
 
 
 # ------------------------------------------------------------------------------
@@ -2131,6 +2131,33 @@ def fit(
                 kl_annealing=kl_annealing_config,
             )
             inference_config = InferenceConfig.from_vae(svi_config)
+        elif method == InferenceMethod.LAPLACE:
+            # PLN-only Laplace path — bypasses NumPyro SVI in favour of
+            # a custom outer-loop training in
+            # ``scribe.svi.laplace_engine``. Most knobs from SVIConfig
+            # do not apply here; we expose the relevant subset
+            # via ``LaplaceConfig``. KL annealing is forced off
+            # (Laplace mode has no KL term to anneal), warn the user
+            # if they passed one.
+            from .models.config import LaplaceConfig
+
+            if kl_annealing_config is not None:
+                import warnings as _w_kl
+
+                _w_kl.warn(
+                    "kl_annealing has no effect under "
+                    "inference_method='laplace' (no encoder, no KL "
+                    "term to anneal). Ignoring.",
+                    UserWarning,
+                )
+            laplace_config = LaplaceConfig(
+                n_steps=n_steps,
+                batch_size=effective_batch_size,
+                optimizer_config=optimizer_config,
+                early_stopping=early_stop_config,
+                restore_best=restore_best,
+            )
+            inference_config = InferenceConfig.from_laplace(laplace_config)
         else:
             raise ValueError(f"Unknown inference method: {method}")
     else:

@@ -200,6 +200,85 @@ JIT recompilation is not triggered. When annealing is off, the
 `dynamic_arrays_step` plumbing is bypassed entirely and the loop is
 byte-identical to the pre-annealing implementation.
 
+### Laplace Inference for PLN (`_laplace_newton.py`, `laplace_engine.py`, `laplace_results.py`)
+
+PLN-only alternative to the encoder-based VAE inference path. Replaces the
+encoder with **per-cell Newton-iterated MAP** on the latent log-rate ``x_c``
+(and joint ``η_c`` when the biology-informed capture anchor is active). Outer
+loop is Adam on global parameters; inner loop is Newton on per-cell latents —
+variational EM in the spirit of ``PLNmodels`` (R).
+
+**When to use Laplace vs encoder:**
+
+- **Encoder (default)**: best for production-scale serving where new cells must
+  be scored at high throughput; the encoder amortises inference into a single
+  forward pass.
+- **Laplace**: best for research-scale analysis where aggregate- posterior drift
+  in the encoder produces biased PPCs. Laplace structurally eliminates this —
+  there is no encoder, so per-cell posteriors are determined locally by data +
+  prior. PLN is globally log-concave (Chiquet et al. 2018) so Newton converges
+  in 5–10 iterations from a warm start, and Woodbury on ``Σ = W W' + diag(d)``
+  keeps each step ``O(G·k + k³)`` per cell.
+
+```python
+import scribe
+
+# Encoder-based VAE (default for PLN):
+results_vae = scribe.fit(
+    adata, model="pln",
+    inference_method="vae",  # implicit default
+    ...
+)
+
+# Laplace alternative:
+results_laplace = scribe.fit(
+    adata, model="pln",
+    inference_method="laplace",
+    n_steps=50_000,                        # outer Adam steps
+    priors={"capture_efficiency": (np.log(1e5), 0.5)},
+)
+```
+
+**Components:**
+
+- **`_laplace_newton.py`** — pure-JAX inner Newton kernel (no NumPyro
+  dependency). Joint Newton on ``(x, η)`` for the capture-anchored case, x-only
+  for the no-capture case. Both use Woodbury on Σ⁻¹ and on ``-H_xx = diag(λ) +
+  Σ⁻¹`` for ``O(G·k + k³)`` per step. Includes step-size capping
+  (``MAX_STEP=5.0``) and Tikhonov damping (default ``1e-2``) to handle the
+  early-iteration ill-conditioning that arises when the Schur complement on the
+  η block is small. The TruncatedNormal(low=0) prior on η is enforced via
+  projection.
+- **`laplace_engine.py`** — outer training loop. Custom (not NumPyro SVI)
+  because: (1) per-cell ``x_loc`` / ``eta_loc`` arrays need Newton-driven
+  write-back rather than Adam, (2) the ELBO requires a per-cell Laplace
+  correction ``-½ log det(-H_c)``, and (3) variational-EM-style
+  ``stop_gradient`` on the inner Newton iterates is cleanest in a hand-rolled
+  loop. ``LaplaceInferenceEngine.run_inference`` is the entry point;
+  ``LaplaceRunResult`` mirrors ``SVIRunResult``.
+- **`laplace_results.py`** — ``ScribeLaplaceResults`` dataclass. Standalone
+  class (not a subclass of ``ScribeVAEResults``) but exposes the same
+  ``get_pln_*`` accessor surface plus ``get_laplace_x_loc`` /
+  ``get_laplace_eta_loc`` / ``get_laplace_p_capture`` for the per-cell Newton
+  MAP estimates.
+
+**Configuration:**
+
+```python
+from scribe.models.config import LaplaceConfig
+
+# Defaults: 50k outer steps, 5 Newton steps each, damping=1e-2.
+LaplaceConfig()
+
+# Tighter inner Newton + slower outer for hard problems:
+LaplaceConfig(n_newton_steps=10, n_steps=100_000, damping=1e-3)
+
+# Convergence diagnostics:
+LaplaceConfig(convergence_action="warn")     # default
+LaplaceConfig(convergence_action="raise")     # raise after the run
+LaplaceConfig(convergence_action="ignore")    # silent
+```
+
 ### Checkpointing (`checkpoint.py`)
 
 The SVI module supports Orbax-based checkpointing for resumable training. When

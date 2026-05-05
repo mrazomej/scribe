@@ -338,7 +338,30 @@ def newton_step_joint(
     grad_inf_norm = jnp.maximum(
         jnp.max(jnp.abs(g_x)), jnp.abs(g_eta)
     )
-    return x + delta_x, eta + delta_eta, grad_inf_norm
+    # Step-size cap: if the proposed step is huge in either block,
+    # scale the whole step down to ``MAX_STEP``. This prevents
+    # runaway iterates when the Schur complement on the η block is
+    # tiny (which can happen for cells where ``log_lib`` is far from
+    # ``log_M_0``). The MAP is still found in 5–10 iterations even
+    # with this safety net because subsequent iterations have well-
+    # conditioned Hessians once we are near the basin of attraction.
+    _MAX_STEP = 5.0
+    step_norm = jnp.maximum(
+        jnp.max(jnp.abs(delta_x)), jnp.abs(delta_eta)
+    )
+    scale = jnp.minimum(1.0, _MAX_STEP / jnp.maximum(step_norm, 1e-12))
+    delta_x = delta_x * scale
+    delta_eta = delta_eta * scale
+    eta_new = eta + delta_eta
+    # Enforce the TruncatedNormal(low=0) constraint on the capture
+    # offset. Newton uses the unconstrained gradient, but the actual
+    # prior assigns -inf log-prob at η < 0 (corresponds to
+    # ``p_capture > 1``, physically impossible). Project back to the
+    # feasible region. A small floor (1e-3) prevents the next-
+    # iteration's exp() from overflowing for cells whose MAP is
+    # genuinely close to η=0.
+    eta_new = jnp.maximum(eta_new, 1e-3)
+    return x + delta_x, eta_new, grad_inf_norm
 
 
 def laplace_newton_loop(
@@ -459,7 +482,11 @@ def newton_step_x_only(
 
     delta_x = _solve_A(factors, g_x)
     grad_inf_norm = jnp.max(jnp.abs(g_x))
-    return x + delta_x, grad_inf_norm
+    # Step-size cap (same rationale as the joint case).
+    _MAX_STEP = 5.0
+    step_norm = jnp.max(jnp.abs(delta_x))
+    scale = jnp.minimum(1.0, _MAX_STEP / jnp.maximum(step_norm, 1e-12))
+    return x + delta_x * scale, grad_inf_norm
 
 
 def laplace_newton_loop_x_only(

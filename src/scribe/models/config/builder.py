@@ -166,7 +166,10 @@ class ModelConfigBuilder:
         Parameters
         ----------
         method : str or InferenceMethod
-            Inference method ("svi", "mcmc", "vae")
+            Inference method: ``"svi"``, ``"mcmc"``, ``"vae"``, or
+            ``"laplace"`` (PLN-only). The string is converted via the
+            ``InferenceMethod`` enum, so any value accepted there is
+            valid here.
         """
         if isinstance(method, str):
             self._inference_method = InferenceMethod(method)
@@ -711,9 +714,18 @@ class ModelConfigBuilder:
         # Mixture is indicated by n_components, not by modifying base_model
         base_model = self._base_model
 
-        # Create VAE config if VAE inference
+        # Create VAE config for VAE *and* Laplace inference. The Laplace
+        # path uses the same generative architecture as the VAE path
+        # (linear decoder, low-rank-plus-diagonal covariance) — it
+        # only differs in how the per-cell latent posterior is inferred.
+        # Without VAEConfig the engine has no place to read
+        # ``latent_dim`` / decoder hidden dims / data-driven init
+        # arrays from.
         vae_config = None
-        if self._inference_method == InferenceMethod.VAE:
+        if self._inference_method in (
+            InferenceMethod.VAE,
+            InferenceMethod.LAPLACE,
+        ):
             vae_config = VAEConfig(**self._vae_params)
 
         # param_specs will be created by preset factories

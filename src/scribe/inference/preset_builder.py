@@ -304,7 +304,7 @@ def build_config_from_preset(
         if inference_method.lower() == "svi":
             inference_method = "vae"
 
-    # --- PLN family: single parameterization, VAE-only
+    # --- PLN family: single parameterization, VAE-or-Laplace
     if model_lower == "pln":
         from ..models.parameterizations import (
             resolve_user_parameterization_for_model,
@@ -312,8 +312,18 @@ def build_config_from_preset(
         parameterization = resolve_user_parameterization_for_model(
             model_lower, parameterization
         )
+        # Auto-promote ``svi`` to ``vae`` (the encoder-based path)
+        # only — ``laplace`` is a deliberate user choice that uses a
+        # different engine entirely and must NOT be coerced.
         if inference_method.lower() == "svi":
             inference_method = "vae"
+        # Validate Laplace is requested only on PLN (it has no
+        # implementation for other models).
+    elif inference_method.lower() == "laplace":
+        raise ValueError(
+            "inference_method='laplace' is currently PLN-only. "
+            f"Use 'svi'/'vae'/'mcmc' for model={model_lower!r}."
+        )
     if d_mode not in ("low_rank", "learned"):
         raise ValueError(
             f"d_mode must be 'low_rank' or 'learned', got {d_mode!r}."
@@ -482,7 +492,13 @@ def build_config_from_preset(
         .with_inference(inference_method)
     )
 
-    if inference_method == "vae":
+    # Build the VAE config for both ``vae`` and ``laplace`` inference
+    # methods. The generative model is the same in both cases (linear
+    # decoder, low-rank-plus-diagonal covariance); only the *inference*
+    # procedure differs (encoder vs Newton). The Laplace engine reads
+    # ``model_config.vae.latent_dim`` to size the decoder kernel, so
+    # we must build VAEConfig here even for Laplace.
+    if inference_method in ("vae", "laplace"):
         # Encoder input transform defaults to ``log1p_prop``
         # (compositional) for LNM and for PLN-with-capture-anchor; it
         # stays at ``log1p`` (raw counts on log scale) for
@@ -558,6 +574,15 @@ def build_config_from_preset(
         if vae_flow_hidden_dims is not None:
             vae_kwargs["flow_hidden_dims"] = vae_flow_hidden_dims
         builder.with_vae(**vae_kwargs)
+        # ``with_vae`` force-sets ``_inference_method = VAE`` to keep
+        # encoder-mode fits coherent. For Laplace mode we need the
+        # VAEConfig (linear decoder, latent_dim, input transform, etc.)
+        # but the *inference method* must remain LAPLACE so the
+        # dispatcher routes to the Laplace handler. Restore it here.
+        if inference_method.lower() == "laplace":
+            from ..models.config.enums import InferenceMethod as _IM
+
+            builder._inference_method = _IM.LAPLACE
 
     if unconstrained:
         builder.unconstrained()

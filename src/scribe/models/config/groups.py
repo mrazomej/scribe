@@ -1390,11 +1390,17 @@ class LaplaceConfig(BaseModel):
         ),
     )
     damping: float = Field(
-        1e-4,
+        1e-2,
         ge=0,
         description=(
             "Tikhonov damping added to the diagonal of -H during the "
-            "Newton step to stabilise ill-conditioned cells."
+            "Newton step to stabilise ill-conditioned cells. Default "
+            "1e-2 is conservative — the kernel itself converges with "
+            "damping=0 in well-conditioned cases, but joint (x, η) "
+            "Newton on real data can produce explosive first steps "
+            "when the Schur complement on the η block is small. "
+            "Power users can drop this below 1e-4 if they observe "
+            "the MAP being biased away from the data."
         ),
     )
     optimizer: Optional[Any] = Field(
