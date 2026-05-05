@@ -50,6 +50,7 @@ from .models.config import (
     DataConfig,
     EarlyStoppingConfig,
     InferenceConfig,
+    KLAnnealingConfig,
     MCMCConfig,
     ModelConfig,
     SVIConfig,
@@ -331,6 +332,14 @@ def fit(
     # Early stopping options (for SVI/VAE)
     early_stopping: Optional[Union[EarlyStoppingConfig, Dict[str, Any]]] = None,
     restore_best: bool = False,
+    # KL annealing options (for VAE only — automatically defaulted ON
+    # for VAE-mode fits; pass an explicit ``KLAnnealingConfig`` or set
+    # ``kl_annealing_warmup`` to customise; pass
+    # ``KLAnnealingConfig(enabled=False)`` to disable).
+    kl_annealing: Optional[
+        Union["KLAnnealingConfig", Dict[str, Any], bool]
+    ] = None,
+    kl_annealing_warmup: Optional[int] = None,
     # Data options
     cells_axis: int = 0,
     layer: Optional[str] = None,
@@ -1957,7 +1966,64 @@ def fit(
                     f"got {type(early_stopping)}"
                 )
 
+        # Resolve KL annealing configuration. Precedence:
+        #   1. Explicit ``kl_annealing`` arg (object / dict / False).
+        #   2. ``kl_annealing_warmup`` shortcut → enabled with that warmup.
+        #   3. Per-method default — ON for VAE, OFF for SVI/MCMC.
+        # Passing ``False`` disables annealing without instantiating a
+        # config object; passing ``True`` activates the default config.
+        kl_annealing_config: Optional[KLAnnealingConfig] = None
+        if kl_annealing is not None:
+            if isinstance(kl_annealing, KLAnnealingConfig):
+                kl_annealing_config = kl_annealing
+            elif isinstance(kl_annealing, bool):
+                # Boolean shortcut: True → defaults; False → disabled.
+                kl_annealing_config = (
+                    KLAnnealingConfig() if kl_annealing else None
+                )
+            elif isinstance(kl_annealing, dict):
+                kl_annealing_config = KLAnnealingConfig(**kl_annealing)
+            else:
+                raise ValueError(
+                    "kl_annealing must be KLAnnealingConfig, dict, bool, "
+                    f"or None; got {type(kl_annealing).__name__}"
+                )
+        elif kl_annealing_warmup is not None:
+            # Convenience shortcut: just the warmup length, defaults
+            # otherwise.
+            kl_annealing_config = KLAnnealingConfig(
+                enabled=True, warmup=int(kl_annealing_warmup)
+            )
+        elif method == InferenceMethod.VAE:
+            # Default: ON for VAE-mode fits (LNM, PLN, and any future
+            # VAE-based model). Aggregate-posterior drift in linear-
+            # decoder VAEs with high-dim latents is most reliably
+            # mitigated by KL annealing during early training; this
+            # default is conservative (warmup=2000) and can be
+            # disabled by passing ``kl_annealing=False``.
+            kl_annealing_config = KLAnnealingConfig()
+        # SVI / MCMC paths leave ``kl_annealing_config`` as None →
+        # the engine uses the standard ``TraceMeanField_ELBO`` and
+        # the dynamic-arrays plumbing is bypassed entirely. The
+        # resulting code path is byte-identical to the pre-annealing
+        # implementation for non-VAE fits.
+
         if method == InferenceMethod.SVI:
+            if kl_annealing_config is not None:
+                # Surfacing this loudly is intentional: KL annealing on
+                # plain SVI (no encoder) is a non-default that the
+                # user must explicitly opt into. We honour it but log
+                # a one-line note so it shows up in run output.
+                import logging as _kl_logging
+
+                _kl_logging.getLogger(__name__).info(
+                    "KL annealing requested for plain SVI inference "
+                    "(method=%s, warmup=%d). Annealing is normally a "
+                    "VAE-mode optimisation; proceeding because the "
+                    "user passed an explicit kl_annealing argument.",
+                    method.value,
+                    kl_annealing_config.warmup,
+                )
             svi_config = SVIConfig(
                 n_steps=n_steps,
                 batch_size=effective_batch_size,
@@ -1966,6 +2032,7 @@ def fit(
                 log_progress_lines=log_progress_lines,
                 early_stopping=early_stop_config,
                 restore_best=restore_best,
+                kl_annealing=kl_annealing_config,
             )
             inference_config = InferenceConfig.from_svi(svi_config)
         elif method == InferenceMethod.MCMC:
@@ -2049,7 +2116,10 @@ def fit(
             )
             inference_config = InferenceConfig.from_mcmc(mcmc_config)
         elif method == InferenceMethod.VAE:
-            # VAE uses SVI config
+            # VAE uses SVI config; KL annealing default-ON resolved
+            # above. The engine treats ``None`` as "no annealing" and
+            # an explicit ``KLAnnealingConfig(enabled=False)`` the same
+            # way, so users can opt out without passing extra kwargs.
             svi_config = SVIConfig(
                 n_steps=n_steps,
                 batch_size=effective_batch_size,
@@ -2058,6 +2128,7 @@ def fit(
                 log_progress_lines=log_progress_lines,
                 early_stopping=early_stop_config,
                 restore_best=restore_best,
+                kl_annealing=kl_annealing_config,
             )
             inference_config = InferenceConfig.from_vae(svi_config)
         else:

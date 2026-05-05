@@ -22,7 +22,7 @@ valid, immutable, and explicit. The groups here are the foundational building
 blocks used to create full model configurations in SCRIBE.
 """
 
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any, Union, Literal
 from pydantic import (
     BaseModel,
     Field,
@@ -839,6 +839,154 @@ class EarlyStoppingConfig(BaseModel):
 
 
 # ==============================================================================
+# KL Annealing Configuration Group
+# ==============================================================================
+
+
+class KLAnnealingConfig(BaseModel):
+    """Schedule for the KL term in the ELBO during VAE-mode SVI training.
+
+    KL annealing introduces a step-dependent weight ``beta(step)`` on the
+    KL component of the ELBO so the encoder can fit the data
+    reconstruction half before the prior pressure is fully applied. This
+    suppresses two well-known failure modes for linear-decoder VAEs with
+    high-dimensional latents:
+
+    1. **Posterior collapse** (``q(z|u) -> N(0, I)`` regardless of input)
+       — caused by full-strength KL pressure dominating gradient flow
+       early in training.
+    2. **Aggregate-posterior drift** (``mean_c q(z|u_c) != N(0, I)``)
+       — the converse: the encoder fits per-cell reconstruction well
+       but the aggregate posterior wanders far from the prior, and any
+       convex decoder path (``exp(W·z)`` in PLN) amplifies the drift
+       into prediction bias.
+
+    The standard linear schedule ramps ``beta`` from ``beta_min`` (at
+    ``step=0``) to ``beta_max`` (at ``step=warmup``) and clamps at
+    ``beta_max`` for ``step > warmup``. ``beta_max=1.0`` recovers the
+    standard ELBO; setting ``beta_max < 1.0`` implements a permanent
+    β-VAE-style down-weighting.
+
+    Annealing only affects training. Post-fit metrics (PPC, MAP,
+    importance-sampled marginal log-likelihood) all use the full
+    ``beta=1`` ELBO regardless of the schedule used during training.
+
+    Parameters
+    ----------
+    enabled : bool, default=True
+        Whether to apply KL annealing. When ``False`` the schedule is
+        ignored and the standard ELBO is used (``beta=1`` always).
+        The :class:`SVIConfig.kl_annealing` field can also be left
+        ``None`` to disable annealing entirely without instantiating a
+        config object.
+    schedule : {"linear"}, default="linear"
+        Shape of the annealing schedule. Only ``"linear"`` is
+        implemented in v1; the field is a literal type so future
+        schedules (``"cosine"``, ``"cyclic"``, ...) can be added without
+        breaking existing configs.
+    warmup : int, default=2_000
+        Number of SVI steps over which to ramp ``beta`` linearly from
+        ``beta_min`` to ``beta_max``. ``warmup=0`` is equivalent to
+        ``enabled=False`` (returns ``beta_max`` immediately).
+    beta_min : float, default=0.0
+        Starting weight on the KL term (inclusive). ``0.0`` means the
+        first step is pure reconstruction. Larger values
+        (e.g. ``0.1``) keep a faint KL signal alive throughout warmup,
+        which can prevent the encoder from drifting too far before the
+        KL term comes online.
+    beta_max : float, default=1.0
+        Final weight on the KL term (post-warmup). ``1.0`` recovers the
+        standard ELBO. ``< 1.0`` permanently down-weights KL
+        (β-VAE-style) at the cost of looser aggregate-posterior
+        regularisation.
+
+    Examples
+    --------
+    >>> # Default linear ramp from 0 to 1 over 2000 steps.
+    >>> KLAnnealingConfig()
+
+    >>> # Faster warmup with a permanent β-VAE-style down-weight.
+    >>> KLAnnealingConfig(warmup=500, beta_max=0.5)
+
+    >>> # Disabled (equivalent to setting svi.kl_annealing=None)
+    >>> KLAnnealingConfig(enabled=False)
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = Field(
+        True,
+        description=(
+            "Whether to apply KL annealing. When False the schedule is "
+            "ignored and beta=1 is used throughout training."
+        ),
+    )
+    schedule: Literal["linear"] = Field(
+        "linear",
+        description=(
+            "Shape of the annealing schedule. Only 'linear' is "
+            "supported in v1."
+        ),
+    )
+    warmup: int = Field(
+        2_000,
+        ge=0,
+        description=(
+            "Number of SVI steps from beta_min to beta_max. 0 disables "
+            "annealing (returns beta_max immediately)."
+        ),
+    )
+    beta_min: float = Field(
+        0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Starting weight on the KL term (inclusive). 0.0 = pure "
+            "reconstruction at step 0."
+        ),
+    )
+    beta_max: float = Field(
+        1.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Final weight on the KL term (post-warmup). 1.0 recovers "
+            "the standard ELBO."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _check_min_le_max(self) -> "KLAnnealingConfig":
+        """Validate ``beta_min <= beta_max`` (a strictly increasing ramp)."""
+        if self.beta_min > self.beta_max:
+            raise ValueError(
+                f"KLAnnealingConfig: beta_min ({self.beta_min}) must be "
+                f"<= beta_max ({self.beta_max}). The schedule is a "
+                "monotone ramp from beta_min to beta_max."
+            )
+        return self
+
+    # --------------------------------------------------------------------------
+
+    def to_yaml(self) -> str:
+        """Serialize config to YAML string."""
+        import yaml
+
+        data = self.model_dump(mode="json")
+        return yaml.dump(data, default_flow_style=False, sort_keys=False)
+
+    # --------------------------------------------------------------------------
+
+    @classmethod
+    def from_yaml(cls, yaml_str: str) -> "KLAnnealingConfig":
+        """Deserialize config from YAML string."""
+        import yaml
+
+        data = yaml.safe_load(yaml_str)
+        return cls(**data)
+
+
+# ==============================================================================
 # SVI Configuration Group
 # ==============================================================================
 
@@ -1050,6 +1198,19 @@ class SVIConfig(BaseModel):
             "early_stopping config is provided, a minimal internal "
             "config is created to enable the custom training loop with "
             "best-state tracking."
+        ),
+    )
+    kl_annealing: Optional[KLAnnealingConfig] = Field(
+        None,
+        description=(
+            "KL annealing schedule for the ELBO during training. "
+            "Defaults are auto-resolved in the public ``scribe.fit`` "
+            "API: ON for any VAE-mode fit (warmup=2000), OFF for plain "
+            "SVI/MCMC, and force-OFF for Laplace mode. Pass an "
+            "explicit ``KLAnnealingConfig(enabled=False)`` to disable, "
+            "or a custom config to override the defaults. When None, "
+            "the standard ``TraceMeanField_ELBO`` is used and the "
+            "training loop is byte-identical to the pre-annealing path."
         ),
     )
 

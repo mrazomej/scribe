@@ -139,6 +139,67 @@ if results.early_stopped:
 - `checkpoint_dir`: Directory for Orbax checkpoints (enables resumable training)
 - `resume`: If True (default), resumes from checkpoint if one exists
 
+### KL Annealing (`kl_annealing.py`)
+
+VAE-based fits (LNM, PLN, and any future VAE-mode model) ramp the KL
+weight `beta` linearly from 0 to 1 over the first `warmup` steps of
+training by default. This addresses the **aggregate-posterior drift**
+failure mode in linear-decoder VAEs with high-dimensional latents:
+the encoder fits the data reconstruction term first, then the prior
+pressure is gradually applied so `q(z) -> N(0, I)` in aggregate.
+Without annealing, convex decoder paths (e.g. `exp(W·z)` in PLN) can
+amplify modest aggregate drift into large prediction bias.
+
+```python
+from scribe.models.config import KLAnnealingConfig
+
+# Default: linear ramp over 2000 steps, beta_min=0, beta_max=1.
+kl = KLAnnealingConfig()
+
+# Faster warmup with permanent β-VAE down-weight:
+kl = KLAnnealingConfig(warmup=500, beta_max=0.5)
+
+# Disable explicitly (overrides the per-method default):
+kl = KLAnnealingConfig(enabled=False)
+
+# Use directly via the public API:
+results = scribe.fit(
+    adata, model="pln",
+    kl_annealing=kl,                # explicit config
+    # or: kl_annealing_warmup=500,  # convenience shortcut
+    # or: kl_annealing=False,       # disable
+)
+```
+
+**Defaults:**
+
+- `inference_method="vae"` (LNM, PLN): KL annealing **ON** by default,
+  `KLAnnealingConfig()` (warmup=2000, ramp 0→1).
+- `inference_method="svi"` / `"mcmc"`: KL annealing **OFF** by default
+  (no encoder, so no aggregate-posterior drift to mitigate).
+- `inference_method="laplace"` (PLN): KL annealing **forced OFF**
+  (Laplace mode has no encoder and no KL term to anneal).
+
+**Implementation:**
+
+- `AnnealedTraceMeanField_ELBO`: drop-in subclass of NumPyro's
+  `TraceMeanField_ELBO` that scales the per-site KL contribution by
+  `beta`. Observed-site (reconstruction) contributions are at full
+  weight regardless of `beta`. The `beta` value is consumed via a
+  `**kwargs` channel and never forwarded to the model or guide.
+- `linear_beta_schedule(step, warmup, beta_min, beta_max)`:
+  JIT-traceable linear ramp with clamping. `warmup<=0` returns
+  `beta_max` immediately (effectively disabled).
+- `make_beta_schedule(kind, warmup, ...)`: dispatcher; only
+  `kind="linear"` is implemented in v1.
+
+**Plumbing:** the SVI loop in `inference_engine.py` injects
+`beta = schedule(step)` as a JAX scalar into `dynamic_arrays_step`
+each iteration. The pytree structure is stable across iterations so
+JIT recompilation is not triggered. When annealing is off, the
+`dynamic_arrays_step` plumbing is bypassed entirely and the loop is
+byte-identical to the pre-annealing implementation.
+
 ### Checkpointing (`checkpoint.py`)
 
 The SVI module supports Orbax-based checkpointing for resumable training. When

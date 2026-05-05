@@ -89,6 +89,10 @@ def _run_vae_inference(
         "seed": seed,
         "stable_update": svi_config.stable_update,
         "early_stopping": svi_config.early_stopping,
+        # Forward the KL annealing config so VAE fits get the per-step
+        # beta plumbing when ``svi_config.kl_annealing`` is set
+        # (default-ON for VAE via ``preset_builder``).
+        "kl_annealing": svi_config.kl_annealing,
     }
     resolved_optimizer = resolve_svi_optimizer(svi_config)
     if resolved_optimizer is not None:

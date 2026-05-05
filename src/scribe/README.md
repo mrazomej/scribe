@@ -357,6 +357,8 @@ lnm_results = scribe.fit(
     #   - r_T LogNormal prior     -> data-driven  (method-of-moments inversion)
     #   - decoder bias init       -> empirical ALR mean of the count matrix
     #   - encoder log_scale clamp -> [-7, 2]      (clamped LNMGaussianEncoder)
+    #   - KL annealing            -> linear ramp 0->1 over 2000 steps (default-ON
+    #                                for VAE; pass kl_annealing=False to disable)
     # All of these are overridable; see the qmd "Training stability"
     # section in paper/_logistic_normal_multinomial.qmd for the rationale.
     n_steps=50000,

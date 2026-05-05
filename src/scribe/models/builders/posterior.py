@@ -1388,9 +1388,12 @@ def _apply_capture(
     # PLN uses capture as an internal flag (no separate 'plnvcp' model),
     # so ``uses_variable_capture`` is False. We still need to extract
     # the ``eta_capture`` posterior when the biology-informed anchor is
-    # active.
+    # active. The PLN branch is gated on ``base_model == "pln"`` —
+    # accessed via ``getattr`` because some unit-test fixtures use a
+    # ``types.SimpleNamespace`` mock that lacks that attribute. Real
+    # ``ModelConfig`` instances always have it.
     _has_capture = model_config.uses_variable_capture or (
-        model_config.base_model == "pln"
+        getattr(model_config, "base_model", None) == "pln"
         and getattr(model_config, "uses_biology_informed_capture", False)
     )
     if not _has_capture:
