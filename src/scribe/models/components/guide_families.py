@@ -32,6 +32,8 @@ AmortizedGuide
     Marker for amortized inference using neural networks.
 VAELatentGuide
     Guide family for VAE latent variable z.
+LaplaceLatentGuide
+    Guide family for PLN Laplace inference (per-cell Newton MAP + log-det).
 
 Examples
 --------
@@ -639,6 +641,65 @@ class VAELatentGuide(GuideFamily):
     @property
     def param_names(self) -> List[str]:
         """Parameter names produced by the decoder — single source of truth."""
+        if self.decoder is not None and hasattr(self.decoder, "output_heads"):
+            return [h.param_name for h in self.decoder.output_heads]
+        return []
+
+
+@dataclass
+class LaplaceLatentGuide(GuideFamily):
+    """Guide family for Laplace-mode PLN inference (no encoder).
+
+    The Laplace path replaces the VAE encoder with per-cell
+    Newton-iterated MAP on the latent log-rate ``x_c`` and (when the
+    biology-informed capture anchor is active) ``eta_c``. The MAP and
+    Hessian are stored as NumPyro mutable sites so they persist across
+    SVI calls and warm-start the next Newton iteration. Outer SVI
+    optimises the global parameters (decoder bias ``mu``, kernel ``W``,
+    diagonal ``d``, and capture-prior hyperparameters) through a
+    Laplace-corrected ELBO.
+
+    Critically there is **no encoder field**: the guide does not run a
+    neural network, so the only callable inputs are the global
+    parameters that already live in ``model_config``. The decoder is
+    still kept here for interpretation — the matrix-form ``W`` of the
+    decoder kernel is the loadings matrix of the generative
+    ``Sigma = W W' + diag(d)`` and is read directly from the trained
+    flax parameter pytree.
+
+    Parameters
+    ----------
+    decoder : optional
+        ``MultiHeadDecoder`` instance, used for parameter naming and
+        for downstream extraction (the kernel/bias of the decoder
+        head are the generative ``W``/``mu``).
+    latent_spec : optional
+        Latent specification (e.g. ``GaussianLatentSpec``).
+    capture_anchor : bool, default=False
+        Whether the biology-informed capture anchor is active. When
+        True, Newton optimises ``(x_c, eta_c)`` jointly per cell;
+        when False, only ``x_c``.
+    n_newton_steps : int, default=5
+        Number of inner Newton iterations per outer SVI step.
+    damping : float, default=1e-4
+        Tikhonov damping for the Newton step.
+
+    See Also
+    --------
+    VAELatentGuide : Encoder-based guide for the standard VAE path.
+    scribe.svi._laplace_newton : Pure-JAX inner Newton kernel used
+        by this guide.
+    """
+
+    decoder: Optional[Any] = None
+    latent_spec: Optional[Any] = None
+    capture_anchor: bool = False
+    n_newton_steps: int = 5
+    damping: float = 1e-4
+
+    @property
+    def param_names(self) -> List[str]:
+        """Parameter names produced by the decoder — same source of truth as VAELatentGuide."""
         if self.decoder is not None and hasattr(self.decoder, "output_heads"):
             return [h.param_name for h in self.decoder.output_heads]
         return []

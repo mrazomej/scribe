@@ -1272,6 +1272,198 @@ class MCMCConfig(BaseModel):
 
 
 # ==============================================================================
+# Laplace Configuration Group
+# ==============================================================================
+
+
+class LaplaceConfig(BaseModel):
+    """Configuration for Laplace-approximation inference (PLN-only).
+
+    The Laplace inference path replaces the encoder with a per-cell
+    Newton-iterated MAP on the latent log-rate ``x_c`` (and joint
+    ``eta_c`` when the biology-informed capture anchor is active).
+    The outer SVI loop updates global parameters (``mu``, ``W``,
+    ``d``, capture-prior hyperparameters) via a Laplace-approximated
+    ELBO that includes the ``-½ log det(-H_c)`` correction term.
+
+    Mathematically equivalent to the variational-EM scheme used by
+    ``PLNmodels`` in R: outer Adam on globals, inner Newton on
+    per-cell latents. PLN is globally log-concave so Newton converges
+    in 5-10 iterations from a warm start. Using Woodbury on
+    ``Σ = W W' + diag(d)`` keeps each step ``O(G·k + k³)`` per cell.
+
+    Structurally eliminates aggregate-posterior drift (no encoder, no
+    parametric ``q(z|u)`` family to drift). The trade-off is that
+    inference at new cells requires re-running Newton on demand
+    rather than a single forward pass through an encoder. For
+    research-scale analysis on the training cells this is fine;
+    serving pipelines that need to score new cells at high throughput
+    would need the encoder VAE path instead.
+
+    Parameters
+    ----------
+    n_steps : int, default=50_000
+        Number of outer SVI steps over the global parameters. Lower
+        than the VAE path's typical 250k because the inner Newton
+        gives the global gradient a clean signal at every step (no
+        encoder-decoder warm-up).
+    n_newton_steps : int, default=5
+        Number of inner Newton iterations per outer SVI step. With
+        warm-started latents, 5 is more than enough for convergence
+        (quadratic in a log-concave problem). Higher values are
+        wasteful but safe.
+    newton_tolerance : float, default=1e-4
+        Surfaced as part of ``ScribeLaplaceResults``: the engine
+        warns if any cell's final L∞-gradient norm exceeds this
+        threshold. Not used to early-stop Newton (we use a fixed
+        iteration count for ``vmap`` compatibility).
+    damping : float, default=1e-4
+        Tikhonov damping added to the diagonal of ``-H_xx`` and to
+        the η-block scalar to stabilise Newton when the Hessian is
+        ill-conditioned (near-zero ``d``, sparse cells). The default
+        is small enough not to bias the MAP for well-conditioned
+        problems and large enough to avoid Cholesky failures.
+    optimizer_config : SVIConfig.OptimizerConfig, optional
+        Outer-loop optimizer specification (Adam by default, lr=1e-3).
+    optimizer : Any, optional
+        Pre-built NumPyro optimizer; takes precedence over
+        ``optimizer_config``.
+    batch_size : int, optional
+        Mini-batch size for the outer SVI loop. ``None`` = full batch.
+    early_stopping : EarlyStoppingConfig, optional
+        Early stopping configuration for the outer loop. Same
+        semantics as for SVI.
+    restore_best : bool, default=False
+        Track and restore the best-loss outer-loop parameters.
+    convergence_action : {"warn", "raise", "ignore"}, default="warn"
+        Action when any cell's final ``‖∇f‖_∞`` exceeds
+        ``newton_tolerance``:
+
+        - ``"warn"``: emit a warning at the end of training listing
+          the offending cell indices.
+        - ``"raise"``: raise ``RuntimeError`` after training.
+        - ``"ignore"``: silent.
+    fallback_to_encoder : bool, default=False
+        Reserved for future work. Implementing this would require
+        keeping an encoder around alongside Laplace, which contradicts
+        the "no encoder in Laplace mode" design. Documented here for
+        forward compatibility only.
+
+    Examples
+    --------
+    >>> # Default Laplace config: 50k outer steps, 5 inner Newton steps.
+    >>> LaplaceConfig()
+
+    >>> # Tighter inner Newton + slower outer for hard problems:
+    >>> LaplaceConfig(n_newton_steps=10, n_steps=100_000, damping=1e-3)
+
+    See Also
+    --------
+    SVIConfig : Configuration for the standard SVI / VAE path.
+    """
+
+    model_config = ConfigDict(
+        frozen=True, arbitrary_types_allowed=True, extra="forbid"
+    )
+
+    n_steps: int = Field(
+        50_000,
+        gt=0,
+        description="Number of outer SVI steps over global parameters.",
+    )
+    n_newton_steps: int = Field(
+        5,
+        ge=1,
+        le=200,
+        description=(
+            "Number of inner Newton iterations per outer SVI step. "
+            "Quadratic convergence on log-concave PLN means 5 is "
+            "usually plenty from a warm start."
+        ),
+    )
+    newton_tolerance: float = Field(
+        1e-4,
+        gt=0,
+        description=(
+            "L∞ gradient-norm tolerance used for convergence "
+            "diagnostics (not for early-stopping Newton)."
+        ),
+    )
+    damping: float = Field(
+        1e-4,
+        ge=0,
+        description=(
+            "Tikhonov damping added to the diagonal of -H during the "
+            "Newton step to stabilise ill-conditioned cells."
+        ),
+    )
+    optimizer: Optional[Any] = Field(
+        None,
+        description="Pre-built NumPyro optimizer for outer-loop SGD.",
+    )
+    optimizer_config: Optional["SVIConfig.OptimizerConfig"] = Field(
+        None,
+        description=(
+            "Serializable optimizer specification. Built into a "
+            "NumPyro optimizer at runtime when ``optimizer`` is not "
+            "explicitly set."
+        ),
+    )
+    batch_size: Optional[int] = Field(
+        None,
+        gt=0,
+        description=(
+            "Mini-batch size for the outer SVI loop. None uses the "
+            "full dataset (batch gradient descent)."
+        ),
+    )
+    early_stopping: Optional[EarlyStoppingConfig] = Field(
+        None,
+        description="Early stopping configuration for the outer loop.",
+    )
+    restore_best: bool = Field(
+        False,
+        description=(
+            "Track and restore the best-loss outer-loop parameters."
+        ),
+    )
+    convergence_action: Literal["warn", "raise", "ignore"] = Field(
+        "warn",
+        description=(
+            "Action when Newton fails to converge on some cells: "
+            "emit a warning, raise RuntimeError, or stay silent."
+        ),
+    )
+    fallback_to_encoder: bool = Field(
+        False,
+        description=(
+            "Reserved for future work; implementing this requires an "
+            "encoder alongside Laplace, which contradicts the no-"
+            "encoder design. Currently has no effect."
+        ),
+    )
+
+    # --------------------------------------------------------------------------
+
+    def to_yaml(self) -> str:
+        """Serialize config to YAML string."""
+        import yaml
+
+        data = self.model_dump(mode="json")
+        return yaml.dump(data, default_flow_style=False, sort_keys=False)
+
+    # --------------------------------------------------------------------------
+
+    @classmethod
+    def from_yaml(cls, yaml_str: str) -> "LaplaceConfig":
+        """Deserialize config from YAML string."""
+        import yaml
+
+        data = yaml.safe_load(yaml_str)
+        return cls(**data)
+
+
+# ==============================================================================
 # Data Configuration Group
 # ==============================================================================
 
@@ -1361,6 +1553,13 @@ class InferenceConfig(BaseModel):
     mcmc: Optional[MCMCConfig] = Field(
         None, description="MCMC configuration (required for MCMC method)"
     )
+    laplace: Optional[LaplaceConfig] = Field(
+        None,
+        description=(
+            "Laplace configuration (required for LAPLACE method, "
+            "currently PLN-only)."
+        ),
+    )
 
     # --------------------------------------------------------------------------
     # Factory Methods
@@ -1446,6 +1645,40 @@ class InferenceConfig(BaseModel):
         return cls(method=InferenceMethod.VAE, svi=svi_config, mcmc=None)
 
     # --------------------------------------------------------------------------
+
+    @classmethod
+    def from_laplace(
+        cls, laplace_config: "LaplaceConfig"
+    ) -> "InferenceConfig":
+        """Create InferenceConfig for Laplace inference (PLN-only).
+
+        Parameters
+        ----------
+        laplace_config : LaplaceConfig
+            Laplace-specific configuration object.
+
+        Returns
+        -------
+        InferenceConfig
+            InferenceConfig with method=LAPLACE and the provided
+            laplace_config. ``svi`` and ``mcmc`` are left as ``None``.
+
+        Examples
+        --------
+        >>> from scribe.models.config import InferenceConfig, LaplaceConfig
+        >>> laplace_config = LaplaceConfig(n_steps=50_000, n_newton_steps=8)
+        >>> inference_config = InferenceConfig.from_laplace(laplace_config)
+        """
+        from .enums import InferenceMethod
+
+        return cls(
+            method=InferenceMethod.LAPLACE,
+            svi=None,
+            mcmc=None,
+            laplace=laplace_config,
+        )
+
+    # --------------------------------------------------------------------------
     # Validation
     # --------------------------------------------------------------------------
 
@@ -1470,17 +1703,42 @@ class InferenceConfig(BaseModel):
                 raise ValueError("SVIConfig required for SVI inference")
             if self.mcmc is not None:
                 raise ValueError("MCMCConfig not allowed for SVI inference")
+            if self.laplace is not None:
+                raise ValueError(
+                    "LaplaceConfig not allowed for SVI inference"
+                )
         elif self.method == InferenceMethod.MCMC:
             if self.mcmc is None:
                 raise ValueError("MCMCConfig required for MCMC inference")
             if self.svi is not None:
                 raise ValueError("SVIConfig not allowed for MCMC inference")
+            if self.laplace is not None:
+                raise ValueError(
+                    "LaplaceConfig not allowed for MCMC inference"
+                )
         elif self.method == InferenceMethod.VAE:
             # VAE uses SVI config
             if self.svi is None:
                 raise ValueError("SVIConfig required for VAE inference")
             if self.mcmc is not None:
                 raise ValueError("MCMCConfig not allowed for VAE inference")
+            if self.laplace is not None:
+                raise ValueError(
+                    "LaplaceConfig not allowed for VAE inference"
+                )
+        elif self.method == InferenceMethod.LAPLACE:
+            if self.laplace is None:
+                raise ValueError(
+                    "LaplaceConfig required for Laplace inference"
+                )
+            if self.svi is not None:
+                raise ValueError(
+                    "SVIConfig not allowed for Laplace inference"
+                )
+            if self.mcmc is not None:
+                raise ValueError(
+                    "MCMCConfig not allowed for Laplace inference"
+                )
         else:
             raise ValueError(f"Unknown inference method: {self.method}")
 
@@ -1488,13 +1746,15 @@ class InferenceConfig(BaseModel):
     # Accessor Methods
     # --------------------------------------------------------------------------
 
-    def get_config(self) -> Union[SVIConfig, MCMCConfig]:
+    def get_config(
+        self,
+    ) -> Union[SVIConfig, MCMCConfig, "LaplaceConfig"]:
         """Get the appropriate config for the inference method.
 
         Returns
         -------
-        Union[SVIConfig, MCMCConfig]
-            The SVI or MCMC configuration, depending on the inference method.
+        Union[SVIConfig, MCMCConfig, LaplaceConfig]
+            The configuration object for the active inference method.
 
         Raises
         ------
@@ -1515,6 +1775,8 @@ class InferenceConfig(BaseModel):
             return self.svi
         elif self.method == InferenceMethod.MCMC:
             return self.mcmc
+        elif self.method == InferenceMethod.LAPLACE:
+            return self.laplace
         else:
             raise ValueError(f"Unknown inference method: {self.method}")
 

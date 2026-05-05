@@ -123,11 +123,24 @@ class Parameterization(str, Enum):
 
 
 class InferenceMethod(str, Enum):
-    """Supported inference methods."""
+    """Supported inference methods.
+
+    - ``SVI``: Stochastic Variational Inference with mean-field guides.
+    - ``MCMC``: Hamiltonian Monte Carlo (NUTS) for exact-ish posterior.
+    - ``VAE``: SVI with an amortized encoder (the standard
+      VAE pattern). All LNM and PLN-with-encoder fits use this method.
+    - ``LAPLACE``: Per-cell Newton-iterated MAP + Gaussian Laplace
+      approximation around the mode. PLN-only. Replaces the encoder
+      with deterministic optimization on each cell's posterior; the
+      outer loop is still SVI on the global parameters but with the
+      Laplace-approximated marginal likelihood as its objective.
+      See ``svi/_laplace_newton.py`` for the inner kernel.
+    """
 
     SVI = "svi"
     MCMC = "mcmc"
     VAE = "vae"
+    LAPLACE = "laplace"
 
 
 # ------------------------------------------------------------------------------
