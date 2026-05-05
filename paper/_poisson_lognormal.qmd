@@ -610,7 +610,7 @@ during optimization. The outer loss summed over cells is therefore
 
 $$
 \mathcal{L}_{\text{Laplace}}(\theta) =
-- \sum_c \left[
+- \sum_{c=1}^{N} \left[
 \log \pi(\underline{u}_c, \underline{x}_c^{*}, \eta_c^{*})
 - \tfrac{1}{2} \log \det(-\underline{\underline{H}}_c)
 \right],
@@ -618,6 +618,29 @@ $${#eq-pln-laplace-outer-loss}
 
 and SCRIBE minimizes this with Adam (or any
 ``optimizer_config``-compatible choice such as ``clipped_adam``).
+
+**Mini-batch estimator.** For large $N$ the engine optimizes
+@eq-pln-laplace-outer-loss with stochastic gradients computed on a
+uniform random subset $\mathcal{B} \subset \{1, \ldots, N\}$ of size
+$|\mathcal{B}| = B$. Following the standard SVI subsample-scaling
+correction [@hoffman2013stochastic], the unbiased single-step
+estimator is
+
+$$
+\widehat{\mathcal{L}}_{\text{Laplace}}(\theta; \mathcal{B}) =
+- \frac{N}{B} \sum_{c \in \mathcal{B}} \left[
+\log \pi(\underline{u}_c, \underline{x}_c^{*}, \eta_c^{*})
+- \tfrac{1}{2} \log \det(-\underline{\underline{H}}_c)
+\right].
+$${#eq-pln-laplace-minibatch}
+
+The $N/B$ factor matches the implicit scaling that NumPyro's
+``plate(..., subsample_size=B)`` applies in scribe's standard SVI/VAE
+paths, so loss curves are directly comparable across inference modes
+and across batch sizes; setting $B = N$ recovers
+@eq-pln-laplace-outer-loss exactly. Inner Newton remains per-cell
+and is unaffected by the scaling — only outer gradients on
+$\theta$ inherit it.
 
 ### Variational-EM training scheme {#sec-pln-laplace-variational-em}
 

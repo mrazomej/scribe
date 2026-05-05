@@ -458,6 +458,17 @@ class LaplaceInferenceEngine:
         if batch_size is None:
             batch_size = n_cells
         batch_size = int(batch_size)
+        # SVI subsample-scaling correction (Hoffman et al. 2013). The
+        # full-data ELBO is sum_{c=1..N} elbo_c. Under uniform
+        # subsampling of B cells, the unbiased estimator is
+        # (N / B) * sum_{c in batch} elbo_c. NumPyro applies this
+        # automatically via plate(..., subsample_size=B); our hand-
+        # rolled loop has to apply it explicitly. The scale is a
+        # Python float, so JAX folds it into the JIT trace as a
+        # constant (no per-step recompilation).
+        # When batch_size == n_cells the factor is 1.0 exactly and
+        # the full-batch path is byte-identical to before.
+        data_scale = float(n_cells) / float(batch_size)
 
         def laplace_loss(
             params,
@@ -501,7 +512,7 @@ class LaplaceInferenceEngine:
                 x_new = jax.lax.stop_gradient(x_new)
                 eta_new = jax.lax.stop_gradient(eta_new)
                 log_det = jax.lax.stop_gradient(log_det)
-                loss = _laplace_elbo(
+                loss = data_scale * _laplace_elbo(
                     mu,
                     W,
                     d,
@@ -525,7 +536,7 @@ class LaplaceInferenceEngine:
                 )
                 x_new = jax.lax.stop_gradient(x_new)
                 log_det = jax.lax.stop_gradient(log_det)
-                loss = _laplace_elbo(
+                loss = data_scale * _laplace_elbo(
                     mu,
                     W,
                     d,
