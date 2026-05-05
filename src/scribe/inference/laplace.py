@@ -64,11 +64,11 @@ def _run_laplace_inference(
         If ``model_config.base_model`` is not in ``{"pln", "lnm"}``.
     """
     base_model = getattr(model_config, "base_model", None)
-    if base_model not in ("pln", "lnm"):
+    if base_model not in ("pln", "lnm", "lnmvcp"):
         raise ValueError(
             f"inference_method='laplace' is currently supported for "
-            f"PLN and LNM (got base_model={base_model!r}). Use "
-            "'svi'/'vae'/'mcmc' for other models."
+            f"PLN, LNM, and LNMVCP (got base_model={base_model!r}). "
+            "Use 'svi'/'vae'/'mcmc' for other models."
         )
 
     # Pull the latent dim from VAEConfig (factories still use the
@@ -78,11 +78,13 @@ def _run_laplace_inference(
         or 32
     )
 
-    # Capture anchor: PLN-only for now. The LNM Laplace v1 does not
-    # support LNMVCP capture priors; the user must use VAE inference
-    # if they need per-cell capture amortization.
+    # Capture anchor: extracted from the biology-informed prior.
+    # PLN reads from priors.eta_capture; LNMVCP reads from the same
+    # field (see preset_builder.py — both alias to ``eta_capture``
+    # via PRIOR_KEY_ALIASES). Plain LNM has no capture submodel so
+    # no anchor is set.
     capture_anchor = None
-    if base_model == "pln":
+    if base_model in ("pln", "lnmvcp"):
         priors_extra = (
             getattr(model_config.priors, "__pydantic_extra__", None) or {}
         )
@@ -127,23 +129,38 @@ def _run_laplace_inference(
             eta_loc=run_result.eta_loc,
         )
 
-    # LNM: route the per-cell latent (the engine packed it into
-    # ``run_result.x_loc`` for transit) into either ``z_loc`` or
-    # ``y_alr_loc`` based on ``d_mode``. Also propagate the ALR
+    # LNM / LNMVCP: route the per-cell latent (the engine packed it
+    # into ``run_result.x_loc`` for transit) into either ``z_loc``
+    # or ``y_alr_loc`` based on ``d_mode``. For LNMVCP, also
+    # populate ``p_capture_loc`` from the engine's eta MAP
+    # (p_capture = exp(-eta_capture)) and propagate the ALR
     # reference index so PPC sampling and gene subsetting know
     # which gene serves as the gauge fix.
     d_mode = getattr(model_config, "d_mode", "learned") or "learned"
     alr_reference_idx = int(getattr(model_config, "alr_reference_idx", -1))
+
+    # LNMVCP-specific extras: store both the raw eta_capture MAP
+    # (the actual latent) and the derived p_capture = exp(-eta).
+    # ``eta_loc`` is shared with the PLN dataclass slot (it carries
+    # the per-cell capture-offset latent in either model); the
+    # ``p_capture_loc`` slot is the natural human-readable view.
+    extras: dict = {}
+    if base_model == "lnmvcp" and run_result.eta_loc is not None:
+        extras["eta_loc"] = run_result.eta_loc
+        extras["p_capture_loc"] = jnp.exp(-run_result.eta_loc)
+
     if d_mode == "low_rank":
         return ScribeLaplaceResults(
             **common_kwargs,
             z_loc=run_result.x_loc,
             alr_reference_idx=alr_reference_idx,
+            **extras,
         )
     return ScribeLaplaceResults(
         **common_kwargs,
         y_alr_loc=run_result.x_loc,
         alr_reference_idx=alr_reference_idx,
+        **extras,
     )
 
 

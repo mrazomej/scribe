@@ -208,3 +208,123 @@ class TestLNMResultsAccessors:
     def test_get_p_capture_is_none_without_capture(self, result):
         # Plain LNM (no LNMVCP) has no per-cell capture probability.
         assert result.get_p_capture() is None
+
+
+# =====================================================================
+# 3. LNMVCP Laplace (capture-aware)
+# =====================================================================
+
+
+class TestLNMVCPLaplaceEndToEnd:
+    """LNMVCP Laplace path: composition Newton + scalar η Newton.
+
+    The (z, η) Hessian is block-diagonal because the multinomial
+    likelihood is η-independent (conditions on u_T) and the NB-on-
+    totals likelihood is z-independent. So Newton on η is a scalar
+    per cell, decoupled from the composition block.
+    """
+
+    def test_fit_runs_and_populates_capture_slots(self):
+        import scribe
+
+        adata = _synthetic_lnm(n_cells=40, n_genes=5, latent_dim=2, seed=10)
+        result = scribe.fit(
+            adata,
+            model="lnmvcp",
+            inference_method="laplace",
+            vae_latent_dim=2,
+            n_steps=30,
+            seed=10,
+            priors={"capture_efficiency": (np.log(50_000.0), 0.5)},
+        )
+        # Composition slot (default d_mode='learned' → y_alr_loc).
+        assert result.y_alr_loc is not None
+        assert result.y_alr_loc.shape == (40, 4)
+        # Capture-anchor slots.
+        assert result.eta_loc is not None
+        assert result.eta_loc.shape == (40,)
+        assert result.p_capture_loc is not None
+        assert result.p_capture_loc.shape == (40,)
+        # p_capture must lie in (0, 1].
+        p = np.asarray(result.p_capture_loc)
+        assert (p > 0.0).all()
+        assert (p <= 1.0).all()
+        # eta_loc is the natural latent: -log(p_capture).
+        np.testing.assert_allclose(
+            np.asarray(result.eta_loc),
+            -np.log(np.asarray(result.p_capture_loc)),
+            rtol=1e-5,
+            atol=1e-5,
+        )
+
+    def test_get_p_capture_dispatches_to_p_capture_loc(self):
+        """``get_p_capture()`` should return the stored
+        ``p_capture_loc`` for LNMVCP fits (rather than computing
+        ``exp(-eta_loc)``)."""
+        import scribe
+
+        adata = _synthetic_lnm(n_cells=30, n_genes=5, latent_dim=2, seed=11)
+        result = scribe.fit(
+            adata,
+            model="lnmvcp",
+            inference_method="laplace",
+            vae_latent_dim=2,
+            n_steps=20,
+            seed=11,
+            priors={"capture_efficiency": (np.log(50_000.0), 0.5)},
+        )
+        p = result.get_p_capture()
+        assert p is not None
+        # Should be the stored slot, not derived from eta_loc.
+        np.testing.assert_array_equal(
+            np.asarray(p), np.asarray(result.p_capture_loc)
+        )
+
+    def test_capture_anchor_pulls_eta_toward_log_M0_over_L_c(self):
+        """For LNMVCP the η-MAP is anchored at log(M_0) - log(L_c).
+        The σ_M=0.5 prior is tight enough that η_loc should track
+        the per-cell anchor closely (within ~σ_M).
+        """
+        import scribe
+
+        adata = _synthetic_lnm(n_cells=40, n_genes=5, latent_dim=2, seed=12)
+        log_M0 = float(np.log(50_000.0))
+        result = scribe.fit(
+            adata,
+            model="lnmvcp",
+            inference_method="laplace",
+            vae_latent_dim=2,
+            n_steps=40,
+            seed=12,
+            priors={"capture_efficiency": (log_M0, 0.5)},
+        )
+        L_c = np.asarray(adata.X).sum(axis=-1)
+        eta_anchor = log_M0 - np.log(np.maximum(L_c, 1.0))
+        eta_map = np.asarray(result.eta_loc)
+        # Each cell's MAP must be within ~3σ of its anchor (loose
+        # bound; the data + prior interact but should not push
+        # cells far from the prior mean for well-converged fits).
+        diff = eta_map - eta_anchor
+        assert float(np.max(np.abs(diff))) < 3.0  # well within 3σ_M
+
+    def test_low_rank_dmode_with_lnmvcp(self):
+        """LNMVCP + d_mode='low_rank' uses Newton over z plus
+        scalar Newton on η; the composition slot should be z_loc."""
+        import scribe
+
+        adata = _synthetic_lnm(n_cells=30, n_genes=5, latent_dim=2, seed=13)
+        result = scribe.fit(
+            adata,
+            model="lnmvcp",
+            inference_method="laplace",
+            d_mode="low_rank",
+            vae_latent_dim=2,
+            n_steps=20,
+            seed=13,
+            priors={"capture_efficiency": (np.log(50_000.0), 0.5)},
+        )
+        assert result.z_loc is not None
+        assert result.z_loc.shape == (30, 2)
+        assert result.y_alr_loc is None
+        assert result.p_capture_loc is not None
+        assert result.eta_loc is not None

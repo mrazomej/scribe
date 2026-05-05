@@ -685,16 +685,12 @@ class ModelConfig(BaseModel):
         _NONE = HierarchicalPriorType.NONE
 
         if self.base_model in ("lnm", "lnmvcp"):
-            # LNM accepts VAE (encoder) or LAPLACE (encoder-free
-            # variational EM). LNMVCP accepts only VAE for now —
-            # the LNMVCP Laplace path needs joint Newton on
-            # (z, p_capture) which is unimplemented in
-            # scribe.laplace._newton_lnm.
-            allowed = (
-                {InferenceMethod.VAE, InferenceMethod.LAPLACE}
-                if self.base_model == "lnm"
-                else {InferenceMethod.VAE}
-            )
+            # Both LNM and LNMVCP accept VAE (encoder) or LAPLACE
+            # (encoder-free variational EM). LNMVCP-Laplace handles
+            # the per-cell capture latent via a separate scalar
+            # Newton block (block-diagonal Hessian on (z, eta)),
+            # so no joint Newton is needed.
+            allowed = {InferenceMethod.VAE, InferenceMethod.LAPLACE}
             if self.inference_method not in allowed:
                 allowed_str = "/".join(
                     sorted(m.value for m in allowed)

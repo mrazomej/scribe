@@ -67,8 +67,10 @@ from ._newton_pln import (
     laplace_newton_batch_x_only,
 )
 from ._newton_lnm import (
+    laplace_log_det_neg_H_batch_eta,
     laplace_log_det_neg_H_batch_y_alr,
     laplace_log_det_neg_H_batch_z,
+    laplace_newton_batch_eta,
     laplace_newton_batch_y_alr,
     laplace_newton_batch_z,
 )
@@ -447,7 +449,7 @@ class LaplaceInferenceEngine:
         """
         # Top-level dispatch on the generative model.
         bm = getattr(model_config, "base_model", "pln")
-        if bm == "lnm":
+        if bm in ("lnm", "lnmvcp"):
             return _run_lnm_inference(
                 model_config=model_config,
                 count_data=count_data,
@@ -456,13 +458,14 @@ class LaplaceInferenceEngine:
                 latent_dim=latent_dim,
                 laplace_config=laplace_config,
                 seed=seed,
+                capture_anchor=capture_anchor,
                 progress=progress,
                 progress_backend=progress_backend,
                 log_progress_lines=log_progress_lines,
             )
         if bm != "pln":
             raise NotImplementedError(
-                f"Laplace inference is supported for PLN and LNM; "
+                f"Laplace inference is supported for PLN, LNM, and LNMVCP; "
                 f"got base_model={bm!r}."
             )
 
@@ -1150,6 +1153,7 @@ def _run_lnm_inference(
     latent_dim: int,
     laplace_config: LaplaceConfig,
     seed: int = 42,
+    capture_anchor: Optional[Tuple[float, float]] = None,
     progress: bool = True,
     progress_backend: ProgressBackendName = "auto",
     log_progress_lines: bool = False,
@@ -1228,7 +1232,21 @@ def _run_lnm_inference(
     )
     d_log_init = jnp.full((g_minus1,), jnp.log(0.01), dtype=jnp.float32)
 
+    # Globals dict. For LNMVCP we additionally fit (log_mu_T, log_r_T)
+    # for the NB-on-totals; for plain LNM these are unused.
     params = {"mu": mu_init, "W": W_init, "d_log": d_log_init}
+    if capture_anchor is not None:
+        # log_mu_T initialised at the user's prior anchor (M_0); r_T
+        # at a moderate value (CV ~0.5 → r_T ≈ 4) that the data will
+        # quickly refine. Both are stored as log-transformed scalars
+        # so Adam optimises in unconstrained space; the engine
+        # exponentiates at every use site.
+        log_M0_user, sigma_M = capture_anchor
+        params["log_mu_T"] = jnp.asarray(float(log_M0_user), dtype=jnp.float32)
+        params["log_r_T"] = jnp.asarray(jnp.log(4.0), dtype=jnp.float32)
+    else:
+        log_M0_user = None
+        sigma_M = 1.0  # placeholder; never read in the no-capture branch
 
     # ---- Per-cell latent state (warm-started near a sensible value) ----
     # For low_rank: warm-start z = 0. For learned: warm-start y_alr = mu
@@ -1241,6 +1259,22 @@ def _run_lnm_inference(
         y_alr_loc = jnp.broadcast_to(
             mu_init, (n_cells, g_minus1)
         ).copy()
+
+    # ---- Capture-anchor per-cell state (LNMVCP only) ----
+    # eta_anchor_c = log(M_0) - log(L_c) is the per-cell prior mean
+    # for the capture-offset latent. Initialise eta_loc at the
+    # anchor so the first Newton step is well-conditioned (η near
+    # the prior mode and the data-likelihood mode coincide when
+    # mu_T ≈ M_0, which is what the prior says).
+    if capture_anchor is not None:
+        log_lib_size = jnp.log(jnp.maximum(n_total_per_cell, 1.0))
+        eta_anchor_per_cell = jnp.asarray(
+            float(log_M0_user) - log_lib_size, dtype=jnp.float32
+        )
+        eta_loc = eta_anchor_per_cell  # warm-start at the anchor
+    else:
+        eta_anchor_per_cell = None
+        eta_loc = None
 
     # ---- Optimizer ----
     if laplace_config.optimizer is not None:
@@ -1261,16 +1295,21 @@ def _run_lnm_inference(
     def lnm_loss(
         params,
         latent_init,
+        eta_init,
+        eta_anchor_batch,
         u_alr_batch,
         n_total_batch,
         counts_batch,
     ):
-        """Compute negative Laplace ELBO on a batch of LNM cells.
+        """Compute negative Laplace ELBO on a batch of LNM(VCP) cells.
 
-        Mirrors the PLN ``laplace_loss`` structure: stop_gradient
-        through the inner Newton iterates (envelope-theorem
-        approximation), live globals into the log_det helper so
-        gradients flow into ``W`` and (for learned d_mode) ``d``.
+        Mirrors the PLN ``laplace_loss`` structure but exploits the
+        block-diagonal Hessian: the multinomial likelihood (in z or
+        y_alr) and the NB-on-totals likelihood (in η) are
+        independent, so Newton on each block runs independently.
+        For LNMVCP the loss adds the NB log-likelihood + η prior +
+        η-block log-det correction; for plain LNM only the
+        composition block contributes.
         """
         mu, W, d_log = params["mu"], params["W"], params["d_log"]
         d = jnp.exp(d_log)
@@ -1280,9 +1319,9 @@ def _run_lnm_inference(
         W_sg = jax.lax.stop_gradient(W)
         d_sg = jax.lax.stop_gradient(d)
 
+        # ----- Composition block (z or y_alr) -----
         if d_mode == "low_rank":
-            # Newton over z; uses only mu and W (no d).
-            z_new, _gn = laplace_newton_batch_z(
+            z_new, _gn_z = laplace_newton_batch_z(
                 latent_init_sg,
                 u_alr_batch,
                 n_total_batch,
@@ -1294,7 +1333,7 @@ def _run_lnm_inference(
                 damping,
             )
             z_new = jax.lax.stop_gradient(z_new)
-            log_det = laplace_log_det_neg_H_batch_z(
+            log_det_comp = laplace_log_det_neg_H_batch_z(
                 z_new,
                 u_alr_batch,
                 n_total_batch,
@@ -1303,21 +1342,21 @@ def _run_lnm_inference(
                 alr_reference_idx,
                 n_genes,
             )
-            loss = data_scale * _lnm_laplace_elbo(
+            comp_loss = data_scale * _lnm_laplace_elbo(
                 mu,
                 W,
                 d,
                 counts_batch,
                 z_new,
-                log_det,
+                log_det_comp,
                 alr_reference_idx,
                 n_genes,
                 d_mode,
             )
-            return loss, (z_new, _gn)
+            latent_new = z_new
+            gn_comp = _gn_z
         else:
-            # Newton over y_alr; uses mu, W, d.
-            y_new, _gn = laplace_newton_batch_y_alr(
+            y_new, _gn_y = laplace_newton_batch_y_alr(
                 latent_init_sg,
                 u_alr_batch,
                 n_total_batch,
@@ -1330,7 +1369,7 @@ def _run_lnm_inference(
                 damping,
             )
             y_new = jax.lax.stop_gradient(y_new)
-            log_det = laplace_log_det_neg_H_batch_y_alr(
+            log_det_comp = laplace_log_det_neg_H_batch_y_alr(
                 y_new,
                 u_alr_batch,
                 n_total_batch,
@@ -1340,31 +1379,110 @@ def _run_lnm_inference(
                 alr_reference_idx,
                 n_genes,
             )
-            loss = data_scale * _lnm_laplace_elbo(
+            comp_loss = data_scale * _lnm_laplace_elbo(
                 mu,
                 W,
                 d,
                 counts_batch,
                 y_new,
-                log_det,
+                log_det_comp,
                 alr_reference_idx,
                 n_genes,
                 d_mode,
             )
-            return loss, (y_new, _gn)
+            latent_new = y_new
+            gn_comp = _gn_y
+
+        # ----- Capture (eta) block — LNMVCP only -----
+        # The η-block is decoupled from the composition block, so we
+        # run a separate scalar Newton per cell. Globals
+        # ``log_mu_T``, ``log_r_T`` enter the NB likelihood and the
+        # log-det correction; their gradients flow through the
+        # outer Adam step.
+        if capture_anchor is not None:
+            mu_T = jnp.exp(params["log_mu_T"])
+            r_T = jnp.exp(params["log_r_T"])
+            mu_T_sg = jax.lax.stop_gradient(mu_T)
+            r_T_sg = jax.lax.stop_gradient(r_T)
+            eta_init_sg = jax.lax.stop_gradient(eta_init)
+            eta_anchor_sg = jax.lax.stop_gradient(eta_anchor_batch)
+
+            eta_new, _gn_eta = laplace_newton_batch_eta(
+                eta_init_sg,
+                n_total_batch,
+                r_T_sg,
+                mu_T_sg,
+                eta_anchor_sg,
+                sigma_M,
+                n_newton,
+                damping,
+            )
+            eta_new = jax.lax.stop_gradient(eta_new)
+
+            # NB log-likelihood at the η-MAP, with live (mu_T, r_T)
+            # so their gradient enters the outer step. Clamp -η in
+            # the same range the LNM kernel uses (see
+            # _newton_lnm._LOGITS_MIN / _LOGITS_MAX).
+            from jax.scipy.special import gammaln
+            exp_neg_eta = jnp.exp(jnp.clip(-eta_new, -30.0, 30.0))
+            rate_T = mu_T * exp_neg_eta
+            v = r_T + rate_T
+            # NB log-pmf (drop lgamma(u_T+1) constant in u_T).
+            nb_lp = (
+                gammaln(n_total_batch + r_T) - gammaln(r_T)
+                + r_T * jnp.log(r_T / v)
+                + n_total_batch * jnp.log(rate_T / v)
+            )
+            # TruncN(eta_anchor, sigma_M, low=0) log-prob on η. The
+            # normaliser depends only on (eta_anchor_batch, sigma_M),
+            # which are fixed → constant in θ → drops out.
+            eta_diff = eta_new - eta_anchor_batch
+            eta_lp = (
+                -0.5 * (eta_diff * eta_diff) / (sigma_M * sigma_M)
+            )
+
+            log_det_eta = laplace_log_det_neg_H_batch_eta(
+                eta_new,
+                n_total_batch,
+                r_T,
+                mu_T,
+                sigma_M,
+            )
+            eta_loss = data_scale * jnp.sum(
+                -(nb_lp + eta_lp) + 0.5 * log_det_eta
+            )
+        else:
+            eta_new = eta_init  # passthrough; never read in plain LNM
+            _gn_eta = jnp.zeros_like(gn_comp)
+            eta_loss = jnp.array(0.0, dtype=comp_loss.dtype)
+
+        loss = comp_loss + eta_loss
+        # Combine grad norms by max so the diagnostic represents
+        # the worst-converging block.
+        gn = jnp.maximum(gn_comp, _gn_eta)
+        return loss, (latent_new, eta_new, gn)
 
     loss_grad_fn = jax.jit(jax.value_and_grad(lnm_loss, has_aux=True))
 
     @jax.jit
-    def update_step(params, opt_state, latent_loc, idx):
+    def update_step(params, opt_state, latent_loc, eta_loc_arg, idx):
         u_alr_batch = u_alr[idx]
         n_total_batch = n_total_per_cell[idx]
         counts_batch = counts[idx]
         latent_init_batch = latent_loc[idx]
+        # Pull eta state for LNMVCP; placeholder zeros for plain LNM.
+        if eta_loc_arg is not None:
+            eta_init_batch = eta_loc_arg[idx]
+            eta_anchor_batch = eta_anchor_per_cell[idx]
+        else:
+            eta_init_batch = jnp.zeros(idx.shape[0], dtype=jnp.float32)
+            eta_anchor_batch = jnp.zeros(idx.shape[0], dtype=jnp.float32)
 
-        (loss, (latent_new, gn)), grads = loss_grad_fn(
+        (loss, (latent_new, eta_new, gn)), grads = loss_grad_fn(
             params,
             latent_init_batch,
+            eta_init_batch,
+            eta_anchor_batch,
             u_alr_batch,
             n_total_batch,
             counts_batch,
@@ -1372,7 +1490,9 @@ def _run_lnm_inference(
         updates, opt_state = opt.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
         latent_loc = latent_loc.at[idx].set(latent_new)
-        return params, opt_state, latent_loc, gn, loss
+        if eta_loc_arg is not None:
+            eta_loc_arg = eta_loc_arg.at[idx].set(eta_new)
+        return params, opt_state, latent_loc, eta_loc_arg, gn, loss
 
     # ---- Outer loop ----
     n_steps = int(laplace_config.n_steps)
@@ -1386,8 +1506,9 @@ def _run_lnm_inference(
         progress=progress, progress_backend=progress_backend
     )
     with progress_reporter as reporter:
+        capture_str = " + capture" if capture_anchor is not None else ""
         reporter.start(
-            description=f"LNM Laplace ({d_mode})",
+            description=f"LNM Laplace ({d_mode}{capture_str})",
             total=n_steps,
             completed=0,
             loss_info="init loss: pending",
@@ -1400,8 +1521,8 @@ def _run_lnm_inference(
                 idx = random.choice(
                     subkey, n_cells, shape=(batch_size,), replace=False
                 )
-            params, opt_state, latent_loc, gn, loss = update_step(
-                params, opt_state, latent_loc, idx
+            params, opt_state, latent_loc, eta_loc, gn, loss = update_step(
+                params, opt_state, latent_loc, eta_loc, idx
             )
             loss_val = float(loss)
             losses.append(loss_val)
@@ -1467,6 +1588,24 @@ def _run_lnm_inference(
         z_loc_final = None
         y_alr_loc_final = latent_final
 
+    # Capture-anchor final Newton sweep (LNMVCP only).
+    if capture_anchor is not None:
+        mu_T_f = jnp.exp(jax.lax.stop_gradient(params["log_mu_T"]))
+        r_T_f = jnp.exp(jax.lax.stop_gradient(params["log_r_T"]))
+        eta_loc_final, gn_eta_final = laplace_newton_batch_eta(
+            eta_loc,
+            n_total_per_cell,
+            r_T_f,
+            mu_T_f,
+            eta_anchor_per_cell,
+            sigma_M,
+            max(2 * n_newton, 10),
+            damping,
+        )
+        gn_final = jnp.maximum(gn_final, gn_eta_final)
+    else:
+        eta_loc_final = None
+
     # Convergence-action handling.
     max_gn = float(jnp.max(gn_final))
     if max_gn > laplace_config.newton_tolerance:
@@ -1482,18 +1621,19 @@ def _run_lnm_inference(
         elif laplace_config.convergence_action == "warn":
             logger.warning(msg)
 
-    # ---- Pack the results. ``globals`` carries (mu, W, d_log) on the
-    # ALR-space; the bridge in inference/laplace.py exponentiates
-    # d_log and routes z_loc / y_alr_loc to the right fields on the
-    # single ``ScribeLaplaceResults`` class. ----
+    # ---- Pack the results. ``globals`` carries (mu, W, d_log) for
+    # the composition block, and (log_mu_T, log_r_T) when capture is
+    # active. The bridge in inference/laplace.py exponentiates the
+    # log-transformed scalars and routes z_loc / y_alr_loc /
+    # eta_loc to the right fields on ScribeLaplaceResults.
     return LaplaceRunResult(
         globals=params,
-        # Reuse the ``x_loc``/``eta_loc`` slots conventionally for
-        # PLN; for LNM we attach the per-cell latent under a model-
-        # specific name via the ``model_config`` carry-through. The
-        # bridge unpacks based on base_model.
+        # Reuse the ``x_loc`` slot for transit of the composition
+        # latent; the bridge unpacks based on base_model + d_mode.
         x_loc=z_loc_final if d_mode == "low_rank" else y_alr_loc_final,
-        eta_loc=None,
+        # ``eta_loc`` is the LNMVCP capture-offset MAP (or None for
+        # plain LNM); reuses the same slot PLN uses for capture.
+        eta_loc=eta_loc_final,
         final_grad_norms=gn_final,
         losses=jnp.asarray(losses, dtype=jnp.float32),
         n_steps_run=len(losses),

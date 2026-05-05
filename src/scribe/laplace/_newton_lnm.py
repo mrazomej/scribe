@@ -567,17 +567,216 @@ laplace_log_det_neg_H_batch_y_alr = jax.vmap(
 )
 
 
+# =====================================================================
+# LNMVCP capture-anchor: scalar Newton on per-cell eta
+# =====================================================================
+#
+# In LNMVCP the per-cell observed total ``u_T = sum(counts)`` is
+# conditioned on, and the NB-on-totals likelihood becomes
+#
+#     log NB(u_T | r_T, mu_T * exp(-eta_c)) - 0.5 (eta_c - eta_anchor_c)^2 / sigma_M^2,
+#
+# where ``eta_c = -log(p_capture_c)`` is the per-cell capture latent
+# and ``eta_anchor_c = log_M_0 - log(L_c)`` is the biology-informed
+# prior mean. Crucially this term is independent of ``z``, and the
+# multinomial likelihood used by Variants A/B above is independent
+# of ``eta``, so the joint Hessian on ``(z, eta)`` is **block
+# diagonal**:
+#
+#     -H_zz : (Variant A or B)            -H_z_eta = 0
+#     -H_eta_z = 0                        -H_eta_eta : scalar
+#
+# Newton over ``eta`` is therefore a scalar Newton per cell that
+# can be run in parallel with (independently of) the z- or y_alr-
+# Newton. The Laplace correction factorises into the sum of two
+# log-determinants.
+
+
+def _nb_eta_grad_and_hessian(
+    eta: jnp.ndarray,
+    u_T: jnp.ndarray,
+    r_T: jnp.ndarray,
+    mu_T: jnp.ndarray,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Closed-form ``∂/∂η`` and ``∂²/∂η²`` of ``log NB(u_T | r_T, mu_T·exp(-η))``.
+
+    Derivation (with ``v = r_T + mu_T·exp(-η)``):
+
+        ∂/∂η  log NB = r_T (mu_T·exp(-η) - u_T) / v
+        ∂²/∂η² log NB = -r_T · mu_T·exp(-η) · (r_T + u_T) / v²
+
+    The Hessian is strictly negative on the interior — the term is
+    log-concave in η — which makes the joint
+    ``(z, eta)`` log-density log-concave whenever the prior on η is
+    log-concave (the TruncN prior at ``low=0`` is log-concave on
+    its support).
+
+    Returns
+    -------
+    grad, hess : jnp.ndarray
+        Both scalar per cell (same shape as ``eta``).
+    """
+    # exp(-eta) with the same float32 safety bound the kernel uses
+    # for the Poisson rate elsewhere.
+    exp_neg_eta = jnp.exp(jnp.clip(-eta, _LOGITS_MIN, _LOGITS_MAX))
+    rate_T = mu_T * exp_neg_eta             # mean of NB at this η
+    v = r_T + rate_T                         # NB normaliser denominator
+    grad = r_T * (rate_T - u_T) / v
+    hess = -r_T * rate_T * (r_T + u_T) / (v * v)
+    return grad, hess
+
+
+def newton_step_eta(
+    eta: jnp.ndarray,
+    u_T: jnp.ndarray,
+    r_T: jnp.ndarray,
+    mu_T: jnp.ndarray,
+    eta_anchor: jnp.ndarray,
+    sigma_M: float,
+    damping: float,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """One Newton step on the per-cell capture-offset ``eta``.
+
+    The per-cell log-density (in η, holding all else fixed) is
+
+        f(η) = log NB(u_T | r_T, mu_T · exp(-η))
+               - 0.5 (η - η_anchor)² / σ_M².
+
+    The Newton step is just a scalar division: ``η_new = η - g/H``
+    where ``g = ∂f/∂η`` and ``H = ∂²f/∂η²``. With the Tikhonov
+    damping convention, the denominator is ``-H + damping`` so the
+    step is well-defined even when ``H`` is near zero (which can
+    happen for cells with very few counts).
+
+    A floor at ``η_new ≥ 1e-3`` enforces the TruncatedNormal(low=0)
+    constraint of the LNMVCP capture prior — analogous to the
+    projection used in :func:`newton_step_joint` for PLN.
+
+    Parameters
+    ----------
+    eta : jnp.ndarray, scalar
+        Current iterate.
+    u_T : jnp.ndarray, scalar
+        Observed total counts for this cell.
+    r_T, mu_T : jnp.ndarray, scalar
+        Globals (NB shape and mean of total mRNA per cell).
+    eta_anchor : jnp.ndarray, scalar
+        Per-cell prior mean ``log_M_0 - log(L_c)``.
+    sigma_M : float
+        Prior scale on ``eta_capture``.
+    damping : float
+        Tikhonov damping added to the negative Hessian.
+
+    Returns
+    -------
+    eta_new : jnp.ndarray, scalar
+    grad_inf_norm : jnp.ndarray, scalar
+        Pre-step ``|∂f/∂η|`` for diagnostics.
+    """
+    nb_grad, nb_hess = _nb_eta_grad_and_hessian(eta, u_T, r_T, mu_T)
+    prior_grad = -(eta - eta_anchor) / (sigma_M * sigma_M)
+    prior_hess = -1.0 / (sigma_M * sigma_M)
+
+    grad = nb_grad + prior_grad
+    neg_H = -(nb_hess + prior_hess) + damping  # > 0 (data + prior + damping)
+
+    delta = grad / neg_H
+    # Step-size cap shared with the other LNM variants.
+    delta = jnp.clip(delta, -_MAX_STEP, _MAX_STEP)
+
+    eta_new = eta + delta
+    # Project back to TruncN(low=0) feasible region.
+    eta_new = jnp.maximum(eta_new, 1e-3)
+
+    return eta_new, jnp.abs(grad)
+
+
+def laplace_newton_loop_eta(
+    eta_init: jnp.ndarray,
+    u_T: jnp.ndarray,
+    r_T: jnp.ndarray,
+    mu_T: jnp.ndarray,
+    eta_anchor: jnp.ndarray,
+    sigma_M: float,
+    n_iters: int,
+    damping: float,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Run ``n_iters`` scalar Newton steps on η via ``lax.scan``.
+
+    The η Newton converges quickly (5–10 iterations from any
+    sensible warm start, e.g. ``eta_anchor``) because the scalar
+    log-density is strictly log-concave and exhibits quadratic
+    Newton convergence near the MAP.
+    """
+    def body(carry, _x):
+        eta = carry
+        eta_new, gn = newton_step_eta(
+            eta, u_T, r_T, mu_T, eta_anchor, sigma_M, damping
+        )
+        return eta_new, gn
+
+    eta_final, gn_history = jax.lax.scan(
+        body, eta_init, jnp.arange(n_iters)
+    )
+    return eta_final, gn_history[-1]
+
+
+laplace_newton_batch_eta = jax.vmap(
+    laplace_newton_loop_eta,
+    in_axes=(0, 0, None, None, 0, None, None, None),
+)
+
+
+def laplace_log_det_neg_H_eta(
+    eta: jnp.ndarray,
+    u_T: jnp.ndarray,
+    r_T: jnp.ndarray,
+    mu_T: jnp.ndarray,
+    sigma_M: float,
+) -> jnp.ndarray:
+    """``log det(-H_η) = log(-H_η)`` for the scalar η-block.
+
+    Used by the outer Laplace ELBO. damping=0 is hardcoded so the
+    correction reflects the *true* posterior curvature, not the
+    inner-Newton solver's regularised one. Live globals (``r_T``,
+    ``mu_T``) flow gradients into the outer Adam step so the
+    NB-on-totals globals get a direct gradient from the Laplace
+    correction.
+
+    Returns
+    -------
+    jnp.ndarray, scalar
+        ``log(neg_H)``.
+    """
+    _, nb_hess = _nb_eta_grad_and_hessian(eta, u_T, r_T, mu_T)
+    neg_H = -(nb_hess - 1.0 / (sigma_M * sigma_M))
+    # Floor for numerical safety at very low total counts.
+    return jnp.log(jnp.maximum(neg_H, 1e-30))
+
+
+laplace_log_det_neg_H_batch_eta = jax.vmap(
+    laplace_log_det_neg_H_eta,
+    in_axes=(0, 0, None, None, None),
+)
+
+
 __all__ = [
-    # Variant A
+    # Variant A (z-space, d_mode='low_rank')
     "newton_step_z",
     "laplace_newton_loop_z",
     "laplace_newton_batch_z",
     "laplace_log_det_neg_H_z",
     "laplace_log_det_neg_H_batch_z",
-    # Variant B
+    # Variant B (y_alr-space, d_mode='learned')
     "newton_step_y_alr",
     "laplace_newton_loop_y_alr",
     "laplace_newton_batch_y_alr",
     "laplace_log_det_neg_H_y_alr",
     "laplace_log_det_neg_H_batch_y_alr",
+    # LNMVCP capture-anchor extension (scalar η per cell)
+    "newton_step_eta",
+    "laplace_newton_loop_eta",
+    "laplace_newton_batch_eta",
+    "laplace_log_det_neg_H_eta",
+    "laplace_log_det_neg_H_batch_eta",
 ]

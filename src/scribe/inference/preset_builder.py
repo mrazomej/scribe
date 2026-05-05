@@ -292,7 +292,9 @@ def build_config_from_preset(
     --------
     scribe.models.presets.factory.create_model : Creates model/guide from config.
     """
-    # --- LNM family: VAE or Laplace (LNM has no LNMVCP-Laplace yet)
+    # --- LNM family: VAE or Laplace (LNMVCP-Laplace adds a scalar
+    # Newton on per-cell eta_capture decoupled from the composition
+    # block via the block-diagonal Hessian).
     model_lower = model.lower()
     if model_lower in ("lnm", "lnmvcp"):
         from ..models.parameterizations import (
@@ -303,19 +305,6 @@ def build_config_from_preset(
         )
         if inference_method.lower() == "svi":
             inference_method = "vae"
-        # Laplace v1 is for plain LNM only — LNMVCP capture support is
-        # a follow-up (the joint-Newton-on-(z, p_capture) extension is
-        # straightforward but unimplemented in scribe.laplace._newton_lnm).
-        if (
-            inference_method.lower() == "laplace"
-            and model_lower == "lnmvcp"
-        ):
-            raise ValueError(
-                "inference_method='laplace' for LNMVCP is not yet "
-                "implemented (LNMVCP needs joint Newton on "
-                "(z, p_capture) per cell). Use 'lnm' + Laplace, or "
-                "stay on 'lnmvcp' + 'vae'."
-            )
 
     # --- PLN family: single parameterization, VAE-or-Laplace
     if model_lower == "pln":
@@ -333,10 +322,12 @@ def build_config_from_preset(
         # Validate Laplace is requested only on supported models.
     elif inference_method.lower() == "laplace" and model_lower not in (
         "lnm",
+        "lnmvcp",
     ):
         raise ValueError(
-            "inference_method='laplace' is supported for PLN and "
-            f"plain LNM. Use 'svi'/'vae'/'mcmc' for model={model_lower!r}."
+            "inference_method='laplace' is supported for PLN, LNM, "
+            f"and LNMVCP. Use 'svi'/'vae'/'mcmc' for model="
+            f"{model_lower!r}."
         )
     if d_mode not in ("low_rank", "learned"):
         raise ValueError(
