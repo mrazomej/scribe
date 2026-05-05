@@ -89,7 +89,11 @@ def _run_laplace_inference(
     if eta_capture is not None:
         capture_anchor = (float(eta_capture[0]), float(eta_capture[1]))
 
-    # Run the engine.
+    # Run the engine. ``progress_backend="auto"`` matches the SVI/VAE
+    # paths: rich in terminals, tqdm in notebooks, no-op when stdout
+    # isn't a TTY. ``log_progress_lines`` is forwarded from the
+    # ``LaplaceConfig`` so users get the same plain-text-line opt-in
+    # they have for SVI.
     run_result = LaplaceInferenceEngine.run_inference(
         model_config=model_config,
         count_data=count_data,
@@ -100,6 +104,8 @@ def _run_laplace_inference(
         seed=seed,
         capture_anchor=capture_anchor,
         progress=True,
+        progress_backend="auto",
+        log_progress_lines=laplace_config.log_progress_lines,
     )
 
     # Pack into ScribeLaplaceResults.

@@ -2156,6 +2156,7 @@ def fit(
                 optimizer_config=optimizer_config,
                 early_stopping=early_stop_config,
                 restore_best=restore_best,
+                log_progress_lines=log_progress_lines,
             )
             inference_config = InferenceConfig.from_laplace(laplace_config)
         else:

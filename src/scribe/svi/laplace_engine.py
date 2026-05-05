@@ -59,6 +59,10 @@ from ._laplace_newton import (
     laplace_newton_batch,
     laplace_newton_batch_x_only,
 )
+from ._progress_backend import (
+    ProgressBackendName,
+    build_progress_reporter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -351,6 +355,8 @@ class LaplaceInferenceEngine:
         seed: int = 42,
         capture_anchor: Optional[Tuple[float, float]] = None,
         progress: bool = True,
+        progress_backend: ProgressBackendName = "auto",
+        log_progress_lines: bool = False,
     ) -> LaplaceRunResult:
         """Run Laplace-mode training.
 
@@ -372,8 +378,22 @@ class LaplaceInferenceEngine:
             ``(log_M_0, sigma_M)``. When ``None``, no capture anchor —
             Newton runs on ``x_c`` only. When set, joint Newton on
             ``(x_c, eta_c)`` with the biology-informed TruncN prior.
-        progress : bool
-            Whether to log periodic loss updates.
+        progress : bool, default=True
+            Whether to render an interactive progress bar during
+            training. The bar uses scribe's standard backend
+            (``rich`` in terminals, ``tqdm`` in notebooks) and
+            displays the running average loss and the worst per-cell
+            Newton gradient norm — the latter is a Laplace-specific
+            diagnostic that flags slow inner-Newton convergence.
+        progress_backend : {"auto", "rich", "tqdm", "none"}, default="auto"
+            Backend policy for the progress bar. ``"auto"`` matches
+            the SVI/VAE engines: ``rich`` in terminals, ``tqdm`` in
+            notebooks (Jupyter / marimo / IPython). Override to force
+            a specific backend or disable rendering.
+        log_progress_lines : bool, default=False
+            When ``True``, also emit a plain-text progress line at
+            each periodic update (useful for non-interactive runs
+            captured to log files).
 
         Returns
         -------
@@ -584,26 +604,78 @@ class LaplaceInferenceEngine:
         losses = np.zeros(n_steps, dtype=np.float32)
         rng_step = rng
 
-        for step in range(n_steps):
-            rng_step, subkey = random.split(rng_step)
-            if batch_size >= n_cells:
-                idx = jnp.arange(n_cells)
-            else:
-                idx = random.choice(
-                    subkey, n_cells, shape=(batch_size,), replace=False
-                )
-            params, opt_state, x_loc, eta_loc, gn, loss = update_step(
-                params, opt_state, x_loc, eta_loc, idx
+        # Periodic-update interval mirrors SVI's ``_progress_display_interval``
+        # heuristic: refresh the loss-info string roughly 100 times over
+        # the run, with a floor of 1 so very short runs still update.
+        display_interval = max(1, n_steps // 100)
+        init_loss: Optional[float] = None
+
+        # Build the same progress backend used by SVI/VAE so terminal
+        # users get rich and notebook users (Jupyter / marimo /
+        # IPython) get tqdm. The reporter is a no-op when
+        # ``progress=False`` or the backend resolves to ``"none"``.
+        progress_reporter = build_progress_reporter(
+            progress=progress,
+            progress_backend=progress_backend,
+        )
+        with progress_reporter as reporter:
+            reporter.start(
+                description="Laplace optimization",
+                total=n_steps,
+                completed=0,
+                loss_info="init loss: pending",
             )
-            losses[step] = float(loss)
-            if progress and step % max(1, n_steps // 20) == 0:
-                logger.info(
-                    "Laplace step %d/%d  loss=%.4e  worst grad=%.3e",
-                    step,
-                    n_steps,
-                    float(loss),
-                    float(jnp.max(gn)),
+
+            for step in range(n_steps):
+                rng_step, subkey = random.split(rng_step)
+                if batch_size >= n_cells:
+                    idx = jnp.arange(n_cells)
+                else:
+                    idx = random.choice(
+                        subkey, n_cells, shape=(batch_size,), replace=False
+                    )
+                params, opt_state, x_loc, eta_loc, gn, loss = update_step(
+                    params, opt_state, x_loc, eta_loc, idx
                 )
+                loss_val = float(loss)
+                losses[step] = loss_val
+                if init_loss is None:
+                    init_loss = loss_val
+
+                # Refresh the displayed loss-info every
+                # ``display_interval`` steps, matching SVI's format
+                # and appending the worst per-cell Newton gradient
+                # norm — a Laplace-specific health check.
+                should_display = (
+                    step == 0
+                    or step == n_steps - 1
+                    or (step + 1) % display_interval == 0
+                )
+                if should_display:
+                    batch_start = max(0, step + 1 - display_interval)
+                    batch_end = step + 1
+                    avg_loss = float(
+                        np.mean(losses[batch_start:batch_end])
+                    )
+                    worst_grad = float(jnp.max(gn))
+                    loss_info = (
+                        f"init loss: {init_loss:.4e}, "
+                        f"avg. loss [{batch_start + 1}-{batch_end}]: "
+                        f"{avg_loss:.4e}, "
+                        f"worst Newton grad: {worst_grad:.3e}"
+                    )
+                    reporter.update(advance=1, loss_info=loss_info)
+                    if log_progress_lines:
+                        print(
+                            "Laplace progress "
+                            f"[{batch_end}/{n_steps}] "
+                            f"init loss: {init_loss:.4e}, "
+                            f"avg. loss [{batch_start + 1}-{batch_end}]: "
+                            f"{avg_loss:.4e}, "
+                            f"worst Newton grad: {worst_grad:.3e}"
+                        )
+                else:
+                    reporter.update(advance=1)
 
         # ---- Final convergence check ----
         # Run one more Newton pass over ALL cells to capture the

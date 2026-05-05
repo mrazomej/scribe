@@ -1448,6 +1448,15 @@ class LaplaceConfig(BaseModel):
             "encoder design. Currently has no effect."
         ),
     )
+    log_progress_lines: bool = Field(
+        False,
+        description=(
+            "When True, the engine prints a plain-text progress line "
+            "in addition to the interactive rich/tqdm progress bar at "
+            "each periodic update. Useful for non-interactive runs "
+            "captured to log files. Mirrors ``SVIConfig.log_progress_lines``."
+        ),
+    )
 
     # --------------------------------------------------------------------------
 
