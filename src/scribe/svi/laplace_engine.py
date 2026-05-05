@@ -38,7 +38,7 @@ interface.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 import logging
 
 import jax
@@ -54,7 +54,12 @@ from ..core.pln_data_init import (
     empirical_log_mean_from_counts,
     pca_loadings_init,
 )
-from ..models.config import LaplaceConfig, ModelConfig, SVIConfig
+from ..models.config import (
+    EarlyStoppingConfig,
+    LaplaceConfig,
+    ModelConfig,
+    SVIConfig,
+)
 from ._laplace_newton import (
     laplace_newton_batch,
     laplace_newton_batch_x_only,
@@ -63,8 +68,22 @@ from ._progress_backend import (
     ProgressBackendName,
     build_progress_reporter,
 )
+from .laplace_checkpoint import (
+    laplace_checkpoint_exists,
+    load_laplace_checkpoint,
+    save_laplace_checkpoint,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _mean_ignoring_nans(values) -> float:
+    """Mean of ``values`` with NaNs filtered out; ``inf`` if all NaN."""
+    arr = np.asarray(values, dtype=np.float64)
+    mask = np.isfinite(arr)
+    if not np.any(mask):
+        return float("inf")
+    return float(arr[mask].mean())
 
 
 # =====================================================================
@@ -204,6 +223,16 @@ class LaplaceRunResult:
     losses: jnp.ndarray
     n_steps_run: int
     model_config: Optional[ModelConfig] = None
+    # Early-stopping / best-loss diagnostics. ``early_stopped`` is
+    # True when the patience criterion fired before ``n_steps``;
+    # ``best_loss`` is the smoothed loss at the best step (``inf`` if
+    # no improvement was ever recorded — typical for very short runs
+    # that finished inside the warmup window). ``stopped_at_step`` is
+    # the actual number of outer iterations executed (which can be
+    # less than ``n_steps`` if early-stopping fired).
+    early_stopped: bool = False
+    best_loss: float = float("inf")
+    stopped_at_step: int = 0
 
 
 # =====================================================================
@@ -601,7 +630,6 @@ class LaplaceInferenceEngine:
 
         # ---- Outer loop ----
         n_steps = int(laplace_config.n_steps)
-        losses = np.zeros(n_steps, dtype=np.float32)
         rng_step = rng
 
         # Periodic-update interval mirrors SVI's ``_progress_display_interval``
@@ -609,6 +637,89 @@ class LaplaceInferenceEngine:
         # the run, with a floor of 1 so very short runs still update.
         display_interval = max(1, n_steps // 100)
         init_loss: Optional[float] = None
+
+        # --------------------------------------------------------------
+        # Early-stopping / checkpointing setup. Mirrors the SVI engine.
+        # When ``laplace_config.early_stopping`` is None we synthesise a
+        # disabled config so the rest of the loop can read fields
+        # uniformly without per-call ``if early_stopping is None``
+        # branching. checkpoint_dir=None on the disabled config means
+        # ``should_checkpoint`` is always False.
+        early_stopping: EarlyStoppingConfig = (
+            laplace_config.early_stopping
+            if laplace_config.early_stopping is not None
+            else EarlyStoppingConfig(enabled=False)
+        )
+        checkpoint_dir = early_stopping.checkpoint_dir
+
+        # Loss history is stored as a list because we mutate it
+        # in-place (append per step, slice on smoothed-mean compute).
+        # We materialise a numpy array at return time.
+        losses: List[float] = []
+        start_step = 0
+        best_loss = float("inf")
+        patience_counter = 0
+        resumed = False
+        resume_message: Optional[str] = None
+        # In-memory snapshot of the best state so far (used when
+        # ``restore_best=True`` regardless of whether early-stopping
+        # actually fires). None until the first improvement is seen.
+        best_state: Optional[Dict[str, Any]] = None
+        best_step = 0
+
+        # If a checkpoint dir is set and ``resume=True``, try to
+        # restore optax state + per-cell MAPs and continue from where
+        # the last run stopped. The orbax restore needs a target
+        # pytree with the right shapes and dtypes — we just initialised
+        # ``params``, ``opt_state``, ``x_loc``, ``eta_loc`` above, so
+        # they double as the target structure here.
+        if (
+            checkpoint_dir
+            and early_stopping.resume
+            and laplace_checkpoint_exists(checkpoint_dir)
+        ):
+            target_state = {
+                "params": params,
+                "opt_state": opt_state,
+                "x_loc": x_loc,
+                # Orbax cannot serialise None; the saver substitutes a
+                # zero placeholder when capture is off, and ``has_eta_loc``
+                # in the metadata controls whether load returns None.
+                "eta_loc": (
+                    eta_loc
+                    if eta_loc is not None
+                    else jnp.zeros((1,), dtype=jnp.float32)
+                ),
+            }
+            loaded = load_laplace_checkpoint(checkpoint_dir, target_state)
+            if loaded is not None:
+                restored_state, md, restored_losses = loaded
+                params = restored_state["params"]
+                opt_state = restored_state["opt_state"]
+                x_loc = restored_state["x_loc"]
+                eta_loc = restored_state["eta_loc"]
+                start_step = md.step + 1
+                best_loss = md.best_loss
+                patience_counter = md.patience_counter
+                losses = list(restored_losses)
+                resumed = True
+                best_loss_str = (
+                    f"{best_loss:.4e}" if np.isfinite(best_loss) else "N/A"
+                )
+                resume_message = (
+                    f"Resumed Laplace from checkpoint at step "
+                    f"{start_step} (best_loss: {best_loss_str})"
+                )
+
+        # Track the last-checkpointed step so we save at intervals
+        # rather than on every check. Sentinel ``-checkpoint_every``
+        # forces a save on the first eligible check when starting
+        # fresh (matches SVI semantics).
+        last_checkpoint_step = (
+            start_step if resumed else -early_stopping.checkpoint_every
+        )
+        early_stopped = False
+        eps = 1e-8  # divide-by-zero guard for percentage-based delta
 
         # Build the same progress backend used by SVI/VAE so terminal
         # users get rich and notebook users (Jupyter / marimo /
@@ -619,14 +730,28 @@ class LaplaceInferenceEngine:
             progress_backend=progress_backend,
         )
         with progress_reporter as reporter:
-            reporter.start(
-                description="Laplace optimization",
-                total=n_steps,
-                completed=0,
-                loss_info="init loss: pending",
+            init_loss_display = (
+                f"{losses[0]:.4e}" if losses else "pending"
             )
+            reporter.start(
+                description=(
+                    "Laplace optimization" + (" (resumed)" if resumed else "")
+                ),
+                total=n_steps,
+                completed=start_step,
+                loss_info=f"init loss: {init_loss_display}",
+            )
+            if resume_message is not None:
+                reporter.print_message(resume_message)
 
-            for step in range(n_steps):
+            # Track ``init_loss`` for the periodic display string.
+            # When resumed, fall back to the first historical loss so
+            # the displayed bar carries continuous context across
+            # resumes.
+            if resumed and losses:
+                init_loss = float(losses[0])
+
+            for step in range(start_step, n_steps):
                 rng_step, subkey = random.split(rng_step)
                 if batch_size >= n_cells:
                     idx = jnp.arange(n_cells)
@@ -638,7 +763,7 @@ class LaplaceInferenceEngine:
                     params, opt_state, x_loc, eta_loc, idx
                 )
                 loss_val = float(loss)
-                losses[step] = loss_val
+                losses.append(loss_val)
                 if init_loss is None:
                     init_loss = loss_val
 
@@ -646,21 +771,22 @@ class LaplaceInferenceEngine:
                 # ``display_interval`` steps, matching SVI's format
                 # and appending the worst per-cell Newton gradient
                 # norm — a Laplace-specific health check.
+                step_completed = step + 1  # 1-based for display
                 should_display = (
-                    step == 0
+                    step == start_step
                     or step == n_steps - 1
-                    or (step + 1) % display_interval == 0
+                    or step_completed % display_interval == 0
                 )
                 if should_display:
-                    batch_start = max(0, step + 1 - display_interval)
-                    batch_end = step + 1
-                    avg_loss = float(
-                        np.mean(losses[batch_start:batch_end])
+                    window_start = max(0, len(losses) - display_interval)
+                    window_end = len(losses)
+                    avg_loss = _mean_ignoring_nans(
+                        losses[window_start:window_end]
                     )
                     worst_grad = float(jnp.max(gn))
                     loss_info = (
                         f"init loss: {init_loss:.4e}, "
-                        f"avg. loss [{batch_start + 1}-{batch_end}]: "
+                        f"avg. loss [{window_start + 1}-{window_end}]: "
                         f"{avg_loss:.4e}, "
                         f"worst Newton grad: {worst_grad:.3e}"
                     )
@@ -668,18 +794,156 @@ class LaplaceInferenceEngine:
                     if log_progress_lines:
                         print(
                             "Laplace progress "
-                            f"[{batch_end}/{n_steps}] "
+                            f"[{window_end}/{n_steps}] "
                             f"init loss: {init_loss:.4e}, "
-                            f"avg. loss [{batch_start + 1}-{batch_end}]: "
+                            f"avg. loss [{window_start + 1}-{window_end}]: "
                             f"{avg_loss:.4e}, "
                             f"worst Newton grad: {worst_grad:.3e}"
                         )
                 else:
                     reporter.update(advance=1)
 
+                # ------------------------------------------------------
+                # Early-stopping + checkpointing block. Mirrors the SVI
+                # engine's ``_run_with_early_stopping`` behaviour:
+                # smoothed-loss best-tracking, periodic orbax saves,
+                # patience-based stop trigger, optional restore-best.
+                # All branches gate on ``len(losses) >= smoothing_window``
+                # so the warmup window has time to fill before any of
+                # the criteria fire.
+                # ------------------------------------------------------
+                should_check = (
+                    step_completed % early_stopping.check_every == 0
+                    and len(losses) >= early_stopping.smoothing_window
+                )
+                if should_check:
+                    window_start = max(
+                        0, len(losses) - early_stopping.smoothing_window
+                    )
+                    smoothed_loss = _mean_ignoring_nans(
+                        losses[window_start:]
+                    )
+
+                    past_warmup = step >= early_stopping.warmup
+                    should_track = past_warmup and (
+                        early_stopping.enabled
+                        or early_stopping.restore_best
+                    )
+
+                    if should_track:
+                        if not np.isfinite(best_loss):
+                            best_loss = smoothed_loss
+                            best_step = step
+                            if early_stopping.restore_best:
+                                # Snapshot pytree leaves; ``params`` and
+                                # ``opt_state`` are pytrees of JAX arrays
+                                # (immutable), but ``x_loc``/``eta_loc``
+                                # rebind on every update_step so we copy
+                                # the references explicitly.
+                                best_state = {
+                                    "params": params,
+                                    "opt_state": opt_state,
+                                    "x_loc": x_loc,
+                                    "eta_loc": eta_loc,
+                                }
+                            patience_counter = 0
+                        else:
+                            improvement = best_loss - smoothed_loss
+                            if early_stopping.min_delta_pct is not None:
+                                denom = max(abs(best_loss), eps)
+                                improvement_pct = (
+                                    100.0 * improvement / denom
+                                )
+                                is_improvement = (
+                                    improvement_pct
+                                    > early_stopping.min_delta_pct
+                                )
+                            else:
+                                is_improvement = (
+                                    improvement > early_stopping.min_delta
+                                )
+
+                            if is_improvement:
+                                best_loss = smoothed_loss
+                                best_step = step
+                                if early_stopping.restore_best:
+                                    best_state = {
+                                        "params": params,
+                                        "opt_state": opt_state,
+                                        "x_loc": x_loc,
+                                        "eta_loc": eta_loc,
+                                    }
+                                patience_counter = 0
+                            else:
+                                patience_counter += (
+                                    early_stopping.check_every
+                                )
+
+                    # Save checkpoint at fixed intervals (independent of
+                    # whether the loss improved) so long-running fits
+                    # are always resumable. ``checkpoint_dir`` is None
+                    # when the user did not configure persistence.
+                    should_checkpoint = (
+                        checkpoint_dir is not None
+                        and (step - last_checkpoint_step)
+                        >= early_stopping.checkpoint_every
+                    )
+                    if should_checkpoint:
+                        save_laplace_checkpoint(
+                            checkpoint_dir=checkpoint_dir,
+                            params=params,
+                            opt_state=opt_state,
+                            x_loc=x_loc,
+                            eta_loc=eta_loc,
+                            step=step,
+                            best_loss=best_loss,
+                            losses=losses,
+                            patience_counter=patience_counter,
+                        )
+                        last_checkpoint_step = step
+
+                    # Trigger early stopping when patience is exceeded.
+                    # Past-warmup gating prevents premature stops while
+                    # the inner Newton is still finding the MAP basin.
+                    if (
+                        early_stopping.enabled
+                        and past_warmup
+                        and patience_counter >= early_stopping.patience
+                    ):
+                        early_stopped = True
+                        reporter.print_message(
+                            f"Early stopping triggered at step "
+                            f"{step + 1} (no improvement for "
+                            f"{patience_counter} steps, best loss "
+                            f"{best_loss:.4e} at step {best_step + 1})"
+                        )
+                        break
+
+        # ---- Restore best state if requested ----
+        # ``early_stopping.restore_best`` (default True) restores the
+        # snapshot taken at the lowest smoothed loss, regardless of
+        # whether early stopping actually triggered. Mirrors the SVI
+        # engine's behaviour. When ``best_state is None`` (e.g. the
+        # whole run finished inside warmup, no improvement ever
+        # tracked), this is a no-op.
+        if early_stopping.restore_best and best_state is not None:
+            params = best_state["params"]
+            opt_state = best_state["opt_state"]
+            x_loc = best_state["x_loc"]
+            eta_loc = best_state["eta_loc"]
+            if not early_stopped:
+                logger.info(
+                    "Restoring best Laplace params from step %d "
+                    "(best smoothed loss: %.4e)",
+                    best_step + 1,
+                    best_loss,
+                )
+
         # ---- Final convergence check ----
         # Run one more Newton pass over ALL cells to capture the
-        # final gradient norms used for diagnostics.
+        # final gradient norms used for diagnostics. Uses whichever
+        # ``params``/``x_loc``/``eta_loc`` ended up active after the
+        # optional restore-best step above.
         if capture_anchor is not None:
             mu_f = jax.lax.stop_gradient(params["mu"])
             W_f = jax.lax.stop_gradient(params["W"])
@@ -731,9 +995,12 @@ class LaplaceInferenceEngine:
             x_loc=x_loc_final,
             eta_loc=eta_loc_final,
             final_grad_norms=gn_final,
-            losses=jnp.asarray(losses),
-            n_steps_run=n_steps,
+            losses=jnp.asarray(losses, dtype=jnp.float32),
+            n_steps_run=len(losses),
             model_config=model_config,
+            early_stopped=early_stopped,
+            best_loss=best_loss,
+            stopped_at_step=len(losses),
         )
 
 

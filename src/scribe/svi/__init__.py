@@ -18,6 +18,13 @@ from .checkpoint import (
     remove_checkpoint,
     CheckpointMetadata,
 )
+from .laplace_checkpoint import (
+    laplace_checkpoint_exists,
+    save_laplace_checkpoint,
+    load_laplace_checkpoint,
+    remove_laplace_checkpoint,
+    LaplaceCheckpointMetadata,
+)
 
 __all__ = [
     "SVIInferenceEngine",
@@ -26,10 +33,17 @@ __all__ = [
     "ScribeVariationalResults",
     "ScribeSVIResults",
     "ScribeVAEResults",
-    # Checkpoint utilities
+    # SVI checkpoint utilities
     "checkpoint_exists",
     "save_svi_checkpoint",
     "load_svi_checkpoint",
     "remove_checkpoint",
     "CheckpointMetadata",
+    # Laplace checkpoint utilities (parallel API for the
+    # custom Laplace training loop)
+    "laplace_checkpoint_exists",
+    "save_laplace_checkpoint",
+    "load_laplace_checkpoint",
+    "remove_laplace_checkpoint",
+    "LaplaceCheckpointMetadata",
 ]
