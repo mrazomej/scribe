@@ -292,11 +292,31 @@ $\underline{x}$, proving that the log-posterior is strictly concave. $\square$
 
 - **Unique MAP.** The posterior has a single mode, making optimization-based
   approximations (e.g., Laplace) well-defined and efficient.
-- **Better variational fit.** Log-concave distributions are more accurately
-  approximated by Gaussian variational families than non-log-concave ones. The
-  LNM's Multinomial factor introduces non-log-concavity (the softmax-Multinomial
-  interaction creates multiple near-modes in high dimensions), which can lead to
-  amortization gap in the VAE.
+- **Cleaner variational geometry than the LNM.** The LNM posterior in
+  $\underline{z}$-space, $\log \pi(\underline{z} \mid \underline{u})
+  \propto \underline{u}^\top (\underline{\mu} +
+  \underline{\underline{W}}\underline{z}) -
+  N \cdot \mathrm{logsumexp}(\underline{\mu} +
+  \underline{\underline{W}}\underline{z}) - \tfrac{1}{2}
+  \underline{z}^\top \underline{z}$, *is* log-concave (logsumexp is
+  convex, so the data term is concave in
+  $\underline{\mu}+\underline{\underline{W}}\underline{z}$, and the
+  Gaussian prior contributes another concave term). The PLN's
+  advantage over the LNM is therefore not log-concavity per se, but
+  identifiability: the softmax map is invariant under adding a common
+  constant to all components of
+  $\underline{\mu}+\underline{\underline{W}}\underline{z}$, so the
+  multinomial likelihood has an exact one-dimensional invariance
+  along the direction $\mathbf{1}$. This invariance is broken only by
+  the standard Gaussian prior on $\underline{z}$, which leaves the
+  posterior log-concave but with a near-flat ridge whenever
+  $\underline{\underline{W}}\mathbf{1}_k$ has a large component along
+  $\mathbf{1}$. PLN's Poisson factor has no such invariance —
+  $\underline{u}^\top \underline{x} - \mathbf{1}^\top
+  \exp(\underline{x})$ is strongly identified in every direction —
+  giving its posterior a more isotropic shape that Gaussian
+  variational families and Laplace approximations both fit more
+  accurately.
 - **Laplace feasibility.** The Laplace approximation (a Gaussian centered at the
   MAP with covariance equal to the negative inverse Hessian) is a natural
   inference strategy for log-concave posteriors. SCRIBE exposes this as
@@ -328,6 +348,37 @@ where $\theta = (\underline{\mu}, \underline{\underline{W}},
 \underline{d})$ are the generative model parameters and
 $q_\phi(\underline{x} \mid \underline{u}^{(c)})$ is the amortized
 variational posterior parameterized by the encoder network $\phi$.
+
+**What the encoder actually models.** Although we write the
+variational posterior as $q_\phi(\underline{x} \mid \underline{u})$
+throughout this section to keep notation parallel with the LNM, the
+encoder operates on the *factor scores*
+$\underline{z} \in \mathbb{R}^k$, not on the full $G$-dimensional
+log-rate $\underline{x}$. Concretely:
+
+$$
+\underline{z} \mid \underline{u} \sim \mathcal{N}(\underline{\mu}_z(\underline{u};\phi),
+\mathrm{diag}(\underline{\sigma}_z^2(\underline{u};\phi))),
+\qquad
+\underline{x} = \underline{\mu} + \underline{\underline{W}}\,
+\underline{z} + \sqrt{\underline{d}} \odot \underline{\epsilon},
+\quad \underline{\epsilon} \sim \mathcal{N}(0, \underline{\underline{I}}_G),
+$${#eq-pln-z-vs-x}
+
+so the implicit $q_\phi(\underline{x} \mid \underline{u})$ is a
+$G$-dimensional Gaussian whose covariance is
+$\underline{\underline{W}}\,\mathrm{diag}(\underline{\sigma}_z^2)\,
+\underline{\underline{W}}^\top + \mathrm{diag}(\underline{d})$ —
+the same low-rank-plus-diagonal structure as the prior, with a
+data-driven inner-rank covariance. The encoder outputs $2k$ numbers
+per cell rather than $2G$, which is why amortization is tractable
+even at $G \sim 10^4$. The KL in @eq-pln-elbo is computed on
+$\underline{z}$ where it has a closed form against the
+$\mathcal{N}(0, \underline{\underline{I}}_k)$ prior; the
+reconstruction expectation is taken under the implicit
+$q_\phi(\underline{x})$ via the reparameterization trick on
+$\underline{z}$ (and on $\underline{\epsilon}$ when
+``d_mode="learned"``).
 
 ### Reconstruction term {#sec-pln-reconstruction}
 
