@@ -324,6 +324,85 @@ class TestJointMAP:
         assert float(log_det_neg_H) > 0
         assert np.isfinite(float(log_det_neg_H))
 
+    def test_single_step_matches_dense(self):
+        """One Newton step on a NON-MAP iterate must match the dense
+        block solve of ``-H δ = ∇f``.
+
+        Regression test for a sign bug in the Schur back-substitution
+        that previously survived because the converged-MAP test only
+        checks the fixed point, not per-step direction. A wrong-sign
+        Newton step can still drift toward the MAP under damping +
+        step-size cap, so we verify the step itself, off the fixed
+        point.
+        """
+        from scribe.svi._laplace_newton import newton_step_joint
+
+        mu_np, W_np, d_np, u_np = _build_random_pln_problem(G=5, k=2, seed=11)
+        sigma_M = 0.3
+        eta_anchor = 0.5
+
+        # Iterate intentionally NOT at the MAP — pick a perturbation
+        # so the cross-coupling term is non-trivial. ``rate^T A^-1 g_x``
+        # is the term whose sign was wrong; we want it to be the same
+        # order of magnitude as ``g_eta`` so the bug is observable.
+        rng = np.random.default_rng(11)
+        x_np = mu_np + 0.4 * rng.standard_normal(size=mu_np.shape).astype(np.float32)
+        eta_np = np.float32(0.7)
+
+        x = jnp.asarray(x_np)
+        eta = jnp.asarray(eta_np)
+        mu = jnp.asarray(mu_np)
+        W = jnp.asarray(W_np)
+        d = jnp.asarray(d_np)
+        u = jnp.asarray(u_np)
+        eta_anch = jnp.asarray(np.float32(eta_anchor))
+
+        x_new, eta_new, _gn = newton_step_joint(
+            x, eta, u, mu, W, d, eta_anch, sigma_M, damping=0.0
+        )
+        delta_x_kernel = np.asarray(x_new - x)
+        delta_eta_kernel = float(eta_new - eta)
+
+        # Build the dense (G+1)x(G+1) -H and solve. We use float64 to
+        # avoid float32 cancellation in the comparison; the kernel
+        # itself runs in float32, so the agreement is bounded by float32
+        # epsilon (~1e-6 relative).
+        rate = np.exp(np.asarray(x - eta), dtype=np.float64)
+        Sigma = (
+            W_np.astype(np.float64) @ W_np.astype(np.float64).T
+            + np.diag(d_np.astype(np.float64))
+        )
+        Sigma_inv = np.linalg.inv(Sigma)
+        diff = (x_np - mu_np).astype(np.float64)
+        g_x = u_np.astype(np.float64) - rate - Sigma_inv @ diff
+        g_eta = (
+            -float(np.sum(u_np))
+            + float(np.sum(rate))
+            - (float(eta_np) - eta_anchor) / sigma_M**2
+        )
+        G = mu_np.shape[0]
+        neg_H = np.zeros((G + 1, G + 1), dtype=np.float64)
+        neg_H[:G, :G] = np.diag(rate) + Sigma_inv
+        # Off-diagonal block of -H is -rate (because H_xη = +rate).
+        neg_H[:G, G] = -rate
+        neg_H[G, :G] = -rate
+        neg_H[G, G] = float(np.sum(rate)) + 1.0 / sigma_M**2
+
+        grad = np.empty(G + 1, dtype=np.float64)
+        grad[:G] = g_x
+        grad[G] = g_eta
+        delta_dense = np.linalg.solve(neg_H, grad)
+
+        # Float32 epsilon means we can't ask for 1e-9 — but 1e-4
+        # relative is comfortably tighter than the wrong-sign step,
+        # which differs from the dense solve by O(1) in this setup.
+        np.testing.assert_allclose(
+            delta_x_kernel, delta_dense[:G], rtol=1e-4, atol=1e-4
+        )
+        assert delta_eta_kernel == pytest.approx(
+            float(delta_dense[G]), rel=1e-4, abs=1e-4
+        )
+
 
 # =====================================================================
 # 4. Hessian determinant on full dense Hessian

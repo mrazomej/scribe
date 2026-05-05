@@ -320,20 +320,36 @@ def newton_step_joint(
     g_x = u - rate - sigma_inv_diff
     g_eta = -jnp.sum(u) + jnp.sum(rate) - (eta - eta_anchor) / (sigma_M**2)
 
-    # Block Schur complement on -H.
+    # Block Schur complement on -H. Solve  -H @ delta = grad f.
+    #
+    # In block form  -H = [[A, B], [B^T, C]] with
+    #   A = -H_xx          = diag(rate) + Σ⁻¹    (>0 definite)
+    #   B = -H_xη          = -rate                (NOTE the leading -)
+    #   C = -H_ηη          = sum(rate) + 1/σ_M²
+    #
+    # Schur back-substitution:
+    #   δ_η = (g_η - B^T A⁻¹ g_x) / (C - B^T A⁻¹ B)
+    #   δ_x = A⁻¹ (g_x - B δ_η)
+    #
+    # With B = -rate, the cross-term ``B^T A⁻¹ g_x`` becomes
+    # ``-rate^T A⁻¹ g_x`` and the back-substitution
+    # ``A⁻¹ (g_x - B δ_η)`` becomes ``A⁻¹ (g_x + rate δ_η)``.
+    # The Schur scalar  C - B^T A⁻¹ B = C - rate^T A⁻¹ rate  is
+    # symmetric in B so the leading sign drops out there.
     A_inv_g_x = _solve_A(factors, g_x)
-    H_x_eta = rate  # ∂²f/∂x∂η, shape (G,)
-    # Schur complement scalar s = -H_ηη - H_xη' A⁻¹ H_xη + damping
-    # = (1' rate + 1/σ²) - rate' A⁻¹ rate + damping.
-    A_inv_H_xeta = _solve_A(factors, H_x_eta)
+    rate_inv_A = _solve_A(factors, rate)  # A⁻¹ rate
     s = (
         jnp.sum(rate)
         + 1.0 / (sigma_M**2)
-        - jnp.dot(H_x_eta, A_inv_H_xeta)
+        - jnp.dot(rate, rate_inv_A)
         + damping
     )
-    delta_eta = (g_eta - jnp.dot(H_x_eta, A_inv_g_x)) / s
-    delta_x = A_inv_g_x - A_inv_H_xeta * delta_eta
+    # The sign convention here had a long-standing bug. Verified by
+    # constructing the dense (G+1)x(G+1) -H matrix and comparing the
+    # block solve to ``np.linalg.solve``; see
+    # ``tests/test_laplace_newton.py::test_single_step_matches_dense``.
+    delta_eta = (g_eta + jnp.dot(rate, A_inv_g_x)) / s
+    delta_x = A_inv_g_x + rate_inv_A * delta_eta
 
     grad_inf_norm = jnp.maximum(
         jnp.max(jnp.abs(g_x)), jnp.abs(g_eta)
