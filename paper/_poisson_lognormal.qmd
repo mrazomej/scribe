@@ -433,7 +433,24 @@ $${#eq-pln-laplace-joint-density}
 with $\underline{\underline{\Sigma}} = \underline{\underline{W}}\,
 \underline{\underline{W}}^\top + \mathrm{diag}(\underline{d})$ and
 $\eta_{\text{anchor}} = \log M_0 - \log L_c$ from the
-biology-informed prior. The gradient is
+biology-informed prior.
+
+**Remark on the truncated-normal normalizer.** The full prior on $\eta$ is
+$\mathrm{TruncatedNormal}(\eta_{\text{anchor}}, \sigma_M^2,\;\text{low}=0)$
+(@sec-pln-capture), so the exact log-density carries an additional
+$-\log Z(\eta_{\text{anchor}}, \sigma_M)$ term with
+$Z = 1 - \Phi(-\eta_{\text{anchor}}/\sigma_M) = \Phi(\eta_{\text{anchor}}/\sigma_M)$.
+This normalizer is independent of $(\underline{x}, \eta)$, so it drops out of
+the inner Newton step and of any Newton-direction calculation. SCRIBE treats
+$M_0$ and $\sigma_M$ as fixed user-supplied hyperparameters (passed through
+``priors={"capture_efficiency": (np.log(M_0), sigma_M)}``), so $\log Z$ is
+also independent of the optimized globals
+$(\underline{\mu}, \underline{\underline{W}}, \underline{d})$ and contributes
+only an additive constant to the outer ELBO. If a future variant exposes
+$M_0$ or $\sigma_M$ as learnable parameters, the $\log Z$ correction would
+need to be added to the outer loss.
+
+The gradient is
 
 $$
 \partial_{\underline{x}} f = \underline{u} - \exp(\underline{x} -
@@ -457,9 +474,32 @@ H_{\eta\eta} =
 - 1/\sigma_M^2.
 $${#eq-pln-laplace-hessian-blocks}
 
-The full $(G+1) \times (G+1)$ Hessian is symmetric negative definite
-(@sec-pln-log-concavity), so $-\underline{\underline{H}}$ is symmetric
-positive definite and the Newton step
+**Joint negative definiteness of the Hessian.** The Poisson term
+$-\mathbf{1}^\top \exp(\underline{x} - \eta\,\mathbf{1})$ is a concave
+function of the linear combination $\underline{z} = \underline{x} - \eta\,
+\mathbf{1}$, so its Hessian on $(\underline{x}, \eta)$ is negative
+*semi*-definite, with a one-dimensional null direction along
+$(\mathbf{1}, 1)$ (shifting all $x_g$ and $\eta$ by a common constant
+leaves $\underline{x} - \eta\,\mathbf{1}$ unchanged). The Gaussian-prior
+contributions $-\underline{\underline{\Sigma}}^{-1}$ on the
+$\underline{x}$-block and $-1/\sigma_M^2$ on the $\eta$-block are each
+*strictly* negative definite on their respective subspaces, and together
+they cover all of $\mathbb{R}^{G+1}$: $\underline{\underline{\Sigma}}^{-1}
+\succ 0$ rules out any pure $\underline{x}$-direction, and $1/\sigma_M^2 > 0$
+rules out the residual $\eta$-direction. Adding a strictly negative-definite
+matrix on the full space to a negative-semi-definite matrix yields a
+strictly negative-definite matrix, so $\underline{\underline{H}} \prec 0$
+on $\mathbb{R}^{G+1}$.
+
+This extends the marginal log-concavity result of @sec-pln-log-concavity
+(which fixes $\eta$ and varies $\underline{x}$) to the joint
+$(\underline{x}, \eta)$ space. Equivalently, in block form, $-H_{\eta\eta} >
+0$ and the Schur complement $-H_{xx} - \underline{H}_{x\eta} H_{\eta\eta}^{-1}
+\underline{H}_{x\eta}^\top$ is positive definite (strict inequality holding
+because the $\Sigma^{-1}$ piece survives the Schur subtraction), which is the
+precise condition we use below to factor the Newton step. Hence
+$-\underline{\underline{H}}$ is symmetric positive definite and the Newton
+step
 
 $$
 \begin{bmatrix} \underline{\delta}_x \\ \delta_\eta \end{bmatrix} =
