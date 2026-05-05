@@ -276,8 +276,15 @@ def fit(
     # Gene-specific overdispersion beyond the NB family
     overdispersion: str = "none",
     overdispersion_prior: str = "horseshoe",
-    # LNM-only: diagonal noise mode for ALR (see ``ModelConfig.d_mode``)
-    d_mode: str = "low_rank",
+    # Diagonal residual noise mode for the latent log-rate
+    # decomposition (see ``ModelConfig.d_mode``). When ``None``,
+    # ``api.fit`` resolves a sensible per-model default:
+    #   - PLN: ``"learned"`` so the generative covariance is
+    #     ``W W' + diag(d)`` (matches the Laplace inference path,
+    #     which has always learned ``d``).
+    #   - LNM and others: ``"low_rank"`` (legacy behavior).
+    # Pass an explicit string to override.
+    d_mode: Optional[str] = None,
     alr_reference_idx: Optional[int] = None,
     n_components: Optional[int] = None,
     mixture_params: Optional[Union[str, List[str]]] = "all",
@@ -496,9 +503,17 @@ def fit(
         Only used when ``overdispersion`` is not ``"none"``.
         Accepted values: ``"horseshoe"``, ``"neg"``.
 
-    d_mode : str, default="low_rank"
-        Only for ``model="lnm"`` / ``"lnmvcp"``: ``"low_rank"`` or ``"learned"``
-        (see ``ModelConfig.d_mode``).  Ignored for other models.
+    d_mode : str or None, default=None
+        Diagonal residual-noise mode for models that decompose the
+        latent log-rate as ``y = mu + W z`` (LNM) or
+        ``x = mu + W z`` (PLN). ``"low_rank"`` skips the diagonal
+        residual (singular ``W W'`` covariance); ``"learned"`` adds
+        a learnable per-gene ``diag(d)`` term so the covariance is
+        ``W W' + diag(d)``. When ``None`` (the default), ``api.fit``
+        picks a sensible per-model default: ``"learned"`` for PLN
+        (so the VAE and Laplace inference paths fit the same
+        generative model), ``"low_rank"`` for LNM/LNMVCP (legacy).
+        Ignored for models that do not decompose log-rates this way.
 
     alr_reference_idx : int or None, default=None
         Only for ``model="lnm"`` / ``"lnmvcp"``: zero-based index of the ALR reference
@@ -1711,6 +1726,17 @@ def fit(
     # ==========================================================================
     # Step 3: Build or use ModelConfig
     # ==========================================================================
+    # Resolve ``d_mode=None`` to the per-model default. PLN's
+    # generative covariance is ``W W' + diag(d)`` (see
+    # paper/_poisson_lognormal.qmd), and the Laplace inference path
+    # has always learned ``d``. Without this resolution, the VAE
+    # path defaulted to ``"low_rank"`` (singular ``W W'`` with no
+    # residual diagonal) — fitting a strictly different generative
+    # model than Laplace. Aligning the default makes the two
+    # inference paths consistent. LNM/LNMVCP keep the ``"low_rank"``
+    # default for backward compatibility.
+    if d_mode is None:
+        d_mode = "learned" if model.lower() == "pln" else "low_rank"
     if model_config is None:
         # Single config object: prefer capture_amortization; else build from 6
         # params
