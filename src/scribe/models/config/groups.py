@@ -1405,7 +1405,7 @@ class LaplaceConfig(BaseModel):
             "correction ``-½ log det(-H)`` in the outer ELBO is "
             "computed at damping=0 against the true posterior "
             "Hessian (see ``laplace_log_det_neg_H`` in "
-            "``scribe.svi._laplace_newton``) — so increasing this "
+            "``scribe.laplace._newton_pln``) — so increasing this "
             "knob trades Newton-step stability for solve quality "
             "without biasing the reported ELBO."
         ),

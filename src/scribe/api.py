@@ -2174,7 +2174,7 @@ def fit(
         elif method == InferenceMethod.LAPLACE:
             # PLN-only Laplace path — bypasses NumPyro SVI in favour of
             # a custom outer-loop training in
-            # ``scribe.svi.laplace_engine``. Most knobs from SVIConfig
+            # ``scribe.laplace.LaplaceInferenceEngine``. Most knobs from SVIConfig
             # do not apply here; we expose the relevant subset
             # via ``LaplaceConfig``. KL annealing is forced off
             # (Laplace mode has no KL term to anneal), warn the user

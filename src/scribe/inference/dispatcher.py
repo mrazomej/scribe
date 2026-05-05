@@ -187,7 +187,7 @@ def _laplace_handler(
     """Handler for Laplace-mode inference (PLN-only).
 
     Bypasses NumPyro's SVI machinery in favour of a custom outer-loop
-    training in :class:`scribe.svi.laplace_engine.LaplaceInferenceEngine`.
+    training in :class:`scribe.laplace.LaplaceInferenceEngine`.
     See ``inference/laplace.py`` for the bridge that builds the
     arguments for the engine from the public ``ModelConfig`` /
     ``LaplaceConfig`` surface.

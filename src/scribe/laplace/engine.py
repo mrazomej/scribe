@@ -60,17 +60,17 @@ from ..models.config import (
     ModelConfig,
     SVIConfig,
 )
-from ._laplace_newton import (
+from ._newton_pln import (
     laplace_log_det_neg_H_batch,
     laplace_log_det_neg_H_batch_x_only,
     laplace_newton_batch,
     laplace_newton_batch_x_only,
 )
-from ._progress_backend import (
+from ..svi._progress_backend import (
     ProgressBackendName,
     build_progress_reporter,
 )
-from .laplace_checkpoint import (
+from .checkpoint import (
     laplace_checkpoint_exists,
     load_laplace_checkpoint,
     save_laplace_checkpoint,

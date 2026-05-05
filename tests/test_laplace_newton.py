@@ -25,7 +25,7 @@ import pytest
 import scipy.optimize as spopt
 from jax import random
 
-from scribe.svi._laplace_newton import (
+from scribe.laplace._newton_pln import (
     _log_det_A,
     _solve_A,
     _woodbury_factors,
@@ -335,7 +335,7 @@ class TestJointMAP:
         step-size cap, so we verify the step itself, off the fixed
         point.
         """
-        from scribe.svi._laplace_newton import newton_step_joint
+        from scribe.laplace._newton_pln import newton_step_joint
 
         mu_np, W_np, d_np, u_np = _build_random_pln_problem(G=5, k=2, seed=11)
         sigma_M = 0.3
@@ -413,7 +413,7 @@ class TestJointMAP:
         term at all. The fix recomputes ``log det(-H)`` outside the
         Newton kernel against live globals, with damping=0.
         """
-        from scribe.svi._laplace_newton import laplace_log_det_neg_H
+        from scribe.laplace._newton_pln import laplace_log_det_neg_H
 
         mu_np, W_np, d_np, u_np = _build_random_pln_problem(G=4, k=2, seed=3)
         rng = np.random.default_rng(3)

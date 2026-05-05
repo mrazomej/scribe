@@ -4,6 +4,10 @@ data analysis.
 
 This module implements SVI inference for SCRIBE models using Numpyro's SVI.
 Supports early stopping based on loss convergence and Orbax checkpointing.
+
+Laplace-mode inference (``inference_method="laplace"``) lives in its own
+submodule at :mod:`scribe.laplace` — it does not use NumPyro's SVI
+machinery and so was deliberately separated.
 """
 
 from .inference_engine import SVIInferenceEngine, SVIRunResult
@@ -17,13 +21,6 @@ from .checkpoint import (
     load_svi_checkpoint,
     remove_checkpoint,
     CheckpointMetadata,
-)
-from .laplace_checkpoint import (
-    laplace_checkpoint_exists,
-    save_laplace_checkpoint,
-    load_laplace_checkpoint,
-    remove_laplace_checkpoint,
-    LaplaceCheckpointMetadata,
 )
 
 __all__ = [
@@ -39,11 +36,4 @@ __all__ = [
     "load_svi_checkpoint",
     "remove_checkpoint",
     "CheckpointMetadata",
-    # Laplace checkpoint utilities (parallel API for the
-    # custom Laplace training loop)
-    "laplace_checkpoint_exists",
-    "save_laplace_checkpoint",
-    "load_laplace_checkpoint",
-    "remove_laplace_checkpoint",
-    "LaplaceCheckpointMetadata",
 ]

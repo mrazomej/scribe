@@ -16,8 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..models.config import DataConfig, LaplaceConfig, ModelConfig
-from ..svi.laplace_engine import LaplaceInferenceEngine
-from ..svi.laplace_results import ScribeLaplaceResults
+from ..laplace import LaplaceInferenceEngine, ScribeLaplaceResults
 
 if TYPE_CHECKING:
     from anndata import AnnData

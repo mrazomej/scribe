@@ -687,7 +687,7 @@ class LaplaceLatentGuide(GuideFamily):
     See Also
     --------
     VAELatentGuide : Encoder-based guide for the standard VAE path.
-    scribe.svi._laplace_newton : Pure-JAX inner Newton kernel used
+    scribe.laplace._newton_pln : Pure-JAX inner Newton kernel used
         by this guide.
     """
 

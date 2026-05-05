@@ -56,7 +56,7 @@ class TestLaplaceEndToEnd:
     def test_fit_runs_and_returns_laplace_results(self):
         """``scribe.fit(..., inference_method='laplace')`` produces ScribeLaplaceResults."""
         import scribe
-        from scribe.svi.laplace_results import ScribeLaplaceResults
+        from scribe.laplace import ScribeLaplaceResults
 
         adata, _, _ = _synthetic_pln(n_cells=40, n_genes=5, latent_dim=2)
         result = scribe.fit(
@@ -319,7 +319,7 @@ class TestLaplaceEarlyStopping:
         can inspect ``LaplaceRunResult`` fields the public API doesn't
         expose. Mirrors what ``scribe.fit`` does internally for PLN."""
         from scribe.models.config import LaplaceConfig, ModelConfig
-        from scribe.svi.laplace_engine import LaplaceInferenceEngine
+        from scribe.laplace import LaplaceInferenceEngine
 
         # Minimal ModelConfig — the engine only consults it for
         # provenance, not for actual training.
@@ -389,9 +389,7 @@ class TestLaplaceEarlyStopping:
         """Train a few steps with checkpointing on, then a second
         run with the same dir resumes from the saved state."""
         from scribe.models.config import EarlyStoppingConfig
-        from scribe.svi.laplace_checkpoint import (
-            laplace_checkpoint_exists,
-        )
+        from scribe.laplace import laplace_checkpoint_exists
 
         adata, _, _ = _synthetic_pln(n_cells=40, n_genes=5, latent_dim=2)
         ckpt_dir = str(tmp_path / "laplace_ckpt")
