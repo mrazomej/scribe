@@ -46,32 +46,144 @@ _P_EPS = 1e-6
 _D_EPS = 1e-8
 
 
-def select_alr_reference(counts) -> int:
-    """Select the gene with highest geometric mean expression as ALR reference.
+def select_alr_reference(
+    counts,
+    expression_floor_pct: float = 50.0,
+    pseudocount: float = 1.0,
+) -> int:
+    """Select an ALR reference gene by stability (low log-proportion variance).
+
+    Two-stage selection that prioritises *stability* over high expression:
+
+    1. **Expression floor** — restrict the candidate pool to genes
+       whose mean ``log1p(count)`` is at or above the
+       ``expression_floor_pct``-th percentile across genes. This
+       defends against the failure mode of the variance criterion
+       on its own (a gene with all-zero counts has zero variance
+       in raw counts but is useless as a reference because
+       ``log p_ref`` is undefined). The floor does *not* require
+       a specific count threshold — it adapts to the dataset
+       depth.
+
+    2. **Variance minimisation** — within the eligible pool, pick
+       ``argmin Var_c[log p_g^c]`` where
+       ``p_g^c = (u_g^c + ps) / (N_c + G·ps)`` is the per-cell
+       log-proportion with Laplace smoothing. The pseudocount
+       ``ps`` (default ``1.0``) prevents ``-inf`` for cells where
+       ``u_g = 0``.
+
+    The criterion mirrors the housekeeping-gene selection used in
+    compositional data analysis: a stable reference produces the
+    cleanest gauge fix because
+
+    .. math::
+        \\mathrm{Var}(y_{\\text{alr},g})
+          = \\mathrm{Var}(\\log p_g)
+          + \\mathrm{Var}(\\log p_{\\text{ref}})
+          - 2\\,\\mathrm{Cov}(\\log p_g, \\log p_{\\text{ref}}).
+
+    A noisy reference inflates ``Var(y_alr_g)`` for *every* non-
+    reference gene (the second term hits all coordinates) and
+    creates spurious correlations through the third term. A stable
+    reference minimises both effects.
+
+    Including the pooled ``_other`` pseudo-gene
+    -------------------------------------------
+    When the count matrix passed in includes a trailing pseudo-
+    gene built from ``gene_coverage`` filtering, that pseudo-gene
+    is a valid candidate and often a *good* one: it is the sum
+    over thousands of low-coverage genes, so by the central limit
+    theorem its per-cell proportion has very small variance, and
+    by construction the genes it pools were excluded *because*
+    they were not biologically informative. Pass the full
+    ``count_data`` (with the ``_other`` column) to let it compete.
 
     Parameters
     ----------
-    counts : array_like
-        Count matrix of shape ``(n_cells, n_genes)``.
+    counts : array_like, shape ``(n_cells, n_genes)``
+        Count matrix. May or may not include a trailing pooled
+        ``_other`` pseudo-gene; this function does not need to
+        know which.
+    expression_floor_pct : float, default 50.0
+        Percentile (in [0, 100]) of mean ``log1p(count)`` below
+        which genes are excluded from the candidate pool. The
+        default keeps the upper half of genes by expression. Set
+        to ``0.0`` to disable the floor (variance-only selection).
+    pseudocount : float, default 1.0
+        Laplace-smoothing pseudocount added to each count when
+        computing per-cell log-proportions. Set to ``0.0`` for
+        an un-smoothed criterion (only safe if every gene has at
+        least one count in every cell).
 
     Returns
     -------
     int
         Index of the gene to use as ALR reference (denominator).
 
+    Examples
+    --------
+    >>> import numpy as np
+    >>> rng = np.random.default_rng(0)
+    >>> # Gene 0: high mean, high variance (e.g. a marker)
+    >>> g0 = rng.poisson(50.0, size=200) * (rng.uniform(size=200) > 0.5)
+    >>> # Gene 1: moderate mean, low variance (e.g. housekeeping)
+    >>> g1 = rng.poisson(20.0, size=200)
+    >>> counts = np.stack([g0, g1], axis=1)
+    >>> select_alr_reference(counts, expression_floor_pct=0.0)
+    1
+
     Notes
     -----
-    The geometric mean is computed as the arithmetic mean of ``log(count + 1)``
-    per gene across cells, then the argmax picks the gene with largest
-    typical log-expression.  This is preferred over the raw UMI sum because it
-    is less sensitive to outlier cells.  A stably expressed reference gene
-    improves numerical conditioning of the ALR coordinates during VAE training.
+    The previous heuristic (``argmax`` of geometric-mean log-
+    expression) named "stable reference" as the goal but actually
+    selected the *highest-mean* gene. In tissues, the highest-
+    expressed gene is often a marker for the dominant cell state
+    — biologically variable, exactly the wrong choice for a
+    gauge-fix. The new criterion picks for stability directly.
     """
     import numpy as np
 
-    log_counts = np.log1p(np.asarray(counts))
-    geo_mean = log_counts.mean(axis=0)
-    return int(np.argmax(geo_mean))
+    counts = np.asarray(counts, dtype=np.float64)
+    if counts.ndim != 2:
+        raise ValueError(
+            f"counts must be 2-D (n_cells, n_genes); got shape {counts.shape}."
+        )
+    n_cells, n_genes = counts.shape
+    if n_genes < 2:
+        raise ValueError(
+            f"ALR reference selection needs ≥ 2 genes; got {n_genes}."
+        )
+    if not (0.0 <= expression_floor_pct <= 100.0):
+        raise ValueError(
+            f"expression_floor_pct must be in [0, 100]; "
+            f"got {expression_floor_pct}."
+        )
+
+    # Stage 1: expression floor (defends against log(0) on cells
+    # where the candidate happens to be zero).
+    log_counts = np.log1p(counts)
+    mean_log = log_counts.mean(axis=0)
+    if expression_floor_pct > 0.0:
+        floor = np.percentile(mean_log, expression_floor_pct)
+        eligible = np.where(mean_log >= floor)[0]
+        if eligible.size == 0:
+            # Degenerate case (all genes equal to floor); fall back
+            # to the full pool so we still return a valid index.
+            eligible = np.arange(n_genes)
+    else:
+        eligible = np.arange(n_genes)
+
+    # Stage 2: variance-of-log-proportion (with Laplace smoothing).
+    n_per_cell = counts.sum(axis=1, keepdims=True)
+    p = (counts + pseudocount) / (n_per_cell + n_genes * pseudocount)
+    # The +pseudocount terms guarantee p > 0 even when u = 0, so log
+    # is finite without further clamping.
+    log_p = np.log(p)
+    var_log_p = log_p.var(axis=0)
+
+    # Argmin within the eligible pool, mapped back to the original index.
+    pool_var = var_log_p[eligible]
+    return int(eligible[int(np.argmin(pool_var))])
 
 
 class LogisticNormalMultinomialLikelihood(Likelihood):

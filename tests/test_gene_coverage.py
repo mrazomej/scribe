@@ -147,18 +147,22 @@ def test_fit_gene_coverage_attaches_metadata(monkeypatch):
     assert "scribe_gene_coverage_rank" in adata.var.columns
 
 
-def test_lnm_auto_reference_excludes_pooled_other(monkeypatch):
-    """LNM auto-reference should ignore the pooled trailing pseudo-gene.
+def test_lnm_auto_reference_includes_pooled_other(monkeypatch):
+    """LNM auto-reference should let the pooled ``_other`` pseudo-gene compete.
+
+    The pooled ``_other`` is a sum over the genes that
+    ``gene_coverage`` filtering already removed for being
+    uninformative. By the central limit theorem its per-cell
+    proportion is typically very stable, making it a strong
+    candidate for the variance-minimising ALR reference. The
+    auto-selection function is called with the full count matrix
+    (including the trailing ``_other`` column) so it can win the
+    competition when appropriate.
 
     Parameters
     ----------
     monkeypatch : pytest.MonkeyPatch
         Fixture used to replace heavy inference and ALR-selection internals.
-
-    Returns
-    -------
-    None
-        The test asserts that ALR selection runs on retained genes only.
     """
     # Use an input where coverage filtering pools one low-abundance gene,
     # creating a trailing ``_other`` model-space column.
@@ -169,10 +173,10 @@ def test_lnm_auto_reference_excludes_pooled_other(monkeypatch):
         ]
     )
 
+    received_shapes = {}
+
     def _fake_run_inference(method, **kwargs):
         model_config = kwargs["model_config"]
-        # The chosen ALR reference should be in retained-gene space, not "other".
-        assert int(model_config.alr_reference_idx) == 0
         return ScribeSVIResults(
             params={},
             loss_history=jnp.array([0.0]),
@@ -183,9 +187,11 @@ def test_lnm_auto_reference_excludes_pooled_other(monkeypatch):
             prior_params={},
         )
 
-    def _fake_select_alr_reference(arr):
-        # Auto-selection must receive only retained columns (exclude pooled "other").
-        assert arr.shape[1] == 2
+    def _fake_select_alr_reference(arr, **_kwargs):
+        # Auto-selection now receives the *full* count matrix
+        # including the trailing ``_other`` column, so the pseudo-
+        # gene gets a chance to win the variance competition.
+        received_shapes["n_genes"] = arr.shape[1]
         return 0
 
     monkeypatch.setattr("scribe.api._run_inference", _fake_run_inference)
@@ -201,6 +207,8 @@ def test_lnm_auto_reference_excludes_pooled_other(monkeypatch):
         n_steps=1,
         gene_coverage=0.95,
     )
+    # Selector saw all 3 columns (2 retained genes + 1 ``_other``).
+    assert received_shapes["n_genes"] == 3
     assert int(result.model_config.alr_reference_idx) == 0
 
 

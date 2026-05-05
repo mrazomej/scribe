@@ -1571,22 +1571,31 @@ def fit(
             _gene_coverage_mask is not None
             and np.any(~np.asarray(_gene_coverage_mask, dtype=bool))
         )
-        _candidate_counts = (
-            count_data[:, :-1] if _has_pooled_other else count_data
-        )
 
         if alr_reference_idx is None:
-            # Auto-selection only considers original genes. The pooled "other"
-            # pseudo-gene is excluded by construction when present.
-            alr_reference_idx = int(select_alr_reference(_candidate_counts))
+            # Auto-selection by minimum variance of log-proportion
+            # (after Laplace smoothing + an expression-floor filter).
+            # The pooled ``_other`` pseudo-gene is included in the
+            # candidate pool when present: it sums over thousands of
+            # low-coverage genes that ``gene_coverage`` filtering
+            # already removed for being uninformative, so by the
+            # central limit theorem its per-cell proportion is
+            # typically very stable — often the natural housekeeping
+            # candidate.
+            alr_reference_idx = int(select_alr_reference(count_data))
+            _is_other = (
+                _has_pooled_other
+                and alr_reference_idx == count_data.shape[1] - 1
+            )
             logging.getLogger(__name__).info(
-                "LNM: auto-selected gene %d as ALR reference (%s).",
+                "LNM: auto-selected gene %d as ALR reference "
+                "(%s; minimum-variance criterion).",
                 alr_reference_idx,
                 (
-                    "highest geometric mean among retained genes "
-                    "(excluding pooled 'other')"
-                    if _has_pooled_other
-                    else "highest geometric mean"
+                    "pooled '_other' pseudo-gene won the variance "
+                    "competition"
+                    if _is_other
+                    else "individual gene"
                 ),
             )
         else:
