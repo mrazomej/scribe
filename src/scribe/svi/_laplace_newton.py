@@ -251,6 +251,78 @@ def _log_det_A(factors: dict) -> jnp.ndarray:
     return log_det_M + log_det_S - log_det_K
 
 
+def laplace_log_det_neg_H(
+    x_map: jnp.ndarray,
+    eta_map: Optional[jnp.ndarray],
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    sigma_M: float,
+) -> jnp.ndarray:
+    """``log det(-H)`` at the MAP, with **no Tikhonov damping**.
+
+    Used by the outer Laplace ELBO so that gradients flow through the
+    determinant correction into the globals ``(W, d)``. The Newton
+    kernel's own ``log_det`` return value is computed inside a stop-
+    gradient region with damping baked into ``A``; this helper is the
+    correct quantity for the ELBO.
+
+    Capture-anchor on (``eta_map is not None``): we have a (G+1)x(G+1)
+    block Hessian. The Schur identity gives
+
+    .. math::
+        \\log \\det(-H) = \\log \\det A + \\log s,
+
+    where ``s = (sum rate + 1/σ_M²) − rate^T A⁻¹ rate`` is exactly the
+    Schur scalar from :func:`newton_step_joint` (modulo the
+    damping term — here we set damping=0). Capture-anchor off: just
+    ``log det A``.
+
+    Parameters
+    ----------
+    x_map, eta_map : jnp.ndarray
+        Per-cell MAP. ``x_map`` shape ``(G,)``; ``eta_map`` scalar or
+        ``None``.
+    W, d : jnp.ndarray
+        Globals at which the determinant is evaluated. The gradient
+        of the returned scalar flows into both.
+    sigma_M : float
+        Capture-anchor prior scale. Ignored when ``eta_map is None``.
+
+    Returns
+    -------
+    jnp.ndarray, scalar.
+    """
+    log_rate = (
+        x_map - eta_map if eta_map is not None else x_map
+    )
+    factors = _woodbury_factors(W, d, log_rate, damping=0.0)
+    log_det_A = _log_det_A(factors)
+    if eta_map is None:
+        return log_det_A
+
+    rate = jnp.exp(jnp.clip(log_rate, _LOG_RATE_MIN, _LOG_RATE_MAX))
+    rate_inv_A = _solve_A(factors, rate)
+    # Schur scalar (no damping): s = sum(rate) + 1/σ_M² − rate^T A⁻¹ rate.
+    # Add a tiny floor so jnp.log doesn't see ``s ≤ 0`` when float32
+    # cancellation makes the Schur scalar barely-positive at very high
+    # rates. This floor is purely numerical; the true ``s`` is strictly
+    # positive whenever -H is SPD (proven in @sec-pln-laplace-density).
+    s = jnp.maximum(
+        jnp.sum(rate) + 1.0 / (sigma_M**2) - jnp.dot(rate, rate_inv_A),
+        1e-30,
+    )
+    return log_det_A + jnp.log(s)
+
+
+# Vmapped version: (B, G), (B,)|None, (G, k), (G,) → (B,)
+laplace_log_det_neg_H_batch = jax.vmap(
+    laplace_log_det_neg_H, in_axes=(0, 0, None, None, None)
+)
+laplace_log_det_neg_H_batch_x_only = jax.vmap(
+    laplace_log_det_neg_H, in_axes=(0, None, None, None, None)
+)
+
+
 # =====================================================================
 # Newton step (joint x, eta)
 # =====================================================================

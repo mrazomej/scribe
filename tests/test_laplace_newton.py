@@ -403,6 +403,47 @@ class TestJointMAP:
             float(delta_dense[G]), rel=1e-4, abs=1e-4
         )
 
+    def test_log_det_helper_has_live_gradient(self):
+        """``laplace_log_det_neg_H`` must have non-zero gradient
+        through ``W`` and ``d``.
+
+        Regression for a bug where the loss path stop_gradient'd the
+        kernel's returned ``log_det`` and then reused it inside the
+        ELBO — so Adam was not optimizing the Laplace correction
+        term at all. The fix recomputes ``log det(-H)`` outside the
+        Newton kernel against live globals, with damping=0.
+        """
+        from scribe.svi._laplace_newton import laplace_log_det_neg_H
+
+        mu_np, W_np, d_np, u_np = _build_random_pln_problem(G=4, k=2, seed=3)
+        rng = np.random.default_rng(3)
+        x_map = jnp.asarray(
+            mu_np + 0.1 * rng.standard_normal(size=mu_np.shape).astype(np.float32)
+        )
+        eta_map = jnp.asarray(np.float32(0.4))
+        W = jnp.asarray(W_np)
+        d = jnp.asarray(d_np)
+
+        # Joint case (capture anchor on)
+        grad_W = jax.grad(
+            lambda W_: laplace_log_det_neg_H(x_map, eta_map, W_, d, 0.3)
+        )(W)
+        grad_d = jax.grad(
+            lambda d_: laplace_log_det_neg_H(x_map, eta_map, W, d_, 0.3)
+        )(d)
+        assert float(jnp.max(jnp.abs(grad_W))) > 1e-4
+        assert float(jnp.max(jnp.abs(grad_d))) > 1e-4
+
+        # x-only case (capture off)
+        grad_W_x = jax.grad(
+            lambda W_: laplace_log_det_neg_H(x_map, None, W_, d, 0.3)
+        )(W)
+        grad_d_x = jax.grad(
+            lambda d_: laplace_log_det_neg_H(x_map, None, W, d_, 0.3)
+        )(d)
+        assert float(jnp.max(jnp.abs(grad_W_x))) > 1e-4
+        assert float(jnp.max(jnp.abs(grad_d_x))) > 1e-4
+
 
 # =====================================================================
 # 4. Hessian determinant on full dense Hessian

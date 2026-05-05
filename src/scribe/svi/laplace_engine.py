@@ -61,6 +61,8 @@ from ..models.config import (
     SVIConfig,
 )
 from ._laplace_newton import (
+    laplace_log_det_neg_H_batch,
+    laplace_log_det_neg_H_batch_x_only,
     laplace_newton_batch,
     laplace_newton_batch_x_only,
 )
@@ -544,7 +546,7 @@ class LaplaceInferenceEngine:
             if capture_anchor is not None:
                 eta_init_sg = jax.lax.stop_gradient(eta_batch_init)
                 eta_anch_sg = jax.lax.stop_gradient(eta_anchor_batch)
-                x_new, eta_new, _gn, log_det = laplace_newton_batch(
+                x_new, eta_new, _gn, _ = laplace_newton_batch(
                     x_init_sg,
                     eta_init_sg,
                     counts_batch,
@@ -556,11 +558,24 @@ class LaplaceInferenceEngine:
                     n_newton,
                     damping,
                 )
-                # The MAP itself is treated as constant w.r.t. params
-                # (standard variational-EM approximation).
+                # Variational-EM approximation: the MAP itself is
+                # treated as constant w.r.t. ``θ``. Justified by the
+                # envelope theorem on the joint log-density (since
+                # ``∂_x log p(u, x*, η*) = 0`` at the MAP). The
+                # discarded log_det from the kernel is computed in a
+                # stop-gradient region with damping baked into A —
+                # we recompute it below at damping=0 against live
+                # ``W, d`` so its direct gradient survives.
                 x_new = jax.lax.stop_gradient(x_new)
                 eta_new = jax.lax.stop_gradient(eta_new)
-                log_det = jax.lax.stop_gradient(log_det)
+                # Laplace correction: ``log det(-H)`` evaluated at
+                # the (stop-gradient) MAP but with **live** globals,
+                # so ∂/∂W and ∂/∂d of the determinant flow through.
+                # damping=0 gives the actual posterior curvature, not
+                # the damped-Newton solver's surrogate.
+                log_det = laplace_log_det_neg_H_batch(
+                    x_new, eta_new, W, d, sigma_M
+                )
                 loss = data_scale * _laplace_elbo(
                     mu,
                     W,
@@ -574,7 +589,7 @@ class LaplaceInferenceEngine:
                 )
                 return loss, (x_new, eta_new, _gn)
             else:
-                x_new, _gn, log_det = laplace_newton_batch_x_only(
+                x_new, _gn, _ = laplace_newton_batch_x_only(
                     x_init_sg,
                     counts_batch,
                     mu_sg,
@@ -584,7 +599,11 @@ class LaplaceInferenceEngine:
                     damping,
                 )
                 x_new = jax.lax.stop_gradient(x_new)
-                log_det = jax.lax.stop_gradient(log_det)
+                # Laplace correction at damping=0 with live globals
+                # — see capture-anchor branch above for the rationale.
+                log_det = laplace_log_det_neg_H_batch_x_only(
+                    x_new, None, W, d, sigma_M
+                )
                 loss = data_scale * _laplace_elbo(
                     mu,
                     W,
