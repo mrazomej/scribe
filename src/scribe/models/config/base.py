@@ -685,9 +685,23 @@ class ModelConfig(BaseModel):
         _NONE = HierarchicalPriorType.NONE
 
         if self.base_model in ("lnm", "lnmvcp"):
-            if self.inference_method != InferenceMethod.VAE:
+            # LNM accepts VAE (encoder) or LAPLACE (encoder-free
+            # variational EM). LNMVCP accepts only VAE for now —
+            # the LNMVCP Laplace path needs joint Newton on
+            # (z, p_capture) which is unimplemented in
+            # scribe.laplace._newton_lnm.
+            allowed = (
+                {InferenceMethod.VAE, InferenceMethod.LAPLACE}
+                if self.base_model == "lnm"
+                else {InferenceMethod.VAE}
+            )
+            if self.inference_method not in allowed:
+                allowed_str = "/".join(
+                    sorted(m.value for m in allowed)
+                )
                 raise ValueError(
-                    f"{self.base_model} requires inference_method=VAE "
+                    f"{self.base_model} requires "
+                    f"inference_method in {{{allowed_str}}} "
                     f"(got {self.inference_method!r})."
                 )
             # LNM family supports three parameterizations of the totals

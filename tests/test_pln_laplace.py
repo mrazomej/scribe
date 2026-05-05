@@ -207,16 +207,24 @@ class TestCaptureAnchor:
 
 
 class TestNonPLNRejection:
-    """Laplace is currently PLN-only — clear errors for other models."""
+    """Laplace inference is supported for PLN and plain LNM.
 
-    def test_lnm_rejects_laplace(self):
+    Clear errors for models that do not have a Laplace path:
+    LNMVCP (capture-anchor extension is unimplemented), and the
+    DM-family models (NBDM, NBVCP, ZINB, ZINBVCP) which would
+    require their own Newton kernels.
+    """
+
+    def test_lnmvcp_rejects_laplace(self):
         import scribe
 
         adata, _, _ = _synthetic_pln(n_cells=20, n_genes=5, latent_dim=2)
-        with pytest.raises(ValueError, match="laplace.*PLN-only|PLN-only"):
+        with pytest.raises(
+            ValueError, match="LNMVCP.*not yet implemented|LNMVCP"
+        ):
             scribe.fit(
                 adata,
-                model="lnm",
+                model="lnmvcp",
                 inference_method="laplace",
                 vae_latent_dim=2,
                 n_steps=5,
@@ -226,7 +234,9 @@ class TestNonPLNRejection:
         import scribe
 
         adata, _, _ = _synthetic_pln(n_cells=20, n_genes=5, latent_dim=2)
-        with pytest.raises(ValueError, match="laplace.*PLN-only|PLN-only"):
+        with pytest.raises(
+            ValueError, match="laplace.*PLN and plain LNM|PLN and plain LNM"
+        ):
             scribe.fit(
                 adata,
                 model="nbdm",

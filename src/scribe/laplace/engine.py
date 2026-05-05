@@ -66,6 +66,12 @@ from ._newton_pln import (
     laplace_newton_batch,
     laplace_newton_batch_x_only,
 )
+from ._newton_lnm import (
+    laplace_log_det_neg_H_batch_y_alr,
+    laplace_log_det_neg_H_batch_z,
+    laplace_newton_batch_y_alr,
+    laplace_newton_batch_z,
+)
 from ..svi._progress_backend import (
     ProgressBackendName,
     build_progress_reporter,
@@ -439,26 +445,24 @@ class LaplaceInferenceEngine:
             loop integration is the remaining piece of the LNM
             Laplace plan).
         """
-        # Top-level dispatch on the generative model. The PLN flow
-        # is the original implementation below. LNM dispatches to
-        # ``_run_lnm_inference`` once that's wired up; for now it
-        # raises a clear error that points the user at the kernel
-        # tests so they can verify the inner pieces are in place.
+        # Top-level dispatch on the generative model.
         bm = getattr(model_config, "base_model", "pln")
         if bm == "lnm":
-            raise NotImplementedError(
-                "LNM Laplace engine integration is in progress. The "
-                "Newton kernels (z-space and y_alr-space) are "
-                "implemented and tested in "
-                "scribe.laplace._newton_lnm; the engine wiring + "
-                "end-to-end integration is the remaining piece of "
-                "Part 3 of the LNM Laplace plan. See "
-                "tests/test_laplace_newton_lnm.py for the kernel-"
-                "level correctness guarantees."
+            return _run_lnm_inference(
+                model_config=model_config,
+                count_data=count_data,
+                n_cells=n_cells,
+                n_genes=n_genes,
+                latent_dim=latent_dim,
+                laplace_config=laplace_config,
+                seed=seed,
+                progress=progress,
+                progress_backend=progress_backend,
+                log_progress_lines=log_progress_lines,
             )
         if bm != "pln":
             raise NotImplementedError(
-                f"Laplace inference is supported for PLN; "
+                f"Laplace inference is supported for PLN and LNM; "
                 f"got base_model={bm!r}."
             )
 
@@ -1053,6 +1057,451 @@ class LaplaceInferenceEngine:
             best_loss=best_loss,
             stopped_at_step=len(losses),
         )
+
+
+# =====================================================================
+# LNM Laplace orchestration
+# =====================================================================
+
+
+def _lnm_laplace_elbo(
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    counts_batch: jnp.ndarray,
+    z_or_y: jnp.ndarray,
+    log_det_neg_H: jnp.ndarray,
+    alr_reference_idx: int,
+    n_genes: int,
+    d_mode: str,
+) -> jnp.ndarray:
+    """Negative Laplace ELBO summed over a batch of LNM cells.
+
+    The Laplace marginal-likelihood approximation for cell ``c`` is
+
+    .. math::
+        \\log p(u_c) \\approx
+            \\log p(u_c, \\xi_c^{*})
+            - \\tfrac{1}{2} \\log\\det(-H_c),
+
+    where :math:`\\xi_c^{*}` is the per-cell MAP — :math:`z_c \\in \\mathbb{R}^k`
+    when ``d_mode='low_rank'`` and :math:`y_{\\text{alr}, c} \\in \\mathbb{R}^{G-1}`
+    when ``d_mode='learned'``. Summed over the batch, this is the
+    outer-loop objective.
+
+    The joint log-density splits cleanly: a multinomial likelihood
+    on observed counts (with ``log_softmax`` over the augmented full-
+    G logits), plus the prior on the chosen latent. For ``low_rank``
+    the prior is :math:`z \\sim \\mathcal{N}(0, I_k)` (so
+    :math:`-\\tfrac{1}{2} z^\\top z`); for ``learned`` it is
+    :math:`y \\sim \\mathcal{N}(\\mu, W W^\\top + \\mathrm{diag}(d))`
+    (low-rank-plus-diagonal Gaussian via Woodbury).
+    """
+    # Build per-cell ALR logits from whichever latent is in use.
+    if d_mode == "low_rank":
+        # z ∈ ℝ^k → y_alr = mu + W z.
+        y_alr = mu[None, :] + z_or_y @ W.T  # (B, G-1)
+    else:
+        # y_alr ∈ ℝ^{G-1} stored directly.
+        y_alr = z_or_y  # (B, G-1)
+
+    # Multinomial likelihood. Augment to full-G with a zero at the
+    # reference position, log_softmax, then dot with observed counts.
+    leading = y_alr.shape[:-1]
+    full_shape = leading + (n_genes,)
+    full = jnp.zeros(full_shape, dtype=y_alr.dtype)
+    other_idx = jnp.asarray(
+        [g for g in range(n_genes) if g != int(alr_reference_idx)]
+    )
+    full = full.at[..., other_idx].set(y_alr)
+    log_p = jax.nn.log_softmax(full, axis=-1)  # (B, G)
+    multinomial_lp = jnp.sum(counts_batch * log_p, axis=-1)  # (B,)
+
+    # Prior on the latent.
+    if d_mode == "low_rank":
+        # -½ z' z per cell.
+        prior_lp = -0.5 * jnp.sum(z_or_y * z_or_y, axis=-1)
+    else:
+        # MVN(mu, WW' + diag(d)) prior on y_alr. Use Woodbury for the
+        # quadratic form; the log-det is a constant w.r.t. the per-
+        # cell latents but does depend on globals so it goes in.
+        diff = y_alr - mu[None, :]  # (B, G-1)
+        quad = _woodbury_quadform(W, d, diff)  # (B,)
+        log_det_sigma = _woodbury_logdet_sigma(W, d)
+        g_minus1 = mu.shape[0]
+        prior_lp = (
+            -0.5 * quad
+            - 0.5 * log_det_sigma
+            - 0.5 * g_minus1 * jnp.log(2 * jnp.pi)
+        )
+
+    # Laplace correction: -½ log det(-H_c).
+    laplace_corr = -0.5 * log_det_neg_H
+
+    elbo_per_cell = multinomial_lp + prior_lp + laplace_corr
+    return -jnp.sum(elbo_per_cell)
+
+
+def _run_lnm_inference(
+    model_config: ModelConfig,
+    count_data: jnp.ndarray,
+    n_cells: int,
+    n_genes: int,
+    latent_dim: int,
+    laplace_config: LaplaceConfig,
+    seed: int = 42,
+    progress: bool = True,
+    progress_backend: ProgressBackendName = "auto",
+    log_progress_lines: bool = False,
+) -> LaplaceRunResult:
+    """LNM Laplace training loop (encoder-free, variational-EM style).
+
+    Parallel structure to the PLN body in
+    :meth:`LaplaceInferenceEngine.run_inference`, with two key
+    branches selected by ``model_config.d_mode``:
+
+    * ``"low_rank"`` → Newton over per-cell ``z ∈ ℝ^k``. Hessian is
+      ``-H_z = I + W^T M(z) W`` with ``M(z) = N (diag(ρ) - ρρ^T)``.
+      Cost per cell ``O(k³)``, no Woodbury.
+    * ``"learned"`` → Newton over per-cell ``y_alr ∈ ℝ^{G-1}``.
+      Hessian is ``-H_y = M_alr + Σ⁻¹``. Reuses scribe's PLN
+      Woodbury machinery + one Sherman-Morrison step.
+
+    The outer scaffolding (optimizer, mini-batching, progress bar)
+    matches the PLN path. Early stopping and orbax checkpointing
+    are not yet wired for LNM Laplace — they're a small follow-up.
+    The caller can pass an ``early_stopping`` config but it will be
+    silently ignored for now.
+    """
+    # ---- Resolve d_mode (model dictates the kernel branch) ----
+    d_mode = getattr(model_config, "d_mode", "learned") or "learned"
+    if d_mode not in ("low_rank", "learned"):
+        raise ValueError(
+            f"d_mode must be 'low_rank' or 'learned'; got {d_mode!r}."
+        )
+
+    # ---- Resolve ALR reference index (must be set on the config) ----
+    alr_reference_idx = int(
+        getattr(model_config, "alr_reference_idx", -1)
+    )
+    if alr_reference_idx < 0 or alr_reference_idx >= n_genes:
+        raise ValueError(
+            "LNM Laplace needs alr_reference_idx in [0, n_genes); "
+            f"got {alr_reference_idx} for n_genes={n_genes}."
+        )
+
+    counts = jnp.asarray(count_data, dtype=jnp.float32)
+    rng = random.PRNGKey(seed)
+
+    # ---- Total counts per cell (observed) ----
+    n_total_per_cell = counts.sum(axis=-1)  # (n_cells,)
+
+    # ---- Counts in ALR coordinates: drop the reference column ----
+    # ``u_alr`` excludes the reference gene; we still need the full
+    # ``counts`` for the multinomial log-likelihood.
+    keep_mask = jnp.asarray(
+        [g for g in range(n_genes) if g != alr_reference_idx]
+    )
+    u_alr = counts[:, keep_mask]  # (n_cells, G-1)
+    g_minus1 = n_genes - 1
+
+    # ---- Data-driven init of globals (in ALR space) ----
+    # Use per-cell log-proportions to initialise mu (mean ALR logits)
+    # and W (PCA loadings on centered log-proportions).
+    pseudocount = 1.0
+    p_full = (counts + pseudocount) / (
+        n_total_per_cell[:, None] + n_genes * pseudocount
+    )
+    log_p_full_np = np.asarray(jnp.log(p_full))  # (n_cells, G)
+    log_p_alr_np = log_p_full_np[:, np.asarray(keep_mask)] - log_p_full_np[
+        :, alr_reference_idx : alr_reference_idx + 1
+    ]
+    mu_init = jnp.asarray(log_p_alr_np.mean(axis=0), dtype=jnp.float32)
+    centered = log_p_alr_np - log_p_alr_np.mean(axis=0, keepdims=True)
+    # PCA loadings via truncated SVD on centered ALR.
+    U, S, Vt = randomized_svd(
+        centered, n_components=int(latent_dim), random_state=int(seed)
+    )
+    # W has shape (G-1, k); rescale so columns have unit norm * sqrt(S).
+    W_init = jnp.asarray(
+        Vt.T * (S / np.sqrt(max(n_cells - 1, 1))), dtype=jnp.float32
+    )
+    d_log_init = jnp.full((g_minus1,), jnp.log(0.01), dtype=jnp.float32)
+
+    params = {"mu": mu_init, "W": W_init, "d_log": d_log_init}
+
+    # ---- Per-cell latent state (warm-started near a sensible value) ----
+    # For low_rank: warm-start z = 0. For learned: warm-start y_alr = mu
+    # (so the prior pull at step 0 is small and Newton focuses on data).
+    if d_mode == "low_rank":
+        z_loc = jnp.zeros((n_cells, latent_dim), dtype=jnp.float32)
+        y_alr_loc = None
+    else:
+        z_loc = None
+        y_alr_loc = jnp.broadcast_to(
+            mu_init, (n_cells, g_minus1)
+        ).copy()
+
+    # ---- Optimizer ----
+    if laplace_config.optimizer is not None:
+        opt = laplace_config.optimizer
+    else:
+        opt = _build_optax_from_config(laplace_config.optimizer_config)
+    opt_state = opt.init(params)
+
+    # ---- Step function (inner Newton + outer gradient + Adam) ----
+    n_newton = int(laplace_config.n_newton_steps)
+    damping = float(laplace_config.damping)
+    batch_size = laplace_config.batch_size
+    if batch_size is None:
+        batch_size = n_cells
+    batch_size = int(batch_size)
+    data_scale = float(n_cells) / float(batch_size)
+
+    def lnm_loss(
+        params,
+        latent_init,
+        u_alr_batch,
+        n_total_batch,
+        counts_batch,
+    ):
+        """Compute negative Laplace ELBO on a batch of LNM cells.
+
+        Mirrors the PLN ``laplace_loss`` structure: stop_gradient
+        through the inner Newton iterates (envelope-theorem
+        approximation), live globals into the log_det helper so
+        gradients flow into ``W`` and (for learned d_mode) ``d``.
+        """
+        mu, W, d_log = params["mu"], params["W"], params["d_log"]
+        d = jnp.exp(d_log)
+
+        latent_init_sg = jax.lax.stop_gradient(latent_init)
+        mu_sg = jax.lax.stop_gradient(mu)
+        W_sg = jax.lax.stop_gradient(W)
+        d_sg = jax.lax.stop_gradient(d)
+
+        if d_mode == "low_rank":
+            # Newton over z; uses only mu and W (no d).
+            z_new, _gn = laplace_newton_batch_z(
+                latent_init_sg,
+                u_alr_batch,
+                n_total_batch,
+                mu_sg,
+                W_sg,
+                alr_reference_idx,
+                n_genes,
+                n_newton,
+                damping,
+            )
+            z_new = jax.lax.stop_gradient(z_new)
+            log_det = laplace_log_det_neg_H_batch_z(
+                z_new,
+                u_alr_batch,
+                n_total_batch,
+                mu,
+                W,
+                alr_reference_idx,
+                n_genes,
+            )
+            loss = data_scale * _lnm_laplace_elbo(
+                mu,
+                W,
+                d,
+                counts_batch,
+                z_new,
+                log_det,
+                alr_reference_idx,
+                n_genes,
+                d_mode,
+            )
+            return loss, (z_new, _gn)
+        else:
+            # Newton over y_alr; uses mu, W, d.
+            y_new, _gn = laplace_newton_batch_y_alr(
+                latent_init_sg,
+                u_alr_batch,
+                n_total_batch,
+                mu_sg,
+                W_sg,
+                d_sg,
+                alr_reference_idx,
+                n_genes,
+                n_newton,
+                damping,
+            )
+            y_new = jax.lax.stop_gradient(y_new)
+            log_det = laplace_log_det_neg_H_batch_y_alr(
+                y_new,
+                u_alr_batch,
+                n_total_batch,
+                mu,
+                W,
+                d,
+                alr_reference_idx,
+                n_genes,
+            )
+            loss = data_scale * _lnm_laplace_elbo(
+                mu,
+                W,
+                d,
+                counts_batch,
+                y_new,
+                log_det,
+                alr_reference_idx,
+                n_genes,
+                d_mode,
+            )
+            return loss, (y_new, _gn)
+
+    loss_grad_fn = jax.jit(jax.value_and_grad(lnm_loss, has_aux=True))
+
+    @jax.jit
+    def update_step(params, opt_state, latent_loc, idx):
+        u_alr_batch = u_alr[idx]
+        n_total_batch = n_total_per_cell[idx]
+        counts_batch = counts[idx]
+        latent_init_batch = latent_loc[idx]
+
+        (loss, (latent_new, gn)), grads = loss_grad_fn(
+            params,
+            latent_init_batch,
+            u_alr_batch,
+            n_total_batch,
+            counts_batch,
+        )
+        updates, opt_state = opt.update(grads, opt_state, params)
+        params = optax.apply_updates(params, updates)
+        latent_loc = latent_loc.at[idx].set(latent_new)
+        return params, opt_state, latent_loc, gn, loss
+
+    # ---- Outer loop ----
+    n_steps = int(laplace_config.n_steps)
+    losses: List[float] = []
+    rng_step = rng
+    display_interval = max(1, n_steps // 100)
+    init_loss: Optional[float] = None
+    latent_loc = z_loc if d_mode == "low_rank" else y_alr_loc
+
+    progress_reporter = build_progress_reporter(
+        progress=progress, progress_backend=progress_backend
+    )
+    with progress_reporter as reporter:
+        reporter.start(
+            description=f"LNM Laplace ({d_mode})",
+            total=n_steps,
+            completed=0,
+            loss_info="init loss: pending",
+        )
+        for step in range(n_steps):
+            rng_step, subkey = random.split(rng_step)
+            if batch_size >= n_cells:
+                idx = jnp.arange(n_cells)
+            else:
+                idx = random.choice(
+                    subkey, n_cells, shape=(batch_size,), replace=False
+                )
+            params, opt_state, latent_loc, gn, loss = update_step(
+                params, opt_state, latent_loc, idx
+            )
+            loss_val = float(loss)
+            losses.append(loss_val)
+            if init_loss is None:
+                init_loss = loss_val
+
+            step_completed = step + 1
+            should_display = (
+                step == 0
+                or step == n_steps - 1
+                or step_completed % display_interval == 0
+            )
+            if should_display:
+                window_start = max(0, len(losses) - display_interval)
+                avg_loss = _mean_ignoring_nans(losses[window_start:])
+                worst_grad = float(jnp.max(gn))
+                loss_info = (
+                    f"init loss: {init_loss:.4e}, "
+                    f"avg. loss [{window_start + 1}-{len(losses)}]: "
+                    f"{avg_loss:.4e}, "
+                    f"worst Newton grad: {worst_grad:.3e}"
+                )
+                reporter.update(advance=1, loss_info=loss_info)
+                if log_progress_lines:
+                    print(
+                        f"LNM Laplace [{len(losses)}/{n_steps}] "
+                        f"{loss_info}"
+                    )
+            else:
+                reporter.update(advance=1)
+
+    # ---- Final convergence check (full-data Newton sweep) ----
+    mu_f = jax.lax.stop_gradient(params["mu"])
+    W_f = jax.lax.stop_gradient(params["W"])
+    d_f = jax.lax.stop_gradient(jnp.exp(params["d_log"]))
+    if d_mode == "low_rank":
+        latent_final, gn_final = laplace_newton_batch_z(
+            latent_loc,
+            u_alr,
+            n_total_per_cell,
+            mu_f,
+            W_f,
+            alr_reference_idx,
+            n_genes,
+            max(2 * n_newton, 10),
+            damping,
+        )
+        z_loc_final = latent_final
+        y_alr_loc_final = None
+    else:
+        latent_final, gn_final = laplace_newton_batch_y_alr(
+            latent_loc,
+            u_alr,
+            n_total_per_cell,
+            mu_f,
+            W_f,
+            d_f,
+            alr_reference_idx,
+            n_genes,
+            max(2 * n_newton, 10),
+            damping,
+        )
+        z_loc_final = None
+        y_alr_loc_final = latent_final
+
+    # Convergence-action handling.
+    max_gn = float(jnp.max(gn_final))
+    if max_gn > laplace_config.newton_tolerance:
+        offending = int(jnp.sum(gn_final > laplace_config.newton_tolerance))
+        msg = (
+            f"LNM Laplace Newton: {offending}/{n_cells} cells did "
+            f"not converge below tolerance="
+            f"{laplace_config.newton_tolerance:.1e} "
+            f"(worst grad-norm={max_gn:.3e})."
+        )
+        if laplace_config.convergence_action == "raise":
+            raise RuntimeError(msg)
+        elif laplace_config.convergence_action == "warn":
+            logger.warning(msg)
+
+    # ---- Pack the results. ``globals`` carries (mu, W, d_log) on the
+    # ALR-space; the bridge in inference/laplace.py exponentiates
+    # d_log and routes z_loc / y_alr_loc to the right fields on the
+    # single ``ScribeLaplaceResults`` class. ----
+    return LaplaceRunResult(
+        globals=params,
+        # Reuse the ``x_loc``/``eta_loc`` slots conventionally for
+        # PLN; for LNM we attach the per-cell latent under a model-
+        # specific name via the ``model_config`` carry-through. The
+        # bridge unpacks based on base_model.
+        x_loc=z_loc_final if d_mode == "low_rank" else y_alr_loc_final,
+        eta_loc=None,
+        final_grad_norms=gn_final,
+        losses=jnp.asarray(losses, dtype=jnp.float32),
+        n_steps_run=len(losses),
+        model_config=model_config,
+        early_stopped=False,
+        best_loss=float("inf"),
+        stopped_at_step=len(losses),
+    )
 
 
 __all__ = ["LaplaceInferenceEngine", "LaplaceRunResult"]
