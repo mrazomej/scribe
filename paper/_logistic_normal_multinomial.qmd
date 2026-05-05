@@ -1591,7 +1591,7 @@ TruncatedNormal capture prior.
 | Inference for new cells | Single forward pass through encoder | Newton (5--10 iterations per cell) |
 | Per-step compute | Encoder $\to$ decoder $\to$ likelihood | Newton ($O(k^3)$ or $O(G \cdot k + k^3)$ per cell) + outer Adam |
 | Latent dim flexibility | Up to encoder capacity | $k$ for $\mathtt{low\_rank}$, $G-1$ for $\mathtt{learned}$ |
-| LNMVCP capture support | Yes (encoder amortises $p_{\text{capture}}$) | Not yet (joint Newton on $(\underline{z}, p_{\text{capture}})$ is a planned extension) |
+| LNMVCP capture support | Yes (encoder amortises $p_{\text{capture}}$) | Yes — scalar Newton on per-cell $\eta_c$, decoupled from the composition block (block-diagonal Hessian; see @sec-lnm-laplace-full-model) |
 
 The natural use cases are different: the encoder VAE is the right
 choice when the user needs amortised inference (held-out cells,
@@ -1605,6 +1605,7 @@ expression, posterior-uncertainty propagation).
 Activated via:
 
 ```python
+# Plain LNM (no per-cell capture)
 result = scribe.fit(
     adata,
     model="lnm",
@@ -1612,6 +1613,20 @@ result = scribe.fit(
     d_mode="learned",     # or "low_rank" for Variant A
     vae_latent_dim=K,
     n_steps=N,
+    optimizer_config={"name": "clipped_adam",
+                      "step_size": 1e-4,
+                      "grad_clip_norm": 10.0},
+)
+
+# LNMVCP (per-cell capture)
+result = scribe.fit(
+    adata,
+    model="lnmvcp",
+    inference_method="laplace",
+    d_mode="learned",
+    vae_latent_dim=K,
+    n_steps=N,
+    priors={"capture_efficiency": (np.log(M_0), sigma_M)},
     optimizer_config={"name": "clipped_adam",
                       "step_size": 1e-4,
                       "grad_clip_norm": 10.0},
@@ -1625,14 +1640,66 @@ training-loop orchestration in :mod:`scribe.laplace.engine`
 :class:`scribe.laplace.ScribeLaplaceResults` --- the same single
 class used for the PLN Laplace path --- with the per-cell MAP
 populated under either ``z_loc`` (Variant A) or ``y_alr_loc``
-(Variant B), and ``alr_reference_idx`` recording the gauge-fix
-gene.
+(Variant B), ``alr_reference_idx`` recording the gauge-fix gene,
+and (for LNMVCP) ``eta_loc`` and the derived ``p_capture_loc``
+holding the per-cell capture-offset MAP.
 
-LNMVCP capture-anchor support is not yet wired (joint Newton on
-$(\underline{z}_c, p_{\text{capture},c})$ is a straightforward
-extension by analogy with PLN's joint $(\underline{x}_c, \eta_c)$
-Newton, but unimplemented in v1). Users with capture-aware data
-should stay on ``inference_method="vae"`` for ``model="lnmvcp"``.
+#### Full LNM(VCP) generative model {#sec-lnm-laplace-full-model}
+
+The Laplace path fits the full LNM(VCP) generative model from
+@sec-lnm-model, *not* just the conditional composition block.
+Both plain LNM and LNMVCP fit the NB-on-totals globals
+$(r_T, \mu_T)$ via Adam alongside $(\underline{\mu},
+\underline{\underline{W}}, \underline{d})$:
+
+* **Plain LNM:** $u_T^{(c)} \sim \mathrm{NB}(r_T, \mu_T)$. The
+  NB log-likelihood at observed totals contributes a global term
+  to the loss; no per-cell totals latent.
+* **LNMVCP:** $u_T^{(c)} \sim \mathrm{NB}(r_T, \mu_T \cdot
+  \exp(-\eta_c))$ where $\eta_c$ is the per-cell capture-offset
+  latent. The Newton on $\eta_c$ is *scalar* (one-dimensional
+  per cell), and crucially the joint Hessian on
+  $(\underline{z}_c, \eta_c)$ is **block-diagonal**:
+
+  * The multinomial likelihood is $\eta$-independent (it
+    conditions on the observed total $u_T^{(c)}$, so $\eta$ does
+    not enter the multinomial log-pmf).
+  * The NB-on-totals likelihood is $\underline{z}$-independent.
+
+  So the off-diagonal Hessian block is exactly zero, and the
+  per-cell Newton factorises into two independent solves: the
+  composition block (Newton on $\underline{z}$ or
+  $\underline{y}$, identical to plain LNM) and the scalar
+  $\eta$ block. The Laplace correction's log-determinant
+  factorises additively:
+
+  $$
+  \log\det(-\underline{\underline{H}}_c) =
+  \log\det(-\underline{\underline{H}}_{\text{comp}, c})
+  + \log(-H_{\eta\eta, c}).
+  $${#eq-lnm-laplace-blockdiag-logdet}
+
+  This is much simpler than PLN's coupled $(\underline{x}_c,
+  \eta_c)$ Newton (which requires Schur-complement back-
+  substitution and Sherman-Morrison) because the LNM
+  multinomial decouples totals from composition by
+  construction.
+
+#### NB parameterization choice {#sec-lnm-laplace-nb-param}
+
+The Laplace engine uses the **mean-NB parameterization**
+($\mathrm{NegativeBinomial2(\text{mean}=\mu_T,
+\text{concentration}=r_T)}$) for the totals submodel,
+regardless of which of canonical / mean_prob / mean_odds the
+user requested at ``scribe.fit`` time. The three NB
+parameterizations are mathematically equivalent --- they
+differ only in which of $(r, p, \mu, \phi)$ is the *sampled*
+parameter and which are derived --- so the fitted predictive
+distribution is identical across choices. The mean-NB form is
+the most natural for variational EM because it puts the mean
+directly in the optimised parameter space, sidestepping the
+log-odds vs log-mean numerical-conditioning trade-offs that
+matter for the encoder VAE path.
 
 ## Equivalence to a linear-decoder VAE {#sec-lnm-linear-vae-equivalence}
 

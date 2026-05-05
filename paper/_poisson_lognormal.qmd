@@ -152,7 +152,7 @@ differ in the observation layer:
 | Total count | Separate NB model for $u_T$ | Emergent: $u_T = \sum_g u_g$ |
 | Scale information | Lost (softmax normalizes) | Retained in $\underline{\mu}$ |
 | Reference gene | Required (ALR reference) | Not needed |
-| Posterior geometry | Non-log-concave | Log-concave |
+| Posterior geometry | Log-concave but with a near-flat ridge along $\mathbf{1}$ (gauge-fixed by the ALR reference; see [@sec-pln-log-concavity] for the corrected discussion) | Log-concave (no softmax invariance) |
 
 An important conceptual connection: the marginal compositions $\rho_g = u_g /
 \sum_j u_j$ under the PLN are approximately logistic-normal. This follows
