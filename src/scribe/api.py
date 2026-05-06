@@ -347,6 +347,16 @@ def fit(
         Union["KLAnnealingConfig", Dict[str, Any], bool]
     ] = None,
     kl_annealing_warmup: Optional[int] = None,
+    # Laplace-specific overrides — accepts a dict of ``LaplaceConfig``
+    # field overrides (e.g. ``{"n_newton_steps": 15, "damping": 1e-3,
+    # "newton_tolerance": 1e-3}``) or a fully-built ``LaplaceConfig``
+    # instance. Top-level kwargs (n_steps, batch_size, optimizer_config,
+    # early_stopping, restore_best, log_progress_lines) populate the
+    # corresponding fields of the resulting LaplaceConfig; anything in
+    # ``laplace_config`` overrides those defaults. Useful for tuning
+    # the inner Newton (n_newton_steps, damping, newton_tolerance,
+    # convergence_action) without polluting the top-level signature.
+    laplace_config: Optional[Union["LaplaceConfig", Dict[str, Any]]] = None,
     # Data options
     cells_axis: int = 0,
     layer: Optional[str] = None,
@@ -2213,7 +2223,15 @@ def fit(
                     "term to anneal). Ignoring.",
                     UserWarning,
                 )
-            laplace_config = LaplaceConfig(
+
+            # Resolve ``laplace_config``: top-level kwargs populate
+            # the LaplaceConfig defaults, and ``laplace_config``
+            # (when provided) overrides any of those defaults.
+            #   * dict  → merged onto the top-level-derived defaults.
+            #   * LaplaceConfig → used directly (top-level kwargs
+            #     are ignored unless they were already encoded into
+            #     the passed-in instance).
+            _base_laplace_kwargs = dict(
                 n_steps=n_steps,
                 batch_size=effective_batch_size,
                 optimizer_config=optimizer_config,
@@ -2221,7 +2239,25 @@ def fit(
                 restore_best=restore_best,
                 log_progress_lines=log_progress_lines,
             )
-            inference_config = InferenceConfig.from_laplace(laplace_config)
+            if laplace_config is None:
+                _resolved_laplace_config = LaplaceConfig(
+                    **_base_laplace_kwargs
+                )
+            elif isinstance(laplace_config, LaplaceConfig):
+                _resolved_laplace_config = laplace_config
+            elif isinstance(laplace_config, dict):
+                # Merge: top-level defaults underneath, dict on top.
+                _merged = {**_base_laplace_kwargs, **laplace_config}
+                _resolved_laplace_config = LaplaceConfig(**_merged)
+            else:
+                raise TypeError(
+                    "laplace_config must be a dict of overrides, a "
+                    "LaplaceConfig instance, or None; got "
+                    f"{type(laplace_config).__name__}."
+                )
+            inference_config = InferenceConfig.from_laplace(
+                _resolved_laplace_config
+            )
         else:
             raise ValueError(f"Unknown inference method: {method}")
     else:

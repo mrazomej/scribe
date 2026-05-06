@@ -788,9 +788,7 @@ class LaplaceInferenceEngine:
             progress_backend=progress_backend,
         )
         with progress_reporter as reporter:
-            init_loss_display = (
-                f"{losses[0]:.4e}" if losses else "pending"
-            )
+            init_loss_display = f"{losses[0]:.4e}" if losses else "pending"
             reporter.start(
                 description=(
                     "Laplace optimization" + (" (resumed)" if resumed else "")
@@ -878,14 +876,11 @@ class LaplaceInferenceEngine:
                     window_start = max(
                         0, len(losses) - early_stopping.smoothing_window
                     )
-                    smoothed_loss = _mean_ignoring_nans(
-                        losses[window_start:]
-                    )
+                    smoothed_loss = _mean_ignoring_nans(losses[window_start:])
 
                     past_warmup = step >= early_stopping.warmup
                     should_track = past_warmup and (
-                        early_stopping.enabled
-                        or early_stopping.restore_best
+                        early_stopping.enabled or early_stopping.restore_best
                     )
 
                     if should_track:
@@ -909,9 +904,7 @@ class LaplaceInferenceEngine:
                             improvement = best_loss - smoothed_loss
                             if early_stopping.min_delta_pct is not None:
                                 denom = max(abs(best_loss), eps)
-                                improvement_pct = (
-                                    100.0 * improvement / denom
-                                )
+                                improvement_pct = 100.0 * improvement / denom
                                 is_improvement = (
                                     improvement_pct
                                     > early_stopping.min_delta_pct
@@ -933,9 +926,7 @@ class LaplaceInferenceEngine:
                                     }
                                 patience_counter = 0
                             else:
-                                patience_counter += (
-                                    early_stopping.check_every
-                                )
+                                patience_counter += early_stopping.check_every
 
                     # Save checkpoint at fixed intervals (independent of
                     # whether the loss improved) so long-running fits
@@ -1185,9 +1176,7 @@ def _run_lnm_inference(
         )
 
     # ---- Resolve ALR reference index (must be set on the config) ----
-    alr_reference_idx = int(
-        getattr(model_config, "alr_reference_idx", -1)
-    )
+    alr_reference_idx = int(getattr(model_config, "alr_reference_idx", -1))
     if alr_reference_idx < 0 or alr_reference_idx >= n_genes:
         raise ValueError(
             "LNM Laplace needs alr_reference_idx in [0, n_genes); "
@@ -1217,9 +1206,10 @@ def _run_lnm_inference(
         n_total_per_cell[:, None] + n_genes * pseudocount
     )
     log_p_full_np = np.asarray(jnp.log(p_full))  # (n_cells, G)
-    log_p_alr_np = log_p_full_np[:, np.asarray(keep_mask)] - log_p_full_np[
-        :, alr_reference_idx : alr_reference_idx + 1
-    ]
+    log_p_alr_np = (
+        log_p_full_np[:, np.asarray(keep_mask)]
+        - log_p_full_np[:, alr_reference_idx : alr_reference_idx + 1]
+    )
     mu_init = jnp.asarray(log_p_alr_np.mean(axis=0), dtype=jnp.float32)
     centered = log_p_alr_np - log_p_alr_np.mean(axis=0, keepdims=True)
     # PCA loadings via truncated SVD on centered ALR.
@@ -1273,9 +1263,7 @@ def _run_lnm_inference(
         y_alr_loc = None
     else:
         z_loc = None
-        y_alr_loc = jnp.broadcast_to(
-            mu_init, (n_cells, g_minus1)
-        ).copy()
+        y_alr_loc = jnp.broadcast_to(mu_init, (n_cells, g_minus1)).copy()
 
     # ---- Capture-anchor per-cell state (LNMVCP only) ----
     # eta_anchor_c = log(M_0) - log(L_c) is the per-cell prior mean
@@ -1416,6 +1404,7 @@ def _run_lnm_inference(
         # Both contribute a NB log-likelihood term to the loss; only
         # the LNMVCP path additionally adds the η Laplace correction.
         from jax.scipy.special import gammaln
+
         mu_T = jnp.exp(params["log_mu_T"])
         r_T = jnp.exp(params["log_r_T"])
 
@@ -1443,7 +1432,8 @@ def _run_lnm_inference(
             rate_T = mu_T * exp_neg_eta  # per-cell NB mean
             v = r_T + rate_T
             nb_lp = (
-                gammaln(n_total_batch + r_T) - gammaln(r_T)
+                gammaln(n_total_batch + r_T)
+                - gammaln(r_T)
                 + r_T * jnp.log(r_T / v)
                 + n_total_batch * jnp.log(rate_T / v)
             )
@@ -1470,7 +1460,8 @@ def _run_lnm_inference(
             # Laplace correction.
             v = r_T + mu_T
             nb_lp = (
-                gammaln(n_total_batch + r_T) - gammaln(r_T)
+                gammaln(n_total_batch + r_T)
+                - gammaln(r_T)
                 + r_T * jnp.log(r_T / v)
                 + n_total_batch * jnp.log(mu_T / v)
             )
@@ -1479,8 +1470,12 @@ def _run_lnm_inference(
             _gn_eta = jnp.zeros_like(gn_comp)
 
         loss = comp_loss + totals_loss
+        # Return per-block grad norms separately so the engine can
+        # surface them in the progress bar — when the composition
+        # block stalls but η converges (or vice versa), the user
+        # sees which one needs more Newton iterations.
         gn = jnp.maximum(gn_comp, _gn_eta)
-        return loss, (latent_new, eta_new, gn)
+        return loss, (latent_new, eta_new, gn, gn_comp, _gn_eta)
 
     loss_grad_fn = jax.jit(jax.value_and_grad(lnm_loss, has_aux=True))
 
@@ -1498,21 +1493,32 @@ def _run_lnm_inference(
             eta_init_batch = jnp.zeros(idx.shape[0], dtype=jnp.float32)
             eta_anchor_batch = jnp.zeros(idx.shape[0], dtype=jnp.float32)
 
-        (loss, (latent_new, eta_new, gn)), grads = loss_grad_fn(
-            params,
-            latent_init_batch,
-            eta_init_batch,
-            eta_anchor_batch,
-            u_alr_batch,
-            n_total_batch,
-            counts_batch,
+        (loss, (latent_new, eta_new, gn, gn_comp, gn_eta)), grads = (
+            loss_grad_fn(
+                params,
+                latent_init_batch,
+                eta_init_batch,
+                eta_anchor_batch,
+                u_alr_batch,
+                n_total_batch,
+                counts_batch,
+            )
         )
         updates, opt_state = opt.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
         latent_loc = latent_loc.at[idx].set(latent_new)
         if eta_loc_arg is not None:
             eta_loc_arg = eta_loc_arg.at[idx].set(eta_new)
-        return params, opt_state, latent_loc, eta_loc_arg, gn, loss
+        return (
+            params,
+            opt_state,
+            latent_loc,
+            eta_loc_arg,
+            gn,
+            gn_comp,
+            gn_eta,
+            loss,
+        )
 
     # ---- Outer loop ----
     n_steps = int(laplace_config.n_steps)
@@ -1541,9 +1547,16 @@ def _run_lnm_inference(
                 idx = random.choice(
                     subkey, n_cells, shape=(batch_size,), replace=False
                 )
-            params, opt_state, latent_loc, eta_loc, gn, loss = update_step(
-                params, opt_state, latent_loc, eta_loc, idx
-            )
+            (
+                params,
+                opt_state,
+                latent_loc,
+                eta_loc,
+                gn,
+                gn_comp,
+                gn_eta,
+                loss,
+            ) = update_step(params, opt_state, latent_loc, eta_loc, idx)
             loss_val = float(loss)
             losses.append(loss_val)
             if init_loss is None:
@@ -1559,17 +1572,31 @@ def _run_lnm_inference(
                 window_start = max(0, len(losses) - display_interval)
                 avg_loss = _mean_ignoring_nans(losses[window_start:])
                 worst_grad = float(jnp.max(gn))
+                worst_grad_comp = float(jnp.max(gn_comp))
+                # Show per-block grads for LNMVCP so the user can
+                # tell which block is slow to converge. For PLN the
+                # PLN engine has its own progress display; for plain
+                # LNM the η block is unused so just show the
+                # composition norm.
+                if capture_anchor is not None:
+                    worst_grad_eta = float(jnp.max(gn_eta))
+                    grad_info = (
+                        f"worst Newton grad: {worst_grad:.3e} "
+                        f"(comp={worst_grad_comp:.3e}, "
+                        f"η={worst_grad_eta:.3e})"
+                    )
+                else:
+                    grad_info = f"worst Newton grad: {worst_grad_comp:.3e}"
                 loss_info = (
                     f"init loss: {init_loss:.4e}, "
                     f"avg. loss [{window_start + 1}-{len(losses)}]: "
                     f"{avg_loss:.4e}, "
-                    f"worst Newton grad: {worst_grad:.3e}"
+                    f"{grad_info}"
                 )
                 reporter.update(advance=1, loss_info=loss_info)
                 if log_progress_lines:
                     print(
-                        f"LNM Laplace [{len(losses)}/{n_steps}] "
-                        f"{loss_info}"
+                        f"LNM Laplace [{len(losses)}/{n_steps}] " f"{loss_info}"
                     )
             else:
                 reporter.update(advance=1)
