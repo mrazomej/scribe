@@ -96,6 +96,36 @@ def _mean_ignoring_nans(values) -> float:
     return float(arr[mask].mean())
 
 
+def _grad_summary(gn_arr: jnp.ndarray) -> Tuple[float, float, float]:
+    """Return ``(max, p99, median)`` of a per-cell gradient-norm array.
+
+    Used for the progress-bar display so users can distinguish two
+    qualitatively different convergence patterns:
+
+    * **Healthy** — most cells converged (``median`` ≪ tolerance),
+      a few outliers in the tail (``max`` and ``p99`` larger but
+      shrinking over training). The L∞ ``max`` is the most
+      conservative reading; ``p99`` says "if you ignore the worst
+      1% of cells, this is your tail"; ``median`` reflects the
+      typical cell.
+    * **Stalled** — ``median`` plateaus *and* ``max`` doesn't trend
+      down. Indicates a real convergence problem (Hessian
+      conditioning, step-size cap, etc.) rather than a few
+      outlier cells.
+
+    Reading per-block: when the LNMVCP engine logs composition and
+    η blocks separately, ``η`` should land at ~1e-6 across all
+    summaries (scalar Newton on a strictly log-concave 1D problem,
+    converges to float precision in a few iterations). Composition
+    is where the interesting variability lives.
+    """
+    return (
+        float(jnp.max(gn_arr)),
+        float(jnp.percentile(gn_arr, 99)),
+        float(jnp.median(gn_arr)),
+    )
+
+
 # =====================================================================
 # Optimizer resolution
 # =====================================================================
@@ -839,22 +869,22 @@ class LaplaceInferenceEngine:
                     avg_loss = _mean_ignoring_nans(
                         losses[window_start:window_end]
                     )
-                    worst_grad = float(jnp.max(gn))
+                    # Per-cell Newton-grad-norm summary; same format
+                    # as the LNM engine: max / p99 / median.
+                    pln_max, pln_p99, pln_med = _grad_summary(gn)
                     loss_info = (
                         f"init loss: {init_loss:.4e}, "
                         f"avg. loss [{window_start + 1}-{window_end}]: "
                         f"{avg_loss:.4e}, "
-                        f"worst Newton grad: {worst_grad:.3e}"
+                        f"Newton grad max/p99/med "
+                        f"{pln_max:.2e}/{pln_p99:.2e}/{pln_med:.2e}"
                     )
                     reporter.update(advance=1, loss_info=loss_info)
                     if log_progress_lines:
                         print(
                             "Laplace progress "
                             f"[{window_end}/{n_steps}] "
-                            f"init loss: {init_loss:.4e}, "
-                            f"avg. loss [{window_start + 1}-{window_end}]: "
-                            f"{avg_loss:.4e}, "
-                            f"worst Newton grad: {worst_grad:.3e}"
+                            f"{loss_info}"
                         )
                 else:
                     reporter.update(advance=1)
@@ -1571,22 +1601,31 @@ def _run_lnm_inference(
             if should_display:
                 window_start = max(0, len(losses) - display_interval)
                 avg_loss = _mean_ignoring_nans(losses[window_start:])
-                worst_grad = float(jnp.max(gn))
-                worst_grad_comp = float(jnp.max(gn_comp))
-                # Show per-block grads for LNMVCP so the user can
-                # tell which block is slow to converge. For PLN the
-                # PLN engine has its own progress display; for plain
-                # LNM the η block is unused so just show the
-                # composition norm.
+                # Per-block max / p99 / median Newton-grad-norm
+                # summary. Reading the three numbers together:
+                #   * median: the typical cell — should be small
+                #     (well below newton_tolerance) on a healthy fit.
+                #   * p99: the 1% worst cells — informative because
+                #     L∞ ``max`` can be dominated by a single
+                #     outlier cell while p99 reflects the broader
+                #     tail.
+                #   * max: the strict L∞ across cells — the most
+                #     conservative reading, used for the
+                #     ``convergence_action`` warning at the end.
+                comp_max, comp_p99, comp_med = _grad_summary(gn_comp)
                 if capture_anchor is not None:
-                    worst_grad_eta = float(jnp.max(gn_eta))
+                    eta_max, eta_p99, eta_med = _grad_summary(gn_eta)
                     grad_info = (
-                        f"worst Newton grad: {worst_grad:.3e} "
-                        f"(comp={worst_grad_comp:.3e}, "
-                        f"η={worst_grad_eta:.3e})"
+                        f"comp max/p99/med "
+                        f"{comp_max:.2e}/{comp_p99:.2e}/{comp_med:.2e}; "
+                        f"η max/p99/med "
+                        f"{eta_max:.2e}/{eta_p99:.2e}/{eta_med:.2e}"
                     )
                 else:
-                    grad_info = f"worst Newton grad: {worst_grad_comp:.3e}"
+                    grad_info = (
+                        f"Newton grad max/p99/med "
+                        f"{comp_max:.2e}/{comp_p99:.2e}/{comp_med:.2e}"
+                    )
                 loss_info = (
                     f"init loss: {init_loss:.4e}, "
                     f"avg. loss [{window_start + 1}-{len(losses)}]: "
