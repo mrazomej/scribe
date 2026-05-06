@@ -580,3 +580,123 @@ def _get_training_diagnostic_payload(results):
         payload["trace_by_chain"] = None
         payload["trace_param_name"] = None
     return payload
+
+
+# =====================================================================
+# Laplace-result registrations
+# =====================================================================
+#
+# The dispatch table is keyed by *result class*, so adding a new
+# inference path (Laplace) requires explicit registrations of every
+# helper the viz layer uses. Without these, callers like
+# ``scribe.viz.plot_loss(laplace_result)`` raise
+# ``NotImplementedError``. The registrations below mirror the
+# Variational/MCMC versions semantically, adapted to the
+# Laplace-specific shape of state on ``ScribeLaplaceResults``.
+
+
+@dispatch(scribe.ScribeLaplaceResults, object)
+def _get_inference_metadata_for_filenames(results, cfg):
+    """Filename metadata for Laplace runs.
+
+    Mirrors the SVI implementation but uses ``laplace_config`` /
+    inference-config plumbing the user passed to ``scribe.fit``.
+    Falls back to ``cfg.get("n_steps", 50000)`` when the higher-
+    level config object isn't structured.
+    """
+    if hasattr(cfg, "inference") and hasattr(cfg.inference, "n_steps"):
+        n_steps = cfg.inference.n_steps
+    else:
+        n_steps = cfg.get("n_steps", 50000)
+    return {
+        "run_size_value": int(n_steps),
+        "run_size_label": "steps",
+        "run_size_token": f"{int(n_steps)}steps_laplace",
+        "n_steps": int(n_steps),
+    }
+
+
+@dispatch(scribe.ScribeLaplaceResults)
+def _get_training_diagnostic_payload(results):
+    """Build training diagnostics payload for Laplace loss plots.
+
+    Laplace produces a per-step negative-ELBO loss curve identical
+    in shape to SVI's, so the payload format matches SVI's. The
+    plot_loss helper consumes ``loss_history`` as a numpy array.
+    """
+    return {
+        "plot_kind": "loss",
+        "loss_history": np.array(results.losses),
+    }
+
+
+@dispatch(scribe.ScribeLaplaceResults)
+def _get_map_estimates_for_plot(
+    results, *, counts=None, use_mean=True, targets=None
+):
+    """Get plot-ready MAP estimates from Laplace results.
+
+    Laplace results store a literal MAP (no posterior to take a
+    mean over), so ``use_mean`` is ignored. ``targets`` and
+    ``counts`` are accepted for signature parity with the
+    variational dispatch but currently ignored — the Laplace
+    ``get_map`` returns a fixed dict of point estimates that
+    downstream callers (mean-calibration, MAP plots) handle
+    directly.
+    """
+    _ = counts
+    _ = use_mean
+    _ = targets
+    return results.get_map()
+
+
+@dispatch(scribe.ScribeLaplaceResults)
+def _get_layouts_for_plot(results) -> dict[str, "AxisLayout"]:
+    """Layout metadata for Laplace results.
+
+    Laplace results don't carry a per-cell ``layouts`` dict the way
+    SVI/MCMC do — the per-cell state is typed dataclass fields
+    rather than NumPyro-named samples. For viz callers that ask
+    for layouts, return an empty dict; the plotting helpers we've
+    wired (loss + PPC) don't actually consult layouts.
+
+    If a future plot helper does need layouts, it should be
+    extended to read shapes directly from the typed
+    ``ScribeLaplaceResults`` slots.
+    """
+    return {}
+
+
+@dispatch(scribe.ScribeLaplaceResults)
+def _get_map_like_predictive_samples_for_plot(
+    results,
+    *,
+    rng_key,
+    n_samples,
+    cell_batch_size=None,
+    use_mean=True,
+    store_samples=False,
+    verbose=True,
+    counts=None,
+):
+    """MAP-based predictive samples for Laplace plotting.
+
+    Laplace already stores per-cell MAP estimates, so "MAP-based"
+    PPC is identical to the standard per-cell PPC: sample from
+    ``Multinomial(L_c, softmax(mu + W z_c*))`` (LNM) or
+    ``Poisson(exp(x_c* - eta_c*))`` (PLN) using the stored MAP.
+    We forward to ``get_per_cell_predictive_samples`` which
+    handles both model branches via ``model_config.base_model``
+    dispatch.
+    """
+    _ = cell_batch_size
+    _ = use_mean
+    _ = store_samples
+    _ = verbose
+    return np.array(
+        results.get_per_cell_predictive_samples(
+            rng_key=rng_key,
+            n_samples=int(n_samples) if n_samples is not None else 100,
+            counts=counts,
+        )
+    )
