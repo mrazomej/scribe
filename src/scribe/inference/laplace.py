@@ -145,6 +145,7 @@ def _run_laplace_inference(
         early_stopped=run_result.early_stopped,
         best_loss=run_result.best_loss,
         stopped_at_step=run_result.stopped_at_step,
+        divergence_aborted=run_result.divergence_aborted,
     )
 
     # Populate NB-on-totals globals when the LNM family fitted them

@@ -221,6 +221,15 @@ class ScribeLaplaceResults:
     early_stopped: bool = False
     best_loss: float = float("inf")
     stopped_at_step: int = 0
+    # True when the run aborted early because the divergence
+    # detector tripped (the loss climbed sustainedly from its
+    # running minimum). The result still carries a usable fit:
+    # the engine restores the best snapshot from before the
+    # divergence before constructing the result. Programmatic
+    # callers can branch on this field to retry with tighter
+    # ``LaplaceConfig`` knobs (n_newton_steps, damping) or
+    # accept the partial result.
+    divergence_aborted: bool = False
 
     # --- Subset-bookkeeping (populated only by __getitem__) ---
     _subset_gene_index: Optional[np.ndarray] = None

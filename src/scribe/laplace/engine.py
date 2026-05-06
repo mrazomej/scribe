@@ -275,6 +275,13 @@ class LaplaceRunResult:
     early_stopped: bool = False
     best_loss: float = float("inf")
     stopped_at_step: int = 0
+    # Set when the divergence detector aborts the outer loop. The
+    # returned result then carries the *best snapshot so far* (the
+    # globals + per-cell MAPs at the step where the running-minimum
+    # loss was reached), not the diverged state. Lets the user
+    # inspect a usable fit and decide whether to retry with tighter
+    # config or accept the partial result.
+    divergence_aborted: bool = False
 
 
 # =====================================================================
@@ -784,6 +791,22 @@ class LaplaceInferenceEngine:
         # the first finite loss is observed (the ``np.isfinite``
         # guard in the check itself bypasses ``inf``).
         min_loss_so_far: float = float("inf")
+        # Best-snapshot tracking for graceful divergence recovery.
+        # Records (params, x_loc, eta_loc) at every new running-
+        # minimum loss so we can restore that snapshot if the
+        # divergence detector aborts the loop. Independent of the
+        # existing ``early_stopping.restore_best`` mechanism — the
+        # divergence path always tracks a snapshot regardless of
+        # config so ``result.divergence_aborted`` users still get a
+        # usable fit.
+        best_params_div: Dict[str, jnp.ndarray] = {
+            k: v for k, v in params.items()
+        }
+        best_x_loc_div = x_loc
+        best_eta_loc_div = eta_loc
+        best_step_idx: int = -1
+        best_loss_value: float = float("inf")
+        divergence_aborted: bool = False
 
         # --------------------------------------------------------------
         # Early-stopping / checkpointing setup. Mirrors the SVI engine.
@@ -932,21 +955,49 @@ class LaplaceInferenceEngine:
                 #   2. ``loss`` climbs from running minimum by
                 #      > 0.5 × |init_loss| (primary detector).
                 #   3. |loss| > 1000× |init_loss| (hard backstop).
-                if not np.isfinite(loss_val):
+                # Helper closure: log a warning, mark divergence,
+                # and break. The post-loop block restores the best
+                # snapshot and continues to result construction so
+                # the user gets a usable ScribeLaplaceResults
+                # instead of a thrown error.
+                def _trigger_pln_divergence_abort(reason: str) -> None:
+                    nonlocal divergence_aborted
                     worst_cell_grad = float(jnp.max(gn))
-                    raise RuntimeError(
-                        f"PLN Laplace loss became non-finite at step "
-                        f"{step + 1}: loss={loss_val}. Most likely "
-                        "cause: one or more cells whose joint "
-                        "(x, η) Newton has diverged (worst Newton "
-                        f"grad this step = {worst_cell_grad:.3e}). "
-                        "Try (a) increasing "
+                    if best_step_idx >= 0:
+                        snapshot_msg = (
+                            f"Restoring best snapshot from step "
+                            f"{best_step_idx + 1} (best loss="
+                            f"{best_loss_value:.3e}; init loss="
+                            f"{init_loss:.3e})."
+                        )
+                    else:
+                        snapshot_msg = (
+                            "No improved snapshot was recorded "
+                            "before the divergence — the result "
+                            "reflects the data-driven init."
+                        )
+                    logger.warning(
+                        f"PLN Laplace divergence detected at step "
+                        f"{step + 1}: {reason} (worst Newton grad="
+                        f"{worst_cell_grad:.3e}). {snapshot_msg} "
+                        "The returned result has "
+                        "``divergence_aborted=True``. To avoid "
+                        "divergence next time, try (a) increasing "
                         "laplace_config['n_newton_steps'] to 20-30, "
-                        "(b) tightening laplace_config['damping'] "
-                        "to 1e-3 or below, or (c) pre-filtering "
-                        "cells with extreme total counts before "
-                        "fitting."
+                        "(b) tightening "
+                        "laplace_config['damping'] to 1e-3 or "
+                        "below, or (c) pre-filtering cells with "
+                        "extreme total counts before fitting. "
+                        "``result.final_grad_norms`` identifies "
+                        "offending cells in the returned result."
                     )
+                    divergence_aborted = True
+
+                if not np.isfinite(loss_val):
+                    _trigger_pln_divergence_abort(
+                        f"loss became non-finite (loss={loss_val})"
+                    )
+                    break
                 if (
                     init_loss is not None
                     and len(losses) > 50
@@ -955,40 +1006,26 @@ class LaplaceInferenceEngine:
                     and (loss_val - min_loss_so_far)
                     > 0.5 * abs(init_loss)
                 ):
-                    worst_cell_grad = float(jnp.max(gn))
-                    raise RuntimeError(
-                        f"PLN Laplace loss climbing (divergence "
-                        f"detected) at step {step + 1}: loss="
-                        f"{loss_val:.3e} has increased by "
+                    _trigger_pln_divergence_abort(
+                        f"loss={loss_val:.3e} climbed by "
                         f"{(loss_val - min_loss_so_far):.3e} from "
                         f"the running minimum "
                         f"{min_loss_so_far:.3e}, which exceeds "
                         f"0.5 × |init_loss|="
-                        f"{0.5 * abs(init_loss):.3e}. Variational "
-                        "EM loss should monotonically decrease; a "
-                        "sustained climb signals one or more cells "
-                        "contaminating the global gradient (worst "
-                        f"Newton grad={worst_cell_grad:.3e}). Try "
-                        "(a) increasing "
-                        "laplace_config['n_newton_steps'] to 20-30, "
-                        "(b) tightening laplace_config['damping'] "
-                        "to 1e-3 or below, or (c) pre-filtering "
-                        "cells with extreme total counts."
+                        f"{0.5 * abs(init_loss):.3e}"
                     )
+                    break
                 if (
                     init_loss is not None
                     and len(losses) > 50
                     and np.isfinite(init_loss)
                     and abs(loss_val) > 1e3 * abs(init_loss)
                 ):
-                    worst_cell_grad = float(jnp.max(gn))
-                    raise RuntimeError(
-                        f"PLN Laplace loss diverged at step "
-                        f"{step + 1}: |loss|={abs(loss_val):.3e} "
-                        f"grew >1000× from |init_loss|="
-                        f"{abs(init_loss):.3e}. See above for "
-                        "remediations."
+                    _trigger_pln_divergence_abort(
+                        f"|loss|={abs(loss_val):.3e} grew >1000× "
+                        f"from |init_loss|={abs(init_loss):.3e}"
                     )
+                    break
 
                 losses.append(loss_val)
                 if init_loss is None:
@@ -996,6 +1033,22 @@ class LaplaceInferenceEngine:
                     min_loss_so_far = loss_val
                 else:
                     min_loss_so_far = min(min_loss_so_far, loss_val)
+
+                # Best-snapshot tracking for graceful divergence
+                # recovery. Snapshot whenever this step pushed the
+                # running minimum down. Independent of (and
+                # composes with) the existing
+                # ``early_stopping.restore_best`` mechanism.
+                if (
+                    np.isfinite(loss_val)
+                    and loss_val == min_loss_so_far
+                    and loss_val < best_loss_value
+                ):
+                    best_loss_value = loss_val
+                    best_params_div = {k: v for k, v in params.items()}
+                    best_x_loc_div = x_loc
+                    best_eta_loc_div = eta_loc
+                    best_step_idx = step
 
                 # Refresh the displayed loss-info every
                 # ``display_interval`` steps, matching SVI's format
@@ -1179,6 +1232,25 @@ class LaplaceInferenceEngine:
                     best_loss,
                 )
 
+        # ---- Divergence recovery ----
+        # If the divergence detector fired, override with the best
+        # snapshot recorded during the run (independent of
+        # ``early_stopping.restore_best`` so divergence is always
+        # recoverable when there's a meaningful pre-divergence
+        # minimum). The divergence-detector's warning has already
+        # been emitted; the post-restore step below logs the
+        # recovery so users can grep for it in their training logs.
+        if divergence_aborted and best_step_idx >= 0:
+            params = best_params_div
+            x_loc = best_x_loc_div
+            eta_loc = best_eta_loc_div
+            logger.warning(
+                "Restored best PLN Laplace snapshot from step "
+                "%d (best loss: %.4e) after divergence-aborted run.",
+                best_step_idx + 1,
+                best_loss_value,
+            )
+
         # ---- Final convergence check ----
         # Run one more Newton pass over ALL cells to capture the
         # final gradient norms used for diagnostics. Uses whichever
@@ -1238,9 +1310,10 @@ class LaplaceInferenceEngine:
             losses=jnp.asarray(losses, dtype=jnp.float32),
             n_steps_run=len(losses),
             model_config=model_config,
-            early_stopped=early_stopped,
+            early_stopped=early_stopped or divergence_aborted,
             best_loss=best_loss,
             stopped_at_step=len(losses),
+            divergence_aborted=divergence_aborted,
         )
 
 
@@ -1739,6 +1812,22 @@ def _run_lnm_inference(
     min_loss_so_far: float = float("inf")
     latent_loc = z_loc if d_mode == "low_rank" else y_alr_loc
 
+    # ---- Best-snapshot tracking ----
+    # When the divergence detector aborts the outer loop, we want
+    # to return the *best fit found so far*, not the diverged
+    # state. Snapshot ``params``, ``latent_loc``, and ``eta_loc``
+    # at every new running-minimum loss. Storing references is safe
+    # because every update produces NEW JAX arrays (params via
+    # optax.apply_updates, latent_loc via .at[idx].set, eta_loc
+    # similarly) — the old arrays stay alive for as long as the
+    # snapshot dict references them.
+    best_params: Dict[str, jnp.ndarray] = {k: v for k, v in params.items()}
+    best_latent_loc = latent_loc
+    best_eta_loc = eta_loc
+    best_step_idx: int = -1
+    best_loss_value: float = float("inf")
+    divergence_aborted: bool = False
+
     progress_reporter = build_progress_reporter(
         progress=progress, progress_backend=progress_backend
     )
@@ -1790,21 +1879,50 @@ def _run_lnm_inference(
             #      kept as a hard backstop for the case where the
             #      loss crosses 0 and balloons in a single step
             #      faster than the climb-from-min check can react.
-            if not np.isfinite(loss_val):
+            # Helper: gracefully abort by restoring the best
+            # snapshot, logging a constructive warning, and
+            # breaking out of the loop. Replaces a previous
+            # ``raise RuntimeError`` that threw away the best fit
+            # found so far — even when training had reached a
+            # *better* minimum than the init loss before
+            # diverging.
+            def _trigger_divergence_abort(reason: str) -> None:
+                nonlocal divergence_aborted
                 worst_cell_grad = float(jnp.max(gn_comp))
-                raise RuntimeError(
-                    f"LNM Laplace loss became non-finite at step "
-                    f"{step + 1}: loss={loss_val}. Most likely cause: "
-                    "one or more cells whose per-cell Newton has "
-                    "diverged (worst comp grad this step = "
-                    f"{worst_cell_grad:.3e}). Try (a) increasing "
+                if best_step_idx >= 0:
+                    snapshot_msg = (
+                        f"Restoring best snapshot from step "
+                        f"{best_step_idx + 1} (best loss="
+                        f"{best_loss_value:.3e}; init loss="
+                        f"{init_loss:.3e})."
+                    )
+                else:
+                    snapshot_msg = (
+                        "No improved snapshot was recorded before "
+                        "the divergence — the result reflects the "
+                        "data-driven init."
+                    )
+                logger.warning(
+                    f"LNM Laplace divergence detected at step "
+                    f"{step + 1}: {reason} (worst comp grad="
+                    f"{worst_cell_grad:.3e}). {snapshot_msg} The "
+                    "returned result has ``divergence_aborted=True`` "
+                    "so downstream code can detect this case. To "
+                    "avoid divergence next time, try (a) increasing "
                     "laplace_config['n_newton_steps'] to 20-30, "
                     "(b) tightening laplace_config['damping'] to "
                     "1e-3 or below, or (c) pre-filtering outlier "
-                    "cells by total count or compositional skew "
-                    "before fitting."
+                    "cells. ``result.final_grad_norms`` identifies "
+                    "the offending cells in the returned result."
                 )
-            # Climb-from-min check (the primary divergence detector).
+                divergence_aborted = True
+
+            if not np.isfinite(loss_val):
+                _trigger_divergence_abort(
+                    f"loss became non-finite (loss={loss_val})"
+                )
+                break
+            # Climb-from-min check (primary detector).
             if (
                 init_loss is not None
                 and len(losses) > 50
@@ -1813,28 +1931,14 @@ def _run_lnm_inference(
                 and (loss_val - min_loss_so_far)
                 > 0.5 * abs(init_loss)
             ):
-                worst_cell_grad = float(jnp.max(gn_comp))
-                raise RuntimeError(
-                    f"LNM Laplace loss climbing (divergence "
-                    f"detected) at step {step + 1}: loss="
-                    f"{loss_val:.3e} has increased by "
+                _trigger_divergence_abort(
+                    f"loss={loss_val:.3e} climbed by "
                     f"{(loss_val - min_loss_so_far):.3e} from the "
                     f"running minimum {min_loss_so_far:.3e}, which "
                     f"exceeds 0.5 × |init_loss|="
-                    f"{0.5 * abs(init_loss):.3e}. A small subset "
-                    "of cells has entered an unstable Newton regime "
-                    f"(worst comp grad={worst_cell_grad:.3e}). "
-                    "Variational EM loss should monotonically "
-                    "decrease; a sustained climb signals one or "
-                    "more cells contaminating the global gradient. "
-                    "Try (a) increasing "
-                    "laplace_config['n_newton_steps'] to 20-30, "
-                    "(b) tightening laplace_config['damping'] to "
-                    "1e-3 or below, or (c) pre-filtering outlier "
-                    "cells. ``result.final_grad_norms`` after a "
-                    "completed shorter run identifies offending "
-                    "cells."
+                    f"{0.5 * abs(init_loss):.3e}"
                 )
+                break
             # Absolute-magnitude backstop.
             if (
                 init_loss is not None
@@ -1842,13 +1946,11 @@ def _run_lnm_inference(
                 and np.isfinite(init_loss)
                 and abs(loss_val) > 1e3 * abs(init_loss)
             ):
-                worst_cell_grad = float(jnp.max(gn_comp))
-                raise RuntimeError(
-                    f"LNM Laplace loss diverged at step {step + 1}: "
+                _trigger_divergence_abort(
                     f"|loss|={abs(loss_val):.3e} grew >1000× from "
-                    f"|init_loss|={abs(init_loss):.3e}. See above "
-                    "remediations."
+                    f"|init_loss|={abs(init_loss):.3e}"
                 )
+                break
 
             losses.append(loss_val)
             if init_loss is None:
@@ -1856,6 +1958,24 @@ def _run_lnm_inference(
                 min_loss_so_far = loss_val
             else:
                 min_loss_so_far = min(min_loss_so_far, loss_val)
+
+            # Best-snapshot update: record post-step references
+            # whenever this step pushed the running minimum down.
+            # ``params`` / ``latent_loc`` / ``eta_loc`` are
+            # immutable JAX-array dicts that are *replaced* (not
+            # mutated) by ``optax.apply_updates`` and
+            # ``.at[idx].set`` respectively, so saving references
+            # is safe.
+            if (
+                np.isfinite(loss_val)
+                and loss_val == min_loss_so_far
+                and loss_val < best_loss_value
+            ):
+                best_loss_value = loss_val
+                best_params = {k: v for k, v in params.items()}
+                best_latent_loc = latent_loc
+                best_eta_loc = eta_loc
+                best_step_idx = step
 
             step_completed = step + 1
             should_display = (
@@ -1904,6 +2024,18 @@ def _run_lnm_inference(
                     )
             else:
                 reporter.update(advance=1)
+
+    # ---- Restore best snapshot when divergence aborted the loop ----
+    # If the divergence detector fired, the current ``params`` /
+    # ``latent_loc`` / ``eta_loc`` are from the diverged state.
+    # Roll back to the snapshot taken at the running-minimum loss so
+    # the returned result reflects the best fit found before the
+    # divergence — typically a meaningful improvement over the data-
+    # driven init even when the run aborted early.
+    if divergence_aborted and best_step_idx >= 0:
+        params = best_params
+        latent_loc = best_latent_loc
+        eta_loc = best_eta_loc
 
     # ---- Final convergence check (full-data Newton sweep) ----
     mu_f = jax.lax.stop_gradient(params["mu"])
@@ -1989,9 +2121,12 @@ def _run_lnm_inference(
         losses=jnp.asarray(losses, dtype=jnp.float32),
         n_steps_run=len(losses),
         model_config=model_config,
-        early_stopped=False,
-        best_loss=float("inf"),
+        early_stopped=divergence_aborted,
+        best_loss=(
+            best_loss_value if best_step_idx >= 0 else float("inf")
+        ),
         stopped_at_step=len(losses),
+        divergence_aborted=divergence_aborted,
     )
 
 
