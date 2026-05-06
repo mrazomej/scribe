@@ -611,6 +611,104 @@ laplace_newton_batch_x_only = jax.vmap(
 )
 
 
+# =====================================================================
+# Per-block gradient-norm split for diagnostics
+# =====================================================================
+#
+# The Newton kernels above return a single ``L∞`` over both blocks
+# (``max(|g_x|_inf, |g_eta|)``) for legacy reasons. The engine's
+# progress display wants a per-block split — separate ``x`` and
+# ``η`` infinity-norms — so users can see at a glance which block
+# is driving the worst-case convergence diagnostic. Computing the
+# per-block grads requires evaluating ``∇f`` once at the MAP, so
+# we expose a small helper that does exactly that without
+# perturbing the kernel's main return signature.
+
+
+def pln_grad_split(
+    x_map: jnp.ndarray,
+    eta_map: jnp.ndarray,
+    u: jnp.ndarray,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    eta_anchor: jnp.ndarray,
+    sigma_M: float,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Per-block ``L∞`` gradient norms at the joint Newton MAP.
+
+    Returns ``(grad_inf_norm_x, grad_inf_norm_eta)`` — both scalars
+    — for the per-cell joint log-density evaluated at
+    ``(x_map, eta_map)``. Used by the engine to display a per-
+    block convergence diagnostic in the progress bar:
+
+        grad max/p99/med x: …, η: …
+
+    Implementation notes:
+
+    * Uses the same gradient formulae as :func:`newton_step_joint`,
+      but does not run the Newton step — just evaluates ``∇f``
+      once at the MAP. Cost ``O(G·k + k³)`` per cell (Woodbury
+      solve for ``Σ⁻¹(x - μ)``), same as one Newton iteration.
+    * Computes ``Σ⁻¹(x - μ)`` via the inner Woodbury (``K``-block
+      only, no ``A``-block needed since we don't need the Hessian
+      structure for a pure gradient evaluation).
+    """
+    log_rate = x_map - eta_map
+    rate = jnp.exp(jnp.clip(log_rate, _LOG_RATE_MIN, _LOG_RATE_MAX))
+
+    # Σ⁻¹ (x - μ) via inner Woodbury (no damping, no diag-A).
+    inv_d = 1.0 / d
+    diff = x_map - mu
+    K = jnp.eye(W.shape[1], dtype=W.dtype) + W.T @ (inv_d[:, None] * W)
+    L_K = jnp.linalg.cholesky(K)
+    sigma_inv_diff = inv_d * diff - inv_d * (
+        W @ jax.scipy.linalg.cho_solve((L_K, True), W.T @ (inv_d * diff))
+    )
+
+    g_x = u - rate - sigma_inv_diff
+    g_eta = -jnp.sum(u) + jnp.sum(rate) - (eta_map - eta_anchor) / (sigma_M**2)
+
+    return jnp.max(jnp.abs(g_x)), jnp.abs(g_eta)
+
+
+# Vmapped version: same in_axes pattern as ``laplace_log_det_neg_H_batch``
+# (the per-cell args are axis 0; globals broadcast).
+pln_grad_split_batch = jax.vmap(
+    pln_grad_split, in_axes=(0, 0, 0, None, None, None, 0, None)
+)
+
+
+def pln_grad_x_only_norm(
+    x_map: jnp.ndarray,
+    u: jnp.ndarray,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+) -> jnp.ndarray:
+    """``L∞`` of ``∇_x f`` at the x-only Newton MAP (no capture anchor).
+
+    Used for symmetric reporting on PLN runs without capture
+    (``capture_anchor=None``); the engine still wants a max/p99/
+    median triplet over cells but there's no η-block to split out.
+    """
+    rate = jnp.exp(jnp.clip(x_map, _LOG_RATE_MIN, _LOG_RATE_MAX))
+    inv_d = 1.0 / d
+    diff = x_map - mu
+    K = jnp.eye(W.shape[1], dtype=W.dtype) + W.T @ (inv_d[:, None] * W)
+    L_K = jnp.linalg.cholesky(K)
+    sigma_inv_diff = inv_d * diff - inv_d * (
+        W @ jax.scipy.linalg.cho_solve((L_K, True), W.T @ (inv_d * diff))
+    )
+    g_x = u - rate - sigma_inv_diff
+    return jnp.max(jnp.abs(g_x))
+
+
+pln_grad_x_only_norm_batch = jax.vmap(
+    pln_grad_x_only_norm, in_axes=(0, 0, None, None, None)
+)
+
+
 __all__ = [
     "newton_step_joint",
     "newton_step_x_only",
@@ -618,4 +716,11 @@ __all__ = [
     "laplace_newton_loop_x_only",
     "laplace_newton_batch",
     "laplace_newton_batch_x_only",
+    # Per-block diagnostic helpers (used by the engine's progress
+    # display; not part of the math, just for surfacing per-cell
+    # convergence info).
+    "pln_grad_split",
+    "pln_grad_split_batch",
+    "pln_grad_x_only_norm",
+    "pln_grad_x_only_norm_batch",
 ]

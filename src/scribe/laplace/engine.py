@@ -65,6 +65,8 @@ from ._newton_pln import (
     laplace_log_det_neg_H_batch_x_only,
     laplace_newton_batch,
     laplace_newton_batch_x_only,
+    pln_grad_split_batch,
+    pln_grad_x_only_norm_batch,
 )
 from ._newton_lnm import (
     laplace_log_det_neg_H_batch_eta,
@@ -714,7 +716,42 @@ class LaplaceInferenceEngine:
             x_loc = x_loc.at[idx].set(x_new)
             if eta_loc is not None:
                 eta_loc = eta_loc.at[idx].set(eta_new)
-            return params, opt_state, x_loc, eta_loc, gn, loss
+
+            # ---- Per-block grad-norm split for diagnostics ----
+            # The Newton kernel returns a single ``L∞`` over the
+            # joint (x, η) gradient. The progress display wants a
+            # per-block split (matches the LNMVCP engine's
+            # ``comp`` vs ``η`` triplet) so users can see at a
+            # glance which block is the convergence bottleneck.
+            # We compute the split at the post-Newton MAP using
+            # the live globals; this is one extra Woodbury solve
+            # per cell, fused into the same JIT body as the
+            # Newton step.
+            mu_g = jax.lax.stop_gradient(params["mu"])
+            W_g = jax.lax.stop_gradient(params["W"])
+            d_g = jax.lax.stop_gradient(jnp.exp(params["d_log"]))
+            if eta_loc is not None:
+                gn_x_batch, gn_eta_batch = pln_grad_split_batch(
+                    x_new,
+                    eta_new,
+                    counts_batch,
+                    mu_g,
+                    W_g,
+                    d_g,
+                    eta_anchor_batch,
+                    sigma_M,
+                )
+            else:
+                gn_x_batch = pln_grad_x_only_norm_batch(
+                    x_new, counts_batch, mu_g, W_g, d_g
+                )
+                # Placeholder zeros for the η side so the return
+                # signature is uniform across capture-on/off.
+                gn_eta_batch = jnp.zeros_like(gn_x_batch)
+            return (
+                params, opt_state, x_loc, eta_loc,
+                gn, gn_x_batch, gn_eta_batch, loss,
+            )
 
         # ---- Outer loop ----
         n_steps = int(laplace_config.n_steps)
@@ -845,7 +882,10 @@ class LaplaceInferenceEngine:
                     idx = random.choice(
                         subkey, n_cells, shape=(batch_size,), replace=False
                     )
-                params, opt_state, x_loc, eta_loc, gn, loss = update_step(
+                (
+                    params, opt_state, x_loc, eta_loc,
+                    gn, gn_x_batch, gn_eta_batch, loss,
+                ) = update_step(
                     params, opt_state, x_loc, eta_loc, idx
                 )
                 loss_val = float(loss)
@@ -869,15 +909,32 @@ class LaplaceInferenceEngine:
                     avg_loss = _mean_ignoring_nans(
                         losses[window_start:window_end]
                     )
-                    # Per-cell Newton-grad-norm summary; same format
-                    # as the LNM engine: max / p99 / median.
-                    pln_max, pln_p99, pln_med = _grad_summary(gn)
+                    # Per-block Newton-grad-norm summary mirroring
+                    # the LNMVCP engine's display format. With the
+                    # capture anchor on, show ``x`` and ``η`` blocks
+                    # separately so users see which block is driving
+                    # the worst-case convergence diagnostic.
+                    x_max, x_p99, x_med = _grad_summary(gn_x_batch)
+                    if eta_loc is not None:
+                        eta_max, eta_p99, eta_med = _grad_summary(
+                            gn_eta_batch
+                        )
+                        grad_info = (
+                            f"x max/p99/med "
+                            f"{x_max:.2e}/{x_p99:.2e}/{x_med:.2e}; "
+                            f"η max/p99/med "
+                            f"{eta_max:.2e}/{eta_p99:.2e}/{eta_med:.2e}"
+                        )
+                    else:
+                        grad_info = (
+                            f"Newton grad max/p99/med "
+                            f"{x_max:.2e}/{x_p99:.2e}/{x_med:.2e}"
+                        )
                     loss_info = (
                         f"init loss: {init_loss:.4e}, "
                         f"avg. loss [{window_start + 1}-{window_end}]: "
                         f"{avg_loss:.4e}, "
-                        f"Newton grad max/p99/med "
-                        f"{pln_max:.2e}/{pln_p99:.2e}/{pln_med:.2e}"
+                        f"{grad_info}"
                     )
                     reporter.update(advance=1, loss_info=loss_info)
                     if log_progress_lines:

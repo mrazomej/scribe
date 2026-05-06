@@ -135,6 +135,8 @@ Reading the three together:
 
 ### Per-block split: composition vs η
 
+For **LNMVCP** (`comp` and `η` blocks):
+
 * The **composition block** is Newton over $z$ (low_rank) or $y_\text{alr}$
   (learned). It can be slow on cells with very few active genes because the
   multinomial Fisher matrix
@@ -142,23 +144,39 @@ Reading the three together:
   $\le u_T$ — much smaller than $G-1$ on typical scRNA-seq. Newton's
   quadratic convergence rate degrades to *linear* along the rank-deficient
   directions, where the only curvature is the prior's $\Sigma^{-1}$.
-* The **η block** (LNMVCP only) is a scalar Newton on a strictly
-  log-concave 1D problem. It converges to float-precision (~`1e-6`) in 1–2
-  Newton iterations from any sensible warm start.
+* The **η block** is a scalar Newton on a strictly log-concave 1D
+  problem. It converges to float-precision (~`1e-6`) in 1–2 Newton
+  iterations from any sensible warm start.
 
-If `η` is at `1e-6` but `comp` is `1e+1`, the engine plumbing is correct;
-the bottleneck is genuinely the composition Hessian conditioning. If `η`
-were also high, that would point to a bug.
+For **PLN with capture anchor** (`x` and `η` blocks):
 
-### Plain LNM, PLN, low_rank d_mode
+* The **`x` block** is Newton over the latent log-rate
+  $x_c \in \mathbb{R}^G$. The Hessian is full-rank for any cell with
+  positive counts (every diagonal entry of $-H_{xx}$ is
+  $\exp(x_g - \eta) + \Sigma^{-1}_{gg} > 0$), so per-cell convergence is
+  typically faster than LNMVCP's composition block.
+* The **η block** is the per-cell capture-offset latent. Unlike LNMVCP,
+  PLN's $(x, \eta)$ Hessian is *not* block-diagonal — $x$ and $\eta$
+  are coupled through the Poisson rate $\exp(x_g - \eta)$, and Newton
+  uses a Schur-complement back-substitution to solve the joint system.
+  The split here is computed from $\nabla f$ at the post-Newton MAP,
+  not from a separate Newton solve.
+
+In both cases:
+
+* If `η` is at `~1e-6` but the composition / `x` block is much larger,
+  the engine plumbing is correct and the bottleneck is the composition
+  geometry (multinomial Fisher rank for LNMVCP) or some specific cell
+  (low counts for PLN).
+* If `η` were also high, that would point to a numerical bug.
+
+### Plain LNM, PLN without capture, low_rank d_mode
 
 * **Plain LNM** has no per-cell capture latent, so the η column is
   suppressed: only `Newton grad max/p99/med <numbers>` is shown.
-* **PLN** (without LNMVCP-style separation) shows the joint $(x, \eta)$
-  block as a single set of numbers because PLN's joint Hessian is
-  *not* block-diagonal — $x$ and $\eta$ are coupled through the Poisson
-  rate $\exp(x_g - \eta)$. Splitting the per-block grad would not be
-  meaningful for PLN.
+* **PLN without capture anchor** (no `priors={"capture_efficiency": ...}`)
+  also has no η latent; Newton runs over $x$ alone and the display is
+  `Newton grad max/p99/med <numbers>` (single block).
 * **low_rank d_mode** (LNM only): no diagonal residual is fit, so the
   composition latent is just the k-dim $z$. Newton is k×k, much smaller
   than the y_alr branch's (G-1)×(G-1).
