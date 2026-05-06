@@ -207,6 +207,51 @@ print(f"max: {gn.max():.3e}, p99: {np.percentile(gn, 99):.3e}, "
 print(f"Cells above 1e-3: {(gn > 1e-3).sum()}")
 ```
 
+## Single-cell explosive divergence
+
+Occasionally an LNM(VCP) fit will run smoothly for thousands of steps and
+then catastrophically diverge: loss jumps by several orders of magnitude,
+`comp max` spikes to `1e+3` or higher while `comp p99` and `comp median`
+remain small. This signature is **one or a handful of cells whose per-cell
+Newton has wandered into an unstable regime** — most commonly cells whose
+softmax probability concentrates near a single gene (e.g., a low-count
+cell where one gene happens to have all the counts), driving the
+Sherman–Morrison denominator `1 - N · ρᵀ A⁻¹ ρ` close to zero. Float32
+cancellation in that subtraction produces wildly wrong Newton steps, and
+the divergence cascades through the loss into the gradient on globals.
+
+The engine has three layered defenses:
+
+1. **Sherman–Morrison denominator floor** in
+   `scribe.laplace._newton_lnm.newton_step_y_alr`. The denominator is
+   floored at 1% of `1/N` (a relative floor that scales with cell total
+   count), well above the float32 catastrophic-cancellation regime.
+2. **Per-cell NaN/Inf mask** inside `_lnm_laplace_elbo`. Per-cell ELBO
+   contributions that go non-finite are replaced with zeros before the
+   batch sum, masking the divergent cells from the current step's
+   gradient on globals.
+3. **Outer-loop divergence detector** in `_run_lnm_inference`. Two
+   conditions trigger a clean abort with a constructive error:
+   - Loss becomes NaN or Inf.
+   - `|loss|` grows by more than 1000× from `|init_loss|` (after a
+     50-step warmup).
+
+When the abort fires, you'll see a `RuntimeError` with diagnostic
+context (worst per-cell Newton grad at the failing step) and remediation
+suggestions:
+
+- Bump `laplace_config['n_newton_steps']` to 20–30 to give Newton more
+  iterations to escape the unstable regime before damage propagates.
+- Tighten `laplace_config['damping']` to 1e-3 or below so the
+  Tikhonov regularization helps the Newton solve stay well-conditioned.
+- Pre-filter outlier cells by total count or compositional skew (e.g.,
+  drop cells with `u_T < 50` or with one gene comprising > 80% of
+  counts) before fitting.
+
+After an abort, you can identify the offending cells by inspecting
+`result.final_grad_norms` from a shorter completed run — cells with
+`final_grad_norms[c] >> newton_tolerance` are the ones to investigate.
+
 ## Troubleshooting flowchart
 
 ```text

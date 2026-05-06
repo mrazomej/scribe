@@ -469,14 +469,26 @@ def newton_step_y_alr(
     rho_A_inv_rho = jnp.dot(p_alr, A_inv_rho)
     rho_A_inv_g = jnp.dot(p_alr, A_inv_g)
     # Floor the SM denominator to avoid numerical issues for cells
-    # whose ρ is degenerate (single dominant gene). With the
-    # Sherman-Morrison form, ``denom -> 1/N - 0+`` so we always
-    # have at least ``1/N - eps`` magnitude.
-    denom = jnp.maximum(1.0 / n_total - rho_A_inv_rho, 1e-12)
+    # whose ρ is degenerate (single dominant gene). The
+    # mathematical lower bound (joint log-concavity of the LNM
+    # posterior) is `1/N - rho^T A^-1 rho > 0` strictly, but in
+    # float32 the subtraction can lose precision when the two
+    # terms are individually large and nearly equal. We use a
+    # *relative* floor rather than absolute: ``denom`` cannot be
+    # less than 1% of ``1/N``. For typical N=10⁴ this floors at
+    # ``1e-6``, four orders of magnitude tighter than the
+    # original ``1e-12`` and well above float32 catastrophic
+    # cancellation. The relative form scales correctly across
+    # cells with different totals.
+    one_over_N = 1.0 / n_total
+    denom = jnp.maximum(one_over_N - rho_A_inv_rho, 1e-2 * one_over_N)
     alpha = rho_A_inv_g / denom
     delta = A_inv_g + alpha * A_inv_rho
 
-    # Step-size cap.
+    # Step-size cap (matches the value used elsewhere in this
+    # module — see ``_MAX_STEP``). Limits a single Newton step's
+    # L∞ to 5 in log-odds space; the SM denominator floor above
+    # is the primary defence against pathological-cell blow-ups.
     step_norm = jnp.max(jnp.abs(delta))
     scale = jnp.minimum(1.0, _MAX_STEP / jnp.maximum(step_norm, 1e-12))
     delta = delta * scale

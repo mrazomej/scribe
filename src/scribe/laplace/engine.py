@@ -396,6 +396,23 @@ def _laplace_elbo(
     laplace_corr = -0.5 * log_det_neg_H
 
     elbo_per_cell = poisson_lp + mvn_lp + eta_lp + laplace_corr
+    # Per-cell loss-finite guard. Mirrors the LNM-side defence:
+    # the joint (x, η) Newton can occasionally drive a single
+    # pathological cell into a regime where ``exp(x_g - η)``
+    # overflows or the Schur back-substitution catastrophically
+    # cancels, producing NaN/Inf in that cell's ELBO contribution.
+    # Without this guard, NaNs propagate through JAX autodiff into
+    # the gradient on globals and contaminate the entire fit.
+    # Replacing NaN/Inf entries with 0 masks the divergent cells
+    # from this step's gradient. A sustained blow-up is still
+    # caught by the outer-loop divergence detector in
+    # ``LaplaceInferenceEngine.run_inference`` (loss-finite check
+    # + 1000× growth check) which aborts with diagnostic context.
+    elbo_per_cell = jnp.where(
+        jnp.isfinite(elbo_per_cell),
+        elbo_per_cell,
+        jnp.zeros_like(elbo_per_cell),
+    )
     return -jnp.sum(elbo_per_cell)
 
 
@@ -889,6 +906,52 @@ class LaplaceInferenceEngine:
                     params, opt_state, x_loc, eta_loc, idx
                 )
                 loss_val = float(loss)
+
+                # ---- Divergence guard ----
+                # Same defenses as the LNM engine: catch non-finite
+                # losses or > 1000× growth from init, raise with
+                # diagnostic context. The PLN-side blow-up
+                # signature is similar to LNM's but the Schur
+                # back-substitution rather than Sherman-Morrison
+                # is the typical trigger: if a cell's ``-H_xx``
+                # becomes ill-conditioned (extreme rate values),
+                # the Schur scalar ``s = -H_ηη - H_xη^T A⁻¹ H_xη``
+                # can lose precision and produce wildly wrong
+                # joint Newton steps.
+                if not np.isfinite(loss_val):
+                    worst_cell_grad = float(jnp.max(gn))
+                    raise RuntimeError(
+                        f"PLN Laplace loss became non-finite at step "
+                        f"{step + 1}: loss={loss_val}. Most likely "
+                        "cause: one or more cells whose joint "
+                        "(x, η) Newton has diverged (worst Newton "
+                        f"grad this step = {worst_cell_grad:.3e}). "
+                        "Try (a) increasing "
+                        "laplace_config['n_newton_steps'] to 20-30, "
+                        "(b) tightening laplace_config['damping'] "
+                        "to 1e-3 or below, or (c) pre-filtering "
+                        "cells with extreme total counts before "
+                        "fitting."
+                    )
+                if (
+                    init_loss is not None
+                    and len(losses) > 50
+                    and np.isfinite(init_loss)
+                    and abs(loss_val) > 1e3 * abs(init_loss)
+                ):
+                    worst_cell_grad = float(jnp.max(gn))
+                    raise RuntimeError(
+                        f"PLN Laplace loss diverged at step "
+                        f"{step + 1}: |loss|={abs(loss_val):.3e} "
+                        f"grew >1000× from |init_loss|="
+                        f"{abs(init_loss):.3e}. A small subset of "
+                        "cells has entered an unstable Newton "
+                        f"regime (worst grad={worst_cell_grad:.3e})."
+                        " See ``result.final_grad_norms`` after "
+                        "killing the run to identify offending "
+                        "cells."
+                    )
+
                 losses.append(loss_val)
                 if init_loss is None:
                     init_loss = loss_val
@@ -1220,6 +1283,22 @@ def _lnm_laplace_elbo(
     laplace_corr = -0.5 * log_det_neg_H
 
     elbo_per_cell = multinomial_lp + prior_lp + laplace_corr
+    # Per-cell loss-finite guard. A handful of cells whose Newton
+    # has wandered off (ρ near a corner of the simplex with the
+    # Sherman-Morrison denominator catastrophically cancelling)
+    # can produce NaN/Inf in the per-cell ELBO contributions.
+    # Without this guard, those NaNs propagate through the JAX
+    # autodiff into the gradient on globals and contaminate the
+    # entire fit. Replacing NaN/Inf entries with 0 effectively
+    # masks the divergent cells from this step's gradient — the
+    # outer loop's per-step divergence guard
+    # (see ``_run_lnm_inference``) will still detect a sustained
+    # blow-up and abort with a constructive error.
+    elbo_per_cell = jnp.where(
+        jnp.isfinite(elbo_per_cell),
+        elbo_per_cell,
+        jnp.zeros_like(elbo_per_cell),
+    )
     return -jnp.sum(elbo_per_cell)
 
 
@@ -1645,6 +1724,51 @@ def _run_lnm_inference(
                 loss,
             ) = update_step(params, opt_state, latent_loc, eta_loc, idx)
             loss_val = float(loss)
+
+            # ---- Divergence guard ----
+            # Two failure modes worth aborting on, both caused by
+            # one or more cells exploding in their per-cell Newton
+            # (ρ near a corner of the simplex, Sherman-Morrison
+            # denominator catastrophically cancelling, etc.):
+            #   1. ``loss`` becomes NaN or Inf → numerical overflow.
+            #   2. ``loss`` jumps by > 1000× from the initial loss →
+            #      one cell's contribution is dominating; continuing
+            #      wastes compute and contaminates the fit.
+            # Both are caught here with diagnostic context so the
+            # user can act (kill, adjust config, restart).
+            if not np.isfinite(loss_val):
+                worst_cell_grad = float(jnp.max(gn_comp))
+                raise RuntimeError(
+                    f"LNM Laplace loss became non-finite at step "
+                    f"{step + 1}: loss={loss_val}. Most likely cause: "
+                    "one or more cells whose per-cell Newton has "
+                    "diverged (worst comp grad this step = "
+                    f"{worst_cell_grad:.3e}). Try (a) increasing "
+                    "laplace_config['n_newton_steps'] to 20-30, "
+                    "(b) tightening laplace_config['damping'] to "
+                    "1e-3 or below, or (c) pre-filtering outlier "
+                    "cells by total count or compositional skew "
+                    "before fitting."
+                )
+            if (
+                init_loss is not None
+                and len(losses) > 50
+                and np.isfinite(init_loss)
+                and abs(loss_val) > 1e3 * abs(init_loss)
+            ):
+                worst_cell_grad = float(jnp.max(gn_comp))
+                raise RuntimeError(
+                    f"LNM Laplace loss diverged at step {step + 1}: "
+                    f"|loss|={abs(loss_val):.3e} grew >1000× from "
+                    f"|init_loss|={abs(init_loss):.3e}. A small "
+                    "subset of cells has entered an unstable Newton "
+                    f"regime (worst comp grad={worst_cell_grad:.3e}). "
+                    "See the non-finite-loss case for remediations; "
+                    "additionally, ``result.final_grad_norms`` after "
+                    "killing the run will identify the offending "
+                    "cells if you restart and let it complete."
+                )
+
             losses.append(loss_val)
             if init_loss is None:
                 init_loss = loss_val
