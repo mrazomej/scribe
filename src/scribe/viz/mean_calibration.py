@@ -161,20 +161,47 @@ def _compute_predicted_mean_lnm(
     from ..core.normalization_logistic import _inverse_alr
     import jax.numpy as jnp
 
-    # Recover the full simplex rho from ALR coordinates
+    # Step 1: recover the simplex composition ρ from ALR
+    # coordinates. ``_inverse_alr`` augments y_alr with a zero
+    # at the reference position and applies softmax — so the
+    # output ``rho`` is in proper composition space (each row
+    # sums to 1).
     y_alr_arr = jnp.asarray(y_alr, dtype=jnp.float32)
+    counts_arr = np.asarray(counts, dtype=float)
+    n_per_cell = np.sum(counts_arr, axis=1)  # observed totals per cell
+
+    # Two input shapes are supported:
+    #   * 1-D ``(G-1,)`` — a single population-level y_alr (e.g.
+    #     the global decoder output for VAE-style results
+    #     without an explicit per-cell ALR map). Population
+    #     prediction is ``ρ_global × mean_c[N_c]``.
+    #   * 2-D ``(n_cells, G-1)`` — per-cell y_alr from Laplace
+    #     results (one ALR vector per training cell). The
+    #     honest population prediction multiplies each cell's
+    #     composition by its OWN observed total (preserving
+    #     correlation between library size and composition),
+    #     then averages across cells:
+    #         pred[g] = mean_c[ρ_c[g] · N_c]
+    #     rather than
+    #         pred[g] = mean_c[ρ_c[g]] · mean_c[N_c]
+    #     which would assume independence between N and ρ.
     if y_alr_arr.ndim == 1:
         y_alr_arr = y_alr_arr[None, :]
-    rho = np.asarray(
-        _inverse_alr(y_alr_arr, reference_index=alr_reference_idx)
-    ).squeeze(axis=0)
-
-    # Use the observed mean total UMI per cell as the scale factor.
-    # This isolates the diagnostic to the compositional sub-model.
-    counts_arr = np.asarray(counts, dtype=float)
-    obs_mean_total = float(np.mean(np.sum(counts_arr, axis=1)))
-
-    return rho * obs_mean_total
+        rho_global = np.asarray(
+            _inverse_alr(y_alr_arr, reference_index=alr_reference_idx)
+        ).squeeze(axis=0)
+        return rho_global * float(np.mean(n_per_cell))
+    if y_alr_arr.ndim == 2:
+        rho_per_cell = np.asarray(
+            _inverse_alr(y_alr_arr, reference_index=alr_reference_idx)
+        )  # shape (n_cells, G)
+        # Per-cell predicted counts then population-mean.
+        pred_per_cell = rho_per_cell * n_per_cell[:, None]
+        return pred_per_cell.mean(axis=0)
+    raise ValueError(
+        f"y_alr must be 1-D (G-1,) or 2-D (n_cells, G-1); "
+        f"got shape {tuple(y_alr_arr.shape)}."
+    )
 
 
 # Map-level log-rate predictions for PLN, accounting for any per-cell
