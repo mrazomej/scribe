@@ -779,6 +779,11 @@ class LaplaceInferenceEngine:
         # the run, with a floor of 1 so very short runs still update.
         display_interval = max(1, n_steps // 100)
         init_loss: Optional[float] = None
+        # Running minimum used by the divergence detector. Defaults
+        # to ``+inf`` so the climb-from-min check is gated off until
+        # the first finite loss is observed (the ``np.isfinite``
+        # guard in the check itself bypasses ``inf``).
+        min_loss_so_far: float = float("inf")
 
         # --------------------------------------------------------------
         # Early-stopping / checkpointing setup. Mirrors the SVI engine.
@@ -887,9 +892,18 @@ class LaplaceInferenceEngine:
             # Track ``init_loss`` for the periodic display string.
             # When resumed, fall back to the first historical loss so
             # the displayed bar carries continuous context across
-            # resumes.
+            # resumes. Also restore ``min_loss_so_far`` from the
+            # loaded loss history so the divergence detector
+            # operates against the true running minimum, not the
+            # post-resume one.
             if resumed and losses:
                 init_loss = float(losses[0])
+                # Filter NaN/Inf in case the saved history contains
+                # divergent steps from a previous run; otherwise
+                # ``min`` would propagate them.
+                _finite_losses = [l for l in losses if np.isfinite(l)]
+                if _finite_losses:
+                    min_loss_so_far = float(min(_finite_losses))
 
             for step in range(start_step, n_steps):
                 rng_step, subkey = random.split(rng_step)
@@ -908,16 +922,16 @@ class LaplaceInferenceEngine:
                 loss_val = float(loss)
 
                 # ---- Divergence guard ----
-                # Same defenses as the LNM engine: catch non-finite
-                # losses or > 1000× growth from init, raise with
-                # diagnostic context. The PLN-side blow-up
-                # signature is similar to LNM's but the Schur
-                # back-substitution rather than Sherman-Morrison
-                # is the typical trigger: if a cell's ``-H_xx``
-                # becomes ill-conditioned (extreme rate values),
-                # the Schur scalar ``s = -H_ηη - H_xη^T A⁻¹ H_xη``
-                # can lose precision and produce wildly wrong
-                # joint Newton steps.
+                # Three failure modes worth aborting on (mirrors
+                # the LNM engine's check after the audit fix —
+                # the original "1000× absolute" check missed the
+                # actual divergence regime where the loss climbs
+                # back up from its minimum without exploding to
+                # extreme magnitudes):
+                #   1. ``loss`` becomes NaN or Inf.
+                #   2. ``loss`` climbs from running minimum by
+                #      > 0.5 × |init_loss| (primary detector).
+                #   3. |loss| > 1000× |init_loss| (hard backstop).
                 if not np.isfinite(loss_val):
                     worst_cell_grad = float(jnp.max(gn))
                     raise RuntimeError(
@@ -936,6 +950,34 @@ class LaplaceInferenceEngine:
                 if (
                     init_loss is not None
                     and len(losses) > 50
+                    and np.isfinite(min_loss_so_far)
+                    and np.isfinite(init_loss)
+                    and (loss_val - min_loss_so_far)
+                    > 0.5 * abs(init_loss)
+                ):
+                    worst_cell_grad = float(jnp.max(gn))
+                    raise RuntimeError(
+                        f"PLN Laplace loss climbing (divergence "
+                        f"detected) at step {step + 1}: loss="
+                        f"{loss_val:.3e} has increased by "
+                        f"{(loss_val - min_loss_so_far):.3e} from "
+                        f"the running minimum "
+                        f"{min_loss_so_far:.3e}, which exceeds "
+                        f"0.5 × |init_loss|="
+                        f"{0.5 * abs(init_loss):.3e}. Variational "
+                        "EM loss should monotonically decrease; a "
+                        "sustained climb signals one or more cells "
+                        "contaminating the global gradient (worst "
+                        f"Newton grad={worst_cell_grad:.3e}). Try "
+                        "(a) increasing "
+                        "laplace_config['n_newton_steps'] to 20-30, "
+                        "(b) tightening laplace_config['damping'] "
+                        "to 1e-3 or below, or (c) pre-filtering "
+                        "cells with extreme total counts."
+                    )
+                if (
+                    init_loss is not None
+                    and len(losses) > 50
                     and np.isfinite(init_loss)
                     and abs(loss_val) > 1e3 * abs(init_loss)
                 ):
@@ -944,17 +986,16 @@ class LaplaceInferenceEngine:
                         f"PLN Laplace loss diverged at step "
                         f"{step + 1}: |loss|={abs(loss_val):.3e} "
                         f"grew >1000× from |init_loss|="
-                        f"{abs(init_loss):.3e}. A small subset of "
-                        "cells has entered an unstable Newton "
-                        f"regime (worst grad={worst_cell_grad:.3e})."
-                        " See ``result.final_grad_norms`` after "
-                        "killing the run to identify offending "
-                        "cells."
+                        f"{abs(init_loss):.3e}. See above for "
+                        "remediations."
                     )
 
                 losses.append(loss_val)
                 if init_loss is None:
                     init_loss = loss_val
+                    min_loss_so_far = loss_val
+                else:
+                    min_loss_so_far = min(min_loss_so_far, loss_val)
 
                 # Refresh the displayed loss-info every
                 # ``display_interval`` steps, matching SVI's format
@@ -1692,6 +1733,10 @@ def _run_lnm_inference(
     rng_step = rng
     display_interval = max(1, n_steps // 100)
     init_loss: Optional[float] = None
+    # Running minimum loss for the divergence detector. Initialised
+    # to +inf so the climb-check is naturally gated off until the
+    # first finite loss is observed.
+    min_loss_so_far: float = float("inf")
     latent_loc = z_loc if d_mode == "low_rank" else y_alr_loc
 
     progress_reporter = build_progress_reporter(
@@ -1726,16 +1771,25 @@ def _run_lnm_inference(
             loss_val = float(loss)
 
             # ---- Divergence guard ----
-            # Two failure modes worth aborting on, both caused by
+            # Three failure modes worth aborting on, all caused by
             # one or more cells exploding in their per-cell Newton
             # (ρ near a corner of the simplex, Sherman-Morrison
             # denominator catastrophically cancelling, etc.):
             #   1. ``loss`` becomes NaN or Inf → numerical overflow.
-            #   2. ``loss`` jumps by > 1000× from the initial loss →
-            #      one cell's contribution is dominating; continuing
-            #      wastes compute and contaminates the fit.
-            # Both are caught here with diagnostic context so the
-            # user can act (kill, adjust config, restart).
+            #   2. ``loss`` *climbs* (moves in the wrong direction)
+            #      by more than 0.5 × |init_loss| from the running
+            #      minimum. Variational EM loss should be
+            #      monotonically decreasing modulo small noise;
+            #      a sustained climb is the earliest sign of
+            #      single-cell divergence contaminating the
+            #      gradient on globals. THIS is the trigger that
+            #      the previous "1000× absolute growth" check
+            #      missed because that bound is far above the
+            #      actual divergence regime.
+            #   3. |loss| explodes by > 1000× from |init_loss| →
+            #      kept as a hard backstop for the case where the
+            #      loss crosses 0 and balloons in a single step
+            #      faster than the climb-from-min check can react.
             if not np.isfinite(loss_val):
                 worst_cell_grad = float(jnp.max(gn_comp))
                 raise RuntimeError(
@@ -1750,6 +1804,38 @@ def _run_lnm_inference(
                     "cells by total count or compositional skew "
                     "before fitting."
                 )
+            # Climb-from-min check (the primary divergence detector).
+            if (
+                init_loss is not None
+                and len(losses) > 50
+                and np.isfinite(min_loss_so_far)
+                and np.isfinite(init_loss)
+                and (loss_val - min_loss_so_far)
+                > 0.5 * abs(init_loss)
+            ):
+                worst_cell_grad = float(jnp.max(gn_comp))
+                raise RuntimeError(
+                    f"LNM Laplace loss climbing (divergence "
+                    f"detected) at step {step + 1}: loss="
+                    f"{loss_val:.3e} has increased by "
+                    f"{(loss_val - min_loss_so_far):.3e} from the "
+                    f"running minimum {min_loss_so_far:.3e}, which "
+                    f"exceeds 0.5 × |init_loss|="
+                    f"{0.5 * abs(init_loss):.3e}. A small subset "
+                    "of cells has entered an unstable Newton regime "
+                    f"(worst comp grad={worst_cell_grad:.3e}). "
+                    "Variational EM loss should monotonically "
+                    "decrease; a sustained climb signals one or "
+                    "more cells contaminating the global gradient. "
+                    "Try (a) increasing "
+                    "laplace_config['n_newton_steps'] to 20-30, "
+                    "(b) tightening laplace_config['damping'] to "
+                    "1e-3 or below, or (c) pre-filtering outlier "
+                    "cells. ``result.final_grad_norms`` after a "
+                    "completed shorter run identifies offending "
+                    "cells."
+                )
+            # Absolute-magnitude backstop.
             if (
                 init_loss is not None
                 and len(losses) > 50
@@ -1760,18 +1846,16 @@ def _run_lnm_inference(
                 raise RuntimeError(
                     f"LNM Laplace loss diverged at step {step + 1}: "
                     f"|loss|={abs(loss_val):.3e} grew >1000× from "
-                    f"|init_loss|={abs(init_loss):.3e}. A small "
-                    "subset of cells has entered an unstable Newton "
-                    f"regime (worst comp grad={worst_cell_grad:.3e}). "
-                    "See the non-finite-loss case for remediations; "
-                    "additionally, ``result.final_grad_norms`` after "
-                    "killing the run will identify the offending "
-                    "cells if you restart and let it complete."
+                    f"|init_loss|={abs(init_loss):.3e}. See above "
+                    "remediations."
                 )
 
             losses.append(loss_val)
             if init_loss is None:
                 init_loss = loss_val
+                min_loss_so_far = loss_val
+            else:
+                min_loss_so_far = min(min_loss_so_far, loss_val)
 
             step_completed = step + 1
             should_display = (
