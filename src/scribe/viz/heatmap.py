@@ -7,6 +7,8 @@ import seaborn as sns
 from jax import random
 import jax.numpy as jnp
 
+import scribe
+
 from ._common import _is_pln_model, console
 from ._interactive import PlotResultCollection, plot_function
 from .dispatch import _get_layouts_for_plot
@@ -25,6 +27,266 @@ def _compute_correlation_matrix(samples, n_samples):
     return correlation_matrix
 
 
+def _select_genes_by_w_clusters(
+    W: np.ndarray,
+    n_take: int,
+    n_clusters: int,
+):
+    """Cluster genes by *direction* of their W rows; pick representatives.
+
+    The motivation is that gene-gene correlation in PLN/LNM is
+    governed by the *direction* of the W rows in the latent factor
+    space, not their magnitude:
+
+        Σ_gh = W_g · W_h + δ_gh d_g
+        Corr(g, h) ≈ cos(angle(W_g, W_h)) (modulo d_g, d_h variance)
+
+    Sorting by ``||W_g||`` therefore picks genes that participate in
+    the latent structure but tells us nothing about *which*
+    direction they participate in. If one direction dominates (a
+    common pathology — typically a "library-size" or "global mean"
+    factor), every high-norm gene aligns with it and the heatmap
+    collapses to a uniform block of high positive correlation.
+
+    Clustering unit-norm W rows finds groups of genes that share a
+    direction. Picking top genes from each cluster gives a heatmap
+    where each within-cluster block is internally highly correlated
+    and between-cluster pairs reveal the latent geometry.
+
+    Parameters
+    ----------
+    W : np.ndarray
+        Shape ``(G_eff, k)`` factor-loading matrix.
+    n_take : int
+        Total number of genes to return.
+    n_clusters : int
+        Number of W-direction clusters to extract.
+
+    Returns
+    -------
+    selected_idx : np.ndarray
+        Selected gene indices, ordered by cluster id (so the
+        heatmap shows block-diagonal structure when row/col
+        clustering is disabled).
+    cluster_id : np.ndarray
+        Cluster id (1-indexed) for each selected gene, parallel to
+        ``selected_idx``.
+    """
+    from scipy.cluster.hierarchy import linkage, fcluster
+
+    G_eff = W.shape[0]
+    n_clusters_eff = max(1, min(int(n_clusters), G_eff))
+
+    # Unit-normalize each row. Genes with effectively-zero W row
+    # don't participate in the latent factors; we keep them in W_hat
+    # but they will form their own cluster (unit ε vector points
+    # nowhere meaningful, which the linkage will detect as outliers).
+    norms = np.linalg.norm(W, axis=1, keepdims=True)
+    safe_norms = np.where(norms < 1e-12, 1.0, norms)
+    W_hat = W / safe_norms
+
+    # Euclidean distance on unit vectors: ‖u − v‖² = 2 − 2 cos θ, so
+    # this is monotone in angular distance with cleaner numerics.
+    # ``method="average"`` gives the most stable cuts for cosine-like
+    # geometry; ``ward`` would also work but assumes squared
+    # Euclidean distortion which is fine here. We use average.
+    Z = linkage(W_hat, method="average", metric="euclidean")
+    cluster_id_full = fcluster(
+        Z, t=n_clusters_eff, criterion="maxclust"
+    )
+
+    # From each cluster, take the top genes by ||W_g|| (so we
+    # surface the genes that load most strongly *within* each
+    # direction). Distribute n_take roughly evenly across clusters.
+    base_per_cluster = max(1, n_take // n_clusters_eff)
+
+    selected_per_cluster = []
+    for cid in range(1, n_clusters_eff + 1):
+        members = np.where(cluster_id_full == cid)[0]
+        if members.size == 0:
+            continue
+        member_norms = np.linalg.norm(W[members], axis=1)
+        order = members[np.argsort(member_norms)[::-1]]
+        selected_per_cluster.append((cid, order[:base_per_cluster]))
+
+    # If we under-filled (clusters smaller than ``base_per_cluster``)
+    # top up by global ||W_g|| ranking on the unselected genes.
+    used = np.concatenate([sel for _, sel in selected_per_cluster])
+    short = n_take - used.size
+    if short > 0:
+        remaining = np.setdiff1d(np.arange(G_eff), used)
+        rem_norms = np.linalg.norm(W[remaining], axis=1)
+        topup = remaining[np.argsort(rem_norms)[::-1][:short]]
+        # Assign them cluster id 0 ("other") for the colorbar strip.
+        selected_per_cluster.append((0, topup))
+
+    # Concatenate in cluster-id order so the resulting block-diagonal
+    # ordering shows the geometry directly when clustermap row/col
+    # clustering is disabled.
+    selected_per_cluster.sort(key=lambda kv: kv[0])
+    selected_idx = np.concatenate(
+        [sel for _, sel in selected_per_cluster]
+    )
+    cluster_id = np.concatenate(
+        [np.full(sel.shape[0], cid, dtype=int)
+         for cid, sel in selected_per_cluster]
+    )
+    return selected_idx, cluster_id
+
+
+def _plot_laplace_correlation_heatmap(
+    results,
+    *,
+    ctx,
+    n_genes_to_plot: int,
+    figsize,
+    cmap,
+    base_fname: str,
+    output_format: str,
+    gene_selection: str = "w_clusters",
+    n_clusters: int = 8,
+):
+    """Render a clustered correlation heatmap from a Laplace fit's globals.
+
+    For PLN/LNM Laplace results, the model's correlation structure
+    is *parameterised* directly: ``Sigma = W W' + diag(d)``. We can
+    therefore compute the gene-gene Pearson correlation in closed
+    form rather than via Monte-Carlo PPC samples, which is both
+    cheaper and free of the encoder's aggregate-posterior drift.
+
+    Two gene-selection strategies are supported:
+
+    - ``"w_clusters"`` (default): hierarchical-cluster genes by the
+      *direction* of their W rows (unit-normalized) and pick top
+      genes from each cluster. Surfaces multi-block structure even
+      when one latent direction dominates the L2 norm.
+    - ``"w_norm"``: pick the top ``n_genes`` by ``||W_g||``. Quick,
+      but collapses to a single block when one direction dominates.
+    """
+    bm = getattr(results.model_config, "base_model", None)
+    bm_str = str(getattr(bm, "value", bm) or "").lower()
+
+    correlation_matrix = np.asarray(results.get_correlation())
+    W = np.asarray(results.W)
+
+    n_total = int(correlation_matrix.shape[0])
+    n_take = min(int(n_genes_to_plot), n_total)
+
+    cluster_id_per_gene: np.ndarray | None = None
+    if gene_selection == "w_norm":
+        # Sort-by-magnitude path. Useful when the user wants the
+        # single most-loaded block; loses information when one
+        # latent direction dominates.
+        w_norm = np.linalg.norm(W, axis=1)
+        top_idx = np.argsort(w_norm)[-n_take:]
+        top_idx = np.sort(top_idx)
+        selection_label = "‖W_g‖ (top by magnitude)"
+    elif gene_selection == "w_clusters":
+        # Direction-cluster path. See _select_genes_by_w_clusters
+        # for the geometric justification.
+        top_idx, cluster_id_per_gene = _select_genes_by_w_clusters(
+            W, n_take=n_take, n_clusters=n_clusters
+        )
+        selection_label = (
+            f"W-direction clusters (k={n_clusters}, top genes per cluster)"
+        )
+    else:
+        raise ValueError(
+            f"gene_selection must be 'w_norm' or 'w_clusters'; "
+            f"got {gene_selection!r}"
+        )
+
+    correlation_subset = correlation_matrix[np.ix_(top_idx, top_idx)]
+
+    # Diagnostics: report the off-diagonal correlation range so the
+    # user can quickly tell whether the model found block structure
+    # at all (range [-eps, +eps] ⇒ no structure; range close to ±1
+    # ⇒ strongly correlated blocks).
+    off_diag = correlation_subset.copy()
+    np.fill_diagonal(off_diag, 0.0)
+    console.print(
+        f"[dim]Selected {n_take} genes via {gene_selection!r} "
+        f"(out of {n_total} {'ALR' if bm_str in ('lnm', 'lnmvcp') else 'log-rate'} dims)[/dim]"
+    )
+    if cluster_id_per_gene is not None:
+        unique_cids, counts_per_cid = np.unique(
+            cluster_id_per_gene, return_counts=True
+        )
+        console.print(
+            f"[dim]Cluster sizes: "
+            f"{dict(zip(unique_cids.tolist(), counts_per_cid.tolist()))}[/dim]"
+        )
+    console.print(
+        f"[dim]Off-diagonal correlation range: "
+        f"[{off_diag.min():.3f}, {off_diag.max():.3f}][/dim]"
+    )
+
+    space_label = (
+        "ALR composition logits"
+        if bm_str in ("lnm", "lnmvcp")
+        else "log-rate latents"
+    )
+    space_extra = (
+        "\n(reference gene excluded; ALR space has G-1 dims by construction)"
+        if bm_str in ("lnm", "lnmvcp")
+        else ""
+    )
+
+    # When using direction clustering, pre-order rows/cols by cluster
+    # id and disable clustermap's own dendrogram-based reordering so
+    # the user sees the direction blocks directly. Add a colored
+    # row strip so each cluster is visually distinct. When using
+    # w_norm we let clustermap re-cluster as before.
+    clustermap_kwargs = dict(
+        cmap=cmap, center=0, vmin=-1, vmax=1,
+        figsize=figsize, dendrogram_ratio=0.15,
+        cbar_pos=(0.02, 0.83, 0.03, 0.15),
+        linewidths=0, xticklabels=False, yticklabels=False,
+        cbar_kws={"label": "Pearson Correlation"},
+    )
+    if cluster_id_per_gene is not None:
+        # Build a per-row color strip so the clusters are easy to
+        # see at a glance.
+        unique_cids = np.unique(cluster_id_per_gene)
+        palette = sns.color_palette("tab10", n_colors=max(10, len(unique_cids)))
+        cid_to_color = {
+            int(cid): palette[i % len(palette)]
+            for i, cid in enumerate(unique_cids)
+        }
+        row_colors = [
+            cid_to_color[int(cid)] for cid in cluster_id_per_gene
+        ]
+        clustermap_kwargs.update(
+            row_cluster=False,
+            col_cluster=False,
+            row_colors=row_colors,
+            col_colors=row_colors,
+        )
+
+    console.print(
+        "[dim]Creating clustered heatmap (analytic correlation)...[/dim]"
+    )
+    fig = sns.clustermap(correlation_subset, **clustermap_kwargs)
+
+    fig.fig.suptitle(
+        f"Gene Correlation Structure — {space_label}{space_extra}\n"
+        f"Top {n_take} genes via {selection_label}\n"
+        f"(analytic: W Wᵀ + diag(d), model={bm_str.upper() or '?'})",
+        y=1.02,
+        fontsize=12,
+    )
+
+    fname = f"{base_fname}_correlation_heatmap.{output_format}"
+    return ctx.finalize(
+        fig.fig,
+        list(fig.fig.axes),
+        1,
+        filename=fname if ctx.save else None,
+        save_kwargs={"bbox_inches": "tight"},
+        save_label="correlation heatmap",
+    )
+
+
 @plot_function()
 def plot_correlation_heatmap(
     results,
@@ -38,6 +300,8 @@ def plot_correlation_heatmap(
     fig=None,
     axes=None,
     ax=None,
+    gene_selection: str = "w_clusters",
+    n_clusters: int = 8,
 ):
     """Plot clustered correlation heatmap of gene parameters from posterior samples.
 
@@ -89,10 +353,6 @@ def plot_correlation_heatmap(
         otherwise. Each value wraps the figure, axes, and metadata.
     """
     console.print("[dim]Plotting correlation heatmap...[/dim]")
-    if counts is not None:
-        counts = _coerce_and_align_counts_to_results(
-            counts, results, context="plot_correlation_heatmap"
-        )
     # Seaborn clustermap owns its own figure/axes objects, so custom axis
     # injection is intentionally unsupported for this entry point.
     if fig is not None or ax is not None or axes is not None:
@@ -114,6 +374,54 @@ def plot_correlation_heatmap(
     if figsize is None:
         figsize = (_cfg_figsize, _cfg_figsize)
     cmap = heatmap_opts.get("cmap", "RdBu_r")
+
+    # Build the filename prefix once — both branches (Laplace and
+    # SVI/MCMC) write through the same context machinery.
+    base_fname = "correlation"
+    if ctx.save:
+        _fname_prefix = ctx.build_filename(
+            "correlation_heatmap", results=results
+        )
+        base_fname = _fname_prefix.rsplit("_correlation_heatmap.", 1)[0]
+    output_format = ctx.output_format
+
+    # ----------------------------------------------------------------
+    # Laplace path: correlation is closed-form ``W Wᵀ + diag(d)`` so we
+    # bypass the entire sampling pipeline (and the PLN-skip guard,
+    # which only applies to SVI/VAE PLN fits that have no per-gene
+    # scalar posteriors). ``counts`` and ``n_samples`` are unused
+    # here — we ignore them with a console note for clarity.
+    # ----------------------------------------------------------------
+    if isinstance(results, scribe.ScribeLaplaceResults):
+        if n_samples is not None:
+            console.print(
+                "[yellow]Note: `n_samples` is ignored for Laplace fits; "
+                "correlation is computed analytically from W and d.[/yellow]"
+            )
+        if counts is not None:
+            console.print(
+                "[dim]Note: `counts` is unused for analytic Laplace correlation.[/dim]"
+            )
+        return _plot_laplace_correlation_heatmap(
+            results,
+            ctx=ctx,
+            n_genes_to_plot=n_genes_to_plot,
+            figsize=figsize,
+            cmap=cmap,
+            base_fname=base_fname,
+            output_format=output_format,
+            gene_selection=gene_selection,
+            n_clusters=n_clusters,
+        )
+
+    # ----------------------------------------------------------------
+    # Sampling-based path (SVI / VAE / MCMC). Falls through to the
+    # legacy implementation below.
+    # ----------------------------------------------------------------
+    if counts is not None:
+        counts = _coerce_and_align_counts_to_results(
+            counts, results, context="plot_correlation_heatmap"
+        )
 
     # PLN does not expose NB-style per-gene scalar posteriors (r/mu) used by
     # this posterior-sample correlation heatmap implementation.
@@ -182,13 +490,8 @@ def plot_correlation_heatmap(
         if not _posterior_was_missing:
             console.print(f"[dim]Found {n_avail} existing samples[/dim]")
 
-    base_fname = "correlation"
-    if ctx.save:
-        _fname_prefix = ctx.build_filename(
-            "correlation_heatmap", results=results
-        )
-        base_fname = _fname_prefix.rsplit("_correlation_heatmap.", 1)[0]
-    output_format = ctx.output_format
+    # ``base_fname`` and ``output_format`` are computed at the top of
+    # the function and shared between the Laplace and SVI/MCMC paths.
 
     # Use canonical AxisLayout (keyed by "r", "mu", etc.) to determine
     # whether this is a mixture model and which axes carry semantics.

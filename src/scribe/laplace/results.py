@@ -971,8 +971,18 @@ def _ppc_pln_per_cell(
         eff_log_rate, _LOG_RATE_MIN, _LOG_RATE_MAX
     )
     rate = jnp.exp(eff_log_rate)
-    rate_b = jnp.broadcast_to(rate, (n_samples,) + rate.shape)
-    return jax.random.poisson(rng_key, rate_b)
+
+    # Batched sampling — same memory consideration as the LNM
+    # per-cell path. Poisson sampling has a smaller intermediate
+    # than multinomial (no n_max categorical expansion), so this
+    # mostly bounds the *output* allocation per chunk.
+    def _sample_chunk(chunk_key: jax.Array, size: int) -> jnp.ndarray:
+        rate_b = jnp.broadcast_to(rate, (size,) + rate.shape)
+        return jax.random.poisson(chunk_key, rate_b)
+
+    return _batched_sample_concat(
+        rng_key, n_samples, _sample_chunk
+    )
 
 
 # ------ LNM PPC helpers ------
@@ -1060,7 +1070,29 @@ def _ppc_lnm_population(
         n_arr = jnp.broadcast_to(
             jnp.asarray(fallback, dtype=jnp.int32), (n_samples,)
         )
-    return _multinomial_sample(k3, n_arr, p)
+
+    # Chunked multinomial. ``p`` and ``n_arr`` are lightweight
+    # (n_samples × G ≈ 14 MB at 512×7K), but NumPyro's multinomial
+    # internally expands ``n_max`` categoricals so the
+    # ``(n_samples, n_max, G)`` intermediate balloons. Stream each
+    # chunk's output to host so device peak stays bounded.
+    chunk_size = _kwargs.get("chunk_size", _PPC_DEFAULT_SAMPLE_CHUNK)
+    if chunk_size is None or chunk_size >= n_samples:
+        return _multinomial_sample(k3, n_arr, p)
+
+    n_chunks = (n_samples + chunk_size - 1) // chunk_size
+    chunk_keys = jax.random.split(k3, n_chunks)
+    pieces: List[np.ndarray] = []
+    for i in range(n_chunks):
+        start = i * chunk_size
+        end = min(start + chunk_size, n_samples)
+        p_chunk = jax.lax.dynamic_slice_in_dim(p, start, end - start, axis=0)
+        n_chunk = jax.lax.dynamic_slice_in_dim(
+            n_arr, start, end - start, axis=0
+        )
+        out_chunk = _multinomial_sample(chunk_keys[i], n_chunk, p_chunk)
+        pieces.append(np.asarray(out_chunk))
+    return np.concatenate(pieces, axis=0)
 
 
 def _ppc_lnm_per_cell(
@@ -1154,8 +1186,32 @@ def _ppc_lnm_per_cell(
         k_pred = rng_key
         n_b = jnp.broadcast_to(n_arr_cells, (n_samples,) + n_arr_cells.shape)
 
-    p_b = jnp.broadcast_to(p_per_cell, (n_samples,) + p_per_cell.shape)
-    return _multinomial_sample(k_pred, n_b, p_b)
+    # Batched sampling. NumPyro's multinomial expands n_max
+    # categoricals internally, which scales as ``chunk · n_cells ·
+    # n_max`` for the intermediate. Without chunking, the full
+    # ``(n_samples, n_cells, G)`` output PLUS that intermediate
+    # easily exceeds GPU memory on real scRNA-seq dimensions
+    # (n_samples=512, n_cells=3K, G=7K ≈ 42 GB output). We sample
+    # in chunks of ``_PPC_DEFAULT_SAMPLE_CHUNK`` and accumulate to
+    # host memory.
+    chunk_size = _kwargs.get("chunk_size", _PPC_DEFAULT_SAMPLE_CHUNK)
+    # ``n_b`` is shaped ``(n_samples, n_cells)`` already; we slice
+    # both the keys and the batch arrays per chunk.
+    if hasattr(n_b, "shape") and n_b.ndim == 2:
+        n_per_cell_for_chunks = n_b[0]  # invariant across samples
+    else:
+        n_per_cell_for_chunks = n_arr_cells
+
+    def _sample_chunk(chunk_key: jax.Array, size: int) -> jnp.ndarray:
+        n_b_chunk = jnp.broadcast_to(
+            n_per_cell_for_chunks, (size,) + n_per_cell_for_chunks.shape
+        )
+        p_b_chunk = jnp.broadcast_to(p_per_cell, (size,) + p_per_cell.shape)
+        return _multinomial_sample(chunk_key, n_b_chunk, p_b_chunk)
+
+    return _batched_sample_concat(
+        k_pred, n_samples, _sample_chunk, chunk_size=chunk_size
+    )
 
 
 def _multinomial_sample(
@@ -1174,6 +1230,71 @@ def _multinomial_sample(
     # MultinomialProbs handles broadcasting; just return a single
     # sample at the broadcast shape.
     return dist.MultinomialProbs(probs=p, total_count=n).sample(rng_key)
+
+
+# Default per-chunk sample count for the batched samplers below.
+# Chosen so the device-side intermediate ``(chunk, n_cells, G)`` for
+# typical scRNA-seq dimensions (3K cells × 7K genes ≈ 84 MB per
+# sample) stays under ~2 GB. NumPyro's multinomial implementation
+# expands ``n_max`` categoricals internally, which is what makes the
+# unchunked version OOM on large datasets even on a 80 GB H100. The
+# chunk size is conservative; users with more headroom can opt into
+# the unchunked path by passing ``chunk_size=None`` to the helpers.
+_PPC_DEFAULT_SAMPLE_CHUNK = 16
+
+
+def _batched_sample_concat(
+    rng_key: jax.Array,
+    n_samples: int,
+    sampler_fn,
+    chunk_size: Optional[int] = _PPC_DEFAULT_SAMPLE_CHUNK,
+) -> np.ndarray:
+    """Run ``sampler_fn`` in n-sample chunks; concatenate on the host.
+
+    The sampler is called as ``sampler_fn(chunk_key, chunk_size_int)``
+    and must return a JAX array of shape ``(chunk_size_int, ...)``.
+    Each chunk is moved to host (numpy) memory immediately so the
+    device-side allocation is bounded by one chunk's intermediate
+    arrays, not the full ``(n_samples, ...)`` output. The returned
+    numpy array has shape ``(n_samples, ...)``.
+
+    Memory accounting for typical PPC use:
+
+    * **device peak** ~ ``chunk_size · n_cells · G · 4 bytes`` for the
+      output, plus NumPyro's categorical-expand intermediate (``n_max
+      · chunk_size · n_cells · 4 bytes`` where ``n_max`` is the max
+      per-cell total). With ``chunk_size=16``, ``n_cells=3000``,
+      ``G=7000``, ``n_max=10000``, the intermediate is ~2 GB and the
+      output chunk is ~1.5 GB — comfortably under any modern GPU.
+    * **host total** = ``n_samples · n_cells · G · 4 bytes`` for the
+      final concatenated array. For ``n_samples=512, n_cells=3000,
+      G=7000`` that's ~42 GB; users with less host RAM should reduce
+      ``n_samples`` at the call site.
+
+    When ``chunk_size`` is None, the sampler runs in a single call
+    (legacy behaviour). Useful for small datasets or when the user
+    knows the device has enough memory.
+    """
+    if chunk_size is None or chunk_size >= n_samples:
+        # Single-call path: return a numpy array for parity with the
+        # chunked path.
+        out = sampler_fn(rng_key, int(n_samples))
+        return np.asarray(out)
+
+    n_chunks = (n_samples + chunk_size - 1) // chunk_size
+    chunk_keys = jax.random.split(rng_key, n_chunks)
+    pieces: List[np.ndarray] = []
+    for i in range(n_chunks):
+        start = i * chunk_size
+        end = min(start + chunk_size, n_samples)
+        size = end - start
+        # Sample on device, then move to host immediately so the
+        # next chunk's allocation has the device's full memory
+        # available again. ``np.asarray`` triggers the
+        # device-to-host transfer in JAX 0.4+.
+        chunk = sampler_fn(chunk_keys[i], size)
+        pieces.append(np.asarray(chunk))
+    return np.concatenate(pieces, axis=0)
 
 
 # ------ Log-likelihood helpers ------
