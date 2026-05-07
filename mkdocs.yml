@@ -143,14 +143,14 @@ nav:
     - Quickstart: getting-started/quickstart.md
   - Theory:
     - theory/index.md
+    - Dirichlet-Multinomial Model: theory/dirichlet-multinomial.md
+    - Hierarchical Gene-Specific p: theory/hierarchical-p.md
+    - Beta Negative Binomial: theory/beta-negative-binomial.md
+    - Anchoring Priors: theory/anchoring-priors.md
+    - Hierarchical Priors: theory/hierarchical-priors.md
     - GRN Biophysics: theory/grn-biophysics.md
     - Poisson Log-Normal Model: theory/poisson-lognormal.md
     - Logistic-Normal Multinomial Model: theory/logistic-normal-multinomial.md
-    - Dirichlet-Multinomial Model: theory/dirichlet-multinomial.md
-    - Hierarchical Gene-Specific p: theory/hierarchical-p.md
-    - Anchoring Priors: theory/anchoring-priors.md
-    - Beta Negative Binomial: theory/beta-negative-binomial.md
-    - Hierarchical Priors: theory/hierarchical-priors.md
     - Bayesian Denoising: theory/denoising.md
     - Differential Expression: theory/differential-expression.md
     - Model Comparison: theory/model-comparison.md
