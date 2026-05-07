@@ -969,3 +969,139 @@ class TestPPCMethods:
             rng_key=random.PRNGKey(0), n_samples=8, counts=counts
         )
         assert tuple(out.shape) == (8, res.n_cells, res.n_genes)
+
+
+class TestCorrelationResidual:
+    """Verify the library-size / nuisance-direction projection
+    machinery on ``ScribeLaplaceResults``.
+
+    Plants a $W$ where factor 0 is a pure ``1_G`` direction (the
+    "library-size" pattern) and factors 1, 2 carry block structure.
+    The residual correlation should:
+      * keep block within-correlations close to 1 (signal preserved).
+      * drop cross-block correlations close to 0 (nuisance removed).
+    """
+
+    def _planted_pln_results(self):
+        from scribe import ScribeLaplaceResults
+        from scribe.models.config import ModelConfig
+        from scribe.models.config.enums import (
+            InferenceMethod,
+            Parameterization,
+        )
+
+        np.random.seed(401)
+        G, k = 60, 3
+        W = np.zeros((G, k), dtype=np.float32)
+        W[:, 0] = 1.5  # library-size axis
+        W[:30, 1] = np.random.normal(1.0, 0.05, 30).astype(np.float32)
+        W[30:, 2] = np.random.normal(1.0, 0.05, 30).astype(np.float32)
+        mu = jnp.zeros(G, dtype=jnp.float32)
+        d = jnp.full(G, 0.05, dtype=jnp.float32)
+        mc = ModelConfig(
+            base_model="pln",
+            parameterization=Parameterization.POISSON_LOGNORMAL,
+            inference_method=InferenceMethod.LAPLACE,
+        )
+        return ScribeLaplaceResults(
+            model_config=mc, mu=mu, W=jnp.asarray(W), d=d,
+            n_genes=G, n_cells=10,
+            x_loc=jnp.zeros((10, G), dtype=jnp.float32),
+            losses=jnp.zeros(1), final_grad_norms=jnp.zeros(1),
+        )
+
+    def test_library_size_direction_recovers_planted_axis(self):
+        res = self._planted_pln_results()
+        e = np.asarray(res.get_library_size_direction())
+        assert e.shape == (3,)
+        # Planted library axis was factor 0; the unit-norm
+        # detector should recover it (sign-ambiguous).
+        assert abs(e[0]) > 0.99
+        assert abs(e[1]) < 1e-3
+        assert abs(e[2]) < 1e-3
+
+    def test_correlation_residual_removes_cross_block_signal(self):
+        res = self._planted_pln_results()
+        C_full = np.asarray(res.get_correlation())
+        C_resid = np.asarray(
+            res.get_correlation_residual(method="library_size")
+        )
+        # Within-block correlations stay near 1 (signal preserved).
+        assert C_resid[:30, :30].mean() > 0.95
+        assert C_resid[30:, 30:].mean() > 0.95
+        # Cross-block correlations were inflated by library-size in
+        # the full matrix (~0.7); residual should drop them to ~0.
+        assert abs(C_full[:30, 30:].mean()) > 0.5
+        assert abs(C_resid[:30, 30:].mean()) < 0.05
+
+    def test_pc_method_returns_distinct_residuals(self):
+        """``method='pc'`` removes the dominant *variance* direction,
+        which need not coincide with the library-size direction
+        $\\mathbf{1}_G$ when the planted columns of $W$ are
+        correlated. The two methods are *both* valid projections;
+        test that they're internally consistent rather than equal.
+        """
+        res = self._planted_pln_results()
+        C_pc1 = np.asarray(
+            res.get_correlation_residual(method="pc", n_components=1)
+        )
+        C_pc2 = np.asarray(
+            res.get_correlation_residual(method="pc", n_components=2)
+        )
+        # Removing more PCs should reduce signal monotonically.
+        # Compare absolute mean off-diagonals.
+        off_pc1 = np.abs(C_pc1 - np.diag(np.diag(C_pc1))).mean()
+        off_pc2 = np.abs(C_pc2 - np.diag(np.diag(C_pc2))).mean()
+        assert off_pc2 <= off_pc1 + 1e-6, (
+            f"removing more PCs should not increase off-diagonal "
+            f"signal (pc1={off_pc1:.4f}, pc2={off_pc2:.4f})"
+        )
+
+    def test_pc1_equals_library_size_for_pure_1G_W(self):
+        """When ``W`` has *only* the library-size factor (a pure rank-1
+        $\\mathbf{1}_G$ column with no other structure), PC1 of
+        $W^\\top W$ coincides with the library-size direction. Both
+        methods then produce the same residual.
+        """
+        from scribe import ScribeLaplaceResults
+        from scribe.models.config import ModelConfig
+        from scribe.models.config.enums import (
+            InferenceMethod,
+            Parameterization,
+        )
+
+        np.random.seed(402)
+        G, k = 30, 2
+        # Pure library-size on factor 0; factor 1 is orthogonal noise.
+        W = np.zeros((G, k), dtype=np.float32)
+        W[:, 0] = 1.0
+        # Make factor 1 mean-zero so it has no projection onto 1_G.
+        W[:, 1] = np.random.normal(0, 0.5, G).astype(np.float32)
+        W[:, 1] -= W[:, 1].mean()
+
+        mc = ModelConfig(
+            base_model="pln",
+            parameterization=Parameterization.POISSON_LOGNORMAL,
+            inference_method=InferenceMethod.LAPLACE,
+        )
+        res = ScribeLaplaceResults(
+            model_config=mc, mu=jnp.zeros(G), W=jnp.asarray(W),
+            d=jnp.full(G, 0.05), n_genes=G, n_cells=10,
+            x_loc=jnp.zeros((10, G)),
+            losses=jnp.zeros(1), final_grad_norms=jnp.zeros(1),
+        )
+
+        C_pc1 = np.asarray(res.get_correlation_residual(method="pc", n_components=1))
+        C_lib = np.asarray(res.get_correlation_residual(method="library_size"))
+        np.testing.assert_allclose(C_pc1, C_lib, atol=1e-4)
+
+    def test_correlation_residual_invalid_method(self):
+        res = self._planted_pln_results()
+        with pytest.raises(ValueError, match="method must be"):
+            res.get_correlation_residual(method="not_a_real_method")
+
+    def test_residual_correlation_shape_matches_full(self):
+        res = self._planted_pln_results()
+        C_full = res.get_correlation()
+        C_resid = res.get_correlation_residual(method="library_size")
+        assert C_resid.shape == C_full.shape

@@ -1,6 +1,8 @@
 """Correlation heatmap plotting."""
 
 import os
+from typing import Optional
+
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -145,6 +147,8 @@ def _plot_laplace_correlation_heatmap(
     output_format: str,
     gene_selection: str = "w_clusters",
     n_clusters: int = 8,
+    subtract_direction: Optional[str] = None,
+    n_pcs_to_remove: int = 1,
 ):
     """Render a clustered correlation heatmap from a Laplace fit's globals.
 
@@ -162,11 +166,41 @@ def _plot_laplace_correlation_heatmap(
       when one latent direction dominates the L2 norm.
     - ``"w_norm"``: pick the top ``n_genes`` by ``||W_g||``. Quick,
       but collapses to a single block when one direction dominates.
+
+    Optional library-size / nuisance-direction removal:
+
+    - ``subtract_direction="library_size"``: project out the
+      column-space-of-W direction whose image is closest to
+      $\\mathbf{1}_G$ before computing correlations. Recommended when
+      the model has absorbed library-size variation into one of
+      its latent factors and the resulting "sea of red" heatmap
+      hides the secondary block structure. See
+      :meth:`ScribeLaplaceResults.get_correlation_residual`.
+    - ``subtract_direction="pc"``: project out the top
+      ``n_pcs_to_remove`` principal components of $W^\\top W$.
+      A model-agnostic fallback when the library-size direction
+      is not well-aligned with $\\mathbf{1}_G$.
+    - ``subtract_direction=None`` (default): plot the full
+      model-implied correlation matrix.
     """
     bm = getattr(results.model_config, "base_model", None)
     bm_str = str(getattr(bm, "value", bm) or "").lower()
 
-    correlation_matrix = np.asarray(results.get_correlation())
+    if subtract_direction is None:
+        correlation_matrix = np.asarray(results.get_correlation())
+    elif subtract_direction in ("library_size", "pc"):
+        correlation_matrix = np.asarray(
+            results.get_correlation_residual(
+                method=subtract_direction,
+                n_components=int(n_pcs_to_remove),
+                include_diagonal_d=False,
+            )
+        )
+    else:
+        raise ValueError(
+            f"subtract_direction must be None, 'library_size', or 'pc'; "
+            f"got {subtract_direction!r}"
+        )
     W = np.asarray(results.W)
 
     n_total = int(correlation_matrix.shape[0])
@@ -268,10 +302,19 @@ def _plot_laplace_correlation_heatmap(
     )
     fig = sns.clustermap(correlation_subset, **clustermap_kwargs)
 
+    if subtract_direction == "library_size":
+        projection_note = "; library-size direction projected out"
+    elif subtract_direction == "pc":
+        projection_note = (
+            f"; top-{int(n_pcs_to_remove)} W^TW PCs projected out"
+        )
+    else:
+        projection_note = ""
+
     fig.fig.suptitle(
         f"Gene Correlation Structure — {space_label}{space_extra}\n"
         f"Top {n_take} genes via {selection_label}\n"
-        f"(analytic: W Wᵀ + diag(d), model={bm_str.upper() or '?'})",
+        f"(analytic: W Wᵀ + diag(d), model={bm_str.upper() or '?'}{projection_note})",
         y=1.02,
         fontsize=12,
     )
@@ -302,6 +345,8 @@ def plot_correlation_heatmap(
     ax=None,
     gene_selection: str = "w_clusters",
     n_clusters: int = 8,
+    subtract_direction: Optional[str] = None,
+    n_pcs_to_remove: int = 1,
 ):
     """Plot clustered correlation heatmap of gene parameters from posterior samples.
 
@@ -412,6 +457,8 @@ def plot_correlation_heatmap(
             output_format=output_format,
             gene_selection=gene_selection,
             n_clusters=n_clusters,
+            subtract_direction=subtract_direction,
+            n_pcs_to_remove=n_pcs_to_remove,
         )
 
     # ----------------------------------------------------------------

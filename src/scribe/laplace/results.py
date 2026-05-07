@@ -295,6 +295,128 @@ class ScribeLaplaceResults:
         std = jnp.sqrt(jnp.maximum(jnp.diag(sigma), 1e-30))
         return sigma / (std[:, None] * std[None, :])
 
+    def get_library_size_direction(self) -> jnp.ndarray:
+        """Latent-space unit vector $\\mathbf{e} \\in \\mathbb{R}^k$ whose image is closest to $\\mathbf{1}_G$.
+
+        Returns the least-squares solution to $\\underline{\\underline{W}} \\mathbf{e} \\approx \\mathbf{1}_G$,
+        normalised to unit length. Geometrically, this is the
+        column-space-of-$W$ direction that best represents the
+        "all-genes-shift-together" pattern characteristic of
+        per-cell library-size variation.
+
+        Theory: the orthogonal projection of $\\mathbf{1}_G$ onto
+        the column space of $\\underline{\\underline{W}}$, expressed
+        in latent coordinates, is
+
+        .. math::
+            \\mathbf{e}_{\\text{unnormed}}
+            \\;=\\; (\\underline{\\underline{W}}^\\top
+                    \\underline{\\underline{W}})^{-1}\\,
+                    \\underline{\\underline{W}}^\\top\\, \\mathbf{1}_G,
+
+        and we normalise. When the latent factor structure has
+        absorbed library-size variation into a single direction
+        (a common pathology when the capture term is weak or
+        absent — see ``paper/_diffexp_lnm_pln_robustness.qmd``
+        @sec-diffexp-lnm-pln-robust-pln-redundancy), this is the
+        direction to project out before computing gene-gene
+        correlations to surface the *non-library-size* block
+        structure.
+
+        Returns
+        -------
+        jnp.ndarray, shape ``(k,)``
+            Unit-norm direction in latent space.
+        """
+        ones_G = jnp.ones(self.W.shape[0], dtype=self.W.dtype)
+        # Solve (W^T W) e = W^T 1_G via Cholesky for stability.
+        WtW = self.W.T @ self.W
+        Wt1 = self.W.T @ ones_G
+        e_raw = jnp.linalg.solve(WtW, Wt1)
+        return e_raw / jnp.maximum(jnp.linalg.norm(e_raw), 1e-30)
+
+    def get_correlation_residual(
+        self,
+        method: str = "library_size",
+        n_components: int = 1,
+        include_diagonal_d: bool = False,
+    ) -> jnp.ndarray:
+        """Correlation matrix after projecting out latent direction(s).
+
+        Two strategies, both designed to surface the *secondary*
+        block structure of $\\Sigma = W W^\\top + \\mathrm{diag}(d)$
+        when one or more latent directions are dominated by
+        nuisance signal (typically library-size in scRNA-seq):
+
+        * ``method="library_size"`` (default): project out the
+          unit direction returned by
+          :meth:`get_library_size_direction` — the column-space
+          direction whose image is closest to $\\mathbf{1}_G$.
+          Always uses one component.
+        * ``method="pc"``: project out the top ``n_components``
+          principal directions of $W^\\top W$ in latent space
+          (i.e., the eigenvectors corresponding to the
+          ``n_components`` largest eigenvalues). Useful as a
+          model-agnostic fallback when the library-size direction
+          isn't well-aligned with $\\mathbf{1}_G$ (e.g., after
+          aggressive batch correction).
+
+        The projection in latent space induces a rank-($k -
+        n_{\\text{remove}}$) factor:
+        $W_\\perp = W (I_k - U U^\\top)$ where $U$ collects the
+        directions to remove. The residual covariance is
+        $\\Sigma_\\perp = W_\\perp W_\\perp^\\top$ (optionally plus
+        $\\mathrm{diag}(d)$); the correlation is the standard
+        normalisation $D^{-1/2} \\Sigma_\\perp D^{-1/2}$ with
+        $D = \\mathrm{diag}(\\Sigma_\\perp)$.
+
+        Parameters
+        ----------
+        method : {"library_size", "pc"}, default "library_size"
+        n_components : int, default 1
+            Number of directions to project out (only used when
+            ``method="pc"``).
+        include_diagonal_d : bool, default False
+            Whether to add ``diag(d)`` to the residual covariance
+            before normalising. Including it gives a strict
+            "model-implied correlation minus library-size signal"
+            interpretation; excluding it gives a "factor-only"
+            correlation that surfaces blocks more sharply (the
+            diagonal residual flattens the off-diagonals).
+
+        Returns
+        -------
+        jnp.ndarray
+            Correlation matrix of the same shape as
+            :meth:`get_correlation`, but with the specified
+            direction(s) projected out of $W$.
+        """
+        if method == "library_size":
+            U = self.get_library_size_direction()[:, None]   # (k, 1)
+        elif method == "pc":
+            n = max(1, int(n_components))
+            WtW = self.W.T @ self.W
+            eigvals, eigvecs = jnp.linalg.eigh(WtW)
+            # eigh returns ascending eigenvalues; pick the top n.
+            U = eigvecs[:, -n:]                              # (k, n)
+        else:
+            raise ValueError(
+                f"method must be 'library_size' or 'pc'; got {method!r}"
+            )
+
+        # P_perp = I_k - U U^T (rank-k - n_components projector).
+        # W_perp = W P_perp; sigma_perp = W_perp W_perp^T.
+        # Use the identity sigma_perp = W W^T - (W U)(W U)^T to
+        # avoid forming the full G x G P_perp matrix.
+        WU = self.W @ U                                       # (G, n)
+        sigma_perp = self.W @ self.W.T - WU @ WU.T
+
+        if include_diagonal_d:
+            sigma_perp = sigma_perp + jnp.diag(self.d)
+
+        std = jnp.sqrt(jnp.maximum(jnp.diag(sigma_perp), 1e-30))
+        return sigma_perp / (std[:, None] * std[None, :])
+
     def get_p_capture(self) -> Optional[jnp.ndarray]:
         """Per-cell capture probability ``p_c ∈ (0, 1]``.
 
