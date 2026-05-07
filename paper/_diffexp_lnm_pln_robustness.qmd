@@ -1,0 +1,429 @@
+---
+editor:
+    render-on-save: true
+csl: ieee.csl
+format:
+  html:
+    filters: [tikz.lua, strip-yaml-frontmatter.lua, maintext-filter.lua, sitext-filter.lua]
+---
+
+## Compositional Robustness in the LNM and PLN Models {#sec-diffexp-lnm-pln-robust}
+
+The Dirichlet-Multinomial framework enjoys a strong compositional robustness
+guarantee: the inferred per-cell composition $\underline{\rho}^{(c)}$ is
+*exactly* invariant under misspecification of the per-cell capture
+probability $\nu_c$ (see @sec-diffexp-robustness). The result rests on a
+single structural property of the DM generative model — binomial thinning
+acts only on the rate parameter of the latent Gamma, leaving the shape
+parameter $\underline{r}$ (and hence the Dirichlet conditional) untouched.
+
+The Logistic-Normal Multinomial (LNM) and Poisson-LogNormal (PLN) models
+introduced in @sec-lnm-logistic-normal-def and @sec-pln-distribution were
+designed for a different purpose — capturing gene-gene correlations that the
+DM cannot represent — but a natural follow-up question is whether the same
+robustness guarantee carries over. The answer depends on which model:
+
+* **LNM(VCP) (@sec-diffexp-lnm-pln-robust-lnm)**: The composition is
+  exactly invariant to capture misspecification, *by construction*. The
+  argument is structurally identical to the DM proof, with the multinomial
+  conditional on the simplex $\text{ALR}^{-1}(\underline{y}_{\text{ALR}})$
+  playing the role that the Dirichlet conditional plays in the DM.
+* **PLN (@sec-diffexp-lnm-pln-robust-pln)**: The composition is invariant
+  *up to a global log-shift*. Compositional contrasts (log-ratios) and the
+  centred-log-ratio (CLR) representation are invariant, but the absolute
+  log-rates $\underline{x}^{(c)}$ absorb the capture-scaling error. PLN
+  inherits the robustness theorem in its **Aitchison-geometry form**, but
+  not in its absolute-rate form.
+
+Both statements are conceptually familiar — they are the model-specific
+translations of the unidentifiability result $\text{Multinomial}(u_T, \rho)$
+that motivated the biology-informed capture anchor of @sec-capture-prior.
+What this section adds is the formal derivation in each model's own
+parameterization, plus a diagnostic interpretation of the *visual*
+signature of the unidentifiability (a cleanly linear $\hat{p}_{\text{capture}}^{(c)}$
+versus $L_c$ plot) that we have observed in real fits.
+
+### Setup and notation {#sec-diffexp-lnm-pln-robust-setup}
+
+We work throughout with the variable-capture generative process introduced
+in @sec-lnm-totals-parameterizations and @sec-pln-capture. For each cell $c$ with observed
+library size $L_c = \sum_g u_g^{(c)}$:
+
+* Per-cell **capture probability** $p_{\text{capture}}^{(c)} \in (0, 1]$,
+  modelled with the biology-informed log-normal anchor
+  $\eta^{(c)} \sim \mathcal{N}(\log M_0 - \log L_c,\, \sigma_M^2)$ and
+  $p_{\text{capture}}^{(c)} = e^{-\eta^{(c)}}$, where $M_0$ is the prior
+  median total mRNA per cell.
+* **True (pre-capture) total mRNA** mean parameter $\mu_T$ shared across
+  cells; the per-cell expected total satisfies $\langle u_T^{(c)} \rangle
+  = \mu_T \cdot p_{\text{capture}}^{(c)}$.
+* **Misspecification ratio** $\kappa = p_{\text{capture}}^{(c)} /
+  \tilde{p}_{\text{capture}}^{(c)}$, where $\tilde{p}_{\text{capture}}^{(c)}$
+  is the value the inferred fit lands on. We treat $\kappa$ as the
+  per-cell quantity that any robustness statement must absorb.
+
+The data quantity that is unambiguously identified is the *expected
+observed total*
+
+$$
+\langle u_T^{(c)} \rangle \;=\; \mu_T \cdot p_{\text{capture}}^{(c)}
+\;=\; \tilde{\mu}_T \cdot \tilde{p}_{\text{capture}}^{(c)},
+$${#eq-diffexp-lnmpln-data-product}
+
+so any consistent fit lies on the one-dimensional ridge $\mu_T \cdot
+p_{\text{capture}}^{(c)} = \text{const}$. The biology-informed prior on
+$\eta^{(c)}$ (equivalently on $p_{\text{capture}}^{(c)}$) breaks this
+non-identifiability *probabilistically* but does not move the data-induced
+ridge.
+
+The robustness question is then: when the model picks the "wrong" point on
+the ridge — say $\tilde{\mu}_T = \kappa \cdot \mu_T$ paired with
+$\tilde{p}_{\text{capture}}^{(c)} = p_{\text{capture}}^{(c)} / \kappa$ —
+which downstream quantities change, and which do not?
+
+### LNM(VCP): composition is exactly invariant {#sec-diffexp-lnm-pln-robust-lnm}
+
+The LNM generative model factorizes the per-cell observation into two
+conditionally independent submodels (see @sec-lnm-totals-parameterizations and
+@sec-lnm-laplace-full-model):
+
+$$
+\begin{aligned}
+\text{(totals submodel)} \quad &
+u_T^{(c)} \;\sim\; \mathrm{NB}\!\left(r_T,\, \mu_T \cdot p_{\text{capture}}^{(c)}\right), \\
+\text{(composition submodel)} \quad &
+\underline{u}^{(c)} \mid u_T^{(c)},\, \underline{y}_{\text{ALR}}^{(c)}
+\;\sim\; \mathrm{Multinomial}\!\left(u_T^{(c)},\, \text{ALR}^{-1}(\underline{y}_{\text{ALR}}^{(c)})\right),
+\end{aligned}
+$${#eq-diffexp-lnmpln-lnm-factorization}
+
+with the compositional latent
+$\underline{y}_{\text{ALR}}^{(c)} \sim \mathcal{N}(\underline{\mu},\,
+\underline{\underline{W}}\,\underline{\underline{W}}^\top + \mathrm{diag}(\underline{d}))$
+unchanged across cells. The two submodels share *no* random variables: the
+capture probability $p_{\text{capture}}^{(c)}$ enters the joint density
+only through the totals submodel.
+
+#### Theorem (LNM compositional invariance) {#sec-diffexp-lnmpln-lnm-theorem}
+
+Let $\mathcal{L}(\underline{\theta})$ denote the joint log-likelihood
+of the LNM(VCP) generative model with global parameters
+$\underline{\theta} = \{\underline{\mu},\, \underline{\underline{W}},\,
+\underline{d},\, \mu_T,\, r_T,\, \{p_{\text{capture}}^{(c)}\}_{c=1}^C\}$.
+For any per-cell scaling $\kappa \in (0, \infty)$, the reparameterization
+
+$$
+\tilde{\mu}_T = \kappa \cdot \mu_T, \qquad
+\tilde{p}_{\text{capture}}^{(c)} = p_{\text{capture}}^{(c)} / \kappa,
+$${#eq-diffexp-lnmpln-lnm-reparam}
+
+leaves the data-likelihood term invariant:
+$\mathcal{L}_{\text{data}}(\underline{\tilde{\theta}}) =
+\mathcal{L}_{\text{data}}(\underline{\theta})$. Furthermore, the
+posterior over the compositional latent
+$q(\underline{y}_{\text{ALR}}^{(c)})$ is **identical** under
+$\underline{\theta}$ and $\underline{\tilde{\theta}}$.
+
+#### Proof {#sec-diffexp-lnmpln-lnm-proof}
+
+The data-likelihood factorizes as
+
+$$
+\mathcal{L}_{\text{data}}(\underline{\theta}) \;=\;
+\sum_{c=1}^{C} \log \mathrm{NB}\!\left(u_T^{(c)} \,\big|\, r_T,\, \mu_T \cdot p_{\text{capture}}^{(c)}\right)
++ \sum_{c=1}^{C} \log \mathrm{Multinomial}\!\left(\underline{u}^{(c)} \,\big|\, u_T^{(c)},\, \text{ALR}^{-1}(\underline{y}_{\text{ALR}}^{(c)})\right).
+$${#eq-diffexp-lnmpln-lnm-loglik}
+
+Under @eq-diffexp-lnmpln-lnm-reparam, the NB mean parameter is unchanged:
+
+$$
+\tilde{\mu}_T \cdot \tilde{p}_{\text{capture}}^{(c)}
+\;=\; (\kappa \cdot \mu_T) \cdot (p_{\text{capture}}^{(c)} / \kappa)
+\;=\; \mu_T \cdot p_{\text{capture}}^{(c)}.
+$${#eq-diffexp-lnmpln-lnm-nb-invariant}
+
+The NB log-density at $u_T^{(c)}$ depends on the global parameters only
+through this product (and through $r_T$, which is unchanged). The first
+sum in @eq-diffexp-lnmpln-lnm-loglik is therefore invariant. The second
+sum depends on $\underline{u}^{(c)}$, $u_T^{(c)}$, and
+$\underline{y}_{\text{ALR}}^{(c)}$ but **not** on $\mu_T$ or
+$p_{\text{capture}}^{(c)}$ — capture and scaling do not appear in the
+multinomial likelihood. The full data-likelihood is therefore invariant.
+
+For the second claim, observe that the marginal posterior over
+$\underline{y}_{\text{ALR}}^{(c)}$ is
+
+$$
+q(\underline{y}_{\text{ALR}}^{(c)} \mid \underline{u}^{(c)}, u_T^{(c)})
+\;\propto\;
+\mathrm{Multinomial}(\underline{u}^{(c)} \mid u_T^{(c)},\, \text{ALR}^{-1}(\underline{y}_{\text{ALR}}^{(c)}))
+\,\cdot\,
+\mathcal{N}(\underline{y}_{\text{ALR}}^{(c)} \mid \underline{\mu},\, \underline{\underline{\Sigma}}),
+$${#eq-diffexp-lnmpln-lnm-y-posterior}
+
+with $\underline{\underline{\Sigma}} = \underline{\underline{W}}\,
+\underline{\underline{W}}^\top + \mathrm{diag}(\underline{d})$. Neither
+factor depends on $\mu_T$ or $p_{\text{capture}}^{(c)}$, so the entire
+posterior is identical under $\underline{\theta}$ and
+$\underline{\tilde{\theta}}$. $\blacksquare$
+
+#### Consequences for differential expression {#sec-diffexp-lnmpln-lnm-de}
+
+Under any compositional contrast — pairwise log-ratio, full ALR, or CLR —
+the test statistic is a function of $\underline{y}_{\text{ALR}}^{(c)}$
+alone. The theorem states that this latent has identical posterior under
+any $\kappa$-shifted scaling of the totals submodel. Therefore:
+
+> **The LNM compositional inference is exactly invariant to capture
+> probability misspecification, in precisely the same sense as the DM**
+> (@eq-diffexp-rob-dirichlet-invariant). All gene-level differential
+> expression test statistics built from $\underline{y}_{\text{ALR}}^{(c)}$
+> are robust to misspecification of $M_0$ or $\sigma_M$.
+
+The only quantity that can absorb capture-scaling error is the totals
+submodel itself, and the absorption is one-dimensional: only the product
+$\mu_T \cdot p_{\text{capture}}^{(c)}$ is identified, so any reported
+absolute $\hat{\mu}_T$ should be interpreted as the data-likelihood
+solution at the prior-pinned $\hat{p}_{\text{capture}}^{(c)}$ point on the
+ridge.
+
+### PLN: invariance restricted to compositional contrasts {#sec-diffexp-lnm-pln-robust-pln}
+
+The PLN model has no separate totals submodel. Capture enters as an
+additive scalar offset in log-rate space (@sec-pln-capture):
+
+$$
+u_g^{(c)} \mid x_g^{(c)},\, \eta^{(c)} \;\sim\; \mathrm{Poisson}\!\left(e^{x_g^{(c)} - \eta^{(c)}}\right),
+\qquad
+\underline{x}^{(c)} \;\sim\; \mathcal{N}(\underline{\mu},\, \underline{\underline{\Sigma}}),
+$${#eq-diffexp-lnmpln-pln-generative}
+
+with $\underline{\underline{\Sigma}} = \underline{\underline{W}}\,
+\underline{\underline{W}}^\top + \mathrm{diag}(\underline{d})$. The
+capture offset is a scalar, so it shifts every gene's log-rate by the
+same amount. Compositions and absolute rates therefore behave
+asymmetrically.
+
+#### Theorem (PLN log-ratio invariance) {#sec-diffexp-lnmpln-pln-theorem}
+
+For any global shift $\Delta \in \mathbb{R}$, the joint log-likelihood
+$\mathcal{L}(\underline{\theta})$ of the PLN model is invariant under
+the reparameterization
+
+$$
+\tilde{\mu}_g = \mu_g + \Delta \;\;\forall g, \qquad
+\tilde{\eta}^{(c)} = \eta^{(c)} + \Delta \;\;\forall c.
+$${#eq-diffexp-lnmpln-pln-translation}
+
+Equivalently: the model has a one-parameter rigid-translation degeneracy
+between $\underline{\mu}$ and the per-cell offsets $\{\eta^{(c)}\}$.
+Under this degeneracy, the centred log-rate vector
+
+$$
+\underline{\tilde{x}}^{(c)} \;\equiv\; \underline{x}^{(c)} - \bar{x}^{(c)} \mathbf{1},
+\quad \text{with } \bar{x}^{(c)} = \tfrac{1}{G} \sum_{g=1}^G x_g^{(c)},
+$${#eq-diffexp-lnmpln-pln-clr}
+
+and any pairwise log-ratio $x_g^{(c)} - x_h^{(c)}$ have identical
+posterior distribution under $\underline{\theta}$ and
+$\underline{\tilde{\theta}}$.
+
+#### Proof {#sec-diffexp-lnmpln-pln-proof}
+
+The Poisson rate appearing in the likelihood is
+
+$$
+e^{x_g^{(c)} - \eta^{(c)}}.
+$${#eq-diffexp-lnmpln-pln-rate}
+
+Under the prior $\underline{x}^{(c)} \sim \mathcal{N}(\underline{\mu},
+\underline{\underline{\Sigma}})$, define the shifted latent
+$\underline{x}'^{(c)} = \underline{x}^{(c)} + \Delta \mathbf{1}$. Then
+$\underline{x}'^{(c)} \sim \mathcal{N}(\underline{\mu} + \Delta \mathbf{1},
+\underline{\underline{\Sigma}})$ — note that the covariance is
+unchanged because adding a constant to each coordinate is a translation,
+not a rotation, of the latent space. The Poisson rate becomes
+
+$$
+e^{x_g'^{(c)} - \tilde{\eta}^{(c)}}
+\;=\; e^{x_g^{(c)} + \Delta - (\eta^{(c)} + \Delta)}
+\;=\; e^{x_g^{(c)} - \eta^{(c)}},
+$${#eq-diffexp-lnmpln-pln-rate-invariant}
+
+i.e., the per-gene Poisson rate is unchanged by the joint shift. Both
+the data-likelihood and the latent prior contribute identically to the
+joint log-density under $\underline{\theta}$ and
+$\underline{\tilde{\theta}}$, establishing the first claim.
+
+For the second claim, observe that the centred log-rate satisfies
+
+$$
+\tilde{x}_g^{(c)} \;=\; x_g^{(c)} - \tfrac{1}{G}\sum_{g'} x_{g'}^{(c)},
+\quad \tilde{x}_g'^{(c)} \;=\; \tilde{x}_g^{(c)} + \Delta - \Delta \;=\; \tilde{x}_g^{(c)},
+$${#eq-diffexp-lnmpln-pln-clr-invariant}
+
+so $\underline{\tilde{x}}^{(c)}$ is a deterministic function of
+$\underline{x}^{(c)}$ that is invariant to the rigid translation. The
+posterior distribution of any function of
+$\underline{\tilde{x}}^{(c)}$ is therefore identical under
+$\underline{\theta}$ and $\underline{\tilde{\theta}}$. The pairwise
+log-ratio $x_g^{(c)} - x_h^{(c)}$ is one such function. $\blacksquare$
+
+#### Where the degeneracy lives in the PLN {#sec-diffexp-lnmpln-pln-degeneracy}
+
+The PLN $(\underline{\mu}, \eta^{(c)})$ degeneracy is the structural
+analogue of the LNM $(\mu_T, p_{\text{capture}}^{(c)})$ scaling
+degeneracy: in both cases, a one-parameter family of parameter values
+produces identical data-likelihood, and in both cases the prior on the
+capture quantity is what selects a point on the family. The difference
+is *which directions* in parameter space are degenerate:
+
+| Model | Capture coupling | Degeneracy direction | Prior breaks degeneracy via |
+|-------|------------------|----------------------|------------------------------|
+| LNM(VCP) | $\langle u_T^{(c)} \rangle = \mu_T \cdot p_{\text{capture}}^{(c)}$ (multiplicative on totals) | $(\mu_T, p_{\text{capture}}^{(c)}) \to (\kappa \mu_T, p_{\text{capture}}^{(c)}/\kappa)$ | log-normal anchor on $\eta^{(c)} = -\log p_{\text{capture}}^{(c)}$ |
+| PLN | $\lambda_g^{(c)} = e^{x_g^{(c)} - \eta^{(c)}}$ (additive on log-rates) | $(\mu_g, \eta^{(c)}) \to (\mu_g + \Delta, \eta^{(c)} + \Delta)$ | log-normal anchor on $\eta^{(c)}$ |
+
+In both rows the prior on $\eta^{(c)}$ does the same job: it selects a
+specific point on the data-induced ridge. In LNM the ridge is
+*multiplicative* in scale (a single scalar $\kappa$ per cell), while in
+PLN it is *additive* in log-rate (a single scalar $\Delta$ shared across
+*all* cells through $\underline{\mu}$). The PLN degeneracy is therefore
+*more restrictive* than the LNM one — it ties all cells together via
+the population mean — but it has the same projection-onto-contrasts
+structure.
+
+#### Consequences for differential expression {#sec-diffexp-lnmpln-pln-de}
+
+The robustness theorem holds for any test statistic that is a function
+of the centred log-rate $\underline{\tilde{x}}^{(c)}$ or any pairwise
+log-ratio $x_g^{(c)} - x_h^{(c)}$. Concretely:
+
+* **CLR-based DE** is robust. Reporting per-gene effects as
+  $\tilde{x}_g^{(\text{cond}_A)} - \tilde{x}_g^{(\text{cond}_B)}$ or as
+  the contrast $(x_g - x_h)^{(\text{cond}_A)} - (x_g - x_h)^{(\text{cond}_B)}$
+  inherits the robustness theorem identically.
+* **Absolute log-fold change of $\mu_g$** is *not* robust. Any reported
+  $\mu_g^{(\text{cond}_A)} - \mu_g^{(\text{cond}_B)}$ absorbs the
+  per-condition $\Delta$ shift if the conditions have different capture
+  scaling. This is the PLN-specific failure mode that does not arise in
+  LNM (where $\underline{\mu}$ lives in ALR space and is structurally
+  centred).
+* **Absolute total mRNA per cell** is not robust in either model: in
+  LNM it absorbs $\kappa$, in PLN it absorbs $e^{\Delta}$.
+
+The recommended workflow for capture-robust DE in the PLN family is
+therefore to report effects in CLR space (or equivalently, in pairwise
+log-ratios), matching the recommended workflow in the DM and LNM
+families. We discuss the practical mechanics of this in
+@sec-diffexp-lnmpln-recommendations below.
+
+### Comparison across model families {#sec-diffexp-lnm-pln-robust-comparison}
+
+The three model families share a common structural pattern: each has a
+one-parameter unidentifiability between a *scale* parameter and a
+per-cell *capture* parameter, and each protects a specific class of
+*compositional* downstream quantities from that unidentifiability. The
+formal symmetry is summarized in the following table:
+
+| Family | Composition latent | Capture mechanism | Class of robust quantities |
+|--------|--------------------|-------------------|----------------------------|
+| DM | $\underline{\rho}^{(c)} \sim \mathrm{Dirichlet}(\underline{r})$ | binomial thinning $\mathrm{Binomial}(m_g, \nu_c)$ | full simplex $\underline{\rho}^{(c)}$ (@eq-diffexp-rob-dirichlet-invariant) |
+| LNM(VCP) | $\underline{y}_{\text{ALR}}^{(c)} \sim \mathcal{N}(\underline{\mu},\, \underline{\underline{\Sigma}})$ | NB-on-totals scaling $\mu_T \cdot p_{\text{capture}}^{(c)}$ | full ALR latent $\underline{y}_{\text{ALR}}^{(c)}$ (@sec-diffexp-lnmpln-lnm-theorem) |
+| PLN | $\underline{x}^{(c)} \sim \mathcal{N}(\underline{\mu},\, \underline{\underline{\Sigma}})$ in absolute log-rates | scalar log-rate offset $-\eta^{(c)} \mathbf{1}$ | centred / pairwise contrasts $\underline{\tilde{x}}^{(c)}$ (@sec-diffexp-lnmpln-pln-theorem) |
+
+The asymmetry is informative. DM and LNM both protect a *full
+$(G-1)$-dimensional* compositional object — the entire simplex point —
+because both have a composition latent that lives natively on (or in
+1-1 correspondence with) the simplex. PLN has only *absolute* log-rates
+as primary latents, and the simplex emerges only as the projection
+$\underline{\tilde{x}}^{(c)}$ that quotients out the rigid-translation
+degeneracy. This is consistent with the broader statement made in
+@sec-pln-contrast: the LNM and PLN are equivalent on the simplex but
+differ in what they identify off it.
+
+### Diagnostic: the linear $\hat{p}_{\text{capture}}^{(c)}$ vs $L_c$ plot {#sec-diffexp-lnm-pln-robust-diagnostic}
+
+A useful empirical diagnostic for the data-induced ridge is to plot the
+fitted $\hat{p}_{\text{capture}}^{(c)}$ against the observed library
+size $L_c$. Under the LNMVCP joint MAP, the data-likelihood drives
+$\hat{\eta}^{(c)} \approx \log \hat{\mu}_T - \log L_c$ (since the
+likelihood has only one knob per cell), so
+
+$$
+\hat{p}_{\text{capture}}^{(c)} \;=\; e^{-\hat{\eta}^{(c)}}
+\;\approx\; \frac{L_c}{\hat{\mu}_T}.
+$${#eq-diffexp-lnmpln-pcap-line}
+
+Equivalently, the fit produces a perfectly linear plot of
+$\hat{p}_{\text{capture}}^{(c)}$ against $L_c$ with slope $1/\hat{\mu}_T$.
+The slope is therefore a direct read-out of the model's posterior on the
+total mRNA scale parameter. If the prior on $\eta^{(c)}$ were strong
+enough to dominate the per-cell likelihood, the plot would deviate from
+the line; in practice, the NB-on-totals likelihood with $C \sim 10^3$
+cells of UMI depth $\sim 10^4$ is overwhelmingly informative compared to
+any reasonable $\sigma_M$, and the line is essentially exact.
+
+This is the visual signature of the unidentifiability documented in
+@eq-diffexp-lnmpln-data-product: the model has parked itself on a single
+point on the data-likelihood ridge, with the prior acting as a tiebreaker
+along the ridge but not pinning the absolute scale. The compositional
+robustness theorem states that this is *not a problem* for any
+downstream compositional inference; it would only be a problem if one
+tried to interpret $\hat{\mu}_T$ as the absolute total mRNA per cell
+without acknowledging the prior's role in selecting that value.
+
+### Practical recommendations {#sec-diffexp-lnmpln-recommendations}
+
+The robustness theorems above translate into a small set of practical
+rules for using the LNM and PLN models in differential expression
+analysis:
+
+1. **In LNM(VCP)**: report effects on the ALR latent
+   $\underline{y}_{\text{ALR}}^{(c)}$, on the simplex
+   $\underline{\rho}^{(c)} = \text{ALR}^{-1}(\underline{y}_{\text{ALR}}^{(c)})$,
+   or on log-fold-changes of these quantities across conditions. The
+   robustness theorem then guarantees that misspecification of $M_0$ or
+   $\sigma_M$ leaves the inference unchanged. Do not interpret
+   $\hat{\mu}_T$ as the absolute total mRNA per cell without the caveat
+   that it is co-determined with $\hat{p}_{\text{capture}}^{(c)}$ along
+   a one-parameter ridge.
+2. **In PLN**: report effects on the centred log-rate
+   $\underline{\tilde{x}}^{(c)} = \underline{x}^{(c)} - \bar{x}^{(c)} \mathbf{1}$
+   or on pairwise log-ratios $x_g^{(c)} - x_h^{(c)}$. Avoid reporting
+   absolute log-fold-changes of $\hat{\mu}_g$, particularly when
+   comparing conditions that may have different per-cell capture
+   distributions.
+3. **In both families**: tighten the prior $\sigma_M$ if the absolute
+   $\hat{\mu}_T$ (LNM) or $\hat{\mu}_g$ (PLN) is needed for downstream
+   interpretation, since these quantities sit on the unidentifiable
+   ridge and are pinned only by the prior.
+4. **Cross-model validation**: a useful sanity check is to verify that
+   recomputing the same DE statistic under $\hat{\mu}_T \to \kappa
+   \hat{\mu}_T$, $\hat{p}_{\text{capture}}^{(c)} \to
+   \hat{p}_{\text{capture}}^{(c)} / \kappa$ (LNM) or
+   $\hat{\mu}_g \to \hat{\mu}_g + \Delta$, $\hat{\eta}^{(c)} \to
+   \hat{\eta}^{(c)} + \Delta$ (PLN) leaves the DE conclusions unchanged.
+   The theorems above guarantee this analytically; verifying it
+   numerically gives a useful consistency check on the implementation.
+
+### Summary {#sec-diffexp-lnm-pln-robust-summary}
+
+The Dirichlet-Multinomial robustness theorem (@eq-diffexp-rob-dirichlet-invariant)
+generalizes to both LNM and PLN, but with a model-specific projection of
+the protected quantity:
+
+* **LNM(VCP)** protects the *full* compositional latent
+  $\underline{y}_{\text{ALR}}^{(c)}$ — directly analogous to the DM
+  protecting $\underline{\rho}^{(c)}$.
+* **PLN** protects the *centred* log-rate
+  $\underline{\tilde{x}}^{(c)}$ and any function thereof (pairwise
+  log-ratios, CLR statistics) — but *not* the absolute log-rates.
+
+In all three families, the unidentifiability is a one-parameter
+direction in parameter space, and in all three families the
+biology-informed capture prior selects a specific point on the ridge
+while the *compositional* downstream inferences are invariant to that
+selection. This common structural pattern explains why all three models
+work well for compositional DE despite their different generative
+mechanics, and clarifies which absolute quantities should be interpreted
+with caution.
