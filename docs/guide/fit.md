@@ -157,24 +157,24 @@ results = scribe.fit(adata, model="nbdm", unconstrained=True)
 
 ## 4. Inference method
 
-SCRIBE supports three inference backends, all accessed through the same
+SCRIBE supports four inference backends, all accessed through the same
 `scribe.fit()` call.
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `inference_method` | `"svi"` | `"svi"` (Stochastic Variational Inference), `"mcmc"` (NUTS), or `"vae"` (Variational Autoencoder) |
+| Parameter          | Default | Description                                                                                                                            |
+| ------------------ | ------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `inference_method` | `"svi"` | `"svi"` (Stochastic Variational Inference), `"mcmc"` (NUTS), `"vae"` (Variational Autoencoder), or `"laplace"` (Laplace Approximation) |
 
 ### SVI parameters
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `n_steps` | `50_000` | Number of optimization steps |
-| `batch_size` | `None` | Mini-batch size. `None` = full-batch. Recommended for > 10 K cells |
-| `stable_update` | `True` | Numerically stable parameter updates |
-| `log_progress_lines` | `False` | Emit periodic plain-text progress lines (useful for SLURM logs) |
-| `early_stopping` | `None` | Dict or `EarlyStoppingConfig` for automatic convergence detection |
-| `restore_best` | `False` | Track the best variational parameters during training and restore them at the end |
-| `optimizer_config` | `None` | Custom optimizer: `{"name": "adam", "step_size": 1e-3}`. Supports `"adam"`, `"clipped_adam"`, `"adagrad"`, `"rmsprop"`, `"sgd"`, `"momentum"` |
+| Parameter            | Default  | Description                                                                                                                                   |
+| -------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `n_steps`            | `50_000` | Number of optimization steps                                                                                                                  |
+| `batch_size`         | `None`   | Mini-batch size. `None` = full-batch. Recommended for > 10 K cells                                                                            |
+| `stable_update`      | `True`   | Numerically stable parameter updates                                                                                                          |
+| `log_progress_lines` | `False`  | Emit periodic plain-text progress lines (useful for SLURM logs)                                                                               |
+| `early_stopping`     | `None`   | Dict or `EarlyStoppingConfig` for automatic convergence detection                                                                             |
+| `restore_best`       | `False`  | Track the best variational parameters during training and restore them at the end                                                             |
+| `optimizer_config`   | `None`   | Custom optimizer: `{"name": "adam", "step_size": 1e-3}`. Supports `"adam"`, `"clipped_adam"`, `"adagrad"`, `"rmsprop"`, `"sgd"`, `"momentum"` |
 
 ```python
 # SVI with mini-batching and early stopping
@@ -194,13 +194,13 @@ results = scribe.fit(
 
 ### MCMC parameters
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `n_samples` | `2_000` | Posterior samples per chain |
-| `n_warmup` | `1_000` | Warmup (burn-in) samples |
-| `n_chains` | `1` | Number of parallel NUTS chains |
-| `svi_init` | `None` | `ScribeSVIResults` to warm-start MCMC (cross-parameterization supported) |
-| `enable_x64` | `None` | Float64 precision. Defaults to `True` for MCMC, `False` for SVI/VAE |
+| Parameter    | Default | Description                                                              |
+| ------------ | ------- | ------------------------------------------------------------------------ |
+| `n_samples`  | `2_000` | Posterior samples per chain                                              |
+| `n_warmup`   | `1_000` | Warmup (burn-in) samples                                                 |
+| `n_chains`   | `1`     | Number of parallel NUTS chains                                           |
+| `svi_init`   | `None`  | `ScribeSVIResults` to warm-start MCMC (cross-parameterization supported) |
+| `enable_x64` | `None`  | Float64 precision. Defaults to `True` for MCMC, `False` for SVI/VAE      |
 
 ```python
 # MCMC warm-started from SVI
@@ -222,6 +222,50 @@ mcmc_results = scribe.fit(
     with `parameterization="mean_odds"`---SCRIBE converts the MAP estimates
     internally.
 
+### Laplace parameters
+
+The Laplace path uses per-cell Newton iteration on latent variables with an
+outer Adam loop on global parameters. It is the recommended inference method
+for `model="pln"`, `"lnm"`, and `"lnmvcp"`.
+
+| Parameter          | Default  | Description                                                           |
+| ------------------ | -------- | --------------------------------------------------------------------- |
+| `laplace_config`   | `None`   | Dict or `LaplaceConfig` for Newton inner-loop and outer-loop settings |
+| `n_steps`          | `50_000` | Outer optimization steps (shared with SVI)                            |
+| `batch_size`       | `None`   | Mini-batch size (shared with SVI)                                     |
+| `optimizer_config` | `None`   | Outer Adam configuration (shared with SVI)                            |
+
+The `laplace_config` dict controls the inner Newton solver:
+
+| `laplace_config` key | Default  | Description                                                            |
+| -------------------- | -------- | ---------------------------------------------------------------------- |
+| `n_newton_steps`     | `5`      | Newton iterations per cell per outer step                              |
+| `damping`            | `1e-2`   | Tikhonov regularization on the Hessian diagonal                        |
+| `newton_tolerance`   | `1e-4`   | Gradient norm threshold for convergence                                |
+| `convergence_action` | `"warn"` | What to do if cells don't converge: `"warn"`, `"raise"`, or `"ignore"` |
+
+```python
+# Laplace inference for PLN
+results = scribe.fit(
+    adata,
+    model="pln",
+    inference_method="laplace",
+    n_steps=50_000,
+    batch_size=256,
+    laplace_config={
+        "n_newton_steps": 10,
+        "damping": 1e-3,
+        "newton_tolerance": 1e-4,
+        "convergence_action": "warn",
+    },
+)
+```
+
+!!! note "Supported models"
+    Laplace inference is available for `model="pln"`, `"lnm"`, and `"lnmvcp"`.
+    The NB-family models (`"nbdm"`, `"nbvcp"`, `"zinb"`, `"zinbvcp"`) use SVI,
+    MCMC, or VAE.
+
 **Full guide:** [Inference Methods](inference.md)
 
 ---
@@ -233,11 +277,11 @@ can capture correlations between parameters.
 
 ### Low-rank Gaussian guides
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `guide_rank` | `None` | Rank for low-rank guide on gene-specific parameters. `None` = mean-field (fully factorized) |
-| `joint_params` | `None` | Parameter names to model jointly. Accepts shorthands (`"all"`, `"biological"`, `"mean"`, `"prob"`, `"gate"`) or an explicit list (e.g. `["mu", "phi"]`). Works with `guide_rank` or `guide_flow` |
-| `dense_params` | `None` | Subset of `joint_params` that get full cross-gene coupling. Accepts same shorthands or explicit list. Others get gene-local conditioning |
+| Parameter      | Default | Description                                                                                                                                                                                      |
+| -------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `guide_rank`   | `None`  | Rank for low-rank guide on gene-specific parameters. `None` = mean-field (fully factorized)                                                                                                      |
+| `joint_params` | `None`  | Parameter names to model jointly. Accepts shorthands (`"all"`, `"biological"`, `"mean"`, `"prob"`, `"gate"`) or an explicit list (e.g. `["mu", "phi"]`). Works with `guide_rank` or `guide_flow` |
+| `dense_params` | `None`  | Subset of `joint_params` that get full cross-gene coupling. Accepts same shorthands or explicit list. Others get gene-local conditioning                                                         |
 
 ```python
 # Low-rank guide (captures gene-gene correlations)
@@ -260,20 +304,20 @@ Replaces the Gaussian variational family with a learned invertible
 transformation, enabling multimodal, skewed, and heavy-tailed posterior
 approximations. Mutually exclusive with `guide_rank`.
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `guide_flow` | `None` | Flow type: `"affine_coupling"` (recommended), `"spline_coupling"`, `"maf"`, `"iaf"` |
-| `guide_flow_num_layers` | `4` | Number of coupling layers |
-| `guide_flow_hidden_dims` | `[64, 64]` | Hidden sizes in the conditioner MLP |
-| `guide_flow_activation` | `"relu"` | Activation function for conditioner MLPs |
-| `guide_flow_n_bins` | `8` | Spline bins (only for `"spline_coupling"`) |
-| `guide_flow_mixture_strategy` | `"independent"` | `"independent"` or `"shared"` for mixture/dataset components |
-| `guide_flow_zero_init` | `True` | Identity-init via zero output layer |
-| `guide_flow_layer_norm` | `True` | LayerNorm in conditioner MLP |
-| `guide_flow_residual` | `True` | Residual connections in conditioner MLP |
-| `guide_flow_soft_clamp` | `True` | Smooth arctan clamp on affine log-scale (Andrade 2024) |
-| `guide_flow_loft` | `True` | LOFT compression + trainable final affine |
-| `guide_flow_log_det_f64` | `False` | Float64 log-det accumulation (datacenter GPUs only) |
+| Parameter                     | Default         | Description                                                                         |
+| ----------------------------- | --------------- | ----------------------------------------------------------------------------------- |
+| `guide_flow`                  | `None`          | Flow type: `"affine_coupling"` (recommended), `"spline_coupling"`, `"maf"`, `"iaf"` |
+| `guide_flow_num_layers`       | `4`             | Number of coupling layers                                                           |
+| `guide_flow_hidden_dims`      | `[64, 64]`      | Hidden sizes in the conditioner MLP                                                 |
+| `guide_flow_activation`       | `"relu"`        | Activation function for conditioner MLPs                                            |
+| `guide_flow_n_bins`           | `8`             | Spline bins (only for `"spline_coupling"`)                                          |
+| `guide_flow_mixture_strategy` | `"independent"` | `"independent"` or `"shared"` for mixture/dataset components                        |
+| `guide_flow_zero_init`        | `True`          | Identity-init via zero output layer                                                 |
+| `guide_flow_layer_norm`       | `True`          | LayerNorm in conditioner MLP                                                        |
+| `guide_flow_residual`         | `True`          | Residual connections in conditioner MLP                                             |
+| `guide_flow_soft_clamp`       | `True`          | Smooth arctan clamp on affine log-scale (Andrade 2024)                              |
+| `guide_flow_loft`             | `True`          | LOFT compression + trainable final affine                                           |
+| `guide_flow_log_det_f64`      | `False`         | Float64 log-det accumulation (datacenter GPUs only)                                 |
 
 ```python
 # Affine coupling flow guide (recommended for high-dimensional gene params)
@@ -313,15 +357,15 @@ probability. Amortization replaces per-cell variational parameters with a
 small neural network that predicts them from total UMI count, reducing the
 parameter count from \(O(N_{\text{cells}})\) to the network weights.
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `amortize_capture` | `False` | Enable neural-network amortization of capture probability |
-| `capture_hidden_dims` | `[64, 32]` | Hidden layer sizes for the amortizer MLP |
-| `capture_activation` | `"leaky_relu"` | Activation function (`"relu"`, `"gelu"`, `"silu"`, `"tanh"`, ...) |
-| `capture_output_transform` | `"softplus"` | Output transform for positive parameters (`"softplus"` or `"exp"`) |
-| `capture_clamp_min` | `0.1` | Minimum clamp for MLP outputs. `None` to disable |
-| `capture_clamp_max` | `50.0` | Maximum clamp for MLP outputs. `None` to disable |
-| `capture_amortization` | `None` | `AmortizationConfig` or dict that overrides all six parameters above |
+| Parameter                  | Default        | Description                                                          |
+| -------------------------- | -------------- | -------------------------------------------------------------------- |
+| `amortize_capture`         | `False`        | Enable neural-network amortization of capture probability            |
+| `capture_hidden_dims`      | `[64, 32]`     | Hidden layer sizes for the amortizer MLP                             |
+| `capture_activation`       | `"leaky_relu"` | Activation function (`"relu"`, `"gelu"`, `"silu"`, `"tanh"`, ...)    |
+| `capture_output_transform` | `"softplus"`   | Output transform for positive parameters (`"softplus"` or `"exp"`)   |
+| `capture_clamp_min`        | `0.1`          | Minimum clamp for MLP outputs. `None` to disable                     |
+| `capture_clamp_max`        | `50.0`         | Maximum clamp for MLP outputs. `None` to disable                     |
+| `capture_amortization`     | `None`         | `AmortizationConfig` or dict that overrides all six parameters above |
 
 ```python
 # Amortized capture with defaults --- useful for very large datasets
@@ -354,11 +398,11 @@ Hierarchical priors provide **adaptive shrinkage** across mixture components
 stay close to a population center while allowing true outliers to deviate. All
 require `unconstrained=True`.
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `expression_prior` | `"none"` | Hierarchical prior on \(\mu\) (or \(r\)) **across mixture components**. Requires `n_components >= 2` |
-| `prob_prior` | `"none"` | Hierarchical prior on \(p\) (or \(\phi\)) **across genes** |
-| `zero_inflation_prior` | `"none"` | Hierarchical prior on zero-inflation gate **across genes**. Only for ZI models |
+| Parameter              | Default  | Description                                                                                          |
+| ---------------------- | -------- | ---------------------------------------------------------------------------------------------------- |
+| `expression_prior`     | `"none"` | Hierarchical prior on \(\mu\) (or \(r\)) **across mixture components**. Requires `n_components >= 2` |
+| `prob_prior`           | `"none"` | Hierarchical prior on \(p\) (or \(\phi\)) **across genes**                                           |
+| `zero_inflation_prior` | `"none"` | Hierarchical prior on zero-inflation gate **across genes**. Only for ZI models                       |
 
 All three accept: `"none"`, `"gaussian"`, `"horseshoe"`, or `"neg"`.
 

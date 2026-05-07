@@ -139,6 +139,9 @@ nav:
     - Quickstart: getting-started/quickstart.md
   - Theory:
     - theory/index.md
+    - GRN Biophysics: theory/grn-biophysics.md
+    - Poisson Log-Normal Model: theory/poisson-lognormal.md
+    - Logistic-Normal Multinomial Model: theory/logistic-normal-multinomial.md
     - Dirichlet-Multinomial Model: theory/dirichlet-multinomial.md
     - Hierarchical Gene-Specific p: theory/hierarchical-p.md
     - Anchoring Priors: theory/anchoring-priors.md
