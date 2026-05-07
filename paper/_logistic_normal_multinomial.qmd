@@ -1652,12 +1652,17 @@ Both plain LNM and LNMVCP fit the NB-on-totals globals
 $(r_T, \mu_T)$ via Adam alongside $(\underline{\mu},
 \underline{\underline{W}}, \underline{d})$:
 
-* **Plain LNM:** $u_T^{(c)} \sim \mathrm{NB}(r_T, \mu_T)$. The
-  NB log-likelihood at observed totals contributes a global term
+* **Plain LNM:** $u_T^{(c)} \sim \mathrm{NB}(r_T, \mu_T)$
+  (mean-concentration form; second slot is the mean, not a
+  probability — see @sec-lnm-totals-nb-vs-dm). The NB
+  log-likelihood at observed totals contributes a global term
   to the loss; no per-cell totals latent.
 * **LNMVCP:** $u_T^{(c)} \sim \mathrm{NB}(r_T, \mu_T \cdot
   \exp(-\eta_c))$ where $\eta_c$ is the per-cell capture-offset
-  latent. The Newton on $\eta_c$ is *scalar* (one-dimensional
+  latent. Same parameterization as plain LNM
+  (mean-concentration; @sec-lnm-totals-nb-vs-dm); the second
+  slot is the post-capture mean $\mu_T \cdot p_{\text{capture}}^{(c)}$
+  with $p_{\text{capture}}^{(c)} = \exp(-\eta_c)$. The Newton on $\eta_c$ is *scalar* (one-dimensional
   per cell), and crucially the joint Hessian on
   $(\underline{z}_c, \eta_c)$ is **block-diagonal**:
 
@@ -2495,6 +2500,77 @@ The odds ratio $\phi_T$ is convention-invariant: defined as the odds
 of failure $\phi_T = p/(1-p)$ in the paper's convention, this equals
 $(1-{\text{probs}})/\text{probs}$ in the NumPyro convention --- the
 same number under both conventions. Only $p$ itself flips.
+
+### NB parameterization: LNM totals vs DM per-gene {#sec-lnm-totals-nb-vs-dm}
+
+A reader moving between the DM derivation (@sec-dirichlet-multinomial,
+@sec-diffexp-robustness) and the LNM equations in this section will
+encounter the negative binomial in two visually different forms. We
+flag the difference here because the *appearance* of the second slot
+of the NB changes between contexts, and the change is the source of a
+real (and reasonable) source of confusion when reading capture-aware
+LNM expressions for the first time.
+
+The two contexts and their natural parameterizations are:
+
+| Context | Distribution | Slot-1 (first arg) | Slot-2 (second arg) | Where capture enters |
+|---------|--------------|--------------------|---------------------|----------------------|
+| DM per-gene, capture-aware (@eq-diffexp-rob-effective-nb) | $u_g \sim \mathrm{NB}(r_g,\, \hat p_c)$ | shape / concentration $r_g$ | success-probability $\hat p_c \in (0, 1]$ | folded into $\hat p_c$ via the binomial-thinning formula |
+| LNM totals, ``canonical`` (@sec-lnm-totals-parameterizations) | $u_T^{(c)} \sim \mathrm{NB}(r_T,\, \hat p^{(c)})$ | $r_T$ | $\hat p^{(c)} \in (0, 1]$ | folded into $\hat p^{(c)}$ via aggregate Poisson-thinning |
+| LNM totals, ``mean_prob`` / ``mean_odds`` / Laplace engine (@sec-lnm-laplace-full-model, @sec-lnm-laplace-nb-param) | $u_T^{(c)} \sim \mathrm{NB}(r_T,\, \mu_T \cdot p_{\text{capture}}^{(c)})$ | $r_T$ | **mean** $\mu_T \cdot p_{\text{capture}}^{(c)} \in (0, \infty)$ | multiplies the mean directly |
+
+The visual collision is between rows 2 and 3 of the table: both write
+$\mathrm{NB}(r_T,\, \cdot)$, but the second slot is a *probability* in
+``canonical`` and a *mean* in ``mean_prob`` / ``mean_odds`` /
+Laplace. In particular, the Laplace expressions
+$\mathrm{NB}(r_T,\, \mu_T \cdot e^{-\eta_c})$ used throughout
+@sec-lnm-laplace-full-model are in the
+$\mathrm{NegativeBinomial2}(\text{mean},\, \text{concentration})$
+convention --- the second slot is the post-capture expected total,
+which lives on library-size scale ($10^4$--$10^5$ UMI per cell) and is
+*not* constrained to $(0, 1]$. Reading the second slot as a success
+probability would be a category error.
+
+#### Why the conventions differ
+
+The choice of parameterization is driven by where capture acts in each
+model:
+
+- **DM per-gene**: capture is derived from binomial thinning at the
+  per-gene level. The crucial algebraic fact is that thinning preserves
+  the NB *shape* $r_g$ (@eq-diffexp-rob-r-invariant). The proof of
+  compositional robustness *is* this preservation statement, so the
+  natural NB slots are $(r_g,\, \hat p_c)$ — keeping the shape
+  explicit and folding capture into the success-probability via
+  thinning.
+- **LNM totals**: capture acts on the aggregate per-cell total, not on
+  per-gene counts. At the aggregate level, capture is a simple
+  multiplicative scaling of the mean,
+  $\langle u_T^{(c)}\rangle = \mu_T \cdot p_{\text{capture}}^{(c)}$,
+  with no need to track per-gene preservation of any shape parameter.
+  The mean form takes advantage of this by putting $p_{\text{capture}}$
+  next to $\mu_T$ as a literal product, sidestepping the non-linear
+  $(p, p_{\text{capture}}) \mapsto \hat p$ map that the
+  ``canonical`` form must compute. This is purely an inferential and
+  numerical convenience; the three slicings of the LNM totals NB are
+  mathematically equivalent (the marginal of $u_T^{(c)}$ is identical),
+  and downstream compositional inferences are robust to any of them
+  (@sec-diffexp-lnm-pln-robust-lnm).
+
+#### Practical reading rule
+
+Whenever the second slot of a totals NB in this paper contains
+$p_{\text{capture}}^{(c)}$ as a multiplicative factor next to a
+mean-magnitude quantity (typically $\mu_T$ or $e^{x}$ for some
+log-mean $x$), the slot is the mean and the distribution is
+$\mathrm{NegativeBinomial2}$. Whenever the second slot is a quantity
+denoted $p$, $\hat p$, or $\hat p^{(c)}$, the slot is a probability
+and the distribution is the classical $(r, p)$ form. The DM
+expressions use the latter convention; the LNM Laplace expressions use
+the former. The compositional-robustness theorem
+(@sec-diffexp-lnm-pln-robust-lnm) goes through unchanged in either
+convention because it depends only on the marginal of $u_T^{(c)}$,
+which is identical across the three slicings.
 
 ### The three slicings
 

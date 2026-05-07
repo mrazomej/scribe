@@ -85,12 +85,19 @@ which downstream quantities change, and which do not?
 
 The LNM generative model factorizes the per-cell observation into two
 conditionally independent submodels (see @sec-lnm-totals-parameterizations and
-@sec-lnm-laplace-full-model):
+@sec-lnm-laplace-full-model). We write the negative binomial throughout in
+the **mean-concentration parameterization** (the NumPyro / Stan
+$\mathrm{NegativeBinomial2}(\mu, r)$ convention): the first slot is the
+mean $\mu \in (0, \infty)$, the second slot is the concentration $r > 0$,
+and the variance is $\mu + \mu^2 / r$. With that convention,
 
 $$
 \begin{aligned}
 \text{(totals submodel)} \quad &
-u_T^{(c)} \;\sim\; \mathrm{NB}\!\left(r_T,\, \mu_T \cdot p_{\text{capture}}^{(c)}\right), \\
+u_T^{(c)} \;\sim\; \mathrm{NB}\!\left(
+  \underbrace{\mu_T \cdot p_{\text{capture}}^{(c)}}_{\text{mean}},\;
+  \underbrace{r_T}_{\text{concentration}}
+\right), \\
 \text{(composition submodel)} \quad &
 \underline{u}^{(c)} \mid u_T^{(c)},\, \underline{y}_{\text{ALR}}^{(c)}
 \;\sim\; \mathrm{Multinomial}\!\left(u_T^{(c)},\, \text{ALR}^{-1}(\underline{y}_{\text{ALR}}^{(c)})\right),
@@ -100,9 +107,48 @@ $${#eq-diffexp-lnmpln-lnm-factorization}
 with the compositional latent
 $\underline{y}_{\text{ALR}}^{(c)} \sim \mathcal{N}(\underline{\mu},\,
 \underline{\underline{W}}\,\underline{\underline{W}}^\top + \mathrm{diag}(\underline{d}))$
-unchanged across cells. The two submodels share *no* random variables: the
-capture probability $p_{\text{capture}}^{(c)}$ enters the joint density
-only through the totals submodel.
+unchanged across cells. Two notational points are worth flagging
+explicitly here, because the parameterization choice is what makes the
+robustness proof clean:
+
+* **The second slot of the NB is *not* a probability.** The product
+  $\mu_T \cdot p_{\text{capture}}^{(c)}$ is the *post-capture expected
+  total* and lives on library-size scale (typically $10^4$--$10^5$ UMI
+  per cell), nowhere near $(0, 1]$. The classical $(r, p)$ form of the
+  negative binomial uses a success probability in $(0, 1]$; we are
+  using a different but equivalent parameterization where the mean
+  $\mu = r(1-p)/p$ is the modelled quantity directly. Reading the
+  factorization as if the second slot were a probability would indeed
+  be inconsistent — that is the parameterization-choice ambiguity
+  this note resolves.
+* **Capture acts at the aggregate-totals level in the LNM, not the
+  per-gene level.** In the DM (@sec-diffexp-robustness), pre-capture
+  per-gene counts $m_g \sim \mathrm{NB}(r_g, p)$ are *thinned* by
+  $\nu_c$, and the observed *per-gene* counts inherit an effective
+  success probability $\hat p_c$ via the binomial-thinning formula.
+  The DM result that capture preserves $r_g$ is a consequence of the
+  per-gene thinning algebra and is the load-bearing fact in the DM
+  robustness proof. In the LNM, capture instead acts on the
+  *aggregate* totals submodel: the per-cell observed total
+  $u_T^{(c)}$ has post-capture expected value $\langle u_T^{(c)}
+  \rangle = \mu_T \cdot p_{\text{capture}}^{(c)}$. The LNM totals NB
+  admits both a thinning derivation (the ``canonical``
+  parameterization, sampling $(r_T, p)$ and computing $\hat p^{(c)}$
+  via aggregate Poisson-thinning) and a direct mean-parameterized
+  form (``mean_prob`` / ``mean_odds`` and the Laplace engine, sampling
+  $\mu_T$ and writing the post-capture mean as a literal product
+  $\mu_T \cdot p_{\text{capture}}^{(c)}$); the three formulations
+  yield identical $u_T^{(c)}$ marginals — see
+  @sec-lnm-totals-parameterizations and @sec-lnm-totals-nb-vs-dm.
+  **Crucially for the robustness theorem, capture never reaches the
+  composition submodel**, regardless of which totals parameterization
+  is used. The multinomial likelihood on
+  $\text{ALR}^{-1}(\underline{y}_{\text{ALR}}^{(c)})$ conditions on
+  $u_T^{(c)}$ and has no capture coupling at all.
+
+The two submodels share *no* random variables: the capture probability
+$p_{\text{capture}}^{(c)}$ enters the joint density only through the
+totals-submodel mean.
 
 #### Theorem (LNM compositional invariance) {#sec-diffexp-lnmpln-lnm-theorem}
 
