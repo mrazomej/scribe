@@ -363,6 +363,184 @@ log-ratios), matching the recommended workflow in the DM and LNM
 families. We discuss the practical mechanics of this in
 @sec-diffexp-lnmpln-recommendations below.
 
+### Structural redundancy of $\eta^{(c)}$ in the PLN {#sec-diffexp-lnm-pln-robust-pln-redundancy}
+
+The rigid-translation theorem above (@sec-diffexp-lnmpln-pln-theorem)
+establishes that adding a constant to all $\mu_g$ while shifting every
+$\eta^{(c)}$ by the same amount leaves the likelihood unchanged. A
+natural follow-up question is whether the capture term $\eta^{(c)}$ is
+*doing useful work* in the PLN, or whether it is functionally redundant
+with some part of the latent prior already in the model. The answer is
+that it is **structurally redundant** with the leading direction of
+$\underline{\underline{W}}\, \underline{z}_c$ — and the choice of
+whether to include it amounts to a choice of *parameterization* of the
+same library-size axis, not a choice of model expressivity.
+
+#### The redundancy in formulas
+
+For PLN *with* capture, the per-cell log-rate is $x_g^{(c)} = \mu_g +
+(\underline{\underline{W}}\, \underline{z}_c)_g - \eta^{(c)}$, with
+$\underline{z}_c \sim \mathcal{N}(0, I_k)$ and $\eta^{(c)} \sim
+\mathcal{N}(\log M_0 - \log L_c, \sigma_M^2)$. The Poisson rate is
+$e^{x_g^{(c)}}$.
+
+For PLN *without* capture, $x_g^{(c)} = \mu_g + (\underline{\underline{W}}\,
+\underline{z}_c)_g$, with the same prior on $\underline{z}_c$ and the
+same Poisson rate.
+
+If $\mathbf{1}_G$ is in the column space of $\underline{\underline{W}}$
+— which is generically the case after a few training steps, because
+cells with high library size shift *every* gene's log-rate up by
+approximately the same amount — there exists a unit vector
+$\underline{e} \in \mathbb{R}^k$ and a scalar $\alpha > 0$ such that
+
+$$
+\underline{\underline{W}}\, \underline{e} \;=\; \alpha\, \mathbf{1}_G.
+$${#eq-diffexp-lnmpln-pln-w1-direction}
+
+The two models are then equivalent under the substitution
+
+$$
+\eta^{(c)} \;\longleftrightarrow\; -\alpha \cdot \underline{e}^\top \underline{z}_c,
+$${#eq-diffexp-lnmpln-pln-eta-vs-z}
+
+with the prior on $\eta^{(c)}$ replaced (loosely) by the marginal prior
+$-\alpha \underline{e}^\top \underline{z}_c \sim \mathcal{N}(0,
+\alpha^2)$ inherited from $\underline{z}_c \sim \mathcal{N}(0, I_k)$.
+The data likelihood sees only the sum $\mu_g + (\underline{\underline{W}}\,
+\underline{z}_c)_g - \eta^{(c)}$ and cannot distinguish whether the
+per-cell library shift is parameterized as $\eta^{(c)}$ — one scalar
+with a chemistry-informed prior — or as $\alpha\, \underline{e}^\top
+\underline{z}_c$ — one direction in latent space with the standard
+$\mathcal{N}(0, I)$ prior. The model has a *one-dimensional*
+"library-size axis" in parameter space, and the user is free to put it
+in either slot.
+
+This is exactly the rigid-translation degeneracy of
+@sec-diffexp-lnmpln-pln-theorem, restated as a structural redundancy
+between two parameter slots. The data identifies the axis itself
+unambiguously (it is the direction along which all genes' log-rates
+shift together to match $L_c$); only its *parameterization* is the
+user's choice.
+
+#### What including $\eta^{(c)}$ does and does not buy
+
+The redundancy constrains what the capture term can contribute. In
+particular:
+
+**Things including $\eta^{(c)}$ does *not* buy:**
+
+* **Better compositional inference.** The theorem of
+  @sec-diffexp-lnmpln-pln-theorem protects compositional contrasts
+  $x_g - x_h$ and CLR-centred $\tilde{x}_g$ from any rigid translation,
+  so these are invariant to *any* parameterization of the library-size
+  direction. Whether library lives in $\eta^{(c)}$ or in the leading
+  $\underline{e}$-projection of $\underline{z}_c$ makes no difference
+  for DE on contrasts.
+* **Better goodness-of-fit.** The two parameterizations admit
+  identical posterior-predictive distributions on the observed counts.
+  PPCs, mean calibration, and any data-likelihood-based diagnostic are
+  equivalent.
+* **Better identifiability of the library-size direction.** The data
+  alone identifies the same one-parameter ridge in both models; with
+  weak prior, the optimizer is genuinely indifferent between the two
+  slots and the rigid-translation null direction can drift freely.
+
+**Things including $\eta^{(c)}$ *does* buy (when the prior is
+load-bearing):**
+
+* **Biophysical decomposition of $\underline{\mu}$.** With $\eta^{(c)}$
+  pinned by a tight prior to a chemistry-informed range (typically
+  $\sigma_M \sim 0.3$ or smaller), $\mu_g$ is the population log-rate
+  of *true* mRNA per cell in absolute units. Without $\eta^{(c)}$,
+  $\mu_g$ is defined only up to "whatever absorbs the per-cell library
+  scaling on average" — the *observed* mean log-rate, in UMI units.
+* **A principled entry point for protocol-level prior information.**
+  The chemistry of scRNA-seq protocols imposes known capture-efficiency
+  ranges (e.g., $\sim 10$–$15\%$ for 10x Chromium). Without
+  $\eta^{(c)}$, that knowledge has no place in the model. With
+  $\eta^{(c)}$ + strong $\sigma_M$, it constrains the fit and gives
+  $\hat{\mu}_g$ a directly interpretable absolute scale.
+* **Cross-protocol comparisons.** When fitting datasets with different
+  protocols, per-cell $\eta^{(c)}$ + per-condition prior lets the model
+  align them on the biological scale. Without $\eta^{(c)}$, protocol
+  differences leak into $\underline{z}_c$.
+* **Centred aggregate posterior.** With $\eta^{(c)}$ doing its job,
+  library-size variation is removed before $\underline{z}_c$ is fit, so
+  the aggregate $q(\underline{z})$ stays close to the $\mathcal{N}(0, I)$
+  prior. Without $\eta^{(c)}$, $q(\underline{z})$ acquires a learned
+  mean along $\underline{e}$ and aggregate-posterior drift becomes a
+  real concern, with downstream consequences for any inference that
+  uses the population-level moment formula (see
+  @sec-diffexp-lnm-pln-robust-diagnostic for the visual signature).
+
+The list is asymmetric: the inferential claims protected by the
+robustness theorem are *unchanged* by whether $\eta^{(c)}$ is included,
+but the interpretational claims (absolute units of $\mu_g$,
+prior-driven calibration, cross-protocol comparability) require
+$\eta^{(c)}$ together with a load-bearing prior. **The capture term in
+the PLN earns its keep through interpretation, not through fit.**
+
+#### Contrast with the LNM(VCP) case
+
+The redundancy analysis above is *PLN-specific*. In the LNM(VCP),
+capture is structurally non-redundant because the model's totals
+submodel and composition submodel are genuinely separate: capture
+enters only the NB-on-totals likelihood
+(@eq-diffexp-lnmpln-lnm-factorization), and the multinomial composition
+submodel cannot absorb library-size variation by construction (it
+conditions on $u_T^{(c)}$). Removing $p_{\text{capture}}^{(c)}$ from
+the LNM(VCP) would force the totals submodel to expand its dispersion
+to absorb cell-to-cell library-size variation — a *materially
+different* model with worse fit. In the PLN, removing $\eta^{(c)}$
+produces an equivalent model (modulo the parameterization-of-priors
+subtlety above) with no inferential cost on protected quantities.
+
+This asymmetry is consistent with the factorization comparison in
+@sec-diffexp-lnm-pln-robust-comparison: the LNM has *two*
+submodels that compose multiplicatively; the PLN has *one* unified
+log-rate model with a redundant per-cell scalar tacked on. The
+redundancy is not a bug of the PLN — it is a direct structural
+consequence of how the model is built.
+
+#### Empirical signature of the weak-prior regime
+
+A weak prior on $\eta^{(c)}$ in the PLN — operationally, $\sigma_M
+\gtrsim 1$ — produces several characteristic symptoms during
+optimization, all of which trace back to the rigid-translation null
+direction acquiring nonzero drift:
+
+* The fitted $\hat{p}_{\text{capture}}^{(c)}$ versus $L_c$ scatter is
+  *not* the clean line of @eq-diffexp-lnmpln-pcap-line that the
+  LNM(VCP) produces; it is a noisy cloud, often with a subset of cells
+  pinned at the boundary $\hat{p}_{\text{capture}}^{(c)} = 1$
+  (equivalently, $\hat{\eta}^{(c)} = 0$). The cells at the boundary are
+  cells where the data-likelihood gradient on $\eta^{(c)}$ wanted to
+  push it negative and the truncation prevented that, fragmenting the
+  per-cell solution.
+* The Laplace inference loss climbs upward late in training. The
+  Newton iteration on the coupled $(\underline{x}_c, \eta^{(c)})$
+  system loses conditioning as the rigid-translation null direction
+  drifts; per-cell Hessians develop extreme eigenvalues; the Laplace
+  log-determinant correction $-\tfrac{1}{2} \log \det(-\underline{\underline{H}}_c)$
+  diverges. The data-likelihood term remains roughly stable through
+  the climb — it is the Laplace correction that explodes.
+* Population-level mean calibration plots show a systematic bias even
+  though PPCs match observed marginals. The bias arises because the
+  population formula $\mathbb{E}[u_g] \approx \exp(\mu_g + \tfrac{1}{2}
+  \sigma_g^2)\, \cdot\, \mathbb{E}_c[\exp(-\eta^{(c)})]$ assumes the
+  aggregate posterior over $\underline{z}_c$ matches its
+  $\mathcal{N}(0, I)$ prior; when $\eta^{(c)}$ is not pinning the
+  library-size axis, $q(\underline{z})$ acquires a learned mean and
+  variance along $\underline{e}$, breaking the formula. PPCs continue
+  to look correct because they sample per-cell rather than apply a
+  population-level moment formula.
+
+Together these are the empirical fingerprints of the weak-prior PLN
+regime. Tightening $\sigma_M$ to $\sim 0.3$ — or removing
+$\eta^{(c)}$ entirely and letting $\underline{z}_c$ absorb library-size
+variation — eliminates them.
+
 ### Comparison across model families {#sec-diffexp-lnm-pln-robust-comparison}
 
 The three model families share a common structural pattern: each has a
@@ -433,7 +611,34 @@ analysis:
    $\hat{\mu}_T$ as the absolute total mRNA per cell without the caveat
    that it is co-determined with $\hat{p}_{\text{capture}}^{(c)}$ along
    a one-parameter ridge.
-2. **In PLN**: report effects on the centred log-rate
+2. **In PLN**: first decide whether to fit $\eta^{(c)}$ at all
+   (@sec-diffexp-lnm-pln-robust-pln-redundancy). The capture term is
+   structurally redundant with the leading direction of
+   $\underline{\underline{W}}\, \underline{z}_c$, so fitting it without
+   a load-bearing prior buys nothing for the inference and adds
+   optimization fragility. Three operating regimes are practical:
+
+   - **No capture term.** Drop the ``capture_efficiency`` prior
+     entirely. Library-size variation is absorbed by the leading
+     direction of $\underline{\underline{W}}\, \underline{z}_c$.
+     Compositional inference is unaffected (the robustness theorem
+     applies in either parameterization), but $\hat{\mu}_g$ is in
+     observed-UMI units rather than true-mRNA units. Recommended for
+     compositional / DE-only workflows.
+   - **Capture term with a load-bearing prior.** Set $\sigma_M \sim
+     0.3$ or smaller. The prior breaks the rigid-translation
+     degeneracy probabilistically, $\hat{\mu}_g$ takes on absolute-units
+     interpretation, and the optimization is well-behaved.
+     Recommended when the chemistry-informed gauge is needed (e.g.
+     cross-protocol comparisons, biophysical reporting in absolute
+     units).
+   - **Capture term with a weak prior** ($\sigma_M \gtrsim 1$):
+     avoid. This regime pays the cost of fitting an extra per-cell
+     scalar without gaining the interpretational benefits, and is
+     vulnerable to the boundary fragmentation and aggregate-posterior
+     drift described in @sec-diffexp-lnm-pln-robust-pln-redundancy.
+
+   Regardless of which regime, report effects on the centred log-rate
    $\underline{\tilde{x}}^{(c)} = \underline{x}^{(c)} - \bar{x}^{(c)} \mathbf{1}$
    or on pairwise log-ratios $x_g^{(c)} - x_h^{(c)}$. Avoid reporting
    absolute log-fold-changes of $\hat{\mu}_g$, particularly when
@@ -473,3 +678,17 @@ selection. This common structural pattern explains why all three models
 work well for compositional DE despite their different generative
 mechanics, and clarifies which absolute quantities should be interpreted
 with caution.
+
+A second-level structural insight is specific to the PLN: the capture
+term $\eta^{(c)}$ is **redundant with the leading direction of
+$\underline{\underline{W}}\, \underline{z}_c$** in the sense that both
+parameterize the same one-dimensional library-size axis
+(@sec-diffexp-lnm-pln-robust-pln-redundancy). The choice of whether to
+include $\eta^{(c)}$ is therefore a choice of *parameterization* of the
+library-size direction, not of model expressivity, and the inferential
+content of the model is unchanged either way. The capture term in the
+PLN earns its keep through *interpretation* (chemistry-informed
+absolute scale, cross-protocol comparability) and not through
+goodness-of-fit. This redundancy does not exist in the LNM(VCP), where
+capture lives in a structurally non-redundant totals submodel
+disjoint from the composition.
