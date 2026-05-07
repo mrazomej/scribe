@@ -191,13 +191,21 @@ def _get_predictive_samples_for_plot(
     """Get PPC samples for plotting from Laplace results.
 
     Laplace results have no encoder; per-cell Laplace posteriors
-    are precomputed at fit time. The PPC reads the per-cell MAP +
-    inverse-Hessian-derived spread directly. When ``counts`` is
-    provided we route through the *per-cell* PPC sampler so each
-    predicted cell uses its own MAP (analogous to the encoder VAE
-    path's conditional PPC, just without the encoder forward
-    pass). When ``counts`` is None we fall back to the population
-    PPC (samples cells from the prior + decoder).
+    are reconstructed from the converged Newton MAP via the
+    Woodbury / Sherman-Morrison machinery in
+    :mod:`scribe.laplace._newton_pln` /
+    :mod:`scribe.laplace._newton_lnm`. When ``counts`` is provided
+    we route through ``get_per_cell_predictive_samples``, the
+    *conditional* level-2 PPC: each predictive draw samples the
+    per-cell composition latent from its Laplace posterior
+    ``N(MAP, (-H_c)^{-1})`` *before* drawing the observation, so
+    the histograms reflect both per-cell latent uncertainty and
+    observation noise. When ``counts`` is None we fall back to the
+    population PPC (samples cells from the prior + decoder).
+
+    Users who specifically want the cheap MAP-only path (no
+    per-cell Hessian solves) should call
+    :meth:`ScribeLaplaceResults.get_map_ppc_samples` directly.
     """
     _ = batch_size
     if counts is not None:
