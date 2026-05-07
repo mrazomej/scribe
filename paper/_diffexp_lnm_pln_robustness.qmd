@@ -5,6 +5,9 @@ csl: ieee.csl
 format:
   html:
     filters: [tikz.lua, strip-yaml-frontmatter.lua, maintext-filter.lua, sitext-filter.lua]
+    theme:
+      light: cosmo
+      dark: superhero 
 ---
 
 ## Compositional Robustness in the LNM and PLN Models {#sec-diffexp-lnm-pln-robust}
@@ -111,40 +114,36 @@ unchanged across cells. Two notational points are worth flagging
 explicitly here, because the parameterization choice is what makes the
 robustness proof clean:
 
-* **The second slot of the NB is *not* a probability.** The product
-  $\mu_T \cdot p_{\text{capture}}^{(c)}$ is the *post-capture expected
-  total* and lives on library-size scale (typically $10^4$--$10^5$ UMI
-  per cell), nowhere near $(0, 1]$. The classical $(r, p)$ form of the
-  negative binomial uses a success probability in $(0, 1]$; we are
-  using a different but equivalent parameterization where the mean
-  $\mu = r(1-p)/p$ is the modelled quantity directly. Reading the
-  factorization as if the second slot were a probability would indeed
-  be inconsistent — that is the parameterization-choice ambiguity
-  this note resolves.
-* **Capture acts at the aggregate-totals level in the LNM, not the
-  per-gene level.** In the DM (@sec-diffexp-robustness), pre-capture
-  per-gene counts $m_g \sim \mathrm{NB}(r_g, p)$ are *thinned* by
-  $\nu_c$, and the observed *per-gene* counts inherit an effective
-  success probability $\hat p_c$ via the binomial-thinning formula.
-  The DM result that capture preserves $r_g$ is a consequence of the
-  per-gene thinning algebra and is the load-bearing fact in the DM
-  robustness proof. In the LNM, capture instead acts on the
-  *aggregate* totals submodel: the per-cell observed total
-  $u_T^{(c)}$ has post-capture expected value $\langle u_T^{(c)}
-  \rangle = \mu_T \cdot p_{\text{capture}}^{(c)}$. The LNM totals NB
-  admits both a thinning derivation (the ``canonical``
-  parameterization, sampling $(r_T, p)$ and computing $\hat p^{(c)}$
-  via aggregate Poisson-thinning) and a direct mean-parameterized
-  form (``mean_prob`` / ``mean_odds`` and the Laplace engine, sampling
-  $\mu_T$ and writing the post-capture mean as a literal product
-  $\mu_T \cdot p_{\text{capture}}^{(c)}$); the three formulations
-  yield identical $u_T^{(c)}$ marginals — see
-  @sec-lnm-totals-parameterizations and @sec-lnm-totals-nb-vs-dm.
-  **Crucially for the robustness theorem, capture never reaches the
-  composition submodel**, regardless of which totals parameterization
-  is used. The multinomial likelihood on
-  $\text{ALR}^{-1}(\underline{y}_{\text{ALR}}^{(c)})$ conditions on
-  $u_T^{(c)}$ and has no capture coupling at all.
+* **The first slot of the NB is *not* a probability.** We use the
+  mean-concentration form $\mathrm{NegativeBinomial2}(\mu, r)$, where the first
+  slot is the mean $\mu = \mu_T \cdot p_{\text{capture}}^{(c)}$ — the
+  *post-capture expected total*, which lives on library-size scale (typically
+  $10^4$--$10^5$ UMI per cell). The second slot is the concentration $r_T$,
+  which is the same shape parameter as in the classical $(r, p)$ form and takes
+  the same numerical value in either parameterization. Reading the first slot as
+  a success probability would be a category error — that is the
+  parameterization-choice ambiguity this note resolves.
+* **Capture acts at the aggregate-totals level in the LNM, not the per-gene
+  level.** In the DM (@sec-diffexp-robustness), pre-capture per-gene counts $m_g
+  \sim \mathrm{NB}(r_g, p)$ are *thinned* by $\nu_c$, and the observed
+  *per-gene* counts inherit an effective success probability $\hat p_c$ via the
+  binomial-thinning formula. The DM result that capture preserves $r_g$ is a
+  consequence of the per-gene thinning algebra and is the load-bearing fact in
+  the DM robustness proof. In the LNM, capture instead acts on the *aggregate*
+  totals submodel: the per-cell observed total $u_T^{(c)}$ has post-capture
+  expected value $\langle u_T^{(c)} \rangle = \mu_T \cdot
+  p_{\text{capture}}^{(c)}$. The LNM totals NB admits both a thinning derivation
+  (the ``canonical`` parameterization, sampling $(r_T, p)$ and computing $\hat
+  p^{(c)}$ via aggregate Poisson-thinning) and a direct mean-parameterized form
+  (``mean_prob`` / ``mean_odds`` and the Laplace engine, sampling $\mu_T$ and
+  writing the post-capture mean as a literal product $\mu_T \cdot
+  p_{\text{capture}}^{(c)}$); the three formulations yield identical $u_T^{(c)}$
+  marginals — see @sec-lnm-totals-parameterizations and
+  @sec-lnm-totals-nb-vs-dm. **Crucially for the robustness theorem, capture
+  never reaches the composition submodel**, regardless of which totals
+  parameterization is used. The multinomial likelihood on
+  $\text{ALR}^{-1}(\underline{y}_{\text{ALR}}^{(c)})$ conditions on $u_T^{(c)}$
+  and has no capture coupling at all.
 
 The two submodels share *no* random variables: the capture probability
 $p_{\text{capture}}^{(c)}$ enters the joint density only through the
@@ -152,11 +151,11 @@ totals-submodel mean.
 
 #### Theorem (LNM compositional invariance) {#sec-diffexp-lnmpln-lnm-theorem}
 
-Let $\mathcal{L}(\underline{\theta})$ denote the joint log-likelihood
-of the LNM(VCP) generative model with global parameters
-$\underline{\theta} = \{\underline{\mu},\, \underline{\underline{W}},\,
-\underline{d},\, \mu_T,\, r_T,\, \{p_{\text{capture}}^{(c)}\}_{c=1}^C\}$.
-For any per-cell scaling $\kappa \in (0, \infty)$, the reparameterization
+Let $\mathcal{L}(\underline{\theta})$ denote the joint log-likelihood of the
+LNM(VCP) generative model with global parameters $\underline{\theta} =
+\{\underline{\mu},\, \underline{\underline{W}},\, \underline{d},\, \mu_T,\,
+r_T,\, \{p_{\text{capture}}^{(c)}\}_{c=1}^C\}$. For any per-cell scaling $\kappa
+\in (0, \infty)$, the reparameterization
 
 $$
 \tilde{\mu}_T = \kappa \cdot \mu_T, \qquad
@@ -208,17 +207,17 @@ q(\underline{y}_{\text{ALR}}^{(c)} \mid \underline{u}^{(c)}, u_T^{(c)})
 $${#eq-diffexp-lnmpln-lnm-y-posterior}
 
 with $\underline{\underline{\Sigma}} = \underline{\underline{W}}\,
-\underline{\underline{W}}^\top + \mathrm{diag}(\underline{d})$. Neither
-factor depends on $\mu_T$ or $p_{\text{capture}}^{(c)}$, so the entire
-posterior is identical under $\underline{\theta}$ and
-$\underline{\tilde{\theta}}$. $\blacksquare$
+\underline{\underline{W}}^\top + \mathrm{diag}(\underline{d})$. Neither factor
+depends on $\mu_T$ or $p_{\text{capture}}^{(c)}$, so the entire posterior is
+identical under $\underline{\theta}$ and $\underline{\tilde{\theta}}$.
+$\blacksquare$
 
 #### Consequences for differential expression {#sec-diffexp-lnmpln-lnm-de}
 
-Under any compositional contrast — pairwise log-ratio, full ALR, or CLR —
-the test statistic is a function of $\underline{y}_{\text{ALR}}^{(c)}$
-alone. The theorem states that this latent has identical posterior under
-any $\kappa$-shifted scaling of the totals submodel. Therefore:
+Under any compositional contrast — pairwise log-ratio, full ALR, or CLR — the
+test statistic is a function of $\underline{y}_{\text{ALR}}^{(c)}$ alone. The
+theorem states that this latent has identical posterior under any
+$\kappa$-shifted scaling of the totals submodel. Therefore:
 
 > **The LNM compositional inference is exactly invariant to capture
 > probability misspecification, in precisely the same sense as the DM**
@@ -226,12 +225,11 @@ any $\kappa$-shifted scaling of the totals submodel. Therefore:
 > expression test statistics built from $\underline{y}_{\text{ALR}}^{(c)}$
 > are robust to misspecification of $M_0$ or $\sigma_M$.
 
-The only quantity that can absorb capture-scaling error is the totals
-submodel itself, and the absorption is one-dimensional: only the product
-$\mu_T \cdot p_{\text{capture}}^{(c)}$ is identified, so any reported
-absolute $\hat{\mu}_T$ should be interpreted as the data-likelihood
-solution at the prior-pinned $\hat{p}_{\text{capture}}^{(c)}$ point on the
-ridge.
+The only quantity that can absorb capture-scaling error is the totals submodel
+itself, and the absorption is one-dimensional: only the product $\mu_T \cdot
+p_{\text{capture}}^{(c)}$ is identified, so any reported absolute $\hat{\mu}_T$
+should be interpreted as the data-likelihood solution at the prior-pinned
+$\hat{p}_{\text{capture}}^{(c)}$ point on the ridge.
 
 ### PLN: invariance restricted to compositional contrasts {#sec-diffexp-lnm-pln-robust-pln}
 
@@ -286,9 +284,9 @@ Under the prior $\underline{x}^{(c)} \sim \mathcal{N}(\underline{\mu},
 \underline{\underline{\Sigma}})$, define the shifted latent
 $\underline{x}'^{(c)} = \underline{x}^{(c)} + \Delta \mathbf{1}$. Then
 $\underline{x}'^{(c)} \sim \mathcal{N}(\underline{\mu} + \Delta \mathbf{1},
-\underline{\underline{\Sigma}})$ — note that the covariance is
-unchanged because adding a constant to each coordinate is a translation,
-not a rotation, of the latent space. The Poisson rate becomes
+\underline{\underline{\Sigma}})$ — note that the covariance is unchanged because
+adding a constant to each coordinate is a translation, not a rotation, of the
+latent space. The Poisson rate becomes
 
 $$
 e^{x_g'^{(c)} - \tilde{\eta}^{(c)}}
