@@ -581,29 +581,50 @@ def _prepare_calibration_data(
         }
 
     # ---- PLN path: predicted observed mean -----------------------------------
-    # The honest population-level prediction uses the *registered*
-    # LowRankPoissonLogNormal distribution (which already encodes
-    # ``mu_g + 0.5·(||W_g||² + d_g)`` via the log-normal moment
-    # formula) times the empirical mean capture factor
-    # ``mean_c[exp(-eta_c)]``. The earlier approach -- read the
-    # ``y_log_rate`` MAP and exponentiate it directly -- silently
-    # dropped the encoder's per-cell contribution because the MAP of
-    # ``y_log_rate`` is just the decoder *bias* ``mu_g`` (i.e., the
-    # ``loc`` of the registered ``LowRankMultivariateNormal``); the
-    # ``W·z_c`` term is recovered only via a full Predictive forward
-    # pass through the encoder.
+    # We have two routes for the per-gene predicted mean:
     #
-    # Tradeoff: this still does not include encoder bias (the
-    # aggregate posterior ``q(z)`` may drift from the ``N(0, I)``
-    # prior in practice). The PPC plots remain the gold standard for
-    # capturing that drift; this calibration plot is a *population-
-    # level* sanity check on whether the decoder bias / loadings /
-    # diagonal residual are jointly placed correctly relative to the
-    # empirical capture scale.
+    # 1. **Per-cell MAP path (preferred when available)**. Laplace
+    #    results expose the per-cell MAP log-rate ``x_loc`` directly,
+    #    and the honest predicted mean for the data-informative
+    #    regime is then
+    #
+    #        pred_g  =  (1/C) sum_c  exp(x_g^(c)  -  eta_c).
+    #
+    #    No log-normal moment correction is added: ``x_loc`` is the
+    #    fitted *posterior MAP*, not a prior sample, and for
+    #    informative likelihood the per-cell posterior is sharply
+    #    concentrated around the MAP (so ``E[exp(x-eta)] ≈
+    #    exp(MAP-eta)`` to leading order). Adding ``exp(0.5*sigma_g^2)``
+    #    here would over-correct by treating the data as
+    #    non-informative. For PPC-consistency in the non-informative
+    #    limit a per-cell Hessian-based variance would be needed; the
+    #    PPC plot remains the gold standard for that regime.
+    #
+    # 2. **Population-level fallback (VAE / encoder-only results)**.
+    #    When ``x_loc`` is not available, we approximate
+    #
+    #        pred_g  ≈  exp(mu_g  +  0.5*(||W_g||²  +  d_g))
+    #                   *  (1/C) sum_c  exp(-eta_c).
+    #
+    #    The first factor is ``LowRankPoissonLogNormal.mean``
+    #    (prior-predictive moment of the log-rate) and the second is
+    #    the empirical capture factor. The factorization is exact
+    #    only when the aggregate posterior over ``z`` matches the
+    #    ``N(0, I)`` prior. Aggregate-posterior drift -- e.g. the
+    #    ``q(z)``-expanded regime that arises in PLN Laplace with a
+    #    weak capture prior -- biases this path by a factor that
+    #    depends on the drift magnitude (under-prediction when
+    #    ``var(z) > 1`` in some directions). The per-cell MAP path
+    #    (route 1) sidesteps that issue.
+    #
+    # Subtle Jensen point on the capture factor: the empirical mean
+    # capture is ``mean_c[exp(-eta_c)]``, *not* ``exp(-mean(eta_c))``.
+    # The two differ by ``exp(tau^2/2)`` where ``tau`` is the std of
+    # ``eta_c``; using the wrong form would under-predict by ~22%
+    # for typical ``tau ~ 0.7``. Both routes above use the unbiased
+    # form.
     if _use_pln:
-        # Pull eta_capture and d_pln when available; we'll combine
-        # them with the registered population distribution rather
-        # than the y_log_rate MAP.
+        # Pull eta_capture and d_pln when available.
         pln_targets = []
         if bool(
             getattr(
@@ -624,41 +645,69 @@ def _prepare_calibration_data(
             if pln_targets
             else {}
         )
-
-        # Population-level predicted biological-rate mean per gene,
-        # using the closed-form ``LowRankPoissonLogNormal.mean``. This
-        # already includes ``exp(mu_g + 0.5·(||W_g||² + d_g))``.
-        try:
-            distributions = results.get_distributions(
-                backend="numpyro", split=False
-            )
-        except (TypeError, AttributeError):
-            # Older results signatures may not support kwargs.
-            distributions = results.get_distributions()
-        lambda_dist = distributions.get("lambda_rate")
-        if lambda_dist is None:
-            console.print(
-                "[yellow]Skipping mean calibration: ``lambda_rate`` "
-                "(LowRankPoissonLogNormal) unavailable for this PLN "
-                "result.[/yellow]"
-            )
-            return None
-        pop_mean_bio = np.asarray(lambda_dist.mean, dtype=float)
-
-        # Empirical capture factor: ``mean_c[exp(-eta_c)]``. With the
-        # capture anchor on, this equals roughly ``mean(L_c) / M_0``.
-        # Without the anchor, eta_capture is absent and we set the
-        # factor to 1 (no capture correction).
         eta_capture = map_estimates.get("eta_capture")
+        d_pln = map_estimates.get("d_pln")
+
+        # Pull eta as numpy for both the formula and the label.
         if eta_capture is not None:
             eta_arr = np.asarray(eta_capture, dtype=float).reshape(-1)
-            mean_capture = float(np.mean(np.exp(-eta_arr)))
             mean_eta = float(np.mean(eta_arr))
         else:
-            mean_capture = 1.0
+            eta_arr = None
             mean_eta = None
 
-        pred_mean = pop_mean_bio * mean_capture
+        # Try the per-cell MAP path first. Laplace results store
+        # the per-cell log-rate MAP under ``x_loc`` (shape
+        # ``(n_cells, G)``). VAE results don't expose this directly
+        # at the results-object level so we fall through.
+        x_loc = getattr(results, "x_loc", None)
+        x_arr: np.ndarray | None = None
+        if x_loc is not None:
+            x_loc_np = np.asarray(x_loc, dtype=float)
+            if x_loc_np.ndim == 2 and x_loc_np.shape[0] > 1:
+                x_arr = x_loc_np
+
+        if x_arr is not None:
+            # Per-cell MAP path: directly evaluate
+            #    pred_g = mean_c[ exp(x_g^(c) - eta_c) ].
+            # No LogN moment correction: ``x_loc`` is a fitted MAP,
+            # not a prior sample, so the per-cell exponential is
+            # already at the right scale for informative likelihood.
+            # See the design comment above.
+            if eta_arr is not None:
+                if eta_arr.shape[0] == x_arr.shape[0]:
+                    x_eff = x_arr - eta_arr[:, None]
+                else:
+                    # Defensive: shape mismatch ⇒ apply the average
+                    # capture factor instead of per-cell. Falls back
+                    # to the route-2 form for the eta term.
+                    log_capture = float(np.log(np.mean(np.exp(-eta_arr))))
+                    x_eff = x_arr + log_capture
+            else:
+                x_eff = x_arr
+            pred_mean = np.exp(x_eff).mean(axis=0)
+        else:
+            # Population-level fallback (VAE).
+            try:
+                distributions = results.get_distributions(
+                    backend="numpyro", split=False
+                )
+            except (TypeError, AttributeError):
+                distributions = results.get_distributions()
+            lambda_dist = distributions.get("lambda_rate")
+            if lambda_dist is None:
+                console.print(
+                    "[yellow]Skipping mean calibration: ``lambda_rate`` "
+                    "(LowRankPoissonLogNormal) unavailable for this PLN "
+                    "result.[/yellow]"
+                )
+                return None
+            pop_mean_bio = np.asarray(lambda_dist.mean, dtype=float)
+            if eta_arr is not None:
+                mean_capture = float(np.mean(np.exp(-eta_arr)))
+            else:
+                mean_capture = 1.0
+            pred_mean = pop_mean_bio * mean_capture
 
         _annotations = []
         if mean_eta is not None:

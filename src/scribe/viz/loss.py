@@ -102,6 +102,12 @@ def plot_loss(
             # whose Gaussian-prior-density constants put the
             # negative-ELBO below zero). The log-scale panel
             # would be empty so we omit it.
+            #
+            # Width is half the two-panel default (3.5 vs 7.0) so
+            # the single panel renders at the same per-panel width
+            # as one half of the two-panel layout, rather than as
+            # a stretched wide rectangle.
+            _single_panel_default = (3.5, 3.0)
             if axes is not None:
                 # Caller supplied multiple axes; use the first.
                 fig, _, flat_axes = _create_or_validate_grid_axes(
@@ -109,7 +115,7 @@ def plot_loss(
                     n_cols=1,
                     fig=fig,
                     axes=axes,
-                    figsize=figsize or (5.0, 3.0),
+                    figsize=figsize or _single_panel_default,
                 )
                 (ax_linear,) = flat_axes
             else:
@@ -120,7 +126,7 @@ def plot_loss(
                     fig = ax_linear.figure
                 else:
                     fig, ax_linear = plt.subplots(
-                        1, 1, figsize=figsize or (5.0, 3.0)
+                        1, 1, figsize=figsize or _single_panel_default
                     )
             ax_linear.plot(loss_history)
             ax_linear.set_xlabel("step")

@@ -3419,37 +3419,61 @@ def test_compute_predicted_mean_pln_matches_exp():
     np.testing.assert_allclose(pred, np.exp(y_log_rate), rtol=1e-8)
 
 
-def test_prepare_calibration_data_pln_uses_y_log_rate(monkeypatch):
-    """Mean-calibration data prep should use PLN branch and annotations."""
-    y_log_rate = np.log(np.array([1.0, 3.0, 5.0], dtype=float))
+def test_prepare_calibration_data_pln_uses_per_cell_map(monkeypatch):
+    """Mean-calibration data prep should use PLN per-cell-MAP path.
+
+    The PLN branch was overhauled (see ``_compute_predicted_mean``)
+    to prefer the per-cell MAP ``x_loc`` over the population-level
+    ``LowRankPoissonLogNormal.mean × mean_c[exp(-eta_c)]`` formula
+    when ``x_loc`` is available on the results object. The per-cell
+    path is robust to aggregate-posterior drift and matches what
+    PPC sampling does in the data-informative regime.
+    """
+    # Build per-cell MAP log-rates that vary across cells to exercise
+    # the ``mean_c[exp(x_g^(c))]`` aggregation.
+    n_cells, n_genes = 4, 3
+    x_loc = np.array(
+        [
+            [0.0, 1.0, 1.5],
+            [0.5, 1.2, 1.8],
+            [0.2, 0.8, 1.6],
+            [0.3, 1.1, 1.7],
+        ],
+        dtype=float,
+    )
 
     class _FakeResults:
-        """Minimal results stub for `_prepare_calibration_data`."""
+        """Minimal results stub exposing ``x_loc`` like a Laplace fit."""
 
         def __init__(self):
             self.model_config = types.SimpleNamespace(
                 parameterization=Parameterization.POISSON_LOGNORMAL,
                 uses_biology_informed_capture=False,
                 uses_variable_capture=False,
+                d_mode="low_rank",
             )
-            self.n_genes = 3
+            self.n_genes = n_genes
+            self.x_loc = x_loc
 
+    # No targets ⇒ map_estimates is empty.
     def _fake_get_map(*_args, **_kwargs):
-        return {"y_log_rate": y_log_rate}
+        return {}
 
     import scribe.viz.mean_calibration as mc_module
 
     monkeypatch.setattr(mc_module, "_get_map_estimates_for_plot", _fake_get_map)
 
-    counts = np.array([[1, 2, 3], [2, 1, 4], [1, 3, 2]], dtype=float)
+    counts = np.array(
+        [[1, 2, 3], [2, 1, 4], [1, 3, 2], [2, 2, 5]], dtype=float
+    )
     payload = _prepare_calibration_data(_FakeResults(), counts)
 
     assert payload is not None
     assert payload["mode"] == "single"
     assert "PLN (log-rate)" in payload["annotations"]
-    np.testing.assert_allclose(
-        payload["pred_mean"], np.exp(y_log_rate), rtol=1e-8
-    )
+    # Per-cell-MAP formula with no capture: ``mean_c[exp(x_g^(c))]``.
+    expected = np.exp(x_loc).mean(axis=0)
+    np.testing.assert_allclose(payload["pred_mean"], expected, rtol=1e-8)
 
 
 def test_plot_correlation_heatmap_skips_for_pln():
