@@ -791,10 +791,9 @@ $$
 + \underline{\underline{B}}\, d\underline{W}\right]^\top,
 $${#eq-grn-bio-outer-product}
 
-where we suppress the time argument for brevity. Expanding the product and
-retaining only terms up to order $dt$ (using the Itô rule
-$d\underline{W}\, d\underline{W}^\top = \underline{\underline{I}}\, dt$
-and discarding terms of order $(dt)^2$ and $dt \cdot d\underline{W}$):
+where we suppress the time argument for brevity. Expanding the product,
+discarding terms of order $(dt)^2$, and applying the Itô rule
+$d\underline{W}\, d\underline{W}^\top = \underline{\underline{I}}\, dt$:
 
 $$
 \delta\underline{x}(t+dt)\, \delta\underline{x}(t+dt)^\top \approx
@@ -803,12 +802,18 @@ $$
 \delta\underline{x}^\top \, dt
 + \delta\underline{x}\, \delta\underline{x}^\top \,
 \underline{\underline{J}}^\top \, dt
-+ \underline{\underline{B}}\, \underline{\underline{B}}^\top \, dt.
++ \underline{\underline{B}}\, \underline{\underline{B}}^\top \, dt
++ \delta\underline{x}\, d\underline{W}^\top \underline{\underline{B}}^\top
++ \underline{\underline{B}}\, d\underline{W}\, \delta\underline{x}^\top.
 $${#eq-grn-bio-outer-expanded}
 
 Taking the expectation of both sides and using
 $\underline{\underline{\Sigma}}(t) = \langle \delta\underline{x}(t)\,
-\delta\underline{x}(t)^\top \rangle$:
+\delta\underline{x}(t)^\top \rangle$. The last two cross terms vanish
+because $d\underline{W}$ is a zero-mean increment independent of
+$\delta\underline{x}(t)$, giving
+$\langle \delta\underline{x}\, d\underline{W}^\top \rangle =
+\langle \delta\underline{x} \rangle \langle d\underline{W}^\top \rangle = 0$:
 
 $$
 \underline{\underline{\Sigma}}(t + dt) =
@@ -1494,3 +1499,193 @@ fit using the same amortized variational inference machinery (encoder-decoder
 VAE with ELBO objective). The columns of $\underline{\underline{W}}$ retain the
 same regulatory-program interpretation (@sec-grn-bio-low-rank) regardless of
 the observation model.
+
+## Appendix: Derivation of the integral solution to the Lyapunov equation {#sec-grn-bio-appendix-lyapunov}
+
+Here we derive @eq-grn-bio-sigma-integral from first principles using the
+method of variation of parameters applied to the covariance ODE
+@eq-grn-bio-cov-ode.
+
+### Setting up the time-dependent problem
+
+Rather than working directly with the steady-state equation, we solve the
+time-dependent ODE
+
+$$
+\frac{d\underline{\underline{\Sigma}}}{dt} =
+\underline{\underline{J}}\, \underline{\underline{\Sigma}}
++ \underline{\underline{\Sigma}}\, \underline{\underline{J}}^\top
++ 2\underline{\underline{D}},
+\qquad \underline{\underline{\Sigma}}(0) = \underline{\underline{0}},
+$${#eq-grn-bio-app-ode-ic}
+
+where the zero initial condition corresponds to starting from the fixed point
+with no fluctuations. The steady-state solution we seek is
+$\underline{\underline{\Sigma}} =
+\lim_{t\to\infty}\underline{\underline{\Sigma}}(t)$.
+
+### Solving the homogeneous equation
+
+We first solve the homogeneous ODE (setting
+$\underline{\underline{D}} = \underline{\underline{0}}$):
+
+$$
+\frac{d\underline{\underline{\Sigma}}}{dt} =
+\underline{\underline{J}}\,\underline{\underline{\Sigma}}
++ \underline{\underline{\Sigma}}\,\underline{\underline{J}}^\top.
+$${#eq-grn-bio-app-homogeneous}
+
+To decouple the left- and right-multiplication by $\underline{\underline{J}}$,
+we introduce the substitution
+$\underline{\underline{\Sigma}}(t) =
+e^{\underline{\underline{J}}t}\,\underline{\underline{\Phi}}(t)$.
+Differentiating and substituting into @eq-grn-bio-app-homogeneous:
+
+$$
+\underline{\underline{J}}\,e^{\underline{\underline{J}}t}\,
+\underline{\underline{\Phi}}
++ e^{\underline{\underline{J}}t}\,\dot{\underline{\underline{\Phi}}}
+= \underline{\underline{J}}\,e^{\underline{\underline{J}}t}\,
+\underline{\underline{\Phi}}
++ e^{\underline{\underline{J}}t}\,\underline{\underline{\Phi}}\,
+\underline{\underline{J}}^\top.
+$$
+
+The $\underline{\underline{J}}\,e^{\underline{\underline{J}}t}\,
+\underline{\underline{\Phi}}$ terms cancel, and multiplying on the left by
+$e^{-\underline{\underline{J}}t}$ gives the simpler ODE:
+
+$$
+\dot{\underline{\underline{\Phi}}} =
+\underline{\underline{\Phi}}\,\underline{\underline{J}}^\top.
+$$
+
+This is a right-multiplication ODE. To solve it, note that:
+
+$$
+\frac{d}{dt}\!\left[\underline{\underline{\Phi}}\,
+e^{-\underline{\underline{J}}^\top t}\right] =
+\dot{\underline{\underline{\Phi}}}\,e^{-\underline{\underline{J}}^\top t}
+- \underline{\underline{\Phi}}\,\underline{\underline{J}}^\top\,
+e^{-\underline{\underline{J}}^\top t}
+= \left(\dot{\underline{\underline{\Phi}}} -
+\underline{\underline{\Phi}}\,\underline{\underline{J}}^\top\right)
+e^{-\underline{\underline{J}}^\top t} = \underline{\underline{0}}.
+$$
+
+Therefore $\underline{\underline{\Phi}}\,e^{-\underline{\underline{J}}^\top t} =
+\underline{\underline{C}}$ is a constant matrix, giving
+$\underline{\underline{\Phi}}(t) =
+\underline{\underline{C}}\,e^{\underline{\underline{J}}^\top t}$.
+Substituting back, the general homogeneous solution is:
+
+$$
+\underline{\underline{\Sigma}}_h(t) =
+e^{\underline{\underline{J}}t}\,\underline{\underline{C}}\,
+e^{\underline{\underline{J}}^\top t}.
+$${#eq-grn-bio-app-hom-solution}
+
+### Variation of parameters ansatz
+
+With the homogeneous solution @eq-grn-bio-app-hom-solution in hand, we seek
+a particular solution of the full inhomogeneous ODE @eq-grn-bio-app-ode-ic
+by allowing the constant $\underline{\underline{C}}$ to become a
+time-dependent matrix $\underline{\underline{M}}(t)$:
+
+$$
+\underline{\underline{\Sigma}}(t) =
+e^{\underline{\underline{J}}t}\,
+\underline{\underline{M}}(t)\,
+e^{\underline{\underline{J}}^\top t}.
+$${#eq-grn-bio-app-ansatz}
+
+### Finding $\underline{\underline{M}}(t)$
+
+Differentiating @eq-grn-bio-app-ansatz with the product rule:
+
+$$
+\frac{d\underline{\underline{\Sigma}}}{dt} =
+\underline{\underline{J}}\,
+e^{\underline{\underline{J}}t}\,\underline{\underline{M}}\,
+e^{\underline{\underline{J}}^\top t}
++ e^{\underline{\underline{J}}t}\,\dot{\underline{\underline{M}}}\,
+e^{\underline{\underline{J}}^\top t}
++ e^{\underline{\underline{J}}t}\,\underline{\underline{M}}\,
+e^{\underline{\underline{J}}^\top t}\,\underline{\underline{J}}^\top
+= \underline{\underline{J}}\,\underline{\underline{\Sigma}}
++ e^{\underline{\underline{J}}t}\,\dot{\underline{\underline{M}}}\,
+e^{\underline{\underline{J}}^\top t}
++ \underline{\underline{\Sigma}}\,\underline{\underline{J}}^\top.
+$$
+
+Substituting into @eq-grn-bio-app-ode-ic and cancelling the
+$\underline{\underline{J}}\underline{\underline{\Sigma}}$ and
+$\underline{\underline{\Sigma}}\underline{\underline{J}}^\top$ terms from
+both sides:
+
+$$
+e^{\underline{\underline{J}}t}\,\dot{\underline{\underline{M}}}\,
+e^{\underline{\underline{J}}^\top t} = 2\underline{\underline{D}}.
+$$
+
+Multiplying on the left by $e^{-\underline{\underline{J}}t}$ and on the
+right by $e^{-\underline{\underline{J}}^\top t}$:
+
+$$
+\dot{\underline{\underline{M}}}(t) =
+e^{-\underline{\underline{J}}t}\,(2\underline{\underline{D}})\,
+e^{-\underline{\underline{J}}^\top t}.
+$$
+
+Integrating from $0$ to $t$ with $\underline{\underline{M}}(0) =
+\underline{\underline{0}}$ (from the initial condition
+$\underline{\underline{\Sigma}}(0) = \underline{\underline{0}}$):
+
+$$
+\underline{\underline{M}}(t) =
+\int_0^t
+e^{-\underline{\underline{J}}s}\,(2\underline{\underline{D}})\,
+e^{-\underline{\underline{J}}^\top s}\, ds.
+$$
+
+### Assembling $\underline{\underline{\Sigma}}(t)$
+
+Substituting back into @eq-grn-bio-app-ansatz:
+
+$$
+\underline{\underline{\Sigma}}(t) =
+e^{\underline{\underline{J}}t}
+\left[\int_0^t
+e^{-\underline{\underline{J}}s}\,(2\underline{\underline{D}})\,
+e^{-\underline{\underline{J}}^\top s}\, ds\right]
+e^{\underline{\underline{J}}^\top t}
+= \int_0^t
+e^{\underline{\underline{J}}(t-s)}\,(2\underline{\underline{D}})\,
+e^{\underline{\underline{J}}^\top(t-s)}\, ds.
+$$
+
+Changing variables to $u = t - s$:
+
+$$
+\underline{\underline{\Sigma}}(t) =
+\int_0^t
+e^{\underline{\underline{J}}u}\,(2\underline{\underline{D}})\,
+e^{\underline{\underline{J}}^\top u}\, du.
+$${#eq-grn-bio-app-sigma-t}
+
+### Taking the steady-state limit
+
+When $\underline{\underline{J}}$ is stable (all eigenvalues have strictly
+negative real part), $e^{\underline{\underline{J}}u} \to \underline{\underline{0}}$
+as $u \to \infty$, so the integrand decays exponentially and the improper
+integral converges. Taking $t \to \infty$ in @eq-grn-bio-app-sigma-t
+recovers the steady-state result:
+
+$$
+\underline{\underline{\Sigma}} =
+\int_0^\infty
+e^{\underline{\underline{J}}u}\,(2\underline{\underline{D}})\,
+e^{\underline{\underline{J}}^\top u}\, du,
+$$
+
+which is exactly @eq-grn-bio-sigma-integral. $\blacksquare$
