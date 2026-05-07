@@ -292,9 +292,7 @@ def laplace_log_det_neg_H(
     -------
     jnp.ndarray, scalar.
     """
-    log_rate = (
-        x_map - eta_map if eta_map is not None else x_map
-    )
+    log_rate = x_map - eta_map if eta_map is not None else x_map
     factors = _woodbury_factors(W, d, log_rate, damping=0.0)
     log_det_A = _log_det_A(factors)
     if eta_map is None:
@@ -410,12 +408,7 @@ def newton_step_joint(
     # symmetric in B so the leading sign drops out there.
     A_inv_g_x = _solve_A(factors, g_x)
     rate_inv_A = _solve_A(factors, rate)  # A⁻¹ rate
-    s = (
-        jnp.sum(rate)
-        + 1.0 / (sigma_M**2)
-        - jnp.dot(rate, rate_inv_A)
-        + damping
-    )
+    s = jnp.sum(rate) + 1.0 / (sigma_M**2) - jnp.dot(rate, rate_inv_A) + damping
     # The sign convention here had a long-standing bug. Verified by
     # constructing the dense (G+1)x(G+1) -H matrix and comparing the
     # block solve to ``np.linalg.solve``; see
@@ -423,9 +416,7 @@ def newton_step_joint(
     delta_eta = (g_eta + jnp.dot(rate, A_inv_g_x)) / s
     delta_x = A_inv_g_x + rate_inv_A * delta_eta
 
-    grad_inf_norm = jnp.maximum(
-        jnp.max(jnp.abs(g_x)), jnp.abs(g_eta)
-    )
+    grad_inf_norm = jnp.maximum(jnp.max(jnp.abs(g_x)), jnp.abs(g_eta))
     # Step-size cap: if the proposed step is huge in either block,
     # scale the whole step down to ``MAX_STEP``. This prevents
     # runaway iterates when the Schur complement on the η block is
@@ -434,9 +425,7 @@ def newton_step_joint(
     # with this safety net because subsequent iterations have well-
     # conditioned Hessians once we are near the basin of attraction.
     _MAX_STEP = 5.0
-    step_norm = jnp.maximum(
-        jnp.max(jnp.abs(delta_x)), jnp.abs(delta_eta)
-    )
+    step_norm = jnp.maximum(jnp.max(jnp.abs(delta_x)), jnp.abs(delta_eta))
     scale = jnp.minimum(1.0, _MAX_STEP / jnp.maximum(step_norm, 1e-12))
     delta_x = delta_x * scale
     delta_eta = delta_eta * scale
@@ -511,9 +500,7 @@ def laplace_newton_loop(
     # caller needs the determinant for the Laplace ELBO, so we cannot
     # skip it.
     final_log_rate = x_final - eta_final
-    final_rate = jnp.exp(
-        jnp.clip(final_log_rate, _LOG_RATE_MIN, _LOG_RATE_MAX)
-    )
+    final_rate = jnp.exp(jnp.clip(final_log_rate, _LOG_RATE_MIN, _LOG_RATE_MAX))
     factors = _woodbury_factors(W, d, final_log_rate, damping)
     log_det_A = _log_det_A(factors)
     A_inv_rate = _solve_A(factors, final_rate)
@@ -590,15 +577,11 @@ def laplace_newton_loop_x_only(
 
     def step(carry, _):
         x_, _grad = carry
-        x_new, grad_norm = newton_step_x_only(
-            x_, u, mu, W, d, damping
-        )
+        x_new, grad_norm = newton_step_x_only(x_, u, mu, W, d, damping)
         return (x_new, grad_norm), None
 
     init = (x_init, jnp.asarray(jnp.inf, dtype=x_init.dtype))
-    (x_final, final_grad), _ = jax.lax.scan(
-        step, init, None, length=n_iters
-    )
+    (x_final, final_grad), _ = jax.lax.scan(step, init, None, length=n_iters)
 
     factors = _woodbury_factors(W, d, x_final, damping)
     log_det_neg_H = _log_det_A(factors)
@@ -709,6 +692,105 @@ pln_grad_x_only_norm_batch = jax.vmap(
 )
 
 
+def sample_x_posterior(
+    rng_key: jax.Array,
+    x_map: jnp.ndarray,
+    eta_map: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    n_samples: int,
+    damping: float = 0.0,
+) -> jnp.ndarray:
+    """Sample from the per-cell Laplace posterior on ``x``.
+
+    Under the Laplace approximation, the per-cell posterior on
+    ``x`` (with ``eta`` held at its MAP) is
+
+    q(x_c | u_c, η_c) ≈ 𝓝( x̂_c, (−H_xx,c)⁻¹ )
+
+    where −H_xx = diag(λ) + Σ⁻¹ admits the Woodbury form
+    M̃ − V K⁻¹ Vᵀ with diagonal M̃ = diag(λ + 1/d + damping),
+    V = diag(1/d) W, and K = Iₖ + Wᵀ diag(1/d) W. The
+    posterior covariance follows by another Woodbury application:
+
+    (−H_xx)⁻¹ = M̃⁻¹ + M̃⁻¹ V S⁻¹ Vᵀ M̃⁻¹,
+        S = K − Vᵀ M̃⁻¹ V.
+
+    A square-root factor of this covariance is
+
+    Σ¹ᐟ² ε = M̃⁻¹ᐟ² ε₁ + M̃⁻¹ V L_S⁻ᵀ ε₂,
+
+    with ε₁ ∼ 𝓝(0, I_G), ε₂ ∼ 𝓝(0, Iₖ), and L_S the
+    lower-triangular Cholesky factor of S. Direct verification:
+
+    Var[Σ¹ᐟ² ε] = M̃⁻¹ + M̃⁻¹ V (L_S L_Sᵀ)⁻¹ Vᵀ M̃⁻¹
+                = (−H_xx)⁻¹.
+
+
+    Cost is ``O(G·k + k^3)`` per sample — the same scaling as one
+    Newton step, dominated by the ``k × k`` triangular solve and a
+    pair of low-rank multiplies. No ``G × G`` factor is ever
+    materialized.
+
+    Parameters
+    ----------
+    rng_key : jax.Array
+        PRNG key.
+    x_map : jnp.ndarray, shape ``(G,)``
+        Converged per-cell MAP for ``x_c``.
+    eta_map : jnp.ndarray, scalar
+        Converged MAP for ``η_c``. Sets ``λ = exp(x_map - eta_map)``.
+    W : jnp.ndarray, shape ``(G, k)``
+        Decoder loadings.
+    d : jnp.ndarray, shape ``(G,)``
+        Diagonal residual variance.
+    n_samples : int
+        Number of posterior samples to draw.
+    damping : float, default 0.0
+        Tikhonov damping carried over from the Newton solve so the
+        sampled covariance matches the matrix the optimiser actually
+        inverted. Set to 0 for the un-damped Laplace posterior.
+
+    Returns
+    -------
+    jnp.ndarray, shape ``(n_samples, G)``
+        Samples from ``N(x_map, (-H_xx)^{-1})``.
+    """
+    log_rate = x_map - eta_map
+    factors = _woodbury_factors(W, d, log_rate, damping)
+    m_inv = factors["m_inv"]  # (G,)
+    V = factors["V"]  # (G, k)
+    L_S = factors["L_S"]  # (k, k)
+
+    G = m_inv.shape[0]
+    k = V.shape[1]
+
+    k1, k2 = jax.random.split(rng_key)
+    eps1 = jax.random.normal(k1, (n_samples, G), dtype=x_map.dtype)
+    eps2 = jax.random.normal(k2, (n_samples, k), dtype=x_map.dtype)
+
+    # Term 1: diag(sqrt(m_inv)) ε₁ — the "diagonal" contribution.
+    sqrt_m_inv = jnp.sqrt(m_inv)
+    term1 = sqrt_m_inv[None, :] * eps1  # (S, G)
+
+    # Term 2: M̃⁻¹ V L_S⁻ᵀ ε₂ — the low-rank correction.
+    # solve(L_S^T, ε₂) returns L_S⁻ᵀ ε₂. We work on (k, S) and
+    # transpose back to (S, k) afterwards.
+    y_T = jax.scipy.linalg.solve_triangular(
+        L_S.T, eps2.T, lower=False
+    )  # (k, S)
+    Vy = (y_T.T) @ V.T  # (S, G)
+    term2 = m_inv[None, :] * Vy  # (S, G)
+
+    return x_map[None, :] + term1 + term2
+
+
+sample_x_posterior_batch = jax.vmap(
+    sample_x_posterior,
+    in_axes=(0, 0, 0, None, None, None, None),
+)
+
+
 __all__ = [
     "newton_step_joint",
     "newton_step_x_only",
@@ -723,4 +805,7 @@ __all__ = [
     "pln_grad_split_batch",
     "pln_grad_x_only_norm",
     "pln_grad_x_only_norm_batch",
+    # Laplace-posterior samplers (used by the per-cell PPC path).
+    "sample_x_posterior",
+    "sample_x_posterior_batch",
 ]

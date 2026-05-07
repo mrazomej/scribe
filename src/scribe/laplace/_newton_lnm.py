@@ -208,10 +208,10 @@ def newton_step_z(
     # Hessian: -H_z = W^T M_alr W + I, with
     #   M_alr v = N (ρ_alr ⊙ v - ρ_alr (ρ_alr^T v))
     # We construct -H_z explicitly because k is small (≤ ~50).
-    Wp = W * p_alr[:, None]                                  # (G-1, k)
-    rhs = W.T @ Wp                                           # = W^T diag(ρ) W, (k, k)
-    Wp_sum = W.T @ p_alr                                     # (k,)
-    M_W = n_total * (rhs - jnp.outer(Wp_sum, Wp_sum))        # = W^T M_alr W
+    Wp = W * p_alr[:, None]  # (G-1, k)
+    rhs = W.T @ Wp  # = W^T diag(ρ) W, (k, k)
+    Wp_sum = W.T @ p_alr  # (k,)
+    M_W = n_total * (rhs - jnp.outer(Wp_sum, Wp_sum))  # = W^T M_alr W
     k = z.shape[0]
     neg_H = M_W + (1.0 + damping) * jnp.eye(k, dtype=z.dtype)
 
@@ -244,17 +244,22 @@ def laplace_newton_loop_z(
     ``lax.scan`` over a fixed iteration count keeps the function
     ``vmap``-friendly. Returns the final iterate and gradient norm.
     """
+
     def body(carry, _x):
         z = carry
         z_new, gn = newton_step_z(
-            z, u_alr, n_total, mu, W,
-            alr_reference_idx, n_genes, damping,
+            z,
+            u_alr,
+            n_total,
+            mu,
+            W,
+            alr_reference_idx,
+            n_genes,
+            damping,
         )
         return z_new, gn
 
-    z_final, gn_history = jax.lax.scan(
-        body, z_init, jnp.arange(n_iters)
-    )
+    z_final, gn_history = jax.lax.scan(body, z_init, jnp.arange(n_iters))
     # Final gradient norm = grad norm at the *last* step (not the
     # post-last gradient), which is a slight approximation but
     # sufficient for the diagnostic.
@@ -361,7 +366,7 @@ def _woodbury_factors_lnm(
     inv_d = 1.0 / d
     m_diag = n_total * p_alr + inv_d + damping
     m_inv = 1.0 / m_diag
-    V = inv_d[:, None] * W                                   # (G-1, k)
+    V = inv_d[:, None] * W  # (G-1, k)
     # Inner Woodbury: K = I_k + W^T D W, with D = diag(1/d).
     k = W.shape[1]
     K = jnp.eye(k, dtype=W.dtype) + W.T @ V
@@ -373,7 +378,7 @@ def _woodbury_factors_lnm(
     #   A⁻¹ = diag(1/m) + diag(1/m) V S⁻¹ V^T diag(1/m),
     #   S   = K - V^T diag(1/m) V.
     # Build S and its Cholesky.
-    Vm = V * m_inv[:, None]                                  # (G-1, k)
+    Vm = V * m_inv[:, None]  # (G-1, k)
     S = K - V.T @ Vm
     L_S = jnp.linalg.cholesky(S)
     log_det_K = 2.0 * jnp.sum(jnp.log(jnp.diag(L_K)))
@@ -510,17 +515,23 @@ def laplace_newton_loop_y_alr(
     damping: float,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Run ``n_iters`` Newton steps via ``lax.scan``."""
+
     def body(carry, _x):
         y = carry
         y_new, gn = newton_step_y_alr(
-            y, u_alr, n_total, mu, W, d,
-            alr_reference_idx, n_genes, damping,
+            y,
+            u_alr,
+            n_total,
+            mu,
+            W,
+            d,
+            alr_reference_idx,
+            n_genes,
+            damping,
         )
         return y_new, gn
 
-    y_final, gn_history = jax.lax.scan(
-        body, y_init, jnp.arange(n_iters)
-    )
+    y_final, gn_history = jax.lax.scan(body, y_init, jnp.arange(n_iters))
     return y_final, gn_history[-1]
 
 
@@ -631,8 +642,8 @@ def _nb_eta_grad_and_hessian(
     # exp(-eta) with the same float32 safety bound the kernel uses
     # for the Poisson rate elsewhere.
     exp_neg_eta = jnp.exp(jnp.clip(-eta, _LOGITS_MIN, _LOGITS_MAX))
-    rate_T = mu_T * exp_neg_eta             # mean of NB at this η
-    v = r_T + rate_T                         # NB normaliser denominator
+    rate_T = mu_T * exp_neg_eta  # mean of NB at this η
+    v = r_T + rate_T  # NB normaliser denominator
     grad = r_T * (rate_T - u_T) / v
     hess = -r_T * rate_T * (r_T + u_T) / (v * v)
     return grad, hess
@@ -720,6 +731,7 @@ def laplace_newton_loop_eta(
     log-density is strictly log-concave and exhibits quadratic
     Newton convergence near the MAP.
     """
+
     def body(carry, _x):
         eta = carry
         eta_new, gn = newton_step_eta(
@@ -727,9 +739,7 @@ def laplace_newton_loop_eta(
         )
         return eta_new, gn
 
-    eta_final, gn_history = jax.lax.scan(
-        body, eta_init, jnp.arange(n_iters)
-    )
+    eta_final, gn_history = jax.lax.scan(body, eta_init, jnp.arange(n_iters))
     return eta_final, gn_history[-1]
 
 
@@ -772,6 +782,192 @@ laplace_log_det_neg_H_batch_eta = jax.vmap(
 )
 
 
+def sample_z_posterior(
+    rng_key: jax.Array,
+    z_map: jnp.ndarray,
+    u_alr: jnp.ndarray,
+    n_total: jnp.ndarray,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    alr_reference_idx: int,
+    n_genes: int,
+    n_samples: int,
+    damping: float = 0.0,
+) -> jnp.ndarray:
+    """Sample from the per-cell Laplace posterior on ``z`` (low_rank LNM).
+
+    Under the Laplace approximation, the per-cell posterior on the
+    low-rank latent “𝑧” is
+
+    q(𝑧_c | 𝑢_c) ≈ 𝓝(ẑ_c, (−𝐇_{zz,c})⁻¹),
+    where
+    −𝐇_{zz} = 𝐖ᵗ 𝐌_{alr} 𝐖 + 𝐈ₖ
+
+    where 𝐌_{alr} = 𝑁 (diag(ρ_alr) − ρ_alr ρ_alrᵗ) is the
+    multinomial Fisher information at the MAP probabilities. Because
+    −𝐇_{zz} is only k × k (with k typically ≤ 50), we
+    Cholesky-factor it directly and sample by triangular solve. Cost
+    is O(k³) per cell — far smaller than the y_alr or PLN paths.
+
+    Parameters
+    ----------
+    rng_key : jax.Array
+    z_map : jnp.ndarray, shape ``(k,)``
+    u_alr, n_total : reference / total counts as in the Newton solver.
+    mu, W : decoder bias and loadings.
+    alr_reference_idx, n_genes : ALR gauge fix.
+    n_samples : int
+    damping : float, default 0.0
+
+    Returns
+    -------
+    jnp.ndarray, shape ``(n_samples, k)``
+    """
+    y_alr = mu + W @ z_map
+    p_alr = _multinomial_p_alr(y_alr, alr_reference_idx, n_genes)
+
+    Wp = W * p_alr[:, None]
+    rhs = W.T @ Wp
+    Wp_sum = W.T @ p_alr
+    M_W = n_total * (rhs - jnp.outer(Wp_sum, Wp_sum))
+    k = z_map.shape[0]
+    neg_H = M_W + (1.0 + damping) * jnp.eye(k, dtype=z_map.dtype)
+    L = jnp.linalg.cholesky(neg_H)
+
+    eps = jax.random.normal(rng_key, (n_samples, k), dtype=z_map.dtype)
+    # Sample from N(0, neg_H^-1): solve L^T δ = ε ⇒ δ = L^{-T} ε.
+    delta_T = jax.scipy.linalg.solve_triangular(L.T, eps.T, lower=False)
+    return z_map[None, :] + delta_T.T
+
+
+sample_z_posterior_batch = jax.vmap(
+    sample_z_posterior,
+    in_axes=(0, 0, 0, 0, None, None, None, None, None, None),
+)
+
+
+def sample_y_alr_posterior(
+    rng_key: jax.Array,
+    y_map: jnp.ndarray,
+    u_alr: jnp.ndarray,
+    n_total: jnp.ndarray,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    alr_reference_idx: int,
+    n_genes: int,
+    n_samples: int,
+    damping: float = 0.0,
+) -> jnp.ndarray:
+    """Sample from the per-cell Laplace posterior on ``y_alr`` (learned d LNM).
+
+    Under the Laplace approximation, the per-cell posterior on
+    ``y_alr`` is ``N(y_map, (-H_y)^{-1})`` where the negative
+    Hessian decomposes as
+
+    −𝐇ʸ = 𝐀ʸ − N ρ ρᵗ,
+
+    with 𝐀ʸ = diag(N ρ + 1/d + damping) − 𝐕𝐊⁻¹𝐕ᵗ admitting
+    the same Woodbury form as in PLN’s −𝐇ˣˣ, and ρ the MAP
+    multinomial probability vector. Inverting via Sherman–Morrison
+    gives the posterior covariance
+
+    (−𝐇ʸ)⁻¹ = 𝐀ʸ⁻¹ + α (𝐀ʸ⁻¹ρ)(𝐀ʸ⁻¹ρ)ᵗ,  α = 1⁄(1/N − ρᵗ𝐀ʸ⁻¹ρ).
+
+    A square-root factor of this covariance is therefore the PLN-style
+    Woodbury sampler for 𝐀ʸ⁻¹, plus a rank-1 correction:
+
+    Σpost¹ᐟ² ε = 𝐀ʸ⁻¹ᐟ² ε₁ + √α (𝐀ʸ⁻¹ρ) ξ,  ξ ∼ 𝒩(0, 1).
+
+    Cost is O(G·k + k³) per sample — same as one Newton step.
+
+    Parameters
+    ----------
+    rng_key : jax.Array
+    y_map : jnp.ndarray, shape ``(G-1,)``
+    u_alr, n_total : per-cell counts.
+    mu, W, d : decoder bias, loadings, and diagonal residual.
+    alr_reference_idx, n_genes : ALR gauge fix.
+    n_samples : int
+    damping : float, default 0.0
+
+    Returns
+    -------
+    jnp.ndarray, shape ``(n_samples, G-1)``
+    """
+    p_alr = _multinomial_p_alr(y_map, alr_reference_idx, n_genes)
+    factors = _woodbury_factors_lnm(W, d, n_total, p_alr, damping)
+    m_inv = factors["m_inv"]  # (G-1,)
+    V = factors["V"]  # (G-1, k)
+    L_S = factors["L_S"]  # (k, k)
+
+    G_minus1 = m_inv.shape[0]
+    k = V.shape[1]
+
+    # A_y^{-1} ρ — needed both for the rank-1 correction's direction
+    # and for the Sherman-Morrison denominator α.
+    A_inv_rho = _solve_A_lnm(factors, p_alr)  # (G-1,)
+    rho_A_inv_rho = jnp.dot(p_alr, A_inv_rho)
+    one_over_N = 1.0 / n_total
+    # Same SM denominator floor as the Newton solver — keeps the
+    # rank-1 correction finite for cells with degenerate ρ.
+    denom = jnp.maximum(one_over_N - rho_A_inv_rho, 1e-2 * one_over_N)
+    alpha = 1.0 / denom
+
+    k1, k2, k3 = jax.random.split(rng_key, 3)
+    eps1 = jax.random.normal(k1, (n_samples, G_minus1), dtype=y_map.dtype)
+    eps2 = jax.random.normal(k2, (n_samples, k), dtype=y_map.dtype)
+    xi = jax.random.normal(k3, (n_samples,), dtype=y_map.dtype)
+
+    # Sample from N(0, A_y^{-1}) via the PLN-style Woodbury factorisation.
+    sqrt_m_inv = jnp.sqrt(m_inv)
+    term1 = sqrt_m_inv[None, :] * eps1  # (S, G-1)
+    y_T = jax.scipy.linalg.solve_triangular(
+        L_S.T, eps2.T, lower=False
+    )  # (k, S)
+    Vy = (y_T.T) @ V.T  # (S, G-1)
+    term2 = m_inv[None, :] * Vy  # (S, G-1)
+
+    # Rank-1 correction: sqrt(α) · A_y^{-1} ρ · ξ.
+    term3 = (jnp.sqrt(alpha) * xi)[:, None] * A_inv_rho[None, :]
+
+    return y_map[None, :] + term1 + term2 + term3
+
+
+sample_y_alr_posterior_batch = jax.vmap(
+    sample_y_alr_posterior,
+    in_axes=(0, 0, 0, 0, None, None, None, None, None, None, None),
+)
+
+
+def sample_eta_posterior(
+    rng_key: jax.Array,
+    eta_map: jnp.ndarray,
+    u_T: jnp.ndarray,
+    r_T: jnp.ndarray,
+    mu_T: jnp.ndarray,
+    sigma_M: float,
+    n_samples: int,
+) -> jnp.ndarray:
+    """Sample from the LNMVCP per-cell scalar η Laplace posterior.
+
+    The η posterior is a 1-D Gaussian under the Laplace approximation;
+    its variance is ``-1/H_{ηη}`` evaluated at the MAP. Sampling is
+    therefore ``η_c^{(s)} = η_map + σ_η ξ`` with ``ξ ~ N(0, 1)``.
+    """
+    _, nb_hess = _nb_eta_grad_and_hessian(eta_map, u_T, r_T, mu_T)
+    neg_H = -(nb_hess - 1.0 / (sigma_M * sigma_M))
+    sigma_eta = jnp.sqrt(1.0 / jnp.maximum(neg_H, 1e-30))
+    eps = jax.random.normal(rng_key, (n_samples,), dtype=eta_map.dtype)
+    return eta_map + sigma_eta * eps
+
+
+sample_eta_posterior_batch = jax.vmap(
+    sample_eta_posterior,
+    in_axes=(0, 0, 0, None, None, None, None),
+)
+
+
 __all__ = [
     # Variant A (z-space, d_mode='low_rank')
     "newton_step_z",
@@ -785,6 +981,13 @@ __all__ = [
     "laplace_newton_batch_y_alr",
     "laplace_log_det_neg_H_y_alr",
     "laplace_log_det_neg_H_batch_y_alr",
+    # Laplace-posterior samplers (used by the per-cell PPC path).
+    "sample_z_posterior",
+    "sample_z_posterior_batch",
+    "sample_y_alr_posterior",
+    "sample_y_alr_posterior_batch",
+    "sample_eta_posterior",
+    "sample_eta_posterior_batch",
     # LNMVCP capture-anchor extension (scalar η per cell)
     "newton_step_eta",
     "laplace_newton_loop_eta",

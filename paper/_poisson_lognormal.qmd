@@ -759,6 +759,166 @@ regulatory-program inference). The encoder is recommended for
 production pipelines where new cells must be scored at high
 throughput.
 
+### Posterior predictive sampling {#sec-pln-laplace-ppc}
+
+Once the per-cell MAPs $(\hat{\underline{x}}_c, \hat{\eta}_c)$ are
+converged, the natural diagnostic is to draw posterior-predictive
+counts and compare their marginal histograms to the observed data.
+Two distinct PPCs are exposed for the Laplace path; the difference
+matters because they answer different questions:
+
+#### MAP-only PPC
+
+Holds the per-cell latents fixed at their point estimates and only
+draws Poisson observation noise:
+
+$$
+\underline{u}_c^{(s)} \;\sim\; \mathrm{Poisson}\!\left(
+\exp(\hat{\underline{x}}_c - \hat{\eta}_c) \right), \qquad s = 1, \ldots, S.
+$${#eq-pln-map-ppc}
+
+Cost is one Poisson draw per (sample, cell, gene). This is the cheapest
+available PPC and tests "given my MAP estimates, does the likelihood-shape match
+the data marginal?" — a likelihood-shape check rather than a
+posterior-uncertainty check. Exposed as
+``ScribeLaplaceResults.get_map_ppc_samples`` to mirror the equivalent SVI/MCMC
+API.
+
+#### Laplace posterior-predictive PPC
+
+Propagates the per-cell Laplace-approximate posterior uncertainty into each
+predictive draw:
+
+$$
+\underline{x}_c^{(s)} \;\sim\;
+\mathcal{N}\!\bigl(\hat{\underline{x}}_c,\;
+(-\underline{\underline{H}}_{xx,c})^{-1}\bigr),
+\qquad
+\underline{u}_c^{(s)} \;\sim\;
+\mathrm{Poisson}(\exp(\underline{x}_c^{(s)} - \hat{\eta}_c)).
+$${#eq-pln-laplace-ppc}
+
+This is the *conditional* posterior-predictive PPC for the
+composition latent — proper for $\underline{x}$ given the MAP
+$\hat{\eta}_c$, but **not** the full joint $(\underline{x}, \eta)$
+posterior predictive. Sampling the joint would require traversing
+the rigid-translation null direction (see the next subsection),
+which is structurally unidentified and would inject a degenerate
+spread into the histogram rather than a biologically meaningful
+one. Holding $\hat{\eta}_c$ fixed and sampling the
+$G$-dimensional composition block is therefore the right
+engineering choice for capture-anchored PLN, and it captures the
+*dominant* per-cell uncertainty
+($G$-dimensional in $\underline{x}$, 1-D in $\eta$). Exposed as
+``ScribeLaplaceResults.get_per_cell_predictive_samples``.
+
+Because the per-cell posterior covariance
+$(-\underline{\underline{H}}_{xx,c})^{-1}$ inflates the predictive
+mean by the per-gene log-normal moment factor
+$\exp(\tfrac{1}{2} [\Sigma_c^{\text{post}}]_{gg})$, this PPC will
+generally show wider tails than the MAP-only path on low-count or
+weakly identified genes — the honest posterior-uncertainty signal
+on the composition block.
+
+#### Square-root factorisation for cheap sampling
+
+Materialising $(-\underline{\underline{H}}_{xx,c})^{-1}$ as a dense
+$G \times G$ matrix is infeasible for typical scRNA-seq dimensions
+($G \sim 10^4$ ⇒ $\sim 200$ MB per cell). The
+key observation is that the Newton solver has *already* computed a
+Woodbury factorisation of the same matrix:
+
+$$
+-\underline{\underline{H}}_{xx,c} \;=\; \underline{\underline{A}} \;=\;
+\underline{\underline{\widetilde{M}}} \,-\, \underline{\underline{V}}\,
+\underline{\underline{K}}^{-1}\, \underline{\underline{V}}^\top,
+$${#eq-pln-laplace-ppc-A-decomp}
+
+with $\widetilde{M} = \mathrm{diag}(\lambda + 1/d)$ (the "easy" diagonal slot at
+the converged MAP, $\lambda_g = e^{\hat{x}_g - \hat{\eta}_c}$), $V =
+\mathrm{diag}(1/d) W$ ($G \times k$), and $K = I_k + W^\top \mathrm{diag}(1/d)
+W$ ($k \times k$). Inverting via the Sherman--Morrison--Woodbury identity
+(applied a *second* time) gives
+
+$$
+\underline{\underline{A}}^{-1}
+\;=\; \underline{\underline{\widetilde{M}}}^{-1}
+\,+\, \underline{\underline{\widetilde{M}}}^{-1}\, \underline{\underline{V}}\,
+\underline{\underline{S}}^{-1}\, \underline{\underline{V}}^\top\,
+\underline{\underline{\widetilde{M}}}^{-1},
+\qquad
+\underline{\underline{S}} = \underline{\underline{K}}
+\,-\, \underline{\underline{V}}^\top \underline{\underline{\widetilde{M}}}^{-1}\,
+\underline{\underline{V}}.
+$${#eq-pln-laplace-ppc-Ainv}
+
+The two terms have an obvious *square-root* form. Letting
+$\underline{\underline{L}}_S$ denote the Cholesky factor of
+$\underline{\underline{S}}$ (i.e. $\underline{\underline{S}} =
+\underline{\underline{L}}_S \underline{\underline{L}}_S^\top$), and
+drawing $\underline{\epsilon}_1 \sim \mathcal{N}(0, I_G)$,
+$\underline{\epsilon}_2 \sim \mathcal{N}(0, I_k)$ independently, the
+displacement
+
+$$
+\underline{\delta}_c \;=\; \underline{\underline{\widetilde{M}}}^{-1/2}
+\underline{\epsilon}_1 \;+\; \underline{\underline{\widetilde{M}}}^{-1}\,
+\underline{\underline{V}}\, \underline{\underline{L}}_S^{-\top}
+\underline{\epsilon}_2 $${#eq-pln-laplace-ppc-sqrt}
+
+satisfies
+
+$$
+\mathrm{Cov}(\underline{\delta}_c)
+\;=\; \underline{\underline{\widetilde{M}}}^{-1}
+\,+\, \underline{\underline{\widetilde{M}}}^{-1}\, \underline{\underline{V}}\,
+\underline{\underline{L}}_S^{-\top} \underline{\underline{L}}_S^{-1}\,
+\underline{\underline{V}}^\top \underline{\underline{\widetilde{M}}}^{-1}
+\;=\; \underline{\underline{A}}^{-1},
+$${#eq-pln-laplace-ppc-cov-check}
+
+so $\underline{x}_c^{(s)} = \hat{\underline{x}}_c +
+\underline{\delta}_c$ is the desired sample from
+$\mathcal{N}(\hat{\underline{x}}_c, \underline{\underline{A}}^{-1})$.
+Cost is dominated by the $G \times k$ multiply $\underline{\underline{V}}\,
+\underline{\underline{L}}_S^{-\top} \underline{\epsilon}_2$ and the
+$k \times k$ Cholesky of $\underline{\underline{S}}$ — total
+$O(G \cdot k + k^3)$ per sample, the same scaling as one Newton
+step. **No $G \times G$ factor is ever materialised.**
+
+#### Why we sample $\underline{x}$ conditional on $\hat{\eta}_c$
+
+The PLN exhibits a rigid-translation degeneracy between the
+population mean $\underline{\mu}$ and the per-cell capture offset
+$\eta^{(c)}$ (see
+[@sec-diffexp-lnmpln-pln-theorem]): the joint posterior on
+$(\underline{x}_c, \eta_c)$ has a near-singular direction along
+$(\underline{x}, \eta) \to (\underline{x} + \Delta \mathbf{1},
+\eta + \Delta)$. When $\sigma_M$ is weak, the data-likelihood gives
+this null direction effectively zero curvature; sampling
+$\eta_c$ jointly with $\underline{x}_c$ would inject Gaussian
+displacements with very large variance along the null direction,
+not because the model is uncertain about something biologically
+meaningful but because the parameterisation is degenerate. The
+PPC histogram would then exhibit a spurious capture-direction
+spread that is invisible in the data.
+
+Sampling $\underline{x}_c$ conditional on the MAP $\hat{\eta}_c$
+projects out the null direction at sample time. This is consistent
+with the compositional-robustness theorem
+([@sec-diffexp-lnm-pln-robust-pln]): the
+predictive distribution of *contrasts* $x_g - x_h$ is unchanged by
+the projection, while the predictive distribution of *absolute*
+$x_g$ is correctly anchored to $\hat{\eta}_c$ rather than smeared
+across the unidentified ridge. The dominant per-cell uncertainty
+($G$-dimensional in $\underline{x}$ versus 1-D in $\eta$) is
+preserved; the structurally unidentified scalar is not. For users
+who want the full joint posterior with all its near-singular
+glory, the marginal $\eta$-block sampler is exposed separately
+(see ``sample_eta_posterior`` in
+``src/scribe/laplace/_newton_lnm.py`` for the LNMVCP analogue;
+the PLN joint case is left as a research extension).
+
 ### Implementation {#sec-pln-laplace-implementation}
 
 In SCRIBE the Laplace path is selected via

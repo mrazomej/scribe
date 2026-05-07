@@ -35,6 +35,8 @@ from scribe.laplace._newton_pln import (
     laplace_newton_loop_x_only,
     newton_step_joint,
     newton_step_x_only,
+    sample_x_posterior,
+    sample_x_posterior_batch,
 )
 
 
@@ -628,3 +630,342 @@ class TestJIT:
         x_jax, eta_jax, _, _ = f(jnp.zeros_like(mu_np), jnp.asarray(1.5))
         assert x_jax.shape == mu_np.shape
         assert eta_jax.shape == ()
+
+
+class TestPosteriorSampler:
+    """Verify the per-cell Laplace-posterior sampler matches the analytic
+    posterior covariance.
+
+    The sampler produces ``x_c ~ N(x_map, (-H_xx)^{-1})`` via a
+    Woodbury-derived square-root factor (see
+    :func:`scribe.laplace._newton_pln.sample_x_posterior`). The
+    empirical covariance from many samples should match the dense
+    inverse of ``-H_xx`` evaluated at the MAP.
+    """
+
+    def test_empirical_cov_matches_analytic_x_only(self):
+        np.random.seed(101)
+        G, k = 6, 2
+        mu = np.random.normal(0, 0.5, G).astype(np.float32)
+        W = (0.3 * np.random.normal(size=(G, k))).astype(np.float32)
+        d = (0.05 + 0.5 * np.random.uniform(size=G)).astype(np.float32)
+        x_map = jnp.asarray(np.random.normal(0, 1, G).astype(np.float32))
+        eta_map = jnp.asarray(0.0, dtype=jnp.float32)
+
+        # Analytic posterior covariance: (diag(λ) + Σ⁻¹)^{-1}
+        Sigma_inv = np.linalg.inv(W @ W.T + np.diag(d))
+        lam = np.exp(np.asarray(x_map - eta_map))
+        neg_H_xx = np.diag(lam) + Sigma_inv
+        post_cov_analytic = np.linalg.inv(neg_H_xx)
+
+        n_samples = 30_000
+        samples = np.asarray(
+            sample_x_posterior(
+                random.PRNGKey(0),
+                x_map,
+                eta_map,
+                jnp.asarray(W),
+                jnp.asarray(d),
+                n_samples,
+            )
+        )
+
+        emp_mean = samples.mean(axis=0)
+        emp_cov = np.cov(samples, rowvar=False)
+
+        # Mean error should be O(1/sqrt(N)) of the posterior std.
+        post_std = np.sqrt(np.diag(post_cov_analytic))
+        np.testing.assert_array_less(
+            np.abs(emp_mean - np.asarray(x_map)), 4.0 * post_std / np.sqrt(n_samples)
+        )
+
+        # Covariance: relative Frobenius error < 3% at this sample size.
+        rel_fro = np.linalg.norm(emp_cov - post_cov_analytic) / np.linalg.norm(
+            post_cov_analytic
+        )
+        assert rel_fro < 0.03, f"emp/analytic Frobenius error {rel_fro:.3f}"
+
+    def test_batch_sampler_has_correct_shape(self):
+        n_cells, G, k, n_samples = 4, 5, 2, 7
+        rng_keys = random.split(random.PRNGKey(0), n_cells)
+        x_loc = jnp.zeros((n_cells, G))
+        eta_loc = jnp.zeros((n_cells,))
+        W = jnp.ones((G, k)) * 0.1
+        d = jnp.full((G,), 0.1)
+        out = sample_x_posterior_batch(
+            rng_keys, x_loc, eta_loc, W, d, n_samples, 0.0
+        )
+        assert out.shape == (n_cells, n_samples, G)
+
+
+class TestLNMPosteriorSamplers:
+    """Verify the LNM Laplace samplers (z-mode, y_alr-mode, eta-block) match
+    their analytic posterior covariances.
+
+    The math being tested:
+
+    * **z-mode (low_rank)**: sample from
+      ``N(z_map, (W^T M_alr W + I)^{-1})`` via a ``k × k`` Cholesky.
+    * **y_alr-mode (learned)**: sample from
+      ``N(y_map, (-H_y)^{-1})`` where
+      ``-H_y = A_y - N ρρ^T``. Tests both the Woodbury part of
+      ``A_y`` and the Sherman-Morrison rank-1 correction together.
+    * **eta-block**: sample from the 1-D Gaussian on the LNMVCP
+      capture-offset latent.
+    """
+
+    def test_z_posterior_cov_matches_analytic(self):
+        from scribe.laplace._newton_lnm import (
+            _multinomial_p_alr,
+            sample_z_posterior,
+        )
+
+        np.random.seed(201)
+        G_full, k, ref_idx = 8, 3, 0
+        G_minus1 = G_full - 1
+        mu = jnp.asarray(np.random.normal(0, 0.5, G_minus1).astype(np.float32))
+        W = jnp.asarray((0.3 * np.random.normal(size=(G_minus1, k))).astype(np.float32))
+        N = jnp.asarray(1000.0, dtype=jnp.float32)
+        z_map = jnp.asarray(np.random.normal(0, 0.5, k).astype(np.float32))
+        u_alr = jnp.asarray(np.random.poisson(50, G_minus1).astype(np.float32))
+
+        # Analytic: -H_z = W^T M_alr W + I where M_alr = N(diag(ρ) - ρρ^T).
+        y_alr = mu + W @ z_map
+        p_alr = _multinomial_p_alr(y_alr, ref_idx, G_full)
+        Wp = W * p_alr[:, None]
+        rhs = W.T @ Wp
+        Wp_sum = W.T @ p_alr
+        M_W = N * (rhs - jnp.outer(Wp_sum, Wp_sum))
+        neg_H_z = M_W + jnp.eye(k, dtype=z_map.dtype)
+        post_cov = np.linalg.inv(np.asarray(neg_H_z))
+
+        n_samples = 30_000
+        samples = np.asarray(
+            sample_z_posterior(
+                random.PRNGKey(0), z_map, u_alr, N, mu, W,
+                ref_idx, G_full, n_samples,
+            )
+        )
+        emp_cov = np.cov(samples, rowvar=False)
+        rel_fro = np.linalg.norm(emp_cov - post_cov) / np.linalg.norm(post_cov)
+        assert rel_fro < 0.05, f"z-mode emp/analytic Frobenius error {rel_fro:.3f}"
+
+    def test_y_alr_posterior_cov_matches_analytic(self):
+        from scribe.laplace._newton_lnm import (
+            _multinomial_p_alr,
+            sample_y_alr_posterior,
+        )
+
+        np.random.seed(202)
+        G_full, k, ref_idx = 8, 3, 0
+        G_minus1 = G_full - 1
+        mu = jnp.asarray(np.random.normal(0, 0.5, G_minus1).astype(np.float32))
+        W = jnp.asarray((0.3 * np.random.normal(size=(G_minus1, k))).astype(np.float32))
+        d = jnp.asarray(np.full(G_minus1, 0.05, dtype=np.float32))
+        N = jnp.asarray(1000.0, dtype=jnp.float32)
+        y_map = jnp.asarray(np.random.normal(0, 0.5, G_minus1).astype(np.float32))
+        u_alr = jnp.asarray(np.random.poisson(50, G_minus1).astype(np.float32))
+
+        # Analytic: -H_y = N(diag(ρ) - ρρ^T) + Σ⁻¹.
+        Sigma = np.asarray(W) @ np.asarray(W).T + np.diag(np.asarray(d))
+        Sigma_inv = np.linalg.inv(Sigma)
+        p_alr = np.asarray(_multinomial_p_alr(y_map, ref_idx, G_full))
+        M_alr = float(N) * (np.diag(p_alr) - np.outer(p_alr, p_alr))
+        neg_H_y = M_alr + Sigma_inv
+        post_cov = np.linalg.inv(neg_H_y)
+
+        n_samples = 30_000
+        samples = np.asarray(
+            sample_y_alr_posterior(
+                random.PRNGKey(0), y_map, u_alr, N, mu, W, d,
+                ref_idx, G_full, n_samples,
+            )
+        )
+        emp_cov = np.cov(samples, rowvar=False)
+        rel_fro = np.linalg.norm(emp_cov - post_cov) / np.linalg.norm(post_cov)
+        assert rel_fro < 0.05, f"y_alr emp/analytic Frobenius error {rel_fro:.3f}"
+
+    def test_eta_posterior_is_one_dim_gaussian(self):
+        """LNMVCP eta posterior is 1-D Gaussian; check empirical mean/variance."""
+        from scribe.laplace._newton_lnm import (
+            _nb_eta_grad_and_hessian,
+            sample_eta_posterior,
+        )
+
+        np.random.seed(203)
+        eta_map = jnp.asarray(0.7, dtype=jnp.float32)
+        u_T = jnp.asarray(15_000.0, dtype=jnp.float32)
+        r_T = jnp.asarray(8.0, dtype=jnp.float32)
+        mu_T = jnp.asarray(60_000.0, dtype=jnp.float32)
+        sigma_M = 0.5
+
+        _, nb_hess = _nb_eta_grad_and_hessian(eta_map, u_T, r_T, mu_T)
+        neg_H = float(-(nb_hess - 1.0 / (sigma_M * sigma_M)))
+        post_var = 1.0 / neg_H
+
+        n_samples = 30_000
+        samples = np.asarray(
+            sample_eta_posterior(
+                random.PRNGKey(0), eta_map, u_T, r_T, mu_T,
+                sigma_M, n_samples,
+            )
+        )
+        emp_mean = samples.mean()
+        emp_var = samples.var()
+        # Mean within a few SE; variance within ~5%.
+        assert abs(emp_mean - float(eta_map)) < 4.0 * np.sqrt(post_var / n_samples)
+        rel_var_err = abs(emp_var - post_var) / post_var
+        assert rel_var_err < 0.05, f"eta emp/analytic var error {rel_var_err:.3f}"
+
+    def test_y_alr_sherman_morrison_floor_keeps_finite(self):
+        """Degenerate-rho cell hits the SM denominator floor — must stay finite."""
+        from scribe.laplace._newton_lnm import sample_y_alr_posterior
+
+        # Build a y_map that gives a near-one-hot p_alr (ρ_alr → e_g),
+        # which drives ρ^T A^-1 ρ → 1/N from below — the regime the
+        # SM denominator floor protects.
+        G_full, k, ref_idx = 6, 2, 0
+        G_minus1 = G_full - 1
+        mu = jnp.zeros(G_minus1, dtype=jnp.float32)
+        W = jnp.zeros((G_minus1, k), dtype=jnp.float32)
+        d = jnp.full((G_minus1,), 0.1, dtype=jnp.float32)
+        N = jnp.asarray(100.0, dtype=jnp.float32)
+        y_map = jnp.asarray([20.0, -20.0, -20.0, -20.0, -20.0], dtype=jnp.float32)
+        u_alr = jnp.zeros(G_minus1, dtype=jnp.float32)
+
+        samples = np.asarray(
+            sample_y_alr_posterior(
+                random.PRNGKey(0), y_map, u_alr, N, mu, W, d,
+                ref_idx, G_full, 64,
+            )
+        )
+        assert np.all(np.isfinite(samples)), "SM-floor must keep samples finite"
+        assert samples.shape == (64, G_minus1)
+
+
+class TestPPCMethods:
+    """Public PPC API: shape parity, MAP-vs-Laplace variance ordering, and
+    NB-fitted totals draw independence (the bug the auditor caught).
+    """
+
+    def _build_pln_results(self):
+        from scribe import ScribeLaplaceResults
+        from scribe.models.config import ModelConfig
+        from scribe.models.config.enums import (
+            InferenceMethod,
+            Parameterization,
+        )
+
+        np.random.seed(301)
+        G, C, k = 25, 12, 3
+        mu = jnp.asarray(np.random.normal(0, 0.5, G).astype(np.float32))
+        W = jnp.asarray((0.3 * np.random.normal(size=(G, k))).astype(np.float32))
+        d = jnp.asarray(np.full(G, 0.1, dtype=np.float32))
+        x_loc = jnp.asarray(np.random.normal(0, 1, (C, G)).astype(np.float32))
+        eta_loc = jnp.asarray(np.random.normal(0.5, 0.2, C).astype(np.float32))
+        mc = ModelConfig(
+            base_model="pln",
+            parameterization=Parameterization.POISSON_LOGNORMAL,
+            inference_method=InferenceMethod.LAPLACE,
+        )
+        return ScribeLaplaceResults(
+            model_config=mc, mu=mu, W=W, d=d,
+            n_genes=G, n_cells=C, x_loc=x_loc, eta_loc=eta_loc,
+            losses=jnp.zeros(1), final_grad_norms=jnp.zeros(1),
+        )
+
+    def _build_lnm_low_rank_results(self):
+        from scribe import ScribeLaplaceResults
+        from scribe.models.config import ModelConfig
+        from scribe.models.config.enums import (
+            InferenceMethod,
+            Parameterization,
+        )
+
+        np.random.seed(302)
+        G_full, C, k = 25, 12, 3
+        G_minus1 = G_full - 1
+        mu = jnp.asarray(np.random.normal(0, 0.5, G_minus1).astype(np.float32))
+        W = jnp.asarray((0.3 * np.random.normal(size=(G_minus1, k))).astype(np.float32))
+        d = jnp.asarray(np.full(G_minus1, 0.05, dtype=np.float32))
+        z_loc = jnp.asarray(np.random.normal(0, 1, (C, k)).astype(np.float32))
+        mc = ModelConfig(
+            base_model="lnm",
+            parameterization=Parameterization.LOGISTIC_NORMAL_CANONICAL,
+            inference_method=InferenceMethod.LAPLACE,
+        )
+        return ScribeLaplaceResults(
+            model_config=mc, mu=mu, W=W, d=d,
+            n_genes=G_full, n_cells=C, z_loc=z_loc,
+            alr_reference_idx=0,
+            mu_T=jnp.asarray(20_000.0, dtype=jnp.float32),
+            r_T=jnp.asarray(8.0, dtype=jnp.float32),
+            losses=jnp.zeros(1), final_grad_norms=jnp.zeros(1),
+        )
+
+    def test_pln_get_map_ppc_samples_shape(self):
+        res = self._build_pln_results()
+        out = res.get_map_ppc_samples(rng_key=random.PRNGKey(0), n_samples=8)
+        assert tuple(out.shape) == (8, res.n_cells, res.n_genes)
+
+    def test_pln_get_per_cell_predictive_samples_shape(self):
+        res = self._build_pln_results()
+        out = res.get_per_cell_predictive_samples(
+            rng_key=random.PRNGKey(0), n_samples=8
+        )
+        assert tuple(out.shape) == (8, res.n_cells, res.n_genes)
+
+    def test_pln_laplace_predictive_variance_exceeds_map_variance(self):
+        """Per-cell PPC should have wider tails than MAP-only PPC."""
+        res = self._build_pln_results()
+        n_samples = 200
+        laplace = np.asarray(
+            res.get_per_cell_predictive_samples(
+                rng_key=random.PRNGKey(0), n_samples=n_samples
+            )
+        )
+        map_only = np.asarray(
+            res.get_map_ppc_samples(
+                rng_key=random.PRNGKey(0), n_samples=n_samples
+            )
+        )
+        # Average per-(cell, gene) variance across samples.
+        var_laplace = laplace.var(axis=0).mean()
+        var_map = map_only.var(axis=0).mean()
+        assert var_laplace > var_map, (
+            f"Laplace PPC variance {var_laplace:.2f} should exceed "
+            f"MAP-only variance {var_map:.2f}"
+        )
+
+    def test_lnm_get_map_ppc_samples_nb_fitted_totals_vary(self):
+        """Regression test for the bug where chunked LNM MAP PPC tied
+        all PPC samples to identical NB-drawn totals.
+        """
+        res = self._build_lnm_low_rank_results()
+        n_samples = 64
+        # No counts kwarg ⇒ NB-fitted totals path.
+        ppc = np.asarray(
+            res.get_map_ppc_samples(
+                rng_key=random.PRNGKey(0), n_samples=n_samples
+            )
+        )
+        # Per-(sample, cell) totals must vary across samples.
+        per_sample_totals = ppc.sum(axis=-1)         # (n_samples, n_cells)
+        std_across_samples = per_sample_totals.std(axis=0)
+        # NB(mean ≈ 20K, r=8) has std ≈ sqrt(20K + 20K^2/8) ≈ 7.1K, so
+        # we comfortably expect the per-cell std across samples to
+        # exceed 1K. The bug would give exactly zero.
+        assert std_across_samples.mean() > 1_000.0, (
+            f"NB-fitted totals not varying across PPC samples "
+            f"(mean std {std_across_samples.mean():.1f})"
+        )
+
+    def test_lnm_low_rank_per_cell_predictive_samples_shape(self):
+        res = self._build_lnm_low_rank_results()
+        # Conditional path with observed counts.
+        np.random.seed(0)
+        counts = np.random.poisson(50, (res.n_cells, res.n_genes)).astype(np.float32)
+        out = res.get_per_cell_predictive_samples(
+            rng_key=random.PRNGKey(0), n_samples=8, counts=counts
+        )
+        assert tuple(out.shape) == (8, res.n_cells, res.n_genes)

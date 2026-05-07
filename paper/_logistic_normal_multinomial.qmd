@@ -1600,6 +1600,173 @@ choice when fidelity of the per-cell posterior on the *training
 cells* is what matters (downstream PPC checks, differential
 expression, posterior-uncertainty propagation).
 
+### Posterior predictive sampling {#sec-lnm-laplace-ppc}
+
+After the per-cell MAPs converge, the natural diagnostic is to draw
+posterior-predictive count vectors and compare their marginal
+distribution to the data. As in the PLN Laplace path
+(@sec-pln-laplace-ppc), two distinct PPCs are exposed; both share
+the same outer multinomial-on-totals draw and differ only in how
+the *composition* latent is treated.
+
+#### MAP-only PPC
+
+Holds the per-cell composition latent at its point estimate and
+draws only the multinomial observation noise:
+
+$$
+\hat{\underline{\rho}}_c \;=\;
+\mathrm{ALR}^{-1}(\hat{\underline{y}}_{\text{ALR},c}), \qquad
+\underline{u}_c^{(s)} \;\sim\; \mathrm{Multinomial}(u_T^{(c)},\,
+\hat{\underline{\rho}}_c). $${#eq-lnm-map-ppc}
+
+For ``low_rank``, $\hat{\underline{y}}_{\text{ALR},c} = \underline{\mu} +
+\underline{\underline{W}} \hat{\underline{z}}_c$. For ``learned``,
+$\hat{\underline{y}}_{\text{ALR},c}$ is taken directly from the converged Newton
+iterate. The cost is one multinomial draw per (sample, cell). Exposed as
+``ScribeLaplaceResults.get_map_ppc_samples``.
+
+#### Laplace posterior-predictive PPC
+
+Propagates the per-cell Laplace-approximate posterior into each predictive draw:
+
+$$
+\underline{\zeta}_c^{(s)}
+\;\sim\; \mathcal{N}\!\bigl(\hat{\underline{\zeta}}_c,\;
+(-\underline{\underline{H}}_{\zeta\zeta,c})^{-1}\bigr),
+\qquad
+\underline{u}_c^{(s)}
+\;\sim\; \mathrm{Multinomial}\!\bigl(u_T^{(c)},\,
+\mathrm{ALR}^{-1}(\underline{y}_{\text{ALR},c}^{(s)})\bigr),
+$${#eq-lnm-laplace-ppc}
+
+where $\underline{\zeta}_c \in \{\underline{z}_c,\,
+\underline{y}_{\text{ALR},c}\}$ is the Variant-A or Variant-B
+latent, and $\underline{y}_{\text{ALR},c}^{(s)} = \underline{\mu} +
+\underline{\underline{W}}\, \underline{z}_c^{(s)}$ in the
+``low_rank`` case (no extra map in the ``learned`` case). This is
+the proper level-2 PPC and is exposed as
+``ScribeLaplaceResults.get_per_cell_predictive_samples``.
+
+The two variants of the LNM Laplace require slightly different
+sampling math, both of which reuse the factorisation already
+computed by the Newton solver.
+
+#### Variant A: sampling $\underline{z}_c$ in the ``low_rank`` case {#sec-lnm-laplace-ppc-z}
+
+The Hessian on the low-rank latent is $k \times k$
+(@sec-lnm-laplace-density-z):
+
+$$
+-\underline{\underline{H}}_z \;=\; \underline{\underline{W}}^\top\,
+\underline{\underline{M}}_{\text{alr}}\, \underline{\underline{W}} +
+\underline{\underline{I}}_k, \qquad \underline{\underline{M}}_{\text{alr}} \;=\;
+N\,\bigl(\mathrm{diag}(\underline{\rho}_{\text{alr}}) \,-\,
+\underline{\rho}_{\text{alr}}\, \underline{\rho}_{\text{alr}}^\top\bigr),
+$${#eq-lnm-laplace-ppc-Hz}
+
+evaluated at the converged MAP probabilities. Because $k$ is small (typically
+$\leq 50$), we Cholesky-factor $-\underline{\underline{H}}_z$ directly:
+
+$$
+-\underline{\underline{H}}_z
+\;=\; \underline{\underline{L}}_z\, \underline{\underline{L}}_z^\top.
+$${#eq-lnm-laplace-ppc-chol-z}
+
+Drawing $\underline{\epsilon} \sim \mathcal{N}(0, \underline{\underline{I}}_k)$
+and solving $\underline{\underline{L}}_z^\top\, \underline{\delta}
+= \underline{\epsilon}$ produces a sample
+$\underline{z}_c^{(s)} = \hat{\underline{z}}_c + \underline{\delta}
+\sim \mathcal{N}(\hat{\underline{z}}_c,
+(-\underline{\underline{H}}_z)^{-1})$.
+Cost: $O(k^3)$ per cell — far cheaper than the y_alr or PLN paths.
+
+#### Variant B: sampling $\underline{y}_{\text{ALR},c}$ in the ``learned`` case {#sec-lnm-laplace-ppc-y}
+
+The Hessian on the ALR logits has the same diagonal-plus-low-rank
+form as in PLN, **plus** a Sherman--Morrison rank-1 correction from
+the multinomial-Fisher's outer-product structure
+(@sec-lnm-laplace-density-y):
+
+$$
+-\underline{\underline{H}}_y \;=\; \underline{\underline{A}}_y \,-\, N\,
+\underline{\rho}\, \underline{\rho}^\top, \qquad \underline{\underline{A}}_y
+\;=\; \underline{\underline{\widetilde{M}}} \,-\, \underline{\underline{V}}\,
+\underline{\underline{K}}^{-1}\, \underline{\underline{V}}^\top,
+$${#eq-lnm-laplace-ppc-Hy}
+
+with $\widetilde{M}_g = N\, \rho_g + 1/d_g$, $V = \mathrm{diag}(1/d) W$, $K =
+I_k + W^\top \mathrm{diag}(1/d) W$. The ``A`` block has the same Woodbury
+inverse as PLN's $-\underline{\underline{H}}_{xx}$ (@eq-pln-laplace-ppc-Ainv),
+and the rank-1 $N\,\underline{\rho}\, \underline{\rho}^\top$ correction is
+absorbed by Sherman--Morrison:
+
+$$
+(-\underline{\underline{H}}_y)^{-1}
+\;=\; \underline{\underline{A}}_y^{-1}
+\,+\, \alpha\, \bigl(\underline{\underline{A}}_y^{-1}\, \underline{\rho}\bigr)\,
+\bigl(\underline{\underline{A}}_y^{-1}\, \underline{\rho}\bigr)^\top,
+\qquad
+\alpha \;=\; \frac{1}{1/N \,-\, \underline{\rho}^\top\,
+\underline{\underline{A}}_y^{-1}\, \underline{\rho}}.
+$${#eq-lnm-laplace-ppc-Hyinv}
+
+A square-root factor for sampling follows by adding a rank-1
+update to PLN's square-root form:
+
+$$
+\underline{\delta}_c \;=\; \underline{\underline{\widetilde{M}}}^{-1/2}\,
+\underline{\epsilon}_1 \,+\, \underline{\underline{\widetilde{M}}}^{-1}\,
+\underline{\underline{V}}\, \underline{\underline{L}}_S^{-\top}\,
+\underline{\epsilon}_2 \,+\, \sqrt{\alpha}\,
+\bigl(\underline{\underline{A}}_y^{-1}\, \underline{\rho}\bigr)\, \xi,
+$${#eq-lnm-laplace-ppc-sqrt-y}
+
+with $\underline{\epsilon}_1 \sim \mathcal{N}(0,
+\underline{\underline{I}}_{G-1})$, $\underline{\epsilon}_2 \sim \mathcal{N}(0,
+\underline{\underline{I}}_k)$, $\xi \sim \mathcal{N}(0, 1)$ all independent.
+Direct verification:
+
+$$
+\mathrm{Cov}(\underline{\delta}_c)
+\;=\; \underline{\underline{A}}_y^{-1}
+\,+\, \alpha\, \bigl(\underline{\underline{A}}_y^{-1}\, \underline{\rho}\bigr)\,
+\bigl(\underline{\underline{A}}_y^{-1}\, \underline{\rho}\bigr)^\top
+\;=\; (-\underline{\underline{H}}_y)^{-1}.
+$${#eq-lnm-laplace-ppc-cov-check-y}
+
+The Sherman--Morrison denominator $1/N - \underline{\rho}^\top
+\underline{\underline{A}}_y^{-1}\, \underline{\rho}$ is positive
+*by joint log-concavity of the LNM posterior*, but in finite
+precision it can lose digits when the two terms are large and
+nearly equal — exactly the same numerical trap the Newton solver
+addresses. We apply the same relative floor used by the Newton
+step (a lower bound of $0.01 / N$ on the denominator) so the
+posterior-predictive sampler inherits the solver's stability
+profile.
+
+Cost per sample: dominated by the $G \times k$ multiply
+$\underline{\underline{V}}\, \underline{\underline{L}}_S^{-\top}\,
+\underline{\epsilon}_2$ and the $k \times k$ Cholesky of
+$\underline{\underline{S}}$ — total $O(G \cdot k + k^3)$, the same
+scaling as one Newton step.
+
+#### LNMVCP $\eta$-block
+
+For LNMVCP fits, the joint Hessian on
+$(\underline{\zeta}_c, \eta_c)$ is *block-diagonal*
+(@sec-lnm-laplace-full-model), so the $\eta$ posterior is a
+1-D Gaussian with variance $-1/H_{\eta\eta,c}$ available in closed
+form from the NB-on-totals log-density. ``sample_eta_posterior``
+in ``src/scribe/laplace/_newton_lnm.py`` exposes this; under the
+default per-cell PPC path the multinomial conditions on the
+observed total $u_T^{(c)} = \sum_g u_g^{(c)}$, in which case the
+$\eta$ posterior does not enter the predictive (the multinomial
+likelihood is $\eta$-independent), and the cell-level NB-on-totals
+draws use the data total directly. The $\eta$ sampler is therefore
+only relevant for *unconditional* PPCs that re-draw cell totals
+from the NB-on-totals submodel.
+
 ### Implementation {#sec-lnm-laplace-implementation}
 
 Activated via:

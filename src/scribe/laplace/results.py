@@ -185,12 +185,12 @@ class ScribeLaplaceResults:
 
     # --- Per-cell latent state (model-specific; exactly one is
     # populated by the engine, the rest are None) ---
-    x_loc: Optional[jnp.ndarray] = None        # PLN: (n_cells, G)
-    eta_loc: Optional[jnp.ndarray] = None      # PLN capture anchor: (n_cells,)
-    z_loc: Optional[jnp.ndarray] = None        # LNM low_rank: (n_cells, k)
-    y_alr_loc: Optional[jnp.ndarray] = None    # LNM learned: (n_cells, G-1)
+    x_loc: Optional[jnp.ndarray] = None  # PLN: (n_cells, G)
+    eta_loc: Optional[jnp.ndarray] = None  # PLN capture anchor: (n_cells,)
+    z_loc: Optional[jnp.ndarray] = None  # LNM low_rank: (n_cells, k)
+    y_alr_loc: Optional[jnp.ndarray] = None  # LNM learned: (n_cells, G-1)
     p_capture_loc: Optional[jnp.ndarray] = None  # LNMVCP capture: (n_cells,)
-    alr_reference_idx: Optional[int] = None    # LNM/LNMVCP only
+    alr_reference_idx: Optional[int] = None  # LNM/LNMVCP only
 
     # NB-on-totals parameters for the LNM family (mean-NB
     # parameterization: ``E[u_T] = mu_T`` for plain LNM,
@@ -582,25 +582,127 @@ class ScribeLaplaceResults:
         n_samples: int = 100,
         **kwargs,
     ) -> jnp.ndarray:
-        """Per-cell posterior predictive samples using the stored MAP.
+        """Per-cell posterior predictive samples (Laplace-uncertainty aware).
 
         For each cell, draws ``n_samples`` predictive count vectors
-        conditioned on its MAP. Captures the *conditional* PPC —
-        predictions tied to each observed cell — analogous to what
-        NumPyro's ``Predictive`` produces for VAE results.
+        from the per-cell Laplace posterior on the *composition
+        latent* (``x`` for PLN, ``z`` or ``y_alr`` for
+        LNM(VCP)) — sampling
+        ``N(MAP, (-H_c)^{-1})`` from the Woodbury / Sherman-Morrison
+        machinery in :mod:`scribe.laplace._newton_pln` /
+        :mod:`scribe.laplace._newton_lnm` — and then drawing the
+        count vector conditional on that latent.
+
+        This propagates two sources of stochasticity (per-cell
+        composition-latent posterior uncertainty + observation
+        noise), unlike :meth:`get_map_ppc_samples` which holds the
+        latents at their point estimates. The capture offset
+        ``eta_c`` (PLN) is held at its MAP rather than sampled
+        jointly with the composition latent — see Notes.
 
         Parameters
         ----------
         rng_key : jax.Array, optional
         n_samples : int, default 100
         **kwargs
-            For LNM-family models: ``total_counts`` per cell. When
-            absent, falls back to using the observed total counts
-            from the data, if attached via ``metadata['counts']``.
+            For LNM-family models: ``total_counts`` and ``counts``
+            (when conditioning on observed totals).
 
         Returns
         -------
         jnp.ndarray, shape (n_samples, n_cells, G)
+
+        See Also
+        --------
+        :meth:`get_map_ppc_samples`
+            Cheaper MAP-only path that does not propagate latent
+            posterior uncertainty. Use when you only need a quick
+            sanity check or when the per-cell Hessian sampling is
+            too expensive for the dataset at hand.
+
+        Notes
+        -----
+        For PLN with the capture anchor active, the joint
+        ``(x, eta)`` posterior has a near-singular direction along
+        the rigid-translation null direction
+        ``(mu, eta) -> (mu + Delta, eta + Delta)``; sampling
+        ``eta`` jointly would amplify variance along that direction
+        without injecting biologically meaningful uncertainty.
+        Sampling ``x`` conditional on the MAP ``eta`` therefore
+        produces a well-conditioned predictive distribution. This
+        is the same compositional-robustness logic used in the
+        robustness theorem (see ``paper/_diffexp_lnm_pln_robustness.qmd``).
+        For LNMVCP fits, the joint Hessian on ``(z, eta)`` is
+        block-diagonal and ``eta`` does not appear in the
+        composition multinomial, so the same procedure is *exact*
+        for the conditional PPC and only the optional unconditional
+        path would re-draw ``eta``.
+        """
+        if rng_key is None:
+            rng_key = jax.random.PRNGKey(0)
+        bm = _base_model(self.model_config)
+        if bm == "pln":
+            return _ppc_pln_per_cell_laplace(
+                rng_key,
+                n_samples,
+                self.x_loc,
+                self.eta_loc,
+                self.W,
+                self.d,
+            )
+        if bm in ("lnm", "lnmvcp"):
+            return _ppc_lnm_per_cell_laplace(
+                rng_key,
+                n_samples,
+                self.mu,
+                self.W,
+                self.d,
+                self.z_loc,
+                self.y_alr_loc,
+                self.alr_reference_idx,
+                mu_T=self.mu_T,
+                r_T=self.r_T,
+                p_capture_loc=self.p_capture_loc,
+                **kwargs,
+            )
+        raise NotImplementedError(
+            f"get_per_cell_predictive_samples not implemented for "
+            f"base_model={bm!r}"
+        )
+
+    def get_map_ppc_samples(
+        self,
+        rng_key: Optional[jax.Array] = None,
+        n_samples: int = 100,
+        **kwargs,
+    ) -> jnp.ndarray:
+        """Per-cell MAP-only PPC samples (no Laplace posterior uncertainty).
+
+        For each cell, draws ``n_samples`` predictive count vectors
+        with the per-cell latents *held fixed at their MAP*. The
+        only stochasticity is the observation-noise step (Poisson
+        for PLN, Multinomial-on-totals for LNM(VCP)). This is the
+        cheap analogue of the level-2 PPC produced by
+        :meth:`get_per_cell_predictive_samples` and is the closest
+        Laplace-side equivalent to the MCMC ``get_map_ppc_samples``
+        path.
+
+        When to prefer which:
+
+        * **Cheap sanity check** (this method): no Hessian solves,
+          one observation-noise draw per (sample, cell). Useful for
+          a quick "does the likelihood shape match the data?"
+          visual.
+        * **Honest posterior predictive**
+          (:meth:`get_per_cell_predictive_samples`): samples the
+          per-cell latent from its Laplace posterior
+          ``N(MAP, (-H_c)^{-1})`` before drawing the observation,
+          so it captures both sources of stochasticity. Use this
+          when the calibration of the model's *uncertainty* matters
+          (e.g., variance-based PPC quantile checks).
+
+        Parameters and return shape match
+        :meth:`get_per_cell_predictive_samples`.
         """
         if rng_key is None:
             rng_key = jax.random.PRNGKey(0)
@@ -625,8 +727,7 @@ class ScribeLaplaceResults:
                 **kwargs,
             )
         raise NotImplementedError(
-            f"get_per_cell_predictive_samples not implemented for "
-            f"base_model={bm!r}"
+            f"get_map_ppc_samples not implemented for " f"base_model={bm!r}"
         )
 
     def get_log_likelihood(
@@ -770,9 +871,7 @@ class ScribeLaplaceResults:
             mu=self.mu[idx_jnp],
             W=self.W[idx_jnp, :],
             d=self.d[idx_jnp],
-            x_loc=self.x_loc[:, idx_jnp]
-            if self.x_loc is not None
-            else None,
+            x_loc=self.x_loc[:, idx_jnp] if self.x_loc is not None else None,
             n_genes=int(len(idx)),
             n_vars=int(len(idx)) if self.n_vars is not None else None,
             var=_subset_var(self.var, idx),
@@ -957,19 +1056,22 @@ def _ppc_pln_per_cell(
     x_loc: jnp.ndarray,
     eta_loc: Optional[jnp.ndarray],
 ) -> jnp.ndarray:
-    """Per-cell Poisson PPC at the stored MAP.
+    """Per-cell Poisson PPC at the stored MAP (no posterior uncertainty).
 
     Effective per-cell log-rate is ``x_c - eta_c`` (or ``x_c``
     when no capture anchor); broadcast to ``(n_samples, n_cells,
-    G)`` and Poisson-sample.
+    G)`` and Poisson-sample. **Does not propagate per-cell Laplace
+    posterior uncertainty** — every PPC sample uses the same
+    point-estimate latents, so the only stochasticity is the
+    Poisson draw. Use :func:`_ppc_pln_per_cell_laplace` when
+    posterior uncertainty matters; this MAP-only path is exposed
+    via :meth:`ScribeLaplaceResults.get_map_ppc_samples`.
     """
     if eta_loc is not None:
         eff_log_rate = x_loc - eta_loc[:, None]
     else:
         eff_log_rate = x_loc
-    eff_log_rate = jnp.clip(
-        eff_log_rate, _LOG_RATE_MIN, _LOG_RATE_MAX
-    )
+    eff_log_rate = jnp.clip(eff_log_rate, _LOG_RATE_MIN, _LOG_RATE_MAX)
     rate = jnp.exp(eff_log_rate)
 
     # Batched sampling — same memory consideration as the LNM
@@ -980,9 +1082,111 @@ def _ppc_pln_per_cell(
         rate_b = jnp.broadcast_to(rate, (size,) + rate.shape)
         return jax.random.poisson(chunk_key, rate_b)
 
-    return _batched_sample_concat(
-        rng_key, n_samples, _sample_chunk
-    )
+    return _batched_sample_concat(rng_key, n_samples, _sample_chunk)
+
+
+def _ppc_pln_per_cell_laplace(
+    rng_key: jax.Array,
+    n_samples: int,
+    x_loc: jnp.ndarray,
+    eta_loc: Optional[jnp.ndarray],
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+) -> jnp.ndarray:
+    """Per-cell PLN PPC propagating composition-latent Laplace uncertainty.
+
+    For each PPC sample ``s`` and each cell ``c``:
+
+    1. Draw ``x_c^(s) ~ N(x_loc[c], (-H_xx_c)^(-1))`` from the
+       per-cell Laplace posterior on the composition latent
+       ``x``, *conditional on* the MAP capture offset
+       ``hat_eta_c``. The covariance is computed in closed form
+       from the Woodbury factors at the converged MAP — see
+       :func:`scribe.laplace._newton_pln.sample_x_posterior`.
+    2. Sample ``u_c^(s) ~ Poisson(exp(x_c^(s) - hat_eta_c))``.
+
+    This is the *conditional* posterior-predictive PPC for PLN
+    Laplace fits — it propagates two sources of stochasticity
+    (composition-latent posterior uncertainty + Poisson
+    likelihood) but holds ``eta_c`` at its MAP rather than
+    sampling the full joint ``(x, eta)`` posterior. See the
+    ``Notes`` section below for the structural reason. The cost is
+    a per-cell, per-sample Woodbury solve; chunked over PPC
+    samples to bound device memory.
+
+    Parameters
+    ----------
+    rng_key : jax.Array
+    n_samples : int
+        Number of PPC samples per cell.
+    x_loc : jnp.ndarray, shape ``(n_cells, G)``
+        Per-cell MAP log-rates.
+    eta_loc : jnp.ndarray, shape ``(n_cells,)`` or None
+        Per-cell capture offsets (held at MAP — see ``Notes``).
+    W : jnp.ndarray, shape ``(G, k)``
+    d : jnp.ndarray, shape ``(G,)``
+
+    Returns
+    -------
+    np.ndarray, shape ``(n_samples, n_cells, G)``
+
+    Notes
+    -----
+    ``eta_c`` is held at its MAP rather than sampled. The
+    rigid-translation degeneracy of the PLN means the joint
+    ``(x, eta)`` posterior has a near-singular direction along
+    ``(mu, eta) -> (mu + Δ, eta + Δ)``; sampling ``eta`` jointly
+    would amplify this near-singularity, while sampling ``x``
+    conditionally at the MAP ``eta`` produces a well-conditioned
+    Gaussian and matches the dominant per-cell uncertainty
+    (since ``eta_c`` is one scalar versus ``G`` components in
+    ``x_c``).
+    """
+    from ._newton_pln import sample_x_posterior_batch
+
+    n_cells = int(x_loc.shape[0])
+
+    if eta_loc is None:
+        # No capture anchor — sampler still works; pass zeros so
+        # the rate is just ``exp(x_c^(s))``.
+        eta_arr = jnp.zeros(n_cells, dtype=x_loc.dtype)
+    else:
+        eta_arr = eta_loc
+
+    chunk_size = _PPC_DEFAULT_SAMPLE_CHUNK
+    if chunk_size is None or chunk_size >= n_samples:
+        size = int(n_samples)
+        k_x, k_p = jax.random.split(rng_key)
+        cell_keys = jax.random.split(k_x, n_cells)
+        # ``sample_x_posterior_batch`` returns (n_cells, size, G).
+        x_samples = sample_x_posterior_batch(
+            cell_keys, x_loc, eta_arr, W, d, size, 0.0
+        )
+        # Transpose to (size, n_cells, G).
+        x_samples = jnp.transpose(x_samples, (1, 0, 2))
+        log_rate = x_samples - eta_arr[None, :, None]
+        log_rate = jnp.clip(log_rate, _LOG_RATE_MIN, _LOG_RATE_MAX)
+        rate = jnp.exp(log_rate)
+        return np.asarray(jax.random.poisson(k_p, rate))
+
+    n_chunks = (n_samples + chunk_size - 1) // chunk_size
+    chunk_keys = jax.random.split(rng_key, n_chunks)
+    pieces: List[np.ndarray] = []
+    for i in range(n_chunks):
+        start = i * chunk_size
+        end = min(start + chunk_size, n_samples)
+        size = end - start
+        k_x, k_p = jax.random.split(chunk_keys[i])
+        cell_keys = jax.random.split(k_x, n_cells)
+        x_samples = sample_x_posterior_batch(
+            cell_keys, x_loc, eta_arr, W, d, size, 0.0
+        )
+        x_samples = jnp.transpose(x_samples, (1, 0, 2))
+        log_rate = x_samples - eta_arr[None, :, None]
+        log_rate = jnp.clip(log_rate, _LOG_RATE_MIN, _LOG_RATE_MAX)
+        rate = jnp.exp(log_rate)
+        pieces.append(np.asarray(jax.random.poisson(k_p, rate)))
+    return np.concatenate(pieces, axis=0)
 
 
 # ------ LNM PPC helpers ------
@@ -1145,9 +1349,7 @@ def _ppc_lnm_per_cell(
     elif z_loc is not None:
         y_alr = mu[None, :] + z_loc @ W.T  # (n_cells, G-1)
     else:
-        raise ValueError(
-            "LNM per-cell PPC requires either z_loc or y_alr_loc."
-        )
+        raise ValueError("LNM per-cell PPC requires either z_loc or y_alr_loc.")
 
     p_per_cell = _alr_to_softmax(y_alr, alr_reference_idx, n_genes)
     n_cells = p_per_cell.shape[0]
@@ -1170,9 +1372,7 @@ def _ppc_lnm_per_cell(
         if p_capture_loc is not None:
             mu_T_per_cell = jnp.asarray(mu_T) * jnp.asarray(p_capture_loc)
         else:
-            mu_T_per_cell = jnp.broadcast_to(
-                jnp.asarray(mu_T), (n_cells,)
-            )
+            mu_T_per_cell = jnp.broadcast_to(jnp.asarray(mu_T), (n_cells,))
         nb = dist.NegativeBinomial2(
             mean=mu_T_per_cell, concentration=jnp.asarray(r_T)
         )
@@ -1195,23 +1395,244 @@ def _ppc_lnm_per_cell(
     # in chunks of ``_PPC_DEFAULT_SAMPLE_CHUNK`` and accumulate to
     # host memory.
     chunk_size = _kwargs.get("chunk_size", _PPC_DEFAULT_SAMPLE_CHUNK)
-    # ``n_b`` is shaped ``(n_samples, n_cells)`` already; we slice
-    # both the keys and the batch arrays per chunk.
-    if hasattr(n_b, "shape") and n_b.ndim == 2:
-        n_per_cell_for_chunks = n_b[0]  # invariant across samples
+    # When the totals come from the fitted NB, ``n_b`` carries
+    # *independent* per-(sample, cell) draws of shape
+    # ``(n_samples, n_cells)``. The chunked path must slice this
+    # array along the leading axis rather than collapse it to a
+    # single per-cell vector — collapsing would tie all PPC
+    # samples to identical totals, which would underestimate the
+    # predictive total-count variance.
+    is_per_sample_totals = hasattr(n_b, "shape") and n_b.ndim == 2
+    if is_per_sample_totals:
+        n_b_static = jnp.asarray(n_b)
     else:
-        n_per_cell_for_chunks = n_arr_cells
+        # Fixed per-cell totals (observed / supplied / fallback) —
+        # broadcast across the sample axis at draw time.
+        n_b_static = jnp.asarray(n_arr_cells)
 
-    def _sample_chunk(chunk_key: jax.Array, size: int) -> jnp.ndarray:
-        n_b_chunk = jnp.broadcast_to(
-            n_per_cell_for_chunks, (size,) + n_per_cell_for_chunks.shape
-        )
+    if chunk_size is None or chunk_size >= n_samples:
+        if is_per_sample_totals:
+            n_b_full = n_b_static
+        else:
+            n_b_full = jnp.broadcast_to(
+                n_b_static, (int(n_samples),) + n_b_static.shape
+            )
+        p_b = jnp.broadcast_to(p_per_cell, (int(n_samples),) + p_per_cell.shape)
+        return np.asarray(_multinomial_sample(k_pred, n_b_full, p_b))
+
+    n_chunks = (n_samples + chunk_size - 1) // chunk_size
+    chunk_keys = jax.random.split(k_pred, n_chunks)
+    pieces: List[np.ndarray] = []
+    for i in range(n_chunks):
+        start = i * chunk_size
+        end = min(start + chunk_size, n_samples)
+        size = end - start
+        if is_per_sample_totals:
+            n_b_chunk = jax.lax.dynamic_slice_in_dim(
+                n_b_static, start, size, axis=0
+            )
+        else:
+            n_b_chunk = jnp.broadcast_to(
+                n_b_static, (size,) + n_b_static.shape
+            )
         p_b_chunk = jnp.broadcast_to(p_per_cell, (size,) + p_per_cell.shape)
-        return _multinomial_sample(chunk_key, n_b_chunk, p_b_chunk)
+        out_chunk = _multinomial_sample(chunk_keys[i], n_b_chunk, p_b_chunk)
+        pieces.append(np.asarray(out_chunk))
+    return np.concatenate(pieces, axis=0)
 
-    return _batched_sample_concat(
-        k_pred, n_samples, _sample_chunk, chunk_size=chunk_size
-    )
+
+def _ppc_lnm_per_cell_laplace(
+    rng_key: jax.Array,
+    n_samples: int,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    z_loc: Optional[jnp.ndarray],
+    y_alr_loc: Optional[jnp.ndarray],
+    alr_reference_idx: Optional[int],
+    mu_T: Optional[jnp.ndarray] = None,
+    r_T: Optional[jnp.ndarray] = None,
+    p_capture_loc: Optional[jnp.ndarray] = None,
+    counts: Optional[jnp.ndarray] = None,
+    total_counts: Optional[jnp.ndarray] = None,
+    **_kwargs,
+) -> jnp.ndarray:
+    """Per-cell LNM(VCP) PPC propagating Laplace posterior uncertainty.
+
+    Mirrors :func:`_ppc_lnm_per_cell` but draws the per-cell
+    composition latent from its Laplace posterior at the converged
+    MAP rather than holding it at the point estimate. Two paths,
+    selected by which latent slot is populated:
+
+    * ``z_loc`` (``d_mode='low_rank'``): use
+      :func:`scribe.laplace._newton_lnm.sample_z_posterior` to draw
+      ``z_c^(s)`` from the ``k``-dim Laplace posterior, then form
+      ``y_alr^(s) = mu + W z^(s)``.
+    * ``y_alr_loc`` (``d_mode='learned'``): use
+      :func:`scribe.laplace._newton_lnm.sample_y_alr_posterior` to
+      draw ``y_alr^(s)`` directly from its ``(G-1)``-dim Laplace
+      posterior.
+
+    The simplex is then ``softmax_full(y_alr^(s))`` and the count
+    sample is ``Multinomial(u_T, simplex)``. Per-cell totals are
+    resolved as in :func:`_ppc_lnm_per_cell` (observed > supplied
+    > NB-fitted > legacy fallback).
+
+    Returns
+    -------
+    np.ndarray, shape ``(n_samples, n_cells, G)``
+    """
+    if alr_reference_idx is None:
+        raise ValueError(
+            "LNM PPC requires alr_reference_idx; this result "
+            "appears to have been constructed without it."
+        )
+    import numpyro.distributions as dist
+
+    g_minus1 = mu.shape[0]
+    n_genes = g_minus1 + 1
+
+    # Determine sampling mode (z vs y_alr) and dimensions.
+    if z_loc is not None and y_alr_loc is None:
+        mode = "z"
+        n_cells = int(z_loc.shape[0])
+    elif y_alr_loc is not None:
+        mode = "y_alr"
+        n_cells = int(y_alr_loc.shape[0])
+    else:
+        raise ValueError(
+            "LNM Laplace per-cell PPC requires either z_loc or y_alr_loc."
+        )
+
+    # Resolve per-cell totals (same logic as the MAP path).
+    if counts is not None:
+        observed_totals = jnp.asarray(counts).sum(axis=-1).astype(jnp.int32)
+        n_arr_cells_static = observed_totals
+        nb_fitted = False
+    elif total_counts is not None:
+        n_arr_cells_static = jnp.asarray(total_counts, dtype=jnp.int32)
+        nb_fitted = False
+    elif mu_T is not None and r_T is not None:
+        n_arr_cells_static = None
+        nb_fitted = True
+        if p_capture_loc is not None:
+            mu_T_per_cell = jnp.asarray(mu_T) * jnp.asarray(p_capture_loc)
+        else:
+            mu_T_per_cell = jnp.broadcast_to(jnp.asarray(mu_T), (n_cells,))
+        nb_dist = dist.NegativeBinomial2(
+            mean=mu_T_per_cell, concentration=jnp.asarray(r_T)
+        )
+    else:
+        n_arr_cells_static = jnp.full((n_cells,), 1000, dtype=jnp.int32)
+        nb_fitted = False
+
+    # Sampler-specific imports — kept inside the function so the
+    # MAP-only path doesn't pay for them when this module is imported.
+    if mode == "z":
+        from ._newton_lnm import sample_z_posterior_batch
+    else:
+        from ._newton_lnm import sample_y_alr_posterior_batch
+
+    # Static "u_alr" used by the Newton-grad direction inside the
+    # samplers — they evaluate at the converged MAP so the gradient
+    # term is irrelevant for the *covariance*; passing zeros works
+    # because the samplers only consume it in the gradient
+    # computation that feeds the multinomial-Fisher matrix at
+    # ``p_alr(MAP)``. We pass observed counts when available
+    # (mathematically a no-op for sampling but keeps the call sites
+    # symmetric); else zeros.
+    if counts is not None:
+        # Map counts to ALR-aligned u_alr: drop the reference column.
+        ref_idx = int(alr_reference_idx)
+        all_idx = list(range(n_genes))
+        all_idx.remove(ref_idx)
+        u_alr_per_cell = jnp.asarray(counts, dtype=jnp.float32)[
+            :, jnp.asarray(all_idx)
+        ]
+    else:
+        u_alr_per_cell = jnp.zeros((n_cells, g_minus1), dtype=mu.dtype)
+
+    # Per-cell totals as floats for the sampler signatures.
+    if n_arr_cells_static is not None:
+        n_total_per_cell = jnp.asarray(n_arr_cells_static, dtype=mu.dtype)
+    else:
+        # NB-fitted path — we need a representative N for the
+        # multinomial-Fisher term used in the per-cell Hessian.
+        # Use the per-cell mean of the NB.
+        n_total_per_cell = jnp.asarray(mu_T_per_cell, dtype=mu.dtype)
+
+    chunk_size = _kwargs.get("chunk_size", _PPC_DEFAULT_SAMPLE_CHUNK)
+    if chunk_size is None or chunk_size >= n_samples:
+        n_chunks = 1
+        chunk_sizes = [int(n_samples)]
+    else:
+        n_chunks = (n_samples + chunk_size - 1) // chunk_size
+        chunk_sizes = [
+            min(chunk_size, n_samples - i * chunk_size) for i in range(n_chunks)
+        ]
+
+    chunk_keys = jax.random.split(rng_key, n_chunks)
+    pieces: List[np.ndarray] = []
+
+    for i, size in enumerate(chunk_sizes):
+        # Three RNG sub-streams: latent samples, NB totals, multinomial.
+        k_lat, k_nb, k_mn = jax.random.split(chunk_keys[i], 3)
+        cell_keys = jax.random.split(k_lat, n_cells)
+
+        if mode == "z":
+            # (n_cells, size, k) → (size, n_cells, k)
+            z_samples = sample_z_posterior_batch(
+                cell_keys,
+                z_loc,
+                u_alr_per_cell,
+                n_total_per_cell,
+                mu,
+                W,
+                alr_reference_idx,
+                n_genes,
+                size,
+                0.0,
+            )
+            z_samples = jnp.transpose(z_samples, (1, 0, 2))
+            # y_alr^(s) = mu + W z^(s)
+            y_alr_samples = mu[None, None, :] + z_samples @ W.T
+        else:
+            # (n_cells, size, G-1) → (size, n_cells, G-1)
+            y_samples = sample_y_alr_posterior_batch(
+                cell_keys,
+                y_alr_loc,
+                u_alr_per_cell,
+                n_total_per_cell,
+                mu,
+                W,
+                d,
+                alr_reference_idx,
+                n_genes,
+                size,
+                0.0,
+            )
+            y_alr_samples = jnp.transpose(y_samples, (1, 0, 2))
+
+        # Convert ALR → simplex per (sample, cell).
+        p_per_sample = _alr_to_softmax(
+            y_alr_samples, alr_reference_idx, n_genes  # (size, n_cells, G)
+        )
+
+        # Per-cell totals: refresh per-chunk for the NB-fitted path.
+        if nb_fitted:
+            n_b_chunk = nb_dist.sample(k_nb, sample_shape=(size,)).astype(
+                jnp.int32
+            )  # (size, n_cells)
+        else:
+            n_b_chunk = jnp.broadcast_to(
+                jnp.asarray(n_arr_cells_static, dtype=jnp.int32),
+                (size,) + (n_cells,),
+            )
+
+        out_chunk = _multinomial_sample(k_mn, n_b_chunk, p_per_sample)
+        pieces.append(np.asarray(out_chunk))
+
+    return np.concatenate(pieces, axis=0)
 
 
 def _multinomial_sample(
@@ -1364,10 +1785,7 @@ def _ll_lnm(
     n_per_cell = u.sum(axis=-1)  # (n_cells,)
     log_pmf_per_cell_per_gene = u * log_p  # (n_cells, G)
     # Multinomial normalisation constant per cell:
-    norm_per_cell = (
-        gammaln(n_per_cell + 1.0)
-        - gammaln(u + 1.0).sum(axis=-1)
-    )
+    norm_per_cell = gammaln(n_per_cell + 1.0) - gammaln(u + 1.0).sum(axis=-1)
 
     if return_by == "cell":
         return log_pmf_per_cell_per_gene.sum(axis=-1) + norm_per_cell

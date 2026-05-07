@@ -61,9 +61,14 @@ library size $L_c = \sum_g u_g^{(c)}$:
   cells; the per-cell expected total satisfies $\langle u_T^{(c)} \rangle
   = \mu_T \cdot p_{\text{capture}}^{(c)}$.
 * **Misspecification ratio** $\kappa = p_{\text{capture}}^{(c)} /
-  \tilde{p}_{\text{capture}}^{(c)}$, where $\tilde{p}_{\text{capture}}^{(c)}$
-  is the value the inferred fit lands on. We treat $\kappa$ as the
-  per-cell quantity that any robustness statement must absorb.
+  \tilde{p}_{\text{capture}}^{(c)}$ — a **global scalar shared across
+  all cells**. The unidentifiability we will exploit is a *single*
+  one-parameter ridge tying the global $\mu_T$ to a single rescaling
+  of every cell's $p_{\text{capture}}^{(c)}$ by the same factor. A
+  cell-specific $\kappa_c$ cannot be absorbed by the parameterisation
+  because $\mu_T$ is global by construction, so any robustness
+  statement that absorbs misspecification along this ridge requires
+  $\kappa$ to be cell-independent.
 
 The data quantity that is unambiguously identified is the *expected
 observed total*
@@ -154,12 +159,20 @@ totals-submodel mean.
 Let $\mathcal{L}(\underline{\theta})$ denote the joint log-likelihood of the
 LNM(VCP) generative model with global parameters $\underline{\theta} =
 \{\underline{\mu},\, \underline{\underline{W}},\, \underline{d},\, \mu_T,\,
-r_T,\, \{p_{\text{capture}}^{(c)}\}_{c=1}^C\}$. For any per-cell scaling $\kappa
-\in (0, \infty)$, the reparameterization
+r_T,\, \{p_{\text{capture}}^{(c)}\}_{c=1}^C\}$. Let $\kappa$ be a *single
+global scalar* satisfying
+
+$$
+\kappa \;\in\; \bigl[\, \max_c p_{\text{capture}}^{(c)},\; \infty\bigr),
+$${#eq-diffexp-lnmpln-lnm-kappa-domain}
+
+so that the rescaled capture probabilities remain in the admissible
+range $(0, 1]$. The reparameterisation
 
 $$
 \tilde{\mu}_T = \kappa \cdot \mu_T, \qquad
-\tilde{p}_{\text{capture}}^{(c)} = p_{\text{capture}}^{(c)} / \kappa,
+\tilde{p}_{\text{capture}}^{(c)} = p_{\text{capture}}^{(c)} / \kappa
+\;\;(\text{same } \kappa \text{ for every cell } c),
 $${#eq-diffexp-lnmpln-lnm-reparam}
 
 leaves the data-likelihood term invariant:
@@ -167,7 +180,11 @@ $\mathcal{L}_{\text{data}}(\underline{\tilde{\theta}}) =
 \mathcal{L}_{\text{data}}(\underline{\theta})$. Furthermore, the
 posterior over the compositional latent
 $q(\underline{y}_{\text{ALR}}^{(c)})$ is **identical** under
-$\underline{\theta}$ and $\underline{\tilde{\theta}}$.
+$\underline{\theta}$ and $\underline{\tilde{\theta}}$. Note that the
+result does **not** extend to a *cell-specific* $\kappa_c$: that
+would require a per-cell $\tilde{\mu}_T^{(c)}$, which the
+parameterisation does not admit (the totals NB shares a single
+global $\mu_T$ across cells).
 
 #### Proof {#sec-diffexp-lnmpln-lnm-proof}
 
@@ -328,13 +345,14 @@ is *which directions* in parameter space are degenerate:
 | PLN | $\lambda_g^{(c)} = e^{x_g^{(c)} - \eta^{(c)}}$ (additive on log-rates) | $(\mu_g, \eta^{(c)}) \to (\mu_g + \Delta, \eta^{(c)} + \Delta)$ | log-normal anchor on $\eta^{(c)}$ |
 
 In both rows the prior on $\eta^{(c)}$ does the same job: it selects a
-specific point on the data-induced ridge. In LNM the ridge is
-*multiplicative* in scale (a single scalar $\kappa$ per cell), while in
-PLN it is *additive* in log-rate (a single scalar $\Delta$ shared across
-*all* cells through $\underline{\mu}$). The PLN degeneracy is therefore
-*more restrictive* than the LNM one — it ties all cells together via
-the population mean — but it has the same projection-onto-contrasts
-structure.
+specific point on the data-induced ridge. The two ridges have the same
+*global* one-parameter structure: the LNM ridge is multiplicative
+(one scalar $\kappa$ rescales every cell's $p_{\text{capture}}^{(c)}$
+and the global $\mu_T$ in proportion); the PLN ridge is additive in
+log-rate (one scalar $\Delta$ shifts every cell's $\eta^{(c)}$ and
+every gene's $\mu_g$ in tandem). Both unidentifiabilities are scalar
+— the data identifies the cell-aggregate or per-gene quantities, but
+not the absolute scale.
 
 #### Consequences for differential expression {#sec-diffexp-lnmpln-pln-de}
 
