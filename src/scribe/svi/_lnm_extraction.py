@@ -274,3 +274,69 @@ class LNMExtractionMixin:
         sigma_clr = W_clr @ W_clr.T + jnp.diag(d_clr)
         std = jnp.sqrt(jnp.maximum(jnp.diag(sigma_clr), 1e-30))
         return sigma_clr / (std[:, None] * std[None, :])
+
+    def get_lnm_library_size_direction(self) -> jnp.ndarray:
+        """Latent-space unit vector whose ``W``-image is closest to ``1_{G-1}``.
+
+        Wrapper over
+        :func:`scribe.stats.correlation_diagnostics.library_size_direction`
+        for VAE-fit LNM results. Operates in ALR coordinates (so
+        ``1_{G-1}``, not ``1_G``); see the helper for the structural-
+        redundancy rationale.
+
+        Note: in ALR space the all-ones direction does not have the
+        same biological interpretation as in PLN's log-rate space —
+        it corresponds to "all non-reference genes shift in lock-step
+        relative to the reference gene". Whether this captures
+        library-size leakage depends on which gene was chosen as the
+        ALR reference.
+        """
+        self._require_lnm()
+        from ..stats.correlation_diagnostics import library_size_direction
+        return library_size_direction(self.get_lnm_W())
+
+    def get_lnm_correlation_residual(
+        self,
+        method: str = "library_size",
+        n_components: int = 1,
+        include_diagonal_d: bool = False,
+    ) -> jnp.ndarray:
+        """LNM gene-gene correlation with latent direction(s) projected out.
+
+        Operates in ALR coordinates. See
+        :func:`scribe.stats.correlation_diagnostics.correlation_residual`
+        for the math.
+        """
+        self._require_lnm()
+        from ..stats.correlation_diagnostics import correlation_residual
+        d = self.get_lnm_d()
+        return correlation_residual(
+            self.get_lnm_W(), d,
+            method=method,
+            n_components=n_components,
+            include_diagonal_d=include_diagonal_d,
+        )
+
+    def summarize_lnm_correlation_structure(
+        self,
+        *,
+        n_top_eig: int = 10,
+        verbose: bool = True,
+    ):
+        """Print and return a diagnostic summary of the LNM correlation structure.
+
+        Wrapper over
+        :func:`scribe.stats.correlation_diagnostics.summarize_correlation_structure`
+        for VAE-fit LNM results. Operates in ALR coordinates.
+        """
+        self._require_lnm()
+        from ..stats.correlation_diagnostics import (
+            summarize_correlation_structure,
+        )
+        return summarize_correlation_structure(
+            self.get_lnm_W(), self.get_lnm_d(),
+            space_label="ALR space",
+            model_label="LNM VAE",
+            n_top_eig=n_top_eig,
+            verbose=verbose,
+        )

@@ -285,3 +285,65 @@ class PLNExtractionMixin:
         sigma = self.get_pln_sigma()
         std = jnp.sqrt(jnp.maximum(jnp.diag(sigma), 1e-30))
         return sigma / (std[:, None] * std[None, :])
+
+    def get_pln_library_size_direction(self) -> jnp.ndarray:
+        """Latent-space unit vector whose ``W``-image is closest to ``1_G``.
+
+        Wrapper over
+        :func:`scribe.stats.correlation_diagnostics.library_size_direction`
+        for VAE-fit PLN results. See the helper for the structural-
+        redundancy rationale.
+        """
+        self._require_pln()
+        from ..stats.correlation_diagnostics import library_size_direction
+        return library_size_direction(self.get_pln_W())
+
+    def get_pln_correlation_residual(
+        self,
+        method: str = "library_size",
+        n_components: int = 1,
+        include_diagonal_d: bool = False,
+    ) -> jnp.ndarray:
+        """PLN gene-gene correlation with latent direction(s) projected out.
+
+        See
+        :func:`scribe.stats.correlation_diagnostics.correlation_residual`
+        for the math. Pulls ``W`` and ``d`` from the VAE decoder /
+        learned residual.
+        """
+        self._require_pln()
+        from ..stats.correlation_diagnostics import correlation_residual
+        d = self.get_pln_d()
+        return correlation_residual(
+            self.get_pln_W(), d,
+            method=method,
+            n_components=n_components,
+            include_diagonal_d=include_diagonal_d,
+        )
+
+    def summarize_pln_correlation_structure(
+        self,
+        *,
+        n_top_eig: int = 10,
+        verbose: bool = True,
+    ):
+        """Print and return a diagnostic summary of the PLN correlation structure.
+
+        Wrapper over
+        :func:`scribe.stats.correlation_diagnostics.summarize_correlation_structure`
+        for VAE-fit PLN results — surfaces library-size alignment,
+        the latent eigenspectrum, and projection-comparison
+        off-diagonal quantiles for picking
+        ``subtract_direction`` in the heatmap plot.
+        """
+        self._require_pln()
+        from ..stats.correlation_diagnostics import (
+            summarize_correlation_structure,
+        )
+        return summarize_correlation_structure(
+            self.get_pln_W(), self.get_pln_d(),
+            space_label="log-rate space",
+            model_label="PLN VAE",
+            n_top_eig=n_top_eig,
+            verbose=verbose,
+        )

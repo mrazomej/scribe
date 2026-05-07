@@ -251,3 +251,56 @@ def test_lnmvcp_enum():
 def test_valid_models_includes_lnmvcp():
     """Public API lists ``lnmvcp`` as a supported model string."""
     assert "lnmvcp" in VALID_MODELS
+
+
+def test_lnm_vae_correlation_diagnostics_pipeline():
+    """End-to-end: LNM VAE fit → library-size, residual, summary methods.
+
+    Verifies the three new diagnostic entry points on
+    ``LNMExtractionMixin`` execute against a fitted ScribeVAEResults
+    and return objects of the right shape / type.
+    """
+    import anndata as ad
+    import numpy as np
+
+    import scribe
+
+    n_cells, n_genes, k = 32, 12, 3
+    G_minus1 = n_genes - 1
+    counts = np.asarray(
+        random.poisson(random.PRNGKey(21), 5.0, shape=(n_cells, n_genes))
+    ).astype(np.float32)
+    adata = ad.AnnData(counts)
+
+    results = scribe.fit(
+        adata,
+        model="lnm",
+        vae_latent_dim=k,
+        vae_encoder_hidden_dims=[16],
+        n_steps=50,
+        seed=0,
+    )
+
+    e = results.get_lnm_library_size_direction()
+    assert e.shape == (k,)
+    assert abs(float(jnp.linalg.norm(e)) - 1.0) < 1e-4
+
+    C_resid = results.get_lnm_correlation_residual(method="library_size")
+    # ALR space is (G-1, G-1).
+    assert C_resid.shape == (G_minus1, G_minus1)
+
+    summary = results.summarize_lnm_correlation_structure(verbose=False)
+    expected_keys = {
+        "n_genes_effective",
+        "n_latent_factors",
+        "cos_We_1G",
+        "We_concentration",
+        "library_axis_share",
+        "eigenvalues",
+        "offdiag_quantiles_full",
+        "offdiag_quantiles_after_library",
+        "offdiag_quantiles_after_pc1",
+    }
+    assert expected_keys.issubset(summary.keys())
+    assert summary["n_genes_effective"] == G_minus1
+    assert summary["n_latent_factors"] == k

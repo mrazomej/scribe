@@ -709,3 +709,59 @@ def test_pln_get_map_with_capture():
     assert "y_log_rate" in map_est
     assert "eta_capture" in map_est
     assert map_est["eta_capture"].shape == (n_cells,)
+
+
+def test_pln_vae_correlation_diagnostics_pipeline():
+    """End-to-end: PLN VAE fit → library-size, residual, summary methods.
+
+    Verifies the three new diagnostic entry points on
+    ``PLNExtractionMixin`` execute against a fitted ScribeVAEResults
+    and return objects of the right shape / type. The numeric
+    correctness of the underlying math is covered by
+    ``tests/test_laplace_newton.py::TestCorrelationResidual`` and
+    ``::TestSummarizeCorrelationStructure``.
+    """
+    import anndata as ad
+    import numpy as np
+
+    import scribe
+
+    n_cells, n_genes, k = 32, 12, 3
+    counts = np.asarray(
+        random.poisson(random.PRNGKey(20), 5.0, shape=(n_cells, n_genes))
+    ).astype(np.float32)
+    adata = ad.AnnData(counts)
+
+    results = scribe.fit(
+        adata,
+        model="pln",
+        vae_latent_dim=k,
+        vae_encoder_hidden_dims=[16],
+        n_steps=50,
+        seed=0,
+    )
+
+    e = results.get_pln_library_size_direction()
+    assert e.shape == (k,)
+    # Unit-norm.
+    assert abs(float(jnp.linalg.norm(e)) - 1.0) < 1e-4
+
+    C_resid = results.get_pln_correlation_residual(method="library_size")
+    C_full = results.get_pln_correlation()
+    assert C_resid.shape == C_full.shape
+
+    summary = results.summarize_pln_correlation_structure(verbose=False)
+    expected_keys = {
+        "n_genes_effective",
+        "n_latent_factors",
+        "cos_We_1G",
+        "We_concentration",
+        "library_axis_share",
+        "eigenvalues",
+        "offdiag_quantiles_full",
+        "offdiag_quantiles_after_library",
+        "offdiag_quantiles_after_pc1",
+    }
+    assert expected_keys.issubset(summary.keys())
+    assert summary["n_genes_effective"] == n_genes
+    assert summary["n_latent_factors"] == k
