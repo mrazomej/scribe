@@ -417,6 +417,292 @@ class ScribeLaplaceResults:
         std = jnp.sqrt(jnp.maximum(jnp.diag(sigma_perp), 1e-30))
         return sigma_perp / (std[:, None] * std[None, :])
 
+    def summarize_correlation_structure(
+        self,
+        *,
+        n_top_eig: int = 10,
+        verbose: bool = True,
+    ) -> Dict[str, Any]:
+        """Print and return a diagnostic summary of the latent correlation structure.
+
+        Computes a small set of quantities that together characterise
+        whether the model's correlation matrix is dominated by a
+        library-size axis (the typical PLN-with-weak-capture pathology),
+        by a single non-library latent direction, or by genuinely
+        diffuse multi-block structure.
+
+        The four quantities of interest:
+
+        * **Library-size alignment**:
+          ``cos(W e, 1_G)`` — how close to ``1_G`` the column-space
+          projection of ``1_G`` is. Close to 1 ⇒ the library-size
+          axis lives cleanly in the column space of $W$. Close to 0
+          ⇒ the model has put library-size somewhere outside $W$
+          (typically in $\\eta$, when the capture term is doing its job).
+        * **Library-size loading concentration**:
+          ``|mean(W e)| / std(W e)`` — high ⇒ the gene loadings on
+          the library-size axis are uniform across genes (the
+          "all-genes-shift" signature). Low ⇒ the projection is
+          contaminated by gene-specific variation.
+        * **Library-size share of $W$**:
+          ``||W e||² / ||W W^\\top||_F`` — fraction of the
+          model-implied covariance Frobenius norm that the
+          library-size rank-1 contribution accounts for. Small ⇒
+          projecting it out will leave the heatmap mostly unchanged.
+        * **Latent eigenspectrum**: top-$k$ eigenvalues of
+          $W^\\top W$ and the cumulative variance explained.
+          A heavy-tailed spectrum (one or two dominant eigenvalues)
+          suggests `subtract_direction="pc"` will produce a
+          markedly different heatmap.
+
+        Parameters
+        ----------
+        n_top_eig : int, default 10
+            Number of top eigenvalues of ``W^T W`` to report.
+        verbose : bool, default True
+            Print a rich-formatted summary to the console. Set to
+            ``False`` for silent return of the diagnostics dict
+            (useful when calling from a notebook cell that already
+            has its own display logic).
+
+        Returns
+        -------
+        dict
+            Keys: ``cos_We_1G``, ``We_concentration``,
+            ``library_axis_share``, ``We_rms``, ``eigenvalues``,
+            ``eigenvalue_fractions``, ``effective_rank``,
+            ``offdiag_quantiles_full``,
+            ``offdiag_quantiles_after_library``,
+            ``offdiag_quantiles_after_pc1``.
+        """
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.table import Table
+        import textwrap
+
+        W_np = np.asarray(self.W)                          # (G_eff, k)
+        G_eff, k = W_np.shape
+        ones_G = np.ones(G_eff, dtype=W_np.dtype)
+
+        # --- Library-size axis diagnostics --------------------------------
+        e = np.asarray(self.get_library_size_direction())  # (k,)
+        We = W_np @ e                                       # (G_eff,)
+
+        We_norm = float(np.linalg.norm(We))
+        cos_We_1G = float(We @ ones_G / max(We_norm * np.sqrt(G_eff), 1e-30))
+        We_mean = float(We.mean())
+        We_std = float(We.std())
+        We_concentration = (
+            abs(We_mean) / We_std if We_std > 1e-30 else float("inf")
+        )
+        We_rms = We_norm / np.sqrt(G_eff)
+
+        # --- Latent eigenspectrum -----------------------------------------
+        WtW = W_np.T @ W_np                                 # (k, k)
+        eigvals = np.linalg.eigvalsh(WtW)[::-1]             # descending
+        eig_total = float(eigvals.sum()) or 1.0
+        eig_fractions = eigvals / eig_total
+
+        # Library-size rank-1 share of ||W W^T||_F (Frobenius).
+        sigma_factor_norm = float(np.linalg.norm(W_np @ W_np.T))
+        library_axis_share = (We_norm**2) / max(sigma_factor_norm, 1e-30)
+
+        # Effective rank: ||W||_F² / ||W||_op² (a smooth proxy for
+        # "how many non-trivial directions are there").
+        op_norm = float(np.sqrt(eigvals[0])) if eigvals.size else 1.0
+        fro_norm = float(np.sqrt(eigvals.sum()))
+        effective_rank = (
+            (fro_norm / op_norm) ** 2 if op_norm > 0 else float("nan")
+        )
+
+        # --- Off-diagonal correlation quantiles ---------------------------
+        def _offdiag_quantiles(C: np.ndarray) -> Dict[str, float]:
+            mask = ~np.eye(C.shape[0], dtype=bool)
+            vals = C[mask]
+            return {
+                "min": float(vals.min()),
+                "p25": float(np.quantile(vals, 0.25)),
+                "p50": float(np.quantile(vals, 0.5)),
+                "p75": float(np.quantile(vals, 0.75)),
+                "max": float(vals.max()),
+            }
+
+        C_full = np.asarray(self.get_correlation())
+        C_lib = np.asarray(
+            self.get_correlation_residual(method="library_size")
+        )
+        C_pc1 = np.asarray(
+            self.get_correlation_residual(method="pc", n_components=1)
+        )
+        q_full = _offdiag_quantiles(C_full)
+        q_lib = _offdiag_quantiles(C_lib)
+        q_pc1 = _offdiag_quantiles(C_pc1)
+
+        n_top = min(int(n_top_eig), int(eigvals.size))
+        result: Dict[str, Any] = {
+            "n_genes_effective": int(G_eff),
+            "n_latent_factors": int(k),
+            "cos_We_1G": cos_We_1G,
+            "We_concentration": We_concentration,
+            "We_rms": We_rms,
+            "library_axis_share": float(library_axis_share),
+            "eigenvalues": eigvals.tolist(),
+            "eigenvalue_fractions": eig_fractions.tolist(),
+            "effective_rank": float(effective_rank),
+            "offdiag_quantiles_full": q_full,
+            "offdiag_quantiles_after_library": q_lib,
+            "offdiag_quantiles_after_pc1": q_pc1,
+        }
+
+        if not verbose:
+            return result
+
+        console = Console()
+
+        # Header.
+        bm = _base_model(self.model_config)
+        space = (
+            "ALR space" if bm in ("lnm", "lnmvcp") else "log-rate space"
+        )
+        header_lines = [
+            f"Model    : {bm.upper()} Laplace",
+            f"Space    : {space}",
+            f"G_eff    : {G_eff} ({'(G-1, ALR)' if bm in ('lnm', 'lnmvcp') else 'genes'})",
+            f"k        : {k} latent factors",
+        ]
+        console.print(
+            Panel(
+                "\n".join(header_lines),
+                title="Correlation structure summary",
+                expand=False,
+            )
+        )
+
+        # Library-size axis table.
+        lib_table = Table(
+            title=(
+                "Library-size axis  "
+                "(W column-space projection of 1_G)"
+            ),
+            show_header=True,
+            header_style="bold",
+        )
+        lib_table.add_column("Quantity")
+        lib_table.add_column("Value", justify="right")
+        lib_table.add_column("Interpretation")
+        lib_table.add_row(
+            "cos(We, 1_G)", f"{cos_We_1G:.3f}",
+            "1.0 = perfectly all-genes-shift",
+        )
+        lib_table.add_row(
+            "|mean(We)| / std(We)",
+            f"{We_concentration:.2f}" if np.isfinite(We_concentration) else "inf",
+            "high → uniform loadings across genes",
+        )
+        lib_table.add_row(
+            "||We|| / sqrt(G)", f"{We_rms:.3f}",
+            "RMS gene loading on the axis",
+        )
+        lib_table.add_row(
+            "share of ||W W^T||_F", f"{library_axis_share * 100:.1f}%",
+            "rank-1 fraction of model covariance",
+        )
+        console.print(lib_table)
+
+        # Eigenspectrum table.
+        eig_table = Table(
+            title=f"Latent eigenspectrum  (top {n_top} of W^T W)",
+            show_header=True,
+            header_style="bold",
+        )
+        eig_table.add_column("PC", justify="right")
+        eig_table.add_column("Eigenvalue", justify="right")
+        eig_table.add_column("Fraction", justify="right")
+        eig_table.add_column("Cumulative", justify="right")
+        cum = 0.0
+        for i in range(n_top):
+            cum += float(eig_fractions[i])
+            eig_table.add_row(
+                f"{i+1}",
+                f"{float(eigvals[i]):.3g}",
+                f"{float(eig_fractions[i]) * 100:.1f}%",
+                f"{cum * 100:.1f}%",
+            )
+        console.print(eig_table)
+        console.print(
+            f"Effective rank (Frobenius/spectral): "
+            f"[bold]{effective_rank:.2f}[/bold]"
+        )
+
+        # Off-diagonal correlation table.
+        corr_table = Table(
+            title="Off-diagonal correlation distribution",
+            show_header=True,
+            header_style="bold",
+        )
+        corr_table.add_column("Variant")
+        corr_table.add_column("min", justify="right")
+        corr_table.add_column("p25", justify="right")
+        corr_table.add_column("p50", justify="right")
+        corr_table.add_column("p75", justify="right")
+        corr_table.add_column("max", justify="right")
+        for label, q in (
+            ("full", q_full),
+            ("after library_size", q_lib),
+            ("after PC1", q_pc1),
+        ):
+            corr_table.add_row(
+                label,
+                f"{q['min']:+.3f}", f"{q['p25']:+.3f}",
+                f"{q['p50']:+.3f}", f"{q['p75']:+.3f}",
+                f"{q['max']:+.3f}",
+            )
+        console.print(corr_table)
+
+        # Suggestions block.
+        suggestions = []
+        if cos_We_1G > 0.9 and library_axis_share > 0.10:
+            suggestions.append(
+                "[yellow]Library-size axis is strongly aligned and "
+                "carries >10% of the model covariance — "
+                "[bold]subtract_direction='library_size'[/bold] is "
+                "recommended.[/yellow]"
+            )
+        elif cos_We_1G > 0.9 and library_axis_share <= 0.10:
+            suggestions.append(
+                "[dim]Library-size axis is well-aligned but contributes "
+                "<10% of the covariance — projection-out will subtly "
+                "improve the heatmap. Try it as a sanity check.[/dim]"
+            )
+        elif cos_We_1G < 0.5:
+            suggestions.append(
+                "[dim]Library-size axis is poorly aligned with W's "
+                "column space — most likely the capture term η has "
+                "absorbed the library-size signal. No projection "
+                "needed.[/dim]"
+            )
+        if eig_fractions.size > 0 and eig_fractions[0] > 0.30:
+            suggestions.append(
+                f"[yellow]PC1 of W^T W carries "
+                f"{eig_fractions[0]*100:.0f}% of the latent variance — "
+                "one direction dominates. "
+                "[bold]subtract_direction='pc', n_pcs_to_remove=1[/bold] "
+                "is likely to surface secondary structure.[/yellow]"
+            )
+        elif n_top >= 3 and eig_fractions[:3].sum() > 0.70:
+            suggestions.append(
+                f"[dim]Top 3 PCs explain "
+                f"{eig_fractions[:3].sum()*100:.0f}% of the latent "
+                "variance — try n_pcs_to_remove=2 or 3 for stronger "
+                "denoising.[/dim]"
+            )
+        if suggestions:
+            console.print()
+            for s in suggestions:
+                console.print(textwrap.fill(s, width=78))
+
+        return result
+
     def get_p_capture(self) -> Optional[jnp.ndarray]:
         """Per-cell capture probability ``p_c ∈ (0, 1]``.
 

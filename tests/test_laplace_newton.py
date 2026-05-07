@@ -1105,3 +1105,108 @@ class TestCorrelationResidual:
         C_full = res.get_correlation()
         C_resid = res.get_correlation_residual(method="library_size")
         assert C_resid.shape == C_full.shape
+
+
+class TestSummarizeCorrelationStructure:
+    """Verify ``summarize_correlation_structure`` returns the expected
+    diagnostics dict and that the silent (``verbose=False``) path
+    matches the verbose computation byte-for-byte (i.e. no
+    side-effects from the printing code).
+    """
+
+    def _planted_pln_results(self):
+        from scribe import ScribeLaplaceResults
+        from scribe.models.config import ModelConfig
+        from scribe.models.config.enums import (
+            InferenceMethod,
+            Parameterization,
+        )
+
+        np.random.seed(501)
+        G, k = 50, 3
+        W = np.zeros((G, k), dtype=np.float32)
+        W[:, 0] = 1.5
+        W[:25, 1] = np.random.normal(1.0, 0.05, 25).astype(np.float32)
+        W[25:, 2] = np.random.normal(1.0, 0.05, 25).astype(np.float32)
+        mc = ModelConfig(
+            base_model="pln",
+            parameterization=Parameterization.POISSON_LOGNORMAL,
+            inference_method=InferenceMethod.LAPLACE,
+        )
+        return ScribeLaplaceResults(
+            model_config=mc, mu=jnp.zeros(G), W=jnp.asarray(W),
+            d=jnp.full(G, 0.05), n_genes=G, n_cells=10,
+            x_loc=jnp.zeros((10, G)),
+            losses=jnp.zeros(1), final_grad_norms=jnp.zeros(1),
+        )
+
+    def test_returned_dict_has_expected_keys(self):
+        res = self._planted_pln_results()
+        out = res.summarize_correlation_structure(verbose=False)
+        expected_keys = {
+            "n_genes_effective",
+            "n_latent_factors",
+            "cos_We_1G",
+            "We_concentration",
+            "We_rms",
+            "library_axis_share",
+            "eigenvalues",
+            "eigenvalue_fractions",
+            "effective_rank",
+            "offdiag_quantiles_full",
+            "offdiag_quantiles_after_library",
+            "offdiag_quantiles_after_pc1",
+        }
+        assert expected_keys.issubset(out.keys())
+
+    def test_diagnostics_recover_planted_axis(self):
+        """On a planted W with factor 0 = 1.5 * 1_G, the library-size
+        diagnostics should be near-perfect.
+        """
+        res = self._planted_pln_results()
+        out = res.summarize_correlation_structure(verbose=False)
+        # Cosine ≈ 1 (exact-aligned axis was planted).
+        assert out["cos_We_1G"] > 0.999
+        # We_rms equals the planted column magnitude (1.5).
+        assert abs(out["We_rms"] - 1.5) < 1e-3
+        # Library-axis share is the dominant fraction (>0.5) since
+        # the planted factor 0 has the largest column norm of W.
+        assert out["library_axis_share"] > 0.5
+
+    def test_eigenvalues_are_descending(self):
+        res = self._planted_pln_results()
+        out = res.summarize_correlation_structure(verbose=False)
+        eigs = np.asarray(out["eigenvalues"])
+        # Strictly descending for non-degenerate W^T W.
+        assert np.all(np.diff(eigs) <= 0)
+        # Fractions sum to 1.
+        assert abs(sum(out["eigenvalue_fractions"]) - 1.0) < 1e-5
+
+    def test_offdiag_quantiles_after_library_drop_signal(self):
+        """For the planted W, library-size projection drops the
+        off-diagonal *median* correlation substantially relative
+        to the full matrix — the user-visible signature in the
+        heatmap.
+        """
+        res = self._planted_pln_results()
+        out = res.summarize_correlation_structure(verbose=False)
+        full_p50 = abs(out["offdiag_quantiles_full"]["p50"])
+        lib_p50 = abs(out["offdiag_quantiles_after_library"]["p50"])
+        assert lib_p50 < full_p50, (
+            f"library-size projection should reduce |p50| of "
+            f"off-diagonals (full={full_p50:.3f}, lib={lib_p50:.3f})"
+        )
+
+    def test_verbose_silent_paths_agree(self, capsys):
+        """The printing code must not mutate the diagnostics; the
+        verbose call should emit text but return the same dict as
+        the silent call.
+        """
+        res = self._planted_pln_results()
+        silent = res.summarize_correlation_structure(verbose=False)
+        verbose = res.summarize_correlation_structure(verbose=True)
+        assert silent.keys() == verbose.keys()
+        # Numeric scalars should match exactly.
+        for k_ in ("cos_We_1G", "We_rms", "library_axis_share",
+                   "effective_rank"):
+            assert silent[k_] == verbose[k_]
