@@ -478,10 +478,11 @@ def plot_correlation_heatmap(
     # this posterior-sample correlation heatmap implementation.
     if _is_pln_model(results):
         console.print(
-            "[yellow]Skipping correlation heatmap for PLN: this plot expects "
-            "NB-family posterior samples ('r' or 'mu'). Use PLN extraction "
-            "methods (e.g. get_pln_correlation/get_pln_sigma) instead."
-            "[/yellow]"
+            "[yellow]Skipping correlation heatmap for PLN/NBLN: this plot "
+            "expects NB-family posterior samples ('r' or 'mu'). Use the "
+            "PLN-family extraction methods on the result object instead "
+            "(e.g. get_pln_correlation / get_pln_sigma for PLN, the NBLN "
+            "analogues when available).[/yellow]"
         )
         return
 

@@ -48,11 +48,15 @@ from .ppc_rendering import (
 
 def _select_divergent_genes(results, counts, n_rows, n_cols):
     """Select genes with highest divergence across components, binned by expression."""
-    # PLN has no NB-family per-component (r/p or mu/phi) parameterization, so
-    # this divergence heuristic is not defined for PLN mixture diagnostics.
+    # The PLN-family models (PLN and NBLN) have no NB-family
+    # per-component (r/p or mu/phi) parameterization at the
+    # composition level, so this divergence heuristic is not defined
+    # for them.  Mixtures aren't currently supported for either PLN
+    # or NBLN regardless.
     if _is_pln_model(results):
         raise ValueError(
-            "Mixture PPC gene selection is not supported for PLN models."
+            "Mixture PPC gene selection is not supported for "
+            "PLN-family models (PLN, NBLN)."
         )
     counts = _coerce_and_align_counts_to_results(
         counts, results, context="_select_divergent_genes"
@@ -1084,12 +1088,14 @@ def plot_mixture_ppc(
     counts = _coerce_and_align_counts_to_results(
         counts, results, context="plot_mixture_ppc"
     )
-    # PLN v1 does not support mixture models; guard here so interactive calls
-    # fail gracefully with a clear, model-aware message.
+    # PLN v1 and NBLN v1 do not support mixture models; guard here so
+    # interactive calls fail gracefully with a clear, model-aware
+    # message.
     if _is_pln_model(results):
         console.print(
-            "[yellow]Skipping mixture PPC for PLN: mixture diagnostics are "
-            "not supported for Poisson-LogNormal models.[/yellow]"
+            "[yellow]Skipping mixture PPC for PLN/NBLN: mixture "
+            "diagnostics are not supported for the PLN-family models "
+            "(Poisson-LogNormal and NB-LogNormal).[/yellow]"
         )
         return
 

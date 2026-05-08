@@ -109,9 +109,10 @@ def plot_bio_ppc(
     # Biological PPC in this module is NB(r, p)-specific by construction.
     if _is_pln_model(results):
         console.print(
-            "[yellow]Skipping biological PPC for PLN: this diagnostic uses "
-            "NB(r, p) biological bands and is not defined for the "
-            "Poisson-LogNormal model.[/yellow]"
+            "[yellow]Skipping biological PPC for PLN/NBLN: this "
+            "diagnostic uses NB(r, p) biological bands tied to the "
+            "DM-family parameterization and is not defined for the "
+            "PLN-family models (PLN and NBLN).[/yellow]"
         )
         return
     render_opts = get_ppc_render_options(viz_cfg)
