@@ -75,6 +75,53 @@ def _ll_pln(
     return log_pmf.sum(axis=0)
 
 
+def _ll_nbln(
+    counts: jnp.ndarray,
+    x_loc: jnp.ndarray,
+    eta_loc: Optional[jnp.ndarray],
+    r: jnp.ndarray,
+    return_by: str,
+) -> jnp.ndarray:
+    """Compute NB-LogNormal MAP log-likelihood.
+
+    Parameters
+    ----------
+    counts : jnp.ndarray, shape (C, G)
+        Observed count matrix.
+    x_loc : jnp.ndarray, shape (C, G)
+        Per-cell MAP latent log-rate.
+    eta_loc : jnp.ndarray or None, shape (C,)
+        Optional per-cell capture offset.
+    r : jnp.ndarray, shape (G,)
+        Gene-specific NB dispersion (positive).
+    return_by : {"cell", "gene"}
+        Aggregation axis.
+
+    Returns
+    -------
+    jnp.ndarray
+        If ``return_by="cell"``: shape ``(C,)``;
+        if ``return_by="gene"``: shape ``(G,)``.
+
+    Notes
+    -----
+    Uses :class:`scribe.stats.distributions.LogMeanNegativeBinomial`,
+    which evaluates the NB log-prob entirely in log-space (no
+    ``exp(x_loc)`` materialised on the gradient path) and matches the
+    likelihood class consumed by the NBLN observation channel.
+    """
+    from ..stats.distributions import LogMeanNegativeBinomial
+
+    log_mean = x_loc - eta_loc[:, None] if eta_loc is not None else x_loc
+    log_mean = jnp.clip(log_mean, _LOG_RATE_MIN, _LOG_RATE_MAX)
+    log_pmf = LogMeanNegativeBinomial(
+        log_mean=log_mean, concentration=r[None, :]
+    ).log_prob(counts)
+    if return_by == "cell":
+        return log_pmf.sum(axis=-1)
+    return log_pmf.sum(axis=0)
+
+
 def _ll_lnm(
     counts: jnp.ndarray,
     mu: jnp.ndarray,

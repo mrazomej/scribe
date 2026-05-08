@@ -39,7 +39,9 @@ class DispatchResultsMixin:
             If the stored ``base_model`` is unknown.
         """
         bm = _base_model(self.model_config)
-        if bm == "pln":
+        if bm in ("pln", "nbln"):
+            # NBLN's per-cell latent has the same shape and semantic
+            # role as PLN's: ``x_loc`` is the log-rate MAP at the cell.
             return self.x_loc
         if bm in ("lnm", "lnmvcp"):
             if self.z_loc is not None:
@@ -70,16 +72,24 @@ class DispatchResultsMixin:
             If the stored ``base_model`` is unknown.
         """
         bm = _base_model(self.model_config)
-        if bm == "pln":
+        if bm in ("pln", "nbln"):
+            # NBLN map is PLN's map plus the gene dispersion ``r``.
+            # The diagonal residual key follows the model-specific
+            # site name (``d_pln`` vs ``d_nbln``) so the dictionary
+            # is consumable by both PLN- and NBLN-specific
+            # downstream code.
+            d_key = "d_nbln" if bm == "nbln" else "d_pln"
             out = {
                 "mu": self.mu,
                 "W": self.W,
-                "d_pln": self.d,
+                d_key: self.d,
                 "y_log_rate": self.x_loc,
             }
             if self.eta_loc is not None:
                 out["eta_capture"] = self.eta_loc
                 out["p_capture"] = jnp.exp(-self.eta_loc)
+            if bm == "nbln" and self.r is not None:
+                out["r"] = self.r
             return out
         if bm in ("lnm", "lnmvcp"):
             out = {
@@ -132,15 +142,25 @@ class DispatchResultsMixin:
         import numpyro.distributions as dist
 
         bm = _base_model(self.model_config)
-        if bm == "pln":
-            return {
+        if bm in ("pln", "nbln"):
+            # The population log-rate distribution is the same for
+            # both PLN and NBLN (a low-rank multivariate normal with
+            # the same loc/W/d). PLN exposes ``lambda_rate`` as the
+            # log-normal-mixed Poisson rate; NBLN's analogous
+            # marginal-rate distribution is parameterised by the
+            # additional gene dispersion ``r`` and is not yet
+            # available as a NumPyro Distribution -- only the
+            # log-rate distribution is exposed.
+            out = {
                 "y_log_rate": dist.LowRankMultivariateNormal(
                     loc=self.mu, cov_factor=self.W, cov_diag=self.d
                 ),
-                "lambda_rate": LowRankPoissonLogNormal(
-                    loc=self.mu, cov_factor=self.W, cov_diag=self.d
-                ),
             }
+            if bm == "pln":
+                out["lambda_rate"] = LowRankPoissonLogNormal(
+                    loc=self.mu, cov_factor=self.W, cov_diag=self.d
+                )
+            return out
         if bm in ("lnm", "lnmvcp"):
             return {
                 "y_alr": dist.LowRankMultivariateNormal(

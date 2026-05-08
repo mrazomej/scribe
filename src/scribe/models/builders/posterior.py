@@ -1385,15 +1385,16 @@ def _apply_capture(
     - Mean-odds parameterization: posterior on ``phi_capture``.
     - Other parameterizations: posterior on ``p_capture``.
     """
-    # PLN uses capture as an internal flag (no separate 'plnvcp' model),
-    # so ``uses_variable_capture`` is False. We still need to extract
-    # the ``eta_capture`` posterior when the biology-informed anchor is
-    # active. The PLN branch is gated on ``base_model == "pln"`` —
-    # accessed via ``getattr`` because some unit-test fixtures use a
+    # PLN and NBLN use capture as an internal flag (no separate
+    # 'plnvcp' / 'nblnvcp' models), so ``uses_variable_capture`` is
+    # False for them. We still need to extract the ``eta_capture``
+    # posterior when the biology-informed anchor is active. The PLN/NBLN
+    # branch is gated on ``base_model in ("pln", "nbln")`` — accessed
+    # via ``getattr`` because some unit-test fixtures use a
     # ``types.SimpleNamespace`` mock that lacks that attribute. Real
     # ``ModelConfig`` instances always have it.
     _has_capture = model_config.uses_variable_capture or (
-        getattr(model_config, "base_model", None) == "pln"
+        getattr(model_config, "base_model", None) in ("pln", "nbln")
         and getattr(model_config, "uses_biology_informed_capture", False)
     )
     if not _has_capture:

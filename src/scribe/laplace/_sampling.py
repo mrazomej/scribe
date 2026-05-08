@@ -18,6 +18,9 @@ from ._results_sampling_helpers import (
     _ppc_lnm_marginal,
     _ppc_lnm_per_cell,
     _ppc_lnm_per_cell_laplace,
+    _ppc_nbln_marginal,
+    _ppc_nbln_per_cell,
+    _ppc_nbln_per_cell_laplace,
     _ppc_pln_library_anchored,
     _ppc_pln_marginal,
     _ppc_pln_per_cell,
@@ -94,7 +97,11 @@ class SamplingResultsMixin:
                 raise ValueError(
                     "level='library_anchored' requires `counts` for observed totals."
                 )
-            if bm == "pln":
+            if bm in ("pln", "nbln"):
+                # Library-anchored PPC samples ``softmax(x) ->
+                # Multinomial`` against observed library size; the NB
+                # vs Poisson choice does not enter (no count-noise
+                # layer at this level), so NBLN reuses the PLN helper.
                 return _ppc_pln_library_anchored(
                     rng_key, n_samples, self.mu, self.W, self.d, counts=counts
                 )
@@ -119,6 +126,20 @@ class SamplingResultsMixin:
                 self.mu,
                 self.W,
                 self.d,
+                eta_loc=self.eta_loc,
+            )
+        if bm == "nbln":
+            if self.r is None:
+                raise ValueError(
+                    "NBLN PPC requires the gene dispersion 'r' field."
+                )
+            return _ppc_nbln_marginal(
+                rng_key,
+                n_samples,
+                self.mu,
+                self.W,
+                self.d,
+                self.r,
                 eta_loc=self.eta_loc,
             )
         if bm in ("lnm", "lnmvcp"):
@@ -195,6 +216,20 @@ class SamplingResultsMixin:
             return _ppc_pln_per_cell_laplace(
                 rng_key, n_samples, self.x_loc, self.eta_loc, self.W, self.d
             )
+        if bm == "nbln":
+            if self.r is None:
+                raise ValueError(
+                    "NBLN PPC requires the gene dispersion 'r' field."
+                )
+            return _ppc_nbln_per_cell_laplace(
+                rng_key,
+                n_samples,
+                self.x_loc,
+                self.eta_loc,
+                self.W,
+                self.d,
+                self.r,
+            )
         if bm in ("lnm", "lnmvcp"):
             return _ppc_lnm_per_cell_laplace(
                 rng_key,
@@ -253,6 +288,18 @@ class SamplingResultsMixin:
         if bm == "pln":
             return _ppc_pln_per_cell(
                 rng_key, n_samples, self.x_loc, self.eta_loc
+            )
+        if bm == "nbln":
+            if self.r is None:
+                raise ValueError(
+                    "NBLN PPC requires the gene dispersion 'r' field."
+                )
+            return _ppc_nbln_per_cell(
+                rng_key,
+                n_samples,
+                self.x_loc,
+                self.eta_loc,
+                self.r,
             )
         if bm in ("lnm", "lnmvcp"):
             return _ppc_lnm_per_cell(
@@ -347,7 +394,11 @@ class SamplingResultsMixin:
             if ref_idx < 0:
                 ref_idx = n_genes_full + ref_idx
             is_alr = True
-        elif bm == "pln":
+        elif bm in ("pln", "nbln"):
+            # PLN and NBLN both produce log-rates ``y_log_rate = mu + W z``;
+            # softmax of those log-rates gives the compositional sample.
+            # The NB vs Poisson choice never enters here -- compositions
+            # are pre-observation-noise.
             mu = jnp.asarray(self.mu)
             W = jnp.asarray(self.W)
             d = self.d

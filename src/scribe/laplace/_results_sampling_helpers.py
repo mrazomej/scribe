@@ -333,6 +333,123 @@ def _alr_to_softmax(
     return jax.nn.softmax(full, axis=-1)
 
 
+# =====================================================================
+# NB-LogNormal predictive samplers
+# =====================================================================
+#
+# Same scaffolding as the PLN samplers above; the only change is that
+# the count layer draws from ``LogMeanNegativeBinomial`` (with the
+# fitted gene dispersion ``r_g``) instead of ``Poisson``.  This is the
+# difference between PLN and NBLN: PLN uses Poisson shot noise on
+# ``exp(x - η)``; NBLN uses a Gamma-Poisson compound, equivalent to
+# ``NB(mean=exp(x - η), concentration=r_g)``.
+#
+# ``_ppc_pln_library_anchored`` is a composition-only sampler
+# (softmax of latent log-rates → Multinomial draws against observed
+# library size) and is *identical* under NBLN, so the dispatch reuses
+# it directly without a separate ``_ppc_nbln_library_anchored``.
+
+
+def _ppc_nbln_marginal(
+    rng_key: jax.Array,
+    n_samples: int,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    r: jnp.ndarray,
+    eta_loc: Optional[jnp.ndarray] = None,
+) -> jnp.ndarray:
+    """Fully marginal NBLN posterior predictive samples.
+
+    Mirrors :func:`_ppc_pln_marginal` but emits NB counts.
+    """
+    from ..stats.distributions import LogMeanNegativeBinomial
+
+    g_genes = int(mu.shape[0])
+    k_factors = int(W.shape[1])
+    k1, k2, k3, k4 = jax.random.split(rng_key, 4)
+    z = jax.random.normal(k1, (n_samples, k_factors), dtype=mu.dtype)
+    eps = jax.random.normal(k2, (n_samples, g_genes), dtype=mu.dtype)
+    x = mu[None, :] + z @ W.T + jnp.sqrt(d)[None, :] * eps
+    if eta_loc is not None:
+        eta_loc_arr = jnp.asarray(eta_loc).reshape(-1)
+        idx = jax.random.randint(k3, (n_samples,), 0, eta_loc_arr.shape[0])
+        eta_sample = eta_loc_arr[idx]
+        log_mean = x - eta_sample[:, None]
+    else:
+        log_mean = x
+    log_mean = jnp.clip(log_mean, _LOG_RATE_MIN, _LOG_RATE_MAX)
+    return LogMeanNegativeBinomial(
+        log_mean=log_mean, concentration=r[None, :]
+    ).sample(k4)
+
+
+def _ppc_nbln_per_cell(
+    rng_key: jax.Array,
+    n_samples: int,
+    x_loc: jnp.ndarray,
+    eta_loc: Optional[jnp.ndarray],
+    r: jnp.ndarray,
+) -> jnp.ndarray:
+    """Per-cell MAP-only NBLN predictive samples.
+
+    Mirrors :func:`_ppc_pln_per_cell` but emits NB counts conditional
+    on the per-cell MAP latent ``(x_loc, eta_loc)``.
+    """
+    from ..stats.distributions import LogMeanNegativeBinomial
+
+    log_mean = (
+        x_loc - eta_loc[:, None] if eta_loc is not None else x_loc
+    )
+    log_mean = jnp.clip(log_mean, _LOG_RATE_MIN, _LOG_RATE_MAX)
+    n_cells, g_genes = log_mean.shape
+    log_mean_b = jnp.broadcast_to(
+        log_mean, (n_samples, n_cells, g_genes)
+    )
+    return LogMeanNegativeBinomial(
+        log_mean=log_mean_b, concentration=r[None, None, :]
+    ).sample(rng_key)
+
+
+def _ppc_nbln_per_cell_laplace(
+    rng_key: jax.Array,
+    n_samples: int,
+    x_loc: jnp.ndarray,
+    eta_loc: Optional[jnp.ndarray],
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    r: jnp.ndarray,
+) -> jnp.ndarray:
+    """Per-cell Laplace-perturbed NBLN predictive samples.
+
+    Adds Gaussian noise from the prior covariance ``Σ = W Wᵀ +
+    diag(d)`` to the per-cell MAP log-rate ``x_loc`` before drawing
+    NB counts -- the standard Laplace posterior-predictive recipe,
+    matching :func:`_ppc_pln_per_cell_laplace` but with NB count
+    sampling.
+    """
+    from ..stats.distributions import LogMeanNegativeBinomial
+
+    n_cells, g_genes = x_loc.shape
+    k_factors = int(W.shape[1])
+    k1, k2, k3 = jax.random.split(rng_key, 3)
+    z = jax.random.normal(
+        k1, (n_samples, n_cells, k_factors), dtype=x_loc.dtype
+    )
+    eps = jax.random.normal(
+        k2, (n_samples, n_cells, g_genes), dtype=x_loc.dtype
+    )
+    x = x_loc[None, :, :] + z @ W.T + jnp.sqrt(d)[None, None, :] * eps
+    if eta_loc is not None:
+        log_mean = x - eta_loc[None, :, None]
+    else:
+        log_mean = x
+    log_mean = jnp.clip(log_mean, _LOG_RATE_MIN, _LOG_RATE_MAX)
+    return LogMeanNegativeBinomial(
+        log_mean=log_mean, concentration=r[None, None, :]
+    ).sample(k3)
+
+
 def _ppc_lnm_marginal(
     rng_key: jax.Array,
     n_samples: int,

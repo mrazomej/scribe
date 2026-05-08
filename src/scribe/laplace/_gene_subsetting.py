@@ -51,25 +51,29 @@ class GeneSubsettingResultsMixin:
             idx = np.where(idx)[0]
 
         bm = _base_model(self.model_config)
-        if bm == "pln":
+        if bm in ("pln", "nbln"):
+            # PLN and NBLN share the same gene-axis tensor shapes
+            # (``mu``, ``W``, ``d`` are length-G; ``x_loc`` is
+            # ``(N, G)``). NBLN additionally has a length-G ``r``
+            # that needs to be sliced by the same gene index.
             return self._subset_pln(idx)
         if bm in ("lnm", "lnmvcp"):
             return self._subset_lnm(idx)
         raise NotImplementedError(f"__getitem__ not implemented for base_model={bm!r}")
 
     def _subset_pln(self, idx: np.ndarray):
-        """Subset PLN gene-axis tensors and metadata.
+        """Subset PLN/NBLN gene-axis tensors and metadata.
 
         Parameters
         ----------
         idx : np.ndarray
-            Integer gene indices in original PLN gene space.
+            Integer gene indices in original PLN/NBLN gene space.
 
         Returns
         -------
         ScribeLaplaceResults
-            New PLN results view with sliced ``mu``, ``W``, ``d``, ``x_loc``,
-            and aligned ``var`` metadata.
+            New PLN/NBLN results view with sliced ``mu``, ``W``, ``d``,
+            ``x_loc`` (and ``r`` for NBLN), with aligned ``var`` metadata.
         """
         idx_jnp = jnp.asarray(idx)
         return replace(
@@ -78,6 +82,7 @@ class GeneSubsettingResultsMixin:
             W=self.W[idx_jnp, :],
             d=self.d[idx_jnp],
             x_loc=self.x_loc[:, idx_jnp] if self.x_loc is not None else None,
+            r=self.r[idx_jnp] if self.r is not None else None,
             n_genes=int(len(idx)),
             n_vars=int(len(idx)) if self.n_vars is not None else None,
             var=_subset_var(self.var, idx),

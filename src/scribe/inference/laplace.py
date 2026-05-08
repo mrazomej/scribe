@@ -64,10 +64,10 @@ def _run_laplace_inference(
         If ``model_config.base_model`` is not in ``{"pln", "lnm"}``.
     """
     base_model = getattr(model_config, "base_model", None)
-    if base_model not in ("pln", "lnm", "lnmvcp"):
+    if base_model not in ("pln", "nbln", "lnm", "lnmvcp"):
         raise ValueError(
             f"inference_method='laplace' is currently supported for "
-            f"PLN, LNM, and LNMVCP (got base_model={base_model!r}). "
+            f"PLN, NBLN, LNM, and LNMVCP (got base_model={base_model!r}). "
             "Use 'svi'/'vae'/'mcmc' for other models."
         )
 
@@ -84,7 +84,7 @@ def _run_laplace_inference(
     # via PRIOR_KEY_ALIASES). Plain LNM has no capture submodel so
     # no anchor is set.
     capture_anchor = None
-    if base_model in ("pln", "lnmvcp"):
+    if base_model in ("pln", "nbln", "lnmvcp"):
         priors_extra = (
             getattr(model_config.priors, "__pydantic_extra__", None) or {}
         )
@@ -161,6 +161,19 @@ def _run_laplace_inference(
             **common_kwargs,
             x_loc=run_result.x_loc,
             eta_loc=run_result.eta_loc,
+        )
+
+    if base_model == "nbln":
+        # NBLN: same per-cell shape as PLN (x_loc is the log-rate
+        # MAP, eta_loc the optional capture offset), plus one extra
+        # gene-specific global ``r`` (NB dispersion) populated from
+        # the ``log_r`` slot of the engine's globals dict.
+        r_value = jnp.exp(g["log_r"]) if "log_r" in g else None
+        return ScribeLaplaceResults(
+            **common_kwargs,
+            x_loc=run_result.x_loc,
+            eta_loc=run_result.eta_loc,
+            r=r_value,
         )
 
     # LNM / LNMVCP: route the per-cell latent (the engine packed it

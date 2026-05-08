@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 
-from ._results_likelihood_helpers import _ll_lnm, _ll_pln
+from ._results_likelihood_helpers import _ll_lnm, _ll_nbln, _ll_pln
 from ._results_shared import _base_model
 
 
@@ -49,6 +49,16 @@ class LikelihoodResultsMixin:
         bm = _base_model(self.model_config)
         if bm == "pln":
             return _ll_pln(counts, self.x_loc, self.eta_loc, return_by)
+        if bm == "nbln":
+            if self.r is None:
+                raise ValueError(
+                    "NBLN log-likelihood requires the gene dispersion 'r' "
+                    "field on the result. This result was constructed "
+                    "without it -- check the inference path."
+                )
+            return _ll_nbln(
+                counts, self.x_loc, self.eta_loc, self.r, return_by
+            )
         if bm in ("lnm", "lnmvcp"):
             return _ll_lnm(
                 counts,

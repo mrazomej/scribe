@@ -120,6 +120,11 @@ class ScribeLaplaceResults(
     mu_T: Optional[jnp.ndarray] = None
     r_T: Optional[jnp.ndarray] = None
 
+    # NB-LogNormal gene-specific dispersion ``r_g`` (length G). Only
+    # populated for ``base_model == "nbln"``; ``None`` for PLN /
+    # LNM / LNMVCP.
+    r: Optional[jnp.ndarray] = None
+
     var: Optional[Any] = None
     obs: Optional[Any] = None
     n_obs: Optional[int] = None

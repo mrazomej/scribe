@@ -550,18 +550,18 @@ def build_config_from_preset(
         )
 
         _wants_compositional_input = model_lower in ("lnm", "lnmvcp") or (
-            model_lower == "pln" and _has_capture_anchor
+            model_lower in ("pln", "nbln") and _has_capture_anchor
         )
         if _wants_compositional_input and vae_input_transform == "log1p":
             resolved_vae_input_transform = "log1p_prop"
 
         # Resolve the ``vae_standardize`` sentinel. ``None`` means "pick a
-        # sensible per-model default": LNM and PLN models benefit from
+        # sensible per-model default": LNM, PLN, and NBLN benefit from
         # standardization, while every other VAE model preserves its
         # historical default of ``False``.
         if vae_standardize is None:
             resolved_vae_standardize = model_lower in (
-                "lnm", "lnmvcp", "pln"
+                "lnm", "lnmvcp", "pln", "nbln"
             )
         else:
             resolved_vae_standardize = bool(vae_standardize)
