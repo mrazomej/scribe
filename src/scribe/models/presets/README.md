@@ -11,14 +11,16 @@ Unified factory for creating SCRIBE models.
 
 ## Supported Models
 
-| Model Type | Description                                                                             |
-| ---------- | --------------------------------------------------------------------------------------- |
-| `nbdm`     | Negative Binomial Dropout Model                                                         |
-| `zinb`     | Zero-Inflated Negative Binomial                                                         |
-| `nbvcp`    | NB with Variable Capture Probability                                                    |
-| `zinbvcp`  | ZINB with Variable Capture Probability                                                  |
-| `lnm`      | Logistic-Normal Multinomial (NB total × multinomial composition via linear-decoder VAE) |
-| `lnmvcp`   | LNM with per-cell variable capture probability on the totals NB submodel                |
+| Model Type | Description                                                                                 |
+| ---------- | ------------------------------------------------------------------------------------------- |
+| `nbdm`     | Negative Binomial Dropout Model                                                             |
+| `zinb`     | Zero-Inflated Negative Binomial                                                             |
+| `nbvcp`    | NB with Variable Capture Probability                                                        |
+| `zinbvcp`  | ZINB with Variable Capture Probability                                                      |
+| `lnm`      | Logistic-Normal Multinomial (NB total × multinomial composition via linear-decoder VAE)     |
+| `lnmvcp`   | LNM with per-cell variable capture probability on the totals NB submodel                    |
+| `pln`      | Poisson-LogNormal (per-gene Poisson on correlated log-normal rates via linear-decoder VAE)  |
+| `nbln`     | NB-LogNormal (per-gene NB on log-normal-modulated means; adds gene dispersion `r_g` global) |
 
 ## Configuration Options
 

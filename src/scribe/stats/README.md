@@ -71,6 +71,14 @@ Custom probability distribution classes:
 - **`BetaPrime(concentration1, concentration0)`**: Beta Prime distribution with
   odds-of-Beta convention. Used for modeling odds ratios in the SCRIBE model.
 
+- **`LogMeanNegativeBinomial(log_mean, concentration)`**: Negative Binomial
+  parameterised by `(log_mean, concentration)`, matching the failure-logit
+  derivation in `paper/_nb_lognormal.qmd`. Computes `log_prob` entirely in
+  log-space via softplus identities, so no `exp(log_mean)` ever materialises
+  on the gradient path. Used by the NB-LogNormal likelihood
+  (`scribe.models.components.likelihoods.NBLogNormalLikelihood`) and the
+  matching Newton kernel (`scribe.laplace._newton_nbln`).
+
 - **`LowRankLogisticNormal(loc, cov_factor, cov_diag)`**: Low-rank
   Logistic-Normal distribution for compositional data using the Additive
   Log-Ratio (ALR) transformation.

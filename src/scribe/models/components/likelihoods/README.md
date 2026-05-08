@@ -13,6 +13,7 @@ likelihoods/
 ├── vcp.py               # VCP variants (NB and ZINB with capture probability)
 ├── lnm.py               # Logistic-Normal Multinomial (NB total × multinomial)
 ├── pln.py               # Poisson-LogNormal (per-gene Poisson from log-normal rates)
+├── nbln.py              # NB-LogNormal (per-gene NB on log-normal-modulated means)
 └── README.md            # This file
 ```
 
@@ -29,6 +30,7 @@ likelihoods/
 | `LNMWithVCPLikelihood`                | lnm.py               | LNM with per-cell VCP on the totals NB submodel                          |
 | `select_alr_reference`                | lnm.py               | Data-adaptive ALR reference gene selection (highest geometric mean)      |
 | `PoissonLogNormalLikelihood`          | pln.py               | Per-gene Poisson from correlated log-normal rates via linear-decoder VAE |
+| `NBLogNormalLikelihood`               | nbln.py              | Per-gene NB on log-normal-modulated means; gene dispersion `r_g` global  |
 
 Each concrete class implements both the **generative** side (`sample()`,
 used by NumPyro during inference) and the **evaluation** side

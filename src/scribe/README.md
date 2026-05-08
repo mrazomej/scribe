@@ -7,19 +7,22 @@ uncertainty quantification in single-cell genomics.
 
 ## Overview
 
-SCRIBE offers three complementary inference methods—**SVI** (Stochastic
-Variational Inference), **MCMC** (Markov Chain Monte Carlo), and **VAE**
-(Variational Autoencoder)—across multiple probabilistic models specifically
-designed for single-cell count data. The package emphasizes flexibility,
-scalability, and rigorous uncertainty quantification.
+SCRIBE offers four complementary inference methods—**SVI** (Stochastic
+Variational Inference), **MCMC** (Markov Chain Monte Carlo), **VAE**
+(Variational Autoencoder), and **Laplace** (per-cell Newton MAP + Gaussian
+Hessian-curvature posterior, encoder-free)—across multiple probabilistic
+models specifically designed for single-cell count data. The package
+emphasizes flexibility, scalability, and rigorous uncertainty
+quantification.
 
 ### Key Features
 
 - **🎯 Simple API**: `scribe.fit()` with flat kwargs and sensible defaults
-- **🧬 Specialized Models**: Five probabilistic models designed for scRNA-seq
-  data
+- **🧬 Specialized Models**: Eight probabilistic models designed for scRNA-seq
+  data (NBDM, ZINB, NBVCP, ZINBVCP, LNM, LNMVCP, PLN, NBLN)
 - **⚡ Multiple Inference**: SVI for speed, MCMC for accuracy, VAE for
-  representation learning
+  representation learning, Laplace for sharp per-cell posteriors without
+  an encoder
 - **🔧 Flexible Parameterization**: Three parameterizations with
   constrained/unconstrained variants
 - **📊 Rich Analysis**: Comprehensive posterior analysis and visualization tools
@@ -518,21 +521,25 @@ normalized = normalize_counts_from_posterior(
 
 ### When to Use Each Model
 
-| Model        | Best For                             | Characteristics                           |
-|--------------|--------------------------------------|-------------------------------------------|
-| **NBDM**     | Baseline analysis, well-behaved data | Simple, interpretable, fast               |
-| **ZINB**     | Data with excess zeros               | Handles technical/biological dropouts     |
-| **NBVCP**    | Variable sequencing depth            | Models capture efficiency                 |
-| **ZINBVCP**  | Complex technical variation          | Most comprehensive model                  |
-| **LNM** | Explicit gene-gene correlations     | Low-rank covariance via linear-decoder VAE |
+| Model        | Best For                                                       | Characteristics                                                  |
+|--------------|----------------------------------------------------------------|------------------------------------------------------------------|
+| **NBDM**     | Baseline analysis, well-behaved data                           | Simple, interpretable, fast                                      |
+| **ZINB**     | Data with excess zeros                                         | Handles technical/biological dropouts                            |
+| **NBVCP**    | Variable sequencing depth                                      | Models capture efficiency                                        |
+| **ZINBVCP**  | Complex technical variation                                    | Most comprehensive model                                         |
+| **LNM**      | Explicit gene-gene correlations on compositions                | Low-rank covariance via ALR linear-decoder VAE                   |
+| **LNMVCP**   | LNM + variable sequencing depth                                | LNM with per-cell capture on the totals NB submodel              |
+| **PLN**      | Gene-gene correlations on absolute counts                      | Per-gene Poisson on log-normal rates; supports Laplace inference |
+| **NBLN**     | Gene-gene correlations + zero-spike on sparse genes (NB+lognormal) | Per-gene NB on log-normal-modulated means; gene dispersion `r_g` |
 
 ### When to Use Each Inference Method
 
-| Method   | Speed  | Accuracy              | Use Case                        |
-|----------|--------|-----------------------|---------------------------------|
-| **SVI**  | Fast   | Good approximation    | Exploration, large datasets     |
-| **MCMC** | Slow   | Exact                 | Final analysis, publication     |
-| **VAE**  | Medium | Good + representation | Dimension reduction, clustering |
+| Method      | Speed  | Accuracy                            | Use Case                                                                       |
+|-------------|--------|-------------------------------------|--------------------------------------------------------------------------------|
+| **SVI**     | Fast   | Good approximation                  | Exploration, large datasets                                                    |
+| **MCMC**    | Slow   | Exact                               | Final analysis, publication                                                    |
+| **VAE**     | Medium | Good + representation               | Dimension reduction, clustering                                                |
+| **Laplace** | Medium | Sharp per-cell posterior at the MAP | PLN / NBLN / LNM / LNMVCP without an encoder; per-cell Newton + Hessian-curvature posterior |
 
 ### Parameterization Guide
 

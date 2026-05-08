@@ -26,17 +26,46 @@ class, and orbax checkpointer. The only cross-submodule dependency is
 
 | Model | `inference_method="laplace"` | Notes |
 |---|---|---|
-| `pln` | ✅ | Full path: per-cell `(x, η)` joint Newton with Schur back-substitution + Sherman–Morrison. |
+| `pln` | ✅ | Per-cell `(x, η)` joint Newton with Schur back-substitution + Sherman–Morrison. |
+| `nbln` | ✅ | NB-LogNormal: per-cell `(x, η)` Newton with the NB-Hessian diagonal `a_g = (u_g + r_g) p_g (1 - p_g)`. Adds gene dispersion `r` as a global; everything else mirrors PLN. |
 | `lnm` | ✅ | Per-cell composition Newton; `d_mode='learned'` → Newton over `y_alr` (G−1 dim) with Woodbury; `d_mode='low_rank'` → Newton over `z` (k dim, no Woodbury). |
 | `lnmvcp` | ✅ | LNM composition Newton + scalar Newton on per-cell `eta_capture`. The `(z, η)` Hessian is **block-diagonal** (multinomial conditions on observed `u_T`, NB conditions on η only) so the two blocks decouple cleanly. |
 | `nbdm`, `nbvcp`, `zinb`, `zinbvcp` | ❌ | DM-family Laplace would require its own Newton kernel — no current implementation. |
+
+## Architecture
+
+All four supported models share the same generic Laplace-EM driver
+(`_em.run_laplace_em`).  The driver owns every piece of cross-model
+scaffolding: outer Adam, mini-batching, three-mode divergence detection,
+best-snapshot recording, smoothed-loss patience early stopping, restore-best,
+orbax checkpoint save/resume, progress reporting, final convergence check.
+
+Per-model code lives in a thin observation-model adapter (`_obs_pln.py`,
+`_obs_nbln.py`, `_obs_lnm.py`) that implements four hooks on the
+`LaplaceObservationModel` ABC:
+
+- `init_state` — build globals (`params`), per-cell latent (`latent_loc`),
+  optional `eta_loc`, and any aux data.
+- `loss_fn` — call the model's Newton kernel(s) under `stop_gradient`,
+  compute `log det(-H)` at live globals, sum the per-cell joint log-density.
+- `final_sweep` — full-data Newton pass for diagnostics.
+- `pack_result` — assemble the canonical `LaplaceRunResult`.
+
+Adding a new Laplace-supported observation channel reduces to writing one
+~250-line adapter and adding one `elif` arm in
+`LaplaceInferenceEngine.run_inference` — there is no engine-level
+scaffolding to duplicate.
 
 ## File layout
 
 ```text
 laplace/
   __init__.py             # Public API re-exports
-  engine.py               # LaplaceInferenceEngine + per-model loops
+  engine.py               # Thin LaplaceInferenceEngine dispatcher (~150 lines)
+  _em.py                  # Generic Laplace-EM driver + LaplaceObservationModel ABC
+  _obs_pln.py             # PLN observation-model adapter
+  _obs_nbln.py            # NBLN observation-model adapter
+  _obs_lnm.py             # LNM/LNMVCP observation-model adapter
   results.py              # ScribeLaplaceResults dataclass + mixin composition
   _core.py                # Model-agnostic parameter and correlation accessors
   _dispatch.py            # base_model-dispatching accessors (map/distributions/embeddings)
@@ -47,8 +76,9 @@ laplace/
   _results_shared.py      # Shared constants and utility helpers
   _results_sampling_helpers.py   # Module-private PLN/LNM PPC backends
   _results_likelihood_helpers.py # Module-private PLN/LNM likelihood backends
-  checkpoint.py           # Orbax checkpoint helpers (LNM/PLN-aware)
+  checkpoint.py           # Orbax checkpoint helpers
   _newton_pln.py          # PLN Newton kernels (joint x, η)
+  _newton_nbln.py         # NBLN Newton kernels (joint x, η; NB Hessian)
   _newton_lnm.py          # LNM Newton kernels (z, y_alr, scalar η)
 ```
 
@@ -255,19 +285,30 @@ The engine has three layered defenses:
    `scribe.laplace._newton_lnm.newton_step_y_alr`. The denominator is
    floored at 1% of `1/N` (a relative floor that scales with cell total
    count), well above the float32 catastrophic-cancellation regime.
-2. **Per-cell NaN/Inf mask** inside `_lnm_laplace_elbo`. Per-cell ELBO
+2. **Per-cell NaN/Inf mask** inside each observation-model `loss_fn`
+   (`_obs_pln.py`, `_obs_nbln.py`, `_obs_lnm.py`).  Per-cell ELBO
    contributions that go non-finite are replaced with zeros before the
    batch sum, masking the divergent cells from the current step's
    gradient on globals.
-3. **Outer-loop divergence detector** in `_run_lnm_inference`. Two
-   conditions trigger a clean abort with a constructive error:
+3. **Outer-loop divergence detector** in `_em.run_laplace_em`.  Three
+   conditions trigger a clean abort that restores the best snapshot
+   seen so far:
    - Loss becomes NaN or Inf.
-   - `|loss|` grows by more than 1000× from `|init_loss|` (after a
-     50-step warmup).
+   - Loss climbs more than `0.5 × |init_loss|` above its running min
+     (after a 50-step warmup).
+   - `|loss|` grows by more than 1000× from `|init_loss|` (last-line
+     backstop).
 
-When the abort fires, you'll see a `RuntimeError` with diagnostic
-context (worst per-cell Newton grad at the failing step) and remediation
-suggestions:
+When a divergence guard fires, the driver **restores the best snapshot
+seen so far** and continues through the final-convergence sweep + result
+packaging.  The returned `LaplaceRunResult` carries
+`divergence_aborted=True` and `early_stopped=True`, plus the best-loss
+globals and per-cell MAPs at the running-minimum loss — typically a
+meaningful improvement over the data-driven init even when the run
+aborted early.  Look for the warning emitted to the
+`scribe.laplace._em` logger to know which guard fired.
+
+Remediation, in order of escalation:
 
 - Bump `laplace_config['n_newton_steps']` to 20–30 to give Newton more
   iterations to escape the unstable regime before damage propagates.
@@ -277,7 +318,7 @@ suggestions:
   drop cells with `u_T < 50` or with one gene comprising > 80% of
   counts) before fitting.
 
-After an abort, you can identify the offending cells by inspecting
+After an abort, identify the offending cells by inspecting
 `result.final_grad_norms` from a shorter completed run — cells with
 `final_grad_norms[c] >> newton_tolerance` are the ones to investigate.
 

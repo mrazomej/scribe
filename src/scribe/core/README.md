@@ -168,6 +168,30 @@ Key differences from LNM data-init:
   All intermediates are float32.
 - Encoder standardization is reused from `lnm_data_init`.
 
+### NBLN Data-Init Helpers (`nbln_data_init.py`)
+
+Data-derived initializers for the NB-LogNormal family (`model="nbln"`).
+Reuses the PLN VAE warm-start path (decoder bias, PCA loadings, encoder
+standardization) and adds a method-of-moments estimator for the gene
+dispersion `r_g`.
+
+```python
+from scribe.core.nbln_data_init import (
+    empirical_log_mean_from_counts,    # re-export from pln_data_init
+    pca_loadings_init,                 # re-export from pln_data_init
+    empirical_dispersion_from_counts,  # → method-of-moments r_g
+    inject_nbln_vae_data_init,         # one-shot ModelConfig transformer
+)
+```
+
+The moment estimator computes `r_g_hat = mean[u_g]² / (var[u_g] - mean[u_g])`
+with a floor on the denominator for sub-Poisson genes. Note that this is
+the *marginal* moment; under NB-LogNormal the marginal variance pools NB
+and lognormal contributions, so the estimator systematically
+**underestimates** the conditional `r_g`. Used as a global scalar prior
+location (`r_prior_loc = log(median(r_hat))`) plumbed through
+`build_r_spec`; the optimizer adjusts during training.
+
 ### Cell Type Assignment (`cell_type_assignment.py`)
 ### Gene Coverage Filtering (`gene_coverage.py`)
 
