@@ -272,3 +272,130 @@ class SamplingResultsMixin:
         raise NotImplementedError(
             f"get_map_ppc_samples not implemented for base_model={bm!r}"
         )
+
+    def get_compositional_samples(
+        self,
+        n_samples: int = 2048,
+        rng_key: Optional[jax.Array] = None,
+        chunk_size: int = 256,
+        store_samples: bool = True,
+    ):
+        """Draw simplex compositions from the fitted marginal distribution.
+
+        Generates samples from the model's *generative marginal* — the
+        same procedure as the ``level="marginal"`` PPC sampler but
+        stops at the simplex step (no observation noise applied):
+
+            z ∼ 𝒩(0, 𝐈ₖ),  ε ∼ 𝒩(0, 𝐈_{Gₑₑ𝚏𝚏})
+            latent = μ + 𝑊 z + √d ⊙ ε
+            ρ = softmax_full(latent)
+
+        For LNM / LNMVCP, the latent lives in (G−1)-dim ALR space and
+        is augmented with a zero at ``alr_reference_idx`` before
+        softmax — the standard ALR⁻¹ map. For PLN, the latent is
+        G-dim log-rate space and softmax is applied directly; the
+        per-cell capture offset η cancels because softmax is
+        invariant to a global additive shift (the rigid-translation
+        degeneracy in operation).
+
+        Each draw is an *independent imaginary cell* from the
+        model's fitted population distribution — no observed-cell
+        information enters any of the latents. This is the right
+        sample source for population-level downstream analyses
+        (empirical DE, gene-set tests, biological summaries on
+        compositions) on LNM and PLN fits, mirroring
+        ``ScribeMCMCResults.get_compositional_samples`` for the
+        DM/NB-family path.
+
+        Parameters
+        ----------
+        n_samples : int, default 2048
+            Total number of fresh simplex draws.
+        rng_key : jax.Array, optional
+            JAX PRNG key. Defaults to ``jax.random.PRNGKey(0)``.
+        chunk_size : int, default 256
+            Per-chunk sample count. Each chunk is moved to host
+            memory before the next is drawn so the device peak
+            stays bounded by ``chunk_size · G · 4 bytes``.
+        store_samples : bool, default True
+            If True, store the returned array in
+            ``self.compositional_samples`` for reuse without
+            re-sampling.
+
+        Returns
+        -------
+        np.ndarray, shape ``(n_samples, G)``
+            Full-dimensional simplex samples (rows sum to 1).
+
+        Raises
+        ------
+        NotImplementedError
+            If the base model is not PLN, LNM, or LNMVCP.
+        """
+        import numpy as _np
+
+        if rng_key is None:
+            rng_key = jax.random.PRNGKey(0)
+
+        bm = _base_model(self.model_config)
+        if bm in ("lnm", "lnmvcp"):
+            mu = jnp.asarray(self.mu)
+            W = jnp.asarray(self.W)
+            d = self.d
+            ref_idx = int(getattr(self.model_config, "alr_reference_idx", -1))
+            n_genes_full = int(W.shape[0]) + 1
+            if ref_idx < 0:
+                ref_idx = n_genes_full + ref_idx
+            is_alr = True
+        elif bm == "pln":
+            mu = jnp.asarray(self.mu)
+            W = jnp.asarray(self.W)
+            d = self.d
+            ref_idx = None
+            n_genes_full = int(W.shape[0])
+            is_alr = False
+        else:
+            raise NotImplementedError(
+                f"get_compositional_samples not implemented for "
+                f"base_model={bm!r}"
+            )
+
+        if d is None:
+            d = jnp.zeros(W.shape[0], dtype=W.dtype)
+        else:
+            d = jnp.asarray(d)
+        sqrt_d = jnp.sqrt(jnp.maximum(d, 0.0))
+
+        G_eff = int(mu.shape[0])
+        k = int(W.shape[1])
+
+        n_total = int(n_samples)
+        n_chunks = (n_total + chunk_size - 1) // chunk_size
+        chunk_keys = jax.random.split(rng_key, n_chunks)
+        pieces = []
+        for i in range(n_chunks):
+            start = i * chunk_size
+            end = min(start + chunk_size, n_total)
+            size = end - start
+            k_z, k_eps = jax.random.split(chunk_keys[i])
+            z = jax.random.normal(k_z, (size, k), dtype=mu.dtype)
+            eps = jax.random.normal(k_eps, (size, G_eff), dtype=mu.dtype)
+            latent = mu[None, :] + z @ W.T + sqrt_d[None, :] * eps
+
+            if is_alr:
+                # ALR → simplex: augment with a zero at the reference
+                # position, then softmax over G dims.
+                full = jnp.zeros((size, n_genes_full), dtype=latent.dtype)
+                other = [g for g in range(n_genes_full) if g != ref_idx]
+                full = full.at[..., jnp.asarray(other)].set(latent)
+                simplex = jax.nn.softmax(full, axis=-1)
+            else:
+                # PLN: softmax of log-rate; η cancels.
+                simplex = jax.nn.softmax(latent, axis=-1)
+
+            pieces.append(_np.asarray(simplex))
+
+        out = _np.concatenate(pieces, axis=0)
+        if store_samples:
+            self.compositional_samples = out
+        return out

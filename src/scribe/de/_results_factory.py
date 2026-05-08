@@ -245,6 +245,39 @@ def compare(
             "logistic-normal model comparisons."
         )
 
+    # When both inputs are LNM / PLN result objects and method=="empirical",
+    # short-circuit to the marginal-driven empirical pipeline.  This
+    # samples fresh simplex draws from each fit's generative marginal
+    # (the level="marginal" PPC sample source, stopped at the simplex
+    # step) rather than trying to drive the existing posterior-samples
+    # pipeline with per-cell-conditional latents that DE doesn't want.
+    if _both_lnm_pln_results and method == "empirical":
+        if mixture_weighted:
+            raise NotImplementedError(
+                "mixture_weighted=True for LNM/PLN empirical DE is not "
+                "yet supported. Use method='parametric' for the analytic "
+                "Gaussian path, which handles non-mixture fits cleanly."
+            )
+        if component_A is not None or component_B is not None:
+            raise NotImplementedError(
+                "Per-component slicing is not implemented for LNM/PLN "
+                "empirical DE. The marginal sampler operates on the "
+                "fitted globals (μ, 𝑊, 𝑑), which already define the "
+                "model's marginal composition distribution."
+            )
+        return _compare_empirical_from_marginal(
+            model_A,
+            model_B,
+            gene_names=gene_names,
+            label_A=label_A,
+            label_B=label_B,
+            n_samples_marginal=int(n_samples_dirichlet)
+            if n_samples_dirichlet > 1
+            else int(batch_size),
+            rng_key=rng_key,
+            gene_mask=gene_mask,
+        )
+
     # When both inputs are LNM / PLN result objects and the parametric
     # path is requested, auto-convert via the extraction adapter and
     # fall through to the dict-driven branch below.
@@ -769,6 +802,134 @@ def _compare_empirical(
         # of ndim heuristics.
         p_post_layout=p_post_layout,
         phi_post_layout=phi_post_layout,
+    )
+
+    if gene_mask is not None:
+        result._gene_mask = jnp.asarray(_np.asarray(gene_mask, dtype=bool))
+    result._all_gene_names = (
+        list(all_gene_names) if all_gene_names is not None else None
+    )
+
+    return result
+
+
+def _compare_empirical_from_marginal(
+    results_A,
+    results_B,
+    *,
+    gene_names: Optional[List[str]],
+    label_A: str,
+    label_B: str,
+    n_samples_marginal: int,
+    rng_key,
+    gene_mask: Optional[jnp.ndarray] = None,
+) -> "ScribeEmpiricalDEResults":
+    """Empirical DE driven by samples from the LNM/PLN fitted marginal.
+
+    Generates fresh simplex samples from each condition's fitted
+    generative-marginal distribution
+    (``softmax_full(𝒩(μ, 𝑊𝑊ᵗ + diag(d)))``), then runs them
+    through the standard CLR-difference / lfsr / PEFP machinery
+    just like any other empirical DE.
+
+    The samples are *not* posterior samples of any per-cell latent
+    — they are draws from the model's generative marginal, the
+    population-level distribution that DE actually asks about.
+    This sidesteps the per-cell-conditional-posterior problem that
+    would arise from feeding ``q(z_c | u_c)`` samples into the
+    empirical pipeline (see
+    paper/_diffexp_lnm_pln_robustness.qmd for the structural
+    argument).
+
+    Parameters
+    ----------
+    results_A, results_B : object
+        ``ScribeLaplaceResults`` or ``ScribeVAEResults`` with PLN
+        or LNM ``base_model``.
+    n_samples_marginal : int
+        Number of fresh simplex draws per condition.  Drives the
+        Monte Carlo precision of the resulting lfsr / PEFP
+        estimates.
+    rng_key : jax.Array
+        Split internally into one key per condition so the two
+        condition-A and condition-B samples are independent.
+    gene_mask : jnp.ndarray, optional
+        Boolean keep-mask in full-G space.  Genes marked False
+        are aggregated into a single "other" pseudo-gene before
+        CLR (matching the existing empirical pipeline).
+    """
+    import jax
+
+    from ._empirical import compute_delta_from_simplex
+    from .results import ScribeEmpiricalDEResults
+
+    if rng_key is None:
+        rng_key = jax.random.PRNGKey(0)
+    k_A, k_B = jax.random.split(rng_key)
+
+    # Each result object self-samples its compositional marginal — same
+    # procedure used by the level="marginal" PPC, but stopping at the
+    # simplex step (no observation noise).  See
+    # ``ScribeLaplaceResults.get_compositional_samples`` and the
+    # equivalent VAE-mixin methods.
+    simplex_A = results_A.get_compositional_samples(
+        n_samples=int(n_samples_marginal),
+        rng_key=k_A,
+        store_samples=False,
+    )
+    simplex_B = results_B.get_compositional_samples(
+        n_samples=int(n_samples_marginal),
+        rng_key=k_B,
+        store_samples=False,
+    )
+
+    if simplex_A.shape != simplex_B.shape:
+        raise ValueError(
+            f"Simplex samples must share shape; got A={simplex_A.shape}, "
+            f"B={simplex_B.shape}. Both conditions need the same gene set."
+        )
+
+    delta_samples = compute_delta_from_simplex(
+        simplex_A, simplex_B, gene_mask=gene_mask,
+    )
+
+    all_gene_names = gene_names
+    kept_gene_names = gene_names
+    if gene_mask is not None and gene_names is not None:
+        gene_mask_arr = _np.asarray(gene_mask, dtype=bool)
+        kept_gene_names = [n for n, m in zip(gene_names, gene_mask_arr) if m]
+
+    D = delta_samples.shape[1]
+    if kept_gene_names is None:
+        kept_gene_names = [f"gene_{i}" for i in range(D)]
+    elif len(kept_gene_names) != D:
+        raise ValueError(
+            f"gene_names has length {len(kept_gene_names)} but samples "
+            f"have D={D} genes."
+        )
+
+    result = ScribeEmpiricalDEResults(
+        delta_samples=delta_samples,
+        gene_names=kept_gene_names,
+        label_A=label_A,
+        label_B=label_B,
+        # No (r, p, mu, phi) posterior samples for LNM/PLN models —
+        # leave the bio fields None (consistent with what
+        # ``compute_biological=False`` would do for NB-family).
+        r_samples_A=None, r_samples_B=None,
+        p_samples_A=None, p_samples_B=None,
+        mu_samples_A=None, mu_samples_B=None,
+        phi_samples_A=None, phi_samples_B=None,
+        simplex_A=simplex_A,
+        simplex_B=simplex_B,
+        # mu_map populated from the marginal's expected per-gene
+        # composition, computed analytically from (μ, 𝑊, d).  This
+        # keeps the standard ``ScribeEmpiricalDEResults`` summary
+        # methods happy without requiring (r, p) posterior samples.
+        mu_map_A=_np.asarray(simplex_A).mean(axis=0),
+        mu_map_B=_np.asarray(simplex_B).mean(axis=0),
+        p_post_layout=None,
+        phi_post_layout=None,
     )
 
     if gene_mask is not None:
