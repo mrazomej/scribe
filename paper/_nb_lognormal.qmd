@@ -6,6 +6,9 @@ csl: ieee.csl
 format:
   html:
     filters: [tikz.lua, strip-yaml-frontmatter.lua, maintext-filter.lua, sitext-filter.lua]
+    theme:
+      light: cosmo
+      dark: superhero 
 ---
 
 # The Negative Binomial-LogNormal model {#sec-nb-lognormal}
@@ -46,7 +49,9 @@ We will show that this model:
 
 1. Is a **strict generalization** of the independent Negative Binomial baseline:
 setting the regulatory covariance to zero (so that $z_c = 0$ for all cells $c$)
-recovers the shared-$p$ NBDM model of @sec-dirichlet-multinomial exactly.
+recovers independent gene-specific NB likelihoods; under the additional
+shared-$p$ constraint $\tilde{\mu}_g / r_g = \text{const}$, this further
+reduces to the NBDM model of @sec-dirichlet-multinomial.
 
 2. **Approaches** the Poisson-LogNormal in the limit $r_g \to \infty$ uniformly
 across genes, in which the bursty NB collapses to its Poisson limit.
@@ -170,13 +175,13 @@ the matrix of regulatory states. The structure is depicted below.
 ]
   % Globals
   \node[param] (Sigma) {$\underline{\underline{\Sigma}}$};
-  \node[param, right=of Sigma, xshift=10mm] (mu) {$\tilde{\mu}_g$};
-  \node[param, right=of mu] (rg) {$r_g$};
+  \node[param, right=of Sigma, xshift=-10mm] (mu) {$\tilde{\mu}_g$};
+  \node[param, right=of mu, xshift=-10mm] (rg) {$r_g$};
 
   % Cell-level
-  \node[latent, below=of Sigma] (z) {$\underline{z}_c$};
-  \node[latent, below=of mu, xshift=6mm] (lam) {$\lambda_{cg}$};
-  \node[obs, below=of lam] (u) {$u_{cg}$};
+  \node[latent, below=of Sigma, yshift=1mm] (z) {$\underline{z}_c$};
+  \node[latent, right=of z, xshift=-5mm] (lam) {$\lambda_{cg}$};
+  \node[obs, below=of lam, yshift=7mm] (u) {$u_{cg}$};
 
   % Edges
   \draw[->] (Sigma) -- (z);
@@ -187,12 +192,12 @@ the matrix of regulatory states. The structure is depicted below.
 
   % Gene plate
   \begin{scope}[on background layer]
-    \node[plate, fit=(lam)(u), label={[yshift=1mm]north east:$g=1,\ldots,G$}] (geneplate) {};
+    \node[plate, fit=(lam)(u), label={[yshift=-4mm,xshift=4mm]north east:$g=1,\ldots,G$}] (geneplate) {};
   \end{scope}
 
   % Cell plate
   \begin{scope}[on background layer]
-    \node[plate, fit=(z)(geneplate), label={[yshift=1mm]north east:$c=1,\ldots,C$}] (cellplate) {};
+    \node[plate, fit=(z)(geneplate), label={[yshift=-3mm,xshift=0mm]north east:$c=1,\ldots,C$}] (cellplate) {};
   \end{scope}
 \end{tikzpicture}
 ```
@@ -284,7 +289,7 @@ $\underline{z}_c$, the conjugacy in @eq-nbln-gamma-poisson would no longer apply
 
 | Quantity | Depends on $\underline{z}_c$? | Expression |
 |---|---|---|
-| Conditional mean $\mathbb{E}[u_{cg} \mid \underline{z}_c]$ | Yes | $\mu_{cg}\, e^{z_{cg}}$ |
+| Conditional mean $\langle u_{cg} \mid \underline{z}_c \rangle$ | Yes | $\mu_{cg}\, e^{z_{cg}}$ |
 | Success probability $p_g(z_{cg})$ | Yes | $r_g / (r_g + \mu_{cg}\, e^{z_{cg}})$ |
 | Conditional variance $\text{Var}(u_{cg} \mid \underline{z}_c)$ | Yes | $\mu_{cg}\, e^{z_{cg}} + (\mu_{cg}\, e^{z_{cg}})^2 / r_g$ |
 | Dispersion $r_g$ | **No** | gene-specific constant |
@@ -372,20 +377,27 @@ snapshot, has effectively reached the bursty NB stationary distribution
 **conditional on its own slow regulatory state**, but different cells are
 sampled from different points along the slow OU trajectory.
 
-Under this assumption, the regulatory state perturbs the burst rate
-multiplicatively. If transcription factors regulate the burst frequency
-$k_{\text{on}}$ of gene $g$ through a Hill-function dose-response, a
-linearization in log-TF concentration gives
+Under this assumption, the regulatory state perturbs the NB mean
+multiplicatively while holding the dispersion $r_g$ fixed. In the one-state
+bursty promoter parameterization, the NB mean is
+$r_g \cdot b_g$ where $r_g = k_{i,g}/\gamma_g$ is the burst frequency and
+$b_g$ is the mean burst size. Since $r_g$ is held constant in our model
+(@eq-nbln-lambda-gamma), the regulatory perturbation acts on the **burst size**
+parameter:
 
 $$
-k_{\text{on}, g}(\underline{z}_c) =
-k_{\text{on}, g}^{(0)}\,
+b_g(\underline{z}_c) =
+b_g^{(0)}\,
 \exp\!\left(\underline{w}_g^\top \underline{u}_c\right),
-$${#eq-nbln-burst-frequency}
+$${#eq-nbln-burst-size}
 
 where $\underline{u}_c \in \mathbb{R}^K$ is the vector of TF activities in
 cell $c$ and $\underline{w}_g \in \mathbb{R}^K$ is the regulatory loading of
-gene $g$. The induced perturbation of the NB mean is then
+gene $g$. In a two-state promoter context, this corresponds to regulation of
+the transcription initiation rate $k_{\text{tx}}$ or the promoter off-rate
+$k_{\text{off}}$---mechanisms that alter how many transcripts are produced per
+burst event without changing the frequency at which bursts are initiated. The
+induced perturbation of the NB mean is then
 
 $$
 \mu_{cg} \to \mu_{cg} \cdot
@@ -411,7 +423,7 @@ layer but differ in their treatment of the inner observation channel:
 |---|---|---|---|
 | Poisson-LogNormal (@sec-poisson-lognormal) | Poisson | log-rate of expression | 1 (rate SDE) |
 | Logistic-Normal-Multinomial (@sec-logistic-normal-multinomial) | Multinomial via softmax | log-composition | 1 (rate SDE) |
-| **Negative Binomial-LogNormal** (this section) | **Bursty NB** | **log-modulator of burst frequency** | **2 (rate SDE + regulatory SDE)** |
+| **Negative Binomial-LogNormal** (this section) | **Bursty NB** | **log-modulator of expression scale (burst size)** | **2 (rate SDE + regulatory SDE)** |
 
 The PLN and LNM models invoke a single linearization (the LNA on the rate SDE)
 and obtain a Gaussian on log-rates that is fed directly into a memoryless
@@ -423,7 +435,139 @@ biophysical foundation.
 The cost of the second linearization is one additional assumption (timescale
 separation between regulatory dynamics and burst dynamics). The benefit is
 a count distribution whose **shape** matches single-cell data far more
-faithfully on sparse genes, as we now show.
+faithfully on sparse genes (see @sec-nbln-zero-spike). Before turning to that
+empirical advantage, however, we must address a tension between the biophysics
+and the mathematics of the model.
+
+### The biophysically ideal model: why it is intractable {#sec-nbln-ideal-model}
+
+The biophysics literature on transcriptional kinetics (e.g., smFISH and MS2
+live-imaging studies) consistently finds that transcription factors and
+enhancers primarily regulate **burst frequency** ($k_{\text{on}}$) rather than
+burst size ($b$). Under the one-state bursty promoter, $r_g = k_{i,g}/\gamma_g$
+is the dimensionless burst frequency. If the GRN modulates this quantity, the
+natural model would let $r_g$ depend on the regulatory state:
+
+$$
+r_{cg}(\underline{z}_c) = r_g^{(0)}\, \exp(z_{cg}),
+\qquad
+\underline{z}_c \sim
+\mathcal{N}(\underline{0}, \underline{\underline{\Sigma}}).
+$${#eq-nbln-ideal-r}
+
+With this choice, the Gamma-Poisson marginalization still applies conditional
+on $\underline{z}_c$: each gene's count is NB with cell-dependent dispersion
+$r_{cg}(\underline{z}_c)$ and mean $\mu_{cg}$. The conditional log-likelihood
+after marginalization is
+
+$$
+\log \text{NB}\!\left(u_{cg} \mid \mu_{cg},\, r_{cg}(z_{cg})\right) =
+\log \Gamma(u_{cg} + r_{cg}) - \log \Gamma(r_{cg}) - \log(u_{cg}!)
++ r_{cg} \log p_{cg} + u_{cg} \log(1 - p_{cg}),
+$${#eq-nbln-ideal-loglik}
+
+where $p_{cg} = r_{cg} / (r_{cg} + \mu_{cg})$. This is mathematically
+well-defined, but critically, **it is not log-concave in
+$\underline{z}_c$**. Differentiating twice with respect to $z_{cg}$
+(substituting $r_{cg} = r_g^{(0)} e^{z_{cg}}$) yields
+
+$$
+\frac{\partial^2 \ell}{\partial z_{cg}^2} =
+r_{cg}^2 \bigl[\psi'(u_{cg} + r_{cg}) - \psi'(r_{cg})\bigr]
++ r_{cg} \bigl[\psi(u_{cg} + r_{cg}) - \psi(r_{cg})\bigr]
++ r_{cg} \log p_{cg},
+$${#eq-nbln-ideal-hessian}
+
+where $\psi$ and $\psi'$ are the digamma and trigamma functions respectively.
+The three terms have **competing signs**:
+
+- The first term is negative ($\psi'$ is a decreasing function, so
+  $\psi'(u + r) < \psi'(r)$).
+- The second term is positive ($\psi$ is an increasing function, so
+  $\psi(u + r) > \psi(r)$).
+- The third term is negative ($p_{cg} < 1$, so $\log p_{cg} < 0$).
+
+For general values of $(u_{cg}, r_{cg}, \mu_{cg})$, the sign of the sum is
+**indeterminate**: the Hessian can be positive for some configurations of the
+data and parameters. The per-cell log-posterior is therefore not globally
+concave.
+
+This non-concavity is not merely a nuisance — it has severe practical
+consequences for inference:
+
+1. **No unique MAP.** The per-cell log-posterior may have multiple local maxima.
+   Newton iteration is not guaranteed to converge to a global optimum, and the
+   Laplace approximation around a local mode may poorly represent the posterior.
+
+2. **No well-defined Laplace approximation.** The Laplace marginal
+   @eq-nbln-laplace-marginal requires the Hessian at the mode to be negative
+   definite. At a saddle point or a shallow mode, the approximation degenerates.
+
+3. **Stochastic variational inference is unreliable.** Non-convex ELBO
+   landscapes with multiple local optima make gradient-based optimization
+   sensitive to initialization and prone to poor solutions.
+
+4. **The double-Woodbury machinery fails.** The efficient $O(GK + K^3)$
+   Newton step of @sec-nbln-laplace relies on the Hessian being a clean
+   diagonal-plus-low-rank form. When $r_g$ varies with $z$, the Hessian
+   acquires a complex structure involving trigamma evaluations that does not
+   admit the same factorization.
+
+In short, the biophysically ideal model — correlation through burst
+frequency — is well-defined as a generative process but **admits no scalable
+inference scheme** for the per-cell latents.
+
+### The modeling compromise {#sec-nbln-compromise}
+
+Faced with this intractability, we make a deliberate structural choice: fix
+$r_g$ as a gene-intrinsic constant and let the regulatory state modulate the
+NB mean. In the bursty promoter parameterization, this is equivalent to
+regulation acting on the **burst size** $b_g$ (or in the two-state promoter,
+on $k_{\text{tx}} / k_{\text{off}}$) rather than on the burst frequency.
+
+This choice is a **phenomenological compromise**, not a biophysical derivation.
+Its justification is threefold:
+
+1. **It is the unique tractable option.** As shown above, any dependence of
+   $r_g$ on $\underline{z}_c$ destroys the log-concavity that the entire
+   inference apparatus (Laplace, amortized VI, double-Woodbury Newton) requires.
+   There is no intermediate choice between "fixed $r_g$" and "intractable."
+
+2. **It captures the right empirical structure.** Fitted $r_g$ values from
+   NB-based tools (scVI, DESeq2, edgeR) are remarkably stable across
+   experimental conditions, even as gene means vary by orders of magnitude.
+   Whether this reflects genuine burst-size regulation, effective averaging over
+   mixed regulatory modes, or simply a useful parametric approximation to count
+   overdispersion is an open question — but the empirical observation that $r_g$
+   behaves as a gene-intrinsic property is well-supported.
+
+3. **It preserves the zero-spike shape.** The critical feature the NB
+   contributes over the PLN is the Gamma-mixing spike at zero for genes with
+   $r_g < 1$. This spike depends only on the *value* of $r_g$, not on whether
+   $r_g$ is fixed or latent. By holding $r_g$ fixed at its fitted (small) value,
+   the model retains the correct marginal shape.
+
+The NB-LogNormal is therefore best understood as a synthesis of two empirically
+validated features of scRNA-seq data:
+
+- Per-gene count distributions are overdispersed with a characteristic spike
+  at zero (the NB shape, parametrized by $r_g$).
+- Gene expression levels are correlated across genes in a pattern driven by
+  shared regulatory programs (the multivariate Gaussian structure).
+
+The model combines these two facts in the most tractable way: the Gaussian
+modulates the NB mean while holding dispersion fixed.
+
+### Comparison to the PLN {#sec-nbln-pln-comparison}
+
+The Poisson-LogNormal is not more principled in this regard. The PLN applies
+the Linear Noise Approximation---a continuous diffusion approximation---to
+discrete bursty processes, which is formally invalid precisely for low-copy
+genes where the PLN fails empirically. Both models make approximations; they
+differ in where those approximations bite. The NB-LogNormal sacrifices a clean
+microscopic mapping of the regulatory mechanism but gains the correct marginal
+count shape. The PLN preserves the log-rate interpretation but loses the
+zero-spike structure that dominates sparse genes.
 
 ## Why this resolves the PLN low-count failure {#sec-nbln-zero-spike}
 
@@ -520,15 +664,17 @@ $$
 u_{cg} \sim \text{NB}(\mu_{cg}, r_g),
 $${#eq-nbln-limit-nbdm-likelihood}
 
-independently across genes. This is the shared-$p$ NBDM model of
-@sec-dirichlet-multinomial expressed in (mean, dispersion) form. In particular,
-all gene-gene correlations vanish.
+independently across genes. This is a product of independent gene-specific
+Negative Binomials. Under the additional constraint that
+$\tilde{\mu}_g / r_g = (1 - \hat{p}) / \hat{p}$ is constant across genes
+(the shared-$p$ assumption), this further reduces to the NBDM model of
+@sec-dirichlet-multinomial. In particular, all gene-gene correlations vanish.
 
 This limit is useful as a **validation check**: any implementation of the
 NB-LogNormal should, when initialized at $\underline{\underline{\Sigma}} = 0$
 and trained with the regulatory parameters frozen, return likelihoods and
 posterior predictive checks identical (up to numerical precision) to the
-existing NBDM implementation.
+independent NB baseline.
 
 ### Poisson-LogNormal approach: $r_g \to \infty$ {#sec-nbln-limit-pln}
 
@@ -651,7 +797,7 @@ A second, subtler identifiability concern arises between the gene baseline
 $\log \tilde{\mu}_g$ and the latent $z_{cg}$: both enter the conditional log-mean
 additively. The zero-mean prior @eq-nbln-z-prior anchors the cell-averaged
 $z_{cg}$ at zero, breaking this redundancy at the population level. In practice,
-monitoring $\frac{1}{C}\sum_c \mathbb{E}_q[z_{cg}]$ during training and
+monitoring $\frac{1}{C}\sum_c \langle z_{cg} \rangle_q$ during training and
 verifying it remains close to zero is a sufficient check.
 
 ## Variational inference {#sec-nbln-elbo}
@@ -682,10 +828,10 @@ $$
 \mathcal{L}(\underline{\theta}, \phi) =
 \sum_{c=1}^C
 \left[
-\mathbb{E}_{q(\underline{z}_c)}\!\left[
+\left\langle
     \sum_{g=1}^G \log
     \text{NB}\!\left(u_{cg} \mid \mu_{cg}\, e^{z_{cg}},\, r_g\right)
-\right]
+\right\rangle_{q(\underline{z}_c)}
 - \text{KL}\!\left(q(\underline{z}_c)\,\|\,
                    p(\underline{z}_c)\right)
 \right].
@@ -1287,7 +1433,7 @@ $$
 \underline{\underline{\Sigma}} \to \underline{\underline{0}}
 \;\Longrightarrow\;
 u_{cg} \sim \text{NB}(\mu_{cg}, r_g)
-\quad \text{(NBDM, @sec-dirichlet-multinomial)},
+\quad \text{(independent NB; reduces to NBDM under shared-$p$)},
 $${#eq-nbln-summary-limit-nbdm}
 
 $$
