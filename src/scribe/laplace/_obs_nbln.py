@@ -269,25 +269,16 @@ class NBLNObservationModel(LaplaceObservationModel):
             )
             gn_blocks = {"x": gn_x}
 
-        # NB log-prob in log-space.  ``LogMeanNegativeBinomial`` returns
-        # the full PMF including the parameter-independent factorial
-        # term ``-lgamma(k+1)``.  To match the PLN engine's loss-scale
-        # convention (which drops the analogous Poisson factorial
-        # constant ``-lgamma(u+1)``), we add it back.  This is a
-        # parameter-independent constant so it does NOT affect the
-        # optimization minimum -- it only shifts the displayed loss
-        # onto a comparable absolute scale to PLN's.  Without this
-        # adjustment, NBLN losses appeared positive (~+5e7) while PLN
-        # losses were negative (~-8e7) on the same dataset, which was
-        # confusing without changing any actual fit behaviour.
-        from jax.scipy.special import gammaln
-
-        nb_lp = (
-            LogMeanNegativeBinomial(
-                log_mean=log_mean, concentration=r[None, :]
-            ).log_prob(counts_batch).sum(axis=-1)
-            + gammaln(counts_batch + 1.0).sum(axis=-1)
-        )
+        # NB log-prob in log-space.  Includes the full PMF (factorial
+        # constant and all) -- the absolute scale of the loss is not
+        # load-bearing for optimization, only the trend matters.  PLN
+        # happens to drop ``-lgamma(u+1)`` and so its losses come out
+        # negative on typical data; NBLN keeps it and so losses come
+        # out positive.  Both are equivalent for optimization; same
+        # convention as the DM-family losses in scribe.
+        nb_lp = LogMeanNegativeBinomial(
+            log_mean=log_mean, concentration=r[None, :]
+        ).log_prob(counts_batch).sum(axis=-1)
 
         # MVN prior on x.
         diff = x_new - mu[None, :]
