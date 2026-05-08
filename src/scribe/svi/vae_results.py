@@ -370,6 +370,61 @@ class ScribeVAEResults(
         return _layouts
 
     # ------------------------------------------------------------------
+    # Compositional sampling (parity with Laplace and MCMC results)
+    # ------------------------------------------------------------------
+
+    def get_compositional_samples(
+        self,
+        n_samples: int = 2048,
+        rng_key=None,
+        chunk_size: int = 256,
+        store_samples: bool = True,
+    ):
+        """Draw simplex compositions from the fitted PLN/LNM marginal.
+
+        Auto-dispatches on ``model_config.base_model`` to either
+        :meth:`get_pln_compositional_samples` (PLN family) or
+        :meth:`get_lnm_compositional_samples` (LNM/LNMVCP). The
+        unprefixed name mirrors
+        :meth:`ScribeLaplaceResults.get_compositional_samples` and
+        :meth:`ScribeMCMCResults.get_compositional_samples` so the
+        DE pipeline can call this polymorphically across all three
+        result types.
+
+        Parameters and return shape are documented on the
+        model-specific methods.
+
+        Raises
+        ------
+        NotImplementedError
+            If the result is not a PLN or LNM-family fit (e.g. an
+            NB/DM-family VAE result).
+        """
+        from .vae_results import ScribeVAEResults  # local import to avoid loops
+
+        bm = getattr(self.model_config, "base_model", None)
+        bm_str = str(getattr(bm, "value", bm) or "").lower()
+        if bm_str == "pln":
+            return self.get_pln_compositional_samples(
+                n_samples=n_samples,
+                rng_key=rng_key,
+                chunk_size=chunk_size,
+                store_samples=store_samples,
+            )
+        if bm_str in ("lnm", "lnmvcp"):
+            return self.get_lnm_compositional_samples(
+                n_samples=n_samples,
+                rng_key=rng_key,
+                chunk_size=chunk_size,
+                store_samples=store_samples,
+            )
+        raise NotImplementedError(
+            f"get_compositional_samples not implemented for "
+            f"base_model={bm_str!r}; use the model-prefixed accessor "
+            "directly when applicable."
+        )
+
+    # ------------------------------------------------------------------
     # Gene subsetting override
     # ------------------------------------------------------------------
 

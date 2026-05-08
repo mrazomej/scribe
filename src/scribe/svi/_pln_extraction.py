@@ -347,3 +347,80 @@ class PLNExtractionMixin:
             n_top_eig=n_top_eig,
             verbose=verbose,
         )
+
+    def get_pln_compositional_samples(
+        self,
+        n_samples: int = 2048,
+        rng_key=None,
+        chunk_size: int = 256,
+        store_samples: bool = True,
+    ):
+        """Draw simplex compositions from the fitted PLN marginal.
+
+        Generates ``n_samples`` independent imaginary cells from the
+        model's generative marginal:
+
+            z ∼ 𝒩(0, 𝐈ₖ), ε ∼ 𝒩(0, 𝐈_G)
+            x = μ + 𝑊 z + √d ⊙ ε
+            ρ = softmax(x)
+
+        The per-cell capture offset η cancels in the softmax (the
+        rigid-translation degeneracy in operation), so this works
+        identically for fits with and without the capture term.
+        Mirrors :meth:`ScribeLaplaceResults.get_compositional_samples`
+        and :meth:`ScribeMCMCResults.get_compositional_samples` so the
+        DE pipeline can call it polymorphically.
+
+        Parameters
+        ----------
+        n_samples : int, default 2048
+        rng_key : jax.Array, optional
+            Defaults to ``jax.random.PRNGKey(0)``.
+        chunk_size : int, default 256
+            Per-chunk sample count; each chunk is moved to host so the
+            device peak stays bounded by ``chunk_size · G · 4 bytes``.
+        store_samples : bool, default True
+            If True, cache the result on ``self.compositional_samples``.
+
+        Returns
+        -------
+        np.ndarray, shape ``(n_samples, G)``
+        """
+        self._require_pln()
+        import jax
+        import numpy as _np
+
+        if rng_key is None:
+            rng_key = jax.random.PRNGKey(0)
+
+        mu = jnp.asarray(self.get_pln_mu())
+        W = jnp.asarray(self.get_pln_W())
+        d_opt = self.get_pln_d()
+        d = (
+            jnp.asarray(d_opt)
+            if d_opt is not None
+            else jnp.zeros(W.shape[0], dtype=W.dtype)
+        )
+        sqrt_d = jnp.sqrt(jnp.maximum(d, 0.0))
+        G = int(mu.shape[0])
+        k = int(W.shape[1])
+
+        n_total = int(n_samples)
+        n_chunks = (n_total + chunk_size - 1) // chunk_size
+        chunk_keys = jax.random.split(rng_key, n_chunks)
+        pieces = []
+        for i in range(n_chunks):
+            start = i * chunk_size
+            end = min(start + chunk_size, n_total)
+            size = end - start
+            k_z, k_eps = jax.random.split(chunk_keys[i])
+            z = jax.random.normal(k_z, (size, k), dtype=mu.dtype)
+            eps = jax.random.normal(k_eps, (size, G), dtype=mu.dtype)
+            latent = mu[None, :] + z @ W.T + sqrt_d[None, :] * eps
+            simplex = jax.nn.softmax(latent, axis=-1)
+            pieces.append(_np.asarray(simplex))
+
+        out = _np.concatenate(pieces, axis=0)
+        if store_samples:
+            self.compositional_samples = out
+        return out

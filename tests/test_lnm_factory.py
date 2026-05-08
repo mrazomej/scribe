@@ -304,3 +304,51 @@ def test_lnm_vae_correlation_diagnostics_pipeline():
     assert expected_keys.issubset(summary.keys())
     assert summary["n_genes_effective"] == G_minus1
     assert summary["n_latent_factors"] == k
+
+
+def test_lnm_vae_get_compositional_samples_and_empirical_de():
+    """End-to-end: LNM VAE fit → compositional sampling → empirical DE.
+
+    Mirrors the PLN VAE test: confirms the unprefixed
+    ``get_compositional_samples`` dispatcher and
+    ``get_lnm_compositional_samples`` accessor work on a fitted
+    LNM VAE result, and that ``compare(method='empirical')``
+    threads through cleanly.
+    """
+    import anndata as ad
+    import numpy as np
+    import scribe
+
+    n_cells, n_genes, k = 32, 12, 3
+    counts = np.asarray(
+        random.poisson(random.PRNGKey(31), 5.0, shape=(n_cells, n_genes))
+    ).astype(np.float32)
+    adata = ad.AnnData(counts)
+
+    res_A = scribe.fit(
+        adata, model="lnm",
+        vae_latent_dim=k, vae_encoder_hidden_dims=[16],
+        n_steps=30, seed=0,
+    )
+    res_B = scribe.fit(
+        adata, model="lnm",
+        vae_latent_dim=k, vae_encoder_hidden_dims=[16],
+        n_steps=30, seed=1,
+    )
+
+    cs = res_A.get_compositional_samples(
+        n_samples=64, rng_key=random.PRNGKey(0)
+    )
+    assert cs.shape == (64, n_genes)
+    np.testing.assert_allclose(cs.sum(axis=-1), 1.0, atol=1e-5)
+
+    cs_pref = res_A.get_lnm_compositional_samples(
+        n_samples=64, rng_key=random.PRNGKey(0), store_samples=False
+    )
+    assert cs_pref.shape == (64, n_genes)
+
+    de = scribe.de.compare(
+        res_A, res_B, method="empirical", n_samples_dirichlet=128,
+    )
+    assert type(de).__name__ == "ScribeEmpiricalDEResults"
+    assert de.delta_samples.shape == (128, n_genes)
