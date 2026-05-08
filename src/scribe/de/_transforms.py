@@ -505,3 +505,101 @@ def ilr_to_clr(ilr: jnp.ndarray, V: jnp.ndarray) -> jnp.ndarray:
     """
     # Matrix multiply: (..., D-1) @ (D-1, D) -> (..., D)
     return ilr @ V
+
+
+# --------------------------------------------------------------------------
+# PLN log-rate Gaussian → ALR-form Gaussian (low-rank-plus-diagonal)
+# --------------------------------------------------------------------------
+
+
+def pln_to_alr_form(
+    mu_pln: jnp.ndarray,
+    W_pln: jnp.ndarray,
+    d_pln: jnp.ndarray,
+    reference_idx: int = -1,
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Convert a PLN log-rate Gaussian to the equivalent ALR-form Gaussian.
+
+    PLN parameterises the per-cell log-rate as
+    𝑥 ∼ 𝒩(μ_pln, 𝑊𝑊ᵗ + diag(𝑑_pln)) on ℝᴳ.  To plug a PLN fit into the
+    parametric DE pipeline (which expects ALR-form (G−1)-dimensional
+    Gaussians with a low-rank-plus-diagonal covariance), we apply the
+    ALR transform 𝑦 = 𝑇𝑥 where 𝑇 subtracts 𝑥[ref] from each non-
+    reference component:
+
+        𝑇 ∈ ℝ^{(G−1)×G},  𝑇_{ij} = δ_{ij}  for j ≠ ref,  𝑇_{i,ref} = −1
+
+    The ALR'd covariance decomposes as
+
+        𝑇 (𝑊𝑊ᵗ + diag(𝑑)) 𝑇ᵗ
+            =  (𝑇𝑊)(𝑇𝑊)ᵗ                    ← keeps low-rank structure
+              +  𝑑[ref] · 𝟏𝟏ᵗ                ← rank-1 from cross-coupling
+              +  diag(𝑑_{−ref})              ← residual on non-ref dims
+
+    The rank-1 term `𝑑[ref] · 𝟏𝟏ᵗ` is *not* diagonal, so PLN does not
+    map directly into a "low-rank-plus-*diagonal*" ALR form.  We absorb
+    it into the cov_factor by appending an extra column `√𝑑[ref] · 𝟏`,
+    extending the latent rank from `k` to `k+1`:
+
+        𝑊_alr_ext = [ 𝑇𝑊  |  √𝑑[ref] · 𝟏 ]    ∈ ℝ^{(G−1)×(k+1)}
+        𝑑_alr     = 𝑑_{−ref}                ∈ ℝ^{G−1}
+
+    Then 𝑊_alr_ext (𝑊_alr_ext)ᵗ + diag(𝑑_alr) reproduces the ALR'd
+    covariance exactly.  The downstream parametric DE pipeline
+    consumes (μ_alr, 𝑊_alr_ext, 𝑑_alr) the same way it consumes any
+    other ALR-form fit: a closed-form CLR transform via
+    :func:`transform_gaussian_alr_to_clr` and Gaussian gene-level
+    contrasts.
+
+    Parameters
+    ----------
+    mu_pln : jnp.ndarray, shape ``(G,)``
+        PLN log-rate mean.
+    W_pln : jnp.ndarray, shape ``(G, k)``
+        PLN low-rank factor.
+    d_pln : jnp.ndarray, shape ``(G,)``
+        PLN diagonal residual.
+    reference_idx : int, default -1
+        Reference gene index for the ALR transform.  ``-1`` uses the
+        last gene (legacy default).
+
+    Returns
+    -------
+    mu_alr : jnp.ndarray, shape ``(G-1,)``
+    W_alr_ext : jnp.ndarray, shape ``(G-1, k+1)``
+    d_alr : jnp.ndarray, shape ``(G-1,)``
+
+    Notes
+    -----
+    This conversion preserves the *full* covariance structure of the
+    PLN fit: there is no approximation involved.  Verification:
+    let Σ_pln = 𝑊𝑊ᵗ + diag(𝑑) and Σ_alr = 𝑇 Σ_pln 𝑇ᵗ.  Direct
+    expansion gives Σ_alr = (𝑇𝑊)(𝑇𝑊)ᵗ + 𝑑[ref] · 𝟏𝟏ᵗ + diag(𝑑_{−ref}),
+    which equals 𝑊_alr_ext (𝑊_alr_ext)ᵗ + diag(𝑑_alr).
+    """
+    G = int(mu_pln.shape[-1])
+    ref = int(reference_idx) if reference_idx >= 0 else G + int(reference_idx)
+    if ref < 0 or ref >= G:
+        raise ValueError(
+            f"reference_idx={reference_idx} out of range for G={G}."
+        )
+
+    keep = [g for g in range(G) if g != ref]
+    keep_idx = jnp.asarray(keep)
+
+    # ALR mean: subtract the reference component.
+    mu_alr = mu_pln[..., keep_idx] - mu_pln[..., ref:ref+1]
+
+    # ALR low-rank factor: subtract the reference row.
+    W_alr_base = W_pln[keep_idx] - W_pln[ref:ref+1, :]   # (G-1, k)
+
+    # Extra column to absorb the rank-1 d_pln[ref] · 11ᵗ term.
+    extra_col = jnp.sqrt(jnp.maximum(d_pln[ref], 0.0)) * jnp.ones(
+        (G - 1, 1), dtype=W_pln.dtype
+    )
+    W_alr_ext = jnp.concatenate([W_alr_base, extra_col], axis=1)
+
+    # ALR diagonal: just the non-reference entries.
+    d_alr = d_pln[keep_idx]
+
+    return mu_alr, W_alr_ext, d_alr

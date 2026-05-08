@@ -35,27 +35,39 @@ def _ppc_pln_marginal(
     d: jnp.ndarray,
     eta_loc: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
-    """Fully marginal PLN posterior predictive sampler.
+    """Draw fully marginal PLN posterior predictive samples.
 
     Parameters
     ----------
     rng_key : jax.Array
-        PRNG key.
+        PRNG key for latent and observation draws.
     n_samples : int
-        Number of synthetic cells to draw.
+        Number of synthetic cells ``S`` to sample.
     mu : jnp.ndarray
-        Decoder bias, shape ``(G,)``.
+        Decoder bias ``μ`` with shape ``(G,)``.
     W : jnp.ndarray
-        Decoder loadings, shape ``(G, k)``.
+        Low-rank loading matrix ``W`` with shape ``(G, K)``.
     d : jnp.ndarray
-        Diagonal residual variance, shape ``(G,)``.
+        Residual diagonal variance ``d`` with shape ``(G,)``.
     eta_loc : jnp.ndarray, optional
-        Optional empirical per-cell capture offsets used as a bootstrap source.
+        Optional empirical capture offsets ``η`` used as a bootstrap source.
+        Expected shape ``(C,)``.
 
     Returns
     -------
     jnp.ndarray
-        Marginal predictive counts with shape ``(n_samples, G)``.
+        Integer counts with shape ``(S, G)``.
+
+    Notes
+    -----
+    The sampler draws:
+
+    - ``z_s ~ N(0, I_K)``
+    - ``ε_s ~ N(0, I_G)``
+    - ``x_s = μ + z_s Wᵀ + sqrt(d) ⊙ ε_s``
+
+    and optionally subtracts a bootstrapped capture offset ``η_s`` before
+    mapping to Poisson rates ``λ_sg = exp(clip(x_sg - η_s, ...))``.
     """
     g_genes = int(mu.shape[0])
     k_factors = int(W.shape[1])
@@ -83,7 +95,7 @@ def _ppc_pln_library_anchored(
     d: jnp.ndarray,
     counts: jnp.ndarray,
 ) -> jnp.ndarray:
-    """PLN sampler with fresh composition and observed library sizes.
+    """Draw PLN library-anchored predictive samples.
 
     This kernel evaluates compositional fit independently of total-count and
     capture submodels by pairing fresh latent composition draws with observed
@@ -104,6 +116,18 @@ def _ppc_pln_library_anchored(
     -------
     np.ndarray
         Predictive counts with shape ``(n_samples, n_cells, G)``.
+
+    Notes
+    -----
+    Let ``N_c = Σ_g u_cg`` be observed per-cell library sizes.
+    For each sample ``s`` and cell ``c``, this kernel draws latent logits
+    ``x_sc·`` from the fitted PLN latent Gaussian, converts them to
+    probabilities ``p_sc· = softmax(x_sc·)``, then draws
+
+    ``ũ_sc· ~ Multinomial(N_c, p_sc·)``.
+
+    This isolates compositional uncertainty while preserving empirical total
+    counts.
     """
     library_sizes = (
         jnp.asarray(counts, dtype=jnp.float32).sum(axis=-1).astype(jnp.int32)
@@ -146,7 +170,7 @@ def _ppc_pln_per_cell(
     x_loc: jnp.ndarray,
     eta_loc: Optional[jnp.ndarray],
 ) -> jnp.ndarray:
-    """PLN per-cell MAP predictive sampler.
+    """Draw PLN per-cell MAP-only predictive samples.
 
     Parameters
     ----------
@@ -163,6 +187,15 @@ def _ppc_pln_per_cell(
     -------
     np.ndarray
         MAP-only predictive counts with shape ``(n_samples, n_cells, G)``.
+
+    Notes
+    -----
+    This kernel keeps per-cell latent states fixed at MAP values and samples
+    only observation noise:
+
+    ``ũ_scg ~ Poisson(exp(clip(x̂_cg - η_c, ...)))``.
+
+    It does **not** propagate posterior uncertainty in ``x``.
     """
     if eta_loc is not None:
         eff_log_rate = x_loc - eta_loc[:, None]
@@ -188,7 +221,7 @@ def _ppc_pln_per_cell_laplace(
     W: jnp.ndarray,
     d: jnp.ndarray,
 ) -> jnp.ndarray:
-    """PLN per-cell predictive sampler with Laplace uncertainty propagation.
+    """Draw PLN per-cell predictive samples with Laplace latent uncertainty.
 
     Parameters
     ----------
@@ -209,6 +242,18 @@ def _ppc_pln_per_cell_laplace(
     -------
     np.ndarray
         Predictive counts with shape ``(n_samples, n_cells, G)``.
+
+    Notes
+    -----
+    For each cell ``c``, this sampler first draws latent log-rates from a
+    local Laplace approximation around the MAP point ``x̂_c`` using Newton
+    posterior samplers, then draws Poisson observations:
+
+    - ``x̃_sc· ~ q_Laplace(x_c | x̂_c, H_c⁻¹)``
+    - ``ũ_scg ~ Poisson(exp(clip(x̃_scg - η_c, ...)))``.
+
+    Compared with :func:`_ppc_pln_per_cell`, this includes latent posterior
+    variability in addition to observation noise.
     """
     from ._newton_pln import sample_x_posterior_batch
 
@@ -256,7 +301,7 @@ def _ppc_pln_per_cell_laplace(
 def _alr_to_softmax(
     y_alr: jnp.ndarray, alr_reference_idx: int, n_genes: int
 ) -> jnp.ndarray:
-    """Convert ALR logits to simplex probabilities by zero insertion + softmax.
+    """Map ALR logits to simplex probabilities.
 
     Parameters
     ----------
@@ -271,6 +316,14 @@ def _alr_to_softmax(
     -------
     jnp.ndarray
         Simplex probabilities with trailing dimension ``G``.
+
+    Notes
+    -----
+    This helper applies the composite map:
+
+    ``y_alr -> y_full (insert 0 at reference index) -> softmax(y_full)``.
+
+    The operation is vectorized over any leading sample/cell axes.
     """
     ref = int(alr_reference_idx)
     full = jnp.zeros(y_alr.shape[:-1] + (n_genes,), dtype=y_alr.dtype)
@@ -293,7 +346,7 @@ def _ppc_lnm_marginal(
     total_counts: Optional[Union[int, jnp.ndarray]] = None,
     **kwargs,
 ) -> jnp.ndarray:
-    """Fully marginal LNM/LNMVCP posterior predictive sampler.
+    """Draw fully marginal LNM/LNMVCP predictive samples.
 
     Parameters
     ----------
@@ -318,6 +371,22 @@ def _ppc_lnm_marginal(
     -------
     np.ndarray
         Marginal predictive counts with shape ``(n_samples, G)``.
+
+    Notes
+    -----
+    The composition branch samples ALR logits from the fitted low-rank
+    Gaussian and maps them to simplex probabilities:
+
+    - ``y_s ~ N(μ, W Wᵀ + diag(d))`` in ALR space
+    - ``p_s· = softmax(augment_ref(y_s))``.
+
+    Total-count branch precedence is:
+
+    1. fitted NB-on-totals (optionally capture-scaled for LNMVCP),
+    2. provided ``total_counts``,
+    3. fixed fallback total ``1000``.
+
+    Final draws follow ``ũ_s· ~ Multinomial(N_s, p_s·)``.
     """
     if alr_reference_idx is None:
         raise ValueError("LNM PPC requires alr_reference_idx.")
@@ -378,7 +447,7 @@ def _ppc_lnm_library_anchored(
     alr_reference_idx: Optional[int],
     counts: jnp.ndarray,
 ) -> jnp.ndarray:
-    """LNM/LNMVCP sampler with fresh composition and observed library sizes.
+    """Draw LNM-family library-anchored predictive samples.
 
     Parameters
     ----------
@@ -397,6 +466,17 @@ def _ppc_lnm_library_anchored(
     -------
     np.ndarray
         Predictive counts with shape ``(n_samples, n_cells, G)``.
+
+    Notes
+    -----
+    With observed totals ``N_c = Σ_g u_cg``, this sampler draws fresh ALR
+    logits for each ``(sample, cell)`` pair from the fitted latent Gaussian,
+    maps to simplex probabilities, and draws:
+
+    ``ũ_sc· ~ Multinomial(N_c, p_sc·)``.
+
+    This mirrors the PLN library-anchored regime while respecting ALR
+    parameterization.
     """
     if alr_reference_idx is None:
         raise ValueError("LNM library-anchored PPC requires alr_reference_idx.")
@@ -453,7 +533,7 @@ def _ppc_lnm_per_cell(
     total_counts: Optional[jnp.ndarray] = None,
     **kwargs,
 ) -> jnp.ndarray:
-    """Per-cell LNM/LNMVCP MAP predictive sampler.
+    """Draw per-cell LNM-family MAP-only predictive samples.
 
     Parameters
     ----------
@@ -482,6 +562,23 @@ def _ppc_lnm_per_cell(
     -------
     np.ndarray
         Predictive counts with shape ``(n_samples, n_cells, G)``.
+
+    Notes
+    -----
+    Latent branch selection:
+
+    - if ``y_alr_loc`` is provided, use direct ALR MAP logits ``ŷ_c``;
+    - else use low-rank reconstruction ``ŷ_c = μ + ẑ_c Wᵀ``.
+
+    Total-count precedence:
+
+    1. observed ``counts`` totals,
+    2. explicit ``total_counts``,
+    3. fitted NB-on-totals (with optional capture scaling),
+    4. fallback constant total ``1000``.
+
+    Once ``p_c· = softmax(augment_ref(ŷ_c))`` is fixed, draws are
+    multinomial and include no latent posterior uncertainty.
     """
     if alr_reference_idx is None:
         raise ValueError("LNM PPC requires alr_reference_idx.")
@@ -574,7 +671,7 @@ def _ppc_lnm_per_cell_laplace(
     total_counts: Optional[jnp.ndarray] = None,
     **kwargs,
 ) -> jnp.ndarray:
-    """Per-cell LNM/LNMVCP predictive sampler with Laplace uncertainty.
+    """Draw per-cell LNM-family predictive samples with Laplace uncertainty.
 
     Parameters
     ----------
@@ -605,6 +702,23 @@ def _ppc_lnm_per_cell_laplace(
     -------
     np.ndarray
         Predictive counts with shape ``(n_samples, n_cells, G)``.
+
+    Notes
+    -----
+    This is the uncertainty-aware counterpart of
+    :func:`_ppc_lnm_per_cell`. It samples latent states from per-cell Laplace
+    approximations and then samples observations.
+
+    Branches:
+
+    - **Low-rank branch** (``z_loc``): sample ``z̃_sc`` from a Newton-derived
+      Laplace posterior and form ``ỹ_sc = μ + z̃_sc Wᵀ``.
+    - **Learned-diagonal branch** (``y_alr_loc``): sample ``ỹ_sc`` directly
+      from a Laplace posterior in ALR space.
+
+    For each draw, compute ``p_sc· = softmax(augment_ref(ỹ_sc))`` and sample
+    ``ũ_sc· ~ Multinomial(N_sc, p_sc·)``, where totals ``N_sc`` come from
+    observed/explicit/NB/fallback logic.
     """
     if alr_reference_idx is None:
         raise ValueError("LNM PPC requires alr_reference_idx.")
@@ -736,7 +850,7 @@ def _multinomial_sample(
     n: jnp.ndarray,
     p: jnp.ndarray,
 ) -> jnp.ndarray:
-    """Vectorized multinomial sampling with broadcasted leading dimensions.
+    """Sample multinomial counts with broadcasted leading dimensions.
 
     Parameters
     ----------
@@ -752,6 +866,11 @@ def _multinomial_sample(
     jnp.ndarray
         Multinomial draws with the broadcasted leading shape of ``n`` and
         ``p``.
+
+    Notes
+    -----
+    If ``p`` has shape ``(..., G)`` and ``n`` broadcasts to ``...``, the
+    result has shape ``(..., G)`` and each trailing vector sums to ``n``.
     """
     import numpyro.distributions as dist
 
@@ -764,7 +883,7 @@ def _batched_sample_concat(
     sampler_fn,
     chunk_size: Optional[int] = _PPC_DEFAULT_SAMPLE_CHUNK,
 ) -> np.ndarray:
-    """Run ``sampler_fn`` in chunks and concatenate outputs on host memory.
+    """Evaluate a sampler in chunks and concatenate on host memory.
 
     Parameters
     ----------
@@ -782,6 +901,11 @@ def _batched_sample_concat(
     -------
     np.ndarray
         Concatenated draws with shape ``(n_samples, ...)``.
+
+    Notes
+    -----
+    Chunking limits peak device memory by materializing at most one
+    ``(chunk_size, ...)`` block at a time before transferring to host.
     """
     if chunk_size is None or chunk_size >= n_samples:
         return np.asarray(sampler_fn(rng_key, int(n_samples)))

@@ -24,28 +24,44 @@ def _ll_pln(
     eta_loc: Optional[jnp.ndarray],
     return_by: str,
 ) -> jnp.ndarray:
-    """Compute PLN Poisson log-likelihood at stored per-cell MAP state.
+    """Compute PLN MAP log-likelihood under a Poisson observation model.
 
     Parameters
     ----------
     counts : jnp.ndarray
-        Observed counts with shape ``(n_cells, G)``.
+        Observed count matrix ``u`` with shape ``(C, G)`` where ``C`` is the
+        number of cells and ``G`` is the number of genes.
     x_loc : jnp.ndarray
-        Per-cell PLN MAP log-rates with shape ``(n_cells, G)``.
+        Per-cell MAP latent log-rate matrix ``x`` with shape ``(C, G)``.
     eta_loc : jnp.ndarray or None
-        Optional per-cell capture offsets with shape ``(n_cells,)``.
+        Optional per-cell capture offsets ``η`` with shape ``(C,)``. When
+        provided, effective log-rates are ``x_cg - η_c``.
     return_by : {"cell", "gene"}
-        Reduction mode for the log-likelihood matrix.
+        Aggregation axis for the elementwise log-likelihood table.
 
     Returns
     -------
     jnp.ndarray
-        Per-cell or per-gene log-likelihood totals.
+        If ``return_by="cell"``, returns ``(C,)`` with per-cell totals:
+
+        ``ℓ_c = Σ_g log p(u_cg | λ_cg)``.
+
+        If ``return_by="gene"``, returns ``(G,)`` with per-gene totals:
+
+        ``ℓ_g = Σ_c log p(u_cg | λ_cg)``.
 
     Notes
     -----
-    ``return_by="gene"`` is a straightforward reduction for PLN because the
-    Poisson likelihood factorizes over genes.
+    The Poisson mean is parameterized by
+
+    ``log λ_cg = clip(x_cg - η_c, log_rate_min, log_rate_max)``
+
+    (or ``log λ_cg = clip(x_cg, ...)`` when no ``η`` is available), and
+
+    ``log p(u_cg | λ_cg) = u_cg log λ_cg - λ_cg - log(u_cg!)``.
+
+    Because the PLN likelihood factorizes over genes, per-gene and per-cell
+    reductions are both exact regroupings of the same elementwise terms.
     """
     from jax.scipy.special import gammaln
 
@@ -68,36 +84,52 @@ def _ll_lnm(
     alr_reference_idx: Optional[int],
     return_by: str,
 ) -> jnp.ndarray:
-    """Compute LNM/LNMVCP multinomial log-likelihood at MAP state.
+    """Compute LNM-family MAP multinomial log-likelihood.
 
     Parameters
     ----------
     counts : jnp.ndarray
-        Observed counts with shape ``(n_cells, G)``.
+        Observed count matrix ``u`` with shape ``(C, G)``.
     mu : jnp.ndarray
-        ALR-space decoder bias with shape ``(G-1,)``.
+        ALR-space decoder bias ``μ`` with shape ``(G−1,)``.
     W : jnp.ndarray
-        ALR-space decoder loadings with shape ``(G-1, k)``.
+        ALR-space loading matrix ``W`` with shape ``(G−1, K)``.
     z_loc : jnp.ndarray or None
-        Per-cell low-rank latent MAP values with shape ``(n_cells, k)``.
+        Low-rank per-cell MAP latent coordinates with shape ``(C, K)``.
     y_alr_loc : jnp.ndarray or None
-        Per-cell ALR latent MAP values with shape ``(n_cells, G-1)``.
+        Direct ALR-space per-cell MAP logits with shape ``(C, G−1)``.
     alr_reference_idx : int or None
-        Reference gene index used in ALR coordinates.
+        Index of the ALR reference gene used for zero-insertion embedding.
     return_by : {"cell", "gene"}
-        Reduction mode for the log-likelihood output.
+        Aggregation axis for log-likelihood reporting.
 
     Returns
     -------
     jnp.ndarray
-        Per-cell full multinomial log-likelihood values or per-gene data-term
-        contributions.
+        If ``return_by="cell"``, returns ``(C,)`` full multinomial
+        log-likelihood values:
+
+        ``ℓ_c = log(N_c!) - Σ_g log(u_cg!) + Σ_g u_cg log p_cg``.
+
+        If ``return_by="gene"``, returns ``(G,)`` data-term contributions:
+
+        ``t_g = Σ_c u_cg log p_cg``.
 
     Notes
     -----
-    For ``return_by="gene"``, the return value contains only the data-term
-    contributions ``Σ_c u_cg log p_cg``. The multinomial normalizer couples
-    genes and is therefore assigned only in the per-cell reduction path.
+    Two latent parameterization branches are supported:
+
+    - **Direct ALR branch**: ``y_alr = y_alr_loc``.
+    - **Low-rank branch**: ``y_alr = μ + z_loc Wᵀ``.
+
+    Full-gene logits are reconstructed by inserting a zero at the ALR
+    reference index, then normalized with
+
+    ``log p_c· = log_softmax(y_full,c·)``.
+
+    For ``return_by="gene"``, only the additive data term is returned.
+    The combinatorial normalizer depends on whole-cell totals and does not
+    decompose into gene-attributable components.
     """
     from jax.scipy.special import gammaln
 

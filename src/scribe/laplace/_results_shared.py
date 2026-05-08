@@ -77,28 +77,34 @@ def _subset_var(var: Optional[Any], idx) -> Optional[Any]:
 def _augment_with_reference(
     y_alr: jnp.ndarray, alr_reference_idx: int, n_genes: int
 ) -> jnp.ndarray:
-    """Insert a zero ALR reference logit to recover full-gene logits.
+    """Embed ALR logits into full-gene logits by zero-reference insertion.
 
     Parameters
     ----------
     y_alr : jnp.ndarray
-        ALR-space logits with trailing axis length ``G-1``.
+        ALR coordinates with trailing axis length ``G−1``. The leading axes
+        are arbitrary (for example ``(C, G−1)`` or ``(S, C, G−1)``).
     alr_reference_idx : int
-        Zero-based index of the ALR reference gene.
+        Zero-based position of the ALR reference gene in full-gene indexing.
     n_genes : int
         Full gene count ``G``.
 
     Returns
     -------
     jnp.ndarray
-        Full logits with shape ``y_alr.shape[:-1] + (G,)`` where the
-        reference logit is fixed at zero.
+        Full-gene logits ``y_full`` with shape ``y_alr.shape[:-1] + (G,)``.
+        The inserted reference coordinate is exactly zero.
 
     Notes
     -----
-    ALR coordinates remove one reference dimension. This utility performs
-    the inverse embedding needed for operations that expect full-gene logits
-    (for example ``log_softmax`` over all genes).
+    If ``r`` is the reference index, this function implements:
+
+    - ``y_full[..., r] = 0``
+    - ``y_full[..., j] = y_alr[..., j']`` for all non-reference genes,
+      preserving original order.
+
+    This is the inverse embedding needed before applying full-simplex
+    transforms such as ``softmax`` or ``log_softmax`` over all ``G`` genes.
     """
     leading = y_alr.shape[:-1]
     full = jnp.zeros(leading + (n_genes,), dtype=y_alr.dtype)
