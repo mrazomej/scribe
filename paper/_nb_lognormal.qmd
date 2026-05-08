@@ -1,0 +1,1299 @@
+---
+editor:
+    render-on-save: true
+# bibliography: references.bib
+csl: ieee.csl
+format:
+  html:
+    filters: [tikz.lua, strip-yaml-frontmatter.lua, maintext-filter.lua, sitext-filter.lua]
+---
+
+# The Negative Binomial-LogNormal model {#sec-nb-lognormal}
+
+In @sec-grn-biophysics, we derived two complementary biophysical results that
+together motivate a hierarchy of count models for single-cell RNA sequencing
+data:
+
+1. At the level of a single gene with a one-state bursty promoter and
+geometrically-distributed burst sizes, the steady-state mRNA count distribution
+is **exactly** Negative Binomial. This is a consequence of the chemical master
+equation in the bursty limit and does not require any approximation.
+
+2. At the level of multiple genes evolving under regulatory feedback, a Linear
+Noise Approximation (LNA) of the Chemical Langevin Equation in log-abundance
+coordinates yields a multivariate Ornstein-Uhlenbeck (OU) process. Its
+stationary distribution is multivariate Gaussian on the log-abundances, with
+covariance $\underline{\underline{\Sigma}}$ determined by the Lyapunov equation.
+
+Two existing scribe models specialize these results in different ways. The
+Poisson-LogNormal (@sec-poisson-lognormal) treats the multivariate Gaussian as
+a vector of log-Poisson rates, capturing cross-gene correlations through
+$\underline{\underline{\Sigma}}$ but **discarding** the bursty nature of
+transcription by collapsing the inner observation channel to Poisson shot
+noise. The Logistic-Normal-Multinomial (@sec-logistic-normal-multinomial) maps
+the Gaussian latent into the simplex through a softmax transform, modelling
+compositional correlations conditional on a separately-modelled total count.
+
+In this section, we introduce a third member of this family that uses **both**
+biophysical results simultaneously: the **Negative Binomial-LogNormal** model.
+The construction is hierarchical:
+
+- The inner observation layer is the bursty Negative Binomial of result (1).
+- The outer regulatory layer is the multivariate log-normal of result (2),
+  entering as a per-cell multiplicative offset on the gene means.
+
+We will show that this model:
+
+1. Is a **strict generalization** of the independent Negative Binomial baseline:
+setting the regulatory covariance to zero (so that $z_c = 0$ for all cells $c$)
+recovers the shared-$p$ NBDM model of @sec-dirichlet-multinomial exactly.
+
+2. **Approaches** the Poisson-LogNormal in the limit $r_g \to \infty$ uniformly
+across genes, in which the bursty NB collapses to its Poisson limit.
+
+3. **Resolves** the documented failure of the Poisson-LogNormal on low-count
+genes by preserving the Gamma mixing structure that gives the Negative
+Binomial its characteristic spike of probability mass near zero.
+
+4. Admits an analytically clean inference procedure: the inner Gamma layer can
+be marginalized in closed form via Gamma-Poisson conjugacy, leaving a single
+continuous latent $\underline{z}_c$ per cell whose log-posterior is concave.
+
+The relationship between this model and the Poisson-LogNormal mirrors the
+relationship between the Negative Binomial and the Poisson: the
+NB-LogNormal is the Poisson-LogNormal corrected for transcriptional
+burstiness, while preserving the Gaussian correlation structure that the
+OU-at-steady-state argument justifies for upstream regulators.
+
+## Generative model {#sec-nbln-generative}
+
+We index cells by $c = 1, \ldots, C$ and genes by $g = 1, \ldots, G$. The
+observed count of gene $g$ in cell $c$ is denoted $u_{cg} \in \mathbb{N}$. The
+model is specified hierarchically by three layers.
+
+### Latent regulatory state
+
+Each cell carries a $G$-dimensional latent regulatory state
+$\underline{z}_c \in \mathbb{R}^G$ drawn from a multivariate Gaussian:
+
+$$
+\underline{z}_c \sim
+\mathcal{N}\!\left(\underline{0},\ \underline{\underline{\Sigma}}\right),
+\qquad c = 1, \ldots, C.
+$${#eq-nbln-z-prior}
+
+The covariance matrix $\underline{\underline{\Sigma}} \in \mathbb{R}^{G \times G}$
+is a global parameter. As established in @sec-grn-biophysics, this covariance is
+the stationary solution of the Lyapunov equation associated with the linearized
+log-abundance dynamics under the LNA.
+
+### Latent expression rate
+
+Given the regulatory state, the latent Poisson rate $\lambda_{cg}$ of gene $g$
+in cell $c$ is drawn from a Gamma distribution whose mean is modulated by
+$z_{cg}$:
+
+$$
+\lambda_{cg} \mid \underline{z}_c \sim
+\text{Gamma}\!\left(
+    \text{shape} = r_g,\
+    \text{rate} = \frac{r_g}{m_{cg}(\underline{z}_c)}
+\right),
+$${#eq-nbln-lambda-gamma}
+
+where the conditional mean is
+
+$$
+m_{cg}(\underline{z}_c) =
+\mu_{cg} \cdot \exp(z_{cg}),
+\qquad
+\mu_{cg} > 0.
+$${#eq-nbln-mean-link}
+
+The dispersion $r_g > 0$ is gene-specific but **independent of**
+$\underline{z}_c$. This independence is a deliberate modelling choice that we
+will exploit repeatedly: it is what makes the inner Gamma layer marginalizable
+in closed form (@sec-nbln-marginalize) and what gives the resulting log-likelihood
+its concavity properties (@sec-nbln-elbo).
+
+The baseline mean $\mu_{cg}$ admits the standard scVI-style decomposition into a
+per-cell library size $\ell_c$ and a gene-specific relative abundance
+$\tilde{\mu}_g$:
+
+$$
+\log \mu_{cg} = \log \ell_c + \log \tilde{\mu}_g.
+$${#eq-nbln-mean-decomposition}
+
+In our framework, $\ell_c$ is **not** absorbed into $z_c$; it is modelled
+separately through the capture-prior construction of @sec-capture-prior, which
+ensures that $\underline{z}_c$ retains its interpretation as a latent
+**regulatory** state rather than a junk drawer for technical noise. We return
+to this point in @sec-nbln-comparison.
+
+### Observation
+
+Conditional on the latent rate, the count is Poisson:
+
+$$
+u_{cg} \mid \lambda_{cg} \sim \text{Poisson}(\lambda_{cg}).
+$${#eq-nbln-poisson}
+
+### Graphical model
+
+The full joint distribution is
+
+$$
+\pi(\underline{\underline{U}},
+    \underline{\underline{\Lambda}},
+    \underline{\underline{Z}})
+=
+\prod_{c=1}^C
+\pi(\underline{z}_c \mid \underline{\underline{\Sigma}})
+\prod_{g=1}^G
+\pi(\lambda_{cg} \mid z_{cg}, r_g, \mu_{cg})\,
+\pi(u_{cg} \mid \lambda_{cg}),
+$${#eq-nbln-joint}
+
+with $\underline{\underline{U}} \in \mathbb{N}^{C \times G}$ the observed count
+matrix, $\underline{\underline{\Lambda}} \in \mathbb{R}_{>0}^{C \times G}$ the
+matrix of latent rates, and $\underline{\underline{Z}} \in \mathbb{R}^{C \times G}$
+the matrix of regulatory states. The structure is depicted below.
+
+```{.tikz caption="Graphical model for the Negative Binomial-LogNormal. White nodes are latent variables, gray nodes are observed variables, and plates denote replication." label="fig-nbln-graphical-model" additionalPackages="\\usetikzlibrary{positioning,fit,backgrounds}"}
+\begin{tikzpicture}[
+  >=stealth,
+  node distance=10mm and 12mm,
+  latent/.style={circle, draw, minimum size=8mm, inner sep=1pt},
+  obs/.style={circle, draw, fill=gray!20, minimum size=8mm, inner sep=1pt},
+  param/.style={rectangle, draw, minimum size=8mm, inner sep=2pt},
+  plate/.style={draw, rounded corners, inner sep=4mm}
+]
+  % Globals
+  \node[param] (Sigma) {$\underline{\underline{\Sigma}}$};
+  \node[param, right=of Sigma, xshift=10mm] (mu) {$\tilde{\mu}_g$};
+  \node[param, right=of mu] (rg) {$r_g$};
+
+  % Cell-level
+  \node[latent, below=of Sigma] (z) {$\underline{z}_c$};
+  \node[latent, below=of mu, xshift=6mm] (lam) {$\lambda_{cg}$};
+  \node[obs, below=of lam] (u) {$u_{cg}$};
+
+  % Edges
+  \draw[->] (Sigma) -- (z);
+  \draw[->] (z) -- (lam);
+  \draw[->] (mu) -- (lam);
+  \draw[->] (rg) -- (lam);
+  \draw[->] (lam) -- (u);
+
+  % Gene plate
+  \begin{scope}[on background layer]
+    \node[plate, fit=(lam)(u), label={[yshift=1mm]north east:$g=1,\ldots,G$}] (geneplate) {};
+  \end{scope}
+
+  % Cell plate
+  \begin{scope}[on background layer]
+    \node[plate, fit=(z)(geneplate), label={[yshift=1mm]north east:$c=1,\ldots,C$}] (cellplate) {};
+  \end{scope}
+\end{tikzpicture}
+```
+
+## Marginalizing the inner Gamma layer {#sec-nbln-marginalize}
+
+The model as written has two latent quantities per observation: the regulatory
+state $z_{cg}$ and the rate $\lambda_{cg}$. The first is a continuous,
+correlated latent that we must approximate variationally. The second can be
+**marginalized analytically** through Gamma-Poisson conjugacy, dramatically
+simplifying inference.
+
+### Gamma-Poisson conjugacy
+
+Recall (cf. @sec-dirichlet-multinomial) that if
+$\lambda \sim \text{Gamma}(\text{shape} = r,\ \text{rate} = \beta)$ and
+$u \mid \lambda \sim \text{Poisson}(\lambda)$, then the marginal distribution
+of $u$ is Negative Binomial in the $(r, p)$ parameterization with
+$p = \beta / (\beta + 1)$, or equivalently in the (mean, dispersion)
+parameterization with mean $r/\beta$ and dispersion $r$. Specifically,
+
+$$
+\pi(u \mid r, \beta)
+=
+\int_0^\infty
+\text{Poisson}(u \mid \lambda)\,
+\text{Gamma}(\lambda \mid r, \beta)\,
+\mathrm{d}\lambda
+=
+\text{NB}\!\left(u \mid r,\ p = \frac{\beta}{\beta + 1}\right).
+$${#eq-nbln-gamma-poisson}
+
+### Application to the conditional likelihood
+
+For the NB-LogNormal model, conditional on $\underline{z}_c$, equations
+@eq-nbln-lambda-gamma and @eq-nbln-poisson have the form of @eq-nbln-gamma-poisson
+with shape $r_g$ and rate $\beta_{cg} = r_g / m_{cg}(\underline{z}_c)$. Applying
+the conjugacy result gives
+
+$$
+u_{cg} \mid \underline{z}_c \sim
+\text{NB}\!\left(
+    \text{mean} = m_{cg}(\underline{z}_c),\
+    \text{dispersion} = r_g
+\right),
+$${#eq-nbln-conditional-nb}
+
+with the corresponding success probability
+
+$$
+\boxed{\
+p_g(z_{cg}) =
+\frac{r_g}{r_g + \mu_{cg}\, e^{z_{cg}}}
+\ }.
+$${#eq-nbln-pg-z}
+
+### Linear dependence in logit space
+
+The conditional NB likelihood depends on $\underline{z}_c$ exclusively through
+the success probability $p_g(z_{cg})$. On the logit scale, this dependence is
+**linear**:
+
+$$
+\text{logit}\bigl(p_g(z_{cg})\bigr) =
+\log\frac{r_g}{\mu_{cg}\, e^{z_{cg}}} =
+\log r_g - \log \mu_{cg} - z_{cg}.
+$${#eq-nbln-logit-linear}
+
+Equivalently, on the failure-logit scale (the convention used by most
+probabilistic-programming libraries for the Negative Binomial),
+
+$$
+\log\frac{1 - p_g(z_{cg})}{p_g(z_{cg})}
+= \log \mu_{cg} + z_{cg} - \log r_g.
+$${#eq-nbln-failure-logit}
+
+The latent enters as a **clean additive term** in the logits.
+Reparameterized gradients with respect to the variational parameters of
+$q(\underline{z}_c)$ flow through this linear term without difficulty, which is
+critical for stochastic variational inference (@sec-nbln-elbo).
+
+### What does and does not depend on $\underline{z}_c$
+
+The following table summarizes the dependence of the relevant quantities on the
+latent regulatory state. The key observation is that the **dispersion**
+$r_g$ is independent of $\underline{z}_c$. This is what allows the Gamma layer
+to be marginalized in closed form: had the dispersion depended on
+$\underline{z}_c$, the conjugacy in @eq-nbln-gamma-poisson would no longer apply.
+
+| Quantity | Depends on $\underline{z}_c$? | Expression |
+|---|---|---|
+| Conditional mean $\mathbb{E}[u_{cg} \mid \underline{z}_c]$ | Yes | $\mu_{cg}\, e^{z_{cg}}$ |
+| Success probability $p_g(z_{cg})$ | Yes | $r_g / (r_g + \mu_{cg}\, e^{z_{cg}})$ |
+| Conditional variance $\text{Var}(u_{cg} \mid \underline{z}_c)$ | Yes | $\mu_{cg}\, e^{z_{cg}} + (\mu_{cg}\, e^{z_{cg}})^2 / r_g$ |
+| Dispersion $r_g$ | **No** | gene-specific constant |
+| Baseline mean $\mu_{cg}$ | No | $\ell_c \tilde{\mu}_g$ |
+
+After marginalizing $\lambda$, the model reduces to a Negative Binomial
+likelihood whose log-mean is offset by a Gaussian latent:
+
+$$
+\boxed{\
+u_{cg} \mid \underline{z}_c \sim
+\text{NB}\!\left(\mu_{cg}\, e^{z_{cg}},\ r_g\right),
+\qquad
+\underline{z}_c \sim \mathcal{N}(\underline{0}, \underline{\underline{\Sigma}}).
+\ }
+$${#eq-nbln-marginalized}
+
+This is the form of the model used throughout the rest of this section.
+
+## Biophysical interpretation {#sec-nbln-biophysics}
+
+Having specified the model, we now justify each layer biophysically. The
+argument relies entirely on results already derived in @sec-grn-biophysics; the
+new content is the **synthesis** that combines them.
+
+### Inner layer: bursty transcription gives an exact Negative Binomial
+
+In @sec-grn-biophysics, we derived the steady-state distribution of mRNA counts
+under the one-state bursty promoter model. Briefly, the gene transcribes
+mRNAs in geometrically-distributed bursts at rate $k_b$, and individual mRNAs
+degrade at rate $\gamma$. The chemical master equation for this system has the
+exact stationary solution
+
+$$
+m \sim \text{NB}\!\left(
+    r = \frac{k_b}{\gamma},\
+    p = \frac{1}{1 + b}
+\right),
+$${#eq-nbln-bursty-nb}
+
+where $b$ is the mean burst size. The Negative Binomial here is **not an
+approximation** — it is the exact stationary distribution of a well-characterized
+biophysical process. Mapping to our notation: $r_g$ corresponds to the
+gene-specific burst frequency divided by the degradation rate, and the success
+probability encodes the burst size.
+
+### Outer layer: regulatory dynamics give a multivariate log-normal
+
+Also in @sec-grn-biophysics, we derived that the joint stationary distribution
+of log-abundances under coupled regulatory dynamics, after the LNA, is
+multivariate Gaussian:
+
+$$
+\underline{x}^{(c)} \sim
+\mathcal{N}\!\left(\underline{\bar{x}},\
+                   \underline{\underline{\Sigma}}\right),
+\qquad
+x_g = \log \lambda_g,
+$${#eq-nbln-x-prior}
+
+with $\underline{\underline{\Sigma}}$ fixed by the Lyapunov equation
+$\underline{\underline{J}}\,\underline{\underline{\Sigma}} +
+\underline{\underline{\Sigma}}\,\underline{\underline{J}}^\top +
+2\underline{\underline{D}} = \underline{\underline{0}}$, where
+$\underline{\underline{J}}$ is the Jacobian of the linearized log-rate drift
+and $\underline{\underline{D}}$ is the diffusion matrix.
+
+Defining $\underline{z}_c = \underline{x}^{(c)} - \underline{\bar{x}}$ recenters
+this to the zero-mean form @eq-nbln-z-prior used in our model.
+
+### The synthesis: timescale separation
+
+The two results above hold at different temporal scales:
+
+- The bursty NB result @eq-nbln-bursty-nb is the stationary distribution under a
+  fixed burst rate $k_b$. It treats the regulatory environment as constant.
+- The log-normal result @eq-nbln-x-prior describes how that regulatory
+  environment fluctuates across cells.
+
+The synthesis assumes a **separation of timescales** between these two layers.
+Concretely: transcription factor (TF) concentrations and pathway activities
+(the slow regulatory state $\underline{z}_c$) evolve on timescales much longer
+than the burst dynamics of any individual gene. Each cell, observed at a single
+snapshot, has effectively reached the bursty NB stationary distribution
+**conditional on its own slow regulatory state**, but different cells are
+sampled from different points along the slow OU trajectory.
+
+Under this assumption, the regulatory state perturbs the burst rate
+multiplicatively. If transcription factors regulate the burst frequency
+$k_{\text{on}}$ of gene $g$ through a Hill-function dose-response, a
+linearization in log-TF concentration gives
+
+$$
+k_{\text{on}, g}(\underline{z}_c) =
+k_{\text{on}, g}^{(0)}\,
+\exp\!\left(\underline{w}_g^\top \underline{u}_c\right),
+$${#eq-nbln-burst-frequency}
+
+where $\underline{u}_c \in \mathbb{R}^K$ is the vector of TF activities in
+cell $c$ and $\underline{w}_g \in \mathbb{R}^K$ is the regulatory loading of
+gene $g$. The induced perturbation of the NB mean is then
+
+$$
+\mu_{cg} \to \mu_{cg} \cdot
+\exp\!\left(\underline{w}_g^\top \underline{u}_c\right) =
+\mu_{cg} \cdot \exp(z_{cg}),
+$${#eq-nbln-mean-perturbation}
+
+with $z_{cg} = \underline{w}_g^\top \underline{u}_c$. This is precisely the
+mean-link function @eq-nbln-mean-link assumed in our model. The vector
+$\underline{z}_c \in \mathbb{R}^G$ is the linear projection of a low-dimensional
+TF state $\underline{u}_c \in \mathbb{R}^K$ through the loading matrix
+$\underline{\underline{W}}$; if $\underline{u}_c \sim \mathcal{N}(0, I_K)$,
+then $\underline{z}_c \sim \mathcal{N}(0, \underline{\underline{W}}\,
+\underline{\underline{W}}^\top)$ exactly, motivating the low-rank structure of
+@sec-nbln-low-rank.
+
+### Comparison to PLN and LNM {#sec-nbln-comparison}
+
+The three models built on @sec-grn-biophysics share the same outer Gaussian
+layer but differ in their treatment of the inner observation channel:
+
+| Model | Inner observation channel | Biophysical role of $\underline{z}_c$ | Linearizations |
+|---|---|---|---|
+| Poisson-LogNormal (@sec-poisson-lognormal) | Poisson | log-rate of expression | 1 (rate SDE) |
+| Logistic-Normal-Multinomial (@sec-logistic-normal-multinomial) | Multinomial via softmax | log-composition | 1 (rate SDE) |
+| **Negative Binomial-LogNormal** (this section) | **Bursty NB** | **log-modulator of burst frequency** | **2 (rate SDE + regulatory SDE)** |
+
+The PLN and LNM models invoke a single linearization (the LNA on the rate SDE)
+and obtain a Gaussian on log-rates that is fed directly into a memoryless
+observation channel. The NB-LogNormal invokes an additional linearization
+(of the regulatory dose-response) and uses the resulting Gaussian as a
+multiplicative offset on a non-memoryless inner channel that has its own
+biophysical foundation.
+
+The cost of the second linearization is one additional assumption (timescale
+separation between regulatory dynamics and burst dynamics). The benefit is
+a count distribution whose **shape** matches single-cell data far more
+faithfully on sparse genes, as we now show.
+
+## Why this resolves the PLN low-count failure {#sec-nbln-zero-spike}
+
+The Poisson-LogNormal captures cross-gene correlations through
+$\underline{\underline{\Sigma}}$, but is empirically known to mis-fit the
+shape of the count distribution for low-mean, high-zero-fraction genes. In this
+section we explain why the failure occurs and why the NB-LogNormal does not
+inherit it.
+
+### The mixing density at zero is what matters
+
+Both PLN and NB-LogNormal arise from a Poisson observation channel mixed over a
+latent rate distribution. The difference is the **shape of the rate
+distribution near zero**.
+
+For the Negative Binomial, the latent rate is Gamma:
+
+$$
+\pi(\lambda \mid r, \beta)
+= \frac{\beta^r}{\Gamma(r)}\,
+  \lambda^{r-1}\, e^{-\beta \lambda}.
+$${#eq-nbln-gamma-density}
+
+For shape $r < 1$, this density **diverges** as $\lambda \to 0^+$: it
+concentrates a spike of probability mass on small rates. Convolved against
+Poisson, this spike directly maps to a large fraction of zero counts.
+
+For the Poisson-LogNormal, the latent rate is $\lambda = \exp(z)$ with
+$z \sim \mathcal{N}(\mu, \sigma^2)$, giving the log-normal density
+
+$$
+\pi(\lambda \mid \mu, \sigma)
+= \frac{1}{\lambda \sigma \sqrt{2\pi}}
+  \exp\!\left(
+      -\frac{(\log\lambda - \mu)^2}{2\sigma^2}
+  \right).
+$${#eq-nbln-lognormal-density}
+
+This density goes to **zero** as $\lambda \to 0^+$, regardless of the values of
+$\mu$ and $\sigma$. There is no spike at zero, and consequently no mechanism
+for the PLN to absorb a large fraction of zero counts without distorting the
+rest of its distribution.
+
+### Moment-matching does not capture shape
+
+Both models can match the first two moments of the count distribution. For
+fixed mean $\mu$:
+
+$$
+\text{NB:}\qquad
+\text{Var}(u) = \mu + \frac{\mu^2}{r},
+$${#eq-nbln-var-nb}
+
+$$
+\text{PLN:}\qquad
+\text{Var}(u) = \mu + \mu^2 (e^{\sigma^2} - 1).
+$${#eq-nbln-var-pln}
+
+The mapping $1/r \leftrightarrow e^{\sigma^2} - 1$ matches second moments. But
+the **shape** of $P(u = k)$ for small $k$ is set by the mixing density near
+zero (@eq-nbln-gamma-density vs. @eq-nbln-lognormal-density), which is where the
+two models structurally disagree.
+
+### Practical consequence
+
+To force the PLN to match an observed zero fraction near unity, the optimizer
+must either drive $\mu \to -\infty$ or inflate $\sigma$. The first underestimates
+expression for the cells that *do* express the gene; the second simultaneously
+fattens the right tail, generating spurious very-large counts. Empirically, PLN
+under-predicts the zero fraction (and over-predicts counts of one and two) for
+sparse genes that the NB fits cleanly with small $r$.
+
+The NB-LogNormal preserves the Gamma mixing density on the rate
+**conditional on $\underline{z}_c$**. The cross-gene correlation enters as a
+multiplicative shift in the Gamma's mean, leaving the spike-at-zero behaviour
+intact for any genes with $r_g < 1$. The model thus retains the marginal
+shape of the NB while gaining the cross-gene correlation structure of the PLN.
+
+## Limiting cases {#sec-nbln-limits}
+
+The NB-LogNormal sits between two existing scribe models, recovering each in
+a clean limit. These limits provide both validation tests and intuition.
+
+### Independent NB recovery: $\underline{\underline{\Sigma}} \to 0$ {#sec-nbln-limit-nbdm}
+
+If $\underline{\underline{\Sigma}} \to \underline{\underline{0}}$ (or
+equivalently, $\underline{\underline{W}} = \underline{\underline{0}}$ and
+$\underline{d} = \underline{0}$ in the low-rank parameterization of
+@sec-nbln-low-rank), the prior on $\underline{z}_c$ collapses to a point mass at
+the origin: $\underline{z}_c = \underline{0}$ for all cells. The
+marginalized likelihood @eq-nbln-marginalized then reduces to
+
+$$
+u_{cg} \sim \text{NB}(\mu_{cg}, r_g),
+$${#eq-nbln-limit-nbdm-likelihood}
+
+independently across genes. This is the shared-$p$ NBDM model of
+@sec-dirichlet-multinomial expressed in (mean, dispersion) form. In particular,
+all gene-gene correlations vanish.
+
+This limit is useful as a **validation check**: any implementation of the
+NB-LogNormal should, when initialized at $\underline{\underline{\Sigma}} = 0$
+and trained with the regulatory parameters frozen, return likelihoods and
+posterior predictive checks identical (up to numerical precision) to the
+existing NBDM implementation.
+
+### Poisson-LogNormal approach: $r_g \to \infty$ {#sec-nbln-limit-pln}
+
+In the limit $r_g \to \infty$ uniformly across genes, the Gamma mixing
+distribution @eq-nbln-lambda-gamma concentrates on its mean
+$m_{cg}(\underline{z}_c)$:
+
+$$
+\text{Gamma}\!\left(r_g,\
+    \frac{r_g}{m_{cg}(\underline{z}_c)}\right)
+\xrightarrow{r_g \to \infty}
+\delta_{m_{cg}(\underline{z}_c)},
+$${#eq-nbln-limit-pln-gamma}
+
+so the latent rate becomes deterministic conditional on $\underline{z}_c$, and
+the Poisson layer fires directly on $m_{cg}(\underline{z}_c) = \mu_{cg}\,
+e^{z_{cg}}$. This is precisely the PLN observation model of
+@sec-poisson-lognormal:
+
+$$
+u_{cg} \mid \underline{z}_c \sim
+\text{Poisson}\!\left(\mu_{cg}\, e^{z_{cg}}\right).
+$${#eq-nbln-limit-pln-likelihood}
+
+Equivalently, in the (mean, dispersion) parameterization the conditional NB
+@eq-nbln-conditional-nb tends to the Poisson with the same mean as
+$r_g \to \infty$.
+
+The two limits together establish that the NB-LogNormal interpolates
+**continuously** between the independent NBDM ($\underline{\underline{\Sigma}}
+\to 0$) and the Poisson-LogNormal ($r_g \to \infty$) as a function of the
+regulatory covariance and the bursty dispersion. The bursty dispersion thus
+controls **how much of the per-gene count variability is intrinsic** (NB-like,
+spike at zero) **versus driven by extrinsic regulatory fluctuations**
+(absorbed into $\underline{\underline{\Sigma}}$).
+
+## Low-rank parameterization of $\underline{\underline{\Sigma}}$ {#sec-nbln-low-rank}
+
+For typical scRNA-seq applications with $G$ on the order of $2 \times 10^3$
+to $2 \times 10^4$ genes, a full $G \times G$ covariance matrix is intractable
+both statistically (too many parameters relative to the sample size) and
+computationally ($O(G^3)$ for inversion). We adopt the low-rank-plus-diagonal
+parameterization
+
+$$
+\underline{\underline{\Sigma}} =
+\underline{\underline{W}}\,\underline{\underline{W}}^\top +
+\text{diag}(\underline{d}),
+\qquad
+\underline{\underline{W}} \in \mathbb{R}^{G \times K},\quad
+\underline{d} \in \mathbb{R}^G_{>0},
+$${#eq-nbln-low-rank}
+
+with $K \ll G$. This is the same parameterization used by the PLN and LNM
+models in scribe.
+
+### Regulatory interpretation
+
+Equation @eq-nbln-low-rank has a direct biophysical reading. The columns of
+$\underline{\underline{W}}$ correspond to $K$ effective regulatory modules
+(linear combinations of TF activities) that drive the dominant cross-gene
+covariation, and $\underline{d}$ encodes the residual gene-specific intrinsic
+noise that is not explained by these modules. This is precisely the
+interpretation supported by the synthesis argument of
+@sec-nbln-biophysics: the underlying low-dimensional TF state
+$\underline{u}_c \in \mathbb{R}^K$ projects to the gene-level latent through
+$\underline{z}_c = \underline{\underline{W}}\,\underline{u}_c +
+\underline{\epsilon}_c$ with
+$\underline{\epsilon}_c \sim \mathcal{N}(0, \text{diag}(\underline{d}))$.
+
+### Computational benefit: Woodbury inversion
+
+The KL term of the variational objective (@sec-nbln-elbo) requires
+$\underline{\underline{\Sigma}}^{-1}$. The Woodbury identity gives
+
+$$
+\underline{\underline{\Sigma}}^{-1} =
+\underline{\underline{D}}^{-1} -
+\underline{\underline{D}}^{-1}
+\underline{\underline{W}}
+\left(\underline{\underline{I}}_K +
+      \underline{\underline{W}}^\top
+      \underline{\underline{D}}^{-1}
+      \underline{\underline{W}}\right)^{-1}
+\underline{\underline{W}}^\top
+\underline{\underline{D}}^{-1},
+$${#eq-nbln-woodbury}
+
+where $\underline{\underline{D}} = \text{diag}(\underline{d})$. The right-hand
+side requires only the inversion of a $K \times K$ matrix and a few
+matrix-vector products, reducing the cost of computing
+$\underline{\underline{\Sigma}}^{-1} \underline{v}$ from $O(G^3)$ to $O(K^2 G)$.
+The same simplification applies to the log-determinant via the matrix-determinant
+lemma:
+
+$$
+\log |\underline{\underline{\Sigma}}|
+= \log |\underline{\underline{D}}|
++ \log |\underline{\underline{I}}_K +
+        \underline{\underline{W}}^\top
+        \underline{\underline{D}}^{-1}
+        \underline{\underline{W}}|.
+$${#eq-nbln-logdet}
+
+### Identifiability
+
+The parameterization @eq-nbln-low-rank is invariant under right-multiplication
+of $\underline{\underline{W}}$ by an orthogonal matrix
+$\underline{\underline{R}} \in \mathcal{O}(K)$:
+$\underline{\underline{W}}\,\underline{\underline{R}}$ and
+$\underline{\underline{W}}$ produce the same
+$\underline{\underline{\Sigma}}$. This non-identifiability does not affect the
+likelihood or the ELBO, but it does mean that the columns of
+$\underline{\underline{W}}$ cannot be interpreted as TF programs without an
+additional constraint. Standard remedies include constraining
+$\underline{\underline{W}}$ to be lower-triangular, imposing column-wise
+orthogonality, or applying a post-hoc principal-component rotation.
+
+A second, subtler identifiability concern arises between the gene baseline
+$\log \tilde{\mu}_g$ and the latent $z_{cg}$: both enter the conditional log-mean
+additively. The zero-mean prior @eq-nbln-z-prior anchors the cell-averaged
+$z_{cg}$ at zero, breaking this redundancy at the population level. In practice,
+monitoring $\frac{1}{C}\sum_c \mathbb{E}_q[z_{cg}]$ during training and
+verifying it remains close to zero is a sufficient check.
+
+## Variational inference {#sec-nbln-elbo}
+
+We now turn to inference. The model has continuous global parameters
+$\underline{\theta} = \{\tilde{\mu}_g, r_g, \underline{\underline{W}},
+\underline{d}\}$ and one per-cell continuous latent $\underline{z}_c$. We
+estimate all global parameters by maximizing a single-sample evidence lower
+bound (ELBO), with $\underline{z}_c$ treated as a variational latent.
+
+### ELBO
+
+Choose a variational posterior factored across cells:
+
+$$
+q(\underline{\underline{Z}}) =
+\prod_{c=1}^C q(\underline{z}_c) =
+\prod_{c=1}^C
+\mathcal{N}\!\left(\underline{z}_c \mid \underline{m}_c,
+                   \underline{\underline{S}}_c\right),
+$${#eq-nbln-q-form}
+
+where $\underline{m}_c \in \mathbb{R}^G$ and $\underline{\underline{S}}_c$ is a
+covariance matrix whose parameterization we discuss in @sec-nbln-amortization.
+The ELBO decomposes additively across cells:
+
+$$
+\mathcal{L}(\underline{\theta}, \phi) =
+\sum_{c=1}^C
+\left[
+\mathbb{E}_{q(\underline{z}_c)}\!\left[
+    \sum_{g=1}^G \log
+    \text{NB}\!\left(u_{cg} \mid \mu_{cg}\, e^{z_{cg}},\, r_g\right)
+\right]
+- \text{KL}\!\left(q(\underline{z}_c)\,\|\,
+                   p(\underline{z}_c)\right)
+\right].
+$${#eq-nbln-elbo}
+
+### Closed-form KL term
+
+Both $q(\underline{z}_c)$ and $p(\underline{z}_c)$ are Gaussian, so the KL has
+the standard closed form
+
+$$
+\text{KL}\!\left(\mathcal{N}(\underline{m}_c, \underline{\underline{S}}_c)\,
+                 \|\,\mathcal{N}(0, \underline{\underline{\Sigma}})\right)
+=
+\frac{1}{2}\!\left[
+    \text{tr}\!\left(\underline{\underline{\Sigma}}^{-1}
+                      \underline{\underline{S}}_c\right)
+    + \underline{m}_c^\top \underline{\underline{\Sigma}}^{-1} \underline{m}_c
+    - G
+    + \log\frac{|\underline{\underline{\Sigma}}|}{|\underline{\underline{S}}_c|}
+\right].
+$${#eq-nbln-kl}
+
+The Woodbury identities @eq-nbln-woodbury and @eq-nbln-logdet make this term
+tractable at $O(K^2 G)$ per cell.
+
+### Reparameterized Monte Carlo for the likelihood term
+
+The expected log-likelihood does not have a closed form, but its gradient is
+estimated cheaply by reparameterized sampling. Letting
+$\underline{\underline{L}}_c$ be a Cholesky-like factor satisfying
+$\underline{\underline{L}}_c \underline{\underline{L}}_c^\top =
+\underline{\underline{S}}_c$, we draw
+
+$$
+\underline{z}_c =
+\underline{m}_c + \underline{\underline{L}}_c \underline{\epsilon}_c,
+\qquad
+\underline{\epsilon}_c \sim \mathcal{N}(0, \underline{\underline{I}}_G),
+$${#eq-nbln-reparam}
+
+and approximate the inner expectation by a single sample (or a small number of
+samples). The gradient flows through the linear-in-$z$ term of the failure
+logits @eq-nbln-failure-logit without difficulty.
+
+### Log-concavity of the per-cell posterior
+
+The conditional log-likelihood @eq-nbln-conditional-nb is concave in
+$\underline{z}_c$. Differentiating $\log\,\text{NB}(u; \mu e^z, r)$ twice with
+respect to $z$ gives
+
+$$
+\frac{\partial^2 \log\,\text{NB}(u; \mu e^z, r)}{\partial z^2}
+= -(u + r)\, p(z)\, \bigl(1 - p(z)\bigr),
+$${#eq-nbln-loglik-curvature}
+
+with $p(z)$ defined in @eq-nbln-pg-z. This is strictly negative for
+$u, r, \mu > 0$. Combined with the (negative) Gaussian prior log-density,
+the per-cell log-posterior $\log \pi(\underline{z}_c \mid \underline{u}_c)$
+has Hessian
+
+$$
+\nabla^2_{\underline{z}_c}
+\log \pi(\underline{z}_c \mid \underline{u}_c)
+= -\text{diag}\!\left(
+    (u_{cg} + r_g)\, p_g(z_{cg})\, (1 - p_g(z_{cg}))
+\right)_{g=1}^G
+- \underline{\underline{\Sigma}}^{-1},
+$${#eq-nbln-posterior-hessian}
+
+which is strictly negative definite. The per-cell posterior over
+$\underline{z}_c$ is therefore log-concave. This has two practical consequences:
+
+1. The MAP solution exists, is unique, and can be found by Newton iteration
+   with quadratic local convergence.
+2. The Laplace approximation around the MAP is well-defined and well-behaved.
+
+The log-concavity result @eq-nbln-posterior-hessian opens two distinct
+inference paths, both of which scribe already supports for the
+Poisson-LogNormal of @sec-poisson-lognormal. Path A — amortized stochastic
+variational inference — replaces the per-cell variational parameters with the
+output of a shared encoder network and optimizes the ELBO by stochastic
+gradient descent. Path B — Laplace-approximated marginal-likelihood
+inference — solves for the per-cell MAP by Newton iteration and maximizes the
+resulting Laplace-approximated marginal likelihood with respect to the global
+parameters. We derive each in turn.
+
+### Path A: amortized stochastic variational inference {#sec-nbln-svi}
+
+In the SVI path, the per-cell variational parameters
+$(\underline{m}_c, \underline{\underline{S}}_c)$ are produced by a shared
+encoder network $f_\phi$ from the observed counts:
+
+$$
+\bigl(\underline{m}_c,\ \log \underline{s}_c\bigr) =
+f_\phi(\underline{u}_c).
+$${#eq-nbln-encoder}
+
+This **amortization** replaces $C \cdot 2G$ free variational parameters with
+the (much smaller) parameter set $\phi$ of the encoder, and is what enables
+the model to scale to single-cell datasets with
+$C \sim 10^4$–$10^6$ cells.
+
+#### Posterior covariance parameterization {#sec-nbln-amortization}
+
+The variational covariance $\underline{\underline{S}}_c$ admits three standard
+choices:
+
+| Option | Form | Cost per cell | Notes |
+|---|---|---|---|
+| Mean-field | $\text{diag}(\underline{s}_c^2)$ | $O(G)$ | Cheapest; ignores posterior cross-gene correlations |
+| Low-rank | $\underline{\underline{V}}_c \underline{\underline{V}}_c^\top + \text{diag}(\underline{t}_c)$ | $O(GK')$ | Richer; encoder outputs $\underline{\underline{V}}_c$ and $\underline{t}_c$ |
+| Full Cholesky | $\underline{\underline{L}}_c \underline{\underline{L}}_c^\top$ | $O(G^2)$ | Infeasible at scale |
+
+The mean-field option is recommended as a starting point: the **prior**
+$\underline{\underline{\Sigma}}$ already encodes the cross-gene correlation
+structure of interest, so the additional flexibility of a structured posterior
+is often unnecessary. The low-rank option becomes useful when the prior
+covariance is misspecified or when the data carry strong residual correlation
+beyond the $K$ regulatory components encoded by
+$\underline{\underline{W}}$.
+
+#### Encoder architecture
+
+A small multi-layer perceptron with two or three hidden layers suffices in
+practice. The input is either the raw count vector $\underline{u}_c$ or a
+log-normalized variant $\log\!\bigl(1 + u_{cg} \cdot 10^4 / \ell_c\bigr)$;
+the output layer has dimension $2G$ for the mean-field option, concatenating
+$\underline{m}_c$ and $\log \underline{s}_c$. For $G \sim 2\,000$ this is
+unproblematic on modern hardware. For substantially larger $G$, a bottleneck
+architecture or a restriction to highly variable genes is appropriate.
+
+#### Mini-batch ELBO and Adam optimization
+
+The factorization @eq-nbln-elbo over cells admits unbiased mini-batch
+estimates of the ELBO. For a mini-batch
+$\mathcal{B} \subset \{1, \ldots, C\}$:
+
+$$
+\hat{\mathcal{L}}(\underline{\theta}, \phi) =
+\frac{C}{|\mathcal{B}|}
+\sum_{c \in \mathcal{B}}
+\left[
+\sum_{g=1}^G
+\log \text{NB}\!\left(u_{cg} \mid \mu_{cg}\, e^{z_{cg}^{(1)}},\, r_g\right)
+- \text{KL}\!\left(q_\phi(\underline{z}_c \mid \underline{u}_c)\,
+                   \|\, p(\underline{z}_c)\right)
+\right],
+$${#eq-nbln-svi-minibatch}
+
+with $\underline{z}_c^{(1)}$ a single reparameterized sample from $q_\phi$
+according to @eq-nbln-reparam, and the KL term given in closed form by
+@eq-nbln-kl. Both the global parameters $\underline{\theta}$ and the encoder
+weights $\phi$ are updated jointly by Adam.
+
+### Path B: Laplace-approximated marginal-likelihood inference {#sec-nbln-laplace}
+
+The log-concavity result @eq-nbln-posterior-hessian permits an alternative
+path that bypasses the encoder entirely. Rather than amortizing the
+posterior through a neural network, we approximate it cell-by-cell using a
+Laplace expansion around the maximum a posteriori (MAP) point
+$\underline{z}_c^*$:
+
+$$
+q_{\text{Lap}}(\underline{z}_c) =
+\mathcal{N}\!\left(
+    \underline{z}_c^*,\
+    \bigl(-\underline{\underline{H}}_c^*\bigr)^{-1}
+\right),
+\qquad
+\underline{\underline{H}}_c^* =
+\nabla^2_{\underline{z}_c}
+\log \pi(\underline{z}_c \mid \underline{u}_c)
+\Big|_{\underline{z}_c = \underline{z}_c^*}.
+$${#eq-nbln-laplace-form}
+
+The corresponding Laplace-approximated marginal log-likelihood — the standard
+result obtained by quadratic Taylor expansion of the integrand around its
+mode and Gaussian integration of the residual — is
+
+$$
+\log \pi_{\text{Lap}}(\underline{u}_c \mid \underline{\theta})
+=
+\log \pi(\underline{u}_c, \underline{z}_c^* \mid \underline{\theta})
++ \frac{G}{2} \log(2\pi)
+- \frac{1}{2} \log \bigl|-\underline{\underline{H}}_c^*\bigr|.
+$${#eq-nbln-laplace-marginal}
+
+Inference then alternates between (i) an **inner step** that solves for
+$\underline{z}_c^*$ per cell, and (ii) an **outer step** that updates the
+global parameters $\underline{\theta}$ to maximize the sum of
+@eq-nbln-laplace-marginal over cells.
+
+#### Inner step: Newton iteration for $\underline{z}_c^*$
+
+The per-cell objective is the unnormalized log-posterior
+
+$$
+\Phi_c(\underline{z}_c)
+=
+\sum_{g=1}^G
+\log \text{NB}\!\left(u_{cg} \mid \mu_{cg}\, e^{z_{cg}},\, r_g\right)
+- \frac{1}{2}\,
+  \underline{z}_c^\top
+  \underline{\underline{\Sigma}}^{-1}
+  \underline{z}_c.
+$${#eq-nbln-laplace-objective}
+
+Differentiating @eq-nbln-laplace-objective once gives the gradient
+
+$$
+\nabla_{\underline{z}_c} \Phi_c(\underline{z}_c) =
+\underline{u}_c -
+(\underline{u}_c + \underline{r}) \odot
+    \bigl(\underline{1} - \underline{p}(\underline{z}_c)\bigr)
+- \underline{\underline{\Sigma}}^{-1} \underline{z}_c,
+$${#eq-nbln-laplace-grad}
+
+with $p_g(z_{cg}) = r_g / (r_g + \mu_{cg}\, e^{z_{cg}})$ and $\odot$ the
+element-wise product. The Hessian is given by @eq-nbln-posterior-hessian.
+The Newton update is
+
+$$
+\underline{z}_c \leftarrow
+\underline{z}_c -
+\bigl(\underline{\underline{H}}_c\bigr)^{-1}
+\nabla_{\underline{z}_c} \Phi_c(\underline{z}_c).
+$${#eq-nbln-newton-step}
+
+By the strict log-concavity of $\Phi_c$, this iteration converges
+quadratically to the unique MAP from any reasonable initialization. We use
+$\underline{z}_c^{(0)} = \underline{0}$ (the prior mean) by default, with a
+relative-gradient stopping criterion
+$\|\nabla_{\underline{z}_c} \Phi_c\| < \tau$ for a small tolerance $\tau$.
+
+#### Newton step via double Woodbury
+
+Naive evaluation of the Newton update @eq-nbln-newton-step requires the
+inverse of a dense $G \times G$ Hessian, which is infeasible for
+$G \sim 10^3$ to $10^4$. The diagonal-plus-low-rank structure of
+$\underline{\underline{\Sigma}}^{-1}$ (itself a Woodbury expression,
+@eq-nbln-woodbury) propagates to a diagonal-plus-low-rank Hessian that
+admits a second Woodbury inversion. Concretely, write
+
+$$
+-\underline{\underline{H}}_c =
+\text{diag}(\underline{a}_c) + \underline{\underline{\Sigma}}^{-1},
+\qquad
+a_{cg} = (u_{cg} + r_g)\,
+         p_g(z_{cg})\,
+         \bigl(1 - p_g(z_{cg})\bigr),
+$${#eq-nbln-hessian-decomp}
+
+and substitute the Woodbury form @eq-nbln-woodbury for
+$\underline{\underline{\Sigma}}^{-1}$:
+
+$$
+-\underline{\underline{H}}_c
+=
+\underbrace{\text{diag}\!\bigl(\underline{a}_c +
+                                \underline{d}^{\,-1}\bigr)}_{
+                  \underline{\underline{A}}_c}
+-
+\underbrace{\underline{\underline{D}}^{-1}\,
+            \underline{\underline{W}}}_{
+                  \underline{\underline{\widetilde{W}}}}\,
+\underline{\underline{M}}^{-1}\,
+\underline{\underline{\widetilde{W}}}^\top,
+\qquad
+\underline{\underline{M}} =
+\underline{\underline{I}}_K +
+\underline{\underline{W}}^\top
+\underline{\underline{D}}^{-1}
+\underline{\underline{W}}.
+$${#eq-nbln-hessian-woodbury}
+
+This is again **diagonal plus rank-$K$**. Applying Woodbury a second time
+gives the inverse in closed form:
+
+$$
+\bigl(-\underline{\underline{H}}_c\bigr)^{-1}
+=
+\underline{\underline{A}}_c^{-1}
++
+\underline{\underline{A}}_c^{-1}\,
+\underline{\underline{\widetilde{W}}}\,
+\bigl(\underline{\underline{M}} -
+      \underline{\underline{\widetilde{W}}}^\top
+      \underline{\underline{A}}_c^{-1}
+      \underline{\underline{\widetilde{W}}}\bigr)^{-1}\,
+\underline{\underline{\widetilde{W}}}^\top\,
+\underline{\underline{A}}_c^{-1}.
+$${#eq-nbln-hessian-inverse}
+
+The matrix-vector product
+$\bigl(-\underline{\underline{H}}_c\bigr)^{-1} \underline{v}$
+therefore costs $O(GK + K^3)$ per cell, dominated by a few matrix-vector
+products with $\underline{\underline{W}}$ and a single $K \times K$
+inversion. The full Newton iteration is
+$O(N_{\text{Newton}}\, (GK + K^3))$ per cell, with $N_{\text{Newton}}$
+typically $5$–$10$ for the local quadratic regime.
+
+#### Log-determinant via the matrix-determinant lemma
+
+The Laplace marginal @eq-nbln-laplace-marginal also requires
+$\log \bigl|-\underline{\underline{H}}_c^*\bigr|$. Applying the
+matrix-determinant lemma to the form @eq-nbln-hessian-woodbury:
+
+$$
+\log \bigl|-\underline{\underline{H}}_c\bigr|
+=
+\log \bigl|\underline{\underline{A}}_c\bigr|
++
+\log
+\bigl|\underline{\underline{M}} -
+      \underline{\underline{\widetilde{W}}}^\top
+      \underline{\underline{A}}_c^{-1}
+      \underline{\underline{\widetilde{W}}}\bigr|
+-
+\log \bigl|\underline{\underline{M}}\bigr|.
+$${#eq-nbln-logdet-woodbury}
+
+Each of the three terms is computable at $O(G + K^3)$ cost. The complete
+inner step (Newton iterations + log-determinant + Laplace marginal) is
+therefore $O\!\bigl(N_{\text{Newton}}\,(GK + K^3)\bigr)$ per cell.
+
+#### Outer step: stochastic gradient on the Laplace marginal
+
+The outer optimization maximizes the sum of Laplace marginals over cells:
+
+$$
+\mathcal{L}_{\text{Lap}}(\underline{\theta}) =
+\sum_{c=1}^C
+\log \pi_{\text{Lap}}(\underline{u}_c \mid \underline{\theta}),
+$${#eq-nbln-outer-objective}
+
+with respect to
+$\underline{\theta} = \{\tilde{\mu}_g, r_g, \underline{\underline{W}},
+\underline{d}\}$, by mini-batched stochastic gradient. Two practical
+choices govern how gradients flow through the inner step.
+
+**Implicit-function gradients.** By the implicit function theorem, the
+Newton-stationarity condition
+$\nabla_{\underline{z}_c} \Phi_c(\underline{z}_c^*) = \underline{0}$ implies
+
+$$
+\frac{\partial \underline{z}_c^*}{\partial \underline{\theta}} =
+-\bigl(\underline{\underline{H}}_c^*\bigr)^{-1}
+\frac{\partial}{\partial \underline{\theta}}
+\nabla_{\underline{z}_c} \Phi_c
+\bigg|_{\underline{z}_c^*}.
+$${#eq-nbln-ift}
+
+This avoids backpropagation through the Newton iteration itself and reuses
+the Hessian inverse @eq-nbln-hessian-inverse already computed in the inner
+step.
+
+**Unrolled differentiation.** Run a fixed number of Newton steps and let
+automatic differentiation propagate gradients through the unrolled
+iteration. Simpler to implement, sometimes preferred when the
+implicit-function solve introduces additional numerical error.
+
+In practice, the implicit-function route scales better at large $C$ and is
+the route adopted by the PLN Laplace path in scribe.
+
+#### Algorithm summary
+
+The complete Laplace-EM scheme is summarized below. The notation $c \in
+\mathcal{B}$ denotes iteration over cells in a mini-batch.
+
+1. **Initialize** the global parameters
+   $\underline{\theta} = \{\tilde{\mu}_g, r_g, \underline{\underline{W}},
+   \underline{d}\}$ (e.g., method-of-moments fit on the empirical mean and
+   variance per gene; $\underline{\underline{W}} = \underline{\underline{0}}$
+   gives a clean NBDM starting point).
+2. **Repeat** until convergence:
+   1. Sample mini-batch $\mathcal{B} \subset \{1, \ldots, C\}$.
+   2. **Inner step** (per cell $c \in \mathcal{B}$):
+      initialize $\underline{z}_c^{(0)} = \underline{0}$;
+      iterate the Newton update @eq-nbln-newton-step using
+      @eq-nbln-hessian-inverse for the Hessian inverse;
+      stop when
+      $\|\nabla_{\underline{z}_c} \Phi_c\|_\infty < \tau$.
+      Record $\underline{z}_c^*$ and
+      $\log \bigl|-\underline{\underline{H}}_c^*\bigr|$ from
+      @eq-nbln-logdet-woodbury.
+   3. **Compute** the Laplace marginal @eq-nbln-laplace-marginal for each
+      cell in the mini-batch.
+   4. **Outer step**: take an Adam step on $\underline{\theta}$ using the
+      gradient of @eq-nbln-outer-objective restricted to $\mathcal{B}$,
+      with implicit-function or unrolled gradient flow through
+      $\underline{z}_c^*$.
+
+### Comparison and recommendation {#sec-nbln-inference-tradeoff}
+
+| Property | Path A (SVI) | Path B (Laplace) |
+|---|---|---|
+| Per-cell posterior approximation | Amortized Gaussian via encoder | Local Gaussian at the MAP |
+| Approximation quality | Limited by encoder capacity and amortization gap | Sharper at the MAP; covariance from local curvature |
+| Per-cell training cost | One forward pass + one reparam sample | $N_{\text{Newton}}$ Newton steps with double-Woodbury |
+| Hyperparameters | Encoder architecture, learning rate, batch size | Newton tolerance, max iterations, learning rate |
+| Adequacy diagnostic | IWBO bound tightness | Symmetry of Laplace residual; IWBO post-hoc |
+| Scribe infrastructure | PLN VAE pipeline | PLN Newton-with-Woodbury solver |
+
+The two paths are complementary, not competitive. By analogy with the
+Poisson-LogNormal experience (@sec-poisson-lognormal), the SVI path is
+preferred during model development and large-scale exploration, while the
+Laplace path is preferred for final fits where posterior approximation
+quality is at stake. Both produce parameter estimates that can be
+cross-validated by switching to the other path on the same data and
+checking for agreement on global parameters.
+
+## Composition sampling for compositional differential expression {#sec-nbln-composition}
+
+The compositional differential-expression framework of @sec-diffexp-nonparametric
+operates on samples drawn from the posterior predictive distribution of the
+composition $\underline{\rho}^{(c)} = \underline{\lambda}^{(c)} / \sum_g
+\lambda_g^{(c)}$. Under the NBDM model with shared $p$, the composition is
+drawn from a Dirichlet,
+$\underline{\rho} \sim \text{Dir}(\underline{r})$, by virtue of the
+Gamma-Dirichlet factorization. We now show how this composition is sampled
+under the NB-LogNormal, and we recover the Dirichlet form in the
+$\underline{\underline{\Sigma}} \to 0$ limit.
+
+### The Gamma-Dirichlet factorization breaks {#sec-nbln-factorization-breaks}
+
+Conditional on $\underline{z}_c$, the latent rates $\lambda_{cg}$ are
+independent Gamma random variables with **gene-specific** rates
+
+$$
+\beta_{cg}(\underline{z}_c) =
+\frac{r_g}{\mu_{cg}\, e^{z_{cg}}}.
+$${#eq-nbln-beta-gene-specific}
+
+By the same argument as in @sec-hier-factorization-breaks, the joint
+density of the $\lambda_{cg}$ does **not** factor into a marginal distribution
+over the total rate $\Lambda_c = \sum_g \lambda_{cg}$ and a Dirichlet
+distribution over the proportions. The exponential cross-term
+
+$$
+\exp\!\left(-\Lambda_c \sum_{g=1}^G \beta_{cg}(\underline{z}_c)\,
+                                    \rho_{cg}\right)
+$${#eq-nbln-cross-term}
+
+couples $\Lambda_c$ and $\underline{\rho}_c$ through the gene-specific rates.
+The Dirichlet form is recovered if and only if all $\beta_{cg}$ are equal,
+which under @eq-nbln-beta-gene-specific requires both $r_g / \mu_{cg}$ to be
+equal across genes (the original shared-$p$ assumption of NBDM) and
+$z_{cg}$ to be equal across genes (which the Gaussian prior, being mean-zero
+with general $\underline{\underline{\Sigma}}$, does not enforce).
+
+Compositions under the NB-LogNormal therefore depend on $\underline{z}_c$ and
+must be sampled accordingly.
+
+### Generalized composition sampling
+
+We use the same Gamma-based generalized procedure introduced in
+@sec-hier-gamma-sampling, adapted to the NB-LogNormal generative form.
+Specifically, for each posterior sample $s$ of the global parameters and each
+posterior or prior draw of $\underline{z}_c^{(s)}$:
+
+1. Draw unit-rate Gamma variates independently per gene:
+   $$
+   \gamma_g^{(s)} \sim \text{Gamma}(r_g^{(s)}, 1),
+   \qquad g = 1, \ldots, G.
+   $${#eq-nbln-comp-gamma-draw}
+
+2. Scale by the gene-specific factor:
+   $$
+   \tilde{\lambda}_{cg}^{(s)} =
+   \gamma_g^{(s)} \cdot
+   \frac{\mu_{cg}^{(s)}\, e^{z_{cg}^{(s)}}}{r_g^{(s)}}.
+   $${#eq-nbln-comp-scaling}
+
+3. Normalize to the simplex:
+   $$
+   \rho_{cg}^{(s)} =
+   \frac{\tilde{\lambda}_{cg}^{(s)}}
+        {\sum_{j=1}^G \tilde{\lambda}_{cj}^{(s)}}.
+   $${#eq-nbln-comp-normalize}
+
+By the change-of-variables argument in @sec-hier-gamma-sampling, the
+$\tilde{\lambda}_{cg}^{(s)}$ have the same distribution as the conditional
+Gamma variates from @eq-nbln-lambda-gamma. The composition
+$\underline{\rho}_c^{(s)}$ is therefore the compositional restriction of the
+NB-LogNormal latent rate, conditional on the sampled $\underline{z}_c^{(s)}$.
+
+### Reduction to the NBDM Dirichlet form when $\underline{\underline{\Sigma}} = 0$
+
+When $\underline{\underline{\Sigma}} = \underline{\underline{0}}$ we have
+$\underline{z}_c = \underline{0}$ for all cells, and the composition reduces to
+
+$$
+\rho_{cg}^{(s)} =
+\frac{\gamma_g^{(s)} \cdot \mu_{cg}^{(s)} / r_g^{(s)}}
+     {\sum_{j} \gamma_j^{(s)} \cdot \mu_{cj}^{(s)} / r_j^{(s)}}.
+$${#eq-nbln-comp-no-z}
+
+If, additionally, the baseline mean factorizes as $\mu_{cg} = \ell_c\,
+\tilde{\mu}_g$ (@eq-nbln-mean-decomposition) and the gene-specific ratio
+$\tilde{\mu}_g / r_g$ is the constant $(1 - \hat{p}) / \hat{p}$ that defines
+the shared-$p$ NBDM (cf. @sec-dirichlet-multinomial), then the gene-independent
+factor $\ell_c\, (1 - \hat{p}) / \hat{p}$ cancels between numerator and
+denominator and the composition reduces to
+
+$$
+\rho_{cg}^{(s)} =
+\frac{\gamma_g^{(s)}}{\sum_j \gamma_j^{(s)}},
+$${#eq-nbln-comp-dirichlet}
+
+with $\gamma_g^{(s)} \sim \text{Gamma}(r_g^{(s)}, 1)$ — the Dirichlet sampling
+form @eq-hier-summary-dirichlet recovered exactly. $\square$
+
+### Pipeline integration
+
+The downstream centered-log-ratio differential-expression pipeline of
+@sec-diffexp-nonparametric operates on samples
+$\underline{\rho}_c^{(s)}$ regardless of how they were generated. The
+NB-LogNormal therefore plugs into the existing pipeline through the modified
+sampler @eq-nbln-comp-gamma-draw–@eq-nbln-comp-normalize, with the additional
+input that posterior or prior samples of $\underline{z}_c$ must be supplied
+together with samples of the global parameters.
+
+In practice, posterior predictive checks evaluate the empirical zero-fraction,
+mean, and variance per gene against draws from the marginal $\pi(u_{cg})$,
+which is obtained by drawing $\underline{z}_c \sim \mathcal{N}(0,
+\underline{\underline{\Sigma}})$ and then $u_{cg} \sim
+\text{NB}(\mu_{cg} e^{z_{cg}}, r_g)$.
+
+## Mathematical summary {#sec-nbln-summary}
+
+We collect the key results of this section.
+
+**Generative model.** For $c = 1, \ldots, C$ and $g = 1, \ldots, G$:
+
+$$
+\underline{z}_c \sim
+\mathcal{N}(\underline{0}, \underline{\underline{\Sigma}}),
+\qquad
+\underline{\underline{\Sigma}} =
+\underline{\underline{W}}\,\underline{\underline{W}}^\top +
+\text{diag}(\underline{d}),
+$${#eq-nbln-summary-prior}
+
+$$
+\lambda_{cg} \mid \underline{z}_c \sim
+\text{Gamma}\!\left(r_g,\
+    \frac{r_g}{\mu_{cg}\, e^{z_{cg}}}\right),
+\qquad
+u_{cg} \mid \lambda_{cg} \sim
+\text{Poisson}(\lambda_{cg}).
+$${#eq-nbln-summary-gen}
+
+**Marginalized form.** After integrating out $\lambda_{cg}$ via Gamma-Poisson
+conjugacy:
+
+$$
+u_{cg} \mid \underline{z}_c \sim
+\text{NB}\!\left(\mu_{cg}\, e^{z_{cg}},\ r_g\right).
+$${#eq-nbln-summary-nb}
+
+**Failure logits.** Linear in $\underline{z}_c$:
+
+$$
+\log\frac{1 - p_g(z_{cg})}{p_g(z_{cg})} =
+\log \mu_{cg} + z_{cg} - \log r_g.
+$${#eq-nbln-summary-logits}
+
+**Posterior log-concavity.** The per-cell log-posterior over
+$\underline{z}_c$ has Hessian
+
+$$
+\nabla^2_{\underline{z}_c} \log
+\pi(\underline{z}_c \mid \underline{u}_c)
+= -\text{diag}\bigl((u_{cg} + r_g)\, p_g(z_{cg})\,
+                    (1 - p_g(z_{cg}))\bigr)
+- \underline{\underline{\Sigma}}^{-1},
+$${#eq-nbln-summary-hessian}
+
+which is strictly negative definite.
+
+**Limiting cases.**
+
+$$
+\underline{\underline{\Sigma}} \to \underline{\underline{0}}
+\;\Longrightarrow\;
+u_{cg} \sim \text{NB}(\mu_{cg}, r_g)
+\quad \text{(NBDM, @sec-dirichlet-multinomial)},
+$${#eq-nbln-summary-limit-nbdm}
+
+$$
+r_g \to \infty
+\;\Longrightarrow\;
+u_{cg} \mid \underline{z}_c \sim
+\text{Poisson}\!\left(\mu_{cg}\, e^{z_{cg}}\right)
+\quad \text{(PLN, @sec-poisson-lognormal)}.
+$${#eq-nbln-summary-limit-pln}
+
+**Composition sampling.** For PPC and compositional DE:
+
+$$
+\gamma_g \sim \text{Gamma}(r_g, 1),
+\qquad
+\rho_{cg} =
+\frac{\gamma_g \cdot \mu_{cg}\, e^{z_{cg}} / r_g}
+     {\sum_j \gamma_j \cdot \mu_{cj}\, e^{z_{cj}} / r_j}.
+$${#eq-nbln-summary-composition}
+
+When $\underline{\underline{\Sigma}} = \underline{\underline{0}}$ and the
+shared-$p$ NBDM constraint $\tilde{\mu}_g / r_g = (1 - \hat{p}) / \hat{p}$
+holds, this reduces to $\underline{\rho} \sim \text{Dir}(\underline{r})$.
