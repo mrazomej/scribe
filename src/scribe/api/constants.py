@@ -8,7 +8,16 @@ inference method selectors in :func:`scribe.api.fit`.
 from ..models.parameterizations import PARAMETERIZATIONS
 
 # Valid model types accepted by ``fit(model=...)``.
-VALID_MODELS = {"nbdm", "zinb", "nbvcp", "zinbvcp", "lnm", "lnmvcp", "pln"}
+VALID_MODELS = {
+    "nbdm",
+    "zinb",
+    "nbvcp",
+    "zinbvcp",
+    "lnm",
+    "lnmvcp",
+    "pln",
+    "nbln",
+}
 
 # Deprecated model name aliases mapped to their canonical replacements.
 _DEPRECATED_MODEL_ALIASES = {"nbdm_lnm": "lnm"}

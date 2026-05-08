@@ -63,6 +63,30 @@ def test_likelihood_registry_routes_nbln():
     assert LIKELIHOOD_REGISTRY["nbln"] is NBLogNormalLikelihood
 
 
+def test_nbln_in_api_valid_models():
+    """``"nbln"`` must be in :data:`scribe.api.constants.VALID_MODELS`.
+
+    Regression test for a real user-reported bug: the API layer's
+    ``validate_inputs`` stage rejects unknown model strings against
+    ``VALID_MODELS``, and a previous wiring pass added NBLN to the
+    factory and registry but missed this set -- so
+    ``scribe.fit(model="nbln", ...)`` blew up with "Unknown model:
+    'nbln'" before ever reaching the model factory.
+
+    Factory tests that call ``create_model`` directly (like the ones
+    above) bypass this validation, which is exactly why the bug
+    slipped through.
+    """
+    from scribe.api.constants import VALID_MODELS
+
+    assert "nbln" in VALID_MODELS, (
+        "nbln must be in VALID_MODELS so scribe.fit(model='nbln', ...) "
+        "passes the API entry-point validation. Without this, the bug "
+        "regression test above doesn't help -- users never reach the "
+        "factory."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Factory: create_model
 # ---------------------------------------------------------------------------
