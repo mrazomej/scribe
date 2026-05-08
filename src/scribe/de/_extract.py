@@ -22,6 +22,8 @@ The function inspects the input and:
    component is stripped to produce (D-1)-dimensional ALR.
 """
 
+from typing import Dict
+
 import jax.numpy as jnp
 
 from ..stats.distributions import LowRankLogisticNormal, SoftmaxNormal
@@ -136,4 +138,133 @@ def extract_alr_params(model):
         f"Unsupported model type: {type(model)}.  Expected dict with keys "
         f"['loc', 'cov_factor', 'cov_diag'], LowRankLogisticNormal, or "
         f"SoftmaxNormal."
+    )
+
+
+def is_lnm_or_pln_results(obj) -> bool:
+    """Whether ``obj`` is a fitted LNM or PLN result object (Laplace or VAE).
+
+    The parametric DE path consumes the *fitted globals* (μ, 𝑊, 𝑑)
+    rather than posterior samples, and these can be extracted
+    directly from any LNM- or PLN-family result regardless of
+    inference path.  This predicate gates the auto-conversion in
+    :func:`scribe.de.compare`.
+    """
+    cfg = getattr(obj, "model_config", None)
+    if cfg is None:
+        return False
+    bm = getattr(cfg, "base_model", None)
+    bm_str = str(getattr(bm, "value", bm) or "").lower()
+    return bm_str in ("lnm", "lnmvcp", "pln")
+
+
+def lnm_or_pln_results_to_parametric_dict(
+    results,
+    *,
+    reference_idx_for_pln: int = -1,
+) -> Dict[str, jnp.ndarray]:
+    """Extract ALR-form parametric inputs from an LNM or PLN result object.
+
+    Both LNM and PLN low-rank-Gaussian fits parameterise their
+    per-cell latent prior as 𝒩(μ, 𝑊𝑊ᵗ + diag(𝑑)).  The parametric
+    DE pipeline expects (G−1)-dimensional ALR-form inputs.  This
+    adapter normalises across:
+
+    * **LNM / LNMVCP**: latent already in (G−1)-dim ALR coordinates;
+      pull (μ_alr, 𝑊_alr, 𝑑_alr) from the result and wrap.
+    * **PLN**: latent in G-dim log-rate space; convert to the
+      equivalent ALR form via :func:`pln_to_alr_form`.  The latent
+      rank gains one extra column (k → k+1) to absorb the rank-1
+      cross-coupling that arises from the ALR transform of
+      diag(𝑑_pln).
+
+    Works on both ``ScribeLaplaceResults`` (which exposes
+    ``mu`` / ``W`` / ``d`` directly as attributes) and
+    ``ScribeVAEResults`` (which exposes them via
+    ``get_lnm_*`` / ``get_pln_*`` methods).
+
+    Parameters
+    ----------
+    results : object
+        ``ScribeLaplaceResults`` or ``ScribeVAEResults`` with
+        PLN/LNM ``base_model``.
+    reference_idx_for_pln : int, default -1
+        Reference gene index for the PLN ALR transform.  Ignored
+        for LNM fits (which already have a fitted
+        ``alr_reference_idx``).
+
+    Returns
+    -------
+    dict
+        ``{"loc": μ_alr, "cov_factor": W_alr, "cov_diag": d_alr}``
+        in (G−1) dims.  Consumed by
+        :func:`scribe.de._results_factory._compare_parametric` the
+        same way any other fitted-logistic-normal dict is.
+
+    Raises
+    ------
+    NotImplementedError
+        If the LNM result has a non-default ``alr_reference_idx``
+        that doesn't match the convention assumed by the
+        downstream parametric pipeline (reference at the last
+        gene).  Real-world fits use the default.
+    """
+    cfg = results.model_config
+    bm = getattr(cfg, "base_model", None)
+    bm_str = str(getattr(bm, "value", bm) or "").lower()
+
+    def _pull(name_pln: str, name_lnm: str, name_attr: str):
+        """VAE-style accessor first, then bare attribute (Laplace)."""
+        if bm_str == "pln" and hasattr(results, name_pln):
+            return getattr(results, name_pln)()
+        if bm_str in ("lnm", "lnmvcp") and hasattr(results, name_lnm):
+            return getattr(results, name_lnm)()
+        return getattr(results, name_attr)
+
+    if bm_str in ("lnm", "lnmvcp"):
+        mu = _pull("get_lnm_mu", "get_lnm_mu", "mu")
+        W = _pull("get_lnm_W", "get_lnm_W", "W")
+        d = _pull("get_lnm_d", "get_lnm_d", "d")
+        # Normalize d=None (low_rank d_mode) to zero vector so
+        # the dict has a uniform shape downstream.
+        if d is None:
+            d = jnp.zeros(W.shape[0], dtype=W.dtype)
+        # Parametric downstream defaults to ref=-1; LNM fits with
+        # other references would need plumbing we don't have yet.
+        ref = int(getattr(cfg, "alr_reference_idx", -1))
+        n_genes = int(W.shape[0]) + 1
+        if ref not in (-1, n_genes - 1):
+            raise NotImplementedError(
+                f"LNM parametric DE currently assumes "
+                f"alr_reference_idx == -1 (last gene); got {ref}. "
+                "Re-fit with the default reference, or open an "
+                "issue for explicit reference-index plumbing."
+            )
+        return {
+            "loc": jnp.asarray(mu),
+            "cov_factor": jnp.asarray(W),
+            "cov_diag": jnp.asarray(d),
+        }
+
+    if bm_str == "pln":
+        from ._transforms import pln_to_alr_form
+
+        mu = _pull("get_pln_mu", "get_pln_mu", "mu")
+        W = _pull("get_pln_W", "get_pln_W", "W")
+        d = _pull("get_pln_d", "get_pln_d", "d")
+        if d is None:
+            d = jnp.zeros(W.shape[0], dtype=W.dtype)
+        mu_alr, W_alr_ext, d_alr = pln_to_alr_form(
+            jnp.asarray(mu), jnp.asarray(W), jnp.asarray(d),
+            reference_idx=reference_idx_for_pln,
+        )
+        return {
+            "loc": mu_alr,
+            "cov_factor": W_alr_ext,
+            "cov_diag": d_alr,
+        }
+
+    raise ValueError(
+        f"DE parametric path supports LNM, LNMVCP, and PLN models; "
+        f"got base_model={bm_str!r}"
     )

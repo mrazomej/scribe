@@ -1175,3 +1175,177 @@ def test_parametric_methods_come_from_parametric_mixin():
 def test_compare_comes_from_factory_module():
     """Public compare() should be re-exported from the factory module."""
     assert compare.__module__ == "scribe.de._results_factory"
+
+
+# --------------------------------------------------------------------------
+# Parametric DE on LNM and PLN result objects
+# --------------------------------------------------------------------------
+
+
+class TestParametricDEFromLnmPlnResults:
+    """Verify ``compare(method='parametric')`` works directly on LNM and
+    PLN result objects (Laplace fits) — the parametric path consumes
+    fitted (μ, 𝑊, 𝑑) globals rather than posterior samples, so the
+    per-cell-conditional-posterior issue is sidestepped entirely.
+    """
+
+    def _build_pln_pair(self, *, planted_shift: float = 1.5, n_de: int = 5):
+        from scribe import ScribeLaplaceResults
+        from scribe.models.config import ModelConfig
+        from scribe.models.config.enums import (
+            InferenceMethod,
+            Parameterization,
+        )
+
+        np.random.seed(801)
+        G, C, k = 30, 12, 3
+        mu_A = jnp.asarray(np.random.normal(0, 0.5, G).astype(np.float32))
+        shift = jnp.asarray(
+            np.concatenate(
+                [np.full(n_de, planted_shift), np.zeros(G - n_de)]
+            ).astype(np.float32)
+        )
+        mu_B = mu_A + shift
+        W = jnp.asarray(
+            (0.3 * np.random.normal(size=(G, k))).astype(np.float32)
+        )
+        d = jnp.asarray(np.full(G, 0.1, dtype=np.float32))
+        mc = ModelConfig(
+            base_model="pln",
+            parameterization=Parameterization.POISSON_LOGNORMAL,
+            inference_method=InferenceMethod.LAPLACE,
+        )
+
+        def _make(mu_):
+            r = ScribeLaplaceResults(
+                model_config=mc,
+                mu=mu_,
+                W=W,
+                d=d,
+                n_genes=G,
+                n_cells=C,
+                x_loc=jnp.zeros((C, G)),
+                losses=jnp.zeros(1),
+                final_grad_norms=jnp.zeros(1),
+            )
+            r.var = None
+            r.posterior_samples = None
+            return r
+
+        return _make(mu_A), _make(mu_B), G, n_de
+
+    def _build_lnm_pair(self, *, planted_shift: float = 1.5, n_de: int = 5):
+        from scribe import ScribeLaplaceResults
+        from scribe.models.config import ModelConfig
+        from scribe.models.config.enums import (
+            InferenceMethod,
+            Parameterization,
+        )
+
+        np.random.seed(802)
+        G, C, k = 30, 12, 3
+        G_minus1 = G - 1
+        mu_alr_A = jnp.asarray(
+            np.random.normal(0, 0.5, G_minus1).astype(np.float32)
+        )
+        shift = jnp.asarray(
+            np.concatenate(
+                [np.full(n_de, planted_shift), np.zeros(G_minus1 - n_de)]
+            ).astype(np.float32)
+        )
+        mu_alr_B = mu_alr_A + shift
+        W = jnp.asarray(
+            (0.3 * np.random.normal(size=(G_minus1, k))).astype(np.float32)
+        )
+        d = jnp.asarray(np.full(G_minus1, 0.05, dtype=np.float32))
+        mc = ModelConfig(
+            base_model="lnm",
+            parameterization=Parameterization.LOGISTIC_NORMAL_CANONICAL,
+            inference_method=InferenceMethod.LAPLACE,
+            alr_reference_idx=-1,
+        )
+
+        def _make(mu_):
+            r = ScribeLaplaceResults(
+                model_config=mc,
+                mu=mu_,
+                W=W,
+                d=d,
+                n_genes=G,
+                n_cells=C,
+                alr_reference_idx=-1,
+                y_alr_loc=jnp.zeros((C, G_minus1)),
+                losses=jnp.zeros(1),
+                final_grad_norms=jnp.zeros(1),
+            )
+            r.var = None
+            r.posterior_samples = None
+            return r
+
+        return _make(mu_alr_A), _make(mu_alr_B), G, n_de
+
+    def test_compare_pln_results_returns_parametric(self):
+        a, b, G, _ = self._build_pln_pair()
+        de = compare(a, b, method="parametric")
+        assert type(de).__name__ == "ScribeParametricDEResults"
+
+    def test_compare_lnm_results_returns_parametric(self):
+        a, b, G, _ = self._build_lnm_pair()
+        de = compare(a, b, method="parametric")
+        assert type(de).__name__ == "ScribeParametricDEResults"
+
+    def test_pln_recovers_planted_shift(self):
+        """For a planted shift Δ on n_de of G genes, the CLR-space
+        contrast is Δ · (1 - n_de/G) on planted-DE genes and Δ ·
+        n_de/G (with opposite sign) on null genes — exact arithmetic
+        of CLR centring.
+        """
+        a, b, G, n_de = self._build_pln_pair(planted_shift=1.5, n_de=5)
+        de = compare(a, b, method="parametric")
+        gene_results = de.gene_level(tau=0.0)
+        delta = np.abs(np.asarray(gene_results["delta_mean"]))
+        expected_de_signal = 1.5 * (1 - n_de / G)
+        expected_null_drag = 1.5 * (n_de / G)
+        np.testing.assert_allclose(delta[:n_de], expected_de_signal, atol=1e-4)
+        np.testing.assert_allclose(delta[n_de:], expected_null_drag, atol=1e-4)
+
+    def test_lnm_recovers_planted_shift(self):
+        a, b, G, n_de = self._build_lnm_pair(planted_shift=1.5, n_de=5)
+        de = compare(a, b, method="parametric")
+        gene_results = de.gene_level(tau=0.0)
+        delta = np.abs(np.asarray(gene_results["delta_mean"]))
+        expected_de_signal = 1.5 * (1 - n_de / G)
+        np.testing.assert_allclose(delta[:n_de], expected_de_signal, atol=1e-3)
+
+    def test_compare_auto_detects_parametric_from_lnm_results(self):
+        """When ``method=None`` and both inputs are LNM/PLN results,
+        ``compare`` should auto-detect ``method='parametric'``.
+        """
+        a, b, _, _ = self._build_pln_pair()
+        de = compare(a, b)
+        assert type(de).__name__ == "ScribeParametricDEResults"
+
+    def test_parametric_requires_both_inputs_to_be_lnm_pln(self):
+        """Mixed LNM-result-vs-NB-result inputs to ``method='parametric'``
+        should raise.
+        """
+        a, _, _, _ = self._build_pln_pair()
+
+        class _FakeNBResults:
+            def __init__(self):
+                from scribe.models.config import ModelConfig
+                from scribe.models.config.enums import (
+                    InferenceMethod,
+                    Parameterization,
+                )
+
+                self.model_config = ModelConfig(
+                    base_model="nbdm",
+                    parameterization=Parameterization.STANDARD,
+                    inference_method=InferenceMethod.SVI,
+                )
+                self.posterior_samples = None
+                self.var = None
+
+        with pytest.raises(TypeError, match="parametric.*both"):
+            compare(a, _FakeNBResults(), method="parametric")

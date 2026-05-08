@@ -397,3 +397,102 @@ def test_zero_rank():
     assert W_clr.shape == (D_alr + 1, 0)
     assert d_clr.shape == (D_alr + 1,)
     assert jnp.all(d_clr > 0)
+
+
+class TestPlnToAlrForm:
+    """Verify that ``pln_to_alr_form`` reproduces ``T Σ_pln Tᵗ`` exactly,
+    where T is the ALR matrix that subtracts the reference component
+    from each non-reference component.
+    """
+
+    def _build_alr_matrix(self, G, ref):
+        keep = [g for g in range(G) if g != ref]
+        T = np.zeros((G - 1, G), dtype=np.float32)
+        for i, g in enumerate(keep):
+            T[i, g] = 1.0
+            T[i, ref] = -1.0
+        return T
+
+    def test_covariance_exact_for_default_reference(self):
+        from scribe.de._transforms import pln_to_alr_form
+
+        np.random.seed(11)
+        G, k = 7, 3
+        mu = jnp.asarray(np.random.normal(0, 0.5, G).astype(np.float32))
+        W = jnp.asarray((0.4 * np.random.normal(size=(G, k))).astype(np.float32))
+        d = jnp.asarray(np.random.uniform(0.05, 0.5, G).astype(np.float32))
+
+        Sigma_pln = np.asarray(W @ W.T + jnp.diag(d))
+        T = self._build_alr_matrix(G, ref=G - 1)
+        Sigma_alr_target = T @ Sigma_pln @ T.T
+
+        mu_alr, W_alr_ext, d_alr = pln_to_alr_form(mu, W, d, reference_idx=-1)
+        Sigma_alr_built = np.asarray(W_alr_ext @ W_alr_ext.T + jnp.diag(d_alr))
+
+        assert np.allclose(Sigma_alr_built, Sigma_alr_target, atol=1e-5)
+        np.testing.assert_allclose(
+            np.asarray(mu_alr), T @ np.asarray(mu), atol=1e-6
+        )
+        # Latent rank expands by 1 to absorb the rank-1 cross-coupling.
+        assert W_alr_ext.shape == (G - 1, k + 1)
+        assert d_alr.shape == (G - 1,)
+
+    def test_covariance_exact_for_arbitrary_reference(self):
+        from scribe.de._transforms import pln_to_alr_form
+
+        np.random.seed(12)
+        G, k = 7, 3
+        mu = jnp.asarray(np.random.normal(0, 0.5, G).astype(np.float32))
+        W = jnp.asarray((0.4 * np.random.normal(size=(G, k))).astype(np.float32))
+        d = jnp.asarray(np.random.uniform(0.05, 0.5, G).astype(np.float32))
+        Sigma_pln = np.asarray(W @ W.T + jnp.diag(d))
+
+        for ref in (0, 3, G - 1):
+            T = self._build_alr_matrix(G, ref=ref)
+            Sigma_alr_target = T @ Sigma_pln @ T.T
+            mu_alr, W_alr_ext, d_alr = pln_to_alr_form(
+                mu, W, d, reference_idx=ref
+            )
+            Sigma_alr_built = np.asarray(
+                W_alr_ext @ W_alr_ext.T + jnp.diag(d_alr)
+            )
+            err = np.linalg.norm(Sigma_alr_built - Sigma_alr_target)
+            assert err < 1e-5, (
+                f"ref={ref}: ‖Σ_built − Σ_target‖_F = {err:.2e}"
+            )
+
+    def test_invalid_reference_raises(self):
+        from scribe.de._transforms import pln_to_alr_form
+
+        mu = jnp.zeros(5)
+        W = jnp.zeros((5, 2))
+        d = jnp.ones(5)
+        with pytest.raises(ValueError, match="out of range"):
+            pln_to_alr_form(mu, W, d, reference_idx=10)
+
+    def test_zero_d_at_reference_does_not_break(self):
+        """When d[ref] = 0, the extra √d[ref] column is just zeros — the
+        latent rank still expands to k+1 but the extra column adds
+        nothing. Math should remain exact in this corner case.
+        """
+        from scribe.de._transforms import pln_to_alr_form
+
+        G, k = 5, 2
+        mu = jnp.zeros(G, dtype=jnp.float32)
+        W = jnp.asarray(
+            np.random.RandomState(0).normal(size=(G, k)).astype(np.float32)
+        )
+        d = jnp.asarray([0.1, 0.1, 0.1, 0.1, 0.0], dtype=jnp.float32)
+
+        T = self._build_alr_matrix(G, ref=G - 1)
+        Sigma_pln = np.asarray(W @ W.T + jnp.diag(d))
+        Sigma_alr_target = T @ Sigma_pln @ T.T
+
+        mu_alr, W_alr_ext, d_alr = pln_to_alr_form(mu, W, d, reference_idx=-1)
+        Sigma_alr_built = np.asarray(
+            W_alr_ext @ W_alr_ext.T + jnp.diag(d_alr)
+        )
+        assert np.allclose(Sigma_alr_built, Sigma_alr_target, atol=1e-5)
+        np.testing.assert_array_equal(
+            np.asarray(W_alr_ext[:, -1]), np.zeros(G - 1, dtype=np.float32)
+        )

@@ -8,7 +8,11 @@ from typing import List, Optional, TYPE_CHECKING
 import numpy as _np
 import jax.numpy as jnp
 
-from ._extract import extract_alr_params
+from ._extract import (
+    extract_alr_params,
+    is_lnm_or_pln_results,
+    lnm_or_pln_results_to_parametric_dict,
+)
 
 if TYPE_CHECKING:
     from .results import (
@@ -200,10 +204,23 @@ def compare(
     _a_is_results = _is_results_object(model_A)
     _b_is_results = _is_results_object(model_B)
 
+    # LNM / PLN result objects can drive the parametric path directly:
+    # the fit produces (μ, 𝑊, 𝑑) globals which we can pull and convert
+    # into the same dict shape that the existing parametric pipeline
+    # consumes.  No posterior samples are involved, so the per-cell
+    # conditional-posterior issue is sidestepped entirely (see
+    # paper/_diffexp_lnm_pln_robustness.qmd for why this is the right
+    # path for capture-aware fits).
+    _a_is_lnm_pln_results = _a_is_results and is_lnm_or_pln_results(model_A)
+    _b_is_lnm_pln_results = _b_is_results and is_lnm_or_pln_results(model_B)
+    _both_lnm_pln_results = _a_is_lnm_pln_results and _b_is_lnm_pln_results
+
     # Auto-detect method when not explicitly provided: use "parametric" for
     # fitted logistic-normal models, "empirical" for everything else.
     if method is None:
         if _is_parametric_model(model_A) and _is_parametric_model(model_B):
+            method = "parametric"
+        elif _both_lnm_pln_results:
             method = "parametric"
         else:
             method = "empirical"
@@ -228,6 +245,29 @@ def compare(
             "logistic-normal model comparisons."
         )
 
+    # When both inputs are LNM / PLN result objects and the parametric
+    # path is requested, auto-convert via the extraction adapter and
+    # fall through to the dict-driven branch below.
+    if (
+        _a_is_lnm_pln_results or _b_is_lnm_pln_results
+    ) and method == "parametric":
+        if not _both_lnm_pln_results:
+            raise TypeError(
+                "method='parametric' on result objects requires both "
+                "inputs to be LNM/PLN result objects. "
+                f"Got: A={type(model_A).__name__} "
+                f"(LNM/PLN: {_a_is_lnm_pln_results}), "
+                f"B={type(model_B).__name__} "
+                f"(LNM/PLN: {_b_is_lnm_pln_results})."
+            )
+        # Replace the inputs with their parametric-dict representations.
+        # Downstream `_compare_parametric` will handle them like any
+        # other fitted-logistic-normal dict.
+        model_A = lnm_or_pln_results_to_parametric_dict(model_A)
+        model_B = lnm_or_pln_results_to_parametric_dict(model_B)
+        _a_is_results = False
+        _b_is_results = False
+
     # Track mixture weights extracted from results objects
     _mix_weights_A = mixture_weights_A
     _mix_weights_B = mixture_weights_B
@@ -243,10 +283,10 @@ def compare(
 
         if method == "parametric":
             raise ValueError(
-                "method='parametric' requires pre-fitted logistic-normal "
-                "models (dicts or distributions), not results objects. "
-                "Use method='empirical' or method='shrinkage' with "
-                "results objects."
+                "method='parametric' on result objects is currently "
+                "supported for LNM, LNMVCP, and PLN fits (the auto-"
+                "conversion above handles those). For DM/NB-family "
+                "results, use method='empirical' or method='shrinkage'."
             )
 
         r_A, p_A, mu_A, phi_A, names_A, layouts_A = _extract_de_inputs(
