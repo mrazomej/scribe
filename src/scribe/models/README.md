@@ -60,6 +60,63 @@ config = (ModelConfigBuilder()
     .build())
 ```
 
+### Logistic-Normal Multinomial (LNM)
+
+```python
+# LNM with strictly low-rank covariance (default)
+config = (ModelConfigBuilder()
+    .for_model("lnm")
+    .build())
+
+# LNM with learned diagonal d
+config = ModelConfig(base_model="lnm", d_mode="learned")
+
+# LNMVCP: LNM + per-cell capture
+config = (ModelConfigBuilder()
+    .for_model("lnmvcp")
+    .build())
+```
+
+### Poisson-LogNormal (PLN)
+
+```python
+# PLN with low-rank covariance (default)
+config = (ModelConfigBuilder()
+    .for_model("pln")
+    .with_parameterization("poisson_lognormal")
+    .with_inference("vae")
+    .with_vae(latent_dim=10, encoder_hidden_dims=[128], decoder_hidden_dims=[128])
+    .build())
+
+# PLN with learned diagonal noise
+config = (ModelConfigBuilder()
+    .for_model("pln")
+    .with_parameterization("poisson_lognormal")
+    .with_inference("vae")
+    .with_vae(latent_dim=10)
+    .build()
+    .model_copy(update={"d_mode": "learned"}))
+
+# PLN with capture probability (biology-informed anchor)
+config = (ModelConfigBuilder()
+    .for_model("pln")
+    .with_parameterization("poisson_lognormal")
+    .with_inference("vae")
+    .with_vae(latent_dim=10, encoder_hidden_dims=[128])
+    .with_priors(capture_efficiency=(log_M0, sigma_M))
+    .build())
+```
+
+**PLN capture**: Unlike LNM/LNMVCP, PLN has no separate model string for
+variable capture.  Capture is an internal flag activated by supplying a
+capture prior (e.g. `priors={"capture_efficiency": (log_M0, sigma_M)}`).
+Setting `variable_capture=True` without capture priors emits a warning.
+
+**When to use PLN vs LNM**: Use PLN when you care about absolute expression
+levels and want total counts to emerge from shared gene-gene correlations
+rather than a separate NB. Use LNM when compositional DE in ALR/CLR
+coordinates is the primary goal.
+
 ## Key Concepts
 
 ### Immutability
@@ -121,6 +178,14 @@ config.vae.hidden_dims  # VAE hidden layer sizes
 # Guides
 config.guides.p  # Guide for p parameter
 ```
+
+### VAE Factory Gene-Width Contract
+
+When reconstructing VAE model/guide callables via `get_model_and_guide(...)`
+or `create_model(...)`, the `n_genes` argument must match the effective
+decoder-head width in the parameter state. Mismatched widths can surface as
+decoder `Dense` shape/broadcast errors during factory dry-run validation and
+posterior predictive sampling.
 
 ## API Reference
 

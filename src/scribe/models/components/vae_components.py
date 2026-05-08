@@ -46,7 +46,7 @@ scribe.models.components.amortizers.Amortizer : Amortizer MLP pattern.
 """
 
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Tuple, Type
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 
 import jax
 import jax.numpy as jnp
@@ -58,11 +58,141 @@ from .covariate_embedding import CovariateEmbedding, CovariateSpec
 # Input transformations (matching legacy VAE)
 # ---------------------------------------------------------------------------
 
+# NOTE:
+# Use named callables (instead of lambdas) for debuggability and safer
+# serialization in toolchains that pickle Python callables.
+
+
+def _log1p_transform(x: jnp.ndarray) -> jnp.ndarray:
+    """Apply element-wise ``log(1 + x)`` transform.
+
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Non-negative count-like input array.
+
+    Returns
+    -------
+    jnp.ndarray
+        Transformed array with the same shape as ``x``.
+    """
+    return jnp.log1p(x)
+
+
+def _log_transform(x: jnp.ndarray) -> jnp.ndarray:
+    """Apply numerically safe element-wise natural logarithm.
+
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Input array.
+
+    Returns
+    -------
+    jnp.ndarray
+        ``log(x + 1e-8)`` evaluated element-wise.
+    """
+    return jnp.log(x + 1e-8)
+
+
+def _sqrt_transform(x: jnp.ndarray) -> jnp.ndarray:
+    """Apply element-wise square-root transform.
+
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Non-negative input array.
+
+    Returns
+    -------
+    jnp.ndarray
+        ``sqrt(x)`` evaluated element-wise.
+    """
+    return jnp.sqrt(x)
+
+
+def _identity_transform(x: jnp.ndarray) -> jnp.ndarray:
+    """Return the input unchanged.
+
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Input array.
+
+    Returns
+    -------
+    jnp.ndarray
+        The same input values with no transformation.
+    """
+    return x
+
+
+def _log1p_prop_transform(x: jnp.ndarray) -> jnp.ndarray:
+    """Apply compositional ``log1p`` transform on row-wise proportions.
+
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Count matrix with genes on the last axis (``..., n_genes``).
+
+    Returns
+    -------
+    jnp.ndarray
+        ``log1p(x / row_total)`` where ``row_total = sum(x, axis=-1)``.
+        The denominator is clamped to at least ``1.0`` to avoid division
+        by zero for empty rows.
+    """
+    row_total = jnp.maximum(x.sum(axis=-1, keepdims=True), 1.0)
+    return jnp.log1p(x / row_total)
+
+
+def _clr_transform(x: jnp.ndarray) -> jnp.ndarray:
+    """Apply centered log-ratio transform with pseudocount ``0.5``.
+
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Count matrix with genes on the last axis (``..., n_genes``).
+
+    Returns
+    -------
+    jnp.ndarray
+        ``log(x + 0.5) - mean(log(x + 0.5), axis=-1)`` so each row is
+        centered in log-ratio coordinates.
+    """
+    log_x = jnp.log(x + 0.5)
+    return log_x - log_x.mean(axis=-1, keepdims=True)
+
+
+_LOG1P_NORM_TARGET_SIZE = 1e4
+
+
+def _log1p_norm_transform(x: jnp.ndarray) -> jnp.ndarray:
+    """Apply library-size normalization to ``1e4`` followed by ``log1p``.
+
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Count matrix with genes on the last axis (``..., n_genes``).
+
+    Returns
+    -------
+    jnp.ndarray
+        ``log1p(x * 1e4 / row_total)`` with ``row_total`` clamped to at
+        least ``1.0`` for numerical safety.
+    """
+    row_total = jnp.maximum(x.sum(axis=-1, keepdims=True), 1.0)
+    return jnp.log1p(x * _LOG1P_NORM_TARGET_SIZE / row_total)
+
+
 INPUT_TRANSFORMS: Dict[str, Callable[[jnp.ndarray], jnp.ndarray]] = {
-    "log1p": jnp.log1p,
-    "log": lambda x: jnp.log(x + 1e-8),
-    "sqrt": jnp.sqrt,
-    "identity": lambda x: x,
+    "log1p": _log1p_transform,
+    "log": _log_transform,
+    "sqrt": _sqrt_transform,
+    "identity": _identity_transform,
+    "log1p_prop": _log1p_prop_transform,
+    "clr": _clr_transform,
+    "log1p_norm": _log1p_norm_transform,
 }
 
 
@@ -127,11 +257,52 @@ class DecoderOutputHead:
     transform : str
         Key into :data:`OUTPUT_TRANSFORMS` applied to the raw Dense
         output to produce the constrained value.
+    bias_init : Optional[Callable]
+        Optional flax-style bias initializer for the head's
+        :class:`nn.Dense`. The signature is the standard flax initializer
+        contract ``(rng_key, shape, dtype) -> jnp.ndarray``. When
+        ``None`` (default), the layer uses flax's default zero bias.
+
+        This hook exists primarily for the LNM linear-decoder head
+        (``"y_alr"``), where initializing the bias to the empirical ALR
+        mean of the count matrix produces a near-marginal-correct output
+        at training step 0 — dramatically reducing the gradient pressure
+        on the rest of the decoder during the first few thousand
+        iterations. See ``empirical_alr_mean_from_counts`` in
+        :mod:`scribe.core.normalization_logistic`. The PLN
+        ``"y_log_rate"`` head reuses the same hook to anchor its bias
+        to the empirical per-gene log-mean expression.
+    kernel_init : Optional[Callable]
+        Optional flax-style kernel initializer for the head's
+        :class:`nn.Dense`. Same ``(rng_key, shape, dtype) -> array``
+        contract as ``bias_init``. When ``None`` (default), the layer
+        uses flax's standard initializer (Lecun normal).
+
+        This hook exists for the PLN linear-decoder head
+        (``"y_log_rate"``), where initializing the kernel to the
+        principal components of the centered log-count matrix gives the
+        optimizer a warm start on the covariance structure (the kernel
+        of a linear decoder *is* the loadings matrix ``W`` in the
+        generative model ``Sigma = W W^T + diag(d)``). Only meaningful
+        for linear-decoder heads; with a hidden-MLP decoder the kernel
+        of the final dense maps a hidden representation to the output,
+        not the latent ``z`` itself, and PCA loadings would be the
+        wrong shape.
     """
 
     param_name: str
     output_dim: int
     transform: str = "identity"
+    # We use ``Optional[Callable]`` rather than ``Optional[jnp.ndarray]``
+    # because flax's ``nn.Dense(bias_init=...)`` API expects an
+    # initializer callable, not an array. To pass a fixed array, callers
+    # wrap it via ``nn.initializers.constant(arr)``; the factory does
+    # exactly this for the LNM ``y_alr`` head.
+    bias_init: Optional[Callable] = None
+    # Same contract as ``bias_init`` but for the dense kernel — used by
+    # the PLN ``y_log_rate`` head to seed ``W`` from PCA loadings of the
+    # centered log-count matrix.
+    kernel_init: Optional[Callable] = None
 
     def __post_init__(self):
         if self.transform not in OUTPUT_TRANSFORMS:
@@ -304,6 +475,107 @@ class GaussianEncoder(AbstractEncoder):
 
 
 # ===========================================================================
+# LNMGaussianEncoder
+# ===========================================================================
+
+
+# Default clamp range for the log-scale head of the LNM encoder. These
+# bounds map to standard deviations of roughly ``[exp(-7), exp(2)] ≈
+# [9.1e-4, 7.4]`` in the latent ``h`` space. The lower bound prevents
+# ``σ → 0`` (which would produce a delta-mass posterior whose KL term is
+# ``-∞``) and the upper bound prevents ``σ → ∞`` (which would produce
+# numerically unstable reparameterised samples). The values are
+# deliberately wide enough that they should never bind once the encoder
+# has learned, while still short-circuiting the runaway dynamics
+# observed at the start of training when the encoder output is noise.
+_LNM_LOG_SCALE_MIN: float = -7.0
+_LNM_LOG_SCALE_MAX: float = 2.0
+
+
+class LNMGaussianEncoder(GaussianEncoder):
+    """Gaussian encoder with a clamped log-scale head, used by LNM models.
+
+    This is a thin specialization of :class:`GaussianEncoder` that wraps
+    the ``log_scale`` output in a fixed clamp ``[log_scale_min,
+    log_scale_max]``. The high-dimensional multinomial likelihood used by
+    the LNM (and LNMVCP) models is unusually unforgiving in the early
+    training regime: an unconstrained log-scale head can drift to
+    ``-∞`` (producing a delta-mass posterior on ``h`` whose KL diverges)
+    or ``+∞`` (which destabilises reparameterised samples and saturates
+    the multinomial). Clamping is the standard fix in scVI/CellBender and
+    other count-data VAEs.
+
+    The clamp is applied to the **raw** Dense output (interpreted as a
+    log-scale) before any downstream computation. Because the clamp is
+    a soft fence that almost never binds in practice, it does not change
+    the model's expressive capacity once training has converged.
+
+    Parameters
+    ----------
+    log_scale_min : float, default=-7.0
+        Lower bound for ``log σ``. The default corresponds to
+        ``σ ≈ 9.1e-4`` — much smaller than the natural scale of the
+        N(0, I) prior on the latent ``h``, but large enough to keep
+        the KL contribution finite.
+    log_scale_max : float, default=2.0
+        Upper bound for ``log σ``. The default corresponds to
+        ``σ ≈ 7.4`` — about an order of magnitude larger than the
+        prior, so the variational family can still represent broad
+        posteriors without saturating the reparameterised sampler.
+
+    Notes
+    -----
+    The clamp is purely a numerical-stability device. It does **not**
+    introduce a non-trivial prior on ``log σ`` (which would distort
+    the ELBO); it only prevents the optimiser from wandering into
+    regions where gradients are arithmetically meaningless. Outside
+    the LNM family, where the encoder output drives a Gaussian
+    reconstruction likelihood instead of a multinomial-softmax, the
+    plain :class:`GaussianEncoder` should be preferred.
+
+    Examples
+    --------
+    >>> encoder = LNMGaussianEncoder(
+    ...     input_dim=20000, latent_dim=128,
+    ...     hidden_dims=[256, 128],
+    ...     activation="gelu",
+    ...     input_transformation="log1p_prop",
+    ... )
+    >>> params = encoder.init(jax.random.PRNGKey(0), jnp.zeros(20000))
+    >>> loc, log_scale = encoder.apply(params, counts)
+    >>> # log_scale is guaranteed in [-7, 2] regardless of training state.
+
+    See Also
+    --------
+    GaussianEncoder : Unclamped baseline encoder used by other models.
+    """
+
+    # Both fields default to the module-level constants but are exposed
+    # as module attributes so an ablation experiment or downstream model
+    # can tune the clamp without subclassing.
+    log_scale_min: float = _LNM_LOG_SCALE_MIN
+    log_scale_max: float = _LNM_LOG_SCALE_MAX
+
+    @nn.compact
+    def encode_to_params(
+        self, h: jnp.ndarray
+    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        # The location head is left untouched: the prior on ``h`` is the
+        # standard ``N(0, I)`` for which arbitrarily large means are
+        # legitimate (they just incur larger KL).
+        loc = nn.Dense(self.latent_dim, name="loc_head")(h)
+        # The raw log-scale is clamped element-wise. ``jnp.clip`` is
+        # subgradient-safe at the clamp boundaries: gradients flow
+        # through the unclamped region and stop at the boundary, which
+        # is the desired behaviour for a soft regulariser.
+        log_scale_raw = nn.Dense(self.latent_dim, name="log_scale_head")(h)
+        log_scale = jnp.clip(
+            log_scale_raw, self.log_scale_min, self.log_scale_max
+        )
+        return loc, log_scale
+
+
+# ===========================================================================
 # AbstractDecoder
 # ===========================================================================
 
@@ -425,9 +697,28 @@ class MultiHeadDecoder(AbstractDecoder):
 
     @nn.compact
     def decode_to_output(self, h: jnp.ndarray) -> Dict[str, jnp.ndarray]:
+        # Build one Dense layer per output head and dispatch to the
+        # configured output transform. We honour an optional per-head
+        # ``bias_init`` callable so that consumers (notably the LNM linear
+        # decoder) can anchor a head's bias to a data-derived constant
+        # rather than the flax default of zero. Falling back to flax's
+        # built-in default keeps existing models bit-identical.
         result: Dict[str, jnp.ndarray] = {}
         for head in self.output_heads:
-            raw = nn.Dense(head.output_dim, name=f"head_{head.param_name}")(h)
+            # Assemble keyword args lazily so that we only pass
+            # ``bias_init`` when a custom initializer was supplied; this
+            # leaves the default code path identical to pre-bias-init
+            # behavior for every existing decoder head.
+            dense_kwargs: Dict[str, Any] = {"name": f"head_{head.param_name}"}
+            if head.bias_init is not None:
+                dense_kwargs["bias_init"] = head.bias_init
+            if head.kernel_init is not None:
+                # Same lazy assembly as ``bias_init``: only forward the
+                # initializer when the caller supplied one, so heads
+                # without a custom kernel init keep flax's default Lecun
+                # normal scheme bit-for-bit.
+                dense_kwargs["kernel_init"] = head.kernel_init
+            raw = nn.Dense(head.output_dim, **dense_kwargs)(h)
             transform_fn = _get_output_transform(head.transform)
             result[head.param_name] = transform_fn(raw)
         return result
@@ -439,6 +730,11 @@ class MultiHeadDecoder(AbstractDecoder):
 
 ENCODER_REGISTRY: Dict[str, Type[AbstractEncoder]] = {
     "gaussian": GaussianEncoder,
+    # LNM-specific Gaussian encoder with a clamped log-scale head. The
+    # clamp is a numerical-stability fence around the multinomial-softmax
+    # likelihood and is registered as a separate encoder type so that
+    # non-LNM models continue to use the unclamped baseline.
+    "gaussian_lnm": LNMGaussianEncoder,
 }
 
 DECODER_REGISTRY: Dict[str, Type[AbstractDecoder]] = {

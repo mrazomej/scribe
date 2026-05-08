@@ -50,6 +50,7 @@ from .models.config import (
     DataConfig,
     EarlyStoppingConfig,
     InferenceConfig,
+    KLAnnealingConfig,
     MCMCConfig,
     ModelConfig,
     SVIConfig,
@@ -77,13 +78,27 @@ from .models.parameterizations import PARAMETERIZATIONS
 ScribeResults = Union[ScribeSVIResults, ScribeMCMCResults, ScribeVAEResults]
 
 # Valid model types
-VALID_MODELS = {"nbdm", "zinb", "nbvcp", "zinbvcp"}
+VALID_MODELS = {"nbdm", "zinb", "nbvcp", "zinbvcp", "lnm", "lnmvcp", "pln"}
+
+# Deprecated aliases mapped to their canonical names.
+_DEPRECATED_MODEL_ALIASES = {"nbdm_lnm": "lnm"}
 
 # Derive valid parameterizations from the single source of truth
 VALID_PARAMETERIZATIONS = set(PARAMETERIZATIONS.keys())
 
 # Valid inference methods
-VALID_INFERENCE_METHODS = {"svi", "mcmc", "vae"}
+VALID_INFERENCE_METHODS = {"svi", "mcmc", "vae", "laplace"}
+
+
+# ------------------------------------------------------------------------------
+# LNMVCP: biology-informed default r_T prior under capture anchor
+# ------------------------------------------------------------------------------
+# The constants and resolver for the LNM ``r_T`` prior live in
+# :mod:`scribe.core.lnm_data_init` so a single source of truth governs both
+# the API layer and the unit tests. See ``resolve_r_T_prior`` for the full
+# branching logic and the qmd subsection
+# "Why the data-driven r_T prior is gated on the capture anchor" for the
+# derivation.
 
 
 # ==============================================================================
@@ -261,6 +276,16 @@ def fit(
     # Gene-specific overdispersion beyond the NB family
     overdispersion: str = "none",
     overdispersion_prior: str = "horseshoe",
+    # Diagonal residual noise mode for the latent log-rate
+    # decomposition (see ``ModelConfig.d_mode``). When ``None``,
+    # ``api.fit`` resolves a sensible per-model default:
+    #   - PLN: ``"learned"`` so the generative covariance is
+    #     ``W W' + diag(d)`` (matches the Laplace inference path,
+    #     which has always learned ``d``).
+    #   - LNM and others: ``"low_rank"`` (legacy behavior).
+    # Pass an explicit string to override.
+    d_mode: Optional[str] = None,
+    alr_reference_idx: Optional[int] = None,
     n_components: Optional[int] = None,
     mixture_params: Optional[Union[str, List[str]]] = "all",
     guide_rank: Optional[int] = None,
@@ -286,7 +311,7 @@ def fit(
     vae_decoder_hidden_dims: Optional[List[int]] = None,
     vae_activation: Optional[str] = None,
     vae_input_transform: str = "log1p",
-    vae_standardize: bool = False,
+    vae_standardize: Optional[bool] = None,
     vae_decoder_transforms: Optional[Dict[str, str]] = None,
     vae_flow_type: str = "none",
     vae_flow_num_layers: int = 4,
@@ -314,6 +339,24 @@ def fit(
     # Early stopping options (for SVI/VAE)
     early_stopping: Optional[Union[EarlyStoppingConfig, Dict[str, Any]]] = None,
     restore_best: bool = False,
+    # KL annealing options (for VAE only — automatically defaulted ON
+    # for VAE-mode fits; pass an explicit ``KLAnnealingConfig`` or set
+    # ``kl_annealing_warmup`` to customise; pass
+    # ``KLAnnealingConfig(enabled=False)`` to disable).
+    kl_annealing: Optional[
+        Union["KLAnnealingConfig", Dict[str, Any], bool]
+    ] = None,
+    kl_annealing_warmup: Optional[int] = None,
+    # Laplace-specific overrides — accepts a dict of ``LaplaceConfig``
+    # field overrides (e.g. ``{"n_newton_steps": 15, "damping": 1e-3,
+    # "newton_tolerance": 1e-3}``) or a fully-built ``LaplaceConfig``
+    # instance. Top-level kwargs (n_steps, batch_size, optimizer_config,
+    # early_stopping, restore_best, log_progress_lines) populate the
+    # corresponding fields of the resulting LaplaceConfig; anything in
+    # ``laplace_config`` overrides those defaults. Useful for tuning
+    # the inner Newton (n_newton_steps, damping, newton_tolerance,
+    # convergence_action) without polluting the top-level signature.
+    laplace_config: Optional[Union["LaplaceConfig", Dict[str, Any]]] = None,
     # Data options
     cells_axis: int = 0,
     layer: Optional[str] = None,
@@ -356,6 +399,10 @@ def fit(
         strings:
 
             - ``"nbdm"``: Negative Binomial (base, no capture channel)
+            - ``"lnm"``: NB total counts × logistic-normal multinomial
+              compositions (VAE-only; uses parameterization ``logistic_normal``)
+            - ``"lnmvcp"``: Like ``"lnm"`` but with per-cell variable capture
+              probability on the totals NB submodel
             - ``"zinb"``: Zero-Inflated NB
             - ``"nbvcp"``: NB with Variable Capture Probability
             - ``"zinbvcp"``: ZINB with Variable Capture Probability
@@ -366,10 +413,30 @@ def fit(
         implied when neither flag nor ``model`` is specified, since the
         default model is ``"nbvcp"``):
 
+        For standard (NBDM-family) parameterizations:
+
             - ``variable_capture=False, zero_inflation=False`` -> ``"nbdm"``
             - ``variable_capture=True, zero_inflation=False`` -> ``"nbvcp"``
             - ``variable_capture=False, zero_inflation=True`` -> ``"zinb"``
             - ``variable_capture=True, zero_inflation=True`` -> ``"zinbvcp"``
+
+        For the LNM family (``model="lnm"`` / ``"lnmvcp"`` — choose
+        the totals-NB ``parameterization=`` separately from
+        ``"canonical"`` / ``"mean_prob"`` / ``"mean_odds"``):
+
+            - ``variable_capture=False`` -> ``"lnm"``
+            - ``variable_capture=True``  -> ``"lnmvcp"``
+            - ``zero_inflation=True`` raises ``ValueError`` (not supported)
+
+        For the PLN family (``model="pln"``):
+
+            - Capture is an internal flag, not a separate model string.
+              If ``variable_capture=True`` and capture priors are provided
+              (``priors={"capture_efficiency": ...}`` or
+              ``priors={"organism": ...}``), capture is silently activated.
+            - If ``variable_capture=True`` but *no* capture prior is
+              provided, a warning is emitted and PLN runs without capture.
+            - ``zero_inflation=True`` raises ``ValueError`` (not supported).
 
         An explicit ``model=`` that conflicts with the flags raises
         ``ValueError``.
@@ -445,6 +512,28 @@ def fit(
         (``kappa_g``).  Controls shrinkage toward the NB limit.
         Only used when ``overdispersion`` is not ``"none"``.
         Accepted values: ``"horseshoe"``, ``"neg"``.
+
+    d_mode : str or None, default=None
+        Diagonal residual-noise mode for models that decompose the
+        latent log-rate as ``y = mu + W z`` (LNM, LNMVCP) or
+        ``x = mu + W z`` (PLN). ``"low_rank"`` skips the diagonal
+        residual (singular ``W W'`` covariance); ``"learned"`` adds
+        a learnable per-gene ``diag(d)`` term so the covariance is
+        ``W W' + diag(d)``. When ``None`` (the default), ``api.fit``
+        resolves to ``"learned"`` for all models that consume
+        ``d_mode``: a proper full-rank prior is the right modeling
+        choice in every case where the latent log-rate has a low-
+        rank-plus-diagonal decomposition. Pass ``"low_rank"``
+        explicitly to opt into the legacy singular-covariance
+        regime. Ignored for models that do not decompose log-rates
+        this way.
+
+    alr_reference_idx : int or None, default=None
+        Only for ``model="lnm"`` / ``"lnmvcp"``: zero-based index of the ALR reference
+        gene (denominator). ``None`` selects automatically from the count
+        matrix (gene with highest mean ``log1p`` expression). Pass an
+        explicit integer to override; ``-1`` keeps the legacy last-gene
+        reference. Ignored for other models.
 
     Multi-dataset hierarchy
     -----------------------
@@ -706,12 +795,26 @@ def fit(
 
     vae_input_transform : str, default="log1p"
         Input transform applied to counts before entering the VAE
-        encoder.  Supported options include ``"log1p"``, ``"log"``,
-        ``"sqrt"``, and ``"identity"``.
+        encoder. Supported options include ``"log1p"``, ``"log"``,
+        ``"sqrt"``, ``"identity"``, ``"log1p_prop"``, ``"clr"``, and
+        ``"log1p_norm"``. For ``model in {"lnm", "lnmvcp"}``, the
+        effective default is ``"log1p_prop"`` when this argument is not
+        explicitly overridden.
 
-    vae_standardize : bool, default=False
+    vae_standardize : bool or None, default=None
         Whether to standardize transformed VAE inputs to zero mean and
-        unit variance.
+        unit variance per gene. ``None`` (the default) is a *sentinel*
+        meaning "auto-pick based on model": ``True`` for the LNM family
+        (``model in {"lnm", "lnmvcp"}``) and ``False`` for every other
+        VAE model. Explicit ``True`` / ``False`` always wins over the
+        auto-default. Standardization happens in the same input-transform
+        space the encoder uses (e.g. ``log1p_prop`` for LNM), so the
+        per-feature stats are computed on the *transformed* counts
+        rather than raw counts. For LNM specifically, sparse
+        ``log1p_prop`` inputs are mostly tiny non-negative values which
+        leaves the encoder's first Dense layer near-rank-deficient at
+        init; standardizing fixes the preconditioning at essentially
+        zero compute cost.
 
     vae_decoder_transforms : Dict[str, str], optional
         Optional mapping from decoder output names to transform names.
@@ -1019,31 +1122,125 @@ def fit(
     # model string from the flags.  An explicit model= that conflicts with
     # the flags raises an error.  When neither flag is set, the model=
     # default ("nbvcp") is used as-is.
+    #
+    # The resolution table depends on the model family — note that the
+    # ``parameterization`` argument is no longer the family selector for
+    # LNM (it now selects among canonical / mean_prob / mean_odds, all
+    # valid for both DM and LNM families). The family is selected by
+    # ``model=`` (or by the ``variable_capture`` / ``zero_inflation``
+    # flags when ``model=`` is left at its default):
+    #   model in {lnm, lnmvcp}                       -> LNM family
+    #   anything else                                -> DM-family
+    # Within the LNM family, ZI is not supported.
+    _is_lnm_model = model.lower() in ("lnm", "lnmvcp")
+    _is_pln_model = model.lower() == "pln"
     _default_model = "nbvcp"
     if variable_capture is not None or zero_inflation is not None:
         _zi = zero_inflation if zero_inflation is not None else False
         _vc = variable_capture if variable_capture is not None else True
-        _resolved = (
-            "zinbvcp"
-            if _zi and _vc
-            else "zinb" if _zi else "nbvcp" if _vc else "nbdm"
-        )
-        # If the user also passed an explicit model= that differs, raise.
-        if model.lower() != _default_model and model.lower() != _resolved:
-            raise ValueError(
-                f"model='{model}' conflicts with the feature flags "
-                f"(zero_inflation={zero_inflation}, "
-                f"variable_capture={variable_capture}) which resolve to "
-                f"'{_resolved}'. Use one or the other, not both."
+        if _is_pln_model:
+            # PLN handles capture as an internal flag on the likelihood,
+            # activated by supplying capture priors (capture_efficiency /
+            # eta_capture / organism).  There is no separate "plnvcp"
+            # model string.
+            if _zi:
+                raise ValueError(
+                    "Zero-inflation is not supported for the PLN family "
+                    "(model='pln'). Drop zero_inflation=True "
+                    "or pick a DM-family model."
+                )
+            if _vc:
+                # Check whether the user supplied capture priors that
+                # would actually activate the capture anchor.
+                from .core.lnm_data_init import CAPTURE_ANCHOR_KEYS
+                from .models.config.parameter_mapping import PRIOR_KEY_ALIASES
+
+                _capture_alias_set = {
+                    alias
+                    for alias, target in PRIOR_KEY_ALIASES.items()
+                    if target in CAPTURE_ANCHOR_KEYS
+                }
+                _all_capture_keys = (
+                    set(CAPTURE_ANCHOR_KEYS) | _capture_alias_set
+                )
+                _has_capture_prior = isinstance(priors, dict) and any(
+                    k in priors for k in _all_capture_keys
+                )
+                if not _has_capture_prior:
+                    warnings.warn(
+                        "variable_capture=True with model='pln' has no "
+                        "effect unless you also supply a capture prior "
+                        "(e.g. priors={'capture_efficiency': (log_M0, "
+                        "sigma_M)} or priors={'organism': 'human'}). "
+                        "The PLN model will be fitted without capture "
+                        "correction.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+            # PLN stays "pln" regardless of variable_capture.
+        elif _is_lnm_model:
+            if _zi:
+                raise ValueError(
+                    "Zero-inflation is not supported for the LNM family "
+                    "(model='lnm' / 'lnmvcp'). Drop zero_inflation=True "
+                    "or pick a DM-family model."
+                )
+            _resolved = "lnmvcp" if _vc else "lnm"
+            # Within the LNM family: ``model="lnm"`` is the base name
+            # that promotes via ``variable_capture`` (so
+            # ``model="lnm" + variable_capture=True`` → ``"lnmvcp"``);
+            # ``model="lnmvcp"`` is an explicit name that must agree
+            # with the flag if both are passed. Mismatched explicit
+            # name + flag is a conflict; ``"lnm"`` is always accepted
+            # because the flag selects the variant.
+            #
+            # NOTE: the previous version compared against
+            # ``_default_model = "nbvcp"`` (a DM-family name), which
+            # made the check pass for nobody and effectively rejected
+            # the natural ``"lnm" + variable_capture=True`` promotion.
+            if model.lower() != "lnm" and model.lower() != _resolved:
+                raise ValueError(
+                    f"model='{model}' conflicts with the feature flags "
+                    f"(zero_inflation={zero_inflation}, "
+                    f"variable_capture={variable_capture}) which resolve to "
+                    f"'{_resolved}'. Pass model='lnm' to let "
+                    f"variable_capture select the variant, or set "
+                    f"variable_capture to match the model name."
+                )
+            model = _resolved
+        else:
+            _resolved = (
+                "zinbvcp"
+                if _zi and _vc
+                else "zinb" if _zi else "nbvcp" if _vc else "nbdm"
             )
-        model = _resolved
+            if model.lower() != _default_model and model.lower() != _resolved:
+                raise ValueError(
+                    f"model='{model}' conflicts with the feature flags "
+                    f"(zero_inflation={zero_inflation}, "
+                    f"variable_capture={variable_capture}) which resolve to "
+                    f"'{_resolved}'. Use one or the other, not both."
+                )
+            model = _resolved
 
     # ==========================================================================
     # Step 1: Validate inputs
     # ==========================================================================
     if model_config is None:
-        # Validate model type
+        # Normalize deprecated aliases before validation.
         model_lower = model.lower()
+        if model_lower in _DEPRECATED_MODEL_ALIASES:
+            canonical = _DEPRECATED_MODEL_ALIASES[model_lower]
+            warnings.warn(
+                f"Model name '{model_lower}' is deprecated; "
+                f"use '{canonical}' instead.",
+                FutureWarning,
+                stacklevel=2,
+            )
+            model = canonical
+            model_lower = canonical
+
+        # Validate model type
         if model_lower not in VALID_MODELS:
             raise ValueError(
                 f"Unknown model: '{model}'. "
@@ -1089,6 +1286,93 @@ def fit(
     count_data, adata, n_cells, n_genes = process_counts_data(
         counts, data_config
     )
+    import numpy as np
+
+    # Cache a concrete upper bound for multinomial total counts used by
+    # posterior predictive sampling. The 1.5x buffer protects against
+    # truncation when predictive NB draws exceed the observed maximum.
+    _total_count_max = int(
+        1.5 * float(np.asarray(count_data).sum(axis=1).max())
+    )
+
+    # ==========================================================================
+    # Step 2c (LNM-only): auto-set r_T prior
+    # ==========================================================================
+    # The default LogNormal(0, 1) prior on the total-count NB dispersion
+    # ``r_T`` has median 1.0 and 95% CI ~[0.14, 7.4] — orders of magnitude
+    # below the values appropriate for typical 10x library sizes
+    # (r_T routinely in the tens to hundreds). Without an anchor, the KL
+    # on r_T fights the data throughout early training and contributes
+    # heavily to the spiky LNM ELBO trajectory observed prior to this fix.
+    #
+    # Two regimes have to be handled separately:
+    #
+    #   (1) **No capture anchor active.** The user has not opted into the
+    #       biology-informed prior on ``p_capture^{(c)} ~ L_c / M_0`` (no
+    #       ``eta_capture`` / ``mu_eta`` / ``organism`` key in ``priors``).
+    #       In this regime, library-size variation ends up partly absorbed
+    #       by the totals NB itself, so a moment-of-moments inversion on
+    #       the empirical totals gives a sensible (slightly biased-low for
+    #       LNMVCP) ballpark for ``r_T``. We use it, with a wider
+    #       ``sigma_log`` for LNMVCP to absorb the bias.
+    #
+    #   (2) **Capture anchor active.** Once ``p_capture^{(c)}`` is pinned
+    #       to ``L_c / M_0`` by the capture prior, the cell-to-cell
+    #       variation in ``u_T`` is consumed by the per-cell ``p_capture``
+    #       and there is essentially no residual variance from which to
+    #       estimate ``r_T`` via totals moments — the method-of-moments
+    #       inversion becomes mathematically uninformative (the
+    #       capture-corrected ``var(u_T)`` collapses to zero in the
+    #       deterministic-anchor limit). In this regime we *skip* the
+    #       MoM and instead use a fixed, biology-informed default prior.
+    #       The qmd subsection
+    #       "Why the data-driven r_T prior is gated on the capture anchor"
+    #       develops the derivation.
+    #
+    # In both regimes, an explicit user override via ``priors["r_T"]``
+    # always wins.
+    #
+    # This block is gated on the LNM family so non-LNM models keep their
+    # existing prior calibration unchanged.
+    # Delegate to the centralized resolver. ``resolve_lnm_priors``
+    # returns a (possibly empty) dict of auto-defaults keyed by the
+    # *sampled* scalar names of the chosen LNM-family parameterization
+    # (canonical → ``r_T``; mean_prob → ``mu_T``; mean_odds → ``mu_T``,
+    # ``phi_T``). It returns ``{}`` for non-LNM models, when the user
+    # has already supplied each scalar's prior, or when the
+    # parameterization is unrecognized.
+    from .core.lnm_data_init import resolve_lnm_priors, CAPTURE_ANCHOR_KEYS
+
+    _resolved_priors = resolve_lnm_priors(
+        model, parameterization, count_data, priors
+    )
+    if _resolved_priors:
+        # Never mutate a caller's dict — make a fresh copy. The user
+        # may reuse the dict across multiple ``fit`` calls and would
+        # not expect ours to silently grow new keys.
+        priors = dict(priors) if priors is not None else {}
+        priors.update(_resolved_priors)
+
+        # Log a single summary line documenting the auto-defaults that
+        # fired, so the user can confirm them at a glance.
+        import logging as _logging
+
+        _capture_active = any(
+            k in priors for k in CAPTURE_ANCHOR_KEYS
+        )
+        _summary_parts = []
+        for _k, (_mu_log, _sigma_log) in _resolved_priors.items():
+            _summary_parts.append(
+                f"{_k}=LogNormal(mu={_mu_log:.3f}, "
+                f"sigma={_sigma_log:.3f}, median={float(jnp.exp(_mu_log)):.1f})"
+            )
+        _logging.getLogger(__name__).info(
+            "LNM[%s]: auto-set priors (%s anchor): %s. "
+            "Override any of these via priors=…",
+            parameterization,
+            "capture" if _capture_active else "no capture",
+            ", ".join(_summary_parts),
+        )
 
     # ==========================================================================
     # Step 2b: Build dataset indices (if multi-dataset model)
@@ -1287,6 +1571,81 @@ def fit(
                 stacklevel=2,
             )
 
+    # Resolve ALR reference for LNM after optional gene coverage filtering so
+    # the final index always matches the model-space count matrix.
+    if model.lower() in ("lnm", "lnmvcp"):
+        from .models.components.likelihoods.lnm import select_alr_reference
+        import logging
+
+        _has_pooled_other = bool(
+            _gene_coverage_mask is not None
+            and np.any(~np.asarray(_gene_coverage_mask, dtype=bool))
+        )
+
+        if alr_reference_idx is None:
+            # Auto-selection by minimum variance of log-proportion
+            # (after Laplace smoothing + an expression-floor filter).
+            # The pooled ``_other`` pseudo-gene is included in the
+            # candidate pool when present: it sums over thousands of
+            # low-coverage genes that ``gene_coverage`` filtering
+            # already removed for being uninformative, so by the
+            # central limit theorem its per-cell proportion is
+            # typically very stable — often the natural housekeeping
+            # candidate.
+            alr_reference_idx = int(select_alr_reference(count_data))
+            _is_other = (
+                _has_pooled_other
+                and alr_reference_idx == count_data.shape[1] - 1
+            )
+            logging.getLogger(__name__).info(
+                "LNM: auto-selected gene %d as ALR reference "
+                "(%s; minimum-variance criterion).",
+                alr_reference_idx,
+                (
+                    "pooled '_other' pseudo-gene won the variance "
+                    "competition"
+                    if _is_other
+                    else "individual gene"
+                ),
+            )
+        else:
+            _ref_input = int(alr_reference_idx)
+            if gene_coverage is None:
+                if not (0 <= _ref_input < n_genes):
+                    raise ValueError(
+                        f"alr_reference_idx must be in [0, {n_genes - 1}], "
+                        f"got {_ref_input}."
+                    )
+                alr_reference_idx = _ref_input
+            else:
+                if not (0 <= _ref_input < _original_n_genes):
+                    raise ValueError(
+                        "With gene_coverage enabled, alr_reference_idx is "
+                        "interpreted in the original gene space and must be "
+                        f"in [0, {_original_n_genes - 1}], got {_ref_input}."
+                    )
+                if _gene_coverage_mask is not None and not bool(
+                    _gene_coverage_mask[_ref_input]
+                ):
+                    raise ValueError(
+                        "alr_reference_idx points to a gene excluded by "
+                        "gene_coverage filtering (pooled into 'other'). "
+                        "Choose a retained gene index."
+                    )
+                if _gene_coverage_mask is not None and _has_pooled_other:
+                    # Map original-gene index -> filtered-gene index.
+                    alr_reference_idx = int(
+                        np.asarray(_gene_coverage_mask[:_ref_input]).sum()
+                    )
+                else:
+                    alr_reference_idx = _ref_input
+
+            if _has_pooled_other and alr_reference_idx == (n_genes - 1):
+                raise ValueError(
+                    "alr_reference_idx resolved to the pooled 'other' gene. "
+                    "Please select a retained original gene."
+                )
+
     # ==========================================================================
     # Step 2c: Build annotation prior logits (if requested)
     # ==========================================================================
@@ -1403,6 +1762,28 @@ def fit(
     # ==========================================================================
     # Step 3: Build or use ModelConfig
     # ==========================================================================
+    # Resolve ``d_mode=None`` to the per-model default.
+    #
+    # All models that decompose the latent log-rate as ``y = mu + W z``
+    # (LNM, LNMVCP) or ``x = mu + W z`` (PLN) now default to a learned
+    # diagonal residual:
+    #
+    #   * PLN: generative covariance ``W W' + diag(d)`` matches the
+    #     paper's derivation (paper/_poisson_lognormal.qmd) and the
+    #     Laplace inference path which has always learned ``d``.
+    #   * LNM/LNMVCP: under low-rank ``Σ = W W'`` the prior on
+    #     y_alr has no support outside ``colspan(W)``, which silently
+    #     constrains the posterior in ways amortized inference can't
+    #     recover. Adding a learned diagonal residual makes the prior
+    #     proper and is also a prerequisite for an LNM Laplace
+    #     inference path (see plan in docs/).
+    #
+    # Non-decomposing models ignore ``d_mode`` entirely; passing
+    # ``"low_rank"`` for them is harmless. Power users who specifically
+    # want the singular-covariance regime can pass
+    # ``d_mode="low_rank"`` explicitly.
+    if d_mode is None:
+        d_mode = "learned"
     if model_config is None:
         # Single config object: prefer capture_amortization; else build from 6
         # params
@@ -1449,6 +1830,10 @@ def fit(
             expression_anchor_sigma=expression_anchor_sigma,
             overdispersion=overdispersion,
             overdispersion_prior=overdispersion_prior,
+            d_mode=d_mode,
+            alr_reference_idx=alr_reference_idx
+            if alr_reference_idx is not None
+            else -1,
             guide_rank=guide_rank,
             joint_params=joint_params,
             dense_params=dense_params,
@@ -1546,6 +1931,91 @@ def fit(
         )
 
     # ==========================================================================
+    # Step 3d (LNM-only): inject data-derived VAE initializers
+    # ==========================================================================
+    # For Logistic-Normal Multinomial models, two further data-derived
+    # constants stabilise early training:
+    #
+    #   1. ``empirical_alr_bias_init``: the empirical ALR mean of the
+    #      counts. The factory wires this into the linear-decoder's
+    #      ``y_alr`` head bias so the very first forward pass already
+    #      reproduces the dataset's marginal composition. Without this,
+    #      ``softmax(y_alr) ≈ 1/G`` at step 0 and the optimizer must
+    #      back-propagate large multinomial gradients through ``W`` for
+    #      thousands of steps just to discover what the marginals are.
+    #
+    #   2. ``standardize_mean`` / ``standardize_std``: per-feature
+    #      statistics of the *transformed* encoder input (e.g. the
+    #      ``log1p_prop`` of raw counts). When ``vae.standardize`` is
+    #      true, these z-standardize the encoder input before the first
+    #      Dense layer. Sparse log1p_prop inputs are mostly tiny
+    #      non-negative values, which leaves the first Dense layer
+    #      near-rank-deficient at init; standardizing fixes the
+    #      preconditioning at essentially zero compute cost.
+    #
+    # All three constants live on ``model_config.vae`` (see
+    # ``VAEConfig``). Because ``VAEConfig`` is a frozen Pydantic model,
+    # we inject by ``model_copy``, mirroring the ``mu_anchor_centers``
+    # pattern in Step 3c above. Non-LNM paths skip this block entirely.
+    if (
+        model_config.inference_method.value == "vae"
+        and model_config.parameterization.value.startswith("logistic_normal")
+    ):
+        # Delegate to the centralized helper so the same transformation
+        # is exercised by the unit tests for the LNM stability pass.
+        # The helper is side-effect-free and returns a new ModelConfig
+        # whose .vae carries the data-derived initializers.
+        from .core.lnm_data_init import inject_lnm_vae_data_init
+
+        _ref = alr_reference_idx if alr_reference_idx is not None else -1
+        model_config = inject_lnm_vae_data_init(
+            model_config, count_data, alr_reference_idx=_ref
+        )
+
+        import logging as _lnm_logging
+
+        _lnm_logging.getLogger(__name__).info(
+            "LNM: injected empirical ALR bias init (length %d, "
+            "ref idx %d) and per-feature encoder standardization "
+            "stats into VAEConfig.",
+            int(model_config.vae.empirical_alr_bias_init.shape[0]),
+            int(_ref),
+        )
+
+    # ==========================================================================
+    # Step 3e (PLN-only): inject data-derived VAE initializers
+    # ==========================================================================
+    # For Poisson-LogNormal models, we inject:
+    #   1. ``empirical_log_mean_bias_init``: per-gene log(mean + c) for
+    #      decoder bias initialization.
+    #   2. ``pca_loadings_init``: PCA-based initialization for decoder W.
+    #   3. ``standardize_mean`` / ``standardize_std``: encoder z-standardization.
+    if (
+        model_config.inference_method.value == "vae"
+        and model_config.parameterization.value == "poisson_lognormal"
+    ):
+        from .core.pln_data_init import inject_pln_vae_data_init
+
+        _latent_dim = model_config.vae.latent_dim
+        model_config = inject_pln_vae_data_init(
+            model_config, count_data, latent_dim=_latent_dim
+        )
+
+        import logging as _pln_logging
+
+        _pln_logging.getLogger(__name__).info(
+            "PLN: injected empirical log-mean bias init (length %d), "
+            "PCA loadings init %s, and encoder standardization stats "
+            "into VAEConfig.",
+            int(model_config.vae.empirical_log_mean_bias_init.shape[0]),
+            (
+                model_config.vae.pca_loadings_init.shape
+                if model_config.vae.pca_loadings_init is not None
+                else "None"
+            ),
+        )
+
+    # ==========================================================================
     # Step 4: Build or use InferenceConfig
     # ==========================================================================
     if inference_config is None:
@@ -1569,7 +2039,64 @@ def fit(
                     f"got {type(early_stopping)}"
                 )
 
+        # Resolve KL annealing configuration. Precedence:
+        #   1. Explicit ``kl_annealing`` arg (object / dict / False).
+        #   2. ``kl_annealing_warmup`` shortcut → enabled with that warmup.
+        #   3. Per-method default — ON for VAE, OFF for SVI/MCMC.
+        # Passing ``False`` disables annealing without instantiating a
+        # config object; passing ``True`` activates the default config.
+        kl_annealing_config: Optional[KLAnnealingConfig] = None
+        if kl_annealing is not None:
+            if isinstance(kl_annealing, KLAnnealingConfig):
+                kl_annealing_config = kl_annealing
+            elif isinstance(kl_annealing, bool):
+                # Boolean shortcut: True → defaults; False → disabled.
+                kl_annealing_config = (
+                    KLAnnealingConfig() if kl_annealing else None
+                )
+            elif isinstance(kl_annealing, dict):
+                kl_annealing_config = KLAnnealingConfig(**kl_annealing)
+            else:
+                raise ValueError(
+                    "kl_annealing must be KLAnnealingConfig, dict, bool, "
+                    f"or None; got {type(kl_annealing).__name__}"
+                )
+        elif kl_annealing_warmup is not None:
+            # Convenience shortcut: just the warmup length, defaults
+            # otherwise.
+            kl_annealing_config = KLAnnealingConfig(
+                enabled=True, warmup=int(kl_annealing_warmup)
+            )
+        elif method == InferenceMethod.VAE:
+            # Default: ON for VAE-mode fits (LNM, PLN, and any future
+            # VAE-based model). Aggregate-posterior drift in linear-
+            # decoder VAEs with high-dim latents is most reliably
+            # mitigated by KL annealing during early training; this
+            # default is conservative (warmup=2000) and can be
+            # disabled by passing ``kl_annealing=False``.
+            kl_annealing_config = KLAnnealingConfig()
+        # SVI / MCMC paths leave ``kl_annealing_config`` as None →
+        # the engine uses the standard ``TraceMeanField_ELBO`` and
+        # the dynamic-arrays plumbing is bypassed entirely. The
+        # resulting code path is byte-identical to the pre-annealing
+        # implementation for non-VAE fits.
+
         if method == InferenceMethod.SVI:
+            if kl_annealing_config is not None:
+                # Surfacing this loudly is intentional: KL annealing on
+                # plain SVI (no encoder) is a non-default that the
+                # user must explicitly opt into. We honour it but log
+                # a one-line note so it shows up in run output.
+                import logging as _kl_logging
+
+                _kl_logging.getLogger(__name__).info(
+                    "KL annealing requested for plain SVI inference "
+                    "(method=%s, warmup=%d). Annealing is normally a "
+                    "VAE-mode optimisation; proceeding because the "
+                    "user passed an explicit kl_annealing argument.",
+                    method.value,
+                    kl_annealing_config.warmup,
+                )
             svi_config = SVIConfig(
                 n_steps=n_steps,
                 batch_size=effective_batch_size,
@@ -1578,6 +2105,7 @@ def fit(
                 log_progress_lines=log_progress_lines,
                 early_stopping=early_stop_config,
                 restore_best=restore_best,
+                kl_annealing=kl_annealing_config,
             )
             inference_config = InferenceConfig.from_svi(svi_config)
         elif method == InferenceMethod.MCMC:
@@ -1661,7 +2189,10 @@ def fit(
             )
             inference_config = InferenceConfig.from_mcmc(mcmc_config)
         elif method == InferenceMethod.VAE:
-            # VAE uses SVI config
+            # VAE uses SVI config; KL annealing default-ON resolved
+            # above. The engine treats ``None`` as "no annealing" and
+            # an explicit ``KLAnnealingConfig(enabled=False)`` the same
+            # way, so users can opt out without passing extra kwargs.
             svi_config = SVIConfig(
                 n_steps=n_steps,
                 batch_size=effective_batch_size,
@@ -1670,8 +2201,63 @@ def fit(
                 log_progress_lines=log_progress_lines,
                 early_stopping=early_stop_config,
                 restore_best=restore_best,
+                kl_annealing=kl_annealing_config,
             )
             inference_config = InferenceConfig.from_vae(svi_config)
+        elif method == InferenceMethod.LAPLACE:
+            # PLN-only Laplace path — bypasses NumPyro SVI in favour of
+            # a custom outer-loop training in
+            # ``scribe.laplace.LaplaceInferenceEngine``. Most knobs from SVIConfig
+            # do not apply here; we expose the relevant subset
+            # via ``LaplaceConfig``. KL annealing is forced off
+            # (Laplace mode has no KL term to anneal), warn the user
+            # if they passed one.
+            from .models.config import LaplaceConfig
+
+            if kl_annealing_config is not None:
+                import warnings as _w_kl
+
+                _w_kl.warn(
+                    "kl_annealing has no effect under "
+                    "inference_method='laplace' (no encoder, no KL "
+                    "term to anneal). Ignoring.",
+                    UserWarning,
+                )
+
+            # Resolve ``laplace_config``: top-level kwargs populate
+            # the LaplaceConfig defaults, and ``laplace_config``
+            # (when provided) overrides any of those defaults.
+            #   * dict  → merged onto the top-level-derived defaults.
+            #   * LaplaceConfig → used directly (top-level kwargs
+            #     are ignored unless they were already encoded into
+            #     the passed-in instance).
+            _base_laplace_kwargs = dict(
+                n_steps=n_steps,
+                batch_size=effective_batch_size,
+                optimizer_config=optimizer_config,
+                early_stopping=early_stop_config,
+                restore_best=restore_best,
+                log_progress_lines=log_progress_lines,
+            )
+            if laplace_config is None:
+                _resolved_laplace_config = LaplaceConfig(
+                    **_base_laplace_kwargs
+                )
+            elif isinstance(laplace_config, LaplaceConfig):
+                _resolved_laplace_config = laplace_config
+            elif isinstance(laplace_config, dict):
+                # Merge: top-level defaults underneath, dict on top.
+                _merged = {**_base_laplace_kwargs, **laplace_config}
+                _resolved_laplace_config = LaplaceConfig(**_merged)
+            else:
+                raise TypeError(
+                    "laplace_config must be a dict of overrides, a "
+                    "LaplaceConfig instance, or None; got "
+                    f"{type(laplace_config).__name__}."
+                )
+            inference_config = InferenceConfig.from_laplace(
+                _resolved_laplace_config
+            )
         else:
             raise ValueError(f"Unknown inference method: {method}")
     else:
@@ -1710,6 +2296,10 @@ def fit(
         dataset_indices=dataset_indices,
         enable_x64=effective_x64,
     )
+
+    # Persist the multinomial allocation ceiling so predictive sampling does
+    # not depend on re-accessing the original count matrix.
+    object.__setattr__(results, "_total_count_max", int(_total_count_max))
 
     # Attach gene-coverage metadata and reconstruct result-level gene metadata
     # when an "other" pseudo-gene was introduced during pre-filtering.

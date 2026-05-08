@@ -257,6 +257,98 @@ results = scribe.fit(
 
 ---
 
+## Log-Normal model family (PLN / LNM / LNMVCP)
+
+Beyond the Negative Binomial family above, SCRIBE offers a second model family
+rooted in the [biophysics of gene regulatory networks](../theory/grn-biophysics.md).
+When genes interact, the steady-state distribution of log-abundances is a
+**multivariate Gaussian**, whose covariance encodes regulatory structure. Two
+observation models connect this latent Gaussian to observed counts:
+
+```mermaid
+graph TD
+    GRN["Multivariate Gaussian<br/>on log-abundances<br/>(GRN steady state)"]
+    PLN["Poisson Log-Normal<br/><b>model='pln'</b><br/><i>direct Poisson emission</i>"]
+    LNM["Logistic-Normal Multinomial<br/><b>model='lnm'</b><br/><i>softmax + Multinomial</i>"]
+    LNMVCP["LNM + Variable Capture<br/><b>model='lnmvcp'</b><br/><i>+ per-cell NB totals</i>"]
+
+    GRN -->|"exp(x_g) -> Poisson"| PLN
+    GRN -->|"softmax -> compositions"| LNM
+    LNM -->|"+ capture eta"| LNMVCP
+```
+
+### When to use the log-normal family
+
+| Criterion                  |                                         NB family (default) |                                        Log-normal family |
+| -------------------------- | ----------------------------------------------------------: | -------------------------------------------------------: |
+| **Gene-gene correlations** | Captured only in the variational posterior (not generative) | Explicit in the generative model via low-rank \(\Sigma\) |
+| **Compositional analysis** |             Dirichlet (pairwise-negative correlations only) |                 Logistic-normal (arbitrary correlations) |
+| **Biophysical grounding**  |            Independent-gene exact (NB from bursty promoter) |            Interacting-gene approximate (LNA / Lyapunov) |
+| **Recommended inference**  |                                               SVI (default) |                   Laplace (`inference_method="laplace"`) |
+
+### Poisson Log-Normal (`model="pln"`)
+
+Models each gene's count as Poisson from the exponentiated log-abundance. Total
+count distribution emerges naturally (no separate NB for totals). Capture enters
+as an additive log-rate offset.
+
+```python
+results = scribe.fit(
+    adata,
+    model="pln",
+    inference_method="laplace",
+    guide_rank=64,
+    n_steps=50_000,
+)
+```
+
+**Best for:** Gene-level denoising with full correlation structure, heavy-tailed
+total counts, log-concave posterior guarantees.
+
+**See also:** [Theory: Poisson Log-Normal](../theory/poisson-lognormal.md)
+
+### Logistic-Normal Multinomial (`model="lnm"`)
+
+Factorizes counts into NB totals and Multinomial compositions drawn from a
+logistic-normal distribution on the simplex.
+
+```python
+results = scribe.fit(
+    adata,
+    model="lnm",
+    inference_method="laplace",
+    guide_rank=64,
+    n_steps=50_000,
+)
+```
+
+**Best for:** Compositional analysis where explicit normalization is desired and
+total-composition independence is acceptable.
+
+**See also:** [Theory: Logistic-Normal Multinomial](../theory/logistic-normal-multinomial.md)
+
+### LNM with Variable Capture (`model="lnmvcp"`)
+
+Adds a per-cell capture latent \(\eta^{(c)}\) that modifies the total count
+distribution while leaving the composition block unchanged. The composition and
+capture have a block-diagonal Hessian, so they decouple cleanly during Newton
+iteration.
+
+```python
+results = scribe.fit(
+    adata,
+    model="lnmvcp",
+    inference_method="laplace",
+    guide_rank=64,
+    n_steps=50_000,
+)
+```
+
+**Best for:** Compositional analysis with heterogeneous library sizes; avoids
+encoder collapse on the capture latent.
+
+---
+
 ## Comparison table
 
 | Model                                                        | Zero Inflated | Variable Capture |  BNB  | Mixture | Best For                                      |
@@ -265,6 +357,9 @@ results = scribe.fit(
 | `"nbvcp"` (**default**)                                      |      --       |       Yes        | opt.  |  opt.   | **Typical** data; heterogeneous library sizes |
 | `"zinb"` (`zero_inflation=True`)                             |      Yes      |        --        | opt.  |  opt.   | Excess zeros **after** VCP ruled out / no VCP |
 | `"zinbvcp"` (`variable_capture=True`, `zero_inflation=True`) |      Yes      |       Yes        | opt.  |  opt.   | Strong evidence for **both** ZI and VCP       |
+| `"pln"`                                                      |      --       |   log-offset     |  --   |   --    | Gene-level correlation recovery, heavy tails  |
+| `"lnm"`                                                      |      --       |        --        |  --   |   --    | Compositional analysis, arbitrary correlations |
+| `"lnmvcp"`                                                   |      --       |   per-cell η     |  --   |   --    | Compositional + heterogeneous library sizes   |
 
 "opt." = add `overdispersion="bnb"` or `n_components=K`.
 

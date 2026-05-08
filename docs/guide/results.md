@@ -330,6 +330,95 @@ on the distributions used.
     r_concentration = mix_results.params["r_concentration"]
     ```
 
+## Laplace Results (`ScribeLaplaceResults`)
+
+When using `inference_method="laplace"` with PLN, LNM, or LNMVCP models,
+`scribe.fit()` returns a `ScribeLaplaceResults` object. This class shares the
+common API with `ScribeResults` while providing Laplace-specific functionality.
+
+### Shared API
+
+The following methods work identically across all results classes:
+
+```python
+results = scribe.fit(adata, model="pln", inference_method="laplace")
+
+# MAP estimates
+map_estimates = results.get_map()
+
+# Posterior distributions
+distributions = results.get_distributions()
+
+# Log-likelihood
+ll = results.compute_log_likelihood(counts=adata.X)
+
+# Loss history
+losses = results.loss_history
+```
+
+### Laplace-specific attributes
+
+| Attribute / Method | Description |
+|--------------------|-------------|
+| `results.final_grad_norms` | Per-cell Newton gradient norms at convergence (array of shape `(n_cells,)`) |
+| `results.x_loc` | Per-cell MAP log-rates (PLN) or factor scores |
+| `results.eta_loc` | Per-cell MAP capture offsets (when applicable) |
+| `results.z_loc` | Per-cell MAP composition latents (LNM with `d_mode='low_rank'`) |
+| `results.y_alr_loc` | Per-cell MAP ALR logits (LNM with `d_mode='learned'`) |
+| `results.p_capture_loc` | Per-cell MAP capture probabilities |
+
+### Model-dispatching behavior
+
+`ScribeLaplaceResults` dispatches on `model_config.base_model` to provide
+model-appropriate behavior:
+
+```python
+# PLN results
+pln_results = scribe.fit(adata, model="pln", inference_method="laplace")
+mu = pln_results.get_mu()       # population mean log-rates
+W = pln_results.get_W()         # loadings matrix (G x k)
+
+# LNMVCP results
+lnm_results = scribe.fit(adata, model="lnmvcp", inference_method="laplace")
+mu = lnm_results.get_mu()       # population mean ALR logits
+W = lnm_results.get_W()         # loadings matrix ((G-1) x k)
+```
+
+### Posterior predictive checks
+
+Two PPC modes are available:
+
+```python
+# MAP-only PPC: point estimates + observation noise
+map_ppc = results.get_map_ppc_samples(n_samples=100, seed=0)
+
+# Laplace-uncertainty PPC: propagate Hessian uncertainty into predictions
+laplace_ppc = results.get_per_cell_predictive_samples(n_samples=100, seed=0)
+```
+
+| Mode | What it tests | When to use |
+|------|---------------|-------------|
+| **MAP-only** (`get_map_ppc_samples`) | Does the likelihood shape match the data given point estimates? | Quick diagnostic; cheapest PPC |
+| **Laplace-uncertainty** (`get_per_cell_predictive_samples`) | Does the full posterior-predictive distribution match observed data? | Publication-quality diagnostics; honest uncertainty |
+
+The Laplace-uncertainty PPC samples the latent from the per-cell Gaussian
+approximation \(\mathcal{N}(\hat{x}, (-H)^{-1})\), using a square-root
+factorization that avoids materializing any \(G \times G\) matrix.
+
+### Inspecting convergence
+
+```python
+import numpy as np
+
+gn = np.asarray(results.final_grad_norms)
+print(f"Cells: {gn.size}")
+print(f"max: {gn.max():.3e}, p99: {np.percentile(gn, 99):.3e}, "
+      f"median: {np.median(gn):.3e}")
+print(f"Cells above 1e-3: {(gn > 1e-3).sum()}")
+```
+
+---
+
 ## Model Comparison
 
 To compare models, you can use the model comparison utilities:

@@ -11,12 +11,15 @@ Tests that the full VAE pipeline works:
 
 import numpy as np
 import pytest
+import warnings
 import jax
 import jax.numpy as jnp
 from jax import random
 import numpyro
 import numpyro.distributions as dist
 from numpyro.infer import SVI, Trace_ELBO, Predictive
+from numpyro.contrib.module import flax_module
+from flax import linen as nn
 
 from scribe.flows import FlowChain
 from scribe.models.builders import (
@@ -37,6 +40,13 @@ from scribe.models.components import (
 )
 from scribe.models.components.guide_families import VAELatentGuide
 from scribe.models.config import ModelConfigBuilder
+from scribe.sampling import sample_variational_posterior
+from scribe.stats.distributions import LowRankLogisticNormal
+from scribe.svi._parameter_extraction import ParameterExtractionMixin
+from scribe.svi._model_helpers import ModelHelpersMixin
+from scribe.svi._sampling_posterior_predictive import (
+    PosteriorPredictiveSamplingMixin,
+)
 
 
 # ==============================================================================
@@ -204,6 +214,358 @@ class TestVAEModelBuilderDetection:
         # r should be a sample site (from prior), not deterministic
         assert "r" in trace
         assert trace["r"]["type"] == "sample"
+
+
+class TestVAEPredictiveParamBinding:
+    """Regression tests for VAE parameter substitution during replay."""
+
+    def test_model_replay_uses_trained_decoder_params(self):
+        """Posterior replay must use provided decoder params, not random init."""
+
+        class _LinearDecoder(nn.Module):
+            @nn.compact
+            def __call__(self, x):
+                return nn.Dense(1, use_bias=True, name="head")(x)
+
+        def model():
+            z = numpyro.sample("z", dist.Normal(0.0, 1.0))
+            decoder = flax_module(
+                "vae_decoder",
+                _LinearDecoder(),
+                input_shape=(1,),
+            )
+            y = decoder(jnp.array([z]))[0]
+            numpyro.sample("y_alr", dist.Delta(y))
+
+        def guide():
+            numpyro.sample("z", dist.Normal(0.0, 1.0))
+
+        # Build explicit decoder params: y = 0 * z + 3.
+        init_params = _LinearDecoder().init(
+            random.PRNGKey(0), jnp.zeros((1,))
+        )["params"]
+        decoder_params = {
+            "head": {
+                "kernel": jnp.zeros_like(init_params["head"]["kernel"]),
+                "bias": jnp.full_like(init_params["head"]["bias"], 3.0),
+            }
+        }
+
+        samples = sample_variational_posterior(
+            guide=guide,
+            params={"vae_decoder$params": decoder_params},
+            model=model,
+            model_args={},
+            rng_key=random.PRNGKey(1),
+            n_samples=16,
+        )
+
+        # If replay ignores params, y_alr will follow random module init.
+        # Correct behavior is exact y_alr == 3 for all draws.
+        assert "y_alr" in samples
+        assert samples["y_alr"].shape == (16,)
+        assert jnp.allclose(samples["y_alr"], 3.0)
+
+    def test_model_helpers_forward_n_genes_to_registry(self, monkeypatch):
+        """VAE model reconstruction must forward stored n_genes."""
+
+        class _DummyResults(ModelHelpersMixin):
+            pass
+
+        captured = {}
+
+        def _fake_get_model_and_guide(
+            model_config, unconstrained=None, guide_families=None, n_genes=None
+        ):
+            del unconstrained, guide_families
+            captured["model_config"] = model_config
+            captured["n_genes"] = n_genes
+            return (lambda **kwargs: None), None, model_config
+
+        monkeypatch.setattr(
+            "scribe.models.model_registry.get_model_and_guide",
+            _fake_get_model_and_guide,
+        )
+
+        dummy = _DummyResults()
+        dummy.model_config = {"kind": "vae"}
+        dummy.n_genes = 77
+
+        model, guide = dummy._model_and_guide()
+        assert callable(model)
+        assert guide is None
+        assert captured["model_config"] == {"kind": "vae"}
+        assert captured["n_genes"] == 77
+
+
+class TestVAEPosteriorPriorPath:
+    """Regression tests for prior-based VAE posterior sampling."""
+
+    def test_lnm_prior_path_uses_trained_decoder_when_counts_missing(self):
+        """LNM posterior draws should bypass encoder and use decoder params.
+
+        When ``counts=None`` and the result object is VAE-backed, posterior
+        sampling should skip the guide/encoder path and sample ``z`` from the
+        model prior while replaying the model with trained decoder parameters.
+        This test verifies that the decoded site uses the supplied
+        ``vae_decoder$params`` exactly.
+        """
+
+        class _LinearDecoder(nn.Module):
+            @nn.compact
+            def __call__(self, x):
+                return nn.Dense(1, use_bias=True, name="head")(x)
+
+        def model(
+            n_cells,
+            n_genes,
+            model_config,
+            dataset_indices=None,
+            batch_size=None,
+            counts=None,
+        ):
+            del (
+                n_cells,
+                n_genes,
+                model_config,
+                dataset_indices,
+                batch_size,
+                counts,
+            )
+            z = numpyro.sample("z", dist.Normal(0.0, 1.0))
+            decoder = flax_module(
+                "vae_decoder",
+                _LinearDecoder(),
+                input_shape=(1,),
+            )
+            y = decoder(jnp.array([z]))[0]
+            numpyro.sample("y_alr", dist.Delta(y))
+
+        def guide(**kwargs):
+            del kwargs
+            raise AssertionError(
+                "Guide must not run for VAE prior-path sampling."
+            )
+
+        class _DummyVAEPosterior(PosteriorPredictiveSamplingMixin):
+            def _model_and_guide(self):
+                return model, guide
+
+        class _DummyModelConfig:
+            base_model = "lnm"
+            parameterization = "logistic_normal"
+
+        init_params = _LinearDecoder().init(
+            random.PRNGKey(0), jnp.zeros((1,))
+        )["params"]
+        decoder_params = {
+            "head": {
+                "kernel": jnp.zeros_like(init_params["head"]["kernel"]),
+                "bias": jnp.full_like(init_params["head"]["bias"], 3.0),
+            }
+        }
+
+        dummy = _DummyVAEPosterior()
+        dummy.n_cells = 1
+        dummy.n_genes = 1
+        # VAE results typically use a generic model_type (e.g. "vae"), so
+        # LNM detection must rely on model_config metadata as well.
+        dummy.model_type = "vae"
+        dummy.model_config = _DummyModelConfig()
+        dummy.params = {"vae_decoder$params": decoder_params}
+        dummy._encoder = object()
+        dummy._latent_spec = GaussianLatentSpec(latent_dim=1)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            samples = dummy._get_posterior_samples_standard(
+                rng_key=random.PRNGKey(1),
+                n_samples=16,
+                batch_size=None,
+                counts=None,
+            )
+
+        assert "z" in samples
+        assert samples["z"].shape == (16,)
+        assert "y_alr" in samples
+        assert samples["y_alr"].shape == (16,)
+        assert jnp.allclose(samples["y_alr"], 3.0)
+        assert not any(
+            "No counts provided for VAE posterior sampling"
+            in str(w.message)
+            for w in caught
+        )
+
+
+class TestLNMDistributionExtraction:
+    """Regression tests for LNM compositional distribution extraction."""
+
+    def test_lnm_get_distributions_and_map_include_y_alr_and_rho(self):
+        """LNM get_distributions should include decoder-derived terms.
+
+        get_map() must include y_alr (exact MVN mode) but must NOT include rho
+        because the exact simplex mode of a logistic-normal has no closed form.
+        """
+
+        class _DummyLNMResults(ParameterExtractionMixin):
+            # Minimal test double exposing the decoder extraction API expected by
+            # get_distributions() for logistic-normal VAE results.
+            def get_lnm_mu(self):
+                return jnp.log(jnp.array([2.0, 3.0]))
+
+            def get_lnm_W(self):
+                return jnp.array([[0.1], [0.2]])
+
+            def get_lnm_d(self):
+                return jnp.array([0.5, 0.7])
+
+        dummy = _DummyLNMResults()
+        # Use the real config builder so posterior extraction sees the full
+        # config surface expected by get_posterior_distributions().
+        dummy.model_config = (
+            ModelConfigBuilder()
+            .for_model("lnm")
+            .with_inference("vae")
+            .with_parameterization("logistic_normal")
+            .build()
+        )
+        dummy.params = {
+            "r_T_loc": jnp.array(0.2),
+            "r_T_scale": jnp.array(0.1),
+            "p_alpha": jnp.array(2.0),
+            "p_beta": jnp.array(5.0),
+        }
+        dummy.n_cells = 1
+        dummy.n_genes = 3
+        dummy.n_components = 1
+
+        distributions = dummy.get_distributions(backend="numpyro")
+        assert "y_alr" in distributions
+        assert "rho" in distributions
+        assert isinstance(distributions["y_alr"], dist.LowRankMultivariateNormal)
+        assert isinstance(distributions["rho"], LowRankLogisticNormal)
+        assert distributions["y_alr"].event_shape == (2,)
+        assert distributions["rho"].event_shape == (3,)
+
+        map_estimates = dummy.get_map(canonical=False, verbose=False)
+        assert "y_alr" in map_estimates
+        assert map_estimates["y_alr"].shape == (2,)
+        assert jnp.allclose(map_estimates["y_alr"], jnp.log(jnp.array([2.0, 3.0])))
+        # rho must NOT appear in MAP output: the exact simplex mode of a
+        # logistic-normal requires numerical optimization.
+        assert "rho" not in map_estimates
+
+
+class TestVAEPosteriorPriorPathWarnings:
+    """Warning behavior for VAE prior-path sampling when counts are missing."""
+
+    def test_non_lnm_non_flow_vae_warns_when_counts_missing(self):
+        """Non-LNM VAEs without flow prior should emit guidance warning."""
+
+        def model(
+            n_cells,
+            n_genes,
+            model_config,
+            dataset_indices=None,
+            batch_size=None,
+            counts=None,
+        ):
+            del (
+                n_cells,
+                n_genes,
+                model_config,
+                dataset_indices,
+                batch_size,
+                counts,
+            )
+            numpyro.sample("z", dist.Normal(0.0, 1.0))
+
+        def guide(**kwargs):
+            del kwargs
+            raise AssertionError(
+                "Guide must not run for VAE prior-path sampling."
+            )
+
+        class _DummyVAEPosterior(PosteriorPredictiveSamplingMixin):
+            def _model_and_guide(self):
+                return model, guide
+
+        dummy = _DummyVAEPosterior()
+        dummy.n_cells = 1
+        dummy.n_genes = 1
+        dummy.model_type = "vae_nb"
+        dummy.model_config = object()
+        dummy.params = {}
+        dummy._encoder = object()
+        dummy._latent_spec = GaussianLatentSpec(latent_dim=1)
+
+        with pytest.warns(UserWarning, match="No counts provided for VAE"):
+            dummy._get_posterior_samples_standard(
+                rng_key=random.PRNGKey(2),
+                n_samples=4,
+                batch_size=None,
+                counts=None,
+            )
+
+    def test_flow_prior_vae_does_not_warn_when_counts_missing(self):
+        """Flow-prior VAEs should use prior path without warning noise."""
+
+        def model(
+            n_cells,
+            n_genes,
+            model_config,
+            dataset_indices=None,
+            batch_size=None,
+            counts=None,
+        ):
+            del (
+                n_cells,
+                n_genes,
+                model_config,
+                dataset_indices,
+                batch_size,
+                counts,
+            )
+            numpyro.sample("z", dist.Normal(0.0, 1.0))
+
+        def guide(**kwargs):
+            del kwargs
+            raise AssertionError(
+                "Guide must not run for VAE prior-path sampling."
+            )
+
+        class _DummyLatentSpec:
+            flow = object()
+
+        class _DummyVAEPosterior(PosteriorPredictiveSamplingMixin):
+            def _model_and_guide(self):
+                return model, guide
+
+        dummy = _DummyVAEPosterior()
+        dummy.n_cells = 1
+        dummy.n_genes = 1
+        dummy.model_type = "vae_nb"
+        dummy.model_config = object()
+        dummy.params = {}
+        dummy._encoder = object()
+        dummy._latent_spec = _DummyLatentSpec()
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            samples = dummy._get_posterior_samples_standard(
+                rng_key=random.PRNGKey(3),
+                n_samples=4,
+                batch_size=None,
+                counts=None,
+            )
+
+        assert "z" in samples
+        assert samples["z"].shape == (4,)
+        assert not any(
+            "No counts provided for VAE posterior sampling"
+            in str(w.message)
+            for w in caught
+        )
 
 
 class TestVAEPriorPredictive:

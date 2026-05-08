@@ -598,6 +598,7 @@ class Likelihood(ABC):
         dims: Dict[str, int],
         batch_size: Optional[int],
         model_config: "ModelConfig",
+        total_count_max: Optional[int] = None,
         vae_cell_fn: Optional[
             Callable[[Optional[jnp.ndarray]], Dict[str, jnp.ndarray]]
         ] = None,
@@ -625,6 +626,9 @@ class Likelihood(ABC):
             Mini-batch size for stochastic VI. If None, uses all cells.
         model_config : ModelConfig
             Model configuration with hyperparameters.
+        total_count_max : int, optional
+            Optional scalar upper bound passed to multinomial samplers that
+            require a static allocation ceiling under JAX tracing.
         vae_cell_fn : callable, optional
             If provided, called inside the cell plate **before** obs sampling.
             Signature: ``vae_cell_fn(batch_idx) -> Dict[str, jnp.ndarray]``.

@@ -21,6 +21,8 @@ SVI result objects can also carry pre-fit gene coverage metadata when
 - `_gene_coverage`: coverage threshold used during fitting
 - `_gene_coverage_mask`: keep-mask over the original gene space
 - `_excluded_gene_names`: names pooled into the trailing "other" pseudo-gene
+- `_total_count_max`: int ceiling used for traced multinomial predictive
+  sampling, computed as `int(1.5 * max(per_cell_total_count))`
 
 For multi-dataset mixture models, post-fit empirical mixing replacement now
 computes dataset-specific soft counts and updates mixing parameters per dataset
@@ -137,6 +139,146 @@ if results.early_stopped:
 - `checkpoint_dir`: Directory for Orbax checkpoints (enables resumable training)
 - `resume`: If True (default), resumes from checkpoint if one exists
 
+### KL Annealing (`kl_annealing.py`)
+
+VAE-based fits (LNM, PLN, and any future VAE-mode model) ramp the KL
+weight `beta` linearly from 0 to 1 over the first `warmup` steps of
+training by default. This addresses the **aggregate-posterior drift**
+failure mode in linear-decoder VAEs with high-dimensional latents:
+the encoder fits the data reconstruction term first, then the prior
+pressure is gradually applied so `q(z) -> N(0, I)` in aggregate.
+Without annealing, convex decoder paths (e.g. `exp(W·z)` in PLN) can
+amplify modest aggregate drift into large prediction bias.
+
+```python
+from scribe.models.config import KLAnnealingConfig
+
+# Default: linear ramp over 2000 steps, beta_min=0, beta_max=1.
+kl = KLAnnealingConfig()
+
+# Faster warmup with permanent β-VAE down-weight:
+kl = KLAnnealingConfig(warmup=500, beta_max=0.5)
+
+# Disable explicitly (overrides the per-method default):
+kl = KLAnnealingConfig(enabled=False)
+
+# Use directly via the public API:
+results = scribe.fit(
+    adata, model="pln",
+    kl_annealing=kl,                # explicit config
+    # or: kl_annealing_warmup=500,  # convenience shortcut
+    # or: kl_annealing=False,       # disable
+)
+```
+
+**Defaults:**
+
+- `inference_method="vae"` (LNM, PLN): KL annealing **ON** by default,
+  `KLAnnealingConfig()` (warmup=2000, ramp 0→1).
+- `inference_method="svi"` / `"mcmc"`: KL annealing **OFF** by default
+  (no encoder, so no aggregate-posterior drift to mitigate).
+- `inference_method="laplace"` (PLN): KL annealing **forced OFF**
+  (Laplace mode has no encoder and no KL term to anneal).
+
+**Implementation:**
+
+- `AnnealedTraceMeanField_ELBO`: drop-in subclass of NumPyro's
+  `TraceMeanField_ELBO` that scales the per-site KL contribution by
+  `beta`. Observed-site (reconstruction) contributions are at full
+  weight regardless of `beta`. The `beta` value is consumed via a
+  `**kwargs` channel and never forwarded to the model or guide.
+- `linear_beta_schedule(step, warmup, beta_min, beta_max)`:
+  JIT-traceable linear ramp with clamping. `warmup<=0` returns
+  `beta_max` immediately (effectively disabled).
+- `make_beta_schedule(kind, warmup, ...)`: dispatcher; only
+  `kind="linear"` is implemented in v1.
+
+**Plumbing:** the SVI loop in `inference_engine.py` injects
+`beta = schedule(step)` as a JAX scalar into `dynamic_arrays_step`
+each iteration. The pytree structure is stable across iterations so
+JIT recompilation is not triggered. When annealing is off, the
+`dynamic_arrays_step` plumbing is bypassed entirely and the loop is
+byte-identical to the pre-annealing implementation.
+
+### Laplace Inference for PLN (`_laplace_newton.py`, `laplace_engine.py`, `laplace_results.py`)
+
+PLN-only alternative to the encoder-based VAE inference path. Replaces the
+encoder with **per-cell Newton-iterated MAP** on the latent log-rate ``x_c``
+(and joint ``η_c`` when the biology-informed capture anchor is active). Outer
+loop is Adam on global parameters; inner loop is Newton on per-cell latents —
+variational EM in the spirit of ``PLNmodels`` (R).
+
+**When to use Laplace vs encoder:**
+
+- **Encoder (default)**: best for production-scale serving where new cells must
+  be scored at high throughput; the encoder amortises inference into a single
+  forward pass.
+- **Laplace**: best for research-scale analysis where aggregate- posterior drift
+  in the encoder produces biased PPCs. Laplace structurally eliminates this —
+  there is no encoder, so per-cell posteriors are determined locally by data +
+  prior. PLN is globally log-concave (Chiquet et al. 2018) so Newton converges
+  in 5–10 iterations from a warm start, and Woodbury on ``Σ = W W' + diag(d)``
+  keeps each step ``O(G·k + k³)`` per cell.
+
+```python
+import scribe
+
+# Encoder-based VAE (default for PLN):
+results_vae = scribe.fit(
+    adata, model="pln",
+    inference_method="vae",  # implicit default
+    ...
+)
+
+# Laplace alternative:
+results_laplace = scribe.fit(
+    adata, model="pln",
+    inference_method="laplace",
+    n_steps=50_000,                        # outer Adam steps
+    priors={"capture_efficiency": (np.log(1e5), 0.5)},
+)
+```
+
+**Components:**
+
+- **`_laplace_newton.py`** — pure-JAX inner Newton kernel (no NumPyro
+  dependency). Joint Newton on ``(x, η)`` for the capture-anchored case, x-only
+  for the no-capture case. Both use Woodbury on Σ⁻¹ and on ``-H_xx = diag(λ) +
+  Σ⁻¹`` for ``O(G·k + k³)`` per step. Includes step-size capping
+  (``MAX_STEP=5.0``) and Tikhonov damping (default ``1e-2``) to handle the
+  early-iteration ill-conditioning that arises when the Schur complement on the
+  η block is small. The TruncatedNormal(low=0) prior on η is enforced via
+  projection.
+- **`laplace_engine.py`** — outer training loop. Custom (not NumPyro SVI)
+  because: (1) per-cell ``x_loc`` / ``eta_loc`` arrays need Newton-driven
+  write-back rather than Adam, (2) the ELBO requires a per-cell Laplace
+  correction ``-½ log det(-H_c)``, and (3) variational-EM-style
+  ``stop_gradient`` on the inner Newton iterates is cleanest in a hand-rolled
+  loop. ``LaplaceInferenceEngine.run_inference`` is the entry point;
+  ``LaplaceRunResult`` mirrors ``SVIRunResult``.
+- **`laplace_results.py`** — ``ScribeLaplaceResults`` dataclass. Standalone
+  class (not a subclass of ``ScribeVAEResults``) but exposes the same
+  ``get_pln_*`` accessor surface plus ``get_laplace_x_loc`` /
+  ``get_laplace_eta_loc`` / ``get_laplace_p_capture`` for the per-cell Newton
+  MAP estimates.
+
+**Configuration:**
+
+```python
+from scribe.models.config import LaplaceConfig
+
+# Defaults: 50k outer steps, 5 Newton steps each, damping=1e-2.
+LaplaceConfig()
+
+# Tighter inner Newton + slower outer for hard problems:
+LaplaceConfig(n_newton_steps=10, n_steps=100_000, damping=1e-3)
+
+# Convergence diagnostics:
+LaplaceConfig(convergence_action="warn")     # default
+LaplaceConfig(convergence_action="raise")     # raise after the run
+LaplaceConfig(convergence_action="ignore")    # silent
+```
+
 ### Checkpointing (`checkpoint.py`)
 
 The SVI module supports Orbax-based checkpointing for resumable training. When
@@ -237,6 +379,8 @@ results = ScribeSVIResults.from_anndata(
 - **`_component_mapping`**: Optional multi-dataset component metadata
   (shared/exclusive structure) populated when fitting with
   `annotation_key + dataset_key`.
+- **`_total_count_max`**: Optional integer upper bound used when sampling
+  multinomial observations under posterior predictive tracing.
 - **`obs`**, **`var`**, **`uns`**: Metadata from AnnData objects
 - **Interactive repr**: `repr(results)` returns a compact one-line summary
   (`model`, `n_cells`, `n_genes`, `n_steps`, and guide summary)
@@ -260,6 +404,16 @@ rp_map = results.get_map(["r", "p"])
 # Get posterior distributions
 distributions = results.get_distributions()
 ```
+
+For logistic-normal VAE models (LNM/LNMVCP), `get_distributions()` now also
+includes decoder-derived compositional entries:
+
+- `y_alr`: `LowRankMultivariateNormal` in ALR space (shape `(G-1,)`)
+- `rho`: `LowRankLogisticNormal` on the simplex (shape `(G,)`)
+
+These are built from trained decoder parameters (`mu`, `W`, `d`) and therefore
+represent the learned population composition distribution in addition to
+guide-site marginals such as `r_T` and `p`.
 
 **Flow Guide MAP Estimation:**
 
@@ -403,6 +557,33 @@ ppc_samples = results.get_ppc_samples(
     counts=observed_counts  # Shape: (n_cells, n_genes)
 )
 ```
+
+For VAE-backed models, posterior/predictive replay uses the trained
+parameter dictionary during both guide and model `Predictive` passes.
+This ensures `flax_module` sites (for example `vae_decoder$params`) are
+substituted from fitted values rather than re-initialized at replay
+time.
+
+VAE posterior sampling has two modes:
+
+- **Encoder path (`counts` provided):** draws latent samples from
+  `q(z|counts)` using the encoder guide, then replays the model.
+- **Prior path (`counts=None`):** bypasses the guide and draws `z` from
+  the model prior while still replaying with trained params.
+  - For LNM/LNMVCP, this is the intended population-level sampling mode.
+  - For VAEs with a learned flow prior, `z` is drawn from the fitted
+    flow prior.
+  - For non-LNM VAEs without flow prior, SCRIBE warns that `z` is being
+    sampled from the uninformative `N(0, I)` prior.
+
+For LNM/LNMVCP models, `get_map()` includes:
+
+- `y_alr` MAP: the low-rank Gaussian location (`mu`) in ALR space (exact MVN mode).
+- `rho` is **not** included in `get_map()` because the exact simplex mode of a
+  logistic-normal distribution has no closed-form solution (the Jacobian
+  correction couples the nonlinear softmax with the Gaussian log-density).
+  Access the full `rho` distribution via `get_distributions()["rho"]` to
+  sample or evaluate log-probabilities.
 
 **Compositional Samples:**
 
@@ -645,6 +826,13 @@ the selected gene/component semantics.
 inference. For non-amortized models (standard VCP models or non-VCP models), the
 `counts` parameter is optional and can be omitted.
 
+For gene-subset result objects, treat counts in two roles:
+
+- **sampling role**: amortized subset results require full original-gene counts
+  (validated against `_original_n_genes`),
+- **plotting role**: visualization code can subset/aligned counts to panel
+  genes after predictive samples are generated.
+
 **Model Evaluation:**
 ```python
 # Compute log-likelihood for model comparison
@@ -819,8 +1007,8 @@ settings where all `r_g > 1`. For gene-specific `p_g`/`phi_g` cases, use
 #### Mixin Architecture
 
 The `ScribeSVIResults` class is implemented using a mixin-based architecture to
-improve maintainability and code organization. The class inherits from 9
-specialized mixins, each handling a specific domain of functionality. This
+improve maintainability and code organization. The class inherits from specialized
+mixins, each handling a specific domain of functionality. This
 design allows for better code organization, easier maintenance, and clearer
 separation of concerns.
 
@@ -837,6 +1025,11 @@ ScribeSVIResults
 ├── LikelihoodMixin            # Log-likelihood computation
 ├── MixtureAnalysisMixin       # Mixture model analysis
 └── NormalizationMixin         # Count normalization
+
+ScribeVAEResults (extends ScribeSVIResults)
+├── LatentSpaceMixin          # Encode/decode/embed via VAE
+├── LNMExtractionMixin        # LNM population parameter extraction (mu, W, d)
+└── PLNExtractionMixin        # PLN population parameter extraction (mu, W, d)
 ```
 
 **Mixin Details:**
@@ -852,6 +1045,7 @@ ScribeSVIResults
    - Purpose: Internal helpers for model/guide access
    - Methods:
      - `_model_and_guide()`: Returns model and guide functions
+       with explicit VAE `n_genes` threading
      - `_parameterization()`: Returns parameterization type string
      - `_unconstrained()`: Returns whether parameterization is unconstrained
      - `_log_likelihood_fn()`: Returns log-likelihood function for model type
@@ -1008,6 +1202,7 @@ ScribeSVIResults
 ```
 src/scribe/svi/
 ├── results.py              # Main class (composed of mixins, ~108 lines)
+├── vae_results.py          # ScribeVAEResults (extends ScribeSVIResults for VAE)
 ├── _core.py                # CoreResultsMixin
 ├── _parameter_extraction.py # ParameterExtractionMixin
 ├── _gene_subsetting.py     # GeneSubsettingMixin
@@ -1015,6 +1210,8 @@ src/scribe/svi/
 ├── _model_helpers.py       # ModelHelpersMixin
 ├── _sampling.py            # SamplingMixin
 ├── _likelihood.py          # LikelihoodMixin
+├── _lnm_extraction.py     # LNMExtractionMixin (mu, W, d, correlation)
+├── _pln_extraction.py     # PLNExtractionMixin (mu, W, d, correlation)
 ├── _mixture_analysis.py    # MixtureAnalysisMixin
 └── _normalization.py       # NormalizationMixin
 ```
@@ -1022,6 +1219,77 @@ src/scribe/svi/
 **Note:** Mixin files use the `_` prefix to indicate they are internal
 implementation details. Users should interact with `ScribeSVIResults` directly;
 the mixin structure is transparent to the public API.
+
+#### LNM Parameter Extraction (VAE Results)
+
+For `lnm` / `lnmvcp` models, `ScribeVAEResults` provides convenience methods to
+extract the fitted Logistic-Normal Multinomial parameters directly from the
+linear-decoder VAE:
+
+```python
+# mu: ALR-space mean (decoder bias), shape (G-1,)
+mu = vae_results.get_lnm_mu()
+
+# W: low-rank factor (decoder kernel), shape (G-1, k)
+W = vae_results.get_lnm_W()
+
+# d: learned diagonal (or None for low_rank mode), shape (G-1,)
+d = vae_results.get_lnm_d()
+
+# Full covariance Sigma = WW^T + diag(d), shape (G-1, G-1)
+sigma = vae_results.get_lnm_sigma()
+
+# Gene-gene correlation in CLR space, shape (G, G)
+corr = vae_results.get_lnm_compositional_correlation()
+```
+
+These methods abstract away the decoder weight extraction and ALR-to-CLR
+coordinate transformations, providing the natural statistical parameters of the
+fitted LNM model.  The ALR reference gene index is stored in
+`vae_results.model_config.alr_reference_idx` (auto-selected from data as the
+gene with the highest geometric mean expression).  All coordinate transforms
+(ALR-to-CLR, simplex sampling, etc.) respect this index.
+
+#### PLN Parameter Extraction (VAE Results)
+
+For `pln` models, `ScribeVAEResults` provides analogous methods to extract the
+fitted Poisson-LogNormal parameters directly from the linear-decoder VAE:
+
+```python
+# mu: log-rate-space mean (decoder bias), shape (G,)
+mu = vae_results.get_pln_mu()
+
+# W: low-rank factor (decoder kernel), shape (G, k)
+W = vae_results.get_pln_W()
+
+# d: learned diagonal (or None for low_rank mode), shape (G,)
+d = vae_results.get_pln_d()
+
+# Full covariance Sigma = WW^T + diag(d), shape (G, G)
+sigma = vae_results.get_pln_sigma()
+
+# Gene-gene correlation in log-rate space, shape (G, G)
+corr = vae_results.get_pln_correlation()
+```
+
+Unlike LNM, PLN parameters are G-dimensional (not G-1) and live in log-rate
+space rather than ALR coordinates.  No ALR-to-CLR transformation is needed
+since log-rate space treats all genes symmetrically.
+
+`get_distributions()` includes `y_log_rate` (low-rank MVN), `lambda_rate`
+(`LowRankPoissonLogNormal`), and optionally `d_pln` (when `d_mode="learned"`)
+and `eta_capture` (when capture is active).  `get_map()` returns point
+estimates for `y_log_rate`, `d_pln`, and `eta_capture`; `lambda_rate` is
+excluded because its mode is intractable.
+
+#### VAE Serialization Note
+
+`ScribeVAEResults` is stdlib-`pickle` compatible, including LNM/LNMVCP/PLN
+models whose decoder heads may carry Flax initializer closures (for example
+from `nn.initializers.constant`). During `__getstate__`, non-picklable
+per-head `bias_init` and `kernel_init` callables are stripped from the
+serialized decoder copy while preserving trained parameter tensors and all
+runtime analysis behavior.
 
 ### SVIResultsFactory (`results_factory.py`)
 

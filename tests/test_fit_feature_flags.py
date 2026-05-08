@@ -31,11 +31,18 @@ def _capture_model_kwarg(**kwargs):
         patch.object(api, "process_counts_data") as mock_data,
         patch.object(api, "_run_inference") as mock_run,
     ):
-        mock_data.return_value = (MagicMock(), None, 10, 5)
+        # Return a concrete numeric matrix so fit() preprocessing paths that
+        # compute count-derived metadata can execute without type errors.
+        import jax.numpy as jnp
+
+        mock_data.return_value = (
+            jnp.zeros((10, 5), dtype=jnp.int32),
+            None,
+            10,
+            5,
+        )
         mock_preset.return_value = MagicMock()
         mock_run.return_value = MagicMock()
-
-        import jax.numpy as jnp
 
         dummy = jnp.zeros((10, 5), dtype=jnp.int32)
         try:
@@ -139,3 +146,123 @@ class TestFeatureFlagConflict:
         """Default model with ``variable_capture=False`` resolves to ``nbdm``."""
         result = _capture_model_kwarg(variable_capture=False)
         assert result == "nbdm"
+
+
+class TestPLNFeatureFlags:
+    """PLN-specific feature-flag resolution.
+
+    PLN does not have a separate 'plnvcp' model string. Capture is
+    activated internally by supplying capture priors. The model string
+    always stays ``"pln"``.
+    """
+
+    def test_pln_stays_pln_with_vc_true(self):
+        """``model='pln', variable_capture=True`` resolves to ``pln``."""
+        assert _capture_model_kwarg(model="pln", variable_capture=True) == "pln"
+
+    def test_pln_stays_pln_with_vc_false(self):
+        """``model='pln', variable_capture=False`` resolves to ``pln``."""
+        assert _capture_model_kwarg(model="pln", variable_capture=False) == "pln"
+
+    def test_pln_stays_pln_with_vc_true_and_capture_prior(self):
+        """``model='pln', variable_capture=True`` with capture prior stays ``pln``."""
+        import numpy as np
+
+        result = _capture_model_kwarg(
+            model="pln",
+            variable_capture=True,
+            priors={"capture_efficiency": (float(np.log(1e5)), 0.5)},
+        )
+        assert result == "pln"
+
+    def test_pln_vc_true_no_priors_warns(self):
+        """``model='pln', variable_capture=True`` without capture priors warns."""
+        import jax.numpy as jnp
+
+        dummy = jnp.zeros((10, 5), dtype=jnp.int32)
+        with pytest.warns(UserWarning, match="variable_capture=True with model='pln'"):
+            try:
+                api.fit(dummy, model="pln", variable_capture=True, n_steps=1)
+            except Exception:
+                pass
+
+    def test_pln_zi_true_raises(self):
+        """``model='pln', zero_inflation=True`` raises ``ValueError``."""
+        import jax.numpy as jnp
+
+        dummy = jnp.zeros((10, 5), dtype=jnp.int32)
+        with pytest.raises(
+            ValueError, match="Zero-inflation is not supported for the PLN"
+        ):
+            api.fit(dummy, model="pln", zero_inflation=True, n_steps=1)
+
+    def test_pln_no_flags_stays_pln(self):
+        """``model='pln'`` without any flags stays ``pln``."""
+        assert _capture_model_kwarg(model="pln") == "pln"
+
+
+class TestLNMFeatureFlags:
+    """LNM-family feature-flag resolution.
+
+    LNM has two member names: ``"lnm"`` (no capture) and ``"lnmvcp"``
+    (variable capture probability). The base name auto-promotes via
+    ``variable_capture``; an explicit composite name must agree with
+    the flag if both are passed.
+
+    Regression tests for the bug where the family-default comparison
+    used ``_default_model = "nbvcp"`` (a DM-family name), which made
+    ``model="lnm" + variable_capture=True`` raise instead of
+    promoting to ``"lnmvcp"``.
+    """
+
+    def test_lnm_promotes_to_lnmvcp_with_vc_true(self):
+        """``model='lnm', variable_capture=True`` promotes to ``"lnmvcp"``."""
+        assert (
+            _capture_model_kwarg(model="lnm", variable_capture=True)
+            == "lnmvcp"
+        )
+
+    def test_lnm_stays_lnm_with_vc_false(self):
+        """``model='lnm', variable_capture=False`` stays ``"lnm"``."""
+        assert (
+            _capture_model_kwarg(model="lnm", variable_capture=False)
+            == "lnm"
+        )
+
+    def test_lnmvcp_with_matching_vc_true(self):
+        """``model='lnmvcp', variable_capture=True`` stays ``"lnmvcp"``."""
+        assert (
+            _capture_model_kwarg(model="lnmvcp", variable_capture=True)
+            == "lnmvcp"
+        )
+
+    def test_lnmvcp_with_conflicting_vc_false_raises(self):
+        """``model='lnmvcp', variable_capture=False`` is a conflict."""
+        import jax.numpy as jnp
+
+        dummy = jnp.zeros((10, 5), dtype=jnp.int32)
+        with pytest.raises(
+            ValueError, match="conflicts with the feature flags"
+        ):
+            api.fit(
+                dummy, model="lnmvcp", variable_capture=False, n_steps=1
+            )
+
+    def test_lnm_no_flag_stays_lnm(self):
+        """``model='lnm'`` with no flags stays ``"lnm"`` (no auto-promotion)."""
+        assert _capture_model_kwarg(model="lnm") == "lnm"
+
+    def test_lnmvcp_no_flag_stays_lnmvcp(self):
+        """``model='lnmvcp'`` with no flags stays ``"lnmvcp"``."""
+        assert _capture_model_kwarg(model="lnmvcp") == "lnmvcp"
+
+    def test_lnm_zi_true_raises(self):
+        """``model='lnm', zero_inflation=True`` raises (LNM family doesn't support ZI)."""
+        import jax.numpy as jnp
+
+        dummy = jnp.zeros((10, 5), dtype=jnp.int32)
+        with pytest.raises(
+            ValueError,
+            match="Zero-inflation is not supported for the LNM",
+        ):
+            api.fit(dummy, model="lnm", zero_inflation=True, n_steps=1)

@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from anndata import AnnData
 
 from ..models.config import (
+    LaplaceConfig,
     ModelConfig,
     InferenceConfig,
     SVIConfig,
@@ -170,10 +171,53 @@ def _vae_handler(
 
 # ------------------------------------------------------------------------------
 
+
+def _laplace_handler(
+    model_config: ModelConfig,
+    count_data: jnp.ndarray,
+    adata: Optional["AnnData"],
+    n_cells: int,
+    n_genes: int,
+    config: SVIConfig | MCMCConfig,
+    data_config: DataConfig,
+    seed: int,
+    annotation_prior_logits: Optional[jnp.ndarray] = None,
+    dataset_indices: Optional[jnp.ndarray] = None,
+) -> Any:
+    """Handler for Laplace-mode inference (PLN-only).
+
+    Bypasses NumPyro's SVI machinery in favour of a custom outer-loop
+    training in :class:`scribe.laplace.LaplaceInferenceEngine`.
+    See ``inference/laplace.py`` for the bridge that builds the
+    arguments for the engine from the public ``ModelConfig`` /
+    ``LaplaceConfig`` surface.
+    """
+    from .laplace import _run_laplace_inference
+
+    if not isinstance(config, LaplaceConfig):
+        raise ValueError(
+            f"Expected LaplaceConfig for Laplace inference, got {type(config)}"
+        )
+
+    return _run_laplace_inference(
+        model_config=model_config,
+        count_data=count_data,
+        adata=adata,
+        n_cells=n_cells,
+        n_genes=n_genes,
+        laplace_config=config,
+        data_config=data_config,
+        seed=seed,
+    )
+
+
+# ------------------------------------------------------------------------------
+
 # Register handlers
 _register_inference_handler(InferenceMethod.SVI, _svi_handler)
 _register_inference_handler(InferenceMethod.MCMC, _mcmc_handler)
 _register_inference_handler(InferenceMethod.VAE, _vae_handler)
+_register_inference_handler(InferenceMethod.LAPLACE, _laplace_handler)
 
 
 # ==============================================================================
@@ -275,6 +319,12 @@ def _run_inference(
         config = inference_config.mcmc
         if config is None:
             raise ValueError("MCMCConfig required for MCMC inference")
+    elif inference_method == InferenceMethod.LAPLACE:
+        config = inference_config.laplace
+        if config is None:
+            raise ValueError(
+                "LaplaceConfig required for Laplace inference"
+            )
     else:
         raise ValueError(f"Unknown inference method: {inference_method}")
 

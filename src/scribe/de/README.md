@@ -254,6 +254,7 @@ from scribe.de import (
     # Empirical composition pipeline
     sample_composition,        # single-condition simplex samples
     sample_compositions,       # two-condition (DE) simplex samples
+    sample_lnm_compositions,   # LNM: simplex samples from mu, W, d
     compute_delta_from_simplex,
     compute_clr_differences,         # convenience wrapper
     # Set-level (parametric)
@@ -272,6 +273,8 @@ from scribe.de import (
     find_lfsr_threshold,
     format_de_table,
     extract_alr_params,
+    # LNM diagnostics
+    effective_per_gene_nb,     # moment-matched per-gene NB from LNM params
 )
 ```
 
@@ -1221,6 +1224,7 @@ de/
 ├── _error_control.py             # Bayesian error control, formatting
 ├── _gaussianity.py               # Gaussianity diagnostics
 ├── _component_matching.py        # Label-based component lookup (match_components_by_label, get_shared_labels)
+├── _lnm_diagnostics.py           # LNM-specific diagnostics (effective per-gene NB)
 └── README.md                     # This file
 ```
 
@@ -1301,6 +1305,59 @@ Genes that fail the skewness/kurtosis thresholds may have poorly
 calibrated lfsr/PEFP values under the Gaussian assumption.  Consider
 filtering them from the DE results or using a non-parametric alternative
 for those genes.
+
+## LNM-Specific Utilities
+
+When using the Logistic-Normal Multinomial model (`lnm` / `lnmvcp`), two
+additional utilities are provided:
+
+### `sample_lnm_compositions(mu, W, d, n_samples, key, reference_idx=-1)`
+
+Draws simplex samples from the fitted LNM distribution by sampling from the
+`LowRankLogisticNormal` distribution (low-rank Gaussian in ALR space followed by
+softmax). When `d` is `None` (strictly low-rank mode), a tiny diagonal jitter is
+used for numerical stability. The `reference_idx` parameter specifies which gene
+is the ALR reference (`-1` = last gene).
+
+```python
+from scribe.de import sample_lnm_compositions
+
+simplex = sample_lnm_compositions(
+    mu=lnm_mu,      # (G-1,) ALR mean
+    W=lnm_W,        # (G-1, k) low-rank factor
+    d=lnm_d,        # (G-1,) or None
+    n_samples=1000,
+    key=jax.random.PRNGKey(0),
+    reference_idx=vae_results.model_config.alr_reference_idx,
+)
+# simplex.shape == (1000, G)
+```
+
+### `effective_per_gene_nb(mu, W, d, r_T, p, ..., reference_idx=-1)`
+
+Moment-matches an effective per-gene Negative Binomial from the LNM parameters,
+providing backward compatibility with Dirichlet-Multinomial style mean-variance
+diagnostics. Uses Monte Carlo sampling of `rho` from the LNM compositional
+distribution and the law of total variance to derive effective `r_g` and `p_g`
+for each gene. Pass `reference_idx` to match the reference gene used during
+fitting.
+
+```python
+from scribe.de import effective_per_gene_nb
+
+diag = effective_per_gene_nb(
+    mu=lnm_mu, W=lnm_W, d=lnm_d,
+    r_T=r_T_map, p=p_map,
+    n_mc_samples=5000,
+    key=jax.random.PRNGKey(1),
+    reference_idx=vae_results.model_config.alr_reference_idx,
+)
+diag["r_eff"]        # (G,) effective per-gene dispersion
+diag["p_eff"]        # (G,) effective per-gene success probability
+diag["mean"]         # (G,) E[u_g]
+diag["var"]          # (G,) Var[u_g]
+diag["well_defined"] # (G,) bool mask for valid moment-matching
+```
 
 ## Performance Notes
 

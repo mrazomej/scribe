@@ -145,6 +145,21 @@ def create_model(model_config):
     # For others: returns "p_capture"
 ```
 
+### `LogisticNormalParameterization`
+
+Used by the `lnm` model type. Samples scalar total-count NB parameters
+and delegates gene compositions to a linear-decoder VAE in ALR space:
+
+- **Core parameters**: `r_T` (total-count dispersion), `p` (total-count
+  success probability)
+- **Derived parameters**: none (compositions come from the decoder)
+- **Gene parameter**: `y_alr` (ALR coordinates, produced by the VAE decoder)
+- **`requires_vae`**: `True` — inference always uses `VAELatentGuide`
+
+The decoder output spec is `[("y_alr", "identity")]`, enforcing a linear
+(no hidden layers) decoder so the kernel acts as the low-rank factor `W` and
+the bias as the ALR mean `mu`.
+
 ## Registry
 
 The `PARAMETERIZATIONS` dictionary maps names to parameterization instances:
@@ -155,6 +170,7 @@ PARAMETERIZATIONS = {
     "canonical": CanonicalParameterization(),
     "mean_prob": MeanProbParameterization(),
     "mean_odds": MeanOddsParameterization(),
+    "logistic_normal": LogisticNormalParameterization(),
     # Backward-compatible aliases
     "standard": CanonicalParameterization(),
     "linked": MeanProbParameterization(),

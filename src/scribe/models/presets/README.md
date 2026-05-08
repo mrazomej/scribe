@@ -11,12 +11,14 @@ Unified factory for creating SCRIBE models.
 
 ## Supported Models
 
-| Model Type | Description                            |
-|------------|----------------------------------------|
-| `nbdm`     | Negative Binomial Dropout Model        |
-| `zinb`     | Zero-Inflated Negative Binomial        |
-| `nbvcp`    | NB with Variable Capture Probability   |
-| `zinbvcp`  | ZINB with Variable Capture Probability |
+| Model Type | Description                                                                             |
+| ---------- | --------------------------------------------------------------------------------------- |
+| `nbdm`     | Negative Binomial Dropout Model                                                         |
+| `zinb`     | Zero-Inflated Negative Binomial                                                         |
+| `nbvcp`    | NB with Variable Capture Probability                                                    |
+| `zinbvcp`  | ZINB with Variable Capture Probability                                                  |
+| `lnm`      | Logistic-Normal Multinomial (NB total × multinomial composition via linear-decoder VAE) |
+| `lnmvcp`   | LNM with per-cell variable capture probability on the totals NB submodel                |
 
 ## Configuration Options
 
@@ -50,13 +52,36 @@ to keep one global mixing vector shared by all datasets.
 
 ### Parameterization Options
 
-| Name          | Parameters | Derived                   |
-|---------------|------------|---------------------------|
-| `"canonical"` | p, r       | -                         |
-| `"mean_prob"` | p, mu      | r = mu*(1-p)/p            |
-| `"mean_odds"` | phi, mu    | r = mu*phi, p = 1/(1+phi) |
+| Name                | Parameters | Derived                                                                      |
+| ------------------- | ---------- | ---------------------------------------------------------------------------- |
+| `"canonical"`       | p, r       | -                                                                            |
+| `"mean_prob"`       | p, mu      | r = mu*(1-p)/p                                                               |
+| `"mean_odds"`       | phi, mu    | r = mu*phi, p = 1/(1+phi)                                                    |
+| `"logistic_normal"` | r_T, p | y_alr (via VAE decoder, reference gene configurable via `alr_reference_idx`) |
 
 **Aliases**: `"standard"` = `"canonical"`, `"linked"` = `"mean_prob"`, `"odds_ratio"` = `"mean_odds"`
+
+**LNM-only stability defaults** (active when `model in {"lnm", "lnmvcp"}`):
+
+- `vae_input_transform` defaults to `"log1p_prop"` (compositional input).
+- `vae_standardize` defaults to `True`; per-feature stats are computed
+  from the count matrix in the *same* input-transform space the
+  encoder uses, via
+  `scribe.core.lnm_data_init.compute_encoder_standardization`.
+- The `r_T` LogNormal prior is auto-initialized from the empirical
+  total-count moments (method-of-moments NB inversion). User-provided
+  `priors={"r_T": ...}` always wins.
+- The linear-decoder `y_alr` head bias is anchored to the empirical
+  ALR mean of the counts via `DecoderOutputHead.bias_init`, computed
+  by `scribe.core.normalization_logistic.empirical_alr_mean_from_counts`.
+- The Gaussian encoder is replaced by `LNMGaussianEncoder`, which
+  clamps the log-scale head to `[-7, 2]` to short-circuit `σ → 0`/`∞`
+  pathologies under the multinomial likelihood.
+
+These changes are gated on the LNM family; non-LNM VAE models are
+bit-identical to pre-stability behavior. See the qmd section
+"Training stability: practical considerations" in
+`paper/_logistic_normal_multinomial.qmd` for the rationale.
 
 ### Guide Families (via `GuideFamilyConfig`)
 
@@ -310,6 +335,8 @@ MODEL_EXTRA_PARAMS = {
     "zinb": ["gate"],
     "nbvcp": ["p_capture"],
     "zinbvcp": ["gate", "p_capture"],
+    "lnm": [],
+    "lnmvcp": ["p_capture"],
 }
 
 # Which likelihood class each model uses
@@ -318,6 +345,8 @@ LIKELIHOOD_REGISTRY = {
     "zinb": ZeroInflatedNBLikelihood,
     "nbvcp": NBWithVCPLikelihood,
     "zinbvcp": ZINBWithVCPLikelihood,
+    "lnm": LogisticNormalMultinomialLikelihood,
+    "lnmvcp": LNMWithVCPLikelihood,
 }
 ```
 

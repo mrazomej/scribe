@@ -76,6 +76,9 @@ def build_config_from_preset(
     expression_anchor_sigma: float = 0.3,
     overdispersion: str = "none",
     overdispersion_prior: str = "horseshoe",
+    # LNM diagonal mode (``lnm`` / ``lnmvcp`` only; see ``ModelConfig.d_mode``)
+    d_mode: str = "low_rank",
+    alr_reference_idx: int = -1,
     guide_rank: Optional[int] = None,
     joint_params: Optional[Union[str, List[str]]] = None,
     dense_params: Optional[Union[str, List[str]]] = None,
@@ -101,7 +104,10 @@ def build_config_from_preset(
     vae_decoder_hidden_dims: Optional[List[int]] = None,
     vae_activation: Optional[str] = None,
     vae_input_transform: str = "log1p",
-    vae_standardize: bool = False,
+    # ``None`` (the default) is a sentinel meaning "auto-pick based on
+    # model": ``True`` for ``lnm`` / ``lnmvcp`` and ``False`` everywhere
+    # else. Pass an explicit boolean to opt in or out unconditionally.
+    vae_standardize: Optional[bool] = None,
     vae_decoder_transforms: Optional[Dict[str, str]] = None,
     vae_flow_type: str = "none",
     vae_flow_num_layers: int = 4,
@@ -133,14 +139,26 @@ def build_config_from_preset(
     Parameters
     ----------
     model : str
-        Model type: "nbdm", "zinb", "nbvcp", or "zinbvcp".
+        Model type: ``"nbdm"``, ``"lnm"``, ``"lnmvcp"``, ``"zinb"``,
+        ``"nbvcp"``, or ``"zinbvcp"``.  ``"lnm"`` and ``"lnmvcp"`` force
+        parameterization ``"logistic_normal"`` and upgrade default
+        ``inference_method="svi"`` to ``"vae"``.
     parameterization : str, default="canonical"
         Parameterization scheme: "canonical", "mean_prob", "mean_odds"
-        (backward compat: "standard", "linked", "odds_ratio").
+        (backward compat: "standard", "linked", "odds_ratio"), or
+        ``"logistic_normal"`` for ``lnm`` / ``lnmvcp``.
     inference_method : str, default="svi"
         Inference method: "svi", "mcmc", or "vae".
     unconstrained : bool, default=False
         Whether to use unconstrained parameterization (Normal+transform).
+    d_mode : str, default="low_rank"
+        For ``model="lnm"`` / ``"lnmvcp"`` only: ``"low_rank"`` (decoder-only
+        ALR mean) or ``"learned"`` (adds ``d_lnm`` and IID Gaussian noise in
+        ALR space). Ignored for other models.
+    alr_reference_idx : int, default=-1
+        For ``model="lnm"`` / ``"lnmvcp"`` only: zero-based index of the ALR
+        reference gene. ``-1`` selects the last gene (legacy default). Ignored
+        for other models.
     guide_rank : Optional[int], default=None
         Rank for low-rank guide on gene-specific parameter. If provided,
         creates a LowRankGuide for the appropriate parameter (r or mu).
@@ -274,6 +292,48 @@ def build_config_from_preset(
     --------
     scribe.models.presets.factory.create_model : Creates model/guide from config.
     """
+    # --- LNM family: VAE or Laplace (LNMVCP-Laplace adds a scalar
+    # Newton on per-cell eta_capture decoupled from the composition
+    # block via the block-diagonal Hessian).
+    model_lower = model.lower()
+    if model_lower in ("lnm", "lnmvcp"):
+        from ..models.parameterizations import (
+            resolve_user_parameterization_for_model,
+        )
+        parameterization = resolve_user_parameterization_for_model(
+            model_lower, parameterization
+        )
+        if inference_method.lower() == "svi":
+            inference_method = "vae"
+
+    # --- PLN family: single parameterization, VAE-or-Laplace
+    if model_lower == "pln":
+        from ..models.parameterizations import (
+            resolve_user_parameterization_for_model,
+        )
+        parameterization = resolve_user_parameterization_for_model(
+            model_lower, parameterization
+        )
+        # Auto-promote ``svi`` to ``vae`` (the encoder-based path)
+        # only — ``laplace`` is a deliberate user choice that uses a
+        # different engine entirely and must NOT be coerced.
+        if inference_method.lower() == "svi":
+            inference_method = "vae"
+        # Validate Laplace is requested only on supported models.
+    elif inference_method.lower() == "laplace" and model_lower not in (
+        "lnm",
+        "lnmvcp",
+    ):
+        raise ValueError(
+            "inference_method='laplace' is supported for PLN, LNM, "
+            f"and LNMVCP. Use 'svi'/'vae'/'mcmc' for model="
+            f"{model_lower!r}."
+        )
+    if d_mode not in ("low_rank", "learned"):
+        raise ValueError(
+            f"d_mode must be 'low_rank' or 'learned', got {d_mode!r}."
+        )
+
     # ==========================================================================
     # Validate parameterization
     # ==========================================================================
@@ -432,16 +492,80 @@ def build_config_from_preset(
     # ==========================================================================
     builder = (
         ModelConfigBuilder()
-        .for_model(model)
+        .for_model(model_lower)
         .with_parameterization(parameterization)
         .with_inference(inference_method)
     )
 
-    if inference_method == "vae":
+    # Build the VAE config for both ``vae`` and ``laplace`` inference
+    # methods. The generative model is the same in both cases (linear
+    # decoder, low-rank-plus-diagonal covariance); only the *inference*
+    # procedure differs (encoder vs Newton). The Laplace engine reads
+    # ``model_config.vae.latent_dim`` to size the decoder kernel, so
+    # we must build VAEConfig here even for Laplace.
+    if inference_method in ("vae", "laplace"):
+        # Encoder input transform defaults to ``log1p_prop``
+        # (compositional) for LNM and for PLN-with-capture-anchor; it
+        # stays at ``log1p`` (raw counts on log scale) for
+        # PLN-without-capture-anchor. The asymmetry is structural:
+        #
+        # * LNM's multinomial likelihood is intrinsically
+        #   scale-invariant (only the simplex ``ρ`` matters), so the
+        #   encoder being compositional is always fine.
+        # * PLN's likelihood is in absolute log-rate space. With a
+        #   capture anchor, the per-cell scale parameter
+        #   ``eta_capture`` carries library-size variation, so a
+        #   compositional encoder *helps* (it keeps scale
+        #   information out of the latent ``z``, eliminating the
+        #   identifiability ridge between ``z`` and
+        #   ``eta_capture``).
+        # * PLN *without* a capture anchor has no per-cell scale
+        #   parameter at all -- the only place library size can be
+        #   encoded is in the latent ``z`` via the decoder. A
+        #   compositional encoder would strip that signal, forcing
+        #   every cell to predict the same total counts. So the
+        #   default falls back to ``log1p`` in that regime.
+        #
+        # The capture-anchor signal is the presence of any
+        # capture-related prior key (canonical or alias) in
+        # ``priors``. We check the small canonical set plus the
+        # registered aliases ``capture_efficiency``,
+        # ``capture_scaling``, ``capture_anchor``, ``organism``.
+        resolved_vae_input_transform = vae_input_transform
+
+        _CAPTURE_ANCHOR_PRIOR_KEYS = frozenset({
+            "eta_capture",
+            "mu_eta",
+            "organism",
+            "capture_efficiency",
+            "capture_scaling",
+            "capture_anchor",
+        })
+        _has_capture_anchor = bool(priors) and any(
+            k in _CAPTURE_ANCHOR_PRIOR_KEYS for k in priors.keys()
+        )
+
+        _wants_compositional_input = model_lower in ("lnm", "lnmvcp") or (
+            model_lower == "pln" and _has_capture_anchor
+        )
+        if _wants_compositional_input and vae_input_transform == "log1p":
+            resolved_vae_input_transform = "log1p_prop"
+
+        # Resolve the ``vae_standardize`` sentinel. ``None`` means "pick a
+        # sensible per-model default": LNM and PLN models benefit from
+        # standardization, while every other VAE model preserves its
+        # historical default of ``False``.
+        if vae_standardize is None:
+            resolved_vae_standardize = model_lower in (
+                "lnm", "lnmvcp", "pln"
+            )
+        else:
+            resolved_vae_standardize = bool(vae_standardize)
+
         vae_kwargs = {
             "latent_dim": vae_latent_dim,
-            "input_transform": vae_input_transform,
-            "standardize": vae_standardize,
+            "input_transform": resolved_vae_input_transform,
+            "standardize": resolved_vae_standardize,
             "decoder_transforms": vae_decoder_transforms,
             "flow_type": vae_flow_type,
             "flow_num_layers": vae_flow_num_layers,
@@ -455,6 +579,15 @@ def build_config_from_preset(
         if vae_flow_hidden_dims is not None:
             vae_kwargs["flow_hidden_dims"] = vae_flow_hidden_dims
         builder.with_vae(**vae_kwargs)
+        # ``with_vae`` force-sets ``_inference_method = VAE`` to keep
+        # encoder-mode fits coherent. For Laplace mode we need the
+        # VAEConfig (linear decoder, latent_dim, input transform, etc.)
+        # but the *inference method* must remain LAPLACE so the
+        # dispatcher routes to the Laplace handler. Restore it here.
+        if inference_method.lower() == "laplace":
+            from ..models.config.enums import InferenceMethod as _IM
+
+            builder._inference_method = _IM.LAPLACE
 
     if unconstrained:
         builder.unconstrained()
@@ -533,6 +666,13 @@ def build_config_from_preset(
 
     if priors:
         builder.with_priors(**priors)
+
+    if model_lower in ("lnm", "lnmvcp"):
+        builder._d_mode = d_mode
+        builder._alr_reference_idx = alr_reference_idx
+
+    if model_lower == "pln":
+        builder._d_mode = d_mode
 
     return builder.build()
 

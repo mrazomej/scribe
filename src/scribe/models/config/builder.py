@@ -117,6 +117,8 @@ class ModelConfigBuilder:
             {}
         )  # For backward compatibility with with_guides()
         self._vae_params: Dict[str, Any] = {}
+        self._d_mode: str = "low_rank"
+        self._alr_reference_idx: int = -1
 
     # --------------------------------------------------------------------------
 
@@ -164,7 +166,10 @@ class ModelConfigBuilder:
         Parameters
         ----------
         method : str or InferenceMethod
-            Inference method ("svi", "mcmc", "vae")
+            Inference method: ``"svi"``, ``"mcmc"``, ``"vae"``, or
+            ``"laplace"`` (PLN-only). The string is converted via the
+            ``InferenceMethod`` enum, so any value accepted there is
+            valid here.
         """
         if isinstance(method, str):
             self._inference_method = InferenceMethod(method)
@@ -376,12 +381,41 @@ class ModelConfigBuilder:
     def with_priors(self, **priors) -> "ModelConfigBuilder":
         """Set prior parameters.
 
+        Accepts both internal short names (``p``, ``r``, ``r_T``,
+        ``mu``, ...) and their descriptive aliases (``prob``,
+        ``dispersion``, ``total_dispersion``, ``expression``, ...).
+        Descriptive aliases are resolved to internal names *here*, at
+        insertion time, so the rest of the builder pipeline only ever
+        sees canonical keys. This is what allows
+        :meth:`_apply_defaults` to correctly recognize that an alias
+        already covers a given parameter (the alias would otherwise
+        slip past the default-filling logic, leading to "ambiguous
+        priors" errors at build time when both the alias and the
+        auto-default landed in the dict).
+
         Parameters
         ----------
         **priors
-            Prior parameters (e.g., p=(1.0, 1.0), r=(2.0, 0.5))
+            Prior parameters (e.g., ``p=(1.0, 1.0)``, ``r=(2.0, 0.5)``,
+            or equivalently ``prob=(1.0, 1.0)``,
+            ``dispersion=(2.0, 0.5)``).
+
+        Raises
+        ------
+        ValueError
+            If both an internal name and one of its descriptive
+            aliases are passed (e.g., ``r=...`` and ``dispersion=...``
+            in the same call).
         """
-        self._priors.update(priors)
+        # Normalize at insertion so that the rest of the builder operates
+        # on internal names only. ``normalize_prior_keys`` itself raises
+        # the "ambiguous priors" ValueError if the caller passes both
+        # forms, which is the desired contract — we don't want to
+        # silently pick one.
+        from .parameter_mapping import normalize_prior_keys
+
+        normalized = normalize_prior_keys(priors)
+        self._priors.update(normalized)
         return self
 
     # --------------------------------------------------------------------------
@@ -425,7 +459,8 @@ class ModelConfigBuilder:
         activation : str
             Activation function (relu, gelu, silu, tanh, elu, leaky_relu).
         input_transform : str
-            Input transformation before encoder (log1p, log, sqrt, identity).
+            Input transformation before encoder (log1p, log, sqrt, identity,
+            log1p_prop, clr, log1p_norm).
         standardize : bool
             Whether to standardize input data.
         decoder_transforms : Dict[str, str], optional
@@ -479,6 +514,7 @@ class ModelConfigBuilder:
                 if param in [
                     "p",
                     "r",
+                    "r_T",
                     "mu",
                     "gate",
                     "p_capture",
@@ -495,7 +531,7 @@ class ModelConfigBuilder:
             for param in required_params:
                 if param in ["p", "gate", "p_capture"]:
                     defaults[param] = (1.0, 1.0)  # Beta(1,1) = Uniform
-                elif param in ["r", "mu"]:
+                elif param in ["r", "mu", "r_T"]:
                     defaults[param] = (0.0, 1.0)  # LogNormal(0,1)
                 elif param in ["phi", "phi_capture"]:
                     defaults[param] = (1.0, 1.0)  # BetaPrime(1,1)
@@ -551,12 +587,21 @@ class ModelConfigBuilder:
         """
         # Params that expect 2-tuples (Beta, LogNormal, BetaPrime)
         SCALAR_2_PARAMS = frozenset(
-            {"p", "r", "mu", "gate", "p_capture", "phi", "phi_capture"}
+            {
+                "p",
+                "r",
+                "r_T",
+                "mu",
+                "gate",
+                "p_capture",
+                "phi",
+                "phi_capture",
+            }
         )
         # Beta-like: both must be > 0
         BETA_PARAMS = frozenset({"p", "gate", "p_capture"})
         # LogNormal: scale (second) must be > 0
-        LOGNORMAL_PARAMS = frozenset({"r", "mu"})
+        LOGNORMAL_PARAMS = frozenset({"r", "mu", "r_T"})
         # BetaPrime: both must be > 0
         BETAPRIME_PARAMS = frozenset({"phi", "phi_capture"})
 
@@ -627,6 +672,7 @@ class ModelConfigBuilder:
         for name in (
             "p",
             "r",
+            "r_T",
             "mu",
             "phi",
             "gate",
@@ -668,9 +714,18 @@ class ModelConfigBuilder:
         # Mixture is indicated by n_components, not by modifying base_model
         base_model = self._base_model
 
-        # Create VAE config if VAE inference
+        # Create VAE config for VAE *and* Laplace inference. The Laplace
+        # path uses the same generative architecture as the VAE path
+        # (linear decoder, low-rank-plus-diagonal covariance) — it
+        # only differs in how the per-cell latent posterior is inferred.
+        # Without VAEConfig the engine has no place to read
+        # ``latent_dim`` / decoder hidden dims / data-driven init
+        # arrays from.
         vae_config = None
-        if self._inference_method == InferenceMethod.VAE:
+        if self._inference_method in (
+            InferenceMethod.VAE,
+            InferenceMethod.LAPLACE,
+        ):
             vae_config = VAEConfig(**self._vae_params)
 
         # param_specs will be created by preset factories
@@ -731,4 +786,6 @@ class ModelConfigBuilder:
             param_specs=param_specs,
             priors=priors,
             vae=vae_config,
+            d_mode=self._d_mode,
+            alr_reference_idx=getattr(self, "_alr_reference_idx", -1),
         )

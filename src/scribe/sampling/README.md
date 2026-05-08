@@ -105,3 +105,29 @@ variance array is discarded when the caller did not request it.
 - **`models.components.likelihoods.beta_negative_binomial`** provides
   `build_count_dist`, used by PPC and denoising to construct the
   appropriate NB/BNB distribution objects.
+
+## VAE Replay Modes and Parameter Binding
+
+For VAE-backed models, replay must always receive the trained parameter
+dictionary so `numpyro.param` / `flax_module` sites are substituted during
+`Predictive` calls.
+
+- `sample_variational_posterior` passes `params` to both the guide and
+  model-replay `Predictive` steps.
+- `generate_predictive_samples` accepts optional `params` and forwards
+  them to `Predictive`.
+
+Without this wiring, decoder parameters (e.g. `vae_decoder$params`) can
+be re-initialized during replay, producing incorrect predictive samples.
+
+`ScribeVAEResults.get_posterior_samples()` supports two replay modes:
+
+1. **Encoder path (`counts` provided)**: sample from `q(z|counts)` via the
+   VAE guide, then replay the model with substituted trained params.
+2. **Prior path (`counts=None`)**: bypass the guide and sample `z` directly
+   from the model prior while replaying with substituted trained params.
+   - For LNM/LNMVCP this is the expected population-sampling behavior.
+   - For VAEs with a latent flow prior, `z` is sampled from the learned
+     flow prior (`FlowDistribution(flow, N(0, I))`).
+   - For non-LNM VAEs without a flow prior, SCRIBE emits a warning that
+     `z` is sampled from the uninformative `N(0, I)` prior.

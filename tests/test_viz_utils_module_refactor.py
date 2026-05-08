@@ -21,7 +21,9 @@ from scribe.mcmc.results import ScribeMCMCResults
 from scribe.inference.preset_builder import build_config_from_preset
 from scribe.models import get_model_and_guide
 from scribe.models.config import ModelConfig
+from scribe.svi import ScribeVariationalResults
 from scribe.svi.results import ScribeSVIResults
+from scribe.svi.vae_results import ScribeVAEResults
 import scribe.viz.config as viz_config
 from scribe.viz import (
     PlotResult,
@@ -520,6 +522,81 @@ def test_training_payload_includes_mcmc_diagnostics():
     assert payload["potential_energy"].shape == (3,)
     assert payload["diverging"].shape == (3,)
     assert payload["trace_by_chain"].shape == (2, 3)
+
+
+def test_training_payload_includes_vae_loss_history():
+    """VAE results should expose the same loss payload as SVI for ``plot_loss``."""
+    encoder = MagicMock()
+    decoder = MagicMock()
+    latent_spec = MagicMock()
+    latent_spec.flow = None
+
+    results = ScribeVAEResults(
+        params={"vae_encoder$params": {}, "vae_decoder$params": {}},
+        loss_history=jnp.array([3.0, 2.0, 1.0], dtype=jnp.float32),
+        n_cells=10,
+        n_genes=20,
+        model_type="lnmvcp",
+        model_config=ModelConfig(base_model="nbdm"),
+        prior_params={},
+        _encoder=encoder,
+        _decoder=decoder,
+        _latent_spec=latent_spec,
+    )
+    payload = _get_training_diagnostic_payload(results)
+    assert payload["plot_kind"] == "loss"
+    assert np.allclose(payload["loss_history"], [3.0, 2.0, 1.0])
+
+
+def test_predictive_samples_dispatch_accepts_vae_results():
+    """``_get_predictive_samples_for_plot`` should dispatch on ``ScribeVAEResults``."""
+    encoder = MagicMock()
+    decoder = MagicMock()
+    latent_spec = MagicMock()
+    latent_spec.flow = None
+
+    results = ScribeVAEResults(
+        params={"vae_encoder$params": {}, "vae_decoder$params": {}},
+        loss_history=jnp.array([1.0], dtype=jnp.float32),
+        n_cells=2,
+        n_genes=3,
+        model_type="lnmvcp",
+        model_config=ModelConfig(base_model="nbdm"),
+        prior_params={},
+        _encoder=encoder,
+        _decoder=decoder,
+        _latent_spec=latent_spec,
+    )
+    fake_post = {"k": jnp.zeros((1,))}
+    fake_pred = jnp.ones((4, 2, 3), dtype=jnp.float32)
+
+    def _fake_posterior(**kwargs):
+        _ = kwargs
+        return fake_post
+
+    def _fake_predictive(**kwargs):
+        _ = kwargs
+        return fake_pred
+
+    results.get_posterior_samples = _fake_posterior
+    results.get_predictive_samples = _fake_predictive
+
+    out = _get_predictive_samples_for_plot(
+        results,
+        rng_key=random.PRNGKey(0),
+        n_samples=4,
+        counts=np.zeros((2, 3), dtype=np.int32),
+        store_samples=False,
+    )
+    assert out.shape == (4, 2, 3)
+
+
+def test_predictive_dispatch_registers_variational_base_signature():
+    """Predictive dispatch should register the shared variational base type."""
+    # The dispatcher should expose one shared variational registration so both
+    # SVI and VAE resolve through the same runtime dispatch key.
+    dispatch_key = (ScribeVariationalResults,)
+    assert dispatch_key in _get_predictive_samples_for_plot.funcs
 
 
 def test_map_dispatch_forwards_targets_for_svi():
@@ -1024,9 +1101,19 @@ def test_plot_ppc_auto_aligns_counts_before_preparation(monkeypatch):
     class _FakeSubset:
         predictive_samples = np.zeros((1, 1, 1), dtype=float)
 
-    def _fake_prepare(_results, prep_counts, _viz_cfg, **kwargs):
+    def _fake_prepare(
+        _results,
+        prep_counts,
+        _viz_cfg,
+        *,
+        counts_for_sampling=None,
+        **kwargs,
+    ):
         # If alignment runs, prep receives model-space counts (3 genes), not 5.
         seen["counts_n_genes"] = int(prep_counts.shape[1])
+        seen["counts_for_sampling_n_genes"] = int(
+            counts_for_sampling.shape[1]
+        )
         _ = kwargs
         return {
             "n_rows": 1,
@@ -1047,7 +1134,83 @@ def test_plot_ppc_auto_aligns_counts_before_preparation(monkeypatch):
     )
     assert isinstance(result, PlotResult)
     assert seen["counts_n_genes"] == 3
+    assert seen["counts_for_sampling_n_genes"] == 3
     plt.close(result.fig)
+
+
+def test_prepare_ppc_data_samples_full_space_for_vae(monkeypatch):
+    """VAE PPC should sample in full gene space before plot subsetting."""
+    import scribe.viz.ppc as ppc_module
+
+    n_cells, n_genes = 6, 10
+    counts = np.arange(n_cells * n_genes, dtype=float).reshape(
+        n_cells, n_genes
+    ) + 1.0
+    seen = {}
+
+    class _FakeResults:
+        def __init__(self, n_genes_local):
+            self.n_genes = int(n_genes_local)
+            self.model_config = types.SimpleNamespace(
+                inference_method="vae", vae=object()
+            )
+            self.predictive_samples = None
+
+        def __getitem__(self, index):
+            subset = _FakeResults(len(index))
+            if self.predictive_samples is not None:
+                idx = np.asarray(index, dtype=int)
+                subset.predictive_samples = self.predictive_samples[:, :, idx]
+            return subset
+
+    def _fake_predictive(
+        sampling_results, *, rng_key, n_samples, counts, store_samples,
+        ppc_level=None,
+    ):
+        _ = rng_key, store_samples, ppc_level
+        seen["sampling_results_n_genes"] = int(sampling_results.n_genes)
+        seen["sampling_counts_n_genes"] = int(counts.shape[1])
+        sampling_results.predictive_samples = np.zeros(
+            (n_samples, counts.shape[0], sampling_results.n_genes), dtype=float
+        )
+        return sampling_results.predictive_samples
+
+    monkeypatch.setattr(
+        ppc_module, "_get_predictive_samples_for_plot", _fake_predictive
+    )
+    prep = ppc_module._prepare_ppc_data(
+        _FakeResults(n_genes),
+        counts,
+        viz_cfg=None,
+        counts_for_sampling=counts,
+        n_rows=1,
+        n_cols=3,
+        n_samples=4,
+    )
+
+    assert seen["sampling_results_n_genes"] == n_genes
+    assert seen["sampling_counts_n_genes"] == n_genes
+    assert prep["results_subset"].n_genes <= 3
+
+
+def test_resolve_ppc_sampling_counts_prefers_full_counts_for_amortized_subset():
+    """Amortized subset PPC must preserve original full-gene count matrix."""
+    import scribe.viz.ppc as ppc_module
+
+    class _FakeResults:
+        n_genes = 4
+        _original_n_genes = 7
+
+        @staticmethod
+        def _uses_amortized_capture():
+            return True
+
+    raw_counts = np.zeros((5, 7), dtype=float)
+    aligned_counts = np.zeros((5, 4), dtype=float)
+    resolved = ppc_module._resolve_ppc_sampling_counts(
+        _FakeResults(), raw_counts, aligned_counts
+    )
+    assert resolved.shape == (5, 7)
 
 
 def test_plot_bio_ppc_aligns_counts_subset_with_results_order(
@@ -3137,6 +3300,12 @@ from scribe.viz.mu_pairwise import (
     _collapse_mixture_axis,
     _get_dataset_count,
 )
+from scribe.models.config.enums import Parameterization
+from scribe.viz._common import _is_pln_model
+from scribe.viz.mean_calibration import (
+    _compute_predicted_mean_pln,
+    _prepare_calibration_data,
+)
 
 
 class TestGetLayoutsForPlot:
@@ -3221,6 +3390,142 @@ class TestComputePredictedMeanWithLayouts:
         pred_no_vcp = _compute_predicted_mean(r, p, w, layouts=layouts)
         # VCP scales by mean(pc) = 0.8; all predictions should shrink.
         np.testing.assert_allclose(pred_vcp, pred_no_vcp * np.mean(pc))
+
+
+# =========================================================================
+# PLN viz compatibility tests
+# =========================================================================
+
+
+def test_is_pln_model_detects_enum_and_string_forms():
+    """PLN detector should handle both enum and plain-string configs."""
+
+    class _Fake:
+        """Small results stub exposing only model_config.parameterization."""
+
+        def __init__(self, parameterization):
+            self.model_config = types.SimpleNamespace(
+                parameterization=parameterization
+            )
+
+    assert _is_pln_model(_Fake(Parameterization.POISSON_LOGNORMAL))
+    assert _is_pln_model(_Fake("poisson_lognormal"))
+    assert not _is_pln_model(_Fake(Parameterization.CANONICAL))
+
+
+def test_compute_predicted_mean_pln_matches_exp():
+    """PLN predicted mean helper should return exp(y_log_rate)."""
+    y_log_rate = np.array([0.0, np.log(2.0), np.log(0.5)], dtype=float)
+    pred = _compute_predicted_mean_pln(y_log_rate)
+    np.testing.assert_allclose(pred, np.exp(y_log_rate), rtol=1e-8)
+
+
+def test_prepare_calibration_data_pln_uses_per_cell_map(monkeypatch):
+    """Mean-calibration data prep should use PLN per-cell-MAP path.
+
+    The PLN branch was overhauled (see ``_compute_predicted_mean``)
+    to prefer the per-cell MAP ``x_loc`` over the population-level
+    ``LowRankPoissonLogNormal.mean × mean_c[exp(-eta_c)]`` formula
+    when ``x_loc`` is available on the results object. The per-cell
+    path is robust to aggregate-posterior drift and matches what
+    PPC sampling does in the data-informative regime.
+    """
+    # Build per-cell MAP log-rates that vary across cells to exercise
+    # the ``mean_c[exp(x_g^(c))]`` aggregation.
+    n_cells, n_genes = 4, 3
+    x_loc = np.array(
+        [
+            [0.0, 1.0, 1.5],
+            [0.5, 1.2, 1.8],
+            [0.2, 0.8, 1.6],
+            [0.3, 1.1, 1.7],
+        ],
+        dtype=float,
+    )
+
+    class _FakeResults:
+        """Minimal results stub exposing ``x_loc`` like a Laplace fit."""
+
+        def __init__(self):
+            self.model_config = types.SimpleNamespace(
+                parameterization=Parameterization.POISSON_LOGNORMAL,
+                uses_biology_informed_capture=False,
+                uses_variable_capture=False,
+                d_mode="low_rank",
+            )
+            self.n_genes = n_genes
+            self.x_loc = x_loc
+
+    # No targets ⇒ map_estimates is empty.
+    def _fake_get_map(*_args, **_kwargs):
+        return {}
+
+    import scribe.viz.mean_calibration as mc_module
+
+    monkeypatch.setattr(mc_module, "_get_map_estimates_for_plot", _fake_get_map)
+
+    counts = np.array(
+        [[1, 2, 3], [2, 1, 4], [1, 3, 2], [2, 2, 5]], dtype=float
+    )
+    payload = _prepare_calibration_data(_FakeResults(), counts)
+
+    assert payload is not None
+    assert payload["mode"] == "single"
+    assert "PLN (log-rate)" in payload["annotations"]
+    # Per-cell-MAP formula with no capture: ``mean_c[exp(x_g^(c))]``.
+    expected = np.exp(x_loc).mean(axis=0)
+    np.testing.assert_allclose(payload["pred_mean"], expected, rtol=1e-8)
+
+
+def test_plot_correlation_heatmap_skips_for_pln():
+    """Correlation heatmap should skip gracefully for PLN runs."""
+    results = types.SimpleNamespace(
+        model_config=types.SimpleNamespace(
+            parameterization=Parameterization.POISSON_LOGNORMAL
+        ),
+        posterior_samples=None,
+    )
+    out = plot_correlation_heatmap(results, None, save=False)
+    assert out is None
+
+
+def test_plot_bio_ppc_skips_for_pln(monkeypatch):
+    """Biological PPC should skip gracefully for PLN runs."""
+    import scribe.viz.bio_ppc as bio_module
+
+    # Keep the test focused on model-type gating, not count alignment.
+    monkeypatch.setattr(
+        bio_module, "_coerce_and_align_counts_to_results", lambda c, *_a, **_k: c
+    )
+
+    results = types.SimpleNamespace(
+        model_config=types.SimpleNamespace(
+            parameterization=Parameterization.POISSON_LOGNORMAL
+        )
+    )
+    counts = np.array([[1, 2], [3, 4]], dtype=float)
+    out = plot_bio_ppc(results, counts, save=False)
+    assert out is None
+
+
+def test_plot_mixture_ppc_skips_for_pln(monkeypatch):
+    """Mixture PPC should skip gracefully for PLN runs."""
+    import scribe.viz.mixture_ppc as mix_module
+
+    # Keep the test focused on model-type gating, not count alignment.
+    monkeypatch.setattr(
+        mix_module, "_coerce_and_align_counts_to_results", lambda c, *_a, **_k: c
+    )
+
+    results = types.SimpleNamespace(
+        model_config=types.SimpleNamespace(
+            parameterization=Parameterization.POISSON_LOGNORMAL
+        ),
+        n_components=2,
+    )
+    counts = np.array([[1, 2], [3, 4]], dtype=float)
+    out = plot_mixture_ppc(results, counts, save=False)
+    assert out is None
 
 
 class TestPerDatasetMeansWithLayouts:

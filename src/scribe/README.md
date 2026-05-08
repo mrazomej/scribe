@@ -16,7 +16,7 @@ scalability, and rigorous uncertainty quantification.
 ### Key Features
 
 - **🎯 Simple API**: `scribe.fit()` with flat kwargs and sensible defaults
-- **🧬 Specialized Models**: Four probabilistic models designed for scRNA-seq
+- **🧬 Specialized Models**: Five probabilistic models designed for scRNA-seq
   data
 - **⚡ Multiple Inference**: SVI for speed, MCMC for accuracy, VAE for
   representation learning
@@ -73,6 +73,11 @@ scribe.viz.plot_loss(
 # via _repr_png_ / _repr_html_ — no duplicate display in notebooks.
 # figs_dir, cfg, and viz_cfg are always optional.
 result = scribe.viz.plot_loss(results=results)
+# ``plot_loss``, ``plot_ppc``, and other ``scribe.viz`` helpers that take a
+# results object support ``ScribeSVIResults``, ``ScribeVAEResults`` (VAE), and
+# ``ScribeMCMCResults`` (where applicable).
+# Internally, variational plot dispatch is unified through
+# ``ScribeVariationalResults`` to avoid duplicate SVI/VAE dispatch branches.
 result.fig      # underlying matplotlib Figure
 result.axes     # tuple of Axes used
 result.n_panels # number of logical panels
@@ -341,6 +346,47 @@ vae_results = scribe.fit(
     n_steps=50000,
 )
 
+# Logistic-Normal Multinomial (explicit gene-gene correlations)
+lnm_results = scribe.fit(
+    data,
+    model="lnm",
+    # For lnm/lnmvcp the API automatically applies several stability
+    # defaults that are *only* active for these models:
+    #   - vae_input_transform     -> "log1p_prop" (compositional input)
+    #   - vae_standardize         -> True         (z-standardize encoder input)
+    #   - r_T LogNormal prior     -> data-driven  (method-of-moments inversion)
+    #   - decoder bias init       -> empirical ALR mean of the count matrix
+    #   - encoder log_scale clamp -> [-7, 2]      (clamped LNMGaussianEncoder)
+    #   - KL annealing            -> linear ramp 0->1 over 2000 steps (default-ON
+    #                                for VAE; pass kl_annealing=False to disable)
+    # All of these are overridable; see the qmd "Training stability"
+    # section in paper/_logistic_normal_multinomial.qmd for the rationale.
+    n_steps=50000,
+)
+
+# LNM with learned diagonal covariance
+lnm_results = scribe.fit(
+    data,
+    model="lnm",
+    d_mode="learned",
+    n_steps=50000,
+)
+
+# LNM with explicit ALR reference gene (auto-selected from data by default)
+lnm_results = scribe.fit(
+    data,
+    model="lnm",
+    alr_reference_idx=42,  # use gene 42 as reference
+    n_steps=50000,
+)
+
+# LNMVCP: LNM + per-cell capture efficiency on the totals NB
+lnmvcp_results = scribe.fit(
+    data,
+    model="lnmvcp",
+    n_steps=50000,
+)
+
 # Mixture model for cell type discovery
 mixture_results = scribe.fit(
     data,
@@ -373,15 +419,21 @@ results = scribe.fit(
 ```
 
 #### 🧬 **Models** (`models/`)
-Four specialized probabilistic models for single-cell data:
+Five specialized probabilistic models for single-cell data:
 
 - **NBDM**: Negative Binomial-Dirichlet Multinomial (baseline model)
 - **ZINB**: Zero-Inflated Negative Binomial (handles excess zeros)
 - **NBVCP**: NB with Variable Capture Probability (models technical dropout)
 - **ZINBVCP**: Combines zero-inflation and variable capture
+- **LNM**: Logistic-Normal Multinomial — replaces the Dirichlet prior
+  with a logistic-normal distribution in ALR space, enabling explicit low-rank
+  gene-gene covariance modeling via a linear-decoder VAE
+- **LNMVCP**: LNM with per-cell variable capture probability on the totals NB
+  submodel; the compositional path is identical to LNM
 
 Each model supports:
-- **Parameterizations**: `standard`, `linked`, `odds_ratio`
+- **Parameterizations**: `standard`, `linked`, `odds_ratio` (plus
+  `logistic_normal` for LNM)
 - **Variants**: Constrained and unconstrained optimization
 - **Mixture Models**: Multi-component versions for cell type discovery
 - **Guide Types**: Mean-field and low-rank variational families
@@ -466,12 +518,13 @@ normalized = normalize_counts_from_posterior(
 
 ### When to Use Each Model
 
-| Model       | Best For                             | Characteristics                       |
-|-------------|--------------------------------------|---------------------------------------|
-| **NBDM**    | Baseline analysis, well-behaved data | Simple, interpretable, fast           |
-| **ZINB**    | Data with excess zeros               | Handles technical/biological dropouts |
-| **NBVCP**   | Variable sequencing depth            | Models capture efficiency             |
-| **ZINBVCP** | Complex technical variation          | Most comprehensive model              |
+| Model        | Best For                             | Characteristics                           |
+|--------------|--------------------------------------|-------------------------------------------|
+| **NBDM**     | Baseline analysis, well-behaved data | Simple, interpretable, fast               |
+| **ZINB**     | Data with excess zeros               | Handles technical/biological dropouts     |
+| **NBVCP**    | Variable sequencing depth            | Models capture efficiency                 |
+| **ZINBVCP**  | Complex technical variation          | Most comprehensive model                  |
+| **LNM** | Explicit gene-gene correlations     | Low-rank covariance via linear-decoder VAE |
 
 ### When to Use Each Inference Method
 
@@ -483,11 +536,12 @@ normalized = normalize_counts_from_posterior(
 
 ### Parameterization Guide
 
-| Parameterization | Parameters            | Best For                               |
-|------------------|-----------------------|----------------------------------------|
-| **Standard**     | Direct p, r           | Most interpretable                     |
-| **Linked**       | Links p to expression | When p-expression relationship matters |
-| **Odds Ratio**   | Uses odds ratios      | When odds ratios are natural scale     |
+| Parameterization    | Parameters            | Best For                               |
+| ------------------- | --------------------- | -------------------------------------- |
+| **Standard**        | Direct p, r           | Most interpretable                     |
+| **Linked**          | Links p to expression | When p-expression relationship matters |
+| **Odds Ratio**      | Uses odds ratios      | When odds ratios are natural scale     |
+| **Logistic Normal** | r_T, p + VAE      | LNM model (auto-selected)              |
 
 ## Advanced Usage Examples
 

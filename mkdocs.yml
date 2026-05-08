@@ -28,15 +28,15 @@ theme:
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: deep purple
-      accent: amber
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: deep purple
-      accent: amber
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -129,6 +129,10 @@ extra_javascript:
   - javascripts/mathjax.js
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
 
+# Custom brand styling (Altos Labs palette)
+extra_css:
+  - stylesheets/extra.css
+
 # Navigation
 nav:
   - Home: index.md
@@ -141,9 +145,12 @@ nav:
     - theory/index.md
     - Dirichlet-Multinomial Model: theory/dirichlet-multinomial.md
     - Hierarchical Gene-Specific p: theory/hierarchical-p.md
-    - Anchoring Priors: theory/anchoring-priors.md
     - Beta Negative Binomial: theory/beta-negative-binomial.md
+    - Anchoring Priors: theory/anchoring-priors.md
     - Hierarchical Priors: theory/hierarchical-priors.md
+    - GRN Biophysics: theory/grn-biophysics.md
+    - Poisson Log-Normal Model: theory/poisson-lognormal.md
+    - Logistic-Normal Multinomial Model: theory/logistic-normal-multinomial.md
     - Bayesian Denoising: theory/denoising.md
     - Differential Expression: theory/differential-expression.md
     - Model Comparison: theory/model-comparison.md

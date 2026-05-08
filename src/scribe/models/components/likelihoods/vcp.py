@@ -242,6 +242,7 @@ class NBWithVCPLikelihood(Likelihood):
         dims: Dict[str, int],
         batch_size: Optional[int],
         model_config: "ModelConfig",
+        total_count_max: Optional[int] = None,
         vae_cell_fn: Optional[
             Callable[[Optional[jnp.ndarray]], Dict[str, jnp.ndarray]]
         ] = None,
@@ -293,6 +294,7 @@ class NBWithVCPLikelihood(Likelihood):
         :func:`_drop_dataset_axis` so :func:`broadcast_param_to_layout` matches
         collapsed array ranks.
         """
+        del total_count_max
         n_cells = dims["n_cells"]
 
         # Multi-dataset: determine n_datasets for indexing
@@ -803,6 +805,7 @@ class ZINBWithVCPLikelihood(Likelihood):
         dims: Dict[str, int],
         batch_size: Optional[int],
         model_config: "ModelConfig",
+        total_count_max: Optional[int] = None,
         vae_cell_fn: Optional[
             Callable[[Optional[jnp.ndarray]], Dict[str, jnp.ndarray]]
         ] = None,
@@ -852,6 +855,7 @@ class ZINBWithVCPLikelihood(Likelihood):
         :class:`ZeroInflatedNBLikelihood` while preserving VCP-specific
         capture reshaping and clamping.
         """
+        del total_count_max
         n_cells = dims["n_cells"]
 
         # Multi-dataset: determine n_datasets for indexing

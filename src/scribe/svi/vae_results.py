@@ -17,13 +17,13 @@ scribe.svi._latent_space : LatentSpaceMixin providing latent operations.
 scribe.svi._latent_dispatch : Dispatched encoder-dependent operations.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as dc_replace
 from typing import TYPE_CHECKING, Any, Dict, Optional
+import pickle
 
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
-from jax import random
 
 from ..models.config import ModelConfig
 
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from ..core.axis_layout import AxisLayout
 from ..core.serialization import make_model_config_pickle_safe
 from ._core import CoreResultsMixin
-from ._gene_subsetting import GeneSubsettingMixin
+from ._gene_subsetting import GeneSubsettingMixin, _has_flow_params
 from ._latent_space import (
     LatentSpaceMixin,
     _DECODER_KEY,
@@ -39,11 +39,93 @@ from ._latent_space import (
     _FLOW_KEY,
 )
 from ._likelihood import LikelihoodMixin
+from ._lnm_extraction import LNMExtractionMixin
+from ._pln_extraction import PLNExtractionMixin
 from ._mixture_analysis import MixtureAnalysisMixin
 from ._model_helpers import ModelHelpersMixin
 from ._normalization import NormalizationMixin
 from ._parameter_extraction import ParameterExtractionMixin
 from ._sampling import SamplingMixin
+from .variational_results_base import ScribeVariationalResults
+
+
+def _is_pickle_serializable(value: Any) -> bool:
+    """Return ``True`` when ``value`` can be serialized by ``pickle``.
+
+    Parameters
+    ----------
+    value : Any
+        Arbitrary Python object to probe for stdlib ``pickle`` support.
+
+    Returns
+    -------
+    bool
+        ``True`` when ``pickle.dumps(value)`` succeeds, ``False`` otherwise.
+    """
+    try:
+        pickle.dumps(value)
+        return True
+    except Exception:
+        return False
+
+
+def _sanitize_decoder_for_pickle(decoder: Any) -> Any:
+    """Return a pickle-safe decoder copy when head initializers are closures.
+
+    Parameters
+    ----------
+    decoder : Any
+        Decoder module carried by ``ScribeVAEResults._decoder``.
+
+    Returns
+    -------
+    Any
+        Original decoder when no sanitization is needed, otherwise a shallow
+        copy with non-picklable ``bias_init`` / ``kernel_init`` callables
+        replaced by ``None``.
+
+    Notes
+    -----
+    Flax initializers such as ``nn.initializers.constant`` are runtime-local
+    closures (e.g. ``constant.<locals>.init``). Those closures are only needed
+    when layers are initialized, not for inference on already-trained params.
+    During serialization we therefore drop any unpicklable head initializers
+    (``bias_init`` from LNM/PLN log-mean bias, ``kernel_init`` from PLN PCA
+    loadings), preserving every other decoder attribute.
+    """
+    # Preserve behavior for non-decoder or legacy objects that do not expose
+    # ``output_heads``.
+    output_heads = getattr(decoder, "output_heads", None)
+    if output_heads is None:
+        return decoder
+
+    sanitized_heads = []
+    changed = False
+
+    # Rewrite any non-picklable per-head initializer closures so that
+    # stdlib pickle can serialize the VAE results object.  Both
+    # ``bias_init`` and ``kernel_init`` can be ``nn.initializers.constant``
+    # closures (PLN sets both; LNM only sets ``bias_init``).
+    for head in output_heads:
+        replacements: dict = {}
+        for attr in ("bias_init", "kernel_init"):
+            init_fn = getattr(head, attr, None)
+            if init_fn is not None and not _is_pickle_serializable(init_fn):
+                replacements[attr] = None
+        if replacements:
+            sanitized_heads.append(dc_replace(head, **replacements))
+            changed = True
+        else:
+            sanitized_heads.append(head)
+
+    if not changed:
+        return decoder
+
+    sanitized_heads_tuple = tuple(sanitized_heads)
+    if hasattr(decoder, "replace"):
+        return decoder.replace(output_heads=sanitized_heads_tuple)
+    return dc_replace(decoder, output_heads=sanitized_heads_tuple)
+
 
 # ==============================================================================
 # ScribeVAEResults
@@ -61,6 +143,9 @@ class ScribeVAEResults(
     LikelihoodMixin,
     MixtureAnalysisMixin,
     NormalizationMixin,
+    LNMExtractionMixin,
+    PLNExtractionMixin,
+    ScribeVariationalResults,
 ):
     """Results from VAE-based variational inference.
 
@@ -154,6 +239,7 @@ class ScribeVAEResults(
     _gene_coverage: Optional[float] = None
     _gene_coverage_mask: Optional[np.ndarray] = None
     _excluded_gene_names: Optional[list[str]] = None
+    _total_count_max: Optional[int] = None
     _gene_axis_by_key: Optional[Dict[str, int]] = None
     _subset_gene_index: Optional[np.ndarray] = None
 
@@ -221,11 +307,20 @@ class ScribeVAEResults(
             )
 
     def __getstate__(self) -> Dict[str, Any]:
-        """Return pickle-safe state for composable VAE results."""
+        """Return pickle-safe state for composable VAE results.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Instance state with a serialization-safe ``model_config`` and a
+            decoder copy whose non-picklable ``bias_init`` closures have been
+            removed from output heads.
+        """
         state = dict(self.__dict__)
         state["model_config"] = make_model_config_pickle_safe(
             state.get("model_config")
         )
+        state["_decoder"] = _sanitize_decoder_for_pickle(state.get("_decoder"))
         return state
 
     def __setstate__(self, state: Dict[str, Any]) -> None:
@@ -275,6 +370,61 @@ class ScribeVAEResults(
         return _layouts
 
     # ------------------------------------------------------------------
+    # Compositional sampling (parity with Laplace and MCMC results)
+    # ------------------------------------------------------------------
+
+    def get_compositional_samples(
+        self,
+        n_samples: int = 2048,
+        rng_key=None,
+        chunk_size: int = 256,
+        store_samples: bool = True,
+    ):
+        """Draw simplex compositions from the fitted PLN/LNM marginal.
+
+        Auto-dispatches on ``model_config.base_model`` to either
+        :meth:`get_pln_compositional_samples` (PLN family) or
+        :meth:`get_lnm_compositional_samples` (LNM/LNMVCP). The
+        unprefixed name mirrors
+        :meth:`ScribeLaplaceResults.get_compositional_samples` and
+        :meth:`ScribeMCMCResults.get_compositional_samples` so the
+        DE pipeline can call this polymorphically across all three
+        result types.
+
+        Parameters and return shape are documented on the
+        model-specific methods.
+
+        Raises
+        ------
+        NotImplementedError
+            If the result is not a PLN or LNM-family fit (e.g. an
+            NB/DM-family VAE result).
+        """
+        from .vae_results import ScribeVAEResults  # local import to avoid loops
+
+        bm = getattr(self.model_config, "base_model", None)
+        bm_str = str(getattr(bm, "value", bm) or "").lower()
+        if bm_str == "pln":
+            return self.get_pln_compositional_samples(
+                n_samples=n_samples,
+                rng_key=rng_key,
+                chunk_size=chunk_size,
+                store_samples=store_samples,
+            )
+        if bm_str in ("lnm", "lnmvcp"):
+            return self.get_lnm_compositional_samples(
+                n_samples=n_samples,
+                rng_key=rng_key,
+                chunk_size=chunk_size,
+                store_samples=store_samples,
+            )
+        raise NotImplementedError(
+            f"get_compositional_samples not implemented for "
+            f"base_model={bm_str!r}; use the model-prefixed accessor "
+            "directly when applicable."
+        )
+
+    # ------------------------------------------------------------------
     # Gene subsetting override
     # ------------------------------------------------------------------
 
@@ -314,7 +464,7 @@ class ScribeVAEResults(
         ScribeVAEResults
             A new results object with subset decoder.
         """
-        from dataclasses import replace as dc_replace
+        from dataclasses import fields as dc_fields
         from ..models.components.vae_components import (
             DecoderOutputHead,
             MultiHeadDecoder,
@@ -341,31 +491,91 @@ class ScribeVAEResults(
         else:
             gene_index_abs = np.asarray(index)
 
-        # Subset decoder output heads and params
+        # Subset decoder output heads and params.
+        # Keep this logic explicit instead of relying on generic dict slicing:
+        # each decoder head is a separate Flax Dense module keyed as
+        # "head_<param_name>" with shape semantics
+        #   kernel: (hidden_dim, n_genes)
+        #   bias:   (n_genes,)
+        # and must remain synchronized with DecoderOutputHead.output_dim.
         decoder_params = new_params.get(_DECODER_KEY, {})
+        if not isinstance(decoder_params, dict):
+            raise ValueError(
+                "Expected 'vae_decoder$params' to be a dict when "
+                "subsetting VAE results."
+            )
         new_heads = []
         new_dec_params = dict(decoder_params)
+        head_field_names = {f.name for f in dc_fields(DecoderOutputHead)}
 
         for head in self._decoder.output_heads:
-            # Update the output_dim to the new gene count
-            new_head = DecoderOutputHead(
+            head_key = f"head_{head.param_name}"
+            if head_key not in decoder_params:
+                raise ValueError(
+                    "Decoder params missing required head key "
+                    f"'{head_key}' during VAE subset creation."
+                )
+            head_params = dict(decoder_params[head_key])
+
+            # Validate expected tensor ranks before slicing to surface corrupt
+            # states early with actionable errors.
+            kernel = head_params.get("kernel")
+            if kernel is not None and (
+                not hasattr(kernel, "ndim") or int(kernel.ndim) != 2
+            ):
+                raise ValueError(
+                    f"Expected '{head_key}.kernel' to be rank-2; "
+                    f"got shape {getattr(kernel, 'shape', None)}."
+                )
+            bias = head_params.get("bias")
+            if bias is not None and (
+                not hasattr(bias, "ndim") or int(bias.ndim) != 1
+            ):
+                raise ValueError(
+                    f"Expected '{head_key}.bias' to be rank-1; "
+                    f"got shape {getattr(bias, 'shape', None)}."
+                )
+
+            # Build kwargs dynamically so this logic remains compatible with
+            # DecoderOutputHead extensions (e.g., optional bias_init vectors).
+            new_head_kwargs = dict(
                 param_name=head.param_name,
                 output_dim=new_n_genes,
                 transform=head.transform,
             )
-            new_heads.append(new_head)
+            if "bias_init" in head_field_names and hasattr(head, "bias_init"):
+                bias_init = getattr(head, "bias_init")
+                if hasattr(bias_init, "shape") and len(bias_init.shape) == 1:
+                    new_head_kwargs["bias_init"] = bias_init[index]
+                else:
+                    new_head_kwargs["bias_init"] = bias_init
+            new_heads.append(DecoderOutputHead(**new_head_kwargs))
 
-            # Subset head kernel and bias in decoder params
-            head_key = f"head_{head.param_name}"
-            if head_key in decoder_params:
-                head_params = dict(decoder_params[head_key])
-                if "kernel" in head_params:
-                    # kernel shape: (hidden_dim, output_dim) -> subset axis 1
-                    head_params["kernel"] = head_params["kernel"][:, index]
-                if "bias" in head_params:
-                    # bias shape: (output_dim,) -> subset axis 0
-                    head_params["bias"] = head_params["bias"][index]
-                new_dec_params[head_key] = head_params
+            # Slice the decoder head parameters along the gene output axis.
+            if "kernel" in head_params:
+                head_params["kernel"] = head_params["kernel"][:, index]
+            if "bias" in head_params:
+                head_params["bias"] = head_params["bias"][index]
+
+            # Validate the post-slice widths so model/guide reconstruction can
+            # safely reuse this subsetted params dict.
+            if "kernel" in head_params and int(
+                head_params["kernel"].shape[1]
+            ) != int(new_n_genes):
+                raise ValueError(
+                    f"Subsetted '{head_key}.kernel' width "
+                    f"{int(head_params['kernel'].shape[1])} does not match "
+                    f"expected n_genes={int(new_n_genes)}."
+                )
+            if "bias" in head_params and int(
+                head_params["bias"].shape[0]
+            ) != int(new_n_genes):
+                raise ValueError(
+                    f"Subsetted '{head_key}.bias' width "
+                    f"{int(head_params['bias'].shape[0])} does not match "
+                    f"expected n_genes={int(new_n_genes)}."
+                )
+            new_dec_params[head_key] = head_params
 
         # Update decoder params in the full params dict
         new_params = dict(new_params)
@@ -379,7 +589,7 @@ class ScribeVAEResults(
             output_heads=tuple(new_heads),
         )
 
-        return ScribeVAEResults(
+        subset = ScribeVAEResults(
             params=new_params,
             loss_history=self.loss_history,
             n_cells=self.n_cells,
@@ -399,13 +609,30 @@ class ScribeVAEResults(
             _gene_coverage=getattr(self, "_gene_coverage", None),
             _gene_coverage_mask=getattr(self, "_gene_coverage_mask", None),
             _excluded_gene_names=getattr(self, "_excluded_gene_names", None),
+            _total_count_max=getattr(self, "_total_count_max", None),
             _gene_axis_by_key=getattr(self, "_gene_axis_by_key", None),
             _subset_gene_index=gene_index_abs,
-            param_layouts=dict(self.layouts),
+            # Keep only layouts that are still present in the subsetted params
+            # dict to avoid dangling metadata entries from removed keys.
+            param_layouts={
+                key: value
+                for key, value in self.layouts.items()
+                if key in new_params
+            },
             _encoder=self._encoder,
             _decoder=new_decoder,
             _latent_spec=self._latent_spec,
         )
+
+        # Preserve full-dimension params for flow-based guides.
+        # Re-use the existing cached copy when re-subsetting.
+        original_params = getattr(self, "_original_params", None)
+        if original_params is None and _has_flow_params(self.params):
+            original_params = self.params
+        if original_params is not None:
+            subset._original_params = original_params
+
+        return subset
 
     # ------------------------------------------------------------------
     # Classmethod factory

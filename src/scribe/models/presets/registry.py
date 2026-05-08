@@ -56,6 +56,9 @@ from ..components.guide_families import (
 )
 from ..components.likelihoods import (
     Likelihood,
+    LogisticNormalMultinomialLikelihood,
+    LNMWithVCPLikelihood,
+    PoissonLogNormalLikelihood,
     NBWithVCPLikelihood,
     NegativeBinomialLikelihood,
     ZeroInflatedNBLikelihood,
@@ -76,6 +79,9 @@ from ..parameterizations import Parameterization
 # These are the parameters that differ between model types
 MODEL_EXTRA_PARAMS: Dict[str, List[str]] = {
     "nbdm": [],
+    "lnm": [],
+    "lnmvcp": ["p_capture"],
+    "pln": [],
     "zinb": ["gate"],
     "nbvcp": ["p_capture"],
     "zinbvcp": ["gate", "p_capture"],
@@ -84,6 +90,9 @@ MODEL_EXTRA_PARAMS: Dict[str, List[str]] = {
 # Likelihood class registry - maps model type to likelihood class
 LIKELIHOOD_REGISTRY: Dict[str, Type[Likelihood]] = {
     "nbdm": NegativeBinomialLikelihood,
+    "lnm": LogisticNormalMultinomialLikelihood,
+    "lnmvcp": LNMWithVCPLikelihood,
+    "pln": PoissonLogNormalLikelihood,
     "zinb": ZeroInflatedNBLikelihood,
     "nbvcp": NBWithVCPLikelihood,
     "zinbvcp": ZINBWithVCPLikelihood,

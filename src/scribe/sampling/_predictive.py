@@ -1,11 +1,11 @@
 """Variational and prior predictive sampling via NumPyro ``Predictive``."""
 
-from typing import Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from jax import random
 import jax.numpy as jnp
 from numpyro.infer import Predictive
-from numpyro.handlers import block
+from numpyro.handlers import block, condition
 
 
 def sample_variational_posterior(
@@ -58,18 +58,23 @@ def sample_variational_posterior(
     if counts is not None:
         model_args = {**model_args, "counts": counts}
 
+    # Separate model-only kwargs that the guide does not accept (e.g.
+    # total_count_max used by the Multinomial likelihood).
+    guide_args = {k: v for k, v in model_args.items()
+                  if k != "total_count_max"}
+
     # Create predictive object for posterior parameter samples
     predictive_param = Predictive(guide, params=params, num_samples=n_samples)
 
     # Sample parameters from the variational posterior
-    posterior_samples = predictive_param(rng_key, **model_args)
+    posterior_samples = predictive_param(rng_key, **guide_args)
 
     # Also run the model to get deterministic sites.
     # We block the 'counts' site to prevent Predictive from sampling it,
     # which avoids a potentially huge memory allocation.
     blocked_model = block(model, hide=["counts"])
     predictive_model = Predictive(
-        blocked_model, posterior_samples=posterior_samples
+        blocked_model, posterior_samples=posterior_samples, params=params
     )
     model_samples = predictive_model(rng_key, **model_args)
 
@@ -83,6 +88,8 @@ def generate_predictive_samples(
     posterior_samples: Dict,
     model_args: Dict,
     rng_key: random.PRNGKey,
+    params: Optional[Dict] = None,
+    condition_data: Optional[Dict[str, Any]] = None,
 ) -> jnp.ndarray:
     """Generate predictive samples using posterior parameter samples.
 
@@ -104,6 +111,25 @@ def generate_predictive_samples(
         via ``Predictive``.
     rng_key : random.PRNGKey
         JAX random number generator key.
+    params : Dict, optional
+        Optional trained parameter dictionary used to substitute model-side
+        ``numpyro.param`` / ``flax_module`` weights during replay. This is
+        required for VAE models so decoder parameters are not re-initialized.
+    condition_data : Dict[str, Any], optional
+        Per-site values to condition on during the predictive replay,
+        passed through ``numpyro.handlers.condition``. Use this to fix
+        certain latent sites at observed values *while still sampling
+        downstream sites freshly*. The canonical example is the
+        **conditional PPC** for LNM-family models: pass
+        ``{"u_T": observed_totals}`` so the predictive replay uses the
+        per-cell observed library sizes rather than re-drawing them
+        from the global NB. Sites listed here are not present in
+        ``posterior_samples`` (they were ``obs=``-tagged during
+        training and so are not stored in the variational posterior);
+        ``condition`` injects them into the replay's trace before
+        ``Predictive`` substitutes the posterior-sampled latents.
+        ``None`` (the default) reproduces the original behaviour:
+        every latent gets sampled from the model.
 
     Returns
     -------
@@ -124,12 +150,25 @@ def generate_predictive_samples(
             "No array values found (all values are nested dicts?)."
         )
 
+    # When the caller supplies ``condition_data``, wrap the model so
+    # those sites are fixed before NumPyro's ``Predictive`` runs. The
+    # wrapped model is what ``Predictive`` traces. The order matters:
+    # ``condition`` substitutes its sites at sample time; ``Predictive``
+    # then substitutes the posterior-sampled latents for the remaining
+    # sites; the still-free sites (e.g. ``counts``) are sampled fresh
+    # from their distributions, conditioned on whatever upstream values
+    # the conditioning + posterior-sample chain has fixed.
+    model_to_use = model
+    if condition_data is not None and len(condition_data) > 0:
+        model_to_use = condition(model, data=condition_data)
+
     # Create predictive object for generating new data
     predictive = Predictive(
-        model,
+        model_to_use,
         posterior_samples,
         num_samples=num_samples,
         exclude_deterministic=False,
+        params=params if params is not None else {},
     )
 
     # NumPyro's Predictive.__call__ passes **kwargs directly to the
@@ -191,6 +230,7 @@ def generate_ppc_samples(
         posterior_param_samples,
         model_args,
         key_pred,
+        params=params,
     )
 
     return {

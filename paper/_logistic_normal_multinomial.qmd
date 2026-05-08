@@ -1,0 +1,3574 @@
+---
+editor:
+    render-on-save: true
+# bibliography: references.bib
+csl: ieee.csl
+format:
+  html:
+    theme:
+      light: cosmo
+      dark: superhero 
+---
+
+# Logistic-Normal Multinomial model {#sec-logistic-normal-multinomial}
+
+In @sec-dirichlet-multinomial, we derived the factorization of a joint
+distribution of independent negative binomial random variables with shared
+$\hat{p}$ into the product of a negative binomial for the total count and a
+Dirichlet-Multinomial for the composition:
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}) =
+\underbrace{
+\pi\left(u_T \mid r_T, \hat{p}\right)
+}_{\text{Negative Binomial}}
+\times
+\underbrace{
+\pi(\underline{u} \mid u_T, \underline{r})
+}_{\text{Dirichlet-Multinomial}}.
+$${#eq-lnm-dm-recap}
+
+This factorization is elegant and computationally convenient: the
+Dirichlet-Multinomial integral has a closed form (see
+@eq-joint-target-int-dirichlet-multinomial), and the compositional distribution
+depends only on the concentration parameters $\underline{r}$, not on
+$\hat{p}$. However, it carries a fundamental limitation for cross-gene
+correlation analysis: **the correlation structure of the compositions
+$\underline{\rho}$ is entirely determined by the concentration parameters
+$\underline{r}$, with no additional degrees of freedom for modeling direct
+gene-gene dependencies.**
+
+In this section, we develop an alternative compositional model---the
+**Logistic-Normal Multinomial** (LNM)---that replaces the Dirichlet prior on
+compositions with a logistic-normal distribution. This substitution introduces
+an explicit, parameterizable covariance structure in log-ratio space, enabling
+the model to represent arbitrary cross-gene correlations. Beyond the statistical
+motivation, the logistic-normal has a direct biophysical justification: it is
+the steady-state distribution of a system of interacting genes under the linear
+noise approximation, with the covariance determined by the gene regulatory
+network's Jacobian (see @sec-grn-biophysical). The trade-off is that
+the Dirichlet-Multinomial's closed-form integral is lost, requiring approximate
+inference techniques for the per-cell composition latent variable.
+
+## Limitations of the Dirichlet for correlation modeling {#sec-lnm-dirichlet-limitations}
+
+To understand why the Dirichlet distribution is insufficient for modeling
+cross-gene correlations, recall from @sec-dirichlet-multinomial that the
+Dirichlet-Multinomial arises from integrating out a Dirichlet-distributed
+composition vector,
+
+$$
+\underline{\rho} \mid \underline{r} \sim
+\text{Dirichlet}(\underline{r}),
+$${#eq-lnm-dirichlet-prior}
+
+over a multinomial likelihood. The Dirichlet distribution on the $G$-simplex
+has $G$ parameters (the concentrations $r_1, \ldots, r_G$), and its covariance
+structure is fully determined by these concentrations. Specifically, the
+covariance between components $\rho_g$ and $\rho_{g'}$ for $g \neq g'$ is
+
+$$
+\text{Cov}(\rho_g, \rho_{g'}) =
+\frac{-r_g r_{g'}}{r_T^2 (r_T + 1)},
+$${#eq-lnm-dirichlet-covariance}
+
+where $r_T = \sum_{j=1}^G r_j$. Two properties of @eq-lnm-dirichlet-covariance
+are important:
+
+1. **All pairwise covariances are negative.** This is a structural property of
+   the Dirichlet: since the components must sum to one, increasing one
+   component necessarily decreases others, forcing all pairwise covariances to
+   be non-positive. There is no way to make two components positively
+   correlated under a Dirichlet distribution.
+
+2. **The correlation matrix is fully determined by $\underline{r}$.** Given the
+   $G$ concentration parameters, there are no free parameters left to tune the
+   correlation structure. The normalized correlation between $\rho_g$ and
+   $\rho_{g'}$ is
+
+$$
+\text{Corr}(\rho_g, \rho_{g'}) =
+\frac{-\sqrt{r_g r_{g'}}}{\sqrt{(r_T - r_g)(r_T - r_{g'})}},
+$${#eq-lnm-dirichlet-correlation}
+
+which depends only on the ratios $r_g / r_T$.
+
+These properties mean that even with a low-rank variational guide that learns
+correlations in the posterior over $\underline{r}$ (as used in the standard
+SCRIBE model), the generative model itself cannot express cross-gene
+correlations beyond those implicitly imposed by the simplex constraint. As
+demonstrated in our synthetic validation experiments, the low-rank guide's $W$
+factor captures **likelihood-induced coupling**---generic posterior
+correlations arising from shared data and model structure---which overwhelms
+any true generative correlation signal and makes direct extraction of
+gene-gene dependencies unreliable. This statistical limitation also
+has a biophysical counterpart: the Dirichlet arises from the assumption
+that genes transcribe independently, whereas real genes form regulatory
+networks that induce the very correlations the Dirichlet cannot represent
+(see @sec-grn-biophysical for the full derivation).
+
+### In log-ratio space, the limitation is even clearer {#sec-lnm-dirichlet-logr}
+
+Consider the centered log-ratio (CLR) transformation of a
+Dirichlet-distributed vector. If $\underline{\rho} \sim
+\text{Dirichlet}(\underline{r})$, the CLR coordinates
+
+$$
+z_{g,\text{CLR}} = \log \rho_g - \frac{1}{G} \sum_{j=1}^G \log \rho_j
+$${#eq-lnm-clr-def}
+
+have a distribution that is determined entirely by $\underline{r}$. There are
+no additional parameters to control the covariance of
+$\underline{z}_{\text{CLR}}$.
+
+This is precisely the gap that the logistic-normal fills: it places a Gaussian
+distribution in log-ratio space with an explicit covariance matrix, providing
+the missing degrees of freedom.
+
+## The logistic-normal distribution {#sec-lnm-logistic-normal}
+
+The logistic-normal distribution is a probability distribution on the simplex
+obtained by applying the inverse additive log-ratio (ALR) transformation to a
+multivariate normal random variable. We define it in three steps.
+
+### The ALR transformation {#sec-lnm-alr}
+
+The **additive log-ratio** (ALR) transformation maps a point on the
+$G$-simplex to $\mathbb{R}^{G-1}$ by taking log-ratios with respect to a
+reference component (conventionally the last one):
+
+$$
+z_g = \log \frac{\rho_g}{\rho_G}, \quad g = 1, 2, \ldots, G-1,
+$${#eq-lnm-alr-forward}
+
+where $\underline{\rho} = (\rho_1, \ldots, \rho_G)$ satisfies $\rho_g > 0$ and
+$\sum_{g=1}^G \rho_g = 1$. The inverse transformation recovers the simplex point
+from the log-ratios:
+
+$$
+\rho_g = \frac{\exp(z_g)}{1 + \sum_{j=1}^{G-1} \exp(z_j)},
+\quad g = 1, \ldots, G-1,
+$${#eq-lnm-alr-inverse-first}
+
+$$
+\rho_G = \frac{1}{1 + \sum_{j=1}^{G-1} \exp(z_j)}.
+$${#eq-lnm-alr-inverse-last}
+
+This is a bijection between the interior of the $G$-simplex and
+$\mathbb{R}^{G-1}$. The ALR is closely related to the CLR used in
+@sec-diffexp-gaussianity. Given ALR coordinates $\underline{z} \in
+\mathbb{R}^{G-1}$, the CLR coordinates are obtained by the linear centering
+operation (see @sec-lnm-alr-to-clr below).
+
+### Definition of the logistic-normal {#sec-lnm-logistic-normal-def}
+
+A random vector $\underline{\rho}$ on the $G$-simplex follows a **logistic-normal
+distribution** if its ALR transform $\underline{z}$ follows a multivariate
+normal distribution:
+
+$$
+\underline{z} \sim
+\mathcal{N}(\underline{\mu},\,
+\underline{\underline{\Sigma}}),
+\quad \underline{z} \in \mathbb{R}^{G-1},
+$${#eq-lnm-base-mvn}
+
+$$
+\underline{\rho} = \text{ALR}^{-1}(\underline{z}),
+\quad \underline{\rho} \in \Delta^G,
+$${#eq-lnm-simplex-map}
+
+where $\underline{\mu} \in \mathbb{R}^{G-1}$ is the location (mean
+composition in log-ratio space) and $\underline{\underline{\Sigma}}$ is a
+$(G-1) \times (G-1)$ positive-definite covariance matrix. We write
+
+$$
+\underline{\rho} \sim
+\text{LogisticNormal}(\underline{\mu},\,
+\underline{\underline{\Sigma}}).
+$${#eq-lnm-distribution-def}
+
+### Density on the simplex {#sec-lnm-density}
+
+The density of the logistic-normal with respect to Lebesgue measure on the
+simplex is obtained by applying the change-of-variables formula to the
+multivariate normal density. We need the Jacobian of the ALR transformation.
+
+The ALR maps $\underline{\rho} \in \Delta^G$ to
+$\underline{z} \in \mathbb{R}^{G-1}$ via $z_g = \log(\rho_g / \rho_G)$. The
+Jacobian matrix of this transformation has entries
+
+$$
+\frac{\partial z_g}{\partial \rho_j} =
+\begin{cases}
+1 / \rho_g & \text{if } j = g, \\
+0 & \text{if } j \neq g \text{ and } j < G.
+\end{cases}
+$${#eq-lnm-jacobian-entries}
+
+However, the simplex constraint $\rho_G = 1 - \sum_{j=1}^{G-1} \rho_j$ introduces
+additional dependencies. Taking into account the constraint (and applying the
+standard change-of-variables formula for the simplex-to-$\mathbb{R}^{G-1}$
+map), the log-determinant of the Jacobian evaluates to
+
+$$
+\log \left| \det
+\underline{\underline{J}} \right| =
+-\sum_{g=1}^{G} \log \rho_g.
+$${#eq-lnm-log-det-jacobian}
+
+The proof of @eq-lnm-log-det-jacobian follows from recognizing that the
+Jacobian of the **inverse** ALR (from $\underline{z}$ to $\underline{\rho}$) is a
+softmax Jacobian, whose log-determinant is $\sum_{g=1}^G \log \rho_g$. Inverting
+gives the sign flip.
+
+Combining the multivariate normal density with the Jacobian correction, the
+logistic-normal density on the simplex is
+
+$$
+\pi(\underline{\rho} \mid \underline{\mu},
+\underline{\underline{\Sigma}}) =
+\frac{1}{(2\pi)^{(G-1)/2}
+|\underline{\underline{\Sigma}}|^{1/2}}
+\exp\!\left(
+-\frac{1}{2}
+(\underline{z} - \underline{\mu})^\top
+\underline{\underline{\Sigma}}^{-1}
+(\underline{z} - \underline{\mu})
+\right)
+\prod_{g=1}^{G} \frac{1}{\rho_g},
+$${#eq-lnm-density}
+
+where $\underline{z}$ is the ALR transform of $\underline{\rho}$, i.e.,
+$z_g = \log(\rho_g / \rho_G)$ for $g = 1, \ldots, G-1$.
+
+Equivalently, in log-probability form:
+
+$$
+\log \pi(\underline{\rho} \mid \underline{\mu},
+\underline{\underline{\Sigma}}) =
+\log \mathcal{N}(\underline{z} \mid \underline{\mu},
+\underline{\underline{\Sigma}})
+- \sum_{g=1}^{G} \log \rho_g.
+$${#eq-lnm-log-density}
+
+The first term is the standard multivariate normal log-density evaluated at the
+ALR coordinates. The second term is the Jacobian correction from the
+change of variables.
+
+### Connection to CLR coordinates {#sec-lnm-alr-to-clr}
+
+The ALR transformation treats the last component $\rho_G$ as a reference, which
+introduces an asymmetry: permuting the gene labels changes the distribution.
+The **centered log-ratio** (CLR) transformation removes this asymmetry by
+centering:
+
+$$
+z_{g,\text{CLR}} = \log \rho_g - \frac{1}{G} \sum_{j=1}^G \log \rho_j,
+\quad g = 1, \ldots, G.
+$${#eq-lnm-clr-from-simplex}
+
+Given ALR coordinates $\underline{z} \in \mathbb{R}^{G-1}$, the CLR
+coordinates are obtained by the linear transformation
+
+$$
+\underline{z}_{\text{CLR}} =
+\underline{\underline{A}}\, \underline{z},
+$${#eq-lnm-alr-to-clr}
+
+where $\underline{\underline{A}}$ is a $G \times (G-1)$ matrix (see the
+detailed derivation in the ALR-to-CLR transformation used in the differential
+expression framework). Since $\underline{z}$ is Gaussian under the
+logistic-normal, $\underline{z}_{\text{CLR}}$ is also Gaussian:
+
+$$
+\underline{z}_{\text{CLR}} \sim
+\mathcal{N}\!\left(
+\underline{\underline{A}}\,\underline{\mu},\;
+\underline{\underline{A}}\,
+\underline{\underline{\Sigma}}\,
+\underline{\underline{A}}^\top
+\right).
+$${#eq-lnm-clr-gaussian}
+
+This is the property that connects the logistic-normal model to the
+Gaussianity diagnostics in @sec-diffexp-gaussianity: under the logistic-normal,
+the CLR coordinates are **exactly** Gaussian by construction, rather than
+approximately Gaussian as tested by the Jarque-Bera diagnostic.
+
+## Equivalent parameterisations: ALR, CLR, and softmax-normal {#sec-lnm-equivalent-params}
+
+The logistic-normal distribution defined in @sec-lnm-logistic-normal-def
+is a probability distribution on the simplex $\Delta^{G-1}$, but it
+admits several equivalent parameterisations. Each corresponds to a
+different convention for removing the one redundant degree of freedom
+inherent to compositional data: the simplex is a $(G-1)$-dimensional
+manifold embedded in $\mathbb{R}^G$, so any natural ambient
+representation will overcount dimensions by one. Because the
+biophysical derivation of @sec-grn-biophysical naturally produces a
+$G$-dimensional Gaussian on log-abundances (not a $(G-1)$-dimensional
+ALR object), and because the chapter on post-hoc fitting
+(@sec-normalization) is restricted to the ALR form for reasons that do
+not carry over to the present setting, we collect the three relevant
+parameterisations here and clarify which simplex distribution they
+each describe.
+
+### The three parameterisations
+
+Let $\underline{x} \in \mathbb{R}^G$ denote log-abundances, as produced
+by the LNA. The composition is $\underline{\rho} =
+\text{softmax}(\underline{x}) \in \Delta^{G-1}$. Three equivalent
+parameterisations of the resulting distribution on $\underline{\rho}$
+are:
+
+**ALR ($G - 1$ dims, asymmetric, full-rank covariance).** Work with
+the contrasts $\underline{z}_{\text{ALR}} = (x_1 - x_G,\,\ldots,\,x_{G-1} - x_G)
+\in \mathbb{R}^{G-1}$. Place
+$$
+\underline{z}_{\text{ALR}} \sim \mathcal{N}(\underline{\mu}_{\text{ALR}},\,
+\underline{\underline{\Sigma}}_{\text{ALR}}),
+$${#eq-lnm-param-alr}
+with $\underline{\underline{\Sigma}}_{\text{ALR}}$ full-rank in
+$\mathbb{R}^{(G-1)\times(G-1)}$. This is the formulation used in the
+rest of this chapter.
+
+**CLR ($G$ dims, symmetric, rank-deficient covariance).** Work with
+the centered log-abundances $\underline{z}_{\text{CLR}} = \underline{x} -
+\bar{x}\,\underline{1}$, where $\bar{x} = G^{-1}\sum_g x_g$. Place
+$$
+\underline{z}_{\text{CLR}} \sim \mathcal{N}(\underline{\mu}_{\text{CLR}},\,
+\underline{\underline{\Sigma}}_{\text{CLR}}),
+$${#eq-lnm-param-clr}
+with the constraint $\underline{1}^\top \underline{\mu}_{\text{CLR}}
+= 0$ and $\underline{\underline{\Sigma}}_{\text{CLR}}\,\underline{1} =
+\underline{0}$. The covariance is rank-deficient (rank $G-1$ in $G$
+dims), with $\underline{1}$ in its null space.
+
+**Unconstrained softmax-normal ($G$ dims, symmetric, with gauge
+freedom).** Work directly with $\underline{x} \in \mathbb{R}^G$
+without any constraint. Place
+$$
+\underline{x} \sim \mathcal{N}(\underline{\mu}_{\text{full}},\,
+\underline{\underline{\Sigma}}_{\text{full}}).
+$${#eq-lnm-param-softmax}
+The simplex distribution is invariant under
+$\underline{\mu}_{\text{full}} \to \underline{\mu}_{\text{full}} + c\,
+\underline{1}$, so this parameterisation has a one-dimensional
+**gauge freedom**: parameters along the $\underline{1}$ direction are
+not determined by any data.
+
+### These describe the same simplex distribution
+
+The three forms are linked by linear maps. Let $\underline{\underline{A}}
+\in \mathbb{R}^{(G-1) \times G}$ be the contrast matrix from
+@eq-lnm-alr-forward and $\underline{\underline{H}} =
+\underline{\underline{I}}_G - G^{-1}\,\underline{1}\,\underline{1}^\top$
+be the centering projector. Then:
+
+$$
+\underline{\underline{\Sigma}}_{\text{ALR}} =
+\underline{\underline{A}}\,\underline{\underline{\Sigma}}_{\text{full}}\,
+\underline{\underline{A}}^\top,
+\qquad
+\underline{\underline{\Sigma}}_{\text{CLR}} =
+\underline{\underline{H}}\,\underline{\underline{\Sigma}}_{\text{full}}\,
+\underline{\underline{H}}^\top.
+$${#eq-lnm-param-equivalence}
+
+Both maps are many-to-one (the ALR map collapses one dimension; the
+CLR projector annihilates the $\underline{1}$ direction), reflecting
+the gauge freedom. The induced distribution on $\underline{\rho}$ is
+the same in all three cases.
+
+### Why ALR for this chapter
+
+The three parameterisations are *generatively* equivalent but differ
+in their fit to standard variational machinery:
+
+| Parameterisation | Covariance rank | Constraints to enforce | Density on simplex | Variational machinery |
+|------------------|-----------------|------------------------|--------------------|-----------------------|
+| ALR | Full | None | Closed form via Jacobian | `LowRankMVN` direct |
+| CLR | $G - 1$ in $G$ dims | $\sum_g \mu_g = 0$, $\Sigma\,\underline{1} = \underline{0}$ | Closed form via pseudoinverse | Requires manual projection |
+| Softmax-normal | Full | None | Not well-defined (gauge freedom) | Optimizer drifts along $\underline{1}$ |
+
+For the **inference machinery** of @sec-lnm-strategy-a, all three are
+in principle usable: the ELBO never requires evaluating
+$\pi(\underline{\rho})$ as a density on the simplex (the multinomial
+likelihood treats $\underline{\rho}$ as a parameter, not a random
+variable with a density), so the singular-Jacobian obstruction that
+applies to the post-hoc fitting in @sec-normalization does not
+apply here. What does matter is operational simplicity:
+
+- **ALR** has full-rank covariance, no constraints, and integrates
+  directly with NumPyro's `LowRankMultivariateNormal`. It is the
+  lowest-friction choice.
+- **CLR** is more interpretable (symmetric across genes, matches the
+  CLR coordinates used in the differential expression pipeline of
+  @sec-diffexp-gaussianity) but requires either projection
+  steps after each gradient update or a pseudoinverse-aware Gaussian
+  density implementation.
+- **Unconstrained softmax-normal** is the most natural fit to the
+  biophysics but introduces a one-dimensional unidentified direction
+  along which the optimizer wanders, slowing convergence and
+  producing parameters that are interpretable only modulo the gauge.
+  A soft penalty of the form $\lambda\,(\underline{1}^\top
+  \underline{\mu})^2$ can fix the gauge stochastically, but it is
+  just a softer version of what ALR/CLR enforce by construction.
+
+We adopt the **ALR parameterisation** for the rest of the chapter on
+the basis of these computational considerations. The choice does not
+affect:
+
+1. The simplex distribution being modelled (identical in all three
+   forms, as established by @eq-lnm-param-equivalence).
+2. The biophysical interpretation of the rank-$k$ structure (the
+   column space of the loading matrix is gauge-invariant up to a
+   known linear map).
+3. The multinomial likelihood, the ELBO, or any quantity intrinsic
+   to compositions.
+
+After fitting, the ALR loading matrix can be translated into CLR
+coordinates --- which are typically the more natural ones for biological
+interpretation, since they treat all genes symmetrically --- via
+
+$$
+\underline{\underline{W}}_{\text{CLR}} = \underline{\underline{H}}\,
+\begin{bmatrix}
+\underline{\underline{W}}_{\text{ALR}} \\ \underline{0}^\top
+\end{bmatrix},
+$${#eq-lnm-W-alr-to-clr}
+
+i.e., extending $\underline{\underline{W}}_{\text{ALR}}$ with a
+zero row for the reference gene and then row-centering. Clustering on
+the rows of $\underline{\underline{W}}_{\text{CLR}}$ provides a
+gauge-symmetric grouping of genes by shared regulatory program,
+removing the asymmetry inherited from the choice of reference gene
+in the ALR step.
+
+In short: **the ALR is best understood as a gauge-fixing convention,
+not as a substantive modelling decision.** The biophysics, the
+generative model, and the simplex distribution are unchanged under
+the equivalent CLR or unconstrained softmax-normal forms; only the
+operational cost of fitting differs.
+
+## Contrasting the Dirichlet and the logistic-normal {#sec-lnm-contrast}
+
+Before developing the full model, it is instructive to compare the two
+distributions on the simplex side by side.
+
+### Parameter count and correlation freedom
+
+The Dirichlet distribution $\text{Dir}(\underline{r})$ on the $G$-simplex has
+$G$ parameters (the concentrations $r_1, \ldots, r_G$). These $G$ parameters
+control both the mean composition and the covariance structure simultaneously,
+leaving zero free parameters for the correlation structure once the mean is
+fixed.
+
+The logistic-normal
+$\text{LogisticNormal}(\underline{\mu},
+\underline{\underline{\Sigma}})$ has $G - 1$ location parameters and
+$\binom{G}{2}$ covariance parameters (the upper triangle of
+$\underline{\underline{\Sigma}}$, including diagonal entries). The total
+parameter count is
+
+$$
+(G - 1) + \frac{(G-1)G}{2} = \frac{(G-1)(G+2)}{2}.
+$${#eq-lnm-param-count}
+
+For $G = 20{,}000$ genes, storing the full covariance matrix is prohibitive
+($\sim 10^8$ entries). The low-rank factorization addresses this:
+
+$$
+\underline{\underline{\Sigma}} =
+\underline{\underline{W}}\,
+\underline{\underline{W}}^\top +
+\text{diag}(\underline{d}),
+$${#eq-lnm-low-rank-cov}
+
+where $\underline{\underline{W}}$ is $(G-1) \times k$ and $\underline{d}$ is a
+$(G-1)$-vector of positive values. This requires $(G-1)(k+1)$ parameters---
+linear in $G$ for fixed rank $k$. The rank $k$ controls the expressiveness of
+the cross-gene correlations: $k = 0$ gives a diagonal covariance (independent
+genes in log-ratio space), while $k = G - 1$ recovers the full covariance.
+
+### Correlation structure
+
+| Property | Dirichlet | Logistic-Normal |
+|----------|-----------|-----------------|
+| Support | $G$-simplex | $G$-simplex |
+| Parameters | $G$ concentrations | $(G-1)$ location + $(G-1)(k+1)$ covariance |
+| Pairwise correlations | Always negative | Arbitrary sign in log-ratio space |
+| Correlation freedom | 0 (fixed by concentrations) | $\binom{G-1}{2}$ (full) or $O(Gk)$ (low-rank) |
+| Closed-form marginals | Yes (Beta) | No (requires numerical integration) |
+| DM integral | Closed form | No closed form |
+
+The critical row is the last one: the Dirichlet-Multinomial integral has a
+closed form, but the logistic-normal-multinomial does not. This is the
+fundamental trade-off between the two approaches.
+
+## Biophysical justification: steady-state gene regulatory networks {#sec-grn-biophysical}
+
+The preceding section established a *statistical* motivation for the
+logistic-normal: the Dirichlet has zero free correlation parameters,
+while the logistic-normal has $O(G^2)$ (or $O(Gk)$ in low-rank form).
+This section summarizes the *biophysical* motivation developed in full
+detail in @sec-grn-biophysics. We show that the logistic-normal on gene
+compositions is the natural steady-state distribution of a system of
+interacting genes under standard stochastic gene expression theory,
+whereas the Dirichlet-Multinomial arises only under the assumption that
+genes are transcriptionally independent.
+
+### The effective Poisson rate and its dynamics
+
+A key conceptual result developed in @sec-grn-bio-bursty is the precise
+identity of the variable $\lambda_g$ that appears in both models.
+Starting from the one-state bursty promoter---a constitutively active
+promoter producing mRNA in geometrically-distributed bursts---the
+effective Poisson rate $\lambda_g$ is the **expected mRNA abundance**,
+and its exact steady-state distribution is a Gamma
+(@sec-grn-bio-bursty-gamma).
+
+The dynamics of $\lambda_g$ follow from **mass balance**
+(@sec-grn-bio-mass-balance): the rate of change of the mRNA pool equals
+production minus first-order degradation,
+
+$$
+\frac{d\lambda_g}{dt} = k_{i,g} \cdot b_g - \gamma_g \lambda_g,
+$${#eq-lnm-bio-lambda-ode-summary}
+
+where $k_{i,g}$ is the burst initiation rate, $b_g$ the mean burst
+size, and $\gamma_g$ the mRNA degradation rate. Every term has
+unambiguous physical meaning: $k_{i,g} \cdot b_g$ is the mean mRNA
+production rate, and $\gamma_g \lambda_g$ is first-order mRNA
+degradation---the same $\gamma$ that appears in every birth-death model
+of gene expression.
+
+This resolves a potential confusion: $\lambda_g$ is **not** a
+"transcription rate" (a kinetic parameter with units molecules/time),
+but rather the **expected mRNA abundance** conditional on the regulatory
+state. The full derivation is given in @sec-grn-bio-lambda-def.
+
+### Gene regulatory coupling
+
+In a gene regulatory network (GRN), the burst initiation rate of gene
+$g$ is no longer autonomous: it depends on the concentrations of
+transcription factors encoded by other genes. Making the burst rate a
+function of the expression vector,
+$k_{i,g} \to k_{i,g}(\underline{\lambda})$
+(see @sec-grn-bio-grn-coupling), yields the coupled ODE system
+
+$$
+\frac{d\lambda_g}{dt} =
+\underbrace{k_{i,g}(\underline{\lambda}) \cdot
+b_g}_{b_g(\underline{\lambda})}
+- \gamma_g \lambda_g,
+\quad g = 1, \ldots, G.
+$${#eq-lnm-bio-grn-ode}
+
+The production term $b_g(\underline{\lambda})$ encodes the full
+regulatory logic of the network. The degradation term
+$\gamma_g \lambda_g$ is the same mRNA degradation as in the single-gene
+case---it does not change upon introducing gene-gene interactions. This
+derivation rests on several explicit assumptions (fluid limit,
+protein-tracks-mRNA proportionality, constant burst size, and
+first-order degradation), which are enumerated and discussed in
+@sec-grn-bio-assumptions.
+
+### From coupled stochastic dynamics to the logistic-normal
+
+The derivation then proceeds through a standard chain of approximations,
+each developed in full in @sec-grn-biophysics:
+
+1. **Chemical Langevin Equation** (@sec-grn-bio-cle): stochastic noise
+   is added to the coupled ODE, modeling intrinsic gene expression
+   fluctuations.
+2. **Log-space transformation** (@sec-grn-bio-log-space): Itô's lemma
+   transforms the CLE to log-abundance coordinates $x_g = \log \lambda_g$.
+3. **Linear Noise Approximation** (@sec-grn-bio-lna): the drift is
+   linearized around the deterministic steady state, and the noise
+   amplitude is frozen at its steady-state value. The result is a
+   multivariate Ornstein--Uhlenbeck (OU) process in log-space.
+4. **Lyapunov equation** (@sec-grn-bio-lyapunov): the OU steady-state
+   distribution is a multivariate Gaussian,
+   $\underline{x} \sim \mathcal{N}(\underline{\bar{x}},
+   \underline{\underline{\Sigma}})$, where the covariance
+   $\underline{\underline{\Sigma}}$ satisfies the continuous Lyapunov
+   equation
+   $\underline{\underline{J}}\,\underline{\underline{\Sigma}} +
+   \underline{\underline{\Sigma}}\,\underline{\underline{J}}^\top +
+   2\underline{\underline{D}} = 0$.
+5. **Softmax to compositions** (@sec-grn-bio-to-ln): since
+   $\underline{x}$ is Gaussian, the gene composition
+   $\underline{\rho} = \text{softmax}(\underline{x})$ follows a
+   logistic-normal distribution by definition.
+
+The central result is: **the logistic-normal on gene compositions is the
+steady-state distribution of a gene regulatory network under the linear
+noise approximation in log-abundance space.** The covariance
+$\underline{\underline{\Sigma}}$ is the Lyapunov solution encoding the
+regulatory interactions in $\underline{\underline{J}}$ and the
+bursty-transcription noise in $\underline{\underline{D}}$.
+
+### Universality across microscopic models
+
+The GRN ODE above is not specific to the one-state bursty promoter.
+As argued deductively in @sec-grn-bio-deductive, the form
+$\dot{\lambda}_g = b_g(\underline{\lambda}) - \gamma_g \lambda_g$ is a
+necessary consequence of two physical ingredients: first-order mRNA
+degradation and coarse-grainable production. In
+@sec-grn-bio-two-state, we verify this claim explicitly by deriving the
+same ODE from the **two-state promoter** (promoter ON/OFF switching),
+a completely different microscopic model. The microscopic model enters
+only through the noise amplitude, not through the form of the result.
+
+### The low-rank covariance as regulatory architecture
+
+The low-rank factorization
+$\underline{\underline{\Sigma}} = \underline{\underline{W}}\,
+\underline{\underline{W}}^\top + \text{diag}(\underline{d})$ from
+@eq-lnm-low-rank-cov has a natural biophysical interpretation
+(@sec-grn-bio-low-rank): the columns of $\underline{\underline{W}}$
+approximate the dominant transcription-factor programs driving
+compositional variance, while $\underline{d}$ captures gene-intrinsic
+noise. This low-rank structure is not merely a computational convenience
+for handling $G = 20{,}000$ genes---it reflects the biological reality
+that a small number of master regulators control large downstream
+programs. Note that $\underline{\underline{W}}$ is identifiable only up
+to rotation, so its columns define a regulatory *subspace* rather than
+individually named programs.
+
+### Connecting the two models
+
+The DM and LNM arise from different approximation regimes applied to the
+same underlying stochastic gene expression process
+(@sec-grn-bio-connection):
+
+| Model | Biophysical assumption | Steady-state | Correlation structure |
+|-------|------------------------|--------------|----------------------|
+| DM | Independent promoters ($\underline{\underline{J}}$ diagonal) | Product of Gammas (exact) | Fixed by $\underline{r}$; always negative on simplex |
+| LNM | Interacting genes ($\underline{\underline{J}}$ general) | Multivariate Gaussian in log-space (LNA) | Free $\underline{\underline{\Sigma}}$, determined by GRN via Lyapunov |
+
+The LNM trades exactness in the non-interacting, low-expression regime
+against expressivity in the coupled regime. For genes that are both
+weakly coupled and lowly expressed, the DM remains the better marginal
+model. The LNM is a generalization only in the sense of admitting a
+broader class of covariance structures, not in the sense of being a
+uniformly better description of the underlying biophysics.
+
+## The Logistic-Normal Multinomial model {#sec-lnm-model}
+
+We now define the complete generative model that replaces the
+Dirichlet-Multinomial component of @eq-lnm-dm-recap with a logistic-normal
+composition model.
+
+### Generative process for a single cell {#sec-lnm-generative}
+
+The generative process for the UMI counts of a single cell $c$ proceeds in
+three steps.
+
+**Step 1: Total count.** The total UMI count is drawn from a negative binomial
+distribution, exactly as in the standard model:
+
+$$
+u_T^{(c)} \sim \text{NB}(r_T, \hat{p}).
+$${#eq-lnm-total-count}
+
+This component is identical to the first factor in @eq-lnm-dm-recap and is
+unchanged from the Dirichlet-Multinomial model.
+
+**Step 2: Composition in log-ratio space.** Each cell draws its own composition
+latent in ALR space from the population distribution:
+
+$$
+\underline{z}^{(c)} \sim
+\mathcal{N}(\underline{\mu},\,
+\underline{\underline{\Sigma}}),
+$${#eq-lnm-cell-latent}
+
+where $\underline{\mu} \in \mathbb{R}^{G-1}$ is the population mean
+composition in log-ratio space, and $\underline{\underline{\Sigma}} =
+\underline{\underline{W}}\,\underline{\underline{W}}^\top +
+\text{diag}(\underline{d})$ is the population covariance. These are **shared
+parameters** (constant across cells), analogous to $\underline{r}$ in the
+Dirichlet model. The per-cell latent $\underline{z}^{(c)}$ plays the role that
+the Dirichlet draw $\underline{\rho}^{(c)} \sim
+\text{Dir}(\underline{r})$ plays in the standard model: it represents the
+cell-specific composition before multinomial sampling.
+
+**Step 3: Count allocation.** The ALR latent is mapped to the simplex and used
+to allocate the total count across genes:
+
+$$
+\underline{\rho}^{(c)} =
+\text{ALR}^{-1}(\underline{z}^{(c)}),
+$${#eq-lnm-cell-composition}
+
+$$
+\underline{u}^{(c)} \mid u_T^{(c)},\, \underline{\rho}^{(c)} \sim
+\text{Multinomial}(u_T^{(c)},\, \underline{\rho}^{(c)}).
+$${#eq-lnm-multinomial}
+
+**Note: scale--composition decoupling is a modeling choice.** The
+generative process above factorizes the per-cell count vector into an
+independent total $u_T^{(c)} \sim \text{NB}(r_T, \hat p)$ and an
+independent compositional latent $\underline{z}^{(c)} \sim
+\mathcal{N}(\underline{\mu},\,\underline{\underline{\Sigma}})$. This is
+the same factorization that the DM uses, and it inherits the same
+limitation: it is **not** strictly derivable from the GRN biophysics of
+@sec-grn-biophysical. Under the LNA on log-abundances
+$\underline{x}^{(c)}$, the total abundance $\Lambda^{(c)} = \sum_g
+\lambda_g^{(c)}$ and the composition $\underline{\rho}^{(c)} =
+\underline{\lambda}^{(c)} / \Lambda^{(c)}$ are in general correlated,
+because both are functionals of the same Gaussian
+$\underline{x}^{(c)}$.
+
+We adopt the decoupled factorization here for two reasons. First, it
+isolates the contribution of the LNM (the compositional model) from the
+total-count model, allowing the chapter to focus exclusively on the
+correlation structure that motivated the development. Second, in
+practice the per-cell total count is dominated by capture efficiency
+(the technical scaling factor introduced when mRNA molecules are
+sampled into UMIs), which is approximately orthogonal to which genes a
+cell expresses. The bias introduced by treating $u_T$ and
+$\underline{\rho}$ as independent is therefore expected to be small for
+the inferential targets of this work. A principled coupling of the two
+---either by deriving the joint $(u_T, \underline{\rho})$ distribution
+from the LNA directly, or by introducing a hierarchical link between
+$r_T$ and $\underline{\mu}$---is left for future development.
+
+### Joint distribution and the marginalization problem {#sec-lnm-joint}
+
+The joint distribution of the observed counts $\underline{u}^{(c)}$, the
+composition latent $\underline{z}^{(c)}$, and the total count $u_T^{(c)}$ for
+a single cell is
+
+$$
+\pi(\underline{u}^{(c)},\, \underline{z}^{(c)} \mid u_T^{(c)},\,
+\underline{\mu},\, \underline{\underline{\Sigma}}) =
+\underbrace{
+\pi(\underline{u}^{(c)} \mid u_T^{(c)},\,
+\underline{\rho}^{(c)})
+}_{\text{Multinomial}}
+\times
+\underbrace{
+\pi(\underline{z}^{(c)} \mid \underline{\mu},\,
+\underline{\underline{\Sigma}})
+}_{\text{Multivariate Normal}},
+$${#eq-lnm-joint}
+
+where $\underline{\rho}^{(c)} = \text{ALR}^{-1}(\underline{z}^{(c)})$ is a
+deterministic function of $\underline{z}^{(c)}$.
+
+To obtain the marginal likelihood of the observed counts (integrating out the
+latent composition), we would need to evaluate
+
+$$
+\pi(\underline{u}^{(c)} \mid u_T^{(c)},\, \underline{\mu},\,
+\underline{\underline{\Sigma}}) =
+\int_{\mathbb{R}^{G-1}} d\underline{z}^{(c)} \;
+\underbrace{
+\pi(\underline{u}^{(c)} \mid u_T^{(c)},\,
+\text{ALR}^{-1}(\underline{z}^{(c)}))
+}_{\text{Multinomial}}
+\times
+\underbrace{
+\pi(\underline{z}^{(c)} \mid \underline{\mu},\,
+\underline{\underline{\Sigma}})
+}_{\text{MVN}}.
+$${#eq-lnm-marginal-integral}
+
+### Why the integral has no closed form {#sec-lnm-no-closed-form}
+
+It is instructive to compare @eq-lnm-marginal-integral with the corresponding
+integral in the Dirichlet-Multinomial derivation. In @sec-dirichlet-multinomial,
+the Dirichlet-Multinomial arose from
+
+$$
+\pi(\underline{u} \mid u_T, \underline{r}) =
+\int_{\Delta^G} d\underline{\rho} \;
+\underbrace{
+\pi(\underline{u} \mid u_T, \underline{\rho})
+}_{\text{Multinomial}}
+\times
+\underbrace{
+\pi(\underline{\rho} \mid \underline{r})
+}_{\text{Dirichlet}}.
+$${#eq-lnm-dm-integral-recap}
+
+That integral evaluated to a ratio of products of Gamma functions (see
+@eq-joint-target-int-dirichlet-multinomial) because the Multinomial and
+Dirichlet are **conjugate**: the product $\text{Mult} \times \text{Dir}$ has
+the form $\prod_g \rho_g^{u_g + r_g - 1}$, which is the kernel of another
+Dirichlet distribution, and the normalizing constant of that Dirichlet provides
+the closed-form answer.
+
+For the logistic-normal, the analogous product is
+
+$$
+\text{Mult}(\underline{u} \mid u_T,
+\text{ALR}^{-1}(\underline{z})) \times
+\mathcal{N}(\underline{z} \mid \underline{\mu},
+\underline{\underline{\Sigma}})
+\;\propto\;
+\exp\!\left(
+\sum_{g=1}^{G} u_g \log \rho_g(\underline{z})
+- \frac{1}{2}
+(\underline{z} - \underline{\mu})^\top
+\underline{\underline{\Sigma}}^{-1}
+(\underline{z} - \underline{\mu})
+\right),
+$${#eq-lnm-integrand}
+
+where $\rho_g(\underline{z})$ is the nonlinear softmax function of
+$\underline{z}$ (from @eq-lnm-alr-inverse-first and
+@eq-lnm-alr-inverse-last). The first term in the exponent---the multinomial
+log-likelihood---is a **nonlinear** function of $\underline{z}$ (it involves
+the log-softmax), and the second term is a **quadratic** function of
+$\underline{z}$. The product of an exponential-of-nonlinear with an
+exponential-of-quadratic does not reduce to any standard family, and the
+integral over $\underline{z}$ has no known closed form.
+
+This is the fundamental difference between the Dirichlet-Multinomial and the
+Logistic-Normal Multinomial: **conjugacy is lost**. The price of a richer
+correlation structure is the need for approximate inference over the per-cell
+latent $\underline{z}^{(c)}$.
+
+## Full Bayesian model {#sec-lnm-full-model}
+
+Combining the total count model with the logistic-normal composition model
+across all cells, the complete generative model for the observed UMI count
+matrix $\underline{\underline{U}}$ is
+
+$$
+\pi(\underline{\underline{U}},\,
+\{\underline{z}^{(c)}\}_{c=1}^{C} \mid
+r_T, \hat{p}, \underline{\mu},
+\underline{\underline{\Sigma}}) =
+\prod_{c=1}^{C} \left[
+    \pi(u_T^{(c)} \mid r_T, \hat{p})
+    \times
+    \pi(\underline{u}^{(c)} \mid u_T^{(c)},
+    \text{ALR}^{-1}(\underline{z}^{(c)}))
+    \times
+    \pi(\underline{z}^{(c)} \mid \underline{\mu},
+    \underline{\underline{\Sigma}})
+\right],
+$${#eq-lnm-full-joint}
+
+with priors on the model parameters:
+
+$$
+r_T \sim \pi(r_T), \qquad
+\hat{p} \sim \text{Beta}(\alpha_p, \beta_p),
+$${#eq-lnm-priors-total}
+
+$$
+\underline{\mu} \sim
+\mathcal{N}(\underline{0}, \sigma_\mu^2 \underline{\underline{I}}),
+\qquad
+\underline{\underline{W}} \sim \pi(\underline{\underline{W}}),
+\qquad
+\underline{d} \sim \pi(\underline{d}).
+$${#eq-lnm-priors-composition}
+
+The posterior of interest is
+
+$$
+\pi(r_T, \hat{p}, \underline{\mu},
+\underline{\underline{\Sigma}},
+\{\underline{z}^{(c)}\}_{c=1}^{C} \mid
+\underline{\underline{U}})
+\propto
+\pi(\underline{\underline{U}},\,
+\{\underline{z}^{(c)}\}_{c=1}^{C} \mid
+r_T, \hat{p}, \underline{\mu},
+\underline{\underline{\Sigma}})
+\times \pi(r_T, \hat{p}, \underline{\mu},
+\underline{\underline{\Sigma}}).
+$${#eq-lnm-posterior}
+
+Note the distinction between two types of latent variables:
+
+- **Population parameters** ($r_T$, $\hat{p}$, $\underline{\mu}$,
+  $\underline{\underline{W}}$, $\underline{d}$): shared across all cells,
+  analogous to $\underline{r}$ and $\hat{p}$ in the standard model.
+- **Per-cell latents** ($\underline{z}^{(c)}$ for $c = 1, \ldots, C$): the
+  composition of each individual cell in log-ratio space. These play the role
+  that $\underline{\rho}^{(c)} \sim \text{Dir}(\underline{r})$ plays in the
+  DM model, except that they could not be marginalized analytically and must
+  be inferred.
+
+## Inference strategies {#sec-lnm-inference}
+
+The loss of conjugacy means that the per-cell latent
+$\underline{z}^{(c)}$ cannot be marginalized out analytically. Several
+strategies exist for handling this integral within the SCRIBE variational
+inference framework. We present them in order of increasing approximation,
+discussing the trade-offs of each.
+
+### Strategy A: Explicit per-cell latent variable {#sec-lnm-strategy-a}
+
+The most direct approach is to treat each $\underline{z}^{(c)}$ as an explicit
+latent variable in the probabilistic model and provide a variational posterior
+for it.
+
+**Model.** In NumPyro notation, the model samples $\underline{z}^{(c)}$ inside
+a cell plate:
+
+$$
+\underline{z}^{(c)} \sim
+\mathcal{N}(\underline{\mu},\,
+\underline{\underline{\Sigma}}),
+\quad c = 1, \ldots, C,
+$${#eq-lnm-strategy-a-prior}
+
+and then observes $\underline{u}^{(c)}$ conditioned on
+$\text{ALR}^{-1}(\underline{z}^{(c)})$ via the Multinomial.
+
+**Guide.** The variational guide provides an approximate posterior
+$q(\underline{z}^{(c)})$ for each cell. Two sub-strategies are possible:
+
+**(A1) Per-cell variational parameters.** Each cell has its own variational
+mean $\underline{m}^{(c)}$ and (diagonal or low-rank) variational covariance.
+The number of variational parameters scales as $O(C \times (G-1))$, which for
+$C = 100{,}000$ and $G = 20{,}000$ yields $\sim 2 \times 10^9$ parameters.
+This is large but manageable with modern hardware, especially since the
+per-cell parameters are only $(G-1)$-dimensional vectors (or low-rank
+structured).
+
+**(A2) Amortized inference.** An encoder network
+$f_\phi(\underline{u}^{(c)}) \to (\underline{m}_\phi(\underline{u}^{(c)}),\,
+\underline{s}_\phi^2(\underline{u}^{(c)}))$ maps the observed counts to the
+parameters of a diagonal Gaussian variational posterior
+
+$$
+q_\phi(\underline{z}^{(c)} \mid \underline{u}^{(c)}) =
+\mathcal{N}\!\left(
+\underline{m}_\phi(\underline{u}^{(c)}),\,
+\text{diag}(\underline{s}_\phi^2(\underline{u}^{(c)}))
+\right).
+$${#eq-lnm-strategy-a2-encoder}
+
+This reduces the variational parameter count to the size of the encoder
+network (independent of $C$) and naturally generalizes to held-out cells.
+
+**Why a diagonal $q_\phi$ suffices despite correlated genes.** That
+$q_\phi$ is diagonal does *not* mean the model has lost cross-gene
+correlations. Those correlations live in the **prior**
+$\mathcal{N}(\underline{\mu}, \underline{\underline{\Sigma}})$, whose
+low-rank covariance $\underline{\underline{\Sigma}} =
+\underline{\underline{W}}\,\underline{\underline{W}}^\top +
+\text{diag}(\underline{d})$ is a population parameter learned from the
+data. The encoder's only job is to locate each cell's posterior mean in
+log-ratio space and a diagonal width around it; the KL term in the ELBO
+ties the spread of those per-cell posteriors back to the population
+covariance, so $\underline{\underline{W}}$ and $\underline{d}$ receive a
+direct gradient from the data even though the per-cell $q_\phi$ is
+factorized. A diagonal posterior is therefore not a model of independent
+genes---it is the natural amortized approximation to a Gaussian whose
+*structured* correlations are encoded once, globally, in the prior.
+
+**Closed-form Gaussian--Gaussian KL.** Because both $q_\phi(\underline{z}^{(c)}
+\mid \underline{u}^{(c)})$ and the prior $\mathcal{N}(\underline{\mu},
+\underline{\underline{\Sigma}})$ are Gaussian, the KL term in the ELBO has
+a closed form:
+
+$$
+\text{KL}\!\left(
+q_\phi(\underline{z}^{(c)} \mid \underline{u}^{(c)})
+\;\big\|\;
+\mathcal{N}(\underline{\mu},\, \underline{\underline{\Sigma}})
+\right) =
+\frac{1}{2} \left[
+\text{tr}\!\left(\underline{\underline{\Sigma}}^{-1}\,
+\text{diag}(\underline{s}_\phi^2)\right)
++ (\underline{m}_\phi - \underline{\mu})^\top
+\underline{\underline{\Sigma}}^{-1}
+(\underline{m}_\phi - \underline{\mu})
+- (G - 1)
++ \log \frac{|\underline{\underline{\Sigma}}|}{\prod_{g=1}^{G-1} s_{\phi,g}^2}
+\right].
+$${#eq-lnm-closed-form-kl}
+
+Both $\underline{\underline{\Sigma}}^{-1}$ and $\log|\underline{\underline{\Sigma}}|$
+are computed in $O(Gk^2 + k^3)$ via the Woodbury identity
+(@eq-lnm-woodbury) and the matrix determinant lemma (@eq-lnm-log-det).
+Only the multinomial expectation
+$\left\langle \log \text{Mult}(\underline{u}^{(c)} \mid u_T^{(c)},
+\text{ALR}^{-1}(\underline{z}^{(c)})) \right\rangle_{q_\phi}$ requires reparameterized
+sampling. This is a meaningful variance-reduction win and should be built
+into the loss from the outset rather than letting the framework sample
+the KL term too. Under the linear-decoder reparameterization developed
+in @sec-lnm-linear-vae-equivalence, this expression collapses further to
+the canonical Kingma--Welling VAE KL between two diagonal Gaussians
+(@eq-lnm-vae-standard-kl), with $O(k)$ cost per cell and no Woodbury
+precompute required.
+
+**Mapping onto SCRIBE's existing infrastructure.** SCRIBE has *two*
+amortization primitives that should not be confused:
+
+- The `AmortizedGuide` family is designed to amortize a per-data-point
+  *parameter* whose prior is fixed at the model level (e.g., the
+  cell-specific capture probability $p_{\text{capture}}^{(c)}$).
+- The `VAELatentGuide` family (with its `GaussianEncoder`,
+  `MultiHeadDecoder`, and `GaussianLatentSpec`) is designed for per-cell
+  *latent variables* that are sampled in the guide and consumed downstream
+  in the model.
+
+The LNM matches the second pattern, so the natural fit is
+`VAELatentGuide` with a Gaussian latent of dimension $G - 1$. Mapped
+naively, this would require two extensions to the existing VAE pipeline:
+
+1. The prior on the latent would be a *learnable, low-rank* Gaussian
+   $\mathcal{N}(\underline{\mu},\, \underline{\underline{W}}\,
+   \underline{\underline{W}}^\top + \text{diag}(\underline{d}))$, with
+   $\underline{\mu}$, $\underline{\underline{W}}$, $\underline{d}$
+   registered as ordinary population parameters (each carrying its own
+   variational guide). The default `GaussianLatentSpec` assumes a fixed
+   $\mathcal{N}(\underline{0},\, \underline{\underline{I}})$ prior and
+   would need to be generalized to read its prior parameters from the
+   model graph.
+2. The "decoder" path would be the deterministic map
+   $\underline{z} \mapsto \text{ALR}^{-1}(\underline{z}) =
+   \underline{\rho}$, fed straight into the multinomial likelihood. With
+   no neural decoder to train, the simplest implementation would be a
+   passthrough that lets the
+   `LogisticNormalMultinomialLikelihood` consume $\underline{z}^{(c)}$
+   directly and apply the inverse ALR internally.
+
+Both extensions can be avoided by adopting an equivalent
+reparameterization of the LNM as a linear-decoder VAE with a
+$k$-dimensional bottleneck. Under that reparameterization, the standard
+$\mathcal{N}(\underline{0},\, \underline{\underline{I}}_k)$ prior and a
+single $\text{Dense}(G-1)$ decoder layer with identity activation
+recover the same generative model with no changes to the existing VAE
+infrastructure. We develop this view in
+@sec-lnm-linear-vae-equivalence and adopt it as the implementation path.
+
+**Advantages:**
+
+- No approximation of the likelihood: the ELBO is a valid lower bound.
+- Standard SVI machinery applies directly; mini-batching over cells is
+  straightforward.
+- The reparameterization trick applies to the Gaussian latent, enabling
+  low-variance gradient estimates.
+
+**Disadvantages:**
+
+- Large number of latent variables (one $(G-1)$-vector per cell).
+- The ELBO requires evaluating the multinomial log-probability for each cell,
+  which involves the log-softmax---a $O(G)$ operation per cell.
+
+### Strategy B: Laplace approximation {#sec-lnm-strategy-b}
+
+Instead of maintaining per-cell variational parameters, we can approximate the
+posterior $\pi(\underline{z}^{(c)} \mid \underline{u}^{(c)}, \underline{\mu},
+\underline{\underline{\Sigma}})$ using a Laplace approximation centered at
+the mode.
+
+**Procedure.** For each cell $c$, find the MAP estimate
+
+$$
+\underline{z}^{(c)}_\star = \arg\max_{\underline{z}} \left[
+\log \pi(\underline{u}^{(c)} \mid u_T^{(c)},
+\text{ALR}^{-1}(\underline{z}))
++ \log \pi(\underline{z} \mid \underline{\mu},
+\underline{\underline{\Sigma}})
+\right],
+$${#eq-lnm-laplace-map}
+
+and approximate the posterior as
+
+$$
+q(\underline{z}^{(c)}) =
+\mathcal{N}(\underline{z}^{(c)}_\star,\,
+\underline{\underline{H}}^{(c)^{-1}}),
+$${#eq-lnm-laplace-approx}
+
+where $\underline{\underline{H}}^{(c)}$ is the Hessian of the negative
+log-posterior at $\underline{z}^{(c)}_\star$.
+
+**Advantages:**
+
+- Deterministic: no sampling noise in the gradient estimates.
+- The Hessian has a known structure (sum of multinomial Fisher information and
+  prior precision), enabling efficient computation.
+
+**Disadvantages:**
+
+- Requires a per-cell inner optimization loop (Newton's method or similar).
+- The quality of the approximation depends on how well the posterior is
+  approximated by a Gaussian, which may be poor for low-count cells.
+- Not naturally compatible with mini-batching: the inner optimization must
+  converge for each cell in the mini-batch.
+
+### Strategy C: Pólya-Gamma augmentation {#sec-lnm-strategy-c}
+
+The logistic-normal-multinomial has a connection to the Pólya-Gamma
+augmentation scheme developed for logistic regression models. By introducing
+auxiliary Pólya-Gamma random variables, the nonlinear log-softmax term in
+@eq-lnm-integrand can be replaced by a quadratic form in $\underline{z}$,
+making the conditional posterior of $\underline{z}$ Gaussian.
+
+This strategy is well-developed for binary and multi-class logistic regression
+but becomes computationally expensive for large $G$, as it requires one
+Pólya-Gamma variable per gene per cell. We mention it for completeness but do
+not develop it further here.
+
+### Strategy D: Moment-matched Dirichlet proxy {#sec-lnm-strategy-d}
+
+A pragmatic alternative is to moment-match the logistic-normal to a Dirichlet
+distribution and use the Dirichlet-Multinomial closed form for the likelihood,
+while extracting cross-gene correlations from the logistic-normal parameters
+$\underline{\mu}$ and $\underline{\underline{\Sigma}}$ after fitting.
+
+**Procedure.** Given $\underline{\mu}$ and
+$\underline{\underline{\Sigma}}$, compute the mean and variance of each
+composition component under the logistic-normal (by Monte Carlo or
+approximation), then find Dirichlet concentrations
+$\underline{r}_{\text{proxy}}$ that match these moments.
+
+**Advantages:**
+
+- Retains the closed-form DM likelihood: no per-cell latent variables.
+- Compatible with the entire existing SCRIBE inference pipeline.
+- Computational cost unchanged from the standard model.
+
+**Disadvantages:**
+
+- **The likelihood gradient on $\underline{\underline{W}}$ is structurally
+  zero.** Because the moment-matched DM is parameterized only by the
+  concentrations $\underline{r}_{\text{proxy}}$, which depend solely on the
+  *marginal* moments of the logistic-normal (not on the off-diagonal entries
+  of $\underline{\underline{\Sigma}}$), the likelihood term in the ELBO
+  carries no information about the cross-gene correlation factor
+  $\underline{\underline{W}}$. Any signal in $\underline{\underline{W}}$
+  comes purely from prior regularization, not from the data---which puts
+  this strategy in essentially the same regime that already produced the
+  null cluster-recovery results on synthetic data with the standard DM
+  model. Strategy D therefore inherits the very problem the LNM was
+  designed to fix.
+- The quality of the Dirichlet approximation depends on how close the
+  logistic-normal is to a Dirichlet---which is precisely the setting where
+  the logistic-normal is most needed (i.e., when correlations are strong).
+
+### Summary of inference strategies
+
+| Strategy | Per-cell latents | Likelihood | Gradient quality | Scalability |
+|----------|-----------------|------------|------------------|-------------|
+| A1: Explicit (per-cell) | $O(C(G{-}1))$ params | Exact | Reparameterized | Medium |
+| A2: Explicit (amortized) | Encoder network | Exact | Reparameterized | High |
+| B: Laplace | None (point estimate) | Approximate | Deterministic | Medium |
+| C: Pólya-Gamma | $O(CG)$ auxiliary | Exact (augmented) | Gibbs | Low for large $G$ |
+| D: DM proxy | None | Approximate (DM) | Standard | High |
+
+The choice between strategies depends on the balance between statistical
+fidelity and computational cost. Strategy A2 (amortized) is the most
+natural fit for SCRIBE's existing architecture, as the framework already
+supports VAE-style amortized inference for per-cell latents through the
+`VAELatentGuide` family (see the implementation notes in
+@sec-lnm-strategy-a). Strategy D is the least invasive but, as noted
+above, its likelihood gradient on $\underline{\underline{W}}$ is
+structurally zero, so it cannot recover correlations from data---it only
+retains the prior on $\underline{\underline{W}}$. Strategies B and C are
+included for completeness; neither is competitive with A2 at the dataset
+scales of interest.
+
+## Inference via Laplace approximation {#sec-lnm-laplace-inference}
+
+In addition to the encoder-based variational path (Strategy A2,
+@sec-lnm-strategy-a), SCRIBE exposes a parallel encoder-free
+inference path under ``inference_method="laplace"``. This section
+derives the LNM analogue of the PLN Laplace inference described
+in [@sec-pln-laplace-inference] of the Poisson--LogNormal chapter,
+working out the ALR-space gauge fix that makes the Laplace
+approximation well-defined for the multinomial likelihood and the
+two Newton variants that scribe implements (one for each
+``d_mode``).
+
+### Why Laplace? {#sec-lnm-laplace-motivation}
+
+The encoder VAE on the LNM has a known empirical failure mode on
+single-cell data: **encoder collapse on per-cell capture or library-
+size latents**. With the biology-informed prior on capture
+efficiency (@sec-lnm-totals-parameterizations), the variational
+posterior $q_\phi(p_{\text{capture},c} \mid \underline{u}^{(c)})$
+can collapse to a near-delta at the prior mean
+$L_c / M_0$. This is a local optimum on the ELBO: the KL term
+vanishes when $q$ matches the prior, and the reconstruction loss
+is locally optimal because $E[N_c] = L_c$ already gives correct
+per-cell means. The encoder therefore has no gradient pressure to
+keep $q$ wide, and the residual cell-to-cell variability gets
+absorbed into the global NB-on-totals dispersion parameter
+$r_T$, which collapses small. The downstream consequence is a
+posterior-predictive distribution whose right-skewed NB tail
+spreads counts over a wider range than the data actually exhibits,
+even though per-cell means match observed values.
+
+The Laplace path is *structurally* immune to this failure mode
+because it has no encoder. Each cell's posterior approximation is
+computed locally from a per-cell Newton-iterated MAP and the
+inverse-Hessian curvature at that MAP, producing an automatically
+right-sized Gaussian. There is no parametric variational family
+that can collapse, no amortizer with limited capacity, and no
+aggregate-posterior drift across cells. The price is that
+inference for new cells (held-out generalisation) requires
+running Newton on demand rather than a single encoder forward
+pass --- see [@sec-lnm-laplace-tradeoffs] below.
+
+### Gauge fix in ALR coordinates {#sec-lnm-laplace-gauge}
+
+A direct Laplace approximation in the *full* $G$-logit space
+fails: the multinomial likelihood
+$$
+\ell(\underline{a}) =
+\underline{u}^\top \underline{a}
+- u_T \cdot \mathrm{logsumexp}(\underline{a})
+$${#eq-lnm-laplace-multinomial-loglik}
+is invariant under adding a common scalar to every component of
+$\underline{a}$ (because $\mathrm{softmax}(\underline{a} + c \mathbf{1})
+= \mathrm{softmax}(\underline{a})$). The corresponding Hessian
+$$
+-\nabla^2_{\underline{a}}\,\ell =
+u_T\!\left(
+\mathrm{diag}(\underline{\rho}) - \underline{\rho}\,\underline{\rho}^\top
+\right),
+\qquad
+\underline{\rho} = \mathrm{softmax}(\underline{a}),
+$${#eq-lnm-laplace-fisher-full}
+has $\mathbf{1}$ as an exact null vector (verify: $\mathbf{1}$
+times the bracketed expression equals $\sum_g \rho_g \mathbf{1}
+- \mathbf{1}\,(\sum_g \rho_g) = 0$). If the prior covariance $\underline{\underline{\Sigma}}$
+also fails to penalise the $\mathbf{1}$-direction --- which
+happens whenever $\underline{\underline{W}}\,\mathbf{1}_k$ has a
+non-zero component along $\mathbf{1}$, common with low-rank-only
+priors --- then the joint Hessian is singular and the Laplace
+determinant blows up.
+
+The remedy is the gauge fix already built into SCRIBE's LNM
+parameterisation: the additive log-ratio (ALR) representation
+$\underline{y} \in \mathbb{R}^{G-1}$ that fixes the reference
+gene's logit at zero (@sec-lnm-equivalent-params). In ALR
+coordinates the redundant $\mathbf{1}$-direction is gone by
+construction, and with a proper Gaussian prior on $\underline{y}$,
+the conditional posterior $\pi(\underline{y} \mid \underline{u})$
+is log-concave and the negative Hessian is strictly positive
+definite. Laplace is well-defined.
+
+This argument leaves one design choice: **which variable to do
+Laplace over.** Three candidates are mathematically valid:
+
+1. The factor scores $\underline{z} \in \mathbb{R}^k$ with the
+   linear-decoder relation $\underline{y} = \underline{\mu} +
+   \underline{\underline{W}}\,\underline{z}$ (and no diagonal
+   residual). Hessian is $k \times k$. Cheap but only valid
+   when ``d_mode='low_rank'``.
+2. The ALR logits $\underline{y} \in \mathbb{R}^{G-1}$ with
+   prior $\underline{y} \sim \mathcal{N}(\underline{\mu},
+   \underline{\underline{W}}\,\underline{\underline{W}}^\top +
+   \mathrm{diag}(\underline{d}))$. Hessian is $(G-1) \times (G-1)$.
+   Needs Woodbury but accommodates ``d_mode='learned'``.
+3. The joint $(\underline{z}, \underline{\epsilon})$ with
+   $\underline{y} = \underline{\mu} + \underline{\underline{W}}\,
+   \underline{z} + \sqrt{\underline{d}} \odot
+   \underline{\epsilon}$. Higher-dimensional than (2) for no gain;
+   mentioned for completeness.
+
+SCRIBE implements the first two and dispatches at engine setup on
+``model_config.d_mode``. We work out both below.
+
+### Per-cell joint log-density {#sec-lnm-laplace-density}
+
+Throughout, $\underline{u}^{(c)} \in \mathbb{N}^G$ denotes the
+observed counts for cell $c$, $u_T^{(c)} = \sum_g u_g^{(c)}$ the
+observed total, $\underline{u}_{\text{alr}}^{(c)}$ the
+non-reference subvector (length $G-1$), and we drop the cell
+index when it is unambiguous.
+
+#### Variant A: Laplace over $\underline{z}$ ($\mathtt{d\_mode='low\_rank'}$) {#sec-lnm-laplace-density-z}
+
+The per-cell joint log-density (up to additive constants in
+$\underline{z}$) is
+
+$$
+f(\underline{z}) =
+\underline{u}_{\text{alr}}^\top
+(\underline{\mu} + \underline{\underline{W}}\,\underline{z})
+- u_T \cdot \mathrm{logsumexp}(\underline{a}_{\text{full}}(\underline{z}))
+- \tfrac{1}{2}\,\underline{z}^\top \underline{z},
+$${#eq-lnm-laplace-joint-density-z}
+
+where $\underline{a}_{\text{full}}(\underline{z}) \in \mathbb{R}^G$
+is the augmented logit vector built by inserting a zero at the
+reference position into $\underline{\mu} +
+\underline{\underline{W}}\,\underline{z}$. The gradient is
+
+$$
+\nabla_{\underline{z}}\,f =
+\underline{\underline{W}}^\top
+\bigl(
+\underline{u}_{\text{alr}} - u_T\,\underline{\rho}_{\text{alr}}(\underline{z})
+\bigr)
+- \underline{z},
+$${#eq-lnm-laplace-gradient-z}
+
+with $\underline{\rho}_{\text{alr}}(\underline{z}) =
+\mathrm{softmax}(\underline{a}_{\text{full}}(\underline{z}))$
+restricted to the $G-1$ non-reference coordinates. The Hessian is
+
+$$
+-\underline{\underline{H}}_z =
+\underline{\underline{W}}^\top \underline{\underline{M}}_{\text{alr}}\,
+\underline{\underline{W}} + \underline{\underline{I}}_k,
+\qquad
+\underline{\underline{M}}_{\text{alr}} =
+u_T\!\left(
+\mathrm{diag}(\underline{\rho}_{\text{alr}})
+- \underline{\rho}_{\text{alr}}\,\underline{\rho}_{\text{alr}}^\top
+\right),
+$${#eq-lnm-laplace-hessian-z}
+
+which is strictly positive definite ($\underline{\underline{I}}_k$
+contributes a strictly-positive-definite term;
+$\underline{\underline{W}}^\top \underline{\underline{M}}_{\text{alr}}\,
+\underline{\underline{W}}$ is positive semi-definite as a
+covariance-like matrix). Newton solves
+$-\underline{\underline{H}}_z\,\underline{\delta} =
+\nabla_{\underline{z}}\,f$ via a $k \times k$ Cholesky --- no
+Woodbury needed --- so the per-step cost is $O(k^3)$ per cell.
+
+#### Variant B: Laplace over $\underline{y}_{\text{alr}}$ ($\mathtt{d\_mode='learned'}$) {#sec-lnm-laplace-density-y}
+
+When the generative model carries a learned diagonal residual
+($\underline{\underline{\Sigma}} = \underline{\underline{W}}\,
+\underline{\underline{W}}^\top + \mathrm{diag}(\underline{d})$
+with $\underline{d} > 0$), Laplace over $\underline{z}$ alone
+misses the residual. The natural Laplace target is $\underline{y}
+\in \mathbb{R}^{G-1}$ with the full prior covariance:
+
+$$
+f(\underline{y}) =
+\underline{u}_{\text{alr}}^\top \underline{y}
+- u_T \cdot \mathrm{logsumexp}(\underline{a}_{\text{full}}(\underline{y}))
+- \tfrac{1}{2}\,(\underline{y} - \underline{\mu})^\top
+\underline{\underline{\Sigma}}^{-1}\,(\underline{y} - \underline{\mu}).
+$${#eq-lnm-laplace-joint-density-y}
+
+The gradient is
+
+$$
+\nabla_{\underline{y}}\,f =
+\underline{u}_{\text{alr}} - u_T\,\underline{\rho}_{\text{alr}}(\underline{y})
+- \underline{\underline{\Sigma}}^{-1}\,(\underline{y} - \underline{\mu}),
+$${#eq-lnm-laplace-gradient-y}
+
+and the negative Hessian decomposes as
+
+$$
+-\underline{\underline{H}}_y =
+\underline{\underline{M}}_{\text{alr}}
++ \underline{\underline{\Sigma}}^{-1}.
+$${#eq-lnm-laplace-hessian-y}
+
+We rewrite this in the form scribe's PLN Newton kernel already
+handles, plus a rank-1 correction:
+
+$$
+-\underline{\underline{H}}_y =
+\underbrace{
+u_T\,\mathrm{diag}(\underline{\rho}_{\text{alr}})
++ \underline{\underline{\Sigma}}^{-1}
+}_{\displaystyle \underline{\underline{A}}_y}
+- u_T\,\underline{\rho}_{\text{alr}}\,\underline{\rho}_{\text{alr}}^\top.
+$${#eq-lnm-laplace-A-y-decomp}
+
+The matrix $\underline{\underline{A}}_y$ has the same low-rank-
+plus-diagonal structure as PLN's $\underline{\underline{A}}$
+(@sec-pln-laplace-woodbury), with the diagonal entries
+$u_T\,\underline{\rho}_{\text{alr}} + 1/\underline{d}$ replacing
+PLN's $\underline{\lambda} + 1/\underline{d}$. We can therefore
+reuse the same Woodbury factorisation:
+
+$$
+\underline{\underline{A}}_y^{-1}\,\underline{v} =
+\underline{m}^{-1} \odot \underline{v}
++ (\underline{m}^{-1} \odot \underline{\underline{V}})\,
+\underline{\underline{S}}^{-1}\,
+\underline{\underline{V}}^\top\,
+(\underline{m}^{-1} \odot \underline{v}),
+$${#eq-lnm-laplace-A-y-inv}
+
+with $\underline{m} = u_T\,\underline{\rho}_{\text{alr}} + 1/
+\underline{d}$, $\underline{\underline{V}} =
+\mathrm{diag}(1/\underline{d})\,\underline{\underline{W}}$, and
+$\underline{\underline{S}} =
+\underline{\underline{K}}_{\text{LNM}} -
+\underline{\underline{V}}^\top \mathrm{diag}(\underline{m}^{-1})\,
+\underline{\underline{V}}$ where
+$\underline{\underline{K}}_{\text{LNM}} = \underline{\underline{I}}_k
++ \underline{\underline{W}}^\top \mathrm{diag}(1/\underline{d})\,
+\underline{\underline{W}}$. The cost is $O(G \cdot k + k^3)$ per
+solve, identical to the PLN scaling.
+
+The rank-1 correction $-u_T\,\underline{\rho}_{\text{alr}}\,
+\underline{\rho}_{\text{alr}}^\top$ is handled by **one
+Sherman--Morrison step** on top of $\underline{\underline{A}}_y^{-1}$:
+
+$$
+(-\underline{\underline{H}}_y)^{-1}\,\underline{v} =
+\underline{\underline{A}}_y^{-1}\,\underline{v}
++ \frac{
+(\underline{\underline{A}}_y^{-1}\,\underline{\rho}_{\text{alr}})
+\,(\underline{\rho}_{\text{alr}}^\top
+\underline{\underline{A}}_y^{-1}\,\underline{v})
+}{
+1/u_T - \underline{\rho}_{\text{alr}}^\top
+\underline{\underline{A}}_y^{-1}\,\underline{\rho}_{\text{alr}}
+}.
+$${#eq-lnm-laplace-sherman-morrison}
+
+The Sherman--Morrison denominator is strictly positive whenever
+$-\underline{\underline{H}}_y$ is positive definite (a Schur-
+complement consequence of the joint log-concavity), and scribe
+floors it numerically to guard against float32 cancellation. By
+the matrix-determinant lemma,
+
+$$
+\log \det(-\underline{\underline{H}}_y) =
+\log \det \underline{\underline{A}}_y
++ \log\!\bigl(
+1 - u_T\,\underline{\rho}_{\text{alr}}^\top
+\underline{\underline{A}}_y^{-1}\,\underline{\rho}_{\text{alr}}
+\bigr),
+$${#eq-lnm-laplace-logdet-y}
+
+which is what the outer Laplace ELBO uses as the curvature
+correction below.
+
+### Joint log-concavity {#sec-lnm-laplace-concavity}
+
+The conditional log-density in @eq-lnm-laplace-joint-density-y is
+strictly concave in $\underline{y}$. The multinomial term
+$\underline{u}_{\text{alr}}^\top \underline{y} - u_T\,
+\mathrm{logsumexp}(\underline{a}_{\text{full}}(\underline{y}))$ is
+linear-minus-convex (logsumexp is convex), so it is concave; the
+Gaussian-prior term $-\tfrac{1}{2}(\underline{y} -
+\underline{\mu})^\top \underline{\underline{\Sigma}}^{-1}
+(\underline{y} - \underline{\mu})$ is strictly concave because
+$\underline{\underline{\Sigma}}^{-1}$ is positive definite (which
+requires $\underline{d} > 0$, i.e., ``d_mode='learned'``; see
+@sec-lnm-laplace-gauge for why ``low_rank`` is handled
+separately via Variant A). Sum of concave + strictly-concave =
+strictly concave, so the MAP is unique and Newton converges to it
+from any starting point in the convex domain. The same conclusion
+holds in $\underline{z}$-space for Variant A
+(@eq-lnm-laplace-joint-density-z), with the
+$-\tfrac{1}{2}\underline{z}^\top \underline{z}$ prior playing the
+role of the strictly-concave term.
+
+### Outer ELBO {#sec-lnm-laplace-elbo}
+
+Plugging the Gaussian Laplace approximation into the marginal
+$\log \pi(\underline{u}^{(c)})$ gives
+
+$$
+\log \pi(\underline{u}^{(c)}) \approx
+\log \pi(\underline{u}^{(c)}, \underline{\xi}_c^{*})
++ \tfrac{1}{2} (k\text{ or }G\!-\!1) \log(2\pi)
+- \tfrac{1}{2} \log \det(-\underline{\underline{H}}_c),
+$${#eq-lnm-laplace-marginal}
+
+where $\underline{\xi}_c^{*}$ is the per-cell MAP --- $\underline{z}_c^{*}$
+under Variant A and $\underline{y}_c^{*}$ under Variant B --- and
+$-\underline{\underline{H}}_c$ is the corresponding negative-Hessian
+matrix at that MAP. The constant
+$\tfrac{1}{2} (k\text{ or }G\!-\!1) \log(2\pi)$ does not depend on
+the global parameters $\underline{\theta} = (\underline{\mu},
+\underline{\underline{W}}, \underline{d}, r_T, p)$ and can be
+dropped during optimization. The outer loss summed over cells is
+therefore
+
+$$
+\mathcal{L}_{\text{Laplace}}^{\text{LNM}}(\underline{\theta}) =
+- \sum_{c=1}^{N}\!\left[
+\log \pi(\underline{u}^{(c)}, \underline{\xi}_c^{*})
+- \tfrac{1}{2} \log \det(-\underline{\underline{H}}_c)
+\right],
+$${#eq-lnm-laplace-outer-loss}
+
+and SCRIBE minimises this with Adam (or any
+``optimizer_config``-compatible choice such as ``clipped_adam``).
+
+**Mini-batch estimator.** For large $N$ the engine optimises
+@eq-lnm-laplace-outer-loss with stochastic gradients on a uniform
+random subset $\mathcal{B} \subset \{1, \ldots, N\}$ of size $B$.
+Following @hoffman2013stochastic, the unbiased single-step
+estimator is
+
+$$
+\widehat{\mathcal{L}}_{\text{Laplace}}^{\text{LNM}}
+(\underline{\theta}; \mathcal{B}) =
+- \frac{N}{B} \sum_{c \in \mathcal{B}}\!\left[
+\log \pi(\underline{u}^{(c)}, \underline{\xi}_c^{*})
+- \tfrac{1}{2} \log \det(-\underline{\underline{H}}_c)
+\right].
+$${#eq-lnm-laplace-minibatch}
+
+Setting $B = N$ recovers @eq-lnm-laplace-outer-loss exactly. Inner
+Newton remains per-cell and is unaffected by the scaling --- only
+outer gradients on $\underline{\theta}$ inherit it.
+
+### Variational-EM training scheme {#sec-lnm-laplace-variational-em}
+
+Training alternates two steps per outer iteration, in the
+variational-EM tradition:
+
+1. **Inner Newton** on per-cell $\underline{\xi}_c$
+   (= $\underline{z}_c$ for Variant A, $\underline{y}_c$ for
+   Variant B), holding $\underline{\theta}$ fixed. Five Newton
+   iterations from the previous outer step's MAP are typically
+   enough for quadratic-convergence-grade accuracy.
+2. **Outer Adam step** on $\underline{\theta}$ using the gradient
+   of @eq-lnm-laplace-outer-loss with the inner MAPs treated as
+   ``stop_gradient`` constants. This is the standard
+   implicit-function-theorem approximation: at the MAP, the
+   gradient of the inner objective with respect to the latents
+   is zero, so the indirect dependence of $\underline{\xi}_c^{*}$
+   on $\underline{\theta}$ contributes only higher-order terms
+   that we drop.
+
+The MAP arrays $\underline{\underline{Z}}^{*}_{\text{loc}}$ (or
+$\underline{\underline{Y}}^{*}_{\text{loc}}$) persist across
+outer steps and serve as warm starts; the engine writes the post-
+Newton values back to them after every step. Mini-batched runs
+update only the sampled cells per step, so cells that are not
+sampled in a given outer iteration retain their previous warm
+start.
+
+The Laplace-correction term $-\tfrac{1}{2} \log
+\det(-\underline{\underline{H}}_c)$ in
+@eq-lnm-laplace-outer-loss is recomputed *outside* the Newton
+kernel against the **live** globals $(\underline{\underline{W}},
+\underline{d})$ with damping=0 (the inner Newton's Tikhonov
+damping is a solver stabiliser and should not bias the reported
+log-determinant). This keeps the outer Adam gradient consistent
+with the documented Laplace ELBO; see [@sec-pln-laplace-elbo]
+for the analogous discussion on the PLN side.
+
+### Constraints and stabilisation {#sec-lnm-laplace-stabilisation}
+
+The LNM Newton kernel applies the same three numerical-safety
+mechanisms used by PLN:
+
+1. **Tikhonov damping** ($10^{-2}$ default) added to the diagonal
+   of $-\underline{\underline{H}}$ during the Newton step. The
+   damping affects only the inner solver; the Laplace correction
+   in the outer ELBO uses the un-damped Hessian
+   (@sec-lnm-laplace-elbo).
+2. **Step-size cap** at $\|\underline{\delta}\|_\infty \le 5$
+   prevents runaway iterates on degenerate cells (e.g., a single
+   dominant gene where $\underline{\rho}_{\text{alr}}$ is sharply
+   peaked).
+3. **Logit clamp** at $|y_g| \le 30$ before each
+   ``softmax`` evaluation prevents float32 overflow in
+   $\exp$.
+
+No projection is required: the multinomial likelihood lives in an
+unconstrained $\underline{z}$- or $\underline{y}$-space (the
+softmax simplex is enforced automatically by the augmented-logit
+construction) and the prior on $\underline{z}$ or $\underline{y}$
+is unbounded Gaussian. This is simpler than the PLN side, which
+must project $\eta_c$ back into $\eta_c \ge 0$ to enforce the
+TruncatedNormal capture prior.
+
+### Tradeoffs vs the encoder VAE {#sec-lnm-laplace-tradeoffs}
+
+| Aspect | Encoder VAE (Strategy A2) | Laplace (this section) |
+|---|---|---|
+| Per-cell variational form | Diagonal Gaussian via encoder | Gaussian centred at MAP, covariance $-\underline{\underline{H}}^{-1}$ |
+| Encoder collapse risk | Real (observed in LNMVCP fits with biology-informed capture priors) | None (no parametric $q$ family) |
+| Aggregate-posterior drift | Yes (encoder's $q(\underline{z})$ aggregated may not match prior $\mathcal{N}(0, \underline{\underline{I}}_k)$) | None (no aggregate posterior) |
+| Inference for new cells | Single forward pass through encoder | Newton (5--10 iterations per cell) |
+| Per-step compute | Encoder $\to$ decoder $\to$ likelihood | Newton ($O(k^3)$ or $O(G \cdot k + k^3)$ per cell) + outer Adam |
+| Latent dim flexibility | Up to encoder capacity | $k$ for $\mathtt{low\_rank}$, $G-1$ for $\mathtt{learned}$ |
+| LNMVCP capture support | Yes (encoder amortises $p_{\text{capture}}$) | Yes — scalar Newton on per-cell $\eta_c$, decoupled from the composition block (block-diagonal Hessian; see @sec-lnm-laplace-full-model) |
+
+The natural use cases are different: the encoder VAE is the right
+choice when the user needs amortised inference (held-out cells,
+cells streaming through a pipeline), whereas Laplace is the right
+choice when fidelity of the per-cell posterior on the *training
+cells* is what matters (downstream PPC checks, differential
+expression, posterior-uncertainty propagation).
+
+### Posterior predictive sampling {#sec-lnm-laplace-ppc}
+
+After the per-cell MAPs converge, the natural diagnostic is to draw
+posterior-predictive count vectors and compare their marginal
+distribution to the data. As in the PLN Laplace path
+(@sec-pln-laplace-ppc), two distinct PPCs are exposed; both share
+the same outer multinomial-on-totals draw and differ only in how
+the *composition* latent is treated.
+
+#### MAP-only PPC
+
+Holds the per-cell composition latent at its point estimate and
+draws only the multinomial observation noise:
+
+$$
+\hat{\underline{\rho}}_c \;=\;
+\mathrm{ALR}^{-1}(\hat{\underline{y}}_{\text{ALR},c}), \qquad
+\underline{u}_c^{(s)} \;\sim\; \mathrm{Multinomial}(u_T^{(c)},\,
+\hat{\underline{\rho}}_c). $${#eq-lnm-map-ppc}
+
+For ``low_rank``, $\hat{\underline{y}}_{\text{ALR},c} = \underline{\mu} +
+\underline{\underline{W}} \hat{\underline{z}}_c$. For ``learned``,
+$\hat{\underline{y}}_{\text{ALR},c}$ is taken directly from the converged Newton
+iterate. The cost is one multinomial draw per (sample, cell). Exposed as
+``ScribeLaplaceResults.get_map_ppc_samples``.
+
+#### Laplace posterior-predictive PPC
+
+Propagates the per-cell Laplace-approximate posterior into each predictive draw:
+
+$$
+\underline{\zeta}_c^{(s)}
+\;\sim\; \mathcal{N}\!\bigl(\hat{\underline{\zeta}}_c,\;
+(-\underline{\underline{H}}_{\zeta\zeta,c})^{-1}\bigr),
+\qquad
+\underline{u}_c^{(s)}
+\;\sim\; \mathrm{Multinomial}\!\bigl(u_T^{(c)},\,
+\mathrm{ALR}^{-1}(\underline{y}_{\text{ALR},c}^{(s)})\bigr),
+$${#eq-lnm-laplace-ppc}
+
+where $\underline{\zeta}_c \in \{\underline{z}_c,\,
+\underline{y}_{\text{ALR},c}\}$ is the Variant-A or Variant-B
+latent, and $\underline{y}_{\text{ALR},c}^{(s)} = \underline{\mu} +
+\underline{\underline{W}}\, \underline{z}_c^{(s)}$ in the
+``low_rank`` case (no extra map in the ``learned`` case). This is
+the proper level-2 PPC and is exposed as
+``ScribeLaplaceResults.get_per_cell_predictive_samples``.
+
+The two variants of the LNM Laplace require slightly different
+sampling math, both of which reuse the factorisation already
+computed by the Newton solver.
+
+#### Variant A: sampling $\underline{z}_c$ in the ``low_rank`` case {#sec-lnm-laplace-ppc-z}
+
+The Hessian on the low-rank latent is $k \times k$
+(@sec-lnm-laplace-density-z):
+
+$$
+-\underline{\underline{H}}_z \;=\; \underline{\underline{W}}^\top\,
+\underline{\underline{M}}_{\text{alr}}\, \underline{\underline{W}} +
+\underline{\underline{I}}_k, \qquad \underline{\underline{M}}_{\text{alr}} \;=\;
+N\,\bigl(\mathrm{diag}(\underline{\rho}_{\text{alr}}) \,-\,
+\underline{\rho}_{\text{alr}}\, \underline{\rho}_{\text{alr}}^\top\bigr),
+$${#eq-lnm-laplace-ppc-Hz}
+
+evaluated at the converged MAP probabilities. Because $k$ is small (typically
+$\leq 50$), we Cholesky-factor $-\underline{\underline{H}}_z$ directly:
+
+$$
+-\underline{\underline{H}}_z
+\;=\; \underline{\underline{L}}_z\, \underline{\underline{L}}_z^\top.
+$${#eq-lnm-laplace-ppc-chol-z}
+
+Drawing $\underline{\epsilon} \sim \mathcal{N}(0, \underline{\underline{I}}_k)$
+and solving $\underline{\underline{L}}_z^\top\, \underline{\delta}
+= \underline{\epsilon}$ produces a sample
+$\underline{z}_c^{(s)} = \hat{\underline{z}}_c + \underline{\delta}
+\sim \mathcal{N}(\hat{\underline{z}}_c,
+(-\underline{\underline{H}}_z)^{-1})$.
+Cost: $O(k^3)$ per cell — far cheaper than the y_alr or PLN paths.
+
+#### Variant B: sampling $\underline{y}_{\text{ALR},c}$ in the ``learned`` case {#sec-lnm-laplace-ppc-y}
+
+The Hessian on the ALR logits has the same diagonal-plus-low-rank
+form as in PLN, **plus** a Sherman--Morrison rank-1 correction from
+the multinomial-Fisher's outer-product structure
+(@sec-lnm-laplace-density-y):
+
+$$
+-\underline{\underline{H}}_y \;=\; \underline{\underline{A}}_y \,-\, N\,
+\underline{\rho}\, \underline{\rho}^\top, \qquad \underline{\underline{A}}_y
+\;=\; \underline{\underline{\widetilde{M}}} \,-\, \underline{\underline{V}}\,
+\underline{\underline{K}}^{-1}\, \underline{\underline{V}}^\top,
+$${#eq-lnm-laplace-ppc-Hy}
+
+with $\widetilde{M}_g = N\, \rho_g + 1/d_g$, $V = \mathrm{diag}(1/d) W$, $K =
+I_k + W^\top \mathrm{diag}(1/d) W$. The ``A`` block has the same Woodbury
+inverse as PLN's $-\underline{\underline{H}}_{xx}$ (@eq-pln-laplace-ppc-Ainv),
+and the rank-1 $N\,\underline{\rho}\, \underline{\rho}^\top$ correction is
+absorbed by Sherman--Morrison:
+
+$$
+(-\underline{\underline{H}}_y)^{-1}
+\;=\; \underline{\underline{A}}_y^{-1}
+\,+\, \alpha\, \bigl(\underline{\underline{A}}_y^{-1}\, \underline{\rho}\bigr)\,
+\bigl(\underline{\underline{A}}_y^{-1}\, \underline{\rho}\bigr)^\top,
+\qquad
+\alpha \;=\; \frac{1}{1/N \,-\, \underline{\rho}^\top\,
+\underline{\underline{A}}_y^{-1}\, \underline{\rho}}.
+$${#eq-lnm-laplace-ppc-Hyinv}
+
+A square-root factor for sampling follows by adding a rank-1
+update to PLN's square-root form:
+
+$$
+\underline{\delta}_c \;=\; \underline{\underline{\widetilde{M}}}^{-1/2}\,
+\underline{\epsilon}_1 \,+\, \underline{\underline{\widetilde{M}}}^{-1}\,
+\underline{\underline{V}}\, \underline{\underline{L}}_S^{-\top}\,
+\underline{\epsilon}_2 \,+\, \sqrt{\alpha}\,
+\bigl(\underline{\underline{A}}_y^{-1}\, \underline{\rho}\bigr)\, \xi,
+$${#eq-lnm-laplace-ppc-sqrt-y}
+
+with $\underline{\epsilon}_1 \sim \mathcal{N}(0,
+\underline{\underline{I}}_{G-1})$, $\underline{\epsilon}_2 \sim \mathcal{N}(0,
+\underline{\underline{I}}_k)$, $\xi \sim \mathcal{N}(0, 1)$ all independent.
+Direct verification:
+
+$$
+\mathrm{Cov}(\underline{\delta}_c)
+\;=\; \underline{\underline{A}}_y^{-1}
+\,+\, \alpha\, \bigl(\underline{\underline{A}}_y^{-1}\, \underline{\rho}\bigr)\,
+\bigl(\underline{\underline{A}}_y^{-1}\, \underline{\rho}\bigr)^\top
+\;=\; (-\underline{\underline{H}}_y)^{-1}.
+$${#eq-lnm-laplace-ppc-cov-check-y}
+
+The Sherman--Morrison denominator $1/N - \underline{\rho}^\top
+\underline{\underline{A}}_y^{-1}\, \underline{\rho}$ is positive
+*by joint log-concavity of the LNM posterior*, but in finite
+precision it can lose digits when the two terms are large and
+nearly equal — exactly the same numerical trap the Newton solver
+addresses. We apply the same relative floor used by the Newton
+step (a lower bound of $0.01 / N$ on the denominator) so the
+posterior-predictive sampler inherits the solver's stability
+profile.
+
+Cost per sample: dominated by the $G \times k$ multiply
+$\underline{\underline{V}}\, \underline{\underline{L}}_S^{-\top}\,
+\underline{\epsilon}_2$ and the $k \times k$ Cholesky of
+$\underline{\underline{S}}$ — total $O(G \cdot k + k^3)$, the same
+scaling as one Newton step.
+
+#### LNMVCP $\eta$-block
+
+For LNMVCP fits, the joint Hessian on
+$(\underline{\zeta}_c, \eta_c)$ is *block-diagonal*
+(@sec-lnm-laplace-full-model), so the $\eta$ posterior is a
+1-D Gaussian with variance $-1/H_{\eta\eta,c}$ available in closed
+form from the NB-on-totals log-density. ``sample_eta_posterior``
+in ``src/scribe/laplace/_newton_lnm.py`` exposes this; under the
+default per-cell PPC path the multinomial conditions on the
+observed total $u_T^{(c)} = \sum_g u_g^{(c)}$, in which case the
+$\eta$ posterior does not enter the predictive (the multinomial
+likelihood is $\eta$-independent), and the cell-level NB-on-totals
+draws use the data total directly. The $\eta$ sampler is therefore
+only relevant for *unconditional* PPCs that re-draw cell totals
+from the NB-on-totals submodel.
+
+### Implementation {#sec-lnm-laplace-implementation}
+
+Activated via:
+
+```python
+# Plain LNM (no per-cell capture)
+result = scribe.fit(
+    adata,
+    model="lnm",
+    inference_method="laplace",
+    d_mode="learned",     # or "low_rank" for Variant A
+    vae_latent_dim=K,
+    n_steps=N,
+    optimizer_config={"name": "clipped_adam",
+                      "step_size": 1e-4,
+                      "grad_clip_norm": 10.0},
+)
+
+# LNMVCP (per-cell capture)
+result = scribe.fit(
+    adata,
+    model="lnmvcp",
+    inference_method="laplace",
+    d_mode="learned",
+    vae_latent_dim=K,
+    n_steps=N,
+    priors={"capture_efficiency": (np.log(M_0), sigma_M)},
+    optimizer_config={"name": "clipped_adam",
+                      "step_size": 1e-4,
+                      "grad_clip_norm": 10.0},
+)
+```
+
+The inference path lives in :mod:`scribe.laplace`, with the
+Newton kernels in :mod:`scribe.laplace._newton_lnm` and the
+training-loop orchestration in :mod:`scribe.laplace.engine`
+(function ``_run_lnm_inference``). Results are returned as a
+:class:`scribe.laplace.ScribeLaplaceResults` --- the same single
+class used for the PLN Laplace path --- with the per-cell MAP
+populated under either ``z_loc`` (Variant A) or ``y_alr_loc``
+(Variant B), ``alr_reference_idx`` recording the gauge-fix gene,
+and (for LNMVCP) ``eta_loc`` and the derived ``p_capture_loc``
+holding the per-cell capture-offset MAP.
+
+#### Full LNM(VCP) generative model {#sec-lnm-laplace-full-model}
+
+The Laplace path fits the full LNM(VCP) generative model from
+@sec-lnm-model, *not* just the conditional composition block.
+Both plain LNM and LNMVCP fit the NB-on-totals globals
+$(r_T, \mu_T)$ via Adam alongside $(\underline{\mu},
+\underline{\underline{W}}, \underline{d})$:
+
+* **Plain LNM:** $u_T^{(c)} \sim \mathrm{NB}(r_T, \mu_T)$
+  (mean-concentration form; second slot is the mean, not a
+  probability — see @sec-lnm-totals-nb-vs-dm). The NB
+  log-likelihood at observed totals contributes a global term
+  to the loss; no per-cell totals latent.
+* **LNMVCP:** $u_T^{(c)} \sim \mathrm{NB}(r_T, \mu_T \cdot
+  \exp(-\eta_c))$ where $\eta_c$ is the per-cell capture-offset
+  latent. Same parameterization as plain LNM
+  (mean-concentration; @sec-lnm-totals-nb-vs-dm); the second
+  slot is the post-capture mean $\mu_T \cdot p_{\text{capture}}^{(c)}$
+  with $p_{\text{capture}}^{(c)} = \exp(-\eta_c)$. The Newton on $\eta_c$ is *scalar* (one-dimensional
+  per cell), and crucially the joint Hessian on
+  $(\underline{z}_c, \eta_c)$ is **block-diagonal**:
+
+  * The multinomial likelihood is $\eta$-independent (it
+    conditions on the observed total $u_T^{(c)}$, so $\eta$ does
+    not enter the multinomial log-pmf).
+  * The NB-on-totals likelihood is $\underline{z}$-independent.
+
+  So the off-diagonal Hessian block is exactly zero, and the
+  per-cell Newton factorises into two independent solves: the
+  composition block (Newton on $\underline{z}$ or
+  $\underline{y}$, identical to plain LNM) and the scalar
+  $\eta$ block. The Laplace correction's log-determinant
+  factorises additively:
+
+  $$
+  \log\det(-\underline{\underline{H}}_c) =
+  \log\det(-\underline{\underline{H}}_{\text{comp}, c})
+  + \log(-H_{\eta\eta, c}).
+  $${#eq-lnm-laplace-blockdiag-logdet}
+
+  This is much simpler than PLN's coupled $(\underline{x}_c,
+  \eta_c)$ Newton (which requires Schur-complement back-
+  substitution and Sherman-Morrison) because the LNM
+  multinomial decouples totals from composition by
+  construction.
+
+#### NB parameterization choice {#sec-lnm-laplace-nb-param}
+
+The Laplace engine uses the **mean-NB parameterization**
+($\mathrm{NegativeBinomial2(\text{mean}=\mu_T,
+\text{concentration}=r_T)}$) for the totals submodel,
+regardless of which of canonical / mean_prob / mean_odds the
+user requested at ``scribe.fit`` time. The three NB
+parameterizations are mathematically equivalent --- they
+differ only in which of $(r, p, \mu, \phi)$ is the *sampled*
+parameter and which are derived --- so the fitted predictive
+distribution is identical across choices. The mean-NB form is
+the most natural for variational EM because it puts the mean
+directly in the optimised parameter space, sidestepping the
+log-odds vs log-mean numerical-conditioning trade-offs that
+matter for the encoder VAE path.
+
+## Equivalence to a linear-decoder VAE {#sec-lnm-linear-vae-equivalence}
+
+The Strategy A2 picture developed in @sec-lnm-strategy-a treats the
+per-cell latent $\underline{z}^{(c)}$ as living directly in
+$\mathbb{R}^{G-1}$ (ALR space), with a learnable low-rank Gaussian prior
+$\mathcal{N}(\underline{\mu},\, \underline{\underline{W}}\,
+\underline{\underline{W}}^\top + \text{diag}(\underline{d}))$. This view
+is mathematically clean but operationally costly: the encoder must output
+$2(G-1)$ variational parameters per cell, the KL involves the Woodbury
+inverse of the population covariance, and the inference framework must
+support a learnable prior on its latent.
+
+There is an equivalent reparameterized view---fully isomorphic to the
+original LNM under a deterministic affine map---in which the model is a
+*linear-decoder VAE* with a $k$-dimensional bottleneck. In this view, the
+rank-$k$ structure of $\underline{\underline{\Sigma}}$ migrates from "a
+learnable prior parameter on a $(G-1)$-dimensional latent" to "a
+learnable linear decoder mapping a $k$-dimensional latent to ALR space".
+The two formulations are exactly the same generative model, but the
+second is dramatically cheaper to implement and maps onto pre-existing
+VAE infrastructure essentially as-is.
+
+### Reparameterizing the rank-$k$ Gaussian {#sec-lnm-reparam}
+
+The low-rank Gaussian on $\underline{z}$ admits the affine
+reparameterization
+
+$$
+\underline{h} \sim \mathcal{N}(\underline{0},\, \underline{\underline{I}}_k),
+\qquad
+\underline{\epsilon} \sim \mathcal{N}(\underline{0},\, \underline{\underline{I}}_{G-1}),
+\qquad
+\underline{z} = \underline{\mu} + \underline{\underline{W}}\,\underline{h}
++ \text{diag}(\sqrt{\underline{d}})\,\underline{\epsilon},
+$${#eq-lnm-vae-reparam}
+
+with $\underline{h}$ and $\underline{\epsilon}$ independent. Pushing this
+affine map through the standard rule for transformations of Gaussians
+yields
+
+$$
+\langle \underline{z} \rangle = \underline{\mu},
+\qquad
+\text{Cov}(\underline{z}) =
+\underline{\underline{W}}\,\underline{\underline{I}}_k\,\underline{\underline{W}}^\top
++ \text{diag}(\sqrt{\underline{d}})\,\underline{\underline{I}}_{G-1}\,
+\text{diag}(\sqrt{\underline{d}})
+=
+\underline{\underline{W}}\,\underline{\underline{W}}^\top + \text{diag}(\underline{d}).
+$${#eq-lnm-vae-marginal}
+
+So the marginal distribution of $\underline{z}$ in @eq-lnm-vae-reparam is
+identical to the prior $\mathcal{N}(\underline{\mu},\,
+\underline{\underline{W}}\,\underline{\underline{W}}^\top +
+\text{diag}(\underline{d}))$ used in @eq-lnm-cell-latent. This is just
+the standard "factor model" decomposition of a low-rank Gaussian:
+$\underline{h}$ carries the rank-$k$ shared variation, and
+$\underline{\epsilon}$ carries the gene-independent residuals.
+
+### The linear-decoder VAE form {#sec-lnm-linear-vae-form}
+
+Using @eq-lnm-vae-reparam, the LNM generative process from
+@sec-lnm-generative becomes
+
+$$
+u_T^{(c)} \sim \text{NB}(r_T,\, \hat{p}),
+$${#eq-lnm-vae-uT}
+
+$$
+\underline{h}^{(c)} \sim \mathcal{N}(\underline{0},\, \underline{\underline{I}}_k),
+\qquad
+\underline{\epsilon}^{(c)} \sim \mathcal{N}(\underline{0},\, \underline{\underline{I}}_{G-1}),
+$${#eq-lnm-vae-latents}
+
+$$
+\underline{z}^{(c)} = \underline{\mu} + \underline{\underline{W}}\,\underline{h}^{(c)}
++ \text{diag}(\sqrt{\underline{d}})\,\underline{\epsilon}^{(c)},
+$${#eq-lnm-vae-decode}
+
+$$
+\underline{\rho}^{(c)} = \text{ALR}^{-1}(\underline{z}^{(c)}),
+\qquad
+\underline{u}^{(c)} \mid u_T^{(c)},\, \underline{\rho}^{(c)} \sim
+\text{Multinomial}(u_T^{(c)},\, \underline{\rho}^{(c)}).
+$${#eq-lnm-vae-multinomial}
+
+Equation @eq-lnm-vae-decode is precisely the forward pass of a single
+linear neural-network layer: the matrix $\underline{\underline{W}}$ plays
+the role of the **kernel** (weights) and $\underline{\mu}$ plays the role
+of the **bias**, with input $\underline{h}^{(c)}$ and output
+$\underline{z}^{(c)}$. The diagonal-$\underline{d}$ component appears as
+additive Gaussian noise at the layer's output. The latent
+$\underline{h}^{(c)}$ is the bottleneck of the VAE, with dimension $k$
+rather than $G - 1$.
+
+The variational posterior is also reparameterized. Instead of
+approximating a posterior over $\underline{z}^{(c)} \in \mathbb{R}^{G-1}$,
+we approximate a posterior over $\underline{h}^{(c)} \in \mathbb{R}^k$:
+
+$$
+q_\phi(\underline{h}^{(c)} \mid \underline{u}^{(c)}) =
+\mathcal{N}\!\left(
+\underline{m}_\phi(\underline{u}^{(c)}),\,
+\text{diag}(\underline{s}_\phi^2(\underline{u}^{(c)}))
+\right),
+\quad \underline{m}_\phi,\,\underline{s}_\phi^2 \in \mathbb{R}^k.
+$${#eq-lnm-vae-encoder}
+
+The variational nuisance noise $\underline{\epsilon}^{(c)}$ requires no
+posterior: its variational distribution is set equal to its prior
+$\mathcal{N}(\underline{0},\, \underline{\underline{I}}_{G-1})$, which
+contributes zero to the KL while still allowing the diagonal
+$\underline{d}$ to be identified through its effect on the marginal
+multinomial likelihood.
+
+**A subtle gain in posterior expressivity.** A diagonal posterior on
+$\underline{h}^{(c)} \in \mathbb{R}^k$ is *not* equivalent to a diagonal
+posterior on $\underline{z}^{(c)} \in \mathbb{R}^{G-1}$. The deterministic
+linear decoder propagates the diagonal posterior on $\underline{h}^{(c)}$
+into a structured low-rank-plus-diagonal posterior on $\underline{z}^{(c)}$:
+
+$$
+\text{Cov}(\underline{z}^{(c)} \mid \underline{u}^{(c)}) =
+\underline{\underline{W}}\,
+\text{diag}(\underline{s}_\phi^2(\underline{u}^{(c)}))\,
+\underline{\underline{W}}^\top
++ \text{diag}(\underline{d}).
+$${#eq-lnm-vae-induced-posterior}
+
+This is strictly more expressive than the diagonal $q_\phi(\underline{z}
+\mid \underline{u})$ posited by the direct $(G-1)$-dimensional
+formulation of @sec-lnm-strategy-a. The VAE reparameterization
+therefore delivers two distinct improvements simultaneously: it
+*reduces* the encoder's output dimension from $2(G-1)$ to $2k$ (a
+computational win), *and* it *upgrades* the implied posterior on
+$\underline{z}^{(c)}$ from diagonal to rank-$k$-plus-diagonal (a
+statistical win). Both advantages stem from pushing the rank-$k$
+structure from "a learnable prior on a $(G-1)$-dim latent" to "a
+deterministic linear decoder from a $k$-dim latent".
+
+### Closed-form KL is now the standard VAE KL {#sec-lnm-vae-kl}
+
+Because the reparameterized prior on $\underline{h}^{(c)}$ is the
+standard isotropic Gaussian $\mathcal{N}(\underline{0},\,
+\underline{\underline{I}}_k)$, the KL term @eq-lnm-closed-form-kl
+collapses to the standard VAE KL between two diagonal Gaussians:
+
+$$
+\text{KL}\!\left(
+q_\phi(\underline{h}^{(c)} \mid \underline{u}^{(c)})
+\;\big\|\;
+\mathcal{N}(\underline{0},\, \underline{\underline{I}}_k)
+\right) =
+\frac{1}{2} \sum_{j=1}^{k}
+\left(
+s_{\phi,j}^2(\underline{u}^{(c)})
++ m_{\phi,j}^2(\underline{u}^{(c)})
+- 1
+- \log s_{\phi,j}^2(\underline{u}^{(c)})
+\right).
+$${#eq-lnm-vae-standard-kl}
+
+This is the canonical Kingma--Welling VAE KL, evaluated in $O(k)$ per
+cell. The Woodbury inverse and matrix-determinant lemma machinery from
+@eq-lnm-woodbury and @eq-lnm-log-det are no longer needed in the loss:
+they are absorbed into the definition of the linear decoder.
+
+### Cost reduction {#sec-lnm-vae-cost}
+
+Compared to the direct $(G-1)$-dimensional formulation of
+@sec-lnm-strategy-a, the linear-decoder form is uniformly cheaper:
+
+| Quantity | Direct $(G-1)$-dim form | Linear-decoder VAE |
+|----------|-------------------------|--------------------|
+| Encoder output dimension | $2(G-1)$ | $2k$ |
+| Per-cell latent dimension | $G - 1$ | $k$ |
+| KL per cell | $O(Gk + k^2)$ via @eq-lnm-closed-form-kl | $O(k)$ via @eq-lnm-vae-standard-kl |
+| Per-batch precompute | $O(Gk^2 + k^3)$ for Woodbury factors | None |
+| Learnable prior in inference framework | Yes | No (prior is fixed $\mathcal{N}(\underline{0},\, \underline{\underline{I}}_k)$) |
+| Decoder structure | Identity / passthrough | Single $\text{Dense}(G-1)$ linear layer |
+
+For $G = 20{,}000$, $k = 128$, $H = 512$ (encoder hidden width), and
+$B = 256$ cells per mini-batch, the encoder output layer shrinks from
+$\sim 2 \times 10^4$ to $\sim 2.5 \times 10^2$ units. The total ELBO cost
+per gradient step drops from $O(BGH + BGk + Gk^2 + k^3)$ to
+$O(BGH + BGk + Bk)$, a saving driven primarily by the elimination of the
+per-batch Woodbury precompute and the shrinking of the closed-form KL
+from $O(Gk)$ to $O(k)$ per cell.
+
+### The diagonal $\underline{d}$ in this view {#sec-lnm-vae-d}
+
+The reparameterization @eq-lnm-vae-reparam admits two practical regimes
+for the diagonal residual noise. A subtle but important consequence of
+the VAE formulation is that the marginal covariance of
+$\underline{z}^{(c)}$ never has to be inverted: the ELBO involves only
+the standard Gaussian prior $\mathcal{N}(\underline{0},\,
+\underline{\underline{I}}_k)$ on $\underline{h}^{(c)}$ and the
+Multinomial likelihood on $\underline{u}^{(c)}$, neither of which
+requires $\text{Cov}(\underline{z}^{(c)})^{-1}$ or
+$\log |\text{Cov}(\underline{z}^{(c)})|$. The marginal covariance of
+$\underline{z}^{(c)}$ is therefore allowed to be **singular** without
+any numerical penalty---a freedom we did not have in the direct
+$(G-1)$-dim formulation of @sec-lnm-strategy-a, which evaluates
+$\log \mathcal{N}(\underline{z} \mid \underline{\mu},\,
+\underline{\underline{\Sigma}})$ as a density and therefore requires
+$\underline{\underline{\Sigma}}$ to be positive definite.
+
+**Strictly low-rank mode.** Drop the residual-noise term
+$\underline{\epsilon}^{(c)}$ entirely (equivalently, set $\underline{d}
+= \underline{0}$). The generative path becomes the deterministic linear
+decoder
+
+$$
+\underline{z}^{(c)} = \underline{\mu} + \underline{\underline{W}}\,\underline{h}^{(c)},
+\qquad \underline{h}^{(c)} \sim \mathcal{N}(\underline{0},\, \underline{\underline{I}}_k),
+$${#eq-lnm-vae-low-rank}
+
+with marginal covariance *exactly*
+$\underline{\underline{W}}\,\underline{\underline{W}}^\top$. This
+covariance is rank-deficient---rank $k$ in an ambient $(G-1)$-dimensional
+space---but, by the argument above, this is harmless: no part of the
+loss inverts it. Compositions in ALR space genuinely live on a
+$k$-dimensional affine manifold up to multinomial sampling noise, and
+the model is internally consistent. This is the simplest and cheapest
+mode: no per-cell stochastic node beyond $\underline{h}^{(c)}$, no
+encoder output for residual noise, and the encoder still emits only
+$2k$ variational parameters per cell. It is sufficient whenever the
+$k$-dimensional bottleneck already explains essentially all of the
+compositional variance.
+
+**Learned mode.** Treat $\underline{d}$ as a positive learnable per-gene
+parameter, with $\underline{\epsilon}^{(c)}$ a per-cell stochastic node
+whose variational posterior is set equal to its prior. The KL
+contribution from $\underline{\epsilon}^{(c)}$ is exactly zero, so the
+gradient on $\underline{d}$ comes entirely from the multinomial
+log-likelihood through the reparameterized path
+
+$$
+\underline{z}^{(c)} = \underline{\mu} +
+\underline{\underline{W}}\,\underline{h}^{(c)} +
+\text{diag}(\sqrt{\underline{d}})\,\underline{\epsilon}^{(c)}.
+$${#eq-lnm-vae-learned}
+
+This recovers the full $\underline{\underline{W}}\,
+\underline{\underline{W}}^\top + \text{diag}(\underline{d})$ marginal of
+@eq-lnm-vae-marginal at the cost of one additional $(G-1)$-vector of
+stochastic noise per cell---cheap, since $\underline{\epsilon}^{(c)}$
+has no posterior and no encoder output. The mode is appropriate when
+the data exhibits gene-specific compositional fluctuations that the
+$k$-rank shared factor cannot absorb.
+
+A *fixed*, non-zero diagonal (i.e., $\underline{d} = d_0\,
+\underline{1}$ with $d_0$ chosen rather than learned) is also possible,
+but it requires sampling $\underline{\epsilon}^{(c)}$ exactly as in the
+learned mode and trades the gain of a learnable per-gene scale for a
+single hyperparameter. In the VAE form there is no numerical
+justification for such a fixed jitter---it cannot serve the
+positive-definiteness role it played in the direct formulation---so we
+do not develop it as a separate mode.
+
+In both modes, the rank-$k$ structure---the part of the covariance that
+captures cross-gene correlations and is the object of scientific
+interest---lives entirely in the decoder weights
+$\underline{\underline{W}}$.
+
+### Comparison to nonlinear-decoder VAEs {#sec-lnm-vae-vs-scvi}
+
+A natural and important question is what we lose by insisting on a
+*linear* decoder, given that nonlinear-decoder VAEs (most prominently
+scVI) have proven highly effective at modeling single-cell counts.
+
+A linear decoder gives the marginal covariance an exact, globally valid,
+low-rank-plus-diagonal form. A nonlinear decoder $f_\theta : \mathbb{R}^k
+\to \mathbb{R}^{G-1}$ does not. Under a nonlinear $f_\theta$, the
+induced covariance of $\underline{z}^{(c)}$ at a given posterior mean
+$\underline{\bar{z}}^{(c)}$ is approximately
+
+$$
+\text{Cov}(\underline{z}^{(c)} \mid \underline{u}^{(c)}) \approx
+\underline{\underline{J}}_{f_\theta}(\underline{\bar{z}}^{(c)})\,
+\underline{\underline{J}}_{f_\theta}(\underline{\bar{z}}^{(c)})^\top
++ \cdots,
+$${#eq-lnm-nonlinear-cov}
+
+where $\underline{\underline{J}}_{f_\theta}$ is the Jacobian of the
+decoder. This Jacobian is **state-dependent**---it varies across the
+latent space---so there is no single matrix one can extract from a
+fitted nonlinear-decoder VAE that plays the role of
+$\underline{\underline{\Sigma}}$. A nonlinear decoder buries the
+cross-gene correlations into its weights *implicitly*; a linear decoder
+makes them an *explicit* and clusterable object $\underline{\underline{W}}$.
+
+This is precisely the property that the synthetic-validation null result
+(see @sec-lnm-dirichlet-limitations) demanded: an explicit, generative
+correlation factor that downstream analyses can act on directly. Trading
+capacity for interpretability---the linear-decoder LNM cannot model
+curved compositional manifolds in log-ratio space, but it makes
+$\underline{\underline{\Sigma}}$ a first-class object---is the correct
+trade-off for the present application. The natural sequel is a
+*nonlinear* LNM whose decoder is an MLP rather than a single
+$\text{Dense}$ layer; this strictly subsumes the linear case in capacity
+at the cost of giving up the closed-form $\underline{\underline{\Sigma}}$,
+and is left to future work.
+
+### Why we adopt this view for implementation {#sec-lnm-vae-adoption}
+
+The linear-decoder VAE form is mathematically identical to the rank-$k$
+LNM developed in @sec-lnm-model. There is no theoretical content in
+switching between the two views; they are the same generative model,
+written differently. We adopt the linear-decoder view because:
+
+1. **It is computationally cheaper.** Encoder output $2k$ vs.\
+   $2(G-1)$; KL is the standard VAE KL; no per-batch Woodbury
+   precompute.
+2. **It maps cleanly onto pre-existing VAE infrastructure.** The model
+   is a standard linear-decoder VAE plus a multinomial output likelihood
+   with an inverse-ALR transformation on the decoder output; the
+   `VAELatentGuide` family in SCRIBE supports this without further
+   extension.
+3. **It makes the rank of the cross-gene covariance an explicit knob.**
+   The bottleneck dimension $k$ *is* the rank of the population
+   covariance; choosing $k$ is now a single hyperparameter selecting how
+   much shared compositional variation the model can express.
+4. **It clarifies the relationship to the broader VAE literature.** The
+   LNM is, in this view, a linear analogue of scVI with a multinomial
+   likelihood and an inverse-ALR transformation in place of scVI's
+   softmax-with-NB factorization. This positions the model concretely on
+   the spectrum of existing single-cell generative models.
+
+The remaining sections of this chapter were developed in the direct
+$(G-1)$-dimensional language for clarity; readers implementing the model
+should mentally translate to @eq-lnm-vae-reparam through
+@eq-lnm-vae-multinomial above.
+
+## Connection to the existing SCRIBE framework {#sec-lnm-connections}
+
+### Relationship to the normalization chapter {#sec-lnm-normalization-connection}
+
+In @sec-normalization, we described how a logistic-normal distribution is fit
+**post hoc** to the posterior predictive compositions
+$\underline{\rho}^{(s)} \sim \text{Dir}(\underline{r}^{(s)})$ obtained from
+the standard model. This post-hoc fitting captures the correlations induced by
+variation in $\underline{r}$ across posterior samples, but it is a
+**downstream summary**, not part of the generative model.
+
+The logistic-normal multinomial model proposed here inverts this relationship:
+the logistic-normal is the **generative prior** on compositions, and the
+correlations are **parameters to be inferred**, not summaries to be computed
+after the fact. This distinction is crucial---by embedding the logistic-normal
+in the generative model, the likelihood function is sensitive to the
+correlation structure, and the inference procedure is directly incentivized to
+recover it from the data.
+
+### Relationship to the Gaussianity diagnostics {#sec-lnm-gaussianity-connection}
+
+The Gaussianity diagnostics developed in @sec-diffexp-gaussianity test whether
+the posterior CLR coordinates are well-approximated by a Gaussian distribution.
+Under the current DM model, this is an empirical question: the CLR coordinates
+of Dirichlet draws are not Gaussian in general, but become approximately so
+when the concentrations $\underline{r}$ are large (the central limit theorem
+for the Dirichlet).
+
+Under the logistic-normal model, **Gaussianity in ALR (and hence CLR) space is
+exact by construction**. The Jarque-Bera diagnostic from
+@sec-diffexp-gaussianity would yield $\text{JB}_g \approx 0$ for all genes,
+confirming that the parametric differential expression path is always valid.
+This means the fast $O(kD)$ parametric DE pipeline from the same section can
+be used without qualification, and the CLR difference
+
+$$
+\Delta_{g,\text{CLR}} =
+z_{g,\text{CLR}}^{(A)} - z_{g,\text{CLR}}^{(B)}
+$${#eq-lnm-de-delta}
+
+is exactly Gaussian with mean and variance directly computable from
+$\underline{\mu}_A$, $\underline{\underline{\Sigma}}_A$,
+$\underline{\mu}_B$, $\underline{\underline{\Sigma}}_B$.
+
+### Relationship to the hierarchical $p_g$ model {#sec-lnm-hierarchical-connection}
+
+The hierarchical gene-specific $p_g$ model from @sec-hierarchical-p addressed
+a different limitation of the standard model: it allowed the success
+probability to vary across genes, breaking the DM factorization but enabling
+the data to determine the degree of gene-to-gene variation in $p_g$.
+
+The logistic-normal model is complementary: it addresses the
+**compositional correlation structure** rather than the **total-count
+model**. In principle, the two extensions can be combined---gene-specific
+$p_g$ for the total count and a logistic-normal for the composition---but
+they do *not* compose cleanly. Under the hierarchical $p_g$ model the
+per-cell composition $\underline{\rho}^{(c)}$ is induced by the joint draw
+$\lambda_g^{(c)} \sim \text{Gamma}(r_g, p_g/(1-p_g))$ followed by
+normalization $\underline{\rho}^{(c)} = \underline{\lambda}^{(c)} /
+\lambda_T^{(c)}$ (see @sec-hier-gamma-sampling), so $\underline{\rho}^{(c)}$
+is *not* a free parameter that can simply be replaced by an independent
+logistic-normal draw. A principled combination would either (a) couple the
+LNM compositional prior to a separate scalar total-count model with a
+single $\hat{p}$ (losing per-gene over-dispersion in $u_T$), or (b)
+introduce a fresh generative path that models cell- and gene-level
+over-dispersion *jointly* in log-ratio space. We defer this design
+question to a follow-up; in the present chapter we work with the
+shared-$\hat{p}$ total-count model from @sec-lnm-model.
+
+## Computational considerations {#sec-lnm-computational}
+
+### Low-rank structure {#sec-lnm-low-rank}
+
+For $G = 20{,}000$ genes, the full covariance matrix
+$\underline{\underline{\Sigma}}$ would have $\sim 2 \times 10^8$ entries,
+which is prohibitive. The low-rank factorization from @eq-lnm-low-rank-cov,
+
+$$
+\underline{\underline{\Sigma}} =
+\underline{\underline{W}}\,
+\underline{\underline{W}}^\top +
+\text{diag}(\underline{d}),
+$${#eq-lnm-low-rank-repeated}
+
+with $\underline{\underline{W}} \in \mathbb{R}^{(G-1) \times k}$ and
+$\underline{d} \in \mathbb{R}^{G-1}_{>0}$, reduces the parameter count to
+$(G-1)(k+1)$. For $k = 128$ (a typical rank for the SCRIBE low-rank guide),
+this is $\sim 2.6 \times 10^6$ parameters---three orders of magnitude fewer
+than the full covariance.
+
+The low-rank structure also enables efficient sampling and density evaluation
+via the Woodbury identity:
+
+$$
+\underline{\underline{\Sigma}}^{-1} =
+\underline{\underline{D}}^{-1} -
+\underline{\underline{D}}^{-1}
+\underline{\underline{W}}
+\left(
+\underline{\underline{I}}_k +
+\underline{\underline{W}}^\top
+\underline{\underline{D}}^{-1}
+\underline{\underline{W}}
+\right)^{-1}
+\underline{\underline{W}}^\top
+\underline{\underline{D}}^{-1},
+$${#eq-lnm-woodbury}
+
+where $\underline{\underline{D}} = \text{diag}(\underline{d})$. This replaces
+the $O(G^2)$ inversion with an $O(Gk^2 + k^3)$ computation, and the
+log-determinant decomposes similarly via the matrix determinant lemma:
+
+$$
+\log |\underline{\underline{\Sigma}}| =
+\log |\underline{\underline{D}}| +
+\log |\underline{\underline{I}}_k +
+\underline{\underline{W}}^\top
+\underline{\underline{D}}^{-1}
+\underline{\underline{W}}|.
+$${#eq-lnm-log-det}
+
+Both operations are $O(Gk^2)$, which is linear in the number of genes for
+fixed $k$. NumPyro's `LowRankMultivariateNormal` distribution already
+implements these efficient operations, and the SCRIBE
+`LowRankLogisticNormal` distribution in `scribe.stats.distributions` wraps
+them with the ALR transformation and Jacobian correction.
+
+### Mini-batching compatibility {#sec-lnm-minibatch}
+
+The product-over-cells structure of @eq-lnm-full-joint is naturally compatible
+with stochastic variational inference via mini-batching. In each gradient step,
+a random subset of cells is selected, and the ELBO contribution from those
+cells is scaled by $C / B$ (where $B$ is the batch size). The per-cell latent
+$\underline{z}^{(c)}$ is sampled only for cells in the current mini-batch.
+
+For Strategy A2 (amortized inference), the encoder network maps each cell's
+counts to variational parameters, so there is no need to maintain persistent
+per-cell variational state---the encoder generalizes to all cells.
+
+### Cost comparison
+
+The table below compares the standard Dirichlet-Multinomial model with
+the LNM under Strategy A2, in both its direct $(G-1)$-dimensional form
+and its linear-decoder VAE reparameterization
+(@sec-lnm-linear-vae-equivalence). $H$ denotes the encoder hidden
+width.
+
+| Operation | Standard DM | LNM A2 (direct $(G-1)$-dim) | LNM A2 (linear-decoder VAE) |
+|-----------|-------------|------------------------------|------------------------------|
+| Likelihood per cell | $O(G)$ (DM formula) | $O(G)$ (log-softmax + Multinomial) | $O(G)$ (log-softmax + Multinomial) |
+| Per-cell latent dim | --- | $G - 1$ | $k$ |
+| Encoder output dim | --- | $2(G-1)$ | $2k$ |
+| Latent sampling per cell | None (marginalized) | $O(G)$ (diagonal $q_\phi$ reparam) | $O(k)$ (diagonal $q_\phi$ reparam) |
+| Linear decoder per cell | --- | --- | $O(Gk)$ ($\underline{\mu} + \underline{\underline{W}}\,\underline{h}$) |
+| Population guide params | $O(Gk)$ over $\log\underline{r}$ | $O(Gk)$ over $\underline{\mu},\,\underline{\underline{W}},\,\underline{d}$ | $O(Gk)$ over decoder kernel/bias and $\underline{d}$ |
+| Per-cell guide params | None | None (encoder weights, $O(GH)$) | None (encoder weights, $O(GH)$) |
+| KL per cell | --- | $O(Gk + k^2)$ closed form (Woodbury) | $O(k)$ closed form (standard VAE KL) |
+| Per-batch precompute | --- | $O(Gk^2 + k^3)$ Woodbury factors | None |
+| Total ELBO per mini-batch | $O(BG + Gk)$ | $O(BGH + BGk + Gk^2 + k^3)$ | $O(BGH + BGk + Bk)$ |
+
+Three things are worth flagging in this comparison. First, sampling from
+$q_\phi$ is now $O(G)$ in the direct form (because $q_\phi$ is diagonal)
+and $O(k)$ in the linear-decoder form (because the latent dimension is
+$k$ rather than $G - 1$). The low-rank cost reappears only in the
+direct-form KL evaluation; the linear-decoder form replaces it with the
+$O(k)$ standard VAE KL. Second, the encoder is *not* a small add-on at
+the absolute scale of $G \approx 20{,}000$: with input layer of size
+$\sim G$ and a hidden width $H$, the encoder contributes $O(GH)$
+parameters per layer, comparable in magnitude to a single column of the
+population low-rank factor $\underline{\underline{W}}$. The encoder
+*output* layer, however, shrinks from $2(G-1)$ to $2k$ in the
+linear-decoder form---a meaningful saving since the output layer is the
+parameter-count bottleneck of a wide encoder. Third, the linear-decoder
+form has no per-batch Woodbury precompute, eliminating the $O(Gk^2 +
+k^3)$ term entirely.
+
+For $B = 256$, $G = 20{,}000$, $k = 128$, and $H = 512$, the encoder
+forward pass contributes $\sim 2.6 \times 10^9$ operations per gradient
+step. In the direct form the closed-form KL adds another $\sim 6.6
+\times 10^8$ operations and the Woodbury precompute adds $\sim 2.6
+\times 10^6$; in the linear-decoder form both terms are replaced by an
+$O(Bk) = O(B \cdot 128) \approx 3 \times 10^4$ closed-form KL,
+effectively free. The DM-side ELBO is recovered in the limit where the
+encoder collapses to a constant (no per-cell adaptation) and
+$\underline{\underline{\Sigma}}$ is moment-matched to a Dirichlet, which
+is exactly Strategy D.
+
+## What the logistic-normal model buys us {#sec-lnm-what-it-buys}
+
+To conclude this theoretical development, we summarize what the logistic-normal
+multinomial model provides over the standard Dirichlet-Multinomial:
+
+1. **Explicit cross-gene correlations.** The covariance matrix
+   $\underline{\underline{\Sigma}}$ (or its low-rank factors
+   $\underline{\underline{W}}$, $\underline{d}$) directly parameterizes the
+   correlation structure of gene compositions in log-ratio space. After
+   fitting, $\underline{\underline{W}}$ can be used directly for clustering,
+   dimensionality reduction, or pathway analysis---without the confounding
+   effect of likelihood-induced coupling that plagues the variational guide's
+   covariance in the standard model.
+
+2. **Exact Gaussianity in log-ratio space.** The CLR coordinates are Gaussian
+   by construction, validating the parametric differential expression pipeline
+   without need for Jarque-Bera screening.
+
+3. **Unified framework.** The logistic-normal model unifies the generative
+   model (compositions), the normalization framework (@sec-normalization), and
+   the differential expression framework (@sec-diffexp-gaussianity) under a
+   single distributional assumption. Rather than fitting a logistic-normal
+   post hoc to posterior predictive compositions, the logistic-normal
+   is the model itself.
+
+4. **Compositional correctness.** Like the Dirichlet-Multinomial, the
+   logistic-normal multinomial respects the simplex constraint and the
+   compositional nature of UMI counts. It does not require ad hoc
+   normalization (such as CPM or log-normalization) because the composition is
+   modeled probabilistically.
+
+The cost is the loss of conjugacy and the need for approximate inference over
+per-cell latent variables. The following sections develop the implementation
+within SCRIBE's modular inference framework.
+
+## Theoretical limitations and open questions {#sec-lnm-limitations}
+
+The logistic-normal multinomial model resolves a structural limitation
+of the Dirichlet-Multinomial (zero free correlation parameters) at the
+cost of introducing approximations and modeling choices that are worth
+making explicit. We collect the main theoretical caveats here, both as
+a guide to where the model is expected to be reliable and as a record
+of design decisions that may warrant revisiting in future work.
+
+### The LNA approximation in low-count regimes {#sec-lnm-lim-lna}
+
+The biophysical derivation of @sec-grn-biophysical relies on two
+approximations applied to the Chemical Langevin Equation: the linear
+noise approximation (linearizing the drift around the deterministic
+steady state) and the freezing of the noise amplitude at its
+steady-state value (see @sec-grn-bio-lna). Both approximations are
+controlled by the same small parameter---the relative size of
+fluctuations $\delta\underline{x}$ around the steady state in
+log-abundance space---and both degrade for genes with very low molecular
+counts.
+
+In the low-count regime, the exact steady-state of an *independent*
+birth-death process is Gamma-distributed, and the resulting compositional
+prior is the Dirichlet of @sec-dirichlet-multinomial. The DM is therefore
+the better marginal model for genes that are both lowly expressed *and*
+weakly coupled to the rest of the network. The LNM should be understood
+as the model of choice when (a) cross-gene correlations are the
+inferential target, and (b) the genes carrying the relevant signal are
+expressed at counts where the LNA is reliable. Pragmatically, this
+covers the bulk of genes that drive cell-type structure in scRNA-seq,
+but it does not cover every gene equally well.
+
+### Identifiability of $\underline{\underline{W}}$ {#sec-lnm-lim-identifiability}
+
+As discussed in @sec-grn-bio-low-rank, the likelihood depends on
+$\underline{\underline{W}}$ only through
+$\underline{\underline{W}}\,\underline{\underline{W}}^\top$, so
+$\underline{\underline{W}}$ is identified only up to a $k \times k$
+orthogonal rotation. The biological reading of "columns of
+$\underline{\underline{W}}$ as transcription-factor programs" is
+therefore valid only at the level of the rank-$k$ subspace they span,
+not at the level of individual columns. Downstream uses that depend on
+$\underline{\underline{W}}\,\underline{\underline{W}}^\top$ (clustering,
+similarity, eigenvalue spectrum) are unaffected; uses that require
+named, sparse, or otherwise distinguished columns require a
+post-processing step (e.g., varimax rotation, sparse-PCA, or imposing
+sparsity in $\underline{\underline{W}}$ at training time).
+
+A related but distinct identifiability question concerns the
+**inverse problem** $\underline{\underline{\Sigma}} \to
+\underline{\underline{J}}$ implied by the Lyapunov equation
+@eq-grn-bio-lyapunov. Multiple Jacobians $\underline{\underline{J}}$
+can produce the same steady-state covariance
+$\underline{\underline{\Sigma}}$, so even if
+$\underline{\underline{\Sigma}}$ is recovered exactly from data, the
+underlying GRN topology is not uniquely determined. This is a
+well-known limitation of static (steady-state) data; resolving it
+typically requires perturbation experiments or temporal information.
+The LNM thus recovers the *consequences* of the GRN, not the GRN
+itself.
+
+A third (and benign) form of non-uniqueness is the **gauge freedom**
+documented in @sec-lnm-equivalent-params. The simplex distribution is
+invariant under the choice of ALR, CLR, or unconstrained
+softmax-normal parameterisation, so any of these forms produces the
+same model. We adopt ALR for computational reasons; the ALR-vs-CLR
+choice does not introduce an additional identifiability question
+beyond the rotation invariance discussed above, since the two are
+related by a fixed linear map and the column space of
+$\underline{\underline{W}}$ is preserved.
+
+### Scale--composition decoupling {#sec-lnm-lim-decoupling}
+
+The generative model of @sec-lnm-generative factorizes the per-cell
+count vector into an independent NB total $u_T^{(c)}$ and an
+independent compositional latent $\underline{z}^{(c)}$. As noted in
+@sec-lnm-generative, this factorization is not derivable from the LNA
+on log-abundances: under the underlying GRN dynamics, the total
+$\Lambda^{(c)} = \sum_g \lambda_g^{(c)}$ and the composition
+$\underline{\rho}^{(c)}$ are functionals of the same Gaussian and are
+in general correlated. The decoupled form is adopted here for clarity
+and tractability; the relevant question for future work is whether the
+small correlations introduced by full coupling materially affect
+inference of $\underline{\underline{W}}$, or whether the technical
+scaling factor (capture efficiency) dominates the per-cell total to
+the point where decoupling is empirically harmless.
+
+### Identifiability of off-diagonal $\underline{\underline{\Sigma}}$ from data {#sec-lnm-lim-data-id}
+
+The structural argument against the moment-matched DM proxy
+(Strategy D, @sec-lnm-strategy-d) is that its likelihood gradient on
+$\underline{\underline{W}}$ is identically zero. Strategy A2 avoids
+this failure mode: its multinomial likelihood depends on $\rho_g(\underline{z})
+= \text{ALR}^{-1}(\underline{z})_g$, which depends on the full vector
+$\underline{z}$, so the ELBO gradient on $\underline{\underline{W}}$
+is non-zero in general.
+
+A separate question---distinct from the *existence* of gradient
+signal---is the **strength** of that signal in finite-data regimes. The
+off-diagonal entries of $\underline{\underline{\Sigma}}$ are identified
+through cell-to-cell co-variation of compositions in log-ratio space,
+and the per-cell signal-to-noise on individual $\rho_g$ scales with
+$\sqrt{u_T^{(c)} \rho_g}$. For low-expression genes in cells with
+modest UMI depth, the multinomial sampling noise can be large relative
+to the compositional fluctuations of interest. This is an empirical
+question rather than a theoretical one, and we defer it to the
+synthetic-data validation that motivates the development. The
+theoretical statement we can make here is conditional: *if* the data
+identify $\underline{\underline{\Sigma}}$, the LNM provides the
+correct generative path through which $\underline{\underline{W}}$
+absorbs that identifiability.
+
+### Fidelity of the diagonal amortized posterior {#sec-lnm-lim-amortized}
+
+In the linear-decoder VAE form, the encoder produces a diagonal
+$q_\phi(\underline{h}^{(c)} \mid \underline{u}^{(c)})$, which induces
+the structured posterior on $\underline{z}^{(c)}$ given by
+@eq-lnm-vae-induced-posterior. This is more expressive than a diagonal
+posterior on $\underline{z}^{(c)}$ would be, but it is still a
+restricted family: the per-cell posterior covariance has rank at most
+$k$ in its low-rank component, with the column space pinned to that of
+$\underline{\underline{W}}$. If the true per-cell posterior over
+$\underline{z}^{(c)}$ has correlations along directions outside the
+column space of $\underline{\underline{W}}$, the variational family
+cannot represent them. Whether this matters in practice depends on how
+well-aligned the likelihood-induced per-cell coupling is with the
+population-level rank-$k$ structure---an alignment that holds
+asymptotically (the prior dominates as $u_T^{(c)} \to 0$) but
+degrades in high-count cells (where the likelihood dominates and may
+prefer different directions).
+
+### Summary
+
+These caveats do not undermine the LNM's central claim---that placing
+cross-gene correlations in the *generative* model rather than the
+*variational guide* is the structural fix to the Dirichlet's
+zero-correlation-freedom limitation. They do, however, delineate the
+regime in which the model is expected to be informative: cell-type
+contexts where the genes of interest are expressed at counts
+compatible with the LNA, where the rank-$k$ low-rank assumption on
+$\underline{\underline{\Sigma}}$ matches the true regulatory
+architecture, and where downstream interpretation respects the
+identifiability constraints on $\underline{\underline{W}}$. The next
+step in this program is empirical: validating that, within this
+regime, the LNM recovers cross-gene correlations that the
+Dirichlet-Multinomial model with a low-rank guide could not.
+
+## Implementation map {#sec-lnm-implementation-map}
+
+The mathematical model developed above is realized in SCRIBE through the
+linear-decoder VAE form of @sec-lnm-linear-vae-equivalence. The
+implementation artefacts are:
+
+- **Likelihood**: `LogisticNormalMultinomialLikelihood` (in
+  `scribe.models.components.likelihoods.lnm`). Implements the joint
+  observation $\text{NB}(u_T \mid r_T, \hat{p})$ on totals plus
+  $\text{Multinomial}(u_T,\, \text{ALR}^{-1}(\underline{z}))$ on counts,
+  with `d_mode in {"low_rank", "learned"}` selecting between the two
+  regimes from @sec-lnm-vae-d (strictly rank-$k$ marginal vs full
+  $\underline{\underline{W}}\,\underline{\underline{W}}^\top +
+  \text{diag}(\underline{d})$).
+- **Parameterization**: `LogisticNormalParameterization` (in
+  `scribe.models.parameterizations`). Declares
+  $r_T,\,\hat{p},\,[\underline{d}]$ as core numpyro sites; the
+  population mean $\underline{\mu}$ and low-rank factor
+  $\underline{\underline{W}}$ live in the linear decoder's bias and
+  kernel, respectively.
+- **Factory branch**: `_create_vae_model` in
+  `scribe.models.presets.factory` instantiates a single
+  $\text{Dense}(G-1)$ identity-transformed decoder head and a
+  $k$-dimensional `GaussianLatentSpec` with the standard
+  $\mathcal{N}(\underline{0},\, \underline{\underline{I}}_k)$ prior.
+- **Encoder preprocessing**: for `lnm`/`lnmvcp`, the effective default
+  VAE encoder input transform is `log1p_prop`, i.e.
+  $\log(1 + u_g^{(c)} / u_T^{(c)})$. This follows the compositional
+  structure of the model: the multinomial likelihood is driven by
+  proportions, while the total-count scale is handled by the separate
+  NB submodel on $u_T$. Using proportions at the encoder input removes a
+  nuisance total-count factor that would otherwise need to be learned as
+  an invariance by the amortizer.
+- **Bottleneck dimension**: set via `VAEConfig.latent_dim = k`. This is
+  the rank of the population covariance
+  $\underline{\underline{\Sigma}}$.
+- **Inference loop**: standard SVI through the existing
+  `VAELatentGuide` family, with `TraceMeanField_ELBO` to get the
+  closed-form KL of @eq-lnm-vae-standard-kl.
+
+After fitting, $\underline{\mu}$ and $\underline{\underline{W}}$ are
+read directly from the decoder's flax module parameters, and the full
+correlation matrix
+$\underline{\underline{\Sigma}} = \underline{\underline{W}}\,
+\underline{\underline{W}}^\top + \text{diag}(\underline{d})$ is
+available as a first-class object for downstream clustering, pathway,
+or differential-expression analyses.
+
+## Parameterizations of the totals NB submodel {#sec-lnm-totals-parameterizations}
+
+The compositional path of the LNM
+(@sec-lnm-linear-vae-equivalence) — encoder, linear decoder,
+softmax, multinomial likelihood — is the same regardless of how the
+totals submodel
+$u_T^{(c)} \sim \text{NB}(r_T,\, \hat p^{(c)})$
+is parameterized. The totals NB has a two-dimensional parameter
+space, however, and just as in the Dirichlet--Multinomial family
+(@sec-dirichlet-multinomial), there are several natural ways to
+slice that space into a sampled pair plus derived quantities. Each
+slicing leads to a different posterior geometry — and, more
+practically, to a different identifiability story under the capture
+anchor of @sec-lnm-stability-rT-anchor-gating. SCRIBE exposes the
+same trio of parameterizations the user is already familiar with
+from the DM family: ``canonical``, ``mean_prob``, and ``mean_odds``.
+
+### Convention note on the negative-binomial parameter $p$
+
+Throughout this paper (consistent with @sec-dirichlet-multinomial),
+the negative-binomial parameter $p$ is the **failure probability** in
+the standard birth--death derivation: the moments are
+
+$$
+\langle X \rangle \,=\, r\,\frac{1-p}{p},
+\qquad
+\operatorname{Var}[X] \,=\, r\,\frac{1-p}{p^{2}}.
+$${#eq-lnm-totals-nb-conv}
+
+We flag this because NumPyro's
+``NegativeBinomialProbs(total\_count, probs)`` distribution uses the
+*conjugate* convention --- its ``probs`` argument is the success
+probability, with mean ``total_count * probs / (1 - probs)``. The two
+$p$'s are related by ``probs = 1 - p`` (paper). All equations in this
+section are in the paper's failure-probability convention; the codebase
+(and the values returned by ``ScribeResults.get_map()``) report the
+NumPyro-convention ``probs`` instead. Translate via ``p_paper = 1 -
+p_numpyro`` whenever moving between the two.
+
+The odds ratio $\phi_T$ is convention-invariant: defined as the odds
+of failure $\phi_T = p/(1-p)$ in the paper's convention, this equals
+$(1-{\text{probs}})/\text{probs}$ in the NumPyro convention --- the
+same number under both conventions. Only $p$ itself flips.
+
+### NB parameterization: LNM totals vs DM per-gene {#sec-lnm-totals-nb-vs-dm}
+
+A reader moving between the DM derivation (@sec-dirichlet-multinomial,
+@sec-diffexp-robustness) and the LNM equations in this section will
+encounter the negative binomial in two visually different forms. We
+flag the difference here because the *appearance* of the second slot
+of the NB changes between contexts, and the change is the source of a
+real (and reasonable) source of confusion when reading capture-aware
+LNM expressions for the first time.
+
+The two contexts and their natural parameterizations are:
+
+| Context | Distribution | Slot-1 (first arg) | Slot-2 (second arg) | Where capture enters |
+|---------|--------------|--------------------|---------------------|----------------------|
+| DM per-gene, capture-aware (@eq-diffexp-rob-effective-nb) | $u_g \sim \mathrm{NB}(r_g,\, \hat p_c)$ | shape / concentration $r_g$ | success-probability $\hat p_c \in (0, 1]$ | folded into $\hat p_c$ via the binomial-thinning formula |
+| LNM totals, ``canonical`` (@sec-lnm-totals-parameterizations) | $u_T^{(c)} \sim \mathrm{NB}(r_T,\, \hat p^{(c)})$ | $r_T$ | $\hat p^{(c)} \in (0, 1]$ | folded into $\hat p^{(c)}$ via aggregate Poisson-thinning |
+| LNM totals, ``mean_prob`` / ``mean_odds`` / Laplace engine (@sec-lnm-laplace-full-model, @sec-lnm-laplace-nb-param) | $u_T^{(c)} \sim \mathrm{NB}(r_T,\, \mu_T \cdot p_{\text{capture}}^{(c)})$ | $r_T$ | **mean** $\mu_T \cdot p_{\text{capture}}^{(c)} \in (0, \infty)$ | multiplies the mean directly |
+
+The visual collision is between rows 2 and 3 of the table: both write
+$\mathrm{NB}(r_T,\, \cdot)$, but the second slot is a *probability* in
+``canonical`` and a *mean* in ``mean_prob`` / ``mean_odds`` /
+Laplace. In particular, the Laplace expressions
+$\mathrm{NB}(r_T,\, \mu_T \cdot e^{-\eta_c})$ used throughout
+@sec-lnm-laplace-full-model are in the
+$\mathrm{NegativeBinomial2}(\text{mean},\, \text{concentration})$
+convention --- the second slot is the post-capture expected total,
+which lives on library-size scale ($10^4$--$10^5$ UMI per cell) and is
+*not* constrained to $(0, 1]$. Reading the second slot as a success
+probability would be a category error.
+
+#### Why the conventions differ
+
+The choice of parameterization is driven by where capture acts in each
+model:
+
+- **DM per-gene**: capture is derived from binomial thinning at the
+  per-gene level. The crucial algebraic fact is that thinning preserves
+  the NB *shape* $r_g$ (@eq-diffexp-rob-r-invariant). The proof of
+  compositional robustness *is* this preservation statement, so the
+  natural NB slots are $(r_g,\, \hat p_c)$ — keeping the shape
+  explicit and folding capture into the success-probability via
+  thinning.
+- **LNM totals**: capture acts on the aggregate per-cell total, not on
+  per-gene counts. At the aggregate level, capture is a simple
+  multiplicative scaling of the mean,
+  $\langle u_T^{(c)}\rangle = \mu_T \cdot p_{\text{capture}}^{(c)}$,
+  with no need to track per-gene preservation of any shape parameter.
+  The mean form takes advantage of this by putting $p_{\text{capture}}$
+  next to $\mu_T$ as a literal product, sidestepping the non-linear
+  $(p, p_{\text{capture}}) \mapsto \hat p$ map that the
+  ``canonical`` form must compute. This is purely an inferential and
+  numerical convenience; the three slicings of the LNM totals NB are
+  mathematically equivalent (the marginal of $u_T^{(c)}$ is identical),
+  and downstream compositional inferences are robust to any of them
+  (@sec-diffexp-lnm-pln-robust-lnm).
+
+#### Practical reading rule
+
+Whenever the second slot of a totals NB in this paper contains
+$p_{\text{capture}}^{(c)}$ as a multiplicative factor next to a
+mean-magnitude quantity (typically $\mu_T$ or $e^{x}$ for some
+log-mean $x$), the slot is the mean and the distribution is
+$\mathrm{NegativeBinomial2}$. Whenever the second slot is a quantity
+denoted $p$, $\hat p$, or $\hat p^{(c)}$, the slot is a probability
+and the distribution is the classical $(r, p)$ form. The DM
+expressions use the latter convention; the LNM Laplace expressions use
+the former. The compositional-robustness theorem
+(@sec-diffexp-lnm-pln-robust-lnm) goes through unchanged in either
+convention because it depends only on the marginal of $u_T^{(c)}$,
+which is identical across the three slicings.
+
+### The three slicings
+
+For the LNMVCP totals submodel, the per-cell mean factorizes as
+
+$$
+\langle u_T^{(c)} \rangle \,=\, r_T \cdot \frac{1 - \hat p^{(c)}}{\hat p^{(c)}}
+\,=\, \mu_T \cdot p_{\text{capture}}^{(c)},
+$${#eq-lnm-totals-mean-factorization}
+
+where $\mu_T \,=\, r_T \cdot (1-p) / p$ is the population-level
+expected mRNA count per cell (before per-cell capture modulation)
+and the per-cell mean follows the standard Poisson-thinning
+relation. The variance is
+
+$$
+\operatorname{Var}[u_T^{(c)}]
+\,=\, \langle u_T^{(c)} \rangle \cdot
+\frac{1}{\hat p^{(c)}}.
+$${#eq-lnm-totals-variance-factorization}
+
+Three equivalent representations of the totals NB are immediate:
+
+**``canonical``**: sample $(r_T,\, p)$ directly. Faithful to the
+Poisson-thinning derivation in @sec-capture-prior; $r_T$ is the
+intrinsic dispersion of the underlying mRNA pool and $p$ is the
+global NB failure probability. The per-cell $\hat p^{(c)}$ is
+computed from $(p,\, p_{\text{capture}}^{(c)})$ via the standard
+Poisson-thinning formula. *No derived parameters.*
+
+**``mean_prob``**: sample $(\mu_T,\, p)$. Derive the dispersion as
+
+$$
+r_T \,=\, \mu_T \cdot \frac{p}{1 - p}.
+$${#eq-lnm-totals-r-from-mu-p}
+
+The mean of the totals NB is now a primary parameter, directly
+identified by the empirical mean of $u_T$.
+
+**``mean_odds``**: sample $(\mu_T,\, \phi_T)$ where the totals
+odds-ratio is $\phi_T \,=\, p/(1-p)$ (odds of failure, in the
+paper's convention). Derive both
+
+$$
+p \,=\, \frac{\phi_T}{1 + \phi_T},
+\qquad
+r_T \,=\, \mu_T \cdot \phi_T.
+$${#eq-lnm-totals-mean-odds-derived}
+
+Both sampled scalars retain independent identifying signal in the
+data: $\mu_T$ is the empirical first moment of $u_T$, and $\phi_T$
+is identified by the variance-to-mean ratio (specifically,
+$\phi_T = \langle u_T \rangle / (\operatorname{Var}[u_T] - \langle
+u_T \rangle)$ from inverting @eq-lnm-totals-variance-factorization).
+
+The three slicings are *generatively* identical — they all describe
+the same NB$(r_T, \hat p^{(c)})$ — and differ only in what scalars
+are *sampled* by the variational guide versus *derived* from those
+samples.
+
+### Identifiability under the capture anchor
+
+The choice of slicing matters when the capture anchor is active
+(@sec-lnm-stability-rT-anchor-gating). Recall that under the
+deterministic capture anchor, $p_{\text{capture}}^{(c)} \approx
+L_c / M_0$ is pinned by the data, leaving the totals submodel with
+one less degree of freedom than the parameter space appears to
+have. Each parameterization handles this differently:
+
+| Variant | Sampled | Derived | Identified under anchor |
+|---------|---------|---------|-------------------------|
+| ``canonical`` | $r_T,\, p$ | --- | $r_T$ ✓; $p$ ✗ (drifts to boundary) |
+| ``mean_prob`` | $\mu_T,\, p$ | $r_T$ | $\mu_T$ ✓; $p$ ✗ |
+| ``mean_odds`` | $\mu_T,\, \phi_T$ | $r_T,\, p$ | $\mu_T$ ✓; $\phi_T$ ✓ |
+
+In the ``canonical`` and ``mean_prob`` variants, the global $p$ has
+no remaining identifying signal once $p_{\text{capture}}^{(c)}$ is
+anchored: the per-cell $\hat p^{(c)}$ is fully determined by
+$(p,\, p_{\text{capture}}^{(c)})$, and any path through parameter
+space that varies $p$ can be matched by an equal-and-opposite
+adjustment to the implied $\hat p^{(c)}$ (which the anchor pins
+externally). The variational posterior on $p$ therefore drifts
+freely along the $(p,\, p_{\text{capture}})$ ridge until it hits
+the boundary $p \to 0$ (paper convention; equivalently
+``probs`` $\to 1$ in NumPyro convention), leaving
+$p_{\text{hat}}^{(c)} \to 0$ and a degenerate NB on $u_T$ whose
+mean diverges.
+
+The ``mean_odds`` variant **softens** this aliasing by reparameterising
+the global degrees of freedom along directions that the data identifies
+better. Under the anchor:
+
+- $\langle u_T^{(c)} \rangle \,=\, \mu_T \cdot p_{\text{capture}}^{(c)}$
+  is identified by the empirical mean of the row sums of
+  $\underline{\underline{U}}$, weighted by the anchor's $L_c / M_0$.
+  Both $\mu_T$ and $p_{\text{capture}}^{(c)}$ contribute to this
+  product, but $p_{\text{capture}}^{(c)}$ is pinned by the anchor
+  (a sharp prior, not a diffuse one), so $\mu_T$ inherits a sharp
+  posterior centered on $\langle u_T \rangle / \langle
+  p_{\text{capture}} \rangle$.
+
+- $\phi_T$ is the totals NB's overdispersion knob. The derived
+  $r_T = \mu_T \,\phi_T$ then takes its identifying signal from the
+  *residual* variance of $u_T$ around the capture-predicted mean.
+
+Crucially, the derived $p \,=\, \phi_T / (1 + \phi_T)$ is a
+deterministic function of $\phi_T$, so it cannot drift along the
+$p$-axis as in the canonical / mean_prob variants. **However**, the
+``mean_odds`` reparameterisation does *not* eliminate the boundary
+collapse altogether under the **deterministic** capture anchor: it
+relocates it to the $\phi_T \to 0$ corner instead. To see why, note
+that the deterministic anchor pins the per-cell mean of $u_T^{(c)}$
+exactly at $L_c$, and each cell is observed once. The likelihood
+$\log \text{NB}(u_T^{(c)} \mid r_T,\,\hat p^{(c)})$ evaluated at the
+predicted mean is maximized when the NB is sharpest --- i.e., when
+the variance is smallest --- i.e., when $r_T \to \infty$
+($\phi_T \to 0$). The optimizer then drives $\phi_T$ to zero
+because there is no residual variance for the totals NB to fit. The
+collapse migrates from $p$ to $\phi_T$ but does not vanish.
+
+The fix for this residual pathology is *not* a different
+parameterisation: it is to loosen the capture anchor away from the
+strict deterministic limit, so that $p_{\text{capture}}^{(c)}$
+retains some posterior slack and $\phi_T$ has variance to fit. We
+develop this point in
+@sec-lnm-stability-rT-anchor-stochastic below; for the
+``mean_odds`` variant under a moderately informative anchor
+($\sigma_M \approx 0.2$ rather than the deterministic limit
+$\sigma_M \to 0$), $\phi_T$ recovers identifying signal and the
+collapse disappears. With $\sigma_M \approx 0.05$ (the default we
+documented), the collapse is still possible — and SCRIBE therefore
+ships a biology-informed soft floor on $\phi_T$ when the capture
+anchor is active, so that even in the deterministic limit the
+posterior stays in a numerically well-conditioned region.
+
+### Default priors per variant
+
+For each variant, SCRIBE sets sensible auto-defaults on the sampled
+scalars when the user does not override them, mirroring the
+mean-anchoring framework of @sec-mean-anchoring:
+
+- ``canonical``: $r_T \sim \text{LogNormal}(\log
+  \hat r_T^{\text{MoM}},\, 1.5)$ via the moment-of-moments
+  inversion $\hat r_T^{\text{MoM}} \,=\, m^2 / (v - m)$ on the
+  empirical totals. Under the capture anchor, this is replaced by
+  the biology-informed default $r_T \sim \text{LogNormal}(\log 50,\,
+  1.5)$ (@sec-lnm-stability-rT-anchor-biology-default).
+
+- ``mean_prob``: $\mu_T \sim \text{LogNormal}(\log \langle u_T
+  \rangle,\, 1.0)$, where $\langle u_T \rangle$ is the empirical
+  mean library size. The empirical mean has CV $\propto 1/\sqrt{C}$
+  so the prior median is precisely placed; $\sigma_{\log} = 1.0$
+  remains generous enough for the posterior to wander. $p$ is left
+  at its default $\text{Beta}(1, 1)$ (uniform).
+
+- ``mean_odds``: same $\mu_T$ prior as ``mean_prob``, plus
+  $\phi_T \sim \text{LogNormal}(\log \hat \phi_T^{\text{MoM}},\,
+  1.5)$, where the empirical odds-ratio estimate (in the paper's
+  failure-probability convention) is $\hat
+  \phi_T^{\text{MoM}} \,=\, m / (v - m)$. Algebraically this equals
+  $\langle u_T \rangle / (\operatorname{Var}[u_T] - \langle u_T
+  \rangle)$, the inverse of the over-dispersion excess. When the
+  capture anchor is active, this empirical estimate is unreliable
+  (the capture variability inflates $v$ but the deterministic anchor
+  predicts most of that inflation directly, leaving little residual
+  for $\phi_T$ to absorb); SCRIBE substitutes a biology-informed
+  soft floor $\phi_T \sim \text{LogNormal}(\log \phi_T^{\text{biol}},\,
+  1.0)$ in that regime, with $\phi_T^{\text{biol}} = 0.01$
+  (corresponding to $r_T \approx \mu_T / 0.01$, a relatively sharp
+  NB) chosen to keep the variational posterior away from the
+  $\phi_T \to 0$ degenerate limit while letting the data move it
+  freely if there is genuine identifying signal.
+
+User overrides via the ``priors`` dict of ``scribe.fit`` always win.
+The override keys mirror the DM family's symmetry:
+
+| Internal | Descriptive alias |
+|----------|-------------------|
+| ``r_T`` | ``total_dispersion`` |
+| ``mu_T`` | ``total_mean`` |
+| ``phi_T`` | ``total_odds_ratio`` |
+| ``p`` | ``prob`` |
+
+### Recommendation and decision rule
+
+The default for the LNM family is ``canonical``, matching the
+historical SCRIBE behavior and the Poisson-thinning derivation. For
+new fits, however, the recommended choice depends on whether the
+capture anchor is active:
+
+- **No capture anchor**: ``canonical``. All three globals
+  ($r_T,\, p,\, p_{\text{capture}}^{(c)}$) are identified by the
+  data; the canonical parameterization is numerically simplest and
+  has the cleanest biophysical interpretation.
+- **Capture anchor active** (``priors`` contains ``eta_capture`` /
+  ``mu_eta`` / ``organism`` / ``capture_efficiency``):
+  ``mean_odds``. Eliminates the $(p,\, p_{\text{capture}})$
+  aliasing; both $\mu_T$ and $\phi_T$ retain independent
+  identifying signal; $p$ and $r_T$ become well-behaved derived
+  quantities.
+
+The ``mean_prob`` variant exists for symmetry with the DM family
+but is rarely the right pragmatic choice for the LNM under a
+capture anchor — it inherits the $p$ aliasing of ``canonical``
+without the simplicity of treating $r_T$ as primary. It is most
+useful when ``mu_T`` has a strong prior from independent biology
+(e.g., a known target library size for a planned experiment) and
+one wants ``mu_T`` to be the primary inferential target.
+
+### API symmetry with the DM family
+
+In SCRIBE, the LNM parameterizations are selected exactly as for
+the DM family:
+
+```python
+# DM family
+scribe.fit(adata, model="nbvcp", parameterization="canonical")
+scribe.fit(adata, model="nbvcp", parameterization="mean_prob")
+scribe.fit(adata, model="nbvcp", parameterization="mean_odds")
+
+# LNM family — same vocabulary, distinct totals-NB parameterizations
+scribe.fit(adata, model="lnmvcp", parameterization="canonical")
+scribe.fit(adata, model="lnmvcp", parameterization="mean_prob")
+scribe.fit(adata, model="lnmvcp", parameterization="mean_odds")
+```
+
+The dispatch is handled by the helper
+``resolve_user_parameterization_for_model`` in
+``scribe.models.parameterizations``, which maps the user-facing
+short name to the internal LNM-family key when the model is
+``lnm`` / ``lnmvcp``. All three variants are registered in
+``PARAMETERIZATIONS`` under
+``logistic_normal_canonical`` /
+``logistic_normal_mean_prob`` /
+``logistic_normal_mean_odds`` respectively. Internally, the same
+``LogisticNormalParameterization`` class instances all three
+variants via a ``variant=`` constructor argument; the three are
+exposed as singletons for registry lookup.
+
+The same compositional path —
+``LNMWithVCPLikelihood`` reading $r_T$ and $p$ from the model's
+parameter dict — serves all three variants. The likelihood does not
+need to know which parameterization is in effect because the model
+builder evaluates the variant's ``DerivedParam`` declarations
+*before* invoking the likelihood, so by the time
+``LNMWithVCPLikelihood.sample`` reads ``param_values["r_T"]`` and
+``param_values["p"]``, both are present regardless of which scalars
+were sampled directly.
+
+## Training stability: practical considerations {#sec-lnm-training-stability}
+
+The mathematics of @sec-lnm-strategy-a, @sec-lnm-linear-vae-equivalence and the
+implementation map above leave the model fully specified up to parameter
+initialization and optimizer hyperparameters. In a setting where the likelihood
+is a Gaussian reconstruction over a few hundred real-valued features, those last
+few choices are usually invisible: any reasonable initialization works, and the
+loss surface is gentle enough that the optimizer smooths out the rest. The
+Logistic-Normal Multinomial is *not* such a setting. The combination of (i) a
+$G\!-\!1$-dimensional softmax likelihood with $G \approx 20{,}000$, (ii) a
+per-cell latent sampled from an amortized Gaussian, and (iii) sparse count
+inputs with median library size in the thousands of UMIs, produces an objective
+whose landscape is exquisitely sensitive to initialization. Empirically, naïve
+training of an LNM-VAE produces ELBO trajectories that drop by an order of
+magnitude in the first few hundred steps and then oscillate at roughly
+$5{-}10\times$ the converged value for tens of thousands of steps, even when the
+underlying model is correct.
+
+This section is a pedagogical companion to that observation. It explains, from
+first principles, why a particular set of small modifications to the standard
+VAE recipe makes a dramatic practical difference for LNM training, and documents
+the defaults SCRIBE applies automatically for `lnm`/`lnmvcp` models. None of
+these modifications change the model itself --- they only change the corner of
+parameter space the optimizer starts in.
+
+### Why anchor the decoder bias to the empirical ALR mean? {#sec-lnm-stability-bias}
+
+Recall from @eq-lnm-vae-decode that the linear decoder produces ALR coordinates
+as
+
+$$
+\underline{z}^{(c)} \,=\, \underline{\mu} \,+\,
+\underline{\underline{W}}\, \underline{h}^{(c)} \,+\,
+\text{diag}(\sqrt{\underline{d}})\, \underline{\epsilon}^{(c)}.
+$${#eq-lnm-stability-bias-recap}
+
+Here $\underline{\mu}$ is the **bias** of the decoder's `Dense(G-1)`
+layer. The standard flax initialization sets this bias to
+$\underline{0}$, which means that at training step zero,
+
+$$
+\underline{\rho}^{(c)} \,=\, \text{ALR}^{-1}\bigl( \underline{\underline{W}}\,
+\underline{h}^{(c)} + \text{diag}(\sqrt{\underline{d}})\,
+\underline{\epsilon}^{(c)}\bigr) \,\approx\, \frac{1}{G}\,\underline{1}_G,
+$$
+
+a near-uniform composition over $G$ genes. The expected log-likelihood
+contribution of a single cell $c$ at step zero is therefore
+approximately
+
+$$
+\left\langle \log \text{Mult}\!\left(\underline{u}^{(c)} \mid u_T^{(c)},
+\underline{\rho}^{(c)}\right) \right\rangle \,\approx\, -\, u_T^{(c)} \log G +
+\text{const},
+$$
+
+which for a typical droplet-scRNA-seq cell with $u_T^{(c)} \sim 5000$
+and $G \sim 20{,}000$ is on the order of $-5 \times 10^4$ nats. Multiplied
+by the cell count of a moderate experiment, the **first** ELBO
+evaluation lands in the $-10^7$ to $-10^8$ range.
+
+This is not a problem in itself --- gradient descent converges from
+arbitrary starting points in convex problems and from reasonable
+starting points in non-convex ones. The problem is the *path* the
+optimizer must take. Every gradient on $\underline{\underline{W}}$ in
+this regime is dominated by the multinomial residual
+$\underline{u}^{(c)} - u_T^{(c)} \underline{\rho}^{(c)}$, which has the
+*same* shape across cells (because $\underline{\rho}^{(c)}$ is
+approximately uniform regardless of $\underline{h}^{(c)}$). The
+optimizer is effectively averaging the same residual across the entire
+mini-batch and has very little bottleneck-dependent signal to learn
+from. Useful learning of the rank-$k$ structure cannot begin until
+$\underline{\mu}$ has shifted enough mass off uniformity for
+$\underline{\rho}^{(c)}$ to depend non-trivially on
+$\underline{h}^{(c)}$. That migration takes thousands of steps because
+the gradient on $\underline{\mu}$ itself is the *sum* across cells of
+the same residual that is failing to drive $\underline{\underline{W}}$.
+
+The remedy is straightforward: initialize $\underline{\mu}$ at the
+empirical ALR mean of the training data. Concretely, given a count
+matrix $\underline{\underline{U}} \in \mathbb{N}^{C \times G}$ and a
+reference index $r$,
+
+$$
+\hat{\mu}^{\text{ALR}}_g \,=\, \log\!\bigl(\bar{u}_g + c\bigr) -
+\log\!\bigl(\bar{u}_r + c\bigr), \qquad g \neq r,
+$${#eq-lnm-stability-empirical-alr}
+
+with $\bar{u}_g = \sum_c u_g^{(c)}$ the pooled per-gene total and $c = 0.5$ a
+Jeffreys-style pseudocount. Pooling across cells is statistically equivalent (up
+to the pseudocount) to a weighted average of per-cell ALR vectors with weights
+proportional to each cell's total, which is exactly the multinomial likelihood
+target. Setting the bias to @eq-lnm-stability-empirical-alr produces a step-zero
+$\underline{\rho}^{(c)}$ that already matches the dataset's marginal
+composition, so the very first multinomial likelihood evaluation is within a
+constant of its asymptotic value and the multinomial residual becomes
+immediately informative about the cell-to-cell variation that
+$\underline{\underline{W}}$ exists to capture. SCRIBE applies this
+initialization automatically for `lnm`/`lnmvcp` (see
+`scribe.core.normalization_logistic.empirical_alr_mean_from_counts` and
+`DecoderOutputHead.bias_init` in `scribe.models.components.vae_components`).
+
+### Why a data-driven prior on $r_T$? {#sec-lnm-stability-rT-prior}
+
+The total-count submodel $u_T^{(c)} \sim \text{NB}(r_T, \hat{p})$ introduces two
+scalar parameters whose joint posterior the variational guide must match. The
+default constrained-prior choice in SCRIBE is $r_T \sim \text{LogNormal}(0, 1)$,
+which has median $1.0$ and a 95\% prior interval of approximately
+$[0.14,\,7.4]$. For 10x Chromium data with median library size in the low
+thousands, the posterior on $r_T$ typically lives in the tens to low hundreds.
+The KL term $\text{KL}(q(r_T) \,\|\, p(r_T))$ therefore subtracts a substantial,
+quasi-constant contribution from the ELBO at every gradient step until the
+variational mean has migrated several log units away from the prior median.
+Because the optimizer updates $r_T$ via reparameterized Gaussian gradients, that
+migration is slow and contributes substantially to the spiky early-training
+loss.
+
+The fix is to use the data to set an informative prior. The negative
+binomial moment relations (in the paper's failure-probability
+convention; see @eq-lnm-totals-nb-conv) are
+
+$$
+\langle u_T \rangle \,=\, r_T\,\frac{1-\hat{p}}{\hat{p}},
+\qquad
+\operatorname{Var}[u_T] \,=\, r_T\,\frac{1-\hat{p}}{\hat{p}^{2}}.
+$$
+
+Letting $m = \widehat{\langle u_T \rangle}$ and $v =
+\widehat{\operatorname{Var}}[u_T]$ be the empirical first two moments
+of the row sums of $\underline{\underline{U}}$, the method-of-moments
+inversion gives
+
+$$
+\hat{r}_T \,=\, \frac{m^2}{v - m},
+\qquad
+\hat{p} \,=\, \frac{m}{v}.
+$${#eq-lnm-stability-rT-mom}
+
+SCRIBE automatically replaces the default $\text{LogNormal}(0, 1)$ prior
+on $r_T$ with $\text{LogNormal}(\log \hat{r}_T,\,\sigma_{\log})$ when the
+user fits an `lnm`/`lnmvcp` model and does not pass an explicit override
+through the `priors` keyword. The prior median therefore starts at the
+data's center of mass; the spread $\sigma_{\log}$ in log-space remains
+generous so the prior does not over-constrain the posterior.
+User-supplied priors always take precedence (see the LNM block of
+`scribe.api.fit`).
+
+**LNM versus LNMVCP: an asymmetry in the estimator.** For the base
+`lnm` model, $u_T^{(c)} \sim \text{NB}(r_T, \hat{p})$ for every cell,
+so @eq-lnm-stability-rT-mom is the *exact* method-of-moments inversion
+and $\sigma_{\log} = 1$ is appropriate. For `lnmvcp`, however, the
+generative model places a per-cell capture probability
+$p_{\text{capture}}^{(c)} \sim \text{Beta}(a, b)$ that modulates
+$\hat{p}$ via the standard Poisson-thinning relation (see
+@sec-dirichlet-multinomial @eq-umicounts-marginal-nb-p, paper
+convention)
+$\hat p^{(c)} \,=\, \hat{p} \,/\, [\,p_{\text{capture}}^{(c)} +
+\hat{p}\,(1 - p_{\text{capture}}^{(c)})\,]$, so the marginal of
+$u_T^{(c)}$ is a Beta--NB compound rather than a pure NB. By the
+law of total variance,
+
+$$
+\operatorname{Var}[u_T^{(c)}] \,=\,
+\underbrace{\left\langle \operatorname{Var}[u_T \mid p_{\text{capture}}] \right\rangle}_{\text{pure-NB variance averaged over } p_{\text{capture}}}
+\,+\,
+\underbrace{\operatorname{Var}\!\left[\left\langle u_T \mid p_{\text{capture}} \right\rangle\right]}_{\text{extra variance from cell-to-cell capture variability}},
+$${#eq-lnm-stability-rT-vcp-decomp}
+
+so the empirical variance is **larger** than what a pure NB at the
+observed mean would predict, and @eq-lnm-stability-rT-mom returns an
+$\hat{r}_T$ smaller than the true $r_T$. The bias is bounded (typically
+within a factor of $\sim\!5$ in realistic single-cell regimes) but does
+shift the prior median below the truth. To compensate, SCRIBE applies
+$\sigma_{\log} = 1.5$ for `lnmvcp` and $\sigma_{\log} = 1$ for `lnm`.
+The wider LNMVCP prior covers $\hat{r}_T$ within roughly two orders of
+magnitude on either side of the median --- comfortably enough to
+absorb the downward bias without giving up the close-to-data anchoring
+the data-driven mean provides. A more sophisticated alternative would
+fit the full Beta--NB compound moments (jointly recovering
+$r_T,\,\hat{p}$ and the Beta hyperparameters $a,\,b$) before setting
+the prior, but the order-of-magnitude correctness from the cheap
+estimator plus a wider spread is sufficient in practice.
+
+### Why the data-driven $r_T$ prior is gated on the capture anchor {#sec-lnm-stability-rT-anchor-gating}
+
+The argument of the previous subsection presumes that the cell-to-cell variation
+in $u_T$ comes from a *combination* of intrinsic NB sampling noise and
+capture-probability variation, with the moment-of-moments inversion conflating
+the two and the wider $\sigma_{\log}$ absorbing the resulting bias. This
+presumption fails — in a clean and instructive way — once the user activates the
+**capture anchor**: the biology-informed prior on $p_{\text{capture}}^{(c)}$
+that pins the per-cell capture probability to its data-implied value
+$\hat{\nu}_c \approx L_c / M_0$ (see @sec-mean-anchoring). When this anchor is
+active, the moment-of-moments inversion stops being merely biased and becomes
+**mathematically uninformative**.
+
+#### The cell-to-cell variance in $u_T$ is consumed by the anchor {#sec-lnm-stability-rT-anchor-consumed}
+
+Under the capture anchor, the conditional mean of the library size is
+
+$$
+\langle u_T^{(c)} \mid p_{\text{capture}}^{(c)} \rangle
+\,=\, M_{\text{pop}} \cdot p_{\text{capture}}^{(c)},
+$${#eq-lnm-stability-rT-anchor-conditional-mean}
+
+where $M_{\text{pop}} = r_T \cdot p / (1 - p)$ is the population-level
+expected mRNA count per cell. The anchor sets
+$p_{\text{capture}}^{(c)} = L_c / M_0$, and at convergence the global
+$p$ is tuned so that $M_{\text{pop}} \approx M_0$ (this is what the
+constant $M_0$ definitionally represents in @sec-capture-prior). Both
+together give
+
+$$
+\langle u_T^{(c)} \rangle \,\approx\, M_0 \cdot \frac{L_c}{M_0} \,=\, L_c \,=\,
+u_T^{(c)}, $${#eq-lnm-stability-rT-anchor-tautology}
+
+i.e. the anchor places the model's expected library size *exactly* at the
+observed library size, cell by cell. There is no residual across-cell variance
+left over for the totals submodel to explain.
+
+Concretely, the empirical "intrinsic" variance after subtracting the
+capture-prediction $L_c$ is
+
+$$
+\widehat{\text{Var}}_{\text{intrinsic}} \,=\,
+\frac{1}{C} \sum_{c=1}^C \left(u_T^{(c)} - L_c\right)^2 \,=\, 0,
+$${#eq-lnm-stability-rT-anchor-zero-residual}
+
+since $L_c \equiv u_T^{(c)}$. The moment-of-moments inversion
+$\hat{r}_T = m^2 / (v - m)$ applied to this capture-corrected variance
+returns $0/0$. Even in the *stochastic* anchor regime (with $\sigma_M >
+0$, the slack of the capture prior), the residual variance scales
+linearly with $\sigma_M$ and vanishes in the deterministic limit. The
+estimator is consistent: it is simply telling us that there is no
+information about $r_T$ in the totals once the capture is anchored.
+
+#### Where $r_T$'s identifiability migrates to {#sec-lnm-stability-rT-anchor-migration}
+
+This is not a problem for the model — it is a relocation of the
+identifying signal. With the capture anchor in place, the
+$(p_{\text{capture}}, r_T)$ identifiability ridge that the qmd warned
+about in @sec-mean-residual-identifiability has been collapsed. The
+totals submodel is fully pinned by the capture prior; $r_T$ is no
+longer needed to explain library-size variation. Its remaining role is
+to control the per-gene **Fano factor** through the underlying NB
+shape that gives rise to the multinomial composition. In practice
+this means $r_T$ is now identified by the *gene-level* fluctuations
+in $u_g^{(c)}$ around their cell-conditional means, mediated through
+the multinomial likelihood — not by anything in the totals.
+
+The totals-side moment-of-moments has nothing to say about that
+quantity; it is the wrong sufficient statistic. Continuing to use it
+under the anchor would either (a) inject a strongly biased point
+estimate into the prior, or (b) collapse to the under-dispersed
+fall-back $r_T = \min_{r_T}$, neither of which is desirable.
+
+#### The biology-informed default {#sec-lnm-stability-rT-anchor-biology-default}
+
+Given that no totals-side data-driven prior is available under the
+anchor, we substitute a fixed prior whose median reflects a typical
+order of magnitude for the NB dispersion in mammalian
+single-cell sequencing experiments. Empirically, $r_T$ for 10x Chromium
+data settles in the tens to low hundreds across most healthy mammalian
+tissues; the choice $\hat{r}_T^{\text{biol}} = 50$ sits comfortably in
+the center of that range. We pair it with a generous log-spread
+$\sigma_{\log}^{\text{biol}} = 1.5$, giving a prior 95\% interval of
+roughly $[2.5,\,1000]$:
+
+$$
+\boxed{ r_T \,\sim\, \text{LogNormal}\!\left(\log 50,\; 1.5\right) \quad
+\text{(LNMVCP under capture anchor, default).} }
+$${#eq-lnm-stability-rT-anchor-biology-default}
+
+This prior does not anchor $r_T$ to any particular value — it merely keeps the
+variational posterior from drifting through the order-of-magnitude regions that
+are biologically implausible. The multinomial-side likelihood, now the sole
+source of identifying information for $r_T$, pulls the posterior to wherever the
+data support. The $\sigma_{\log} = 1.5$ width is wide enough to cover
+$[\hat{r}_T^{\text{biol}} / 20,\, 20 \, \hat{r}_T^{\text{biol}}]$, which
+encompasses essentially every reported NB dispersion estimate in the published
+10x literature.
+
+#### From deterministic to stochastic capture anchor {#sec-lnm-stability-rT-anchor-stochastic}
+
+The discussion in
+@sec-lnm-stability-rT-anchor-consumed shows why the totals NB has no
+identifying signal *under the deterministic capture anchor* — the
+per-cell mean is pinned exactly at $L_c$, leaving zero residual
+variance for $r_T$ (or $\phi_T$) to fit. In practice this manifests
+as the variational posterior on $\phi_T$ collapsing to the boundary
+$\phi_T \to 0$ (equivalently $r_T \to \infty$, a delta-distribution
+NB on totals), even when the data clearly has finite per-cell
+variability that the model could in principle express through the
+totals NB.
+
+The fix that *does* preserve identifying signal for the totals
+NB — without sacrificing the qualitative role of the capture anchor
+in pinning the cell-to-cell library-size variation — is to operate
+in the **stochastic** anchor regime. Concretely, the capture prior
+is
+
+$$
+\eta_c \,\sim\, \mathcal{N}\!\left(\log M_0 - \log L_c,\,
+\sigma_M\right),
+$$
+
+with $\sigma_M$ controlling how tightly $\eta_c$ is pinned to its
+data-implied mean. The default $\sigma_M = 0.05$ that ships with
+SCRIBE is *very* tight ---near-deterministic --- and reproduces the
+pathology described above. Loosening to $\sigma_M \approx 0.2$ gives
+the per-cell capture probability roughly $\pm 20\%$ posterior slack
+around its $L_c / M_0$ anchor, which leaves enough residual variance
+in the totals for $\phi_T$ to identify. This is the recommended
+configuration whenever the user activates the capture anchor and
+selects the ``mean_odds`` parameterization:
+
+```python
+scribe.fit(
+    adata,
+    model="lnmvcp",
+    parameterization="mean_odds",
+    priors={
+        "capture_efficiency": (math.log(2e5), 0.2),  # sigma_M = 0.2
+    },
+)
+```
+
+With $\sigma_M \approx 0.2$, the capture-vs-library-size scaling
+remains visibly linear (verifiable from the
+``p_capture^(c)`` posterior plot) and ``phi_T`` settles in the
+interior of its support rather than at the boundary. The biology
+default ``mu_T``-anchor of @sec-lnm-stability-rT-anchor-biology-default
+continues to apply as the safety net regardless of $\sigma_M$.
+
+For users who want the original deterministic regime --- e.g.,
+because the capture variability really is negligible and they want
+to test that hypothesis explicitly --- the biology-informed soft
+floor on $\phi_T$ (median $\phi_T^{\text{biol}} = 0.01$, see
+@sec-lnm-totals-parameterizations) is automatically applied when
+SCRIBE detects the capture anchor in the ``priors`` dict, preventing
+the boundary collapse without imposing a sharp data-driven
+constraint. The model trains; the posterior on $\phi_T$ may be near
+the prior; downstream PPCs will show whether the fit is good enough
+for the intended use.
+
+#### User override {#sec-lnm-stability-rT-anchor-user-override}
+
+The biology-informed default is, by construction, an *uninformative* choice in
+the strong sense: it is the SCRIBE author's best guess at a sensible
+order-of-magnitude prior in the absence of other information. For datasets where
+the user has independent reason to believe a specific value of $r_T$ (e.g., a
+previous fit on a related dataset, a literature-reported value for the cell type
+in question, or a strong prior belief about the regulatory regime), the override
+mechanism is the standard one: pass `priors={"r_T": (mu_log, sigma_log)}` to
+`scribe.fit`. The user-supplied value takes precedence over both the biology
+default *and* the moment-of-moments fall-back, regardless of whether the capture
+anchor is active.
+
+#### Decision summary {#sec-lnm-stability-rT-anchor-decision}
+
+The combined `r_T`-prior policy across all four LNM regimes can be expressed as
+a single decision table:
+
+| Model | Capture anchor in `priors`? | User-supplied `priors["r_T"]`? | Resulting prior |
+|-------|------|-------------|-------------------------------------------------|
+| `lnm` | --- | yes | user value |
+| `lnm` | --- | no | $\text{LogNormal}\!\bigl(\log \hat{r}_T^{\text{MoM}},\,1.0\bigr)$ |
+| `lnmvcp` | no | yes | user value |
+| `lnmvcp` | no | no | $\text{LogNormal}\!\bigl(\log \hat{r}_T^{\text{MoM}},\,1.5\bigr)$ |
+| `lnmvcp` | yes | yes | user value |
+| `lnmvcp` | yes | no | $\text{LogNormal}\!\bigl(\log 50,\,1.5\bigr)$ (biology default) |
+
+The capture-anchor activation keys are `eta_capture`, `mu_eta`, and `organism`,
+mirroring the keys consumed by the mean-anchoring injection in
+@sec-mean-multi-dataset. The full implementation is the helper
+`scribe.core.lnm_data_init.resolve_r_T_prior`, which is exercised in isolation
+by the tests in `tests/test_lnm_stability.py` so the policy is
+regression-protected against any future drift.
+
+### Why clamp the encoder $\log\sigma$ head? {#sec-lnm-stability-log-sigma}
+
+The variational posterior on the bottleneck is
+$q_\phi(\underline{h}^{(c)} \mid \underline{u}^{(c)}) =
+\mathcal{N}(\underline{m}_\phi(\underline{u}^{(c)}),\,
+\text{diag}(\underline{s}^2_\phi(\underline{u}^{(c)})))$, where the
+encoder's two output heads emit $\underline{m}_\phi$ and
+$\log \underline{s}^2_\phi = 2 \log \underline{s}_\phi$. The KL term of
+@eq-lnm-vae-standard-kl is
+
+$$
+\text{KL} \,=\, \tfrac{1}{2}\sum_{j=1}^k\! \bigl(s_{\phi,j}^2 + m_{\phi,j}^2 - 1
+- 2 \log s_{\phi,j}\bigr).
+$$
+
+This expression has finite gradients only for $s_{\phi,j} \in (0,
+\infty)$. Two failure modes are common with an unrestricted Dense head
+on $\log s_{\phi,j}$:
+
+1. **$\log s_{\phi,j} \to -\infty$**: the variational posterior
+   collapses to a delta at $\underline{m}_\phi$, the term
+   $-2 \log s_{\phi,j}$ diverges to $+\infty$, and the KL becomes
+   numerically infinite. In practice this manifests as `nan` losses
+   propagated through every subsequent step.
+2. **$\log s_{\phi,j} \to +\infty$**: the variational posterior becomes
+   arbitrarily wide; the reparameterized sample
+   $\underline{h}^{(c)} = \underline{m}_\phi + \underline{s}_\phi \odot
+   \underline{\xi}$ saturates the linear decoder's argument and
+   collapses $\underline{\rho}^{(c)}$ to a one-hot configuration on the
+   single ALR coordinate with the largest $|W_{g,j}|$, after which the
+   multinomial likelihood produces enormous gradients that destabilize
+   training.
+
+Both modes are well-known to practitioners of Gaussian-prior VAEs and
+are handled by the same idiom: clamp the raw $\log s$ output to a fixed
+range. SCRIBE's `LNMGaussianEncoder` (see
+`scribe.models.components.vae_components`) clamps $\log s$ to
+$[-7,\,2]$, corresponding to $s \in [\,9.1\times10^{-4},\,7.4\,]$. The
+lower end is tight enough to keep the KL finite without forcing the
+posterior to be artificially diffuse; the upper end is loose enough that
+no realistic posterior ever binds against it. Crucially, the clamp is
+**only** applied for `lnm`/`lnmvcp` models. Other SCRIBE VAEs use the
+standard unclamped `GaussianEncoder` so their training behavior remains
+bit-identical to pre-stability-pass code.
+
+### Why standardize the encoder input? {#sec-lnm-stability-standardize}
+
+The default encoder input transform for `lnm`/`lnmvcp` is `log1p_prop`,
+defined as
+
+$$
+x_g^{(c)} \,=\, \log\!\bigl(1 + u_g^{(c)} / u_T^{(c)}\bigr),
+$$
+
+a per-cell compositional log-transform. For a cell with
+$u_T^{(c)} \sim 5000$ and a typical gene with $u_g^{(c)} \in \{0,1,2\}$,
+$u_g^{(c)} / u_T^{(c)}$ is on the order of $10^{-4}$, and $\log1p$ of a
+small positive value is approximately the value itself. The encoder
+therefore sees a sparse, near-zero input vector with a long tail of
+slightly larger values for the few highly-expressed genes. The first
+Dense layer applies a LeCun-normal-initialized weight matrix to this
+input; the resulting pre-activation vector is dominated by the few
+non-zero coordinates and is essentially noise for everything else.
+Until the network has learned to amplify the signal in the right
+coordinates, the encoder output --- and therefore the per-cell
+$q_\phi(\underline{h}^{(c)} \mid \underline{u}^{(c)})$ --- is largely
+indistinguishable across cells.
+
+Z-standardizing the encoder input fixes the preconditioning at
+essentially zero cost. Concretely, given the per-feature mean
+$\bar{x}_g = C^{-1} \sum_c x_g^{(c)}$ and standard deviation
+$\sigma_{x,g}$ computed *in the same `log1p_prop` space* the encoder
+uses, the encoder applies
+
+$$
+\tilde{x}_g^{(c)} \,=\, \frac{x_g^{(c)} - \bar{x}_g}{\sigma_{x,g}}
+$$
+
+before the first Dense layer. The standardized input has per-feature
+mean zero and unit variance, restoring the LeCun-normal initialization
+to its intended operating regime. Because the standardization is a pure
+preprocessing transformation that does not depend on any learned
+parameter, it does not change the model class --- only the basis in
+which the encoder learns its weights.
+
+SCRIBE computes $\bar{x}_g, \sigma_{x,g}$ once from the training count
+matrix and stores them on `model_config.vae`, then defaults
+`vae_standardize=True` for `lnm`/`lnmvcp` (see
+`scribe.core.lnm_data_init.compute_encoder_standardization` and the LNM
+sentinel resolution in `scribe.inference.preset_builder`). The user can
+override either the flag or the stats via the public API.
+
+### Bayesian status of the stability modifications {#sec-lnm-stability-bayesian}
+
+The preceding subsections present the stability modifications through an
+optimization lens --- each one moves the optimizer's starting point to a region
+where gradients are immediately informative. But the modifications are not all
+of the same *inferential* type, and it is worth distinguishing them explicitly
+because the distinction matters for calibration and for the formal status of the
+posterior.
+
+**Optimizer-side interventions (do not change the target posterior).** The
+decoder bias initialization (@sec-lnm-stability-bias), the encoder $\log s$
+clamp (@sec-lnm-stability-log-sigma), and the encoder input standardization
+(@sec-lnm-stability-standardize) all leave the generative model and its priors
+untouched. They affect the *path* the optimizer takes through parameter space,
+not the *destination*. Two runs with different initializations but the same model
+specification converge (given sufficient steps) to the same ELBO landscape.
+
+**Model-side intervention (changes the prior, hence the posterior).** The
+data-driven prior on $r_T$ (@sec-lnm-stability-rT-prior) is different in kind:
+it uses the empirical moments of the row sums to set the prior hyperparameters
+$(\log \hat{r}_T, \sigma_{\log})$ and therefore modifies the Bayesian target.
+This is **empirical Bayes** in the classical sense --- the prior is estimated
+from the same data that the posterior is conditioned on. The justification
+follows the same logic applied to the mean-anchoring prior for the NBDM model
+(see @sec-mean-relationship-eb): the row sums $u_T^{(c)}$ are a low-dimensional
+summary statistic (two scalars: sample mean and variance) that is approximately
+sufficient for the hyperparameters and approximately independent of the
+high-dimensional compositional latents $\underline{z}^{(c)}$ that dominate the
+posterior. The formal "double-use" of the data inflates posterior certainty by an
+amount proportional to the ratio of hyperparameter dimensions to data dimensions
+--- two scalars versus $C \times G$ observations --- which is negligible in any
+realistic single-cell experiment.
+
+**Why empirical Bayes is both necessary and safe here.** Single-cell genomics is
+emphatically *not* a data-scarce regime: a typical experiment delivers
+$10^3$--$10^5$ cells, each contributing $\sim\!10^3$--$10^4$ UMIs across
+$\sim\!2 \times 10^4$ genes. In this data-rich setting the likelihood dominates
+the prior for all well-identified parameters, and the posterior is insensitive
+to moderate perturbations of the prior center. The practical influence of the
+data-driven $r_T$ prior on the converged posterior is therefore small --- it is
+not "choosing the answer." However, the variational inference problem lives in a
+high-dimensional parameter space ($G - 1$ softmax coordinates per cell, plus
+population-level covariance structure), and the ELBO objective is non-convex with
+many saddle points and plateaux. In this landscape, **proper, informative priors
+are not a luxury but a computational necessity**: they constrain the feasible
+region enough for stochastic gradient methods to make progress during the
+critical early-training phase when the likelihood surface is still nearly flat.
+A vague or improper prior on $r_T$ does not bias the eventual answer
+appreciably --- but it *does* place the optimizer in a region where the KL
+penalty dominates for thousands of steps before the likelihood becomes
+informative, producing the oscillatory training curves documented at the start
+of this section. The empirical Bayes choice resolves the tension: it supplies
+the computational regularization the optimizer needs while remaining
+asymptotically irrelevant to the posterior as the number of cells grows.
+
+This pattern --- using cheap, closed-form moment estimators to center priors in
+high-dimensional variational models --- is the same strategy that makes DESeq2's
+dispersion shrinkage, edgeR's empirical Bayes common dispersion, and
+limma-voom's mean--variance trend estimation both practical and theoretically
+sound. The distinguishing feature is that the hyperparameter space is always
+low-dimensional relative to the data, so the information leak is bounded and
+decreases with sample size.
+
+### A note on what is *not* automated {#sec-lnm-stability-future-work}
+
+A natural next step --- not currently automated by SCRIBE --- is **KL
+annealing**: linearly ramping the weight $\beta$ on the
+$\text{KL}(q_\phi(\underline{h}^{(c)})\, \|\, p(\underline{h}^{(c)}))$
+term from $0$ at step zero to $1$ over the first $\sim\!10^4$ steps.
+Annealing is a well-studied remedy for *posterior collapse*, the failure
+mode in which the encoder learns to ignore $\underline{u}^{(c)}$ and
+emit a dataset-independent prior-like posterior because doing so makes
+the KL term vanish while the likelihood term is still uninformative.
+With the four stability modifications above in place, posterior collapse
+is rare in practice for LNM models on real scRNA-seq data --- the
+empirical-bias and data-driven prior together leave the likelihood
+informative from step one, so the encoder has a real signal to fit.
+Users who do encounter collapse, or who simply want a smoother
+early-training trajectory, can implement annealing manually by wrapping
+the relevant `numpyro.sample` sites with `numpyro.handlers.scale`. A
+first-class API for KL annealing is left as future work.
+
+A second deferred item is **gradient-clip-norm tuning**. The
+implementation exposes `optimizer_config={"name": "clipped_adam",
+"grad_clip_norm": ...}` directly to the user. The default of
+`grad_clip_norm=1.0` is appropriate for small NBDM models with
+$O(10^4)$ parameters, but for a linear-decoder LNM with $G \sim 20{,}000$
+the global gradient norm at step zero is dominated by the multinomial
+residual on the decoder bias and frequently exceeds $10^2$. Clipping
+this aggressively at $1.0$ stretches early training without changing the
+eventual fit. We recommend $\text{grad\_clip\_norm} \in [10,\,100]$ for
+`lnm`/`lnmvcp` models --- but because the user passes the optimizer
+configuration explicitly through the public API, SCRIBE deliberately
+does not silently rewrite their choice. The clipping threshold appears
+in this section so the recommendation is discoverable.
+
+### Summary
+
+The five practical considerations in this section --- empirical ALR
+bias, data-driven $r_T$ prior, $\log s$ clamp, standardized encoder
+input, and the deferred KL-annealing/grad-clip recommendations --- are
+the difference between an LNM-VAE that converges cleanly and one that
+oscillates noisily for tens of thousands of steps. Four of them are
+purely optimizer-side: they change the starting point or the feasible
+trajectory without altering the Bayesian target. One --- the data-driven
+$r_T$ prior --- is an empirical Bayes modification that formally changes
+the prior and therefore the posterior, but whose influence on the
+converged posterior is negligible in the data-rich regime of single-cell
+experiments (see @sec-lnm-stability-bayesian). Together, they place the
+optimizer in a corner of parameter space where the multinomial gradient
+already carries information about the dataset's structure rather than
+pressing the model toward uniformity. The first four are applied
+automatically for `lnm`/`lnmvcp` models in SCRIBE; the fifth is
+documented here as a recommended user setting.

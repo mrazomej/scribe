@@ -118,6 +118,10 @@ def _run_svi_inference(
     early_stopping = svi_config.early_stopping
 
     restore_best = svi_config.restore_best
+    # Forward the optional KL annealing config; the engine resolves
+    # ``None`` to the standard ELBO and a non-None config to the
+    # ``AnnealedTraceMeanField_ELBO`` + per-step ``beta`` plumbing.
+    kl_annealing = svi_config.kl_annealing
 
     # Build inference kwargs for the engine
     inference_kwargs = {
@@ -134,6 +138,7 @@ def _run_svi_inference(
         "annotation_prior_logits": annotation_prior_logits,
         "dataset_indices": dataset_indices,
         "restore_best": restore_best,
+        "kl_annealing": kl_annealing,
     }
 
     # Add optional optimizer and loss if provided

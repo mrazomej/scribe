@@ -79,6 +79,14 @@ Custom probability distribution classes:
   - Memory efficient: O((D-1) × rank) instead of O((D-1)²)
   - Ideal for large gene sets (30K+)
 
+- **`LowRankPoissonLogNormal(loc, cov_factor, cov_diag)`**: Low-rank
+  Poisson-LogNormal distribution for absolute count data. Each gene's count is
+  Poisson with a log-rate drawn from a correlated multivariate normal.
+  - Does NOT support `log_prob()` (marginal is intractable)
+  - Provides closed-form `mean` and `variance` via log-normal moments
+  - Memory efficient: O(G × rank) instead of O(G²)
+  - Used for PLN posterior predictive checks and post-fit sampling
+
 - **`SoftmaxNormal(loc, cov_factor, cov_diag)`**: Softmax-Normal distribution
   for compositional data with symmetric treatment of all components.
   - Does NOT support `log_prob()` (softmax is singular)

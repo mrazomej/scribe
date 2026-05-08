@@ -11,18 +11,24 @@ likelihoods/
 ├── negative_binomial.py # Standard NB likelihood
 ├── zero_inflated.py     # Zero-Inflated NB likelihood
 ├── vcp.py               # VCP variants (NB and ZINB with capture probability)
+├── lnm.py               # Logistic-Normal Multinomial (NB total × multinomial)
+├── pln.py               # Poisson-LogNormal (per-gene Poisson from log-normal rates)
 └── README.md            # This file
 ```
 
 ## Classes
 
-| Class                        | File                 | Description                             |
-| ---------------------------- | -------------------- | --------------------------------------- |
-| `Likelihood`                 | base.py              | Abstract base class for all likelihoods |
-| `NegativeBinomialLikelihood` | negative_binomial.py | Standard Negative Binomial              |
-| `ZeroInflatedNBLikelihood`   | zero_inflated.py     | Zero-Inflated Negative Binomial         |
-| `NBWithVCPLikelihood`        | vcp.py               | NB with Variable Capture Probability    |
-| `ZINBWithVCPLikelihood`      | vcp.py               | ZINB with Variable Capture Probability  |
+| Class                                 | File                 | Description                                                              |
+| ------------------------------------- | -------------------- | ------------------------------------------------------------------------ |
+| `Likelihood`                          | base.py              | Abstract base class for all likelihoods                                  |
+| `NegativeBinomialLikelihood`          | negative_binomial.py | Standard Negative Binomial                                               |
+| `ZeroInflatedNBLikelihood`            | zero_inflated.py     | Zero-Inflated Negative Binomial                                          |
+| `NBWithVCPLikelihood`                 | vcp.py               | NB with Variable Capture Probability                                     |
+| `ZINBWithVCPLikelihood`               | vcp.py               | ZINB with Variable Capture Probability                                   |
+| `LogisticNormalMultinomialLikelihood` | lnm.py               | NB total × Multinomial composition via ALR-space linear-decoder VAE      |
+| `LNMWithVCPLikelihood`                | lnm.py               | LNM with per-cell VCP on the totals NB submodel                          |
+| `select_alr_reference`                | lnm.py               | Data-adaptive ALR reference gene selection (highest geometric mean)      |
+| `PoissonLogNormalLikelihood`          | pln.py               | Per-gene Poisson from correlated log-normal rates via linear-decoder VAE |
 
 Each concrete class implements both the **generative** side (`sample()`,
 used by NumPyro during inference) and the **evaluation** side
@@ -423,6 +429,24 @@ A module-level constant `_P_EPS = 1e-6` is defined in both
 This mirrors the `p_floor` parameter already used in the post-hoc
 log-likelihood evaluation functions in `log_likelihood.py`.  Tests for both
 layers live in `tests/test_floor.py`.
+
+### PLN numerical stability
+
+| Likelihood                   | Parameter | Guard                                             |
+| ---------------------------- | --------- | ------------------------------------------------- |
+| `PoissonLogNormalLikelihood` | log-rate  | `jnp.clip(y, _LOG_RATE_MIN, _LOG_RATE_MAX)` (±30) |
+| `PoissonLogNormalLikelihood` | `d_pln`   | `jnp.maximum(d, _D_EPS)` (1e-8 floor)             |
+
+### PLN capture probability
+
+PLN does not have a separate model string for variable capture (unlike
+`lnmvcp`).  Capture is activated internally by supplying a capture prior
+(e.g. `priors={"capture_efficiency": (log_M0, sigma_M)}`) and is handled
+as a per-cell additive offset in log-rate space.  The factory appends a
+`BiologyInformedCaptureSpec` to `param_specs` so the `GuideBuilder` emits
+a matching `eta_capture` variational site.  Using `variable_capture=True`
+with `model="pln"` without capture priors emits a warning and runs PLN
+without capture correction.
 
 ## Adding New Likelihoods
 

@@ -108,6 +108,7 @@ configured with a parameterization, constraint mode, optional extensions, and
 an inference method:
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#dce5f1', 'primaryTextColor': '#231f20', 'primaryBorderColor': '#4f7cbb', 'lineColor': '#272C68', 'secondaryColor': '#f0e8f4', 'tertiaryColor': '#ccf1e5'}}}%%
 graph TD
     subgraph likelihood ["1 - Likelihood Construction"]
         NB["Negative Binomial<br/><i>base model</i>"]
@@ -160,6 +161,14 @@ graph TD
     extensions --> infer
     SVI_node --> guide
     VAE_node --> guide
+
+    %% Brand color styling for subgraphs
+    style likelihood fill:#ccf1e5,stroke:#00b97c,stroke-width:2px
+    style parameterization fill:#dce5f1,stroke:#4f7cbb,stroke-width:2px
+    style constraint fill:#f0e8f4,stroke:#b48ec6,stroke-width:2px
+    style extensions fill:#fcf1ce,stroke:#ebb800,stroke-width:2px
+    style infer fill:#e3e5fc,stroke:#767eed,stroke-width:2px
+    style guide fill:#effbfa,stroke:#28898A,stroke-width:2px
 ```
 
 This compositional design means you can combine **4 likelihoods x 3

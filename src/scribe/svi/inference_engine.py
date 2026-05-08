@@ -17,7 +17,11 @@ from jax import random, jit
 import numpyro
 from numpyro.infer import SVI, TraceMeanField_ELBO
 from ..models.model_registry import get_model_and_guide
-from ..models.config import ModelConfig, EarlyStoppingConfig
+from ..models.config import (
+    ModelConfig,
+    EarlyStoppingConfig,
+    KLAnnealingConfig,
+)
 from ._progress_backend import (
     ProgressBackendName,
     build_progress_reporter,
@@ -26,6 +30,10 @@ from .checkpoint import (
     checkpoint_exists,
     save_svi_checkpoint,
     load_svi_checkpoint,
+)
+from .kl_annealing import (
+    AnnealedTraceMeanField_ELBO,
+    make_beta_schedule,
 )
 
 # ==============================================================================
@@ -149,6 +157,7 @@ def _run_with_early_stopping(
     progress_backend: ProgressBackendName = "auto",
     log_progress_lines: bool = False,
     model_config: Optional[ModelConfig] = None,
+    beta_schedule: Optional[Any] = None,
 ) -> SVIRunResult:
     """Run SVI with a custom training loop, checkpointing, and optional early stopping.
 
@@ -347,9 +356,26 @@ def _run_with_early_stopping(
 
         jit_body_fn = jit(body_fn)
 
-        # Run the update loop
+        # Run the update loop. When KL annealing is on, ``beta`` is
+        # injected as a JAX scalar in ``dynamic_arrays_step`` per
+        # iteration. The pytree structure of ``dynamic_arrays_step`` is
+        # stable across iterations (same set of keys every step), so
+        # the JIT cache is preserved and the only thing that changes
+        # between calls is the *value* of the traced ``beta`` scalar.
+        # When annealing is off (``beta_schedule is None``), the loop
+        # passes ``dynamic_arrays`` unchanged — this path is byte-
+        # identical to the pre-annealing implementation, preserving
+        # backward compatibility for SVI/MCMC and for VAE fits where
+        # the user explicitly disabled annealing.
         for step in range(start_step, n_steps):
-            svi_state, loss = jit_body_fn(svi_state, dynamic_arrays)
+            if beta_schedule is not None:
+                beta_val = jnp.asarray(
+                    beta_schedule(step), dtype=jnp.float32
+                )
+                dynamic_arrays_step = {**dynamic_arrays, "beta": beta_val}
+            else:
+                dynamic_arrays_step = dynamic_arrays
+            svi_state, loss = jit_body_fn(svi_state, dynamic_arrays_step)
 
             # Store loss every step (like NumPyro's svi.run)
             loss_val = float(loss)
@@ -517,6 +543,7 @@ def _run_standard(
     n_steps: int,
     stable_update: bool = True,
     model_config: Optional[ModelConfig] = None,
+    beta_schedule: Optional[Any] = None,
 ) -> SVIRunResult:
     """Run SVI using NumPyro's built-in run method (no early stopping).
 
@@ -532,12 +559,42 @@ def _run_standard(
         Number of optimization steps.
     stable_update : bool, default=True
         Whether to use numerically stable updates.
+    beta_schedule : Optional[Callable]
+        KL annealing schedule. When ``None`` (the default), the path
+        falls through to NumPyro's built-in ``svi.run()`` and is
+        byte-identical to the pre-annealing implementation. When set,
+        the run is delegated to :func:`_run_with_early_stopping` with a
+        no-op early-stopping config so that the per-step ``beta``
+        kwarg can be threaded through ``dynamic_arrays_step``
+        (NumPyro's built-in ``svi.run()`` does not support per-step
+        kwargs).
 
     Returns
     -------
     SVIRunResult
         Results containing optimized parameters and loss history.
     """
+    # When annealing is requested, delegate to the custom loop with a
+    # no-op early stopping config. The custom loop is the only path
+    # that supports per-step kwargs (i.e. the dynamic ``beta`` value);
+    # NumPyro's ``svi.run()`` builds a single static lax.scan and
+    # cannot accept additional dynamic arguments.
+    if beta_schedule is not None:
+        return _run_with_early_stopping(
+            svi=svi,
+            rng_key=rng_key,
+            model_args=model_args,
+            n_steps=n_steps,
+            early_stopping=EarlyStoppingConfig(
+                enabled=False, restore_best=False
+            ),
+            stable_update=stable_update,
+            progress=True,
+            log_progress_lines=False,
+            model_config=model_config,
+            beta_schedule=beta_schedule,
+        )
+
     # Use NumPyro's built-in run method with progress bar
     result = svi.run(
         rng_key,
@@ -626,6 +683,7 @@ class SVIInferenceEngine:
         dataset_indices: Optional[jnp.ndarray] = None,
         progress: bool = True,
         restore_best: bool = False,
+        kl_annealing: Optional[KLAnnealingConfig] = None,
     ) -> SVIRunResult:
         """
         Execute SVI inference with optional early stopping.
@@ -721,8 +779,27 @@ class SVIInferenceEngine:
             model_config, n_genes=n_genes
         )
 
+        # Resolve the ELBO loss + the (optional) annealing schedule.
+        # When ``kl_annealing`` is provided and enabled, we swap the
+        # standard ``TraceMeanField_ELBO`` for our ``AnnealedTraceMeanField_ELBO``
+        # subclass and build a ``step -> beta`` callable. Both pieces
+        # are required: without the subclass the ``beta`` kwarg is
+        # ignored (or worse, forwarded to the model and breaks); without
+        # the schedule the inference loop has no per-step ``beta`` to
+        # inject.
+        beta_schedule: Optional[Any] = None
+        effective_loss = loss
+        if kl_annealing is not None and kl_annealing.enabled:
+            effective_loss = AnnealedTraceMeanField_ELBO()
+            beta_schedule = make_beta_schedule(
+                kl_annealing.schedule,
+                warmup=kl_annealing.warmup,
+                beta_min=kl_annealing.beta_min,
+                beta_max=kl_annealing.beta_max,
+            )
+
         # Create SVI instance
-        svi = SVI(model, guide, optimizer, loss=loss)
+        svi = SVI(model, guide, optimizer, loss=effective_loss)
 
         # Create random key
         rng_key = random.PRNGKey(seed)
@@ -766,6 +843,7 @@ class SVIInferenceEngine:
                 progress=progress,
                 log_progress_lines=log_progress_lines,
                 model_config=model_config_for_results,
+                beta_schedule=beta_schedule,
             )
         else:
             return _run_standard(
@@ -775,4 +853,5 @@ class SVIInferenceEngine:
                 n_steps=n_steps,
                 stable_update=stable_update,
                 model_config=model_config_for_results,
+                beta_schedule=beta_schedule,
             )

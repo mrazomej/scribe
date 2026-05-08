@@ -1,0 +1,1691 @@
+---
+editor:
+    render-on-save: true
+# bibliography: references.bib
+csl: ieee.csl
+format:
+  html:
+    theme:
+      light: cosmo
+      dark: superhero 
+---
+
+# Biophysical foundation: from gene regulatory networks to log-normal abundances {#sec-grn-biophysics}
+
+In this section, we develop a thorough biophysical derivation showing that the
+steady-state distribution of gene expression in a gene regulatory network (GRN)
+is a **multivariate Gaussian on log-abundances**. This result is universal: it
+follows from any microscopic promoter model satisfying first-order mRNA
+degradation and coarse-grainable production, under the linear noise
+approximation. It does not depend on a particular choice of observation model
+(how counts are generated from those abundances).
+
+The multivariate Gaussian on log-abundances is the central biophysical result.
+Downstream, this result can be connected to different statistical observation
+models---including the Logistic-Normal Multinomial (LNM) and the
+Poisson-LogNormal (PLN)---depending on how one models the mapping from
+continuous abundances to discrete observed counts. These observation models are
+discussed in @sec-grn-bio-observation-models after the core derivation.
+
+For completeness, all algebraic steps are provided. This is with the intention
+that the reader can follow the derivation step by step, and verify for
+themselves that each step is correct.
+
+## The starting point: the one-state bursty promoter {#sec-grn-bio-bursty}
+
+We begin with the simplest microscopic model of gene expression that produces
+the negative binomial distribution **exactly**: the one-state bursty promoter.
+This model yields a clean, approximation-free foundation for the ODE that
+governs the effective mRNA abundance, and provides the most direct path to the
+Dirichlet-Multinomial in the independent-gene limit.
+
+### The model {#sec-grn-bio-bursty-model}
+
+Consider a gene $g$ whose promoter is **constitutively active**: there is no
+OFF state. Transcription occurs in discrete **bursts**. Each burst arrives at
+rate $k_{i,g}$ (the burst initiation rate) and deposits a random number of mRNA
+molecules, where the burst size $B$ follows a geometric distribution with mean
+$b_g$:
+
+$$
+\text{Prob}(B = n) = \frac{1}{1 + b_g}
+\left(\frac{b_g}{1 + b_g}\right)^n,
+\quad n = 0, 1, 2, \ldots
+$${#eq-grn-bio-burst-size}
+
+Between bursts, mRNA molecules degrade independently at rate $\gamma_g$. This
+model has two sources of stochasticity: the random timing of bursts (Poisson
+process with rate $k_{i,g}$) and the random burst sizes (geometric with mean
+$b_g$).
+
+As shown in @sec-bnb-nb-routes, the steady-state mRNA distribution of this
+model is **exactly** the negative binomial:
+
+$$
+m_g \sim \text{NB}\!\left(r_g = \frac{k_{i,g}}{\gamma_g},\;
+p_g = \frac{1}{1 + b_g}\right).
+$${#eq-grn-bio-nb-exact}
+
+No approximation is involved: the NB is the exact steady-state distribution
+of the one-state bursty promoter.
+
+### The shot-noise representation {#sec-grn-bio-shot-noise}
+
+Let $\{t_j\}$ be the (random) arrival times of bursts, forming a Poisson
+process with rate $k_{i,g}$, and let $B_j$ be the (random) size of the $j$-th
+burst. Conditioned on a specific realization of this burst process, the mRNA
+count evolves deterministically between bursts (decaying at rate $\gamma_g$)
+and jumps upward by $B_j$ at each burst time $t_j$:
+
+$$
+\frac{dm_g}{dt} = \sum_j B_j \, \delta(t - t_j) - \gamma_g \, m_g,
+$${#eq-grn-bio-shot-noise-ode}
+
+where $\delta(\cdot)$ is the Dirac delta function. The first term is the
+production: each burst deposits $B_j$ molecules instantaneously at time $t_j$.
+The second term is first-order mRNA degradation.
+
+### Solving the shot-noise ODE {#sec-grn-bio-shot-noise-solve}
+
+We now solve @eq-grn-bio-shot-noise-ode step by step. The ODE is linear in
+$m_g$, so we use the integrating factor method. Writing the ODE in standard
+form,
+
+$$
+\dot{m}_g(t) + \gamma_g \, m_g(t) =
+\sum_j B_j \, \delta(t - t_j).
+$${#eq-grn-bio-shot-standard}
+
+Multiply both sides by the integrating factor $e^{\gamma_g t}$:
+
+$$
+e^{\gamma_g t}
+\left[\dot{m}_g(t) + \gamma_g \, m_g(t)\right] =
+e^{\gamma_g t} \sum_j B_j \, \delta(t - t_j).
+$${#eq-grn-bio-shot-if-mult}
+
+The left-hand side is a total derivative, since by the product rule
+
+$$
+\frac{d}{dt}\!\left(m_g(t)\, e^{\gamma_g t}\right) =
+\dot{m}_g(t)\, e^{\gamma_g t} +
+\gamma_g \, m_g(t)\, e^{\gamma_g t}.
+$${#eq-grn-bio-shot-product-rule}
+
+We therefore have
+
+$$
+\frac{d}{dt}\!\left(m_g(t)\, e^{\gamma_g t}\right) =
+e^{\gamma_g t} \sum_j B_j \, \delta(t - t_j).
+$${#eq-grn-bio-shot-total-deriv}
+
+Integrating both sides from an initial time $t_0$ to $t$:
+
+$$
+m_g(t)\, e^{\gamma_g t} - m_g(t_0)\, e^{\gamma_g t_0} =
+\sum_j B_j \int_{t_0}^{t} ds\; e^{\gamma_g s}\, \delta(s - t_j).
+$${#eq-grn-bio-shot-integrated}
+
+By the sifting property of the Dirac delta,
+$\int_{t_0}^{t} ds\; e^{\gamma_g s}\, \delta(s - t_j) =
+e^{\gamma_g t_j}$ whenever $t_j \in (t_0, t)$, and zero otherwise.
+Substituting:
+
+$$
+m_g(t)\, e^{\gamma_g t} - m_g(t_0)\, e^{\gamma_g t_0} =
+\sum_{j:\, t_0 < t_j < t} B_j \, e^{\gamma_g t_j}.
+$${#eq-grn-bio-shot-sifted}
+
+Solving for $m_g(t)$ by multiplying both sides by $e^{-\gamma_g t}$:
+
+$$
+m_g(t) =
+m_g(t_0)\, e^{-\gamma_g(t - t_0)} +
+\sum_{j:\, t_0 < t_j < t} B_j \, e^{-\gamma_g(t - t_j)}.
+$${#eq-grn-bio-shot-full-solution}
+
+The first term is the contribution from the initial condition, which decays
+exponentially with time constant $1/\gamma_g$---exactly as in the two-state
+case. The second term sums the surviving contributions from all bursts that
+arrived between $t_0$ and $t$.
+
+Letting $t_0 \to -\infty$ (so that the initial-condition term vanishes), we
+reach the steady-state **shot-noise process**:
+
+$$
+\boxed{
+m_g(t) = \sum_{j:\, t_j < t} B_j \, e^{-\gamma_g(t - t_j)}.
+}
+$${#eq-grn-bio-shot-noise-solution}
+
+Each burst deposits $B_j$ molecules at time $t_j$, and these molecules decay
+exponentially with rate $\gamma_g$. The current mRNA count is the sum of all
+surviving contributions from past bursts---a natural **exponential moving
+average** over the gene's production history, with memory timescale
+$1/\gamma_g$ set by mRNA degradation.
+
+### Steady-state distribution: from the Chemical Master Equation to the Gamma {#sec-grn-bio-bursty-gamma}
+
+We now derive the steady-state distribution of the one-state bursty promoter
+from first principles using the Chemical Master Equation (CME) and the
+probability generating function (PGF).
+
+#### The Chemical Master Equation {#sec-grn-bio-cme}
+
+Let $P(n, t) = \text{Prob}(m_g = n \text{ at time } t)$ be the probability
+that gene $g$ has exactly $n$ mRNA molecules at time $t$. Two processes change
+the mRNA count: degradation (which decreases $n$ by 1) and bursts (which
+increase $n$ by the burst size $B$). The CME is
+
+$$
+\frac{dP(n)}{dt} =
+\underbrace{\gamma_g (n+1) P(n+1) - \gamma_g n \, P(n)}_{\text{degradation}}
++ \underbrace{k_{i,g} \sum_{m=0}^{n} q_m \, P(n-m) - k_{i,g} \, P(n)}_{\text{bursts}},
+$${#eq-grn-bio-cme}
+
+where $q_m = \text{Prob}(B = m)$ is the burst size probability mass function
+from @eq-grn-bio-burst-size. The degradation terms account for molecules
+leaving state $n+1$ (entering $n$) and leaving state $n$. The burst terms
+account for arriving at state $n$ from any state $n - m$ via a burst of size
+$m$, minus leaving state $n$ by any burst event (including bursts of size 0).
+
+#### Converting to the probability generating function {#sec-grn-bio-pgf}
+
+Define the probability generating function
+
+$$
+G(z, t) = \sum_{n=0}^{\infty} z^n P(n, t) = \langle z^{m_g} \rangle.
+$${#eq-grn-bio-pgf-def}
+
+To convert the CME to an equation for $G$, we multiply both sides of
+@eq-grn-bio-cme by $z^n$ and sum over $n \geq 0$. Each group of terms
+transforms as follows.
+
+**Degradation terms.** The "gain" term (molecules entering state $n$ from
+$n+1$) gives
+
+$$
+\sum_{n=0}^{\infty} z^n \, \gamma_g(n+1) P(n+1) =
+\gamma_g \frac{\partial G}{\partial z},
+$${#eq-grn-bio-pgf-deg-gain}
+
+since $(n+1)P(n+1)$ is the coefficient of $z^n$ in $\partial G / \partial z$.
+The "loss" term (molecules leaving state $n$) gives
+
+$$
+\sum_{n=0}^{\infty} z^n \, \gamma_g \, n \, P(n) =
+\gamma_g \, z \frac{\partial G}{\partial z},
+$${#eq-grn-bio-pgf-deg-loss}
+
+since $n P(n)$ is the coefficient of $z^n$ in $z \, \partial G / \partial z$.
+Together, the degradation contribution is
+
+$$
+\gamma_g (1 - z) \frac{\partial G}{\partial z}.
+$${#eq-grn-bio-pgf-deg-total}
+
+**Burst terms.** The "gain" term is a convolution sum
+$\sum_{m=0}^{n} q_m P(n-m)$, which, after multiplying by $z^n$ and summing
+over $n$, becomes the product of the PGFs:
+
+$$
+\sum_{n=0}^{\infty} z^n \sum_{m=0}^{n} q_m \, P(n-m) =
+Q(z) \cdot G(z),
+$${#eq-grn-bio-pgf-burst-conv}
+
+where $Q(z) = \sum_{m=0}^{\infty} q_m z^m$ is the PGF of the burst size
+distribution. The "loss" term is simply $k_{i,g} G(z)$. Together, the burst
+contribution is
+
+$$
+k_{i,g}\left[Q(z) - 1\right] G(z).
+$${#eq-grn-bio-pgf-burst-total}
+
+**The PGF of the geometric burst size.** From @eq-grn-bio-burst-size,
+
+$$
+Q(z) = \sum_{m=0}^{\infty} \frac{1}{1+b_g}
+\left(\frac{b_g z}{1+b_g}\right)^m =
+\frac{1}{1 + b_g(1 - z)},
+$${#eq-grn-bio-pgf-geom}
+
+where the geometric series converges for $|z| \leq 1$ (since
+$b_g / (1 + b_g) < 1$). Therefore,
+
+$$
+Q(z) - 1 = \frac{1}{1 + b_g(1 - z)} - 1 =
+\frac{-b_g(1 - z)}{1 + b_g(1 - z)}.
+$${#eq-grn-bio-pgf-Qminus1}
+
+#### The steady-state PGF equation {#sec-grn-bio-pgf-ode}
+
+At steady state, $\partial G / \partial t = 0$. Collecting the degradation
+(@eq-grn-bio-pgf-deg-total) and burst (@eq-grn-bio-pgf-burst-total) terms:
+
+$$
+0 = \gamma_g(1 - z)\frac{\partial G}{\partial z}
++ k_{i,g} \cdot \frac{-b_g(1 - z)}{1 + b_g(1 - z)} \, G(z).
+$${#eq-grn-bio-pgf-ss-raw}
+
+Dividing both sides by $(1 - z)$ (valid for $z \neq 1$):
+
+$$
+\gamma_g \frac{\partial G}{\partial z} =
+\frac{k_{i,g} \, b_g}{1 + b_g(1 - z)} \, G(z).
+$${#eq-grn-bio-pgf-ss}
+
+This is a first-order **separable ODE** in $z$.
+
+#### Solving the separable ODE {#sec-grn-bio-pgf-solve}
+
+Separating variables:
+
+$$
+\frac{dG}{G} =
+\frac{k_{i,g} \, b_g}{\gamma_g} \cdot
+\frac{dz}{1 + b_g(1 - z)}.
+$${#eq-grn-bio-pgf-separated}
+
+To evaluate the right-hand side, substitute $w = 1 + b_g(1 - z)$, so
+$dw = -b_g \, dz$, i.e., $dz = -dw / b_g$:
+
+$$
+\frac{k_{i,g} \, b_g}{\gamma_g} \cdot \frac{-dw / b_g}{w} =
+-\frac{k_{i,g}}{\gamma_g} \cdot \frac{dw}{w}.
+$${#eq-grn-bio-pgf-substitution}
+
+Integrating both sides:
+
+$$
+\ln G = -\frac{k_{i,g}}{\gamma_g} \ln w + C =
+-\frac{k_{i,g}}{\gamma_g} \ln\!\left[1 + b_g(1 - z)\right] + C.
+$${#eq-grn-bio-pgf-integrated}
+
+Exponentiating:
+
+$$
+G(z) = A \cdot \left[1 + b_g(1 - z)\right]^{-k_{i,g}/\gamma_g}.
+$${#eq-grn-bio-pgf-general}
+
+The constant $A$ is fixed by the normalization condition $G(1) = 1$ (since
+$\sum_{n=0}^{\infty} P(n) = 1$):
+
+$$
+G(1) = A \cdot \left[1 + b_g(1 - 1)\right]^{-k_{i,g}/\gamma_g} =
+A \cdot 1 = A.
+$${#eq-grn-bio-pgf-normalization}
+
+Therefore $A = 1$, and the steady-state PGF is
+
+$$
+\boxed{
+G(z) = \left[1 + b_g(1 - z)\right]^{-k_{i,g}/\gamma_g}.
+}
+$${#eq-grn-bio-pgf-result}
+
+#### Identifying the distribution {#sec-grn-bio-pgf-identify}
+
+The PGF @eq-grn-bio-pgf-result is exactly the PGF of the **negative binomial**
+distribution with shape $r_g = k_{i,g}/\gamma_g$ and success probability
+$p = 1/(1 + b_g)$. This confirms that the exact discrete steady-state is
+$m_g \sim \text{NB}(r_g, p)$, as stated in @eq-grn-bio-nb-exact.
+
+The Gamma distribution for the effective Poisson rate $\lambda_g$ now follows
+immediately from the Poisson-Gamma mixture representation of the NB, which was
+derived in @sec-dirichlet-multinomial: the NB is the marginal distribution of
+$m_g \mid \lambda_g \sim \text{Poisson}(\lambda_g)$ when
+$\lambda_g \sim \text{Gamma}(r_g, b_g)$. Since we have just shown that the
+steady-state is $\text{NB}(r_g, p)$ with $r_g = k_{i,g}/\gamma_g$ and
+$p = 1/(1 + b_g)$, the effective Poisson rate is
+
+$$
+\boxed{
+\lambda_g \sim \text{Gamma}\!\left(\frac{k_{i,g}}{\gamma_g},\, b_g\right),
+}
+$${#eq-grn-bio-bursty-gamma}
+
+with $k_{i,g}/\gamma_g$ as the shape parameter (dimensionless burst frequency)
+and $b_g$ as the scale parameter (mean burst size).
+
+### The effective Poisson rate and its physical meaning {#sec-grn-bio-lambda-def}
+
+The variable $\lambda_g$ is the central quantity in our model. Its physical
+interpretation is unambiguous: **$\lambda_g$ is the expected mRNA abundance of
+gene $g$, conditional on the current state of the burst process.** It is
+neither a "transcription rate" in the kinetic sense (which would have units of
+molecules/time) nor the actual mRNA count (which is a discrete random variable).
+It is the Poisson rate---the continuous-valued effective expression level that
+determines the mean of the mRNA count distribution.
+
+In the Poisson-Gamma mixture representation of the negative binomial
+(@sec-dirichlet-multinomial), the mRNA count for gene $g$ was written as
+
+$$
+m_g \mid \lambda_g \sim \text{Poisson}(\lambda_g),
+\quad \lambda_g \sim \text{Gamma}(r_g, \beta).
+$${#eq-grn-bio-poisson-gamma-recap}
+
+The $\lambda_g$ we use here is the same object.
+
+## The mRNA ODE from mass balance {#sec-grn-bio-mass-balance}
+
+### The ODE between bursts {#sec-grn-bio-between-bursts}
+
+The dynamics of $\lambda_g$ in the one-state bursty model are those of a
+**piecewise-deterministic Markov process** (PDMP):
+
+- **Between bursts**: $\lambda_g$ decays deterministically,
+  $$
+  \frac{d\lambda_g}{dt} = -\gamma_g \lambda_g.
+  $${#eq-grn-bio-bursty-decay}
+
+- **At a burst event** at time $t_j$: $\lambda_g$ jumps upward by $B_j$,
+  $$
+  \lambda_g(t_j^+) = \lambda_g(t_j^-) + B_j.
+  $${#eq-grn-bio-bursty-jump}
+
+Between bursts, the only process acting on the mRNA pool is first-order
+degradation, so $\lambda_g$ decays exponentially. At each burst, molecules are
+added instantaneously.
+
+### The continuous (fluid-limit) ODE {#sec-grn-bio-fluid-limit}
+
+When the burst rate $k_{i,g}$ is sufficiently high relative to the mRNA
+degradation rate $\gamma_g$ (i.e., many bursts arrive within one mRNA
+lifetime), the discrete burst train is well approximated by its mean---a
+continuous, deterministic production flow. This is the **fluid limit** of the
+compound Poisson process: the sum of many small, frequent bursts looks like a
+continuous stream.
+
+The mean production rate from the burst process is the product of the burst
+arrival rate and the mean burst size:
+
+$$
+\langle \text{production rate} \rangle = k_{i,g} \cdot b_g.
+$${#eq-grn-bio-mean-production}
+
+In the fluid limit, the ODE for $\lambda_g$ becomes
+
+$$
+\boxed{
+\frac{d\lambda_g}{dt} = k_{i,g} \cdot b_g - \gamma_g \lambda_g.
+}
+$${#eq-grn-bio-ode-single}
+
+Every term in this equation has an unambiguous physical meaning:
+
+- **$k_{i,g} \cdot b_g$** is the mean mRNA production rate: burst initiation
+  rate times mean burst size, giving molecules per unit time.
+- **$\gamma_g \lambda_g$** is the mRNA degradation rate: first-order
+  degradation at rate $\gamma_g$ applied to a pool of $\lambda_g$ molecules.
+- **$\gamma_g$** is the mRNA degradation rate constant---the same $\gamma$
+  that appears in every birth-death model of gene expression.
+
+This ODE is simply **mass balance**: the rate of change of the mRNA pool equals
+production minus degradation. There is no ambiguity about units, no confusion
+about "degradation of a rate," and no need for a microscopic derivation beyond
+the two physical ingredients:
+
+1. mRNA is produced at some effective rate (here, $k_{i,g} \cdot b_g$).
+2. mRNA is degraded at first-order rate $\gamma_g$.
+
+## The independent-gene case: recovering the Dirichlet-Multinomial {#sec-grn-bio-independent}
+
+For non-interacting genes, each gene's burst process is autonomous: the burst
+initiation rate $k_{i,g}$ does not depend on the expression of any other gene
+$g'$. In this case, each $\lambda_g$ evolves according to its own independent
+dynamics. At steady state, the effective Poisson rates are independently
+Gamma-distributed (@eq-grn-bio-bursty-gamma):
+
+$$
+\lambda_g \sim \text{Gamma}\!\left(\frac{k_{i,g}}{\gamma_g},\, b_g\right),
+\quad g = 1, \ldots, G,
+$${#eq-grn-bio-independent-gamma}
+
+with the $\lambda_g$ independent across genes. This is an **exact** result for
+the one-state bursty promoter---no approximation is involved.
+
+Normalizing to a composition yields the Dirichlet distribution, exactly as in
+the Dirichlet-Multinomial derivation (@sec-dirichlet-multinomial):
+
+$$
+\rho_g = \frac{\lambda_g}{\sum_{j=1}^G \lambda_j},
+\quad \underline{\rho} \sim \text{Dir}(\underline{r}),
+$${#eq-grn-bio-dirichlet-recover}
+
+where $r_g = k_{i,g}/\gamma_g$. The critical feature of this result is that
+the composition $\underline{\rho}$ has a covariance structure fully determined
+by the concentration vector $\underline{r}$, with no free parameters for
+cross-gene correlations. This is the correct consequence of the assumption
+that each gene's burst process operates autonomously.
+
+## From independent genes to gene regulatory networks {#sec-grn-bio-grn}
+
+### Gene regulatory networks: genes are not isolated {#sec-grn-bio-grn-coupling}
+
+In reality, genes do not transcribe in isolation. They form **gene regulatory
+networks** (GRNs) in which the product of one gene (typically a transcription
+factor, or TF) modulates the transcription rate of another. Activation,
+repression, and more complex regulatory motifs (feed-forward loops, toggle
+switches, cascades) create coupling between the expression dynamics of different
+genes. This coupling is the physical origin of the cross-gene correlations that
+the Dirichlet model cannot represent.
+
+To see how coupling enters the ODE for $\lambda_g$, consider what changes when
+gene $g$'s burst process is no longer autonomous. In the independent model,
+the burst initiation rate $k_{i,g}$ is a gene-specific constant. In a GRN,
+$k_{i,g}$ depends on the concentrations of the transcription factors that
+regulate gene $g$'s promoter. These TF concentrations are themselves gene
+products---they are proportional to the expression levels $\lambda_{g'}$ of
+the TF-encoding genes $g'$.
+
+We therefore write the burst initiation rate as a function of the entire
+expression vector:
+
+$$
+k_{i,g} \longrightarrow k_{i,g}(\underline{\lambda}),
+$${#eq-grn-bio-grn-coupling-eq}
+
+making the burst rate dependent on the regulatory state. Substituting into
+@eq-grn-bio-ode-single, we obtain the coupled ODE for the effective Poisson
+rate of gene $g$ in a GRN:
+
+$$
+\frac{d\lambda_g}{dt} =
+\underbrace{k_{i,g}(\underline{\lambda}) \cdot b_g}_{b_g(\underline{\lambda})}
+- \gamma_g \lambda_g,
+\quad g = 1, \ldots, G.
+$${#eq-grn-bio-grn-ode}
+
+This is a system of $G$ coupled ODEs. The function
+$b_g(\underline{\lambda}) \equiv k_{i,g}(\underline{\lambda}) \cdot b_g$ is
+the effective production rate of gene $g$, which depends on the expression
+levels of all other genes through the GRN. The degradation term
+$\gamma_g \lambda_g$ is the same mRNA degradation that appeared in the
+single-gene case---it does not change upon introducing gene-gene interactions.
+
+### Explicit assumptions {#sec-grn-bio-assumptions}
+
+The derivation of @eq-grn-bio-grn-ode rests on several assumptions, which we
+now enumerate explicitly:
+
+1. **Fluid limit (many bursts per mRNA lifetime).** The burst arrival rate
+   $k_{i,g}$ is high relative to $\gamma_g$, so that the discrete burst train
+   is well approximated by its mean production rate. For genes with very low
+   burst rates (rare, large bursts), the continuous approximation breaks down
+   and the discrete shot-noise description is needed.
+
+2. **Protein tracks mRNA (proportionality assumption).** The regulatory effect
+   of gene $g'$ on gene $g$ is mediated through protein, but protein abundance
+   is proportional to mRNA abundance:
+   $\text{[protein]}_{g'} \propto \lambda_{g'}$. This allows writing the
+   burst rate as $k_{i,g}(\underline{\lambda})$ rather than introducing a
+   separate protein layer. This assumption is valid when translation and protein
+   turnover are fast (or at least constant) relative to the regulatory dynamics,
+   or equivalently, when the protein-to-mRNA ratio is approximately constant
+   across cells.
+
+3. **Constant burst size.** The mean burst size $b_g$ is treated as a
+   gene-specific constant, not modulated by the GRN. In principle, burst size
+   could also depend on TF concentrations; relaxing this assumption would allow
+   $b_g$ to depend on $\underline{\lambda}$, which simply redefines
+   $b_g(\underline{\lambda})$ without changing the form of the ODE.
+
+4. **First-order mRNA degradation.** mRNA molecules are degraded at a
+   constant rate $\gamma_g$, independent of abundance and of the promoter
+   state. This is standard and well-supported experimentally for most genes.
+
+These assumptions are common in the gene expression modeling literature. When
+they hold, the effective Poisson rate $\lambda_g$ evolves according to
+@eq-grn-bio-grn-ode, and the $\gamma_g$ in the degradation term is
+unambiguously the mRNA degradation rate.
+
+## Stochastic dynamics: the Chemical Langevin Equation {#sec-grn-bio-cle}
+
+In a single cell, the dynamics of @eq-grn-bio-grn-ode are stochastic: mRNA
+molecules are produced in discrete bursts and degraded stochastically. For
+sufficiently high molecular counts---the regime relevant to most genes detected
+in scRNA-seq---the Chemical Langevin Equation (CLE) provides a continuous-time
+stochastic approximation to the discrete Chemical Master Equation:
+
+$$
+d\lambda_g =
+\left[b_g(\underline{\lambda}) - \gamma_g \lambda_g\right] dt
++ \sigma_g(\underline{\lambda})\, dW_g(t),
+\quad g = 1, \ldots, G,
+$${#eq-grn-bio-cle}
+
+where $dW_g(t)$ are independent Wiener increments and
+$\sigma_g(\underline{\lambda})$ is the state-dependent noise amplitude. For
+the one-state bursty promoter, the noise variance scales as
+$\sigma_g^2(\underline{\lambda}) \propto \lambda_g(1 + b_g)$, where the
+factor $(1 + b_g)$ is the Fano factor correction from burst-size variability.
+When bursts produce more than one molecule on average ($b_g > 0$), the noise is
+super-Poissonian.
+
+The CLE replaces the discrete jump process (production of individual mRNA
+molecules in bursts) with a continuous diffusion. This approximation is valid
+when the molecular counts are not too small, so that the discrete jumps can be
+approximated by a continuous stochastic process. For lowly expressed genes with
+only a few molecules, the CLE breaks down and the discrete Chemical Master
+Equation (or its Gamma steady-state, i.e., the DM-side model) is more
+appropriate.
+
+## Working in log-abundance space {#sec-grn-bio-log-space}
+
+Our goal is to derive the steady-state distribution of gene expression in a
+gene regulatory network. This requires transforming the CLE to a space where
+the Linear Noise Approximation produces a well-defined, physically meaningful
+result. We now transform to log-abundance space. Define
+
+$$
+x_g = \log \lambda_g, \quad g = 1, \ldots, G.
+$${#eq-grn-bio-log-def}
+
+### Why log-abundances? {#sec-grn-bio-why-log}
+
+Before proceeding with the mathematical transformation, it is worth pausing to
+ask: why work in log-abundance space at all? Is this a biophysical necessity, or
+merely a mathematical convenience? The answer is that it is a highly principled
+mathematical convenience---one that allows us to model complex gene-gene
+interactions while respecting the fundamental physical constraints of the cell.
+
+If we were to apply the Linear Noise Approximation directly to the linear
+abundances $\underline{\lambda}$, we would obtain a multivariate Gaussian
+distribution on linear molecule counts. This presents a severe physical problem:
+a Gaussian distribution has support from $-\infty$ to $\infty$. Because
+single-cell data is characterized by low molecule counts, a Gaussian on linear
+abundances would assign significant probability mass to negative mRNA counts,
+which is physically impossible. 
+
+Transforming to log-abundance space resolves this by mapping the physical domain
+of $(0, \infty)$ to the mathematical domain of $(-\infty, \infty)$. A Gaussian
+in log-space (which corresponds to a log-normal distribution in linear space)
+strictly enforces the constraint that mRNA counts must be positive. 
+
+Furthermore, there is a strong biological justification for this choice. Gene
+regulation is fundamentally multiplicative, not additive. Transcription factors
+act via fold-changes, and thermodynamic binding models operate on relative
+scales. By taking the logarithm, these multiplicative regulatory effects become
+additive. Since the LNA relies on taking a first-order Taylor expansion (the
+Jacobian) of the regulatory dynamics, linearizing a system that is naturally
+additive (log-space) is vastly more accurate over a wide dynamic range than
+attempting to linearize a highly non-linear multiplicative system.
+
+However, this convenience comes at a biophysical cost, which will become
+apparent when we apply Itô's lemma in the next section. The transformation will
+cause the noise amplitude to become inversely proportional to the abundance. To
+obtain a tractable solution, we will be forced to "freeze" this noise at its
+steady-state mean. This approximation works beautifully for highly expressed
+genes but breaks down for lowly expressed genes where the abundance frequently
+approaches zero. We accept this breakdown at the extreme low end of expression
+as a necessary trade-off to obtain a tractable, positive-definite model of
+gene-gene correlations.
+
+### Itô's lemma for the transformation {#sec-grn-bio-ito-lemma}
+
+Applying Itô's lemma to @eq-grn-bio-cle yields the dynamics of $x_g$. Recall
+that for a function $f(\lambda)$ of a diffusion process
+$d\lambda = \mu \, dt + \sigma \, dW$, Itô's lemma states
+
+$$
+df = \left[ \mu f'(\lambda) + \frac{1}{2} \sigma^2 f''(\lambda) \right] dt
++ \sigma f'(\lambda) \, dW.
+$${#eq-grn-bio-ito-lemma-general}
+
+For $f(\lambda) = \log \lambda$, we have $f'(\lambda) = 1/\lambda$ and
+$f''(\lambda) = -1/\lambda^2$. Substituting into Itô's lemma with
+$\mu = b_g(\underline{\lambda}) - \gamma_g \lambda_g$ and
+$\sigma = \sigma_g(\underline{\lambda})$:
+
+$$
+dx_g =
+\left[
+\frac{b_g(\underline{\lambda}) - \gamma_g \lambda_g}{\lambda_g}
++ \frac{1}{2} \sigma_g^2(\underline{\lambda}) \cdot
+\left(-\frac{1}{\lambda_g^2}\right)
+\right] dt
++ \frac{\sigma_g(\underline{\lambda})}{\lambda_g}\, dW_g(t).
+$${#eq-grn-bio-ito-expand}
+
+Simplifying the drift:
+
+$$
+\frac{b_g(\underline{\lambda}) - \gamma_g \lambda_g}{\lambda_g} =
+\frac{b_g(\underline{\lambda})}{\lambda_g} - \gamma_g.
+$${#eq-grn-bio-drift-simplify}
+
+Combining, we obtain
+
+$$
+dx_g =
+\left[
+\frac{b_g(\underline{\lambda})}{\lambda_g}
+- \gamma_g
+- \frac{\sigma_g^2(\underline{\lambda})}{2\lambda_g^2}
+\right] dt
++ \frac{\sigma_g(\underline{\lambda})}{\lambda_g}\, dW_g(t).
+$${#eq-grn-bio-ito}
+
+The Itô correction term $-\sigma_g^2 / (2\lambda_g^2)$ is a standard
+consequence of the nonlinear transformation from linear to log scale. Two
+properties of @eq-grn-bio-ito are important:
+
+1. **The drift depends on $\underline{\lambda}$** (i.e., on $\underline{x}$
+   through $\lambda_g = e^{x_g}$). This is where the GRN coupling enters.
+2. **The noise amplitude in log-space** is $\sigma_g / \lambda_g$. For the
+   bursty promoter with $\sigma_g^2 \propto \lambda_g(1 + b_g)$, this
+   becomes $\sqrt{(1 + b_g) / \lambda_g}$: the noise in log-space is
+   state-dependent but *decreasing* in abundance. For moderately to highly
+   expressed genes, $\lambda_g$ fluctuates around its steady-state mean
+   $\bar{\lambda}_g$, and the noise amplitude can be approximated as the
+   constant $\sqrt{(1 + b_g) / \bar{\lambda}_g}$. This is the key
+   approximation that yields additive noise in log-space.
+
+## The Linear Noise Approximation in log-space {#sec-grn-bio-lna}
+
+Suppose the system has a stable steady state
+$\underline{\bar{x}} = (\log\bar{\lambda}_1, \ldots, \log\bar{\lambda}_G)$,
+defined by setting the deterministic drift to zero in @eq-grn-bio-ito. The
+**Linear Noise Approximation** (LNA) linearizes the dynamics around this
+steady state. We expand the drift to first order in
+$\delta\underline{x} = \underline{x} - \underline{\bar{x}}$:
+
+$$
+\text{drift}_g \approx
+\sum_{g'=1}^{G} J_{gg'}\, \delta x_{g'},
+$${#eq-grn-bio-drift-linear}
+
+where $J_{gg'} = \partial(\text{drift}_g) / \partial x_{g'}$ evaluated at
+$\underline{\bar{x}}$ is the $(g,g')$ entry of the **Jacobian matrix** of the
+GRN dynamics in log-space. The Jacobian encodes the biophysics of the network
+directly: $J_{gg'} > 0$ means gene $g'$ activates gene $g$ (increasing $g'$
+increases the drift of $g$), and $J_{gg'} < 0$ means repression. The diagonal
+entries $J_{gg}$ encode each gene's intrinsic restoring force (degradation plus
+autoregulation).
+
+### The Ornstein-Uhlenbeck process {#sec-grn-bio-ou}
+
+Combining the linearized drift with the constant-noise approximation, the SDE
+becomes a multivariate **Ornstein--Uhlenbeck** (OU) process:
+
+$$
+d\underline{x} =
+\underline{\underline{J}}\,
+(\underline{x} - \underline{\bar{x}})\, dt
++ \underline{\underline{B}}\, d\underline{W}(t),
+$${#eq-grn-bio-ou}
+
+where $\underline{\underline{B}} =
+\text{diag}(\sqrt{(1+b_1)/\bar{\lambda}_1},
+\ldots, \sqrt{(1+b_G)/\bar{\lambda}_G})$ is the (now constant) noise matrix in
+log-space. For genes with $b_g \ll 1$ (small bursts), this reduces to
+$\text{diag}(1/\sqrt{\bar{\lambda}_1}, \ldots, 1/\sqrt{\bar{\lambda}_G})$.
+
+Two approximations have been made to arrive at @eq-grn-bio-ou, and their
+validity should be noted:
+
+1. **Linearization of the drift** around the deterministic steady state. This
+   is valid when the fluctuations $\delta\underline{x}$ are small relative to
+   the scale on which the nonlinear regulatory functions change
+   appreciably---a standard and well-justified assumption for most genes in
+   single-cell data, where the coefficient of variation in log-space is
+   typically modest.
+2. **Freezing the noise amplitude** at its steady-state value. This is valid
+   when $\lambda_g$ does not fluctuate too far from
+   $\bar{\lambda}_g$---the same regime where the drift linearization holds.
+   For lowly expressed genes with very few molecules, both approximations
+   degrade, and the exact Gamma steady-state of the birth-death process (i.e.,
+   the DM-side model) may be more appropriate.
+
+## Steady-state distribution: the Lyapunov equation {#sec-grn-bio-lyapunov}
+
+A fundamental result in the theory of stochastic processes is that the
+steady-state distribution of a multivariate OU process with stable drift matrix
+$\underline{\underline{J}}$ (all eigenvalues with negative real part,
+guaranteeing stability) and constant diffusion is a **multivariate Gaussian**:
+
+$$
+\underline{x} \sim \mathcal{N}(\underline{\bar{x}},\,
+\underline{\underline{\Sigma}}).
+$${#eq-grn-bio-mvn}
+
+### Deriving the Lyapunov equation {#sec-grn-bio-lyapunov-deriv}
+
+To see why the covariance satisfies the Lyapunov equation, we start from the
+OU process @eq-grn-bio-ou. At steady state, the distribution of $\underline{x}$
+is stationary, meaning that the covariance
+$\underline{\underline{\Sigma}} = \langle \delta\underline{x} \,
+\delta\underline{x}^\top \rangle$ does not change in time. Let us write the
+deviation from the mean as
+$\delta\underline{x}(t) = \underline{x}(t) - \underline{\bar{x}}$. From
+@eq-grn-bio-ou, this deviation satisfies
+
+$$
+d(\delta\underline{x}) =
+\underline{\underline{J}}\, \delta\underline{x}\, dt
++ \underline{\underline{B}}\, d\underline{W}(t).
+$${#eq-grn-bio-deviation-sde}
+
+Over a small time interval $dt$, the change in $\delta\underline{x}$ is
+
+$$
+\delta\underline{x}(t + dt) =
+\delta\underline{x}(t) +
+\underline{\underline{J}}\, \delta\underline{x}(t)\, dt
++ \underline{\underline{B}}\, d\underline{W}(t).
+$${#eq-grn-bio-discrete-step}
+
+To compute how the covariance changes, we form the outer product
+$\delta\underline{x}(t+dt)\, \delta\underline{x}(t+dt)^\top$ and take
+the expectation, keeping terms up to first order in $dt$. Using
+@eq-grn-bio-discrete-step:
+
+$$
+\delta\underline{x}(t+dt)\, \delta\underline{x}(t+dt)^\top =
+\left[\delta\underline{x} +
+\underline{\underline{J}}\, \delta\underline{x}\, dt
++ \underline{\underline{B}}\, d\underline{W}\right]
+\left[\delta\underline{x} +
+\underline{\underline{J}}\, \delta\underline{x}\, dt
++ \underline{\underline{B}}\, d\underline{W}\right]^\top,
+$${#eq-grn-bio-outer-product}
+
+where we suppress the time argument for brevity. Expanding the product,
+discarding terms of order $(dt)^2$, and applying the Itô rule
+$d\underline{W}\, d\underline{W}^\top = \underline{\underline{I}}\, dt$:
+
+$$
+\delta\underline{x}(t+dt)\, \delta\underline{x}(t+dt)^\top \approx
+\delta\underline{x}\, \delta\underline{x}^\top
++ \underline{\underline{J}}\, \delta\underline{x}\,
+\delta\underline{x}^\top \, dt
++ \delta\underline{x}\, \delta\underline{x}^\top \,
+\underline{\underline{J}}^\top \, dt
++ \underline{\underline{B}}\, \underline{\underline{B}}^\top \, dt
++ \delta\underline{x}\, d\underline{W}^\top \underline{\underline{B}}^\top
++ \underline{\underline{B}}\, d\underline{W}\, \delta\underline{x}^\top.
+$${#eq-grn-bio-outer-expanded}
+
+Taking the expectation of both sides and using
+$\underline{\underline{\Sigma}}(t) = \langle \delta\underline{x}(t)\,
+\delta\underline{x}(t)^\top \rangle$. The last two cross terms vanish
+because $d\underline{W}$ is a zero-mean increment independent of
+$\delta\underline{x}(t)$, giving
+$\langle \delta\underline{x}\, d\underline{W}^\top \rangle =
+\langle \delta\underline{x} \rangle \langle d\underline{W}^\top \rangle = 0$:
+
+$$
+\underline{\underline{\Sigma}}(t + dt) =
+\underline{\underline{\Sigma}}(t)
++ \underline{\underline{J}}\, \underline{\underline{\Sigma}}(t)\, dt
++ \underline{\underline{\Sigma}}(t)\, \underline{\underline{J}}^\top\, dt
++ \underline{\underline{B}}\, \underline{\underline{B}}^\top\, dt.
+$${#eq-grn-bio-cov-evolution}
+
+Rearranging and dividing by $dt$:
+
+$$
+\frac{d\underline{\underline{\Sigma}}}{dt} =
+\underline{\underline{J}}\, \underline{\underline{\Sigma}}
++ \underline{\underline{\Sigma}}\, \underline{\underline{J}}^\top
++ \underline{\underline{B}}\, \underline{\underline{B}}^\top.
+$${#eq-grn-bio-cov-ode}
+
+At **steady state**, the covariance is time-invariant, so
+$d\underline{\underline{\Sigma}} / dt = 0$. Defining the diffusion matrix
+$\underline{\underline{D}} = \frac{1}{2}
+\underline{\underline{B}}\, \underline{\underline{B}}^\top$ and rearranging,
+we obtain the **continuous Lyapunov equation**:
+
+$$
+\underline{\underline{J}}\, \underline{\underline{\Sigma}}
++ \underline{\underline{\Sigma}}\, \underline{\underline{J}}^\top
++ 2\underline{\underline{D}} = 0.
+$${#eq-grn-bio-lyapunov}
+
+This equation states that the steady-state covariance is at a balance between
+two forces: the drift $\underline{\underline{J}}$ contracts the distribution
+toward the steady state (the terms involving $\underline{\underline{J}}$),
+while the noise $\underline{\underline{D}}$ broadens it.
+
+### The integral solution {#sec-grn-bio-sigma-integral}
+
+The Lyapunov equation @eq-grn-bio-lyapunov can be solved explicitly. When
+$\underline{\underline{J}}$ is stable (all eigenvalues with negative real
+part), the solution is
+
+$$
+\underline{\underline{\Sigma}} =
+\int_0^\infty
+e^{\underline{\underline{J}} t}\,
+(2\underline{\underline{D}})\,
+e^{\underline{\underline{J}}^\top t}\, dt.
+$${#eq-grn-bio-sigma-integral}
+
+To verify this, one can differentiate the right-hand side with respect to the
+upper limit and check that it satisfies the original covariance ODE
+@eq-grn-bio-cov-ode with the boundary condition
+$\underline{\underline{\Sigma}}(0) = 0$ at $t = 0$ and convergence as
+$t \to \infty$ (guaranteed by stability of $\underline{\underline{J}}$).
+
+This integral solution shows that $\underline{\underline{\Sigma}}$ is a
+nonlinear but deterministic function of the network topology
+($\underline{\underline{J}}$) and the noise structure
+($\underline{\underline{D}}$). Crucially, **the off-diagonal entries of
+$\underline{\underline{\Sigma}}$ are nonzero whenever
+$\underline{\underline{J}}$ has off-diagonal entries**, i.e., whenever genes
+regulate each other.
+
+## The central biophysical result {#sec-grn-bio-to-ln}
+
+We have arrived at @eq-grn-bio-mvn: the steady-state distribution of
+log-abundances is multivariate Gaussian. This is the **central biophysical
+result** of this chapter:
+
+$$
+\boxed{
+\underline{x}^{(c)} \sim \mathcal{N}(\underline{\bar{x}},\,
+\underline{\underline{\Sigma}}),
+\quad x_g = \log \lambda_g.
+}
+$${#eq-grn-bio-central-result}
+
+This result holds independently of how one subsequently models the observation
+process (i.e., how discrete counts are generated from these latent
+abundances). The covariance $\underline{\underline{\Sigma}}$ is not an
+arbitrary statistical object---it is the Lyapunov solution to the OU process
+governing the GRN, and its entries are direct consequences of the regulatory
+interactions encoded in $\underline{\underline{J}}$ and the
+bursty-transcription noise encoded in $\underline{\underline{D}}$.
+
+Different statistical observation models can be constructed atop this
+biophysical foundation. Each constitutes a different choice for how to connect
+the continuous latent log-abundances $\underline{x}^{(c)}$ to the discrete
+observed count vector $\underline{u}^{(c)}$. The two natural paths are:
+
+1. **The compositional path (Logistic-Normal Multinomial).** Transform
+   log-abundances to compositions via the softmax map, yielding the
+   logistic-normal distribution on the simplex, then model counts as
+   Multinomial draws from these compositions.
+
+2. **The direct emission path (Poisson-LogNormal).** Model each gene's count
+   directly as a Poisson draw from the exponentiated log-abundance
+   $e^{x_g}$, without an intervening compositional factorization.
+
+Both observation models inherit the same biophysical foundation; they differ
+only in how the latent abundances map to observed counts. We develop both
+paths fully in @sec-grn-bio-observation-models.
+
+### Compositions as a downstream consequence {#sec-grn-bio-compositions}
+
+To see how the compositional path arises, note that the composition vector
+$\underline{\rho}^{(c)}$ representing the relative abundance of each gene's
+mRNA is
+
+$$
+\rho_g^{(c)} = \frac{\lambda_g^{(c)}}{\sum_{j=1}^G \lambda_j^{(c)}}
+= \frac{e^{x_g^{(c)}}}{\sum_{j=1}^G e^{x_j^{(c)}}}.
+$${#eq-grn-bio-composition}
+
+This is exactly the softmax (inverse ALR) transformation applied to the
+log-abundances $\underline{x}^{(c)}$. Since $\underline{x}^{(c)}$ is Gaussian
+by @eq-grn-bio-central-result, $\underline{\rho}^{(c)}$ follows a
+**logistic-normal distribution** by definition
+(cf.\ @sec-lnm-logistic-normal-def):
+
+$$
+\underline{\rho}^{(c)} \sim
+\text{LogisticNormal}(\underline{\mu}_{\text{ALR}},\,
+\underline{\underline{\Sigma}}_{\text{ALR}}),
+$${#eq-grn-bio-logistic-normal}
+
+where $\underline{\mu}_{\text{ALR}}$ and
+$\underline{\underline{\Sigma}}_{\text{ALR}}$ are the mean and covariance of
+the ALR-transformed log-abundances (a linear transformation of
+$\underline{\bar{x}}$ and $\underline{\underline{\Sigma}}$; see
+@sec-lnm-alr-to-clr for the ALR-to-CLR algebra).
+
+It is worth being explicit about where the biophysics ends and the
+parameterisation begins. The LNA produces an unconstrained $G$-dimensional
+Gaussian on log-abundances $\underline{x}^{(c)} \in \mathbb{R}^G$; the
+compositional distribution follows by applying the softmax map
+$\underline{\rho}^{(c)} = \text{softmax}(\underline{x}^{(c)})$, which
+collapses the $G$-dimensional space onto the $(G-1)$-dimensional simplex.
+The further step from "Gaussian on $\mathbb{R}^G$" to "ALR parameters
+$\underline{\mu}_{\text{ALR}},\,
+\underline{\underline{\Sigma}}_{\text{ALR}}$" is **not** a step in the
+biophysics: it is a downstream gauge-fixing convention that removes the one
+redundant degree of freedom inherent to compositional data.
+
+## The low-rank covariance as regulatory architecture {#sec-grn-bio-low-rank}
+
+The low-rank factorization
+$\underline{\underline{\Sigma}} = \underline{\underline{W}}\,
+\underline{\underline{W}}^\top + \text{diag}(\underline{d})$ acquires a
+natural interpretation in this biophysical framework.
+
+**The rank-$k$ factor $\underline{\underline{W}}$.** Gene regulatory networks
+are sparse and modular: a small number of master regulators (transcription
+factors, signaling pathway effectors) control large programs of downstream
+genes. In the language of the Lyapunov solution @eq-grn-bio-sigma-integral,
+the dominant eigenvectors of $\underline{\underline{\Sigma}}$ correspond to
+the most energetic modes of the network---the transcription factor programs
+that explain the largest fraction of the expression variance. The columns
+of $\underline{\underline{W}}$ approximate these dominant modes. Clustering on
+the rows of $\underline{\underline{W}}$ (each row corresponding to a gene)
+therefore groups genes by shared regulatory control, not by artefactual
+likelihood coupling.
+
+**The diagonal $\underline{d}$.** The residual diagonal captures the
+gene-intrinsic noise: the component of each gene's variance that is not
+explained by the shared regulatory programs in $\underline{\underline{W}}$. In
+terms of the Lyapunov equation, this is the variance arising from each gene's
+own burst noise ($\underline{\underline{D}}$) and degradation ($J_{gg}$), after
+subtracting the variance propagated through the network.
+
+The assumption that $\underline{\underline{\Sigma}}$ is approximately low-rank
+is therefore not merely a computational convenience for handling
+$G = 20{,}000$ genes---it is a biological expectation. The number of
+independent transcription-factor programs driving compositional variation within
+a cell type is vastly smaller than the number of genes. Typical estimates of the
+number of active transcription-factor programs in a mammalian cell type range
+from tens to low hundreds, precisely the range of $k$ used in practice.
+
+**Identifiability of $\underline{\underline{W}}$ up to rotation.** A caveat
+that affects the biological interpretation of $\underline{\underline{W}}$ is
+that the likelihood depends on $\underline{\underline{W}}$ only through the
+product $\underline{\underline{W}}\,\underline{\underline{W}}^\top$. For any
+$k \times k$ orthogonal matrix $\underline{\underline{R}}$ (i.e.,
+$\underline{\underline{R}}\,\underline{\underline{R}}^\top =
+\underline{\underline{I}}_k$), the substitution
+$\underline{\underline{W}} \to
+\underline{\underline{W}}\,\underline{\underline{R}}$ leaves
+$\underline{\underline{W}}\,\underline{\underline{W}}^\top$ invariant and
+produces an identical model. Consequently:
+
+- The **column space** of $\underline{\underline{W}}$ (equivalently, the
+  rank-$k$ subspace of log-ratio space spanned by the regulatory programs) is
+  identifiable from the data.
+- **Specific columns** of $\underline{\underline{W}}$ (e.g., "program 1" vs
+  "program 2") are *not* identifiable without an additional constraint such as
+  sparsity, orthogonality of gene loadings, or varimax-style rotation.
+
+For downstream uses that are rotation-invariant---clustering genes by the rows
+of $\underline{\underline{W}}$, computing gene--gene similarity via
+$\underline{\underline{W}}\,\underline{\underline{W}}^\top$, extracting the
+rank-$k$ correlation structure---the lack of column-level identification is
+harmless. For uses that require *interpretable* programs (e.g., naming columns
+of $\underline{\underline{W}}$ as TF activities), an additional rotation or
+sparsification step is required as a post-processing operation.
+
+## Connecting the two regimes: the independent-gene limit {#sec-grn-bio-connection}
+
+The biophysical derivation clarifies the relationship between the
+Dirichlet-Multinomial model and the multivariate Gaussian on log-abundances.
+They arise from different approximation regimes applied to the same underlying
+stochastic gene expression process.
+
+**The DM regime (exact, independent genes).** When genes are transcriptionally
+independent, $b_g(\underline{\lambda}) = k_{i,g} \cdot b_g$ (a constant) in
+@eq-grn-bio-grn-ode, and the Jacobian $\underline{\underline{J}}$ is diagonal
+(each gene's dynamics depend only on itself). The exact steady-state of the
+birth-death process for each gene is Gamma-distributed
+(@eq-grn-bio-independent-gamma), and normalizing yields the Dirichlet. This is
+the derivation in @sec-dirichlet-multinomial. No linear noise approximation is
+involved; the result is exact given the birth-death model.
+
+**The GRN regime (approximate, interacting genes).** When genes interact,
+$\underline{\underline{J}}$ has off-diagonal entries, and the exact joint
+steady-state distribution of $G$ coupled birth-death processes has no tractable
+closed form. The LNA in log-space gives the multivariate Gaussian approximation
+@eq-grn-bio-mvn, which can then be connected to observed counts via either of
+the two observation models described in @sec-grn-bio-observation-models.
+
+**The two regimes converge for non-interacting, high-expression genes.** When
+$\underline{\underline{J}}$ is diagonal and $r_g$ is large, the Gamma
+distribution for $\lambda_g$ is well approximated by a log-normal (by the
+central limit theorem applied to the log of a Gamma with large shape
+parameter). In this limit, the DM and the diagonal-$\Sigma$ Gaussian model
+produce approximately the same marginal distributions and the same (negative,
+simplex-constrained) pairwise correlations. They are not mathematically
+identical, but they are asymptotically equivalent in the high-expression regime.
+
+The key difference emerges for **interacting genes**: the Dirichlet model has no
+mechanism to represent the cross-gene correlations generated by
+$\underline{\underline{J}}$, regardless of how large $r_g$ is. The Gaussian
+log-abundance model does, through the off-diagonal entries of
+$\underline{\underline{\Sigma}}$.
+
+**The asymmetry of "extending" the DM.** It is tempting to describe the
+Gaussian log-abundance model as a strict generalization of the DM (with the DM
+recovered as the diagonal-$\underline{\underline{\Sigma}}$, high-expression
+limit). The relationship is not actually symmetric, and it is worth being
+precise about the direction of the trade-off:
+
+- For **non-interacting genes**, the DM is the *exact* steady-state of the
+  underlying birth-death process, regardless of expression level. The Gaussian
+  log-abundance model is the LNA approximation of the same process and degrades
+  for genes with very low counts, where neither the drift linearization nor the
+  constant-noise approximation is reliable (see @sec-grn-bio-lna).
+- For **interacting genes**, the DM cannot represent the cross-gene correlations
+  generated by off-diagonal entries of $\underline{\underline{J}}$ at all, while
+  the Gaussian model does so through $\underline{\underline{\Sigma}}$.
+
+The Gaussian log-abundance model therefore trades *exactness for the
+non-interacting, low-expression regime* against *expressivity in the coupled
+regime*. This is the correct trade-off for our scientific goal (recovering
+gene-gene structure), but it does mean that for genes that are both weakly
+coupled and lowly expressed, the DM remains the better marginal model. The
+Gaussian model is a generalization only in the sense of admitting a broader
+class of *covariance structures*, not in the sense of being a uniformly better
+description of the underlying biophysics.
+
+## Summary of the derivation {#sec-grn-bio-summary}
+
+The following table summarizes the biophysical regimes and the resulting
+steady-state distributions:
+
+| Regime | Biophysical assumption | Steady-state | Correlation structure |
+|--------|------------------------|--------------|----------------------|
+| Independent genes (DM) | Autonomous promoters ($\underline{\underline{J}}$ diagonal) | Product of Gammas (exact) | Fixed by $\underline{r}$; always negative on simplex |
+| Interacting genes (GRN) | Gene regulatory network ($\underline{\underline{J}}$ general) | Multivariate Gaussian in log-space (LNA) | Free $\underline{\underline{\Sigma}}$, determined by GRN via Lyapunov |
+
+The GRN regime produces the multivariate Gaussian on log-abundances
+(@eq-grn-bio-mvn), which is the universal biophysical result. This Gaussian
+is the endpoint of the biophysical derivation. Different observation
+models---the Logistic-Normal Multinomial (LNM) for compositional analysis, and
+the Poisson-LogNormal (PLN) for absolute expression modeling---can then be
+constructed atop this foundation as separate statistical modeling decisions
+(see @sec-grn-bio-observation-models).
+
+The derivation proceeded through the following chain of reasoning:
+
+1. **The one-state bursty promoter** (@sec-grn-bio-bursty): A constitutively
+   active promoter with geometric burst sizes yields an exact Gamma distribution
+   for the mRNA abundance $\lambda_g$.
+2. **Mass balance** (@sec-grn-bio-mass-balance): The ODE
+   $\dot{\lambda}_g = b_g - \gamma_g \lambda_g$ follows from production minus
+   first-order degradation. No microscopic derivation beyond mass conservation
+   is needed.
+3. **Independent-gene limit** (@sec-grn-bio-independent): Independent Gammas
+   normalize to the Dirichlet (exact).
+4. **Gene regulatory coupling** (@sec-grn-bio-grn): Regulatory interactions
+   enter by making the burst rate $k_{i,g}$ depend on other genes' expression
+   levels.
+5. **Stochastic dynamics** (@sec-grn-bio-cle): The CLE adds noise to the
+   coupled ODE, modeling intrinsic gene expression stochasticity.
+6. **Log-space transformation** (@sec-grn-bio-log-space): Itô's lemma
+   transforms the CLE to log-abundance space.
+7. **Linearization** (@sec-grn-bio-lna): The LNA yields a multivariate OU
+   process in log-space.
+8. **Steady-state** (@sec-grn-bio-lyapunov): The OU steady-state is a
+   multivariate Gaussian, with covariance given by the Lyapunov equation.
+9. **Observation models** (@sec-grn-bio-observation-models): The Gaussian
+   log-abundances connect to observed counts via two paths: (i) applying
+   softmax to obtain logistic-normal compositions (LNM), or (ii) Poisson
+   emission from exponentiated log-abundances (PLN).
+
+The multivariate Gaussian on log-abundances does not abandon the biophysics
+underlying the Dirichlet-Multinomial; it adopts a different approximation regime
+that admits the cross-gene correlations the DM cannot represent. The covariance
+matrix $\underline{\underline{\Sigma}}$ that we learn (via its low-rank
+factorization $\underline{\underline{W}}\, \underline{\underline{W}}^\top +
+\text{diag}(\underline{d})$) is, under the LNA, a direct steady-state
+consequence of the cell's underlying gene regulatory network. The price of this
+expressivity is the linearization and constant-noise approximations of
+@sec-grn-bio-lna, which limit the model's faithfulness for weakly expressed
+genes.
+
+The choice of how to connect this biophysical result to observed scRNA-seq
+counts---through a compositional model (LNM) or a direct count model
+(PLN)---is a separate, downstream decision discussed in
+@sec-grn-bio-observation-models.
+
+## Universality: the two-state promoter route {#sec-grn-bio-universality-section}
+
+The derivation above started from the one-state bursty promoter because it
+provides the cleanest path: the Gamma on $\lambda_g$ is exact, the mass-balance
+ODE is self-evident, and the Dirichlet recovery is exact. A natural question
+is whether the multivariate Gaussian result depends on this particular choice of
+microscopic model, or whether it is more general.
+
+### A deductive argument for universality {#sec-grn-bio-deductive}
+
+The GRN ODE @eq-grn-bio-grn-ode has the form
+
+$$
+\frac{d\lambda_g}{dt} = b_g(\underline{\lambda}) - \gamma_g \lambda_g.
+$$
+
+This form is not specific to the one-state bursty promoter. It is a **necessary
+consequence of two physical ingredients** that any model of mRNA dynamics must
+satisfy:
+
+1. **First-order mRNA degradation.** Each mRNA molecule is independently
+   degraded at rate $\gamma_g$. This is unimolecular chemistry: the
+   degradation flux from a pool of expected abundance $\lambda_g$ is always
+   $\gamma_g \lambda_g$, regardless of how those molecules were produced. No
+   model of transcription changes this term.
+
+2. **Coarse-grainable production.** Whatever the microscopic production
+   mechanism---promoter switching, discrete bursting, polymerase kinetics,
+   chromatin remodeling, or any combination thereof---once the fast production
+   dynamics are averaged out (under an appropriate timescale separation), the
+   effective production rate is *some* function $b_g(\underline{\lambda})$ of
+   the current regulatory state.
+
+Given these two ingredients, conservation of mass dictates the ODE:
+
+$$
+\frac{d\lambda_g}{dt} =
+\underbrace{b_g(\underline{\lambda})}_{\text{production (any mechanism)}}
+- \underbrace{\gamma_g \lambda_g}_{\text{first-order degradation}}.
+$${#eq-grn-bio-universal-ode}
+
+This is not a model-specific result; it is the unique ODE consistent with
+linear degradation and an arbitrary production function. The one-state bursty
+derivation above is a **concrete verification** that the coarse-graining step
+(ingredient 2) succeeds for a specific, well-studied microscopic model. But the
+ODE form itself is guaranteed by ingredient 1 alone.
+
+The downstream chain of approximations (CLE $\to$ log-space $\to$ LNA $\to$ OU
+$\to$ Lyapunov $\to$ multivariate Gaussian) depends only on this mesoscopic
+ODE, not on the microscopic details that produced it. The microscopic model affects only
+the noise amplitude $\sigma_g$, which determines the diagonal of the diffusion
+matrix $\underline{\underline{D}}$---a quantitative detail that influences each
+gene's marginal variance but not the qualitative structure of the result.
+
+### Verification: the two-state promoter {#sec-grn-bio-two-state}
+
+To verify this universality claim with a second microscopic model, we now
+derive the same GRN ODE from the **two-state promoter**, in which a gene's
+promoter switches between an inactive (OFF) state and an active (ON) state.
+
+Consider a gene $g$ with switching rates $k_g^+$ (OFF $\to$ ON) and $k_g^-$
+(ON $\to$ OFF). When the promoter is ON, mRNA is produced at rate $r_g$;
+when OFF, no transcription occurs. We encode the promoter state at time $t$
+with an indicator random variable,
+
+$$
+\mathbb{1}_g(t) =
+\begin{cases}
+1 & \text{if the promoter of gene } g \text{ is ON at time } t, \\
+0 & \text{if the promoter of gene } g \text{ is OFF at time } t.
+\end{cases}
+$${#eq-grn-bio-indicator}
+
+#### The mRNA ODE and its steady-state solution {#sec-grn-bio-two-state-ode}
+
+Conditioned on a fixed realization of the switching process
+$\mathbb{1}_g^*(t)$, the expected mRNA abundance evolves as
+
+$$
+\frac{d\langle m_g \rangle}{dt} =
+r_g \, \mathbb{1}_g^*(t) - \gamma_g \langle m_g \rangle.
+$${#eq-grn-bio-mrna-ode}
+
+Solving by the integrating factor method (multiplying by $e^{\gamma_g t}$,
+recognizing the left-hand side as a total derivative, integrating from
+$t_0$ to $t$, and letting $t_0 \to -\infty$ to reach steady state) gives
+
+$$
+\langle m_g \rangle_{\text{ss}} =
+r_g \int_0^{\infty} d\tau \; e^{-\gamma_g \tau} \,
+\mathbb{1}_g^*(t - \tau).
+$${#eq-grn-bio-ss-convolution}
+
+This shows that the steady-state mRNA abundance is a **weighted average of the
+promoter's past activity**, with exponential weights of timescale $1/\gamma_g$
+set by mRNA degradation.
+
+#### The memory-weighted promoter activity $p_g(t)$ {#sec-grn-bio-p-def}
+
+Defining the dimensionless memory-weighted ON-fraction as
+
+$$
+p_g(t) \equiv
+\gamma_g \int_0^{\infty} d\tau \; e^{-\gamma_g \tau} \,
+\mathbb{1}_g(t - \tau),
+$${#eq-grn-bio-p-definition}
+
+we have $p_g \in [0, 1]$ (since the exponential kernel integrates to 1) and
+$\langle m_g \rangle_{\text{ss}} = \hat{r}_g \cdot p_g$ where
+$\hat{r}_g = r_g / \gamma_g$. The effective Poisson rate is
+$\lambda_g = \hat{r}_g \cdot p_g$.
+
+#### Deriving the ODE for $p_g(t)$ {#sec-grn-bio-p-ode}
+
+Differentiating @eq-grn-bio-p-definition with respect to $t$, passing the
+derivative through the integral (Leibniz rule), changing variables to
+$s = t - \tau$, and integrating by parts (with $u = e^{-\gamma_g(t-s)}$ and
+$dv = d\mathbb{1}_g(s)/ds \, ds$) yields, after recognizing $p_g(t)$ in the
+result:
+
+$$
+\frac{dp_g(t)}{dt} = \gamma_g \left[ \mathbb{1}_g(t) - p_g(t) \right].
+$${#eq-grn-bio-p-ode-result}
+
+The full algebraic details of this derivation (Leibniz rule, chain rule,
+integration by parts, and recognition step) are given in @sec-beta-origin.
+Between promoter jumps, $p_g$ relaxes exponentially toward the current promoter
+state (1 if ON, 0 if OFF) with rate $\gamma_g$.
+
+#### Converting to the ODE for $\lambda_g$ {#sec-grn-bio-two-state-lambda-ode}
+
+Using $\lambda_g = (r_g / \gamma_g) \, p_g$ and substituting
+@eq-grn-bio-p-ode-result:
+
+$$
+\frac{d\lambda_g}{dt} =
+\frac{r_g}{\gamma_g} \cdot \gamma_g
+\left[ \mathbb{1}_g(t) - p_g(t) \right] =
+r_g \, \mathbb{1}_g(t) - \gamma_g \lambda_g.
+$${#eq-grn-bio-lambda-ode-two-state}
+
+This is the single-gene ODE for the two-state promoter. Coarse-graining the
+fast promoter switching (replacing the discrete indicator $\mathbb{1}_g$ with a
+continuous regulatory function $h_g(\underline{\lambda})$) yields the GRN ODE:
+
+$$
+\frac{d\lambda_g}{dt} =
+\underbrace{r_g \, h_g(\underline{\lambda})}_{b_g(\underline{\lambda})}
+- \gamma_g \lambda_g,
+$${#eq-grn-bio-grn-ode-two-state}
+
+which is **identical in form** to @eq-grn-bio-grn-ode. The only difference is
+the physical interpretation of the production term:
+
+| Route | $b_g(\underline{\lambda})$ | Physical meaning |
+|-------|---------------------------|-----------------|
+| One-state bursty | $k_{i,g}(\underline{\lambda}) \cdot b_g$ | GRN-modulated burst rate $\times$ mean burst size |
+| Two-state | $r_g \cdot h_g(\underline{\lambda})$ | Maximal rate $\times$ GRN-modulated effective ON-fraction |
+
+The degradation term $\gamma_g \lambda_g$ has the same origin and meaning in
+both cases: first-order mRNA degradation.
+
+#### A subtlety: scaled Beta versus Gamma {#sec-grn-bio-beta-vs-gamma}
+
+There is an important distinction in the independent-gene limit. For the
+two-state promoter, the exact stationary distribution of $p_g$ is
+$\text{Beta}(\hat{k}_g^+, \hat{k}_g^-)$ (as derived in @sec-beta-origin),
+so $\lambda_g = \hat{r}_g \cdot p_g$ follows a **scaled Beta** distribution
+on $[0, \hat{r}_g]$. This is **not** the same as a Gamma distribution, which
+has support $[0, \infty)$.
+
+The distinction arises because the two-state promoter imposes a ceiling on
+$\lambda_g$: even if the promoter is permanently ON, $\lambda_g$ cannot exceed
+$\hat{r}_g = r_g / \gamma_g$. The one-state bursty promoter has no such
+ceiling: arbitrarily many bursts can pile up (though this is exponentially
+unlikely), giving $\lambda_g$ unbounded support.
+
+The two distributions converge in the **bursty limit** ($k_g^- \gg \gamma_g$),
+where the two-state model reduces to the one-state bursty model, and more
+generally whenever the Beta parameters are large (fast switching relative to
+mRNA turnover), so that $p_g$ concentrates away from the boundaries 0 and 1.
+In this regime, the scaled Beta and the Gamma are both well approximated by a
+log-normal, and the Dirichlet recovery from independent Gammas holds
+approximately.
+
+This subtlety does not affect the derivation of the multivariate Gaussian,
+because the downstream chain (CLE $\to$ LNA $\to$ OU $\to$ Lyapunov) depends
+only on the **ODE form**, not on the exact marginal distribution of $\lambda_g$
+in the independent-gene limit.
+
+### The universality result {#sec-grn-bio-universality}
+
+We may now state the result precisely:
+
+> **The multivariate Gaussian on log-abundances is the steady-state
+> distribution of any gene regulatory network whose effective dynamics satisfy
+> (i) first-order mRNA degradation and (ii) a production rate that, after
+> coarse-graining the fast transcription kinetics, depends on the expression
+> levels of other genes. Under the linear noise approximation in log-abundance
+> space, these two conditions are sufficient to produce a multivariate Gaussian
+> on log-abundances. The microscopic promoter model enters only through the
+> noise structure, not through the form of the result.**
+
+This strengthens the biophysical justification: the result does not depend on
+committing to a particular model of promoter kinetics. The one-state bursty
+promoter and the two-state promoter---the two most widely studied microscopic
+models in the gene expression literature---both converge to the same mesoscopic
+ODE. Any other microscopic model satisfying first-order degradation and
+coarse-grainable production will do the same.
+
+The multivariate Gaussian on log-abundances is the fundamental result. From it,
+different observation models can be constructed: applying the softmax map yields
+the logistic-normal distribution on compositions (the LNM path), while direct
+Poisson emission from the exponentiated log-abundances yields the PLN path.
+Both inherit the same biophysical foundation (see
+@sec-grn-bio-observation-models).
+
+## From log-abundances to observed counts: two observation models {#sec-grn-bio-observation-models}
+
+The derivation in the preceding sections establishes that the steady-state
+distribution of log-abundances in a gene regulatory network is a multivariate
+Gaussian (@eq-grn-bio-mvn):
+
+$$
+\underline{x}^{(c)} \sim \mathcal{N}(\underline{\bar{x}},\,
+\underline{\underline{\Sigma}}),
+\quad x_g = \log \lambda_g.
+$${#eq-grn-bio-mvn-recap}
+
+This result is **upstream** of any particular statistical model for the observed
+counts. The choice of how to connect the latent log-abundances
+$\underline{x}^{(c)}$ to the observed count vector $\underline{u}^{(c)}$ is a
+separate modeling decision. We now describe two natural observation models that
+both inherit this biophysical foundation.
+
+### Path 1: Poisson-Multinomial factorization (Logistic-Normal Multinomial) {#sec-grn-bio-obs-lnm}
+
+The first path decomposes the count vector into a **total count** and a
+**composition**. The total UMI count
+$u_T^{(c)} = \sum_{g=1}^G u_g^{(c)}$ is modeled separately (e.g., via a
+Negative Binomial distribution), and the gene-level counts are drawn from a
+**Multinomial** conditioned on this total:
+
+$$
+u_T^{(c)} \sim \text{NB}(r_T, p),
+\quad
+\underline{u}^{(c)} \mid u_T^{(c)} \sim
+\text{Multinomial}\!\left(u_T^{(c)},\,
+\underline{\rho}^{(c)}\right),
+$${#eq-grn-bio-obs-lnm}
+
+where the composition $\underline{\rho}^{(c)} =
+\text{softmax}(\underline{x}^{(c)})$ is the logistic-normal distribution
+derived in @sec-grn-bio-to-ln. This is the **Logistic-Normal Multinomial**
+(LNM) model (see @sec-lnm-logistic-normal-def for the full development).
+
+The factorization into total and composition is computationally convenient and
+aligns with the compositional nature of scRNA-seq data (where library-size
+variation is a dominant technical effect). However, it introduces two modeling
+choices that are not dictated by the biophysics:
+
+1. **The total-count distribution** (here, Negative Binomial) must be specified
+   independently. The NB arises naturally from the independent-gene Gamma
+   steady-state (@sec-grn-bio-bursty-gamma), but for interacting genes the total
+   count distribution is not NB in general---it is a sum of correlated
+   log-normal variables, which has no standard closed form.
+
+2. **The total-composition independence assumption.** The factorization treats
+   $u_T^{(c)}$ and $\underline{\rho}^{(c)}$ as independent given the model
+   parameters. Under the biophysics, however, total abundance and composition
+   are coupled through the shared covariance $\underline{\underline{\Sigma}}$.
+   This decoupling is an additional approximation beyond the LNA.
+
+### Path 2: Direct Poisson emission (Poisson-LogNormal) {#sec-grn-bio-obs-pln}
+
+The second path avoids the total-composition factorization entirely. Each gene's
+count is modeled as a **Poisson** draw from the exponentiated log-abundance:
+
+$$
+u_g^{(c)} \mid x_g^{(c)} \sim
+\text{Poisson}\!\left(e^{x_g^{(c)}}\right),
+\quad g = 1, \ldots, G,
+$${#eq-grn-bio-obs-pln}
+
+with $\underline{x}^{(c)}$ drawn from the same multivariate Gaussian
+(@eq-grn-bio-mvn-recap). This is the **Poisson-LogNormal** (PLN) model.
+
+The Poisson emission is the most direct connection to the biophysics: the
+Poisson-Gamma mixture representation of the Negative Binomial
+(@sec-grn-bio-bursty-gamma) already established that $m_g \mid \lambda_g \sim
+\text{Poisson}(\lambda_g)$, and the LNA result gives
+$\log \lambda_g \sim \mathcal{N}$. The PLN simply combines these two results
+without the intervening total-composition factorization.
+
+**Advantages of the PLN path:**
+
+- **No total-composition split.** The total count
+  $u_T^{(c)} = \sum_g u_g^{(c)}$ emerges naturally as a sum of correlated
+  Poissons. There is no need to specify a separate distribution for $u_T$ or to
+  assume independence between total and composition.
+- **Tighter biophysical alignment.** The model directly uses the Poisson
+  emission that is inherent in the birth-death process, without rerouting
+  through the softmax/simplex.
+- **Log-concave posterior.** The conditional posterior
+  $p(\underline{x} \mid \underline{u})$ is log-concave (the Poisson log-
+  likelihood $u_g x_g - e^{x_g}$ is concave in $x_g$, and the Gaussian prior
+  is log-concave). This guarantees a unique MAP estimate and makes variational
+  approximation more accurate than for the LNM, where the Multinomial
+  introduces non-log-concavity.
+- **Simpler capture model.** Variable capture probability enters as an additive
+  offset in log-rate space: if cell $c$ has capture efficiency
+  $e^{-\eta^{(c)}}$, the effective log-rate is simply
+  $x_g^{(c)} - \eta^{(c)}$. This is structurally cleaner than the
+  NB-thinning convolution required in the LNM framework.
+
+**Trade-offs relative to the LNM path:**
+
+- **No explicit compositional normalization.** The PLN models absolute counts;
+  compositional information must be extracted post-hoc (e.g., by computing
+  $\rho_g = u_g / \sum u_g$ from posterior predictive samples). For analyses
+  where composition is the primary quantity of interest (e.g., differential
+  composition analysis), the LNM may be more natural.
+- **Absolute scale must be learned.** The mean log-rate $\underline{\mu}$
+  encodes both biological expression levels and technical scale factors
+  (library size, capture efficiency). In the LNM, the softmax absorbs scale
+  differences automatically.
+- **Marginal compositions are logistic-normal.** Interestingly, the marginal
+  distribution of PLN compositions
+  $\rho_g^{(c)} = u_g^{(c)} / \sum_j u_j^{(c)}$ is approximately
+  logistic-normal (since ratios of correlated log-normals are approximately
+  logistic-normal). The two models thus share the same compositional structure;
+  they differ in whether this structure is imposed directly (LNM) or emerges
+  as a consequence (PLN).
+
+### Choosing between observation models {#sec-grn-bio-obs-choice}
+
+Both observation models inherit the same biophysical foundation: the
+multivariate Gaussian on log-abundances from the LNA of the gene regulatory
+network dynamics. The choice between them is a modeling decision, not a
+biophysical one:
+
+| Criterion | LNM | PLN |
+|-----------|-----|-----|
+| Primary target | Compositions ($\underline{\rho}$) | Absolute counts ($\underline{u}$) |
+| Total count model | Separate (NB, specified) | Emergent (sum of Poissons) |
+| Total-composition coupling | Assumed independent | Naturally coupled |
+| Posterior geometry | Non-log-concave | Log-concave |
+| Capture probability | NB-thinning (convolution) | Log-rate offset (addition) |
+| Biophysical directness | Softmax detour | Direct Poisson emission |
+
+Both models use the same low-rank covariance structure
+$\underline{\underline{\Sigma}} = \underline{\underline{W}}\,
+\underline{\underline{W}}^\top + \text{diag}(\underline{d})$, and both can be
+fit using the same amortized variational inference machinery (encoder-decoder
+VAE with ELBO objective). The columns of $\underline{\underline{W}}$ retain the
+same regulatory-program interpretation (@sec-grn-bio-low-rank) regardless of
+the observation model.
+
+## Appendix: Derivation of the integral solution to the Lyapunov equation {#sec-grn-bio-appendix-lyapunov}
+
+Here we derive @eq-grn-bio-sigma-integral from first principles using the
+method of variation of parameters applied to the covariance ODE
+@eq-grn-bio-cov-ode.
+
+### Setting up the time-dependent problem
+
+Rather than working directly with the steady-state equation, we solve the
+time-dependent ODE
+
+$$
+\frac{d\underline{\underline{\Sigma}}}{dt} =
+\underline{\underline{J}}\, \underline{\underline{\Sigma}}
++ \underline{\underline{\Sigma}}\, \underline{\underline{J}}^\top
++ 2\underline{\underline{D}},
+\qquad \underline{\underline{\Sigma}}(0) = \underline{\underline{0}},
+$${#eq-grn-bio-app-ode-ic}
+
+where the zero initial condition corresponds to starting from the fixed point
+with no fluctuations. The steady-state solution we seek is
+$\underline{\underline{\Sigma}} =
+\lim_{t\to\infty}\underline{\underline{\Sigma}}(t)$.
+
+### Solving the homogeneous equation
+
+We first solve the homogeneous ODE (setting
+$\underline{\underline{D}} = \underline{\underline{0}}$):
+
+$$
+\frac{d\underline{\underline{\Sigma}}}{dt} =
+\underline{\underline{J}}\,\underline{\underline{\Sigma}}
++ \underline{\underline{\Sigma}}\,\underline{\underline{J}}^\top.
+$${#eq-grn-bio-app-homogeneous}
+
+To decouple the left- and right-multiplication by $\underline{\underline{J}}$,
+we introduce the substitution
+$\underline{\underline{\Sigma}}(t) =
+e^{\underline{\underline{J}}t}\,\underline{\underline{\Phi}}(t)$.
+Differentiating and substituting into @eq-grn-bio-app-homogeneous:
+
+$$
+\underline{\underline{J}}\,e^{\underline{\underline{J}}t}\,
+\underline{\underline{\Phi}}
++ e^{\underline{\underline{J}}t}\,\dot{\underline{\underline{\Phi}}}
+= \underline{\underline{J}}\,e^{\underline{\underline{J}}t}\,
+\underline{\underline{\Phi}}
++ e^{\underline{\underline{J}}t}\,\underline{\underline{\Phi}}\,
+\underline{\underline{J}}^\top.
+$$
+
+The $\underline{\underline{J}}\,e^{\underline{\underline{J}}t}\,
+\underline{\underline{\Phi}}$ terms cancel, and multiplying on the left by
+$e^{-\underline{\underline{J}}t}$ gives the simpler ODE:
+
+$$
+\dot{\underline{\underline{\Phi}}} =
+\underline{\underline{\Phi}}\,\underline{\underline{J}}^\top.
+$$
+
+This is a right-multiplication ODE. To solve it, note that:
+
+$$
+\frac{d}{dt}\!\left[\underline{\underline{\Phi}}\,
+e^{-\underline{\underline{J}}^\top t}\right] =
+\dot{\underline{\underline{\Phi}}}\,e^{-\underline{\underline{J}}^\top t}
+- \underline{\underline{\Phi}}\,\underline{\underline{J}}^\top\,
+e^{-\underline{\underline{J}}^\top t}
+= \left(\dot{\underline{\underline{\Phi}}} -
+\underline{\underline{\Phi}}\,\underline{\underline{J}}^\top\right)
+e^{-\underline{\underline{J}}^\top t} = \underline{\underline{0}}.
+$$
+
+Therefore $\underline{\underline{\Phi}}\,e^{-\underline{\underline{J}}^\top t} =
+\underline{\underline{C}}$ is a constant matrix, giving
+$\underline{\underline{\Phi}}(t) =
+\underline{\underline{C}}\,e^{\underline{\underline{J}}^\top t}$.
+Substituting back, the general homogeneous solution is:
+
+$$
+\underline{\underline{\Sigma}}_h(t) =
+e^{\underline{\underline{J}}t}\,\underline{\underline{C}}\,
+e^{\underline{\underline{J}}^\top t}.
+$${#eq-grn-bio-app-hom-solution}
+
+### Variation of parameters ansatz
+
+With the homogeneous solution @eq-grn-bio-app-hom-solution in hand, we seek
+a particular solution of the full inhomogeneous ODE @eq-grn-bio-app-ode-ic
+by allowing the constant $\underline{\underline{C}}$ to become a
+time-dependent matrix $\underline{\underline{M}}(t)$:
+
+$$
+\underline{\underline{\Sigma}}(t) =
+e^{\underline{\underline{J}}t}\,
+\underline{\underline{M}}(t)\,
+e^{\underline{\underline{J}}^\top t}.
+$${#eq-grn-bio-app-ansatz}
+
+### Finding $\underline{\underline{M}}(t)$
+
+Differentiating @eq-grn-bio-app-ansatz with the product rule:
+
+$$
+\frac{d\underline{\underline{\Sigma}}}{dt} =
+\underline{\underline{J}}\,
+e^{\underline{\underline{J}}t}\,\underline{\underline{M}}\,
+e^{\underline{\underline{J}}^\top t}
++ e^{\underline{\underline{J}}t}\,\dot{\underline{\underline{M}}}\,
+e^{\underline{\underline{J}}^\top t}
++ e^{\underline{\underline{J}}t}\,\underline{\underline{M}}\,
+e^{\underline{\underline{J}}^\top t}\,\underline{\underline{J}}^\top
+= \underline{\underline{J}}\,\underline{\underline{\Sigma}}
++ e^{\underline{\underline{J}}t}\,\dot{\underline{\underline{M}}}\,
+e^{\underline{\underline{J}}^\top t}
++ \underline{\underline{\Sigma}}\,\underline{\underline{J}}^\top.
+$$
+
+Substituting into @eq-grn-bio-app-ode-ic and cancelling the
+$\underline{\underline{J}}\underline{\underline{\Sigma}}$ and
+$\underline{\underline{\Sigma}}\underline{\underline{J}}^\top$ terms from
+both sides:
+
+$$
+e^{\underline{\underline{J}}t}\,\dot{\underline{\underline{M}}}\,
+e^{\underline{\underline{J}}^\top t} = 2\underline{\underline{D}}.
+$$
+
+Multiplying on the left by $e^{-\underline{\underline{J}}t}$ and on the
+right by $e^{-\underline{\underline{J}}^\top t}$:
+
+$$
+\dot{\underline{\underline{M}}}(t) =
+e^{-\underline{\underline{J}}t}\,(2\underline{\underline{D}})\,
+e^{-\underline{\underline{J}}^\top t}.
+$$
+
+Integrating from $0$ to $t$ with $\underline{\underline{M}}(0) =
+\underline{\underline{0}}$ (from the initial condition
+$\underline{\underline{\Sigma}}(0) = \underline{\underline{0}}$):
+
+$$
+\underline{\underline{M}}(t) =
+\int_0^t
+e^{-\underline{\underline{J}}s}\,(2\underline{\underline{D}})\,
+e^{-\underline{\underline{J}}^\top s}\, ds.
+$$
+
+### Assembling $\underline{\underline{\Sigma}}(t)$
+
+Substituting back into @eq-grn-bio-app-ansatz:
+
+$$
+\underline{\underline{\Sigma}}(t) =
+e^{\underline{\underline{J}}t}
+\left[\int_0^t
+e^{-\underline{\underline{J}}s}\,(2\underline{\underline{D}})\,
+e^{-\underline{\underline{J}}^\top s}\, ds\right]
+e^{\underline{\underline{J}}^\top t}
+= \int_0^t
+e^{\underline{\underline{J}}(t-s)}\,(2\underline{\underline{D}})\,
+e^{\underline{\underline{J}}^\top(t-s)}\, ds.
+$$
+
+Changing variables to $u = t - s$:
+
+$$
+\underline{\underline{\Sigma}}(t) =
+\int_0^t
+e^{\underline{\underline{J}}u}\,(2\underline{\underline{D}})\,
+e^{\underline{\underline{J}}^\top u}\, du.
+$${#eq-grn-bio-app-sigma-t}
+
+### Taking the steady-state limit
+
+When $\underline{\underline{J}}$ is stable (all eigenvalues have strictly
+negative real part), $e^{\underline{\underline{J}}u} \to \underline{\underline{0}}$
+as $u \to \infty$, so the integrand decays exponentially and the improper
+integral converges. Taking $t \to \infty$ in @eq-grn-bio-app-sigma-t
+recovers the steady-state result:
+
+$$
+\underline{\underline{\Sigma}} =
+\int_0^\infty
+e^{\underline{\underline{J}}u}\,(2\underline{\underline{D}})\,
+e^{\underline{\underline{J}}^\top u}\, du,
+$$
+
+which is exactly @eq-grn-bio-sigma-integral. $\blacksquare$

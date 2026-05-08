@@ -1175,3 +1175,379 @@ def test_parametric_methods_come_from_parametric_mixin():
 def test_compare_comes_from_factory_module():
     """Public compare() should be re-exported from the factory module."""
     assert compare.__module__ == "scribe.de._results_factory"
+
+
+# --------------------------------------------------------------------------
+# Parametric DE on LNM and PLN result objects
+# --------------------------------------------------------------------------
+
+
+class TestParametricDEFromLnmPlnResults:
+    """Verify ``compare(method='parametric')`` works directly on LNM and
+    PLN result objects (Laplace fits) — the parametric path consumes
+    fitted (μ, 𝑊, 𝑑) globals rather than posterior samples, so the
+    per-cell-conditional-posterior issue is sidestepped entirely.
+    """
+
+    def _build_pln_pair(self, *, planted_shift: float = 1.5, n_de: int = 5):
+        from scribe import ScribeLaplaceResults
+        from scribe.models.config import ModelConfig
+        from scribe.models.config.enums import (
+            InferenceMethod,
+            Parameterization,
+        )
+
+        np.random.seed(801)
+        G, C, k = 30, 12, 3
+        mu_A = jnp.asarray(np.random.normal(0, 0.5, G).astype(np.float32))
+        shift = jnp.asarray(
+            np.concatenate(
+                [np.full(n_de, planted_shift), np.zeros(G - n_de)]
+            ).astype(np.float32)
+        )
+        mu_B = mu_A + shift
+        W = jnp.asarray(
+            (0.3 * np.random.normal(size=(G, k))).astype(np.float32)
+        )
+        d = jnp.asarray(np.full(G, 0.1, dtype=np.float32))
+        mc = ModelConfig(
+            base_model="pln",
+            parameterization=Parameterization.POISSON_LOGNORMAL,
+            inference_method=InferenceMethod.LAPLACE,
+        )
+
+        def _make(mu_):
+            r = ScribeLaplaceResults(
+                model_config=mc,
+                mu=mu_,
+                W=W,
+                d=d,
+                n_genes=G,
+                n_cells=C,
+                x_loc=jnp.zeros((C, G)),
+                losses=jnp.zeros(1),
+                final_grad_norms=jnp.zeros(1),
+            )
+            r.var = None
+            r.posterior_samples = None
+            return r
+
+        return _make(mu_A), _make(mu_B), G, n_de
+
+    def _build_lnm_pair(self, *, planted_shift: float = 1.5, n_de: int = 5):
+        from scribe import ScribeLaplaceResults
+        from scribe.models.config import ModelConfig
+        from scribe.models.config.enums import (
+            InferenceMethod,
+            Parameterization,
+        )
+
+        np.random.seed(802)
+        G, C, k = 30, 12, 3
+        G_minus1 = G - 1
+        mu_alr_A = jnp.asarray(
+            np.random.normal(0, 0.5, G_minus1).astype(np.float32)
+        )
+        shift = jnp.asarray(
+            np.concatenate(
+                [np.full(n_de, planted_shift), np.zeros(G_minus1 - n_de)]
+            ).astype(np.float32)
+        )
+        mu_alr_B = mu_alr_A + shift
+        W = jnp.asarray(
+            (0.3 * np.random.normal(size=(G_minus1, k))).astype(np.float32)
+        )
+        d = jnp.asarray(np.full(G_minus1, 0.05, dtype=np.float32))
+        mc = ModelConfig(
+            base_model="lnm",
+            parameterization=Parameterization.LOGISTIC_NORMAL_CANONICAL,
+            inference_method=InferenceMethod.LAPLACE,
+            alr_reference_idx=-1,
+        )
+
+        def _make(mu_):
+            r = ScribeLaplaceResults(
+                model_config=mc,
+                mu=mu_,
+                W=W,
+                d=d,
+                n_genes=G,
+                n_cells=C,
+                alr_reference_idx=-1,
+                y_alr_loc=jnp.zeros((C, G_minus1)),
+                losses=jnp.zeros(1),
+                final_grad_norms=jnp.zeros(1),
+            )
+            r.var = None
+            r.posterior_samples = None
+            return r
+
+        return _make(mu_alr_A), _make(mu_alr_B), G, n_de
+
+    def test_compare_pln_results_returns_parametric(self):
+        a, b, G, _ = self._build_pln_pair()
+        de = compare(a, b, method="parametric")
+        assert type(de).__name__ == "ScribeParametricDEResults"
+
+    def test_compare_lnm_results_returns_parametric(self):
+        a, b, G, _ = self._build_lnm_pair()
+        de = compare(a, b, method="parametric")
+        assert type(de).__name__ == "ScribeParametricDEResults"
+
+    def test_pln_recovers_planted_shift(self):
+        """For a planted shift Δ on n_de of G genes, the CLR-space
+        contrast is Δ · (1 - n_de/G) on planted-DE genes and Δ ·
+        n_de/G (with opposite sign) on null genes — exact arithmetic
+        of CLR centring.
+        """
+        a, b, G, n_de = self._build_pln_pair(planted_shift=1.5, n_de=5)
+        de = compare(a, b, method="parametric")
+        gene_results = de.gene_level(tau=0.0)
+        delta = np.abs(np.asarray(gene_results["delta_mean"]))
+        expected_de_signal = 1.5 * (1 - n_de / G)
+        expected_null_drag = 1.5 * (n_de / G)
+        np.testing.assert_allclose(delta[:n_de], expected_de_signal, atol=1e-4)
+        np.testing.assert_allclose(delta[n_de:], expected_null_drag, atol=1e-4)
+
+    def test_lnm_recovers_planted_shift(self):
+        a, b, G, n_de = self._build_lnm_pair(planted_shift=1.5, n_de=5)
+        de = compare(a, b, method="parametric")
+        gene_results = de.gene_level(tau=0.0)
+        delta = np.abs(np.asarray(gene_results["delta_mean"]))
+        expected_de_signal = 1.5 * (1 - n_de / G)
+        np.testing.assert_allclose(delta[:n_de], expected_de_signal, atol=1e-3)
+
+    def test_compare_auto_detects_parametric_from_lnm_results(self):
+        """When ``method=None`` and both inputs are LNM/PLN results,
+        ``compare`` should auto-detect ``method='parametric'``.
+        """
+        a, b, _, _ = self._build_pln_pair()
+        de = compare(a, b)
+        assert type(de).__name__ == "ScribeParametricDEResults"
+
+    def test_parametric_requires_both_inputs_to_be_lnm_pln(self):
+        """Mixed LNM-result-vs-NB-result inputs to ``method='parametric'``
+        should raise.
+        """
+        a, _, _, _ = self._build_pln_pair()
+
+        class _FakeNBResults:
+            def __init__(self):
+                from scribe.models.config import ModelConfig
+                from scribe.models.config.enums import (
+                    InferenceMethod,
+                    Parameterization,
+                )
+
+                self.model_config = ModelConfig(
+                    base_model="nbdm",
+                    parameterization=Parameterization.STANDARD,
+                    inference_method=InferenceMethod.SVI,
+                )
+                self.posterior_samples = None
+                self.var = None
+
+        with pytest.raises(TypeError, match="parametric.*both"):
+            compare(a, _FakeNBResults(), method="parametric")
+
+
+class TestEmpiricalDEFromLnmPlnMarginal:
+    """End-to-end empirical DE driven by samples from the fitted LNM/PLN
+    *marginal* distribution.
+
+    This is the Monte-Carlo counterpart of the parametric path: instead
+    of an analytic Gaussian on CLR contrasts, it draws fresh simplex
+    samples from each condition's generative marginal (the same
+    procedure as ``level="marginal"`` PPC, stopped at the simplex
+    step) and pushes them through the standard CLR-difference
+    machinery.
+
+    Crucially, the samples are *not* per-cell-conditional posterior
+    samples; they are draws from the population-level distribution
+    that DE asks about.  See
+    paper/_diffexp_lnm_pln_robustness.qmd for the structural argument.
+    """
+
+    def _build_pln_pair(self, *, planted_shift: float = 1.5, n_de: int = 5):
+        from scribe import ScribeLaplaceResults
+        from scribe.models.config import ModelConfig
+        from scribe.models.config.enums import (
+            InferenceMethod,
+            Parameterization,
+        )
+
+        np.random.seed(901)
+        G, C, k = 30, 12, 3
+        mu_A = jnp.asarray(np.random.normal(0, 0.5, G).astype(np.float32))
+        shift = jnp.asarray(
+            np.concatenate(
+                [np.full(n_de, planted_shift), np.zeros(G - n_de)]
+            ).astype(np.float32)
+        )
+        mu_B = mu_A + shift
+        W = jnp.asarray(
+            (0.3 * np.random.normal(size=(G, k))).astype(np.float32)
+        )
+        d = jnp.asarray(np.full(G, 0.1, dtype=np.float32))
+        mc = ModelConfig(
+            base_model="pln",
+            parameterization=Parameterization.POISSON_LOGNORMAL,
+            inference_method=InferenceMethod.LAPLACE,
+        )
+
+        def _make(mu_):
+            r = ScribeLaplaceResults(
+                model_config=mc, mu=mu_, W=W, d=d, n_genes=G, n_cells=C,
+                x_loc=jnp.zeros((C, G)),
+                losses=jnp.zeros(1), final_grad_norms=jnp.zeros(1),
+            )
+            r.var = None
+            r.posterior_samples = None
+            return r
+
+        return _make(mu_A), _make(mu_B), G, n_de
+
+    def _build_lnm_pair(self, *, planted_shift: float = 1.5, n_de: int = 5):
+        from scribe import ScribeLaplaceResults
+        from scribe.models.config import ModelConfig
+        from scribe.models.config.enums import (
+            InferenceMethod,
+            Parameterization,
+        )
+
+        np.random.seed(902)
+        G, C, k = 30, 12, 3
+        G_minus1 = G - 1
+        mu_alr_A = jnp.asarray(
+            np.random.normal(0, 0.5, G_minus1).astype(np.float32)
+        )
+        shift = jnp.asarray(
+            np.concatenate(
+                [np.full(n_de, planted_shift), np.zeros(G_minus1 - n_de)]
+            ).astype(np.float32)
+        )
+        mu_alr_B = mu_alr_A + shift
+        W = jnp.asarray(
+            (0.3 * np.random.normal(size=(G_minus1, k))).astype(np.float32)
+        )
+        d = jnp.asarray(np.full(G_minus1, 0.05, dtype=np.float32))
+        mc = ModelConfig(
+            base_model="lnm",
+            parameterization=Parameterization.LOGISTIC_NORMAL_CANONICAL,
+            inference_method=InferenceMethod.LAPLACE,
+            alr_reference_idx=-1,
+        )
+
+        def _make(mu_):
+            r = ScribeLaplaceResults(
+                model_config=mc, mu=mu_, W=W, d=d, n_genes=G, n_cells=C,
+                alr_reference_idx=-1,
+                y_alr_loc=jnp.zeros((C, G_minus1)),
+                losses=jnp.zeros(1), final_grad_norms=jnp.zeros(1),
+            )
+            r.var = None
+            r.posterior_samples = None
+            return r
+
+        return _make(mu_alr_A), _make(mu_alr_B), G, n_de
+
+    def test_get_compositional_samples_pln(self):
+        a, _, G, _ = self._build_pln_pair()
+        cs = a.get_compositional_samples(n_samples=64, rng_key=random.PRNGKey(0))
+        assert cs.shape == (64, G)
+        # Rows sum to 1 (valid simplex).
+        np.testing.assert_allclose(cs.sum(axis=-1), 1.0, atol=1e-5)
+        # All non-negative.
+        assert np.all(cs >= 0)
+
+    def test_get_compositional_samples_lnm(self):
+        a, _, G, _ = self._build_lnm_pair()
+        cs = a.get_compositional_samples(n_samples=64, rng_key=random.PRNGKey(0))
+        assert cs.shape == (64, G)
+        np.testing.assert_allclose(cs.sum(axis=-1), 1.0, atol=1e-5)
+        assert np.all(cs >= 0)
+
+    def test_get_compositional_samples_stores_by_default(self):
+        a, _, _, _ = self._build_pln_pair()
+        assert getattr(a, "compositional_samples", None) is None
+        a.get_compositional_samples(n_samples=32, rng_key=random.PRNGKey(0))
+        assert a.compositional_samples is not None
+        assert a.compositional_samples.shape[0] == 32
+
+    def test_compare_empirical_pln_recovers_planted_shift(self):
+        """Empirical DE on PLN-Laplace results should recover the planted
+        CLR contrast (Δ_planted · (1 − n_de/G) for DE genes,
+        Δ_planted · n_de/G for null genes) within Monte Carlo noise.
+        """
+        a, b, G, n_de = self._build_pln_pair(
+            planted_shift=1.5, n_de=5
+        )
+        de = compare(a, b, method="empirical", n_samples_dirichlet=2048)
+        gene_results = de.gene_level(tau=0.0)
+        delta = np.abs(np.asarray(gene_results["delta_mean"]))
+        expected_de_signal = 1.5 * (1 - n_de / G)        # 1.25
+        expected_null_drag = 1.5 * (n_de / G)            # 0.25
+        # Monte Carlo with 2048 samples: 2-sigma SE on Δ_mean ≈
+        # σ_Δ / √2048 ≈ 0.05; loose atol absorbs that.
+        np.testing.assert_allclose(
+            delta[:n_de], expected_de_signal, atol=0.1
+        )
+        np.testing.assert_allclose(
+            delta[n_de:], expected_null_drag, atol=0.05
+        )
+
+    def test_compare_empirical_lnm_recovers_planted_shift(self):
+        a, b, G, n_de = self._build_lnm_pair(
+            planted_shift=1.5, n_de=5
+        )
+        de = compare(a, b, method="empirical", n_samples_dirichlet=2048)
+        gene_results = de.gene_level(tau=0.0)
+        delta = np.abs(np.asarray(gene_results["delta_mean"]))
+        expected_de_signal = 1.5 * (1 - n_de / G)
+        np.testing.assert_allclose(
+            delta[:n_de], expected_de_signal, atol=0.1
+        )
+
+    def test_empirical_returns_empirical_results_type(self):
+        a, b, _, _ = self._build_pln_pair()
+        de = compare(a, b, method="empirical", n_samples_dirichlet=128)
+        assert type(de).__name__ == "ScribeEmpiricalDEResults"
+        # delta_samples should have shape (N_samples, G).
+        assert de.delta_samples.shape[0] == 128
+
+    def test_empirical_per_component_not_implemented(self):
+        a, b, _, _ = self._build_pln_pair()
+        with pytest.raises(NotImplementedError, match="component"):
+            compare(
+                a, b, method="empirical",
+                component_A=0, component_B=0,
+            )
+
+    def test_empirical_mixture_weighted_not_implemented(self):
+        a, b, _, _ = self._build_pln_pair()
+        with pytest.raises(NotImplementedError, match="mixture_weighted"):
+            compare(
+                a, b, method="empirical",
+                mixture_weighted=True,
+            )
+
+    def test_parametric_and_empirical_agree_on_planted_signal(self):
+        """The parametric (analytic) and empirical (Monte Carlo) paths
+        should agree on planted-DE Δ values within MC noise.  This is
+        the cross-validation that the marginal sampler is sampling
+        from the *same* Gaussian-on-ALR that the parametric path
+        analytically transforms to CLR.
+        """
+        a, b, G, n_de = self._build_pln_pair(
+            planted_shift=1.5, n_de=5
+        )
+        de_param = compare(a, b, method="parametric")
+        de_emp = compare(a, b, method="empirical", n_samples_dirichlet=4096)
+        delta_param = np.asarray(de_param.gene_level(tau=0.0)["delta_mean"])
+        delta_emp = np.asarray(de_emp.gene_level(tau=0.0)["delta_mean"])
+        # The two should agree within Monte Carlo noise on the absolute
+        # mean (sign may flip globally between paths if conditions
+        # were flipped — take absolute value to robust against that).
+        np.testing.assert_allclose(
+            np.abs(delta_emp), np.abs(delta_param), atol=0.1
+        )

@@ -184,16 +184,17 @@ via `encode_to_params` (encoder) or `decode_to_output` (decoder).
 
 ### Classes
 
-| Class               | Description |
-|---------------------|-------------|
-| `AbstractEncoder`   | Base: input transform → optional standardize → optional covariate concat → MLP → `encode_to_params(h)` |
-| `GaussianEncoder`   | Diagonal-Gaussian posterior: outputs `(loc, log_scale)` |
-| `AbstractDecoder`   | Base: optional covariate concat to z → reversed MLP → `decode_to_output(h)` |
-| `MultiHeadDecoder`  | Multi-head output: one head per decoder-driven parameter; each head has `output_dim` and `transform` (e.g. `"exp"`, `"sigmoid"`) |
-| `DecoderOutputHead` | Frozen spec for one head: `param_name`, `output_dim`, `transform` (key into `OUTPUT_TRANSFORMS`) |
+| Class                | Description                                                                                                                                                                                                                               |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AbstractEncoder`    | Base: input transform → optional standardize → optional covariate concat → MLP → `encode_to_params(h)`                                                                                                                                    |
+| `GaussianEncoder`    | Diagonal-Gaussian posterior: outputs `(loc, log_scale)`                                                                                                                                                                                   |
+| `LNMGaussianEncoder` | LNM-specific subclass of `GaussianEncoder` with a clamped log-scale head (`[-7, 2]` by default). Used automatically by the LNM/LNMVCP factory path; not appropriate for non-LNM models. Registered as `ENCODER_REGISTRY["gaussian_lnm"]`. |
+| `AbstractDecoder`    | Base: optional covariate concat to z → reversed MLP → `decode_to_output(h)`                                                                                                                                                               |
+| `MultiHeadDecoder`   | Multi-head output: one head per decoder-driven parameter; each head has `output_dim` and `transform` (e.g. `"exp"`, `"sigmoid"`)                                                                                                          |
+| `DecoderOutputHead`  | Frozen spec for one head: `param_name`, `output_dim`, `transform` (key into `OUTPUT_TRANSFORMS`), and an optional `bias_init` callable (used by LNM to anchor the linear-decoder bias to the empirical ALR mean).                         |
 
 Registries for lookup by name: `ENCODER_REGISTRY`, `DECODER_REGISTRY` (e.g.
-`ENCODER_REGISTRY["gaussian"]` → `GaussianEncoder`).
+`ENCODER_REGISTRY["gaussian"]` → `GaussianEncoder`, `ENCODER_REGISTRY["gaussian_lnm"]` → `LNMGaussianEncoder`).
 
 When used with **VAELatentGuide**, the guide builder (see
 [builders README](../builders/README.md)) wires encoder output to a
@@ -205,9 +206,22 @@ latent z. Decoder-driven parameter names are derived from `decoder.output_heads`
 ### Input transforms and standardization
 
 Encoders support configurable **input transformation** (`input_transformation`):
-`"log1p"`, `"log"`, `"sqrt"`, `"identity"`. Optional **standardization** via
-`standardize_mean` and `standardize_std` (per feature); decoders can apply the
-inverse with the same arrays for reconstruction in original scale.
+`"log1p"`, `"log"`, `"sqrt"`, `"identity"`, `"log1p_prop"`, `"clr"`,
+`"log1p_norm"`.
+
+- `"log1p_prop"` computes `log1p(u_g / u_T)` row-wise and is the default input
+  transform for `lnm`/`lnmvcp` when not explicitly overridden.
+- `"clr"` computes centered log-ratios `log(u_g + 0.5) - mean_g(log(u_g + 0.5))`.
+- `"log1p_norm"` computes scVI-style library-size normalization
+  `log1p(u_g * 1e4 / u_T)`.
+
+Optional **standardization** via `standardize_mean` and `standardize_std` (per
+feature); decoders can apply the inverse with the same arrays for
+reconstruction in original scale. For LNM/LNMVCP, the public API populates
+both arrays automatically from the count matrix (in the same input-transform
+space the encoder uses) and turns standardization on by default — see
+`scribe.core.lnm_data_init.compute_encoder_standardization` for the helper
+and the LNM section of `scribe.api.fit` for the wiring point.
 
 ### Optional covariate conditioning
 

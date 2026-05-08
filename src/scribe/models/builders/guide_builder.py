@@ -165,7 +165,11 @@ class GuideBuilder:
             # ================================================================
             # Setup dimensions dict
             # ================================================================
-            dims = {"n_cells": n_cells, "n_genes": n_genes}
+            dims = {
+                "n_cells": n_cells,
+                "n_genes": n_genes,
+                "n_alr": max(n_genes - 1, 0),
+            }
             if (
                 hasattr(model_config, "n_components")
                 and model_config.n_components

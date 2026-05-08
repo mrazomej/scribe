@@ -345,7 +345,7 @@ constrains the parameter to its data-implied value.
   $\sigma_\mu \to \infty$, the prior becomes flat (uninformative) and the
   anchoring effect disappears, recovering the standard model.
 
-### Relationship to empirical Bayes
+### Relationship to empirical Bayes {#sec-mean-relationship-eb}
 
 The data-informed prior is a form of **empirical Bayes**: the prior
 hyperparameters (the per-gene centers $\log \hat{\mu}_g$) are estimated from

@@ -1,0 +1,811 @@
+"""Pure-JAX Newton kernel for the Poisson-LogNormal MAP per cell.
+
+Implements the inner Newton iteration of the Laplace-approximation
+inference scheme for PLN (and its capture-anchored variant). No
+NumPyro dependency — the kernel can be unit-tested by comparing to
+``scipy.optimize.minimize`` on a small joint log-density.
+
+Mathematical background
+-----------------------
+The PLN per-cell joint log-density (with the biology-informed capture
+anchor active, dropping additive constants in ``(x, η)``) is
+
+.. math::
+    f(x, \\eta)
+        = u^\\top (x - \\eta \\mathbf{1})
+        - \\mathbf{1}^\\top \\exp(x - \\eta \\mathbf{1})
+        - \\tfrac{1}{2}(x - \\mu)^\\top \\Sigma^{-1} (x - \\mu)
+        - \\tfrac{1}{2}(\\eta - \\eta_{\\text{anchor}})^2 / \\sigma_M^2
+
+where ``x ∈ R^G`` is the latent log-rate vector, ``η`` is the per-cell
+capture offset (in log-rate space), ``μ ∈ R^G`` is the decoder bias,
+``Σ = W W^\\top + \\text{diag}(d)`` is the low-rank-plus-diagonal
+prior covariance (``W ∈ R^{G \\times k}``, ``d ∈ R^G_{>0}``), and
+``η_anchor = log(M_0) - log(L_c)`` is the per-cell anchor with prior
+scale ``σ_M``. ``u ∈ R^G`` is the observed count vector for the cell.
+
+Gradient (component-wise):
+
+.. math::
+    \\partial_x f &= u - \\exp(x - \\eta) - \\Sigma^{-1}(x - \\mu) \\\\
+    \\partial_\\eta f &= -\\mathbf{1}^\\top u + \\mathbf{1}^\\top \\exp(x - \\eta)
+                       - (\\eta - \\eta_{\\text{anchor}})/\\sigma_M^2
+
+Hessian blocks:
+
+.. math::
+    H_{xx} &= -\\text{diag}(\\exp(x - \\eta)) - \\Sigma^{-1} \\\\
+    H_{x\\eta} &= \\exp(x - \\eta) \\quad (\\text{column vector}) \\\\
+    H_{\\eta\\eta} &= -\\mathbf{1}^\\top \\exp(x - \\eta) - 1/\\sigma_M^2
+
+The full ``(G+1) × (G+1)`` Hessian is symmetric negative definite
+(PLN is globally log-concave, see Chiquet et al. 2018), so ``-H`` is
+symmetric positive definite. Letting
+
+.. math::
+    A = -H_{xx} = \\text{diag}(\\lambda) + \\Sigma^{-1},
+    \\qquad \\lambda_g = \\exp(x_g - \\eta),
+
+and applying Woodbury to ``Σ^{-1}`` and then again to ``A``, both the
+linear solve ``A^{-1} y`` and the log-determinant ``log det(A)`` are
+computable in ``O(G·k + k^3)`` per cell — the cost of one ``k × k``
+Cholesky and a few low-rank multiplies. See :func:`_woodbury_factors`
+and :func:`_solve_A` below.
+
+Newton step
+-----------
+At each iterate, solve ``-H δ = ∇f`` for ``δ = (δ_x, δ_η)`` via block
+Schur complement:
+
+.. math::
+    s &= -H_{\\eta\\eta} - H_{x\\eta}^\\top A^{-1} H_{x\\eta} \\\\
+    \\delta_\\eta &= (g_\\eta - H_{x\\eta}^\\top A^{-1} g_x) / s \\\\
+    \\delta_x &= A^{-1}(g_x - H_{x\\eta} \\, \\delta_\\eta)
+
+The same ``A^{-1}`` factorization is reused for all three solves
+needed per Newton step.
+
+Damping
+-------
+A small Tikhonov term ``damping`` is added to the diagonal of ``A``
+(``λ_g + 1/d_g + damping``) and to ``-H_{ηη}`` to stabilise Newton
+when ``A`` is ill-conditioned. The default ``damping = 1e-4`` is
+small enough not to bias the MAP for well-conditioned problems and
+large enough to avoid Cholesky failures in pathological corners
+(e.g., near-zero ``d`` or extremely sparse cells).
+
+API
+---
+- :func:`newton_step_joint(x, eta, u, mu, W, d, eta_anchor, sigma_M, damping)`
+  — single joint Newton step. Returns ``(x_new, eta_new, grad_inf_norm)``.
+- :func:`laplace_newton_loop(...)` — `lax.scan` over a fixed number of
+  Newton steps; returns ``(x_map, eta_map, final_grad_norm, log_det_neg_H)``.
+- :func:`laplace_newton_batch(...)` — ``jax.vmap`` of the above over
+  cells. Inputs are per-cell ``(G,)``-shaped arrays; outputs include
+  per-cell ``log_det_neg_H`` for the Laplace correction term in the
+  outer ELBO.
+- :func:`newton_step_x_only`, :func:`laplace_newton_loop_x_only`,
+  :func:`laplace_newton_batch_x_only` — variants for fits without a
+  capture anchor (eliminates the ``η`` block). Same ``A`` Woodbury
+  structure.
+
+The kernel is JIT-traceable and ``vmap``-compatible: all loops use
+``lax.scan`` (data-independent iteration count) so vectorising over
+cells is a one-line ``jax.vmap``.
+
+References
+----------
+- Chiquet, Mariadassou, Robin (2018). *Variational inference for
+  probabilistic Poisson PCA*. Annals of Applied Statistics.
+- The PLN R package https://github.com/PLN-team/PLNmodels uses the
+  same variational-EM scheme: outer SGD on global parameters,
+  inner Newton (or quasi-Newton) on per-cell latents.
+"""
+
+from __future__ import annotations
+
+from typing import Tuple
+
+import jax
+import jax.numpy as jnp
+
+
+# Clamp on (x - eta) before exponentiation. exp(30) ≈ 1e13, so the
+# Poisson rate cannot exceed that; in float32 this leaves ~25 bits of
+# headroom before overflow at exp(88). Same bound used by the PLN
+# likelihood in pln.py so the Newton kernel and the model agree on the
+# rate clamp.
+_LOG_RATE_MIN = -30.0
+_LOG_RATE_MAX = 30.0
+
+
+# =====================================================================
+# Woodbury helpers
+# =====================================================================
+
+
+def _woodbury_factors(
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    log_rate: jnp.ndarray,
+    damping: float,
+):
+    """Pre-compute Woodbury factors for ``A = diag(λ + 1/d + damping) − V K⁻¹ V'``.
+
+    Caller passes ``log_rate = x - η`` (already centred); we
+    exponentiate inside (with the standard clamp) so callers do not
+    have to remember the safety net. All factors are reused across
+    the three linear solves performed in one Newton step (gradient
+    direction + Schur complement).
+
+    Parameters
+    ----------
+    W : jnp.ndarray, shape (G, k)
+        Decoder loadings.
+    d : jnp.ndarray, shape (G,)
+        Diagonal residual variance (positive).
+    log_rate : jnp.ndarray, shape (G,)
+        Current ``x - η`` value at the iterate.
+    damping : float
+        Tikhonov damping added to the diagonal of ``A``.
+
+    Returns
+    -------
+    dict with keys:
+        ``m_inv``: shape (G,), ``1/(λ_g + 1/d_g + damping)``.
+        ``V``: shape (G, k), ``(1/d) ⊙ W``.
+        ``L_K``: shape (k, k), Cholesky factor of ``K = I + W' diag(1/d) W``.
+        ``L_S``: shape (k, k), Cholesky of ``S = K − V' diag(m_inv) V``.
+        ``log_det_K``: scalar.
+        ``log_det_S``: scalar.
+    """
+    rate = jnp.exp(jnp.clip(log_rate, _LOG_RATE_MIN, _LOG_RATE_MAX))
+    inv_d = 1.0 / d
+    # M_diag = λ + 1/d + damping (positive). m_inv is its reciprocal.
+    m_diag = rate + inv_d + damping
+    m_inv = 1.0 / m_diag
+
+    # V = diag(1/d) W (the same matrix that appears in Woodbury for Σ⁻¹).
+    V = inv_d[:, None] * W
+
+    # K = I_k + W' diag(1/d) W (symmetric positive definite). Used both
+    # for Σ⁻¹ and for the Schur complement S.
+    k = W.shape[1]
+    K = jnp.eye(k) + W.T @ V
+
+    # S = K − V' diag(m_inv) V. Symmetric positive definite when A is
+    # positive definite (Sylvester / Schur complement).
+    S = K - V.T @ (m_inv[:, None] * V)
+
+    # Cholesky factors. We compute log-dets here once so subsequent
+    # log-det queries are free.
+    L_K = jnp.linalg.cholesky(K)
+    L_S = jnp.linalg.cholesky(S)
+    log_det_K = 2.0 * jnp.sum(jnp.log(jnp.diag(L_K)))
+    log_det_S = 2.0 * jnp.sum(jnp.log(jnp.diag(L_S)))
+
+    return {
+        "m_inv": m_inv,
+        "V": V,
+        "L_K": L_K,
+        "L_S": L_S,
+        "log_det_K": log_det_K,
+        "log_det_S": log_det_S,
+    }
+
+
+def _solve_A(factors: dict, y: jnp.ndarray) -> jnp.ndarray:
+    """Compute ``A⁻¹ y`` using the pre-built Woodbury factors.
+
+    Uses the Woodbury identity for ``A = M̃ - V K⁻¹ V'``:
+
+    .. math::
+        A^{-1} y = m_inv \\odot y +
+                   m_inv \\odot V (S^{-1} V^\\top (m_inv \\odot y))
+
+    where ``S = K - V' diag(m_inv) V``. Cost: ``O(G·k + k^3)`` per
+    solve (one Cholesky-back-substitute on the ``k × k`` matrix
+    ``S``). Same algorithm as ``cho_solve`` from SciPy.
+
+    Parameters
+    ----------
+    factors : dict
+        Output of :func:`_woodbury_factors`.
+    y : jnp.ndarray, shape (G,)
+
+    Returns
+    -------
+    jnp.ndarray, shape (G,)
+    """
+    m_inv = factors["m_inv"]
+    V = factors["V"]
+    L_S = factors["L_S"]
+
+    # First term: m_inv ⊙ y.
+    base = m_inv * y
+    # Correction: m_inv ⊙ (V (S⁻¹ V' (m_inv ⊙ y))).
+    rhs = V.T @ base
+    z = jax.scipy.linalg.cho_solve((L_S, True), rhs)
+    return base + m_inv * (V @ z)
+
+
+def _log_det_A(factors: dict) -> jnp.ndarray:
+    """Compute ``log det A`` from the Woodbury factors.
+
+    Using the matrix-determinant lemma on ``A = M̃ - V K⁻¹ V'``:
+
+    .. math::
+        \\log \\det A = \\sum_g \\log(λ_g + 1/d_g + \\text{damping})
+                      + \\log \\det S - \\log \\det K
+
+    All three terms are pre-computed in :func:`_woodbury_factors`.
+
+    Returns
+    -------
+    jnp.ndarray, scalar.
+    """
+    m_inv = factors["m_inv"]
+    log_det_K = factors["log_det_K"]
+    log_det_S = factors["log_det_S"]
+    log_det_M = -jnp.sum(jnp.log(m_inv))  # = sum log(m_diag)
+    return log_det_M + log_det_S - log_det_K
+
+
+def laplace_log_det_neg_H(
+    x_map: jnp.ndarray,
+    eta_map: Optional[jnp.ndarray],
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    sigma_M: float,
+) -> jnp.ndarray:
+    """``log det(-H)`` at the MAP, with **no Tikhonov damping**.
+
+    Used by the outer Laplace ELBO so that gradients flow through the
+    determinant correction into the globals ``(W, d)``. The Newton
+    kernel's own ``log_det`` return value is computed inside a stop-
+    gradient region with damping baked into ``A``; this helper is the
+    correct quantity for the ELBO.
+
+    Capture-anchor on (``eta_map is not None``): we have a (G+1)x(G+1)
+    block Hessian. The Schur identity gives
+
+    .. math::
+        \\log \\det(-H) = \\log \\det A + \\log s,
+
+    where ``s = (sum rate + 1/σ_M²) − rate^T A⁻¹ rate`` is exactly the
+    Schur scalar from :func:`newton_step_joint` (modulo the
+    damping term — here we set damping=0). Capture-anchor off: just
+    ``log det A``.
+
+    Parameters
+    ----------
+    x_map, eta_map : jnp.ndarray
+        Per-cell MAP. ``x_map`` shape ``(G,)``; ``eta_map`` scalar or
+        ``None``.
+    W, d : jnp.ndarray
+        Globals at which the determinant is evaluated. The gradient
+        of the returned scalar flows into both.
+    sigma_M : float
+        Capture-anchor prior scale. Ignored when ``eta_map is None``.
+
+    Returns
+    -------
+    jnp.ndarray, scalar.
+    """
+    log_rate = x_map - eta_map if eta_map is not None else x_map
+    factors = _woodbury_factors(W, d, log_rate, damping=0.0)
+    log_det_A = _log_det_A(factors)
+    if eta_map is None:
+        return log_det_A
+
+    rate = jnp.exp(jnp.clip(log_rate, _LOG_RATE_MIN, _LOG_RATE_MAX))
+    rate_inv_A = _solve_A(factors, rate)
+    # Schur scalar (no damping): s = sum(rate) + 1/σ_M² − rate^T A⁻¹ rate.
+    # Add a tiny floor so jnp.log doesn't see ``s ≤ 0`` when float32
+    # cancellation makes the Schur scalar barely-positive at very high
+    # rates. This floor is purely numerical; the true ``s`` is strictly
+    # positive whenever -H is SPD (proven in @sec-pln-laplace-density).
+    s = jnp.maximum(
+        jnp.sum(rate) + 1.0 / (sigma_M**2) - jnp.dot(rate, rate_inv_A),
+        1e-30,
+    )
+    return log_det_A + jnp.log(s)
+
+
+# Vmapped version: (B, G), (B,)|None, (G, k), (G,) → (B,)
+laplace_log_det_neg_H_batch = jax.vmap(
+    laplace_log_det_neg_H, in_axes=(0, 0, None, None, None)
+)
+laplace_log_det_neg_H_batch_x_only = jax.vmap(
+    laplace_log_det_neg_H, in_axes=(0, None, None, None, None)
+)
+
+
+# =====================================================================
+# Newton step (joint x, eta)
+# =====================================================================
+
+
+def newton_step_joint(
+    x: jnp.ndarray,
+    eta: jnp.ndarray,
+    u: jnp.ndarray,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    eta_anchor: jnp.ndarray,
+    sigma_M: float,
+    damping: float = 1e-4,
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """One joint Newton step on ``(x, η)``.
+
+    Solves ``-H δ = ∇f`` via block Schur complement, reusing one
+    Cholesky factorization of ``S = K - V' diag(m_inv) V`` for all
+    three internal solves.
+
+    Parameters
+    ----------
+    x : jnp.ndarray, shape (G,)
+        Current log-rate iterate.
+    eta : jnp.ndarray, scalar
+        Current capture offset iterate.
+    u : jnp.ndarray, shape (G,)
+        Observed counts for this cell.
+    mu : jnp.ndarray, shape (G,)
+        Decoder bias.
+    W : jnp.ndarray, shape (G, k)
+        Decoder loadings.
+    d : jnp.ndarray, shape (G,)
+        Diagonal residual variance.
+    eta_anchor : jnp.ndarray, scalar
+        Anchor value for ``η``: ``log M_0 - log L_c``.
+    sigma_M : float
+        Anchor scale (``> 0``).
+    damping : float, default 1e-4
+        Tikhonov damping on ``A`` and on the ``η``-block scalar.
+
+    Returns
+    -------
+    x_new : jnp.ndarray, shape (G,)
+    eta_new : jnp.ndarray, scalar
+    grad_inf_norm : jnp.ndarray, scalar
+        Pre-step ``L∞`` norm of the gradient ``(∇_x f, ∇_η f)``,
+        useful for convergence diagnostics.
+    """
+    # Centre once and exponentiate (with clamp) to get the Poisson rate.
+    log_rate = x - eta
+    rate = jnp.exp(jnp.clip(log_rate, _LOG_RATE_MIN, _LOG_RATE_MAX))
+
+    # Gradient.
+    factors = _woodbury_factors(W, d, log_rate, damping)
+    # Σ⁻¹ (x - μ) — use the inner Woodbury for Σ to keep cost low.
+    inv_d = 1.0 / d
+    diff = x - mu
+    sigma_inv_diff = inv_d * diff - inv_d * (
+        W
+        @ jax.scipy.linalg.cho_solve(
+            (factors["L_K"], True), W.T @ (inv_d * diff)
+        )
+    )
+    g_x = u - rate - sigma_inv_diff
+    g_eta = -jnp.sum(u) + jnp.sum(rate) - (eta - eta_anchor) / (sigma_M**2)
+
+    # Block Schur complement on -H. Solve  -H @ delta = grad f.
+    #
+    # In block form  -H = [[A, B], [B^T, C]] with
+    #   A = -H_xx          = diag(rate) + Σ⁻¹    (>0 definite)
+    #   B = -H_xη          = -rate                (NOTE the leading -)
+    #   C = -H_ηη          = sum(rate) + 1/σ_M²
+    #
+    # Schur back-substitution:
+    #   δ_η = (g_η - B^T A⁻¹ g_x) / (C - B^T A⁻¹ B)
+    #   δ_x = A⁻¹ (g_x - B δ_η)
+    #
+    # With B = -rate, the cross-term ``B^T A⁻¹ g_x`` becomes
+    # ``-rate^T A⁻¹ g_x`` and the back-substitution
+    # ``A⁻¹ (g_x - B δ_η)`` becomes ``A⁻¹ (g_x + rate δ_η)``.
+    # The Schur scalar  C - B^T A⁻¹ B = C - rate^T A⁻¹ rate  is
+    # symmetric in B so the leading sign drops out there.
+    A_inv_g_x = _solve_A(factors, g_x)
+    rate_inv_A = _solve_A(factors, rate)  # A⁻¹ rate
+    s = jnp.sum(rate) + 1.0 / (sigma_M**2) - jnp.dot(rate, rate_inv_A) + damping
+    # The sign convention here had a long-standing bug. Verified by
+    # constructing the dense (G+1)x(G+1) -H matrix and comparing the
+    # block solve to ``np.linalg.solve``; see
+    # ``tests/test_laplace_newton.py::test_single_step_matches_dense``.
+    delta_eta = (g_eta + jnp.dot(rate, A_inv_g_x)) / s
+    delta_x = A_inv_g_x + rate_inv_A * delta_eta
+
+    grad_inf_norm = jnp.maximum(jnp.max(jnp.abs(g_x)), jnp.abs(g_eta))
+    # Step-size cap: if the proposed step is huge in either block,
+    # scale the whole step down to ``MAX_STEP``. This prevents
+    # runaway iterates when the Schur complement on the η block is
+    # tiny (which can happen for cells where ``log_lib`` is far from
+    # ``log_M_0``). The MAP is still found in 5–10 iterations even
+    # with this safety net because subsequent iterations have well-
+    # conditioned Hessians once we are near the basin of attraction.
+    _MAX_STEP = 5.0
+    step_norm = jnp.maximum(jnp.max(jnp.abs(delta_x)), jnp.abs(delta_eta))
+    scale = jnp.minimum(1.0, _MAX_STEP / jnp.maximum(step_norm, 1e-12))
+    delta_x = delta_x * scale
+    delta_eta = delta_eta * scale
+    eta_new = eta + delta_eta
+    # Enforce the TruncatedNormal(low=0) constraint on the capture
+    # offset. Newton uses the unconstrained gradient, but the actual
+    # prior assigns -inf log-prob at η < 0 (corresponds to
+    # ``p_capture > 1``, physically impossible). Project back to the
+    # feasible region. A small floor (1e-3) prevents the next-
+    # iteration's exp() from overflowing for cells whose MAP is
+    # genuinely close to η=0.
+    eta_new = jnp.maximum(eta_new, 1e-3)
+    return x + delta_x, eta_new, grad_inf_norm
+
+
+def laplace_newton_loop(
+    x_init: jnp.ndarray,
+    eta_init: jnp.ndarray,
+    u: jnp.ndarray,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    eta_anchor: jnp.ndarray,
+    sigma_M: float,
+    n_iters: int,
+    damping: float = 1e-4,
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Run ``n_iters`` Newton steps on ``(x, η)`` for one cell.
+
+    Uses :func:`jax.lax.scan` so the iteration count is a static
+    integer (compatible with ``vmap`` over cells). Convergence is
+    surfaced via the final gradient norm rather than early exit; the
+    caller is expected to set ``n_iters`` large enough that
+    quadratic convergence has plateau'd (5–10 iterations from a warm
+    start is typically more than enough for a log-concave posterior).
+
+    Parameters
+    ----------
+    x_init, eta_init : jnp.ndarray
+        Newton starting point. Shape ``(G,)`` and scalar.
+    u, mu, W, d, eta_anchor, sigma_M : see :func:`newton_step_joint`.
+    n_iters : int
+        Number of Newton iterations to run. Static (Python int).
+    damping : float
+
+    Returns
+    -------
+    x_map : jnp.ndarray, shape (G,)
+    eta_map : jnp.ndarray, scalar
+    final_grad_norm : jnp.ndarray, scalar
+    log_det_neg_H : jnp.ndarray, scalar
+        ``log det(-H)`` evaluated at the MAP. The Schur-complement
+        decomposition gives ``log det(-H) = log det(A) + log s`` where
+        ``s = -H_ηη - H_xη' A⁻¹ H_xη``. Required by the Laplace
+        correction term in the outer ELBO.
+    """
+
+    def step(carry, _):
+        x_, eta_, _grad = carry
+        x_new, eta_new, grad_norm = newton_step_joint(
+            x_, eta_, u, mu, W, d, eta_anchor, sigma_M, damping
+        )
+        return (x_new, eta_new, grad_norm), None
+
+    init = (x_init, eta_init, jnp.asarray(jnp.inf, dtype=x_init.dtype))
+    (x_final, eta_final, final_grad), _ = jax.lax.scan(
+        step, init, None, length=n_iters
+    )
+
+    # log det(-H) at the MAP. Recompute the Woodbury factors at the
+    # final iterate; this is one extra factorization per cell but the
+    # caller needs the determinant for the Laplace ELBO, so we cannot
+    # skip it.
+    final_log_rate = x_final - eta_final
+    final_rate = jnp.exp(jnp.clip(final_log_rate, _LOG_RATE_MIN, _LOG_RATE_MAX))
+    factors = _woodbury_factors(W, d, final_log_rate, damping)
+    log_det_A = _log_det_A(factors)
+    A_inv_rate = _solve_A(factors, final_rate)
+    s = (
+        jnp.sum(final_rate)
+        + 1.0 / (sigma_M**2)
+        - jnp.dot(final_rate, A_inv_rate)
+        + damping
+    )
+    log_det_neg_H = log_det_A + jnp.log(s)
+
+    return x_final, eta_final, final_grad, log_det_neg_H
+
+
+# Vectorise over cells: each per-cell input has a leading batch axis,
+# global parameters (mu, W, d, sigma_M, damping) are shared.
+laplace_newton_batch = jax.vmap(
+    laplace_newton_loop,
+    in_axes=(0, 0, 0, None, None, None, 0, None, None, None),
+)
+
+
+# =====================================================================
+# x-only variant (no capture anchor)
+# =====================================================================
+
+
+def newton_step_x_only(
+    x: jnp.ndarray,
+    u: jnp.ndarray,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    damping: float = 1e-4,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Single Newton step on ``x`` only (no capture anchor).
+
+    The η block of the joint Hessian disappears entirely, so this is
+    the standard PLN MAP inference (Chiquet et al. 2018). Newton step
+    is just ``δ = A⁻¹ g`` where ``A = diag(exp(x) + 1/d) - V K⁻¹ V'``.
+    """
+    rate = jnp.exp(jnp.clip(x, _LOG_RATE_MIN, _LOG_RATE_MAX))
+    factors = _woodbury_factors(W, d, x, damping)
+
+    inv_d = 1.0 / d
+    diff = x - mu
+    sigma_inv_diff = inv_d * diff - inv_d * (
+        W
+        @ jax.scipy.linalg.cho_solve(
+            (factors["L_K"], True), W.T @ (inv_d * diff)
+        )
+    )
+    g_x = u - rate - sigma_inv_diff
+
+    delta_x = _solve_A(factors, g_x)
+    grad_inf_norm = jnp.max(jnp.abs(g_x))
+    # Step-size cap (same rationale as the joint case).
+    _MAX_STEP = 5.0
+    step_norm = jnp.max(jnp.abs(delta_x))
+    scale = jnp.minimum(1.0, _MAX_STEP / jnp.maximum(step_norm, 1e-12))
+    return x + delta_x * scale, grad_inf_norm
+
+
+def laplace_newton_loop_x_only(
+    x_init: jnp.ndarray,
+    u: jnp.ndarray,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    n_iters: int,
+    damping: float = 1e-4,
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Run ``n_iters`` Newton steps on ``x`` for one cell (no capture)."""
+
+    def step(carry, _):
+        x_, _grad = carry
+        x_new, grad_norm = newton_step_x_only(x_, u, mu, W, d, damping)
+        return (x_new, grad_norm), None
+
+    init = (x_init, jnp.asarray(jnp.inf, dtype=x_init.dtype))
+    (x_final, final_grad), _ = jax.lax.scan(step, init, None, length=n_iters)
+
+    factors = _woodbury_factors(W, d, x_final, damping)
+    log_det_neg_H = _log_det_A(factors)
+    return x_final, final_grad, log_det_neg_H
+
+
+laplace_newton_batch_x_only = jax.vmap(
+    laplace_newton_loop_x_only,
+    in_axes=(0, 0, None, None, None, None, None),
+)
+
+
+# =====================================================================
+# Per-block gradient-norm split for diagnostics
+# =====================================================================
+#
+# The Newton kernels above return a single ``L∞`` over both blocks
+# (``max(|g_x|_inf, |g_eta|)``) for legacy reasons. The engine's
+# progress display wants a per-block split — separate ``x`` and
+# ``η`` infinity-norms — so users can see at a glance which block
+# is driving the worst-case convergence diagnostic. Computing the
+# per-block grads requires evaluating ``∇f`` once at the MAP, so
+# we expose a small helper that does exactly that without
+# perturbing the kernel's main return signature.
+
+
+def pln_grad_split(
+    x_map: jnp.ndarray,
+    eta_map: jnp.ndarray,
+    u: jnp.ndarray,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    eta_anchor: jnp.ndarray,
+    sigma_M: float,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Per-block ``L∞`` gradient norms at the joint Newton MAP.
+
+    Returns ``(grad_inf_norm_x, grad_inf_norm_eta)`` — both scalars
+    — for the per-cell joint log-density evaluated at
+    ``(x_map, eta_map)``. Used by the engine to display a per-
+    block convergence diagnostic in the progress bar:
+
+        grad max/p99/med x: …, η: …
+
+    Implementation notes:
+
+    * Uses the same gradient formulae as :func:`newton_step_joint`,
+      but does not run the Newton step — just evaluates ``∇f``
+      once at the MAP. Cost ``O(G·k + k³)`` per cell (Woodbury
+      solve for ``Σ⁻¹(x - μ)``), same as one Newton iteration.
+    * Computes ``Σ⁻¹(x - μ)`` via the inner Woodbury (``K``-block
+      only, no ``A``-block needed since we don't need the Hessian
+      structure for a pure gradient evaluation).
+    """
+    log_rate = x_map - eta_map
+    rate = jnp.exp(jnp.clip(log_rate, _LOG_RATE_MIN, _LOG_RATE_MAX))
+
+    # Σ⁻¹ (x - μ) via inner Woodbury (no damping, no diag-A).
+    inv_d = 1.0 / d
+    diff = x_map - mu
+    K = jnp.eye(W.shape[1], dtype=W.dtype) + W.T @ (inv_d[:, None] * W)
+    L_K = jnp.linalg.cholesky(K)
+    sigma_inv_diff = inv_d * diff - inv_d * (
+        W @ jax.scipy.linalg.cho_solve((L_K, True), W.T @ (inv_d * diff))
+    )
+
+    g_x = u - rate - sigma_inv_diff
+    g_eta = -jnp.sum(u) + jnp.sum(rate) - (eta_map - eta_anchor) / (sigma_M**2)
+
+    return jnp.max(jnp.abs(g_x)), jnp.abs(g_eta)
+
+
+# Vmapped version: same in_axes pattern as ``laplace_log_det_neg_H_batch``
+# (the per-cell args are axis 0; globals broadcast).
+pln_grad_split_batch = jax.vmap(
+    pln_grad_split, in_axes=(0, 0, 0, None, None, None, 0, None)
+)
+
+
+def pln_grad_x_only_norm(
+    x_map: jnp.ndarray,
+    u: jnp.ndarray,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+) -> jnp.ndarray:
+    """``L∞`` of ``∇_x f`` at the x-only Newton MAP (no capture anchor).
+
+    Used for symmetric reporting on PLN runs without capture
+    (``capture_anchor=None``); the engine still wants a max/p99/
+    median triplet over cells but there's no η-block to split out.
+    """
+    rate = jnp.exp(jnp.clip(x_map, _LOG_RATE_MIN, _LOG_RATE_MAX))
+    inv_d = 1.0 / d
+    diff = x_map - mu
+    K = jnp.eye(W.shape[1], dtype=W.dtype) + W.T @ (inv_d[:, None] * W)
+    L_K = jnp.linalg.cholesky(K)
+    sigma_inv_diff = inv_d * diff - inv_d * (
+        W @ jax.scipy.linalg.cho_solve((L_K, True), W.T @ (inv_d * diff))
+    )
+    g_x = u - rate - sigma_inv_diff
+    return jnp.max(jnp.abs(g_x))
+
+
+pln_grad_x_only_norm_batch = jax.vmap(
+    pln_grad_x_only_norm, in_axes=(0, 0, None, None, None)
+)
+
+
+def sample_x_posterior(
+    rng_key: jax.Array,
+    x_map: jnp.ndarray,
+    eta_map: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    n_samples: int,
+    damping: float = 0.0,
+) -> jnp.ndarray:
+    """Sample from the per-cell Laplace posterior on ``x``.
+
+    Under the Laplace approximation, the per-cell posterior on
+    ``x`` (with ``eta`` held at its MAP) is
+
+    q(x_c | u_c, η_c) ≈ 𝓝( x̂_c, (−H_xx,c)⁻¹ )
+
+    where −H_xx = diag(λ) + Σ⁻¹ admits the Woodbury form
+    M̃ − V K⁻¹ Vᵀ with diagonal M̃ = diag(λ + 1/d + damping),
+    V = diag(1/d) W, and K = Iₖ + Wᵀ diag(1/d) W. The
+    posterior covariance follows by another Woodbury application:
+
+    (−H_xx)⁻¹ = M̃⁻¹ + M̃⁻¹ V S⁻¹ Vᵀ M̃⁻¹,
+        S = K − Vᵀ M̃⁻¹ V.
+
+    A square-root factor of this covariance is
+
+    Σ¹ᐟ² ε = M̃⁻¹ᐟ² ε₁ + M̃⁻¹ V L_S⁻ᵀ ε₂,
+
+    with ε₁ ∼ 𝓝(0, I_G), ε₂ ∼ 𝓝(0, Iₖ), and L_S the
+    lower-triangular Cholesky factor of S. Direct verification:
+
+    Var[Σ¹ᐟ² ε] = M̃⁻¹ + M̃⁻¹ V (L_S L_Sᵀ)⁻¹ Vᵀ M̃⁻¹
+                = (−H_xx)⁻¹.
+
+
+    Cost is ``O(G·k + k^3)`` per sample — the same scaling as one
+    Newton step, dominated by the ``k × k`` triangular solve and a
+    pair of low-rank multiplies. No ``G × G`` factor is ever
+    materialized.
+
+    Parameters
+    ----------
+    rng_key : jax.Array
+        PRNG key.
+    x_map : jnp.ndarray, shape ``(G,)``
+        Converged per-cell MAP for ``x_c``.
+    eta_map : jnp.ndarray, scalar
+        Converged MAP for ``η_c``. Sets ``λ = exp(x_map - eta_map)``.
+    W : jnp.ndarray, shape ``(G, k)``
+        Decoder loadings.
+    d : jnp.ndarray, shape ``(G,)``
+        Diagonal residual variance.
+    n_samples : int
+        Number of posterior samples to draw.
+    damping : float, default 0.0
+        Tikhonov damping carried over from the Newton solve so the
+        sampled covariance matches the matrix the optimiser actually
+        inverted. Set to 0 for the un-damped Laplace posterior.
+
+    Returns
+    -------
+    jnp.ndarray, shape ``(n_samples, G)``
+        Samples from ``N(x_map, (-H_xx)^{-1})``.
+    """
+    log_rate = x_map - eta_map
+    factors = _woodbury_factors(W, d, log_rate, damping)
+    m_inv = factors["m_inv"]  # (G,)
+    V = factors["V"]  # (G, k)
+    L_S = factors["L_S"]  # (k, k)
+
+    G = m_inv.shape[0]
+    k = V.shape[1]
+
+    k1, k2 = jax.random.split(rng_key)
+    eps1 = jax.random.normal(k1, (n_samples, G), dtype=x_map.dtype)
+    eps2 = jax.random.normal(k2, (n_samples, k), dtype=x_map.dtype)
+
+    # Term 1: diag(sqrt(m_inv)) ε₁ — the "diagonal" contribution.
+    sqrt_m_inv = jnp.sqrt(m_inv)
+    term1 = sqrt_m_inv[None, :] * eps1  # (S, G)
+
+    # Term 2: M̃⁻¹ V L_S⁻ᵀ ε₂ — the low-rank correction.
+    # solve(L_S^T, ε₂) returns L_S⁻ᵀ ε₂. We work on (k, S) and
+    # transpose back to (S, k) afterwards.
+    y_T = jax.scipy.linalg.solve_triangular(
+        L_S.T, eps2.T, lower=False
+    )  # (k, S)
+    Vy = (y_T.T) @ V.T  # (S, G)
+    term2 = m_inv[None, :] * Vy  # (S, G)
+
+    return x_map[None, :] + term1 + term2
+
+
+sample_x_posterior_batch = jax.vmap(
+    sample_x_posterior,
+    in_axes=(0, 0, 0, None, None, None, None),
+)
+
+
+__all__ = [
+    "newton_step_joint",
+    "newton_step_x_only",
+    "laplace_newton_loop",
+    "laplace_newton_loop_x_only",
+    "laplace_newton_batch",
+    "laplace_newton_batch_x_only",
+    # Per-block diagnostic helpers (used by the engine's progress
+    # display; not part of the math, just for surfacing per-cell
+    # convergence info).
+    "pln_grad_split",
+    "pln_grad_split_batch",
+    "pln_grad_x_only_norm",
+    "pln_grad_x_only_norm_batch",
+    # Laplace-posterior samplers (used by the per-cell PPC path).
+    "sample_x_posterior",
+    "sample_x_posterior_batch",
+]

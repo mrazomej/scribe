@@ -22,7 +22,7 @@ valid, immutable, and explicit. The groups here are the foundational building
 blocks used to create full model configurations in SCRIBE.
 """
 
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any, Union, Literal
 from pydantic import (
     BaseModel,
     Field,
@@ -93,7 +93,8 @@ class GuideFamilyConfig(BaseModel):
     Parameters
     ----------
     p : GuideFamily, optional
-        Guide family for the success probability parameter.
+        Guide family for the success probability parameter (canonical, linked,
+        mean_prob) or LNM total-count NB probability (logistic_normal).
     r : GuideFamily, optional
         Guide family for the dispersion parameter.
     mu : GuideFamily, optional
@@ -135,7 +136,11 @@ class GuideFamilyConfig(BaseModel):
 
     # All possible parameters - None means use default MeanFieldGuide
     p: Optional[GuideFamily] = Field(
-        None, description="Guide family for success probability"
+        None,
+        description=(
+            "Guide family for success probability (canonical / linked / "
+            "mean_prob) or LNM total-count NB probability (logistic_normal)"
+        ),
     )
     r: Optional[GuideFamily] = Field(
         None, description="Guide family for dispersion"
@@ -157,6 +162,23 @@ class GuideFamilyConfig(BaseModel):
     )
     mixing: Optional[GuideFamily] = Field(
         None, description="Guide family for mixture weights"
+    )
+    r_T: Optional[GuideFamily] = Field(
+        None,
+        description="Guide family for LNM total-count NB dispersion r_T",
+    )
+    y_alr: Optional[GuideFamily] = Field(
+        None,
+        description=(
+            "Guide family for ALR compositional coordinates "
+            "(LNM gene-level parameter, typically low-rank or joint)"
+        ),
+    )
+    d_lnm: Optional[GuideFamily] = Field(
+        None,
+        description=(
+            "Guide family for LNM learned diagonal ALR scales (d_mode=learned)"
+        ),
     )
 
     # --------------------------------------------------------------------------
@@ -236,7 +258,8 @@ class AmortizationConfig(BaseModel):
         "silu", "tanh", "sigmoid", etc.
     input_transformation : str, default="log1p"
         Transformation applied to input data before computing sufficient
-        statistic. Options: "log1p", "log", "sqrt", "identity".
+        statistic. Options: "log1p", "log", "sqrt", "identity",
+        "log1p_prop", "clr", and "log1p_norm".
 
     Examples
     --------
@@ -270,7 +293,10 @@ class AmortizationConfig(BaseModel):
     )
     input_transformation: str = Field(
         "log1p",
-        description="Transformation for input data (log1p, log, sqrt, identity)",
+        description=(
+            "Transformation for input data (log1p, log, sqrt, identity, "
+            "log1p_prop, clr, log1p_norm)"
+        ),
     )
     output_transform: str = Field(
         "softplus",
@@ -344,7 +370,15 @@ class AmortizationConfig(BaseModel):
     @classmethod
     def validate_input_transformation(cls, v: str) -> str:
         """Validate input transformation is supported."""
-        valid_transforms = {"log1p", "log", "sqrt", "identity"}
+        valid_transforms = {
+            "log1p",
+            "log",
+            "sqrt",
+            "identity",
+            "log1p_prop",
+            "clr",
+            "log1p_norm",
+        }
         if v.lower() not in valid_transforms:
             raise ValueError(
                 f"Unknown transformation '{v}'. "
@@ -430,10 +464,82 @@ class VAEConfig(BaseModel):
     activation: str = Field("relu", description="Activation function")
     input_transform: str = Field(
         "log1p",
-        description="Input transformation before encoder (log1p, log, sqrt, identity)",
+        description=(
+            "Input transformation before encoder "
+            "(log1p, log, sqrt, identity, log1p_prop, clr, log1p_norm)"
+        ),
     )
     standardize: bool = Field(
         False, description="Whether to standardize input data"
+    )
+
+    # --------------------------------------------------------------------------
+    # LNM-specific data-derived fields
+    # --------------------------------------------------------------------------
+    # The three optional fields below carry data-derived constants that
+    # the Logistic-Normal Multinomial (LNM) factory consumes to anchor
+    # encoder / decoder initialization to the dataset. They are filled
+    # by the public API (``scribe.api.fit``) for ``model in {"lnm",
+    # "lnmvcp"}`` and remain ``None`` for every other model, so the
+    # default behavior of standard NBDM/ZINB pipelines is unchanged.
+    #
+    # Each field is typed as ``Optional[Any]`` because Pydantic does not
+    # natively understand ``jnp.ndarray``; runtime enforcement of the
+    # array shape is handled by the consuming factory code, which is
+    # the source of truth for the contract anyway.
+
+    empirical_alr_bias_init: Optional[Any] = Field(
+        None,
+        description=(
+            "Optional ALR bias used to initialize the LNM linear-decoder "
+            "``y_alr`` head. Shape ``(n_genes - 1,)``. When set, the "
+            "decoder bias is anchored to the empirical ALR mean of the "
+            "training counts so the very first forward pass already "
+            "reproduces the dataset's marginal composition. None for "
+            "non-LNM models."
+        ),
+    )
+    standardize_mean: Optional[Any] = Field(
+        None,
+        description=(
+            "Per-feature mean to subtract from the (transformed) "
+            "encoder input when ``standardize=True``. Shape "
+            "``(n_genes,)``. Computed in the same input-transform space "
+            "the encoder uses (e.g. ``log1p_prop`` for LNM). None for "
+            "models that do not request input standardization or for "
+            "which standardization stats are not pre-computed."
+        ),
+    )
+    standardize_std: Optional[Any] = Field(
+        None,
+        description=(
+            "Per-feature standard deviation paired with "
+            "``standardize_mean``. Shape ``(n_genes,)``. Floored to a "
+            "small epsilon at consumption time to avoid division by "
+            "zero on constant features."
+        ),
+    )
+
+    # PLN-specific data-derived initialization fields.
+    empirical_log_mean_bias_init: Optional[Any] = Field(
+        None,
+        description=(
+            "Optional per-gene log-mean bias for PLN decoder "
+            "initialization. Shape ``(n_genes,)``. When set, the "
+            "decoder bias is anchored to ``log(mean(u_g) + c)`` so "
+            "that the initial Poisson rates are at the right order of "
+            "magnitude. None for non-PLN models."
+        ),
+    )
+    pca_loadings_init: Optional[Any] = Field(
+        None,
+        description=(
+            "Optional PCA-based initialization for the PLN decoder "
+            "weight matrix W. Shape ``(n_genes, latent_dim)``. "
+            "Derived from truncated SVD of the centered log-count "
+            "matrix. None for non-PLN models or when PCA init is "
+            "disabled."
+        ),
     )
 
     # Decoder output transforms (optional per-param overrides)
@@ -489,7 +595,15 @@ class VAEConfig(BaseModel):
     @field_validator("input_transform")
     @classmethod
     def validate_input_transform(cls, v):
-        valid = {"log1p", "log", "sqrt", "identity"}
+        valid = {
+            "log1p",
+            "log",
+            "sqrt",
+            "identity",
+            "log1p_prop",
+            "clr",
+            "log1p_norm",
+        }
         if v.lower() not in valid:
             raise ValueError(
                 f"Invalid input_transform: {v}. Must be one of {valid}"
@@ -725,6 +839,154 @@ class EarlyStoppingConfig(BaseModel):
 
 
 # ==============================================================================
+# KL Annealing Configuration Group
+# ==============================================================================
+
+
+class KLAnnealingConfig(BaseModel):
+    """Schedule for the KL term in the ELBO during VAE-mode SVI training.
+
+    KL annealing introduces a step-dependent weight ``beta(step)`` on the
+    KL component of the ELBO so the encoder can fit the data
+    reconstruction half before the prior pressure is fully applied. This
+    suppresses two well-known failure modes for linear-decoder VAEs with
+    high-dimensional latents:
+
+    1. **Posterior collapse** (``q(z|u) -> N(0, I)`` regardless of input)
+       — caused by full-strength KL pressure dominating gradient flow
+       early in training.
+    2. **Aggregate-posterior drift** (``mean_c q(z|u_c) != N(0, I)``)
+       — the converse: the encoder fits per-cell reconstruction well
+       but the aggregate posterior wanders far from the prior, and any
+       convex decoder path (``exp(W·z)`` in PLN) amplifies the drift
+       into prediction bias.
+
+    The standard linear schedule ramps ``beta`` from ``beta_min`` (at
+    ``step=0``) to ``beta_max`` (at ``step=warmup``) and clamps at
+    ``beta_max`` for ``step > warmup``. ``beta_max=1.0`` recovers the
+    standard ELBO; setting ``beta_max < 1.0`` implements a permanent
+    β-VAE-style down-weighting.
+
+    Annealing only affects training. Post-fit metrics (PPC, MAP,
+    importance-sampled marginal log-likelihood) all use the full
+    ``beta=1`` ELBO regardless of the schedule used during training.
+
+    Parameters
+    ----------
+    enabled : bool, default=True
+        Whether to apply KL annealing. When ``False`` the schedule is
+        ignored and the standard ELBO is used (``beta=1`` always).
+        The :class:`SVIConfig.kl_annealing` field can also be left
+        ``None`` to disable annealing entirely without instantiating a
+        config object.
+    schedule : {"linear"}, default="linear"
+        Shape of the annealing schedule. Only ``"linear"`` is
+        implemented in v1; the field is a literal type so future
+        schedules (``"cosine"``, ``"cyclic"``, ...) can be added without
+        breaking existing configs.
+    warmup : int, default=2_000
+        Number of SVI steps over which to ramp ``beta`` linearly from
+        ``beta_min`` to ``beta_max``. ``warmup=0`` is equivalent to
+        ``enabled=False`` (returns ``beta_max`` immediately).
+    beta_min : float, default=0.0
+        Starting weight on the KL term (inclusive). ``0.0`` means the
+        first step is pure reconstruction. Larger values
+        (e.g. ``0.1``) keep a faint KL signal alive throughout warmup,
+        which can prevent the encoder from drifting too far before the
+        KL term comes online.
+    beta_max : float, default=1.0
+        Final weight on the KL term (post-warmup). ``1.0`` recovers the
+        standard ELBO. ``< 1.0`` permanently down-weights KL
+        (β-VAE-style) at the cost of looser aggregate-posterior
+        regularisation.
+
+    Examples
+    --------
+    >>> # Default linear ramp from 0 to 1 over 2000 steps.
+    >>> KLAnnealingConfig()
+
+    >>> # Faster warmup with a permanent β-VAE-style down-weight.
+    >>> KLAnnealingConfig(warmup=500, beta_max=0.5)
+
+    >>> # Disabled (equivalent to setting svi.kl_annealing=None)
+    >>> KLAnnealingConfig(enabled=False)
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = Field(
+        True,
+        description=(
+            "Whether to apply KL annealing. When False the schedule is "
+            "ignored and beta=1 is used throughout training."
+        ),
+    )
+    schedule: Literal["linear"] = Field(
+        "linear",
+        description=(
+            "Shape of the annealing schedule. Only 'linear' is "
+            "supported in v1."
+        ),
+    )
+    warmup: int = Field(
+        2_000,
+        ge=0,
+        description=(
+            "Number of SVI steps from beta_min to beta_max. 0 disables "
+            "annealing (returns beta_max immediately)."
+        ),
+    )
+    beta_min: float = Field(
+        0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Starting weight on the KL term (inclusive). 0.0 = pure "
+            "reconstruction at step 0."
+        ),
+    )
+    beta_max: float = Field(
+        1.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Final weight on the KL term (post-warmup). 1.0 recovers "
+            "the standard ELBO."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _check_min_le_max(self) -> "KLAnnealingConfig":
+        """Validate ``beta_min <= beta_max`` (a strictly increasing ramp)."""
+        if self.beta_min > self.beta_max:
+            raise ValueError(
+                f"KLAnnealingConfig: beta_min ({self.beta_min}) must be "
+                f"<= beta_max ({self.beta_max}). The schedule is a "
+                "monotone ramp from beta_min to beta_max."
+            )
+        return self
+
+    # --------------------------------------------------------------------------
+
+    def to_yaml(self) -> str:
+        """Serialize config to YAML string."""
+        import yaml
+
+        data = self.model_dump(mode="json")
+        return yaml.dump(data, default_flow_style=False, sort_keys=False)
+
+    # --------------------------------------------------------------------------
+
+    @classmethod
+    def from_yaml(cls, yaml_str: str) -> "KLAnnealingConfig":
+        """Deserialize config from YAML string."""
+        import yaml
+
+        data = yaml.safe_load(yaml_str)
+        return cls(**data)
+
+
+# ==============================================================================
 # SVI Configuration Group
 # ==============================================================================
 
@@ -938,6 +1200,19 @@ class SVIConfig(BaseModel):
             "best-state tracking."
         ),
     )
+    kl_annealing: Optional[KLAnnealingConfig] = Field(
+        None,
+        description=(
+            "KL annealing schedule for the ELBO during training. "
+            "Defaults are auto-resolved in the public ``scribe.fit`` "
+            "API: ON for any VAE-mode fit (warmup=2000), OFF for plain "
+            "SVI/MCMC, and force-OFF for Laplace mode. Pass an "
+            "explicit ``KLAnnealingConfig(enabled=False)`` to disable, "
+            "or a custom config to override the defaults. When None, "
+            "the standard ``TraceMeanField_ELBO`` is used and the "
+            "training loop is byte-identical to the pre-annealing path."
+        ),
+    )
 
     # --------------------------------------------------------------------------
 
@@ -989,6 +1264,220 @@ class MCMCConfig(BaseModel):
 
     @classmethod
     def from_yaml(cls, yaml_str: str) -> "MCMCConfig":
+        """Deserialize config from YAML string."""
+        import yaml
+
+        data = yaml.safe_load(yaml_str)
+        return cls(**data)
+
+
+# ==============================================================================
+# Laplace Configuration Group
+# ==============================================================================
+
+
+class LaplaceConfig(BaseModel):
+    """Configuration for Laplace-approximation inference (PLN-only).
+
+    The Laplace inference path replaces the encoder with a per-cell
+    Newton-iterated MAP on the latent log-rate ``x_c`` (and joint
+    ``eta_c`` when the biology-informed capture anchor is active).
+    The outer SVI loop updates global parameters (``mu``, ``W``,
+    ``d``, capture-prior hyperparameters) via a Laplace-approximated
+    ELBO that includes the ``-½ log det(-H_c)`` correction term.
+
+    Mathematically equivalent to the variational-EM scheme used by
+    ``PLNmodels`` in R: outer Adam on globals, inner Newton on
+    per-cell latents. PLN is globally log-concave so Newton converges
+    in 5-10 iterations from a warm start. Using Woodbury on
+    ``Σ = W W' + diag(d)`` keeps each step ``O(G·k + k³)`` per cell.
+
+    Structurally eliminates aggregate-posterior drift (no encoder, no
+    parametric ``q(z|u)`` family to drift). The trade-off is that
+    inference at new cells requires re-running Newton on demand
+    rather than a single forward pass through an encoder. For
+    research-scale analysis on the training cells this is fine;
+    serving pipelines that need to score new cells at high throughput
+    would need the encoder VAE path instead.
+
+    Parameters
+    ----------
+    n_steps : int, default=50_000
+        Number of outer SVI steps over the global parameters. Lower
+        than the VAE path's typical 250k because the inner Newton
+        gives the global gradient a clean signal at every step (no
+        encoder-decoder warm-up).
+    n_newton_steps : int, default=5
+        Number of inner Newton iterations per outer SVI step. With
+        warm-started latents, 5 is more than enough for convergence
+        (quadratic in a log-concave problem). Higher values are
+        wasteful but safe.
+    newton_tolerance : float, default=1e-4
+        Surfaced as part of ``ScribeLaplaceResults``: the engine
+        warns if any cell's final L∞-gradient norm exceeds this
+        threshold. Not used to early-stop Newton (we use a fixed
+        iteration count for ``vmap`` compatibility).
+    damping : float, default=1e-4
+        Tikhonov damping added to the diagonal of ``-H_xx`` and to
+        the η-block scalar to stabilise Newton when the Hessian is
+        ill-conditioned (near-zero ``d``, sparse cells). The default
+        is small enough not to bias the MAP for well-conditioned
+        problems and large enough to avoid Cholesky failures.
+    optimizer_config : SVIConfig.OptimizerConfig, optional
+        Outer-loop optimizer specification (Adam by default, lr=1e-3).
+    optimizer : Any, optional
+        Pre-built NumPyro optimizer; takes precedence over
+        ``optimizer_config``.
+    batch_size : int, optional
+        Mini-batch size for the outer SVI loop. ``None`` = full batch.
+    early_stopping : EarlyStoppingConfig, optional
+        Early stopping configuration for the outer loop. Same
+        semantics as for SVI.
+    restore_best : bool, default=False
+        Track and restore the best-loss outer-loop parameters.
+    convergence_action : {"warn", "raise", "ignore"}, default="warn"
+        Action when any cell's final ``‖∇f‖_∞`` exceeds
+        ``newton_tolerance``:
+
+        - ``"warn"``: emit a warning at the end of training listing
+          the offending cell indices.
+        - ``"raise"``: raise ``RuntimeError`` after training.
+        - ``"ignore"``: silent.
+    fallback_to_encoder : bool, default=False
+        Reserved for future work. Implementing this would require
+        keeping an encoder around alongside Laplace, which contradicts
+        the "no encoder in Laplace mode" design. Documented here for
+        forward compatibility only.
+
+    Examples
+    --------
+    >>> # Default Laplace config: 50k outer steps, 5 inner Newton steps.
+    >>> LaplaceConfig()
+
+    >>> # Tighter inner Newton + slower outer for hard problems:
+    >>> LaplaceConfig(n_newton_steps=10, n_steps=100_000, damping=1e-3)
+
+    See Also
+    --------
+    SVIConfig : Configuration for the standard SVI / VAE path.
+    """
+
+    model_config = ConfigDict(
+        frozen=True, arbitrary_types_allowed=True, extra="forbid"
+    )
+
+    n_steps: int = Field(
+        50_000,
+        gt=0,
+        description="Number of outer SVI steps over global parameters.",
+    )
+    n_newton_steps: int = Field(
+        5,
+        ge=1,
+        le=200,
+        description=(
+            "Number of inner Newton iterations per outer SVI step. "
+            "Quadratic convergence on log-concave PLN means 5 is "
+            "usually plenty from a warm start."
+        ),
+    )
+    newton_tolerance: float = Field(
+        1e-4,
+        gt=0,
+        description=(
+            "L∞ gradient-norm tolerance used for convergence "
+            "diagnostics (not for early-stopping Newton)."
+        ),
+    )
+    damping: float = Field(
+        1e-2,
+        ge=0,
+        description=(
+            "Tikhonov damping added to the diagonal of -H during the "
+            "Newton step to stabilise ill-conditioned cells. Default "
+            "1e-2 is conservative — the kernel itself converges with "
+            "damping=0 in well-conditioned cases, but joint (x, η) "
+            "Newton on real data can produce explosive first steps "
+            "when the Schur complement on the η block is small. "
+            "Power users can drop this below 1e-4 if they observe "
+            "the MAP being biased away from the data. NOTE: this "
+            "damping only affects the *Newton solver*. The Laplace "
+            "correction ``-½ log det(-H)`` in the outer ELBO is "
+            "computed at damping=0 against the true posterior "
+            "Hessian (see ``laplace_log_det_neg_H`` in "
+            "``scribe.laplace._newton_pln``) — so increasing this "
+            "knob trades Newton-step stability for solve quality "
+            "without biasing the reported ELBO."
+        ),
+    )
+    optimizer: Optional[Any] = Field(
+        None,
+        description="Pre-built NumPyro optimizer for outer-loop SGD.",
+    )
+    optimizer_config: Optional["SVIConfig.OptimizerConfig"] = Field(
+        None,
+        description=(
+            "Serializable optimizer specification. Built into a "
+            "NumPyro optimizer at runtime when ``optimizer`` is not "
+            "explicitly set."
+        ),
+    )
+    batch_size: Optional[int] = Field(
+        None,
+        gt=0,
+        description=(
+            "Mini-batch size for the outer SVI loop. None uses the "
+            "full dataset (batch gradient descent)."
+        ),
+    )
+    early_stopping: Optional[EarlyStoppingConfig] = Field(
+        None,
+        description="Early stopping configuration for the outer loop.",
+    )
+    restore_best: bool = Field(
+        False,
+        description=(
+            "Track and restore the best-loss outer-loop parameters."
+        ),
+    )
+    convergence_action: Literal["warn", "raise", "ignore"] = Field(
+        "warn",
+        description=(
+            "Action when Newton fails to converge on some cells: "
+            "emit a warning, raise RuntimeError, or stay silent."
+        ),
+    )
+    fallback_to_encoder: bool = Field(
+        False,
+        description=(
+            "Reserved for future work; implementing this requires an "
+            "encoder alongside Laplace, which contradicts the no-"
+            "encoder design. Currently has no effect."
+        ),
+    )
+    log_progress_lines: bool = Field(
+        False,
+        description=(
+            "When True, the engine prints a plain-text progress line "
+            "in addition to the interactive rich/tqdm progress bar at "
+            "each periodic update. Useful for non-interactive runs "
+            "captured to log files. Mirrors ``SVIConfig.log_progress_lines``."
+        ),
+    )
+
+    # --------------------------------------------------------------------------
+
+    def to_yaml(self) -> str:
+        """Serialize config to YAML string."""
+        import yaml
+
+        data = self.model_dump(mode="json")
+        return yaml.dump(data, default_flow_style=False, sort_keys=False)
+
+    # --------------------------------------------------------------------------
+
+    @classmethod
+    def from_yaml(cls, yaml_str: str) -> "LaplaceConfig":
         """Deserialize config from YAML string."""
         import yaml
 
@@ -1086,6 +1575,13 @@ class InferenceConfig(BaseModel):
     mcmc: Optional[MCMCConfig] = Field(
         None, description="MCMC configuration (required for MCMC method)"
     )
+    laplace: Optional[LaplaceConfig] = Field(
+        None,
+        description=(
+            "Laplace configuration (required for LAPLACE method, "
+            "currently PLN-only)."
+        ),
+    )
 
     # --------------------------------------------------------------------------
     # Factory Methods
@@ -1171,6 +1667,40 @@ class InferenceConfig(BaseModel):
         return cls(method=InferenceMethod.VAE, svi=svi_config, mcmc=None)
 
     # --------------------------------------------------------------------------
+
+    @classmethod
+    def from_laplace(
+        cls, laplace_config: "LaplaceConfig"
+    ) -> "InferenceConfig":
+        """Create InferenceConfig for Laplace inference (PLN-only).
+
+        Parameters
+        ----------
+        laplace_config : LaplaceConfig
+            Laplace-specific configuration object.
+
+        Returns
+        -------
+        InferenceConfig
+            InferenceConfig with method=LAPLACE and the provided
+            laplace_config. ``svi`` and ``mcmc`` are left as ``None``.
+
+        Examples
+        --------
+        >>> from scribe.models.config import InferenceConfig, LaplaceConfig
+        >>> laplace_config = LaplaceConfig(n_steps=50_000, n_newton_steps=8)
+        >>> inference_config = InferenceConfig.from_laplace(laplace_config)
+        """
+        from .enums import InferenceMethod
+
+        return cls(
+            method=InferenceMethod.LAPLACE,
+            svi=None,
+            mcmc=None,
+            laplace=laplace_config,
+        )
+
+    # --------------------------------------------------------------------------
     # Validation
     # --------------------------------------------------------------------------
 
@@ -1195,17 +1725,42 @@ class InferenceConfig(BaseModel):
                 raise ValueError("SVIConfig required for SVI inference")
             if self.mcmc is not None:
                 raise ValueError("MCMCConfig not allowed for SVI inference")
+            if self.laplace is not None:
+                raise ValueError(
+                    "LaplaceConfig not allowed for SVI inference"
+                )
         elif self.method == InferenceMethod.MCMC:
             if self.mcmc is None:
                 raise ValueError("MCMCConfig required for MCMC inference")
             if self.svi is not None:
                 raise ValueError("SVIConfig not allowed for MCMC inference")
+            if self.laplace is not None:
+                raise ValueError(
+                    "LaplaceConfig not allowed for MCMC inference"
+                )
         elif self.method == InferenceMethod.VAE:
             # VAE uses SVI config
             if self.svi is None:
                 raise ValueError("SVIConfig required for VAE inference")
             if self.mcmc is not None:
                 raise ValueError("MCMCConfig not allowed for VAE inference")
+            if self.laplace is not None:
+                raise ValueError(
+                    "LaplaceConfig not allowed for VAE inference"
+                )
+        elif self.method == InferenceMethod.LAPLACE:
+            if self.laplace is None:
+                raise ValueError(
+                    "LaplaceConfig required for Laplace inference"
+                )
+            if self.svi is not None:
+                raise ValueError(
+                    "SVIConfig not allowed for Laplace inference"
+                )
+            if self.mcmc is not None:
+                raise ValueError(
+                    "MCMCConfig not allowed for Laplace inference"
+                )
         else:
             raise ValueError(f"Unknown inference method: {self.method}")
 
@@ -1213,13 +1768,15 @@ class InferenceConfig(BaseModel):
     # Accessor Methods
     # --------------------------------------------------------------------------
 
-    def get_config(self) -> Union[SVIConfig, MCMCConfig]:
+    def get_config(
+        self,
+    ) -> Union[SVIConfig, MCMCConfig, "LaplaceConfig"]:
         """Get the appropriate config for the inference method.
 
         Returns
         -------
-        Union[SVIConfig, MCMCConfig]
-            The SVI or MCMC configuration, depending on the inference method.
+        Union[SVIConfig, MCMCConfig, LaplaceConfig]
+            The configuration object for the active inference method.
 
         Raises
         ------
@@ -1240,6 +1797,8 @@ class InferenceConfig(BaseModel):
             return self.svi
         elif self.method == InferenceMethod.MCMC:
             return self.mcmc
+        elif self.method == InferenceMethod.LAPLACE:
+            return self.laplace
         else:
             raise ValueError(f"Unknown inference method: {self.method}")
 

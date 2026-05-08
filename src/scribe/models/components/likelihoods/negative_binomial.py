@@ -243,6 +243,7 @@ class NegativeBinomialLikelihood(Likelihood):
         dims: Dict[str, int],
         batch_size: Optional[int],
         model_config: "ModelConfig",
+        total_count_max: Optional[int] = None,
         vae_cell_fn: Optional[
             Callable[[Optional[jnp.ndarray]], Dict[str, jnp.ndarray]]
         ] = None,
@@ -265,6 +266,7 @@ class NegativeBinomialLikelihood(Likelihood):
         # Determine whether we need cell-specific mixing (annotation path)
         is_mixture = "mixing_weights" in param_values
         use_annotation = annotation_prior_logits is not None and is_mixture
+        del total_count_max
 
         # Use externally-provided layouts (from model builder) when
         # available.  Fall back to building from model_config.param_specs

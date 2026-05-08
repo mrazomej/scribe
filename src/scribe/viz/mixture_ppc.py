@@ -9,6 +9,7 @@ import numpyro.distributions as dist
 from typing import Iterable
 
 from ._common import (
+    _is_pln_model,
     console,
     Progress,
     SpinnerColumn,
@@ -47,6 +48,12 @@ from .ppc_rendering import (
 
 def _select_divergent_genes(results, counts, n_rows, n_cols):
     """Select genes with highest divergence across components, binned by expression."""
+    # PLN has no NB-family per-component (r/p or mu/phi) parameterization, so
+    # this divergence heuristic is not defined for PLN mixture diagnostics.
+    if _is_pln_model(results):
+        raise ValueError(
+            "Mixture PPC gene selection is not supported for PLN models."
+        )
     counts = _coerce_and_align_counts_to_results(
         counts, results, context="_select_divergent_genes"
     )
@@ -1077,6 +1084,14 @@ def plot_mixture_ppc(
     counts = _coerce_and_align_counts_to_results(
         counts, results, context="plot_mixture_ppc"
     )
+    # PLN v1 does not support mixture models; guard here so interactive calls
+    # fail gracefully with a clear, model-aware message.
+    if _is_pln_model(results):
+        console.print(
+            "[yellow]Skipping mixture PPC for PLN: mixture diagnostics are "
+            "not supported for Poisson-LogNormal models.[/yellow]"
+        )
+        return
 
     # Resolve grid dimensions: explicit kwargs > viz_cfg > defaults
     # Mixture PPC defaults to 1500 samples (heavier computation).

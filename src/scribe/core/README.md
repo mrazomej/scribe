@@ -125,6 +125,49 @@ distributions = normalized["distributions"]  # List of Dirichlet objects
 - **Flexible Sampling**: Control number of Dirichlet samples per posterior
   sample
 
+### LNM Data-Init Helpers (`lnm_data_init.py`)
+
+Data-derived initializers used by the public API exclusively for the
+Logistic-Normal Multinomial family (`model in {"lnm", "lnmvcp"}`). These
+helpers are computed once, up front, from the count matrix and folded
+into `model_config.vae` (and the `r_T` prior) before model construction
+so that the very first SVI step sees a well-conditioned starting point.
+
+```python
+from scribe.core.lnm_data_init import (
+    empirical_alr_mean_from_counts,   # → decoder bias init for y_alr
+    compute_encoder_standardization,  # → per-feature mean/std in transform space
+    moments_to_lognormal_r_T,         # → method-of-moments NB inversion
+    inject_lnm_vae_data_init,         # one-shot ModelConfig transformer
+)
+```
+
+Each function is small and side-effect-free; `inject_lnm_vae_data_init`
+is what `scribe.api.fit` calls. See the qmd section
+"Training stability: practical considerations" for the motivation.
+
+### PLN Data-Init Helpers (`pln_data_init.py`)
+
+Data-derived initializers for the Poisson-LogNormal family (`model="pln"`).
+Analogous to `lnm_data_init.py` but for G-dimensional log-rate space
+rather than (G-1)-dimensional ALR space.
+
+```python
+from scribe.core.pln_data_init import (
+    empirical_log_mean_from_counts,  # → decoder bias init for y_log_rate
+    pca_loadings_init,               # → PCA-based W init from truncated SVD
+    inject_pln_vae_data_init,        # one-shot ModelConfig transformer
+)
+```
+
+Key differences from LNM data-init:
+- Bias is G-dimensional `log(mean(u_g) + pseudocount)` (not G-1 ALR).
+- PCA uses randomized SVD (Halko et al. 2011) on centered
+  `log(counts + pseudocount)` to initialize the decoder kernel `W`.
+  For large datasets (> 50k cells), cells are subsampled to cap memory.
+  All intermediates are float32.
+- Encoder standardization is reused from `lnm_data_init`.
+
 ### Cell Type Assignment (`cell_type_assignment.py`)
 ### Gene Coverage Filtering (`gene_coverage.py`)
 
@@ -150,6 +193,12 @@ filtered_counts = aggregate_counts_by_mask(count_data, mask)
 
 In multi-dataset mode, masks are computed per dataset and unioned so genes
 abundant in any dataset are retained globally.
+
+When used through `scribe.fit`, the same preprocessing pass also stores a
+serialization-safe multinomial sampling ceiling on the results object:
+`_total_count_max = int(1.5 * max(per_cell_total_count))`. This value is used
+later by posterior predictive samplers that require a static
+`total_count_max` under traced JAX execution.
 
 
 Advanced utilities for analyzing mixture models and assigning cell types:

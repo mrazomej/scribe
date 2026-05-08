@@ -565,10 +565,18 @@ config = build_config_from_preset(
   `ExpTransform`. This transform is threaded to every
   `_build_positive_normal_posterior`, `_build_low_rank_positive_normal_posterior`,
   and `_build_joint_low_rank_posterior` call for positive-valued parameters
-  (`mu`, `phi`, `r`, `phi_capture`). This covers all three posterior code
+  (`mu`, `phi`, `r`, `r_T`, `phi_capture`). This covers all three posterior code
   paths: mean-field, per-parameter low-rank, and joint low-rank guides.
   Probability-valued parameters (`p`, `gate`, `p_capture`) continue to use
   `SigmoidTransform` regardless.
+- **Logistic-normal base extraction**: for `parameterization="logistic_normal"`,
+  pass 1 builds total-count posteriors under canonical keys `r_T` and `p`
+  (the LNM totals parameters), analogous to canonical `r`/`p` extraction.
+- **Poisson-LogNormal base extraction**: for `parameterization="poisson_lognormal"`,
+  pass 1 builds only the optional `d_pln` posterior (learned diagonal noise).
+  Log-rate distributions (`y_log_rate`, `lambda_rate`) are decoder-derived and
+  added in `get_distributions()`, not the base extraction pass.  Pass 7
+  (`_apply_capture`) also handles `eta_capture` when capture is active on PLN.
 - **Capture guide detection**: `_build_biology_informed_capture_posterior`
   auto-detects the guide type from variational parameter names:
   `eta_capture_raw_loc` → softplus-normal (reconstructs

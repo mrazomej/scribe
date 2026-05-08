@@ -37,24 +37,35 @@ class TestRegistryContents:
 
     def test_model_extra_params_contains_all_models(self):
         """Test MODEL_EXTRA_PARAMS has entries for all model types."""
-        expected_models = {"nbdm", "zinb", "nbvcp", "zinbvcp"}
+        expected_models = {
+            "nbdm", "lnm", "lnmvcp", "pln", "zinb", "nbvcp", "zinbvcp"
+        }
         assert set(MODEL_EXTRA_PARAMS.keys()) == expected_models
 
     def test_model_extra_params_values(self):
         """Test MODEL_EXTRA_PARAMS has correct extra parameters."""
         assert MODEL_EXTRA_PARAMS["nbdm"] == []
+        assert MODEL_EXTRA_PARAMS["lnm"] == []
+        assert MODEL_EXTRA_PARAMS["lnmvcp"] == ["p_capture"]
+        # PLN has no totals submodel and no separate capture site:
+        # capture is folded into the per-cell log-rate offset directly
+        # in the likelihood, so no extra global param is registered.
+        assert MODEL_EXTRA_PARAMS["pln"] == []
         assert MODEL_EXTRA_PARAMS["zinb"] == ["gate"]
         assert MODEL_EXTRA_PARAMS["nbvcp"] == ["p_capture"]
         assert MODEL_EXTRA_PARAMS["zinbvcp"] == ["gate", "p_capture"]
 
     def test_likelihood_registry_contains_all_models(self):
         """Test LIKELIHOOD_REGISTRY has entries for all model types."""
-        expected_models = {"nbdm", "zinb", "nbvcp", "zinbvcp"}
+        expected_models = {
+            "nbdm", "lnm", "lnmvcp", "pln", "zinb", "nbvcp", "zinbvcp"
+        }
         assert set(LIKELIHOOD_REGISTRY.keys()) == expected_models
 
     def test_likelihood_registry_classes(self):
         """Test LIKELIHOOD_REGISTRY contains correct likelihood classes."""
         from scribe.models.components.likelihoods import (
+            LogisticNormalMultinomialLikelihood,
             NBWithVCPLikelihood,
             NegativeBinomialLikelihood,
             ZeroInflatedNBLikelihood,
@@ -62,6 +73,7 @@ class TestRegistryContents:
         )
 
         assert LIKELIHOOD_REGISTRY["nbdm"] == NegativeBinomialLikelihood
+        assert LIKELIHOOD_REGISTRY["lnm"] == LogisticNormalMultinomialLikelihood
         assert LIKELIHOOD_REGISTRY["zinb"] == ZeroInflatedNBLikelihood
         assert LIKELIHOOD_REGISTRY["nbvcp"] == NBWithVCPLikelihood
         assert LIKELIHOOD_REGISTRY["zinbvcp"] == ZINBWithVCPLikelihood
@@ -1640,9 +1652,7 @@ class TestMeanAnchor:
 
         assert log_anchors.shape == (n_genes,)
         # Anchors should be close to log(true_means) since nu_bar=1
-        np.testing.assert_allclose(
-            log_anchors, np.log(true_means), atol=0.3
-        )
+        np.testing.assert_allclose(log_anchors, np.log(true_means), atol=0.3)
 
     def test_compute_mu_anchor_with_capture(self):
         """Test compute_mu_anchor with capture probability correction.
@@ -1673,9 +1683,7 @@ class TestMeanAnchor:
         # After capture correction: mu_hat = u_bar / nu_bar
         # u_bar ~ 5 (50 * 0.1), nu_bar ~ 0.1 → mu_hat ~ 50
         expected = np.log(50.0)
-        np.testing.assert_allclose(
-            log_anchors, expected, atol=0.3
-        )
+        np.testing.assert_allclose(log_anchors, expected, atol=0.3)
 
     def test_compute_mu_anchor_epsilon_prevents_log_zero(self):
         """Test that epsilon prevents log(0) for zero-expression genes."""
@@ -1693,7 +1701,9 @@ class TestMeanAnchor:
         """Test that expression_anchor=True requires unconstrained=True."""
         from scribe.models.config import ModelConfig
 
-        with pytest.raises(ValueError, match="expression_anchor.*unconstrained"):
+        with pytest.raises(
+            ValueError, match="expression_anchor.*unconstrained"
+        ):
             ModelConfig(
                 base_model="nbdm",
                 expression_anchor=True,
@@ -1816,9 +1826,7 @@ class TestMeanAnchor:
         _, _, param_specs = create_model(config, validate=False)
 
         # Find the log_mu_loc spec — should be an AnchoredNormalSpec
-        log_mu_loc_specs = [
-            s for s in param_specs if s.name == "log_mu_loc"
-        ]
+        log_mu_loc_specs = [s for s in param_specs if s.name == "log_mu_loc"]
         assert len(log_mu_loc_specs) == 1
         spec = log_mu_loc_specs[0]
         assert isinstance(spec, AnchoredNormalSpec)
@@ -1844,9 +1852,7 @@ class TestMeanAnchor:
 
         _, _, param_specs = create_model(config, validate=False)
 
-        log_mu_loc_specs = [
-            s for s in param_specs if s.name == "log_mu_loc"
-        ]
+        log_mu_loc_specs = [s for s in param_specs if s.name == "log_mu_loc"]
         assert len(log_mu_loc_specs) == 1
         spec = log_mu_loc_specs[0]
         # Should NOT be an AnchoredNormalSpec

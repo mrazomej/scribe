@@ -196,6 +196,143 @@ PARAMETERIZATION_MAPPINGS = {
             "mu": "Mean parameter (LogNormal distribution)",
         },
     ),
+    # ------------------------------------------------------------------
+    # LNM family: three parameterizations of the totals NB submodel.
+    # Each maps the same compositional path (y_alr, multinomial,
+    # decoder/encoder) to a different choice of which scalar globals
+    # are sampled directly. Mirrors the DM-family
+    # canonical / mean_prob / mean_odds pattern.
+    # ------------------------------------------------------------------
+    Parameterization.LOGISTIC_NORMAL_CANONICAL: ParameterizationMapping(
+        parameterization=Parameterization.LOGISTIC_NORMAL_CANONICAL,
+        core_parameters={"r_T", "p"},
+        optional_parameters={"d_lnm", "y_alr", "z"},
+        parameter_descriptions={
+            "r_T": (
+                "NB dispersion for total UMI counts per cell "
+                "(LogNormal / PositiveNormal). Descriptive alias: "
+                "``total_dispersion``. Override the prior via "
+                "``priors={'r_T': (mu_log, sigma_log)}`` (or "
+                "equivalently ``priors={'total_dispersion': "
+                "(mu_log, sigma_log)}``) in ``scribe.fit``; an "
+                "explicit value short-circuits the auto-defaults "
+                "(MoM inversion when no capture anchor; "
+                "biology-informed LogNormal(log 50, 1.5) when the "
+                "capture anchor is active). Distinct from the "
+                "DM-family gene-level ``r`` parameter (descriptive "
+                "alias ``dispersion``), which has shape ``(n_genes,)``."
+            ),
+            "p": (
+                "NB success probability for total counts "
+                "(Beta / SigmoidNormal). Note: under the capture "
+                "anchor with the canonical LNM parameterization, ``p`` "
+                "becomes aliased with ``p_capture`` and may drift to "
+                "the upper boundary; switch to ``mean_odds`` to "
+                "eliminate the aliasing."
+            ),
+            "y_alr": (
+                "ALR coordinates from VAE decoder (G-1, reference gene "
+                "determined by alr_reference_idx)"
+            ),
+            "d_lnm": (
+                "Optional per-coordinate ALR variance scale (learned d_mode)"
+            ),
+            "z": "VAE latent code",
+        },
+    ),
+    Parameterization.LOGISTIC_NORMAL_MEAN_PROB: ParameterizationMapping(
+        parameterization=Parameterization.LOGISTIC_NORMAL_MEAN_PROB,
+        core_parameters={"mu_T", "p"},
+        optional_parameters={"d_lnm", "y_alr", "z", "r_T"},
+        parameter_descriptions={
+            "mu_T": (
+                "Population-level expected library size (LogNormal / "
+                "PositiveNormal). A scalar — one value per dataset — "
+                "describing the average ``u_T^(c)`` before per-cell "
+                "capture modulation. Descriptive alias: "
+                "``total_mean``. ``r_T`` is derived as "
+                "``mu_T * (1 - p) / p``."
+            ),
+            "p": (
+                "NB success probability for total counts "
+                "(Beta / SigmoidNormal). Same caveat as the canonical "
+                "variant: aliased with ``p_capture`` under the "
+                "anchor; ``mean_odds`` eliminates the aliasing."
+            ),
+            "r_T": (
+                "DERIVED: dispersion ``r_T = mu_T * (1 - p) / p``."
+            ),
+            "y_alr": (
+                "ALR coordinates from VAE decoder (G-1, reference gene "
+                "determined by alr_reference_idx)"
+            ),
+            "d_lnm": (
+                "Optional per-coordinate ALR variance scale (learned d_mode)"
+            ),
+            "z": "VAE latent code",
+        },
+    ),
+    Parameterization.LOGISTIC_NORMAL_MEAN_ODDS: ParameterizationMapping(
+        parameterization=Parameterization.LOGISTIC_NORMAL_MEAN_ODDS,
+        core_parameters={"mu_T", "phi_T"},
+        optional_parameters={"d_lnm", "y_alr", "z", "r_T", "p"},
+        parameter_descriptions={
+            "mu_T": (
+                "Population-level expected library size "
+                "(LogNormal / PositiveNormal). Same as in mean_prob; "
+                "directly identified by the empirical mean of ``u_T``. "
+                "Descriptive alias: ``total_mean``."
+            ),
+            "phi_T": (
+                "Totals-NB odds ratio ``phi_T = (1 - p) / p`` "
+                "(BetaPrime / PositiveNormal). Identified by the "
+                "per-cell variance of ``u_T`` around its predicted "
+                "mean. Under the capture anchor, both ``mu_T`` and "
+                "``phi_T`` retain independent identifying signal in "
+                "the data — the ``(p, p_capture)`` aliasing of the "
+                "other two variants is gone. Descriptive alias: "
+                "``total_odds_ratio``."
+            ),
+            "r_T": (
+                "DERIVED: dispersion ``r_T = mu_T * phi_T``."
+            ),
+            "p": (
+                "DERIVED: success probability ``p = 1 / (1 + phi_T)``. "
+                "Because ``p`` is derived rather than sampled, it "
+                "cannot drift to the boundary as it does in the "
+                "canonical / mean_prob variants under the capture "
+                "anchor."
+            ),
+            "y_alr": (
+                "ALR coordinates from VAE decoder (G-1, reference gene "
+                "determined by alr_reference_idx)"
+            ),
+            "d_lnm": (
+                "Optional per-coordinate ALR variance scale (learned d_mode)"
+            ),
+            "z": "VAE latent code",
+        },
+    ),
+    # ------------------------------------------------------------------
+    # PLN (Poisson-LogNormal) — single variant, no totals submodel
+    # ------------------------------------------------------------------
+    Parameterization.POISSON_LOGNORMAL: ParameterizationMapping(
+        parameterization=Parameterization.POISSON_LOGNORMAL,
+        core_parameters=set(),
+        optional_parameters={"d_pln", "y_log_rate", "z"},
+        parameter_descriptions={
+            "y_log_rate": (
+                "Per-gene log Poisson rates from VAE decoder "
+                "(G-dimensional, identity transform). Exponentiated "
+                "inside the likelihood to obtain Poisson rates."
+            ),
+            "d_pln": (
+                "Optional per-gene residual variance scale in "
+                "log-rate space (learned d_mode, G-dimensional)"
+            ),
+            "z": "VAE latent code",
+        },
+    ),
 }
 
 # ==============================================================================
@@ -527,6 +664,9 @@ def get_parameterization_summary() -> Dict[str, Dict[str, any]]:
 DESCRIPTIVE_NAMES: Dict[str, str] = {
     # Core NB parameters
     "r": "dispersion",
+    "r_T": "total_dispersion",
+    "mu_T": "total_mean",
+    "phi_T": "total_odds_ratio",
     "p": "prob",
     "mu": "mean_expression",
     "phi": "odds_ratio",
@@ -535,6 +675,12 @@ DESCRIPTIVE_NAMES: Dict[str, str] = {
     "p_capture": "capture_prob",
     "phi_capture": "capture_odds_ratio",
     "eta_capture": "capture_efficiency",
+    # LNM compositional parameters
+    "y_alr": "alr_coordinates",
+    "d_lnm": "alr_residual_scale",
+    # PLN log-rate parameters
+    "y_log_rate": "log_expression_rate",
+    "d_pln": "expression_residual_scale",
     # Already descriptive (identity)
     "bnb_concentration": "bnb_concentration",
     "mixing_weights": "mixing_weights",
@@ -562,11 +708,17 @@ PRIOR_KEY_ALIASES: Dict[str, str] = {
     # Core parameter priors (descriptive -> internal)
     "prob": "p",
     "dispersion": "r",
+    "total_dispersion": "r_T",
+    "total_mean": "mu_T",
+    "total_odds_ratio": "phi_T",
     "expression": "mu",
     "odds": "phi",
     "zero_inflation": "gate",
     "capture_prob": "p_capture",
     "capture_odds": "phi_capture",
+    # PLN parameter priors
+    "log_expression_rate": "y_log_rate",
+    "expression_residual_scale": "d_pln",
     # Capture-specific priors
     "capture_efficiency": "eta_capture",
     "capture_scaling": "mu_eta",

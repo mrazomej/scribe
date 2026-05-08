@@ -299,6 +299,7 @@ class ModelBuilder:
             model_config: "ModelConfig",
             counts: Optional[jnp.ndarray] = None,
             batch_size: Optional[int] = None,
+            total_count_max: Optional[int] = None,
             annotation_prior_logits: Optional[jnp.ndarray] = None,
             dataset_indices: Optional[jnp.ndarray] = None,
         ):
@@ -317,6 +318,9 @@ class ModelBuilder:
                 predictive).
             batch_size : Optional[int]
                 Mini-batch size for stochastic VI. If None, uses all cells.
+            total_count_max : Optional[int]
+                Optional multinomial allocation ceiling used by likelihoods
+                that need a static upper bound during traced sampling.
             annotation_prior_logits : Optional[jnp.ndarray], shape (n_cells,
             n_components)
                 Per-cell logit offsets for mixture component assignment priors.
@@ -330,16 +334,17 @@ class ModelBuilder:
             # We need this dict to resolve symbolic shape_dims like ("n_genes",)
             # into concrete shapes like (2000,)
             # ================================================================
-            dims = {"n_cells": n_cells, "n_genes": n_genes}
+            dims = {
+                "n_cells": n_cells,
+                "n_genes": n_genes,
+                "n_alr": max(n_genes - 1, 0),
+            }
             if (
                 hasattr(model_config, "n_components")
                 and model_config.n_components
             ):
                 dims["n_components"] = model_config.n_components
-            if (
-                hasattr(model_config, "n_datasets")
-                and model_config.n_datasets
-            ):
+            if hasattr(model_config, "n_datasets") and model_config.n_datasets:
                 dims["n_datasets"] = model_config.n_datasets
 
             param_values: Dict[str, jnp.ndarray] = {}
@@ -370,9 +375,7 @@ class ModelBuilder:
                     use_dataset_mixing = bool(
                         getattr(model_config, "dataset_mixing_enabled", False)
                     )
-                    shape_dims = (
-                        ("n_components",) if use_dataset_mixing else ()
-                    )
+                    shape_dims = ("n_components",) if use_dataset_mixing else ()
                     mixing_spec = DirichletSpec(
                         name="mixing_weights",
                         shape_dims=shape_dims,
@@ -400,18 +403,13 @@ class ModelBuilder:
                 and s.name != "mixing_weights"  # Already sampled above
             ]
             for spec in global_specs:
-                if isinstance(
-                    spec, DatasetHierarchicalNormalWithTransformSpec
-                ):
+                if isinstance(spec, DatasetHierarchicalNormalWithTransformSpec):
                     # Dataset-level hierarchical param (e.g. scalar p
                     # per dataset) uses learned hyperparameters
                     param_values[spec.name] = spec.sample_hierarchical(
                         dims, param_values
                     )
-                elif (
-                    isinstance(spec, GammaSpec)
-                    and spec.rate_name is not None
-                ):
+                elif isinstance(spec, GammaSpec) and spec.rate_name is not None:
                     # Gamma with rate from another site (e.g. psi ~ Gamma(u, zeta))
                     param_values[spec.name] = sample_prior(
                         spec, dims, model_config, param_values
@@ -448,10 +446,7 @@ class ModelBuilder:
                     param_values[spec.name] = spec.sample_hierarchical(
                         dims, param_values
                     )
-                elif (
-                    isinstance(spec, GammaSpec)
-                    and spec.rate_name is not None
-                ):
+                elif isinstance(spec, GammaSpec) and spec.rate_name is not None:
                     # Gamma with rate from another site (e.g. psi ~ Gamma(u, zeta))
                     param_values[spec.name] = sample_prior(
                         spec, dims, model_config, param_values
@@ -603,9 +598,7 @@ class ModelBuilder:
                                 else:
                                     deps[dep] = param_values[dep]
                                 dep_layouts.append(
-                                    param_layouts.get(
-                                        dep, AxisLayout(())
-                                    )
+                                    param_layouts.get(dep, AxisLayout(()))
                                 )
 
                             target = (
@@ -616,9 +609,7 @@ class ModelBuilder:
                             aligned = {
                                 k: align_to_layout(
                                     v,
-                                    param_layouts.get(
-                                        k, AxisLayout(())
-                                    ),
+                                    param_layouts.get(k, AxisLayout(())),
                                     target,
                                 )
                                 for k, v in deps.items()
@@ -658,6 +649,7 @@ class ModelBuilder:
                 dims=dims,
                 batch_size=batch_size,
                 model_config=model_config,
+                total_count_max=total_count_max,
                 vae_cell_fn=vae_cell_fn,
                 annotation_prior_logits=annotation_prior_logits,
                 dataset_indices=dataset_indices,

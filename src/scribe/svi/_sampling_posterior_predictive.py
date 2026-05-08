@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 import numpy as np
 import jax.numpy as jnp
 from jax import random
+import warnings
 
 from ..sampling import generate_predictive_samples, sample_variational_posterior
 from ..core.posterior_matrix import posterior_samples_to_matrix
@@ -456,11 +457,45 @@ class PosteriorPredictiveSamplingMixin:
             and _gene_idx is not None
             and _has_flow_params(self.params)
         )
-        n_genes_for_guide = _orig_ng if _full_dim else self.n_genes
+        base_n_genes = self._factory_n_genes() or self.n_genes
+        n_genes_for_guide = _orig_ng if _full_dim else int(base_n_genes)
         params_for_guide = (
-            _orig_params if (_full_dim and _orig_params is not None)
+            _orig_params
+            if (_full_dim and _orig_params is not None)
             else self.params
         )
+
+        if counts is not None and int(counts.shape[1]) != int(
+            n_genes_for_guide
+        ):
+            # VAE results may legitimately receive counts with one extra
+            # trailing column (the pooled "other" gene from gene-coverage
+            # filtering) because the decoder was trained on the narrower
+            # gene set.  Trim it only when we can confirm this is a VAE
+            # result so non-VAE paths never silently drop data.
+            _is_vae = (
+                hasattr(self, "_encoder")
+                and getattr(self, "_encoder", None) is not None
+            )
+            if (
+                _is_vae
+                and int(counts.shape[1]) == int(n_genes_for_guide) + 1
+            ):
+                warnings.warn(
+                    "Posterior sampling received counts with one extra gene "
+                    f"column ({int(counts.shape[1])}) relative to the VAE "
+                    f"reconstruction width ({int(n_genes_for_guide)}). "
+                    "Dropping trailing column (pooled 'other' gene).",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                counts = counts[:, : int(n_genes_for_guide)]
+            else:
+                raise ValueError(
+                    "Posterior sampling counts width does not match model "
+                    f"reconstruction width: counts.shape[1]={int(counts.shape[1])}, "
+                    f"expected {int(n_genes_for_guide)}."
+                )
 
         # Include dataset_indices so that when the model is replayed to
         # compute deterministic sites, index_dataset_params can convert
@@ -473,6 +508,9 @@ class PosteriorPredictiveSamplingMixin:
         ds_idx = getattr(self, "_dataset_indices", None)
         if ds_idx is not None:
             model_args["dataset_indices"] = ds_idx
+        _tcm = getattr(self, "_total_count_max", None)
+        if _tcm is not None:
+            model_args["total_count_max"] = int(_tcm)
 
         # Add batch_size to model_args if provided for memory-efficient sampling
         if batch_size is not None:
@@ -493,11 +531,12 @@ class PosteriorPredictiveSamplingMixin:
         # accounts for the leading posterior-draw dimension.
         if _full_dim:
             _sample_layouts = {
-                k: v.with_sample_dim()
-                for k, v in self.layouts.items()
+                k: v.with_sample_dim() for k, v in self.layouts.items()
             }
             posterior_samples = _subset_gene_dim_samples(
-                posterior_samples, _gene_idx, _orig_ng,
+                posterior_samples,
+                _gene_idx,
+                _orig_ng,
                 layouts=_sample_layouts,
             )
 
@@ -553,8 +592,51 @@ class PosteriorPredictiveSamplingMixin:
         self,
         rng_key: Optional[random.PRNGKey] = None,
         store_samples: bool = True,
+        counts: Optional[jnp.ndarray] = None,
     ) -> jnp.ndarray:
-        """Generate predictive samples using posterior parameter samples."""
+        """Generate predictive samples using posterior parameter samples.
+
+        Two PPC modes, dispatched on whether ``counts`` is provided:
+
+        * **Generative PPC** (``counts=None``) — every latent in the
+          model is sampled fresh from its posterior draw, including
+          per-cell totals. For LNM-family models this means
+          ``u_T_c ~ NB(r_T, p)`` is re-rolled per posterior sample.
+          Answers "for a *new* cell drawn from the same population
+          as my data, what counts would I expect?"
+        * **Conditional PPC** (``counts`` provided) — for LNM-family
+          models only, the per-cell observed totals
+          ``u_T_obs = sum(counts, axis=-1)`` are injected via
+          ``numpyro.handlers.condition`` so the predictive replay
+          fixes ``u_T`` and only ``counts`` is sampled fresh from
+          ``Multinomial(u_T_obs, softmax(y_alr))``. Answers "given
+          *this specific cell's* observed library size, what gene-
+          by-gene counts does the model predict for it?"
+
+        For non-LNM models, the ``counts`` argument is currently
+        ignored (no analogous total-count latent to condition on);
+        a future extension can plumb conditional PPC through to
+        the relevant site for other models.
+
+        Parameters
+        ----------
+        rng_key : random.PRNGKey, optional
+            JAX random number generator key (default ``PRNGKey(42)``).
+        store_samples : bool, optional
+            Whether to store the predictive samples in
+            ``self.predictive_samples`` (default ``True``).
+        counts : jnp.ndarray, optional
+            Observed count matrix of shape ``(n_cells, n_genes)``.
+            When provided for an LNM-family model, switches to
+            conditional PPC mode (see above). When ``None`` (the
+            default) the original generative PPC is produced.
+
+        Returns
+        -------
+        jnp.ndarray
+            Array of predictive count samples; shape
+            ``(n_samples, n_cells, n_genes)``.
+        """
         from ..models.config import GuideFamilyConfig
         from ..models.model_registry import get_model_and_guide
 
@@ -569,7 +651,9 @@ class PosteriorPredictiveSamplingMixin:
             self.model_config,
             unconstrained=False,
             guide_families=GuideFamilyConfig(),
+            n_genes=self._factory_n_genes(),
         )
+        n_genes_for_model = int(self._factory_n_genes() or self.n_genes)
 
         # Use model_config_for_pred (which has param_specs populated) so
         # index_dataset_params in the likelihood can correctly identify
@@ -577,12 +661,15 @@ class PosteriorPredictiveSamplingMixin:
         # params are indexed to per-cell layout.
         model_args = {
             "n_cells": self.n_cells,
-            "n_genes": self.n_genes,
+            "n_genes": n_genes_for_model,
             "model_config": model_config_for_pred,
         }
         ds_idx = getattr(self, "_dataset_indices", None)
         if ds_idx is not None:
             model_args["dataset_indices"] = ds_idx
+        _tcm = getattr(self, "_total_count_max", None)
+        if _tcm is not None:
+            model_args["total_count_max"] = int(_tcm)
 
         # Check if posterior samples exist
         if self.posterior_samples is None:
@@ -594,12 +681,59 @@ class PosteriorPredictiveSamplingMixin:
         if rng_key is None:
             rng_key = random.PRNGKey(42)
 
+        # Build the optional condition_data dict for conditional-PPC
+        # mode. Only LNM-family models have a ``u_T`` latent that
+        # makes sense to fix at observed totals; other models silently
+        # ignore the ``counts`` arg here for now.
+        condition_data: Optional[Dict[str, jnp.ndarray]] = None
+        if counts is not None and self._is_lnm_family_model():
+            counts_arr = jnp.asarray(counts)
+            # Drop a trailing pooled "_other" column if the user
+            # passed full original-gene counts to a coverage-filtered
+            # result. The ``u_T`` site lives in model-space (post-
+            # filter), so we sum across the model-space columns.
+            if int(counts_arr.shape[1]) == n_genes_for_model + 1:
+                counts_arr = counts_arr[:, :n_genes_for_model]
+            elif int(counts_arr.shape[1]) != n_genes_for_model:
+                raise ValueError(
+                    "Conditional PPC counts width does not match model "
+                    f"reconstruction width: counts.shape[1]="
+                    f"{int(counts_arr.shape[1])}, expected "
+                    f"{n_genes_for_model} (or {n_genes_for_model + 1} "
+                    "for the trailing pooled '_other' column)."
+                )
+            u_T_obs = counts_arr.sum(axis=-1)
+            condition_data = {"u_T": u_T_obs}
+
+        # Generative-mode bookkeeping: if ``counts`` was passed to a
+        # prior ``get_posterior_samples`` call, NumPyro's ``Predictive``
+        # captured the observed ``u_T = sum(counts, axis=-1)`` into
+        # ``self.posterior_samples`` (it is reachable in the model
+        # trace as a non-guide site). Re-substituting that fixed
+        # value during predictive replay would lock per-cell totals
+        # to the observed values even when the caller asked for a
+        # generative PPC — exactly defeating the purpose of
+        # ``counts=None``. Drop it so the model resamples ``u_T``
+        # from its NB. (Only relevant for LNM-family models.)
+        posterior_samples_for_predictive = self.posterior_samples
+        if (
+            condition_data is None
+            and self._is_lnm_family_model()
+            and "u_T" in self.posterior_samples
+        ):
+            posterior_samples_for_predictive = {
+                k: v
+                for k, v in self.posterior_samples.items()
+                if k != "u_T"
+            }
+
         # Generate predictive samples
         predictive_samples = generate_predictive_samples(
             model,
-            self.posterior_samples,
+            posterior_samples_for_predictive,
             model_args,
             rng_key=rng_key,
+            condition_data=condition_data,
         )
 
         # Store samples if requested
@@ -607,6 +741,18 @@ class PosteriorPredictiveSamplingMixin:
             self.predictive_samples = predictive_samples
 
         return predictive_samples
+
+    def _is_lnm_family_model(self) -> bool:
+        """Return True when this result is from an LNM-family model.
+
+        LNM-family models (``"lnm"`` and ``"lnmvcp"``) have a
+        ``"u_T"`` total-count latent that can be conditioned on
+        observed library sizes for conditional PPC. Other models
+        either lack such a site or use a different name; conditional
+        PPC for those is a future extension.
+        """
+        bm = getattr(self.model_config, "base_model", None)
+        return bm in ("lnm", "lnmvcp")
 
     def get_ppc_samples(
         self,
@@ -682,6 +828,7 @@ class PosteriorPredictiveSamplingMixin:
         self.get_predictive_samples(
             rng_key=key_pred,
             store_samples=store_samples,
+            counts=counts,
         )
 
         return {

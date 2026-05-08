@@ -10,6 +10,7 @@ Device: use ``pytest --device cpu`` (default) or ``pytest --device gpu``.
 """
 
 import os
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -39,8 +40,9 @@ from scribe.models.components.vae_components import (
     MultiHeadDecoder,
 )
 from scribe.models.config import ModelConfigBuilder
-from scribe.models.config.enums import ModelType
+from scribe.models.config.enums import InferenceMethod, ModelType
 from scribe.svi.vae_results import ScribeVAEResults
+from scribe.svi._model_helpers import ModelHelpersMixin
 
 # ==============================================================================
 # Constants
@@ -473,6 +475,142 @@ class TestScribeVAEResultsIntegration:
         mask = mask.at[:7].set(True)
         subset = vae_results[mask]
         assert subset.n_genes == 7
+
+    def test_gene_subsetting_missing_decoder_head_raises(self, vae_results):
+        """Subsetting should fail fast when decoder head params are missing.
+
+        A subsetted VAE decoder must have one Flax head subtree per
+        ``DecoderOutputHead``. Missing ``head_*`` entries indicate a corrupt
+        params state that would otherwise fail later with opaque shape errors.
+        """
+        broken_params = dict(vae_results.params)
+        decoder_params = dict(broken_params["vae_decoder$params"])
+        decoder_params.pop("head_r", None)
+        broken_params["vae_decoder$params"] = decoder_params
+        broken_results = ScribeVAEResults(
+            params=broken_params,
+            loss_history=vae_results.loss_history,
+            n_cells=vae_results.n_cells,
+            n_genes=vae_results.n_genes,
+            model_type=vae_results.model_type,
+            model_config=vae_results.model_config,
+            prior_params=vae_results.prior_params,
+            _encoder=vae_results._encoder,
+            _decoder=vae_results._decoder,
+            _latent_spec=vae_results._latent_spec,
+        )
+
+        with pytest.raises(ValueError, match="missing required head key"):
+            _ = broken_results[0:5]
+
+
+class TestModelHelpersVAEGeneContract:
+    """Tests for VAE model/guide reconstruction gene-width contracts."""
+
+    def test_model_and_guide_threads_vae_n_genes(self, monkeypatch):
+        """VAE helper should always pass explicit ``n_genes`` to the factory."""
+
+        class _DummyResults(ModelHelpersMixin):
+            pass
+
+        dummy = _DummyResults()
+        dummy.n_genes = 15
+        dummy.model_config = SimpleNamespace(
+            inference_method=InferenceMethod.VAE,
+            vae=SimpleNamespace(),
+        )
+        dummy.params = {
+            "vae_decoder$params": {
+                "head_r": {"bias": jnp.zeros((15,), dtype=jnp.float32)}
+            }
+        }
+
+        captured = {}
+
+        def _fake_get_model_and_guide(model_config, **kwargs):
+            _ = model_config
+            captured["n_genes"] = kwargs.get("n_genes")
+            return (lambda **_kw: None), (lambda **_kw: None), model_config
+
+        monkeypatch.setattr(
+            "scribe.models.model_registry.get_model_and_guide",
+            _fake_get_model_and_guide,
+        )
+        dummy._model_and_guide()
+        assert captured["n_genes"] == 15
+
+    def test_model_and_guide_prefers_decoder_width_on_mismatch(self):
+        """Mismatched width should fall back to decoder param width.
+
+        When no stored decoder module is available, the raw param bias
+        width is used as ``n_genes`` even if it differs from
+        ``results.n_genes``.
+        """
+
+        class _DummyResults(ModelHelpersMixin):
+            pass
+
+        dummy = _DummyResults()
+        dummy.n_genes = 15
+        dummy.model_config = SimpleNamespace(
+            inference_method=InferenceMethod.VAE,
+            vae=SimpleNamespace(),
+        )
+        # No _decoder attribute → fallback to raw param width
+        dummy.params = {
+            "vae_decoder$params": {
+                "head_r": {"bias": jnp.zeros((20,), dtype=jnp.float32)}
+            }
+        }
+
+        with pytest.warns(UserWarning, match="gene-width mismatch"):
+            resolved = dummy._factory_n_genes()
+        assert resolved == 20
+
+    def test_factory_n_genes_respects_alr_offset(self):
+        """ALR heads have output_dim = n_genes - 1; factory must use n_genes.
+
+        When the stored decoder module's head output_dim matches the
+        param width (both = n_genes - 1 for ALR), ``_infer_decoder_gene_width``
+        should return None so ``_factory_n_genes`` uses ``results.n_genes``.
+        """
+        from scribe.models.components.vae_components import MultiHeadDecoder
+
+        class _DummyResults(ModelHelpersMixin):
+            pass
+
+        n_genes = 100
+        alr_dim = n_genes - 1
+
+        dummy = _DummyResults()
+        dummy.n_genes = n_genes
+        dummy.model_config = SimpleNamespace(
+            inference_method=InferenceMethod.VAE,
+            vae=SimpleNamespace(),
+        )
+        # Decoder module stores the ALR-reduced output_dim
+        dummy._decoder = MultiHeadDecoder(
+            output_dim=0,
+            latent_dim=10,
+            hidden_dims=[32],
+            output_heads=(
+                DecoderOutputHead(
+                    "y_alr", output_dim=alr_dim, transform="identity"
+                ),
+            ),
+        )
+        # Params also have the ALR-reduced width
+        dummy.params = {
+            "vae_decoder$params": {
+                "head_y_alr": {
+                    "bias": jnp.zeros((alr_dim,), dtype=jnp.float32)
+                }
+            }
+        }
+
+        # Should NOT warn and should return n_genes (not alr_dim)
+        resolved = dummy._factory_n_genes()
+        assert resolved == n_genes
 
 
 # ==============================================================================

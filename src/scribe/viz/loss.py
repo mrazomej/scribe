@@ -58,29 +58,83 @@ def plot_loss(
 
     if payload["plot_kind"] == "loss":
         console.print("[dim]Plotting loss history...[/dim]")
-        if ax is not None:
-            raise ValueError(
-                "Loss history plot needs 2 panels; provide `fig` or 2 `axes`."
-            )
-        fig, _, flat_axes = _create_or_validate_grid_axes(
-            n_rows=1,
-            n_cols=2,
-            fig=fig,
-            axes=axes,
-            figsize=figsize or (7.0, 3.0),
+        loss_history = np.asarray(payload["loss_history"])
+        # Decide layout based on whether the loss is strictly
+        # positive (e.g., SVI/VAE neg-ELBO) or sign-bearing
+        # (e.g., Laplace, where the Gaussian-prior-density
+        # constants can land the loss negative).
+        # ``log`` of a non-positive value is undefined, so the
+        # log-scale panel collapses to an empty axis when the
+        # loss has any non-positive entries. In that case, drop
+        # the log panel entirely and show a single linear-scale
+        # plot.
+        finite_losses = loss_history[np.isfinite(loss_history)]
+        all_positive = (
+            finite_losses.size > 0 and np.all(finite_losses > 0)
         )
-        ax_log, ax_linear = flat_axes
-        ax_log.plot(payload["loss_history"])
-        ax_linear.plot(payload["loss_history"])
-        ax_log.set_xlabel("step")
-        ax_log.set_ylabel("ELBO loss")
-        ax_linear.set_xlabel("step")
-        ax_linear.set_ylabel("ELBO loss")
-        ax_log.set_yscale("log")
+        if all_positive:
+            # Two-panel layout: log + linear (legacy behaviour).
+            if ax is not None:
+                raise ValueError(
+                    "Loss history plot needs 2 panels; "
+                    "provide `fig` or 2 `axes`."
+                )
+            fig, _, flat_axes = _create_or_validate_grid_axes(
+                n_rows=1,
+                n_cols=2,
+                fig=fig,
+                axes=axes,
+                figsize=figsize or (7.0, 3.0),
+            )
+            ax_log, ax_linear = flat_axes
+            ax_log.plot(loss_history)
+            ax_linear.plot(loss_history)
+            ax_log.set_xlabel("step")
+            ax_log.set_ylabel("ELBO loss")
+            ax_linear.set_xlabel("step")
+            ax_linear.set_ylabel("ELBO loss")
+            ax_log.set_yscale("log")
+            n_panels = 2
+            used_axes = [ax_log, ax_linear]
+        else:
+            # Single-panel linear-scale layout: the loss is
+            # sign-bearing (most commonly a Laplace-mode fit
+            # whose Gaussian-prior-density constants put the
+            # negative-ELBO below zero). The log-scale panel
+            # would be empty so we omit it.
+            #
+            # Width is half the two-panel default (3.5 vs 7.0) so
+            # the single panel renders at the same per-panel width
+            # as one half of the two-panel layout, rather than as
+            # a stretched wide rectangle.
+            _single_panel_default = (3.5, 3.0)
+            if axes is not None:
+                # Caller supplied multiple axes; use the first.
+                fig, _, flat_axes = _create_or_validate_grid_axes(
+                    n_rows=1,
+                    n_cols=1,
+                    fig=fig,
+                    axes=axes,
+                    figsize=figsize or _single_panel_default,
+                )
+                (ax_linear,) = flat_axes
+            else:
+                if ax is not None and fig is not None:
+                    ax_linear = ax
+                elif ax is not None:
+                    ax_linear = ax
+                    fig = ax_linear.figure
+                else:
+                    fig, ax_linear = plt.subplots(
+                        1, 1, figsize=figsize or _single_panel_default
+                    )
+            ax_linear.plot(loss_history)
+            ax_linear.set_xlabel("step")
+            ax_linear.set_ylabel("ELBO loss")
+            n_panels = 1
+            used_axes = [ax_linear]
         plot_suffix = "loss"
         save_label = "loss plot"
-        n_panels = 2
-        used_axes = [ax_log, ax_linear]
     else:
         console.print("[dim]Plotting MCMC diagnostics...[/dim]")
         if ax is not None:

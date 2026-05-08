@@ -33,6 +33,10 @@ BNBWithVCPLikelihood
     BNB counterpart of NBWithVCPLikelihood.
 ZIBNBWithVCPLikelihood
     BNB counterpart of ZINBWithVCPLikelihood.
+LogisticNormalMultinomialLikelihood
+    NB total × multinomial composition with ALR logistic-normal (VAE decoder).
+LNMWithVCPLikelihood
+    LNM with per-cell Variable Capture Probability on the totals NB submodel.
 
 Examples
 --------
@@ -56,6 +60,12 @@ from .beta_negative_binomial import (
     BNBWithVCPLikelihood,
     ZIBNBWithVCPLikelihood,
 )
+from .lnm import (
+    LogisticNormalMultinomialLikelihood,
+    LNMWithVCPLikelihood,
+    select_alr_reference,
+)
+from .pln import PoissonLogNormalLikelihood
 
 __all__ = [
     "Likelihood",
@@ -70,4 +80,10 @@ __all__ = [
     "ZeroInflatedBNBLikelihood",
     "BNBWithVCPLikelihood",
     "ZIBNBWithVCPLikelihood",
+    # LNM
+    "LogisticNormalMultinomialLikelihood",
+    "LNMWithVCPLikelihood",
+    "select_alr_reference",
+    # PLN
+    "PoissonLogNormalLikelihood",
 ]

@@ -361,6 +361,7 @@ class GeneSubsettingMixin:
             n_components=self.n_components,
             param_layouts=dict(self.layouts),
             _original_n_genes=original_n_genes,
+            _total_count_max=getattr(self, "_total_count_max", None),
             _gene_axis_by_key=getattr(self, "_gene_axis_by_key", None),
             _subset_gene_index=gene_index_abs,
         )

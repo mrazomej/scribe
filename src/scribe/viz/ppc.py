@@ -22,6 +22,7 @@ from ._interactive import (
 from .dispatch import _get_predictive_samples_for_plot
 from .gene_selection import (
     _coerce_and_align_counts_to_results,
+    _coerce_counts,
     _get_gene_names,
     _select_genes,
 )
@@ -33,7 +34,93 @@ from .ppc_rendering import (
 )
 
 
-def _prepare_ppc_data(results, counts, viz_cfg, *, n_rows, n_cols, n_samples):
+def _requires_full_gene_sampling(results) -> bool:
+    """Return whether PPC sampling should run on full results space.
+
+    Parameters
+    ----------
+    results : object
+        Fitted model results object.
+
+    Returns
+    -------
+    bool
+        ``True`` when PPC sampling should run in full model gene space before
+        plotting subsetting.
+    """
+    model_config = getattr(results, "model_config", None)
+    inference_method = (
+        str(getattr(model_config, "inference_method", "")).lower()
+        if model_config is not None
+        else ""
+    )
+    is_vae = "vae" in inference_method
+    is_amortized_subset = bool(
+        hasattr(results, "_uses_amortized_capture")
+        and results._uses_amortized_capture()
+        and getattr(results, "_original_n_genes", None) is not None
+        and int(getattr(results, "_original_n_genes")) > int(results.n_genes)
+    )
+    return bool(is_vae or is_amortized_subset)
+
+
+def _resolve_ppc_sampling_counts(results, raw_counts, aligned_counts):
+    """Resolve counts matrix for PPC sampling calls.
+
+    Parameters
+    ----------
+    results : object
+        Fitted model results object.
+    raw_counts : ndarray
+        Coerced counts in caller-provided gene space.
+    aligned_counts : ndarray
+        Counts aligned to ``results.n_genes`` for plotting operations.
+
+    Returns
+    -------
+    ndarray
+        Counts used in posterior/predictive sampling.
+
+    Raises
+    ------
+    ValueError
+        Raised for amortized subset results when full original-gene counts are
+        required but not provided.
+    """
+    if not (
+        hasattr(results, "_uses_amortized_capture")
+        and results._uses_amortized_capture()
+    ):
+        return aligned_counts
+
+    original_n_genes = getattr(results, "_original_n_genes", None)
+    if original_n_genes is None or int(original_n_genes) == int(
+        results.n_genes
+    ):
+        return aligned_counts
+
+    if int(raw_counts.shape[1]) == int(original_n_genes):
+        return raw_counts
+    if int(aligned_counts.shape[1]) == int(original_n_genes):
+        return aligned_counts
+    raise ValueError(
+        "PPC sampling requires full original-gene counts for amortized "
+        "capture on gene-subset results. Pass the original counts matrix "
+        f"with {int(original_n_genes)} genes."
+    )
+
+
+def _prepare_ppc_data(
+    results,
+    counts,
+    viz_cfg,
+    *,
+    counts_for_sampling=None,
+    n_rows,
+    n_cols,
+    n_samples,
+    ppc_level: str = "library_anchored",
+):
     """Prepare gene selection and predictive samples for PPC plotting.
 
     Selects genes across expression bins, generates posterior
@@ -46,6 +133,10 @@ def _prepare_ppc_data(results, counts, viz_cfg, *, n_rows, n_cols, n_samples):
         Fitted model results exposing predictive sampling.
     counts : array-like
         Observed count matrix ``(n_cells, n_genes)``.
+    counts_for_sampling : array-like
+        Count matrix used by posterior/predictive sampling calls. This can
+        differ from ``counts`` when amortized subset results require original
+        full-gene counts for sufficient-statistic computation.
     viz_cfg : OmegaConf or None
         Visualization configuration (used only for render options).
     n_rows : int
@@ -77,19 +168,29 @@ def _prepare_ppc_data(results, counts, viz_cfg, *, n_rows, n_cols, n_samples):
         f"[dim]Selected {n_genes_selected} genes across {n_rows} expression bins[/dim]"
     )
 
-    results_subset = results[selected_idx]
-    counts_subset = counts[:, selected_idx]
+    if counts_for_sampling is None:
+        counts_for_sampling = counts
+
+    sample_full_space = _requires_full_gene_sampling(results)
+    if sample_full_space:
+        sampling_results = results
+        sampling_counts = counts_for_sampling
+    else:
+        sampling_results = results[selected_idx]
+        sampling_counts = counts[:, selected_idx]
 
     console.print(
         f"[dim]Generating {n_samples} posterior predictive samples...[/dim]"
     )
     _ = _get_predictive_samples_for_plot(
-        results_subset,
+        sampling_results,
         rng_key=random.PRNGKey(42),
         n_samples=n_samples,
-        counts=counts_subset,
+        counts=sampling_counts,
         store_samples=True,
+        ppc_level=ppc_level,
     )
+    results_subset = results[selected_idx]
 
     # results[selected_idx] preserves the caller-specified gene order, so
     # subset_positions maps each gene's original index to its position in
@@ -128,6 +229,7 @@ def plot_ppc(
     fig=None,
     axes=None,
     ax=None,
+    ppc_level: str = "library_anchored",
 ):
     """Plot posterior predictive checks for selected genes.
 
@@ -169,8 +271,12 @@ def plot_ppc(
         Wrapped result containing the figure, axes, and metadata.
     """
     console.print("[dim]Plotting PPC...[/dim]")
+    raw_counts = _coerce_counts(counts)
     counts = _coerce_and_align_counts_to_results(
-        counts, results, context="plot_ppc"
+        raw_counts, results, context="plot_ppc"
+    )
+    counts_for_sampling = _resolve_ppc_sampling_counts(
+        results, raw_counts, counts
     )
     if ax is not None:
         raise ValueError(
@@ -178,13 +284,21 @@ def plot_ppc(
         )
     # Resolve grid dimensions: explicit kwargs > viz_cfg > defaults
     grid = _resolve_ppc_grid(
-        n_rows=n_rows, n_cols=n_cols, n_genes=n_genes,
-        n_samples=n_samples, viz_cfg=viz_cfg,
+        n_rows=n_rows,
+        n_cols=n_cols,
+        n_genes=n_genes,
+        n_samples=n_samples,
+        viz_cfg=viz_cfg,
     )
     prep = _prepare_ppc_data(
-        results, counts, viz_cfg,
-        n_rows=grid["n_rows"], n_cols=grid["n_cols"],
+        results,
+        counts,
+        viz_cfg,
+        counts_for_sampling=counts_for_sampling,
+        n_rows=grid["n_rows"],
+        n_cols=grid["n_cols"],
         n_samples=grid["n_samples"],
+        ppc_level=ppc_level,
     )
     n_rows = prep["n_rows"]
     n_cols = prep["n_cols"]

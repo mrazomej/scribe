@@ -224,6 +224,8 @@ class ModelConfig(BaseModel):
         d.setdefault("overdispersion_dataset_prior", "none")
         d.setdefault("expression_anchor", False)
         d.setdefault("expression_anchor_sigma", 0.3)
+        d.setdefault("d_mode", "low_rank")
+        d.setdefault("alr_reference_idx", -1)
         d.setdefault("gene_coverage", None)
 
         # Migrate legacy top-level capture prior fields into priors dict.
@@ -411,6 +413,26 @@ class ModelConfig(BaseModel):
             "via log(1+exp(z)); 'exp' restores the original log-Normal "
             "behavior via exp(z). Power users may prefer 'exp' for exact "
             "log-Normal priors at the cost of numerical stability."
+        ),
+    )
+
+    #: Diagonal mode for LNM ALR noise (``lnm`` / ``lnmvcp`` only; ignored otherwise).
+    d_mode: str = Field(
+        "low_rank",
+        description=(
+            "Diagonal mode for logistic-normal multinomial (LNM) models: "
+            "'low_rank' uses only the VAE decoder mean in ALR space; "
+            "'learned' adds per-coordinate positive scale d_lnm and IID "
+            "standard normal noise inside each cell."
+        ),
+    )
+    alr_reference_idx: int = Field(
+        -1,
+        description=(
+            "Index of the gene used as ALR reference (denominator) for LNM "
+            "models.  ``-1`` means the last gene (default / backward compat).  "
+            "Set automatically from data by ``scribe.fit()`` when "
+            "``model='lnm'``; can be overridden explicitly."
         ),
     )
 
@@ -605,6 +627,17 @@ class ModelConfig(BaseModel):
     # Validation Methods
     # --------------------------------------------------------------------------
 
+    @field_validator("d_mode")
+    @classmethod
+    def validate_d_mode(cls, v: str) -> str:
+        """Restrict ``d_mode`` to supported LNM regimes."""
+        allowed = {"low_rank", "learned"}
+        if v not in allowed:
+            raise ValueError(f"d_mode must be one of {allowed}, got {v!r}.")
+        return v
+
+    # --------------------------------------------------------------------------
+
     @field_validator("base_model")
     @classmethod
     def validate_base_model(cls, v: str) -> str:
@@ -650,6 +683,43 @@ class ModelConfig(BaseModel):
         - ``positive_transform`` must be ``"softplus"`` or ``"exp"``.
         """
         _NONE = HierarchicalPriorType.NONE
+
+        if self.base_model in ("lnm", "lnmvcp"):
+            # Both LNM and LNMVCP accept VAE (encoder) or LAPLACE
+            # (encoder-free variational EM). LNMVCP-Laplace handles
+            # the per-cell capture latent via a separate scalar
+            # Newton block (block-diagonal Hessian on (z, eta)),
+            # so no joint Newton is needed.
+            allowed = {InferenceMethod.VAE, InferenceMethod.LAPLACE}
+            if self.inference_method not in allowed:
+                allowed_str = "/".join(
+                    sorted(m.value for m in allowed)
+                )
+                raise ValueError(
+                    f"{self.base_model} requires "
+                    f"inference_method in {{{allowed_str}}} "
+                    f"(got {self.inference_method!r})."
+                )
+            # LNM family supports three parameterizations of the totals
+            # NB submodel: canonical, mean_prob, mean_odds. All three
+            # share the same compositional path; only the sampled-vs-
+            # derived split among (r_T, p, mu_T, phi_T) differs.
+            _lnm_variants = {
+                Parameterization.LOGISTIC_NORMAL_CANONICAL,
+                Parameterization.LOGISTIC_NORMAL_MEAN_PROB,
+                Parameterization.LOGISTIC_NORMAL_MEAN_ODDS,
+            }
+            if self.parameterization not in _lnm_variants:
+                raise ValueError(
+                    f"{self.base_model} requires one of the LNM-family "
+                    f"parameterizations (canonical / mean_prob / "
+                    f"mean_odds); got {self.parameterization!r}."
+                )
+            if self.overdispersion != OverdispersionType.NONE:
+                raise ValueError(
+                    "Gene-level BNB overdispersion is not supported for "
+                    f"{self.base_model} (got overdispersion={self.overdispersion!r})."
+                )
 
         # --- positive_transform validation ------------------------------------
         valid_transforms = {"softplus", "exp"}
@@ -819,7 +889,10 @@ class ModelConfig(BaseModel):
                 "hierarchy subsumes gene-level."
             )
         # Gene-level gate + dataset-level gate are mutually exclusive
-        if self.zero_inflation_prior != _NONE and self.zero_inflation_dataset_prior != _NONE:
+        if (
+            self.zero_inflation_prior != _NONE
+            and self.zero_inflation_dataset_prior != _NONE
+        ):
             raise ValueError(
                 f"zero_inflation_prior={self.zero_inflation_prior.value!r} and "
                 f"zero_inflation_dataset_prior={self.zero_inflation_dataset_prior.value!r} "
@@ -829,9 +902,7 @@ class ModelConfig(BaseModel):
         # shared_components validation: requires multi-dataset mixture setup
         if self.shared_components is not None:
             if self.n_datasets is None:
-                raise ValueError(
-                    "shared_components requires n_datasets >= 2."
-                )
+                raise ValueError("shared_components requires n_datasets >= 2.")
         if self.dataset_mixing:
             if self.n_datasets is None:
                 raise ValueError(
@@ -879,14 +950,24 @@ class ModelConfig(BaseModel):
         data_driven = self.capture_scaling_prior != _NONE
         has_capture_priors = eta_capture is not None or mu_eta is not None
 
-        # VCP model required for capture priors or data-driven mu_eta
+        # Capture priors require either a VCP model (nbvcp / zinbvcp /
+        # lnmvcp) OR the PLN model. PLN doesn't carry the "vcp" suffix
+        # because its capture is structurally different -- it folds
+        # capture into a per-cell additive log-rate offset rather than
+        # introducing a separate ``p_capture`` global parameter -- but
+        # it is still a *capture-aware* model and accepts the same
+        # biology-informed prior tuple.
+        capture_aware = (
+            self.uses_variable_capture or self.base_model == "pln"
+        )
         if has_capture_priors or data_driven:
-            if not self.uses_variable_capture:
+            if not capture_aware:
                 raise ValueError(
                     "Biology-informed capture priors (priors.organism, "
                     "priors.eta_capture, priors.mu_eta) or "
-                    "capture_scaling_prior != 'none' requires a VCP model "
-                    "(nbvcp or zinbvcp)."
+                    "capture_scaling_prior != 'none' requires a "
+                    "capture-aware model (nbvcp, zinbvcp, lnmvcp, or "
+                    "pln)."
                 )
 
         # capture_scaling_prior requires an eta_capture anchor
@@ -988,9 +1069,7 @@ class ModelConfig(BaseModel):
             return self
 
         if self.joint_params is None:
-            raise ValueError(
-                "dense_params requires joint_params to be set."
-            )
+            raise ValueError("dense_params requires joint_params to be set.")
 
         if not self.dense_params:
             raise ValueError(
@@ -1123,7 +1202,9 @@ class ModelConfig(BaseModel):
         .. deprecated::
             Use ``zero_inflation_dataset_prior`` instead.
         """
-        return self.zero_inflation_dataset_prior == HierarchicalPriorType.HORSESHOE
+        return (
+            self.zero_inflation_dataset_prior == HierarchicalPriorType.HORSESHOE
+        )
 
     @property
     def hierarchical_datasets(self) -> bool:
@@ -1135,8 +1216,7 @@ class ModelConfig(BaseModel):
         """
         _NONE = HierarchicalPriorType.NONE
         return any(
-            getattr(self, f)
-            != _NONE
+            getattr(self, f) != _NONE
             for f in (
                 "expression_dataset_prior",
                 "prob_dataset_prior",

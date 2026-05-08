@@ -5,13 +5,26 @@ count matrix against the predicted gene mean from the model's MAP
 parameters.  This is the single most informative diagnostic for mean
 calibration.
 
+For NB-family models (DM, NBVCP, ZINB, etc.) the predicted mean is
+``r * p / (1 - p)`` scaled by VCP capture probability when applicable.
+
+For LNM (Logistic Normal Multinomial) models the predicted mean is
+``rho_g * mean(u_T_obs)`` where ``rho`` is the compositional simplex
+from the inverse-ALR of the MAP ``y_alr``, and ``mean(u_T_obs)`` is
+the observed mean total UMI per cell.  We use the observed total
+rather than the NB model's ``r_T * p / (1 - p)`` because the
+composition and total-count are separate sub-models in LNM and the
+NB MAP point estimates can be unreliable for this purpose; the
+diagnostic therefore isolates the compositional fit quality.
+
+For PLN (Poisson-LogNormal) models the predicted mean is
+``exp(y_log_rate)`` where ``y_log_rate`` is the MAP decoder output in
+log-rate space.
+
 For mixture models the predicted mean is the marginal (weighted)
 average across components, which is directly comparable to the
 sample-wide observed mean regardless of whether cell labels are
 available.
-
-For VCP models the biological NB mean is scaled by the average
-capture probability to yield the predicted *observed* mean.
 
 The BNB uses a mean-preserving parameterization, so the predicted
 mean formula ``r * p / (1 - p)`` is valid whether BNB is active or
@@ -24,7 +37,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats as sp_stats
 
-from ._common import console
+from ._common import _is_pln_model, console
 from ._interactive import (
     _create_or_validate_grid_axes,
     _create_or_validate_single_axis,
@@ -47,7 +60,7 @@ def _compute_predicted_mean(
     *,
     layouts,
 ):
-    """Compute predicted per-gene observed mean from MAP parameters.
+    """Compute predicted per-gene observed mean from NB MAP parameters.
 
     Parameters
     ----------
@@ -107,6 +120,196 @@ def _compute_predicted_mean(
         mean_nu = 1.0
 
     return mu_bio * mean_nu
+
+
+def _compute_predicted_mean_lnm(
+    y_alr,
+    counts,
+    *,
+    alr_reference_idx=-1,
+):
+    """Compute predicted per-gene observed mean for LNM models.
+
+    The LNM predicted mean per gene is ``rho_g * mean(u_T)`` where
+    ``rho`` is the compositional simplex from the inverse-ALR of the
+    MAP ``y_alr``, and ``mean(u_T)`` is the observed mean total UMI
+    count per cell.
+
+    We use the observed mean total rather than the NB model's
+    ``r_T * p / (1 - p)`` because the composition (``rho``) and
+    total-count (``NB(r_T, p)``) are separate sub-models in LNM.
+    The NB MAP point estimates can lie in extreme regions of the
+    parameter space (small ``r_T``, ``p`` near 1) where the formula
+    produces unreliable values, even though posterior predictive
+    samples are fine.  Using the observed total isolates this
+    diagnostic to test the compositional model only.
+
+    Parameters
+    ----------
+    y_alr : ndarray, shape ``(G-1,)``
+        MAP ALR coordinates from the VAE decoder.
+    counts : ndarray, shape ``(C, G)``
+        Observed UMI count matrix (already aligned to model gene space).
+    alr_reference_idx : int
+        Index of the ALR reference gene (default ``-1`` = last gene).
+
+    Returns
+    -------
+    pred : ndarray, shape ``(G,)``
+        Predicted per-gene observed mean.
+    """
+    from ..core.normalization_logistic import _inverse_alr
+    import jax.numpy as jnp
+
+    # Step 1: recover the simplex composition ρ from ALR
+    # coordinates. ``_inverse_alr`` augments y_alr with a zero
+    # at the reference position and applies softmax — so the
+    # output ``rho`` is in proper composition space (each row
+    # sums to 1).
+    y_alr_arr = jnp.asarray(y_alr, dtype=jnp.float32)
+    counts_arr = np.asarray(counts, dtype=float)
+    n_per_cell = np.sum(counts_arr, axis=1)  # observed totals per cell
+
+    # Two input shapes are supported:
+    #   * 1-D ``(G-1,)`` — a single population-level y_alr (e.g.
+    #     the global decoder output for VAE-style results
+    #     without an explicit per-cell ALR map). Population
+    #     prediction is ``ρ_global × mean_c[N_c]``.
+    #   * 2-D ``(n_cells, G-1)`` — per-cell y_alr from Laplace
+    #     results (one ALR vector per training cell). The
+    #     honest population prediction multiplies each cell's
+    #     composition by its OWN observed total (preserving
+    #     correlation between library size and composition),
+    #     then averages across cells:
+    #         pred[g] = mean_c[ρ_c[g] · N_c]
+    #     rather than
+    #         pred[g] = mean_c[ρ_c[g]] · mean_c[N_c]
+    #     which would assume independence between N and ρ.
+    if y_alr_arr.ndim == 1:
+        y_alr_arr = y_alr_arr[None, :]
+        rho_global = np.asarray(
+            _inverse_alr(y_alr_arr, reference_index=alr_reference_idx)
+        ).squeeze(axis=0)
+        return rho_global * float(np.mean(n_per_cell))
+    if y_alr_arr.ndim == 2:
+        rho_per_cell = np.asarray(
+            _inverse_alr(y_alr_arr, reference_index=alr_reference_idx)
+        )  # shape (n_cells, G)
+        # Per-cell predicted counts then population-mean.
+        pred_per_cell = rho_per_cell * n_per_cell[:, None]
+        return pred_per_cell.mean(axis=0)
+    raise ValueError(
+        f"y_alr must be 1-D (G-1,) or 2-D (n_cells, G-1); "
+        f"got shape {tuple(y_alr_arr.shape)}."
+    )
+
+
+# Map-level log-rate predictions for PLN, accounting for any per-cell
+# capture offset and learned diagonal residual variance.
+def _compute_predicted_mean_pln(
+    y_log_rate, eta_capture=None, d_pln=None
+):
+    """Compute predicted per-gene observed mean for PLN models.
+
+    The PLN observation model is
+
+    .. math::
+        u_g^{(c)} \\mid x_g^{(c)} \\sim \\text{Poisson}(\\exp(x_g^{(c)})),
+        \\qquad x_g^{(c)} = y_{\\text{log-rate},\\,g,\\,c} - \\eta_c,
+
+    where :math:`\\eta_c` is the per-cell capture offset (zero when no
+    capture anchor is in use) and ``y_log_rate`` is the decoder output
+    in *biological* log-rate space (before capture). The per-gene
+    expected observed count is therefore
+
+    .. math::
+        \\mathbb{E}[u_g] \\;=\\; \\frac{1}{C}\\sum_c
+        \\exp\\!\\left(y_{\\text{log-rate},\\,g,\\,c} - \\eta_c\\right).
+
+    When ``d_mode = "learned"`` the decoder also adds a diagonal
+    residual ``sqrt(d_g) * eps`` in log-rate space, contributing a
+    multiplicative ``exp(d_g/2)`` to each gene's mean by the
+    log-normal moment formula.
+
+    Earlier revisions of this helper computed ``exp(y_log_rate)``
+    *without* subtracting ``eta_capture``, which returned the
+    *biological* rate rather than the *observed* rate -- on a fitted
+    PLNVCP model the diagnostic was systematically inflated by
+    ``1/p_capture``. The corrected formula brings the diagnostic into
+    the same observed-counts space as the empirical mean it is
+    plotted against.
+
+    Parameters
+    ----------
+    y_log_rate : ndarray, shape ``(G,)``, ``(1, G)``, or ``(n_cells, G)``
+        MAP log-rate from the PLN decoder. When per-cell, the
+        diagnostic averages ``exp(...)`` across cells.
+    eta_capture : ndarray or None, shape ``(n_cells,)`` or scalar
+        Per-cell capture offset. When ``None``, no capture correction is
+        applied (e.g. fits without ``priors={"capture_efficiency": ...}``).
+    d_pln : ndarray or None, shape ``(G,)``
+        Per-gene learned residual variance. When ``None`` the
+        log-normal moment correction is skipped.
+
+    Returns
+    -------
+    pred : ndarray, shape ``(G,)``
+        Per-gene predicted observed mean.
+    """
+    y_arr = np.asarray(y_log_rate, dtype=float)
+
+    # Apply per-cell capture offset, if any. The offset enters as a
+    # *subtraction* in log-rate space, broadcast across genes.
+    if eta_capture is not None:
+        eta_arr = np.asarray(eta_capture, dtype=float)
+        if y_arr.ndim == 1:
+            # Scalar / per-cell-collapsed y_log_rate: subtract the
+            # mean offset; the per-cell distribution is lost so we use
+            # the cell-averaged shift as a best-effort summary.
+            y_arr = y_arr - float(eta_arr.mean())
+        else:
+            # Per-cell y_log_rate: align eta_capture to (n_cells,) and
+            # subtract per cell, broadcasting across genes.
+            eta_arr = eta_arr.reshape(-1)
+            if eta_arr.shape[0] != y_arr.shape[0]:
+                # Shape mismatch: fall back to the mean offset and
+                # warn at most via the calibration caller.
+                y_arr = y_arr - float(eta_arr.mean())
+            else:
+                y_arr = y_arr - eta_arr[:, None]
+
+    # Average ``exp`` across cells for per-cell input; otherwise leave
+    # the (G,) shape alone.
+    rate = np.exp(y_arr)
+    if rate.ndim > 1:
+        rate = rate.mean(axis=0)
+    rate = np.squeeze(rate)
+
+    # Log-normal moment correction for learned diagonal residual.
+    if d_pln is not None:
+        d_arr = np.asarray(d_pln, dtype=float).reshape(-1)
+        rate = rate * np.exp(d_arr / 2.0)
+
+    return rate
+
+
+def _is_lnm_model(results) -> bool:
+    """Return True if the results use a logistic-normal parameterization."""
+    param = getattr(
+        getattr(results, "model_config", None), "parameterization", None
+    )
+    param_value = getattr(param, "value", param)
+    param_name = getattr(param, "name", None)
+    # Match any of the LNM-family variants (canonical / mean_prob /
+    # mean_odds). All three share the compositional path for which the
+    # mean-calibration plot is meaningful.
+    return (
+        isinstance(param_value, str)
+        and param_value.startswith("logistic_normal")
+    ) or (
+        isinstance(param_name, str)
+        and param_name.startswith("LOGISTIC_NORMAL")
+    )
 
 
 def _compute_per_dataset_means(
@@ -329,13 +532,199 @@ def _prepare_calibration_data(
         - ``obs_mean``, ``pred_mean``: arrays (single-dataset)
         - ``is_mixture``: bool
         - ``annotations``: list of annotation strings
-        Returns ``None`` when r/p are unavailable.
+        Returns ``None`` when required MAP parameters are unavailable.
     """
     counts = _coerce_and_align_counts_to_results(
         counts, results, context="_prepare_calibration_data"
     )
-    # Request only required keys up front so this diagnostic works for
-    # non-mixture and non-BNB models without forcing optional parameters.
+
+    _use_lnm = _is_lnm_model(results)
+    _use_pln = _is_pln_model(results)
+
+    # ---- LNM path: predicted mean = rho * obs_mean_total ---------------------
+    if _use_lnm:
+        lnm_targets = ["y_alr"]
+        if bool(getattr(results.model_config, "uses_variable_capture", False)):
+            lnm_targets.append("p_capture")
+        map_estimates = _get_map_estimates_for_plot(
+            results, counts=counts, targets=lnm_targets
+        )
+        y_alr = map_estimates.get("y_alr")
+        if y_alr is None:
+            console.print(
+                "[yellow]Skipping mean calibration: y_alr unavailable "
+                "in MAP estimates for LNM model.[/yellow]"
+            )
+            return None
+
+        alr_ref = getattr(results.model_config, "alr_reference_idx", -1)
+        p_capture = map_estimates.get("p_capture")
+
+        _annotations = []
+        if p_capture is not None:
+            mean_nu = float(np.mean(np.asarray(p_capture, dtype=float)))
+            _annotations.append(f"$\\bar{{\\nu}} = {mean_nu:.4f}$")
+        _annotations.append("LNM (composition)")
+
+        obs_mean = np.mean(np.asarray(counts, dtype=float), axis=0)
+        pred_mean = _compute_predicted_mean_lnm(
+            y_alr, counts,
+            alr_reference_idx=alr_ref,
+        )
+        return {
+            "mode": "single",
+            "ds_results": None,
+            "obs_mean": obs_mean,
+            "pred_mean": pred_mean,
+            "is_mixture": False,
+            "annotations": _annotations,
+        }
+
+    # ---- PLN path: predicted observed mean -----------------------------------
+    # We have two routes for the per-gene predicted mean:
+    #
+    # 1. **Per-cell MAP path (preferred when available)**. Laplace
+    #    results expose the per-cell MAP log-rate ``x_loc`` directly,
+    #    and the honest predicted mean for the data-informative
+    #    regime is then
+    #
+    #        pred_g  =  (1/C) sum_c  exp(x_g^(c)  -  eta_c).
+    #
+    #    No log-normal moment correction is added: ``x_loc`` is the
+    #    fitted *posterior MAP*, not a prior sample, and for
+    #    informative likelihood the per-cell posterior is sharply
+    #    concentrated around the MAP (so ``E[exp(x-eta)] ≈
+    #    exp(MAP-eta)`` to leading order). Adding ``exp(0.5*sigma_g^2)``
+    #    here would over-correct by treating the data as
+    #    non-informative. For PPC-consistency in the non-informative
+    #    limit a per-cell Hessian-based variance would be needed; the
+    #    PPC plot remains the gold standard for that regime.
+    #
+    # 2. **Population-level fallback (VAE / encoder-only results)**.
+    #    When ``x_loc`` is not available, we approximate
+    #
+    #        pred_g  ≈  exp(mu_g  +  0.5*(||W_g||²  +  d_g))
+    #                   *  (1/C) sum_c  exp(-eta_c).
+    #
+    #    The first factor is ``LowRankPoissonLogNormal.mean``
+    #    (prior-predictive moment of the log-rate) and the second is
+    #    the empirical capture factor. The factorization is exact
+    #    only when the aggregate posterior over ``z`` matches the
+    #    ``N(0, I)`` prior. Aggregate-posterior drift -- e.g. the
+    #    ``q(z)``-expanded regime that arises in PLN Laplace with a
+    #    weak capture prior -- biases this path by a factor that
+    #    depends on the drift magnitude (under-prediction when
+    #    ``var(z) > 1`` in some directions). The per-cell MAP path
+    #    (route 1) sidesteps that issue.
+    #
+    # Subtle Jensen point on the capture factor: the empirical mean
+    # capture is ``mean_c[exp(-eta_c)]``, *not* ``exp(-mean(eta_c))``.
+    # The two differ by ``exp(tau^2/2)`` where ``tau`` is the std of
+    # ``eta_c``; using the wrong form would under-predict by ~22%
+    # for typical ``tau ~ 0.7``. Both routes above use the unbiased
+    # form.
+    if _use_pln:
+        # Pull eta_capture and d_pln when available.
+        pln_targets = []
+        if bool(
+            getattr(
+                results.model_config,
+                "uses_biology_informed_capture",
+                False,
+            )
+        ):
+            pln_targets.append("eta_capture")
+        if (
+            getattr(results.model_config, "d_mode", "low_rank") == "learned"
+        ):
+            pln_targets.append("d_pln")
+        map_estimates = (
+            _get_map_estimates_for_plot(
+                results, counts=counts, targets=pln_targets
+            )
+            if pln_targets
+            else {}
+        )
+        eta_capture = map_estimates.get("eta_capture")
+        d_pln = map_estimates.get("d_pln")
+
+        # Pull eta as numpy for both the formula and the label.
+        if eta_capture is not None:
+            eta_arr = np.asarray(eta_capture, dtype=float).reshape(-1)
+            mean_eta = float(np.mean(eta_arr))
+        else:
+            eta_arr = None
+            mean_eta = None
+
+        # Try the per-cell MAP path first. Laplace results store
+        # the per-cell log-rate MAP under ``x_loc`` (shape
+        # ``(n_cells, G)``). VAE results don't expose this directly
+        # at the results-object level so we fall through.
+        x_loc = getattr(results, "x_loc", None)
+        x_arr: np.ndarray | None = None
+        if x_loc is not None:
+            x_loc_np = np.asarray(x_loc, dtype=float)
+            if x_loc_np.ndim == 2 and x_loc_np.shape[0] > 1:
+                x_arr = x_loc_np
+
+        if x_arr is not None:
+            # Per-cell MAP path: directly evaluate
+            #    pred_g = mean_c[ exp(x_g^(c) - eta_c) ].
+            # No LogN moment correction: ``x_loc`` is a fitted MAP,
+            # not a prior sample, so the per-cell exponential is
+            # already at the right scale for informative likelihood.
+            # See the design comment above.
+            if eta_arr is not None:
+                if eta_arr.shape[0] == x_arr.shape[0]:
+                    x_eff = x_arr - eta_arr[:, None]
+                else:
+                    # Defensive: shape mismatch ⇒ apply the average
+                    # capture factor instead of per-cell. Falls back
+                    # to the route-2 form for the eta term.
+                    log_capture = float(np.log(np.mean(np.exp(-eta_arr))))
+                    x_eff = x_arr + log_capture
+            else:
+                x_eff = x_arr
+            pred_mean = np.exp(x_eff).mean(axis=0)
+        else:
+            # Population-level fallback (VAE).
+            try:
+                distributions = results.get_distributions(
+                    backend="numpyro", split=False
+                )
+            except (TypeError, AttributeError):
+                distributions = results.get_distributions()
+            lambda_dist = distributions.get("lambda_rate")
+            if lambda_dist is None:
+                console.print(
+                    "[yellow]Skipping mean calibration: ``lambda_rate`` "
+                    "(LowRankPoissonLogNormal) unavailable for this PLN "
+                    "result.[/yellow]"
+                )
+                return None
+            pop_mean_bio = np.asarray(lambda_dist.mean, dtype=float)
+            if eta_arr is not None:
+                mean_capture = float(np.mean(np.exp(-eta_arr)))
+            else:
+                mean_capture = 1.0
+            pred_mean = pop_mean_bio * mean_capture
+
+        _annotations = []
+        if mean_eta is not None:
+            _annotations.append(f"$\\bar{{\\eta}} = {mean_eta:.4f}$")
+        _annotations.append("PLN (log-rate)")
+
+        obs_mean = np.mean(np.asarray(counts, dtype=float), axis=0)
+        return {
+            "mode": "single",
+            "ds_results": None,
+            "obs_mean": obs_mean,
+            "pred_mean": pred_mean,
+            "is_mixture": False,
+            "annotations": _annotations,
+        }
+
+    # ---- NB-family path: predicted mean = r * p / (1 - p) -------------------
     required_targets = ["r", "p"]
     if bool(getattr(results.model_config, "uses_variable_capture", False)):
         required_targets.append("p_capture")
@@ -369,7 +758,6 @@ def _prepare_calibration_data(
     bnb_kappa = None
     bnb_concentration = None
     if bool(getattr(results.model_config, "is_bnb", False)):
-        # BNB-specific annotations are optional and should never block plotting.
         try:
             bnb_map = _get_map_estimates_for_plot(
                 results, counts=counts, targets=["bnb_kappa"]

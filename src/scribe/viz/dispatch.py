@@ -8,13 +8,58 @@ import numpy as np
 from multipledispatch import dispatch
 import scribe
 
-from .gene_selection import _coerce_and_align_counts_to_results
+from .gene_selection import (
+    _coerce_and_align_counts_to_results,
+    _coerce_counts,
+)
 
 if TYPE_CHECKING:
     from ..core.axis_layout import AxisLayout
 
 
-@dispatch(scribe.ScribeSVIResults, object)
+def _coerce_counts_for_sampling(results, counts, *, context):
+    """Coerce plot counts for inference-time sampling calls.
+
+    Parameters
+    ----------
+    results : object
+        Fitted results object.
+    counts : array-like
+        Counts provided by the caller.
+    context : str
+        Error-context label for alignment helpers.
+
+    Returns
+    -------
+    numpy.ndarray
+        Count matrix suited for downstream sampling methods.
+
+    Notes
+    -----
+    Gene-subset results with amortized capture require full original-gene
+    counts when available. In that specific case this helper preserves the
+    full matrix and skips model-space realignment.
+    """
+    counts_arr = _coerce_counts(counts)
+    uses_amortized = bool(
+        hasattr(results, "_uses_amortized_capture")
+        and results._uses_amortized_capture()
+    )
+    original_n_genes = getattr(results, "_original_n_genes", None)
+    if (
+        uses_amortized
+        and original_n_genes is not None
+        and int(original_n_genes) > int(getattr(results, "n_genes", 0))
+        and counts_arr.ndim == 2
+        and int(counts_arr.shape[1]) == int(original_n_genes)
+    ):
+        return counts_arr
+    return _coerce_and_align_counts_to_results(
+        counts_arr, results, context=context
+    )
+
+
+@dispatch(scribe.ScribeVariationalResults, object)
 def _get_inference_metadata_for_filenames(results, cfg):
     """Get filename metadata for SVI runs."""
     if hasattr(cfg, "inference") and hasattr(cfg.inference, "n_steps"):
@@ -80,13 +125,28 @@ def _get_inference_metadata_for_filenames(results, cfg):
     }
 
 
-@dispatch(scribe.ScribeSVIResults)
+@dispatch(scribe.ScribeVariationalResults)
 def _get_predictive_samples_for_plot(
-    results, *, rng_key, n_samples, counts, store_samples=True
+    results,
+    *,
+    rng_key,
+    n_samples,
+    counts,
+    batch_size=None,
+    store_samples=True,
+    ppc_level=None,
 ):
-    """Get PPC samples for plotting from variational results."""
-    counts = _coerce_and_align_counts_to_results(
-        counts, results, context="_get_predictive_samples_for_plot"
+    """Get PPC samples for plotting from variational results.
+
+    The ``ppc_level`` argument is accepted for interface parity
+    with the Laplace dispatch but currently ignored — the SVI/VAE
+    PPC path predates the three-level honesty taxonomy and routes
+    through the legacy posterior-sampling pipeline.
+    """
+    _ = batch_size
+    _ = ppc_level
+    counts = _coerce_counts_for_sampling(
+        results, counts, context="_get_predictive_samples_for_plot"
     )
     # Generate posterior draws explicitly for this plotting call so we can run
     # one PPC batch at a time without relying on persistent cached samples.
@@ -104,9 +164,15 @@ def _get_predictive_samples_for_plot(
     predictive_samples = None
     try:
         results.posterior_samples = posterior_samples
+        # Forward ``counts`` so LNM-family results trigger
+        # conditional PPC (per-cell ``u_T`` fixed at observed
+        # library size). For non-LNM models this kwarg is ignored
+        # in get_predictive_samples, so the call is safe across
+        # all result types.
         predictive_samples = results.get_predictive_samples(
             rng_key=rng_key,
             store_samples=False,
+            counts=counts,
         )
     finally:
         if store_samples:
@@ -120,12 +186,108 @@ def _get_predictive_samples_for_plot(
     return np.array(predictive_samples)
 
 
+@dispatch(scribe.ScribeLaplaceResults)
+def _get_predictive_samples_for_plot(
+    results,
+    *,
+    rng_key,
+    n_samples,
+    counts,
+    batch_size=None,
+    store_samples=True,
+    ppc_level: str = "library_anchored",
+):
+    """Get PPC samples for plotting from Laplace results.
+
+    Three honesty levels are supported via ``ppc_level``:
+
+    * ``"per_cell"`` — per-cell Laplace posterior (conditional
+      on each observed cell). Calibrated for per-cell uncertainty
+      but circular as a population-level fit test.
+    * ``"library_anchored"`` (default) — fresh latents from
+      𝒩(μ, 𝑊𝑊ᵗ + diag(d)) paired with each cell's observed
+      library size. Tests the compositional fit independently
+      of the totals/capture submodel. Recommended default.
+    * ``"marginal"`` — fully marginal: latent factors, capture
+      (η/p_capture bootstrapped from fitted per-cell values),
+      totals, and observation noise are all sampled fresh.
+      Most honest test of the entire generative story.
+
+    See :meth:`ScribeLaplaceResults.get_ppc_samples` for the
+    full signatures.
+    """
+    _ = batch_size
+    n_eff = int(n_samples) if n_samples is not None else 100
+
+    if ppc_level == "library_anchored":
+        if counts is None:
+            raise ValueError(
+                "ppc_level='library_anchored' requires `counts`. "
+                "Pass an AnnData / count matrix to plot_ppc, or "
+                "use ppc_level='marginal' to skip observed-cell "
+                "anchoring entirely."
+            )
+        predictive_samples = results.get_ppc_samples(
+            rng_key=rng_key, n_samples=n_eff,
+            level="library_anchored", counts=counts,
+        )
+    elif ppc_level == "per_cell":
+        if counts is None:
+            raise ValueError(
+                "ppc_level='per_cell' requires `counts` so the "
+                "per-cell observed totals can drive the multinomial."
+            )
+        predictive_samples = results.get_ppc_samples(
+            rng_key=rng_key, n_samples=n_eff,
+            level="per_cell", counts=counts,
+        )
+    elif ppc_level == "marginal":
+        # Marginal mode samples ``(n_eff, G)`` fresh imaginary cells.
+        # The rendering code expects ``(n_samples, n_cells, G)`` so
+        # downstream histograms aggregate over the cell axis. We
+        # produce that shape by drawing ``n_eff * n_cells_obs``
+        # *independent* imaginary cells and reshaping — each
+        # cell-slot in the output is its own marginal draw.
+        n_cells_obs = (
+            int(counts.shape[0]) if counts is not None else n_eff
+        )
+        n_total_imaginary = n_eff * n_cells_obs
+        flat = results.get_ppc_samples(
+            rng_key=rng_key, n_samples=n_total_imaginary,
+            level="marginal",
+        )
+        flat_np = np.asarray(flat)
+        G_eff = flat_np.shape[-1]
+        predictive_samples = flat_np.reshape(n_eff, n_cells_obs, G_eff)
+    else:
+        raise ValueError(
+            f"ppc_level must be 'per_cell', 'library_anchored', or "
+            f"'marginal'; got {ppc_level!r}"
+        )
+    predictive_np = np.array(predictive_samples)
+    if store_samples:
+        results.predictive_samples = predictive_np
+    return predictive_np
+
+
 @dispatch(scribe.ScribeMCMCResults)
 def _get_predictive_samples_for_plot(
-    results, *, rng_key, n_samples, counts, store_samples=True
+    results,
+    *,
+    rng_key,
+    n_samples,
+    counts,
+    batch_size=None,
+    store_samples=True,
+    ppc_level=None,
 ):
-    """Get PPC samples for plotting from MCMC results."""
+    """Get PPC samples for plotting from MCMC results.
+
+    ``ppc_level`` accepted for interface parity; ignored here.
+    """
     _ = counts
+    _ = batch_size
+    _ = ppc_level
     predictive_samples = results.get_ppc_samples(
         rng_key=rng_key,
         store_samples=store_samples,
@@ -144,7 +306,7 @@ def _get_predictive_samples_for_plot(
     return predictive_np
 
 
-@dispatch(scribe.ScribeSVIResults)
+@dispatch(scribe.ScribeVariationalResults)
 def _get_map_like_predictive_samples_for_plot(
     results,
     *,
@@ -158,8 +320,10 @@ def _get_map_like_predictive_samples_for_plot(
 ):
     """Generate MAP-based predictive samples for variational plotting."""
     if counts is not None:
-        counts = _coerce_and_align_counts_to_results(
-            counts, results, context="_get_map_like_predictive_samples_for_plot"
+        counts = _coerce_counts_for_sampling(
+            results,
+            counts,
+            context="_get_map_like_predictive_samples_for_plot",
         )
     return np.array(
         results.get_map_ppc_samples(
@@ -199,14 +363,14 @@ def _get_map_like_predictive_samples_for_plot(
     )
 
 
-@dispatch(scribe.ScribeSVIResults)
+@dispatch(scribe.ScribeVariationalResults)
 def _get_map_estimates_for_plot(
     results, *, counts=None, use_mean=True, targets=None
 ):
     """Get plot-ready MAP estimates from variational results."""
     if counts is not None:
-        counts = _coerce_and_align_counts_to_results(
-            counts, results, context="_get_map_estimates_for_plot"
+        counts = _coerce_counts_for_sampling(
+            results, counts, context="_get_map_estimates_for_plot"
         )
     return results.get_map(
         targets=targets,
@@ -233,7 +397,7 @@ def _get_map_estimates_for_plot(
 # ---------------------------------------------------------------------------
 
 
-@dispatch(scribe.ScribeSVIResults)
+@dispatch(scribe.ScribeVariationalResults)
 def _get_layouts_for_plot(results) -> dict[str, "AxisLayout"]:
     """Get canonical MAP-level AxisLayout metadata from SVI results.
 
@@ -274,14 +438,15 @@ def _get_layouts_for_plot(results) -> dict[str, "AxisLayout"]:
     return {k: v.without_sample_dim() for k, v in raw.items()}
 
 
-
-@dispatch(scribe.ScribeSVIResults)
+@dispatch(scribe.ScribeVariationalResults)
 def _get_cell_assignment_probabilities_for_plot(
     results, *, counts, batch_size=None, use_mean=False
 ):
     """Get MAP component-assignment probabilities from SVI mixture results."""
-    counts = _coerce_and_align_counts_to_results(
-        counts, results, context="_get_cell_assignment_probabilities_for_plot"
+    counts = _coerce_counts_for_sampling(
+        results,
+        counts,
+        context="_get_cell_assignment_probabilities_for_plot",
     )
     # Use optional batching to avoid OOM on large cell counts.
     assignment_info = results.cell_type_probabilities_map(
@@ -299,8 +464,10 @@ def _get_cell_assignment_probabilities_for_plot(
 ):
     """Get component-assignment probabilities from MCMC results."""
     _ = use_mean
-    counts = _coerce_and_align_counts_to_results(
-        counts, results, context="_get_cell_assignment_probabilities_for_plot"
+    counts = _coerce_counts_for_sampling(
+        results,
+        counts,
+        context="_get_cell_assignment_probabilities_for_plot",
     )
     # Use optional batching to avoid OOM on large cell counts.
     assignment_info = results.cell_type_probabilities(
@@ -317,7 +484,7 @@ def _get_cell_assignment_probabilities_for_plot(
 # ---------------------------------------------------------------------------
 
 
-@dispatch(scribe.ScribeSVIResults)
+@dispatch(scribe.ScribeVariationalResults)
 def _get_biological_ppc_samples_for_plot(
     results, *, rng_key, n_samples, counts, batch_size=None, store_samples=True
 ):
@@ -327,8 +494,8 @@ def _get_biological_ppc_samples_for_plot(
     zero-inflation gate.  Follows the same save/restore pattern as
     ``_get_predictive_samples_for_plot``.
     """
-    counts = _coerce_and_align_counts_to_results(
-        counts, results, context="_get_biological_ppc_samples_for_plot"
+    counts = _coerce_counts_for_sampling(
+        results, counts, context="_get_biological_ppc_samples_for_plot"
     )
     bio_result = results.get_ppc_samples_biological(
         rng_key=rng_key,
@@ -363,7 +530,9 @@ def _get_biological_ppc_samples_for_plot(
         key_parts = np.asarray(rng_key, dtype=np.uint64).ravel()
         seed = int(key_parts[0] * np.uint64(2**32) + key_parts[1])
         draw_rng = np.random.default_rng(seed)
-        idx = draw_rng.choice(bio_np.shape[0], size=int(n_samples), replace=False)
+        idx = draw_rng.choice(
+            bio_np.shape[0], size=int(n_samples), replace=False
+        )
         bio_np = bio_np[idx]
     if store_samples:
         results.predictive_samples = bio_np
@@ -375,16 +544,16 @@ def _get_biological_ppc_samples_for_plot(
 # ---------------------------------------------------------------------------
 
 
-@dispatch(scribe.ScribeSVIResults)
+@dispatch(scribe.ScribeVariationalResults)
 def _get_denoised_counts_for_plot(
     results, *, counts, rng_key, method=("mean", "sample"), cell_batch_size=None
 ):
     """MAP-denoise observed counts for SVI results.
 
-    Returns a 2-D ``(n_cells, n_genes)`` numpy array.
+    Returns a 2-D     ``(n_cells, n_genes)`` numpy array.
     """
-    counts = _coerce_and_align_counts_to_results(
-        counts, results, context="_get_denoised_counts_for_plot"
+    counts = _coerce_counts_for_sampling(
+        results, counts, context="_get_denoised_counts_for_plot"
     )
     denoised = results.denoise_counts_map(
         counts=counts,
@@ -406,8 +575,8 @@ def _get_denoised_counts_for_plot(
     Averages over posterior samples to produce a single 2-D
     ``(n_cells, n_genes)`` numpy array.
     """
-    counts = _coerce_and_align_counts_to_results(
-        counts, results, context="_get_denoised_counts_for_plot"
+    counts = _coerce_counts_for_sampling(
+        results, counts, context="_get_denoised_counts_for_plot"
     )
     denoised = results.denoise_counts(
         counts=counts,
@@ -425,7 +594,7 @@ def _get_denoised_counts_for_plot(
 # ---------------------------------------------------------------------------
 
 
-@dispatch(scribe.ScribeSVIResults)
+@dispatch(scribe.ScribeVariationalResults)
 def _get_training_diagnostic_payload(results):
     """Build training diagnostics payload for SVI loss plots."""
     return {
@@ -445,9 +614,9 @@ def _get_training_diagnostic_payload(results):
         "potential_energy": (
             np.array(potential_energy) if potential_energy is not None else None
         ),
-        "diverging": np.array(diverging).astype(int)
-        if diverging is not None
-        else None,
+        "diverging": (
+            np.array(diverging).astype(int) if diverging is not None else None
+        ),
         "trace_by_chain": None,
         "trace_param_name": None,
     }
@@ -466,3 +635,123 @@ def _get_training_diagnostic_payload(results):
         payload["trace_by_chain"] = None
         payload["trace_param_name"] = None
     return payload
+
+
+# =====================================================================
+# Laplace-result registrations
+# =====================================================================
+#
+# The dispatch table is keyed by *result class*, so adding a new
+# inference path (Laplace) requires explicit registrations of every
+# helper the viz layer uses. Without these, callers like
+# ``scribe.viz.plot_loss(laplace_result)`` raise
+# ``NotImplementedError``. The registrations below mirror the
+# Variational/MCMC versions semantically, adapted to the
+# Laplace-specific shape of state on ``ScribeLaplaceResults``.
+
+
+@dispatch(scribe.ScribeLaplaceResults, object)
+def _get_inference_metadata_for_filenames(results, cfg):
+    """Filename metadata for Laplace runs.
+
+    Mirrors the SVI implementation but uses ``laplace_config`` /
+    inference-config plumbing the user passed to ``scribe.fit``.
+    Falls back to ``cfg.get("n_steps", 50000)`` when the higher-
+    level config object isn't structured.
+    """
+    if hasattr(cfg, "inference") and hasattr(cfg.inference, "n_steps"):
+        n_steps = cfg.inference.n_steps
+    else:
+        n_steps = cfg.get("n_steps", 50000)
+    return {
+        "run_size_value": int(n_steps),
+        "run_size_label": "steps",
+        "run_size_token": f"{int(n_steps)}steps_laplace",
+        "n_steps": int(n_steps),
+    }
+
+
+@dispatch(scribe.ScribeLaplaceResults)
+def _get_training_diagnostic_payload(results):
+    """Build training diagnostics payload for Laplace loss plots.
+
+    Laplace produces a per-step negative-ELBO loss curve identical
+    in shape to SVI's, so the payload format matches SVI's. The
+    plot_loss helper consumes ``loss_history`` as a numpy array.
+    """
+    return {
+        "plot_kind": "loss",
+        "loss_history": np.array(results.losses),
+    }
+
+
+@dispatch(scribe.ScribeLaplaceResults)
+def _get_map_estimates_for_plot(
+    results, *, counts=None, use_mean=True, targets=None
+):
+    """Get plot-ready MAP estimates from Laplace results.
+
+    Laplace results store a literal MAP (no posterior to take a
+    mean over), so ``use_mean`` is ignored. ``targets`` and
+    ``counts`` are accepted for signature parity with the
+    variational dispatch but currently ignored — the Laplace
+    ``get_map`` returns a fixed dict of point estimates that
+    downstream callers (mean-calibration, MAP plots) handle
+    directly.
+    """
+    _ = counts
+    _ = use_mean
+    _ = targets
+    return results.get_map()
+
+
+@dispatch(scribe.ScribeLaplaceResults)
+def _get_layouts_for_plot(results) -> dict[str, "AxisLayout"]:
+    """Layout metadata for Laplace results.
+
+    Laplace results don't carry a per-cell ``layouts`` dict the way
+    SVI/MCMC do — the per-cell state is typed dataclass fields
+    rather than NumPyro-named samples. For viz callers that ask
+    for layouts, return an empty dict; the plotting helpers we've
+    wired (loss + PPC) don't actually consult layouts.
+
+    If a future plot helper does need layouts, it should be
+    extended to read shapes directly from the typed
+    ``ScribeLaplaceResults`` slots.
+    """
+    return {}
+
+
+@dispatch(scribe.ScribeLaplaceResults)
+def _get_map_like_predictive_samples_for_plot(
+    results,
+    *,
+    rng_key,
+    n_samples,
+    cell_batch_size=None,
+    use_mean=True,
+    store_samples=False,
+    verbose=True,
+    counts=None,
+):
+    """MAP-based predictive samples for Laplace plotting.
+
+    Laplace already stores per-cell MAP estimates, so "MAP-based"
+    PPC is identical to the standard per-cell PPC: sample from
+    ``Multinomial(L_c, softmax(mu + W z_c*))`` (LNM) or
+    ``Poisson(exp(x_c* - eta_c*))`` (PLN) using the stored MAP.
+    We forward to ``get_per_cell_predictive_samples`` which
+    handles both model branches via ``model_config.base_model``
+    dispatch.
+    """
+    _ = cell_batch_size
+    _ = use_mean
+    _ = store_samples
+    _ = verbose
+    return np.array(
+        results.get_per_cell_predictive_samples(
+            rng_key=rng_key,
+            n_samples=int(n_samples) if n_samples is not None else 100,
+            counts=counts,
+        )
+    )

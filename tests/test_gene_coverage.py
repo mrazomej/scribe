@@ -139,8 +139,159 @@ def test_fit_gene_coverage_attaches_metadata(monkeypatch):
     assert result.gene_coverage == pytest.approx(0.8)
     assert result.gene_coverage_mask is not None
     assert hasattr(result, "_excluded_gene_names")
+    # The stored multinomial allocation ceiling is based on the observed
+    # maximum per-cell total count with a 1.5x safety buffer.
+    assert result.total_count_max == 70
+    assert int(result._total_count_max) == 70
     assert "scribe_gene_coverage_included" in adata.var.columns
     assert "scribe_gene_coverage_rank" in adata.var.columns
+
+
+def test_lnm_auto_reference_includes_pooled_other(monkeypatch):
+    """LNM auto-reference should let the pooled ``_other`` pseudo-gene compete.
+
+    The pooled ``_other`` is a sum over the genes that
+    ``gene_coverage`` filtering already removed for being
+    uninformative. By the central limit theorem its per-cell
+    proportion is typically very stable, making it a strong
+    candidate for the variance-minimising ALR reference. The
+    auto-selection function is called with the full count matrix
+    (including the trailing ``_other`` column) so it can win the
+    competition when appropriate.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Fixture used to replace heavy inference and ALR-selection internals.
+    """
+    # Use an input where coverage filtering pools one low-abundance gene,
+    # creating a trailing ``_other`` model-space column.
+    counts = np.array(
+        [
+            [40.0, 10.0, 1.0],
+            [35.0, 9.0, 1.0],
+        ]
+    )
+
+    received_shapes = {}
+
+    def _fake_run_inference(method, **kwargs):
+        model_config = kwargs["model_config"]
+        return ScribeSVIResults(
+            params={},
+            loss_history=jnp.array([0.0]),
+            n_cells=kwargs["n_cells"],
+            n_genes=kwargs["n_genes"],
+            model_type=model_config.base_model,
+            model_config=model_config,
+            prior_params={},
+        )
+
+    def _fake_select_alr_reference(arr, **_kwargs):
+        # Auto-selection now receives the *full* count matrix
+        # including the trailing ``_other`` column, so the pseudo-
+        # gene gets a chance to win the variance competition.
+        received_shapes["n_genes"] = arr.shape[1]
+        return 0
+
+    monkeypatch.setattr("scribe.api._run_inference", _fake_run_inference)
+    monkeypatch.setattr(
+        "scribe.models.components.likelihoods.lnm.select_alr_reference",
+        _fake_select_alr_reference,
+    )
+
+    result = fit(
+        counts,
+        model="lnm",
+        inference_method="svi",
+        n_steps=1,
+        gene_coverage=0.95,
+    )
+    # Selector saw all 3 columns (2 retained genes + 1 ``_other``).
+    assert received_shapes["n_genes"] == 3
+    assert int(result.model_config.alr_reference_idx) == 0
+
+
+def test_lnm_reference_maps_from_original_gene_space(monkeypatch):
+    """LNM ALR reference should map from original to filtered gene indices.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Fixture used to replace heavy inference internals.
+
+    Returns
+    -------
+    None
+        The test asserts the mapped reference index in model-space.
+    """
+    # Coverage keeps genes 1 and 3, then appends a pooled "other" column.
+    counts = np.array(
+        [
+            [1.0, 10.0, 1.0, 9.0],
+            [1.0, 8.0, 1.0, 8.0],
+        ]
+    )
+
+    def _fake_run_inference(method, **kwargs):
+        model_config = kwargs["model_config"]
+        # Original index 3 maps to filtered index 1 (kept genes: [1, 3]).
+        assert int(model_config.alr_reference_idx) == 1
+        return ScribeSVIResults(
+            params={},
+            loss_history=jnp.array([0.0]),
+            n_cells=kwargs["n_cells"],
+            n_genes=kwargs["n_genes"],
+            model_type=model_config.base_model,
+            model_config=model_config,
+            prior_params={},
+        )
+
+    monkeypatch.setattr("scribe.api._run_inference", _fake_run_inference)
+
+    result = fit(
+        counts,
+        model="lnm",
+        inference_method="svi",
+        n_steps=1,
+        gene_coverage=0.8,
+        alr_reference_idx=3,
+    )
+    assert int(result.model_config.alr_reference_idx) == 1
+
+
+def test_lnm_reference_rejects_excluded_gene(monkeypatch):
+    """LNM should reject ALR references excluded by coverage filtering.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Fixture used to replace heavy inference internals.
+
+    Returns
+    -------
+    None
+        The test asserts a clear validation error for excluded references.
+    """
+    counts = np.array(
+        [
+            [10.0, 4.0, 1.0],
+            [9.0, 3.0, 1.0],
+        ]
+    )
+    monkeypatch.setattr("scribe.api._run_inference", lambda *a, **k: None)
+
+    with pytest.raises(
+        ValueError, match="alr_reference_idx points to a gene excluded"
+    ):
+        fit(
+            counts,
+            model="lnm",
+            inference_method="svi",
+            n_steps=1,
+            gene_coverage=0.8,
+            alr_reference_idx=2,
+        )
 
 
 @dataclass

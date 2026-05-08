@@ -179,3 +179,88 @@ class TestBuildConfigFromPreset:
                 inference_method="svi",
             )
             assert config.base_model == model
+
+    def test_lnm_defaults_to_log1p_prop_input_transform(self):
+        """LNM models should default to compositional encoder inputs."""
+        # ``parameterization="canonical"`` is the LNM default (mirrors
+        # the historical ``logistic_normal`` behavior). The legacy
+        # ``"logistic_normal"`` string is no longer accepted; users
+        # pass one of canonical / mean_prob / mean_odds explicitly.
+        config = build_config_from_preset(
+            model="lnm",
+            parameterization="canonical",
+            inference_method="vae",
+        )
+        assert config.vae is not None
+        assert config.vae.input_transform == "log1p_prop"
+
+    def test_lnm_respects_explicit_input_transform_override(self):
+        """Explicit user overrides must take precedence for LNM."""
+        config = build_config_from_preset(
+            model="lnm",
+            parameterization="canonical",
+            inference_method="vae",
+            vae_input_transform="clr",
+        )
+        assert config.vae is not None
+        assert config.vae.input_transform == "clr"
+
+    def test_pln_without_capture_anchor_defaults_to_log1p(self):
+        """PLN without a capture anchor must keep ``log1p`` (raw counts).
+
+        Without a per-cell capture parameter, the latent ``z`` is the
+        *only* place per-cell library-size variation can be encoded.
+        Stripping that signal from the encoder input would force
+        every cell to predict the same total counts -- a guaranteed
+        bad fit. So the default falls back to ``log1p`` in this
+        regime.
+        """
+        config = build_config_from_preset(
+            model="pln",
+            parameterization="poisson_lognormal",
+            inference_method="vae",
+        )
+        assert config.vae is not None
+        assert config.vae.input_transform == "log1p"
+
+    def test_pln_with_capture_anchor_defaults_to_log1p_prop(self):
+        """PLN with a capture-anchor prior must default to ``log1p_prop``.
+
+        With ``eta_capture`` available as a per-cell scale parameter
+        anchored by the biology-informed prior, library-size
+        variation has a dedicated home -- and stripping it from the
+        encoder input prevents the identifiability ridge between
+        ``z`` and ``eta_capture`` (the failure mode that pushed
+        ``\\bar{\\eta}`` to ~10 on the jurkat data). The capture
+        anchor is detected by the presence of any capture-related
+        prior key.
+        """
+        config = build_config_from_preset(
+            model="pln",
+            parameterization="poisson_lognormal",
+            inference_method="vae",
+            priors={"capture_efficiency": (11.5, 0.5)},
+        )
+        assert config.vae is not None
+        assert config.vae.input_transform == "log1p_prop"
+
+    def test_pln_respects_explicit_input_transform_override(self):
+        """Explicit non-``log1p`` user overrides must take precedence for PLN.
+
+        Note: the override path matches LNM's -- it can only detect a
+        user-supplied transform when it differs from the function
+        default (``log1p``). Passing ``log1p`` explicitly is
+        indistinguishable from the function default and therefore
+        gets resolved to the per-model recommendation
+        (``log1p_prop`` when capture anchor is on, ``log1p``
+        otherwise). Users who want a non-default transform pass it
+        explicitly (here ``clr``, mirroring LNM's override test).
+        """
+        config = build_config_from_preset(
+            model="pln",
+            parameterization="poisson_lognormal",
+            inference_method="vae",
+            vae_input_transform="clr",
+        )
+        assert config.vae is not None
+        assert config.vae.input_transform == "clr"

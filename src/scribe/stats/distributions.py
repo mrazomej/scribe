@@ -234,9 +234,9 @@ class BetaNegativeBinomial(Distribution):
         at their native (G,) shape rather than the broadcast (C, G).
         JAX broadcasting handles the addition with the (C, G) terms.
         """
-        c1 = self.concentration1   # alpha — (C, G) or full batch
-        c0 = self._c0_raw          # kappa — original shape, e.g. (G,)
-        n = self._n_raw            # r     — original shape, e.g. (G,)
+        c1 = self.concentration1  # alpha — (C, G) or full batch
+        c0 = self._c0_raw  # kappa — original shape, e.g. (G,)
+        n = self._n_raw  # r     — original shape, e.g. (G,)
 
         # Gene-only terms: 3 gammaln at the smaller (G,) shape.
         gene_terms = gammaln(c0 + n) - gammaln(n) - gammaln(c0)
@@ -324,10 +324,13 @@ class LowRankLogisticNormal(Distribution):
 
     Asymmetry and Reference Component
     ----------------------------------
-    The ALR transformation treats the last component (x_D) as a reference.
-    This means the distribution is NOT symmetric under permutation of
-    components. If you need symmetry, use SoftmaxNormal instead (but note
-    that SoftmaxNormal cannot compute log_prob).
+    The ALR transformation uses one simplex component as the reference
+    (denominator in log-ratios).  By default (``reference_idx=-1``) this is
+    the last component.  A non-default index places that component at the
+    chosen axis position without reordering latent rows (the Gaussian always
+    has dimension ``D-1``).  The distribution is not symmetric under
+    arbitrary relabeling unless you use ``SoftmaxNormal`` (which cannot
+    compute ``log_prob``).
 
     Parameters
     ----------
@@ -337,6 +340,9 @@ class LowRankLogisticNormal(Distribution):
         Low-rank factor matrix W of shape (D-1, rank)
     cov_diag : jnp.ndarray
         Diagonal component D of shape (D-1,)
+    reference_idx : int, default=-1
+        Zero-based index of the simplex component used as the ALR reference.
+        ``-1`` means the last component (legacy default).
     validate_args : bool, optional
         Whether to validate input arguments
 
@@ -383,7 +389,9 @@ class LowRankLogisticNormal(Distribution):
     support = constraints.simplex
     has_rsample = False
 
-    def __init__(self, loc, cov_factor, cov_diag, validate_args=None):
+    def __init__(
+        self, loc, cov_factor, cov_diag, reference_idx=-1, validate_args=None
+    ):
         loc = jnp.asarray(loc)
         cov_factor = jnp.asarray(cov_factor)
         cov_diag = jnp.asarray(cov_diag)
@@ -392,6 +400,7 @@ class LowRankLogisticNormal(Distribution):
         self.loc = loc
         self.cov_factor = cov_factor
         self.cov_diag = cov_diag
+        self._reference_idx = int(reference_idx)
 
         # Infer dimensions
         self.n_dims_unconstrained = loc.shape[-1]  # D - 1
@@ -407,6 +416,11 @@ class LowRankLogisticNormal(Distribution):
             event_shape=(self.n_dims_simplex,),
             validate_args=validate_args,
         )
+
+    @property
+    def reference_idx(self) -> int:
+        """Index of the ALR reference component on the simplex (zero-based)."""
+        return self._reference_idx
 
     # --------------------------------------------------------------------------
 
@@ -431,15 +445,22 @@ class LowRankLogisticNormal(Distribution):
         # Sample from base MVN in log-ratio space
         y = self.base_dist.sample(key, sample_shape)  # (..., D-1)
 
-        # Apply ALR transformation
+        # Map ALR latent y to simplex probabilities (reference index controls layout)
         exp_y = jnp.exp(y)
+        g = self.n_dims_simplex
+        ref = self._reference_idx if self._reference_idx >= 0 else g - 1
+
         sum_exp = 1.0 + jnp.sum(exp_y, axis=-1, keepdims=True)
+        x_alr = exp_y / sum_exp
+        x_ref = 1.0 / sum_exp
 
-        # Compute simplex coordinates
-        x_first = exp_y / sum_exp  # (..., D-1)
-        x_last = 1.0 / sum_exp  # (..., 1)
-
-        return jnp.concatenate([x_first, x_last], axis=-1)  # (..., D)
+        if ref == g - 1:
+            return jnp.concatenate([x_alr, x_ref], axis=-1)
+        if ref == 0:
+            return jnp.concatenate([x_ref, x_alr], axis=-1)
+        return jnp.concatenate(
+            [x_alr[..., :ref], x_ref, x_alr[..., ref:]], axis=-1
+        )
 
     # --------------------------------------------------------------------------
 
@@ -458,13 +479,21 @@ class LowRankLogisticNormal(Distribution):
         jnp.ndarray
             Log probability density of shape (...)
         """
-        # Inverse ALR: x -> y
-        # yᵢ = log(xᵢ / x_D)
-        x_first = value[..., :-1]  # (..., D-1)
-        x_last = value[..., -1:]  # (..., 1)
+        # Inverse ALR: extract reference and non-reference simplex components
+        g = self.n_dims_simplex
+        ref = self._reference_idx if self._reference_idx >= 0 else g - 1
 
-        # Compute log-ratio coordinates (avoid log(0))
-        y = jnp.log(x_first + 1e-20) - jnp.log(x_last + 1e-20)  # (..., D-1)
+        x_ref = value[..., ref : ref + 1]
+        if ref == g - 1:
+            x_nonref = value[..., :-1]
+        elif ref == 0:
+            x_nonref = value[..., 1:]
+        else:
+            x_nonref = jnp.concatenate(
+                [value[..., :ref], value[..., ref + 1 :]], axis=-1
+            )
+
+        y = jnp.log(x_nonref + 1e-20) - jnp.log(x_ref + 1e-20)
 
         # Log probability in unconstrained space
         log_prob_unconstrained = self.base_dist.log_prob(y)  # (...)
@@ -493,6 +522,314 @@ class LowRankLogisticNormal(Distribution):
         key = random.PRNGKey(0)
         samples = self.sample(key, (10000,))
         return jnp.mean(samples, axis=0)
+
+
+# ==============================================================================
+# Poisson-LogNormal Distribution (PLN)
+# ==============================================================================
+
+
+class LowRankPoissonLogNormal(Distribution):
+    """
+    Low-rank Poisson-LogNormal distribution for count data.
+
+    This distribution models G-dimensional count vectors where each gene's
+    count is drawn from a Poisson whose log-rate follows a multivariate
+    normal with low-rank-plus-diagonal covariance structure.
+
+    Mathematical Definition
+    -----------------------
+    Let x in R^G ~ MVN(mu, Sigma) where Sigma = WW^T + diag(d) is low-rank.
+    Each gene's count is an independent Poisson draw given x:
+
+        u_g | x_g  ~  Poisson(exp(x_g)),   g = 1, ..., G
+
+    The marginal over x yields correlated counts despite per-gene
+    conditional independence.
+
+    Low-Rank Covariance Structure
+    -----------------------------
+    The covariance matrix has the form:
+
+        Sigma = W @ W^T + diag(d)
+
+    where:
+        W: (G, k) factor loading matrix
+        d: (G,) diagonal (positive) vector
+
+    Relationship to LNM
+    --------------------
+    While LowRankLogisticNormal (LNM) models *compositions* on the simplex
+    via ALR transforms, LowRankPoissonLogNormal models *absolute counts*
+    directly.  Total counts are **not** a separate parameter -- they emerge
+    as the sum of per-gene Poisson draws, naturally coupling composition
+    and total through the shared covariance.
+
+    Parameters
+    ----------
+    loc : jnp.ndarray
+        Mean of the latent Gaussian in log-rate space, shape ``(G,)``.
+    cov_factor : jnp.ndarray
+        Low-rank factor ``W``, shape ``(G, k)``.
+    cov_diag : jnp.ndarray
+        Diagonal entries ``d``, shape ``(G,)``.  Must be positive.
+
+    See Also
+    --------
+    LowRankLogisticNormal : Compositional analogue for LNM models.
+    """
+
+    arg_constraints = {
+        "loc": constraints.real_vector,
+        "cov_factor": constraints.independent(constraints.real, 2),
+        "cov_diag": constraints.positive,
+    }
+    # Count support: non-negative integers for each gene.
+    support = constraints.independent(constraints.nonnegative_integer, 1)
+    has_rsample = False
+
+    def __init__(
+        self,
+        loc,
+        cov_factor,
+        cov_diag,
+        validate_args=None,
+    ):
+        loc = jnp.asarray(loc)
+        cov_factor = jnp.asarray(cov_factor)
+        cov_diag = jnp.asarray(cov_diag)
+
+        self.loc = loc
+        self.cov_factor = cov_factor
+        self.cov_diag = cov_diag
+        self.n_genes = loc.shape[-1]
+
+        # Internal low-rank MVN for sampling latent log-rates.
+        self.base_dist = LowRankMultivariateNormal(
+            loc=loc, cov_factor=cov_factor, cov_diag=cov_diag
+        )
+
+        super().__init__(
+            batch_shape=self.base_dist.batch_shape,
+            event_shape=(self.n_genes,),
+            validate_args=validate_args,
+        )
+
+    def sample(self, key, sample_shape=()):
+        """Draw count vectors by sampling log-rates then Poisson counts.
+
+        Parameters
+        ----------
+        key : jax.random.PRNGKey
+            PRNG key for sampling.
+        sample_shape : tuple
+            Shape prefix for batched draws.
+
+        Returns
+        -------
+        jnp.ndarray
+            Integer count array of shape ``(*sample_shape, *batch_shape, G)``.
+        """
+        k1, k2 = random.split(key)
+
+        # Sample latent log-rates from the low-rank MVN.
+        log_rates = self.base_dist.sample(k1, sample_shape)
+
+        # Clamp to prevent float32 overflow in exp (exp(88) ~ 2.4e38).
+        log_rates = jnp.clip(log_rates, -30.0, 30.0)
+        rates = jnp.exp(log_rates)
+
+        # Draw per-gene Poisson counts.
+        return random.poisson(k2, rates)
+
+    def log_prob(self, value):
+        """Marginal log-probability of a count vector — not closed form.
+
+        The marginal ``log p(u) = log ∫ p(u|x) p(x) dx`` has no closed
+        form for the Poisson-LogNormal: the integrand is
+        ``Poisson(exp(x))`` against a multivariate Normal over ``x``,
+        and the ``exp(x)`` inside the Poisson rate kills any
+        analytical reduction.
+
+        **This is not a barrier to inference.** NumPyro never
+        evaluates this method during SVI / MCMC, because PLN is
+        specified in the model trace as the *factorization*
+
+            x      ~  MVN(mu, Sigma)             # closed-form log_prob
+            u | x  ~  Poisson(exp(x))            # closed-form log_prob
+
+        and the ELBO needs only the *joint* ``log p(x, u)``, not the
+        marginal ``log p(u)``. Each factor's ``log_prob`` is closed
+        form, so the inference machinery has everything it needs
+        without ever touching this method.
+
+        The compound ``LowRankPoissonLogNormal.log_prob`` would only
+        be needed for held-out marginal-likelihood evaluation, marginal
+        Bayes factors, or PSIS-LOO — all post-fit operations. For
+        those use cases see :meth:`importance_log_prob`, which returns
+        an importance-sampled (IWAE-style) estimate.
+
+        Raises
+        ------
+        NotImplementedError
+            Always. The marginal has no closed form. Use
+            :meth:`importance_log_prob` for an MC estimate or, if a
+            looser bound is acceptable, the ELBO computed via
+            NumPyro's standard machinery.
+        """
+        raise NotImplementedError(
+            "The marginal log p(u) for Poisson-LogNormal has no "
+            "closed form (it requires integrating Poisson(exp(x)) "
+            "against a multivariate Normal over x). This does NOT "
+            "block inference: NumPyro evaluates the joint p(x, u) "
+            "via the model trace, never this method. For post-fit "
+            "marginal-likelihood evaluation, use "
+            "`importance_log_prob(value, q_dist, n_samples=...)`."
+        )
+
+    def importance_log_prob(
+        self, value, q_dist, *, n_samples=64, rng_key=None
+    ):
+        """Importance-sampled estimate of the marginal ``log p(u)``.
+
+        Returns the IWAE-style estimator
+
+        .. math::
+            \\log\\hat p(u) \\;=\\;
+              \\operatorname{logsumexp}_{s=1}^{S}\\,
+              \\bigl[\\log p(u\\mid x_s) + \\log p(x_s) - \\log q(x_s\\mid u)\\bigr]
+              \\;-\\;\\log S
+
+        where ``x_s ~ q(x | u)``.  This is a valid lower bound on
+        ``log p(u)``; it is tighter than the ELBO and becomes exact in
+        the limit ``q → p(x | u)``.  In practice ``q`` will be the
+        amortized posterior produced by the encoder.
+
+        This method is **not** used during training — it is a
+        post-fit utility for held-out marginal log-likelihood,
+        model comparison (Bayes factors, log-Bayes factors), and
+        PSIS-LOO-style cross-validation diagnostics.
+
+        Parameters
+        ----------
+        value : jnp.ndarray
+            Observed counts, shape ``(*batch_shape, G)``.
+        q_dist : numpyro.distributions.Distribution
+            Variational posterior ``q(x | u)`` whose ``event_shape``
+            matches the latent dimension ``G`` and whose
+            ``batch_shape`` is broadcast-compatible with ``value``.
+            For a SCRIBE PLN fit, this is typically constructed from
+            the encoder's amortized parameters at the cell of
+            interest.
+        n_samples : int, default=64
+            Number of importance samples ``S``.  Larger ``S`` gives a
+            tighter IWAE bound at linear extra cost.  64 is a sensible
+            default for diagnostic use; 1024+ for definitive model
+            comparison numbers.
+        rng_key : jax.random.PRNGKey
+            PRNG key for the importance samples.  Required (no
+            implicit default — reproducibility matters for any number
+            you publish).
+
+        Returns
+        -------
+        jnp.ndarray
+            Estimated ``log p(u)`` of shape ``(*batch_shape,)``.
+
+        Raises
+        ------
+        ValueError
+            If ``rng_key`` is not supplied.
+        """
+        if rng_key is None:
+            raise ValueError(
+                "importance_log_prob requires an explicit rng_key for "
+                "reproducible importance sampling. Pass "
+                "`rng_key=jax.random.PRNGKey(seed)`."
+            )
+
+        # Draw S samples from q in shape (S, *batch_shape, G).
+        x_samples = q_dist.sample(rng_key, sample_shape=(n_samples,))
+
+        # Clamp log-rates the same way ``sample`` does so that ``exp``
+        # cannot overflow float32 inside the Poisson log-pmf
+        # evaluation (exp(88) ~ 2.4e38).
+        x_clip = jnp.clip(x_samples, -30.0, 30.0)
+        rates = jnp.exp(x_clip)
+
+        # log p(u | x_s) factorizes across genes:
+        # Poisson log-pmf  =  u * log(rate) - rate - lgamma(u + 1).
+        value_b = jnp.broadcast_to(value, x_samples.shape)
+        log_p_u_given_x = jnp.sum(
+            value_b * x_clip - rates - gammaln(value_b + 1.0),
+            axis=-1,
+        )
+
+        # log p(x_s) — closed form via the prior low-rank MVN.
+        log_p_x = self.base_dist.log_prob(x_samples)
+
+        # log q(x_s | u) — closed form via the supplied variational
+        # posterior. Whatever guide family the caller uses must
+        # implement log_prob (every NumPyro Distribution does).
+        log_q_x = q_dist.log_prob(x_samples)
+
+        # IWAE aggregation: log mean of importance weights.
+        log_w = log_p_u_given_x + log_p_x - log_q_x  # (S, *batch)
+        return jsp.special.logsumexp(log_w, axis=0) - jnp.log(n_samples)
+
+    @property
+    def mean(self):
+        """Marginal mean via log-normal moment formula.
+
+        For a scalar PLN, ⟨u_g⟩ = exp(mu_g + sigma_g^2 / 2).
+        Under the low-rank model, sigma_g^2 = (W W^T)_{gg} + d_g.
+
+        Returns
+        -------
+        jnp.ndarray
+            Shape ``(*batch_shape, G)`` expected counts per gene.
+        """
+        W = self.cov_factor
+        sigma_sq = jnp.sum(W**2, axis=-1) + self.cov_diag
+        return jnp.exp(self.loc + sigma_sq / 2.0)
+
+    @property
+    def variance(self):
+        """Marginal variance of count ``u_g`` via the law of total variance.
+
+        For ``u_g | lambda_g ~ Poisson(lambda_g)`` with
+        ``lambda_g = exp(x_g)`` and ``x_g ~ Normal(mu_g, sigma_g^2)`` the
+        marginal variance decomposes as
+
+        .. math::
+            \\mathrm{Var}[u_g] \\;=\\;
+              \\mathbb{E}\\bigl[\\mathrm{Var}[u_g \\mid \\lambda_g]\\bigr] +
+              \\mathrm{Var}\\bigl[\\mathbb{E}[u_g \\mid \\lambda_g]\\bigr]
+            \\;=\\; \\mathbb{E}[\\lambda_g] + \\mathrm{Var}[\\lambda_g],
+
+        i.e. ``E[lambda_g] = exp(mu_g + sigma_g^2 / 2)`` (the Poisson
+        conditional-variance contribution) plus ``Var[lambda_g] =
+        exp(2 mu_g + sigma_g^2) * (exp(sigma_g^2) - 1)`` (the
+        between-cell rate variation).
+
+        Earlier versions of this property dropped the ``E[lambda_g]``
+        term and returned only ``Var[lambda_g]``, which under-reports
+        the true count variance for high-mean genes by a fixed offset
+        equal to the mean. The Monte-Carlo variance of ``sample()``
+        agrees with the corrected formula.
+
+        Returns
+        -------
+        jnp.ndarray
+            Shape ``(*batch_shape, G)`` marginal variance per gene.
+        """
+        W = self.cov_factor
+        sigma_sq = jnp.sum(W**2, axis=-1) + self.cov_diag
+        mean_lambda = jnp.exp(self.loc + sigma_sq / 2.0)
+        var_lambda = jnp.exp(2.0 * self.loc + sigma_sq) * (
+            jnp.exp(sigma_sq) - 1.0
+        )
+        return mean_lambda + var_lambda
 
 
 # ==============================================================================

@@ -24,6 +24,7 @@ from .distributions import (
     BetaNegativeBinomial,
     BetaPrime,
     LowRankLogisticNormal,
+    LowRankPoissonLogNormal,
     SoftmaxNormal,
 )
 
@@ -62,6 +63,7 @@ __all__ = [
     "BetaNegativeBinomial",
     "BetaPrime",
     "LowRankLogisticNormal",
+    "LowRankPoissonLogNormal",
     "SoftmaxNormal",
     # Divergences (KL registrations)
     "_kl_betaprime",

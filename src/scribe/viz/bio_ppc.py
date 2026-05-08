@@ -12,6 +12,7 @@ from jax import random
 import scribe
 
 from ._common import (
+    _is_pln_model,
     console,
     Progress,
     SpinnerColumn,
@@ -105,6 +106,14 @@ def plot_bio_ppc(
     counts = _coerce_and_align_counts_to_results(
         counts, results, context="plot_bio_ppc"
     )
+    # Biological PPC in this module is NB(r, p)-specific by construction.
+    if _is_pln_model(results):
+        console.print(
+            "[yellow]Skipping biological PPC for PLN: this diagnostic uses "
+            "NB(r, p) biological bands and is not defined for the "
+            "Poisson-LogNormal model.[/yellow]"
+        )
+        return
     render_opts = get_ppc_render_options(viz_cfg)
 
     # Resolve grid dimensions: explicit kwargs > viz_cfg > defaults
