@@ -971,6 +971,187 @@ class TestPPCMethods:
         assert tuple(out.shape) == (8, res.n_cells, res.n_genes)
 
 
+class TestPPCLevels:
+    """Verify the three-level PPC taxonomy on ``ScribeLaplaceResults``:
+
+    * ``per_cell``: cell-conditioned (Laplace posterior).
+    * ``library_anchored``: fresh latent, observed library size.
+    * ``marginal``: everything sampled fresh (incl. η / p_capture).
+
+    These tests guard the *plumbing* (shapes, dispatch, level
+    keyword); the underlying math is covered by the per-helper
+    tests elsewhere in the file.
+    """
+
+    def _build_pln(self, *, with_capture: bool = True):
+        from scribe import ScribeLaplaceResults
+        from scribe.models.config import ModelConfig
+        from scribe.models.config.enums import (
+            InferenceMethod,
+            Parameterization,
+        )
+
+        np.random.seed(701)
+        G, C, k = 24, 12, 3
+        mu = jnp.asarray(np.random.normal(0, 0.5, G).astype(np.float32))
+        W = jnp.asarray((0.3 * np.random.normal(size=(G, k))).astype(np.float32))
+        d = jnp.asarray(np.full(G, 0.05, dtype=np.float32))
+        x_loc = jnp.asarray(np.random.normal(0, 1, (C, G)).astype(np.float32))
+        eta_loc = (
+            jnp.asarray(np.random.normal(0.5, 0.2, C).astype(np.float32))
+            if with_capture else None
+        )
+        mc = ModelConfig(
+            base_model="pln",
+            parameterization=Parameterization.POISSON_LOGNORMAL,
+            inference_method=InferenceMethod.LAPLACE,
+        )
+        return ScribeLaplaceResults(
+            model_config=mc, mu=mu, W=W, d=d,
+            n_genes=G, n_cells=C, x_loc=x_loc, eta_loc=eta_loc,
+            losses=jnp.zeros(1), final_grad_norms=jnp.zeros(1),
+        )
+
+    def _build_lnmvcp(self):
+        from scribe import ScribeLaplaceResults
+        from scribe.models.config import ModelConfig
+        from scribe.models.config.enums import (
+            InferenceMethod,
+            Parameterization,
+        )
+
+        np.random.seed(702)
+        G, C, k = 24, 12, 3
+        G_minus1 = G - 1
+        mu = jnp.asarray(np.random.normal(0, 0.5, G_minus1).astype(np.float32))
+        W = jnp.asarray((0.3 * np.random.normal(size=(G_minus1, k))).astype(np.float32))
+        d = jnp.asarray(np.full(G_minus1, 0.05, dtype=np.float32))
+        z_loc = jnp.asarray(np.random.normal(0, 1, (C, k)).astype(np.float32))
+        p_capture_loc = jnp.asarray(
+            np.random.uniform(0.05, 0.5, C).astype(np.float32)
+        )
+        mc = ModelConfig(
+            base_model="lnmvcp",
+            parameterization=Parameterization.LOGISTIC_NORMAL_CANONICAL,
+            inference_method=InferenceMethod.LAPLACE,
+        )
+        return ScribeLaplaceResults(
+            model_config=mc, mu=mu, W=W, d=d,
+            n_genes=G, n_cells=C, z_loc=z_loc,
+            alr_reference_idx=0,
+            p_capture_loc=p_capture_loc,
+            mu_T=jnp.asarray(15_000.0, dtype=jnp.float32),
+            r_T=jnp.asarray(8.0, dtype=jnp.float32),
+            losses=jnp.zeros(1), final_grad_norms=jnp.zeros(1),
+        )
+
+    def test_pln_three_levels_shapes(self):
+        res = self._build_pln(with_capture=True)
+        counts = np.random.poisson(15, (res.n_cells, res.n_genes)).astype(np.float32)
+        out_pc = res.get_ppc_samples(
+            rng_key=random.PRNGKey(0), n_samples=4,
+            level="per_cell", counts=counts,
+        )
+        out_lib = res.get_ppc_samples(
+            rng_key=random.PRNGKey(0), n_samples=4,
+            level="library_anchored", counts=counts,
+        )
+        out_marg = res.get_ppc_samples(
+            rng_key=random.PRNGKey(0), n_samples=4, level="marginal",
+        )
+        assert tuple(out_pc.shape) == (4, res.n_cells, res.n_genes)
+        assert tuple(out_lib.shape) == (4, res.n_cells, res.n_genes)
+        # Marginal returns (n_samples, G) — one fresh imaginary cell per sample.
+        assert tuple(out_marg.shape) == (4, res.n_genes)
+
+    def test_pln_marginal_samples_eta(self):
+        """When eta_loc is present, marginal PPC should reflect bootstrapped
+        η — totals should *vary* across samples, not all sit at one value
+        (which would happen if η were silently held at zero or at the mean).
+        """
+        res = self._build_pln(with_capture=True)
+        n_samples = 200
+        out = np.asarray(
+            res.get_ppc_samples(
+                rng_key=random.PRNGKey(0), n_samples=n_samples,
+                level="marginal",
+            )
+        )
+        per_sample_totals = out.sum(axis=-1)  # (n_samples,)
+        # If η bootstrap is working, totals span a wide range. The
+        # silent η ≡ 0 path would give totals concentrated around
+        # exp(μ_g + 0.5 σ²_g) summed — this test would catch a
+        # regression that drops the η sampling.
+        assert per_sample_totals.std() > 1.0, (
+            f"marginal PPC totals do not vary: std={per_sample_totals.std():.2f}"
+        )
+
+    def test_pln_no_capture_marginal_works(self):
+        """Marginal path should also work when there is no η to sample."""
+        res = self._build_pln(with_capture=False)
+        out = res.get_ppc_samples(
+            rng_key=random.PRNGKey(0), n_samples=4, level="marginal",
+        )
+        assert tuple(out.shape) == (4, res.n_genes)
+
+    def test_lnmvcp_marginal_samples_p_capture(self):
+        """LNMVCP marginal PPC should bootstrap-sample p_capture so per-sample
+        totals reflect the empirical capture distribution rather than
+        collapsing to a single μ_T value (the previous bug).
+        """
+        res = self._build_lnmvcp()
+        n_samples = 200
+        out = np.asarray(
+            res.get_ppc_samples(
+                rng_key=random.PRNGKey(0), n_samples=n_samples,
+                level="marginal",
+            )
+        )
+        totals = out.sum(axis=-1)  # (n_samples,)
+        # With p_capture bootstrapped from U(0.05, 0.5), post-capture
+        # μ_T·p_capture spans 750–7500 and NB on top widens further.
+        # Without the bootstrap (the old bug), totals would all sit at
+        # ~μ_T = 15000.
+        assert totals.std() > totals.mean() * 0.1, (
+            f"LNMVCP marginal totals not varying with p_capture "
+            f"(std={totals.std():.0f}, mean={totals.mean():.0f})"
+        )
+
+    def test_library_anchored_requires_counts(self):
+        res = self._build_pln(with_capture=True)
+        with pytest.raises(ValueError, match="library_anchored.*requires"):
+            res.get_ppc_samples(
+                rng_key=random.PRNGKey(0), n_samples=4,
+                level="library_anchored",
+            )
+
+    def test_unknown_level_raises(self):
+        res = self._build_pln(with_capture=True)
+        with pytest.raises(ValueError, match="level must be"):
+            res.get_ppc_samples(
+                rng_key=random.PRNGKey(0), n_samples=4,
+                level="not_a_level",
+            )
+
+    def test_library_anchored_totals_match_observed(self):
+        """Library-anchored PPC must produce per-cell totals that
+        exactly match the observed library sizes — that is the
+        defining property of this PPC level.
+        """
+        res = self._build_pln(with_capture=True)
+        counts = np.random.poisson(20, (res.n_cells, res.n_genes)).astype(np.float32)
+        L_obs = counts.sum(axis=-1).astype(int)
+        out = np.asarray(
+            res.get_ppc_samples(
+                rng_key=random.PRNGKey(0), n_samples=4,
+                level="library_anchored", counts=counts,
+            )
+        )
+        L_ppc = out.sum(axis=-1)  # (4, n_cells)
+        for s in range(L_ppc.shape[0]):
+            np.testing.assert_array_equal(L_ppc[s], L_obs)
+
+
 class TestCorrelationResidual:
     """Verify the library-size / nuisance-direction projection
     machinery on ``ScribeLaplaceResults``.

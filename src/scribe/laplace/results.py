@@ -609,74 +609,124 @@ class ScribeLaplaceResults:
         self,
         rng_key: Optional[jax.Array] = None,
         n_samples: int = 100,
-        per_cell: bool = False,
+        level: str = "library_anchored",
+        counts: Optional[jnp.ndarray] = None,
         **kwargs,
     ) -> jnp.ndarray:
-        """Draw posterior predictive samples.
+        """Draw posterior-predictive samples at the specified honesty level.
 
-        Two modes, controlled by ``per_cell``:
+        Three predictive distributions are supported, ranging from
+        most-conditional (per_cell, calibrated for per-cell
+        uncertainty but circular as a fit test) to fully marginal
+        (everything sampled fresh, the most stringent fit test):
 
-        * ``per_cell=False`` (default — population PPC): draw
-          ``n_samples`` cells from the *population* (prior-
-          predictive) distribution. Captures what the model
-          predicts for a *new* cell drawn from the prior — the
-          natural diagnostic for "does the population-level model
-          match the data?"
-        * ``per_cell=True``: per-cell posterior PPC using the
-          stored per-cell MAP. For each cell ``c``, draw
-          ``n_samples`` count vectors conditioned on its MAP.
-          Analogous to NumPyro's ``Predictive`` under guide replay
-          for the VAE path.
+        * ``level="per_cell"`` — per-cell posterior predictive.
+          Samples the per-cell composition latent from its Laplace
+          posterior ``𝒩(MAP_c, (-H_c)⁻¹)``, holds the capture
+          offset at MAP, and draws the observation conditional on
+          the cell. **Conditional on the cell's observed counts**;
+          calibrated for per-cell uncertainty but circular as a
+          test of population-level fit (predictions are tested
+          against the data they were conditioned on).
+        * ``level="library_anchored"`` (default) —
+          library-size-anchored marginal. Draws fresh latents
+          from ``𝒩(μ, 𝑊𝑊ᵗ + diag(d))`` (no per-cell conditioning)
+          and pairs with the *observed* per-cell library size via
+          a multinomial. Tests whether the fitted compositional
+          distribution matches the empirical data, independently
+          of whether the totals submodel and capture submodel
+          are well-calibrated. **Recommended default for
+          model-fit validation.**
+        * ``level="marginal"`` — fully marginal. Samples *everything*
+          from the model: latent factors, capture (η or
+          p_capture, bootstrap-sampled from the empirical
+          distribution of fitted per-cell values), totals (NB-on-
+          totals for LNM(VCP), Poisson sum for PLN), and
+          observation noise. The most honest test of the entire
+          generative story; nothing is conditioned on observed
+          data. The shape is ``(n_samples, G)`` rather than
+          ``(n_samples, n_cells, G)`` — fresh imaginary cells
+          rather than per-observed-cell samples.
 
         Parameters
         ----------
         rng_key : jax.Array, optional
-            PRNG key. Defaults to ``random.PRNGKey(0)`` for
-            reproducibility.
         n_samples : int, default 100
-            Number of samples. Interpretation depends on
-            ``per_cell``: total cells in population mode, samples
-            per cell in per-cell mode.
-        per_cell : bool, default False
-            See above.
+        level : {"per_cell", "library_anchored", "marginal"}
+            Default ``"library_anchored"``. See above.
+        counts : jnp.ndarray, optional
+            Required for ``level="library_anchored"`` and the
+            ``per_cell`` LNM path. Per-cell observed counts.
         **kwargs
-            For LNM-family models: ``total_counts`` (per-cell
-            scalar or ``(n_samples,)``) is passed through to the
-            multinomial-sampling helper; defaults to a per-cell
-            sum derived from the data when omitted.
+            For LNM-family models: ``total_counts`` is forwarded
+            to the multinomial sampler in the marginal path.
 
         Returns
         -------
-        jnp.ndarray
-            Shape ``(n_samples, G)`` in population mode and
-            ``(n_samples, n_cells, G)`` in per-cell mode.
+        jnp.ndarray or np.ndarray
+            * ``per_cell`` / ``library_anchored``: shape
+              ``(n_samples, n_cells, G)``.
+            * ``marginal``: shape ``(n_samples, G)``.
         """
         if rng_key is None:
             rng_key = jax.random.PRNGKey(0)
-        if per_cell:
+
+        if level not in ("per_cell", "library_anchored", "marginal"):
+            raise ValueError(
+                f"level must be 'per_cell', 'library_anchored', or "
+                f"'marginal'; got {level!r}"
+            )
+
+        if level == "per_cell":
             return self.get_per_cell_predictive_samples(
-                rng_key=rng_key, n_samples=n_samples, **kwargs
+                rng_key=rng_key, n_samples=n_samples,
+                counts=counts, **kwargs,
             )
 
         bm = _base_model(self.model_config)
+
+        if level == "library_anchored":
+            if counts is None:
+                raise ValueError(
+                    "level='library_anchored' requires `counts` so "
+                    "the per-cell library sizes can anchor the "
+                    "multinomial. For purely marginal samples, use "
+                    "level='marginal' (no observed-cell info)."
+                )
+            if bm == "pln":
+                return _ppc_pln_library_anchored(
+                    rng_key, n_samples, self.mu, self.W, self.d,
+                    counts=counts,
+                )
+            if bm in ("lnm", "lnmvcp"):
+                return _ppc_lnm_library_anchored(
+                    rng_key, n_samples,
+                    self.mu, self.W, self.d,
+                    self.alr_reference_idx,
+                    counts=counts,
+                )
+            raise NotImplementedError(
+                f"library_anchored PPC not implemented for "
+                f"base_model={bm!r}"
+            )
+
+        # level == "marginal" — fully marginal generative story.
         if bm == "pln":
-            return _ppc_pln_population(
-                rng_key, n_samples, self.mu, self.W, self.d
+            return _ppc_pln_marginal(
+                rng_key, n_samples, self.mu, self.W, self.d,
+                eta_loc=self.eta_loc,
             )
         if bm in ("lnm", "lnmvcp"):
-            return _ppc_lnm_population(
-                rng_key,
-                n_samples,
-                self.mu,
-                self.W,
-                self.d,
+            return _ppc_lnm_marginal(
+                rng_key, n_samples,
+                self.mu, self.W, self.d,
                 self.alr_reference_idx,
-                mu_T=self.mu_T,
-                r_T=self.r_T,
+                mu_T=self.mu_T, r_T=self.r_T,
+                p_capture_loc=self.p_capture_loc,
                 **kwargs,
             )
         raise NotImplementedError(
-            f"get_ppc_samples not implemented for base_model={bm!r}"
+            f"marginal PPC not implemented for base_model={bm!r}"
         )
 
     def get_predictive_samples(
@@ -1152,22 +1202,126 @@ def _subset_var(var: Optional[Any], idx: np.ndarray) -> Optional[Any]:
 # ------ PLN PPC helpers ------
 
 
-def _ppc_pln_population(
+def _ppc_pln_marginal(
     rng_key: jax.Array,
     n_samples: int,
     mu: jnp.ndarray,
     W: jnp.ndarray,
     d: jnp.ndarray,
+    eta_loc: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
-    """Population-level Poisson-LogNormal PPC.
+    """Fully marginal PLN PPC (samples *everything* from the model).
 
-    Draws ``n_samples`` cells from the prior-predictive
-    ``LowRankPoissonLogNormal(mu, W, d)``. Used as the diagnostic
-    for "does the population-level fit reproduce the marginal
-    count distribution?"
+    The model's complete generative story for a fresh cell is:
+
+        z ∼ 𝒩(0, 𝐈ₖ)                    # latent factor scores
+        ε ∼ 𝒩(0, 𝐈_G)                   # diagonal residual
+        x = μ + 𝑊 z + √d ⊙ ε             # log-rate
+        η ∼ 𝑝(η)                          # capture (capture-aware fits)
+        u_g ∼ Poisson(exp(x_g − η))      # observed counts
+
+    For capture-aware fits (``eta_loc`` given), η is bootstrapped
+    from the empirical distribution of fitted ``eta_loc`` values
+    across cells — analogous to NBVCP's "sample p_capture from its
+    posterior". Each PPC sample gets one fresh η. For fits without
+    capture, η ≡ 0.
+
+    This is the most honest population-level PPC for PLN: no
+    observed-cell information leaks into any of the latents, and
+    the capture submodel is exercised as part of the predictive
+    distribution. Compare to the previous ``_ppc_pln_population``
+    which silently held η ≡ 0 even for capture-aware fits.
+
+    Parameters
+    ----------
+    rng_key : jax.Array
+    n_samples : int
+    mu, W, d : fitted PLN globals.
+    eta_loc : jnp.ndarray or None, shape ``(n_cells_observed,)``
+        Per-cell fitted capture-offset MAPs. When provided, η is
+        bootstrap-sampled from this empirical distribution. When
+        None, η ≡ 0.
+
+    Returns
+    -------
+    jnp.ndarray, shape ``(n_samples, G)``
     """
-    pln = LowRankPoissonLogNormal(loc=mu, cov_factor=W, cov_diag=d)
-    return pln.sample(rng_key, sample_shape=(n_samples,))
+    G = int(mu.shape[0])
+    k = int(W.shape[1])
+    k1, k2, k3, k4 = jax.random.split(rng_key, 4)
+    z = jax.random.normal(k1, (n_samples, k), dtype=mu.dtype)
+    eps = jax.random.normal(k2, (n_samples, G), dtype=mu.dtype)
+    x = mu[None, :] + z @ W.T + jnp.sqrt(d)[None, :] * eps
+    if eta_loc is not None:
+        eta_loc_arr = jnp.asarray(eta_loc).reshape(-1)
+        idx = jax.random.randint(k3, (n_samples,), 0, eta_loc_arr.shape[0])
+        eta_sample = eta_loc_arr[idx]
+        log_rate = x - eta_sample[:, None]
+    else:
+        log_rate = x
+    log_rate = jnp.clip(log_rate, _LOG_RATE_MIN, _LOG_RATE_MAX)
+    rate = jnp.exp(log_rate)
+    return jax.random.poisson(k4, rate)
+
+
+def _ppc_pln_library_anchored(
+    rng_key: jax.Array,
+    n_samples: int,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    counts: jnp.ndarray,
+) -> jnp.ndarray:
+    """PLN PPC: fresh compositions, library size from observed.
+
+    Tests the *compositional* fit independently of the totals /
+    capture submodel. For each observed cell c with library size
+    ``L_c = sum_g u_gᶜ``, draws ``n_samples`` fresh compositions from
+    the fitted marginal ``softmax(𝒩(μ, 𝑊𝑊ᵗ + diag(d)))`` and pairs
+    each with the cell's observed total via Multinomial(L_c, ρ).
+
+    Note: η does not appear in the composition because softmax is
+    invariant to a global additive shift of its logits — this is
+    exactly the rigid-translation degeneracy from the robustness
+    theorem. So the compositional check is well-defined even though
+    the model has the η scalar floating freely.
+
+    Returns
+    -------
+    np.ndarray, shape ``(n_samples, n_cells, G)``
+    """
+    L_c = jnp.asarray(counts, dtype=jnp.float32).sum(axis=-1).astype(jnp.int32)
+    n_cells = int(L_c.shape[0])
+    G = int(mu.shape[0])
+    k = int(W.shape[1])
+
+    chunk_size = _PPC_DEFAULT_SAMPLE_CHUNK
+    if chunk_size is None or chunk_size >= n_samples:
+        size = int(n_samples)
+        k1, k2, k3 = jax.random.split(rng_key, 3)
+        z = jax.random.normal(k1, (size, n_cells, k), dtype=mu.dtype)
+        eps = jax.random.normal(k2, (size, n_cells, G), dtype=mu.dtype)
+        x = mu[None, None, :] + z @ W.T + jnp.sqrt(d)[None, None, :] * eps
+        p = jax.nn.softmax(x, axis=-1)
+        L_b = jnp.broadcast_to(L_c, (size,) + L_c.shape)
+        return np.asarray(_multinomial_sample(k3, L_b, p))
+
+    n_chunks = (n_samples + chunk_size - 1) // chunk_size
+    chunk_keys = jax.random.split(rng_key, n_chunks)
+    pieces: List[np.ndarray] = []
+    for i in range(n_chunks):
+        start = i * chunk_size
+        end = min(start + chunk_size, n_samples)
+        size = end - start
+        k1, k2, k3 = jax.random.split(chunk_keys[i], 3)
+        z = jax.random.normal(k1, (size, n_cells, k), dtype=mu.dtype)
+        eps = jax.random.normal(k2, (size, n_cells, G), dtype=mu.dtype)
+        x = mu[None, None, :] + z @ W.T + jnp.sqrt(d)[None, None, :] * eps
+        p = jax.nn.softmax(x, axis=-1)
+        L_b = jnp.broadcast_to(L_c, (size,) + L_c.shape)
+        out_chunk = _multinomial_sample(k3, L_b, p)
+        pieces.append(np.asarray(out_chunk))
+    return np.concatenate(pieces, axis=0)
 
 
 def _ppc_pln_per_cell(
@@ -1333,7 +1487,7 @@ def _alr_to_softmax(
     return jax.nn.softmax(full, axis=-1)
 
 
-def _ppc_lnm_population(
+def _ppc_lnm_marginal(
     rng_key: jax.Array,
     n_samples: int,
     mu: jnp.ndarray,
@@ -1342,20 +1496,33 @@ def _ppc_lnm_population(
     alr_reference_idx: Optional[int],
     mu_T: Optional[jnp.ndarray] = None,
     r_T: Optional[jnp.ndarray] = None,
+    p_capture_loc: Optional[jnp.ndarray] = None,
     total_counts: Optional[Union[int, jnp.ndarray]] = None,
     **_kwargs,
 ) -> jnp.ndarray:
-    """Population-level full LNM PPC.
+    """Fully marginal LNM(VCP) PPC (samples *everything* from the model).
 
-    Generative process per sample:
-      1. ``y_alr ~ N(mu, W W^T + diag(d))``  — composition.
-      2. ``u_T ~ NB(r_T, mu_T)``               — total mRNA per cell.
-      3. ``u ~ Multinomial(u_T, softmax_full(y_alr))``.
+    Generative process per fresh imaginary cell:
 
-    Step 2 uses the fitted ``(mu_T, r_T)`` from the result. When
-    those are absent (legacy callers, or models that do not store
-    them) the function falls back to ``total_counts`` (default
-    1000), preserving backward-compat for shape-only comparisons.
+        z ∼ 𝒩(0, 𝐈ₖ); ε ∼ 𝒩(0, 𝐈_{G-1})
+        y_alr = μ + 𝑊 z + √d ⊙ ε
+        ρ = softmax_full(y_alr)
+        p_capture ∼ 𝑝(p_capture)              # LNMVCP only
+        u_T ∼ NB(μ_T · p_capture, r_T)
+        u ∼ Multinomial(u_T, ρ)
+
+    For LNMVCP fits (``p_capture_loc`` provided), p_capture is
+    bootstrap-sampled from the empirical distribution of fitted
+    ``p_capture_loc`` values across cells — analogous to NBVCP's
+    "sample p_capture from its posterior". Each PPC sample gets
+    one fresh p_capture and one fresh ``u_T``. For plain LNM
+    (no capture term), p_capture ≡ 1 and ``u_T ∼ NB(μ_T, r_T)``.
+
+    This is the most honest population-level PPC for LNM: no
+    observed-cell information leaks into any of the latents, and
+    the capture submodel is exercised as part of the predictive
+    distribution. **Compare to the previous ``_ppc_lnm_population``
+    which silently held p_capture ≡ 1 even for LNMVCP fits.**
 
     Parameters
     ----------
@@ -1363,6 +1530,11 @@ def _ppc_lnm_population(
         Fitted NB-on-totals globals. When both are provided, totals
         are drawn from ``NB(r_T, mu_T)``; otherwise the function
         falls back to the explicit ``total_counts`` argument.
+    p_capture_loc : Optional, shape ``(n_cells_observed,)``
+        Per-cell fitted capture-probability MAPs. When provided,
+        p_capture is bootstrap-sampled from this empirical
+        distribution to drive the totals NB mean. When None, the
+        capture submodel is not applied (plain LNM).
     total_counts : Optional
         Override for the fallback path. Ignored when ``mu_T`` and
         ``r_T`` are present.
@@ -1377,18 +1549,33 @@ def _ppc_lnm_population(
     g_minus1 = mu.shape[0]
     n_genes = g_minus1 + 1
     mvn = dist.LowRankMultivariateNormal(loc=mu, cov_factor=W, cov_diag=d)
-    k1, k2, k3 = jax.random.split(rng_key, 3)
+    k1, k2, k3, k4 = jax.random.split(rng_key, 4)
     y_alr = mvn.sample(k1, sample_shape=(n_samples,))  # (n_samples, G-1)
     p = _alr_to_softmax(y_alr, alr_reference_idx, n_genes)  # (n_samples, G)
 
     # Total counts: prefer the fitted NB; fall back to scalar.
     if mu_T is not None and r_T is not None:
-        # NegativeBinomial2(mean=mu_T, concentration=r_T): variance
-        # = mu_T + mu_T^2 / r_T. Per-sample independent draws.
+        # Capture-aware LNMVCP: bootstrap p_capture from its
+        # empirical distribution and apply per-sample to the
+        # totals NB mean. Each PPC sample gets one fresh p_capture
+        # — analogous to NBVCP's "sample p_capture from its
+        # posterior" approach. For plain LNM (p_capture_loc=None),
+        # p_capture ≡ 1 and the totals NB is just NB(mu_T, r_T).
+        if p_capture_loc is not None:
+            p_capture_arr = jnp.asarray(p_capture_loc).reshape(-1)
+            idx = jax.random.randint(
+                k2, (n_samples,), 0, p_capture_arr.shape[0]
+            )
+            p_capture_sample = p_capture_arr[idx]
+            mu_T_eff = jnp.asarray(mu_T) * p_capture_sample
+        else:
+            mu_T_eff = jnp.broadcast_to(
+                jnp.asarray(mu_T), (n_samples,)
+            )
         nb = dist.NegativeBinomial2(
-            mean=jnp.asarray(mu_T), concentration=jnp.asarray(r_T)
+            mean=mu_T_eff, concentration=jnp.asarray(r_T)
         )
-        n_arr = nb.sample(k2, sample_shape=(n_samples,)).astype(jnp.int32)
+        n_arr = nb.sample(k4, sample_shape=()).astype(jnp.int32)
     else:
         fallback = 1000 if total_counts is None else total_counts
         n_arr = jnp.broadcast_to(
@@ -1415,6 +1602,80 @@ def _ppc_lnm_population(
             n_arr, start, end - start, axis=0
         )
         out_chunk = _multinomial_sample(chunk_keys[i], n_chunk, p_chunk)
+        pieces.append(np.asarray(out_chunk))
+    return np.concatenate(pieces, axis=0)
+
+
+def _ppc_lnm_library_anchored(
+    rng_key: jax.Array,
+    n_samples: int,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    alr_reference_idx: Optional[int],
+    counts: jnp.ndarray,
+) -> jnp.ndarray:
+    """LNM(VCP) PPC: fresh compositions, library size from observed.
+
+    Tests the *compositional* fit independently of the totals NB
+    submodel and the LNMVCP capture submodel. For each observed
+    cell c with library size ``L_c = sum_g u_gᶜ``, draws
+    ``n_samples`` fresh compositions from the fitted marginal
+    ``softmax_full(𝒩(μ, 𝑊𝑊ᵗ + diag(d)))`` and pairs each with the
+    cell's observed total via ``Multinomial(L_c, ρ)``.
+
+    This is the right level for "does my fitted compositional
+    distribution match the empirical compositional distribution?"
+    — independent of whether the NB-on-totals or capture submodel
+    is well-calibrated.
+
+    Returns
+    -------
+    np.ndarray, shape ``(n_samples, n_cells, G)``
+    """
+    if alr_reference_idx is None:
+        raise ValueError(
+            "LNM library-anchored PPC requires alr_reference_idx."
+        )
+    L_c = jnp.asarray(counts, dtype=jnp.float32).sum(axis=-1).astype(jnp.int32)
+    n_cells = int(L_c.shape[0])
+    g_minus1 = int(mu.shape[0])
+    n_genes = g_minus1 + 1
+    k = int(W.shape[1])
+
+    chunk_size = _PPC_DEFAULT_SAMPLE_CHUNK
+    if chunk_size is None or chunk_size >= n_samples:
+        size = int(n_samples)
+        k1, k2, k3 = jax.random.split(rng_key, 3)
+        z = jax.random.normal(k1, (size, n_cells, k), dtype=mu.dtype)
+        eps = jax.random.normal(k2, (size, n_cells, g_minus1), dtype=mu.dtype)
+        y_alr = (
+            mu[None, None, :]
+            + z @ W.T
+            + jnp.sqrt(d)[None, None, :] * eps
+        )
+        p = _alr_to_softmax(y_alr, alr_reference_idx, n_genes)   # (S, n_cells, G)
+        L_b = jnp.broadcast_to(L_c, (size,) + L_c.shape)
+        return np.asarray(_multinomial_sample(k3, L_b, p))
+
+    n_chunks = (n_samples + chunk_size - 1) // chunk_size
+    chunk_keys = jax.random.split(rng_key, n_chunks)
+    pieces: List[np.ndarray] = []
+    for i in range(n_chunks):
+        start = i * chunk_size
+        end = min(start + chunk_size, n_samples)
+        size = end - start
+        k1, k2, k3 = jax.random.split(chunk_keys[i], 3)
+        z = jax.random.normal(k1, (size, n_cells, k), dtype=mu.dtype)
+        eps = jax.random.normal(k2, (size, n_cells, g_minus1), dtype=mu.dtype)
+        y_alr = (
+            mu[None, None, :]
+            + z @ W.T
+            + jnp.sqrt(d)[None, None, :] * eps
+        )
+        p = _alr_to_softmax(y_alr, alr_reference_idx, n_genes)
+        L_b = jnp.broadcast_to(L_c, (size,) + L_c.shape)
+        out_chunk = _multinomial_sample(k3, L_b, p)
         pieces.append(np.asarray(out_chunk))
     return np.concatenate(pieces, axis=0)
 

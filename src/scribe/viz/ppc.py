@@ -119,6 +119,7 @@ def _prepare_ppc_data(
     n_rows,
     n_cols,
     n_samples,
+    ppc_level: str = "library_anchored",
 ):
     """Prepare gene selection and predictive samples for PPC plotting.
 
@@ -187,6 +188,7 @@ def _prepare_ppc_data(
         n_samples=n_samples,
         counts=sampling_counts,
         store_samples=True,
+        ppc_level=ppc_level,
     )
     results_subset = results[selected_idx]
 
@@ -227,6 +229,7 @@ def plot_ppc(
     fig=None,
     axes=None,
     ax=None,
+    ppc_level: str = "library_anchored",
 ):
     """Plot posterior predictive checks for selected genes.
 
@@ -295,6 +298,7 @@ def plot_ppc(
         n_rows=grid["n_rows"],
         n_cols=grid["n_cols"],
         n_samples=grid["n_samples"],
+        ppc_level=ppc_level,
     )
     n_rows = prep["n_rows"]
     n_cols = prep["n_cols"]

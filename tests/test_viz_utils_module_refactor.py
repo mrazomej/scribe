@@ -1164,9 +1164,10 @@ def test_prepare_ppc_data_samples_full_space_for_vae(monkeypatch):
             return subset
 
     def _fake_predictive(
-        sampling_results, *, rng_key, n_samples, counts, store_samples
+        sampling_results, *, rng_key, n_samples, counts, store_samples,
+        ppc_level=None,
     ):
-        _ = rng_key, store_samples
+        _ = rng_key, store_samples, ppc_level
         seen["sampling_results_n_genes"] = int(sampling_results.n_genes)
         seen["sampling_counts_n_genes"] = int(counts.shape[1])
         sampling_results.predictive_samples = np.zeros(

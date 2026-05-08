@@ -134,9 +134,17 @@ def _get_predictive_samples_for_plot(
     counts,
     batch_size=None,
     store_samples=True,
+    ppc_level=None,
 ):
-    """Get PPC samples for plotting from variational results."""
+    """Get PPC samples for plotting from variational results.
+
+    The ``ppc_level`` argument is accepted for interface parity
+    with the Laplace dispatch but currently ignored — the SVI/VAE
+    PPC path predates the three-level honesty taxonomy and routes
+    through the legacy posterior-sampling pipeline.
+    """
     _ = batch_size
+    _ = ppc_level
     counts = _coerce_counts_for_sampling(
         results, counts, context="_get_predictive_samples_for_plot"
     )
@@ -187,40 +195,74 @@ def _get_predictive_samples_for_plot(
     counts,
     batch_size=None,
     store_samples=True,
+    ppc_level: str = "library_anchored",
 ):
     """Get PPC samples for plotting from Laplace results.
 
-    Laplace results have no encoder; per-cell Laplace posteriors
-    are reconstructed from the converged Newton MAP via the
-    Woodbury / Sherman-Morrison machinery in
-    :mod:`scribe.laplace._newton_pln` /
-    :mod:`scribe.laplace._newton_lnm`. When ``counts`` is provided
-    we route through ``get_per_cell_predictive_samples``, the
-    *conditional* level-2 PPC: each predictive draw samples the
-    per-cell composition latent from its Laplace posterior
-    ``N(MAP, (-H_c)^{-1})`` *before* drawing the observation, so
-    the histograms reflect both per-cell latent uncertainty and
-    observation noise. When ``counts`` is None we fall back to the
-    population PPC (samples cells from the prior + decoder).
+    Three honesty levels are supported via ``ppc_level``:
 
-    Users who specifically want the cheap MAP-only path (no
-    per-cell Hessian solves) should call
-    :meth:`ScribeLaplaceResults.get_map_ppc_samples` directly.
+    * ``"per_cell"`` — per-cell Laplace posterior (conditional
+      on each observed cell). Calibrated for per-cell uncertainty
+      but circular as a population-level fit test.
+    * ``"library_anchored"`` (default) — fresh latents from
+      𝒩(μ, 𝑊𝑊ᵗ + diag(d)) paired with each cell's observed
+      library size. Tests the compositional fit independently
+      of the totals/capture submodel. Recommended default.
+    * ``"marginal"`` — fully marginal: latent factors, capture
+      (η/p_capture bootstrapped from fitted per-cell values),
+      totals, and observation noise are all sampled fresh.
+      Most honest test of the entire generative story.
+
+    See :meth:`ScribeLaplaceResults.get_ppc_samples` for the
+    full signatures.
     """
     _ = batch_size
-    if counts is not None:
-        # Per-cell PPC at the stored MAP, with totals fixed at
-        # observed library sizes (conditional PPC).
-        predictive_samples = results.get_per_cell_predictive_samples(
-            rng_key=rng_key,
-            n_samples=int(n_samples) if n_samples is not None else 100,
-            counts=counts,
-        )
-    else:
+    n_eff = int(n_samples) if n_samples is not None else 100
+
+    if ppc_level == "library_anchored":
+        if counts is None:
+            raise ValueError(
+                "ppc_level='library_anchored' requires `counts`. "
+                "Pass an AnnData / count matrix to plot_ppc, or "
+                "use ppc_level='marginal' to skip observed-cell "
+                "anchoring entirely."
+            )
         predictive_samples = results.get_ppc_samples(
-            rng_key=rng_key,
-            n_samples=int(n_samples) if n_samples is not None else 100,
-            per_cell=False,
+            rng_key=rng_key, n_samples=n_eff,
+            level="library_anchored", counts=counts,
+        )
+    elif ppc_level == "per_cell":
+        if counts is None:
+            raise ValueError(
+                "ppc_level='per_cell' requires `counts` so the "
+                "per-cell observed totals can drive the multinomial."
+            )
+        predictive_samples = results.get_ppc_samples(
+            rng_key=rng_key, n_samples=n_eff,
+            level="per_cell", counts=counts,
+        )
+    elif ppc_level == "marginal":
+        # Marginal mode samples ``(n_eff, G)`` fresh imaginary cells.
+        # The rendering code expects ``(n_samples, n_cells, G)`` so
+        # downstream histograms aggregate over the cell axis. We
+        # produce that shape by drawing ``n_eff * n_cells_obs``
+        # *independent* imaginary cells and reshaping — each
+        # cell-slot in the output is its own marginal draw.
+        n_cells_obs = (
+            int(counts.shape[0]) if counts is not None else n_eff
+        )
+        n_total_imaginary = n_eff * n_cells_obs
+        flat = results.get_ppc_samples(
+            rng_key=rng_key, n_samples=n_total_imaginary,
+            level="marginal",
+        )
+        flat_np = np.asarray(flat)
+        G_eff = flat_np.shape[-1]
+        predictive_samples = flat_np.reshape(n_eff, n_cells_obs, G_eff)
+    else:
+        raise ValueError(
+            f"ppc_level must be 'per_cell', 'library_anchored', or "
+            f"'marginal'; got {ppc_level!r}"
         )
     predictive_np = np.array(predictive_samples)
     if store_samples:
@@ -237,10 +279,15 @@ def _get_predictive_samples_for_plot(
     counts,
     batch_size=None,
     store_samples=True,
+    ppc_level=None,
 ):
-    """Get PPC samples for plotting from MCMC results."""
+    """Get PPC samples for plotting from MCMC results.
+
+    ``ppc_level`` accepted for interface parity; ignored here.
+    """
     _ = counts
     _ = batch_size
+    _ = ppc_level
     predictive_samples = results.get_ppc_samples(
         rng_key=rng_key,
         store_samples=store_samples,
