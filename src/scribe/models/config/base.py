@@ -1329,6 +1329,7 @@ class ModelConfig(BaseModel):
             is_mixture=self.is_mixture,
             is_zero_inflated=self.is_zero_inflated,
             uses_variable_capture=self.uses_variable_capture,
+            uses_biology_informed_capture=self.uses_biology_informed_capture,
             hierarchical_mu=self.expression_prior != HierarchicalPriorType.NONE,
             hierarchical_p=self.hierarchical_p,
             hierarchical_gate=self.hierarchical_gate,

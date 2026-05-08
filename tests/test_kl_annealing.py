@@ -332,7 +332,7 @@ class TestPublicAPIDefaults:
 
         cfg = build_config_from_preset(
             model="pln",
-            parameterization="poisson_lognormal",
+            parameterization="count_lognormal",
             inference_method="vae",
         )
         # The model_config does not carry kl_annealing — it is on

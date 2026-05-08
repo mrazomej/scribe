@@ -316,8 +316,8 @@ PARAMETERIZATION_MAPPINGS = {
     # ------------------------------------------------------------------
     # PLN (Poisson-LogNormal) — single variant, no totals submodel
     # ------------------------------------------------------------------
-    Parameterization.POISSON_LOGNORMAL: ParameterizationMapping(
-        parameterization=Parameterization.POISSON_LOGNORMAL,
+    Parameterization.COUNT_LOGNORMAL: ParameterizationMapping(
+        parameterization=Parameterization.COUNT_LOGNORMAL,
         core_parameters=set(),
         optional_parameters={"d_pln", "y_log_rate", "z"},
         parameter_descriptions={
@@ -378,6 +378,7 @@ def get_active_parameters(
     is_mixture: bool = False,
     is_zero_inflated: bool = False,
     uses_variable_capture: bool = False,
+    uses_biology_informed_capture: bool = False,
     hierarchical_mu: bool = False,
     hierarchical_p: bool = False,
     hierarchical_gate: bool = False,
@@ -396,7 +397,14 @@ def get_active_parameters(
     is_zero_inflated : bool
         Whether this is a zero-inflated model
     uses_variable_capture : bool
-        Whether this model uses variable capture
+        Whether this model uses variable capture (DM-family ``p_capture``
+        or ``phi_capture`` site).
+    uses_biology_informed_capture : bool
+        Whether the biology-informed capture path is active (PLN/NBLN/LNMVCP
+        with the ``eta_capture`` truncated-normal log-offset latent).
+        When True, ``"eta_capture"`` is added to the active set so
+        downstream code that introspects ``model_config.active_parameters``
+        sees the capture site.
     hierarchical_mu : bool
         Whether hierarchical mu/r prior across components is enabled
     hierarchical_p : bool
@@ -414,6 +422,22 @@ def get_active_parameters(
     # Start with parameterization-specific parameters
     mapping = get_parameterization_mapping(parameterization)
     active_params = mapping.get_all_parameters().copy()
+
+    # PLN/NBLN share ``Parameterization.COUNT_LOGNORMAL`` (Path B
+    # design — see ``Parameterization`` docstring), but the per-gene
+    # diagonal residual variance scale uses a *model-specific* site
+    # name to avoid collision when both likelihoods coexist:
+    # ``d_pln`` (PLN) vs ``d_nbln`` (NBLN).  The likelihood class sets
+    # ``d_param_name`` accordingly; mirror that swap here so
+    # ``model_config.active_parameters`` matches what the likelihood
+    # actually samples.
+    if (
+        parameterization == Parameterization.COUNT_LOGNORMAL
+        and model_type == "nbln"
+        and "d_pln" in active_params
+    ):
+        active_params.discard("d_pln")
+        active_params.add("d_nbln")
 
     # Add hierarchical mu hyperparameters when flag is set
     if hierarchical_mu:
@@ -451,6 +475,17 @@ def get_active_parameters(
             active_params.add("phi_capture")
         else:
             active_params.add("p_capture")
+
+    # Biology-informed capture (PLN/NBLN/LNMVCP eta_c truncated-normal
+    # log-offset).  Distinct from ``uses_variable_capture`` (which is
+    # the DM-family ``p_capture`` Beta site): biology-informed capture
+    # uses a Gaussian-on-log-rate ``eta_capture`` latent.  Both can
+    # legitimately coexist conceptually, but in practice
+    # ``uses_biology_informed_capture`` is True for PLN/NBLN/LNMVCP
+    # with a capture prior and ``uses_variable_capture`` is True for
+    # the DM-family ``vcp`` aliases.
+    if uses_biology_informed_capture:
+        active_params.add("eta_capture")
 
     if is_mixture:
         active_params.add("mixing")

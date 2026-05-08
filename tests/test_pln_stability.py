@@ -187,7 +187,7 @@ class TestInjectPLNVAEDataInit:
         return (
             ModelConfigBuilder()
             .for_model("pln")
-            .with_parameterization("poisson_lognormal")
+            .with_parameterization("count_lognormal")
             .with_inference("vae")
             .with_vae(
                 latent_dim=3,

@@ -18,6 +18,26 @@ from ._results_shared import _base_model
 class DispatchResultsMixin:
     """Mixin implementing model-branching public accessors."""
 
+    @property
+    def params(self) -> Dict[str, jnp.ndarray]:
+        """Fitted-globals + per-cell-MAP dictionary.
+
+        Mirrors :attr:`scribe.svi.results.ScribeSVIResults.params` so
+        Laplace and SVI results share a common name for "the dict of
+        fitted values keyed by site name".  Internally delegates to
+        :meth:`get_map`, so the keys are model-specific (e.g.
+        ``{"mu", "W", "d_pln", "y_log_rate"}`` for PLN;
+        ``{..., "d_nbln", "r", "eta_capture", "p_capture"}`` for NBLN
+        with capture).  See :meth:`get_map` for the full per-model
+        key listing.
+
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary of fitted MAP values, keyed by site name.
+        """
+        return self.get_map()
+
     def get_latent_embeddings(self) -> jnp.ndarray:
         """Return per-cell latent embeddings for downstream visualization.
 
@@ -109,7 +129,7 @@ class DispatchResultsMixin:
     def get_distributions(
         self, backend: str = "numpyro", **_kwargs
     ) -> Dict[str, Any]:
-        """Return population-level distributions implied by fitted globals.
+        """Return population-level distributions and fitted-global values.
 
         Parameters
         ----------
@@ -122,13 +142,25 @@ class DispatchResultsMixin:
         Returns
         -------
         Dict[str, Any]
-            Distribution dictionary:
+            Per-site dictionary.  Continuous population-level latents are
+            returned as proper NumPyro ``Distribution`` objects (e.g.
+            ``LowRankMultivariateNormal`` for the log-rate latent);
+            scalar fitted globals (e.g. ``r``) and per-cell MAP
+            point-estimates from Laplace (e.g. ``eta_capture``,
+            ``p_capture``) are returned as ``dist.Delta`` so the API
+            is uniformly distribution-valued and callers can sample
+            ``d.sample(key)`` from any entry.
 
-            - PLN: ``{"y_log_rate", "lambda_rate"}``
-            - LNM/LNMVCP: ``{"y_alr"}``
+            - PLN: ``y_log_rate``, ``lambda_rate`` (always);
+              ``eta_capture``, ``p_capture`` (when capture anchor on).
+            - NBLN: ``y_log_rate``, ``r`` (always);
+              ``eta_capture``, ``p_capture`` (when capture anchor on).
+            - LNM/LNMVCP: ``y_alr``; ``p_capture`` for LNMVCP.
 
-            The returned objects describe the learned population latent
-            distribution, not per-cell posterior conditionals.
+            Laplace produces MAP point-estimates for fitted globals
+            and per-cell latents, not posterior covariances over them,
+            so non-population entries collapse to ``Delta`` rather
+            than full posteriors.
 
         Raises
         ------
@@ -147,11 +179,10 @@ class DispatchResultsMixin:
             # both PLN and NBLN (a low-rank multivariate normal with
             # the same loc/W/d). PLN exposes ``lambda_rate`` as the
             # log-normal-mixed Poisson rate; NBLN's analogous
-            # marginal-rate distribution is parameterised by the
-            # additional gene dispersion ``r`` and is not yet
-            # available as a NumPyro Distribution -- only the
-            # log-rate distribution is exposed.
-            out = {
+            # marginal-rate distribution requires the additional
+            # gene dispersion ``r`` and is exposed indirectly via the
+            # ``y_log_rate`` distribution + ``r`` Delta entry.
+            out: Dict[str, Any] = {
                 "y_log_rate": dist.LowRankMultivariateNormal(
                     loc=self.mu, cov_factor=self.W, cov_diag=self.d
                 ),
@@ -160,13 +191,27 @@ class DispatchResultsMixin:
                 out["lambda_rate"] = LowRankPoissonLogNormal(
                     loc=self.mu, cov_factor=self.W, cov_diag=self.d
                 )
+            if bm == "nbln" and self.r is not None:
+                # ``r`` is a fitted gene-specific global, not a
+                # population latent; surface as a Delta so the API
+                # is uniformly distribution-valued.
+                out["r"] = dist.Delta(self.r)
+            if self.eta_loc is not None:
+                # Biology-informed capture anchor: per-cell MAP
+                # log-offset (and the implied per-cell capture
+                # probability ``p_capture = exp(-eta_capture)``).
+                out["eta_capture"] = dist.Delta(self.eta_loc)
+                out["p_capture"] = dist.Delta(jnp.exp(-self.eta_loc))
             return out
         if bm in ("lnm", "lnmvcp"):
-            return {
+            out = {
                 "y_alr": dist.LowRankMultivariateNormal(
                     loc=self.mu, cov_factor=self.W, cov_diag=self.d
                 )
             }
+            if self.p_capture_loc is not None:
+                out["p_capture"] = dist.Delta(self.p_capture_loc)
+            return out
         raise NotImplementedError(
             f"get_distributions not implemented for base_model={bm!r}"
         )

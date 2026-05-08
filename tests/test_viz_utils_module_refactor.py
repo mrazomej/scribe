@@ -3408,8 +3408,8 @@ def test_is_pln_model_detects_enum_and_string_forms():
                 parameterization=parameterization
             )
 
-    assert _is_pln_model(_Fake(Parameterization.POISSON_LOGNORMAL))
-    assert _is_pln_model(_Fake("poisson_lognormal"))
+    assert _is_pln_model(_Fake(Parameterization.COUNT_LOGNORMAL))
+    assert _is_pln_model(_Fake("count_lognormal"))
     assert not _is_pln_model(_Fake(Parameterization.CANONICAL))
 
 
@@ -3448,7 +3448,7 @@ def test_prepare_calibration_data_pln_uses_per_cell_map(monkeypatch):
 
         def __init__(self):
             self.model_config = types.SimpleNamespace(
-                parameterization=Parameterization.POISSON_LOGNORMAL,
+                parameterization=Parameterization.COUNT_LOGNORMAL,
                 uses_biology_informed_capture=False,
                 uses_variable_capture=False,
                 d_mode="low_rank",
@@ -3481,7 +3481,7 @@ def test_plot_correlation_heatmap_skips_for_pln():
     """Correlation heatmap should skip gracefully for PLN runs."""
     results = types.SimpleNamespace(
         model_config=types.SimpleNamespace(
-            parameterization=Parameterization.POISSON_LOGNORMAL
+            parameterization=Parameterization.COUNT_LOGNORMAL
         ),
         posterior_samples=None,
     )
@@ -3500,7 +3500,7 @@ def test_plot_bio_ppc_skips_for_pln(monkeypatch):
 
     results = types.SimpleNamespace(
         model_config=types.SimpleNamespace(
-            parameterization=Parameterization.POISSON_LOGNORMAL
+            parameterization=Parameterization.COUNT_LOGNORMAL
         )
     )
     counts = np.array([[1, 2], [3, 4]], dtype=float)
@@ -3519,7 +3519,7 @@ def test_plot_mixture_ppc_skips_for_pln(monkeypatch):
 
     results = types.SimpleNamespace(
         model_config=types.SimpleNamespace(
-            parameterization=Parameterization.POISSON_LOGNORMAL
+            parameterization=Parameterization.COUNT_LOGNORMAL
         ),
         n_components=2,
     )

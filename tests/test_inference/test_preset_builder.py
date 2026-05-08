@@ -217,7 +217,7 @@ class TestBuildConfigFromPreset:
         """
         config = build_config_from_preset(
             model="pln",
-            parameterization="poisson_lognormal",
+            parameterization="count_lognormal",
             inference_method="vae",
         )
         assert config.vae is not None
@@ -237,7 +237,7 @@ class TestBuildConfigFromPreset:
         """
         config = build_config_from_preset(
             model="pln",
-            parameterization="poisson_lognormal",
+            parameterization="count_lognormal",
             inference_method="vae",
             priors={"capture_efficiency": (11.5, 0.5)},
         )
@@ -258,7 +258,7 @@ class TestBuildConfigFromPreset:
         """
         config = build_config_from_preset(
             model="pln",
-            parameterization="poisson_lognormal",
+            parameterization="count_lognormal",
             inference_method="vae",
             vae_input_transform="clr",
         )

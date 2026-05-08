@@ -1212,7 +1212,7 @@ class TestParametricDEFromLnmPlnResults:
         d = jnp.asarray(np.full(G, 0.1, dtype=np.float32))
         mc = ModelConfig(
             base_model="pln",
-            parameterization=Parameterization.POISSON_LOGNORMAL,
+            parameterization=Parameterization.COUNT_LOGNORMAL,
             inference_method=InferenceMethod.LAPLACE,
         )
 
@@ -1391,7 +1391,7 @@ class TestEmpiricalDEFromLnmPlnMarginal:
         d = jnp.asarray(np.full(G, 0.1, dtype=np.float32))
         mc = ModelConfig(
             base_model="pln",
-            parameterization=Parameterization.POISSON_LOGNORMAL,
+            parameterization=Parameterization.COUNT_LOGNORMAL,
             inference_method=InferenceMethod.LAPLACE,
         )
 

@@ -187,7 +187,7 @@ def _post_process(ctx, kw, model_config):
     # so we dispatch by ``base_model`` to pick the right helper.
     if (
         model_config.inference_method.value == "vae"
-        and model_config.parameterization.value == "poisson_lognormal"
+        and model_config.parameterization.value == "count_lognormal"
     ):
         _base = (
             model_config.base_model.value

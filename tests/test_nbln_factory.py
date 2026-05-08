@@ -34,7 +34,7 @@ def _nbln_config(*, d_mode: str = "low_rank"):
     built = (
         ModelConfigBuilder()
         .for_model("nbln")
-        .with_parameterization("poisson_lognormal")
+        .with_parameterization("count_lognormal")
         .with_inference("vae")
         .with_vae(
             latent_dim=2,
@@ -235,7 +235,7 @@ def test_nbln_distinct_from_pln_in_trace():
     cfg_pln = (
         ModelConfigBuilder()
         .for_model("pln")
-        .with_parameterization("poisson_lognormal")
+        .with_parameterization("count_lognormal")
         .with_inference("vae")
         .with_vae(
             latent_dim=2,

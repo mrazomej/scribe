@@ -949,7 +949,7 @@ class PoissonLogNormalParameterization(Parameterization):
 
     @property
     def name(self) -> str:
-        return "poisson_lognormal"
+        return "count_lognormal"
 
     @property
     def core_parameters(self) -> List[str]:
@@ -1185,7 +1185,7 @@ PARAMETERIZATIONS = {
     "logistic_normal_mean_prob": _logistic_normal_mean_prob,
     "logistic_normal_mean_odds": _logistic_normal_mean_odds,
     # PLN parameterization (single variant, no totals submodel)
-    "poisson_lognormal": _poisson_lognormal,
+    "count_lognormal": _poisson_lognormal,
     # Backward compatibility for the DM family
     "standard": _canonical,
     "linked": _mean_prob,
@@ -1211,8 +1211,14 @@ _LNM_FAMILY_KEYS: frozenset = frozenset(
 )
 
 
-def is_poisson_lognormal_family(param_key: str) -> bool:
-    """Return ``True`` for the PLN parameterization key.
+def is_count_lognormal_family(param_key: str) -> bool:
+    """Return ``True`` for the count-LogNormal parameterization key.
+
+    Covers both the PLN base model (Poisson observation channel) and
+    the NBLN base model (NB observation channel); they share the same
+    Gaussian-on-log-rate latent structure.  The legacy name was
+    ``is_poisson_lognormal_family`` (kept as a backward-compatible
+    alias below).
 
     Parameters
     ----------
@@ -1222,9 +1228,16 @@ def is_poisson_lognormal_family(param_key: str) -> bool:
     Returns
     -------
     bool
-        ``True`` if ``param_key == "poisson_lognormal"``.
+        ``True`` if ``param_key == "count_lognormal"`` (or its legacy
+        alias ``"poisson_lognormal"``).
     """
-    return param_key == "poisson_lognormal"
+    return param_key in ("count_lognormal", "poisson_lognormal")
+
+
+# Backward-compatible alias.  External callers / older imports may
+# reference ``is_poisson_lognormal_family``; keep the binding so they
+# continue to work without modification.
+is_poisson_lognormal_family = is_count_lognormal_family
 
 
 def is_logistic_normal_family(param_key: str) -> bool:
@@ -1308,7 +1321,7 @@ def resolve_user_parameterization_for_model(
     # through a distinct parameterization. Always resolve to it
     # regardless of the user-supplied parameterization string.
     if model_lower in ("pln", "nbln"):
-        return "poisson_lognormal"
+        return "count_lognormal"
 
     param_lower = parameterization.lower()
 
@@ -1362,6 +1375,11 @@ __all__ = [
     "PARAMETERIZATIONS",
     # Family helpers
     "is_logistic_normal_family",
+    "is_count_lognormal_family",
+    # Backward-compatible alias.  Prefer ``is_count_lognormal_family``
+    # in new code; this name covers both the PLN (Poisson) and NBLN
+    # (Negative Binomial) base models which share the same
+    # parameterization.
     "is_poisson_lognormal_family",
     "resolve_user_parameterization_for_model",
     # Derived parameter compute functions (pure math, alignment-free)

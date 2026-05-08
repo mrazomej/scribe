@@ -1081,15 +1081,18 @@ class ParameterExtractionMixin:
         # For PLN VAE results, include decoder-derived log-rate distributions:
         # - y_log_rate: G-dimensional low-rank MVN in log-rate space
         # - lambda_rate: LowRankPoissonLogNormal for generating count-space PPCs
-        _is_poisson_lognormal = (
+        # Accept both canonical and legacy names so pre-rename pickles
+        # persisted as raw strings resolve correctly here.
+        _is_count_lognormal = (
             isinstance(_param_value, str)
-            and _param_value == "poisson_lognormal"
+            and _param_value in ("count_lognormal", "poisson_lognormal")
         ) or (
-            isinstance(_param_name, str) and _param_name == "POISSON_LOGNORMAL"
+            isinstance(_param_name, str)
+            and _param_name in ("COUNT_LOGNORMAL", "POISSON_LOGNORMAL")
         )
         if (
             backend == "numpyro"
-            and _is_poisson_lognormal
+            and _is_count_lognormal
             and hasattr(self, "get_pln_mu")
             and hasattr(self, "get_pln_W")
             and hasattr(self, "get_pln_d")

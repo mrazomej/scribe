@@ -24,7 +24,7 @@ def _pln_config(*, d_mode: str = "low_rank"):
     built = (
         ModelConfigBuilder()
         .for_model("pln")
-        .with_parameterization("poisson_lognormal")
+        .with_parameterization("count_lognormal")
         .with_inference("vae")
         .with_vae(
             latent_dim=2,
@@ -111,7 +111,7 @@ def test_svi_smoke_fit_pln():
     config = (
         ModelConfigBuilder()
         .for_model("pln")
-        .with_parameterization("poisson_lognormal")
+        .with_parameterization("count_lognormal")
         .with_inference("vae")
         .with_vae(
             latent_dim=k,
@@ -231,7 +231,7 @@ def test_pln_factory_uses_linear_decoder():
     config = (
         ModelConfigBuilder()
         .for_model("pln")
-        .with_parameterization("poisson_lognormal")
+        .with_parameterization("count_lognormal")
         .with_inference("vae")
         .with_vae(
             latent_dim=k,
@@ -319,7 +319,7 @@ def test_pln_factory_wires_capture_anchor_when_prior_supplied():
     config = (
         ModelConfigBuilder()
         .for_model("pln")
-        .with_parameterization("poisson_lognormal")
+        .with_parameterization("count_lognormal")
         .with_inference("vae")
         .with_vae(
             latent_dim=k,
@@ -377,7 +377,7 @@ def test_svi_smoke_fit_pln_with_capture():
     config = (
         ModelConfigBuilder()
         .for_model("pln")
-        .with_parameterization("poisson_lognormal")
+        .with_parameterization("count_lognormal")
         .with_inference("vae")
         .with_vae(
             latent_dim=k,

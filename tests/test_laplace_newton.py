@@ -865,7 +865,7 @@ class TestPPCMethods:
         eta_loc = jnp.asarray(np.random.normal(0.5, 0.2, C).astype(np.float32))
         mc = ModelConfig(
             base_model="pln",
-            parameterization=Parameterization.POISSON_LOGNORMAL,
+            parameterization=Parameterization.COUNT_LOGNORMAL,
             inference_method=InferenceMethod.LAPLACE,
         )
         return ScribeLaplaceResults(
@@ -1003,7 +1003,7 @@ class TestPPCLevels:
         )
         mc = ModelConfig(
             base_model="pln",
-            parameterization=Parameterization.POISSON_LOGNORMAL,
+            parameterization=Parameterization.COUNT_LOGNORMAL,
             inference_method=InferenceMethod.LAPLACE,
         )
         return ScribeLaplaceResults(
@@ -1181,7 +1181,7 @@ class TestCorrelationResidual:
         d = jnp.full(G, 0.05, dtype=jnp.float32)
         mc = ModelConfig(
             base_model="pln",
-            parameterization=Parameterization.POISSON_LOGNORMAL,
+            parameterization=Parameterization.COUNT_LOGNORMAL,
             inference_method=InferenceMethod.LAPLACE,
         )
         return ScribeLaplaceResults(
@@ -1262,7 +1262,7 @@ class TestCorrelationResidual:
 
         mc = ModelConfig(
             base_model="pln",
-            parameterization=Parameterization.POISSON_LOGNORMAL,
+            parameterization=Parameterization.COUNT_LOGNORMAL,
             inference_method=InferenceMethod.LAPLACE,
         )
         res = ScribeLaplaceResults(
@@ -1311,7 +1311,7 @@ class TestSummarizeCorrelationStructure:
         W[25:, 2] = np.random.normal(1.0, 0.05, 25).astype(np.float32)
         mc = ModelConfig(
             base_model="pln",
-            parameterization=Parameterization.POISSON_LOGNORMAL,
+            parameterization=Parameterization.COUNT_LOGNORMAL,
             inference_method=InferenceMethod.LAPLACE,
         )
         return ScribeLaplaceResults(

@@ -62,11 +62,19 @@ def _is_pln_model(results) -> bool:
     )
     param_value = getattr(param, "value", param)
     param_name = getattr(param, "name", None)
+    # Accept both the canonical name (``count_lognormal`` /
+    # ``COUNT_LOGNORMAL``) and the legacy name (``poisson_lognormal`` /
+    # ``POISSON_LOGNORMAL``) so that pre-rename pickles persisted as
+    # raw strings also resolve correctly.  The runtime ``Parameterization``
+    # alias ensures ``Parameterization.POISSON_LOGNORMAL is
+    # Parameterization.COUNT_LOGNORMAL`` for in-memory objects, but
+    # name/value-string forms of either label are also valid here.
     return (
         isinstance(param_value, str)
-        and param_value == "poisson_lognormal"
+        and param_value in ("count_lognormal", "poisson_lognormal")
     ) or (
-        isinstance(param_name, str) and param_name == "POISSON_LOGNORMAL"
+        isinstance(param_name, str)
+        and param_name in ("COUNT_LOGNORMAL", "POISSON_LOGNORMAL")
     )
 
 

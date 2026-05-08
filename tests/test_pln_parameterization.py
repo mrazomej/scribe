@@ -35,7 +35,7 @@ def pln_param():
 
 def test_name(pln_param):
     """The registry key is ``poisson_lognormal``."""
-    assert pln_param.name == "poisson_lognormal"
+    assert pln_param.name == "count_lognormal"
 
 
 def test_gene_param_name(pln_param):
@@ -104,9 +104,9 @@ def test_build_derived_params_empty(pln_param):
 
 def test_registry_contains_poisson_lognormal():
     """The global registry includes the PLN singleton."""
-    assert "poisson_lognormal" in PARAMETERIZATIONS
+    assert "count_lognormal" in PARAMETERIZATIONS
     assert isinstance(
-        PARAMETERIZATIONS["poisson_lognormal"],
+        PARAMETERIZATIONS["count_lognormal"],
         PoissonLogNormalParameterization,
     )
 
@@ -118,7 +118,7 @@ def test_registry_contains_poisson_lognormal():
 
 def test_is_poisson_lognormal_family_positive():
     """``is_poisson_lognormal_family`` recognizes the PLN key."""
-    assert is_poisson_lognormal_family("poisson_lognormal")
+    assert is_poisson_lognormal_family("count_lognormal")
 
 
 def test_is_poisson_lognormal_family_negative():
@@ -137,8 +137,8 @@ def test_is_poisson_lognormal_family_negative():
 def test_resolve_user_parameterization_for_pln():
     """``pln`` model resolves to ``poisson_lognormal``."""
     assert (
-        resolve_user_parameterization_for_model("pln", "poisson_lognormal")
-        == "poisson_lognormal"
+        resolve_user_parameterization_for_model("pln", "count_lognormal")
+        == "count_lognormal"
     )
 
 
@@ -146,7 +146,7 @@ def test_resolve_user_parameterization_pln_default():
     """When user passes None / default, the PLN branch returns
     ``poisson_lognormal``."""
     result = resolve_user_parameterization_for_model("pln", None)
-    assert result == "poisson_lognormal"
+    assert result == "count_lognormal"
 
 
 def test_resolve_does_not_affect_dm():

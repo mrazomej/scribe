@@ -77,8 +77,26 @@ class Parameterization(str, Enum):
     LOGISTIC_NORMAL_CANONICAL = "logistic_normal_canonical"
     LOGISTIC_NORMAL_MEAN_PROB = "logistic_normal_mean_prob"
     LOGISTIC_NORMAL_MEAN_ODDS = "logistic_normal_mean_odds"
-    # PLN parameterization (single variant, no totals submodel)
-    POISSON_LOGNORMAL = "poisson_lognormal"
+    # Count-LogNormal parameterization.  Covers every base model with
+    # a low-rank Gaussian latent on log-rates (``μ + W·u + √d⊙ε``)
+    # and a count observation channel mixed against the implied
+    # LogNormal rate density:
+    #
+    # - ``base_model="pln"``  →  Poisson observation channel
+    # - ``base_model="nbln"`` →  Negative Binomial observation channel
+    #
+    # The structural form (Gaussian-on-log-rates with low-rank
+    # factorisation) is shared; observation channels are distinguished
+    # by ``base_model``, mirroring how CANONICAL covers ``nbdm``,
+    # ``nbvcp``, ``zinb``, ``zinbvcp``.  Per-model differences in
+    # site names (``d_pln`` vs ``d_nbln``) and extra globals (``r_g``
+    # for NBLN) are handled at the registry / factory layer via
+    # dispatch on ``base_model``.
+    COUNT_LOGNORMAL = "count_lognormal"
+    # Backward-compatible alias retained so existing imports
+    # (``Parameterization.POISSON_LOGNORMAL``) continue to resolve to
+    # the same enum member.  New code should prefer ``COUNT_LOGNORMAL``.
+    POISSON_LOGNORMAL = "count_lognormal"
     # Internal alias of LOGISTIC_NORMAL_CANONICAL kept so that internal
     # code still comparing against ``Parameterization.LOGISTIC_NORMAL``
     # resolves to canonical (the historical default). No longer
@@ -112,6 +130,14 @@ class Parameterization(str, Enum):
             "hierarchical_mean_prob": "mean_prob",
             "hierarchical_mean_odds": "mean_odds",
             "logistic_normal": "logistic_normal_canonical",
+            # Renamed in 2026-05: ``poisson_lognormal`` was the original
+            # name (when only the PLN base model existed).  After NBLN
+            # was added, the parameterization was renamed to
+            # ``count_lognormal`` to reflect that it covers any count
+            # observation channel mixed against a LogNormal rate.  Old
+            # pickles persisting the legacy value still load via this
+            # mapping.
+            "poisson_lognormal": "count_lognormal",
         }
         if isinstance(value, str):
             base = _legacy.get(value)

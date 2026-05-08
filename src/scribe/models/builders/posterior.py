@@ -633,7 +633,7 @@ def _apply_base_parameterization(
                 pos_transform=pos_transform,
             )
         )
-    elif parameterization == Parameterization.POISSON_LOGNORMAL:
+    elif parameterization == Parameterization.COUNT_LOGNORMAL:
         # PLN has no core NB scalars — log-rates come from the VAE
         # decoder and are added as decoder-derived distributions in
         # ``get_distributions()``. The only guide-level parameter is
