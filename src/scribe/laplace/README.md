@@ -37,11 +37,40 @@ class, and orbax checkpointer. The only cross-submodule dependency is
 laplace/
   __init__.py             # Public API re-exports
   engine.py               # LaplaceInferenceEngine + per-model loops
-  results.py              # ScribeLaplaceResults (single class, dispatches on base_model)
+  results.py              # ScribeLaplaceResults dataclass + mixin composition
+  _core.py                # Model-agnostic parameter and correlation accessors
+  _dispatch.py            # base_model-dispatching accessors (map/distributions/embeddings)
+  _sampling.py            # Public PPC/predictive entry points
+  _likelihood.py          # Public MAP log-likelihood entry point
+  _gene_subsetting.py     # Gene-axis slicing behavior (PLN and ALR-safe LNM)
+  _serialization.py       # Pickle hooks + plotting sample-cache compatibility
+  _results_shared.py      # Shared constants and utility helpers
+  _results_sampling_helpers.py   # Module-private PLN/LNM PPC backends
+  _results_likelihood_helpers.py # Module-private PLN/LNM likelihood backends
   checkpoint.py           # Orbax checkpoint helpers (LNM/PLN-aware)
   _newton_pln.py          # PLN Newton kernels (joint x, η)
   _newton_lnm.py          # LNM Newton kernels (z, y_alr, scalar η)
 ```
+
+### Results mixin architecture
+
+`ScribeLaplaceResults` now follows the same compositional style as
+`ScribeSVIResults`: a single dataclass state object plus focused mixins.
+This keeps the public API unchanged while making responsibilities easier to
+find and maintain.
+
+- `CoreResultsMixin`: shared accessors (`get_mu`, `get_W`, `get_d`,
+  correlation diagnostics, and `get_p_capture`)
+- `DispatchResultsMixin`: `base_model`-aware methods (`get_map`,
+  `get_distributions`, `get_latent_embeddings`)
+- `SamplingResultsMixin`: public predictive/PPC methods that route to
+  private PLN/LNM sampling helpers
+- `LikelihoodResultsMixin`: MAP log-likelihood API routed to private
+  PLN/LNM likelihood helpers
+- `GeneSubsettingResultsMixin`: `__getitem__` and PLN/LNM subsetting logic,
+  including ALR reference safety checks
+- `SerializationResultsMixin`: pickle-safe state handling and compatibility
+  sample-cache properties (`predictive_samples`, `posterior_samples`)
 
 ## Configuration via `LaplaceConfig`
 
