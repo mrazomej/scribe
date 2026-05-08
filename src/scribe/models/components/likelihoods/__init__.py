@@ -66,6 +66,7 @@ from .lnm import (
     select_alr_reference,
 )
 from .pln import PoissonLogNormalLikelihood
+from .nbln import NBLogNormalLikelihood
 
 __all__ = [
     "Likelihood",
@@ -86,4 +87,6 @@ __all__ = [
     "select_alr_reference",
     # PLN
     "PoissonLogNormalLikelihood",
+    # NBLN (NB-LogNormal)
+    "NBLogNormalLikelihood",
 ]
