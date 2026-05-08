@@ -441,11 +441,18 @@ class LNMObservationModel(LaplaceObservationModel):
             )
             totals_loss = data_scale * jnp.sum(-nb_lp)
             eta_new = eta_init  # passthrough; not used by plain LNM
-            gn_eta = jnp.zeros_like(gn_comp)
+            gn_eta = None
 
         loss = comp_loss + totals_loss
-        gn = jnp.maximum(gn_comp, gn_eta)
-        return loss, (latent_new, eta_new, gn)
+        # Per-block grad-norm split for the progress display.  Plain
+        # LNM has only the composition Newton block; LNMVCP adds the
+        # scalar capture-anchor η block whose Hessian decouples from
+        # the composition block (see paper/_logistic_normal_multinomial.qmd).
+        if gn_eta is not None:
+            gn_blocks = {"comp": gn_comp, "η": gn_eta}
+        else:
+            gn_blocks = {"comp": gn_comp}
+        return loss, (latent_new, eta_new, gn_blocks)
 
     # --- Final convergence check ----------------------------------------
 

@@ -662,3 +662,91 @@ def nbln_grad_split(
         out["norm_eta"] = None
 
     return out
+
+
+# Vmappable helpers analogous to ``_newton_pln.pln_grad_split_batch`` and
+# ``_newton_pln.pln_grad_x_only_norm_batch``: same per-block grad-norm
+# diagnostic, used by the generic Laplace driver to surface a
+# composition-style ``max/p99/med`` triplet per block in the progress
+# display.  The dict-returning :func:`nbln_grad_split` above does not
+# vmap cleanly because of the optional ``eta`` branch, so these
+# fixed-shape variants are provided alongside it.
+
+
+def _nbln_grad_split_with_eta(
+    x_map: jnp.ndarray,
+    eta_map: jnp.ndarray,
+    u: jnp.ndarray,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    r: jnp.ndarray,
+    eta_anchor: jnp.ndarray,
+    sigma_M: float,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Per-block ``L∞`` grad norms at the joint NBLN Newton MAP.
+
+    Returns ``(grad_inf_norm_x, grad_inf_norm_eta)`` for the per-cell
+    joint log-density evaluated at ``(x_map, eta_map)``.  Same role
+    as :func:`scribe.laplace._newton_pln.pln_grad_split` but with the
+    NB-Hessian-conditional gradient ``u - (u+r)(1-p)`` replacing the
+    Poisson form ``u - rate``.
+    """
+    log_rate = x_map - eta_map
+    nb = _nb_factors(log_rate, u, r)
+    one_minus_p = nb["one_minus_p"]
+
+    inv_d = 1.0 / d
+    diff = x_map - mu
+    k = W.shape[1]
+    K = jnp.eye(k, dtype=W.dtype) + W.T @ (inv_d[:, None] * W)
+    L_K = jnp.linalg.cholesky(K)
+    sigma_inv_diff = inv_d * diff - inv_d * (
+        W @ jax.scipy.linalg.cho_solve((L_K, True), W.T @ (inv_d * diff))
+    )
+
+    expected_count = (u + r) * one_minus_p
+    g_x = u - expected_count - sigma_inv_diff
+    g_eta = (
+        -jnp.sum(u)
+        + jnp.sum(expected_count)
+        - (eta_map - eta_anchor) / (sigma_M ** 2)
+    )
+    return jnp.max(jnp.abs(g_x)), jnp.abs(g_eta)
+
+
+nbln_grad_split_batch = jax.vmap(
+    _nbln_grad_split_with_eta,
+    in_axes=(0, 0, 0, None, None, None, None, 0, None),
+)
+
+
+def _nbln_grad_x_only_norm(
+    x_map: jnp.ndarray,
+    u: jnp.ndarray,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    r: jnp.ndarray,
+) -> jnp.ndarray:
+    """``L∞`` of ``∇_x f`` at the x-only NBLN Newton MAP (no capture)."""
+    nb = _nb_factors(x_map, u, r)
+    one_minus_p = nb["one_minus_p"]
+
+    inv_d = 1.0 / d
+    diff = x_map - mu
+    k = W.shape[1]
+    K = jnp.eye(k, dtype=W.dtype) + W.T @ (inv_d[:, None] * W)
+    L_K = jnp.linalg.cholesky(K)
+    sigma_inv_diff = inv_d * diff - inv_d * (
+        W @ jax.scipy.linalg.cho_solve((L_K, True), W.T @ (inv_d * diff))
+    )
+
+    expected_count = (u + r) * one_minus_p
+    g_x = u - expected_count - sigma_inv_diff
+    return jnp.max(jnp.abs(g_x))
+
+
+nbln_grad_x_only_norm_batch = jax.vmap(
+    _nbln_grad_x_only_norm, in_axes=(0, 0, None, None, None, None)
+)

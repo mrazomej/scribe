@@ -215,8 +215,21 @@ class LaplaceObservationModel(ABC):
         data_scale: float,
         n_newton: int,
         damping: float,
-    ) -> Tuple[jnp.ndarray, Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]]:
-        """Compute the negative Laplace ELBO on one batch."""
+    ) -> Tuple[jnp.ndarray, Tuple[jnp.ndarray, jnp.ndarray, Dict[str, jnp.ndarray]]]:
+        """Compute the negative Laplace ELBO on one batch.
+
+        Returns
+        -------
+        loss : jnp.ndarray, scalar
+        aux : tuple
+            ``(latent_new, eta_new, gn_blocks)`` where ``gn_blocks`` is
+            a dict mapping block name (e.g. ``"x"``, ``"η"``,
+            ``"comp"``) to per-cell ``L∞`` gradient norms of shape
+            ``(batch,)``.  Single-block models return a one-element
+            dict; LNMVCP and PLN/NBLN with capture return two blocks.
+            The driver uses the dict for the per-block progress
+            display and reduces over blocks for divergence detection.
+        """
 
     @abstractmethod
     def final_sweep(
@@ -434,7 +447,7 @@ def run_laplace_em(
             eta_anchor_batch = jnp.zeros(idx.shape[0])
         aux_batch = obs_model.aux_batch_slice(aux_data, idx)
 
-        (loss, (latent_new, eta_new, gn)), grads = loss_grad_fn(
+        (loss, (latent_new, eta_new, gn_blocks)), grads = loss_grad_fn(
             params,
             latent_batch_init,
             eta_batch_init,
@@ -450,7 +463,7 @@ def run_laplace_em(
         latent_loc = latent_loc.at[idx].set(latent_new)
         if eta_loc is not None:
             eta_loc = eta_loc.at[idx].set(eta_new)
-        return params, opt_state, latent_loc, eta_loc, gn, loss
+        return params, opt_state, latent_loc, eta_loc, gn_blocks, loss
 
     # ---- Bookkeeping ----
     losses: List[float] = []
@@ -568,7 +581,7 @@ def run_laplace_em(
                 opt_state,
                 latent_loc,
                 eta_loc,
-                gn,
+                gn_blocks,
                 loss,
             ) = update_step(params, opt_state, latent_loc, eta_loc, idx)
 
@@ -638,7 +651,20 @@ def run_laplace_em(
                 init_loss_str = (
                     f"{init_loss:.4e}" if init_loss is not None else "N/A"
                 )
-                grad_info = f"|grad|_inner max={float(jnp.max(gn)):.2e}"
+                # Per-block ``L∞`` summary across cells -- one
+                # ``max/p99/med`` triplet per Newton block (e.g.,
+                # ``x``, ``η`` for PLN/NBLN with capture; ``comp``,
+                # ``η`` for LNMVCP).  Single-block models show a
+                # single triplet.  Mirrors the legacy progress bar so
+                # callers can see at a glance which Newton block is
+                # the convergence bottleneck.
+                grad_info = "; ".join(
+                    f"{name} max/p99/med "
+                    f"{float(jnp.max(g)):.2e}/"
+                    f"{float(jnp.percentile(g, 99)):.2e}/"
+                    f"{float(jnp.median(g)):.2e}"
+                    for name, g in gn_blocks.items()
+                )
                 loss_info = (
                     f"init loss: {init_loss_str}, "
                     f"avg. loss [{window_start + 1}-{len(losses)}]: "

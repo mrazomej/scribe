@@ -53,6 +53,8 @@ from ._newton_nbln import (
     laplace_log_det_neg_H_batch_x_only,
     laplace_newton_batch,
     laplace_newton_batch_x_only,
+    nbln_grad_split_batch,
+    nbln_grad_x_only_norm_batch,
 )
 
 
@@ -208,7 +210,7 @@ class NBLNObservationModel(LaplaceObservationModel):
         if self.uses_capture:
             eta_init_sg = jax.lax.stop_gradient(eta_init)
             eta_anchor_sg = jax.lax.stop_gradient(eta_anchor_batch)
-            x_new, eta_new, gn, _ = laplace_newton_batch(
+            x_new, eta_new, _gn, _ = laplace_newton_batch(
                 latent_init_sg,
                 eta_init_sg,
                 counts_batch,
@@ -227,8 +229,26 @@ class NBLNObservationModel(LaplaceObservationModel):
                 x_new, eta_new, counts_batch, r, W, d, self._sigma_M
             )
             log_mean = x_new - eta_new[:, None]
+            # Per-block grad split for the progress display.  The
+            # Newton kernel returns a joint ``L∞`` over ``(x, η)`` --
+            # useful for divergence detection but unhelpful for
+            # diagnosing which block is stalling.  Re-evaluate ∇f at
+            # the post-Newton MAP and split into x- and η-block
+            # norms.  Cost: one extra Woodbury solve per cell.
+            gn_x, gn_eta = nbln_grad_split_batch(
+                x_new,
+                eta_new,
+                counts_batch,
+                mu_sg,
+                W_sg,
+                d_sg,
+                r_sg,
+                eta_anchor_sg,
+                self._sigma_M,
+            )
+            gn_blocks = {"x": gn_x, "η": gn_eta}
         else:
-            x_new, gn, _ = laplace_newton_batch_x_only(
+            x_new, _gn, _ = laplace_newton_batch_x_only(
                 latent_init_sg,
                 counts_batch,
                 mu_sg,
@@ -244,11 +264,30 @@ class NBLNObservationModel(LaplaceObservationModel):
                 x_new, None, counts_batch, r, W, d, 1.0
             )
             log_mean = x_new
+            gn_x = nbln_grad_x_only_norm_batch(
+                x_new, counts_batch, mu_sg, W_sg, d_sg, r_sg
+            )
+            gn_blocks = {"x": gn_x}
 
-        # NB log-prob in log-space.
-        nb_lp = LogMeanNegativeBinomial(
-            log_mean=log_mean, concentration=r[None, :]
-        ).log_prob(counts_batch).sum(axis=-1)
+        # NB log-prob in log-space.  ``LogMeanNegativeBinomial`` returns
+        # the full PMF including the parameter-independent factorial
+        # term ``-lgamma(k+1)``.  To match the PLN engine's loss-scale
+        # convention (which drops the analogous Poisson factorial
+        # constant ``-lgamma(u+1)``), we add it back.  This is a
+        # parameter-independent constant so it does NOT affect the
+        # optimization minimum -- it only shifts the displayed loss
+        # onto a comparable absolute scale to PLN's.  Without this
+        # adjustment, NBLN losses appeared positive (~+5e7) while PLN
+        # losses were negative (~-8e7) on the same dataset, which was
+        # confusing without changing any actual fit behaviour.
+        from jax.scipy.special import gammaln
+
+        nb_lp = (
+            LogMeanNegativeBinomial(
+                log_mean=log_mean, concentration=r[None, :]
+            ).log_prob(counts_batch).sum(axis=-1)
+            + gammaln(counts_batch + 1.0).sum(axis=-1)
+        )
 
         # MVN prior on x.
         diff = x_new - mu[None, :]
@@ -278,7 +317,7 @@ class NBLNObservationModel(LaplaceObservationModel):
             jnp.zeros_like(elbo_per_cell),
         )
         loss = -data_scale * jnp.sum(elbo_per_cell)
-        return loss, (x_new, eta_new, gn)
+        return loss, (x_new, eta_new, gn_blocks)
 
     # --- Final convergence check ----------------------------------------
 

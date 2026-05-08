@@ -48,6 +48,8 @@ from ._newton_pln import (
     laplace_log_det_neg_H_batch_x_only,
     laplace_newton_batch,
     laplace_newton_batch_x_only,
+    pln_grad_split_batch,
+    pln_grad_x_only_norm_batch,
 )
 
 
@@ -192,7 +194,7 @@ class PLNObservationModel(LaplaceObservationModel):
         if self.uses_capture:
             eta_init_sg = jax.lax.stop_gradient(eta_init)
             eta_anchor_sg = jax.lax.stop_gradient(eta_anchor_batch)
-            x_new, eta_new, gn, _ = laplace_newton_batch(
+            x_new, eta_new, _gn, _ = laplace_newton_batch(
                 latent_init_sg,
                 eta_init_sg,
                 counts_batch,
@@ -210,8 +212,24 @@ class PLNObservationModel(LaplaceObservationModel):
                 x_new, eta_new, W, d, self._sigma_M
             )
             log_rate = x_new - eta_new[:, None]
+            # Per-block grad split for the progress display.  Same
+            # rationale as the NBLN adapter: the Newton kernel returns
+            # a joint ``L∞`` over ``(x, η)`` for divergence detection,
+            # but the per-block split is what users want for diagnosing
+            # which Newton block is the convergence bottleneck.
+            gn_x, gn_eta = pln_grad_split_batch(
+                x_new,
+                eta_new,
+                counts_batch,
+                mu_sg,
+                W_sg,
+                d_sg,
+                eta_anchor_sg,
+                self._sigma_M,
+            )
+            gn_blocks = {"x": gn_x, "η": gn_eta}
         else:
-            x_new, gn, _ = laplace_newton_batch_x_only(
+            x_new, _gn, _ = laplace_newton_batch_x_only(
                 latent_init_sg,
                 counts_batch,
                 mu_sg,
@@ -226,6 +244,10 @@ class PLNObservationModel(LaplaceObservationModel):
                 x_new, None, W, d, self._sigma_M
             )
             log_rate = x_new
+            gn_x = pln_grad_x_only_norm_batch(
+                x_new, counts_batch, mu_sg, W_sg, d_sg
+            )
+            gn_blocks = {"x": gn_x}
 
         # Poisson log-prob (drops constant ``lgamma(u + 1)``):
         #   log p(u | x, η) = Σ_g [ u_g (x_g − η) − exp(x_g − η) ].
@@ -263,7 +285,7 @@ class PLNObservationModel(LaplaceObservationModel):
             jnp.zeros_like(elbo_per_cell),
         )
         loss = -data_scale * jnp.sum(elbo_per_cell)
-        return loss, (x_new, eta_new, gn)
+        return loss, (x_new, eta_new, gn_blocks)
 
     # --- Final convergence check ----------------------------------------
 
