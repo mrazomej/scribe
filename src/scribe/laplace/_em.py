@@ -273,27 +273,75 @@ class LaplaceObservationModel(ABC):
 
 
 def _build_optimizer(laplace_config: LaplaceConfig):
-    """Resolve the outer-loop optax optimizer from the config."""
+    """Resolve the outer-loop optax optimizer from the config.
+
+    Mirrors :func:`scribe.inference.optimizer_factory.build_optimizer_from_config`
+    but returns a native ``optax.GradientTransformation``.  Reads the
+    structured Pydantic ``OptimizerConfig`` schema directly (explicit
+    fields ``name``, ``step_size``, ``b1``, ``b2``, ``eps``,
+    ``grad_clip_norm``, ``weight_decay``, ``momentum``) -- *not* a
+    free-form ``kwargs`` dict.
+
+    Resolution order:
+        1. ``laplace_config.optimizer`` (a pre-built
+           ``optax.GradientTransformation``) -- power-user override.
+        2. ``laplace_config.optimizer_config`` (structured spec).
+        3. Default ``optax.adam(1e-3)``.
+    """
     if laplace_config.optimizer is not None:
         return laplace_config.optimizer
+
     optim_cfg = laplace_config.optimizer_config
     if optim_cfg is None:
         return optax.adam(1e-3)
-    name = optim_cfg.name.lower()
-    kwargs = dict(optim_cfg.kwargs or {})
-    lr = kwargs.pop("step_size", kwargs.pop("learning_rate", 1e-3))
+
+    name = optim_cfg.name
+    lr = optim_cfg.step_size if optim_cfg.step_size is not None else 1e-3
+    b1 = optim_cfg.b1 if optim_cfg.b1 is not None else 0.9
+    b2 = optim_cfg.b2 if optim_cfg.b2 is not None else 0.999
+    eps = optim_cfg.eps if optim_cfg.eps is not None else 1e-8
+    grad_clip_norm = optim_cfg.grad_clip_norm
+    weight_decay = optim_cfg.weight_decay
+
     if name == "adam":
-        return optax.adam(lr, **kwargs)
-    if name == "adamw":
-        return optax.adamw(lr, **kwargs)
-    if name == "sgd":
-        return optax.sgd(lr, **kwargs)
-    if name in ("clipped_adam", "adam_clipped"):
-        clip = kwargs.pop("grad_clip_norm", 10.0)
-        return optax.chain(
-            optax.clip_by_global_norm(clip), optax.adam(lr, **kwargs)
+        opt = optax.adam(lr, b1=b1, b2=b2, eps=eps)
+    elif name == "clipped_adam":
+        # Chain a global-norm clip with Adam -- same semantics as
+        # ``numpyro.optim.ClippedAdam`` and the SVI/VAE-mode default.
+        clip_norm = float(grad_clip_norm) if grad_clip_norm is not None else 1.0
+        opt = optax.chain(
+            optax.clip_by_global_norm(clip_norm),
+            optax.adam(lr, b1=b1, b2=b2, eps=eps),
         )
-    raise ValueError(f"Unknown optimizer name: {name!r}")
+    elif name == "adagrad":
+        opt = optax.adagrad(lr, eps=eps)
+    elif name == "rmsprop":
+        opt = optax.rmsprop(lr, decay=b2, eps=eps)
+    elif name == "sgd":
+        opt = optax.sgd(lr)
+    elif name == "momentum":
+        momentum = (
+            optim_cfg.momentum if optim_cfg.momentum is not None else 0.9
+        )
+        opt = optax.sgd(lr, momentum=float(momentum))
+    else:
+        raise ValueError(
+            f"Unsupported optimizer name {name!r} for Laplace."
+        )
+
+    if weight_decay is not None:
+        opt = optax.chain(opt, optax.add_decayed_weights(weight_decay))
+
+    if grad_clip_norm is not None and name != "clipped_adam":
+        # Match ``optimizer_factory.build_optimizer_from_config``:
+        # ``grad_clip_norm`` is currently supported only with
+        # ``clipped_adam`` for the Laplace path.
+        raise ValueError(
+            "grad_clip_norm is currently supported only with "
+            "optimizer name 'clipped_adam' for Laplace inference."
+        )
+
+    return opt
 
 
 def _mean_ignoring_nans(values) -> float:
