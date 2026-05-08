@@ -1008,9 +1008,23 @@ $$
 \log \bigl|\underline{\underline{M}}\bigr|.
 $${#eq-nbln-logdet-woodbury}
 
-Each of the three terms is computable at $O(G + K^3)$ cost. The complete
-inner step (Newton iterations + log-determinant + Laplace marginal) is
-therefore $O\!\bigl(N_{\text{Newton}}\,(GK + K^3)\bigr)$ per cell.
+The first and third terms are scalar reductions over $G$ and a
+$K \times K$ determinant respectively, each $O(G + K^3)$. The middle
+term requires forming the $K \times K$ matrix
+$\underline{\underline{\widetilde{W}}}^\top
+\underline{\underline{A}}_c^{-1}
+\underline{\underline{\widetilde{W}}}$, whose entries are inner products
+of length-$G$ vectors weighted by the diagonal
+$\underline{\underline{A}}_c^{-1}$ — a cost of $O(G K^2)$, plus a single
+$K \times K$ determinant at $O(K^3)$. The dominant per-iteration cost
+is therefore $O(G K^2 + K^3)$, breaking down as: each matrix-vector
+product through $\bigl(-\underline{\underline{H}}_c\bigr)^{-1}$ at
+$O(G K + K^3)$, multiplied by a constant number of Krylov / Newton
+matvecs per inner step, plus a single $O(G K^2 + K^3)$ log-determinant
+formation. The complete inner step (Newton iterations + log-determinant
++ Laplace marginal) is therefore
+$O\!\bigl(N_{\text{Newton}}\,(G K^2 + K^3)\bigr)$ per cell, dominated by
+the log-determinant on each Newton step.
 
 #### Outer step: stochastic gradient on the Laplace marginal
 
