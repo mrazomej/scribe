@@ -207,7 +207,7 @@ class TestCaptureAnchor:
 
 
 class TestNonPLNRejection:
-    """Laplace inference is supported for PLN, LNM, and LNMVCP.
+    """Laplace inference is supported for PLN, NBLN, LNM, and LNMVCP.
 
     Clear errors for the DM-family models (NBDM, NBVCP, ZINB,
     ZINBVCP) which would require their own Newton kernels.
@@ -219,7 +219,7 @@ class TestNonPLNRejection:
         adata, _, _ = _synthetic_pln(n_cells=20, n_genes=5, latent_dim=2)
         with pytest.raises(
             ValueError,
-            match="laplace.*PLN, LNM, and LNMVCP|PLN, LNM, and LNMVCP",
+            match="laplace.*PLN, NBLN, LNM, and LNMVCP|PLN, NBLN, LNM, and LNMVCP",
         ):
             scribe.fit(
                 adata,

@@ -519,10 +519,31 @@ class LaplaceInferenceEngine:
                 progress_backend=progress_backend,
                 log_progress_lines=log_progress_lines,
             )
+        if bm == "nbln":
+            # NBLN routes through the generic Laplace-EM driver
+            # (``_em.run_laplace_em``) with an NBLN-specific
+            # observation-model adapter. PLN/LNM still use the legacy
+            # parallel orchestrations below until they are migrated to
+            # the same generic path in a follow-up.
+            from ._em import run_laplace_em
+            from ._obs_nbln import NBLNObservationModel
+
+            return run_laplace_em(
+                obs_model=NBLNObservationModel(capture_anchor=capture_anchor),
+                count_data=count_data,
+                n_cells=n_cells,
+                n_genes=n_genes,
+                latent_dim=latent_dim,
+                laplace_config=laplace_config,
+                model_config=model_config,
+                seed=seed,
+                progress=progress,
+                progress_backend=progress_backend,
+            )
         if bm != "pln":
             raise NotImplementedError(
-                f"Laplace inference is supported for PLN, LNM, and LNMVCP; "
-                f"got base_model={bm!r}."
+                f"Laplace inference is supported for PLN, NBLN, LNM, "
+                f"and LNMVCP; got base_model={bm!r}."
             )
 
         counts = jnp.asarray(count_data, dtype=jnp.float32)
