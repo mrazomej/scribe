@@ -1302,9 +1302,12 @@ def resolve_user_parameterization_for_model(
     """
     model_lower = model.lower()
 
-    # PLN has a single parameterization -- always resolve to it
+    # PLN and NBLN share a single parameterization (POISSON_LOGNORMAL):
+    # both use the VAE log-rate decoder. NBLN adds gene dispersion
+    # ``r_g`` via ``MODEL_EXTRA_PARAMS["nbln"] = ["r"]`` rather than
+    # through a distinct parameterization. Always resolve to it
     # regardless of the user-supplied parameterization string.
-    if model_lower == "pln":
+    if model_lower in ("pln", "nbln"):
         return "poisson_lognormal"
 
     param_lower = parameterization.lower()

@@ -31,6 +31,7 @@ class ModelType(str, Enum):
     LNM = "lnm"
     LNMVCP = "lnmvcp"
     PLN = "pln"
+    NBLN = "nbln"
     ZINB = "zinb"
     NBVCP = "nbvcp"
     ZINBVCP = "zinbvcp"

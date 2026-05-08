@@ -40,6 +40,7 @@ from ..builders.parameter_specs import (
     BetaPrimeSpec,
     BetaSpec,
     HorseshoeBNBConcentrationSpec,
+    LogNormalSpec,
     NEGBNBConcentrationSpec,
     PositiveNormalSpec,
     HierarchicalSigmoidNormalSpec,
@@ -59,6 +60,7 @@ from ..components.likelihoods import (
     LogisticNormalMultinomialLikelihood,
     LNMWithVCPLikelihood,
     PoissonLogNormalLikelihood,
+    NBLogNormalLikelihood,
     NBWithVCPLikelihood,
     NegativeBinomialLikelihood,
     ZeroInflatedNBLikelihood,
@@ -82,6 +84,10 @@ MODEL_EXTRA_PARAMS: Dict[str, List[str]] = {
     "lnm": [],
     "lnmvcp": ["p_capture"],
     "pln": [],
+    # NBLN: Negative Binomial-LogNormal. Reuses PLN's POISSON_LOGNORMAL
+    # parameterization for the log-rate decoder, and adds gene dispersion
+    # ``r_g`` as an extra global parameter (built via ``build_r_spec``).
+    "nbln": ["r"],
     "zinb": ["gate"],
     "nbvcp": ["p_capture"],
     "zinbvcp": ["gate", "p_capture"],
@@ -93,6 +99,7 @@ LIKELIHOOD_REGISTRY: Dict[str, Type[Likelihood]] = {
     "lnm": LogisticNormalMultinomialLikelihood,
     "lnmvcp": LNMWithVCPLikelihood,
     "pln": PoissonLogNormalLikelihood,
+    "nbln": NBLogNormalLikelihood,
     "zinb": ZeroInflatedNBLikelihood,
     "nbvcp": NBWithVCPLikelihood,
     "zinbvcp": ZINBWithVCPLikelihood,
@@ -689,6 +696,105 @@ def build_bnb_concentration_spec(
 # ------------------------------------------------------------------------------
 
 
+def build_r_spec(
+    unconstrained: bool,
+    guide_families: GuideFamilyConfig,
+    n_components: Optional[int] = None,
+    mixture_params: Optional[List[str]] = None,
+    model_config: Optional[Any] = None,
+) -> List[ParamSpec]:
+    """Build dispersion parameter spec for the NB-LogNormal model.
+
+    The dispersion ``r_g`` is gene-specific and global (not amortized,
+    not per-cell). It plays the role of the inner-layer Negative Binomial
+    dispersion in the NB-LogNormal hierarchy: counts conditional on the
+    log-rate offset ``z_cg`` are drawn from
+    ``NB(mean = mu_cg * exp(z_cg), concentration = r_g)``.
+
+    The spec mirrors the ``r`` spec inside ``CanonicalParameterization``:
+    ``LogNormalSpec`` for the constrained path and ``PositiveNormalSpec``
+    (Normal + softplus/exp transform) for the unconstrained path.
+
+    When ``model_config.priors`` carries a ``r_prior_loc`` extra (set by
+    :func:`scribe.core.nbln_data_init.inject_nbln_vae_data_init` from a
+    moment-based estimator), we use it as the prior loc instead of the
+    generic ``0.0``. This anchors the LogNormal prior on ``r`` near the
+    data-implied scale on the first iteration. The scale parameter
+    remains ``1.0`` (one order-of-magnitude spread).
+
+    Parameters
+    ----------
+    unconstrained : bool
+        If True, use ``PositiveNormalSpec`` (Normal + transform).
+        If False, use ``LogNormalSpec`` (constrained).
+    guide_families : GuideFamilyConfig
+        Guide family configuration for retrieving ``r``'s guide family.
+    n_components : int, optional
+        Number of mixture components. If provided and ``r`` is in
+        ``mixture_params``, the parameter will be marked as
+        mixture-specific.
+    mixture_params : List[str], optional
+        List of parameters that should be mixture-specific. If None and
+        ``n_components`` is set, ``r`` defaults to mixture-specific.
+    model_config : ModelConfig, optional
+        Full model configuration. When provided, ``priors.r_prior_loc``
+        (a single float) is consulted to override the default prior
+        loc. Useful for data-driven initialization in NBLN.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Single-element list containing the dispersion parameter spec.
+    """
+    r_family = guide_families.get("r")
+
+    is_mixture = False
+    if n_components is not None:
+        if mixture_params is None:
+            is_mixture = True
+        else:
+            is_mixture = "r" in mixture_params
+
+    # Pull data-driven prior loc if present (set upstream by
+    # ``inject_nbln_vae_data_init``).
+    prior_loc: float = 0.0
+    if model_config is not None and getattr(
+        model_config, "priors", None
+    ) is not None:
+        priors_extra = (
+            getattr(model_config.priors, "__pydantic_extra__", None) or {}
+        )
+        _r_loc = priors_extra.get("r_prior_loc")
+        if _r_loc is not None:
+            prior_loc = float(_r_loc)
+
+    if unconstrained:
+        return [
+            PositiveNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(prior_loc, 1.0),
+                is_gene_specific=True,
+                guide_family=r_family,
+                is_mixture=is_mixture,
+            )
+        ]
+    else:
+        return [
+            LogNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(prior_loc, 1.0),
+                is_gene_specific=True,
+                guide_family=r_family,
+                is_mixture=is_mixture,
+            )
+        ]
+
+
+# ------------------------------------------------------------------------------
+
+
 def build_extra_param_spec(
     param_name: str,
     unconstrained: bool,
@@ -795,10 +901,18 @@ def build_extra_param_spec(
             is_dataset=_bnb_is_dataset,
             positive_transform=positive_transform,
         )
+    elif param_name == "r":
+        return build_r_spec(
+            unconstrained=unconstrained,
+            guide_families=guide_families,
+            n_components=n_components,
+            mixture_params=mixture_params,
+            model_config=model_config,
+        )
     else:
         raise ValueError(
             f"Unknown extra parameter: {param_name}. "
-            f"Valid parameters are: gate, p_capture, bnb_concentration"
+            f"Valid parameters are: gate, p_capture, bnb_concentration, r"
         )
 
 

@@ -306,8 +306,12 @@ def build_config_from_preset(
         if inference_method.lower() == "svi":
             inference_method = "vae"
 
-    # --- PLN family: single parameterization, VAE-or-Laplace
-    if model_lower == "pln":
+    # --- PLN / NBLN family: single parameterization (POISSON_LOGNORMAL),
+    # VAE-or-Laplace.  NBLN shares this branch with PLN -- both use the
+    # same y_log_rate decoder; NBLN swaps the observation channel from
+    # Poisson to NB and adds gene dispersion ``r_g`` as a global extra
+    # parameter (handled by MODEL_EXTRA_PARAMS["nbln"]=["r"]).
+    if model_lower in ("pln", "nbln"):
         from ..models.parameterizations import (
             resolve_user_parameterization_for_model,
         )
@@ -325,8 +329,8 @@ def build_config_from_preset(
         "lnmvcp",
     ):
         raise ValueError(
-            "inference_method='laplace' is supported for PLN, LNM, "
-            f"and LNMVCP. Use 'svi'/'vae'/'mcmc' for model="
+            "inference_method='laplace' is supported for PLN, NBLN, "
+            "LNM, and LNMVCP. Use 'svi'/'vae'/'mcmc' for model="
             f"{model_lower!r}."
         )
     if d_mode not in ("low_rank", "learned"):

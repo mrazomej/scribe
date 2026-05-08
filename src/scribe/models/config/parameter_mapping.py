@@ -455,6 +455,13 @@ def get_active_parameters(
     if is_mixture:
         active_params.add("mixing")
 
+    # NBLN: gene dispersion ``r_g`` is added on top of the
+    # POISSON_LOGNORMAL parameterization. Registered in
+    # ``MODEL_EXTRA_PARAMS["nbln"] = ["r"]`` and built by
+    # ``build_r_spec`` in the registry.
+    if model_type == "nbln":
+        active_params.add("r")
+
     return active_params
 
 

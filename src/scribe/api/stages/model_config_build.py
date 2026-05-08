@@ -182,12 +182,22 @@ def _post_process(ctx, kw, model_config):
     ):
         model_config = _inject_lnm_vae_init(ctx, model_config)
 
-    # PLN: inject data-derived VAE initializers.
+    # PLN / NBLN: inject data-derived VAE initializers. Both models share
+    # the POISSON_LOGNORMAL parameterization (same y_log_rate decoder),
+    # so we dispatch by ``base_model`` to pick the right helper.
     if (
         model_config.inference_method.value == "vae"
         and model_config.parameterization.value == "poisson_lognormal"
     ):
-        model_config = _inject_pln_vae_init(ctx, model_config)
+        _base = (
+            model_config.base_model.value
+            if hasattr(model_config.base_model, "value")
+            else str(model_config.base_model)
+        )
+        if _base == "nbln":
+            model_config = _inject_nbln_vae_init(ctx, model_config)
+        else:
+            model_config = _inject_pln_vae_init(ctx, model_config)
 
     return model_config
 
@@ -264,5 +274,39 @@ def _inject_pln_vae_init(ctx, model_config):
             if model_config.vae.pca_loadings_init is not None
             else "None"
         ),
+    )
+    return model_config
+
+
+def _inject_nbln_vae_init(ctx, model_config):
+    """Inject NBLN data-derived VAE initializers.
+
+    Reuses the PLN helpers for the decoder bias, PCA loadings, and
+    encoder standardization stats (identical between PLN and NBLN
+    because both share the y_log_rate decoder), and additionally
+    computes a method-of-moments estimator for the gene dispersion
+    ``r_g`` and stashes it on the priors extra payload.
+    """
+    from ...core.nbln_data_init import inject_nbln_vae_data_init
+
+    _latent_dim = model_config.vae.latent_dim
+    model_config = inject_nbln_vae_data_init(
+        model_config, ctx.count_data, latent_dim=_latent_dim
+    )
+    _extra = (
+        getattr(model_config.priors, "__pydantic_extra__", None) or {}
+    )
+    _r_init = _extra.get("empirical_r_init")
+    _log.info(
+        "NBLN: injected empirical log-mean bias init (length %d), "
+        "PCA loadings init %s, encoder standardization stats, and "
+        "method-of-moments r_g estimator (length %s) into ModelConfig.",
+        int(model_config.vae.empirical_log_mean_bias_init.shape[0]),
+        (
+            model_config.vae.pca_loadings_init.shape
+            if model_config.vae.pca_loadings_init is not None
+            else "None"
+        ),
+        int(_r_init.shape[0]) if _r_init is not None else "None",
     )
     return model_config

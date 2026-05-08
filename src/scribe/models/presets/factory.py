@@ -541,13 +541,19 @@ def _create_vae_model(
         is_poisson_lognormal_family(param_key)
         and getattr(model_config, "d_mode", "low_rank") == "learned"
     ):
-        d_pln_family = guide_families.get("d_pln")
+        # NBLN uses the same d_mode mechanism as PLN but with its own
+        # site name (``d_nbln``) to avoid trace collisions if both
+        # models ever co-exist in a single trace and to match the
+        # ``d_param_name`` argument passed to ``NBLogNormalLikelihood``
+        # in the model-build step below.
+        _d_name = "d_nbln" if base_model == "nbln" else "d_pln"
+        d_pln_family = guide_families.get(_d_name)
         pln_d_specs = [
             LogNormalSpec(
-                name="d_pln",
-                # PLN keeps the *full* G-dimensional log-rate space
-                # (no reference gene) so the diagonal residual is
-                # also G-dimensional.
+                name=_d_name,
+                # PLN/NBLN keep the *full* G-dimensional log-rate
+                # space (no reference gene) so the diagonal residual
+                # is also G-dimensional.
                 shape_dims=("n_genes",),
                 default_params=(-4.6, 1.0),
                 is_gene_specific=True,
@@ -595,17 +601,23 @@ def _create_vae_model(
     # 9. Build model
     # Select LNM / LNMVCP / PLN likelihood or BNB / standard registry entry.
     if is_poisson_lognormal_family(param_key):
-        # PLN: per-gene Poisson on log-normal rates. Capture is folded
-        # into a per-cell additive offset in log-rate space, which is
-        # *internal* to the likelihood -- there is no separate global
-        # capture parameter (unlike LNMVCP). When the user supplies a
-        # capture-anchor prior via ``priors={"capture_efficiency":
-        # (log_M0, sigma_M)}`` (or any of the registered aliases), we
-        # construct a minimal BiologyInformedCaptureSpec carrying just
-        # the two scalars the likelihood actually reads, and switch the
-        # likelihood into capture-anchor mode. Without such a prior the
-        # likelihood's capture branch is simply not executed.
-        from ..components.likelihoods import PoissonLogNormalLikelihood
+        # PLN / NBLN: per-gene Poisson or Negative-Binomial on log-normal
+        # rates.  Both share the y_log_rate decoder (and hence the
+        # POISSON_LOGNORMAL parameterization); they differ only in the
+        # observation channel.  Capture is folded into a per-cell
+        # additive offset in log-rate space, which is *internal* to the
+        # likelihood (no separate global capture parameter, unlike
+        # LNMVCP).  When the user supplies a capture-anchor prior via
+        # ``priors={"capture_efficiency": (log_M0, sigma_M)}`` (or any
+        # of the registered aliases), we construct a minimal
+        # BiologyInformedCaptureSpec carrying just the two scalars the
+        # likelihood actually reads, and switch the likelihood into
+        # capture-anchor mode.  Without such a prior the likelihood's
+        # capture branch is simply not executed.
+        from ..components.likelihoods import (
+            PoissonLogNormalLikelihood,
+            NBLogNormalLikelihood,
+        )
         from ..builders.parameter_specs import BiologyInformedCaptureSpec
 
         d_mode = getattr(model_config, "d_mode", "low_rank")
@@ -636,9 +648,10 @@ def _create_vae_model(
                 guide_family=None,
                 log_M0=_log_m0,
                 sigma_M=_sigma_m,
-                # PLN's per-cell offset is in log-rate space, so the
-                # helper returns ``p_capture`` directly (the likelihood
-                # converts to ``eta = -log(p_capture)`` on its own).
+                # PLN/NBLN's per-cell offset is in log-rate space, so
+                # the helper returns ``p_capture`` directly (the
+                # likelihood converts to ``eta = -log(p_capture)`` on
+                # its own).
                 use_phi_capture=False,
             )
             # Register the spec so GuideBuilder emits a matching
@@ -648,12 +661,28 @@ def _create_vae_model(
             # corresponding variational distribution.
             param_specs.append(pln_capture_spec)
 
-        likelihood_instance = PoissonLogNormalLikelihood(
-            d_mode=d_mode,
-            d_param_name="d_pln",
-            capture_anchor=pln_capture_spec is not None,
-            biology_informed_spec=pln_capture_spec,
-        )
+        # Dispatch on base_model.  NBLN reuses the entire PLN scaffolding
+        # (decoder, capture-anchor wiring, d_mode) and only swaps the
+        # observation channel from Poisson to Negative-Binomial via the
+        # NBLogNormalLikelihood class, with its own ``d_nbln`` diagonal
+        # site name and a global ``r`` (gene dispersion) site sampled
+        # outside the cell plate by the MODEL_EXTRA_PARAMS["nbln"]=["r"]
+        # registration.
+        if base_model == "nbln":
+            likelihood_instance = NBLogNormalLikelihood(
+                d_mode=d_mode,
+                d_param_name="d_nbln",
+                r_param_name="r",
+                capture_anchor=pln_capture_spec is not None,
+                biology_informed_spec=pln_capture_spec,
+            )
+        else:
+            likelihood_instance = PoissonLogNormalLikelihood(
+                d_mode=d_mode,
+                d_param_name="d_pln",
+                capture_anchor=pln_capture_spec is not None,
+                biology_informed_spec=pln_capture_spec,
+            )
     elif is_logistic_normal_family(param_key):
         d_mode = getattr(model_config, "d_mode", "low_rank")
         ref_idx = getattr(model_config, "alr_reference_idx", -1)

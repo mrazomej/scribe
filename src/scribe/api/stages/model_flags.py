@@ -38,7 +38,10 @@ def resolve_model_flags(ctx: FitContext) -> None:
     model = ctx.model
 
     _is_lnm_model = model.lower() in ("lnm", "lnmvcp")
-    _is_pln_model = model.lower() == "pln"
+    # NBLN sits in the PLN family: it shares the VAE/Laplace inference
+    # path and the POISSON_LOGNORMAL parameterization, with capture as
+    # an internal flag (no separate "nblnvcp" model string).
+    _is_pln_model = model.lower() in ("pln", "nbln")
     _default_model = "nbvcp"
 
     if variable_capture is None and zero_inflation is None:
