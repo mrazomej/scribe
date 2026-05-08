@@ -1,11 +1,12 @@
 """Generic Laplace-EM driver and observation-model protocol.
 
-This module factors out the scaffolding shared by every Laplace fit in scribe —
-outer Adam, mini-batching, divergence detection, best- snapshot recording,
-progress reporting, and the final convergence check — so that adding a new
-observation model (NB-LogNormal, NBLN mixture, future zero-inflated variants, …)
-reduces to implementing a small protocol class. The rest of this module is the
-driver:
+This module factors out the scaffolding shared by every Laplace fit in
+scribe — outer Adam, mini-batching, divergence detection, best-snapshot
+recording, progress reporting, smoothed-loss-based patience early
+stopping, orbax checkpoint save/resume, and the final convergence
+check — so that adding a new observation model (NB-LogNormal, NBLN
+mixture, future zero-inflated variants, …) reduces to implementing a
+small protocol class. The rest of this module is the driver:
 
     run_laplace_em(obs_model, count_data, latent_dim, ...)
 
@@ -24,8 +25,8 @@ Each subclass owns the four model-specific pieces:
    diagnostics.
 4. ``pack_result``: assemble the final :class:`LaplaceRunResult` —
    the only model-specific touch is selecting which latent goes into
-   ``x_loc`` (PLN: ``x``; LNM low-rank: ``z``; LNM learned-d: ``y_alr``;
-   NBLN: ``x``).
+   ``x_loc`` (PLN/NBLN: ``x``; LNM low-rank: ``z``; LNM learned-d:
+   ``y_alr``).
 
 Shared scaffolding behaviours
 -----------------------------
@@ -45,22 +46,32 @@ Shared scaffolding behaviours
   the driver always tracks the best ``params``, ``latent_loc``, and
   ``eta_loc`` seen so far. Restores from this snapshot if any
   divergence guard fires, so callers always get a usable result.
+- **Patience-based early stopping** (when
+  ``laplace_config.early_stopping.enabled``): smoothed-loss
+  improvement tracking with ``min_delta`` / ``min_delta_pct`` and
+  ``patience`` after a configurable warmup. When
+  ``restore_best=True`` (default), the best snapshot is restored at
+  the end regardless of whether early stopping fired.
+- **Orbax checkpoint save/resume**: when
+  ``early_stopping.checkpoint_dir`` is set, the driver saves
+  ``(params, opt_state, latent_loc, eta_loc, step, best_loss, losses,
+  patience_counter)`` every ``checkpoint_every`` steps and resumes
+  from the latest checkpoint on the next call when
+  ``early_stopping.resume`` is True.
 - **Final convergence check**: ``model.final_sweep`` is called on the
   full cell population at the end with ``2 × n_newton_steps`` Newton
   iterations. The final per-cell gradient-infinity norms drive the
   ``convergence_action`` (``"raise"`` / ``"warn"`` / ``"ignore"``).
 
-What's *not* in this MVP driver
--------------------------------
-- Orbax checkpoint save/resume (TODO: lift from ``engine.py``).
-- Patience-based early stopping (TODO: lift from ``engine.py``).
-- Per-block grad split for the progress display (the existing engine
-  shows separate composition + η gradient histograms; the MVP driver
-  shows the joint norm only).
+What's *not* yet in the generic driver
+--------------------------------------
+- Per-block grad-norm split for the progress display (the legacy
+  engine showed separate composition + η gradient histograms; the
+  generic driver shows the joint norm only).
 
-These features remain available through the legacy PLN/LNM
-orchestrations in ``engine.py`` which haven't been migrated yet. They
-will be lifted into the driver in a follow-up.
+This feature gap will be addressed when LNM is migrated onto the
+generic driver — the per-block split is naturally LNM-specific and
+will be an optional hook on the protocol.
 """
 
 from __future__ import annotations
@@ -76,8 +87,13 @@ import jax.random as random
 import numpy as np
 import optax
 
-from ..models.config import LaplaceConfig, ModelConfig
+from ..models.config import EarlyStoppingConfig, LaplaceConfig, ModelConfig
 from ..svi._progress_backend import ProgressBackendName, build_progress_reporter
+from .checkpoint import (
+    laplace_checkpoint_exists,
+    load_laplace_checkpoint,
+    save_laplace_checkpoint,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +138,7 @@ class LaplaceRunResult:
         True if the loop terminated before ``n_steps`` (early stopping
         or divergence recovery).
     best_loss : float
-        Smallest loss seen over the run (post-warm-up).
+        Smallest *smoothed* loss seen over the run (post-warm-up).
     stopped_at_step : int
         Index of the step at which the loop terminated.
     divergence_aborted : bool
@@ -169,26 +185,12 @@ class FinalSweepResult:
 
 
 class LaplaceObservationModel(ABC):
-    """Per-model hooks plugged into :func:`run_laplace_em`.
-
-    Subclasses describe a specific observation channel (PLN: per-gene
-    Poisson on log-normal rates; LNM: ALR Multinomial + NB totals;
-    NBLN: per-gene NB on log-normal-modulated means). The driver
-    handles all shared scaffolding.
-
-    Subclasses are instantiated once per fit call (typically with
-    ``capture_anchor`` and ``model_config`` resolved from the API
-    layer), then their hooks are dispatched from inside the driver.
-    """
-
-    # --- Identity --------------------------------------------------------
+    """Per-model hooks plugged into :func:`run_laplace_em`."""
 
     @property
     @abstractmethod
     def name(self) -> str:
         """Short name used in progress messages and error contexts."""
-
-    # --- State construction ---------------------------------------------
 
     @abstractmethod
     def init_state(
@@ -200,8 +202,6 @@ class LaplaceObservationModel(ABC):
         seed: int,
     ) -> InitState:
         """Build initial ``params``, per-cell latents, and aux data."""
-
-    # --- Loss closure ----------------------------------------------------
 
     @abstractmethod
     def loss_fn(
@@ -216,25 +216,7 @@ class LaplaceObservationModel(ABC):
         n_newton: int,
         damping: float,
     ) -> Tuple[jnp.ndarray, Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]]:
-        """Compute the negative Laplace ELBO on one batch.
-
-        The implementation calls the model's Newton kernel internally,
-        computes ``log det(-H)`` at live globals, sums the joint
-        log-density per cell, and scales by ``data_scale`` for the
-        SVI subsampling correction.
-
-        Returns
-        -------
-        loss : jnp.ndarray, scalar
-        aux : tuple
-            ``(latent_new, eta_new, grad_inf_norm)`` — updated MAP
-            iterates and per-cell gradient norms from the inner Newton.
-            ``eta_new`` may be a placeholder zero vector when capture
-            is off; the driver routes only the real entries back into
-            ``eta_loc`` if it is not None.
-        """
-
-    # --- Full-data convergence check ------------------------------------
+        """Compute the negative Laplace ELBO on one batch."""
 
     @abstractmethod
     def final_sweep(
@@ -249,8 +231,6 @@ class LaplaceObservationModel(ABC):
         damping: float,
     ) -> FinalSweepResult:
         """Run a final Newton sweep over all cells and return MAP + grad."""
-
-    # --- Result packaging -----------------------------------------------
 
     @abstractmethod
     def pack_result(
@@ -267,16 +247,13 @@ class LaplaceObservationModel(ABC):
     ) -> LaplaceRunResult:
         """Pack into the canonical result dataclass."""
 
-    # --- Optional: aux-data slicing for mini-batches --------------------
-
     def aux_batch_slice(
         self, aux_data: Dict[str, jnp.ndarray], idx: jnp.ndarray
     ) -> Dict[str, jnp.ndarray]:
         """Slice per-cell entries in ``aux_data`` by mini-batch ``idx``.
 
         Default: slice every value whose first axis matches ``n_cells``
-        and pass through anything else unchanged. Models with non-cell-
-        indexed aux data can override.
+        and pass through anything else unchanged.
         """
         if not aux_data:
             return aux_data
@@ -291,20 +268,12 @@ class LaplaceObservationModel(ABC):
 
 
 # =====================================================================
-# Optimizer resolution (mirrors engine.py)
+# Optimizer and helpers
 # =====================================================================
 
 
 def _build_optimizer(laplace_config: LaplaceConfig):
-    """Resolve the outer-loop optax optimizer from the config.
-
-    Same precedence rules as the legacy PLN engine:
-
-    1. ``laplace_config.optimizer`` (a pre-built
-       ``optax.GradientTransformation``) — power-user override.
-    2. ``laplace_config.optimizer_config`` (serialized name + kwargs).
-    3. Default ``optax.adam(1e-3)``.
-    """
+    """Resolve the outer-loop optax optimizer from the config."""
     if laplace_config.optimizer is not None:
         return laplace_config.optimizer
     optim_cfg = laplace_config.optimizer_config
@@ -327,6 +296,15 @@ def _build_optimizer(laplace_config: LaplaceConfig):
     raise ValueError(f"Unknown optimizer name: {name!r}")
 
 
+def _mean_ignoring_nans(values) -> float:
+    """Mean of ``values`` with NaNs filtered out; ``inf`` if all NaN."""
+    arr = np.asarray(values, dtype=np.float64)
+    mask = np.isfinite(arr)
+    if not np.any(mask):
+        return float("inf")
+    return float(arr[mask].mean())
+
+
 # =====================================================================
 # Driver
 # =====================================================================
@@ -343,31 +321,18 @@ def run_laplace_em(
     seed: int = 42,
     progress: bool = True,
     progress_backend: ProgressBackendName = "auto",
+    log_progress_lines: bool = False,
 ) -> LaplaceRunResult:
     """Generic Laplace-EM training loop.
 
     Outer Adam on globals; inner Newton (per-cell) provided by the
     observation model. See module docstring for the full set of
     behaviours.
-
-    Parameters
-    ----------
-    obs_model : LaplaceObservationModel
-        Per-model hooks. See subclasses in
-        :mod:`scribe.laplace._obs_nbln` etc.
-    count_data : jnp.ndarray, shape (n_cells, n_genes)
-    n_cells, n_genes, latent_dim : int
-    laplace_config : LaplaceConfig
-        Outer-loop and Newton-step hyperparameters.
-    model_config : ModelConfig
-    seed : int
-    progress : bool, default True
-    progress_backend : str, default "auto"
     """
     counts = jnp.asarray(count_data, dtype=jnp.float32)
     rng = random.PRNGKey(seed)
 
-    # Per-model state (params, per-cell latents, aux data).
+    # ---- Per-model state (params, per-cell latents, aux data) ----
     init = obs_model.init_state(
         count_data=counts,
         n_cells=n_cells,
@@ -381,11 +346,12 @@ def run_laplace_em(
     eta_anchor = init.eta_anchor
     aux_data = init.aux_data
 
-    # Outer optimiser.
+    # ---- Outer optimiser ----
     opt = _build_optimizer(laplace_config)
     opt_state = opt.init(params)
 
-    # Hyperparameters.
+    # ---- Hyperparameters ----
+    n_steps = int(laplace_config.n_steps)
     n_newton = int(laplace_config.n_newton_steps)
     damping = float(laplace_config.damping)
     batch_size = laplace_config.batch_size
@@ -394,7 +360,15 @@ def run_laplace_em(
     batch_size = int(batch_size)
     data_scale = float(n_cells) / float(batch_size)
 
-    # JIT the loss + gradient.
+    # ---- Early-stopping / checkpointing config ----
+    early_stopping: EarlyStoppingConfig = (
+        laplace_config.early_stopping
+        if laplace_config.early_stopping is not None
+        else EarlyStoppingConfig(enabled=False)
+    )
+    checkpoint_dir = early_stopping.checkpoint_dir
+
+    # ---- JIT the loss + gradient ----
     loss_grad_fn = jax.jit(
         jax.value_and_grad(obs_model.loss_fn, has_aux=True),
         static_argnames=("data_scale", "n_newton", "damping"),
@@ -402,7 +376,6 @@ def run_laplace_em(
 
     @jax.jit
     def update_step(params, opt_state, latent_loc, eta_loc, idx):
-        """One outer-loop step: inner Newton + Adam on globals."""
         counts_batch = counts[idx]
         latent_batch_init = latent_loc[idx]
         if eta_loc is not None:
@@ -431,44 +404,108 @@ def run_laplace_em(
             eta_loc = eta_loc.at[idx].set(eta_new)
         return params, opt_state, latent_loc, eta_loc, gn, loss
 
-    # Outer loop bookkeeping.
-    n_steps = int(laplace_config.n_steps)
-    display_interval = max(1, n_steps // 100)
+    # ---- Bookkeeping ----
+    losses: List[float] = []
+    start_step = 0
     init_loss: Optional[float] = None
     min_loss_so_far: float = float("inf")
-    losses: List[float] = []
+    display_interval = max(1, n_steps // 100)
 
-    # Best-snapshot tracking for divergence recovery (always on).
-    best_params: Dict[str, jnp.ndarray] = {k: v for k, v in params.items()}
-    best_latent = latent_loc
-    best_eta = eta_loc
-    best_step_idx: int = -1
-    best_loss_value: float = float("inf")
+    # Best-snapshot for divergence recovery (always on).
+    best_params_div: Dict[str, jnp.ndarray] = {k: v for k, v in params.items()}
+    best_latent_div = latent_loc
+    best_eta_div = eta_loc
+    best_step_idx_div: int = -1
+    best_loss_value_div: float = float("inf")
     divergence_aborted: bool = False
-    early_stopped: bool = False
 
-    def _capture_best_snapshot(p, x, e, step, loss_val):
-        nonlocal best_params, best_latent, best_eta, best_step_idx, best_loss_value
-        best_params = {k: v for k, v in p.items()}
-        best_latent = x
-        best_eta = e
-        best_step_idx = step
-        best_loss_value = loss_val
+    # Early-stopping snapshot + tracker (smoothed loss).
+    best_loss = float("inf")
+    patience_counter = 0
+    best_state: Optional[Dict[str, Any]] = None
+    best_step = 0
+    early_stopped = False
+    eps_div = 1e-8  # divide-by-zero guard for percentage-based delta
 
-    # Progress reporter.
+    # ---- Resume from checkpoint if requested ----
+    resumed = False
+    resume_message: Optional[str] = None
+    if (
+        checkpoint_dir
+        and early_stopping.resume
+        and laplace_checkpoint_exists(checkpoint_dir)
+    ):
+        target_state = {
+            "params": params,
+            "opt_state": opt_state,
+            "x_loc": latent_loc,
+            # Orbax cannot serialise None; saver substitutes a zero
+            # placeholder when capture is off and the metadata's
+            # ``has_eta_loc`` flag controls whether load returns None.
+            "eta_loc": (
+                eta_loc
+                if eta_loc is not None
+                else jnp.zeros((1,), dtype=jnp.float32)
+            ),
+        }
+        loaded = load_laplace_checkpoint(checkpoint_dir, target_state)
+        if loaded is not None:
+            restored_state, md, restored_losses = loaded
+            params = restored_state["params"]
+            opt_state = restored_state["opt_state"]
+            latent_loc = restored_state["x_loc"]
+            eta_loc = restored_state["eta_loc"]
+            start_step = md.step + 1
+            best_loss = md.best_loss
+            patience_counter = md.patience_counter
+            losses = list(restored_losses)
+            resumed = True
+            best_loss_str = (
+                f"{best_loss:.4e}" if np.isfinite(best_loss) else "N/A"
+            )
+            resume_message = (
+                f"Resumed Laplace from checkpoint at step "
+                f"{start_step} (best_loss: {best_loss_str})"
+            )
+            # Restore running minimum from the loaded loss history so
+            # the divergence detector operates against the true min,
+            # not the post-resume one.  ``init_loss`` is the magnitude
+            # used for the climb-from-min threshold and must be
+            # ``abs(loss)`` (losses are typically negative; using the
+            # signed value would produce a negative threshold and
+            # spurious divergence aborts).
+            if losses:
+                init_loss = abs(float(losses[0]))
+                _finite_losses = [l for l in losses if np.isfinite(l)]
+                if _finite_losses:
+                    min_loss_so_far = float(min(_finite_losses))
+
+    last_checkpoint_step = (
+        start_step if resumed else -early_stopping.checkpoint_every
+    )
+
+    # ---- Progress reporter ----
     progress_reporter = build_progress_reporter(
         progress=progress, progress_backend=progress_backend
     )
 
     with progress_reporter as reporter:
-        reporter.start(
-            description=f"Laplace ({obs_model.name})",
-            total=n_steps,
-            completed=0,
-            loss_info="init loss: pending",
+        init_loss_display = (
+            f"{losses[0]:.4e}" if losses else "pending"
         )
+        reporter.start(
+            description=(
+                f"Laplace ({obs_model.name})"
+                + (" (resumed)" if resumed else "")
+            ),
+            total=n_steps,
+            completed=start_step,
+            loss_info=f"init loss: {init_loss_display}",
+        )
+        if resume_message is not None:
+            reporter.print_message(resume_message)
 
-        for step in range(n_steps):
+        for step in range(start_step, n_steps):
             # Mini-batch sampling.
             if batch_size < n_cells:
                 rng, sub = random.split(rng)
@@ -489,95 +526,193 @@ def run_laplace_em(
 
             loss_val = float(loss)
             losses.append(loss_val)
+            step_completed = step + 1
 
             if init_loss is None and np.isfinite(loss_val):
                 init_loss = abs(loss_val)
 
-            # Best-snapshot tracking.
-            if loss_val < best_loss_value:
-                _capture_best_snapshot(
-                    params, latent_loc, eta_loc, step, loss_val
-                )
+            # Best-snapshot (raw loss) for divergence recovery.
+            if loss_val < best_loss_value_div:
+                best_params_div = {k: v for k, v in params.items()}
+                best_latent_div = latent_loc
+                best_eta_div = eta_loc
+                best_step_idx_div = step
+                best_loss_value_div = loss_val
             if loss_val < min_loss_so_far:
                 min_loss_so_far = loss_val
 
-            # Divergence guards (warm-up: first 50 steps).
+            # ---- Divergence guards (warm-up: first 50 steps) ----
             if step >= 50 and init_loss is not None:
-                # 1. Loss-finite.
                 if not np.isfinite(loss_val):
                     logger.warning(
-                        "Laplace[%s]: divergence detected at step %d "
+                        "Laplace[%s]: divergence at step %d "
                         "(loss=%s, non-finite). Restoring best snapshot.",
-                        obs_model.name,
-                        step,
-                        loss_val,
+                        obs_model.name, step, loss_val,
                     )
                     divergence_aborted = True
                     early_stopped = True
                     break
-                # 2. Climb-from-min.
                 climb = loss_val - min_loss_so_far
                 if climb > 0.5 * init_loss:
                     logger.warning(
-                        "Laplace[%s]: divergence detected at step %d "
+                        "Laplace[%s]: divergence at step %d "
                         "(loss climbed %.3e above running min, threshold "
                         "%.3e). Restoring best snapshot.",
-                        obs_model.name,
-                        step,
-                        climb,
-                        0.5 * init_loss,
+                        obs_model.name, step, climb, 0.5 * init_loss,
                     )
                     divergence_aborted = True
                     early_stopped = True
                     break
-                # 3. Absolute-magnitude.
                 if abs(loss_val) > 1000.0 * init_loss:
                     logger.warning(
-                        "Laplace[%s]: divergence detected at step %d "
+                        "Laplace[%s]: divergence at step %d "
                         "(|loss|=%.3e > 1000x|init_loss|=%.3e). "
                         "Restoring best snapshot.",
-                        obs_model.name,
-                        step,
-                        abs(loss_val),
+                        obs_model.name, step, abs(loss_val),
                         1000.0 * init_loss,
                     )
                     divergence_aborted = True
                     early_stopped = True
                     break
 
-            # Periodic progress update.  ``reporter.update`` accepts
-            # ``advance`` to step the bar by one tick on every call,
-            # with ``loss_info`` only on the periodic-display steps so
-            # the rendered string isn't churned every iteration.
-            if (
-                step == 0
-                or (step + 1) % display_interval == 0
+            # ---- Periodic progress update ----
+            display_step = (
+                step == start_step
+                or step_completed % display_interval == 0
                 or step == n_steps - 1
-            ):
-                reporter.update(
-                    advance=1,
-                    loss_info=(
-                        f"loss={loss_val:.4e}  "
-                        f"|grad_inner| max={float(jnp.max(gn)):.2e}"
-                    ),
+            )
+            if display_step:
+                window_start = max(
+                    0,
+                    len(losses) - max(1, early_stopping.smoothing_window),
                 )
+                avg_loss = _mean_ignoring_nans(losses[window_start:])
+                init_loss_str = (
+                    f"{init_loss:.4e}" if init_loss is not None else "N/A"
+                )
+                grad_info = f"|grad|_inner max={float(jnp.max(gn)):.2e}"
+                loss_info = (
+                    f"init loss: {init_loss_str}, "
+                    f"avg. loss [{window_start + 1}-{len(losses)}]: "
+                    f"{avg_loss:.4e}, {grad_info}"
+                )
+                reporter.update(advance=1, loss_info=loss_info)
+                if log_progress_lines:
+                    print(
+                        f"Laplace progress [{len(losses)}/{n_steps}] "
+                        f"{loss_info}"
+                    )
             else:
                 reporter.update(advance=1)
 
-    # Restore best snapshot if divergence aborted.
-    if divergence_aborted and best_step_idx >= 0:
-        params = best_params
-        latent_loc = best_latent
-        eta_loc = best_eta
+            # ---- Early-stopping + checkpointing block ----
+            should_check = (
+                step_completed % early_stopping.check_every == 0
+                and len(losses) >= early_stopping.smoothing_window
+            )
+            if should_check:
+                window_start = max(
+                    0, len(losses) - early_stopping.smoothing_window
+                )
+                smoothed_loss = _mean_ignoring_nans(losses[window_start:])
+                past_warmup = step >= early_stopping.warmup
+                should_track = past_warmup and (
+                    early_stopping.enabled or early_stopping.restore_best
+                )
+
+                if should_track:
+                    if not np.isfinite(best_loss):
+                        best_loss = smoothed_loss
+                        best_step = step
+                        if early_stopping.restore_best:
+                            best_state = {
+                                "params": params,
+                                "opt_state": opt_state,
+                                "x_loc": latent_loc,
+                                "eta_loc": eta_loc,
+                            }
+                        patience_counter = 0
+                    else:
+                        improvement = best_loss - smoothed_loss
+                        if early_stopping.min_delta_pct is not None:
+                            denom = max(abs(best_loss), eps_div)
+                            improvement_pct = 100.0 * improvement / denom
+                            is_improvement = (
+                                improvement_pct
+                                > early_stopping.min_delta_pct
+                            )
+                        else:
+                            is_improvement = (
+                                improvement > early_stopping.min_delta
+                            )
+                        if is_improvement:
+                            best_loss = smoothed_loss
+                            best_step = step
+                            if early_stopping.restore_best:
+                                best_state = {
+                                    "params": params,
+                                    "opt_state": opt_state,
+                                    "x_loc": latent_loc,
+                                    "eta_loc": eta_loc,
+                                }
+                            patience_counter = 0
+                        else:
+                            patience_counter += early_stopping.check_every
+
+                # Periodic checkpoint save.
+                should_checkpoint = (
+                    checkpoint_dir is not None
+                    and (step - last_checkpoint_step)
+                    >= early_stopping.checkpoint_every
+                )
+                if should_checkpoint:
+                    save_laplace_checkpoint(
+                        checkpoint_dir=checkpoint_dir,
+                        params=params,
+                        opt_state=opt_state,
+                        x_loc=latent_loc,
+                        eta_loc=eta_loc,
+                        step=step,
+                        best_loss=best_loss,
+                        losses=losses,
+                        patience_counter=patience_counter,
+                    )
+                    last_checkpoint_step = step
+
+                # Trigger early stopping on patience exceeded.
+                if (
+                    early_stopping.enabled
+                    and past_warmup
+                    and patience_counter >= early_stopping.patience
+                ):
+                    early_stopped = True
+                    reporter.print_message(
+                        f"Early stopping triggered at step "
+                        f"{step + 1} (no improvement for "
+                        f"{patience_counter} steps, best loss "
+                        f"{best_loss:.4e} at step {best_step + 1})"
+                    )
+                    break
+
+    # ---- Restore best state if requested ----
+    if early_stopping.restore_best and best_state is not None:
+        params = best_state["params"]
+        opt_state = best_state["opt_state"]
+        latent_loc = best_state["x_loc"]
+        eta_loc = best_state["eta_loc"]
+
+    # ---- Restore divergence-best if a guard fired ----
+    if divergence_aborted and best_step_idx_div >= 0:
+        params = best_params_div
+        latent_loc = best_latent_div
+        eta_loc = best_eta_div
         logger.warning(
             "Laplace[%s]: restored best snapshot from step %d "
             "(best loss: %.4e).",
-            obs_model.name,
-            best_step_idx + 1,
-            best_loss_value,
+            obs_model.name, best_step_idx_div + 1, best_loss_value_div,
         )
 
-    # Final convergence check.
+    # ---- Final convergence check ----
     final = obs_model.final_sweep(
         params=params,
         latent_loc=latent_loc,
@@ -589,15 +724,14 @@ def run_laplace_em(
         damping=damping,
     )
 
-    # Convergence-action handling.
     max_gn = float(jnp.max(final.final_grad_norms))
     if max_gn > laplace_config.newton_tolerance:
         offending = int(
             jnp.sum(final.final_grad_norms > laplace_config.newton_tolerance)
         )
         msg = (
-            f"Laplace[{obs_model.name}]: {offending}/{n_cells} cells did "
-            f"not converge below tolerance="
+            f"Laplace[{obs_model.name}]: {offending}/{n_cells} cells "
+            f"did not converge below tolerance="
             f"{laplace_config.newton_tolerance:.1e} "
             f"(worst grad-norm={max_gn:.3e})."
         )
@@ -613,11 +747,11 @@ def run_laplace_em(
         losses=np.asarray(losses, dtype=np.float64),
         n_steps_run=len(losses),
         model_config=model_config,
-        early_stopped=early_stopped,
+        early_stopped=early_stopped or divergence_aborted,
         best_loss=(
-            best_loss_value
-            if best_loss_value != float("inf")
-            else float(losses[-1]) if losses else float("inf")
+            best_loss
+            if np.isfinite(best_loss)
+            else (float(losses[-1]) if losses else float("inf"))
         ),
         stopped_at_step=len(losses),
         divergence_aborted=divergence_aborted,
