@@ -92,6 +92,30 @@ class TestEarlyStoppingConfig:
         with pytest.raises(ValueError):
             EarlyStoppingConfig(smoothing_window=0)
 
+    def test_drift_above_initial_defaults(self):
+        """Drift-above-initial guard ships enabled with conservative defaults."""
+        config = EarlyStoppingConfig()
+        assert config.drift_above_initial_pct == 1.0
+        assert config.drift_patience == 500
+
+    def test_drift_above_initial_disabled_when_none(self):
+        """Setting drift_above_initial_pct=None disables the guard."""
+        config = EarlyStoppingConfig(drift_above_initial_pct=None)
+        assert config.drift_above_initial_pct is None
+
+    def test_drift_above_initial_pct_non_negative(self):
+        """drift_above_initial_pct accepts 0 (any drift triggers) but not negatives."""
+        EarlyStoppingConfig(drift_above_initial_pct=0.0)
+        with pytest.raises(ValueError):
+            EarlyStoppingConfig(drift_above_initial_pct=-0.1)
+
+    def test_drift_patience_positive(self):
+        """drift_patience must be strictly positive."""
+        with pytest.raises(ValueError):
+            EarlyStoppingConfig(drift_patience=0)
+        with pytest.raises(ValueError):
+            EarlyStoppingConfig(drift_patience=-1)
+
     def test_immutability(self):
         """Test that config is immutable (frozen)."""
         config = EarlyStoppingConfig()

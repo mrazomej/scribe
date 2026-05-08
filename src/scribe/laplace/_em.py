@@ -42,6 +42,15 @@ Shared scaffolding behaviours
        ``0.5 × |init_loss|`` above its running minimum.
     3. Absolute magnitude: abort if ``|loss|`` exceeds
        ``1000 × |init_loss|`` — last-line backstop.
+    4. Drift-above-initial: when
+       ``early_stopping.drift_above_initial_pct`` is set (default
+       ``1.0`` = 1%), abort if the *smoothed* loss stays above
+       ``init_loss + (pct/100) × |init_loss|`` for
+       ``early_stopping.drift_patience`` consecutive steps.  Targets
+       the failure mode where the outer Adam wanders into a region
+       where the inner Newton's Laplace approximation degrades and
+       the loop feeds itself — characteristic of non-amortized M-step
+       training.
 - **Best-snapshot recording**: independent of early-stopping config,
   the driver always tracks the best ``params``, ``latent_loc``, and
   ``eta_loc`` seen so far. Restores from this snapshot if any
@@ -469,8 +478,15 @@ def run_laplace_em(
     losses: List[float] = []
     start_step = 0
     init_loss: Optional[float] = None
+    init_loss_signed: Optional[float] = None
     min_loss_so_far: float = float("inf")
     display_interval = max(1, n_steps // 100)
+    # Drift-above-initial guard: counter accumulates by ``check_every``
+    # on each check where ``smoothed_loss`` exceeds the threshold, and
+    # resets to zero on any check that drops back below threshold.
+    # Same units as ``patience_counter`` so the comparison against
+    # ``drift_patience`` mirrors the standard early-stopping semantics.
+    drift_counter: int = 0
 
     # Best-snapshot for divergence recovery (always on).
     best_params_div: Dict[str, jnp.ndarray] = {k: v for k, v in params.items()}
@@ -537,6 +553,7 @@ def run_laplace_em(
             # spurious divergence aborts).
             if losses:
                 init_loss = abs(float(losses[0]))
+                init_loss_signed = float(losses[0])
                 _finite_losses = [l for l in losses if np.isfinite(l)]
                 if _finite_losses:
                     min_loss_so_far = float(min(_finite_losses))
@@ -591,6 +608,7 @@ def run_laplace_em(
 
             if init_loss is None and np.isfinite(loss_val):
                 init_loss = abs(loss_val)
+                init_loss_signed = float(loss_val)
 
             # Best-snapshot (raw loss) for divergence recovery.
             if loss_val < best_loss_value_div:
@@ -690,6 +708,59 @@ def run_laplace_em(
                 )
                 smoothed_loss = _mean_ignoring_nans(losses[window_start:])
                 past_warmup = step >= early_stopping.warmup
+
+                # ---- Drift-above-initial guard (orthogonal to the per-
+                # step NaN/jump/magnitude detector and to early
+                # stopping; runs whenever the smoothed loss is finite
+                # and we have an initial reference).  Default
+                # ``drift_above_initial_pct=1.0`` means a 1% climb
+                # above the *signed* initial loss, sustained for
+                # ``drift_patience`` steps, triggers the abort.  The
+                # divergence-recovery snapshot (always tracked) is
+                # restored after the loop, so the caller still gets
+                # the best parameters seen.
+                drift_pct = early_stopping.drift_above_initial_pct
+                if (
+                    drift_pct is not None
+                    and past_warmup
+                    and init_loss_signed is not None
+                    and np.isfinite(smoothed_loss)
+                ):
+                    drift_threshold = init_loss_signed + (
+                        drift_pct / 100.0
+                    ) * abs(init_loss_signed)
+                    if smoothed_loss > drift_threshold:
+                        drift_counter += early_stopping.check_every
+                    else:
+                        drift_counter = 0
+                    if drift_counter >= early_stopping.drift_patience:
+                        logger.warning(
+                            "Laplace[%s]: drift-above-initial at step %d "
+                            "(smoothed_loss=%.4e exceeded threshold=%.4e "
+                            "for %d consecutive steps; init_loss=%.4e, "
+                            "drift_above_initial_pct=%.3f%%). Restoring "
+                            "best snapshot.",
+                            obs_model.name,
+                            step,
+                            smoothed_loss,
+                            drift_threshold,
+                            drift_counter,
+                            init_loss_signed,
+                            drift_pct,
+                        )
+                        reporter.print_message(
+                            f"Drift-above-initial guard triggered at step "
+                            f"{step + 1}: smoothed loss "
+                            f"{smoothed_loss:.4e} > threshold "
+                            f"{drift_threshold:.4e} (init "
+                            f"{init_loss_signed:.4e}, "
+                            f"+{drift_pct:.2f}%) for {drift_counter} "
+                            f"steps. Restoring best snapshot."
+                        )
+                        divergence_aborted = True
+                        early_stopped = True
+                        break
+
                 should_track = past_warmup and (
                     early_stopping.enabled or early_stopping.restore_best
                 )

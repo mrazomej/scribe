@@ -800,6 +800,38 @@ class EarlyStoppingConfig(BaseModel):
         ),
     )
 
+    # Drift-above-initial guard (Laplace-EM only at present).  The
+    # standard divergence detector watches for jumps above the running
+    # minimum, so it catches sharp explosions but not slow drift.  This
+    # guard targets the failure mode where the smoothed loss creeps
+    # past its starting value and stays there — typical for non-
+    # amortized M-step training (PLN, NBLN, LNM Laplace) where the
+    # outer Adam can wander into a poor region from which the inner
+    # Newton no longer recovers.  Setting either field to None
+    # disables the guard.
+    drift_above_initial_pct: Optional[float] = Field(
+        1.0,
+        ge=0,
+        description=(
+            "Drift-above-initial guard: percentage above the (signed) initial "
+            "loss that the smoothed loss is allowed to exceed before drift is "
+            "declared.  Threshold = init_loss + (drift_above_initial_pct/100) "
+            "* |init_loss|.  When the smoothed loss exceeds this threshold for "
+            "drift_patience consecutive steps, the run aborts and the best "
+            "snapshot is restored.  Default 1.0 (1%); set to None to disable."
+        ),
+    )
+    drift_patience: int = Field(
+        500,
+        gt=0,
+        description=(
+            "Number of consecutive steps the smoothed loss must remain above "
+            "the drift-above-initial threshold before aborting.  Counter "
+            "increments by check_every per check (mirrors patience semantics), "
+            "and resets whenever the smoothed loss drops back below threshold."
+        ),
+    )
+
     # --------------------------------------------------------------------------
 
     @field_validator("smoothing_window")
