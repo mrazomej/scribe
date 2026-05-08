@@ -160,6 +160,26 @@ The decoder output spec is `[("y_alr", "identity")]`, enforcing a linear
 (no hidden layers) decoder so the kernel acts as the low-rank factor `W` and
 the bias as the ALR mean `mu`.
 
+### `PoissonLogNormalParameterization`
+
+Used by both the `pln` and `nbln` model types. Has **no sampled core
+parameters** — the per-cell log-rate latent is produced by the linear-decoder
+VAE, not sampled directly:
+
+- **Core parameters**: none
+- **Derived parameters**: none
+- **Gene parameter**: `y_log_rate` (per-cell log-rates from the VAE decoder)
+- **`requires_vae`**: `True` — same VAE pattern as the LNM family
+- **Decoder output spec**: `[("y_log_rate", "identity")]` — linear decoder,
+  exponentiated inside the likelihood (PLN) or fed as the NB log-mean (NBLN).
+
+NBLN reuses this parameterization unchanged and adds gene dispersion `r_g`
+through the `MODEL_EXTRA_PARAMS["nbln"] = ["r"]` registration mechanism in
+`scribe.models.presets.registry`. The factory's
+`build_extra_param_spec("r", ...)` arm dispatches to a dedicated
+`build_r_spec` builder that returns a `LogNormalSpec` (constrained) or
+`PositiveNormalSpec` (unconstrained) for the gene-specific `r_g`.
+
 ## Registry
 
 The `PARAMETERIZATIONS` dictionary maps names to parameterization instances:
@@ -170,7 +190,10 @@ PARAMETERIZATIONS = {
     "canonical": CanonicalParameterization(),
     "mean_prob": MeanProbParameterization(),
     "mean_odds": MeanOddsParameterization(),
-    "logistic_normal": LogisticNormalParameterization(),
+    "logistic_normal_canonical": LogisticNormalParameterization(...),
+    "logistic_normal_mean_prob": LogisticNormalParameterization(...),
+    "logistic_normal_mean_odds": LogisticNormalParameterization(...),
+    "poisson_lognormal": PoissonLogNormalParameterization(),
     # Backward-compatible aliases
     "standard": CanonicalParameterization(),
     "linked": MeanProbParameterization(),
