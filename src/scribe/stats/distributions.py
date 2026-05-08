@@ -280,6 +280,141 @@ class BetaNegativeBinomial(Distribution):
 
 
 # ==============================================================================
+# Log-Mean Negative Binomial
+# ==============================================================================
+
+
+class LogMeanNegativeBinomial(Distribution):
+    """Negative-Binomial parameterized by ``(log_mean, concentration)``.
+
+    This parameterization is the natural fit for the NB-LogNormal model,
+    where the decoder produces a log-mean ``y_log_rate = log(mu * exp(z))``
+    and the gene dispersion ``r`` is a separate global. Compared to
+    ``NegativeBinomial2(mean=exp(y), concentration=r)``, this class:
+
+    1. Avoids materializing ``mean = exp(log_mean)`` in the log-prob path.
+       Computing log-prob entirely in log-space sidesteps float32 overflow
+       that would otherwise force a model-changing clamp on the log-rate.
+    2. Matches the failure-logit linear-in-``z`` derivation in
+       ``paper/_nb_lognormal.qmd`` directly: the success-logit (NumPyro
+       convention) is ``log(r) - log_mean``, so the posterior gradient
+       and curvature derivations there carry over to the implementation
+       without an extra exp/log round-trip.
+
+    The PMF in the canonical (mean, dispersion) form is
+
+        Var[Y] = ⟨Y⟩ + ⟨Y⟩^2 / r,
+
+
+    and the mean and variance properties below evaluate ``exp(log_mean)``
+    explicitly because they are not on the gradient path.
+
+    Parameters
+    ----------
+    log_mean : array_like
+        Logarithm of the NB mean (broadcasts with ``concentration``).
+        Real-valued; no positivity constraint.
+    concentration : array_like
+        Dispersion parameter ``r > 0`` (NumPyro's "concentration").
+        Larger values approach the Poisson limit; smaller values give
+        heavier-tailed counts with a stronger zero-spike.
+
+    Notes
+    -----
+    The log-prob uses the identity
+
+        log NB(k; log_mean, r)
+            = lgamma(k+r) - lgamma(k+1) - lgamma(r)
+              + k * delta - (k + r) * softplus(delta),
+
+    where ``delta = log_mean - log(r)``.  This formulation never instantiates
+    ``mean`` or ``r/(r+mean)`` and is stable for any finite ``log_mean`` and
+    positive ``r``.
+    """
+
+    arg_constraints = {
+        "log_mean": constraints.real,
+        "concentration": constraints.positive,
+    }
+    support = constraints.nonnegative_integer
+    has_rsample = False
+
+    def __init__(self, log_mean, concentration, validate_args=None):
+        log_mean = jnp.asarray(log_mean, dtype=jnp.float32)
+        concentration = jnp.asarray(concentration, dtype=jnp.float32)
+        self.log_mean, self.concentration = promote_shapes(
+            log_mean, concentration
+        )
+        batch_shape = lax.broadcast_shapes(
+            jnp.shape(log_mean), jnp.shape(concentration)
+        )
+        super().__init__(
+            batch_shape=batch_shape,
+            event_shape=(),
+            validate_args=validate_args,
+        )
+
+    def sample(self, key, sample_shape=()):
+        """Sample via the Gamma-Poisson decomposition.
+
+        ``Y | lambda ~ Poisson(lambda)`` with ``lambda = exp(log_mean) *
+        Gamma(r, 1) / r`` is equivalent to the standard NB sampler. The
+        only ``exp`` we evaluate is ``exp(log_mean - log(r))``, which we
+        clamp for float32 safety.
+        """
+        if not is_prng_key(key):
+            raise ValueError(f"key must be a JAX PRNGKey, got {type(key)}")
+        key_g, key_p = random.split(key)
+        # delta = log_mean - log(r) ; mean = r * exp(delta)
+        delta = self.log_mean - jnp.log(self.concentration)
+        # Gamma(r, 1) sample
+        gamma_sample = Gamma(self.concentration, 1.0).sample(
+            key_g, sample_shape
+        )
+        # rate = mean * gamma_sample / r = exp(delta) * gamma_sample
+        # Clamp delta to a wide-but-finite range. This is *not* a model
+        # modification: it bounds non-finite inputs, never hit in valid
+        # inference, while keeping float32 arithmetic well-defined.
+        delta_clipped = jnp.clip(delta, -50.0, 50.0)
+        rate = jnp.exp(delta_clipped) * gamma_sample
+        return jax.random.poisson(key_p, rate)
+
+    @validate_sample
+    def log_prob(self, value):
+        """Stable log-prob in pure log-space (no ``exp(log_mean)``)."""
+        k = jnp.asarray(value, dtype=jnp.float32)
+        r = self.concentration
+        delta = self.log_mean - jnp.log(r)
+        sp = jax.nn.softplus(delta)
+        return (
+            gammaln(k + r)
+            - gammaln(k + 1.0)
+            - gammaln(r)
+            + k * delta
+            - (k + r) * sp
+        )
+
+    @property
+    def mean(self):
+        return jnp.exp(self.log_mean)
+
+    @property
+    def variance(self):
+        m = jnp.exp(self.log_mean)
+        return m + jnp.square(m) / self.concentration
+
+    @property
+    def mode(self):
+        # Standard NB mode in mean parameterization:
+        #   mode = floor((r - 1) * mean / r)  for r >= 1, else 0.
+        m = jnp.exp(self.log_mean)
+        r = self.concentration
+        return jnp.where(
+            r >= 1.0, jnp.floor((r - 1.0) * m / r), jnp.zeros_like(m)
+        )
+
+
+# ==============================================================================
 # Low-Rank Compositional Distributions
 # ==============================================================================
 
@@ -687,9 +822,7 @@ class LowRankPoissonLogNormal(Distribution):
             "`importance_log_prob(value, q_dist, n_samples=...)`."
         )
 
-    def importance_log_prob(
-        self, value, q_dist, *, n_samples=64, rng_key=None
-    ):
+    def importance_log_prob(self, value, q_dist, *, n_samples=64, rng_key=None):
         """Importance-sampled estimate of the marginal ``log p(u)``.
 
         Returns the IWAE-style estimator
