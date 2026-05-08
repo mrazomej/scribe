@@ -229,59 +229,11 @@ def _build_optax_from_config(
 # =====================================================================
 
 
-@dataclass
-class LaplaceRunResult:
-    """Result of a Laplace-mode training run.
-
-    Mirrors :class:`SVIRunResult` so that downstream packaging code can
-    treat the two interchangeably.
-
-    Attributes
-    ----------
-    globals : dict
-        Trained global parameters: ``mu`` (G,), ``W`` (G, k),
-        ``d_log`` (G,) — the unconstrained ``log d_pln`` so that
-        ``d = exp(d_log)``.
-    x_loc : jnp.ndarray, shape (n_cells, G)
-        Per-cell MAP estimate of the latent log-rate ``x_c``.
-    eta_loc : jnp.ndarray or None, shape (n_cells,)
-        Per-cell MAP estimate of the capture offset, or ``None`` when
-        no capture anchor is active.
-    final_grad_norms : jnp.ndarray, shape (n_cells,)
-        Per-cell L∞ gradient norm at the final outer step. Used for
-        convergence diagnostics.
-    losses : jnp.ndarray
-        Outer-loop loss history (negative Laplace ELBO).
-    n_steps_run : int
-        Number of outer steps executed.
-    model_config : ModelConfig, optional
-        For provenance.
-    """
-
-    globals: Dict[str, jnp.ndarray]
-    x_loc: jnp.ndarray
-    eta_loc: Optional[jnp.ndarray]
-    final_grad_norms: jnp.ndarray
-    losses: jnp.ndarray
-    n_steps_run: int
-    model_config: Optional[ModelConfig] = None
-    # Early-stopping / best-loss diagnostics. ``early_stopped`` is
-    # True when the patience criterion fired before ``n_steps``;
-    # ``best_loss`` is the smoothed loss at the best step (``inf`` if
-    # no improvement was ever recorded — typical for very short runs
-    # that finished inside the warmup window). ``stopped_at_step`` is
-    # the actual number of outer iterations executed (which can be
-    # less than ``n_steps`` if early-stopping fired).
-    early_stopped: bool = False
-    best_loss: float = float("inf")
-    stopped_at_step: int = 0
-    # Set when the divergence detector aborts the outer loop. The
-    # returned result then carries the *best snapshot so far* (the
-    # globals + per-cell MAPs at the step where the running-minimum
-    # loss was reached), not the diverged state. Lets the user
-    # inspect a usable fit and decide whether to retry with tighter
-    # config or accept the partial result.
-    divergence_aborted: bool = False
+# LaplaceRunResult lives in :mod:`scribe.laplace._em` so that the
+# generic driver and the legacy LNM orchestration both produce the
+# same dataclass shape. Re-exported here so existing imports
+# ``from scribe.laplace.engine import LaplaceRunResult`` keep working.
+from ._em import LaplaceRunResult  # noqa: E402, F401
 
 
 # =====================================================================
@@ -328,99 +280,6 @@ def _woodbury_quadform(
     correction = jnp.sum(WtDy * KinvWtDy, axis=-1)
     return base - correction
 
-
-def _laplace_elbo(
-    mu: jnp.ndarray,
-    W: jnp.ndarray,
-    d: jnp.ndarray,
-    x: jnp.ndarray,
-    eta: Optional[jnp.ndarray],
-    log_det_neg_H: jnp.ndarray,
-    counts: jnp.ndarray,
-    eta_anchor: Optional[jnp.ndarray],
-    sigma_M: float,
-) -> jnp.ndarray:
-    """Laplace-corrected ELBO summed over a batch of cells.
-
-    The Laplace approximation to ``log p(u_c)`` is
-
-    .. math::
-        \\log p(u_c) \\approx \\log p(u_c, x_c^*, \\eta_c^*)
-                            + \\tfrac{1}{2}(G + 1)\\log(2\\pi)
-                            - \\tfrac{1}{2} \\log\\det(-H_c)
-
-    Summed over cells, this is the outer-loop objective. We drop the
-    ``½(G+1)log(2π)`` constant (it does not depend on parameters).
-
-    Parameters
-    ----------
-    mu, W, d : jnp.ndarray
-        Global parameters at the current outer iterate. ``d > 0``.
-    x : jnp.ndarray, shape (B, G)
-        Per-cell MAP from the inner Newton (with ``stop_gradient``).
-    eta : jnp.ndarray or None, shape (B,)
-        Per-cell capture offset MAP. ``None`` when no capture anchor.
-    log_det_neg_H : jnp.ndarray, shape (B,)
-        Per-cell ``log det(-H_c)`` at the MAP, from the Newton kernel.
-    counts : jnp.ndarray, shape (B, G)
-        Observed counts (data).
-    eta_anchor, sigma_M : capture-anchor prior params (or ``None``).
-
-    Returns
-    -------
-    jnp.ndarray, scalar
-        The negative Laplace ELBO summed over cells (loss to minimise).
-    """
-    rate = jnp.exp(
-        jnp.clip(x - (eta[:, None] if eta is not None else 0.0), -30.0, 30.0)
-    )
-    # Poisson log-prob per cell (drops constant lgamma(u + 1)):
-    # log p(u | x, eta) = sum_g [u_g (x_g - eta) - exp(x_g - eta)]
-    if eta is not None:
-        poisson_lp = jnp.sum(counts * (x - eta[:, None]), axis=-1) - jnp.sum(
-            rate, axis=-1
-        )
-    else:
-        poisson_lp = jnp.sum(counts * x, axis=-1) - jnp.sum(rate, axis=-1)
-
-    # MVN prior log-prob: log p(x | μ, Σ) = -½ (x-μ)' Σ⁻¹ (x-μ) - ½ log|Σ| - G/2 log(2π)
-    quad = _woodbury_quadform(W, d, x - mu)  # (B,)
-    log_det_sigma = _woodbury_logdet_sigma(W, d)
-    G = mu.shape[0]
-    mvn_lp = -0.5 * quad - 0.5 * log_det_sigma - 0.5 * G * jnp.log(2 * jnp.pi)
-
-    # Capture-anchor TruncN prior on eta_c. We use the truncated-
-    # normal log-prob via numpyro for correctness on the truncation
-    # constant.
-    if eta is not None and eta_anchor is not None:
-        eta_lp = dist.TruncatedNormal(eta_anchor, sigma_M, low=0.0).log_prob(
-            eta
-        )
-    else:
-        eta_lp = jnp.zeros_like(poisson_lp)
-
-    # Laplace correction: -½ log det(-H).
-    laplace_corr = -0.5 * log_det_neg_H
-
-    elbo_per_cell = poisson_lp + mvn_lp + eta_lp + laplace_corr
-    # Per-cell loss-finite guard. Mirrors the LNM-side defence:
-    # the joint (x, η) Newton can occasionally drive a single
-    # pathological cell into a regime where ``exp(x_g - η)``
-    # overflows or the Schur back-substitution catastrophically
-    # cancels, producing NaN/Inf in that cell's ELBO contribution.
-    # Without this guard, NaNs propagate through JAX autodiff into
-    # the gradient on globals and contaminate the entire fit.
-    # Replacing NaN/Inf entries with 0 masks the divergent cells
-    # from this step's gradient. A sustained blow-up is still
-    # caught by the outer-loop divergence detector in
-    # ``LaplaceInferenceEngine.run_inference`` (loss-finite check
-    # + 1000× growth check) which aborts with diagnostic context.
-    elbo_per_cell = jnp.where(
-        jnp.isfinite(elbo_per_cell),
-        elbo_per_cell,
-        jnp.zeros_like(elbo_per_cell),
-    )
-    return -jnp.sum(elbo_per_cell)
 
 
 # =====================================================================
