@@ -219,6 +219,91 @@ def transform_gaussian_alr_to_clr(
 
 
 # --------------------------------------------------------------------------
+# Convert PLN log-rate Gaussian to equivalent ALR-form Gaussian
+# --------------------------------------------------------------------------
+
+
+def pln_to_alr_form(
+    mu_pln: jnp.ndarray,
+    W_pln: jnp.ndarray,
+    d_pln: jnp.ndarray,
+    reference_idx: int = -1,
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Express a PLN log-rate Gaussian in ALR-form coordinates.
+
+    A PLN fit gives ``x ~ 𝒩(μ_pln, 𝑊_pln 𝑊ᵗ_pln + diag(d_pln))`` on
+    ℝ^G. The ALR transform 𝑇 (subtracting ``x[ref]`` from each
+    ``x[g]``, g ≠ ref) maps this to a Gaussian on ℝ^{G-1} with
+    covariance
+
+        Σ_alr  =  𝑇 (𝑊_pln 𝑊ᵗ_pln + diag(d_pln)) 𝑇ᵗ
+              =  (𝑇 𝑊_pln) (𝑇 𝑊_pln)ᵗ
+                 +  d_pln[ref] · 𝟏𝟏ᵗ
+                 +  diag(d_pln_{≠ref}).
+
+    The middle term — ``d_pln[ref] · 𝟏𝟏ᵗ`` — is rank-1 and arises
+    purely from the ALR's subtract-reference operation. It does not
+    fit the LNM's diagonal-residual form, so we *absorb it into the
+    cov_factor* by appending a ``√d_pln[ref] · 𝟏`` column. The
+    resulting ALR-form parameters are
+
+        μ_alr  =  μ_pln_{≠ref}  −  μ_pln[ref]
+        𝑊_alr_ext  =  [ 𝑇 𝑊_pln  ‖  √d_pln[ref] · 𝟏_{G-1} ]
+        d_alr  =  d_pln_{≠ref}
+
+    with ``𝑊_alr_ext`` of shape ``(G-1, k+1)``. This representation
+    is *exactly equivalent* to the original PLN model under any
+    contrast in CLR space (the ALR→CLR pipeline cancels the
+    reference-component shift and recovers ``H 𝒩(μ_pln,
+    𝑊_pln 𝑊ᵗ_pln + diag(d_pln)) Hᵗ`` where ``H = I − 𝟏𝟏ᵗ/G``).
+
+    Use this to feed PLN fits into scribe's ALR-native parametric
+    DE pipeline: the downstream
+    :func:`transform_gaussian_alr_to_clr` step then produces the
+    correct CLR-space Gaussian for compositional contrasts.
+
+    Parameters
+    ----------
+    mu_pln : jnp.ndarray, shape ``(G,)``
+        PLN population mean in log-rate space.
+    W_pln : jnp.ndarray, shape ``(G, k)``
+        PLN low-rank loadings.
+    d_pln : jnp.ndarray, shape ``(G,)``
+        PLN diagonal residual variance (positive).
+    reference_idx : int, default ``-1``
+        Index of the gene to use as ALR reference.
+
+    Returns
+    -------
+    mu_alr : jnp.ndarray, shape ``(G-1,)``
+    W_alr_ext : jnp.ndarray, shape ``(G-1, k+1)``
+        Extended low-rank factor; the trailing column carries the
+        rank-1 ``√d_pln[ref]`` contribution from the ALR transform.
+    d_alr : jnp.ndarray, shape ``(G-1,)``
+    """
+    G = mu_pln.shape[-1]
+    ref = reference_idx if reference_idx >= 0 else G + reference_idx
+
+    # Indices of the non-reference components, in the original gene
+    # order (so the resulting ALR vector aligns with the user's
+    # gene_names minus the reference gene).
+    keep = jnp.asarray([g for g in range(G) if g != ref])
+
+    mu_alr = mu_pln[keep] - mu_pln[ref]
+    W_alr_base = W_pln[keep, :] - W_pln[ref, :][None, :]            # (G-1, k)
+
+    # Rank-1 absorbing column: √d_pln[ref] · 𝟏_{G-1}.
+    extra_col = (
+        jnp.sqrt(jnp.maximum(d_pln[ref], 0.0))
+        * jnp.ones((G - 1, 1), dtype=mu_pln.dtype)
+    )
+    W_alr_ext = jnp.concatenate([W_alr_base, extra_col], axis=-1)   # (G-1, k+1)
+
+    d_alr = d_pln[keep]
+    return mu_alr, W_alr_ext, d_alr
+
+
+# --------------------------------------------------------------------------
 # Build ILR basis (orthonormal basis of CLR subspace)
 # --------------------------------------------------------------------------
 

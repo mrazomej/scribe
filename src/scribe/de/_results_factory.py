@@ -271,9 +271,11 @@ def compare(
             gene_names=gene_names,
             label_A=label_A,
             label_B=label_B,
-            n_samples_marginal=int(n_samples_dirichlet)
-            if n_samples_dirichlet > 1
-            else int(batch_size),
+            n_samples_marginal=(
+                int(n_samples_dirichlet)
+                if n_samples_dirichlet > 1
+                else int(batch_size)
+            ),
             rng_key=rng_key,
             gene_mask=gene_mask,
         )
@@ -890,7 +892,9 @@ def _compare_empirical_from_marginal(
         )
 
     delta_samples = compute_delta_from_simplex(
-        simplex_A, simplex_B, gene_mask=gene_mask,
+        simplex_A,
+        simplex_B,
+        gene_mask=gene_mask,
     )
 
     all_gene_names = gene_names
@@ -916,10 +920,14 @@ def _compare_empirical_from_marginal(
         # No (r, p, mu, phi) posterior samples for LNM/PLN models —
         # leave the bio fields None (consistent with what
         # ``compute_biological=False`` would do for NB-family).
-        r_samples_A=None, r_samples_B=None,
-        p_samples_A=None, p_samples_B=None,
-        mu_samples_A=None, mu_samples_B=None,
-        phi_samples_A=None, phi_samples_B=None,
+        r_samples_A=None,
+        r_samples_B=None,
+        p_samples_A=None,
+        p_samples_B=None,
+        mu_samples_A=None,
+        mu_samples_B=None,
+        phi_samples_A=None,
+        phi_samples_B=None,
         simplex_A=simplex_A,
         simplex_B=simplex_B,
         # mu_map populated from the marginal's expected per-gene
