@@ -1239,6 +1239,241 @@ The complete Laplace-EM scheme is summarized below. The notation $c \in
       with implicit-function or unrolled gradient flow through
       $\underline{z}_c^*$.
 
+### Posterior uncertainty on gene-specific dispersion {#sec-nbln-global-uncertainty}
+
+The Laplace-EM outer loop delivers MAP estimates
+$\hat{\underline{\theta}} = \{\hat{\tilde{\mu}}_g,\, \hat{r}_g,\,
+\hat{\underline{\underline{W}}},\, \hat{\underline{d}}\}$. For a fully
+Bayesian analysis we also want a posterior approximation for the global
+parameters. Among the NBLN globals, $r_g$ is the only one with non-trivial
+per-gene uncertainty that is cleanly separable from the per-cell Laplace
+approximation: it is gene-specific, enters the per-cell likelihood directly,
+and its curvature accumulates over all cells.
+
+#### Conditional vs profiled observed-information Hessian
+
+A naive post-hoc Laplace on the globals would compute the Hessian of the
+outer loss @eq-nbln-outer-objective with respect to $r_g$ **while holding
+the per-cell latent MAPs $\underline{z}_c^*$ fixed**. This gives the
+*conditional* observed-information Hessian
+
+$$
+H^{\text{cond}}_{r_g, r_g} =
+\frac{\partial^2 \mathcal{L}_{\text{Lap}}}
+     {\partial r_g^2}
+\bigg|_{\underline{z}_c = \underline{z}_c^*(\hat{\theta})}.
+$${#eq-nbln-hess-cond}
+
+However, the per-cell MAPs are themselves **functions** of $\underline{\theta}$
+(they solve $\nabla_{\underline{z}_c} \Phi_c = 0$ at the current
+$\underline{\theta}$). Ignoring this dependence underestimates uncertainty: it
+is equivalent to treating the latent MAPs as noiseless sufficient statistics,
+which they are not.
+
+The correct quantity is the **profiled (marginal) observed-information
+Hessian**, obtained by the Schur complement over the per-cell latent block.
+Let $\underline{\theta}$ denote the vector of global parameters and
+$\underline{Z}$ the stacked per-cell MAPs. The joint Hessian of the complete
+log-density has the block structure
+
+$$
+\begin{bmatrix}
+H_{\theta\theta} & H_{\theta Z} \\
+H_{Z\theta} & H_{ZZ}
+\end{bmatrix},
+$${#eq-nbln-joint-hess-blocks}
+
+and the profiled Hessian for $\underline{\theta}$ is
+
+$$
+\boxed{
+H^{\text{profile}}_{\theta\theta} =
+H_{\theta\theta}
+- H_{\theta Z}\,
+  H_{ZZ}^{-1}\,
+  H_{Z\theta}.
+}
+$${#eq-nbln-profiled-hessian}
+
+The correction $H_{\theta Z}\, H_{ZZ}^{-1}\, H_{Z\theta}$ is a positive
+semi-definite matrix subtracted from the (negative) conditional Hessian,
+making the profiled curvature **less negative** — equivalently, making the
+inferred posterior uncertainty **larger** — which is the physically correct
+direction: uncertainty in the latents propagates into additional uncertainty on
+the globals.
+
+#### Diagonal structure of the NBLN $r_g$ Hessian
+
+The NB log-likelihood
+$\log \text{NB}(u_{cg} \mid \mu_{cg} e^{z_{cg}},\, r_g)$ factorizes across
+genes. Consequently:
+
+- $H_{r_g,\, r_{g'}} = 0$ for $g \neq g'$ (the conditional Hessian on the
+  $r$-block is diagonal),
+- $H_{r_g,\, z_{cg'}} = 0$ for $g \neq g'$ (the cross-Hessian between $r_g$
+  and cell-latent $z_{cg'}$ vanishes for different genes).
+
+The profiled Hessian therefore inherits diagonal structure. Specializing
+@eq-nbln-profiled-hessian to the $g$-th dispersion parameter (in
+unconstrained coordinates $\varrho_g = h^{-1}(r_g)$ where $h$ is the
+configured ``positive_transform``):
+
+$$
+\left[H^{\text{profile}}\right]_{gg} =
+\sum_{c=1}^C \left[
+  H^{(c)}_{\varrho_g,\, \varrho_g}
+  -
+  \frac{\bigl(H^{(c)}_{\varrho_g,\, z_{cg}}\bigr)^2}
+       {\bigl[(-\underline{\underline{H}}^{(c)}_{zz})^{-1}\bigr]_{gg}^{-1}}
+\right],
+$${#eq-nbln-profiled-diagonal}
+
+where the sum runs over all cells and $H^{(c)}_{\varrho_g, \varrho_g}$ and
+$H^{(c)}_{\varrho_g, z_{cg}}$ are the per-cell second derivatives of the
+joint log-density (NB log-likelihood plus the Gaussian prior contribution on
+$z$).
+
+The denominator
+$\bigl[(-\underline{\underline{H}}^{(c)}_{zz})^{-1}\bigr]_{gg}^{-1}$ is the
+reciprocal of the $g$-th diagonal of the per-cell posterior covariance — i.e.,
+the *conditional precision* of $z_{cg}$ — which quantifies how well-determined
+the latent is for that cell and gene.
+
+#### Efficient extraction of $\text{diag}((-H_{zz})^{-1})$ via Woodbury factors
+
+The per-cell Newton solver (@sec-nbln-laplace) already computes the Woodbury
+factorization of $-\underline{\underline{H}}_c = \underline{\underline{A}}_c
+- \underline{\underline{\widetilde{W}}}\,
+\underline{\underline{M}}^{-1}\,
+\underline{\underline{\widetilde{W}}}^\top$
+(equations @eq-nbln-hessian-woodbury and @eq-nbln-hessian-inverse). The
+diagonal of the inverse is
+
+$$
+\left[(-\underline{\underline{H}}_c)^{-1}\right]_{gg}
+=
+\left[\underline{\underline{A}}_c^{-1}\right]_{gg}
++
+\left\|
+  \left(\underline{\underline{A}}_c^{-1}
+        \underline{\underline{\widetilde{W}}}\,
+        \underline{\underline{S}}_c^{-\top}
+  \right)_{g,:}
+\right\|_2^2,
+$${#eq-nbln-diag-woodbury}
+
+where $\underline{\underline{S}}_c = \underline{\underline{M}} -
+\underline{\underline{\widetilde{W}}}^\top
+\underline{\underline{A}}_c^{-1}
+\underline{\underline{\widetilde{W}}}$ is the $K \times K$ Schur complement
+already available from the inner Newton step, and $\underline{\underline{S}}_c
+= \underline{\underline{L}}_S\, \underline{\underline{L}}_S^\top$ is its
+Cholesky factorization (also already computed for the log-determinant
+@eq-nbln-logdet-woodbury).
+
+The first term is simply $1 / (a_{cg} + 1/d_g)$ — the diagonal of a diagonal
+matrix. The second term requires forming $\underline{\underline{A}}_c^{-1}\,
+\underline{\underline{\widetilde{W}}}$ (cost $O(GK)$, reuses existing diagonal
+$\underline{\underline{A}}_c^{-1}$) and solving
+$\underline{\underline{L}}_S^\top \underline{v} = \cdot$ (one triangular solve
+per column, cost $O(K^2)$). The total per-cell cost is therefore $O(GK + K^3)$
+— **identical to one Newton step** — and no $G \times G$ matrix is ever
+materialized.
+
+#### Unconstrained coordinate system
+
+All curvature quantities in @eq-nbln-profiled-diagonal are evaluated in the
+**unconstrained** space $\varrho_g = h^{-1}(r_g)$ where $h$ is the configured
+``positive_transform`` (defaulting to $\text{softplus}$). This is the
+coordinate system in which the outer optimization actually ran; computing the
+Hessian in the same coordinates ensures that the inferred scale reflects the
+geometry of the loss landscape.
+
+The resulting posterior approximation for gene $g$ is
+
+$$
+\varrho_g \mid \underline{\underline{U}} \;\approx\;
+\mathcal{N}\!\left(
+  \hat{\varrho}_g,\;
+  \sigma_g^2
+\right),
+\qquad
+\sigma_g =
+\frac{1}{\sqrt{-\left[H^{\text{profile}}\right]_{gg}}},
+$${#eq-nbln-r-posterior}
+
+stored as ``r_loc`` $= \hat{\varrho}_g$ and ``r_scale`` $= \sigma_g$.
+Constrained dispersion values are recovered by applying the forward transform:
+$r_g = h(\varrho_g)$, i.e., $r_g = \text{softplus}(\varrho_g)$ under the
+default configuration. This yields a
+$\text{TransformedDistribution}(\mathcal{N}(\hat{\varrho}_g, \sigma_g^2),\;
+h)$ — a positively-supported distribution on $r_g$ whose shape inherits the
+skewness of the softplus (or exponential) link.
+
+#### Curvature flooring and diagnostics
+
+Non-positive entries in the profiled Hessian diagonal indicate that the
+corresponding gene's dispersion is **unidentified** at the converged
+$\hat{\underline{\theta}}$: the Laplace marginal is locally flat or even
+increasing in that direction, so the posterior "scale" would be imaginary.
+This can occur for genes with very few non-zero counts (no information on
+$r_g$) or for numerical reasons when $r_g$ is extremely large (Poisson limit,
+where the NB likelihood loses sensitivity to $r_g$).
+
+SCRIBE handles this with a relative curvature floor:
+
+$$
+\left[H^{\text{profile}}\right]_{gg}
+\longleftarrow
+\min\!\left(
+  \left[H^{\text{profile}}\right]_{gg},\;
+  -\epsilon \cdot \text{median}\!\left(
+    \bigl|\left[H^{\text{profile}}\right]_{11}\bigr|,\, \ldots,\,
+    \bigl|\left[H^{\text{profile}}\right]_{GG}\bigr|
+  \right)
+\right),
+$${#eq-nbln-curvature-floor}
+
+with $\epsilon \sim 10^{-6}$. The floor is expressed in curvature units rather
+than absolute units because the Hessian scales with the number of cells $C$.
+Any gene $g$ whose curvature was floored is reported as a logged warning at fit
+time; downstream, its ``r_scale`` is finite but should be interpreted with
+caution (it reflects the floor, not genuine posterior concentration). The
+diagnostics field ``r_hessian_floor_count`` records the number of floored
+genes.
+
+#### Total cost
+
+The profiled-Hessian calculation requires one additional pass over all cells
+(or the subset used for the "final sweep") **after** the outer loop has
+converged and the best-loss state has been restored. For each cell, the
+dominant cost is the extraction of
+$\text{diag}((-\underline{\underline{H}}_c)^{-1})$ and the two per-gene second
+derivatives, both at $O(GK + K^3)$. Summing over $C$ cells gives a total cost
+of $O(C \cdot (GK + K^3))$ — the same order as one full pass of the
+Laplace-EM inner step. In practice, this adds $< 10\%$ wall-clock overhead to
+a converged fit.
+
+#### Caveats
+
+Two limitations of the diagonal approximation are worth noting:
+
+1. **No $r_g$–$r_{g'}$ covariance.** The profiled Hessian is diagonal (each
+   gene's curvature is independent), which is exact for the NB likelihood but
+   ignores potential coupling through the shared prior
+   $\underline{\underline{\Sigma}}$. For per-gene credible intervals and
+   single-gene hypothesis tests this is correct. For joint hypotheses across
+   many genes (e.g., gene-set enrichment tests on dispersion), the diagonal
+   approximation will underestimate the joint uncertainty.
+
+2. **No prior contribution.** Unless the training loss included an explicit
+   prior on $r_g$ (which the current NBLN Laplace path does not), the Hessian
+   is purely the observed information. This is equivalent to a flat prior in
+   unconstrained coordinates — acceptable for well-identified genes with many
+   informative cells, but it makes the posterior overly diffuse for weakly
+   identified genes where a regularizing prior would otherwise concentrate the
+   posterior.
+
 ### Comparison and recommendation {#sec-nbln-inference-tradeoff}
 
 | Property | Path A (SVI) | Path B (Laplace) |
@@ -1374,6 +1609,71 @@ mean, and variance per gene against draws from the marginal $\pi(u_{cg})$,
 which is obtained by drawing $\underline{z}_c \sim \mathcal{N}(0,
 \underline{\underline{\Sigma}})$ and then $u_{cg} \sim
 \text{NB}(\mu_{cg} e^{z_{cg}}, r_g)$.
+
+### Posterior predictive checks with global uncertainty {#sec-nbln-ppc-global}
+
+When posterior uncertainty on the gene-specific dispersion is available
+(@sec-nbln-global-uncertainty), non-MAP posterior predictive checks
+**automatically** propagate that uncertainty into the predictive distribution.
+Two PPC flavors are exposed for the Laplace path:
+
+**MAP-only PPC.** Holds all parameters (both per-cell latents and globals) at
+their MAP estimates. For sample $s$:
+
+$$
+u_{cg}^{(s)} \sim
+\text{NB}\!\left(
+  \hat{\mu}_{cg}\, e^{\hat{z}_{cg}},\;
+  \hat{r}_g
+\right),
+\qquad s = 1, \ldots, S.
+$${#eq-nbln-map-ppc}
+
+This is the cheapest PPC and tests the likelihood shape at the point estimate.
+Exposed as ``get_map_ppc_samples``.
+
+**Posterior-predictive PPC (with global uncertainty).** For each sample $s$,
+first draw the dispersion from its posterior, then draw per-cell latents from
+the Laplace-approximate posterior, then draw counts:
+
+$$
+\varepsilon_g^{(s)} \sim \mathcal{N}(0, 1),
+\qquad
+r_g^{(s)} = h\!\left(\hat{\varrho}_g + \sigma_g\,
+\varepsilon_g^{(s)}\right),
+$${#eq-nbln-ppc-r-sample}
+
+$$
+\underline{z}_c^{(s)} \sim
+\mathcal{N}\!\left(\hat{\underline{z}}_c,\;
+(-\underline{\underline{H}}_c)^{-1}\right),
+$${#eq-nbln-ppc-z-sample}
+
+$$
+u_{cg}^{(s)} \sim
+\text{NB}\!\left(
+  \hat{\mu}_{cg}\, e^{z_{cg}^{(s)}},\;
+  r_g^{(s)}
+\right),
+$${#eq-nbln-ppc-count-sample}
+
+where $h$ is the configured ``positive_transform`` (softplus by default),
+$\hat{\varrho}_g$ is the fitted ``r_loc``, and $\sigma_g$ is the ``r_scale``
+from @eq-nbln-r-posterior. Exposed as ``get_ppc_samples`` and
+``get_per_cell_predictive_samples``.
+
+The composition sampling procedure
+(@eq-nbln-comp-gamma-draw–@eq-nbln-comp-normalize) is similarly modified: each
+sample uses $r_g^{(s)}$ drawn from the posterior rather than the fixed MAP.
+
+**Effect on predictive tails.** Because $r_g$ enters the NB variance
+quadratically ($\text{Var}(u_{cg}) = \mu + \mu^2/r_g$), uncertainty in $r_g$
+asymmetrically widens the predictive distribution. The widening is most
+pronounced for genes with small fitted $\hat{r}_g$ (highly bursty) and
+relatively large $\sigma_g / \hat{\varrho}_g$ (weakly identified dispersion).
+This is the honest posterior-uncertainty signal: a model that is uncertain
+about gene burstiness **should** produce wider predictive intervals for those
+genes.
 
 ## Mathematical summary {#sec-nbln-summary}
 

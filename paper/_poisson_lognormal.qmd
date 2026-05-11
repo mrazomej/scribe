@@ -947,6 +947,40 @@ are returned as a ``ScribeLaplaceResults`` (see
 methods ``get_laplace_x_loc``, ``get_laplace_eta_loc``,
 ``get_laplace_p_capture``, and per-cell predictive sampling.
 
+### Remark on global parameter uncertainty {#sec-pln-global-uncertainty-remark}
+
+The NBLN and LNM Laplace paths provide post-hoc posterior uncertainty on their
+respective scalar global parameters ($r_g$ for NBLN, @sec-nbln-global-uncertainty;
+$\mu_T$ and $r_T$ for LNM, @sec-lnm-global-uncertainty) via the profiled
+observed-information Hessian. The PLN does not have an analogous result, for
+a structural reason.
+
+The PLN's global parameters $\underline{\theta} =
+(\underline{\mu},\, \underline{\underline{W}},\, \underline{d})$ enter the
+model *exclusively* through the Gaussian prior
+$\mathcal{N}(\underline{\mu},\, \underline{\underline{W}}
+\underline{\underline{W}}^\top + \text{diag}(\underline{d}))$ on the
+per-cell latent $\underline{x}$. There are **no scalar globals** that enter
+the observation-channel likelihood directly while being independent of the
+per-cell latents (contrast with the NBLN's gene-specific $r_g$ or the LNM's
+totals-NB parameters, both of which interact with the data independently of
+the composition latent). The per-cell Laplace approximation already accounts
+for the curvature of the joint log-density with respect to $\underline{x}$
+at the current $\underline{\theta}$, so — conditioned on the fitted globals —
+the per-cell posteriors represent the complete inference story.
+
+Computing posterior uncertainty on $(\underline{\mu},
+\underline{\underline{W}}, \underline{d})$ themselves would require a Hessian
+over the full $G + G \cdot K + G = G(K+2)$-dimensional parameter space,
+evaluated at the converged MAP. While conceptually straightforward (the
+profiled-Hessian machinery of @sec-nbln-global-uncertainty applies in
+principle), the dimensionality makes this expensive and the resulting
+posterior high-dimensional. This is deferred to future work; the current
+PLN Laplace path treats these parameters as MAP estimates. In practice, for
+moderately sized panels ($G \sim 10^3$, $C \sim 10^4$), the per-parameter
+Fisher information concentrates rapidly with $C$ and the MAP is typically
+sharply peaked for well-identified parameters.
+
 ## Connection to the LNM {#sec-pln-connection-to-lnm}
 
 The PLN and LNM are two observation layers built on the same biophysical

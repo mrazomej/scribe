@@ -1767,6 +1767,61 @@ draws use the data total directly. The $\eta$ sampler is therefore
 only relevant for *unconditional* PPCs that re-draw cell totals
 from the NB-on-totals submodel.
 
+#### Propagation of totals-parameter uncertainty into PPCs {#sec-lnm-ppc-global}
+
+When posterior uncertainty on the totals parameters is available
+(@sec-lnm-global-uncertainty), non-MAP posterior-predictive checks
+**automatically** incorporate it. The ``get_map_ppc_samples`` path remains
+MAP-only (using $\hat{\mu}_T$ and $\hat{r}_T$ directly). The non-MAP paths
+(``get_ppc_samples``, ``get_per_cell_predictive_samples``) proceed as follows
+for each sample $s$:
+
+1. **Draw totals parameters from their joint posterior:**
+
+$$
+\underline{\vartheta}_T^{(s)} \;\sim\;
+\mathcal{N}\!\left(
+  \hat{\underline{\vartheta}}_T,\;
+  \underline{\underline{\Sigma}}_{\vartheta_T}
+\right),
+\qquad
+\mu_T^{(s)} = h(\vartheta_{\mu_T}^{(s)}),
+\quad
+r_T^{(s)} = h(\vartheta_{r_T}^{(s)}),
+$${#eq-lnm-ppc-totals-draw}
+
+where $h$ is the configured ``positive_transform``.
+
+2. **Draw per-cell totals from the NB with the sampled parameters:**
+
+$$
+u_T^{(c,s)} \;\sim\;
+\text{NB}\!\left(\mu_T^{(s)},\; r_T^{(s)}\right),
+$${#eq-lnm-ppc-totals-nb}
+
+or, for LNMVCP, $u_T^{(c,s)} \sim \text{NB}(\mu_T^{(s)} \cdot
+\exp(-\eta_c),\; r_T^{(s)})$.
+
+3. **Draw composition from the per-cell Laplace posterior** (as in
+   @eq-lnm-laplace-ppc, unchanged):
+
+$$
+\underline{u}_c^{(s)} \;\sim\;
+\text{Multinomial}\!\left(u_T^{(c,s)},\;
+\text{ALR}^{-1}(\underline{y}_{\text{ALR},c}^{(s)})\right).
+$${#eq-lnm-ppc-counts}
+
+**Effect on predictive distribution.** The primary consequence of sampling
+$(\mu_T, r_T)$ is that the marginal predictive distribution of totals $u_T$
+becomes a **mixture of Negative Binomials** (mixing over the posterior on
+the NB parameters), rather than a single NB at the MAP. This mixture has
+heavier tails than the MAP-conditioned NB, reflecting genuine uncertainty
+about the population-level total-count distribution. The effect is most
+pronounced for small datasets (where the totals-parameter posterior is wide)
+and for LNMVCP fits with large capture-offset uncertainty (where $\mu_T$ and
+$r_T$ absorb residual ambiguity between the capture model and the
+population-level total distribution).
+
 ### Implementation {#sec-lnm-laplace-implementation}
 
 Activated via:
@@ -1872,6 +1927,173 @@ the most natural for variational EM because it puts the mean
 directly in the optimised parameter space, sidestepping the
 log-odds vs log-mean numerical-conditioning trade-offs that
 matter for the encoder VAE path.
+
+### Posterior uncertainty on totals parameters {#sec-lnm-global-uncertainty}
+
+The Laplace-EM outer loop yields MAP estimates of the NB-on-totals globals
+$(\hat{\mu}_T, \hat{r}_T)$ alongside the composition parameters
+$(\hat{\underline{\mu}}, \hat{\underline{\underline{W}}},
+\hat{\underline{d}})$. To complete the Bayesian picture, we approximate
+the posterior uncertainty on $(\mu_T, r_T)$ via the same profiled
+observed-information Hessian technique developed for the NBLN gene-specific
+dispersion in @sec-nbln-global-uncertainty. We provide the LNM-specific
+derivation here; the general framework (motivation, conditional vs profiled
+Hessian, Schur complement) is presented there.
+
+#### The 2$\times$2 totals block
+
+Unlike the NBLN case where the dispersion parameters are gene-specific and
+independent (giving a diagonal profiled Hessian), the LNM has exactly **two**
+coupled scalar globals: the unconstrained totals-NB parameters
+
+$$
+\underline{\vartheta}_T =
+\begin{bmatrix}
+\vartheta_{\mu_T} \\
+\vartheta_{r_T}
+\end{bmatrix}
+=
+\begin{bmatrix}
+h^{-1}(\mu_T) \\
+h^{-1}(r_T)
+\end{bmatrix},
+$${#eq-lnm-totals-unconstrained}
+
+where $h$ is the configured ``positive_transform`` (softplus by default). These
+parameters are strongly coupled because the NB-on-totals log-likelihood
+$\log \text{NB}(u_T^{(c)} \mid \mu_T, r_T)$ has non-zero cross-curvature
+$\partial^2 \ell / \partial \vartheta_{\mu_T}\, \partial \vartheta_{r_T}$.
+The profiled Hessian is therefore a **full** $2 \times 2$ matrix, not diagonal.
+
+#### Derivation of the profiled Hessian
+
+Let $\underline{Z}$ denote the stacked per-cell latent MAPs (the ALR or
+factor-score latents $\underline{z}_c$ for each cell, and additionally the
+capture offsets $\eta_c$ for LNMVCP). The profiled Hessian for
+$\underline{\vartheta}_T$ is the $2 \times 2$ Schur complement
+
+$$
+H^{\text{profile}}_{\vartheta_T, \vartheta_T} =
+H_{\vartheta_T, \vartheta_T}
+- H_{\vartheta_T, Z}\,
+  H_{ZZ}^{-1}\,
+  H_{Z, \vartheta_T},
+$${#eq-lnm-profiled-totals}
+
+where $H_{\vartheta_T, \vartheta_T}$ is the $2 \times 2$ conditional Hessian
+of the outer Laplace objective with respect to the totals parameters at fixed
+per-cell MAPs.
+
+**Structure of the cross-Hessian $H_{\vartheta_T, Z}$.** The NB-on-totals
+log-likelihood contributes a cross-derivative only between
+$\underline{\vartheta}_T$ and the capture offset $\eta_c$ (for LNMVCP, where
+$\eta_c$ shifts the NB mean), and is zero with respect to the composition
+latent $\underline{z}_c$ (which enters only the multinomial). For **plain
+LNM** (no capture offset), the cross-Hessian $H_{\vartheta_T, Z}$ is
+**exactly zero**: the NB-on-totals objective depends only on
+$(\mu_T, r_T)$ and the observed totals $u_T^{(c)}$, with no per-cell latent
+coupling. In this case, the profiled and conditional Hessians coincide:
+
+$$
+H^{\text{profile}}_{\vartheta_T, \vartheta_T}
+\;=\;
+H^{\text{cond}}_{\vartheta_T, \vartheta_T}
+\;=\;
+\sum_{c=1}^C
+\nabla^2_{\underline{\vartheta}_T}
+\log \text{NB}\!\left(u_T^{(c)} \mid \mu_T, r_T\right).
+\quad\text{(plain LNM)}
+$${#eq-lnm-profiled-plain}
+
+For **LNMVCP**, the NB mean is $\mu_T \exp(-\eta_c)$, giving non-zero
+$H_{\vartheta_T, \eta_c}$ (a $2 \times 1$ column per cell). The Schur
+correction accumulates over cells:
+
+$$
+H^{\text{profile}}_{\vartheta_T, \vartheta_T}
+\;=\;
+\sum_{c=1}^C \left[
+  H^{(c)}_{\vartheta_T, \vartheta_T}
+  -
+  H^{(c)}_{\vartheta_T, \eta_c}\,
+  \frac{1}{-H^{(c)}_{\eta_c, \eta_c}}\,
+  H^{(c)}_{\eta_c, \vartheta_T}
+\right],
+\quad\text{(LNMVCP)}
+$${#eq-lnm-profiled-vcp}
+
+where $H^{(c)}_{\eta_c, \eta_c}$ is the scalar NB-plus-prior curvature on
+the capture offset (already computed in the per-cell Newton step,
+@eq-lnm-laplace-blockdiag-logdet). Each cell's correction term is a
+rank-1 outer product of a $2 \times 1$ vector, so the total cost is $O(C)$
+scalar operations — negligible.
+
+#### Result: joint posterior on totals
+
+Inverting the $2 \times 2$ profiled Hessian gives the posterior covariance:
+
+$$
+\underline{\underline{\Sigma}}_{\vartheta_T}
+\;=\;
+\left(-H^{\text{profile}}_{\vartheta_T, \vartheta_T}\right)^{-1}
+\;\in\; \mathbb{R}^{2 \times 2}.
+$${#eq-lnm-totals-cov}
+
+The joint posterior approximation in unconstrained space is
+
+$$
+\underline{\vartheta}_T \mid \underline{\underline{U}}
+\;\approx\;
+\mathcal{N}\!\left(
+  \hat{\underline{\vartheta}}_T,\;
+  \underline{\underline{\Sigma}}_{\vartheta_T}
+\right),
+$${#eq-lnm-totals-posterior}
+
+stored as ``totals_cov`` (the $2 \times 2$ covariance), ``mu_T_loc`` $=
+\hat{\vartheta}_{\mu_T}$, and ``r_T_loc`` $= \hat{\vartheta}_{r_T}$.
+Marginal scales are extracted from the diagonal:
+
+$$
+\text{mu\_T\_scale} = \sqrt{[\underline{\underline{\Sigma}}_{\vartheta_T}]_{11}},
+\qquad
+\text{r\_T\_scale} = \sqrt{[\underline{\underline{\Sigma}}_{\vartheta_T}]_{22}}.
+$${#eq-lnm-marginal-scales}
+
+#### Constrained marginal distributions
+
+The constrained marginal distributions are obtained by applying the forward
+transform $h$ (softplus or exp) to the unconstrained Normal marginals:
+
+$$
+\mu_T \mid \underline{\underline{U}}
+\;\approx\;
+h\!\left(\mathcal{N}(\hat{\vartheta}_{\mu_T},\;
+[\underline{\underline{\Sigma}}_{\vartheta_T}]_{11})\right),
+$${#eq-lnm-mu-T-constrained}
+
+$$
+r_T \mid \underline{\underline{U}}
+\;\approx\;
+h\!\left(\mathcal{N}(\hat{\vartheta}_{r_T},\;
+[\underline{\underline{\Sigma}}_{\vartheta_T}]_{22})\right).
+$${#eq-lnm-r-T-constrained}
+
+These are ``TransformedDistribution`` objects in scribe's NumPyro
+representation, accessible through ``get_distributions()["mu_T"]`` and
+``get_distributions()["r_T"]`` respectively. The full joint (preserving the
+off-diagonal correlation) is available as
+``get_distributions()["totals_unconstrained"]``, a bivariate Normal.
+
+#### Curvature flooring
+
+The same relative-curvature-flooring strategy from @sec-nbln-global-uncertainty
+applies. For the $2 \times 2$ Hessian, the check is that the matrix is
+negative definite (both eigenvalues negative). If either eigenvalue is
+non-negative, both diagonal entries are floored to a minimum curvature
+$\epsilon \cdot |H_{11} + H_{22}| / 2$ and a warning is logged. In practice,
+totals parameters are almost always well-identified because the NB-on-totals
+likelihood accumulates information from all $C$ cells into just two parameters.
 
 ## Equivalence to a linear-decoder VAE {#sec-lnm-linear-vae-equivalence}
 
