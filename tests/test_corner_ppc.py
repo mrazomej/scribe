@@ -13,11 +13,14 @@ These tests verify the helper functions and grid layout logic in
 import pytest
 import numpy as np
 import matplotlib
+import types
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+import scribe.viz.corner_ppc as corner_ppc_module
 from scribe.viz.corner_ppc import (
+    plot_corner_ppc,
     _resolve_gene_indices,
     _render_diagonal_panel,
     _render_offdiag_panel,
@@ -468,3 +471,84 @@ class TestCornerGridStructure:
             for col in range(row):
                 assert axes_grid[row, col].axison
         plt.close(fig)
+
+
+def test_plot_corner_ppc_reuses_subset_sampling_object(monkeypatch):
+    """Corner PPC should plot from the subset object that got sampled."""
+    counts = np.arange(5 * 7, dtype=float).reshape(5, 7) + 1.0
+    seen = {}
+
+    class _FakeResultsForCorner:
+        def __init__(self, n_genes):
+            self.n_genes = int(n_genes)
+            self.model_config = types.SimpleNamespace(inference_method="svi")
+            self.predictive_samples = None
+            self.var = None
+
+        def __getitem__(self, index):
+            # Return a fresh subset object, matching the behavior that exposed
+            # the regression when predictive samples were attached elsewhere.
+            subset = _FakeResultsForCorner(len(index))
+            if self.predictive_samples is not None:
+                idx = np.asarray(index, dtype=int)
+                subset.predictive_samples = self.predictive_samples[:, :, idx]
+            return subset
+
+    def _fake_predictive(
+        sampling_results, *, rng_key, n_samples, counts, store_samples,
+        ppc_level=None,
+    ):
+        _ = rng_key, store_samples, ppc_level
+        seen["sampling_results_id"] = id(sampling_results)
+        sampling_results.predictive_samples = np.zeros(
+            (n_samples, counts.shape[0], sampling_results.n_genes), dtype=float
+        )
+        return sampling_results.predictive_samples
+
+    def _fake_diagonal(axis, ppc_samples, true_counts, render_opts, gene_label=None):
+        _ = axis, true_counts, render_opts, gene_label
+        seen["diag_called"] = True
+        seen["diag_ppc_shape"] = tuple(ppc_samples.shape)
+
+    monkeypatch.setattr(corner_ppc_module, "_coerce_counts", lambda x: np.asarray(x))
+    monkeypatch.setattr(
+        corner_ppc_module,
+        "_coerce_and_align_counts_to_results",
+        lambda raw, results, context=None: raw,
+    )
+    monkeypatch.setattr(
+        corner_ppc_module,
+        "_resolve_ppc_sampling_counts",
+        lambda results, raw, aligned: aligned,
+    )
+    monkeypatch.setattr(
+        corner_ppc_module,
+        "_resolve_gene_indices",
+        lambda *args, **kwargs: np.array([1, 4], dtype=int),
+    )
+    monkeypatch.setattr(
+        corner_ppc_module, "_resolve_ppc_grid", lambda **kwargs: {"n_samples": 3}
+    )
+    monkeypatch.setattr(corner_ppc_module, "_get_gene_names", lambda results: None)
+    monkeypatch.setattr(
+        corner_ppc_module, "_get_predictive_samples_for_plot", _fake_predictive
+    )
+    monkeypatch.setattr(corner_ppc_module, "_render_diagonal_panel", _fake_diagonal)
+    monkeypatch.setattr(
+        corner_ppc_module, "_render_offdiag_panel", lambda *args, **kwargs: None
+    )
+
+    result = plot_corner_ppc(
+        _FakeResultsForCorner(counts.shape[1]),
+        counts,
+        n_genes=2,
+        n_samples=3,
+        save=False,
+        show=False,
+    )
+
+    # The diagonal renderer receives per-gene PPC slices from the sampled
+    # subset object; shape (n_samples, n_cells) confirms predictive cache use.
+    assert seen["diag_called"] is True
+    assert seen["diag_ppc_shape"] == (3, counts.shape[0])
+    plt.close(result.fig)

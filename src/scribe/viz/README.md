@@ -38,6 +38,10 @@ plotting from raw `adata` counts against filtered model results.
 - For VAE PPC paths, generate predictive samples in full result-space first,
   then subset samples for plotting panels. This avoids rebuilding VAE
   model/guide callables with inconsistent decoder head widths.
+- For subset-sampling PPC paths (non-VAE / non-amortized), reuse the exact
+  subset results object passed into predictive sampling when plotting panels.
+  Reconstructing a fresh `results[selected_idx]` view can drop freshly cached
+  `predictive_samples` when the parent results object has no predictive cache.
 - `plot_mean_calibration` auto-detects LNM models and computes the predicted
   mean as `rho * E[u_T]` (compositional probability times expected total
   count) instead of the NB formula `r * p / (1-p)`. The ALR reference index

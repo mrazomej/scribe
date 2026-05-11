@@ -190,7 +190,13 @@ def _prepare_ppc_data(
         store_samples=True,
         ppc_level=ppc_level,
     )
-    results_subset = results[selected_idx]
+    # Reuse the object that received predictive samples. For the subset
+    # sampling path, sampling_results is already gene-aligned and now carries
+    # predictive_samples. Re-creating results[selected_idx] here would drop the
+    # freshly populated cache when the parent results object had no cache.
+    results_subset = (
+        results[selected_idx] if sample_full_space else sampling_results
+    )
 
     # results[selected_idx] preserves the caller-specified gene order, so
     # subset_positions maps each gene's original index to its position in

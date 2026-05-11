@@ -1193,6 +1193,70 @@ def test_prepare_ppc_data_samples_full_space_for_vae(monkeypatch):
     assert prep["results_subset"].n_genes <= 3
 
 
+def test_prepare_ppc_data_reuses_subset_object_with_fresh_samples(monkeypatch):
+    """Subset PPC sampling should keep the sampled subset instance."""
+    import scribe.viz.ppc as ppc_module
+
+    n_cells, n_genes = 6, 8
+    counts = np.arange(n_cells * n_genes, dtype=float).reshape(
+        n_cells, n_genes
+    ) + 1.0
+    seen = {}
+
+    class _FakeResults:
+        def __init__(self, n_genes_local):
+            self.n_genes = int(n_genes_local)
+            self.model_config = types.SimpleNamespace(inference_method="svi")
+            self.predictive_samples = None
+
+        def __getitem__(self, index):
+            # Return a fresh subset view, mirroring the real SVI results
+            # behavior that triggered the regression when predictive_samples
+            # were only attached to a different subset instance.
+            subset = _FakeResults(len(index))
+            if self.predictive_samples is not None:
+                idx = np.asarray(index, dtype=int)
+                subset.predictive_samples = self.predictive_samples[:, :, idx]
+            return subset
+
+    def _fake_select_genes(counts_arr, n_rows, n_cols):
+        _ = counts_arr, n_rows, n_cols
+        selected = np.array([1, 3, 6], dtype=int)
+        mean_counts = counts.mean(axis=0)
+        return selected, mean_counts
+
+    def _fake_predictive(
+        sampling_results, *, rng_key, n_samples, counts, store_samples,
+        ppc_level=None,
+    ):
+        _ = rng_key, store_samples, ppc_level
+        seen["sampling_results_id"] = id(sampling_results)
+        sampling_results.predictive_samples = np.zeros(
+            (n_samples, counts.shape[0], sampling_results.n_genes), dtype=float
+        )
+        return sampling_results.predictive_samples
+
+    monkeypatch.setattr(ppc_module, "_select_genes", _fake_select_genes)
+    monkeypatch.setattr(
+        ppc_module, "_get_predictive_samples_for_plot", _fake_predictive
+    )
+    prep = ppc_module._prepare_ppc_data(
+        _FakeResults(n_genes),
+        counts,
+        viz_cfg=None,
+        counts_for_sampling=counts,
+        n_rows=1,
+        n_cols=3,
+        n_samples=4,
+    )
+
+    # The plotting subset must be the same object that received the
+    # predictive cache in the subset-sampling branch.
+    assert id(prep["results_subset"]) == seen["sampling_results_id"]
+    assert prep["results_subset"].predictive_samples is not None
+    assert prep["results_subset"].predictive_samples.shape == (4, n_cells, 3)
+
+
 def test_resolve_ppc_sampling_counts_prefers_full_counts_for_amortized_subset():
     """Amortized subset PPC must preserve original full-gene count matrix."""
     import scribe.viz.ppc as ppc_module

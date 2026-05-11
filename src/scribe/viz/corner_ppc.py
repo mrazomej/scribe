@@ -772,8 +772,13 @@ def plot_corner_ppc(
         ppc_level=ppc_level,
     )
 
-    # Subset results to the selected genes so predictive_samples is aligned
-    results_subset = results[selected_idx]
+    # Reuse the object that received predictive samples. For the subset
+    # sampling path, sampling_results is already gene-aligned and now carries
+    # predictive_samples. Re-creating results[selected_idx] here would drop the
+    # freshly populated cache when the parent results object had no cache.
+    results_subset = (
+        results[selected_idx] if sample_full_space else sampling_results
+    )
 
     # Build a mapping from original gene index → position inside the
     # gene-subset (needed because results[selected_idx] preserves
