@@ -46,6 +46,52 @@ plotting from raw `adata` counts against filtered model results.
   predicted mean as `exp(y_log_rate)` from the MAP decoder log-rate head.
   This keeps the diagnostic in the model's native log-rate space.
 
+## Corner PPC (`plot_corner_ppc`)
+
+`corner_ppc.py` renders an **N x N triangular grid** for a small set of genes
+(typically 4-5), combining marginal and bivariate posterior predictive checks in
+a single figure:
+
+- **Diagonal panels** — marginal PPC histograms identical to `plot_ppc`: shaded
+  credible-region bands from posterior predictive draws with the observed count
+  histogram overlaid.
+- **Lower-triangle panels** — bivariate PPC panels: 2-D density contour levels
+  computed via `scipy.stats.gaussian_kde` on pooled posterior predictive samples,
+  with the observed gene-gene scatter plotted on top.
+- **Upper triangle** — hidden.
+
+### Gene selection
+
+Three modes (checked in priority order):
+
+1. `gene_indices` — explicit column indices.
+2. `gene_names_list` — gene name strings resolved against `results.var.index`.
+3. **Auto (correlation-diversity)** — selects genes that span the correlation
+   spectrum so the corner grid contains panels with strong positive, strong
+   negative, and near-zero correlations:
+   - **Seed**: find the most positively correlated pair and the most negatively
+     correlated pair (up to 4 unique genes).
+   - **Greedy fill**: add genes that maximise pairwise diversity (the gene
+     whose minimum absolute correlation with all already-selected genes is
+     largest).
+   - **Sort**: final selection is ordered by median expression (ascending).
+   - **Correlation source**: model-aware dispatch — Laplace fits use the
+     analytic `W W^T + diag(d)` correlation, VAE PLN fits use
+     `get_pln_correlation()`, everything else falls back to empirical Pearson
+     on `log1p(counts)`.
+   - **Nuisance removal** (`subtract_direction`): optionally project out
+     library-size or top-PC directions before gene selection, mirroring the
+     same option in `plot_correlation_heatmap`.  For Laplace/VAE PLN fits this
+     uses the analytic `get_correlation_residual()`.  For the empirical path,
+     `"library_size"` falls back to `"pc"` (eigendecomposition of the empirical
+     covariance).
+
+### Performance
+
+To keep the 2-D KDE responsive on large datasets, pooled PPC samples are
+subsampled to at most 50 000 points before kernel density estimation.  A small
+jitter is added to break integer ties for KDE stability.
+
 ## PLN Compatibility Notes
 
 The viz module supports PLN runs with model-aware behavior:

@@ -1,5 +1,7 @@
 """Shared utilities for the packaged ``scribe.viz`` module."""
 
+import warnings
+
 from rich.console import Console
 from rich.progress import (
     Progress,
@@ -7,6 +9,15 @@ from rich.progress import (
     BarColumn,
     TextColumn,
     TimeElapsedColumn,
+)
+
+# Suppress Rich's repeated "install ipywidgets for Jupyter support"
+# warning that fires on every console.print / progress.update call
+# in IPython / marimo environments where ipywidgets is not installed.
+warnings.filterwarnings(
+    "ignore",
+    message=r'install "ipywidgets"',
+    category=UserWarning,
 )
 
 console = Console()

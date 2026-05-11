@@ -56,7 +56,51 @@ _KDE_MAX_POINTS = 50_000
 # ---------------------------------------------------------------------------
 
 
-def _get_correlation_matrix_for_selection(results, counts):
+def _empirical_correlation_residual(counts, method, n_components):
+    """Remove dominant PCA directions from an empirical covariance matrix.
+
+    When no model-implied ``W`` matrix is available, this performs
+    eigendecomposition of the empirical covariance of ``log1p(counts)``
+    and removes the top principal components before converting back to
+    a correlation matrix.
+
+    Parameters
+    ----------
+    counts : ndarray
+        Observed count matrix ``(n_cells, n_genes)``.
+    method : {"pc"}
+        Only ``"pc"`` is supported for the empirical path (there is no
+        model-implied library-size direction without a ``W`` matrix).
+    n_components : int
+        Number of top principal components to project out.
+
+    Returns
+    -------
+    ndarray
+        Residual correlation matrix of shape ``(n_genes, n_genes)``.
+    """
+    log_counts = np.log1p(counts.astype(float))
+    cov = np.cov(log_counts, rowvar=False)
+
+    # Eigendecomposition, largest eigenvalues last
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    # Project out the top-n_components directions
+    n_remove = min(n_components, len(eigvals))
+    for i in range(1, n_remove + 1):
+        v = eigvecs[:, -i]
+        cov = cov - np.outer(v, v) * eigvals[-i]
+
+    # Convert residual covariance to correlation
+    std = np.sqrt(np.maximum(np.diag(cov), 1e-30))
+    corr = cov / (std[:, None] * std[None, :])
+    # Clamp to [-1, 1] to handle numerical noise
+    np.clip(corr, -1.0, 1.0, out=corr)
+    return corr
+
+
+def _get_correlation_matrix_for_selection(
+    results, counts, *, subtract_direction=None, n_pcs_to_remove=1,
+):
     """Obtain a gene-gene correlation matrix for auto-selection.
 
     The source is chosen based on the model type:
@@ -68,12 +112,29 @@ def _get_correlation_matrix_for_selection(results, counts):
     - **Everything else**: empirical Pearson correlation on
       ``log1p(counts)``.
 
+    When ``subtract_direction`` is set, nuisance directions (library
+    size or top PCs) are projected out before computing the correlation.
+    This mirrors the ``subtract_direction`` option in
+    :func:`plot_correlation_heatmap`.
+
     Parameters
     ----------
     results : object
         Fitted model results.
     counts : ndarray
         Observed count matrix ``(n_cells, n_genes)``.
+    subtract_direction : {None, "library_size", "pc"}, optional
+        Nuisance-direction removal strategy:
+
+        - ``None`` (default): use the full correlation matrix.
+        - ``"library_size"``: project out the latent direction closest
+          to the all-ones gene vector (Laplace / VAE PLN only; falls
+          back to ``"pc"`` for empirical correlation).
+        - ``"pc"``: project out the top ``n_pcs_to_remove`` principal
+          components.
+    n_pcs_to_remove : int
+        Number of PCs to remove when ``subtract_direction="pc"``
+        (default 1).
 
     Returns
     -------
@@ -87,29 +148,59 @@ def _get_correlation_matrix_for_selection(results, counts):
     """
     n_genes_counts = int(counts.shape[1])
 
-    # Laplace fits expose an analytic correlation from W W^T + diag(d)
+    # Laplace fits expose analytic correlation (and residual) from W, d
     if isinstance(results, scribe.ScribeLaplaceResults):
-        corr = np.asarray(results.get_correlation())
+        if subtract_direction is not None:
+            corr = np.asarray(results.get_correlation_residual(
+                method=subtract_direction,
+                n_components=int(n_pcs_to_remove),
+                include_diagonal_d=False,
+            ))
+        else:
+            corr = np.asarray(results.get_correlation())
         return corr, n_genes_counts
 
     # VAE PLN-family fits expose an analytic correlation in log-rate
-    # space.  PLN provides ``get_pln_correlation``; NBLN (when its
-    # SVI extraction mixin lands) will provide ``get_nbln_correlation``.
-    # Fall through to the empirical fallback if neither is available.
+    # space, with optional residual projection.
     if (isinstance(results, scribe.ScribeVAEResults)
             and _is_pln_model(results)):
-        for accessor in ("get_nbln_correlation", "get_pln_correlation"):
-            fn = getattr(results, accessor, None)
-            if callable(fn):
-                try:
-                    corr = np.asarray(fn())
-                    return corr, n_genes_counts
-                except Exception:
-                    continue
+        if subtract_direction is not None:
+            for accessor in (
+                "get_nbln_correlation_residual",
+                "get_pln_correlation_residual",
+            ):
+                fn = getattr(results, accessor, None)
+                if callable(fn):
+                    try:
+                        corr = np.asarray(fn(
+                            method=subtract_direction,
+                            n_components=int(n_pcs_to_remove),
+                            include_diagonal_d=False,
+                        ))
+                        return corr, n_genes_counts
+                    except Exception:
+                        continue
+        else:
+            for accessor in ("get_nbln_correlation", "get_pln_correlation"):
+                fn = getattr(results, accessor, None)
+                if callable(fn):
+                    try:
+                        corr = np.asarray(fn())
+                        return corr, n_genes_counts
+                    except Exception:
+                        continue
 
     # Fallback: empirical Pearson on log1p(counts)
-    log_counts = np.log1p(counts.astype(float))
-    corr = np.corrcoef(log_counts, rowvar=False)
+    if subtract_direction is not None:
+        # "library_size" requires a W matrix; for the empirical path
+        # we fall back to PCA removal.
+        _method = "pc" if subtract_direction == "library_size" else subtract_direction
+        corr = _empirical_correlation_residual(
+            counts, method=_method, n_components=int(n_pcs_to_remove),
+        )
+    else:
+        log_counts = np.log1p(counts.astype(float))
+        corr = np.corrcoef(log_counts, rowvar=False)
     return corr, n_genes_counts
 
 
@@ -220,7 +311,16 @@ def _select_genes_by_correlation_diversity(corr_matrix, n_genes, counts):
     return selected_arr[np.argsort(medians)]
 
 
-def _resolve_gene_indices(results, counts, gene_indices, gene_names_list, n_genes):
+def _resolve_gene_indices(
+    results,
+    counts,
+    gene_indices,
+    gene_names_list,
+    n_genes,
+    *,
+    subtract_direction=None,
+    n_pcs_to_remove=1,
+):
     """Resolve which gene columns to display in the corner grid.
 
     Three modes are supported, checked in priority order:
@@ -246,6 +346,12 @@ def _resolve_gene_indices(results, counts, gene_indices, gene_names_list, n_gene
         Gene names to resolve via ``results.var.index``.
     n_genes : int
         Number of genes when auto-selecting.
+    subtract_direction : {None, "library_size", "pc"}, optional
+        Nuisance-direction removal applied to the correlation matrix
+        before auto-selection.  Ignored when ``gene_indices`` or
+        ``gene_names_list`` is provided.
+    n_pcs_to_remove : int
+        Number of PCs to remove when ``subtract_direction="pc"``.
 
     Returns
     -------
@@ -284,7 +390,9 @@ def _resolve_gene_indices(results, counts, gene_indices, gene_names_list, n_gene
 
     # Auto-select: correlation-diversity strategy
     corr_matrix, _n_genes_counts = _get_correlation_matrix_for_selection(
-        results, counts
+        results, counts,
+        subtract_direction=subtract_direction,
+        n_pcs_to_remove=n_pcs_to_remove,
     )
     return _select_genes_by_correlation_diversity(corr_matrix, n_genes, counts)
 
@@ -498,6 +606,8 @@ def plot_corner_ppc(
     gene_indices=None,
     gene_names_list=None,
     n_genes=5,
+    subtract_direction=None,
+    n_pcs_to_remove=1,
     n_samples=None,
     ppc_level="library_anchored",
     n_contour_levels=6,
@@ -541,6 +651,22 @@ def plot_corner_ppc(
     n_genes : int
         Number of genes when auto-selecting (default 5).  Ignored when
         ``gene_indices`` or ``gene_names_list`` is given.
+    subtract_direction : {None, "library_size", "pc"}, optional
+        Remove nuisance directions from the correlation matrix before
+        automatic gene selection.  Useful when library-size variation
+        dominates and hides secondary block structure:
+
+        - ``None`` (default): use the full correlation matrix.
+        - ``"library_size"``: project out the latent direction closest
+          to the all-ones gene vector.  Available for Laplace and VAE
+          PLN fits; falls back to ``"pc"`` for the empirical path.
+        - ``"pc"``: project out the top ``n_pcs_to_remove`` principal
+          components from the covariance.
+
+        Ignored when ``gene_indices`` or ``gene_names_list`` is given.
+    n_pcs_to_remove : int
+        Number of principal components to project out when
+        ``subtract_direction="pc"`` (default 1).
     n_samples : int or None
         Number of posterior predictive draws.  Overrides
         ``viz_cfg.ppc_opts.n_samples``.
@@ -605,7 +731,9 @@ def plot_corner_ppc(
     # Gene selection
     # ------------------------------------------------------------------
     selected_idx = _resolve_gene_indices(
-        results, counts, gene_indices, gene_names_list, n_genes
+        results, counts, gene_indices, gene_names_list, n_genes,
+        subtract_direction=subtract_direction,
+        n_pcs_to_remove=n_pcs_to_remove,
     )
     n_panel = len(selected_idx)
     gene_names = _get_gene_names(results)

@@ -72,6 +72,7 @@ _LAZY_EXPORTS = {
         "scribe.viz.mean_calibration",
         "plot_mean_calibration",
     ),
+    "plot_corner_ppc": ("scribe.viz.corner_ppc", "plot_corner_ppc"),
     "plot_mu_pairwise": ("scribe.viz.mu_pairwise", "plot_mu_pairwise"),
     "plot_de_mean_expression": ("scribe.viz.de", "plot_de_mean_expression"),
     "plot_de_volcano": ("scribe.viz.de", "plot_de_volcano"),
