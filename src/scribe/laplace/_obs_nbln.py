@@ -113,12 +113,26 @@ class NBLNObservationModel(LaplaceObservationModel):
         Model configuration.  Used to resolve
         ``positive_transform`` for the dispersion parameter ``r``.
         Falls back to ``softplus`` when ``None``.
+    informative_priors : Optional[Dict[str, Dict[str, jnp.ndarray]]]
+        Empirical Gaussian priors derived from a previously-fit SVI
+        results object.  Keys are a subset of ``{"r", "mu", "eta"}``,
+        each mapping to a ``{"loc": ..., "scale": ...}`` dict in the
+        target Laplace coordinate space.  See
+        :mod:`scribe.laplace.priors` for the adapter that builds these.
+
+        When ``"eta"`` is supplied, capture activates on the target
+        even if ``capture_anchor`` is ``None`` — the SVI per-cell
+        prior supersedes the scalar anchor.  When ``"r"`` or ``"mu"``
+        is supplied, the loss gains a ``Normal(loc, scale).log_prob(...)``
+        term that adds prior curvature to the global Hessian during
+        both training and post-fit uncertainty extraction.
     """
 
     def __init__(
         self,
         capture_anchor: Optional[Tuple[float, float]] = None,
         model_config: Optional[ModelConfig] = None,
+        informative_priors: Optional[Dict[str, Dict[str, jnp.ndarray]]] = None,
     ):
         if capture_anchor is None:
             self._capture_anchor = None
@@ -135,6 +149,32 @@ class NBLNObservationModel(LaplaceObservationModel):
             model_config
         )
 
+        # Informative priors (Round-2/3 audit: split per-parameter
+        # storage; validate keys ⊆ {"r", "mu", "eta"}).
+        if informative_priors is not None:
+            valid = {"r", "mu", "eta"}
+            invalid = set(informative_priors) - valid
+            if invalid:
+                raise ValueError(
+                    f"informative_priors has unrecognized keys {invalid}; "
+                    f"valid keys are {valid}."
+                )
+        self._prior_r = (
+            informative_priors.get("r")
+            if informative_priors is not None
+            else None
+        )
+        self._prior_mu = (
+            informative_priors.get("mu")
+            if informative_priors is not None
+            else None
+        )
+        self._prior_eta = (
+            informative_priors.get("eta")
+            if informative_priors is not None
+            else None
+        )
+
     # --- Identity --------------------------------------------------------
 
     @property
@@ -143,7 +183,10 @@ class NBLNObservationModel(LaplaceObservationModel):
 
     @property
     def uses_capture(self) -> bool:
-        return self._capture_anchor is not None
+        # Round-2 Finding A: per-cell eta prior must also activate
+        # capture, otherwise the loss path silently takes the x-only
+        # branch and ignores the SVI-supplied per-cell anchors.
+        return self._capture_anchor is not None or self._prior_eta is not None
 
     # --- Initial state ---------------------------------------------------
 
@@ -157,25 +200,37 @@ class NBLNObservationModel(LaplaceObservationModel):
     ) -> InitState:
         counts_np = np.asarray(count_data)
 
-        mu_init = jnp.asarray(
-            empirical_log_mean_from_counts(counts_np), dtype=jnp.float32
-        )
+        # --- mu init: prior loc overrides data-driven init -----------
+        if self._prior_mu is not None:
+            mu_init = jnp.asarray(self._prior_mu["loc"], dtype=jnp.float32)
+        else:
+            mu_init = jnp.asarray(
+                empirical_log_mean_from_counts(counts_np), dtype=jnp.float32
+            )
+
         W_init = jnp.asarray(
             pca_loadings_init(counts_np, latent_dim=latent_dim),
             dtype=jnp.float32,
         )
         # Initialise unconstrained d_loc so positive_transform(d_loc) ≈ 0.1.
+        # No informative-prior override: NBVCP has no `d` counterpart and
+        # the prior would be ill-posed.
         d_loc_init = self._pos_inverse(
             jnp.full((n_genes,), 0.1, dtype=jnp.float32)
         )
-        # Initialise the unconstrained dispersion coordinate r_loc so
-        # that positive_transform(r_loc) ≈ empirical dispersion.
-        r_init = jnp.asarray(
-            empirical_dispersion_from_counts(counts_np), dtype=jnp.float32
-        )
-        r_loc_init = self._pos_inverse(jnp.maximum(r_init, 1e-3)).astype(
-            jnp.float32
-        )
+
+        # --- r init: prior loc overrides data-driven init ------------
+        if self._prior_r is not None:
+            r_loc_init = jnp.asarray(
+                self._prior_r["loc"], dtype=jnp.float32
+            )
+        else:
+            r_init = jnp.asarray(
+                empirical_dispersion_from_counts(counts_np), dtype=jnp.float32
+            )
+            r_loc_init = self._pos_inverse(jnp.maximum(r_init, 1e-3)).astype(
+                jnp.float32
+            )
 
         params = {
             "mu": mu_init,
@@ -184,25 +239,51 @@ class NBLNObservationModel(LaplaceObservationModel):
             "r_loc": r_loc_init,
         }
 
-        # Warm-start per-cell x at log(u + 1) [+ η_anchor when capture is on]
-        # so exp(x − η) ≈ u from step 0.
-        if self.uses_capture:
+        # --- Three-way capture branch (Round-3 Finding A) ------------
+        # Order matters: SVI-derived per-cell prior (if present)
+        # supersedes the scalar anchor; the bare ``capture_anchor``
+        # branch unpacks the tuple, which crashes when capture_anchor
+        # is None but prior_eta activates capture.
+        if self._prior_eta is not None:
+            # SVI-derived per-cell capture (mode "eta").
+            eta_anchor = jnp.asarray(
+                self._prior_eta["loc"], dtype=jnp.float32
+            )
+            eta_scale_per_cell = jnp.asarray(
+                self._prior_eta["scale"], dtype=jnp.float32
+            )
+            eta_loc = eta_anchor
+            latent_loc = jnp.log(count_data + 1.0) + eta_loc[:, None]
+        elif self._capture_anchor is not None:
+            # Scalar biology-informed capture anchor (legacy path).
             log_M0, _sigma_M = self._capture_anchor
             log_lib = jnp.log(jnp.maximum(jnp.sum(count_data, axis=-1), 1.0))
             eta_anchor = log_M0 - log_lib
+            eta_scale_per_cell = jnp.full(
+                (n_cells,), self._sigma_M, dtype=jnp.float32
+            )
             eta_loc = eta_anchor
             latent_loc = jnp.log(count_data + 1.0) + eta_loc[:, None]
         else:
+            # No capture at all (x-only Newton path).
             eta_anchor = None
+            eta_scale_per_cell = None
             eta_loc = None
             latent_loc = jnp.log(count_data + 1.0)
+
+        # Per-cell eta scale rides through ``aux_data`` so the existing
+        # ``aux_batch_slice`` auto-slices it by minibatch index — no
+        # InitState schema change required (Round-2 Finding B).
+        aux_data: Dict[str, jnp.ndarray] = {}
+        if eta_scale_per_cell is not None:
+            aux_data["eta_scale"] = eta_scale_per_cell
 
         return InitState(
             params=params,
             latent_loc=latent_loc,
             eta_loc=eta_loc,
             eta_anchor=eta_anchor,
-            aux_data={},
+            aux_data=aux_data,
         )
 
     # --- Loss closure ----------------------------------------------------
@@ -219,14 +300,23 @@ class NBLNObservationModel(LaplaceObservationModel):
         n_newton: int,
         damping: float,
     ) -> Tuple[jnp.ndarray, Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]]:
-        del aux_batch  # NBLN has no auxiliary data
-
         mu = params["mu"]
         W = params["W"]
         d = self._pos_forward(params["d_loc"])
         # Map unconstrained r_loc to positive dispersion via the
         # configured positive_transform (softplus by default).
         r = self._pos_forward(params["r_loc"])
+
+        # Per-cell eta prior scale (Round-1 Finding 4 + Round-2 Finding B).
+        # When capture is on, ``aux_batch["eta_scale"]`` provides one
+        # scale per cell — either the SVI-derived per-cell prior scale
+        # or a broadcast of the scalar ``self._sigma_M`` for the
+        # capture-anchor path.  When capture is off, we synthesise a
+        # ones array so the Newton kernel's vmap stays uniform.
+        if self.uses_capture:
+            sigma_eta_batch = aux_batch["eta_scale"]
+        else:
+            sigma_eta_batch = jnp.ones((counts_batch.shape[0],))
 
         # Stop-gradient on Newton inputs (variational-EM convention).
         latent_init_sg = jax.lax.stop_gradient(latent_init)
@@ -238,6 +328,7 @@ class NBLNObservationModel(LaplaceObservationModel):
         if self.uses_capture:
             eta_init_sg = jax.lax.stop_gradient(eta_init)
             eta_anchor_sg = jax.lax.stop_gradient(eta_anchor_batch)
+            sigma_eta_sg = jax.lax.stop_gradient(sigma_eta_batch)
             x_new, eta_new, _gn, _ = laplace_newton_batch(
                 latent_init_sg,
                 eta_init_sg,
@@ -247,14 +338,14 @@ class NBLNObservationModel(LaplaceObservationModel):
                 d_sg,
                 r_sg,
                 eta_anchor_sg,
-                self._sigma_M,
+                sigma_eta_sg,
                 n_newton,
                 damping,
             )
             x_new = jax.lax.stop_gradient(x_new)
             eta_new = jax.lax.stop_gradient(eta_new)
             log_det = laplace_log_det_neg_H_batch(
-                x_new, eta_new, counts_batch, r, W, d, self._sigma_M
+                x_new, eta_new, counts_batch, r, W, d, sigma_eta_batch
             )
             log_mean = x_new - eta_new[:, None]
             # Per-block grad split for the progress display.  The
@@ -272,7 +363,7 @@ class NBLNObservationModel(LaplaceObservationModel):
                 d_sg,
                 r_sg,
                 eta_anchor_sg,
-                self._sigma_M,
+                sigma_eta_sg,
             )
             gn_blocks = {"x": gn_x, "η": gn_eta}
         else:
@@ -319,10 +410,10 @@ class NBLNObservationModel(LaplaceObservationModel):
             -0.5 * quad - 0.5 * log_det_sigma - 0.5 * G * jnp.log(2 * jnp.pi)
         )
 
-        # TruncN prior on η.
+        # TruncN prior on η (per-cell scale).
         if self.uses_capture:
             eta_lp = dist.TruncatedNormal(
-                eta_anchor_batch, self._sigma_M, low=0.0
+                eta_anchor_batch, sigma_eta_batch, low=0.0
             ).log_prob(eta_new)
         else:
             eta_lp = jnp.zeros_like(nb_lp)
@@ -337,7 +428,30 @@ class NBLNObservationModel(LaplaceObservationModel):
             elbo_per_cell,
             jnp.zeros_like(elbo_per_cell),
         )
-        loss = -data_scale * jnp.sum(elbo_per_cell)
+
+        # Global-parameter priors (NOT scaled by data_scale — these are
+        # parameter priors, not per-cell likelihood contributions).
+        # The Normal log-prob terms add prior precision to ``r_loc`` and
+        # ``mu``; autodiff carries this through to the training gradient
+        # automatically.  ``compute_global_uncertainty`` mirrors the
+        # ``1/scale**2`` injection in its closed-form Hessian path.
+        global_prior_lp = jnp.zeros(())
+        if self._prior_r is not None:
+            r_loc_prior = self._prior_r
+            global_prior_lp = global_prior_lp + jnp.sum(
+                dist.Normal(r_loc_prior["loc"], r_loc_prior["scale"]).log_prob(
+                    params["r_loc"]
+                )
+            )
+        if self._prior_mu is not None:
+            mu_prior = self._prior_mu
+            global_prior_lp = global_prior_lp + jnp.sum(
+                dist.Normal(mu_prior["loc"], mu_prior["scale"]).log_prob(
+                    params["mu"]
+                )
+            )
+
+        loss = -data_scale * jnp.sum(elbo_per_cell) - global_prior_lp
         return loss, (x_new, eta_new, gn_blocks)
 
     # --- Final convergence check ----------------------------------------
@@ -353,14 +467,13 @@ class NBLNObservationModel(LaplaceObservationModel):
         n_newton: int,
         damping: float,
     ) -> FinalSweepResult:
-        del aux_data
-
         mu = jax.lax.stop_gradient(params["mu"])
         W = jax.lax.stop_gradient(params["W"])
         d = jax.lax.stop_gradient(self._pos_forward(params["d_loc"]))
         r = jax.lax.stop_gradient(self._pos_forward(params["r_loc"]))
 
         if self.uses_capture:
+            sigma_eta_full = aux_data["eta_scale"]
             x_final, eta_final, gn_final, _ = laplace_newton_batch(
                 latent_loc,
                 eta_loc,
@@ -370,7 +483,7 @@ class NBLNObservationModel(LaplaceObservationModel):
                 d,
                 r,
                 eta_anchor,
-                self._sigma_M,
+                sigma_eta_full,
                 n_newton,
                 damping,
             )
@@ -393,7 +506,7 @@ class NBLNObservationModel(LaplaceObservationModel):
             final_grad_norms=gn_final,
         )
 
-    # --- Global uncertainty (NBLN r_g) -----------------------------------
+    # --- Global uncertainty (NBLN r_g and mu_g) --------------------------
 
     def compute_global_uncertainty(
         self,
@@ -405,46 +518,44 @@ class NBLNObservationModel(LaplaceObservationModel):
         aux_data: Dict[str, jnp.ndarray],
         model_config: ModelConfig,
     ) -> Dict[str, jnp.ndarray]:
-        """Compute diagonal Laplace posterior for unconstrained r_g.
+        """Compute diagonal Laplace posteriors for ``r_g`` and ``mu_g``.
 
-        Uses the profiled/marginal observed-information Hessian that
-        accounts for per-cell latent uncertainty via the Schur
-        complement correction.  The exploitable structure is:
+        Returns per-gene Gaussian posterior parameters
+        ``(r_loc, r_scale)`` and ``(mu_loc, mu_scale)`` in the
+        unconstrained coordinate space.  All scales are derived from
+        the diagonal of the profiled (marginal) Hessian — the per-cell
+        latent uncertainty is integrated out via the Schur complement
+        using closed-form Woodbury algebra at the converged MAP.
 
-        - ``H_{rr}`` is diagonal across genes (NB factorises per gene).
-        - ``H_{rx}`` is diagonal across genes (``r_g`` couples only
-          to ``x_{c,g}``).
-        - ``diag((-H_{xx,c})^{-1})`` is obtained from Woodbury factors.
+        For capture-active fits, both the ``r`` and ``mu`` paths use
+        the **joint (x, η) inverse**, not just the marginal x-block.
+        For ``r_g`` this includes the cross term ``H_{r_g, η_c}`` via
+        the identity ``H_{r_g, η_c} = -H_{r_g, x_{c,g}}`` (since NBLN's
+        likelihood depends on ``log_mean = x − η``).  For ``mu``, the
+        cross with η is zero (μ enters only the latent prior).
 
-        For each gene g the profiled curvature is::
+        For ``mu``, we use a **diagonal-Σ approximation**: each gene's
+        marginal posterior on ``μ_g`` is computed as if ``Σ^{-1}`` were
+        gene-diagonal.  The diagonal value ``Σ^{-1}_{gg}`` is exact
+        (from ``woodbury_inv_diag``); only the off-diagonal coupling
+        between ``μ_g`` and ``μ_{g'}`` through the MVN prior is dropped.
+        This is the per-gene marginal-posterior approximation already
+        accepted for the ``r`` path.
 
-            H_profile_g = sum_c [ H_{r_g,r_g}^(c)
-                - (H_{r_g,x_{c,g}}^(c))^2 * [(-H_{xx,c})^{-1}]_{gg} ]
-
-        For capture-anchor NBLN, the joint (x, eta) block inverse is
-        used, adding the ``(x_g, eta)`` cross terms.
-
-        Parameters
-        ----------
-        params : dict
-            Final global parameters including ``r_loc``.
-        latent_loc : jnp.ndarray, shape ``(N, G)``
-            Per-cell log-rate MAPs from the final sweep.
-        eta_loc : jnp.ndarray or None, shape ``(N,)``
-            Per-cell capture offset MAPs.
-        eta_anchor : jnp.ndarray or None, shape ``(N,)``
-            Per-cell capture anchors.
-        count_data : jnp.ndarray, shape ``(N, G)``
-            Observed counts.
-        aux_data : dict
-            Unused for NBLN.
-        model_config : ModelConfig
-            Provides ``positive_transform``.
+        Informative priors (when supplied via ``informative_priors=...``)
+        contribute their precision ``1/scale**2`` directly to the
+        diagonal of the negative-objective Hessian — equivalent to
+        what the loss already adds via autodiff during training.
 
         Returns
         -------
         dict
-            ``r_loc`` (G,), ``r_scale`` (G,), plus diagnostics.
+            ``r_loc, r_scale`` (G,) — NBLN dispersion posterior.
+            ``mu_loc, mu_scale`` (G,) — NBLN latent prior mean
+            posterior in log-rate coordinates.
+            Diagnostics keys: ``r_hessian_diag``, ``r_hessian_min``,
+            ``r_hessian_floor_count``, ``r_curvature_floor`` and the
+            ``mu_*`` analogues.
         """
         del aux_data
 
@@ -463,15 +574,10 @@ class NBLNObservationModel(LaplaceObservationModel):
         else:
             log_rate_all = latent_loc
 
-        # --- Per-cell, per-gene second derivatives of the NB loss ---
-        # We need d^2(-loss)/d(r_loc_g)^2 and d^2(-loss)/d(r_loc_g)d(x_g)
-        # for a single cell's NB contribution to gene g.
-        #
-        # The NB log-prob for gene g in cell c is:
-        #   f(r_loc_g, x_g) = log NB(u_g | exp(x_g - eta), pos_fwd(r_loc_g))
-        # The negative objective's Hessian entries are the negatives of
-        # the log-prob's second derivatives.
-
+        # --- Per-cell, per-gene NB Hessian entries via autodiff -------
+        # H_{r_loc_g, r_loc_g} and H_{r_loc_g, log_rate_g} per gene per
+        # cell.  log_rate = x - η so this autodiff covers both x and η
+        # cross-partials via chain rule (H_{r,η} = -H_{r,x}).
         def _nb_lp_gene(r_loc_g, log_rate_g, u_g):
             """NB log-prob for one gene in one cell, as a function of
             unconstrained r_loc_g and log_rate_g = x_g - eta."""
@@ -488,36 +594,34 @@ class NBLNObservationModel(LaplaceObservationModel):
                 + u_g * jnp.log(jnp.exp(log_rate_g) / v)
             )
 
-        # H_{r_loc_g, r_loc_g}: second derivative of (-NB log-prob)
-        # w.r.t. r_loc_g.
         def _neg_nb_rr(r_loc_g, log_rate_g, u_g):
             return -jax.grad(jax.grad(_nb_lp_gene, argnums=0), argnums=0)(
                 r_loc_g, log_rate_g, u_g
             )
 
-        # H_{r_loc_g, x_g}: cross-derivative of (-NB log-prob).
         def _neg_nb_rx(r_loc_g, log_rate_g, u_g):
+            # H_{r_loc_g, x_g}_neg-loss: cross-derivative of the
+            # negative log-prob.  For NBLN, H_{r,η} = -H_{r,x} by chain
+            # rule on log_rate = x - η, so we compute this once and
+            # use the sign relation when assembling capture-aware terms.
             return -jax.grad(jax.grad(_nb_lp_gene, argnums=0), argnums=1)(
                 r_loc_g, log_rate_g, u_g
             )
 
-        # Vectorise over genes for a single cell.
         _neg_nb_rr_genes = jax.vmap(_neg_nb_rr, in_axes=(0, 0, 0))
         _neg_nb_rx_genes = jax.vmap(_neg_nb_rx, in_axes=(0, 0, 0))
-
-        # Vectorise over cells (r_loc is shared, log_rate and u vary).
-        # Chunk to avoid GPU OOM from large intermediate AD tensors.
         _neg_nb_rr_batch = jax.vmap(_neg_nb_rr_genes, in_axes=(None, 0, 0))
         _neg_nb_rx_batch = jax.vmap(_neg_nb_rx_genes, in_axes=(None, 0, 0))
 
-        _chunk_size_hess = min(512, count_data.shape[0])
+        # Chunked AD pass over cells to avoid GPU OOM.
+        _chunk_size_hess = min(512, N)
         _lr_chunks = [
             log_rate_all[i : i + _chunk_size_hess]
-            for i in range(0, count_data.shape[0], _chunk_size_hess)
+            for i in range(0, N, _chunk_size_hess)
         ]
         _u_chunks = [
             count_data[i : i + _chunk_size_hess]
-            for i in range(0, count_data.shape[0], _chunk_size_hess)
+            for i in range(0, N, _chunk_size_hess)
         ]
         H_rr_all = jnp.concatenate(
             [
@@ -525,71 +629,183 @@ class NBLNObservationModel(LaplaceObservationModel):
                 for lr, u in zip(_lr_chunks, _u_chunks)
             ],
             axis=0,
-        )
+        )  # (N, G)
         H_rx_all = jnp.concatenate(
             [
                 _neg_nb_rx_batch(r_loc, lr, u)
                 for lr, u in zip(_lr_chunks, _u_chunks)
             ],
             axis=0,
-        )  # Shape: (N, G) for both.
+        )  # (N, G)
 
-        # --- Per-cell inverse-Hessian diagonal for the x-block ---
-        # The x-block Hessian for cell c is:
-        #   -H_{xx,c} = diag(a_c) + Sigma^{-1}
-        # where a_c = (u_c + r) * p_c * (1 - p_c) is the NB data Hessian
-        # diagonal. We need diag((-H_{xx,c})^{-1}).
-        from ._newton_nbln import _nb_factors
+        # --- Per-cell joint-inverse Woodbury structure ----------------
+        # For each cell we need:
+        #   A_inv_diag_c       — diag of (-H_xx_c)^{-1}, shape (G,)
+        #   joint_inv_xx_diag  — diag of joint inv top-left block, (G,)
+        #   joint_inv_xη_c     — vector (G,) of joint inverse cross-block
+        #   joint_inv_ηη_c     — scalar
+        #
+        # joint_inv_xx = A^{-1} + (A^{-1} a)(A^{-1} a)^T / s_η  (capture-on)
+        #              = A^{-1}                                 (capture-off)
+        # joint_inv_xη = A^{-1} a / s_η                          (capture-on)
+        # joint_inv_ηη = 1 / s_η                                 (capture-on)
+        #
+        # where s_η = sum(a) + 1/σ_η² − a^T A^{-1} a.
+        from ._newton_nbln import (
+            _nb_factors,
+            _woodbury_factors,
+            _solve_A,
+        )
 
-        def _inv_hess_diag_per_cell(log_rate_c, u_c):
-            """Diagonal of (-H_{xx})^{-1} for one cell using Woodbury."""
+        capture_on = self.uses_capture and eta_loc is not None
+        if capture_on:
+            # Resolve per-cell sigma_eta — prefer aux_data["eta_scale"]
+            # (the per-cell array used by the loss); fall back to scalar
+            # ``self._sigma_M`` broadcast for backward compatibility.
+            sigma_eta_full = jnp.full((N,), self._sigma_M, dtype=jnp.float32)
+        else:
+            sigma_eta_full = jnp.ones((N,))  # unused in capture-off path
+
+        def _A_inv_diag_from_factors(factors: Dict) -> jnp.ndarray:
+            """diag(A^{-1}) using the existing Woodbury factors.
+
+            A = M̃ - V K^{-1} V^T where M̃ = diag(a + 1/d), so by Woodbury
+            A^{-1} = M̃^{-1} + M̃^{-1} V S^{-1} V^T M̃^{-1} = diag(m_inv) + Q Q^T
+            where Q = M̃^{-1} V L_S^{-T}.  diag(Q Q^T)_g = ||Q_g||² is
+            computed via one triangular solve at cost O(G·k + k²).
+            """
+            m_inv = factors["m_inv"]
+            V = factors["V"]
+            L_S = factors["L_S"]
+            V_scaled = m_inv[:, None] * V  # (G, k)
+            # Solve L_S Y = V_scaled^T  =>  Y = L_S^{-1} V_scaled^T  (k, G).
+            # Then rowsumsq(V_scaled L_S^{-T}) = colsumsq(Y).
+            Y = jax.scipy.linalg.solve_triangular(
+                L_S, V_scaled.T, lower=True
+            )
+            correction = jnp.sum(Y * Y, axis=0)  # (G,)
+            return m_inv + correction
+
+        def _per_cell_inverse_blocks(
+            log_rate_c: jnp.ndarray,
+            u_c: jnp.ndarray,
+            sigma_eta_c: jnp.ndarray,
+        ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+            """Return (joint_inv_xx_diag, joint_inv_xη, joint_inv_ηη)."""
             nb = _nb_factors(log_rate_c, u_c, r)
             a_c = nb["a"]
-            # (-H_{xx}) = diag(a_c) + Sigma^{-1}
-            # = diag(a_c + 1/d) - (1/d) W (I + W^T (1/d) W)^{-1} W^T (1/d)
-            # ... actually this is the Woodbury for (diag(a+1/d) + lowrank)
-            # The inverse diagonal is obtained from woodbury_inv_diag
-            # with d_eff = 1 / (a_c + 1/d) as the "diagonal" and W as loadings.
-            d_eff = 1.0 / (a_c + 1.0 / d)
-            return woodbury_inv_diag(W, d_eff)
+            factors = _woodbury_factors(W, d, a_c, damping=0.0)
+            A_inv_diag = _A_inv_diag_from_factors(factors)
+            if capture_on:
+                A_inv_a = _solve_A(factors, a_c)  # (G,)
+                s_eta = jnp.maximum(
+                    jnp.sum(a_c) + 1.0 / (sigma_eta_c ** 2)
+                    - jnp.dot(a_c, A_inv_a),
+                    1e-30,
+                )
+                joint_inv_xx_diag = A_inv_diag + (A_inv_a ** 2) / s_eta
+                joint_inv_xeta = A_inv_a / s_eta
+                joint_inv_etaeta = 1.0 / s_eta
+            else:
+                joint_inv_xx_diag = A_inv_diag
+                joint_inv_xeta = jnp.zeros_like(a_c)
+                joint_inv_etaeta = jnp.asarray(0.0, dtype=a_c.dtype)
+            return joint_inv_xx_diag, joint_inv_xeta, joint_inv_etaeta
 
-        # Process cells in chunks to avoid GPU OOM from materializing
-        # all (N, G, k) intermediates simultaneously during vmap.
-        _chunk_size = min(256, log_rate_all.shape[0])
-        _n_cells = log_rate_all.shape[0]
+        _per_cell_vmap = jax.vmap(
+            _per_cell_inverse_blocks, in_axes=(0, 0, 0)
+        )
+
+        # Chunked pass over cells to keep GPU memory bounded.
+        _chunk_size = min(256, N)
         _chunks_lr = [
             log_rate_all[i : i + _chunk_size]
-            for i in range(0, _n_cells, _chunk_size)
+            for i in range(0, N, _chunk_size)
         ]
         _chunks_u = [
             count_data[i : i + _chunk_size]
-            for i in range(0, _n_cells, _chunk_size)
+            for i in range(0, N, _chunk_size)
         ]
-        _vmap_fn = jax.vmap(_inv_hess_diag_per_cell, in_axes=(0, 0))
-        inv_H_xx_diag_all = jnp.concatenate(
-            [_vmap_fn(lr, u) for lr, u in zip(_chunks_lr, _chunks_u)],
-            axis=0,
-        )  # shape (N, G)
+        _chunks_sigma = [
+            sigma_eta_full[i : i + _chunk_size]
+            for i in range(0, N, _chunk_size)
+        ]
+        _joint_xx_chunks = []
+        _joint_xeta_chunks = []
+        _joint_etaeta_chunks = []
+        for lr, u, se in zip(_chunks_lr, _chunks_u, _chunks_sigma):
+            jx, jxe, jee = _per_cell_vmap(lr, u, se)
+            _joint_xx_chunks.append(jx)
+            _joint_xeta_chunks.append(jxe)
+            _joint_etaeta_chunks.append(jee)
+        joint_inv_xx_diag_all = jnp.concatenate(_joint_xx_chunks, axis=0)  # (N, G)
+        joint_inv_xeta_all = jnp.concatenate(_joint_xeta_chunks, axis=0)  # (N, G)
+        joint_inv_etaeta_all = jnp.concatenate(
+            _joint_etaeta_chunks, axis=0
+        )  # (N,)
 
-        # --- Profiled Hessian diagonal ---
-        # diag(H_profile)_g = sum_c H_{r_g,r_g}^(c)
-        #   - sum_c (H_{r_g,x_g}^(c))^2 * [(-H_{xx,c})^{-1}]_{gg}
+        # --- r profiled Hessian diagonal (Round-3 Finding B) -----------
+        # capture-off:  Schur_g = sum_c H_rx_cg² · joint_inv_xx_diag_cg
+        # capture-on:   Schur_g = sum_c H_rx_cg² · B_cg
+        #               where B_cg = joint_inv_xx_diag_cg
+        #                            - 2 · joint_inv_xη_cg
+        #                            + joint_inv_ηη_c
+        # The bracket comes from H_{r,η}_cg = -H_{r,x}_cg (chain rule on
+        # log_rate = x - η).
         H_rr_summed = jnp.sum(H_rr_all, axis=0)  # (G,)
-        schur_correction = jnp.sum(
-            H_rx_all**2 * inv_H_xx_diag_all, axis=0
-        )  # (G,)
-        H_profiled_diag = H_rr_summed - schur_correction
+        if capture_on:
+            bracket = (
+                joint_inv_xx_diag_all
+                - 2.0 * joint_inv_xeta_all
+                + joint_inv_etaeta_all[:, None]
+            )  # (N, G)
+        else:
+            bracket = joint_inv_xx_diag_all
+        r_schur = jnp.sum(H_rx_all ** 2 * bracket, axis=0)  # (G,)
+        H_r_profiled_diag = H_rr_summed - r_schur
 
-        # Convert profiled curvature to posterior scales.
-        r_scale, diagnostics = curvature_to_scale(H_profiled_diag)
+        # Prior precision injection on r_loc (Round-1 Finding 2).
+        if self._prior_r is not None:
+            H_r_profiled_diag = (
+                H_r_profiled_diag + 1.0 / (self._prior_r["scale"] ** 2)
+            )
+
+        r_scale, r_diag = curvature_to_scale(H_r_profiled_diag)
+
+        # --- mu profiled Hessian diagonal (diagonal-Σ approximation) ---
+        # Cross-Hessian -H_{μ_g, x_{c,g}} = (Σ^{-1})_{g,g} in the
+        # diagonal approximation.  μ does not couple to η_c (NB likelihood
+        # depends on x, η only; prior on x couples to μ).  So per cell:
+        #   H_μμ_profile_cg ≈ (Σ^{-1})_{gg} − (Σ^{-1})_{gg}² · joint_inv_xx_diag_cg
+        # Summed over cells:
+        #   H_μμ_profile_g = Σ^{-1}_{gg} · [ N − Σ^{-1}_{gg} · sum_c joint_inv_xx_diag_cg ]
+        sigma_inv_diag = woodbury_inv_diag(W, d)  # (G,) — exact
+        sum_joint_xx_diag = jnp.sum(joint_inv_xx_diag_all, axis=0)  # (G,)
+        H_mu_profiled_diag = sigma_inv_diag * (
+            float(N) - sigma_inv_diag * sum_joint_xx_diag
+        )
+
+        # Prior precision injection on mu.
+        if self._prior_mu is not None:
+            H_mu_profiled_diag = (
+                H_mu_profiled_diag + 1.0 / (self._prior_mu["scale"] ** 2)
+            )
+
+        mu_scale, mu_diag = curvature_to_scale(H_mu_profiled_diag)
 
         return {
             "r_loc": r_loc,
             "r_scale": r_scale,
-            "r_hessian_diag": H_profiled_diag,
-            "r_hessian_min": diagnostics["hessian_min"],
-            "r_hessian_floor_count": diagnostics["floor_count"],
-            "r_curvature_floor": diagnostics["curvature_floor"],
+            "r_hessian_diag": H_r_profiled_diag,
+            "r_hessian_min": r_diag["hessian_min"],
+            "r_hessian_floor_count": r_diag["floor_count"],
+            "r_curvature_floor": r_diag["curvature_floor"],
+            "mu_loc": mu,
+            "mu_scale": mu_scale,
+            "mu_hessian_diag": H_mu_profiled_diag,
+            "mu_hessian_min": mu_diag["hessian_min"],
+            "mu_hessian_floor_count": mu_diag["floor_count"],
+            "mu_curvature_floor": mu_diag["curvature_floor"],
         }
 
     # --- Result packaging -----------------------------------------------

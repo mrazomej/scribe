@@ -26,7 +26,7 @@ interface.
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import jax.numpy as jnp
 
@@ -62,6 +62,7 @@ class LaplaceInferenceEngine:
         progress: bool = True,
         progress_backend: ProgressBackendName = "auto",
         log_progress_lines: bool = False,
+        informative_priors: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> LaplaceRunResult:
         """Run Laplace-mode training for any supported observation model.
 
@@ -86,6 +87,12 @@ class LaplaceInferenceEngine:
         progress : bool, default=True
         progress_backend : str, default="auto"
         log_progress_lines : bool, default=False
+        informative_priors : Optional[Dict]
+            Empirical Gaussian priors derived from a previous SVI fit.
+            Keys are a subset of ``{"r", "mu", "eta"}``.  Only consumed
+            by the NBLN branch — other base models silently ignore.
+            See :mod:`scribe.laplace.priors` for the adapter that builds
+            these from a ``ScribeSVIResults`` object.
 
         Returns
         -------
@@ -120,6 +127,7 @@ class LaplaceInferenceEngine:
             obs_model = NBLNObservationModel(
                 capture_anchor=capture_anchor,
                 model_config=model_config,
+                informative_priors=informative_priors,
             )
         elif bm in ("lnm", "lnmvcp"):
             from ._obs_lnm import LNMObservationModel

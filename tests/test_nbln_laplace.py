@@ -437,3 +437,313 @@ class TestProfiledCurvatureSanity:
         scale_cond, _ = curvature_to_scale(H_cond_diag)
         # Profiled scale >= conditional scale (element-wise).
         assert jnp.all(scale_prof >= scale_cond - 1e-6)
+
+
+# =====================================================================
+# NBLN informative-prior cascade (SVI-results → empirical Gaussian)
+# =====================================================================
+
+
+class TestInformativePriorsIntegration:
+    """Tests for the SVI-results → empirical-Gaussian-prior pathway
+    inside ``NBLNObservationModel`` and downstream result handling."""
+
+    def _model_config(self, transform: str = "softplus") -> ModelConfig:
+        return ModelConfig(
+            base_model="nbln",
+            parameterization=Parameterization.COUNT_LOGNORMAL,
+            inference_method=InferenceMethod.LAPLACE,
+            positive_transform=transform,
+        )
+
+    def test_constructor_validates_keys(self):
+        """Unrecognized keys raise ValueError."""
+        from scribe.laplace._obs_nbln import NBLNObservationModel
+
+        with pytest.raises(ValueError, match="unrecognized keys"):
+            NBLNObservationModel(
+                capture_anchor=None,
+                model_config=self._model_config(),
+                informative_priors={
+                    "bad_key": {"loc": jnp.zeros(3), "scale": jnp.ones(3)},
+                },
+            )
+
+    def test_uses_capture_activated_by_prior_eta_alone(self):
+        """Round-2 Finding A: prior_eta must activate capture even
+        without a scalar capture_anchor."""
+        from scribe.laplace._obs_nbln import NBLNObservationModel
+
+        N = 5
+        mc = self._model_config()
+        obs = NBLNObservationModel(
+            capture_anchor=None,
+            model_config=mc,
+            informative_priors={
+                "eta": {
+                    "loc": jnp.full((N,), 0.5),
+                    "scale": jnp.full((N,), 0.1),
+                }
+            },
+        )
+        assert obs.uses_capture is True
+        # And without any eta prior, uses_capture remains False.
+        obs2 = NBLNObservationModel(
+            capture_anchor=None, model_config=mc, informative_priors=None
+        )
+        assert obs2.uses_capture is False
+
+    def test_init_state_three_way_branching(self):
+        """Round-3 Finding A: init_state must not crash on
+        prior_eta + capture_anchor=None (the broken tuple unpack)."""
+        from scribe.laplace._obs_nbln import NBLNObservationModel
+
+        N, G = 4, 6
+        rng = np.random.default_rng(0)
+        counts = jnp.asarray(rng.integers(0, 10, (N, G)), dtype=jnp.float32)
+
+        mc = self._model_config()
+        # Case 1: prior_eta only, no capture_anchor.
+        eta_loc_prior = jnp.full((N,), 0.4)
+        eta_scale_prior = jnp.full((N,), 0.05)
+        obs = NBLNObservationModel(
+            capture_anchor=None,
+            model_config=mc,
+            informative_priors={
+                "eta": {"loc": eta_loc_prior, "scale": eta_scale_prior},
+            },
+        )
+        init = obs.init_state(
+            count_data=counts, n_cells=N, n_genes=G, latent_dim=2, seed=0
+        )
+        assert init.eta_anchor is not None
+        assert "eta_scale" in init.aux_data
+        np.testing.assert_allclose(
+            init.aux_data["eta_scale"], eta_scale_prior
+        )
+
+        # Case 2: capture_anchor only.
+        obs2 = NBLNObservationModel(
+            capture_anchor=(float(jnp.log(1000.0)), 0.5),
+            model_config=mc,
+            informative_priors=None,
+        )
+        init2 = obs2.init_state(
+            count_data=counts, n_cells=N, n_genes=G, latent_dim=2, seed=0
+        )
+        assert init2.eta_anchor is not None
+        assert "eta_scale" in init2.aux_data
+        np.testing.assert_allclose(
+            init2.aux_data["eta_scale"], jnp.full((N,), 0.5)
+        )
+
+        # Case 3: neither — no capture at all.
+        obs3 = NBLNObservationModel(
+            capture_anchor=None, model_config=mc, informative_priors=None
+        )
+        init3 = obs3.init_state(
+            count_data=counts, n_cells=N, n_genes=G, latent_dim=2, seed=0
+        )
+        assert init3.eta_anchor is None
+        assert init3.eta_loc is None
+        assert "eta_scale" not in init3.aux_data
+
+    def test_init_state_r_and_mu_overrides(self):
+        """Prior loc overrides the data-driven init for r and mu."""
+        from scribe.laplace._obs_nbln import NBLNObservationModel
+
+        N, G = 4, 6
+        rng = np.random.default_rng(0)
+        counts = jnp.asarray(rng.integers(0, 10, (N, G)), dtype=jnp.float32)
+        mc = self._model_config()
+        r_loc_prior = jnp.full((G,), -2.5)
+        mu_prior_loc = jnp.full((G,), 1.7)
+        obs = NBLNObservationModel(
+            capture_anchor=None,
+            model_config=mc,
+            informative_priors={
+                "r": {"loc": r_loc_prior, "scale": jnp.full((G,), 0.2)},
+                "mu": {"loc": mu_prior_loc, "scale": jnp.full((G,), 0.3)},
+            },
+        )
+        init = obs.init_state(
+            count_data=counts, n_cells=N, n_genes=G, latent_dim=2, seed=0
+        )
+        np.testing.assert_allclose(init.params["r_loc"], r_loc_prior)
+        np.testing.assert_allclose(init.params["mu"], mu_prior_loc)
+
+    def test_compute_global_uncertainty_returns_mu_fields(self):
+        """``compute_global_uncertainty`` should now return mu_loc/mu_scale."""
+        from scribe.laplace._obs_nbln import NBLNObservationModel
+
+        N, G, k = 6, 5, 2
+        rng = np.random.default_rng(7)
+        counts = jnp.asarray(rng.integers(0, 10, (N, G)), dtype=jnp.float32)
+        mc = ModelConfig(
+            base_model="nbln",
+            parameterization=Parameterization.COUNT_LOGNORMAL,
+            inference_method=InferenceMethod.LAPLACE,
+            positive_transform="softplus",
+        )
+        obs = NBLNObservationModel(capture_anchor=None, model_config=mc)
+        init = obs.init_state(
+            count_data=counts, n_cells=N, n_genes=G, latent_dim=k, seed=0
+        )
+        gu = obs.compute_global_uncertainty(
+            params=init.params,
+            latent_loc=init.latent_loc,
+            eta_loc=init.eta_loc,
+            eta_anchor=init.eta_anchor,
+            count_data=counts,
+            aux_data=init.aux_data,
+            model_config=mc,
+        )
+        assert "mu_loc" in gu and "mu_scale" in gu
+        assert gu["mu_loc"].shape == (G,)
+        assert gu["mu_scale"].shape == (G,)
+        assert jnp.all(jnp.isfinite(gu["mu_scale"]))
+        assert jnp.all(gu["mu_scale"] > 0)
+
+    def test_compute_global_uncertainty_prior_precision_tightens_r_scale(self):
+        """Adding a tight r prior should TIGHTEN the posterior r_scale."""
+        from scribe.laplace._obs_nbln import NBLNObservationModel
+
+        N, G, k = 6, 5, 2
+        rng = np.random.default_rng(11)
+        counts = jnp.asarray(rng.integers(0, 10, (N, G)), dtype=jnp.float32)
+        mc = ModelConfig(
+            base_model="nbln",
+            parameterization=Parameterization.COUNT_LOGNORMAL,
+            inference_method=InferenceMethod.LAPLACE,
+            positive_transform="softplus",
+        )
+
+        obs_nopr = NBLNObservationModel(
+            capture_anchor=None, model_config=mc, informative_priors=None
+        )
+        init_nopr = obs_nopr.init_state(
+            count_data=counts, n_cells=N, n_genes=G, latent_dim=k, seed=0
+        )
+        gu_nopr = obs_nopr.compute_global_uncertainty(
+            params=init_nopr.params, latent_loc=init_nopr.latent_loc,
+            eta_loc=None, eta_anchor=None, count_data=counts,
+            aux_data=init_nopr.aux_data, model_config=mc,
+        )
+
+        obs_pr = NBLNObservationModel(
+            capture_anchor=None, model_config=mc,
+            informative_priors={
+                "r": {
+                    "loc": init_nopr.params["r_loc"],
+                    "scale": jnp.full((G,), 0.05),
+                }
+            },
+        )
+        init_pr = obs_pr.init_state(
+            count_data=counts, n_cells=N, n_genes=G, latent_dim=k, seed=0
+        )
+        gu_pr = obs_pr.compute_global_uncertainty(
+            params=init_pr.params, latent_loc=init_pr.latent_loc,
+            eta_loc=None, eta_anchor=None, count_data=counts,
+            aux_data=init_pr.aux_data, model_config=mc,
+        )
+
+        # Prior precision adds curvature → r_scale must decrease.
+        assert jnp.all(gu_pr["r_scale"] <= gu_nopr["r_scale"] + 1e-6)
+        # And the prior scale (0.05) bounds r_scale from above.
+        assert jnp.all(gu_pr["r_scale"] <= 0.05 + 1e-6)
+
+    def test_capture_aware_r_uncertainty_runs(self):
+        """For capture-on, compute_global_uncertainty must succeed
+        end-to-end with the joint (x, η) inverse path (Round-3 Finding B)."""
+        from scribe.laplace._obs_nbln import NBLNObservationModel
+
+        N, G, k = 8, 6, 2
+        rng = np.random.default_rng(17)
+        counts = jnp.asarray(
+            rng.integers(1, 12, (N, G)), dtype=jnp.float32
+        )
+        mc = ModelConfig(
+            base_model="nbln",
+            parameterization=Parameterization.COUNT_LOGNORMAL,
+            inference_method=InferenceMethod.LAPLACE,
+            positive_transform="softplus",
+        )
+
+        obs = NBLNObservationModel(
+            capture_anchor=(float(jnp.log(1000.0)), 0.5), model_config=mc
+        )
+        init = obs.init_state(
+            count_data=counts, n_cells=N, n_genes=G, latent_dim=k, seed=0
+        )
+        gu = obs.compute_global_uncertainty(
+            params=init.params,
+            latent_loc=init.latent_loc,
+            eta_loc=init.eta_loc,
+            eta_anchor=init.eta_anchor,
+            count_data=counts,
+            aux_data=init.aux_data,
+            model_config=mc,
+        )
+        assert gu["r_scale"].shape == (G,)
+        assert gu["mu_scale"].shape == (G,)
+        assert jnp.all(jnp.isfinite(gu["r_scale"]))
+        assert jnp.all(jnp.isfinite(gu["mu_scale"]))
+
+    def test_results_propagates_mu_fields(self):
+        """``ScribeLaplaceResults`` round-trip preserves mu_loc/mu_scale."""
+        G, C = 6, 4
+        result = _nbln_result(G=G, C=C, k=2, with_uncertainty=True)
+        # Patch on mu_loc / mu_scale manually.
+        from dataclasses import replace
+        rng = np.random.default_rng(0)
+        mu_loc = jnp.asarray(rng.normal(0, 0.3, G).astype(np.float32))
+        mu_scale = jnp.asarray(
+            rng.uniform(0.05, 0.4, G).astype(np.float32)
+        )
+        result2 = replace(result, mu_loc=mu_loc, mu_scale=mu_scale)
+        # get_map exposes them.
+        m = result2.get_map()
+        assert "mu_loc" in m and "mu_scale" in m
+        np.testing.assert_allclose(m["mu_loc"], mu_loc)
+        np.testing.assert_allclose(m["mu_scale"], mu_scale)
+        # Pickle round-trip preserves fields.
+        round_tripped = pickle.loads(pickle.dumps(result2))
+        np.testing.assert_allclose(round_tripped.mu_loc, mu_loc)
+        np.testing.assert_allclose(round_tripped.mu_scale, mu_scale)
+
+    def test_gene_subsetting_slices_mu_fields(self):
+        """Subsetting must propagate mu_loc/mu_scale alongside r."""
+        from dataclasses import replace
+        G, C = 8, 5
+        result = _nbln_result(G=G, C=C, k=2, with_uncertainty=True)
+        rng = np.random.default_rng(0)
+        result = replace(
+            result,
+            mu_loc=jnp.asarray(rng.normal(0, 0.3, G).astype(np.float32)),
+            mu_scale=jnp.asarray(
+                rng.uniform(0.05, 0.4, G).astype(np.float32)
+            ),
+        )
+        idx = np.array([0, 2, 5])
+        subset = result[idx]
+        assert subset.mu_loc is not None and subset.mu_loc.shape == (3,)
+        assert subset.mu_scale is not None and subset.mu_scale.shape == (3,)
+        np.testing.assert_allclose(
+            subset.mu_loc, np.asarray(result.mu_loc)[idx]
+        )
+
+    def test_scope_validation_rejects_non_nbln(self):
+        """Round-4 Finding 1: scope validation runs on the resolved
+        config, not the raw kwarg."""
+        from types import SimpleNamespace
+        from scribe.api.stages.run_inference import dispatch_inference
+
+        ctx = SimpleNamespace()
+        ctx.kwargs = {"informative_priors_from": object()}
+        ctx.model_config = SimpleNamespace(base_model="lnm")
+        ctx.inference_config = SimpleNamespace(
+            method=SimpleNamespace(value="laplace")
+        )
+        with pytest.raises(ValueError, match="only supported"):
+            dispatch_inference(ctx)

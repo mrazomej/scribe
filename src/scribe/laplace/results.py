@@ -155,6 +155,14 @@ class ScribeLaplaceResults(
     # NBLN fields:
     r_loc: Optional[jnp.ndarray] = None
     r_scale: Optional[jnp.ndarray] = None
+    # NBLN latent prior mean ``mu`` posterior (per gene, log-rate
+    # coordinate).  Populated by ``compute_global_uncertainty`` using
+    # the diagonal-Σ approximation of the profiled Hessian.  Both
+    # values live in the unconstrained real-valued log-rate space
+    # (NBLN ``params["mu"]`` is the latent prior mean, not a positive
+    # parameter — no ``positive_transform`` is applied).
+    mu_loc: Optional[jnp.ndarray] = None
+    mu_scale: Optional[jnp.ndarray] = None
     #
     # LNM / LNMVCP totals fields:
     mu_T_loc: Optional[jnp.ndarray] = None

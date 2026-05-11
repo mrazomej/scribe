@@ -323,10 +323,16 @@ def laplace_log_det_neg_H(
     return log_det_A + jnp.log(s)
 
 
-# Vmapped versions: per-cell axes are 0 for x_map/eta_map/u; globals shared.
+# Vmapped versions: per-cell axes are 0 for x_map/eta_map/u; globals
+# shared.  Capture-active path additionally accepts a per-cell
+# ``sigma_M`` (axis 0) so each cell can carry its own truncated-normal
+# prior scale on ``η`` — used by the SVI-informative-prior cascade
+# where each cell's η scale comes from the SVI posterior.  For the
+# x-only path (no capture), ``sigma_M`` is unused inside the function
+# and the vmap keeps it shared.
 laplace_log_det_neg_H_batch = jax.vmap(
     laplace_log_det_neg_H,
-    in_axes=(0, 0, 0, None, None, None, None),
+    in_axes=(0, 0, 0, None, None, None, 0),
 )
 laplace_log_det_neg_H_batch_x_only = jax.vmap(
     laplace_log_det_neg_H,
@@ -512,10 +518,13 @@ def laplace_newton_loop(
 
 
 # Vectorise over cells: each per-cell input has a leading batch axis,
-# global parameters (mu, W, d, sigma_M, damping) are shared.
+# global parameters (mu, W, d, r, damping) are shared.  ``sigma_M``
+# (slot 8) is per-cell so each cell can carry its own ``η`` prior
+# scale — used by the SVI-informative-prior cascade.  The scalar-anchor
+# code path passes a broadcast ``jnp.full((B,), sigma_M)``.
 laplace_newton_batch = jax.vmap(
     laplace_newton_loop,
-    in_axes=(0, 0, 0, None, None, None, None, 0, None, None, None),
+    in_axes=(0, 0, 0, None, None, None, None, 0, 0, None, None),
 )
 
 
@@ -717,7 +726,7 @@ def _nbln_grad_split_with_eta(
 
 nbln_grad_split_batch = jax.vmap(
     _nbln_grad_split_with_eta,
-    in_axes=(0, 0, 0, None, None, None, None, 0, None),
+    in_axes=(0, 0, 0, None, None, None, None, 0, 0),
 )
 
 

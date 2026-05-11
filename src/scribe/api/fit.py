@@ -199,6 +199,18 @@ def fit(
     annotation_min_cells: Optional[int] = None,
     # SVI-to-MCMC initialization
     svi_init: Optional[ScribeSVIResults] = None,
+    # SVI-to-Laplace informative-prior cascade (NBLN only).  When set,
+    # empirical Gaussian priors on ``r``, ``mu``, and (when capture is
+    # supplied) ``eta`` are derived from posterior samples of the SVI
+    # results object and used as informative priors during the NBLN
+    # Laplace fit.  See :mod:`scribe.laplace.priors` for details and
+    # caveats (gene-identity safeguards, amortized-capture handling,
+    # capture-mode trichotomy).  Recommended ``tau`` defaults to 1.0
+    # (trust SVI exactly); raise to 2-3 in noisy / sparse regimes.
+    informative_priors_from: Optional[ScribeSVIResults] = None,
+    informative_priors_tau: float = 1.0,
+    informative_priors_n_samples: int = 1000,
+    informative_priors_verbose: bool = True,
     # Float64 precision -- defaults to True for MCMC, False for SVI/VAE
     enable_x64: Optional[bool] = None,
     # Power user: explicit configs override above
@@ -887,6 +899,10 @@ def fit(
             annotation_component_order=annotation_component_order,
             annotation_min_cells=annotation_min_cells,
             svi_init=svi_init,
+            informative_priors_from=informative_priors_from,
+            informative_priors_tau=informative_priors_tau,
+            informative_priors_n_samples=informative_priors_n_samples,
+            informative_priors_verbose=informative_priors_verbose,
             enable_x64=enable_x64,
             model_config=model_config,
             inference_config=inference_config,

@@ -455,6 +455,104 @@ multiplicatively into the predictive variance.
   unidentified parameters) are floored and logged as warnings. Inspect
   `result.metadata` for Hessian diagnostic fields if needed.
 
+### NBLN `mu` posterior
+
+In addition to `r_loc, r_scale`, NBLN-Laplace exposes `mu_loc, mu_scale`
+— a per-gene Gaussian approximation of the latent-prior mean `mu` in
+log-rate coordinates. Like `r`, `mu` uses a **diagonal-Σ
+approximation**: each gene's posterior is computed as if the cross-gene
+coupling through `Σ^{-1}` were zero. The diagonal value
+`(Σ^{-1})_{gg}` is exact (from `woodbury_inv_diag`); only the off-
+diagonals are dropped. Unlike `r`, `mu` is *not* a positive parameter
+— it is real-valued in NBLN's coordinate system (the prior mean of the
+latent log-rate). No `positive_transform` is applied; the constrained
+distribution returned by `get_distributions()` is `Normal(mu_loc,
+mu_scale).to_event(1)` directly.
+
+## SVI-to-Laplace informative-prior cascade (NBLN only)
+
+For NBLN-Laplace fits, you can pass a previously-fit `ScribeSVIResults`
+object (typically NBVCP-SVI on the same dataset) and have it derive
+empirical Gaussian priors on the NBLN globals `r`, `mu`, and (when
+the SVI source has `eta_capture`) per-cell `eta`. The priors enter the
+Laplace loss as proper `Normal(loc, scale).log_prob(...)` terms — so
+their **uncertainty** (not just their location) shapes both training
+dynamics and post-fit global Hessian.
+
+```python
+svi_results = scribe.fit(adata, model="nbvcp",
+                         parameterization="mean_odds",
+                         priors={"capture_efficiency": (np.log(100_000), 0.5)},
+                         inference_method="svi", n_steps=250_000)
+
+laplace_results = scribe.fit(
+    adata, model="nbln", inference_method="laplace",
+    informative_priors_from=svi_results,
+    informative_priors_tau=1.0,          # trust SVI exactly; raise to
+                                          # 2-3 in noisy / sparse regimes
+    informative_priors_n_samples=1000,
+    n_steps=50_000,
+)
+```
+
+### Coordinate handling
+
+The adapter (`scribe.laplace.priors.priors_from_results`) moves SVI
+posterior samples from their **constrained** space into the target
+NBLN-Laplace **unconstrained** coordinate space:
+
+| NBLN target | SVI source | Transform applied |
+|---|---|---|
+| `r_loc` (per gene) | `r` (positive) | inverse of target `positive_transform` |
+| `mu` (per gene) | `mu` (positive NB mean) | plain `jnp.log` (NBLN `mu` is real-valued log-rate; **never** uses `positive_transform`) |
+| `eta_anchor`, per-cell `sigma_eta` | `eta_capture` (constrained ≥ 0) | identity (matches the target's TruncatedNormal prior) |
+
+Posterior samples (not extracted variational parameters) are the
+intermediate representation because they are parameterization-agnostic:
+SVI may have used `mean_odds`, `mean_prob`, or `canonical`
+parameterizations, but the samples are always in the natural
+constrained coordinate.
+
+### Capture-mode trichotomy
+
+Detection from the SVI samples dict:
+
+| Source state | Mode | Behavior |
+|---|---|---|
+| `eta_capture` present | `"eta"` | Per-cell prior supersedes the scalar `capture_anchor`. Activates capture on the target even without an explicit `capture_efficiency` prior. |
+| only `phi_capture` / `p_capture` | `"phi_only"` | Warn; apply `r` and `mu` priors only; leave target capture configuration intact. |
+| no capture keys | `"none"` | Warn; apply `r` and `mu` priors only; leave target capture configuration intact. |
+
+The two "leave intact" branches are deliberate: SVI provides
+*information about the source*, not *permission to override the
+target*. A user who passes both `capture_efficiency=...` and a
+non-eta SVI source still gets their explicit capture anchor.
+
+### Safeguards
+
+- **Strict gene identity** check, via priority `var_names > mask > count`.
+  A var-names mismatch raises `ValueError` even when counts agree.
+- **Amortized-capture sources** require either `results._original_counts`
+  to be stored *or* strict var-name identity verified plus `source_counts`
+  passed. Mask-only identity is **not** sufficient (the encoder's input
+  dimension is fixed at SVI fit time; an identity-by-mask check does
+  not guarantee positional equivalence in the encoder's input space).
+- **Scope validation** at the API layer rejects `informative_priors_from`
+  for non-NBLN or non-Laplace fits with a clear error.
+- **`d_loc`** is never overridden; NBVCP has no `d` counterpart and the
+  prior would be ill-posed.
+
+### Practical recommendations
+
+- Default `informative_priors_tau=1.0` trusts SVI exactly. Raise to
+  `2-3` if the SVI posterior is over-confident on noisy or sparse
+  datasets (small N or low coverage).
+- The cascade is the recommended fix for NBLN-Laplace divergence on
+  low-count low-`r` data, where the per-cell Newton's curvature
+  `(u+r) p (1-p)` collapses if `r` drifts far from its data-supported
+  value. The SVI prior pins `r` and unlocks stable optimization of
+  `(W, d)`.
+
 ## See also
 
 * [`paper/_poisson_lognormal.qmd`](../../../paper/_poisson_lognormal.qmd)

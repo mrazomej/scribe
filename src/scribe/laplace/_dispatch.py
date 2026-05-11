@@ -121,6 +121,11 @@ class DispatchResultsMixin:
                 out["r_loc"] = self.r_loc
             if bm == "nbln" and self.r_scale is not None:
                 out["r_scale"] = self.r_scale
+            # NBLN ``mu`` posterior (log-rate coordinate; mu IS the loc).
+            if bm == "nbln" and self.mu_loc is not None:
+                out["mu_loc"] = self.mu_loc
+            if bm == "nbln" and self.mu_scale is not None:
+                out["mu_scale"] = self.mu_scale
             return out
 
         if bm in ("lnm", "lnmvcp"):
@@ -227,6 +232,16 @@ class DispatchResultsMixin:
                     )
                 elif self.r is not None:
                     out["r"] = dist.Delta(self.r)
+                # NBLN ``mu`` posterior: Normal in log-rate space.  Unlike
+                # ``r``, ``mu`` is already real-valued in NBLN's coordinate
+                # system (it's the latent log-rate prior mean), so no
+                # transform applies.  The Normal is returned directly.
+                if self.mu_loc is not None and self.mu_scale is not None:
+                    out["mu"] = dist.Normal(
+                        self.mu_loc, self.mu_scale
+                    ).to_event(1)
+                elif self.mu is not None:
+                    out["mu"] = dist.Delta(self.mu)
             if self.eta_loc is not None:
                 out["eta_capture"] = dist.Delta(self.eta_loc)
                 out["p_capture"] = dist.Delta(jnp.exp(-self.eta_loc))

@@ -94,6 +94,12 @@ class GeneSubsettingResultsMixin:
             r_scale=(
                 self.r_scale[idx_jnp] if self.r_scale is not None else None
             ),
+            mu_loc=(
+                self.mu_loc[idx_jnp] if self.mu_loc is not None else None
+            ),
+            mu_scale=(
+                self.mu_scale[idx_jnp] if self.mu_scale is not None else None
+            ),
             n_genes=int(len(idx)),
             n_vars=int(len(idx)) if self.n_vars is not None else None,
             var=_subset_var(self.var, idx),

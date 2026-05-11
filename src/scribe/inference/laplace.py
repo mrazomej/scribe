@@ -10,7 +10,7 @@ with the VAE path.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import jax.numpy as jnp
 import numpy as np
@@ -32,6 +32,8 @@ def _run_laplace_inference(
     laplace_config: LaplaceConfig,
     data_config: DataConfig,
     seed: int,
+    informative_priors: Optional[Dict[str, Dict[str, Any]]] = None,
+    capture_mode_override: Optional[str] = None,
 ) -> ScribeLaplaceResults:
     """Run Laplace inference (PLN or LNM) and package results.
 
@@ -108,6 +110,15 @@ def _run_laplace_inference(
             "capture variant, use model='lnm' instead."
         )
 
+    # SVI-informative-prior cascade: when the source provides per-cell
+    # eta_capture (capture_mode_override == "eta"), the SVI per-cell
+    # prior supersedes the target's scalar (log_M0, sigma_M) anchor.
+    # Other modes ("phi_only", "none") leave the target capture
+    # configuration intact — see the run_inference stage for the
+    # detection logic.
+    if capture_mode_override == "eta":
+        capture_anchor = None
+
     run_result = LaplaceInferenceEngine.run_inference(
         model_config=model_config,
         count_data=count_data,
@@ -120,6 +131,7 @@ def _run_laplace_inference(
         progress=True,
         progress_backend="auto",
         log_progress_lines=laplace_config.log_progress_lines,
+        informative_priors=informative_priors,
     )
 
     g = run_result.globals
@@ -182,6 +194,8 @@ def _run_laplace_inference(
             r=r_value,
             r_loc=r_loc_val,
             r_scale=gu.get("r_scale"),
+            mu_loc=gu.get("mu_loc"),
+            mu_scale=gu.get("mu_scale"),
         )
 
     # LNM / LNMVCP: route the per-cell latent (the engine packed it

@@ -183,14 +183,21 @@ def _laplace_handler(
     seed: int,
     annotation_prior_logits: Optional[jnp.ndarray] = None,
     dataset_indices: Optional[jnp.ndarray] = None,
+    informative_priors: Optional[dict] = None,
+    capture_mode_override: Optional[str] = None,
 ) -> Any:
-    """Handler for Laplace-mode inference (PLN-only).
+    """Handler for Laplace-mode inference.
 
     Bypasses NumPyro's SVI machinery in favour of a custom outer-loop
     training in :class:`scribe.laplace.LaplaceInferenceEngine`.
     See ``inference/laplace.py`` for the bridge that builds the
     arguments for the engine from the public ``ModelConfig`` /
     ``LaplaceConfig`` surface.
+
+    The two trailing kwargs ``informative_priors`` and
+    ``capture_mode_override`` are populated only by the SVI-cascade
+    pathway (see ``api/stages/run_inference.py``); for plain Laplace
+    fits they remain ``None``.
     """
     from .laplace import _run_laplace_inference
 
@@ -208,6 +215,8 @@ def _laplace_handler(
         laplace_config=config,
         data_config=data_config,
         seed=seed,
+        informative_priors=informative_priors,
+        capture_mode_override=capture_mode_override,
     )
 
 
@@ -238,6 +247,8 @@ def _run_inference(
     annotation_prior_logits: Optional[jnp.ndarray] = None,
     dataset_indices: Optional[jnp.ndarray] = None,
     enable_x64: bool = False,
+    informative_priors: Optional[dict] = None,
+    capture_mode_override: Optional[str] = None,
 ) -> Any:
     """Route inference execution to the appropriate handler.
 
@@ -349,6 +360,14 @@ def _run_inference(
         annotation_prior_logits=annotation_prior_logits,
         dataset_indices=dataset_indices,
     )
+
+    # Per-method conditional forwarding: the Laplace-specific kwargs
+    # ``informative_priors`` and ``capture_mode_override`` are only
+    # added when the method is Laplace.  SVI / MCMC / VAE handlers
+    # never see these and their signatures remain untouched.
+    if inference_method == InferenceMethod.LAPLACE:
+        handler_kwargs["informative_priors"] = informative_priors
+        handler_kwargs["capture_mode_override"] = capture_mode_override
 
     if enable_x64:
         import jax
