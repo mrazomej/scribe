@@ -173,9 +173,9 @@ class NBLNObservationModel(LaplaceObservationModel):
         r_init = jnp.asarray(
             empirical_dispersion_from_counts(counts_np), dtype=jnp.float32
         )
-        r_loc_init = self._pos_inverse(
-            jnp.maximum(r_init, 1e-3)
-        ).astype(jnp.float32)
+        r_loc_init = self._pos_inverse(jnp.maximum(r_init, 1e-3)).astype(
+            jnp.float32
+        )
 
         params = {
             "mu": mu_init,
@@ -304,17 +304,19 @@ class NBLNObservationModel(LaplaceObservationModel):
         # negative on typical data; NBLN keeps it and so losses come
         # out positive.  Both are equivalent for optimization; same
         # convention as the DM-family losses in scribe.
-        nb_lp = LogMeanNegativeBinomial(
-            log_mean=log_mean, concentration=r[None, :]
-        ).log_prob(counts_batch).sum(axis=-1)
+        nb_lp = (
+            LogMeanNegativeBinomial(log_mean=log_mean, concentration=r[None, :])
+            .log_prob(counts_batch)
+            .sum(axis=-1)
+        )
 
         # MVN prior on x.
         diff = x_new - mu[None, :]
         quad = _woodbury_quadform(W, d, diff)
         log_det_sigma = _woodbury_logdet_sigma(W, d)
         G = mu.shape[0]
-        mvn_lp = -0.5 * quad - 0.5 * log_det_sigma - 0.5 * G * jnp.log(
-            2 * jnp.pi
+        mvn_lp = (
+            -0.5 * quad - 0.5 * log_det_sigma - 0.5 * G * jnp.log(2 * jnp.pi)
         )
 
         # TruncN prior on η.
@@ -504,17 +506,33 @@ class NBLNObservationModel(LaplaceObservationModel):
         _neg_nb_rx_genes = jax.vmap(_neg_nb_rx, in_axes=(0, 0, 0))
 
         # Vectorise over cells (r_loc is shared, log_rate and u vary).
-        _neg_nb_rr_batch = jax.vmap(
-            _neg_nb_rr_genes, in_axes=(None, 0, 0)
-        )
-        _neg_nb_rx_batch = jax.vmap(
-            _neg_nb_rx_genes, in_axes=(None, 0, 0)
-        )
+        # Chunk to avoid GPU OOM from large intermediate AD tensors.
+        _neg_nb_rr_batch = jax.vmap(_neg_nb_rr_genes, in_axes=(None, 0, 0))
+        _neg_nb_rx_batch = jax.vmap(_neg_nb_rx_genes, in_axes=(None, 0, 0))
 
-        # Compute per-cell, per-gene Hessian entries.
-        # Shape: (N, G) for both.
-        H_rr_all = _neg_nb_rr_batch(r_loc, log_rate_all, count_data)
-        H_rx_all = _neg_nb_rx_batch(r_loc, log_rate_all, count_data)
+        _chunk_size_hess = min(512, count_data.shape[0])
+        _lr_chunks = [
+            log_rate_all[i : i + _chunk_size_hess]
+            for i in range(0, count_data.shape[0], _chunk_size_hess)
+        ]
+        _u_chunks = [
+            count_data[i : i + _chunk_size_hess]
+            for i in range(0, count_data.shape[0], _chunk_size_hess)
+        ]
+        H_rr_all = jnp.concatenate(
+            [
+                _neg_nb_rr_batch(r_loc, lr, u)
+                for lr, u in zip(_lr_chunks, _u_chunks)
+            ],
+            axis=0,
+        )
+        H_rx_all = jnp.concatenate(
+            [
+                _neg_nb_rx_batch(r_loc, lr, u)
+                for lr, u in zip(_lr_chunks, _u_chunks)
+            ],
+            axis=0,
+        )  # Shape: (N, G) for both.
 
         # --- Per-cell inverse-Hessian diagonal for the x-block ---
         # The x-block Hessian for cell c is:
@@ -535,17 +553,30 @@ class NBLNObservationModel(LaplaceObservationModel):
             d_eff = 1.0 / (a_c + 1.0 / d)
             return woodbury_inv_diag(W, d_eff)
 
-        # Vectorise over cells.
-        inv_H_xx_diag_all = jax.vmap(
-            _inv_hess_diag_per_cell, in_axes=(0, 0)
-        )(log_rate_all, count_data)  # shape (N, G)
+        # Process cells in chunks to avoid GPU OOM from materializing
+        # all (N, G, k) intermediates simultaneously during vmap.
+        _chunk_size = min(256, log_rate_all.shape[0])
+        _n_cells = log_rate_all.shape[0]
+        _chunks_lr = [
+            log_rate_all[i : i + _chunk_size]
+            for i in range(0, _n_cells, _chunk_size)
+        ]
+        _chunks_u = [
+            count_data[i : i + _chunk_size]
+            for i in range(0, _n_cells, _chunk_size)
+        ]
+        _vmap_fn = jax.vmap(_inv_hess_diag_per_cell, in_axes=(0, 0))
+        inv_H_xx_diag_all = jnp.concatenate(
+            [_vmap_fn(lr, u) for lr, u in zip(_chunks_lr, _chunks_u)],
+            axis=0,
+        )  # shape (N, G)
 
         # --- Profiled Hessian diagonal ---
         # diag(H_profile)_g = sum_c H_{r_g,r_g}^(c)
         #   - sum_c (H_{r_g,x_g}^(c))^2 * [(-H_{xx,c})^{-1}]_{gg}
         H_rr_summed = jnp.sum(H_rr_all, axis=0)  # (G,)
         schur_correction = jnp.sum(
-            H_rx_all ** 2 * inv_H_xx_diag_all, axis=0
+            H_rx_all**2 * inv_H_xx_diag_all, axis=0
         )  # (G,)
         H_profiled_diag = H_rr_summed - schur_correction
 
