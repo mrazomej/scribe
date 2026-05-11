@@ -1466,32 +1466,523 @@ Two limitations of the diagonal approximation are worth noting:
    many genes (e.g., gene-set enrichment tests on dispersion), the diagonal
    approximation will underestimate the joint uncertainty.
 
-2. **No prior contribution.** Unless the training loss included an explicit
-   prior on $r_g$ (which the current NBLN Laplace path does not), the Hessian
-   is purely the observed information. This is equivalent to a flat prior in
-   unconstrained coordinates — acceptable for well-identified genes with many
-   informative cells, but it makes the posterior overly diffuse for weakly
-   identified genes where a regularizing prior would otherwise concentrate the
-   posterior.
+2. **No prior contribution.** Unless the training loss includes an explicit
+   prior on $r_g$, the Hessian is purely the observed information. This is
+   equivalent to a flat prior in unconstrained coordinates — acceptable for
+   well-identified genes with many informative cells, but it makes the
+   posterior overly diffuse for weakly identified genes where a regularizing
+   prior would otherwise concentrate the posterior. This caveat is *removed*
+   when the SVI-informative-prior cascade is active (@sec-nbln-svi-cascade);
+   see @sec-nbln-informative-prior-precision for the prior-precision
+   contribution to the profiled Hessian.
+
+#### Capture-aware profiled Hessian for $r_g$ {#sec-nbln-capture-aware-r}
+
+When the NBLN fit includes the biology-informed capture anchor on
+$\eta_c$ (@sec-capture-prior), the per-cell latent block expands from
+$\underline{z}_c$ alone to the joint $(\underline{z}_c, \eta_c)$. The
+$r_g$ dispersion couples to **both** sub-blocks through the NB
+likelihood, because the NB log-mean is the linear combination
+$\log\text{mean}_{cg} = \log\mu_{cg} + z_{cg} - \eta_c$. Chain rule on
+this composition gives the crucial identity
+
+$$
+H^{(c)}_{r_g,\,\eta_c}
+\;=\;
+- H^{(c)}_{r_g,\, z_{cg}},
+$${#eq-nbln-r-eta-cross}
+
+i.e., the cross-partial of the NB log-density with respect to $r_g$
+and $\eta_c$ is the negative of the cross-partial with respect to
+$r_g$ and $z_{cg}$. This is exact and gene-diagonal in the same way
+that $H^{(c)}_{r_g, z_{cg'}} = 0$ for $g \neq g'$.
+
+The profiled Hessian in @eq-nbln-profiled-hessian must therefore use
+the **joint $(\underline{z}_c, \eta_c)$ inverse-Hessian block**, not
+just the marginal $z$-block inverse. Writing the joint inverse as
+
+$$
+\bigl(-\underline{\underline{H}}^{(c)}_{z\eta,\, z\eta}\bigr)^{-1}
+=
+\begin{bmatrix}
+\underline{\underline{J}}^{(c)}_{zz} &
+\underline{j}^{(c)}_{z\eta} \\
+\bigl(\underline{j}^{(c)}_{z\eta}\bigr)^{\!\top} &
+J^{(c)}_{\eta\eta}
+\end{bmatrix},
+$${#eq-nbln-joint-inverse}
+
+the contribution of cell $c$ to the profiled Hessian on $\varrho_g$
+expands to a quadratic form in the joint cross-Hessian column for that
+gene:
+
+$$
+\bigl[ S^{(c)}_g \bigr]
+\;=\;
+\bigl(H^{(c)}_{\varrho_g,\, z_{cg}}\bigr)^{\!2}
+\left[
+\bigl(\underline{\underline{J}}^{(c)}_{zz}\bigr)_{gg}
+\;-\;2\, \bigl(\underline{j}^{(c)}_{z\eta}\bigr)_g
+\;+\;
+J^{(c)}_{\eta\eta}
+\right],
+$${#eq-nbln-r-schur-capture}
+
+where the bracketed factor collapses the cross-derivative terms via
+@eq-nbln-r-eta-cross. The capture-off case is recovered by setting
+$\underline{j}^{(c)}_{z\eta} = 0$ and $J^{(c)}_{\eta\eta} = 0$, in which
+case $\bigl(\underline{\underline{J}}^{(c)}_{zz}\bigr)_{gg}$ reduces to
+$\bigl[(-\underline{\underline{H}}^{(c)}_{zz})^{-1}\bigr]_{gg}$ and
+@eq-nbln-r-schur-capture matches @eq-nbln-profiled-diagonal.
+
+All three joint-inverse components are obtainable from the same
+Woodbury factors used by the per-cell Newton step at the converged
+MAP, at total cost $O(GK + K^3)$ per cell — identical to the
+capture-off path. Specifically, with
+$\underline{\underline{A}}_c = -\underline{\underline{H}}^{(c)}_{zz}
+= \text{diag}(\underline{a}_c) + \underline{\underline{\Sigma}}^{-1}$
+and $s^{(c)}_\eta = \mathbf{1}^{\!\top}\underline{a}_c + 1/\sigma_M^2
+- \underline{a}_c^{\!\top} \underline{\underline{A}}_c^{-1} \underline{a}_c$,
+
+$$
+\bigl(\underline{\underline{J}}^{(c)}_{zz}\bigr)_{gg}
+=
+\bigl[\underline{\underline{A}}_c^{-1}\bigr]_{gg}
++
+\frac{\bigl[\underline{\underline{A}}_c^{-1}\, \underline{a}_c\bigr]_g^2}
+     {s^{(c)}_\eta},
+\quad
+\bigl(\underline{j}^{(c)}_{z\eta}\bigr)_g
+=
+\frac{\bigl[\underline{\underline{A}}_c^{-1}\, \underline{a}_c\bigr]_g}
+     {s^{(c)}_\eta},
+\quad
+J^{(c)}_{\eta\eta}
+=
+\frac{1}{s^{(c)}_\eta}.
+$${#eq-nbln-joint-inverse-components}
+
+These are precisely the same quantities computed by the inner Newton
+step (cf. @eq-nbln-newton-step), so the post-fit Hessian path
+reconstructs them at the converged MAP and reuses the same Woodbury
+helpers.
+
+#### Posterior uncertainty on the latent prior mean $\widetilde{\mu}_g$ {#sec-nbln-mu-uncertainty}
+
+In addition to dispersion, the gene-specific log-mean baseline
+$\widetilde{\mu}_g$ — stored in the implementation as
+$\text{params["mu"]}_g = \log \widetilde{\mu}_g$ — is a global parameter
+whose posterior uncertainty informs downstream inference. Unlike $r_g$,
+the parameter $\widetilde{\mu}_g$ does **not** enter the NB likelihood
+directly; it appears only through the latent's Gaussian prior
+$\underline{x}_c \sim
+\mathcal{N}(\log \widetilde{\underline{\mu}},\, \underline{\underline{\Sigma}})$
+(in the implementation's coordinate system, with $\underline{x}_c$ the
+unconstrained latent log-rate centered at $\log \widetilde{\underline{\mu}}$).
+Two consequences follow:
+
+1. **Cross-Hessian with the latent is the inverse covariance.** From the
+   Gaussian prior contribution $-\tfrac{1}{2}(\underline{x}_c -
+   \log\widetilde{\underline{\mu}})^{\!\top}\,
+   \underline{\underline{\Sigma}}^{-1}\,
+   (\underline{x}_c - \log\widetilde{\underline{\mu}})$,
+   $$
+   -H^{(c)}_{\widetilde{\mu}\,\underline{x}_c}
+   \;=\;
+   -\underline{\underline{\Sigma}}^{-1},
+   \quad
+   -H^{(c)}_{\widetilde{\mu}\,\eta_c}
+   \;=\;
+   \mathbf{0}.
+   $${#eq-nbln-mu-cross-hess}
+   The $\eta_c$-block vanishes because $\widetilde{\mu}$ enters only
+   the latent prior, not the NB likelihood or the truncated-normal
+   prior on $\eta_c$.
+
+2. **Conditional Hessian is $C \cdot \underline{\underline{\Sigma}}^{-1}$.** Each cell contributes
+   $\underline{\underline{\Sigma}}^{-1}$ to the curvature on
+   $\log\widetilde{\underline{\mu}}$, summing to
+   $C \cdot \underline{\underline{\Sigma}}^{-1}$ over $C$ cells.
+
+Combining @eq-nbln-profiled-hessian with these blocks, the profiled
+Hessian on $\log\widetilde{\mu}_g$ is
+
+$$
+\bigl[H^{\text{profile}}_{\widetilde{\mu}\,\widetilde{\mu}}\bigr]
+=
+C \cdot \underline{\underline{\Sigma}}^{-1}
+\;-\;
+\underline{\underline{\Sigma}}^{-1}
+\left(\sum_{c=1}^C \underline{\underline{J}}^{(c)}_{zz}\right)
+\underline{\underline{\Sigma}}^{-1},
+$${#eq-nbln-mu-profile-exact}
+
+where $\underline{\underline{J}}^{(c)}_{zz}$ is the joint-inverse
+top-left block from @eq-nbln-joint-inverse-components (capture-on) or
+$(-\underline{\underline{H}}^{(c)}_{zz})^{-1}$ (capture-off).
+
+Unlike the $r_g$ case, this expression is **not gene-diagonal**:
+$\widetilde{\mu}_g$ couples to every $z_{c,g'}$ for $g' \neq g$ through
+the off-diagonals of $\underline{\underline{\Sigma}}^{-1}$. Materializing
+@eq-nbln-mu-profile-exact would require a $G \times G$ dense product,
+infeasible at $G \sim 10^4$.
+
+**Diagonal-$\Sigma$ approximation.** For per-gene marginal posteriors
+(the dominant analysis use case), we approximate
+$\underline{\underline{\Sigma}}^{-1}$ by its diagonal $\sigma^{-2}_g$
+when evaluating the cross-Hessian contractions. The diagonal entries
+$\sigma^{-2}_g = \bigl[\underline{\underline{\Sigma}}^{-1}\bigr]_{gg}$
+are **exact** — obtainable from the Woodbury identity
+(@eq-nbln-diag-woodbury applied to $\Sigma$ alone) — only the
+off-diagonal cross-gene coupling is dropped. Under this approximation,
+
+$$
+\bigl[H^{\text{profile}}_{\widetilde{\mu}\,\widetilde{\mu}}\bigr]_{gg}
+\;\approx\;
+\sigma^{-2}_g
+\left[
+C - \sigma^{-2}_g
+\sum_{c=1}^C
+\bigl[\underline{\underline{J}}^{(c)}_{zz}\bigr]_{gg}
+\right],
+$${#eq-nbln-mu-profile-diag}
+
+which is computable in $O(C \cdot G)$ once the per-cell diagonals
+$\bigl[\underline{\underline{J}}^{(c)}_{zz}\bigr]_{gg}$ have been
+extracted (the same arrays used for the $r$ path). The resulting
+posterior approximation
+
+$$
+\log \widetilde{\mu}_g \mid \underline{\underline{U}} \;\approx\;
+\mathcal{N}\!\left(
+\widehat{\log\widetilde{\mu}}_g,\;
+\tau^2_g
+\right),
+\qquad
+\tau_g \;=\;
+\frac{1}{\sqrt{\bigl[H^{\text{profile}}_{\widetilde{\mu}\,\widetilde{\mu}}\bigr]_{gg}}},
+$${#eq-nbln-mu-posterior}
+
+is stored as ``mu_loc`` $= \widehat{\log\widetilde{\mu}}_g$ and
+``mu_scale`` $= \tau_g$. Unlike $r$, no positive transform is applied
+on the result: $\log\widetilde{\mu}_g$ is already real-valued (it's
+the prior mean of a Gaussian latent in log-rate coordinates), so
+``get_distributions()`` returns it directly as
+$\mathcal{N}(\text{mu\_loc}, \text{mu\_scale}^2)$.
+
+This diagonal-$\Sigma$ approximation parallels the diagonal-$r$
+approximation: it captures the per-gene marginal posterior correctly
+while dropping cross-gene covariance through the shared prior. For
+per-gene credible intervals, single-gene hypothesis tests, and PPCs
+where $\log\widetilde{\mu}_g$ uncertainty propagates through the
+expression channel, this is the appropriate level of fidelity. For
+joint hypotheses spanning many genes, the full $G \times G$ form would
+be needed.
+
+#### Adding an informative prior to the profiled Hessian {#sec-nbln-informative-prior-precision}
+
+If the training loss includes an explicit Gaussian prior in unconstrained
+coordinates,
+$$
+\varrho_g \;\sim\; \mathcal{N}(\varrho^{(0)}_g,\, s^{(0)}_g{}^2),
+$${#eq-nbln-prior-spec}
+its log-density contributes the constant curvature
+$1 / s^{(0)}_g{}^2$ to the diagonal of the negative-log-density Hessian
+on $\varrho_g$. The profiled Hessian inherits this addition directly:
+
+$$
+\bigl[H^{\text{profile}}_{\varrho\,\varrho}\bigr]_{gg}
+\;\longleftarrow\;
+\bigl[H^{\text{profile}}_{\varrho\,\varrho}\bigr]_{gg}
+\;+\;
+\frac{1}{\bigl(s^{(0)}_g\bigr)^{\!2}}.
+$${#eq-nbln-prior-precision}
+
+The same injection applies to the $\widetilde{\mu}_g$ profiled Hessian
+when an informative prior on $\log\widetilde{\mu}_g$ is supplied.
+Because the prior log-density also appears in the outer training loss,
+autodiff carries the same $1/s^{(0)}_g{}^2$ curvature contribution
+through the gradients during training — so the prior shapes both the
+optimization trajectory and the post-fit posterior in a coherent
+manner.
+
+The natural source for $(\varrho^{(0)}_g, s^{(0)}_g)$ is the moment-
+matched empirical-Bayes prior derived from an SVI posterior on a
+simpler model (NBVCP) fit on the same data. This is the
+SVI-informative-prior cascade developed in the next section.
+
+### Path C: SVI-informative-prior cascade for NBLN Laplace {#sec-nbln-svi-cascade}
+
+Paths A and B treat the NBLN globals $\underline{\theta} = \{\widetilde{\mu}_g,
+r_g, \underline{\underline{W}}, \underline{d}\}$ as having flat priors in
+unconstrained coordinates. This is acceptable when every gene has enough
+informative cells to identify $r_g$ from data alone, but in two practically
+important regimes it leads to optimization pathologies and overly diffuse
+posteriors:
+
+1. **Low-count low-$r_g$ Newton degeneracy.** The per-cell NB Hessian
+   curvature for a gene is
+   $a_{cg} = (u_{cg} + r_g)\, p_{cg}\, (1 - p_{cg})$.
+   For cells with $u_{cg} = 0$ and genes with $r_g \ll 1$ (the
+   bursty-transcription regime), $a_{cg} \to 0$ as soon as
+   $p_{cg} \to 1$. The Newton step in those directions scales as
+   $1/a_{cg}$ and becomes ill-conditioned. Without prior curvature on
+   $r_g$, the outer optimizer can drift $r_g$ far from its data-supported
+   value, worsening the conditioning further in a positive-feedback loop.
+
+2. **Weakly identified $r_g$ on noisy data.** Even when optimization
+   converges, the profiled-Hessian posterior on $r_g$
+   (@eq-nbln-profiled-diagonal) can have very small curvature on genes with
+   few non-zero counts, producing $r$-scales so large they make
+   downstream PPCs uninformative.
+
+Both failure modes have the same root cause: $r_g$ is allowed to wander far
+from its data-supported value because nothing in the loss penalizes that
+drift. The fix is to add a *data-supported* prior on $r_g$ (and the
+companion globals $\widetilde{\mu}_g$, $\eta_c$) without re-deriving the
+model from scratch.
+
+#### The cascade: NBVCP-SVI posterior as NBLN-Laplace prior
+
+The NBDM limit of NBLN at $\underline{\underline{\Sigma}} \to 0$
+(@sec-nbln-limit-nbdm) collapses the model to *independent* NB per gene
+with the same dispersion parameter $r_g$. The NBDM (and its capture-aware
+variant NBVCP) is well-conditioned in this limit: each gene's $r_g$ is
+identified from $C$ independent NB observations with no per-cell latent
+to marginalize, and stochastic variational inference (Path A's NBVCP
+counterpart) converges robustly. The NBVCP posterior on $r_g$ is
+therefore *the asymptotic NBLN posterior in the no-correlation limit*.
+
+This nesting motivates a two-stage Bayesian cascade:
+
+1. **Stage 1** (NBVCP-SVI): fit the simpler NBVCP model on the same data.
+   Obtain $S$ posterior samples
+   $\{r_g^{(s)},\, \widetilde{\mu}_g^{(s)},\, \eta_c^{(s)}\}_{s=1}^S$
+   from the variational posterior $q_\phi(\theta_{\text{NBVCP}})$.
+
+2. **Stage 2** (NBLN-Laplace with cascade): use the NBVCP posterior to
+   construct empirical Gaussian priors in NBLN's unconstrained
+   coordinates, then run Path B with those priors entering the loss as
+   $\mathcal{N}(\theta^{(0)},\, s^{(0)}{}^2)$ log-density terms.
+
+The Bayes statement underlying this cascade is
+
+$$
+\pi(\theta \mid \underline{\underline{U}}_{\text{NBLN}})
+\;\propto\;
+\pi(\underline{\underline{U}}_{\text{NBLN}} \mid \theta)\;
+\underbrace{q_\phi(\theta_{\text{NBVCP}} \approx \theta \mid \underline{\underline{U}}_{\text{NBVCP}})}_{\text{empirical prior}},
+$${#eq-nbln-cascade-bayes}
+
+with $q_\phi$ standing in as a proper Gaussian prior in the unconstrained
+target coordinate after moment-matching (@sec-nbln-cascade-momentmatch
+below). Because the data appears on both sides, this is *empirical Bayes*,
+not a fully separate prior elicitation. The bias is asymptotically
+$O(1/N_{\text{cells}})$ on posterior variance and is dominated by the
+benefit of fixed Newton conditioning at any practical $N$.
+
+#### Coordinate mapping {#sec-nbln-cascade-coords}
+
+NBVCP and NBLN parameterize their shared quantities in different
+coordinate systems. Building the empirical prior requires three explicit
+maps from the SVI source coordinates into the NBLN-Laplace target
+coordinates:
+
+| NBLN target | SVI source | Target coordinate space | Transform applied |
+|---|---|---|---|
+| $\varrho_g = h^{-1}(r_g)$ (per gene) | $r_g$ (positive) | unconstrained ($\mathbb{R}$) | $h^{-1}$ — the inverse of the configured ``positive_transform`` |
+| $\log\widetilde{\mu}_g$ (per gene) | $\widetilde{\mu}_g$ (positive NB mean) | real-valued log-rate ($\mathbb{R}$) | $\log$ (always, regardless of ``positive_transform``) |
+| $\eta_c$ (per cell, when capture-aware) | $\eta_c$ (constrained $\geq 0$) | $[0, \infty)$ | identity |
+
+The asymmetry between $r_g$ and $\widetilde{\mu}_g$ deserves emphasis. The
+NBLN parameter $r_g$ is genuinely positive and uses the configured
+``positive_transform`` (typically ``softplus``) to map to its unconstrained
+coordinate $\varrho_g$. The NBLN parameter $\log\widetilde{\mu}_g$, by
+contrast, is *the prior mean of the latent log-rate*: a real-valued shift
+in the Gaussian prior on $\underline{x}_c$. It does not pass through any
+positivity transform. Confusing the two — applying $h^{-1}$ to NBVCP's
+$\widetilde{\mu}_g$ — would yield priors in the wrong coordinate space
+whenever $h$ is not exactly $\log$ (e.g., when ``positive_transform`` is
+``softplus``).
+
+#### Moment-matched empirical prior {#sec-nbln-cascade-momentmatch}
+
+Given $S$ posterior samples
+$\{\theta^{(s)}\}_{s=1}^S$ from the NBVCP variational posterior in the
+target coordinate (after applying the appropriate transform from the
+table above), the empirical Gaussian prior is constructed by
+sample-moment matching:
+
+$$
+\theta^{(0)}_j \;=\; \frac{1}{S} \sum_{s=1}^S \theta^{(s)}_j,
+\qquad
+s^{(0)}_j \;=\; \tau \cdot \widehat{\text{std}}\!\left(\{\theta^{(s)}_j\}_{s=1}^S\right),
+\qquad j = 1, \ldots, D,
+$${#eq-nbln-cascade-moments}
+
+where $D$ is the parameter's dimension (e.g., $G$ for $r$ and $\mu$, $N$
+for $\eta$), $\widehat{\text{std}}$ is the unbiased sample standard
+deviation, and $\tau \geq 1$ is a prior-temperature hyperparameter:
+
+- $\tau = 1$: trust the SVI posterior exactly. The empirical prior has the
+  full precision of the NBVCP fit.
+- $\tau \in [2, 3]$: soften the prior. Useful when the NBVCP variational
+  family may be over-confident on noisy or sparse data — the cascade
+  retains the *location* of the NBVCP posterior but allows the NBLN data
+  to refine the *scale*.
+
+A small floor $s^{(0)}_j \geq \epsilon$ (default $\epsilon = 10^{-4}$)
+prevents zero-variance priors from degenerate-posterior coordinates that
+might otherwise produce singular Hessians downstream.
+
+Moment-matching captures the per-coordinate mean and variance of the
+NBVCP posterior in the target coordinate. For unimodal LogNormal-like
+posteriors — which is what NBVCP's variational families produce on
+typical scRNA-seq — this is asymptotically a tight Gaussian
+approximation. The use of posterior samples rather than extracted
+variational parameters is a deliberate choice: it makes the cascade
+*parameterization-agnostic*, so different NBVCP parameterizations
+(``canonical``, ``mean_prob``, ``mean_odds``) all funnel through the same
+sample-space pipeline.
+
+#### Entering the loss
+
+The empirical prior log-density is added to the outer NBLN-Laplace loss
+as a sum of unconstrained-coordinate Gaussian terms:
+
+$$
+\mathcal{L}^{\text{cascade}}(\underline{\theta})
+=
+\mathcal{L}_{\text{Lap}}(\underline{\theta})
+\;-\;
+\sum_g \log \mathcal{N}\!\left(\varrho_g \mid \varrho^{(0)}_g,\, s^{(0)}_g{}^2\right)
+\;-\;
+\sum_g \log \mathcal{N}\!\left(\log\widetilde{\mu}_g \mid (\log\widetilde{\mu})^{(0)}_g,\, t^{(0)}_g{}^2\right),
+$${#eq-nbln-cascade-loss}
+
+with the $\eta_c$ block already entering through the cell-level
+TruncatedNormal prior whose scale $\sigma_M$ is replaced by the per-cell
+empirical scale $s^{(0)}_{\eta, c}$ when the cascade provides one.
+Crucially:
+
+- **The prior terms are not scaled by mini-batch.** They are global
+  parameter priors, not per-cell likelihood contributions, so the
+  standard SVI sub-sample scaling factor $N / |\text{batch}|$ does not
+  apply.
+
+- **The prior's $1/s^{(0)}{}^2$ curvature contributes directly to the
+  profiled Hessian** (@eq-nbln-prior-precision). Autodiff carries the
+  same contribution through the optimizer's gradient during training,
+  so the prior shapes both the optimization trajectory and the post-fit
+  posterior coherently.
+
+#### Capture-mode trichotomy
+
+The NBVCP source may or may not include a capture-aware sub-model.
+Three cases are distinguished from the keys present in the SVI sample
+dictionary:
+
+| Detected SVI keys | Cascade mode | Behavior |
+|---|---|---|
+| ``eta_capture`` present | ``"eta"`` | Build per-cell prior on $\eta_c$; **supersedes** any scalar capture anchor specified for the NBLN target. |
+| only ``phi_capture`` or ``p_capture`` | ``"phi_only"`` | Warn — odds-ratio NBVCP capture is not directly compatible with NBLN's biology-informed $\eta_c$ prior. Apply only the $r$ and $\widetilde{\mu}$ priors; leave the NBLN target's own capture configuration intact. |
+| no capture keys | ``"none"`` | Warn — NBVCP source has no capture latent. Apply only the $r$ and $\widetilde{\mu}$ priors; leave the NBLN target's capture configuration intact. |
+
+The asymmetry between the eta-mode and the other two reflects the
+information content of the SVI source. When the source provides a
+proper biology-informed $\eta_c$ posterior, it is the most informative
+prior available and should override the scalar anchor. When the source
+only provides odds-ratio capture or no capture, it lacks the information
+needed to specify a per-cell $\eta_c$ prior; the cascade falls back to
+the $r$ and $\widetilde{\mu}$ priors and lets the target's own
+configuration handle capture.
+
+#### Safeguards
+
+Three checks gate the cascade before any prior is constructed:
+
+1. **Strict gene-identity check** (priority: var-names $\succ$ mask $\succ$
+   count). A var-names mismatch raises ``ValueError`` even when gene
+   counts agree, because two distinct gene panels of the same size
+   would silently produce per-gene priors mapping to the wrong genes.
+
+2. **Amortized-capture source handling.** When the SVI source uses an
+   amortized capture encoder, sampling its posterior requires feeding
+   the encoder its training inputs. The cascade prefers
+   ``results._original_counts`` if stored on the source, else accepts
+   ``source_counts`` (only if strict var-name identity was verified —
+   mask-only identity is *not* sufficient because the encoder's input
+   dimension is fixed at SVI fit time). Otherwise refuse with an
+   explicit error pointing at remediation options.
+
+3. **Scope validation.** The cascade is rejected at the API layer
+   unless ``model == "nbln"`` and ``inference_method == "laplace"``,
+   preventing accidental application to other inference paths.
+
+#### Connection to the global uncertainty path
+
+The cascade and the post-fit global uncertainty path
+(@sec-nbln-global-uncertainty) compose cleanly:
+
+- During training, the cascade priors enter
+  $\mathcal{L}^{\text{cascade}}$ (@eq-nbln-cascade-loss) and the
+  optimizer's gradients carry their precision contribution.
+
+- At convergence, ``compute_global_uncertainty`` evaluates the profiled
+  Hessian on $\varrho_g$ and $\log\widetilde{\mu}_g$ at the converged
+  MAP and explicitly injects the $1/s^{(0)}{}^2$ prior precision
+  (@eq-nbln-prior-precision) into the diagonal.
+
+The resulting ``r_loc``, ``r_scale``, ``mu_loc``, ``mu_scale`` fields
+are then the *posterior* parameters under the cascade's empirical
+prior — not the pure-likelihood posterior. This is the desired
+behavior: the cascade *is* what the user opted into by passing
+``informative_priors_from``.
+
+#### Practical implications
+
+The cascade fixes the Newton-conditioning failure mode discussed at
+the start of this section by structural means rather than empirical
+tuning. With the SVI prior pinning $r_g$ near its data-supported
+value, the per-cell NB curvature $a_{cg} = (u_{cg} + r_g)\, p_{cg}\,
+(1 - p_{cg})$ stays well above zero throughout optimization, the
+Woodbury solves stay well-conditioned, and the outer optimizer can
+focus on fitting the cross-gene structure
+$(\underline{\underline{W}}, \underline{d})$ without contaminating
+$r_g$.
+
+Empirically, on a divergence-prone test dataset where vanilla NBLN
+Laplace failed to converge on all $C$ cells, the cascade brings
+Newton convergence above 99\% with no other intervention. The
+cascade also tightens the post-fit ``r_scale`` (by the prior-precision
+contribution) and unlocks the new ``mu_loc``, ``mu_scale`` outputs
+(@sec-nbln-mu-uncertainty).
 
 ### Comparison and recommendation {#sec-nbln-inference-tradeoff}
 
-| Property | Path A (SVI) | Path B (Laplace) |
-|---|---|---|
-| Per-cell posterior approximation | Amortized Gaussian via encoder | Local Gaussian at the MAP |
-| Approximation quality | Limited by encoder capacity and amortization gap | Sharper at the MAP; covariance from local curvature |
-| Per-cell training cost | One forward pass + one reparam sample | $N_{\text{Newton}}$ Newton steps with double-Woodbury |
-| Hyperparameters | Encoder architecture, learning rate, batch size | Newton tolerance, max iterations, learning rate |
-| Adequacy diagnostic | IWBO bound tightness | Symmetry of Laplace residual; IWBO post-hoc |
-| Scribe infrastructure | PLN VAE pipeline | PLN Newton-with-Woodbury solver |
+| Property | Path A (SVI) | Path B (Laplace) | Path C (SVI cascade → Laplace) |
+|---|---|---|---|
+| Per-cell posterior approximation | Amortized Gaussian via encoder | Local Gaussian at the MAP | Local Gaussian at the MAP |
+| Global posterior approximation | Variational (under amortization gap) | Profiled-Hessian Gaussian in unconstrained coords | Profiled-Hessian Gaussian + empirical-prior precision injection |
+| Approximation quality | Limited by encoder capacity and amortization gap | Sharper at the MAP; covariance from local curvature | Same as B, with $r_g$ and $\widetilde{\mu}_g$ scales tightened by prior precision |
+| Per-cell training cost | One forward pass + one reparam sample | $N_{\text{Newton}}$ Newton steps with double-Woodbury | Same as B plus a one-time NBVCP-SVI fit upstream |
+| Hyperparameters | Encoder architecture, learning rate, batch size | Newton tolerance, max iterations, learning rate | Path B's hyperparameters + cascade temperature $\tau$, $S$ samples |
+| Newton conditioning on low-count low-$r$ data | N/A (no inner Newton) | Can degenerate | Structural fix via prior precision |
+| Adequacy diagnostic | IWBO bound tightness | Symmetry of Laplace residual; IWBO post-hoc | Same as B; additionally, ``mu_scale`` and ``r_scale`` finite/positive |
+| Scribe infrastructure | PLN VAE pipeline | PLN Newton-with-Woodbury solver | Path B plus ``scribe.laplace.priors`` adapter |
 
-The two paths are complementary, not competitive. By analogy with the
-Poisson-LogNormal experience (@sec-poisson-lognormal), the SVI path is
-preferred during model development and large-scale exploration, while the
-Laplace path is preferred for final fits where posterior approximation
-quality is at stake. Both produce parameter estimates that can be
-cross-validated by switching to the other path on the same data and
-checking for agreement on global parameters.
+The three paths are complementary, not competitive. By analogy with the
+Poisson-LogNormal experience (@sec-poisson-lognormal), Path A is preferred
+during model development and large-scale exploration, while Paths B and C
+are preferred for final fits where posterior approximation quality is at
+stake. Path C is recommended specifically when (a) the NBVCP fit is
+already available (e.g., from an exploratory pass), and (b) the dataset
+exhibits the low-count low-$r$ degeneracy that destabilizes vanilla Path
+B. For datasets where Path B converges cleanly, Path C is still useful
+because the prior-precision contribution shrinks weakly-identified
+posterior scales toward their NBVCP-supported values — improving
+downstream PPCs and uncertainty quantification without changing the
+estimator's character.
 
 ## Composition sampling for compositional differential expression {#sec-nbln-composition}
 
