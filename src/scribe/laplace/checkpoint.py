@@ -168,7 +168,7 @@ def save_laplace_checkpoint(
         subdirectory is removed before writing (orbax does not
         overwrite by default).
     params : dict
-        Globals dict (``mu``, ``W``, ``d_log``).
+        Globals dict (``mu``, ``W``, ``d_loc``).
     opt_state : Any
         optax optimizer state for the globals. Saved as part of the
         same orbax pytree so resumed training keeps Adam's first /

@@ -116,16 +116,15 @@ logger = logging.getLogger(__name__)
 class LaplaceRunResult:
     """Engine-agnostic Laplace-EM result.
 
-    Identical to the legacy :class:`engine.LaplaceRunResult` — kept
-    here so the generic driver does not depend on the legacy module.
-
     Attributes
     ----------
     globals : dict
-        Final optimised global parameters. Keys are model-specific
-        (PLN: ``{"mu", "W", "d_log"}``; NBLN: ``{"mu", "W", "d_log",
-        "log_r"}``; LNM: ``{"mu", "W", "d_log", "log_mu_T",
-        "log_r_T"}``).
+        Final optimised global parameters.  Keys are model-specific
+        (PLN: ``{"mu", "W", "d_loc"}``; NBLN: ``{"mu", "W", "d_loc",
+        "r_loc"}``; LNM: ``{"mu", "W", "d_loc", "mu_T_loc",
+        "r_T_loc"}``).  Unconstrained positive-parameter coordinates
+        are named ``*_loc`` and mapped to constrained space by the
+        configured ``model_config.positive_transform``.
     x_loc : jnp.ndarray
         Per-cell latent MAP. Shape and semantics are model-specific:
         ``(N, G)`` for PLN/NBLN (log-rate), ``(N, k)`` for LNM low-rank
@@ -134,7 +133,7 @@ class LaplaceRunResult:
         Per-cell capture offset MAP, ``(N,)``, or None when the
         capture anchor is off.
     final_grad_norms : jnp.ndarray
-        Per-cell L∞ Newton gradient norm at the end of training,
+        Per-cell L-inf Newton gradient norm at the end of training,
         ``(N,)``. Used by ``convergence_action`` and downstream
         diagnostics.
     losses : jnp.ndarray
@@ -153,6 +152,19 @@ class LaplaceRunResult:
     divergence_aborted : bool
         True if the divergence guard restored a best snapshot and
         terminated the loop.
+    global_uncertainty : dict
+        Post-fit Laplace posterior approximation for selected global
+        parameters in unconstrained space.  Populated by each
+        observation model's ``compute_global_uncertainty`` hook after
+        the final Newton sweep.  Keys are model-specific:
+
+        - NBLN: ``r_loc``, ``r_scale``, and diagnostics.
+        - LNM/LNMVCP: ``totals_loc``, ``totals_cov``, ``totals_scale``,
+          plus marginal aliases ``mu_T_loc/scale``, ``r_T_loc/scale``.
+        - PLN: empty dict (no extra globals to approximate).
+
+        Empty dict when the observation model does not implement the
+        hook.
     """
 
     globals: Dict[str, jnp.ndarray]
@@ -166,6 +178,7 @@ class LaplaceRunResult:
     best_loss: float
     stopped_at_step: int
     divergence_aborted: bool
+    global_uncertainty: Dict[str, jnp.ndarray]
 
 
 @dataclass
@@ -266,8 +279,54 @@ class LaplaceObservationModel(ABC):
         best_loss: float,
         stopped_at_step: int,
         divergence_aborted: bool,
+        global_uncertainty: Optional[Dict[str, jnp.ndarray]] = None,
     ) -> LaplaceRunResult:
         """Pack into the canonical result dataclass."""
+
+    def compute_global_uncertainty(
+        self,
+        params: Dict[str, jnp.ndarray],
+        latent_loc: jnp.ndarray,
+        eta_loc: Optional[jnp.ndarray],
+        eta_anchor: Optional[jnp.ndarray],
+        count_data: jnp.ndarray,
+        aux_data: Dict[str, jnp.ndarray],
+        model_config: ModelConfig,
+    ) -> Dict[str, jnp.ndarray]:
+        """Compute post-fit Laplace uncertainty for model-specific globals.
+
+        Called after the final Newton sweep, at the restored best
+        parameters and converged per-cell MAPs.  Returns a dictionary of
+        uncertainty quantities in unconstrained space.  The default
+        implementation returns an empty dict (no globals to approximate,
+        as in PLN).
+
+        Parameters
+        ----------
+        params : dict
+            Final optimised global parameters.
+        latent_loc : jnp.ndarray
+            Per-cell latent MAPs from the final sweep.
+        eta_loc : jnp.ndarray or None
+            Per-cell capture offset MAPs, or None.
+        eta_anchor : jnp.ndarray or None
+            Capture-anchor ``(log_M_0, sigma_M)`` per cell, or None.
+        count_data : jnp.ndarray
+            Full observed count matrix, shape ``(N, G)``.
+        aux_data : dict
+            Auxiliary data (e.g. log-library sizes).
+        model_config : ModelConfig
+            Model configuration, including ``positive_transform``.
+
+        Returns
+        -------
+        dict
+            Model-specific uncertainty fields.  NBLN returns ``r_loc``,
+            ``r_scale``, and diagnostics.  LNM returns ``totals_loc``,
+            ``totals_cov``, ``totals_scale``, and marginal aliases.
+            PLN returns ``{}``.
+        """
+        return {}
 
     def aux_batch_slice(
         self, aux_data: Dict[str, jnp.ndarray], idx: jnp.ndarray
@@ -886,6 +945,20 @@ def run_laplace_em(
         if action == "warn":
             logger.warning(msg)
 
+    # ---- Post-fit global Laplace uncertainty ----
+    # Compute Hessian-based posterior approximations for model-specific
+    # global parameters (e.g. NBLN r_g, LNM totals) at the restored
+    # best state and converged per-cell MAPs.
+    global_uncertainty = obs_model.compute_global_uncertainty(
+        params=params,
+        latent_loc=final.latent_loc,
+        eta_loc=final.eta_loc,
+        eta_anchor=eta_anchor,
+        count_data=counts,
+        aux_data=aux_data,
+        model_config=model_config,
+    )
+
     return obs_model.pack_result(
         params=params,
         final=final,
@@ -900,4 +973,5 @@ def run_laplace_em(
         ),
         stopped_at_step=len(losses),
         divergence_aborted=divergence_aborted,
+        global_uncertainty=global_uncertainty,
     )

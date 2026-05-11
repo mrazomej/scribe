@@ -17,6 +17,7 @@ import numpy as np
 
 from ..models.config import DataConfig, LaplaceConfig, ModelConfig
 from ..laplace import LaplaceInferenceEngine, ScribeLaplaceResults
+from ..laplace._global_uncertainty import resolve_positive_fns
 
 if TYPE_CHECKING:
     from anndata import AnnData
@@ -127,11 +128,15 @@ def _run_laplace_inference(
     # residual); store ``d`` as zeros so downstream PPCs and
     # distribution accessors don't multiply in an un-fitted variance
     # term. For PLN and LNM learned, ``d`` is fitted as usual.
+    # Resolve the same positive transform used during training so
+    # that constrained globals are derived consistently.
+    pos_forward, _ = resolve_positive_fns(model_config)
+
     d_mode = getattr(model_config, "d_mode", "learned") or "learned"
     if base_model in ("lnm", "lnmvcp") and d_mode == "low_rank":
         d_value = jnp.zeros_like(g["mu"])
     else:
-        d_value = jnp.exp(g["d_log"])
+        d_value = pos_forward(g["d_loc"])
 
     common_kwargs = dict(
         model_config=run_result.model_config,
@@ -150,10 +155,10 @@ def _run_laplace_inference(
 
     # Populate NB-on-totals globals when the LNM family fitted them
     # (which is now always the case after the v1.1 audit fixes; PLN
-    # has no log_mu_T / log_r_T).
-    if "log_mu_T" in g and "log_r_T" in g:
-        common_kwargs["mu_T"] = jnp.exp(g["log_mu_T"])
-        common_kwargs["r_T"] = jnp.exp(g["log_r_T"])
+    # has no mu_T_loc / r_T_loc).
+    if "mu_T_loc" in g and "r_T_loc" in g:
+        common_kwargs["mu_T"] = pos_forward(g["mu_T_loc"])
+        common_kwargs["r_T"] = pos_forward(g["r_T_loc"])
 
     if base_model == "pln":
         # PLN: latent is x_c; eta_c populated when capture anchor on.
@@ -165,15 +170,18 @@ def _run_laplace_inference(
 
     if base_model == "nbln":
         # NBLN: same per-cell shape as PLN (x_loc is the log-rate
-        # MAP, eta_loc the optional capture offset), plus one extra
-        # gene-specific global ``r`` (NB dispersion) populated from
-        # the ``log_r`` slot of the engine's globals dict.
-        r_value = jnp.exp(g["log_r"]) if "log_r" in g else None
+        # MAP, eta_loc the optional capture offset), plus gene-specific
+        # dispersion from the unconstrained r_loc coordinate.
+        gu = run_result.global_uncertainty
+        r_loc_val = g.get("r_loc")
+        r_value = pos_forward(r_loc_val) if r_loc_val is not None else None
         return ScribeLaplaceResults(
             **common_kwargs,
             x_loc=run_result.x_loc,
             eta_loc=run_result.eta_loc,
             r=r_value,
+            r_loc=r_loc_val,
+            r_scale=gu.get("r_scale"),
         )
 
     # LNM / LNMVCP: route the per-cell latent (the engine packed it
@@ -186,15 +194,27 @@ def _run_laplace_inference(
     d_mode = getattr(model_config, "d_mode", "learned") or "learned"
     alr_reference_idx = int(getattr(model_config, "alr_reference_idx", -1))
 
+    # Propagate global uncertainty for the totals block.
+    gu = run_result.global_uncertainty
+    extras: dict = {}
+
     # LNMVCP-specific extras: store both the raw eta_capture MAP
     # (the actual latent) and the derived p_capture = exp(-eta).
-    # ``eta_loc`` is shared with the PLN dataclass slot (it carries
-    # the per-cell capture-offset latent in either model); the
-    # ``p_capture_loc`` slot is the natural human-readable view.
-    extras: dict = {}
     if base_model == "lnmvcp" and run_result.eta_loc is not None:
         extras["eta_loc"] = run_result.eta_loc
         extras["p_capture_loc"] = jnp.exp(-run_result.eta_loc)
+
+    # Totals uncertainty fields from the global Laplace hook.
+    if "mu_T_loc" in g:
+        extras["mu_T_loc"] = g["mu_T_loc"]
+    if "r_T_loc" in g:
+        extras["r_T_loc"] = g["r_T_loc"]
+    if "totals_cov" in gu:
+        extras["totals_cov"] = gu["totals_cov"]
+    if "mu_T_scale" in gu:
+        extras["mu_T_scale"] = gu["mu_T_scale"]
+    if "r_T_scale" in gu:
+        extras["r_T_scale"] = gu["r_T_scale"]
 
     if d_mode == "low_rank":
         return ScribeLaplaceResults(

@@ -58,8 +58,21 @@ run_scribe(counts, ...)
     └── Inference Routing (dispatcher.py)
         ├── @dispatch(SVI, SVIConfig) → svi._run_svi_inference()
         ├── @dispatch(MCMC, MCMCConfig) → mcmc._run_mcmc_inference()
-        └── @dispatch(VAE, SVIConfig) → vae._run_vae_inference()
+        ├── @dispatch(VAE, SVIConfig) → vae._run_vae_inference()
+        └── @dispatch(LAPLACE, LaplaceConfig) → laplace.run_inference()
 ```
+
+### Laplace inference
+
+The Laplace path (`inference_method="laplace"`) bypasses NumPyro's SVI
+machinery entirely and uses a custom Laplace-EM algorithm: per-cell Newton
+solves in the E-step, Adam on globals in the M-step. Results are returned as
+`ScribeLaplaceResults`, which now includes **approximate posterior
+distributions for selected global parameters** (NBLN gene dispersion `r_g`,
+LNM/LNMVCP totals `mu_T`/`r_T`) computed via a post-fit Hessian calculation
+in unconstrained space. Non-MAP posterior predictive checks automatically
+incorporate this global uncertainty. See `src/scribe/laplace/README.md` for
+full details.
 
 ## Quick Start
 

@@ -110,11 +110,17 @@ class LaplaceInferenceEngine:
         if bm == "pln":
             from ._obs_pln import PLNObservationModel
 
-            obs_model = PLNObservationModel(capture_anchor=capture_anchor)
+            obs_model = PLNObservationModel(
+                capture_anchor=capture_anchor,
+                model_config=model_config,
+            )
         elif bm == "nbln":
             from ._obs_nbln import NBLNObservationModel
 
-            obs_model = NBLNObservationModel(capture_anchor=capture_anchor)
+            obs_model = NBLNObservationModel(
+                capture_anchor=capture_anchor,
+                model_config=model_config,
+            )
         elif bm in ("lnm", "lnmvcp"):
             from ._obs_lnm import LNMObservationModel
 
@@ -126,6 +132,7 @@ class LaplaceInferenceEngine:
                 d_mode=d_mode,
                 alr_reference_idx=alr_reference_idx,
                 capture_anchor=capture_anchor,
+                model_config=model_config,
             )
         else:
             raise NotImplementedError(

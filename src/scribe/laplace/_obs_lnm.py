@@ -33,7 +33,7 @@ LNM is structurally distinct from PLN/NBLN in three ways:
 Result packaging: ``x_loc`` is whichever composition latent is in
 use (``z`` or ``y_alr``); ``eta_loc`` is the η_capture MAP for
 LNMVCP and None for plain LNM; ``globals`` exposes
-``μ, W, log d, log μ_T, log r_T``.
+``μ, W, d_loc, mu_T_loc, r_T_loc``.
 """
 
 from __future__ import annotations
@@ -53,6 +53,10 @@ from ._em import (
     InitState,
     LaplaceObservationModel,
     LaplaceRunResult,
+)
+from ._global_uncertainty import (
+    invert_hessian_with_jitter,
+    resolve_positive_fns,
 )
 from ._newton_lnm import (
     laplace_log_det_neg_H_batch_eta,
@@ -170,14 +174,18 @@ class LNMObservationModel(LaplaceObservationModel):
     ----------
     d_mode : {"low_rank", "learned"}
         Selects whether the per-cell composition latent is the
-        k-dimensional ``z`` (``low_rank``) or the (G−1)-dimensional
+        k-dimensional ``z`` (``low_rank``) or the (G-1)-dimensional
         ``y_alr`` (``learned``).
     alr_reference_idx : int
         Index of the ALR reference gene; required to build the
         full-G logits inside the multinomial likelihood.
     capture_anchor : Optional[Tuple[float, float]]
-        ``(log_M_0, σ_M)`` for the biology-informed prior on
-        ``η_capture``. ``None`` disables capture (plain LNM).
+        ``(log_M_0, sigma_M)`` for the biology-informed prior on
+        ``eta_capture``. ``None`` disables capture (plain LNM).
+    model_config : ModelConfig, optional
+        Model configuration.  Used to resolve
+        ``positive_transform`` for the totals parameters ``mu_T``
+        and ``r_T``.  Falls back to ``softplus`` when ``None``.
     """
 
     def __init__(
@@ -185,6 +193,7 @@ class LNMObservationModel(LaplaceObservationModel):
         d_mode: str,
         alr_reference_idx: int,
         capture_anchor: Optional[Tuple[float, float]] = None,
+        model_config: Optional[ModelConfig] = None,
     ):
         if d_mode not in ("low_rank", "learned"):
             raise ValueError(
@@ -199,6 +208,13 @@ class LNMObservationModel(LaplaceObservationModel):
             log_M0, sigma_M = capture_anchor
             self._capture_anchor = (float(log_M0), float(sigma_M))
             self._sigma_M = float(sigma_M)
+
+        # Resolve the configured positivity map and its inverse once,
+        # so loss_fn, final_sweep, and compute_global_uncertainty all
+        # share the same coordinate system.
+        self._pos_forward, self._pos_inverse = resolve_positive_fns(
+            model_config
+        )
 
     @property
     def name(self) -> str:
@@ -255,30 +271,33 @@ class LNMObservationModel(LaplaceObservationModel):
         W_init = jnp.asarray(
             Vt.T * (S / np.sqrt(max(n_cells - 1, 1))), dtype=jnp.float32
         )
-        d_log_init = jnp.full((g_minus1,), jnp.log(0.01), dtype=jnp.float32)
+        # Initialise unconstrained d_loc so positive_transform(d_loc) ≈ 0.01.
+        d_loc_init = self._pos_inverse(
+            jnp.full((g_minus1,), 0.01, dtype=jnp.float32)
+        )
 
-        params = {"mu": mu_init, "W": W_init, "d_log": d_log_init}
+        params = {"mu": mu_init, "W": W_init, "d_loc": d_loc_init}
 
         # NB-on-totals globals (always present; LNMVCP feeds eta into them).
+        # Initialise unconstrained mu_T_loc and r_T_loc so that
+        # positive_transform(loc) ≈ desired positive initial value.
         if self.uses_capture:
             log_M0, _sigma_M = self._capture_anchor
-            log_mu_T_init = float(log_M0)
+            mu_T_pos_init = jnp.exp(jnp.asarray(log_M0, dtype=jnp.float32))
         else:
-            log_mu_T_init = float(
-                jnp.log(jnp.maximum(jnp.mean(n_total_per_cell), 1.0))
-            )
-        params["log_mu_T"] = jnp.asarray(log_mu_T_init, dtype=jnp.float32)
-        params["log_r_T"] = jnp.asarray(jnp.log(4.0), dtype=jnp.float32)
+            mu_T_pos_init = jnp.maximum(jnp.mean(n_total_per_cell), 1.0)
+        r_T_pos_init = jnp.asarray(4.0, dtype=jnp.float32)
+
+        params["mu_T_loc"] = self._pos_inverse(mu_T_pos_init).astype(
+            jnp.float32
+        )
+        params["r_T_loc"] = self._pos_inverse(r_T_pos_init).astype(jnp.float32)
 
         # Per-cell composition latent (z or y_alr).
         if self._d_mode == "low_rank":
-            latent_loc = jnp.zeros(
-                (n_cells, latent_dim), dtype=jnp.float32
-            )
+            latent_loc = jnp.zeros((n_cells, latent_dim), dtype=jnp.float32)
         else:
-            latent_loc = jnp.broadcast_to(
-                mu_init, (n_cells, g_minus1)
-            ).copy()
+            latent_loc = jnp.broadcast_to(mu_init, (n_cells, g_minus1)).copy()
 
         # Capture-anchor per-cell state.
         if self.uses_capture:
@@ -318,10 +337,8 @@ class LNMObservationModel(LaplaceObservationModel):
 
         mu = params["mu"]
         W = params["W"]
-        d = jnp.exp(params["d_log"])
-        n_genes = (
-            W.shape[0] + 1  # G = (G-1) + 1
-        )
+        d = self._pos_forward(params["d_loc"])
+        n_genes = W.shape[0] + 1  # G = (G-1) + 1
 
         latent_init_sg = jax.lax.stop_gradient(latent_init)
         mu_sg = jax.lax.stop_gradient(mu)
@@ -352,8 +369,15 @@ class LNMObservationModel(LaplaceObservationModel):
                 n_genes,
             )
             comp_loss = data_scale * _lnm_composition_elbo(
-                mu, W, d, counts_batch, z_new, log_det_comp,
-                self._alr_reference_idx, n_genes, self._d_mode,
+                mu,
+                W,
+                d,
+                counts_batch,
+                z_new,
+                log_det_comp,
+                self._alr_reference_idx,
+                n_genes,
+                self._d_mode,
             )
             latent_new = z_new
         else:
@@ -381,14 +405,23 @@ class LNMObservationModel(LaplaceObservationModel):
                 n_genes,
             )
             comp_loss = data_scale * _lnm_composition_elbo(
-                mu, W, d, counts_batch, y_new, log_det_comp,
-                self._alr_reference_idx, n_genes, self._d_mode,
+                mu,
+                W,
+                d,
+                counts_batch,
+                y_new,
+                log_det_comp,
+                self._alr_reference_idx,
+                n_genes,
+                self._d_mode,
             )
             latent_new = y_new
 
         # ----- Totals block (NB on observed totals) -----
-        mu_T = jnp.exp(params["log_mu_T"])
-        r_T = jnp.exp(params["log_r_T"])
+        # Map unconstrained coordinates to positive totals parameters
+        # via the configured positive_transform (softplus by default).
+        mu_T = self._pos_forward(params["mu_T_loc"])
+        r_T = self._pos_forward(params["r_T_loc"])
 
         if self.uses_capture:
             mu_T_sg = jax.lax.stop_gradient(mu_T)
@@ -418,8 +451,8 @@ class LNMObservationModel(LaplaceObservationModel):
                 + n_total_batch * jnp.log(rate_T / v)
             )
             eta_diff = eta_new - eta_anchor_batch
-            eta_prior_lp = -0.5 * (eta_diff * eta_diff) / (
-                self._sigma_M * self._sigma_M
+            eta_prior_lp = (
+                -0.5 * (eta_diff * eta_diff) / (self._sigma_M * self._sigma_M)
             )
             log_det_eta = laplace_log_det_neg_H_batch_eta(
                 eta_new,
@@ -469,13 +502,11 @@ class LNMObservationModel(LaplaceObservationModel):
     ) -> FinalSweepResult:
         u_alr = aux_data["u_alr"]
         n_total = aux_data["n_total"]
-        n_genes = (
-            params["W"].shape[0] + 1
-        )
+        n_genes = params["W"].shape[0] + 1
 
         mu = jax.lax.stop_gradient(params["mu"])
         W = jax.lax.stop_gradient(params["W"])
-        d = jax.lax.stop_gradient(jnp.exp(params["d_log"]))
+        d = jax.lax.stop_gradient(self._pos_forward(params["d_loc"]))
 
         if self._d_mode == "low_rank":
             latent_final, gn_final = laplace_newton_batch_z(
@@ -504,8 +535,8 @@ class LNMObservationModel(LaplaceObservationModel):
             )
 
         if self.uses_capture:
-            mu_T = jnp.exp(jax.lax.stop_gradient(params["log_mu_T"]))
-            r_T = jnp.exp(jax.lax.stop_gradient(params["log_r_T"]))
+            mu_T = self._pos_forward(jax.lax.stop_gradient(params["mu_T_loc"]))
+            r_T = self._pos_forward(jax.lax.stop_gradient(params["r_T_loc"]))
             eta_final, gn_eta_final = laplace_newton_batch_eta(
                 eta_loc,
                 n_total,
@@ -526,6 +557,215 @@ class LNMObservationModel(LaplaceObservationModel):
             final_grad_norms=gn_final,
         )
 
+    # --- Global uncertainty (LNM totals) ---------------------------------
+
+    def compute_global_uncertainty(
+        self,
+        params: Dict[str, jnp.ndarray],
+        latent_loc: jnp.ndarray,
+        eta_loc: Optional[jnp.ndarray],
+        eta_anchor: Optional[jnp.ndarray],
+        count_data: jnp.ndarray,
+        aux_data: Dict[str, jnp.ndarray],
+        model_config: ModelConfig,
+    ) -> Dict[str, jnp.ndarray]:
+        """Compute full 2x2 Laplace covariance for LNM totals parameters.
+
+        Builds the negative NB-on-totals objective as a function of
+        the unconstrained ``(mu_T_loc, r_T_loc)`` vector, maps through
+        ``positive_transform`` to get constrained ``(mu_T, r_T)``,
+        evaluates the full-data NB log-prob on observed cell totals,
+        and computes the 2x2 Hessian at the optimised MAP.
+
+        For LNMVCP, includes the profiled correction from the scalar
+        per-cell ``eta_c*(theta)`` MAP so the global covariance reflects
+        eta uncertainty.
+
+        Parameters
+        ----------
+        params : dict
+            Final global parameters including ``mu_T_loc``, ``r_T_loc``.
+        latent_loc : jnp.ndarray
+            Per-cell composition latent MAPs (not used directly).
+        eta_loc : jnp.ndarray or None
+            Per-cell eta MAPs for LNMVCP.
+        eta_anchor : jnp.ndarray or None
+            Per-cell eta anchors for LNMVCP.
+        count_data : jnp.ndarray, shape ``(N, G)``
+            Full observed count matrix.
+        aux_data : dict
+            Must contain ``"n_total"`` (per-cell totals).
+        model_config : ModelConfig
+            Provides ``positive_transform``.
+
+        Returns
+        -------
+        dict
+            ``totals_loc`` (2,), ``totals_cov`` (2, 2),
+            ``totals_scale`` (2,), plus marginal aliases
+            ``mu_T_loc``, ``mu_T_scale``, ``r_T_loc``, ``r_T_scale``,
+            and diagnostics.
+        """
+        n_total = aux_data["n_total"]
+        pos_fwd = self._pos_forward
+
+        mu_T_loc_val = params["mu_T_loc"]
+        r_T_loc_val = params["r_T_loc"]
+        theta_hat = jnp.stack([mu_T_loc_val, r_T_loc_val])
+
+        if self.uses_capture and eta_loc is not None:
+            # LNMVCP: the totals objective includes the eta latent.
+            # We build the profiled objective that accounts for the
+            # implicit dependence of eta*(theta) on theta.
+
+            def _totals_neg_obj_lnmvcp(theta):
+                """Negative NB-on-totals + eta prior + Laplace correction.
+
+                The per-cell eta MAPs are held fixed (conditional
+                Hessian). The profiled correction from eta uncertainty
+                is added below via the Schur complement.
+                """
+                mu_T_ = pos_fwd(theta[0])
+                r_T_ = pos_fwd(theta[1])
+                exp_neg_eta = jnp.exp(jnp.clip(-eta_loc, -30.0, 30.0))
+                rate_T = mu_T_ * exp_neg_eta
+                v = r_T_ + rate_T
+                nb_lp = (
+                    gammaln(n_total + r_T_)
+                    - gammaln(r_T_)
+                    + r_T_ * jnp.log(r_T_ / v)
+                    + n_total * jnp.log(rate_T / v)
+                )
+                # Truncated-normal prior on eta (half-normal from 0).
+                eta_diff = eta_loc - eta_anchor
+                eta_prior_lp = -0.5 * (eta_diff**2) / (self._sigma_M**2)
+                # Laplace correction: -0.5 log det(-H_eta).
+                from ._newton_lnm import _nb_eta_grad_and_hessian
+
+                def _neg_H_eta_scalar(eta_c, u_T_c):
+                    _, nb_hess = _nb_eta_grad_and_hessian(
+                        eta_c, u_T_c, r_T_, mu_T_
+                    )
+                    return -(nb_hess - 1.0 / (self._sigma_M**2))
+
+                neg_H_eta = jax.vmap(_neg_H_eta_scalar)(eta_loc, n_total)
+                log_det_eta = jnp.log(jnp.maximum(neg_H_eta, 1e-30))
+                total_lp = jnp.sum(nb_lp + eta_prior_lp - 0.5 * log_det_eta)
+                return -total_lp
+
+            # Conditional 2x2 Hessian at the MAP (eta held fixed).
+            H_cond = jax.hessian(_totals_neg_obj_lnmvcp)(theta_hat)
+
+            # Schur complement correction from eta uncertainty.
+            # For each cell c, the cross-derivative d^2(-obj)/d(theta)d(eta_c)
+            # is a 2-vector, and d^2(-obj)/d(eta_c)^2 is a scalar.
+            # The profiled correction is:
+            #   sum_c  H_{theta,eta_c} * (1/H_{eta_c,eta_c}) * H_{eta_c,theta}
+            from ._newton_lnm import _nb_eta_grad_and_hessian
+
+            def _schur_correction_per_cell(eta_c, u_T_c, eta_anch_c):
+                """Per-cell Schur correction for the (theta, eta) block."""
+                mu_T_ = pos_fwd(theta_hat[0])
+                r_T_ = pos_fwd(theta_hat[1])
+
+                # Cross-derivative d^2(-obj)/d(theta_i)d(eta_c).
+                # We differentiate the negative per-cell objective
+                # w.r.t. theta, evaluated at fixed eta_c.
+                def _neg_obj_cell(theta_):
+                    mu_T_v = pos_fwd(theta_[0])
+                    r_T_v = pos_fwd(theta_[1])
+                    exp_neg_eta = jnp.exp(jnp.clip(-eta_c, -30.0, 30.0))
+                    rate_T = mu_T_v * exp_neg_eta
+                    v = r_T_v + rate_T
+                    nb_lp = (
+                        gammaln(u_T_c + r_T_v)
+                        - gammaln(r_T_v)
+                        + r_T_v * jnp.log(r_T_v / v)
+                        + u_T_c * jnp.log(rate_T / v)
+                    )
+                    eta_diff = eta_c - eta_anch_c
+                    eta_prior_lp = -0.5 * (eta_diff**2) / (self._sigma_M**2)
+                    _, nb_hess = _nb_eta_grad_and_hessian(
+                        eta_c, u_T_c, r_T_v, mu_T_v
+                    )
+                    neg_H_eta = -(nb_hess - 1.0 / (self._sigma_M**2))
+                    log_det_eta = jnp.log(jnp.maximum(neg_H_eta, 1e-30))
+                    return -(nb_lp + eta_prior_lp - 0.5 * log_det_eta)
+
+                # H_{theta, eta_c}: shape (2,)
+                def _neg_obj_joint(theta_, eta_):
+                    mu_T_v = pos_fwd(theta_[0])
+                    r_T_v = pos_fwd(theta_[1])
+                    exp_neg_eta = jnp.exp(jnp.clip(-eta_, -30.0, 30.0))
+                    rate_T = mu_T_v * exp_neg_eta
+                    v = r_T_v + rate_T
+                    nb_lp = (
+                        gammaln(u_T_c + r_T_v)
+                        - gammaln(r_T_v)
+                        + r_T_v * jnp.log(r_T_v / v)
+                        + u_T_c * jnp.log(rate_T / v)
+                    )
+                    eta_diff = eta_ - eta_anch_c
+                    eta_prior_lp = -0.5 * (eta_diff**2) / (self._sigma_M**2)
+                    return -(nb_lp + eta_prior_lp)
+
+                # Cross-Hessian: d^2(-obj)/d(theta)d(eta) at the MAP
+                H_theta_eta = jax.jacobian(
+                    jax.grad(_neg_obj_joint, argnums=1), argnums=0
+                )(
+                    theta_hat, eta_c
+                )  # shape (2,)
+
+                # Diagonal Hessian of eta: d^2(-obj)/d(eta)^2
+                H_eta_eta = jax.grad(
+                    jax.grad(lambda e: _neg_obj_joint(theta_hat, e))
+                )(eta_c)
+
+                # Schur term: H_{theta,eta} @ (1/H_{eta,eta}) @ H_{eta,theta}
+                # Both are scalars since eta is 1D per cell.
+                return jnp.outer(H_theta_eta, H_theta_eta) / H_eta_eta
+
+            schur_total = jnp.sum(
+                jax.vmap(_schur_correction_per_cell)(
+                    eta_loc, n_total, eta_anchor
+                ),
+                axis=0,
+            )
+            H_profiled = H_cond - schur_total
+        else:
+            # Plain LNM: no eta latent, no profiled correction needed.
+            def _totals_neg_obj_plain(theta):
+                mu_T_ = pos_fwd(theta[0])
+                r_T_ = pos_fwd(theta[1])
+                v = r_T_ + mu_T_
+                nb_lp = (
+                    gammaln(n_total + r_T_)
+                    - gammaln(r_T_)
+                    + r_T_ * jnp.log(r_T_ / v)
+                    + n_total * jnp.log(mu_T_ / v)
+                )
+                return -jnp.sum(nb_lp)
+
+            H_profiled = jax.hessian(_totals_neg_obj_plain)(theta_hat)
+
+        # Invert the 2x2 profiled Hessian with jitter if needed.
+        totals_cov, jitter_used = invert_hessian_with_jitter(H_profiled)
+        totals_scale = jnp.sqrt(jnp.diag(totals_cov))
+
+        return {
+            "totals_loc": theta_hat,
+            "totals_cov": totals_cov,
+            "totals_scale": totals_scale,
+            "mu_T_loc": theta_hat[0],
+            "mu_T_scale": totals_scale[0],
+            "r_T_loc": theta_hat[1],
+            "r_T_scale": totals_scale[1],
+            "totals_hessian_diag": jnp.diag(H_profiled),
+            "totals_hessian_jitter": jnp.asarray(
+                jitter_used, dtype=jnp.float32
+            ),
+        }
+
     # --- Result packaging -----------------------------------------------
 
     def pack_result(
@@ -539,6 +779,7 @@ class LNMObservationModel(LaplaceObservationModel):
         best_loss: float,
         stopped_at_step: int,
         divergence_aborted: bool,
+        global_uncertainty: Optional[Dict[str, jnp.ndarray]] = None,
     ) -> LaplaceRunResult:
         return LaplaceRunResult(
             globals=params,
@@ -552,4 +793,5 @@ class LNMObservationModel(LaplaceObservationModel):
             best_loss=best_loss,
             stopped_at_step=stopped_at_step,
             divergence_aborted=divergence_aborted,
+            global_uncertainty=global_uncertainty or {},
         )

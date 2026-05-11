@@ -69,7 +69,22 @@ class ScribeLaplaceResults(
     alr_reference_idx : int, optional
         ALR reference gene index for LNM-family models.
     mu_T, r_T : jnp.ndarray, optional
-        LNM-family NB-on-totals parameters.
+        Constrained LNM-family NB-on-totals parameters.  Derived from
+        unconstrained ``mu_T_loc`` / ``r_T_loc`` via ``positive_transform``.
+    r : jnp.ndarray, optional
+        Constrained NBLN gene-specific dispersion.  Derived from
+        unconstrained ``r_loc`` via ``positive_transform``.
+    r_loc, r_scale : jnp.ndarray, optional
+        Unconstrained NBLN dispersion posterior: Normal(r_loc, r_scale).
+        Shape ``(G,)``.  ``r_scale`` comes from the diagonal Laplace
+        approximation of the profiled Hessian.
+    mu_T_loc, mu_T_scale, r_T_loc, r_T_scale : jnp.ndarray, optional
+        Unconstrained LNM totals marginal posterior parameters.
+        Scalar arrays.
+    totals_cov : jnp.ndarray, optional
+        Full 2x2 covariance for the joint (mu_T, r_T) unconstrained
+        posterior.  Important for deriving the distribution of the
+        success probability ``p = r_T / (r_T + mu_T)``.
     var, obs : Any, optional
         AnnData-style metadata.
     n_obs, n_vars : int, optional
@@ -117,13 +132,39 @@ class ScribeLaplaceResults(
     p_capture_loc: Optional[jnp.ndarray] = None
     alr_reference_idx: Optional[int] = None
 
+    # Constrained NB-on-totals globals (LNM family only).  Derived from
+    # unconstrained ``*_loc`` coordinates via ``positive_transform``.
     mu_T: Optional[jnp.ndarray] = None
     r_T: Optional[jnp.ndarray] = None
 
     # NB-LogNormal gene-specific dispersion ``r_g`` (length G). Only
     # populated for ``base_model == "nbln"``; ``None`` for PLN /
-    # LNM / LNMVCP.
+    # LNM / LNMVCP.  Derived as ``positive_transform(r_loc)``.
     r: Optional[jnp.ndarray] = None
+
+    # --- Global posterior uncertainty (unconstrained space) --------
+    #
+    # All ``*_loc`` and ``*_scale`` fields live in unconstrained
+    # pre-transform space.  Constrained positive parameters are
+    # obtained by applying ``model_config.positive_transform`` to
+    # the ``*_loc`` values.  The ``*_scale`` fields are standard
+    # deviations of the approximate Normal posterior in unconstrained
+    # space; they are NOT standard deviations of the constrained
+    # (positive) parameter.
+    #
+    # NBLN fields:
+    r_loc: Optional[jnp.ndarray] = None
+    r_scale: Optional[jnp.ndarray] = None
+    #
+    # LNM / LNMVCP totals fields:
+    mu_T_loc: Optional[jnp.ndarray] = None
+    mu_T_scale: Optional[jnp.ndarray] = None
+    r_T_loc: Optional[jnp.ndarray] = None
+    r_T_scale: Optional[jnp.ndarray] = None
+    # Full 2x2 covariance for the joint (mu_T, r_T) unconstrained
+    # posterior.  Needed to derive coherent distributions for the
+    # derived quantity p = r_T / (r_T + mu_T).
+    totals_cov: Optional[jnp.ndarray] = None
 
     var: Optional[Any] = None
     obs: Optional[Any] = None

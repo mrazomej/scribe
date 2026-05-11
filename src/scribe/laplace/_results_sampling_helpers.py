@@ -358,16 +358,23 @@ def _ppc_nbln_marginal(
     d: jnp.ndarray,
     r: jnp.ndarray,
     eta_loc: Optional[jnp.ndarray] = None,
+    r_loc: Optional[jnp.ndarray] = None,
+    r_scale: Optional[jnp.ndarray] = None,
+    pos_forward=None,
 ) -> jnp.ndarray:
     """Fully marginal NBLN posterior predictive samples.
 
     Mirrors :func:`_ppc_pln_marginal` but emits NB counts.
+    Global uncertainty in ``r`` is included by default when
+    ``r_loc`` and ``r_scale`` are provided: each sample draws
+    ``r_unconstrained ~ Normal(r_loc, r_scale)`` and maps to
+    constrained space via ``pos_forward``.
     """
     from ..stats.distributions import LogMeanNegativeBinomial
 
     g_genes = int(mu.shape[0])
     k_factors = int(W.shape[1])
-    k1, k2, k3, k4 = jax.random.split(rng_key, 4)
+    k1, k2, k3, k4, k5 = jax.random.split(rng_key, 5)
     z = jax.random.normal(k1, (n_samples, k_factors), dtype=mu.dtype)
     eps = jax.random.normal(k2, (n_samples, g_genes), dtype=mu.dtype)
     x = mu[None, :] + z @ W.T + jnp.sqrt(d)[None, :] * eps
@@ -379,8 +386,19 @@ def _ppc_nbln_marginal(
     else:
         log_mean = x
     log_mean = jnp.clip(log_mean, _LOG_RATE_MIN, _LOG_RATE_MAX)
+
+    # Sample r per draw when global uncertainty is available.
+    if r_loc is not None and r_scale is not None and pos_forward is not None:
+        r_unconstrained = (
+            r_loc[None, :]
+            + r_scale[None, :] * jax.random.normal(k5, (n_samples, g_genes))
+        )
+        r_draw = pos_forward(r_unconstrained)
+    else:
+        r_draw = r[None, :]
+
     return LogMeanNegativeBinomial(
-        log_mean=log_mean, concentration=r[None, :]
+        log_mean=log_mean, concentration=r_draw
     ).sample(k4)
 
 
@@ -419,20 +437,23 @@ def _ppc_nbln_per_cell_laplace(
     W: jnp.ndarray,
     d: jnp.ndarray,
     r: jnp.ndarray,
+    r_loc: Optional[jnp.ndarray] = None,
+    r_scale: Optional[jnp.ndarray] = None,
+    pos_forward=None,
 ) -> jnp.ndarray:
     """Per-cell Laplace-perturbed NBLN predictive samples.
 
-    Adds Gaussian noise from the prior covariance ``Σ = W Wᵀ +
+    Adds Gaussian noise from the prior covariance ``Sigma = W W^T +
     diag(d)`` to the per-cell MAP log-rate ``x_loc`` before drawing
-    NB counts -- the standard Laplace posterior-predictive recipe,
-    matching :func:`_ppc_pln_per_cell_laplace` but with NB count
-    sampling.
+    NB counts.  Global uncertainty in ``r`` is included by default
+    when ``r_loc`` and ``r_scale`` are provided: one shared ``r``
+    draw per posterior predictive sample.
     """
     from ..stats.distributions import LogMeanNegativeBinomial
 
     n_cells, g_genes = x_loc.shape
     k_factors = int(W.shape[1])
-    k1, k2, k3 = jax.random.split(rng_key, 3)
+    k1, k2, k3, k4 = jax.random.split(rng_key, 4)
     z = jax.random.normal(
         k1, (n_samples, n_cells, k_factors), dtype=x_loc.dtype
     )
@@ -445,8 +466,19 @@ def _ppc_nbln_per_cell_laplace(
     else:
         log_mean = x
     log_mean = jnp.clip(log_mean, _LOG_RATE_MIN, _LOG_RATE_MAX)
+
+    # Sample r once per posterior predictive draw (shared across cells).
+    if r_loc is not None and r_scale is not None and pos_forward is not None:
+        r_unconstrained = (
+            r_loc[None, :]
+            + r_scale[None, :] * jax.random.normal(k4, (n_samples, g_genes))
+        )
+        r_draw = pos_forward(r_unconstrained)[:, None, :]
+    else:
+        r_draw = r[None, None, :]
+
     return LogMeanNegativeBinomial(
-        log_mean=log_mean, concentration=r[None, None, :]
+        log_mean=log_mean, concentration=r_draw
     ).sample(k3)
 
 
@@ -461,6 +493,10 @@ def _ppc_lnm_marginal(
     r_T: Optional[jnp.ndarray] = None,
     p_capture_loc: Optional[jnp.ndarray] = None,
     total_counts: Optional[Union[int, jnp.ndarray]] = None,
+    totals_cov: Optional[jnp.ndarray] = None,
+    mu_T_loc: Optional[jnp.ndarray] = None,
+    r_T_loc: Optional[jnp.ndarray] = None,
+    pos_forward=None,
     **kwargs,
 ) -> jnp.ndarray:
     """Draw fully marginal LNM/LNMVCP predictive samples.
@@ -517,16 +553,37 @@ def _ppc_lnm_marginal(
     p = _alr_to_softmax(y_alr, alr_reference_idx, n_genes)
 
     if mu_T is not None and r_T is not None:
+        # Sample totals with global uncertainty when available.
+        k_glob = k4
+        if (
+            totals_cov is not None
+            and mu_T_loc is not None
+            and r_T_loc is not None
+            and pos_forward is not None
+        ):
+            # Draw unconstrained (mu_T, r_T) from the joint 2D posterior.
+            k_glob, k4 = jax.random.split(k4)
+            totals_loc_vec = jnp.stack([mu_T_loc, r_T_loc])
+            totals_unconstrained = dist.MultivariateNormal(
+                loc=totals_loc_vec,
+                covariance_matrix=totals_cov,
+            ).sample(k_glob, sample_shape=(n_samples,))
+            mu_T_draw = pos_forward(totals_unconstrained[:, 0])
+            r_T_draw = pos_forward(totals_unconstrained[:, 1])
+        else:
+            mu_T_draw = jnp.broadcast_to(jnp.asarray(mu_T), (n_samples,))
+            r_T_draw = jnp.broadcast_to(jnp.asarray(r_T), (n_samples,))
+
         if p_capture_loc is not None:
             p_capture_arr = jnp.asarray(p_capture_loc).reshape(-1)
             idx = jax.random.randint(
                 k2, (n_samples,), 0, p_capture_arr.shape[0]
             )
-            mu_t_eff = jnp.asarray(mu_T) * p_capture_arr[idx]
+            mu_t_eff = mu_T_draw * p_capture_arr[idx]
         else:
-            mu_t_eff = jnp.broadcast_to(jnp.asarray(mu_T), (n_samples,))
+            mu_t_eff = mu_T_draw
         nb = dist.NegativeBinomial2(
-            mean=mu_t_eff, concentration=jnp.asarray(r_T)
+            mean=mu_t_eff, concentration=r_T_draw
         )
         n_arr = nb.sample(k4, sample_shape=()).astype(jnp.int32)
     else:
@@ -786,6 +843,10 @@ def _ppc_lnm_per_cell_laplace(
     p_capture_loc: Optional[jnp.ndarray] = None,
     counts: Optional[jnp.ndarray] = None,
     total_counts: Optional[jnp.ndarray] = None,
+    totals_cov: Optional[jnp.ndarray] = None,
+    mu_T_loc: Optional[jnp.ndarray] = None,
+    r_T_loc: Optional[jnp.ndarray] = None,
+    pos_forward=None,
     **kwargs,
 ) -> jnp.ndarray:
     """Draw per-cell LNM-family predictive samples with Laplace uncertainty.
@@ -854,6 +915,14 @@ def _ppc_lnm_per_cell_laplace(
             "LNM Laplace per-cell PPC requires either z_loc or y_alr_loc."
         )
 
+    # Whether to draw per-sample global totals with uncertainty.
+    _has_totals_uncertainty = (
+        totals_cov is not None
+        and mu_T_loc is not None
+        and r_T_loc is not None
+        and pos_forward is not None
+    )
+
     if counts is not None:
         n_arr_cells_static = jnp.asarray(counts).sum(axis=-1).astype(jnp.int32)
         nb_fitted = False
@@ -863,14 +932,15 @@ def _ppc_lnm_per_cell_laplace(
     elif mu_T is not None and r_T is not None:
         n_arr_cells_static = None
         nb_fitted = True
-        mu_t_per_cell = (
-            jnp.asarray(mu_T) * jnp.asarray(p_capture_loc)
-            if p_capture_loc is not None
-            else jnp.broadcast_to(jnp.asarray(mu_T), (n_cells,))
-        )
-        nb_dist = dist.NegativeBinomial2(
-            mean=mu_t_per_cell, concentration=jnp.asarray(r_T)
-        )
+        if not _has_totals_uncertainty:
+            mu_t_per_cell = (
+                jnp.asarray(mu_T) * jnp.asarray(p_capture_loc)
+                if p_capture_loc is not None
+                else jnp.broadcast_to(jnp.asarray(mu_T), (n_cells,))
+            )
+            nb_dist = dist.NegativeBinomial2(
+                mean=mu_t_per_cell, concentration=jnp.asarray(r_T)
+            )
     else:
         n_arr_cells_static = jnp.full((n_cells,), 1000, dtype=jnp.int32)
         nb_fitted = False
@@ -892,8 +962,16 @@ def _ppc_lnm_per_cell_laplace(
 
     if n_arr_cells_static is not None:
         n_total_per_cell = jnp.asarray(n_arr_cells_static, dtype=mu.dtype)
-    else:
+    elif not _has_totals_uncertainty:
         n_total_per_cell = jnp.asarray(mu_t_per_cell, dtype=mu.dtype)
+    else:
+        # Placeholder; per-cell totals for Newton sampling use MAP values.
+        mu_t_map = (
+            jnp.asarray(mu_T) * jnp.asarray(p_capture_loc)
+            if p_capture_loc is not None
+            else jnp.broadcast_to(jnp.asarray(mu_T), (n_cells,))
+        )
+        n_total_per_cell = jnp.asarray(mu_t_map, dtype=mu.dtype)
 
     chunk_size = kwargs.get("chunk_size", _PPC_DEFAULT_SAMPLE_CHUNK)
     if chunk_size is None or chunk_size >= n_samples:
@@ -947,9 +1025,34 @@ def _ppc_lnm_per_cell_laplace(
             y_alr_samples, alr_reference_idx, n_genes
         )
         if nb_fitted:
-            n_b_chunk = nb_dist.sample(k_nb, sample_shape=(size,)).astype(
-                jnp.int32
-            )
+            if _has_totals_uncertainty:
+                # Draw per-sample (mu_T, r_T) from the joint 2D posterior.
+                k_glob, k_nb2 = jax.random.split(k_nb)
+                totals_loc_vec = jnp.stack([mu_T_loc, r_T_loc])
+                totals_unc = dist.MultivariateNormal(
+                    loc=totals_loc_vec,
+                    covariance_matrix=totals_cov,
+                ).sample(k_glob, sample_shape=(size,))
+                mu_T_s = pos_forward(totals_unc[:, 0])
+                r_T_s = pos_forward(totals_unc[:, 1])
+                if p_capture_loc is not None:
+                    mu_t_eff_s = mu_T_s[:, None] * jnp.asarray(
+                        p_capture_loc
+                    )[None, :]
+                else:
+                    mu_t_eff_s = jnp.broadcast_to(
+                        mu_T_s[:, None], (size, n_cells)
+                    )
+                r_T_s_bc = jnp.broadcast_to(
+                    r_T_s[:, None], (size, n_cells)
+                )
+                n_b_chunk = dist.NegativeBinomial2(
+                    mean=mu_t_eff_s, concentration=r_T_s_bc
+                ).sample(k_nb2).astype(jnp.int32)
+            else:
+                n_b_chunk = nb_dist.sample(
+                    k_nb, sample_shape=(size,)
+                ).astype(jnp.int32)
         else:
             n_b_chunk = jnp.broadcast_to(
                 jnp.asarray(n_arr_cells_static, dtype=jnp.int32),

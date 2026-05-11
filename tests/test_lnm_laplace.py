@@ -328,3 +328,170 @@ class TestLNMVCPLaplaceEndToEnd:
         assert result.y_alr_loc is None
         assert result.p_capture_loc is not None
         assert result.eta_loc is not None
+
+
+# =====================================================================
+# 4. LNM Global Uncertainty
+# =====================================================================
+
+
+class TestLNMGlobalUncertainty:
+    """Verify that LNM Laplace results include global totals uncertainty
+    fields (``mu_T_loc``, ``mu_T_scale``, ``r_T_loc``, ``r_T_scale``,
+    ``totals_cov``) and that downstream APIs expose them correctly.
+    """
+
+    @pytest.fixture
+    def lnm_result_with_uncertainty(self):
+        """Build a synthetic ``ScribeLaplaceResults`` with LNM totals
+        uncertainty populated, without running a real fit."""
+        from scribe import ScribeLaplaceResults
+        from scribe.laplace._global_uncertainty import resolve_positive_fns
+        from scribe.models.config import ModelConfig
+        from scribe.models.config.enums import (
+            InferenceMethod,
+            Parameterization,
+        )
+
+        rng = np.random.default_rng(500)
+        G_full, C, k = 10, 15, 2
+        G_minus1 = G_full - 1
+        mu = jnp.asarray(rng.normal(0, 0.5, G_minus1).astype(np.float32))
+        W = jnp.asarray(
+            (0.3 * rng.normal(size=(G_minus1, k))).astype(np.float32)
+        )
+        d = jnp.asarray(np.full(G_minus1, 0.05, dtype=np.float32))
+        z_loc = jnp.asarray(
+            rng.normal(0, 1, (C, k)).astype(np.float32)
+        )
+
+        mc = ModelConfig(
+            base_model="lnm",
+            parameterization=Parameterization.LOGISTIC_NORMAL_CANONICAL,
+            inference_method=InferenceMethod.LAPLACE,
+            positive_transform="softplus",
+        )
+        pos_fwd, pos_inv = resolve_positive_fns(mc)
+
+        mu_T_val = 20_000.0
+        r_T_val = 8.0
+        mu_T_loc = pos_inv(jnp.asarray(mu_T_val, dtype=jnp.float32))
+        r_T_loc = pos_inv(jnp.asarray(r_T_val, dtype=jnp.float32))
+        # Synthetic 2x2 covariance (must be PSD).
+        cov = jnp.array(
+            [[0.04, 0.005], [0.005, 0.09]], dtype=jnp.float32
+        )
+
+        return ScribeLaplaceResults(
+            model_config=mc,
+            mu=mu,
+            W=W,
+            d=d,
+            n_genes=G_full,
+            n_cells=C,
+            z_loc=z_loc,
+            alr_reference_idx=0,
+            mu_T=jnp.asarray(mu_T_val, dtype=jnp.float32),
+            r_T=jnp.asarray(r_T_val, dtype=jnp.float32),
+            mu_T_loc=mu_T_loc,
+            r_T_loc=r_T_loc,
+            mu_T_scale=jnp.sqrt(cov[0, 0]),
+            r_T_scale=jnp.sqrt(cov[1, 1]),
+            totals_cov=cov,
+            losses=jnp.zeros(1),
+            final_grad_norms=jnp.zeros(1),
+        )
+
+    def test_get_map_includes_totals_fields(
+        self, lnm_result_with_uncertainty
+    ):
+        m = lnm_result_with_uncertainty.get_map()
+        assert "mu_T" in m
+        assert "r_T" in m
+        assert "p" in m
+        assert "mu_T_loc" in m
+        assert "mu_T_scale" in m
+        assert "r_T_loc" in m
+        assert "r_T_scale" in m
+
+    def test_get_map_p_is_correct(self, lnm_result_with_uncertainty):
+        """Derived ``p = r_T / (r_T + mu_T)``."""
+        m = lnm_result_with_uncertainty.get_map()
+        expected_p = float(m["r_T"]) / (float(m["r_T"]) + float(m["mu_T"]))
+        np.testing.assert_allclose(float(m["p"]), expected_p, atol=1e-5)
+
+    def test_get_distributions_returns_mvn_totals(
+        self, lnm_result_with_uncertainty
+    ):
+        import numpyro.distributions as dist
+
+        dists = lnm_result_with_uncertainty.get_distributions()
+        assert "totals_unconstrained" in dists
+        assert isinstance(
+            dists["totals_unconstrained"], dist.MultivariateNormal
+        )
+
+    def test_get_distributions_returns_transformed_marginals(
+        self, lnm_result_with_uncertainty
+    ):
+        import numpyro.distributions as dist
+
+        dists = lnm_result_with_uncertainty.get_distributions()
+        assert "mu_T" in dists
+        assert isinstance(dists["mu_T"], dist.TransformedDistribution)
+        assert "r_T" in dists
+        assert isinstance(dists["r_T"], dist.TransformedDistribution)
+
+    def test_gene_subsetting_preserves_totals_fields(
+        self, lnm_result_with_uncertainty
+    ):
+        """Totals uncertainty is global/scalar and must pass through
+        gene subsetting unchanged."""
+        res = lnm_result_with_uncertainty
+        # Subset genes 0 (ref) and 3.
+        sub = res[[0, 3]]
+        assert sub.n_genes == 2
+        # Global totals fields pass through.
+        np.testing.assert_array_equal(
+            np.asarray(sub.mu_T_loc), np.asarray(res.mu_T_loc)
+        )
+        np.testing.assert_array_equal(
+            np.asarray(sub.totals_cov), np.asarray(res.totals_cov)
+        )
+
+    def test_serialization_roundtrip(self, lnm_result_with_uncertainty):
+        import pickle
+
+        res = lnm_result_with_uncertainty
+        loaded = pickle.loads(pickle.dumps(res))
+        assert loaded.mu_T_loc is not None
+        assert loaded.r_T_loc is not None
+        assert loaded.totals_cov is not None
+        np.testing.assert_allclose(
+            np.asarray(loaded.totals_cov),
+            np.asarray(res.totals_cov),
+            atol=1e-6,
+        )
+
+    def test_lnm_marginal_ppc_with_totals_uncertainty_shape(
+        self, lnm_result_with_uncertainty
+    ):
+        res = lnm_result_with_uncertainty
+        ppc = res.get_ppc_samples(
+            rng_key=jax.random.PRNGKey(0), n_samples=10, level="marginal"
+        )
+        assert ppc.shape == (10, res.n_genes)
+        assert np.all(np.isfinite(ppc))
+
+    def test_lnm_per_cell_laplace_ppc_with_totals_uncertainty_shape(
+        self, lnm_result_with_uncertainty
+    ):
+        res = lnm_result_with_uncertainty
+        counts = np.random.poisson(
+            50, (res.n_cells, res.n_genes)
+        ).astype(np.float32)
+        ppc = res.get_per_cell_predictive_samples(
+            rng_key=jax.random.PRNGKey(0), n_samples=10, counts=counts
+        )
+        assert ppc.shape == (10, res.n_cells, res.n_genes)
+        assert np.all(np.isfinite(ppc))

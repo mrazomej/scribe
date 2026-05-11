@@ -73,7 +73,14 @@ class GeneSubsettingResultsMixin:
         -------
         ScribeLaplaceResults
             New PLN/NBLN results view with sliced ``mu``, ``W``, ``d``,
-            ``x_loc`` (and ``r`` for NBLN), with aligned ``var`` metadata.
+            ``x_loc`` (and ``r, r_loc, r_scale`` for NBLN), with aligned
+            ``var`` metadata.
+
+        Notes
+        -----
+        Subsetted uncertainty fields (``r_loc``, ``r_scale``) are
+        marginals from the model fitted on the full gene panel, not the
+        posterior one would obtain by refitting on only the selected genes.
         """
         idx_jnp = jnp.asarray(idx)
         return replace(
@@ -83,6 +90,10 @@ class GeneSubsettingResultsMixin:
             d=self.d[idx_jnp],
             x_loc=self.x_loc[:, idx_jnp] if self.x_loc is not None else None,
             r=self.r[idx_jnp] if self.r is not None else None,
+            r_loc=self.r_loc[idx_jnp] if self.r_loc is not None else None,
+            r_scale=(
+                self.r_scale[idx_jnp] if self.r_scale is not None else None
+            ),
             n_genes=int(len(idx)),
             n_vars=int(len(idx)) if self.n_vars is not None else None,
             var=_subset_var(self.var, idx),
@@ -115,6 +126,13 @@ class GeneSubsettingResultsMixin:
         This method maps user-provided full-gene indices to ALR positions,
         preserving reference-gene validity and updating the new reference
         position in subset coordinates.
+
+        LNM totals uncertainty (``mu_T_loc``, ``mu_T_scale``,
+        ``r_T_loc``, ``r_T_scale``, ``totals_cov``) is scalar/global
+        and passes through unchanged when the ALR reference gene
+        remains in the subset.  These are marginals from the model
+        fitted on the full gene panel, not the posterior from a refit
+        on the selected gene subset.
         """
         ref = self.alr_reference_idx
         if ref is None:

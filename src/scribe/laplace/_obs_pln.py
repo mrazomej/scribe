@@ -7,7 +7,7 @@ detection, progress reporting, final convergence check — lives in the
 driver; this module owns only the model-specific pieces.
 
 State init: empirical log-mean for ``μ``, PCA loadings for ``W``, a
-small uniform ``log d``. Per-cell ``x`` warm-starts at ``log(u + 1)``
+small uniform unconstrained ``d_loc``. Per-cell ``x`` warm-starts at ``log(u + 1)``
 (+ ``η_anchor`` when capture is on) so the initial Newton iteration
 sees a near-MAP iterate.
 
@@ -20,7 +20,7 @@ Final sweep: ``2 × n_newton`` iterations on the full cell population
 to lock in per-cell convergence diagnostics.
 
 Result packaging: ``x_loc = latent_loc``; ``globals`` exposes
-``μ, W, log d``.
+``μ, W, d_loc``.
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ from ._em import (
     LaplaceObservationModel,
     LaplaceRunResult,
 )
+from ._global_uncertainty import resolve_positive_fns
 from ._newton_pln import (
     laplace_log_det_neg_H_batch,
     laplace_log_det_neg_H_batch_x_only,
@@ -104,11 +105,16 @@ class PLNObservationModel(LaplaceObservationModel):
         ``(log_M_0, σ_M)`` for the biology-informed truncated-normal
         prior on ``η_capture``. ``None`` disables capture (Newton runs
         on ``x`` only).
+    model_config : ModelConfig, optional
+        Model configuration.  Used to resolve
+        ``positive_transform`` for the diagonal variance ``d``.
+        Falls back to ``softplus`` when ``None``.
     """
 
     def __init__(
         self,
         capture_anchor: Optional[Tuple[float, float]] = None,
+        model_config: Optional[ModelConfig] = None,
     ):
         if capture_anchor is None:
             self._capture_anchor = None
@@ -117,6 +123,12 @@ class PLNObservationModel(LaplaceObservationModel):
             log_M0, sigma_M = capture_anchor
             self._capture_anchor = (float(log_M0), float(sigma_M))
             self._sigma_M = float(sigma_M)
+
+        # Resolve the configured positivity map once so loss_fn,
+        # final_sweep, and init_state all share the same coordinate.
+        self._pos_forward, self._pos_inverse = resolve_positive_fns(
+            model_config
+        )
 
     @property
     def name(self) -> str:
@@ -144,8 +156,11 @@ class PLNObservationModel(LaplaceObservationModel):
             pca_loadings_init(counts_np, latent_dim=latent_dim),
             dtype=jnp.float32,
         )
-        d_log_init = jnp.full((n_genes,), jnp.log(0.1), dtype=jnp.float32)
-        params = {"mu": mu_init, "W": W_init, "d_log": d_log_init}
+        # Initialise unconstrained d_loc so positive_transform(d_loc) ≈ 0.1.
+        d_loc_init = self._pos_inverse(
+            jnp.full((n_genes,), 0.1, dtype=jnp.float32)
+        )
+        params = {"mu": mu_init, "W": W_init, "d_loc": d_loc_init}
 
         if self.uses_capture:
             log_M0, _sigma_M = self._capture_anchor
@@ -184,7 +199,7 @@ class PLNObservationModel(LaplaceObservationModel):
 
         mu = params["mu"]
         W = params["W"]
-        d = jnp.exp(params["d_log"])
+        d = self._pos_forward(params["d_loc"])
 
         latent_init_sg = jax.lax.stop_gradient(latent_init)
         mu_sg = jax.lax.stop_gradient(mu)
@@ -303,7 +318,7 @@ class PLNObservationModel(LaplaceObservationModel):
         del aux_data
         mu = jax.lax.stop_gradient(params["mu"])
         W = jax.lax.stop_gradient(params["W"])
-        d = jax.lax.stop_gradient(jnp.exp(params["d_log"]))
+        d = jax.lax.stop_gradient(self._pos_forward(params["d_loc"]))
 
         if self.uses_capture:
             x_final, eta_final, gn_final, _ = laplace_newton_batch(
@@ -349,6 +364,7 @@ class PLNObservationModel(LaplaceObservationModel):
         best_loss: float,
         stopped_at_step: int,
         divergence_aborted: bool,
+        global_uncertainty: Optional[Dict[str, jnp.ndarray]] = None,
     ) -> LaplaceRunResult:
         return LaplaceRunResult(
             globals=params,
@@ -362,4 +378,5 @@ class PLNObservationModel(LaplaceObservationModel):
             best_loss=best_loss,
             stopped_at_step=stopped_at_step,
             divergence_aborted=divergence_aborted,
+            global_uncertainty=global_uncertainty or {},
         )

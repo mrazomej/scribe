@@ -74,6 +74,7 @@ laplace/
   _gene_subsetting.py     # Gene-axis slicing behavior (PLN and ALR-safe LNM)
   _serialization.py       # Pickle hooks + plotting sample-cache compatibility
   _results_shared.py      # Shared constants and utility helpers
+  _global_uncertainty.py   # Post-fit Hessian utilities for global-parameter posteriors
   _results_sampling_helpers.py   # Module-private PLN/LNM PPC backends
   _results_likelihood_helpers.py # Module-private PLN/LNM likelihood backends
   checkpoint.py           # Orbax checkpoint helpers
@@ -353,6 +354,106 @@ worst comp grad doesn't converge below tolerance
              and should always converge to float precision.
              Check for NaNs in r_T, mu_T, eta_anchor.
 ```
+
+## Global parameter posterior uncertainty
+
+After EM convergence and the final Newton sweep, the Laplace path computes an
+approximate posterior for selected global parameters using the **profiled
+observed-information Hessian**. This extends the Laplace-EM framework to
+provide uncertainty quantification for globals that were previously represented
+only by MAP point estimates.
+
+### How it works
+
+At convergence, the global negative-ELBO objective $\mathcal{L}(\theta)$
+implicitly depends on all per-cell latent MAPs $\xi_c^*(\theta)$. The
+**profiled Hessian** is the Schur complement:
+
+$$
+H_\text{profile} = H_{\theta\theta}
+  - H_{\theta z}\, H_{zz}^{-1}\, H_{z\theta}
+$$
+
+This correction accounts for the fact that per-cell latent MAPs shift when
+globals $\theta$ change, preventing the posterior scale from being
+underestimated.
+
+The posterior covariance in **unconstrained** space is then:
+
+$$
+\Sigma_\theta \approx H_\text{profile}^{-1}
+$$
+
+Constrained positive parameters ($r$, $\mu_T$, $r_T$) are obtained by
+applying `model_config.positive_transform` (default `softplus`) to the
+unconstrained `*_loc` values.
+
+### Per-model behavior
+
+| Model      | Global parameters                | Uncertainty structure                                                                                          |
+| ---------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| PLN        | None                             | Empty (PLN's globals are the latent-Gaussian parameters, already covered by the population-level distribution) |
+| NBLN       | $r_g$ (gene-specific dispersion) | Diagonal covariance: independent $\text{Normal}(r\_loc_g, r\_scale_g)$ per gene                                |
+| LNM/LNMVCP | $\mu_T, r_T$ (NB-on-totals)      | Full $2 \times 2$ covariance: $\text{MVN}([mu\_T\_loc, r\_T\_loc], \Sigma_{2 \times 2})$                       |
+
+### Accessing uncertainty
+
+```python
+result = scribe.fit(adata, model="nbln", inference_method="laplace", ...)
+
+# Unconstrained posterior parameters
+m = result.get_map()
+m["r_loc"]    # unconstrained location (shape G)
+m["r_scale"]  # unconstrained scale (shape G)
+m["r"]        # constrained MAP: positive_transform(r_loc)
+
+# NumPyro distributions
+dists = result.get_distributions()
+dists["r_unconstrained"]  # Normal(r_loc, r_scale).to_event(1)
+dists["r"]                # TransformedDistribution (SoftplusTransform)
+
+# LNM totals
+dists["totals_unconstrained"]  # MultivariateNormal (2D)
+dists["mu_T"]                  # TransformedDistribution (marginal)
+dists["r_T"]                   # TransformedDistribution (marginal)
+```
+
+### PPC behavior with global uncertainty
+
+Non-MAP posterior predictive checks (`get_ppc_samples`,
+`get_per_cell_predictive_samples`) **always include global parameter
+uncertainty** by default. Each predictive sample draws fresh global
+parameters from their posterior before generating counts:
+
+- **NBLN**: each sample draws $r_g$ from $\text{Normal}(r\_loc, r\_scale)$ and
+  maps through `positive_transform`.
+- **LNM/LNMVCP**: each sample draws $(\mu_T, r_T)$ jointly from
+  $\text{MVN}(\text{loc}, \Sigma_{2 \times 2})$ and maps through
+  `positive_transform`.
+
+`get_map_ppc_samples` remains MAP-only and does not incorporate global
+uncertainty.
+
+This can widen predictive tails and credible bands compared to previous
+MAP-only PPCs, especially for NBLN where dispersion uncertainty enters
+multiplicatively into the predictive variance.
+
+### Important caveats
+
+- **Diagonal NBLN approximation**: the diagonal covariance for NBLN $r_g$
+  ignores cross-gene covariance. Per-gene credible intervals are the intended
+  use case; joint gene-set hypotheses may need a richer covariance
+  approximation.
+- **Gene subsetting semantics**: sliced uncertainty fields (`r_loc[genes]`,
+  `r_scale[genes]`) are marginals from the model fitted on the full gene
+  panel, not the posterior one would obtain by refitting on only the selected
+  genes.
+- **Unconstrained space**: all `*_loc` and `*_scale` fields live in the
+  unconstrained pre-transform space. The `*_scale` fields are NOT standard
+  deviations of the constrained positive parameter.
+- **Curvature diagnostics**: non-positive profiled curvature entries (locally
+  unidentified parameters) are floored and logged as warnings. Inspect
+  `result.metadata` for Hessian diagnostic fields if needed.
 
 ## See also
 

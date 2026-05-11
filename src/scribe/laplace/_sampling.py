@@ -13,6 +13,7 @@ from typing import Optional
 import jax
 import jax.numpy as jnp
 
+from ._global_uncertainty import resolve_positive_fns
 from ._results_sampling_helpers import (
     _ppc_lnm_library_anchored,
     _ppc_lnm_marginal,
@@ -133,6 +134,7 @@ class SamplingResultsMixin:
                 raise ValueError(
                     "NBLN PPC requires the gene dispersion 'r' field."
                 )
+            pos_fwd, _ = resolve_positive_fns(self.model_config)
             return _ppc_nbln_marginal(
                 rng_key,
                 n_samples,
@@ -141,8 +143,12 @@ class SamplingResultsMixin:
                 self.d,
                 self.r,
                 eta_loc=self.eta_loc,
+                r_loc=self.r_loc,
+                r_scale=self.r_scale,
+                pos_forward=pos_fwd,
             )
         if bm in ("lnm", "lnmvcp"):
+            pos_fwd, _ = resolve_positive_fns(self.model_config)
             return _ppc_lnm_marginal(
                 rng_key,
                 n_samples,
@@ -153,6 +159,10 @@ class SamplingResultsMixin:
                 mu_T=self.mu_T,
                 r_T=self.r_T,
                 p_capture_loc=self.p_capture_loc,
+                totals_cov=self.totals_cov,
+                mu_T_loc=self.mu_T_loc,
+                r_T_loc=self.r_T_loc,
+                pos_forward=pos_fwd,
                 **kwargs,
             )
         raise NotImplementedError(
@@ -221,6 +231,7 @@ class SamplingResultsMixin:
                 raise ValueError(
                     "NBLN PPC requires the gene dispersion 'r' field."
                 )
+            pos_fwd, _ = resolve_positive_fns(self.model_config)
             return _ppc_nbln_per_cell_laplace(
                 rng_key,
                 n_samples,
@@ -229,8 +240,12 @@ class SamplingResultsMixin:
                 self.W,
                 self.d,
                 self.r,
+                r_loc=self.r_loc,
+                r_scale=self.r_scale,
+                pos_forward=pos_fwd,
             )
         if bm in ("lnm", "lnmvcp"):
+            pos_fwd, _ = resolve_positive_fns(self.model_config)
             return _ppc_lnm_per_cell_laplace(
                 rng_key,
                 n_samples,
@@ -243,6 +258,10 @@ class SamplingResultsMixin:
                 mu_T=self.mu_T,
                 r_T=self.r_T,
                 p_capture_loc=self.p_capture_loc,
+                totals_cov=self.totals_cov,
+                mu_T_loc=self.mu_T_loc,
+                r_T_loc=self.r_T_loc,
+                pos_forward=pos_fwd,
                 **kwargs,
             )
         raise NotImplementedError(

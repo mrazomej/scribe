@@ -12,6 +12,7 @@ from typing import Any, Dict
 import jax.numpy as jnp
 
 from ..stats.distributions import LowRankPoissonLogNormal
+from ._global_uncertainty import resolve_numpyro_transform, resolve_positive_fns
 from ._results_shared import _base_model
 
 
@@ -74,6 +75,10 @@ class DispatchResultsMixin:
     def get_map(self, **_kwargs) -> Dict[str, jnp.ndarray]:
         """Return point-estimate dictionary for diagnostics and plotting.
 
+        Exposes both unconstrained posterior parameterisation
+        (``*_loc``, ``*_scale``) and constrained MAPs derived via
+        ``model_config.positive_transform``.
+
         Parameters
         ----------
         **_kwargs
@@ -84,7 +89,13 @@ class DispatchResultsMixin:
         -------
         Dict[str, jnp.ndarray]
             Model-specific mapping of semantic parameter names to arrays.
-            The keys match the names expected by plotting and analysis helpers.
+
+            - PLN: ``mu, W, d_pln, y_log_rate`` (+ ``eta_capture,
+              p_capture`` when capture anchor on).
+            - NBLN: same as PLN plus ``r, r_loc, r_scale`` (+ capture).
+            - LNM/LNMVCP: ``mu, W, d_lnm``, composition latent,
+              ``mu_T, r_T, p, mu_T_loc, mu_T_scale, r_T_loc, r_T_scale``
+              (+ ``p_capture`` for LNMVCP).
 
         Raises
         ------
@@ -93,11 +104,6 @@ class DispatchResultsMixin:
         """
         bm = _base_model(self.model_config)
         if bm in ("pln", "nbln"):
-            # NBLN map is PLN's map plus the gene dispersion ``r``.
-            # The diagonal residual key follows the model-specific
-            # site name (``d_pln`` vs ``d_nbln``) so the dictionary
-            # is consumable by both PLN- and NBLN-specific
-            # downstream code.
             d_key = "d_nbln" if bm == "nbln" else "d_pln"
             out = {
                 "mu": self.mu,
@@ -110,8 +116,15 @@ class DispatchResultsMixin:
                 out["p_capture"] = jnp.exp(-self.eta_loc)
             if bm == "nbln" and self.r is not None:
                 out["r"] = self.r
+            # NBLN global posterior parameters in unconstrained space.
+            if bm == "nbln" and self.r_loc is not None:
+                out["r_loc"] = self.r_loc
+            if bm == "nbln" and self.r_scale is not None:
+                out["r_scale"] = self.r_scale
             return out
+
         if bm in ("lnm", "lnmvcp"):
+            pos_fwd, _ = resolve_positive_fns(self.model_config)
             out = {
                 "mu": self.mu,
                 "W": self.W,
@@ -123,7 +136,25 @@ class DispatchResultsMixin:
                 out["y_alr"] = self.y_alr_loc
             if self.p_capture_loc is not None:
                 out["p_capture"] = self.p_capture_loc
+            # Constrained totals MAPs.
+            if self.mu_T is not None:
+                out["mu_T"] = self.mu_T
+            if self.r_T is not None:
+                out["r_T"] = self.r_T
+            # Derived success probability.
+            if self.mu_T is not None and self.r_T is not None:
+                out["p"] = self.r_T / (self.r_T + self.mu_T)
+            # Unconstrained posterior parameterisation.
+            if self.mu_T_loc is not None:
+                out["mu_T_loc"] = self.mu_T_loc
+            if self.mu_T_scale is not None:
+                out["mu_T_scale"] = self.mu_T_scale
+            if self.r_T_loc is not None:
+                out["r_T_loc"] = self.r_T_loc
+            if self.r_T_scale is not None:
+                out["r_T_scale"] = self.r_T_scale
             return out
+
         raise NotImplementedError(f"get_map not implemented for base_model={bm!r}")
 
     def get_distributions(
@@ -143,24 +174,22 @@ class DispatchResultsMixin:
         -------
         Dict[str, Any]
             Per-site dictionary.  Continuous population-level latents are
-            returned as proper NumPyro ``Distribution`` objects (e.g.
-            ``LowRankMultivariateNormal`` for the log-rate latent);
-            scalar fitted globals (e.g. ``r``) and per-cell MAP
-            point-estimates from Laplace (e.g. ``eta_capture``,
-            ``p_capture``) are returned as ``dist.Delta`` so the API
-            is uniformly distribution-valued and callers can sample
-            ``d.sample(key)`` from any entry.
+            returned as proper NumPyro ``Distribution`` objects.
 
             - PLN: ``y_log_rate``, ``lambda_rate`` (always);
               ``eta_capture``, ``p_capture`` (when capture anchor on).
-            - NBLN: ``y_log_rate``, ``r`` (always);
+            - NBLN: ``y_log_rate``, ``r_unconstrained`` (Normal),
+              ``r`` (transformed positive distribution) (always);
               ``eta_capture``, ``p_capture`` (when capture anchor on).
-            - LNM/LNMVCP: ``y_alr``; ``p_capture`` for LNMVCP.
+            - LNM/LNMVCP: ``y_alr``, ``totals_unconstrained``
+              (MultivariateNormal), ``mu_T`` and ``r_T`` (transformed
+              marginals); ``p_capture`` for LNMVCP.
 
-            Laplace produces MAP point-estimates for fitted globals
-            and per-cell latents, not posterior covariances over them,
-            so non-population entries collapse to ``Delta`` rather
-            than full posteriors.
+            Global parameters that have a Laplace posterior approximation
+            are returned as proper Normal (or MultivariateNormal)
+            distributions rather than Delta.  Constrained-space
+            distributions are TransformedDistribution objects using
+            the configured positive transform.
 
         Raises
         ------
@@ -175,13 +204,6 @@ class DispatchResultsMixin:
 
         bm = _base_model(self.model_config)
         if bm in ("pln", "nbln"):
-            # The population log-rate distribution is the same for
-            # both PLN and NBLN (a low-rank multivariate normal with
-            # the same loc/W/d). PLN exposes ``lambda_rate`` as the
-            # log-normal-mixed Poisson rate; NBLN's analogous
-            # marginal-rate distribution requires the additional
-            # gene dispersion ``r`` and is exposed indirectly via the
-            # ``y_log_rate`` distribution + ``r`` Delta entry.
             out: Dict[str, Any] = {
                 "y_log_rate": dist.LowRankMultivariateNormal(
                     loc=self.mu, cov_factor=self.W, cov_diag=self.d
@@ -191,27 +213,56 @@ class DispatchResultsMixin:
                 out["lambda_rate"] = LowRankPoissonLogNormal(
                     loc=self.mu, cov_factor=self.W, cov_diag=self.d
                 )
-            if bm == "nbln" and self.r is not None:
-                # ``r`` is a fitted gene-specific global, not a
-                # population latent; surface as a Delta so the API
-                # is uniformly distribution-valued.
-                out["r"] = dist.Delta(self.r)
+            if bm == "nbln":
+                if self.r_loc is not None and self.r_scale is not None:
+                    # Unconstrained r posterior: independent Normal
+                    # per gene.
+                    out["r_unconstrained"] = dist.Normal(
+                        self.r_loc, self.r_scale
+                    ).to_event(1)
+                    # Constrained r via the configured positive transform.
+                    out["r"] = dist.TransformedDistribution(
+                        dist.Normal(self.r_loc, self.r_scale).to_event(1),
+                        resolve_numpyro_transform(self.model_config),
+                    )
+                elif self.r is not None:
+                    out["r"] = dist.Delta(self.r)
             if self.eta_loc is not None:
-                # Biology-informed capture anchor: per-cell MAP
-                # log-offset (and the implied per-cell capture
-                # probability ``p_capture = exp(-eta_capture)``).
                 out["eta_capture"] = dist.Delta(self.eta_loc)
                 out["p_capture"] = dist.Delta(jnp.exp(-self.eta_loc))
             return out
+
         if bm in ("lnm", "lnmvcp"):
             out = {
                 "y_alr": dist.LowRankMultivariateNormal(
                     loc=self.mu, cov_factor=self.W, cov_diag=self.d
                 )
             }
+            # Totals posterior in unconstrained space.
+            if self.totals_cov is not None and self.mu_T_loc is not None:
+                totals_loc = jnp.stack(
+                    [self.mu_T_loc, self.r_T_loc]
+                )
+                out["totals_unconstrained"] = dist.MultivariateNormal(
+                    loc=totals_loc,
+                    covariance_matrix=self.totals_cov,
+                )
+            # Constrained marginal mu_T and r_T distributions.
+            tfm = resolve_numpyro_transform(self.model_config)
+            if self.mu_T_loc is not None and self.mu_T_scale is not None:
+                out["mu_T"] = dist.TransformedDistribution(
+                    dist.Normal(self.mu_T_loc, self.mu_T_scale),
+                    tfm,
+                )
+            if self.r_T_loc is not None and self.r_T_scale is not None:
+                out["r_T"] = dist.TransformedDistribution(
+                    dist.Normal(self.r_T_loc, self.r_T_scale),
+                    tfm,
+                )
             if self.p_capture_loc is not None:
                 out["p_capture"] = dist.Delta(self.p_capture_loc)
             return out
+
         raise NotImplementedError(
             f"get_distributions not implemented for base_model={bm!r}"
         )
