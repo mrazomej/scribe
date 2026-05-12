@@ -6,9 +6,9 @@ selected genes:
 - **Diagonal**: marginal PPC histograms — shaded credible-region bands
   from posterior predictive samples with the observed count histogram
   overlaid (identical to :func:`plot_ppc`).
-- **Lower triangle**: bivariate PPC panels — observed gene–gene scatter
-  with semi-transparent 2-D density contours computed from pooled
-  posterior predictive samples overlaid.
+- **Lower triangle**: bivariate PPC panels — 2-D density contours
+  computed from pooled posterior predictive samples with observed
+  gene–gene scatter in the background.
 - **Upper triangle**: hidden (``axis.off``).
 """
 
@@ -204,7 +204,9 @@ def _get_correlation_matrix_for_selection(
     return corr, n_genes_counts
 
 
-def _select_genes_by_correlation_diversity(corr_matrix, n_genes, counts):
+def _select_genes_by_correlation_diversity(
+    corr_matrix, n_genes, counts, *, min_mean_umi_for_selection=None
+):
     """Select genes that span the correlation spectrum for corner PPC.
 
     The algorithm seeds with the most positively and most negatively
@@ -222,6 +224,9 @@ def _select_genes_by_correlation_diversity(corr_matrix, n_genes, counts):
     counts : ndarray
         Observed count matrix ``(n_cells, n_genes_counts)``.  Used only
         to sort the final selection by median expression.
+    min_mean_umi_for_selection : float or None, optional
+        Lower threshold on per-gene mean UMI counts for inclusion in the
+        auto-selection candidate pool.  ``None`` disables this filter.
 
     Returns
     -------
@@ -246,6 +251,12 @@ def _select_genes_by_correlation_diversity(corr_matrix, n_genes, counts):
         candidate_pool = np.arange(g_eff)
     else:
         candidate_pool = np.arange(n_genes_counts)
+
+    # Optionally drop low-expression genes before diversity scoring.
+    if min_mean_umi_for_selection is not None:
+        _min_mean = float(min_mean_umi_for_selection)
+        mean_umi = np.mean(counts[:, candidate_pool].astype(float), axis=0)
+        candidate_pool = candidate_pool[mean_umi >= _min_mean]
 
     # Cap at the number of available candidates
     n_select = min(n_genes, len(candidate_pool))
@@ -318,6 +329,7 @@ def _resolve_gene_indices(
     gene_names_list,
     n_genes,
     *,
+    min_mean_umi_for_selection=5.0,
     subtract_direction=None,
     n_pcs_to_remove=1,
 ):
@@ -346,6 +358,10 @@ def _resolve_gene_indices(
         Gene names to resolve via ``results.var.index``.
     n_genes : int
         Number of genes when auto-selecting.
+    min_mean_umi_for_selection : float
+        Lower threshold on per-gene mean UMI counts used to restrict
+        auto-selection candidates. Ignored when ``gene_indices`` or
+        ``gene_names_list`` is provided.
     subtract_direction : {None, "library_size", "pc"}, optional
         Nuisance-direction removal applied to the correlation matrix
         before auto-selection.  Ignored when ``gene_indices`` or
@@ -362,7 +378,12 @@ def _resolve_gene_indices(
     ------
     ValueError
         If ``gene_names_list`` contains names not found in ``results.var``.
+        Also raised when ``min_mean_umi_for_selection < 0``.
     """
+    # Validate threshold once so direct helper use fails early.
+    if float(min_mean_umi_for_selection) < 0.0:
+        raise ValueError("min_mean_umi_for_selection must be >= 0.")
+
     if gene_indices is not None:
         return np.asarray(gene_indices, dtype=int)
 
@@ -394,7 +415,20 @@ def _resolve_gene_indices(
         subtract_direction=subtract_direction,
         n_pcs_to_remove=n_pcs_to_remove,
     )
-    return _select_genes_by_correlation_diversity(corr_matrix, n_genes, counts)
+    selected = _select_genes_by_correlation_diversity(
+        corr_matrix,
+        n_genes,
+        counts,
+        min_mean_umi_for_selection=min_mean_umi_for_selection,
+    )
+    if selected.size == 0:
+        raise ValueError(
+            "No genes passed auto-selection: "
+            f"all genes have mean UMI < {float(min_mean_umi_for_selection):.3g}. "
+            "Lower min_mean_umi_for_selection or provide explicit "
+            "gene_indices/gene_names_list."
+        )
+    return selected
 
 
 def _render_diagonal_panel(
@@ -478,11 +512,16 @@ def _render_offdiag_panel(
     obs_y,
     *,
     n_contour_levels=6,
+    contour_mass_levels=(0.5, 0.68, 0.95, 0.99),
     contour_cmap="Blues",
     contour_alpha=0.6,
+    draw_contour_edges=True,
+    contour_edgecolor="gray",
+    contour_edgewidth=0.7,
+    suppress_contour_edges_for_discrete=True,
     scatter_alpha=0.25,
     scatter_size=4,
-    scatter_color="gray",
+    scatter_color="black",
     log_scale=False,
     density_method="hist2d",
     hist2d_bins=80,
@@ -494,8 +533,8 @@ def _render_offdiag_panel(
 
     Pools posterior predictive samples across draws, estimates a bivariate
     density field (fast histogram by default, optionally KDE), and renders
-    filled contour levels. Observed data is scattered first so the contour
-    structure can be overlaid on top with transparency.
+    filled contour levels with observed data scatter rendered in the
+    background.
 
     Parameters
     ----------
@@ -510,11 +549,26 @@ def _render_offdiag_panel(
     obs_y : ndarray
         Observed counts for the y-axis gene, shape ``(n_cells,)``.
     n_contour_levels : int
-        Number of filled contour levels.
+        Number of filled contour levels when ``contour_mass_levels=None``.
+        Kept for backward compatibility.
+    contour_mass_levels : tuple of float or None
+        HPD-style cumulative mass levels in ``(0, 1)`` used to derive
+        contour thresholds from the estimated bivariate density field.
+        When ``None``, falls back to equally spaced density levels.
     contour_cmap : str
         Matplotlib colormap for the contour fill.
     contour_alpha : float
         Transparency of the contour fill.
+    draw_contour_edges : bool
+        If ``True``, draw contour-line edges on top of filled bands.
+    contour_edgecolor : str
+        Matplotlib colour for contour-line edges.
+    contour_edgewidth : float
+        Line width for contour-line edges.
+    suppress_contour_edges_for_discrete : bool
+        If ``True``, skip edge-line drawing on strongly discrete integer-like
+        panels (common for low-count genes) where contour-line overlays tend
+        to produce dense vertical/horizontal stripe artifacts.
     scatter_alpha : float
         Transparency of the observed-data scatter points.
     scatter_size : float
@@ -623,13 +677,6 @@ def _render_offdiag_panel(
         # histogram2d returns shape (nx, ny); transpose to (ny, nx).
         _zz = _hist.T
 
-    # Draw observed data first so contours remain legible in dense clouds.
-    ax.scatter(
-        obs_x_plot, obs_y_plot,
-        s=scatter_size, alpha=scatter_alpha, color=scatter_color,
-        edgecolors="none", rasterized=True, zorder=1,
-    )
-
     # Keep the panel background from the active style visible by skipping
     # the very lowest-density band; otherwise contourf often tints the full
     # axis area and appears as a custom facecolor override.
@@ -640,16 +687,81 @@ def _render_offdiag_panel(
     else:
         _z_min = np.nan
         _z_max = np.nan
+    # Draw observed data first so contour layers remain on top.
+    ax.scatter(
+        obs_x_plot, obs_y_plot,
+        s=scatter_size, alpha=scatter_alpha, color=scatter_color,
+        edgecolors="none", rasterized=True, zorder=1,
+    )
+
     if np.isfinite(_z_min) and np.isfinite(_z_max) and _z_max > _z_min:
-        _levels = np.linspace(_z_min, _z_max, _n_levels + 1)[1:]
-        # Overlay contour fill above points with transparency to preserve context.
-        ax.contourf(
-            _xx, _yy, _zz,
-            levels=_levels,
-            cmap=contour_cmap,
-            alpha=contour_alpha,
-            zorder=2,
-        )
+        if contour_mass_levels is not None:
+            _mass_levels = np.asarray(contour_mass_levels, dtype=float)
+            if _mass_levels.ndim != 1 or _mass_levels.size == 0:
+                raise ValueError(
+                    "contour_mass_levels must be a non-empty 1-D sequence."
+                )
+            if np.any((_mass_levels <= 0.0) | (_mass_levels >= 1.0)):
+                raise ValueError(
+                    "contour_mass_levels values must be strictly between 0 and 1."
+                )
+            _mass_levels = np.unique(np.sort(_mass_levels))
+
+            # HPD thresholds: sort density descending, then find the minimum
+            # density required to contain each cumulative probability mass.
+            _flat = _zz[np.isfinite(_zz)].ravel()
+            _flat = _flat[_flat > 0.0]
+            if _flat.size > 0:
+                _dens_desc = np.sort(_flat)[::-1]
+                _cdf = np.cumsum(_dens_desc)
+                _cdf /= _cdf[-1]
+                _thresholds = []
+                for _mass in _mass_levels:
+                    _idx = int(np.searchsorted(_cdf, _mass, side="left"))
+                    _idx = min(max(_idx, 0), _dens_desc.size - 1)
+                    _thresholds.append(float(_dens_desc[_idx]))
+                _thresholds = np.asarray(_thresholds, dtype=float)
+                _levels = np.r_[
+                    np.sort(np.unique(_thresholds)),
+                    _z_max,
+                ]
+            else:
+                _levels = np.linspace(_z_min, _z_max, _n_levels + 1)[1:]
+        else:
+            _levels = np.linspace(_z_min, _z_max, _n_levels + 1)[1:]
+
+        # Need at least two boundaries for contourf.
+        if _levels.size >= 2 and np.all(np.diff(_levels) > 0):
+            # Draw contour fill above points as the density layer.
+            ax.contourf(
+                _xx, _yy, _zz,
+                levels=_levels,
+                cmap=contour_cmap,
+                alpha=contour_alpha,
+                zorder=2,
+            )
+            _draw_edges = bool(draw_contour_edges)
+            if _draw_edges and suppress_contour_edges_for_discrete:
+                _x_int_like = np.allclose(obs_x_plot, np.round(obs_x_plot))
+                _y_int_like = np.allclose(obs_y_plot, np.round(obs_y_plot))
+                _x_unique = np.unique(obs_x_plot).size
+                _y_unique = np.unique(obs_y_plot).size
+                _low_cardinality = min(_x_unique, _y_unique) <= 40
+                if _x_int_like and _y_int_like and _low_cardinality:
+                    _draw_edges = False
+
+            if _draw_edges:
+                # Draw explicit level boundaries so HPD regions are easy
+                # to read in dense panels.
+                _edge_levels = _levels[:-1]
+                if _edge_levels.size >= 1:
+                    ax.contour(
+                        _xx, _yy, _zz,
+                        levels=_edge_levels,
+                        colors=contour_edgecolor,
+                        linewidths=float(contour_edgewidth),
+                        zorder=3,
+                    )
 
 
 @plot_function(
@@ -666,16 +778,22 @@ def plot_corner_ppc(
     gene_indices=None,
     gene_names_list=None,
     n_genes=5,
+    min_mean_umi_for_selection=5.0,
     subtract_direction=None,
     n_pcs_to_remove=1,
     n_samples=None,
     ppc_level="library_anchored",
     n_contour_levels=6,
+    contour_mass_levels=(0.5, 0.68, 0.95, 0.99),
     contour_cmap="Blues",
     contour_alpha=0.6,
+    draw_contour_edges=True,
+    contour_edgecolor="gray",
+    contour_edgewidth=0.7,
+    suppress_contour_edges_for_discrete=True,
     scatter_alpha=0.25,
     scatter_size=4,
-    scatter_color="gray",
+    scatter_color="black",
     density_method="hist2d",
     hist2d_bins=80,
     log_scale=False,
@@ -692,9 +810,9 @@ def plot_corner_ppc(
 
     - **Diagonal**: marginal PPC histograms (shaded predictive credible
       bands + observed count histogram), identical to :func:`plot_ppc`.
-    - **Lower triangle**: bivariate PPC panels showing observed gene-gene
-      scatter with semi-transparent 2-D density contours from pooled posterior
-      predictive samples overlaid.
+    - **Lower triangle**: bivariate PPC panels showing 2-D density
+      contours from pooled posterior predictive samples with observed
+      gene-gene scatter in the background.
     - **Upper triangle**: hidden.
 
     Parameters
@@ -714,6 +832,10 @@ def plot_corner_ppc(
     n_genes : int
         Number of genes when auto-selecting (default 5).  Ignored when
         ``gene_indices`` or ``gene_names_list`` is given.
+    min_mean_umi_for_selection : float
+        Lower threshold on per-gene mean UMI counts for auto-selection
+        candidates (default 5). Ignored when ``gene_indices`` or
+        ``gene_names_list`` is provided.
     subtract_direction : {None, "library_size", "pc"}, optional
         Remove nuisance directions from the correlation matrix before
         automatic gene selection.  Useful when library-size variation
@@ -737,11 +859,27 @@ def plot_corner_ppc(
         PPC level passed to the predictive sampler (default
         ``"library_anchored"``).
     n_contour_levels : int
-        Number of filled contour levels for off-diagonal panels.
+        Number of filled contour levels for off-diagonal panels when
+        ``contour_mass_levels=None``.
+    contour_mass_levels : tuple of float or None
+        HPD-style cumulative mass levels in ``(0, 1)`` for off-diagonal
+        contour thresholds (default ``(0.5, 0.68, 0.95, 0.99)``). Set to
+        ``None`` to use evenly spaced density levels.
     contour_cmap : str
         Colormap for off-diagonal contour fills.
     contour_alpha : float
         Transparency for contour fills.
+    draw_contour_edges : bool
+        If ``True`` (default), draw contour-line edges on top of each
+        filled HPD region for clearer boundaries.
+    contour_edgecolor : str
+        Colour for contour-line edges (default ``"gray"``).
+    contour_edgewidth : float
+        Line width for contour-line edges.
+    suppress_contour_edges_for_discrete : bool
+        If ``True`` (default), automatically suppress contour-line edges in
+        strongly discrete integer-like panels where edge overlays can become
+        visually cluttered.
     scatter_alpha : float
         Transparency for observed-data scatter points.
     scatter_size : float
@@ -782,7 +920,8 @@ def plot_corner_ppc(
     ------
     ValueError
         If ``ax`` is provided (multi-panel plot requires ``fig`` or
-        ``axes``), or if gene name resolution fails.
+        ``axes``), if gene name resolution fails, or if no genes pass
+        the minimum mean-UMI threshold during auto-selection.
     """
     console.print("[dim]Plotting corner PPC...[/dim]")
     if ax is not None:
@@ -807,6 +946,7 @@ def plot_corner_ppc(
     # ------------------------------------------------------------------
     selected_idx = _resolve_gene_indices(
         results, counts, gene_indices, gene_names_list, n_genes,
+        min_mean_umi_for_selection=min_mean_umi_for_selection,
         subtract_direction=subtract_direction,
         n_pcs_to_remove=n_pcs_to_remove,
     )
@@ -963,8 +1103,15 @@ def plot_corner_ppc(
                         obs_x,
                         obs_y,
                         n_contour_levels=n_contour_levels,
+                        contour_mass_levels=contour_mass_levels,
                         contour_cmap=contour_cmap,
                         contour_alpha=contour_alpha,
+                        draw_contour_edges=draw_contour_edges,
+                        contour_edgecolor=contour_edgecolor,
+                        contour_edgewidth=contour_edgewidth,
+                        suppress_contour_edges_for_discrete=(
+                            suppress_contour_edges_for_discrete
+                        ),
                         scatter_alpha=scatter_alpha,
                         scatter_size=scatter_size,
                         scatter_color=scatter_color,

@@ -208,7 +208,7 @@ class TestRenderOffdiagPanel:
         plt.close(fig)
 
     def test_contours_are_drawn_above_scatter(self):
-        """Contours should use a higher z-order than scatter points."""
+        """Contour layers should use higher z-order than scatter points."""
         rng = np.random.default_rng(123)
         ppc_x = rng.negative_binomial(n=5, p=0.3, size=(12, 35))
         ppc_y = rng.negative_binomial(n=7, p=0.4, size=(12, 35))
@@ -220,7 +220,7 @@ class TestRenderOffdiagPanel:
         _render_offdiag_panel(ax, ppc_x, ppc_y, obs_x, obs_y)
         zorders = {float(coll.get_zorder()) for coll in ax.collections}
 
-        # Scatter should be at zorder=1 and contour levels at zorder=2.
+        # Scatter at zorder=1 and contour fill at zorder=2.
         assert 1.0 in zorders
         assert 2.0 in zorders
         plt.close(fig)
@@ -310,6 +310,137 @@ class TestRenderOffdiagPanel:
                 density_method="not_a_method",
             )
         plt.close(fig)
+
+    def test_invalid_contour_mass_levels_raise(self):
+        """HPD contour mass levels must lie strictly in (0, 1)."""
+        rng = np.random.default_rng(444)
+        ppc_x = rng.negative_binomial(n=5, p=0.3, size=(10, 30))
+        ppc_y = rng.negative_binomial(n=8, p=0.4, size=(10, 30))
+        obs_x = rng.negative_binomial(n=5, p=0.3, size=30)
+        obs_y = rng.negative_binomial(n=8, p=0.4, size=30)
+
+        fig, ax = plt.subplots()
+        with pytest.raises(ValueError, match="contour_mass_levels"):
+            _render_offdiag_panel(
+                ax,
+                ppc_x,
+                ppc_y,
+                obs_x,
+                obs_y,
+                contour_mass_levels=(0.5, 1.2),
+            )
+        plt.close(fig)
+
+    def test_hpd_contours_render_in_hist2d_mode(self):
+        """Default HPD mass contours render without error in hist2d mode."""
+        rng = np.random.default_rng(555)
+        ppc_x = rng.negative_binomial(n=5, p=0.3, size=(10, 30))
+        ppc_y = rng.negative_binomial(n=8, p=0.4, size=(10, 30))
+        obs_x = rng.negative_binomial(n=5, p=0.3, size=30)
+        obs_y = rng.negative_binomial(n=8, p=0.4, size=30)
+
+        fig, ax = plt.subplots()
+        _render_offdiag_panel(
+            ax,
+            ppc_x,
+            ppc_y,
+            obs_x,
+            obs_y,
+            density_method="hist2d",
+            contour_mass_levels=(0.5, 0.68, 0.95, 0.99),
+        )
+        assert len(ax.collections) > 0
+        plt.close(fig)
+
+    def test_contour_edges_drawn_on_continuous_panel_by_default(self):
+        """Default rendering should draw edges on smooth continuous panels."""
+        rng = np.random.default_rng(556)
+        ppc_x = rng.normal(loc=5.0, scale=1.5, size=(10, 30))
+        ppc_y = rng.normal(loc=8.0, scale=2.0, size=(10, 30))
+        obs_x = rng.normal(loc=5.0, scale=1.5, size=30)
+        obs_y = rng.normal(loc=8.0, scale=2.0, size=30)
+
+        class _RecordingAxis:
+            """Minimal axis recorder for contour-edge call assertions."""
+
+            def __init__(self):
+                self.contour_calls = []
+
+            def scatter(self, *args, **kwargs):
+                _ = args, kwargs
+
+            def contourf(self, *args, **kwargs):
+                _ = args, kwargs
+
+            def contour(self, *args, **kwargs):
+                self.contour_calls.append((args, kwargs))
+
+        axis = _RecordingAxis()
+        _render_offdiag_panel(axis, ppc_x, ppc_y, obs_x, obs_y)
+        assert len(axis.contour_calls) > 0
+        _, kwargs = axis.contour_calls[-1]
+        assert kwargs["colors"] == "gray"
+
+    def test_contour_edges_suppressed_for_discrete_panels_by_default(self):
+        """Discrete low-count panels should auto-suppress contour edges."""
+        rng = np.random.default_rng(558)
+        ppc_x = rng.negative_binomial(n=5, p=0.3, size=(10, 30))
+        ppc_y = rng.negative_binomial(n=8, p=0.4, size=(10, 30))
+        obs_x = rng.negative_binomial(n=5, p=0.3, size=30)
+        obs_y = rng.negative_binomial(n=8, p=0.4, size=30)
+
+        class _RecordingAxis:
+            """Minimal axis recorder for contour-edge call assertions."""
+
+            def __init__(self):
+                self.contour_calls = []
+
+            def scatter(self, *args, **kwargs):
+                _ = args, kwargs
+
+            def contourf(self, *args, **kwargs):
+                _ = args, kwargs
+
+            def contour(self, *args, **kwargs):
+                self.contour_calls.append((args, kwargs))
+
+        axis = _RecordingAxis()
+        _render_offdiag_panel(axis, ppc_x, ppc_y, obs_x, obs_y)
+        assert len(axis.contour_calls) == 0
+
+    def test_contour_edges_can_be_disabled(self):
+        """Contour-line outlines should be optional."""
+        rng = np.random.default_rng(557)
+        ppc_x = rng.negative_binomial(n=5, p=0.3, size=(10, 30))
+        ppc_y = rng.negative_binomial(n=8, p=0.4, size=(10, 30))
+        obs_x = rng.negative_binomial(n=5, p=0.3, size=30)
+        obs_y = rng.negative_binomial(n=8, p=0.4, size=30)
+
+        class _RecordingAxis:
+            """Minimal axis recorder for contour-edge call assertions."""
+
+            def __init__(self):
+                self.contour_calls = []
+
+            def scatter(self, *args, **kwargs):
+                _ = args, kwargs
+
+            def contourf(self, *args, **kwargs):
+                _ = args, kwargs
+
+            def contour(self, *args, **kwargs):
+                self.contour_calls.append((args, kwargs))
+
+        axis = _RecordingAxis()
+        _render_offdiag_panel(
+            axis,
+            ppc_x,
+            ppc_y,
+            obs_x,
+            obs_y,
+            draw_contour_edges=False,
+        )
+        assert len(axis.contour_calls) == 0
 
     def test_degenerate_data_no_crash(self):
         """When all samples are identical the panel should not crash."""
@@ -413,6 +544,24 @@ class TestCorrelationDiversitySelection:
         assert len(selected) == n_g
         np.testing.assert_array_equal(sorted(selected), list(range(n_g)))
 
+    def test_min_mean_umi_threshold_filters_candidates(self):
+        """Low-mean genes should be excluded from auto-selection candidates."""
+        # Build a simple correlation matrix where all genes are otherwise valid.
+        corr = np.eye(4, dtype=float)
+        # Genes 0 and 1 stay below threshold; genes 2 and 3 exceed it.
+        counts = np.array(
+            [
+                [1.0, 2.0, 8.0, 10.0],
+                [2.0, 3.0, 7.0, 9.0],
+                [1.0, 2.0, 9.0, 8.0],
+            ]
+        )
+        selected = _select_genes_by_correlation_diversity(
+            corr, 4, counts, min_mean_umi_for_selection=5.0
+        )
+        assert np.all(np.isin(selected, [2, 3]))
+        assert len(selected) == 2
+
     def test_alr_dimension_mismatch(self):
         """When corr has fewer rows than counts columns, excludes the last."""
         # Simulate LNM: corr is (G-1, G-1), counts is (n_cells, G)
@@ -502,6 +651,34 @@ class TestSubtractDirection:
         assert len(idx_full) == 4
         assert len(idx_resid) == 4
         assert all(0 <= i < synth_counts.shape[1] for i in idx_resid)
+
+    def test_explicit_gene_indices_ignore_mean_umi_threshold(
+        self, fake_results, synth_counts
+    ):
+        """Explicit indices should bypass the mean-UMI auto-selection filter."""
+        idx = _resolve_gene_indices(
+            fake_results,
+            synth_counts,
+            gene_indices=[0, 1],
+            gene_names_list=None,
+            n_genes=2,
+            min_mean_umi_for_selection=1e6,
+        )
+        np.testing.assert_array_equal(idx, np.array([0, 1], dtype=int))
+
+    def test_raises_when_no_genes_pass_mean_umi_threshold(
+        self, fake_results, synth_counts
+    ):
+        """Auto-selection should fail clearly when threshold excludes all genes."""
+        with pytest.raises(ValueError, match="No genes passed auto-selection"):
+            _resolve_gene_indices(
+                fake_results,
+                synth_counts,
+                gene_indices=None,
+                gene_names_list=None,
+                n_genes=4,
+                min_mean_umi_for_selection=1e6,
+            )
 
 
 # ==============================================================================

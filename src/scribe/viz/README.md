@@ -59,17 +59,19 @@ a single figure:
 - **Diagonal panels** — marginal PPC histograms identical to `plot_ppc`: shaded
   credible-region bands from posterior predictive draws with the observed count
   histogram overlaid.
-- **Lower-triangle panels** — bivariate PPC panels: observed gene-gene scatter
-  with semi-transparent 2-D density contour levels computed via
+- **Lower-triangle panels** — bivariate PPC panels: 2-D density contour
+  levels computed via
   pooled posterior predictive samples overlaid. By default, these densities are
   computed with a fast `numpy.histogram2d` path (`density_method="hist2d"`).
   For smoother (but slower) contours, `density_method="kde"` uses
-  `scipy.stats.gaussian_kde`. Scatter points default to `scatter_color="gray"`
-  to improve contour visibility.
+  `scipy.stats.gaussian_kde`. Scatter points default to `scatter_color="black"`
+  and are rendered in the background under contours.
   Contours use HPD-style mass levels by default:
   `contour_mass_levels=(0.5, 0.68, 0.95, 0.99)`.
-  Black contour-line edges are drawn by default
-  (`draw_contour_edges=True`, `contour_edgecolor="black"`).
+  Gray contour-line edges are drawn on smoother panels by default
+  (`draw_contour_edges=True`, `contour_edgecolor="gray"`), but are
+  automatically suppressed on strongly discrete low-count panels to avoid
+  dense stripe artifacts (`suppress_contour_edges_for_discrete=True`).
   Low-density background is left unfilled so panel facecolor continues to follow
   the active Matplotlib style.
 - **Upper triangle** — hidden.
