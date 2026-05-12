@@ -61,8 +61,18 @@ a single figure:
   histogram overlaid.
 - **Lower-triangle panels** — bivariate PPC panels: observed gene-gene scatter
   with semi-transparent 2-D density contour levels computed via
-  `scipy.stats.gaussian_kde` on pooled posterior predictive samples overlaid.
+  pooled posterior predictive samples overlaid. By default, these densities are
+  computed with a fast `numpy.histogram2d` path (`density_method="hist2d"`).
+  For smoother (but slower) contours, `density_method="kde"` uses
+  `scipy.stats.gaussian_kde`. Scatter points default to `scatter_color="gray"`
+  to improve contour visibility.
+  Low-density background is left unfilled so panel facecolor continues to follow
+  the active Matplotlib style.
 - **Upper triangle** — hidden.
+
+By default, off-diagonal panel limits are matched to their corresponding
+diagonal marginals (`match_offdiag_limits_to_marginals=True`), so each bivariate
+panel uses the same x/y ranges as its gene-specific marginals.
 
 ### Gene selection
 
@@ -92,9 +102,9 @@ Three modes (checked in priority order):
 
 ### Performance
 
-To keep the 2-D KDE responsive on large datasets, pooled PPC samples are
-subsampled to at most 50 000 points before kernel density estimation.  A small
-jitter is added to break integer ties for KDE stability.
+The default `hist2d` estimator is designed for speed on large pooled PPC
+samples.  When `density_method="kde"`, pooled samples are subsampled to at most
+50 000 points and tiny jitter is added to break integer ties for KDE stability.
 
 ## PLN Compatibility Notes
 

@@ -6,9 +6,9 @@ selected genes:
 - **Diagonal**: marginal PPC histograms — shaded credible-region bands
   from posterior predictive samples with the observed count histogram
   overlaid (identical to :func:`plot_ppc`).
-- **Lower triangle**: bivariate PPC panels — 2-D density contours
-  computed from pooled posterior predictive samples, with the observed
-  gene–gene scatter plotted on top.
+- **Lower triangle**: bivariate PPC panels — observed gene–gene scatter
+  with semi-transparent 2-D density contours computed from pooled
+  posterior predictive samples overlaid.
 - **Upper triangle**: hidden (``axis.off``).
 """
 
@@ -482,15 +482,18 @@ def _render_offdiag_panel(
     contour_alpha=0.6,
     scatter_alpha=0.25,
     scatter_size=4,
-    scatter_color="black",
+    scatter_color="gray",
     log_scale=False,
+    density_method="hist2d",
+    hist2d_bins=80,
     rng=None,
 ):
     """Render one lower-triangle panel (2-D PPC contour + observed scatter).
 
-    Pools posterior predictive samples across draws, estimates a 2-D KDE,
-    and renders filled contour levels. Observed data is scattered first so the
-    contour structure can be overlaid on top with transparency.
+    Pools posterior predictive samples across draws, estimates a bivariate
+    density field (fast histogram by default, optionally KDE), and renders
+    filled contour levels. Observed data is scattered first so the contour
+    structure can be overlaid on top with transparency.
 
     Parameters
     ----------
@@ -518,9 +521,15 @@ def _render_offdiag_panel(
         Colour for scatter points.
     log_scale : bool
         If ``True``, apply ``log1p`` to both PPC samples and observed
-        data before KDE estimation and scatter plotting.
+        data before density estimation and scatter plotting.
+    density_method : {"hist2d", "kde"}
+        Off-diagonal density estimator. ``"hist2d"`` (default) uses
+        ``numpy.histogram2d`` and is substantially faster. ``"kde"`` uses
+        ``scipy.stats.gaussian_kde`` for a smoother but slower estimate.
+    hist2d_bins : int
+        Number of bins per axis for ``density_method="hist2d"``.
     rng : numpy.random.Generator or None
-        Random generator used for subsampling large PPC pools.
+        Random generator used for subsampling and jitter in KDE mode.
     """
     # Pool PPC samples across draws → (n_draws * n_cells,)
     pooled_x = ppc_samples_x.ravel().astype(float)
@@ -535,47 +544,63 @@ def _render_offdiag_panel(
         obs_x_plot = obs_x.astype(float)
         obs_y_plot = obs_y.astype(float)
 
-    # Subsample if the pooled array is too large for KDE
-    n_total = len(pooled_x)
-    if n_total > _KDE_MAX_POINTS:
-        if rng is None:
-            rng = np.random.default_rng(0)
-        idx = rng.choice(n_total, size=_KDE_MAX_POINTS, replace=False)
-        pooled_x = pooled_x[idx]
-        pooled_y = pooled_y[idx]
-
-    # Add tiny jitter to avoid singular covariance on integer-valued data
-    _jitter_scale = 0.1
-    if rng is None:
-        rng = np.random.default_rng(0)
-    pooled_x = pooled_x + rng.normal(scale=_jitter_scale, size=len(pooled_x))
-    pooled_y = pooled_y + rng.normal(scale=_jitter_scale, size=len(pooled_y))
-
-    # 2-D KDE on the pooled PPC samples
-    try:
-        kde = gaussian_kde(np.vstack([pooled_x, pooled_y]))
-    except np.linalg.LinAlgError:
-        # Degenerate case: KDE cannot be computed, fall back to scatter only
-        ax.scatter(
-            obs_x_plot, obs_y_plot,
-            s=scatter_size, alpha=scatter_alpha, color=scatter_color,
-            edgecolors="none", rasterized=True,
+    # Validate density-method selection early to provide a clear message.
+    if density_method not in {"hist2d", "kde"}:
+        raise ValueError(
+            "density_method must be one of {'hist2d', 'kde'}."
         )
-        return
 
-    # Evaluate KDE on a regular grid spanning the observed data range
-    _n_grid = 80
+    # Build a shared plotting domain from observed data so off-diagonal
+    # contours and scatter use consistent limits regardless of estimator.
     x_lo, x_hi = float(obs_x_plot.min()), float(obs_x_plot.max())
     y_lo, y_hi = float(obs_y_plot.min()), float(obs_y_plot.max())
-
-    # Small margin so contours don't clip at the boundary
     x_margin = max((x_hi - x_lo) * 0.05, 0.5)
     y_margin = max((y_hi - y_lo) * 0.05, 0.5)
-    xi = np.linspace(x_lo - x_margin, x_hi + x_margin, _n_grid)
-    yi = np.linspace(y_lo - y_margin, y_hi + y_margin, _n_grid)
-    _xx, _yy = np.meshgrid(xi, yi)
-    positions = np.vstack([_xx.ravel(), _yy.ravel()])
-    _zz = kde(positions).reshape(_xx.shape)
+
+    # Compute density field using the selected method.
+    if density_method == "kde":
+        # Subsample if the pooled array is too large for KDE.
+        n_total = len(pooled_x)
+        if n_total > _KDE_MAX_POINTS:
+            if rng is None:
+                rng = np.random.default_rng(0)
+            idx = rng.choice(n_total, size=_KDE_MAX_POINTS, replace=False)
+            pooled_x = pooled_x[idx]
+            pooled_y = pooled_y[idx]
+
+        # Add tiny jitter to avoid singular covariance on integer-valued data.
+        _jitter_scale = 0.1
+        if rng is None:
+            rng = np.random.default_rng(0)
+        pooled_x = pooled_x + rng.normal(scale=_jitter_scale, size=len(pooled_x))
+        pooled_y = pooled_y + rng.normal(scale=_jitter_scale, size=len(pooled_y))
+
+        # Evaluate KDE on a regular grid across the plotting domain.
+        _n_grid = 80
+        xi = np.linspace(x_lo - x_margin, x_hi + x_margin, _n_grid)
+        yi = np.linspace(y_lo - y_margin, y_hi + y_margin, _n_grid)
+        _xx, _yy = np.meshgrid(xi, yi)
+        try:
+            kde = gaussian_kde(np.vstack([pooled_x, pooled_y]))
+            positions = np.vstack([_xx.ravel(), _yy.ravel()])
+            _zz = kde(positions).reshape(_xx.shape)
+        except np.linalg.LinAlgError:
+            # Degenerate KDE: keep scatter and skip contour layers.
+            _zz = None
+    else:
+        # Fast path: build a binned 2-D density with histogram2d.
+        _n_bins = max(int(hist2d_bins), 8)
+        x_edges = np.linspace(x_lo - x_margin, x_hi + x_margin, _n_bins + 1)
+        y_edges = np.linspace(y_lo - y_margin, y_hi + y_margin, _n_bins + 1)
+        _hist, _x_edges, _y_edges = np.histogram2d(
+            pooled_x, pooled_y, bins=[x_edges, y_edges], density=True
+        )
+        # Convert bin edges to centers for contourf's x/y grid specification.
+        _x_centers = 0.5 * (_x_edges[:-1] + _x_edges[1:])
+        _y_centers = 0.5 * (_y_edges[:-1] + _y_edges[1:])
+        _xx, _yy = np.meshgrid(_x_centers, _y_centers)
+        # histogram2d returns shape (nx, ny); transpose to (ny, nx).
+        _zz = _hist.T
 
     # Draw observed data first so contours remain legible in dense clouds.
     ax.scatter(
@@ -584,14 +609,26 @@ def _render_offdiag_panel(
         edgecolors="none", rasterized=True, zorder=1,
     )
 
-    # Overlay contour fill above points with transparency to preserve context.
-    ax.contourf(
-        _xx, _yy, _zz,
-        levels=n_contour_levels,
-        cmap=contour_cmap,
-        alpha=contour_alpha,
-        zorder=2,
-    )
+    # Keep the panel background from the active style visible by skipping
+    # the very lowest-density band; otherwise contourf often tints the full
+    # axis area and appears as a custom facecolor override.
+    _n_levels = max(int(n_contour_levels), 2)
+    if _zz is not None:
+        _z_min = float(np.nanmin(_zz))
+        _z_max = float(np.nanmax(_zz))
+    else:
+        _z_min = np.nan
+        _z_max = np.nan
+    if np.isfinite(_z_min) and np.isfinite(_z_max) and _z_max > _z_min:
+        _levels = np.linspace(_z_min, _z_max, _n_levels + 1)[1:]
+        # Overlay contour fill above points with transparency to preserve context.
+        ax.contourf(
+            _xx, _yy, _zz,
+            levels=_levels,
+            cmap=contour_cmap,
+            alpha=contour_alpha,
+            zorder=2,
+        )
 
 
 @plot_function(
@@ -617,8 +654,11 @@ def plot_corner_ppc(
     contour_alpha=0.6,
     scatter_alpha=0.25,
     scatter_size=4,
-    scatter_color="black",
+    scatter_color="gray",
+    density_method="hist2d",
+    hist2d_bins=80,
     log_scale=False,
+    match_offdiag_limits_to_marginals=True,
     figsize=None,
     fig=None,
     axes=None,
@@ -687,9 +727,21 @@ def plot_corner_ppc(
         Marker size for scatter points.
     scatter_color : str
         Colour for observed-data scatter points.
+    density_method : {"hist2d", "kde"}
+        Off-diagonal density estimator. ``"hist2d"`` (default) is fast and
+        uses binned densities; ``"kde"`` provides smoother contours but is
+        slower on large pooled PPC samples.
+    hist2d_bins : int
+        Number of bins per axis for ``density_method="hist2d"``.
     log_scale : bool
-        If ``True``, apply ``log1p`` to counts before 2-D KDE estimation
+        If ``True``, apply ``log1p`` to counts before off-diagonal density
         and scatter plotting in off-diagonal panels.
+    match_offdiag_limits_to_marginals : bool
+        If ``True`` (default), enforce off-diagonal axis limits to match
+        the corresponding marginal (diagonal) panels: x-limits follow the
+        diagonal panel in the same column and y-limits follow the diagonal
+        panel in the same row. When ``log_scale=True``, matched limits are
+        transformed with ``log1p`` for consistency with off-diagonal axes.
     figsize : tuple of float or None
         Figure size.  Defaults to ``(3.0 * N, 3.0 * N)`` where ``N`` is
         the number of selected genes.
@@ -873,6 +925,8 @@ def plot_corner_ppc(
                         scatter_alpha=scatter_alpha,
                         scatter_size=scatter_size,
                         scatter_color=scatter_color,
+                        density_method=density_method,
+                        hist2d_bins=hist2d_bins,
                         log_scale=log_scale,
                         rng=_rng,
                     )
@@ -919,6 +973,23 @@ def plot_corner_ppc(
                 if row_idx == col_idx and row_idx != n_panel - 1:
                     axis.set_xticklabels([])
                     axis.tick_params(axis="x", which="both", bottom=False)
+
+    # Optionally enforce corner-style shared limits between marginals and
+    # lower-triangle bivariate panels for easier visual cross-comparison.
+    if match_offdiag_limits_to_marginals:
+        _diag_limits = {}
+        for diag_idx in range(n_panel):
+            _x_lo, _x_hi = axes_grid[diag_idx, diag_idx].get_xlim()
+            if log_scale:
+                _x_lo = float(np.log1p(max(_x_lo, 0.0)))
+                _x_hi = float(np.log1p(max(_x_hi, 0.0)))
+            _diag_limits[diag_idx] = (_x_lo, _x_hi)
+
+        for row_idx in range(n_panel):
+            for col_idx in range(row_idx):
+                axis = axes_grid[row_idx, col_idx]
+                axis.set_xlim(_diag_limits[col_idx])
+                axis.set_ylim(_diag_limits[row_idx])
 
     fig.suptitle("Corner PPC", fontsize=11, y=1.01)
     fig.subplots_adjust(

@@ -240,6 +240,77 @@ class TestRenderOffdiagPanel:
         assert len(ax.collections) > 0
         plt.close(fig)
 
+    def test_hist2d_default_does_not_call_kde(self, monkeypatch):
+        """Default off-diagonal rendering should use fast hist2d, not KDE."""
+        rng = np.random.default_rng(111)
+        ppc_x = rng.negative_binomial(n=5, p=0.3, size=(10, 30))
+        ppc_y = rng.negative_binomial(n=8, p=0.4, size=(10, 30))
+        obs_x = rng.negative_binomial(n=5, p=0.3, size=30)
+        obs_y = rng.negative_binomial(n=8, p=0.4, size=30)
+
+        # If KDE is called in default mode this test should fail immediately.
+        monkeypatch.setattr(
+            corner_ppc_module,
+            "gaussian_kde",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("gaussian_kde should not be called")
+            ),
+        )
+
+        fig, ax = plt.subplots()
+        _render_offdiag_panel(ax, ppc_x, ppc_y, obs_x, obs_y)
+        assert len(ax.collections) > 0
+        plt.close(fig)
+
+    def test_kde_mode_uses_kde_path(self, monkeypatch):
+        """KDE mode should execute gaussian_kde and still render."""
+        rng = np.random.default_rng(222)
+        ppc_x = rng.negative_binomial(n=5, p=0.3, size=(10, 30))
+        ppc_y = rng.negative_binomial(n=8, p=0.4, size=(10, 30))
+        obs_x = rng.negative_binomial(n=5, p=0.3, size=30)
+        obs_y = rng.negative_binomial(n=8, p=0.4, size=30)
+        seen = {"called": False}
+
+        # Build a minimal KDE stub that matches the callable contract.
+        class _FakeKDE:
+            def __call__(self, positions):
+                _n = positions.shape[1]
+                return np.ones(_n, dtype=float)
+
+        def _fake_kde(_stacked):
+            seen["called"] = True
+            return _FakeKDE()
+
+        monkeypatch.setattr(corner_ppc_module, "gaussian_kde", _fake_kde)
+
+        fig, ax = plt.subplots()
+        _render_offdiag_panel(
+            ax, ppc_x, ppc_y, obs_x, obs_y, density_method="kde"
+        )
+        assert seen["called"] is True
+        assert len(ax.collections) > 0
+        plt.close(fig)
+
+    def test_invalid_density_method_raises(self):
+        """Invalid density method should raise a clear ValueError."""
+        rng = np.random.default_rng(333)
+        ppc_x = rng.negative_binomial(n=5, p=0.3, size=(10, 30))
+        ppc_y = rng.negative_binomial(n=8, p=0.4, size=(10, 30))
+        obs_x = rng.negative_binomial(n=5, p=0.3, size=30)
+        obs_y = rng.negative_binomial(n=8, p=0.4, size=30)
+
+        fig, ax = plt.subplots()
+        with pytest.raises(ValueError, match="density_method"):
+            _render_offdiag_panel(
+                ax,
+                ppc_x,
+                ppc_y,
+                obs_x,
+                obs_y,
+                density_method="not_a_method",
+            )
+        plt.close(fig)
+
     def test_degenerate_data_no_crash(self):
         """When all samples are identical the panel should not crash."""
         # Constant data → singular KDE covariance → should fall back
@@ -569,4 +640,89 @@ def test_plot_corner_ppc_reuses_subset_sampling_object(monkeypatch):
     # subset object; shape (n_samples, n_cells) confirms predictive cache use.
     assert seen["diag_called"] is True
     assert seen["diag_ppc_shape"] == (3, counts.shape[0])
+    plt.close(result.fig)
+
+
+def test_plot_corner_ppc_matches_offdiag_limits_to_marginals_by_default(
+    monkeypatch,
+):
+    """Off-diagonal limits should follow diagonal marginal limits by default."""
+    # Build two-gene counts with clearly different scales so x/y matching is
+    # easy to observe on the lower-triangle panel.
+    counts = np.column_stack(
+        [
+            np.linspace(0, 15, 60),
+            np.linspace(80, 400, 60),
+        ]
+    )
+
+    class _FakeResultsForLimits:
+        """Minimal subsettable results object with predictive cache."""
+
+        def __init__(self, n_genes):
+            self.n_genes = int(n_genes)
+            self.model_config = types.SimpleNamespace(inference_method="svi")
+            self.predictive_samples = None
+            self.var = None
+
+        def __getitem__(self, index):
+            subset = _FakeResultsForLimits(len(index))
+            if self.predictive_samples is not None:
+                idx = np.asarray(index, dtype=int)
+                subset.predictive_samples = self.predictive_samples[:, :, idx]
+            return subset
+
+    def _fake_predictive(
+        sampling_results, *, rng_key, n_samples, counts, store_samples,
+        ppc_level=None,
+    ):
+        _ = rng_key, store_samples, ppc_level
+        # Populate predictive samples on the same count scale so diagonal
+        # histogram limits are meaningful and deterministic in this test.
+        base = np.broadcast_to(
+            counts[None, :, :],
+            (n_samples, counts.shape[0], counts.shape[1]),
+        ).astype(float)
+        sampling_results.predictive_samples = base
+        return sampling_results.predictive_samples
+
+    monkeypatch.setattr(corner_ppc_module, "_coerce_counts", lambda x: np.asarray(x))
+    monkeypatch.setattr(
+        corner_ppc_module,
+        "_coerce_and_align_counts_to_results",
+        lambda raw, results, context=None: raw,
+    )
+    monkeypatch.setattr(
+        corner_ppc_module,
+        "_resolve_ppc_sampling_counts",
+        lambda results, raw, aligned: aligned,
+    )
+    monkeypatch.setattr(
+        corner_ppc_module,
+        "_resolve_gene_indices",
+        lambda *args, **kwargs: np.array([0, 1], dtype=int),
+    )
+    monkeypatch.setattr(
+        corner_ppc_module, "_resolve_ppc_grid", lambda **kwargs: {"n_samples": 4}
+    )
+    monkeypatch.setattr(corner_ppc_module, "_get_gene_names", lambda results: None)
+    monkeypatch.setattr(
+        corner_ppc_module, "_get_predictive_samples_for_plot", _fake_predictive
+    )
+
+    result = plot_corner_ppc(
+        _FakeResultsForLimits(counts.shape[1]),
+        counts,
+        n_genes=2,
+        n_samples=4,
+        save=False,
+        show=False,
+    )
+
+    # Validate that lower-triangle limits match the diagonal marginals:
+    # x-limit from column gene and y-limit from row gene.
+    axes_grid = np.asarray(result.axes, dtype=object).reshape(2, 2)
+    lower_ax = axes_grid[1, 0]
+    assert np.allclose(lower_ax.get_xlim(), axes_grid[0, 0].get_xlim())
+    assert np.allclose(lower_ax.get_ylim(), axes_grid[1, 1].get_xlim())
     plt.close(result.fig)
