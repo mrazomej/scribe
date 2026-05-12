@@ -1212,3 +1212,85 @@ class TestCascadeAwarePPC:
         assert arrays["r_samples"] is None
         assert arrays["mu_samples"] is None
         assert arrays["eta_samples"] is None
+
+    def test_resolver_slices_cascade_samples_to_gene_subset(self):
+        """Gene-subsetted result must slice cascade samples to match.
+
+        Regression guard against the broadcast-shapes bug encountered
+        when ``plot_ppc(n_genes=K)`` calls into a Laplace result that
+        carries ``_subset_gene_index``: the cascade lives in the full
+        gene panel; the resolver must subset it before returning.
+        """
+        from dataclasses import replace
+        from scribe.laplace._sampling import _resolve_nbln_ppc_arrays
+        # Build a full-G result with frozen r+eta and a stub cascade.
+        full = _frozen_nbln_result_with_cascade(G=8, C=5, k=2)
+        # Slice to a 3-gene subset, mimicking what ``__getitem__`` does
+        # (the production helper additionally re-slices ``r``/``mu``/etc.;
+        # for resolver-isolation we only need ``_subset_gene_index`` set).
+        subset_idx = np.array([0, 3, 5])
+        subsetted = replace(
+            full,
+            mu=full.mu[subset_idx],
+            W=full.W[subset_idx, :],
+            d=full.d[subset_idx],
+            r=full.r[subset_idx],
+            r_loc=full.r_loc[subset_idx],
+            n_genes=int(subset_idx.size),
+            _subset_gene_index=subset_idx,
+        )
+        arrays = _resolve_nbln_ppc_arrays(
+            subsetted, jax.random.PRNGKey(0), n_samples=12, per_cell=False,
+        )
+        # Cascade r samples should match the subsetted gene count, not 8.
+        assert arrays["r_samples"] is not None
+        assert arrays["r_samples"].shape == (12, 3)
+        # eta is per-cell, no gene slicing — shape (n_samples,) for marginal.
+        assert arrays["eta_samples"] is not None
+        assert arrays["eta_samples"].shape == (12,)
+
+    def test_resolver_caps_cascade_pool_for_large_n_samples(self):
+        """Large ``n_samples`` must not draw an unbounded cascade pool.
+
+        Regression guard against the OOM blow-up when
+        ``plot_ppc(level="marginal")`` inflates ``n_samples`` to
+        ``n_eff × n_cells_obs``.  The resolver caps the SVI pool at
+        ``_CASCADE_POOL_MAX`` and resamples-with-replacement to reach
+        the requested predictive count.
+        """
+        from scribe.laplace._sampling import (
+            _resolve_nbln_ppc_arrays,
+            _CASCADE_POOL_MAX,
+        )
+        # Cascade source built with just ``_CASCADE_POOL_MAX`` samples:
+        # if the resolver respects the cap, this is enough.  If it
+        # asks for more than that, the stub recycles via tile-then-trim
+        # (so the shape is still (n_samples, G)), but we verify
+        # capping by asserting that the cascade was *called* with the
+        # bounded count, not the full ``n_samples``.
+        res = _frozen_nbln_result_with_cascade(
+            G=8, C=5, k=2, n_cascade_samples=_CASCADE_POOL_MAX,
+        )
+        # Track the n_samples value passed into ``get_posterior_samples``.
+        recorded: dict = {}
+        orig = res.cascade_source.get_posterior_samples
+
+        def _spy(rng_key=None, n_samples=100, **kw):
+            recorded["n_samples"] = int(n_samples)
+            return orig(rng_key=rng_key, n_samples=n_samples, **kw)
+
+        res.cascade_source.get_posterior_samples = _spy  # type: ignore
+
+        # Request 50_000 predictive samples — far above the pool cap.
+        arrays = _resolve_nbln_ppc_arrays(
+            res, jax.random.PRNGKey(0), n_samples=50_000, per_cell=False,
+        )
+        # The cascade should have been asked for *at most* the pool cap.
+        assert recorded["n_samples"] <= _CASCADE_POOL_MAX, (
+            f"Cascade pool exceeded cap: requested "
+            f"{recorded['n_samples']}, cap is {_CASCADE_POOL_MAX}."
+        )
+        # The returned arrays still have the requested S dimension via
+        # resample-with-replacement.
+        assert arrays["r_samples"].shape == (50_000, 8)
+        assert arrays["eta_samples"].shape == (50_000,)

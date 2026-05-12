@@ -43,30 +43,68 @@ from ._results_shared import _base_model
 # posterior samples (full guide fidelity preserved) and the non-frozen
 # ``mu`` through its Laplace ``Normal(mu_loc, mu_scale)`` posterior — a
 # capability the helpers also lacked previously.
+# Cascade-pool size cap.  The SVI guide is a fixed posterior approximation;
+# drawing 1e6 independent samples from it is no more informative than drawing
+# a few thousand.  ``plot_ppc(level="marginal")`` inflates ``n_samples`` to
+# ``n_eff * n_cells_obs`` (≈ 1.6M for a typical scRNA-seq dataset), which is
+# fine for the cheap legacy ``Normal`` samplers but would force the cascade
+# path to materialize an O(GB) SVI sample tensor.  We cap the pool here and
+# resample-with-replacement to reach the requested predictive count.
+_CASCADE_POOL_MAX = 2048
+
+
 def _draw_nbln_cascade_samples(
     cascade,
     cascade_counts: Optional[jnp.ndarray],
     n_samples: int,
     rng_key: jax.Array,
+    pool_max: int = _CASCADE_POOL_MAX,
 ) -> Optional[Dict[str, jnp.ndarray]]:
-    """Draw ``n_samples`` SVI posterior samples from the cascade source.
+    """Draw a bounded pool of SVI posterior samples from the cascade source.
 
-    Returns ``None`` when the cascade reference is missing.  Otherwise
-    forwards ``counts`` (resolved from the dedicated cache field or the
-    SVI source's own ``_original_counts``) only when the source needs
-    them (amortized capture).
+    Pool size is ``min(n_samples, pool_max)``.  When the caller asks for
+    more predictive draws than the pool, expand by resampling with
+    replacement at the *parameter-array* level (see
+    :func:`_expand_pool_to_n_samples`).  Returns ``None`` when the
+    cascade reference is missing.  Forwards ``counts`` (resolved from
+    the dedicated cache field or the SVI source's own
+    ``_original_counts``) only when the source needs them (amortized
+    capture).
     """
     if cascade is None:
         return None
+    pool_size = min(int(n_samples), int(pool_max))
     sample_kwargs = {
         "rng_key": rng_key,
-        "n_samples": int(n_samples),
+        "n_samples": pool_size,
         "store_samples": False,
     }
     counts = _resolve_cascade_counts(cascade, cascade_counts)
     if counts is not None:
         sample_kwargs["counts"] = counts
     return cascade.get_posterior_samples(**sample_kwargs)
+
+
+def _expand_pool_to_n_samples(
+    arr: jnp.ndarray,
+    n_samples: int,
+    rng_key: jax.Array,
+) -> jnp.ndarray:
+    """Return ``n_samples`` rows by indexing into ``arr`` with replacement.
+
+    When ``arr.shape[0] >= n_samples``, take the first ``n_samples``
+    rows (the SVI sampler already provides independent draws; the
+    truncation simply matches the requested count).  Otherwise draw
+    ``n_samples`` indices uniformly from ``[0, pool_size)`` — sampling
+    with replacement from the SVI empirical posterior.  This keeps the
+    cascade memory cost bounded by ``pool_size``, independent of how
+    many predictive draws the caller asks for.
+    """
+    pool = int(arr.shape[0])
+    if pool >= n_samples:
+        return arr[:n_samples]
+    idx = jax.random.randint(rng_key, (n_samples,), 0, pool)
+    return arr[idx]
 
 
 def _resolve_nbln_ppc_arrays(
@@ -113,14 +151,31 @@ def _resolve_nbln_ppc_arrays(
     frozen = getattr(result, "frozen_params", frozenset()) or frozenset()
     cascade = getattr(result, "cascade_source", None)
     cascade_counts = getattr(result, "cascade_source_counts", None)
+    # Gene-subset index lives on results subsetted via
+    # ``ScribeLaplaceResults.__getitem__``.  When present, the cascade
+    # (which lives in the FULL gene panel — was not gene-subsetted
+    # because the amortizer needs full counts) must be sliced to the
+    # subset gene axis to match ``self.mu``/``self.W``/``self.d``.
+    gene_idx = getattr(result, "_subset_gene_index", None)
+    gene_idx_jnp = (
+        jnp.asarray(gene_idx) if gene_idx is not None else None
+    )
 
-    k_cascade, k_r_lap, k_eta_pick = jax.random.split(rng_key, 3)
+    k_cascade, k_r_lap, k_eta_pick, k_r_exp, k_mu_exp, k_eta_exp = (
+        jax.random.split(rng_key, 6)
+    )
 
     cascade_samples = None
     if frozen and cascade is not None:
         cascade_samples = _draw_nbln_cascade_samples(
             cascade, cascade_counts, n_samples, k_cascade,
         )
+
+    def _gene_slice(arr: jnp.ndarray) -> jnp.ndarray:
+        """Slice a (S, G_full) array onto the gene subset, if any."""
+        if gene_idx_jnp is None:
+            return arr
+        return arr[:, gene_idx_jnp]
 
     r_samples: Optional[jnp.ndarray] = None
     mu_samples: Optional[jnp.ndarray] = None
@@ -133,8 +188,10 @@ def _resolve_nbln_ppc_arrays(
         and "r" in cascade_samples
     ):
         # SVI ``r`` is in positive (constrained) space — feed directly
-        # to ``LogMeanNegativeBinomial(concentration=...)``.
-        r_samples = jnp.asarray(cascade_samples["r"])  # (S, G)
+        # to ``LogMeanNegativeBinomial(concentration=...)``.  Subset to
+        # the result's gene axis, then expand pool to n_samples.
+        r_pool = _gene_slice(jnp.asarray(cascade_samples["r"]))
+        r_samples = _expand_pool_to_n_samples(r_pool, n_samples, k_r_exp)
     elif (
         "r" not in frozen
         and getattr(result, "r_loc", None) is not None
@@ -169,27 +226,42 @@ def _resolve_nbln_ppc_arrays(
         and "mu" in cascade_samples
     ):
         # SVI ``mu`` is the NB mean (positive); NBLN's ``mu`` is the
-        # log-rate prior mean — apply ``log`` per sample.
-        mu_pos = jnp.asarray(cascade_samples["mu"])  # (S, G)
-        mu_samples = jnp.log(jnp.maximum(mu_pos, 1e-8))
+        # log-rate prior mean — apply ``log`` per sample.  Subset to
+        # gene axis, then expand pool to n_samples.
+        mu_pos = _gene_slice(jnp.asarray(cascade_samples["mu"]))  # (S, G_subset)
+        mu_log = jnp.log(jnp.maximum(mu_pos, 1e-8))
+        mu_samples = _expand_pool_to_n_samples(
+            mu_log, n_samples, k_mu_exp
+        )
 
     # ---- eta -------------------------------------------------------
+    # Eta is per-cell, not per-gene; no gene-subset slicing needed.
+    # Cell counts in the subsetted result match the cascade source
+    # (gene subsetting doesn't touch the cell axis).
     if (
         "eta" in frozen
         and cascade_samples is not None
         and "eta_capture" in cascade_samples
     ):
-        eta_full = jnp.asarray(cascade_samples["eta_capture"])  # (S, N)
+        eta_full = jnp.asarray(cascade_samples["eta_capture"])  # (pool, N)
         if per_cell:
-            eta_samples = eta_full
+            # Per-cell PPC: need (n_samples, N).  Pool expansion picks
+            # whole-cell rows; pool-mode SVI uncertainty preserved.
+            eta_samples = _expand_pool_to_n_samples(
+                eta_full, n_samples, k_eta_exp
+            )
         else:
-            n_cells = int(eta_full.shape[1])
+            # Marginal PPC: one eta per draw.  Pick a random cell index
+            # per draw, then index into the (expanded) pool.  Combines
+            # SVI posterior uncertainty with across-cell heterogeneity.
+            eta_expanded = _expand_pool_to_n_samples(
+                eta_full, n_samples, k_eta_exp
+            )  # (n_samples, N)
+            n_cells = int(eta_expanded.shape[1])
             cell_idx = jax.random.randint(
                 k_eta_pick, (n_samples,), 0, n_cells
             )
-            # One eta per draw, picked from that draw's per-cell slice —
-            # preserves SVI uncertainty AND across-cell heterogeneity.
-            eta_samples = eta_full[jnp.arange(n_samples), cell_idx]
+            eta_samples = eta_expanded[jnp.arange(n_samples), cell_idx]
 
     return {
         "r_samples": r_samples,
