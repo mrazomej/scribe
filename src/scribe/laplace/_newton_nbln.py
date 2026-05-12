@@ -927,3 +927,44 @@ def _nbln_grad_x_only_norm(
 nbln_grad_x_only_norm_batch = jax.vmap(
     _nbln_grad_x_only_norm, in_axes=(0, 0, None, None, None, None)
 )
+
+
+def _nbln_grad_x_only_offset_norm(
+    x_map: jnp.ndarray,
+    u: jnp.ndarray,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    r: jnp.ndarray,
+    eta_offset: jnp.ndarray,
+) -> jnp.ndarray:
+    """``L∞`` of ``∇_x f`` at the x-only-with-offset NBLN Newton MAP.
+
+    Mirrors :func:`_nbln_grad_x_only_norm` but evaluates the NB factors at
+    the **shifted log-rate** ``log_rate = x − η_offset``.  Required for
+    the frozen-eta path: evaluating at the raw ``x`` produces
+    misleadingly huge gradients (the NB likelihood saturates because
+    ``exp(x)`` is enormous), even when the Newton MAP itself is healthy.
+    """
+    log_rate = x_map - eta_offset
+    nb = _nb_factors(log_rate, u, r)
+    one_minus_p = nb["one_minus_p"]
+
+    inv_d = 1.0 / d
+    diff = x_map - mu
+    k = W.shape[1]
+    K = jnp.eye(k, dtype=W.dtype) + W.T @ (inv_d[:, None] * W)
+    L_K = jnp.linalg.cholesky(K)
+    sigma_inv_diff = inv_d * diff - inv_d * (
+        W @ jax.scipy.linalg.cho_solve((L_K, True), W.T @ (inv_d * diff))
+    )
+
+    expected_count = (u + r) * one_minus_p
+    g_x = u - expected_count - sigma_inv_diff
+    return jnp.max(jnp.abs(g_x))
+
+
+nbln_grad_x_only_offset_norm_batch = jax.vmap(
+    _nbln_grad_x_only_offset_norm,
+    in_axes=(0, 0, None, None, None, None, 0),
+)

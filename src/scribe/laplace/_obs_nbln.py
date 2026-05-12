@@ -62,6 +62,7 @@ from ._newton_nbln import (
     laplace_newton_batch_x_only_offset,
     nbln_grad_split_batch,
     nbln_grad_x_only_norm_batch,
+    nbln_grad_x_only_offset_norm_batch,
 )
 
 
@@ -494,8 +495,13 @@ class NBLNObservationModel(LaplaceObservationModel):
             # display entirely — there's no η Newton variable to
             # diagnose, and displaying zeros would mislead.  The driver
             # iterates over whatever keys are present in gn_blocks.
-            gn_x = nbln_grad_x_only_norm_batch(
-                x_new, counts_batch, mu_sg, W_sg, d_sg, r_sg
+            # Use the *offset-aware* helper: the NB factors must be
+            # evaluated at ``log_rate = x − η_offset``, not at ``x``
+            # (the latter saturates ``p → 0`` and produces enormous
+            # spurious gradients while the Newton MAP is actually fine).
+            gn_x = nbln_grad_x_only_offset_norm_batch(
+                x_new, counts_batch, mu_sg, W_sg, d_sg, r_sg,
+                eta_offset_sg,
             )
             gn_blocks = {"x": gn_x}
         elif self.uses_capture:
