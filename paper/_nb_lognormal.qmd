@@ -2064,6 +2064,42 @@ See @sec-diffexp-nbln-robustness for the full mathematical
 robustness statement and the ``get_W_compositional()`` /
 ``get_gauge_diagnostics()`` accessors.
 
+**Validation workflow for cross-gene correlations.** Once a Phase-2
+frozen NBLN fit is in hand, the practical acceptance chain for
+trusting downstream correlation analyses is:
+
+1. Run a *marginal* posterior predictive check
+   (``scribe.viz.plot_ppc(..., ppc_level="marginal")``). When the
+   predicted per-gene distributions match the observed histograms,
+   the generative tuple $(\underline{\mu}, \underline{\underline{W}},
+   \underline{d}, \underline{r}, \underline{\eta})$ is internally
+   consistent with the data.
+2. Inspect ``get_gauge_diagnostics()``. A
+   ``gauge_contamination_ratio`` below $0.05$ indicates the cascade
+   freeze fully pinned the rigid-translation gauge and
+   $\underline{\underline{W}} \approx \underline{\underline{W}}_\perp$.
+3. Extract correlations from
+   ``get_W_compositional()`` — the gauge-invariant projection
+   $\underline{\underline{W}}_\perp$. The cross-gene correlation
+   matrix derived from $\underline{\underline{W}}_\perp
+   \underline{\underline{W}}_\perp^{\top}$ is then trustworthy at
+   the population level.
+
+Two caveats worth knowing:
+``plot_mean_calibration`` is a MAP-based diagnostic that uses
+$\underline{x}_c$ at its Laplace point — not a posterior predictive
+check — and can exhibit Jensen-inequality inflation
+$\overline{\exp(\underline{x}_c)} \geq \exp(\overline{\underline{x}_c})$
+at very low expression for sparse heavy-tailed genes. This is an
+artifact of evaluating an exponential at the MAP rather than
+integrating over the posterior, and does *not* invalidate correlation
+analyses based on $\underline{\underline{W}}_\perp$. Similarly,
+``plot_ppc(..., ppc_level="library_anchored")`` (the default) is a
+*compositional* PPC that conditions on observed per-cell library
+sizes; for the population-level test that gates correlation trust,
+use ``ppc_level="marginal"``. See
+@sec-diffexp-nbln-ppc-validation for the full workflow.
+
 ### Comparison and recommendation {#sec-nbln-inference-tradeoff}
 
 | Property | Path A (SVI) | Path B (Laplace) | Path C (SVI cascade → Laplace) |

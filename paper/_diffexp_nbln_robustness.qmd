@@ -344,6 +344,151 @@ $\eta$ estimate.
    checks of compositional quantities are valid irrespective of the gauge
    contamination in $\underline{\underline{W}}$.
 
+## Validating cross-gene correlations: a PPC-anchored workflow {#sec-diffexp-nbln-ppc-validation}
+
+The gauge-invariance result in Theorem 2 establishes that
+$\underline{\underline{W}}_\perp$ is the right object for biological
+correlation analysis. But the result is conditional: it presumes the fit was
+*statistically successful*, i.e. that the generative model with the recovered
+$(\underline{\mu}, \underline{\underline{W}}, \underline{d}, \underline{r},
+\underline{\eta})$ produces counts consistent with the observed data. This
+section spells out a practical workflow that establishes that condition before
+trusting correlations downstream.
+
+### The workflow
+
+A clean acceptance chain for cross-gene correlation analyses from an NBLN
+Laplace fit:
+
+1. **Marginal PPC at the population level**.
+
+   Call ``get_ppc_samples(level="marginal")`` (or
+   ``scribe.viz.plot_ppc(..., ppc_level="marginal")``) and check that the
+   predicted per-gene count distributions overlay the empirical histograms
+   across the dynamic range of the data. This is the most honest test of the
+   fit because no observed-data quantity enters the generative draw: latent
+   $\underline{x}_c$ is sampled from
+   $\mathcal{N}(\underline{\mu}, \underline{\underline{W}}\,
+   \underline{\underline{W}}^{\top} + \mathrm{diag}(\underline{d}))$, $\eta_c$
+   is sampled from the cascade or Laplace posterior on $\eta$, and counts are
+   drawn from $\mathrm{NB}(\exp(\underline{x}_c - \eta_c), \underline{r})$.
+   When the marginal PPC matches the data, the generative tuple
+   $(\underline{\mu}, \underline{\underline{W}}, \underline{d}, \underline{r},
+   \underline{\eta})$ is internally consistent.
+
+2. **Gauge-contamination diagnostic**.
+
+   Call ``get_gauge_diagnostics()`` and check that the
+   ``gauge_contamination_ratio`` is small (heuristic threshold: $< 0.05$ for a
+   clean Phase-2 frozen fit, $< 0.2$ acceptable, larger flags trouble). This
+   confirms that $\underline{\underline{W}} \approx
+   \underline{\underline{W}}_\perp$ — the rank-1 all-ones-direction component
+   has been absorbed into $\eta$ by the cascade freeze, and the loadings matrix
+   is operating in the gauge-invariant subspace.
+
+3. **Extract correlations from the gauge-invariant projection**.
+
+   Compute cross-gene correlations from ``get_W_compositional()`` rather than
+   the raw ``W``:
+   $$
+   \mathrm{Cov}(\rho_g, \rho_h)
+       \;\approx\;
+       \bigl(\underline{\underline{W}}_\perp\,
+             \underline{\underline{W}}_\perp^{\top}\bigr)_{gh},
+   $$
+   normalised by the corresponding standard deviations for the correlation
+   matrix. This is gauge-invariant by Theorem 2 and is the right object for
+   gene-set analysis, regulatory-program identification, and co-expression
+   clustering.
+
+When steps 1 and 2 both pass, step 3's output can be trusted at the population
+level. When step 1 fails, the model is structurally misfit and no projection of
+$\underline{\underline{W}}$ can rescue it — refit with a richer model
+(e.g. add an explicit zero-inflation layer for dropout-heavy data). When step 2
+flags contamination but step 1 passes, $\underline{\underline{W}}_\perp$ is
+still the right object — the projection is doing more work, but the underlying
+gauge-invariance result still applies.
+
+### Diagnostics that are *not* PPCs
+
+Several SCRIBE visualisations look like predictive diagnostics but are not, and
+their failure modes do not invalidate correlation analyses based on
+$\underline{\underline{W}}_\perp$.
+
+**Mean calibration (``plot_mean_calibration``).** This diagnostic computes the
+per-gene predicted mean as
+$$
+\hat{\mu}_g^{\mathrm{pred}}
+  \;=\;
+  \frac{1}{C}\sum_{c=1}^{C} \exp\bigl(x_g^{(c)} - \eta_c\bigr),
+$$
+where $x_g^{(c)}$ is the per-cell MAP latent (Laplace point estimate). For
+heavy-tailed, sparse data, this expression can systematically over-predict the
+empirical mean by Jensen's inequality: a small fraction of cells with high
+$x_g^{(c)}$ dominate the exponentiated mean while the empirical mean is held
+down by the bulk of zeros. The inflation symptom — predicted means in the
+hundreds for genes with empirical means near zero — is a property of the
+MAP-based diagnostic, not of the marginal predictive distribution. The marginal
+PPC integrates over the posterior of $\underline{x}_c$ and does not exhibit
+this inflation when the fit is calibrated.
+
+**Library-anchored PPC (``ppc_level="library_anchored"``, the default in
+``plot_ppc``).** This diagnostic conditions on the *observed per-cell library
+sizes* and tests only the compositional fit. Each predictive draw fixes
+$N_c^{\mathrm{obs}}$ from the data and samples
+$\underline{\tilde{u}}_c \sim \mathrm{Multinomial}\bigl(N_c^{\mathrm{obs}},\,
+\mathrm{softmax}(\underline{x}_c)\bigr)$ with $\underline{x}_c$ drawn from the
+latent prior. Because $\eta$ cancels under softmax and the NB observation layer
+is replaced by Multinomial-against-observed-totals, this level tests
+compositional structure cleanly and is the right diagnostic when the question
+is "does the relative-expression model fit?". It is *not* the right diagnostic
+for "does the entire generative story match the data?" — that question is
+``ppc_level="marginal"``.
+
+**Per-cell PPC (``ppc_level="per_cell"``).** This level is the most
+data-conditioned: it draws $\underline{x}_c$ from the per-cell Laplace
+posterior around the cell-specific MAP and adds NB observation noise. It tests
+whether each individual cell looks plausible under the fit. It is the
+appropriate diagnostic for cell-level outlier detection but is *not* the
+appropriate population-level test because each cell sees its own MAP.
+
+The rule of thumb: for "is the fit good enough to interpret
+$\underline{\underline{W}}_\perp$?", the right test is the marginal PPC.
+
+### Why the cascade-frozen PPC preserves SVI fidelity {#sec-diffexp-nbln-ppc-cascade}
+
+When the cascade freeze is active (Phase 2 default), each
+non-MAP predictive draw resolves the frozen parameters from the embedded
+``cascade_source`` SVI guide rather than from a moment-matched Gaussian summary.
+Per parameter, the routing is:
+
+- **$\underline{r}$**: each draw uses a fresh sample
+  $\underline{r}^{(s)} \sim q_{\mathrm{SVI}}(\underline{r})$ in NBLN's positive
+  parameterisation; the negative-binomial concentration is then $r_g^{(s)}$.
+- **$\underline{\eta}$**: each draw uses a fresh sample
+  $\underline{\eta}^{(s)} \sim q_{\mathrm{SVI}}(\underline{\eta})$ (per-cell);
+  for marginal PPC a random cell index is drawn per imaginary cell so the eta
+  realisation carries both SVI uncertainty *and* across-cell heterogeneity.
+- **$\underline{\mu}$** (Level-4 freeze only): each draw uses
+  $\mu_g^{(s)} = \log\bigl(\mu_g^{\mathrm{SVI}, (s)}\bigr)$ (NBLN's $\mu$ is in
+  log-rate space, the cascade's is the NB mean).
+
+This preserves the full structure of the SVI variational posterior — including
+non-Gaussianity, low-rank structure across genes, and any joint correlation the
+guide family captures — rather than collapsing it to a per-coordinate Gaussian
+summary. The marginal PPC is thus a genuine *posterior-marginal* predictive
+check: it integrates over the SVI guide for the frozen globals while drawing
+$\underline{x}_c$ fresh from its prior. When this check passes, the fit's
+global posterior is consistent with the data at the count level.
+
+For practical reasons, the cascade pool is capped at 2048 samples per
+predictive call and expanded via index-with-replacement when the caller
+requests more — drawing $10^6$ independent SVI samples from a fixed guide is
+no more informative than 2048 (the guide is a parametric posterior
+approximation), and the cap keeps memory bounded independent of how many
+predictive draws downstream visualisations request. See
+``src/scribe/laplace/README.md`` for the implementation details.
+
 ## Summary {#sec-diffexp-nbln-summary}
 
 NBLN's per-cell rigid-translation gauge generalises the NBDM/NBVCP/PLN gauge
@@ -360,3 +505,12 @@ gauge-invariant projection directly. The ``get_gauge_diagnostics()`` accessor
 quantifies how close the fitted $\underline{\underline{W}}$ is to its
 compositional projection — a clean fit has $\|\underline{\underline{W}} -
 \underline{\underline{W}}_\perp\|/\|\underline{\underline{W}}_\perp\| < 0.05$.
+
+The validation chain in
+[@sec-diffexp-nbln-ppc-validation] makes this operational: a passing
+marginal PPC plus a small gauge-contamination ratio together license
+downstream correlation analysis based on $\underline{\underline{W}}_\perp$.
+MAP-based diagnostics like ``plot_mean_calibration`` can show Jensen-inequality
+inflation at low expression that does *not* invalidate the correlation
+analysis; only the marginal PPC and the gauge diagnostic gate the
+correlation-trust conclusion.
