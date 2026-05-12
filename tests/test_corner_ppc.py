@@ -726,3 +726,96 @@ def test_plot_corner_ppc_matches_offdiag_limits_to_marginals_by_default(
     assert np.allclose(lower_ax.get_xlim(), axes_grid[0, 0].get_xlim())
     assert np.allclose(lower_ax.get_ylim(), axes_grid[1, 1].get_xlim())
     plt.close(result.fig)
+
+
+def test_plot_corner_ppc_uses_marginal_ranges_for_offdiag_density(monkeypatch):
+    """Off-diagonal density ranges should be sourced from diagonal marginals."""
+    counts = np.column_stack(
+        [
+            np.linspace(0, 20, 40),
+            np.linspace(50, 250, 40),
+        ]
+    )
+    seen = {}
+
+    class _FakeResultsForRanges:
+        """Subsettable fake results object used for panel-range wiring tests."""
+
+        def __init__(self, n_genes):
+            self.n_genes = int(n_genes)
+            self.model_config = types.SimpleNamespace(inference_method="svi")
+            self.predictive_samples = None
+            self.var = None
+
+        def __getitem__(self, index):
+            subset = _FakeResultsForRanges(len(index))
+            if self.predictive_samples is not None:
+                idx = np.asarray(index, dtype=int)
+                subset.predictive_samples = self.predictive_samples[:, :, idx]
+            return subset
+
+    def _fake_predictive(
+        sampling_results, *, rng_key, n_samples, counts, store_samples,
+        ppc_level=None,
+    ):
+        _ = rng_key, store_samples, ppc_level
+        base = np.broadcast_to(
+            counts[None, :, :],
+            (n_samples, counts.shape[0], counts.shape[1]),
+        ).astype(float)
+        sampling_results.predictive_samples = base
+        return sampling_results.predictive_samples
+
+    def _fake_diag(axis, ppc_samples, true_counts, render_opts, gene_label=None):
+        _ = ppc_samples, render_opts, gene_label
+        # Set deterministic diagonal x-limits keyed by gene identity.
+        if float(np.mean(true_counts)) < 40.0:
+            axis.set_xlim(10.0, 20.0)
+        else:
+            axis.set_xlim(100.0, 200.0)
+
+    def _fake_offdiag(
+        axis, ppc_x, ppc_y, obs_x, obs_y, *, x_range=None, y_range=None, **kwargs
+    ):
+        _ = axis, ppc_x, ppc_y, obs_x, obs_y, kwargs
+        seen["x_range"] = tuple(x_range)
+        seen["y_range"] = tuple(y_range)
+
+    monkeypatch.setattr(corner_ppc_module, "_coerce_counts", lambda x: np.asarray(x))
+    monkeypatch.setattr(
+        corner_ppc_module,
+        "_coerce_and_align_counts_to_results",
+        lambda raw, results, context=None: raw,
+    )
+    monkeypatch.setattr(
+        corner_ppc_module,
+        "_resolve_ppc_sampling_counts",
+        lambda results, raw, aligned: aligned,
+    )
+    monkeypatch.setattr(
+        corner_ppc_module,
+        "_resolve_gene_indices",
+        lambda *args, **kwargs: np.array([0, 1], dtype=int),
+    )
+    monkeypatch.setattr(
+        corner_ppc_module, "_resolve_ppc_grid", lambda **kwargs: {"n_samples": 3}
+    )
+    monkeypatch.setattr(corner_ppc_module, "_get_gene_names", lambda results: None)
+    monkeypatch.setattr(
+        corner_ppc_module, "_get_predictive_samples_for_plot", _fake_predictive
+    )
+    monkeypatch.setattr(corner_ppc_module, "_render_diagonal_panel", _fake_diag)
+    monkeypatch.setattr(corner_ppc_module, "_render_offdiag_panel", _fake_offdiag)
+
+    result = plot_corner_ppc(
+        _FakeResultsForRanges(counts.shape[1]),
+        counts,
+        n_genes=2,
+        n_samples=3,
+        save=False,
+        show=False,
+    )
+
+    assert seen["x_range"] == (10.0, 20.0)
+    assert seen["y_range"] == (100.0, 200.0)
+    plt.close(result.fig)

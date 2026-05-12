@@ -486,6 +486,8 @@ def _render_offdiag_panel(
     log_scale=False,
     density_method="hist2d",
     hist2d_bins=80,
+    x_range=None,
+    y_range=None,
     rng=None,
 ):
     """Render one lower-triangle panel (2-D PPC contour + observed scatter).
@@ -528,6 +530,14 @@ def _render_offdiag_panel(
         ``scipy.stats.gaussian_kde`` for a smoother but slower estimate.
     hist2d_bins : int
         Number of bins per axis for ``density_method="hist2d"``.
+    x_range : tuple of float or None
+        Optional plotting-space x-range ``(x_min, x_max)`` used to build the
+        density grid and set contour support. When ``None``, the range is
+        estimated from observed off-diagonal data.
+    y_range : tuple of float or None
+        Optional plotting-space y-range ``(y_min, y_max)`` used to build the
+        density grid and set contour support. When ``None``, the range is
+        estimated from observed off-diagonal data.
     rng : numpy.random.Generator or None
         Random generator used for subsampling and jitter in KDE mode.
     """
@@ -550,12 +560,23 @@ def _render_offdiag_panel(
             "density_method must be one of {'hist2d', 'kde'}."
         )
 
-    # Build a shared plotting domain from observed data so off-diagonal
-    # contours and scatter use consistent limits regardless of estimator.
-    x_lo, x_hi = float(obs_x_plot.min()), float(obs_x_plot.max())
-    y_lo, y_hi = float(obs_y_plot.min()), float(obs_y_plot.max())
-    x_margin = max((x_hi - x_lo) * 0.05, 0.5)
-    y_margin = max((y_hi - y_lo) * 0.05, 0.5)
+    # Build the plotting domain. When explicit ranges are supplied (for
+    # marginal/off-diagonal alignment), use them directly in plotting space.
+    # Otherwise derive a padded domain from observed off-diagonal data.
+    if x_range is not None:
+        x_lo, x_hi = float(x_range[0]), float(x_range[1])
+    else:
+        x_lo, x_hi = float(obs_x_plot.min()), float(obs_x_plot.max())
+    if y_range is not None:
+        y_lo, y_hi = float(y_range[0]), float(y_range[1])
+    else:
+        y_lo, y_hi = float(obs_y_plot.min()), float(obs_y_plot.max())
+    if x_range is None:
+        x_margin = max((x_hi - x_lo) * 0.05, 0.5)
+        x_lo, x_hi = x_lo - x_margin, x_hi + x_margin
+    if y_range is None:
+        y_margin = max((y_hi - y_lo) * 0.05, 0.5)
+        y_lo, y_hi = y_lo - y_margin, y_hi + y_margin
 
     # Compute density field using the selected method.
     if density_method == "kde":
@@ -577,8 +598,8 @@ def _render_offdiag_panel(
 
         # Evaluate KDE on a regular grid across the plotting domain.
         _n_grid = 80
-        xi = np.linspace(x_lo - x_margin, x_hi + x_margin, _n_grid)
-        yi = np.linspace(y_lo - y_margin, y_hi + y_margin, _n_grid)
+        xi = np.linspace(x_lo, x_hi, _n_grid)
+        yi = np.linspace(y_lo, y_hi, _n_grid)
         _xx, _yy = np.meshgrid(xi, yi)
         try:
             kde = gaussian_kde(np.vstack([pooled_x, pooled_y]))
@@ -590,8 +611,8 @@ def _render_offdiag_panel(
     else:
         # Fast path: build a binned 2-D density with histogram2d.
         _n_bins = max(int(hist2d_bins), 8)
-        x_edges = np.linspace(x_lo - x_margin, x_hi + x_margin, _n_bins + 1)
-        y_edges = np.linspace(y_lo - y_margin, y_hi + y_margin, _n_bins + 1)
+        x_edges = np.linspace(x_lo, x_hi, _n_bins + 1)
+        y_edges = np.linspace(y_lo, y_hi, _n_bins + 1)
         _hist, _x_edges, _y_edges = np.histogram2d(
             pooled_x, pooled_y, bins=[x_edges, y_edges], density=True
         )
@@ -861,6 +882,39 @@ def plot_corner_ppc(
     # Total renderable panels: n_panel diagonal + n_panel*(n_panel-1)/2
     n_renderable = n_panel + n_panel * (n_panel - 1) // 2
     _rng = np.random.default_rng(42)
+    _diag_rendered = np.zeros(n_panel, dtype=bool)
+
+    # Helper to render one diagonal panel exactly once, even when a lower-
+    # triangle panel needs its limits before the row-major loop reaches that
+    # diagonal cell.
+    def _ensure_diagonal_panel(diag_idx):
+        if _diag_rendered[diag_idx]:
+            return
+        axis_diag = axes_grid[diag_idx, diag_idx]
+        gene_idx = int(selected_idx[diag_idx])
+        subset_pos = subset_positions[gene_idx]
+        true_counts = counts[:, gene_idx]
+        ppc_gene = results_subset.predictive_samples[:, :, subset_pos]
+        _label = str(gene_names[gene_idx]) if gene_names is not None else None
+        _render_diagonal_panel(
+            axis_diag,
+            ppc_gene,
+            true_counts,
+            render_opts,
+            gene_label=_label,
+        )
+        # Mirror classic corner-plot style by hiding diagonal y ticks.
+        axis_diag.set_yticks([])
+        _diag_rendered[diag_idx] = True
+        progress.update(task, advance=1)
+
+    # Helper to get diagonal x-limits in off-diagonal plotting space.
+    def _diagonal_plot_limits(diag_idx):
+        lo, hi = axes_grid[diag_idx, diag_idx].get_xlim()
+        if log_scale:
+            lo = float(np.log1p(np.clip(lo, 0.0, None)))
+            hi = float(np.log1p(np.clip(hi, 0.0, None)))
+        return (float(lo), float(hi))
 
     with Progress(
         SpinnerColumn(),
@@ -880,30 +934,14 @@ def plot_corner_ppc(
 
                 if row_idx == col_idx:
                     # --- Diagonal: marginal PPC histogram ---
-                    gene_idx = int(selected_idx[row_idx])
-                    subset_pos = subset_positions[gene_idx]
-                    true_counts = counts[:, gene_idx]
-                    ppc_gene = results_subset.predictive_samples[
-                        :, :, subset_pos
-                    ]
-                    _label = (
-                        str(gene_names[gene_idx])
-                        if gene_names is not None
-                        else None
-                    )
-                    _render_diagonal_panel(
-                        axis,
-                        ppc_gene,
-                        true_counts,
-                        render_opts,
-                        gene_label=_label,
-                    )
-                    # Remove y-axis ticks on diagonal to mirror corner style
-                    axis.set_yticks([])
-                    progress.update(task, advance=1)
+                    _ensure_diagonal_panel(row_idx)
 
                 elif row_idx > col_idx:
                     # --- Lower triangle: bivariate PPC contour ---
+                    # Ensure both relevant diagonal marginals are rendered so
+                    # off-diagonal density ranges can be aligned to them.
+                    _ensure_diagonal_panel(col_idx)
+                    _ensure_diagonal_panel(row_idx)
                     gene_x = int(selected_idx[col_idx])
                     gene_y = int(selected_idx[row_idx])
                     pos_x = subset_positions[gene_x]
@@ -912,6 +950,11 @@ def plot_corner_ppc(
                     ppc_y = results_subset.predictive_samples[:, :, pos_y]
                     obs_x = counts[:, gene_x]
                     obs_y = counts[:, gene_y]
+                    _x_range = None
+                    _y_range = None
+                    if match_offdiag_limits_to_marginals:
+                        _x_range = _diagonal_plot_limits(col_idx)
+                        _y_range = _diagonal_plot_limits(row_idx)
 
                     _render_offdiag_panel(
                         axis,
@@ -927,6 +970,8 @@ def plot_corner_ppc(
                         scatter_color=scatter_color,
                         density_method=density_method,
                         hist2d_bins=hist2d_bins,
+                        x_range=_x_range,
+                        y_range=_y_range,
                         log_scale=log_scale,
                         rng=_rng,
                     )
@@ -981,8 +1026,8 @@ def plot_corner_ppc(
         for diag_idx in range(n_panel):
             _x_lo, _x_hi = axes_grid[diag_idx, diag_idx].get_xlim()
             if log_scale:
-                _x_lo = float(np.log1p(max(_x_lo, 0.0)))
-                _x_hi = float(np.log1p(max(_x_hi, 0.0)))
+                _x_lo = float(np.log1p(np.clip(_x_lo, 0.0, None)))
+                _x_hi = float(np.log1p(np.clip(_x_hi, 0.0, None)))
             _diag_limits[diag_idx] = (_x_lo, _x_hi)
 
         for row_idx in range(n_panel):
