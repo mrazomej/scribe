@@ -66,6 +66,10 @@ a single figure:
   For smoother (but slower) contours, `density_method="kde"` uses
   `scipy.stats.gaussian_kde`. Scatter points default to `scatter_color="gray"`
   to improve contour visibility.
+  Contours use HPD-style mass levels by default:
+  `contour_mass_levels=(0.5, 0.68, 0.95, 0.99)`.
+  Black contour-line edges are drawn by default
+  (`draw_contour_edges=True`, `contour_edgecolor="black"`).
   Low-density background is left unfilled so panel facecolor continues to follow
   the active Matplotlib style.
 - **Upper triangle** — hidden.
@@ -83,6 +87,9 @@ Three modes (checked in priority order):
 3. **Auto (correlation-diversity)** — selects genes that span the correlation
    spectrum so the corner grid contains panels with strong positive, strong
    negative, and near-zero correlations:
+   - **Expression floor**: candidates are filtered to genes with mean UMI
+     `>= min_mean_umi_for_selection` (default `5`) before correlation-diversity
+     selection.
    - **Seed**: find the most positively correlated pair and the most negatively
      correlated pair (up to 4 unique genes).
    - **Greedy fill**: add genes that maximise pairwise diversity (the gene
@@ -105,6 +112,31 @@ Three modes (checked in priority order):
 The default `hist2d` estimator is designed for speed on large pooled PPC
 samples.  When `density_method="kde"`, pooled samples are subsampled to at most
 50 000 points and tiny jitter is added to break integer ties for KDE stability.
+
+## `plot_ppc` conditioning levels
+
+`plot_ppc(results, counts, ppc_level=...)` selects how much observed
+data enters each predictive draw:
+
+| `ppc_level` | Conditioning | Use case |
+|---|---|---|
+| `"library_anchored"` (default) | Fresh composition from prior; **observed per-cell totals** pin the Multinomial | Compositional fit test, isolated from totals/capture |
+| `"marginal"` | Fully unconditional — `x`, `η`, `N_c` all drawn from the model | Honest "does the generative story match the data?" |
+| `"per_cell"` | Per-cell MAP latents + Laplace noise; observed totals | Per-cell predictive — most conditioned |
+
+For NBLN Laplace fits using the Phase-2 cascade freeze, **marginal**
+and **per_cell** PPCs route frozen `r`/`mu`/`eta` through the embedded
+`cascade_source` SVI guide (preserves full SVI fidelity).
+**library_anchored** is composition-only — `r` and `eta` don't enter,
+so the cascade-routing is a no-op there. The mean-calibration plot
+(`plot_mean_calibration`) uses `x_loc` directly and is *not* a PPC; it
+will exhibit Jensen-inequality inflation for very-low-expression genes
+on heavy-tailed sparse data, which is a diagnostic artifact rather than
+a model misfit. For population-level correlation analysis, use
+`results.get_W_compositional()` — gauge-invariant under the
+rigid-translation symmetry of NBLN. See
+[`src/scribe/laplace/README.md`](../laplace/README.md) for the full
+cascade-aware PPC routing details.
 
 ## PLN Compatibility Notes
 

@@ -436,8 +436,18 @@ Non-MAP posterior predictive checks (`get_ppc_samples`,
 uncertainty** by default. Each predictive sample draws fresh global
 parameters from their posterior before generating counts:
 
-- **NBLN**: each sample draws $r_g$ from $\text{Normal}(r\_loc, r\_scale)$ and
-  maps through `positive_transform`.
+- **NBLN (non-frozen)**: each sample draws $r_g$ from
+  $\text{Normal}(r\_loc, r\_scale)$ and maps through `positive_transform`.
+  `mu` is held at its point estimate (the Laplace `mu_scale` carries
+  gauge-slop contamination and is deliberately *not* propagated through
+  PPC; honest `mu` uncertainty for cascade fits is available via the
+  frozen-cascade routing below).
+- **NBLN (cascade-frozen, Phase-2)**: for each parameter listed in
+  `result.frozen_params`, samples are drawn from
+  `result.cascade_source` (the embedded SVI guide) and transformed
+  into the NBLN target coordinate per sample. Full SVI guide fidelity
+  is preserved (the routing does not moment-match to a Normal). See
+  "Cascade-aware PPC routing" below for the full sampler/coordinate map.
 - **LNM/LNMVCP**: each sample draws $(\mu_T, r_T)$ jointly from
   $\text{MVN}(\text{loc}, \Sigma_{2 \times 2})$ and maps through
   `positive_transform`.
@@ -448,6 +458,22 @@ uncertainty.
 This can widen predictive tails and credible bands compared to previous
 MAP-only PPCs, especially for NBLN where dispersion uncertainty enters
 multiplicatively into the predictive variance.
+
+#### Conditioning levels (`ppc_level`)
+
+`get_ppc_samples` (and `scribe.viz.plot_ppc`) accept a `level` /
+`ppc_level` kwarg that selects how much observed-data information
+enters each predictive draw:
+
+| Level | Latent `x` | `η` | Per-cell totals `N_c` | Use for |
+|---|---|---|---|---|
+| `marginal` | fresh from $\mathcal{N}(\mu, WW^{\top} + \mathrm{diag}(d))$ | from cascade / Laplace posterior | drawn from the model (NB sampling against `exp(x − η)`) | Honest "does the entire generative story match the data?" test — **no** observed-data conditioning |
+| `library_anchored` (default) | fresh from $\mathcal{N}(\mu, WW^{\top} + \mathrm{diag}(d))$ | (cancels via softmax) | **observed** (`Multinomial(N_c^{obs}, p_s)`) | Compositional fit test, isolated from the totals/capture submodel |
+| `per_cell` | per-cell MAP `x_loc` + Laplace noise | per-cell MAP `eta_loc` | **observed** | Per-cell predictive — most conditioned |
+
+`plot_ppc` defaults to `library_anchored` because the histogram aggregation
+is most interpretable under fixed totals. For honest population-level
+predictive tests, pass `ppc_level="marginal"`.
 
 ### Important caveats
 
@@ -595,6 +621,47 @@ dict** — they cannot drift, regardless of optimizer internals. The full
 `ScribeSVIResults` is embedded on `result.cascade_source` for downstream
 PPC/distribution access; counts cached on `result.cascade_source_counts`
 for amortized sources.
+
+### Cascade-aware PPC routing
+
+When `result.frozen_params` is non-empty, posterior predictive samplers
+route frozen parameters through `result.cascade_source` instead of
+through Laplace post-fit moments. This preserves full SVI guide fidelity
+(non-Gaussian guides, low-rank, flows — whatever the SVI fit was) and
+sidesteps the NaN sentinels that `compute_global_uncertainty` writes
+into `r_scale` / `mu_scale` for frozen entries.
+
+Implementation lives in
+[`_resolve_nbln_ppc_arrays`](_sampling.py) (the resolver) and the
+`r_samples` / `mu_samples` / `eta_samples` kwargs threaded through
+`_ppc_nbln_marginal` / `_ppc_nbln_per_cell_laplace` /
+`_ppc_pln_library_anchored`. Per-parameter routing:
+
+| Param | Frozen + cascade | Non-frozen | Coordinate transform applied |
+|---|---|---|---|
+| `r` | SVI samples `(S, G)` from `cascade_source` | `Normal(r_loc, r_scale)` per draw via `pos_forward` | identity (SVI `r` is already in positive space) |
+| `mu` | SVI samples `(S, G)` from `cascade_source` | point `result.mu` (Laplace `mu_scale` is gauge-contaminated and deliberately *not* propagated) | `log` (SVI `mu` is the NB mean; NBLN `mu` is log-rate) |
+| `eta` | SVI samples `(S, N)` from `cascade_source.eta_capture` | legacy uniform-pick from `eta_loc[idx]` (marginal) or point `eta_loc` (per-cell) | identity (both already in `[0, ∞)`) |
+
+Two operational details worth knowing:
+
+- **Gene-subsetted results**. `ScribeLaplaceResults.__getitem__` slices
+  `mu`/`W`/`d`/`r_loc`/`mu_loc` to the selected gene panel but leaves
+  `cascade_source` and `cascade_source_counts` unchanged (the amortizer
+  encoder needs the full-gene count matrix). The resolver reads
+  `result._subset_gene_index` and slices the gene axis of the cascade
+  samples before returning them — so the gene-subsetted PPC works
+  out of the box for `scribe.viz.plot_ppc(..., n_genes=K)`.
+- **Cascade-pool cap**. `plot_ppc(level="marginal")` inflates
+  `n_samples` to `n_eff × n_cells_obs` (frequently 1e6+). Drawing that
+  many SVI samples is wasteful (the guide is a fixed posterior
+  approximation) and would OOM the GPU for amortized cascades. The
+  resolver caps the SVI pool at `_CASCADE_POOL_MAX = 2048` and
+  resamples-with-replacement to reach the requested predictive count.
+  Statistically equivalent; memory bounded.
+
+For pure-MAP PPCs (no global-uncertainty propagation), use
+`get_map_ppc_samples` — it does not consult `cascade_source` at all.
 
 ### Gauge-invariant accessors (all Laplace models)
 
