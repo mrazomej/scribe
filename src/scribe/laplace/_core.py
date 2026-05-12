@@ -204,3 +204,100 @@ class CoreResultsMixin:
             return jnp.exp(-self.eta_loc)
         return None
 
+    # --- Phase-2: gauge-invariant W accessors ----------------------------
+    #
+    # The NBLN (and PLN) model parameterize the cross-gene correlation
+    # structure via a low-rank loadings matrix W in absolute log-rate
+    # space.  Under the per-cell rigid translation gauge
+    # ``(x_c, η_c) → (x_c + Δ_c · 1, η_c + Δ_c)``, W has an unidentified
+    # rank-1 component along the all-ones direction that corresponds to
+    # cell-scaling slop, not biology.  The biologically meaningful
+    # signal is the gene-centered projection
+    #
+    #     W_perp = (I − 1·1^T / G) W,
+    #
+    # which is gauge-invariant by construction.  For LNM/LNMVCP, W
+    # already lives in ALR compositional coordinates (a gauge-fixed
+    # quotient space) and the projection is a no-op.  See
+    # ``paper/_diffexp_nbln_robustness.qmd`` for the theorem.
+
+    def get_W_compositional(self) -> jnp.ndarray:
+        """Return the gauge-invariant gene-centered loadings matrix.
+
+        For PLN and NBLN, the loadings matrix W lives in absolute
+        log-rate space and is subject to a rank-1 gauge along the
+        all-ones direction.  The biologically meaningful cross-gene
+        correlation structure is captured by
+
+            W_perp = (I - 1 1^T / G) W
+
+        which projects out the all-ones component.  For LNM and LNMVCP,
+        W already lives in ALR compositional coordinates and is
+        returned unchanged.
+
+        Returns
+        -------
+        jnp.ndarray
+            Shape ``(G, k)`` for PLN/NBLN (gene-centered).  Shape
+            ``(G-1, k)`` for LNM-family (unchanged).
+
+        See Also
+        --------
+        get_gauge_diagnostics : quantify how much gauge-coupled
+            structure ``W`` carries (zero for LNM-family by
+            construction; small for NBLN with default freeze of
+            ``("r", "eta")``).
+        """
+        bm = _base_model(self.model_config)
+        W = self.W
+        if bm in ("pln", "nbln"):
+            return W - W.mean(axis=0, keepdims=True)
+        # LNM-family already compositional.
+        return W
+
+    def get_gauge_diagnostics(self) -> Dict[str, float]:
+        """Quantify the gauge contamination in the fitted W.
+
+        For PLN and NBLN, the loadings matrix has both a biologically
+        meaningful gene-centered component (``W_perp``) and a
+        gauge-coupled all-ones-direction component (``W_para``).  This
+        method returns the Frobenius norms of both plus their ratio.
+        A clean cascade-frozen fit (default Phase-2 freeze of ``r`` and
+        ``eta``) should produce a ``gauge_contamination_ratio`` < 0.05;
+        values > 0.2 flag that NBVCP's eta estimate is not absorbing
+        all the cell-scaling.
+
+        For LNM/LNMVCP, W is in ALR coordinates by construction and the
+        ratio is identically zero (no all-ones contamination possible).
+
+        Returns
+        -------
+        Dict[str, float]
+            ``W_compositional_norm`` — Frobenius norm of ``W_perp``.
+            ``W_all_ones_component_norm`` — Frobenius norm of
+                ``W − W_perp`` (the all-ones-direction component).
+            ``gauge_contamination_ratio`` — ratio of the two; zero
+                for LNM-family.
+        """
+        bm = _base_model(self.model_config)
+        W = self.W
+        if bm in ("pln", "nbln"):
+            W_perp = W - W.mean(axis=0, keepdims=True)
+            W_para = W - W_perp
+            perp_norm = float(jnp.linalg.norm(W_perp))
+            para_norm = float(jnp.linalg.norm(W_para))
+            return {
+                "W_compositional_norm": perp_norm,
+                "W_all_ones_component_norm": para_norm,
+                "gauge_contamination_ratio": (
+                    para_norm / max(perp_norm, 1e-12)
+                ),
+            }
+        # LNM-family: W is already in ALR compositional coordinates.
+        # No all-ones contamination possible by parameterization.
+        return {
+            "W_compositional_norm": float(jnp.linalg.norm(W)),
+            "W_all_ones_component_norm": 0.0,
+            "gauge_contamination_ratio": 0.0,
+        }
+

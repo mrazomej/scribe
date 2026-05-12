@@ -540,4 +540,217 @@ def priors_from_results(
 __all__ = [
     "fit_empirical_gaussian",
     "priors_from_results",
+    "freeze_values_from_results",
 ]
+
+
+# =====================================================================
+# Layer 3 — freeze-value extractor (point estimates, no moment-matching)
+# =====================================================================
+
+
+def freeze_values_from_results(
+    results: Any,
+    target_positive_transform: str,
+    target_n_genes: int,
+    target_n_cells: int,
+    target_gene_names: Optional[np.ndarray] = None,
+    target_gene_mask: Optional[np.ndarray] = None,
+    source_counts: Optional[jnp.ndarray] = None,
+    freeze_params: Tuple[str, ...] = ("r", "eta"),
+    verbose: bool = True,
+) -> Dict[str, Dict[str, jnp.ndarray]]:
+    """Extract point-estimate freeze values from an SVI results object.
+
+    Unlike :func:`priors_from_results` (which moment-matches posterior
+    samples into Gaussian priors for the soft-cascade loss term), this
+    function extracts a single point per coordinate from the SVI
+    variational MAP and converts to the NBLN-Laplace target coordinate.
+
+    The freeze values are the **fixed values** used during NBLN's M-step
+    when the corresponding parameter is in ``freeze_params``.  No
+    moment-matching, no MC error from sampling — the point estimate is
+    directly what SVI converged to.
+
+    For the **reported posterior** on frozen parameters, downstream code
+    consults the full SVI guide via the embedded ``cascade_source`` field
+    on the Laplace result (see :class:`ScribeLaplaceResults`).  This
+    function only extracts the M-step point estimate.
+
+    Parameters
+    ----------
+    results
+        Scribe SVI results object with ``get_map()`` and gene-identity
+        metadata.
+    target_positive_transform : {"exp", "softplus"}
+        Resolved from the target ``model_config.positive_transform``.
+        Used only for the ``r`` coordinate.
+    target_n_genes, target_n_cells : int
+        Target dataset shape — checked against the source.
+    target_gene_names : Optional[np.ndarray]
+        Target var-names array for strict gene identity verification.
+    target_gene_mask : Optional[np.ndarray]
+        Target gene coverage mask for fallback identity verification.
+    source_counts : Optional[jnp.ndarray]
+        Target count matrix, passed for amortized-capture SVI sources.
+        Same three-tier defensive hierarchy as
+        :func:`priors_from_results`.
+    freeze_params : Tuple[str, ...], default ("r", "eta")
+        Which parameters to extract freeze values for.  Valid keys are
+        a subset of ``{"r", "mu", "eta"}``.
+    verbose : bool
+        Whether to print user-facing progress messages.
+
+    Returns
+    -------
+    Dict[str, Dict[str, jnp.ndarray]]
+        Per-parameter ``{"loc": ...}`` dicts (no ``scale`` — point
+        estimates only).  Keys are the requested subset of
+        ``{"r", "mu", "eta"}`` that the SVI source can supply.
+
+    Raises
+    ------
+    ValueError
+        On gene-identity mismatch, on amortized-capture source without
+        reconstructible training counts, or when a requested freeze
+        parameter is absent from the SVI source.
+    """
+    if target_positive_transform not in _JAX_POSITIVE_FNS:
+        raise ValueError(
+            f"Unknown target_positive_transform={target_positive_transform!r}; "
+            f"expected one of {set(_JAX_POSITIVE_FNS)}."
+        )
+    valid = {"r", "mu", "eta"}
+    invalid = set(freeze_params) - valid
+    if invalid:
+        raise ValueError(
+            f"freeze_params has invalid keys {invalid}; valid = {valid}."
+        )
+
+    def _say(msg: str) -> None:
+        if verbose:
+            print(f"[scribe.laplace.priors] {msg}", flush=True)
+
+    _say(
+        f"Extracting freeze values from SVI source "
+        f"(freeze_params={list(freeze_params)})"
+    )
+
+    # --- Gene-identity safeguard (reuses the priors_from_results helper) ---
+    strict_var_name_verified, identity_method = _check_gene_identity(
+        results=results,
+        target_n_genes=int(target_n_genes),
+        target_gene_names=target_gene_names,
+        target_gene_mask=target_gene_mask,
+    )
+    _say(f"  Gene identity verified via {identity_method!r}.")
+
+    # --- Amortized-capture-aware get_map() call ---
+    # Same defensive hierarchy as priors_from_results._draw_samples:
+    # prefer results._original_counts; else accept source_counts only
+    # when strict var-name identity verified; else refuse.
+    if _is_amortized_capture(results):
+        _say(
+            "  SVI source uses amortized capture; resolving counts for "
+            "encoder evaluation..."
+        )
+        svi_source_counts = getattr(results, "_original_counts", None)
+        if svi_source_counts is None:
+            svi_source_counts = getattr(results, "counts", None)
+        if svi_source_counts is not None:
+            counts_for_encoder = svi_source_counts
+        elif strict_var_name_verified and source_counts is not None:
+            counts_for_encoder = source_counts
+        else:
+            raise ValueError(
+                "Source SVI results use amortized capture, but the "
+                "encoder's training counts could not be reconstructed "
+                "safely for get_map(). Same remediation options as "
+                "priors_from_results: refit SVI with non-amortized "
+                "capture, store training counts on the SVI result, or "
+                "pass source_counts with strict var-name identity."
+            )
+        map_dict = results.get_map(counts=counts_for_encoder, verbose=False)
+    else:
+        map_dict = results.get_map(verbose=False)
+
+    _say(f"  SVI MAP keys: {sorted(map_dict.keys())}")
+
+    pos_inverse = _resolve_target_pos_inverse(target_positive_transform)
+    freeze_values: Dict[str, Dict[str, jnp.ndarray]] = {}
+
+    # --- r: positive → NBLN unconstrained (via pos_inverse) ---
+    if "r" in freeze_params:
+        if "r" not in map_dict:
+            raise ValueError(
+                "freeze_params requests 'r' but SVI source's get_map() "
+                "does not include an 'r' key. "
+                f"Available keys: {sorted(map_dict.keys())}."
+            )
+        r_pos = jnp.asarray(map_dict["r"])
+        if r_pos.ndim != 1 or r_pos.shape[0] != int(target_n_genes):
+            raise ValueError(
+                f"SVI 'r' MAP has shape {r_pos.shape}; expected "
+                f"({int(target_n_genes)},)."
+            )
+        r_uncon = pos_inverse(jnp.maximum(r_pos, 1e-8))
+        freeze_values["r"] = {"loc": r_uncon}
+        _say(
+            f"  Extracted r freeze value (G={target_n_genes}, "
+            f"transform={target_positive_transform!r} inverse)."
+        )
+
+    # --- mu: positive NB mean → NBLN log-rate (via jnp.log) ---
+    if "mu" in freeze_params:
+        if "mu" not in map_dict:
+            raise ValueError(
+                "freeze_params requests 'mu' but SVI source's get_map() "
+                "does not include a 'mu' key. "
+                f"Available keys: {sorted(map_dict.keys())}."
+            )
+        mu_pos = jnp.asarray(map_dict["mu"])
+        if mu_pos.ndim != 1 or mu_pos.shape[0] != int(target_n_genes):
+            raise ValueError(
+                f"SVI 'mu' MAP has shape {mu_pos.shape}; expected "
+                f"({int(target_n_genes)},)."
+            )
+        mu_log = jnp.log(jnp.maximum(mu_pos, 1e-8))
+        freeze_values["mu"] = {"loc": mu_log}
+        _say(
+            f"  Extracted mu freeze value (G={target_n_genes}, "
+            "transform='log' — NBLN mu is real-valued log-rate)."
+        )
+
+    # --- eta: constrained [0, ∞) → identity (NBLN's coord is the same) ---
+    if "eta" in freeze_params:
+        if "eta_capture" not in map_dict:
+            raise ValueError(
+                "freeze_params requests 'eta' but SVI source's get_map() "
+                "does not include an 'eta_capture' key.  The SVI source "
+                "may not be using biology-informed capture (only "
+                "odds-ratio capture).  Available keys: "
+                f"{sorted(map_dict.keys())}."
+            )
+        eta = jnp.asarray(map_dict["eta_capture"])
+        if eta.ndim != 1 or eta.shape[0] != int(target_n_cells):
+            raise ValueError(
+                f"SVI 'eta_capture' MAP has shape {eta.shape}; expected "
+                f"({int(target_n_cells)},)."
+            )
+        freeze_values["eta"] = {"loc": eta}
+        _say(
+            f"  Extracted eta freeze value (N={target_n_cells}, "
+            "transform='identity' — constrained [0, ∞) matches target)."
+        )
+
+    _say(
+        f"Built freeze-values bundle: keys={sorted(freeze_values.keys())}."
+    )
+    logger.info(
+        "freeze_values_from_results: requested=%s, extracted=%s, "
+        "identity=%s",
+        list(freeze_params),
+        sorted(freeze_values.keys()),
+        identity_method,
+    )
+    return freeze_values

@@ -56,8 +56,10 @@ from ._global_uncertainty import (
 from ._newton_nbln import (
     laplace_log_det_neg_H_batch,
     laplace_log_det_neg_H_batch_x_only,
+    laplace_log_det_neg_H_batch_x_only_offset,
     laplace_newton_batch,
     laplace_newton_batch_x_only,
+    laplace_newton_batch_x_only_offset,
     nbln_grad_split_batch,
     nbln_grad_x_only_norm_batch,
 )
@@ -126,6 +128,25 @@ class NBLNObservationModel(LaplaceObservationModel):
         is supplied, the loss gains a ``Normal(loc, scale).log_prob(...)``
         term that adds prior curvature to the global Hessian during
         both training and post-fit uncertainty extraction.
+    freeze_values : Optional[Dict[str, Dict[str, jnp.ndarray]]]
+        Point-estimate values for parameters listed in ``freeze_params``.
+        Built by :func:`scribe.laplace.priors.freeze_values_from_results`
+        from an SVI source's ``get_map()``.  Each value is a dict with a
+        single ``"loc"`` key (no scale — frozen parameters are points).
+        Coordinates are already in NBLN target space (``log`` for ``mu``,
+        ``pos_inverse`` for ``r``, identity for ``eta``).
+
+        Separate from ``informative_priors``: the two dicts can coexist
+        (e.g. freeze ``r`` and ``eta``, soft-cascade ``mu``).  A frozen
+        key MUST also appear in ``freeze_params``.
+    freeze_params : Tuple[str, ...]
+        Names of parameters to freeze during the M-step.  Subset of
+        ``{"r", "mu", "eta"}``.  Frozen parameters are excluded from the
+        optax optimizer's params dict — the optimizer literally cannot
+        move what isn't in its state.  Frozen values are spliced back
+        into a working ``params_full`` dict inside every method that
+        needs them (loss_fn, final_sweep, compute_global_uncertainty,
+        pack_result).
     """
 
     def __init__(
@@ -133,7 +154,11 @@ class NBLNObservationModel(LaplaceObservationModel):
         capture_anchor: Optional[Tuple[float, float]] = None,
         model_config: Optional[ModelConfig] = None,
         informative_priors: Optional[Dict[str, Dict[str, jnp.ndarray]]] = None,
+        freeze_values: Optional[Dict[str, Dict[str, jnp.ndarray]]] = None,
+        freeze_params: Tuple[str, ...] = (),
+        max_step: float = 5.0,
     ):
+        self._max_step = float(max_step)
         if capture_anchor is None:
             self._capture_anchor = None
             self._sigma_M = 1.0  # placeholder; never read when capture is off
@@ -175,6 +200,40 @@ class NBLNObservationModel(LaplaceObservationModel):
             else None
         )
 
+        # Freeze values (Round-4 / Round-5).  freeze_values lives
+        # SEPARATE from informative_priors: the soft-cascade and the
+        # hard-freeze can coexist (e.g. freeze r+eta, soft-cascade mu).
+        valid_frozen = {"r", "mu", "eta"}
+        bad_frozen = set(freeze_params) - valid_frozen
+        if bad_frozen:
+            raise ValueError(
+                f"freeze_params has invalid keys {bad_frozen}; "
+                f"valid keys are {valid_frozen}."
+            )
+        # Each frozen key MUST have a corresponding freeze_values entry.
+        if freeze_params:
+            if freeze_values is None:
+                raise ValueError(
+                    f"freeze_params={list(freeze_params)} non-empty but "
+                    "freeze_values is None.  Each frozen key needs a "
+                    "freeze_values[key] entry with a 'loc' field."
+                )
+            missing = set(freeze_params) - set(freeze_values.keys())
+            if missing:
+                raise ValueError(
+                    f"freeze_params requests {sorted(missing)} but "
+                    "freeze_values does not provide those keys.  "
+                    "Available freeze_values keys: "
+                    f"{sorted(freeze_values.keys())}."
+                )
+            for k in freeze_params:
+                if "loc" not in freeze_values[k]:
+                    raise ValueError(
+                        f"freeze_values[{k!r}] missing 'loc' field."
+                    )
+        self._frozen_params = frozenset(freeze_params)
+        self._freeze_values = freeze_values if freeze_values is not None else {}
+
     # --- Identity --------------------------------------------------------
 
     @property
@@ -183,10 +242,23 @@ class NBLNObservationModel(LaplaceObservationModel):
 
     @property
     def uses_capture(self) -> bool:
-        # Round-2 Finding A: per-cell eta prior must also activate
-        # capture, otherwise the loss path silently takes the x-only
-        # branch and ignores the SVI-supplied per-cell anchors.
-        return self._capture_anchor is not None or self._prior_eta is not None
+        # Capture activates when ANY of:
+        # - The user passed a scalar capture_anchor (legacy path).
+        # - The user passed a soft-cascade prior on eta (Phase 1 path).
+        # - The user froze eta at SVI's MAP (Phase 2 path).
+        # The third clause is the Round-4 R5-1 fix: without it,
+        # frozen-eta fits silently degrade to the x-only-no-capture
+        # branch in loss_fn / final_sweep.
+        return (
+            self._capture_anchor is not None
+            or self._prior_eta is not None
+            or "eta" in self._frozen_params
+        )
+
+    @property
+    def freezes_eta(self) -> bool:
+        """True iff eta is frozen at the SVI MAP (x-only-with-offset path)."""
+        return "eta" in self._frozen_params
 
     # --- Initial state ---------------------------------------------------
 
@@ -200,8 +272,12 @@ class NBLNObservationModel(LaplaceObservationModel):
     ) -> InitState:
         counts_np = np.asarray(count_data)
 
-        # --- mu init: prior loc overrides data-driven init -----------
-        if self._prior_mu is not None:
+        # --- mu init: frozen overrides prior overrides data-driven ---
+        if "mu" in self._frozen_params:
+            mu_init = jnp.asarray(
+                self._freeze_values["mu"]["loc"], dtype=jnp.float32
+            )
+        elif self._prior_mu is not None:
             mu_init = jnp.asarray(self._prior_mu["loc"], dtype=jnp.float32)
         else:
             mu_init = jnp.asarray(
@@ -214,13 +290,17 @@ class NBLNObservationModel(LaplaceObservationModel):
         )
         # Initialise unconstrained d_loc so positive_transform(d_loc) ≈ 0.1.
         # No informative-prior override: NBVCP has no `d` counterpart and
-        # the prior would be ill-posed.
+        # the prior would be ill-posed.  Cannot freeze d either.
         d_loc_init = self._pos_inverse(
             jnp.full((n_genes,), 0.1, dtype=jnp.float32)
         )
 
-        # --- r init: prior loc overrides data-driven init ------------
-        if self._prior_r is not None:
+        # --- r init: frozen overrides prior overrides data-driven ---
+        if "r" in self._frozen_params:
+            r_loc_init = jnp.asarray(
+                self._freeze_values["r"]["loc"], dtype=jnp.float32
+            )
+        elif self._prior_r is not None:
             r_loc_init = jnp.asarray(
                 self._prior_r["loc"], dtype=jnp.float32
             )
@@ -232,20 +312,46 @@ class NBLNObservationModel(LaplaceObservationModel):
                 jnp.float32
             )
 
-        params = {
+        # Build the FULL params dict first (covers all keys).
+        full_init = {
             "mu": mu_init,
             "W": W_init,
             "d_loc": d_loc_init,
             "r_loc": r_loc_init,
         }
 
-        # --- Three-way capture branch (Round-3 Finding A) ------------
-        # Order matters: SVI-derived per-cell prior (if present)
-        # supersedes the scalar anchor; the bare ``capture_anchor``
-        # branch unpacks the tuple, which crashes when capture_anchor
-        # is None but prior_eta activates capture.
-        if self._prior_eta is not None:
-            # SVI-derived per-cell capture (mode "eta").
+        # --- Exclude frozen keys from the optimizer dict (Round-4 R4) ---
+        # Stash frozen values on `self._frozen_runtime` for splicing into
+        # params_full inside loss_fn / final_sweep / compute_global_uncertainty
+        # / pack_result.  The optax optimizer never sees these keys, so
+        # they cannot drift regardless of optimizer internals.
+        self._frozen_runtime: Dict[str, jnp.ndarray] = {}
+        if "r" in self._frozen_params:
+            self._frozen_runtime["r_loc"] = full_init.pop("r_loc")
+        if "mu" in self._frozen_params:
+            self._frozen_runtime["mu"] = full_init.pop("mu")
+        # Note: eta is per-cell and never lived in `params` dict — it's
+        # in `latent_loc` / `eta_loc` / `aux_data`.  We handle frozen
+        # eta below via the offset path.
+
+        params = full_init  # reduced dict for optax
+
+        # --- Four-way capture branch (extends the Round-3 three-way) ---
+        # Frozen eta gets its own branch: x-only Newton with fixed
+        # eta_offset.  No prior_eta or capture_anchor consulted in this
+        # case — the freeze value comes from self._freeze_values["eta"].
+        if "eta" in self._frozen_params:
+            eta_offset = jnp.asarray(
+                self._freeze_values["eta"]["loc"], dtype=jnp.float32
+            )
+            # eta_anchor / eta_scale_per_cell are unused in this branch
+            # but populated for downstream result-storage symmetry.
+            eta_anchor = eta_offset
+            eta_scale_per_cell = None  # no scale — eta is a fixed point
+            eta_loc = eta_offset  # carried on the result so PPC sees it
+            latent_loc = jnp.log(count_data + 1.0) + eta_loc[:, None]
+        elif self._prior_eta is not None:
+            # SVI-derived soft-cascade per-cell capture (mode "eta").
             eta_anchor = jnp.asarray(
                 self._prior_eta["loc"], dtype=jnp.float32
             )
@@ -271,12 +377,16 @@ class NBLNObservationModel(LaplaceObservationModel):
             eta_loc = None
             latent_loc = jnp.log(count_data + 1.0)
 
-        # Per-cell eta scale rides through ``aux_data`` so the existing
-        # ``aux_batch_slice`` auto-slices it by minibatch index — no
-        # InitState schema change required (Round-2 Finding B).
+        # aux_data: per-cell scale for soft-cascade eta path; per-cell
+        # offset for frozen-eta path.  Both ride through aux_batch_slice
+        # so minibatch indexing is automatic.
         aux_data: Dict[str, jnp.ndarray] = {}
         if eta_scale_per_cell is not None:
             aux_data["eta_scale"] = eta_scale_per_cell
+        if "eta" in self._frozen_params:
+            aux_data["eta_frozen"] = jnp.asarray(
+                self._freeze_values["eta"]["loc"], dtype=jnp.float32
+            )
 
         return InitState(
             params=params,
@@ -285,6 +395,30 @@ class NBLNObservationModel(LaplaceObservationModel):
             eta_anchor=eta_anchor,
             aux_data=aux_data,
         )
+
+    # --- Splice helper (used by loss_fn, final_sweep, compute_global_uncertainty,
+    #     pack_result to reconstruct the full params dict for likelihood / Hessian
+    #     computation when frozen keys have been excluded from the optimizer).
+
+    def _splice_frozen(
+        self, params: Dict[str, jnp.ndarray]
+    ) -> Dict[str, jnp.ndarray]:
+        """Return ``{**params, **frozen}`` with stop_gradient on frozen entries.
+
+        The reduced ``params`` dict that the optimizer holds excludes
+        any frozen keys; this helper splices their runtime values back
+        in for likelihood / Hessian computation.  ``stop_gradient`` on
+        frozen entries is belt-and-suspenders on top of the primary
+        exclusion-from-optimizer mechanism — autodiff sees them as
+        constants either way, but the explicit stop_gradient documents
+        intent and protects against any incidental gradient flow.
+        """
+        if not self._frozen_runtime:
+            return params
+        out = dict(params)
+        for k, v in self._frozen_runtime.items():
+            out[k] = jax.lax.stop_gradient(v)
+        return out
 
     # --- Loss closure ----------------------------------------------------
 
@@ -300,20 +434,25 @@ class NBLNObservationModel(LaplaceObservationModel):
         n_newton: int,
         damping: float,
     ) -> Tuple[jnp.ndarray, Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]]:
-        mu = params["mu"]
-        W = params["W"]
-        d = self._pos_forward(params["d_loc"])
+        # Splice frozen values into a working params_full dict for
+        # likelihood computation (Round-4 R4).  The optimizer holds only
+        # the reduced params dict (frozen keys excluded).
+        params_full = self._splice_frozen(params)
+
+        mu = params_full["mu"]
+        W = params_full["W"]
+        d = self._pos_forward(params_full["d_loc"])
         # Map unconstrained r_loc to positive dispersion via the
         # configured positive_transform (softplus by default).
-        r = self._pos_forward(params["r_loc"])
+        r = self._pos_forward(params_full["r_loc"])
 
         # Per-cell eta prior scale (Round-1 Finding 4 + Round-2 Finding B).
-        # When capture is on, ``aux_batch["eta_scale"]`` provides one
-        # scale per cell — either the SVI-derived per-cell prior scale
-        # or a broadcast of the scalar ``self._sigma_M`` for the
-        # capture-anchor path.  When capture is off, we synthesise a
-        # ones array so the Newton kernel's vmap stays uniform.
-        if self.uses_capture:
+        # When eta is frozen, we use the x-only-with-offset Newton path
+        # which doesn't consume sigma_eta_batch.  When capture is soft
+        # (prior_eta or capture_anchor), aux_batch["eta_scale"] provides
+        # the per-cell scale.  When no capture, we synthesise a ones
+        # array for the vmap signature.
+        if self.uses_capture and not self.freezes_eta:
             sigma_eta_batch = aux_batch["eta_scale"]
         else:
             sigma_eta_batch = jnp.ones((counts_batch.shape[0],))
@@ -325,7 +464,41 @@ class NBLNObservationModel(LaplaceObservationModel):
         d_sg = jax.lax.stop_gradient(d)
         r_sg = jax.lax.stop_gradient(r)
 
-        if self.uses_capture:
+        # --- Four-way Newton dispatch (Round-4 R5-2) ---
+        # 1. Frozen eta: x-only Newton with offset = freeze value.
+        # 2. Soft eta (prior or anchor): joint (x, η) Newton.
+        # 3. No capture: plain x-only Newton.
+        if self.freezes_eta:
+            eta_offset_batch = aux_batch["eta_frozen"]
+            eta_offset_sg = jax.lax.stop_gradient(eta_offset_batch)
+            x_new, _gn, _ = laplace_newton_batch_x_only_offset(
+                latent_init_sg,
+                counts_batch,
+                mu_sg,
+                W_sg,
+                d_sg,
+                r_sg,
+                eta_offset_sg,
+                n_newton,
+                damping,
+                self._max_step,
+            )
+            x_new = jax.lax.stop_gradient(x_new)
+            eta_new = eta_offset_batch  # carried forward to result/PPC.
+            log_det = laplace_log_det_neg_H_batch_x_only_offset(
+                x_new, eta_offset_batch, counts_batch, r, W, d,
+            )
+            log_mean = x_new - eta_offset_batch[:, None]
+            # Per-block grad split: only x-block exists in this path.
+            # When eta is frozen, omit the η key from the progress
+            # display entirely — there's no η Newton variable to
+            # diagnose, and displaying zeros would mislead.  The driver
+            # iterates over whatever keys are present in gn_blocks.
+            gn_x = nbln_grad_x_only_norm_batch(
+                x_new, counts_batch, mu_sg, W_sg, d_sg, r_sg
+            )
+            gn_blocks = {"x": gn_x}
+        elif self.uses_capture:
             eta_init_sg = jax.lax.stop_gradient(eta_init)
             eta_anchor_sg = jax.lax.stop_gradient(eta_anchor_batch)
             sigma_eta_sg = jax.lax.stop_gradient(sigma_eta_batch)
@@ -341,6 +514,7 @@ class NBLNObservationModel(LaplaceObservationModel):
                 sigma_eta_sg,
                 n_newton,
                 damping,
+                self._max_step,
             )
             x_new = jax.lax.stop_gradient(x_new)
             eta_new = jax.lax.stop_gradient(eta_new)
@@ -376,6 +550,7 @@ class NBLNObservationModel(LaplaceObservationModel):
                 r_sg,
                 n_newton,
                 damping,
+                self._max_step,
             )
             x_new = jax.lax.stop_gradient(x_new)
             eta_new = eta_init  # placeholder, not used downstream
@@ -411,7 +586,9 @@ class NBLNObservationModel(LaplaceObservationModel):
         )
 
         # TruncN prior on η (per-cell scale).
-        if self.uses_capture:
+        # Skip when eta is frozen — the prior is a Delta at the freeze
+        # value and contributes a constant the optimizer can ignore.
+        if self.uses_capture and not self.freezes_eta:
             eta_lp = dist.TruncatedNormal(
                 eta_anchor_batch, sigma_eta_batch, low=0.0
             ).log_prob(eta_new)
@@ -431,23 +608,21 @@ class NBLNObservationModel(LaplaceObservationModel):
 
         # Global-parameter priors (NOT scaled by data_scale — these are
         # parameter priors, not per-cell likelihood contributions).
-        # The Normal log-prob terms add prior precision to ``r_loc`` and
-        # ``mu``; autodiff carries this through to the training gradient
-        # automatically.  ``compute_global_uncertainty`` mirrors the
-        # ``1/scale**2`` injection in its closed-form Hessian path.
+        # Skip frozen parameters: their prior is a Delta at the freeze
+        # value, contributing a constant to the loss (no gradient).
         global_prior_lp = jnp.zeros(())
-        if self._prior_r is not None:
+        if self._prior_r is not None and "r" not in self._frozen_params:
             r_loc_prior = self._prior_r
             global_prior_lp = global_prior_lp + jnp.sum(
                 dist.Normal(r_loc_prior["loc"], r_loc_prior["scale"]).log_prob(
-                    params["r_loc"]
+                    params_full["r_loc"]
                 )
             )
-        if self._prior_mu is not None:
+        if self._prior_mu is not None and "mu" not in self._frozen_params:
             mu_prior = self._prior_mu
             global_prior_lp = global_prior_lp + jnp.sum(
                 dist.Normal(mu_prior["loc"], mu_prior["scale"]).log_prob(
-                    params["mu"]
+                    params_full["mu"]
                 )
             )
 
@@ -467,12 +642,36 @@ class NBLNObservationModel(LaplaceObservationModel):
         n_newton: int,
         damping: float,
     ) -> FinalSweepResult:
-        mu = jax.lax.stop_gradient(params["mu"])
-        W = jax.lax.stop_gradient(params["W"])
-        d = jax.lax.stop_gradient(self._pos_forward(params["d_loc"]))
-        r = jax.lax.stop_gradient(self._pos_forward(params["r_loc"]))
+        # Round-5 R5-1 fix: splice frozen values into params_full at
+        # entry — final_sweep reads params["mu"]/params["r_loc"] which
+        # are absent from the reduced optimizer dict when frozen.
+        params_full = self._splice_frozen(params)
 
-        if self.uses_capture:
+        mu = jax.lax.stop_gradient(params_full["mu"])
+        W = jax.lax.stop_gradient(params_full["W"])
+        d = jax.lax.stop_gradient(self._pos_forward(params_full["d_loc"]))
+        r = jax.lax.stop_gradient(self._pos_forward(params_full["r_loc"]))
+
+        # Four-way Newton dispatch (parallels loss_fn).
+        if self.freezes_eta:
+            # x-only Newton with fixed per-cell offset from aux_data.
+            eta_offset = aux_data["eta_frozen"]
+            x_final, gn_final, _ = laplace_newton_batch_x_only_offset(
+                latent_loc,
+                count_data,
+                mu,
+                W,
+                d,
+                r,
+                eta_offset,
+                n_newton,
+                damping,
+                self._max_step,
+            )
+            # Carry the frozen eta forward so the result's `eta_loc` is
+            # populated — PPC needs this to compute `log_mean = x − eta`.
+            eta_final = eta_offset
+        elif self.uses_capture:
             sigma_eta_full = aux_data["eta_scale"]
             x_final, eta_final, gn_final, _ = laplace_newton_batch(
                 latent_loc,
@@ -486,6 +685,7 @@ class NBLNObservationModel(LaplaceObservationModel):
                 sigma_eta_full,
                 n_newton,
                 damping,
+                self._max_step,
             )
         else:
             x_final, gn_final, _ = laplace_newton_batch_x_only(
@@ -497,6 +697,7 @@ class NBLNObservationModel(LaplaceObservationModel):
                 r,
                 n_newton,
                 damping,
+                self._max_step,
             )
             eta_final = None
 
@@ -557,12 +758,15 @@ class NBLNObservationModel(LaplaceObservationModel):
             ``r_hessian_floor_count``, ``r_curvature_floor`` and the
             ``mu_*`` analogues.
         """
-        del aux_data
+        # Round-5 R5-2 fix: splice frozen values into params_full at
+        # entry — compute_global_uncertainty reads params["mu"]/["r_loc"]
+        # which are absent from the reduced optimizer dict when frozen.
+        params_full = self._splice_frozen(params)
 
-        mu = params["mu"]
-        W = params["W"]
-        d = self._pos_forward(params["d_loc"])
-        r_loc = params["r_loc"]
+        mu = params_full["mu"]
+        W = params_full["W"]
+        d = self._pos_forward(params_full["d_loc"])
+        r_loc = params_full["r_loc"]
         pos_fwd = self._pos_forward
         r = pos_fwd(r_loc)
 
@@ -765,12 +969,26 @@ class NBLNObservationModel(LaplaceObservationModel):
         H_r_profiled_diag = H_rr_summed - r_schur
 
         # Prior precision injection on r_loc (Round-1 Finding 2).
-        if self._prior_r is not None:
+        if self._prior_r is not None and "r" not in self._frozen_params:
             H_r_profiled_diag = (
                 H_r_profiled_diag + 1.0 / (self._prior_r["scale"] ** 2)
             )
 
-        r_scale, r_diag = curvature_to_scale(H_r_profiled_diag)
+        if "r" in self._frozen_params:
+            # Frozen r: post-fit Hessian is meaningless (r doesn't move).
+            # The authoritative r posterior lives on the cascade_source
+            # and is accessed at get_distributions / PPC time via
+            # moment-matching SVI samples in the NBLN target coordinate.
+            # Emit NaN sentinels here; downstream code checks
+            # `self.frozen_params` to route through cascade_source.
+            r_scale = jnp.full_like(r_loc, jnp.nan)
+            r_diag = {
+                "hessian_min": jnp.asarray(jnp.nan, dtype=jnp.float32),
+                "floor_count": jnp.asarray(0, dtype=jnp.int32),
+                "curvature_floor": jnp.asarray(jnp.nan, dtype=jnp.float32),
+            }
+        else:
+            r_scale, r_diag = curvature_to_scale(H_r_profiled_diag)
 
         # --- mu profiled Hessian diagonal (diagonal-Σ approximation) ---
         # Cross-Hessian -H_{μ_g, x_{c,g}} = (Σ^{-1})_{g,g} in the
@@ -786,12 +1004,23 @@ class NBLNObservationModel(LaplaceObservationModel):
         )
 
         # Prior precision injection on mu.
-        if self._prior_mu is not None:
+        if self._prior_mu is not None and "mu" not in self._frozen_params:
             H_mu_profiled_diag = (
                 H_mu_profiled_diag + 1.0 / (self._prior_mu["scale"] ** 2)
             )
 
-        mu_scale, mu_diag = curvature_to_scale(H_mu_profiled_diag)
+        if "mu" in self._frozen_params:
+            # Frozen mu: same sentinel pattern as frozen r.  Authoritative
+            # mu posterior is at cascade_source; this field is NaN to
+            # signal "do not read directly; route through cascade".
+            mu_scale = jnp.full_like(mu, jnp.nan)
+            mu_diag = {
+                "hessian_min": jnp.asarray(jnp.nan, dtype=jnp.float32),
+                "floor_count": jnp.asarray(0, dtype=jnp.int32),
+                "curvature_floor": jnp.asarray(jnp.nan, dtype=jnp.float32),
+            }
+        else:
+            mu_scale, mu_diag = curvature_to_scale(H_mu_profiled_diag)
 
         return {
             "r_loc": r_loc,
@@ -823,8 +1052,15 @@ class NBLNObservationModel(LaplaceObservationModel):
         divergence_aborted: bool,
         global_uncertainty: Optional[Dict[str, jnp.ndarray]] = None,
     ) -> LaplaceRunResult:
+        # Round-5 R5-5 fix: splice frozen values back so run_result.globals
+        # carries the FULL params dict (downstream _format_laplace_results
+        # and result-packaging consumers expect every key to be present).
+        params_full = self._splice_frozen(params)
+        # ``stop_gradient``-wrapped entries from _splice_frozen are fine
+        # here because we're outside the autodiff graph at result-
+        # packaging time; the jax tracer simply unwraps them.
         return LaplaceRunResult(
-            globals=params,
+            globals=params_full,
             x_loc=final.latent_loc,
             eta_loc=final.eta_loc,
             final_grad_norms=final.final_grad_norms,
@@ -836,4 +1072,5 @@ class NBLNObservationModel(LaplaceObservationModel):
             stopped_at_step=stopped_at_step,
             divergence_aborted=divergence_aborted,
             global_uncertainty=global_uncertainty or {},
+            frozen_params=self._frozen_params,
         )

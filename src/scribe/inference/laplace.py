@@ -34,6 +34,10 @@ def _run_laplace_inference(
     seed: int,
     informative_priors: Optional[Dict[str, Dict[str, Any]]] = None,
     capture_mode_override: Optional[str] = None,
+    freeze_values: Optional[Dict[str, Dict[str, Any]]] = None,
+    freeze_params: tuple = (),
+    cascade_source: Optional[Any] = None,
+    cascade_source_counts: Optional[jnp.ndarray] = None,
 ) -> ScribeLaplaceResults:
     """Run Laplace inference (PLN or LNM) and package results.
 
@@ -132,6 +136,8 @@ def _run_laplace_inference(
         progress_backend="auto",
         log_progress_lines=laplace_config.log_progress_lines,
         informative_priors=informative_priors,
+        freeze_values=freeze_values,
+        freeze_params=freeze_params,
     )
 
     g = run_result.globals
@@ -187,15 +193,49 @@ def _run_laplace_inference(
         gu = run_result.global_uncertainty
         r_loc_val = g.get("r_loc")
         r_value = pos_forward(r_loc_val) if r_loc_val is not None else None
+
+        # Phase-2 freeze: when params are frozen, compute_global_uncertainty
+        # writes NaN sentinels for r_scale / mu_scale.  Replace with
+        # moment-matched values from cascade_source samples so PPC
+        # paths and other consumers see a usable Normal posterior in
+        # NBLN target coordinate.  Full-fidelity SVI guide is accessed
+        # via cascade_source / get_distributions().
+        r_scale_val = gu.get("r_scale")
+        mu_loc_val = gu.get("mu_loc")
+        mu_scale_val = gu.get("mu_scale")
+        if cascade_source is not None and run_result.frozen_params:
+            r_scale_val, mu_loc_val, mu_scale_val = (
+                _moment_match_frozen_for_nbln(
+                    cascade_source=cascade_source,
+                    cascade_counts=cascade_source_counts,
+                    frozen_params=run_result.frozen_params,
+                    pos_forward=pos_forward,
+                    model_config=run_result.model_config,
+                    r_scale_fallback=r_scale_val,
+                    mu_loc_fallback=mu_loc_val,
+                    mu_scale_fallback=mu_scale_val,
+                )
+            )
+
+        # Round-5 R5-5: cascade fields live only on the bridge-level
+        # result.  `cascade_source` carries the SVI guide for PPC and
+        # `get_distributions()` routing; `cascade_source_counts` caches
+        # counts for amortized SVI sources (set upstream in
+        # api/stages/run_inference.py when freezing is active).
+        # `frozen_params` propagates from run_result so downstream
+        # consumers can identify cascade-bound parameters.
         return ScribeLaplaceResults(
             **common_kwargs,
             x_loc=run_result.x_loc,
             eta_loc=run_result.eta_loc,
             r=r_value,
             r_loc=r_loc_val,
-            r_scale=gu.get("r_scale"),
-            mu_loc=gu.get("mu_loc"),
-            mu_scale=gu.get("mu_scale"),
+            r_scale=r_scale_val,
+            mu_loc=mu_loc_val,
+            mu_scale=mu_scale_val,
+            frozen_params=run_result.frozen_params,
+            cascade_source=cascade_source,
+            cascade_source_counts=cascade_source_counts,
         )
 
     # LNM / LNMVCP: route the per-cell latent (the engine packed it
@@ -243,6 +283,62 @@ def _run_laplace_inference(
         alr_reference_idx=alr_reference_idx,
         **extras,
     )
+
+
+def _moment_match_frozen_for_nbln(
+    *,
+    cascade_source: Any,
+    cascade_counts: Optional[jnp.ndarray],
+    frozen_params: frozenset,
+    pos_forward,
+    model_config: ModelConfig,
+    r_scale_fallback: Optional[jnp.ndarray],
+    mu_loc_fallback: Optional[jnp.ndarray],
+    mu_scale_fallback: Optional[jnp.ndarray],
+) -> tuple:
+    """Moment-match SVI samples into NBLN target coord for r and mu.
+
+    Called at result-packaging time when one or more NBLN parameters
+    were frozen at the SVI MAP during the M-step.  Replaces the
+    NaN sentinels in ``compute_global_uncertainty`` with usable
+    Gaussian summaries so PPC, ``get_distributions``, and other
+    downstream consumers see a coherent ``Normal(loc, scale)`` in
+    NBLN's target coordinate.
+
+    Full SVI-guide fidelity is still available via
+    ``ScribeLaplaceResults.cascade_source.get_distributions()`` /
+    ``.get_posterior_samples()``.  This helper provides the simpler
+    Gaussian summary the existing PPC paths expect.
+    """
+    from scribe.laplace._global_uncertainty import resolve_positive_fns
+
+    _pos_fwd, pos_inv = resolve_positive_fns(model_config)
+
+    # Resolve counts for amortized SVI sources.
+    counts = cascade_counts
+    if counts is None:
+        counts = getattr(cascade_source, "_original_counts", None)
+    sample_kwargs = {"n_samples": 1000, "store_samples": False}
+    if counts is not None:
+        sample_kwargs["counts"] = counts
+    svi_samples = cascade_source.get_posterior_samples(**sample_kwargs)
+
+    r_scale = r_scale_fallback
+    mu_loc = mu_loc_fallback
+    mu_scale = mu_scale_fallback
+
+    if "r" in frozen_params and "r" in svi_samples:
+        r_pos = jnp.asarray(svi_samples["r"])  # (S, G)
+        r_uncon = pos_inv(jnp.maximum(r_pos, 1e-8))
+        r_scale = jnp.std(r_uncon, axis=0, ddof=1).astype(jnp.float32)
+
+    if "mu" in frozen_params and "mu" in svi_samples:
+        mu_pos = jnp.asarray(svi_samples["mu"])  # (S, G)
+        mu_log = jnp.log(jnp.maximum(mu_pos, 1e-8))
+        mu_loc = jnp.mean(mu_log, axis=0).astype(jnp.float32)
+        mu_scale = jnp.std(mu_log, axis=0, ddof=1).astype(jnp.float32)
+
+    return r_scale, mu_loc, mu_scale
 
 
 __all__ = ["_run_laplace_inference"]

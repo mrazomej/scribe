@@ -747,3 +747,233 @@ class TestInformativePriorsIntegration:
         )
         with pytest.raises(ValueError, match="only supported"):
             dispatch_inference(ctx)
+
+
+# =====================================================================
+# Phase-2 freeze (cascade-parameter freeze + gauge-invariant accessors)
+# =====================================================================
+
+
+class TestFrozenCascade:
+    """Phase-2 cascade-parameter-freeze unit tests (NBLN-only).
+
+    Tests cover:
+    - Constructor validation (invalid keys, missing freeze_values entries).
+    - ``uses_capture`` activation by frozen eta (Round-4 R5-1).
+    - ``init_state`` excludes frozen keys from optimizer params and
+      stashes them on ``self._frozen_runtime`` (Round-4 R4 mechanism).
+    - ``aux_data["eta_frozen"]`` is populated when eta is frozen.
+    - ``compute_global_uncertainty`` emits NaN sentinels for frozen
+      scales (Round-5 R5-2).
+    - ``pack_result`` splices frozen values back so ``run_result.globals``
+      carries the full params dict (Round-5 R5-5).
+    - ``get_W_compositional`` / ``get_gauge_diagnostics`` model-aware
+      dispatch (PLN/NBLN project; LNM no-op).
+    """
+
+    def _mc(self, transform: str = "softplus") -> ModelConfig:
+        return ModelConfig(
+            base_model="nbln",
+            parameterization=Parameterization.COUNT_LOGNORMAL,
+            inference_method=InferenceMethod.LAPLACE,
+            positive_transform=transform,
+        )
+
+    # ---- Constructor validation ----
+
+    def test_freeze_rejects_invalid_keys(self):
+        from scribe.laplace._obs_nbln import NBLNObservationModel
+        with pytest.raises(ValueError, match="invalid keys"):
+            NBLNObservationModel(
+                capture_anchor=None,
+                model_config=self._mc(),
+                freeze_params=("bogus",),
+                freeze_values={"bogus": {"loc": jnp.zeros(3)}},
+            )
+
+    def test_freeze_requires_corresponding_freeze_values(self):
+        from scribe.laplace._obs_nbln import NBLNObservationModel
+        with pytest.raises(ValueError, match="freeze_values"):
+            NBLNObservationModel(
+                capture_anchor=None,
+                model_config=self._mc(),
+                freeze_params=("r",),
+                freeze_values=None,
+            )
+        with pytest.raises(ValueError, match="missing 'loc'"):
+            NBLNObservationModel(
+                capture_anchor=None,
+                model_config=self._mc(),
+                freeze_params=("r",),
+                freeze_values={"r": {}},  # missing 'loc'
+            )
+
+    # ---- uses_capture activation ----
+
+    def test_frozen_eta_activates_uses_capture(self):
+        """Round-5 R5-1: uses_capture must include 'eta' in frozen_params."""
+        from scribe.laplace._obs_nbln import NBLNObservationModel
+        N = 4
+        obs = NBLNObservationModel(
+            capture_anchor=None,
+            model_config=self._mc(),
+            freeze_params=("eta",),
+            freeze_values={"eta": {"loc": jnp.full((N,), 0.5)}},
+        )
+        assert obs.uses_capture is True
+        assert obs.freezes_eta is True
+
+    # ---- init_state: frozen keys excluded from optimizer ----
+
+    def test_init_state_excludes_frozen_r_from_params(self):
+        from scribe.laplace._obs_nbln import NBLNObservationModel
+        N, G = 4, 6
+        rng = np.random.default_rng(0)
+        counts = jnp.asarray(rng.integers(0, 10, (N, G)), dtype=jnp.float32)
+        r_loc_frozen = jnp.full((G,), -2.0)
+        obs = NBLNObservationModel(
+            capture_anchor=None,
+            model_config=self._mc(),
+            freeze_params=("r",),
+            freeze_values={"r": {"loc": r_loc_frozen}},
+        )
+        init = obs.init_state(
+            count_data=counts, n_cells=N, n_genes=G, latent_dim=2, seed=0
+        )
+        # r_loc must NOT be in the optimizer's params dict (excluded).
+        assert "r_loc" not in init.params
+        # mu, W, d_loc remain in params (not frozen).
+        assert "mu" in init.params and "W" in init.params and "d_loc" in init.params
+        # Frozen value is stashed on the obs model for splicing.
+        assert "r_loc" in obs._frozen_runtime
+        np.testing.assert_allclose(obs._frozen_runtime["r_loc"], r_loc_frozen)
+
+    def test_init_state_eta_frozen_populates_aux_data(self):
+        from scribe.laplace._obs_nbln import NBLNObservationModel
+        N, G = 4, 6
+        rng = np.random.default_rng(0)
+        counts = jnp.asarray(rng.integers(0, 10, (N, G)), dtype=jnp.float32)
+        eta_loc_frozen = jnp.full((N,), 0.5)
+        obs = NBLNObservationModel(
+            capture_anchor=None,
+            model_config=self._mc(),
+            freeze_params=("eta",),
+            freeze_values={"eta": {"loc": eta_loc_frozen}},
+        )
+        init = obs.init_state(
+            count_data=counts, n_cells=N, n_genes=G, latent_dim=2, seed=0
+        )
+        # aux_data carries the per-cell eta offset for x-only Newton.
+        assert "eta_frozen" in init.aux_data
+        np.testing.assert_allclose(init.aux_data["eta_frozen"], eta_loc_frozen)
+        # eta_loc on the result also populated (PPC reads from it).
+        np.testing.assert_allclose(init.eta_loc, eta_loc_frozen)
+
+    # ---- splice helper ----
+
+    def test_splice_frozen_reconstructs_full_params(self):
+        from scribe.laplace._obs_nbln import NBLNObservationModel
+        N, G = 4, 6
+        rng = np.random.default_rng(0)
+        counts = jnp.asarray(rng.integers(0, 10, (N, G)), dtype=jnp.float32)
+        obs = NBLNObservationModel(
+            capture_anchor=None,
+            model_config=self._mc(),
+            freeze_params=("r",),
+            freeze_values={"r": {"loc": jnp.full((G,), -1.5)}},
+        )
+        init = obs.init_state(
+            count_data=counts, n_cells=N, n_genes=G, latent_dim=2, seed=0
+        )
+        params_full = obs._splice_frozen(init.params)
+        # Full dict includes r_loc (spliced) plus everything else.
+        assert {"mu", "W", "d_loc", "r_loc"} == set(params_full.keys())
+        np.testing.assert_allclose(params_full["r_loc"], jnp.full((G,), -1.5))
+
+    # ---- compute_global_uncertainty: NaN sentinels for frozen ----
+
+    def test_compute_global_uncertainty_emits_nan_for_frozen_r(self):
+        from scribe.laplace._obs_nbln import NBLNObservationModel
+        N, G, k = 6, 5, 2
+        rng = np.random.default_rng(7)
+        counts = jnp.asarray(rng.integers(0, 10, (N, G)), dtype=jnp.float32)
+        mc = self._mc()
+        obs = NBLNObservationModel(
+            capture_anchor=None, model_config=mc,
+            freeze_params=("r",),
+            freeze_values={"r": {"loc": jnp.full((G,), -1.0)}},
+        )
+        init = obs.init_state(
+            count_data=counts, n_cells=N, n_genes=G, latent_dim=k, seed=0
+        )
+        gu = obs.compute_global_uncertainty(
+            params=init.params, latent_loc=init.latent_loc,
+            eta_loc=None, eta_anchor=None, count_data=counts,
+            aux_data=init.aux_data, model_config=mc,
+        )
+        # r_scale is NaN sentinel — authoritative posterior lives at
+        # cascade_source, accessed at get_distributions / PPC time.
+        assert jnp.all(jnp.isnan(gu["r_scale"]))
+        # mu path unaffected — finite scale.
+        assert jnp.all(jnp.isfinite(gu["mu_scale"]))
+
+    # ---- pack_result: splices frozen values into globals ----
+
+    def test_pack_result_includes_frozen_in_globals(self):
+        from scribe.laplace._obs_nbln import NBLNObservationModel
+        from scribe.laplace._em import FinalSweepResult
+        N, G = 4, 6
+        rng = np.random.default_rng(0)
+        counts = jnp.asarray(rng.integers(0, 10, (N, G)), dtype=jnp.float32)
+        r_frozen = jnp.full((G,), -2.0)
+        obs = NBLNObservationModel(
+            capture_anchor=None,
+            model_config=self._mc(),
+            freeze_params=("r",),
+            freeze_values={"r": {"loc": r_frozen}},
+        )
+        init = obs.init_state(
+            count_data=counts, n_cells=N, n_genes=G, latent_dim=2, seed=0
+        )
+        # Fake final-sweep result.
+        x_loc = jnp.zeros((N, G))
+        final = FinalSweepResult(
+            latent_loc=x_loc, eta_loc=None,
+            final_grad_norms=jnp.zeros(N),
+        )
+        run_result = obs.pack_result(
+            params=init.params, final=final,
+            losses=np.zeros(10), n_steps_run=10,
+            model_config=self._mc(), early_stopped=False,
+            best_loss=0.0, stopped_at_step=10, divergence_aborted=False,
+        )
+        # Frozen r_loc must be present in run_result.globals so
+        # _format_laplace_results (which reads g["r_loc"]) doesn't KeyError.
+        assert "r_loc" in run_result.globals
+        np.testing.assert_allclose(run_result.globals["r_loc"], r_frozen)
+        # frozen_params is propagated.
+        assert run_result.frozen_params == frozenset({"r"})
+
+    # ---- gauge-invariant accessors ----
+
+    def test_get_W_compositional_gene_centers_for_NBLN(self):
+        result = _nbln_result(G=8, C=4, k=2, with_uncertainty=False)
+        W_perp = result.get_W_compositional()
+        # Each column of W_perp is gene-centered.
+        col_means = jnp.mean(W_perp, axis=0)
+        np.testing.assert_allclose(
+            np.asarray(col_means), np.zeros_like(np.asarray(col_means)),
+            atol=1e-5,
+        )
+
+    def test_get_gauge_diagnostics_keys_and_values(self):
+        result = _nbln_result(G=8, C=4, k=2, with_uncertainty=False)
+        diag = result.get_gauge_diagnostics()
+        assert set(diag.keys()) == {
+            "W_compositional_norm",
+            "W_all_ones_component_norm",
+            "gauge_contamination_ratio",
+        }
+        assert all(np.isfinite(v) for v in diag.values())
+        # All values non-negative.
+        assert all(v >= 0 for v in diag.values())

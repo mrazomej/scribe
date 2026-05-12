@@ -211,6 +211,14 @@ def fit(
     informative_priors_tau: float = 1.0,
     informative_priors_n_samples: int = 1000,
     informative_priors_verbose: bool = True,
+    # Phase-2 freeze: which NBLN globals are fixed at the SVI cascade's
+    # MAP rather than refined during the M-step.  Default ("r", "eta")
+    # eliminates the rigid-translation gauge degeneracy and yields the
+    # cleanest cross-gene correlation structure in W.  Pass () to
+    # disable freezing entirely (Phase-1 soft cascade only).  See
+    # paper/_diffexp_nbln_robustness.qmd and the Cascade-parameter
+    # freeze subsection in paper/_nb_lognormal.qmd for the rationale.
+    informative_priors_freeze: tuple = ("r", "eta"),
     # Float64 precision -- defaults to True for MCMC, False for SVI/VAE
     enable_x64: Optional[bool] = None,
     # Power user: explicit configs override above
@@ -903,6 +911,7 @@ def fit(
             informative_priors_tau=informative_priors_tau,
             informative_priors_n_samples=informative_priors_n_samples,
             informative_priors_verbose=informative_priors_verbose,
+            informative_priors_freeze=informative_priors_freeze,
             enable_x64=enable_x64,
             model_config=model_config,
             inference_config=inference_config,

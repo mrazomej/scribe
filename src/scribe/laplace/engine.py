@@ -63,6 +63,8 @@ class LaplaceInferenceEngine:
         progress_backend: ProgressBackendName = "auto",
         log_progress_lines: bool = False,
         informative_priors: Optional[Dict[str, Dict[str, Any]]] = None,
+        freeze_values: Optional[Dict[str, Dict[str, Any]]] = None,
+        freeze_params: Tuple[str, ...] = (),
     ) -> LaplaceRunResult:
         """Run Laplace-mode training for any supported observation model.
 
@@ -128,6 +130,11 @@ class LaplaceInferenceEngine:
                 capture_anchor=capture_anchor,
                 model_config=model_config,
                 informative_priors=informative_priors,
+                freeze_values=freeze_values,
+                freeze_params=freeze_params,
+                max_step=float(
+                    getattr(laplace_config, "newton_max_step", 5.0)
+                ),
             )
         elif bm in ("lnm", "lnmvcp"):
             from ._obs_lnm import LNMObservationModel

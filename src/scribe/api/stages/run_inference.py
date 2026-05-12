@@ -102,6 +102,53 @@ def dispatch_inference(ctx: FitContext) -> None:
             verbose=bool(ctx.kwargs.get("informative_priors_verbose", True)),
         )
 
+    # --- Phase 2 freeze: extract point estimates + resolve cascade source ---
+    # The freeze API is activated only when a cascade is supplied.  When
+    # `informative_priors_from is None`, normalize freeze to empty so a
+    # plain Laplace fit (no cascade) is unaffected by the default-on
+    # `informative_priors_freeze=("r", "eta")` kwarg (Round-4 R5-2 fix).
+    freeze_values = None
+    freeze_params: tuple = ()
+    cascade_source = None
+    cascade_source_counts = None
+    if informative_priors_from is not None:
+        # Read and normalize the freeze tuple.  Accept any iterable
+        # of {"r", "mu", "eta"}; coerce to a tuple of strings.
+        raw_freeze = ctx.kwargs.get("informative_priors_freeze", ("r", "eta"))
+        if raw_freeze is None:
+            freeze_params = ()
+        else:
+            freeze_params = tuple(raw_freeze)
+        # Build the freeze-values bundle from SVI's get_map().
+        if freeze_params:
+            from ...laplace.priors import freeze_values_from_results
+            freeze_values = freeze_values_from_results(
+                informative_priors_from,
+                target_positive_transform=ctx.model_config.positive_transform,
+                target_n_genes=ctx.n_genes,
+                target_n_cells=ctx.n_cells,
+                target_gene_names=target_gene_names,
+                target_gene_mask=getattr(ctx, "_gene_coverage_mask", None),
+                source_counts=ctx.count_data,
+                freeze_params=freeze_params,
+                verbose=bool(
+                    ctx.kwargs.get("informative_priors_verbose", True)
+                ),
+            )
+        # Embed the SVI results object so PPC and get_distributions can
+        # consult its guide directly for frozen parameters.  Per Round-5
+        # R5-6: store counts on the Laplace result (cascade_source_counts)
+        # rather than mutating cascade_source._original_counts.
+        cascade_source = informative_priors_from
+        if hasattr(cascade_source, "_uses_amortized_capture") and \
+                cascade_source._uses_amortized_capture():
+            existing_counts = getattr(cascade_source, "_original_counts", None)
+            if existing_counts is None:
+                # Source is amortized but didn't cache its training counts;
+                # cache the target counts (var-name identity verified by
+                # priors_from_results above) so pickle-then-PPC works.
+                cascade_source_counts = ctx.count_data
+
     results = _run_inference(
         ctx.inference_config.method,
         model_config=ctx.model_config,
@@ -117,5 +164,9 @@ def dispatch_inference(ctx: FitContext) -> None:
         enable_x64=ctx.effective_x64,
         informative_priors=informative_priors,
         capture_mode_override=capture_mode_override,
+        freeze_values=freeze_values,
+        freeze_params=freeze_params,
+        cascade_source=cascade_source,
+        cascade_source_counts=cascade_source_counts,
     )
     ctx.results = results

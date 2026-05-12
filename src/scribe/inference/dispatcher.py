@@ -185,6 +185,10 @@ def _laplace_handler(
     dataset_indices: Optional[jnp.ndarray] = None,
     informative_priors: Optional[dict] = None,
     capture_mode_override: Optional[str] = None,
+    freeze_values: Optional[dict] = None,
+    freeze_params: tuple = (),
+    cascade_source: Optional[Any] = None,
+    cascade_source_counts: Optional[jnp.ndarray] = None,
 ) -> Any:
     """Handler for Laplace-mode inference.
 
@@ -217,6 +221,10 @@ def _laplace_handler(
         seed=seed,
         informative_priors=informative_priors,
         capture_mode_override=capture_mode_override,
+        freeze_values=freeze_values,
+        freeze_params=freeze_params,
+        cascade_source=cascade_source,
+        cascade_source_counts=cascade_source_counts,
     )
 
 
@@ -249,6 +257,10 @@ def _run_inference(
     enable_x64: bool = False,
     informative_priors: Optional[dict] = None,
     capture_mode_override: Optional[str] = None,
+    freeze_values: Optional[dict] = None,
+    freeze_params: tuple = (),
+    cascade_source: Optional[Any] = None,
+    cascade_source_counts: Optional[jnp.ndarray] = None,
 ) -> Any:
     """Route inference execution to the appropriate handler.
 
@@ -362,12 +374,15 @@ def _run_inference(
     )
 
     # Per-method conditional forwarding: the Laplace-specific kwargs
-    # ``informative_priors`` and ``capture_mode_override`` are only
-    # added when the method is Laplace.  SVI / MCMC / VAE handlers
-    # never see these and their signatures remain untouched.
+    # are only added when the method is Laplace.  SVI / MCMC / VAE
+    # handlers never see these and their signatures remain untouched.
     if inference_method == InferenceMethod.LAPLACE:
         handler_kwargs["informative_priors"] = informative_priors
         handler_kwargs["capture_mode_override"] = capture_mode_override
+        handler_kwargs["freeze_values"] = freeze_values
+        handler_kwargs["freeze_params"] = freeze_params
+        handler_kwargs["cascade_source"] = cascade_source
+        handler_kwargs["cascade_source_counts"] = cascade_source_counts
 
     if enable_x64:
         import jax

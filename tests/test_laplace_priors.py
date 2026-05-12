@@ -500,3 +500,140 @@ def test_verbose_false_silences_progress(capsys):
     )
     captured = capsys.readouterr().out
     assert "[scribe.laplace.priors]" not in captured
+
+
+# =====================================================================
+# Phase-2 freeze_values_from_results
+# =====================================================================
+
+
+class _FakeSVIWithGetMap(_FakeSVIResults):
+    """SVI stub that also implements get_map() for freeze tests."""
+
+    def __init__(self, n_genes, n_cells, samples, var_names, mu_map, r_map,
+                 eta_map=None, amortized=False, original_counts=None,
+                 requires_counts=False):
+        super().__init__(
+            n_genes=n_genes, n_cells=n_cells, samples=samples,
+            var_names=var_names, amortized=amortized,
+            original_counts=original_counts,
+            requires_counts=requires_counts,
+        )
+        self._mu_map = mu_map
+        self._r_map = r_map
+        self._eta_map = eta_map
+
+    def get_map(self, counts=None, verbose=True, **_kwargs):
+        if self._requires_counts and counts is None:
+            raise RuntimeError(
+                "Amortized SVI requires counts for get_map(); none passed."
+            )
+        out = {"r": self._r_map, "mu": self._mu_map}
+        if self._eta_map is not None:
+            out["eta_capture"] = self._eta_map
+        return out
+
+
+def test_freeze_values_from_results_basic():
+    """Extracts r, mu, eta in NBLN target coordinates from SVI MAP."""
+    from scribe.laplace.priors import freeze_values_from_results
+
+    G, N = 4, 3
+    var_names = np.array([f"g{i}" for i in range(G)])
+    rng = np.random.default_rng(0)
+    samples = _make_basic_results(G=G, N=N, var_names=var_names)._samples
+    mu_map = jnp.asarray(rng.uniform(0.5, 5.0, G).astype(np.float32))
+    r_map = jnp.asarray(rng.uniform(0.5, 3.0, G).astype(np.float32))
+    eta_map = jnp.asarray(rng.uniform(0.2, 0.8, N).astype(np.float32))
+    results = _FakeSVIWithGetMap(
+        n_genes=G, n_cells=N, samples=samples, var_names=var_names,
+        mu_map=mu_map, r_map=r_map, eta_map=eta_map,
+    )
+    fv = freeze_values_from_results(
+        results,
+        target_positive_transform="softplus",
+        target_n_genes=G, target_n_cells=N,
+        target_gene_names=var_names,
+        freeze_params=("r", "mu", "eta"),
+        verbose=False,
+    )
+    assert set(fv.keys()) == {"r", "mu", "eta"}
+    # r is in unconstrained softplus-inverse space; mu in log space;
+    # eta in identity (raw value).
+    from scribe.laplace._global_uncertainty import _inverse_softplus
+    np.testing.assert_allclose(
+        fv["r"]["loc"], _inverse_softplus(jnp.maximum(r_map, 1e-8)),
+        atol=1e-5,
+    )
+    np.testing.assert_allclose(
+        fv["mu"]["loc"], jnp.log(jnp.maximum(mu_map, 1e-8)), atol=1e-5,
+    )
+    np.testing.assert_allclose(fv["eta"]["loc"], eta_map, atol=1e-5)
+
+
+def test_freeze_values_subset_only():
+    """Requesting subset of params returns only those keys."""
+    from scribe.laplace.priors import freeze_values_from_results
+
+    G, N = 4, 3
+    var_names = np.array([f"g{i}" for i in range(G)])
+    samples = _make_basic_results(G=G, N=N, var_names=var_names)._samples
+    results = _FakeSVIWithGetMap(
+        n_genes=G, n_cells=N, samples=samples, var_names=var_names,
+        mu_map=jnp.ones(G), r_map=jnp.ones(G), eta_map=jnp.full(N, 0.5),
+    )
+    fv = freeze_values_from_results(
+        results,
+        target_positive_transform="exp",
+        target_n_genes=G, target_n_cells=N,
+        target_gene_names=var_names,
+        freeze_params=("r",),
+        verbose=False,
+    )
+    assert set(fv.keys()) == {"r"}
+
+
+def test_freeze_values_rejects_invalid_keys():
+    """Invalid freeze key raises ValueError."""
+    from scribe.laplace.priors import freeze_values_from_results
+
+    G, N = 4, 3
+    var_names = np.array([f"g{i}" for i in range(G)])
+    samples = _make_basic_results(G=G, N=N, var_names=var_names)._samples
+    results = _FakeSVIWithGetMap(
+        n_genes=G, n_cells=N, samples=samples, var_names=var_names,
+        mu_map=jnp.ones(G), r_map=jnp.ones(G), eta_map=jnp.full(N, 0.5),
+    )
+    with pytest.raises(ValueError, match="invalid keys"):
+        freeze_values_from_results(
+            results,
+            target_positive_transform="exp",
+            target_n_genes=G, target_n_cells=N,
+            target_gene_names=var_names,
+            freeze_params=("bogus",),
+            verbose=False,
+        )
+
+
+def test_freeze_values_amortized_requires_counts():
+    """Amortized SVI source without counts/cached fields raises."""
+    from scribe.laplace.priors import freeze_values_from_results
+
+    G, N = 4, 3
+    var_names = np.array([f"g{i}" for i in range(G)])
+    samples = _make_basic_results(G=G, N=N, var_names=var_names)._samples
+    results = _FakeSVIWithGetMap(
+        n_genes=G, n_cells=N, samples=samples, var_names=var_names,
+        mu_map=jnp.ones(G), r_map=jnp.ones(G), eta_map=jnp.full(N, 0.5),
+        amortized=True, requires_counts=True,
+    )
+    # No source_counts AND no _original_counts on results → refuse.
+    with pytest.raises(ValueError, match="amortized capture"):
+        freeze_values_from_results(
+            results,
+            target_positive_transform="exp",
+            target_n_genes=G, target_n_cells=N,
+            target_gene_names=var_names,
+            freeze_params=("r",),
+            verbose=False,
+        )

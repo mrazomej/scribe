@@ -356,6 +356,7 @@ def newton_step_joint(
     eta_anchor: jnp.ndarray,
     sigma_M: float,
     damping: float = 1e-4,
+    max_step: float = 5.0,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """One joint Newton step on ``(x, η)`` for NB-LogNormal.
 
@@ -442,11 +443,13 @@ def newton_step_joint(
         jnp.max(jnp.abs(g_x)), jnp.abs(g_eta)
     )
     # Step-size cap: if the proposed step is huge in either block,
-    # scale the whole step down to ``MAX_STEP``.  Same rationale as
-    # the PLN kernel.
-    _MAX_STEP = 5.0
+    # scale the whole step down to ``max_step``.  Default 5.0 matches
+    # the PLN-era safeguard.  Exposed as a config knob
+    # (``LaplaceConfig.newton_max_step``) — raise it (e.g. 20-50) when
+    # the rigid-translation gauge is structurally pinned (cascade
+    # freeze on η) and Newton can take larger steps safely.
     step_norm = jnp.maximum(jnp.max(jnp.abs(delta_x)), jnp.abs(delta_eta))
-    scale = jnp.minimum(1.0, _MAX_STEP / jnp.maximum(step_norm, 1e-12))
+    scale = jnp.minimum(1.0, max_step / jnp.maximum(step_norm, 1e-12))
     delta_x = delta_x * scale
     delta_eta = delta_eta * scale
     eta_new = eta + delta_eta
@@ -468,6 +471,7 @@ def laplace_newton_loop(
     sigma_M: float,
     n_iters: int,
     damping: float = 1e-4,
+    max_step: float = 5.0,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Run ``n_iters`` Newton steps on ``(x, η)`` for one cell.
 
@@ -488,7 +492,7 @@ def laplace_newton_loop(
     def step(carry, _):
         x_, eta_, _grad = carry
         x_new, eta_new, grad_norm = newton_step_joint(
-            x_, eta_, u, mu, W, d, r, eta_anchor, sigma_M, damping
+            x_, eta_, u, mu, W, d, r, eta_anchor, sigma_M, damping, max_step,
         )
         return (x_new, eta_new, grad_norm), None
 
@@ -524,7 +528,7 @@ def laplace_newton_loop(
 # code path passes a broadcast ``jnp.full((B,), sigma_M)``.
 laplace_newton_batch = jax.vmap(
     laplace_newton_loop,
-    in_axes=(0, 0, 0, None, None, None, None, 0, 0, None, None),
+    in_axes=(0, 0, 0, None, None, None, None, 0, 0, None, None, None),
 )
 
 
@@ -541,6 +545,7 @@ def newton_step_x_only(
     d: jnp.ndarray,
     r: jnp.ndarray,
     damping: float = 1e-4,
+    max_step: float = 5.0,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Single Newton step on ``x`` only (no capture anchor).
 
@@ -566,9 +571,9 @@ def newton_step_x_only(
 
     delta_x = _solve_A(factors, g_x)
     grad_inf_norm = jnp.max(jnp.abs(g_x))
-    _MAX_STEP = 5.0
+    # Step-size cap (configurable via LaplaceConfig.newton_max_step).
     step_norm = jnp.max(jnp.abs(delta_x))
-    scale = jnp.minimum(1.0, _MAX_STEP / jnp.maximum(step_norm, 1e-12))
+    scale = jnp.minimum(1.0, max_step / jnp.maximum(step_norm, 1e-12))
     return x + delta_x * scale, grad_inf_norm
 
 
@@ -581,12 +586,15 @@ def laplace_newton_loop_x_only(
     r: jnp.ndarray,
     n_iters: int,
     damping: float = 1e-4,
+    max_step: float = 5.0,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Run ``n_iters`` Newton steps on ``x`` for one cell (no capture)."""
 
     def step(carry, _):
         x_, _grad = carry
-        x_new, grad_norm = newton_step_x_only(x_, u, mu, W, d, r, damping)
+        x_new, grad_norm = newton_step_x_only(
+            x_, u, mu, W, d, r, damping, max_step,
+        )
         return (x_new, grad_norm), None
 
     init = (x_init, jnp.asarray(jnp.inf, dtype=x_init.dtype))
@@ -602,7 +610,167 @@ def laplace_newton_loop_x_only(
 
 laplace_newton_batch_x_only = jax.vmap(
     laplace_newton_loop_x_only,
-    in_axes=(0, 0, None, None, None, None, None, None),
+    in_axes=(0, 0, None, None, None, None, None, None, None),
+)
+
+
+# =====================================================================
+# x-only-with-offset variant (capture frozen at NBVCP MAP)
+# =====================================================================
+#
+# When the SVI-cascade `informative_priors_freeze` includes "eta", the
+# per-cell capture offset is pinned at the SVI source's MAP and is no
+# longer a Newton-optimized latent.  The model effectively becomes
+# x-only with a fixed per-cell offset:
+#
+#     log_rate_cg = x_cg − η_offset_c.
+#
+# The Newton step is identical to the no-capture x-only path EXCEPT the
+# data-side NB factors are evaluated at the offset-shifted log_rate.
+# No η block in the Hessian (η is constant), so no rigid-translation
+# gauge degeneracy — the joint (x, η) inverse collapses to a clean
+# x-only inverse.
+
+
+def newton_step_x_only_offset(
+    x: jnp.ndarray,
+    u: jnp.ndarray,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    r: jnp.ndarray,
+    eta_offset: jnp.ndarray,
+    damping: float = 1e-4,
+    max_step: float = 5.0,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Single Newton step on ``x`` with fixed ``η_offset``.
+
+    The NB factors are evaluated at the shifted log-rate
+    ``log_rate = x − η_offset``; the MVN prior on ``x`` is unchanged
+    (the prior is on the latent log-rate, not on the observable
+    log_rate).  No η Newton block; no rigid-translation gauge.
+
+    Parameters
+    ----------
+    x : jnp.ndarray, shape (G,)
+        Current iterate of the latent log-rate.
+    u : jnp.ndarray, shape (G,)
+        Observed counts for this cell.
+    mu, W, d, r
+        Globals (same as the no-offset x-only path).
+    eta_offset : jnp.ndarray, scalar
+        Fixed per-cell capture offset.  When zero, this path is
+        identical to :func:`newton_step_x_only`.
+    damping : float
+        Tikhonov damping on ``A``.
+
+    Returns
+    -------
+    x_new : jnp.ndarray, shape (G,)
+    grad_inf_norm : jnp.ndarray, scalar
+    """
+    log_rate = x - eta_offset
+    nb = _nb_factors(log_rate, u, r)
+    a = nb["a"]
+    one_minus_p = nb["one_minus_p"]
+
+    factors = _woodbury_factors(W, d, a, damping)
+
+    inv_d = 1.0 / d
+    diff = x - mu
+    sigma_inv_diff = inv_d * diff - inv_d * (
+        W
+        @ jax.scipy.linalg.cho_solve(
+            (factors["L_K"], True), W.T @ (inv_d * diff)
+        )
+    )
+    # NB gradient at the shifted log_rate; sign on x is +1 (chain rule
+    # through ``log_rate = x − η_offset`` has ∂ log_rate / ∂ x = 1).
+    g_x = u - (u + r) * one_minus_p - sigma_inv_diff
+
+    delta_x = _solve_A(factors, g_x)
+    grad_inf_norm = jnp.max(jnp.abs(g_x))
+    # Step-size cap (configurable via LaplaceConfig.newton_max_step).
+    # The x-only-with-offset path has no rigid-translation gauge null
+    # direction (η is fixed); raising max_step to 20-50 is safe and
+    # often necessary for x to converge in finite outer iterations on
+    # high-count datasets.
+    step_norm = jnp.max(jnp.abs(delta_x))
+    scale = jnp.minimum(1.0, max_step / jnp.maximum(step_norm, 1e-12))
+    return x + delta_x * scale, grad_inf_norm
+
+
+def laplace_newton_loop_x_only_offset(
+    x_init: jnp.ndarray,
+    u: jnp.ndarray,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    r: jnp.ndarray,
+    eta_offset: jnp.ndarray,
+    n_iters: int,
+    damping: float = 1e-4,
+    max_step: float = 5.0,
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """``n_iters`` Newton steps on ``x`` with fixed ``η_offset`` for one cell.
+
+    Returns ``(x_map, final_grad_norm, log_det_neg_H)``.  The log-det
+    is the negative-x-Hessian at the converged iterate, with NB factors
+    evaluated at the shifted log_rate.
+    """
+
+    def step(carry, _):
+        x_, _grad = carry
+        x_new, grad_norm = newton_step_x_only_offset(
+            x_, u, mu, W, d, r, eta_offset, damping, max_step,
+        )
+        return (x_new, grad_norm), None
+
+    init = (x_init, jnp.asarray(jnp.inf, dtype=x_init.dtype))
+    (x_final, final_grad), _ = jax.lax.scan(
+        step, init, None, length=n_iters
+    )
+
+    log_rate_final = x_final - eta_offset
+    nb_final = _nb_factors(log_rate_final, u, r)
+    factors = _woodbury_factors(W, d, nb_final["a"], damping)
+    log_det_neg_H = _log_det_A(factors)
+    return x_final, final_grad, log_det_neg_H
+
+
+# Vmapped: per-cell axes are 0 for x_init, u, eta_offset; globals
+# (mu, W, d, r, n_iters, damping) shared.
+laplace_newton_batch_x_only_offset = jax.vmap(
+    laplace_newton_loop_x_only_offset,
+    in_axes=(0, 0, None, None, None, None, 0, None, None, None),
+)
+
+
+def laplace_log_det_neg_H_x_only_offset(
+    x_map: jnp.ndarray,
+    eta_offset: jnp.ndarray,
+    u: jnp.ndarray,
+    r: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+) -> jnp.ndarray:
+    """``log det(−H_x)`` at the MAP for the x-only-with-offset path.
+
+    Used by the outer Laplace ELBO so the determinant correction
+    propagates gradients through the globals ``(W, d, r, μ)``.  No η
+    block — log det is just ``log det A`` where
+    ``A = diag(a) + Σ⁻¹`` with ``a = (u+r) p (1−p)`` evaluated at
+    ``log_rate = x − η_offset``.
+    """
+    log_rate = x_map - eta_offset
+    nb = _nb_factors(log_rate, u, r)
+    factors = _woodbury_factors(W, d, nb["a"], damping=0.0)
+    return _log_det_A(factors)
+
+
+laplace_log_det_neg_H_batch_x_only_offset = jax.vmap(
+    laplace_log_det_neg_H_x_only_offset,
+    in_axes=(0, 0, 0, None, None, None),
 )
 
 

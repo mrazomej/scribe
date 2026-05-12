@@ -179,6 +179,35 @@ class ScribeLaplaceResults(
     n_obs: Optional[int] = None
     n_vars: Optional[int] = None
 
+    # --- Phase-2 cascade-freeze fields (Round-5 R5-5 contract) ----
+    #
+    # ``frozen_params`` is the subset of ``{"r", "mu", "eta"}`` that
+    # was excluded from the optax optimizer during the M-step.  Their
+    # values came from the SVI source's MAP via ``freeze_values_from_results``.
+    # Downstream consumers (``get_distributions``, PPC sampling, the
+    # gauge-contamination diagnostic) check this set to decide whether
+    # to route through ``cascade_source``.  Empty frozenset for plain
+    # Laplace fits with no cascade.
+    frozen_params: frozenset = field(default_factory=frozenset)
+    #
+    # ``cascade_source`` holds the full ``ScribeSVIResults`` of the SVI
+    # source when a cascade was active.  ``get_distributions()`` for
+    # frozen parameters moment-matches samples from this guide in NBLN
+    # target coordinate; PPC samples for frozen parameters route through
+    # the guide directly for full-fidelity predictive sampling.
+    # ``None`` for plain Laplace fits.
+    cascade_source: Optional[Any] = None
+    #
+    # ``cascade_source_counts`` caches the count matrix needed for
+    # amortized-capture SVI sources to sample (the encoder evaluates on
+    # counts at sample time).  Set by the run-inference stage when the
+    # cascade source is amortized and its own ``_original_counts`` field
+    # is missing — populated from the target's ``ctx.count_data`` after
+    # var-name identity verification.  ``None`` otherwise; PPC then
+    # reads ``cascade_source._original_counts`` directly.  Storing here
+    # avoids mutating the user's SVI result.
+    cascade_source_counts: Optional[jnp.ndarray] = None
+
     _gene_coverage: Optional[float] = None
     _gene_coverage_mask: Optional[np.ndarray] = None
     _excluded_gene_names: Optional[List[str]] = None

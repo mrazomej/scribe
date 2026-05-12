@@ -87,7 +87,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 import jax
@@ -179,6 +179,11 @@ class LaplaceRunResult:
     stopped_at_step: int
     divergence_aborted: bool
     global_uncertainty: Dict[str, jnp.ndarray]
+    # Phase-2 freeze: subset of {"r", "mu", "eta"} the obs model
+    # excluded from the optimizer.  Read by ``_format_laplace_results``
+    # so the final ``ScribeLaplaceResults`` carries the same marker.
+    # Empty frozenset for non-NBLN base models and for unfrozen fits.
+    frozen_params: frozenset = field(default_factory=frozenset)
 
 
 @dataclass

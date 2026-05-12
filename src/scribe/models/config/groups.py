@@ -1442,6 +1442,39 @@ class LaplaceConfig(BaseModel):
             "without biasing the reported ELBO."
         ),
     )
+    newton_max_step: float = Field(
+        5.0,
+        gt=0,
+        description=(
+            "Per-iteration step-size cap on the Newton update. If the "
+            "raw Newton step ``δ = A⁻¹ g`` proposes any coordinate "
+            "with ``|δ_g| > newton_max_step``, the entire step is "
+            "scaled down so ``max_g |δ_g| ≤ newton_max_step``.  This "
+            "is a *vector-norm cap* (one outlier coordinate throttles "
+            "the whole G-dim update for that cell).\n\n"
+            "Default 5.0 is conservative and matches the historical "
+            "PLN-era safeguard against rigid-translation gauge "
+            "overshoot in the joint (x, η) Newton path.  For the "
+            "Phase-2 cascade-freeze x-only-with-offset path "
+            "(``informative_priors_freeze`` includes ``\"eta\"``), the "
+            "rigid-translation gauge is structurally pinned and the "
+            "Newton problem is strictly log-concave with no "
+            "overshoot risk — raising this to 20-50 lets x converge "
+            "in many fewer iterations.\n\n"
+            "Symptoms that suggest raising this knob:\n"
+            "- Per-cell ``x max`` gradient plateaus in the 10s or "
+            "100s after a substantial fraction of training and "
+            "doesn't decrease (steady-state non-convergence rather "
+            "than slow convergence).\n"
+            "- The same gradient magnitudes are observed at multiple "
+            "outer steps (suggests the cap is binding every step).\n\n"
+            "Symptoms that suggest LOWERING this knob:\n"
+            "- Newton-step overshoot warnings or NaN gradients on "
+            "pathological cells.\n"
+            "- Loss climb-from-min divergence guard firing early in "
+            "training."
+        ),
+    )
     optimizer: Optional[Any] = Field(
         None,
         description="Pre-built NumPyro optimizer for outer-loop SGD.",

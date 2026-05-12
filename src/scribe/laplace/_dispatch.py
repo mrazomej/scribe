@@ -7,13 +7,120 @@ model. Dispatch is centralized here so callers can interact with a single
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import jax.numpy as jnp
+import numpy as np
 
 from ..stats.distributions import LowRankPoissonLogNormal
 from ._global_uncertainty import resolve_numpyro_transform, resolve_positive_fns
 from ._results_shared import _base_model
+
+
+# =====================================================================
+# Frozen-parameter distribution helpers (Phase-2 R5-2 / R5-3 / R5-5).
+# =====================================================================
+#
+# When a Phase-2 cascade-freeze is active, the NBLN result's r_scale /
+# mu_scale fields are NaN sentinels (the post-fit profiled Hessian
+# computation was skipped for frozen keys).  Authoritative posterior
+# information lives on the embedded `cascade_source` SVI results
+# object.  These helpers draw samples from the cascade source and
+# moment-match in NBLN's target coordinate to construct distribution
+# objects for `get_distributions()`.  PPC sampling uses the raw
+# samples directly (full SVI fidelity) — see `_sampling.py`.
+
+
+def _resolve_cascade_counts(
+    cascade,
+    cascade_counts: Optional[jnp.ndarray],
+) -> Optional[jnp.ndarray]:
+    """Resolve the counts to pass to amortized SVI sampling.
+
+    Priority: the dedicated cache field on the Laplace result
+    (``cascade_source_counts``), falling back to the SVI source's own
+    ``_original_counts`` field.  Returns ``None`` when the SVI source
+    is non-amortized and doesn't need counts.
+    """
+    if cascade_counts is not None:
+        return cascade_counts
+    return getattr(cascade, "_original_counts", None)
+
+
+def _nbln_frozen_distributions(
+    result,
+    frozen: frozenset,
+    cascade,
+    cascade_counts: Optional[jnp.ndarray],
+    n_samples: int = 1000,
+) -> Dict[str, Any]:
+    """Build moment-matched Distributions for frozen NBLN parameters.
+
+    Routing per parameter (Round-4 walkback locked in Round-5):
+
+    - **r**: SVI samples are positive; transform to NBLN unconstrained
+      space via ``positive_transform`` inverse, fit per-gene Normal,
+      wrap unconstrained as ``Normal.to_event(1)`` and constrained
+      as ``TransformedDistribution(Normal, positive_transform)``.
+    - **mu**: SVI samples are positive NB means; transform via
+      ``jnp.log`` (NBLN ``mu`` is real-valued log-rate, no positive
+      transform applies); return ``Normal.to_event(1)``.
+    - **eta**: SVI samples are already in ``[0, ∞)`` (NBLN target
+      coord); return ``TruncatedNormal(loc, scale, low=0.0)`` to keep
+      support consistent with NBLN's existing TruncatedNormal η prior.
+    """
+    import numpyro.distributions as dist
+    from ..models.config import ModelConfig  # noqa: F401  (typing only)
+
+    # Resolve transforms once.
+    target_pos_transform = resolve_numpyro_transform(result.model_config)
+    pos_fwd, pos_inv = resolve_positive_fns(result.model_config)
+
+    # Draw SVI samples (amortized branch handles counts internally).
+    counts = _resolve_cascade_counts(cascade, cascade_counts)
+    sample_kwargs = {"n_samples": int(n_samples), "store_samples": False}
+    if counts is not None:
+        sample_kwargs["counts"] = counts
+    svi_samples = cascade.get_posterior_samples(**sample_kwargs)
+
+    out: Dict[str, Any] = {}
+
+    if "r" in frozen and "r" in svi_samples:
+        r_pos = jnp.asarray(svi_samples["r"])  # (S, G)
+        r_uncon = pos_inv(jnp.maximum(r_pos, 1e-8))
+        r_loc_mm = jnp.mean(r_uncon, axis=0)
+        r_scale_mm = jnp.std(r_uncon, axis=0, ddof=1)
+        out["r_unconstrained"] = dist.Normal(
+            r_loc_mm, r_scale_mm
+        ).to_event(1)
+        out["r"] = dist.TransformedDistribution(
+            dist.Normal(r_loc_mm, r_scale_mm).to_event(1),
+            target_pos_transform,
+        )
+
+    if "mu" in frozen and "mu" in svi_samples:
+        mu_pos = jnp.asarray(svi_samples["mu"])  # (S, G)
+        mu_log = jnp.log(jnp.maximum(mu_pos, 1e-8))
+        mu_loc_mm = jnp.mean(mu_log, axis=0)
+        mu_scale_mm = jnp.std(mu_log, axis=0, ddof=1)
+        # NBLN mu is real-valued log-rate; no positive_transform.
+        out["mu"] = dist.Normal(mu_loc_mm, mu_scale_mm).to_event(1)
+
+    if "eta" in frozen and "eta_capture" in svi_samples:
+        eta_samples = jnp.asarray(svi_samples["eta_capture"])  # (S, N)
+        eta_loc_mm = jnp.mean(eta_samples, axis=0)
+        eta_scale_mm = jnp.std(eta_samples, axis=0, ddof=1)
+        # Support [0, ∞): TruncatedNormal matches NBLN's existing η prior.
+        out["eta_capture"] = dist.TruncatedNormal(
+            eta_loc_mm, eta_scale_mm, low=0.0
+        )
+        # p_capture = exp(-eta) is bounded in (0, 1]; expose as a Delta
+        # at the MAP for backward compatibility (the cascade's
+        # posterior on p_capture is implicit in the eta TruncatedNormal).
+        if result.eta_loc is not None:
+            out["p_capture"] = dist.Delta(jnp.exp(-result.eta_loc))
+
+    return out
 
 
 class DispatchResultsMixin:
@@ -126,6 +233,14 @@ class DispatchResultsMixin:
                 out["mu_loc"] = self.mu_loc
             if bm == "nbln" and self.mu_scale is not None:
                 out["mu_scale"] = self.mu_scale
+            # Phase-2 cascade-freeze flags so callers can identify
+            # cascade-bound parameters.  Always present for NBLN; values
+            # come from the frozen_params frozenset on the result.
+            if bm == "nbln":
+                frozen = getattr(self, "frozen_params", frozenset())
+                out["r_frozen"] = "r" in frozen
+                out["mu_frozen"] = "mu" in frozen
+                out["eta_frozen"] = "eta" in frozen
             return out
 
         if bm in ("lnm", "lnmvcp"):
@@ -219,7 +334,28 @@ class DispatchResultsMixin:
                     loc=self.mu, cov_factor=self.W, cov_diag=self.d
                 )
             if bm == "nbln":
-                if self.r_loc is not None and self.r_scale is not None:
+                # Phase-2 cascade-freeze: when a parameter is frozen,
+                # NBLN's profiled-Hessian r_scale/mu_scale is NaN (Round-5
+                # R5-2 sentinel).  Route through cascade_source's SVI
+                # posterior samples and moment-match in NBLN target coord.
+                frozen = getattr(self, "frozen_params", frozenset())
+                cascade = getattr(self, "cascade_source", None)
+                cascade_counts = getattr(
+                    self, "cascade_source_counts", None
+                )
+                if frozen and cascade is not None:
+                    out.update(
+                        _nbln_frozen_distributions(
+                            self, frozen, cascade, cascade_counts,
+                        )
+                    )
+
+                # Non-frozen r path: post-fit Laplace Normal.
+                if (
+                    "r" not in frozen
+                    and self.r_loc is not None
+                    and self.r_scale is not None
+                ):
                     # Unconstrained r posterior: independent Normal
                     # per gene.
                     out["r_unconstrained"] = dist.Normal(
@@ -230,19 +366,30 @@ class DispatchResultsMixin:
                         dist.Normal(self.r_loc, self.r_scale).to_event(1),
                         resolve_numpyro_transform(self.model_config),
                     )
-                elif self.r is not None:
+                elif "r" not in frozen and self.r is not None:
                     out["r"] = dist.Delta(self.r)
-                # NBLN ``mu`` posterior: Normal in log-rate space.  Unlike
-                # ``r``, ``mu`` is already real-valued in NBLN's coordinate
-                # system (it's the latent log-rate prior mean), so no
-                # transform applies.  The Normal is returned directly.
-                if self.mu_loc is not None and self.mu_scale is not None:
+
+                # Non-frozen mu path.
+                if (
+                    "mu" not in frozen
+                    and self.mu_loc is not None
+                    and self.mu_scale is not None
+                ):
+                    # NBLN ``mu`` posterior: Normal in log-rate space.
+                    # Unlike ``r``, ``mu`` is already real-valued in
+                    # NBLN's coordinate system, so no transform applies.
                     out["mu"] = dist.Normal(
                         self.mu_loc, self.mu_scale
                     ).to_event(1)
-                elif self.mu is not None:
+                elif "mu" not in frozen and self.mu is not None:
                     out["mu"] = dist.Delta(self.mu)
-            if self.eta_loc is not None:
+
+            # Frozen eta is handled by _nbln_frozen_distributions above
+            # (TruncatedNormal summary from cascade samples).  Non-frozen
+            # eta retains the legacy Delta accessor.
+            if self.eta_loc is not None and "eta" not in (
+                getattr(self, "frozen_params", frozenset())
+            ):
                 out["eta_capture"] = dist.Delta(self.eta_loc)
                 out["p_capture"] = dist.Delta(jnp.exp(-self.eta_loc))
             return out

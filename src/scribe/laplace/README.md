@@ -564,6 +564,63 @@ non-eta SVI source still gets their explicit capture anchor.
   value. The SVI prior pins `r` and unlocks stable optimization of
   `(W, d)`.
 
+### Phase-2: Cascade-parameter freeze
+
+The soft cascade above injects Gaussian priors with finite scale; on
+real data this is sometimes insufficient to break the **per-cell
+rigid-translation gauge** between `x_c` and `eta_c` (see
+[`paper/_diffexp_nbln_robustness.qmd`](../../../paper/_diffexp_nbln_robustness.qmd)).
+The Phase-2 **freeze mechanism** fixes selected globals exactly at the
+SVI MAP, structurally pinning the gauge:
+
+```python
+laplace_results = scribe.fit(
+    adata, model="nbln", inference_method="laplace",
+    informative_priors_from=svi_results,
+    informative_priors_freeze=("r", "eta"),   # default — Level 3
+    n_steps=50_000,
+)
+```
+
+Four levels of aggressiveness via the tuple kwarg:
+
+- `()`        — Level 1: no freeze (soft cascade only, finite τ).
+- `("r",)`    — Level 2: freeze dispersion; keep μ, η refined.
+- `("r", "eta")` — **default**. Pins the per-cell gauge structurally.
+  Empirically reduces `gauge_contamination_ratio` < 0.05.
+- `("r", "mu", "eta")` — Level 4: NBLN learns only W and d on top of NBVCP.
+
+Frozen parameters are **excluded from the optax optimizer's params
+dict** — they cannot drift, regardless of optimizer internals. The full
+`ScribeSVIResults` is embedded on `result.cascade_source` for downstream
+PPC/distribution access; counts cached on `result.cascade_source_counts`
+for amortized sources.
+
+### Gauge-invariant accessors (all Laplace models)
+
+For any model where W lives in absolute log-rate space (PLN, NBLN),
+the gauge-invariant cross-gene correlation structure is the
+gene-centered projection W_perp = (I − 1·1^T/G) W:
+
+```python
+# Returns gene-centered W for PLN/NBLN; W unchanged for LNM/LNMVCP
+# (which is already in ALR compositional coordinates).
+W_perp = laplace_results.get_W_compositional()
+
+# Quantify how much rank-1 contamination W carries.  For a clean
+# Phase-2-frozen fit, gauge_contamination_ratio should be < 0.05.
+diag = laplace_results.get_gauge_diagnostics()
+# {"W_compositional_norm": ..., "W_all_ones_component_norm": ...,
+#  "gauge_contamination_ratio": ...}
+```
+
+For biological interpretation of cross-gene correlations (gene-set
+analysis, regulatory program identification, co-expression
+clustering), **use `get_W_compositional()` rather than the raw `W`**
+— it is gauge-invariant by construction. Full theory and
+recommendations in
+[`paper/_diffexp_nbln_robustness.qmd`](../../../paper/_diffexp_nbln_robustness.qmd).
+
 ## See also
 
 * [`paper/_poisson_lognormal.qmd`](../../../paper/_poisson_lognormal.qmd)
