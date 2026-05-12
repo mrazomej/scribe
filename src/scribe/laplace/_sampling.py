@@ -114,7 +114,7 @@ def _resolve_nbln_ppc_arrays(
     cascade = getattr(result, "cascade_source", None)
     cascade_counts = getattr(result, "cascade_source_counts", None)
 
-    k_cascade, k_r_lap, k_mu_lap, k_eta_pick = jax.random.split(rng_key, 4)
+    k_cascade, k_r_lap, k_eta_pick = jax.random.split(rng_key, 3)
 
     cascade_samples = None
     if frozen and cascade is not None:
@@ -154,6 +154,15 @@ def _resolve_nbln_ppc_arrays(
             r_samples = pos_fwd(r_un)
 
     # ---- mu --------------------------------------------------------
+    # Cascade-frozen ``mu`` (Level 4): use SVI samples in NBLN log-rate
+    # coord.  Non-frozen ``mu``: fall back to the deterministic point.
+    # We do NOT propagate ``Normal(mu_loc, mu_scale)`` for non-frozen
+    # mu — the post-fit Laplace ``mu_scale`` carries the rigid-translation
+    # gauge contamination flagged in the Phase-2 audits, and pushing it
+    # into per-draw predictions blows up compositional structure in
+    # library-anchored PPCs (genes randomly re-rank per draw).  Honest
+    # ``mu`` uncertainty for cascade fits is available via cascade-freeze
+    # at Level 4 (``informative_priors_freeze=("r","mu","eta")``).
     if (
         "mu" in frozen
         and cascade_samples is not None
@@ -163,18 +172,6 @@ def _resolve_nbln_ppc_arrays(
         # log-rate prior mean — apply ``log`` per sample.
         mu_pos = jnp.asarray(cascade_samples["mu"])  # (S, G)
         mu_samples = jnp.log(jnp.maximum(mu_pos, 1e-8))
-    elif (
-        "mu" not in frozen
-        and getattr(result, "mu_loc", None) is not None
-        and getattr(result, "mu_scale", None) is not None
-    ):
-        mu_loc = jnp.asarray(result.mu_loc)
-        mu_scale = jnp.asarray(result.mu_scale)
-        if jnp.all(jnp.isfinite(mu_scale)):
-            g_genes = int(mu_loc.shape[0])
-            mu_samples = mu_loc[None, :] + mu_scale[None, :] * jax.random.normal(
-                k_mu_lap, (n_samples, g_genes), dtype=mu_loc.dtype
-            )
 
     # ---- eta -------------------------------------------------------
     if (

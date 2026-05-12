@@ -1168,17 +1168,38 @@ class TestCascadeAwarePPC:
         assert float(jnp.max(gene_var)) > 0.0
 
     def test_no_freeze_no_nan_when_laplace_scales_finite(self):
-        """Non-frozen Laplace fit: existing path still works post-fix."""
+        """Non-frozen Laplace fit: existing path still works post-fix.
+
+        Cascade routing is skipped when ``frozen_params`` is empty.  The
+        non-frozen ``r`` sampling continues to use ``Normal(r_loc, r_scale)``
+        (legacy correct behavior).  Non-frozen ``mu`` stays as a point in
+        PPC — the Laplace ``mu_scale`` is gauge-slop-contaminated for NBLN
+        and was never the right uncertainty source for predictive draws.
+        """
         # frozen=∅, r_scale and mu_scale are finite arrays.
         res = _frozen_nbln_result_with_cascade(frozen=frozenset())
-        # No cascade routing should happen (frozen empty), but mu Normal
-        # sampling now also kicks in for non-frozen mu (new behavior).
         samples = res.get_ppc_samples(
             rng_key=jax.random.PRNGKey(4),
             n_samples=12,
             level="marginal",
         )
         assert jnp.all(jnp.isfinite(samples))
+
+    def test_non_frozen_mu_not_sampled_via_laplace_normal(self):
+        """``mu`` must stay a point for non-frozen NBLN fits.
+
+        Regression guard against re-introducing the gauge-slop blow-up:
+        with non-frozen mu and a wide ``mu_scale``, the resolver must
+        NOT inject per-draw mu noise into the PPC composition.
+        """
+        from scribe.laplace._sampling import _resolve_nbln_ppc_arrays
+        res = _frozen_nbln_result_with_cascade(frozen=frozenset())
+        arrays = _resolve_nbln_ppc_arrays(
+            res, jax.random.PRNGKey(0), n_samples=8, per_cell=False,
+        )
+        # Cascade routing skipped (frozen empty), Laplace-Normal-mu
+        # path also skipped → mu_samples is None, helper uses point mu.
+        assert arrays["mu_samples"] is None
 
     def test_resolver_returns_none_for_non_frozen_without_scales(self):
         """Helper bails gracefully when neither cascade nor Laplace scale exists."""
