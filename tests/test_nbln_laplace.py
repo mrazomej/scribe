@@ -977,3 +977,217 @@ class TestFrozenCascade:
         assert all(np.isfinite(v) for v in diag.values())
         # All values non-negative.
         assert all(v >= 0 for v in diag.values())
+
+
+class _StubCascadeSource:
+    """Minimal ``ScribeSVIResults``-shaped stub for PPC cascade-routing tests.
+
+    Exposes only ``get_posterior_samples`` and ``_uses_amortized_capture``.
+    Returns the configured per-sample arrays (truncated/recycled to match
+    the requested ``n_samples``).
+    """
+
+    def __init__(
+        self,
+        r_samples: jnp.ndarray,
+        mu_samples: jnp.ndarray,
+        eta_samples: jnp.ndarray,
+        amortized: bool = False,
+    ):
+        self._r = r_samples
+        self._mu = mu_samples
+        self._eta = eta_samples
+        self._amortized = amortized
+
+    def _uses_amortized_capture(self) -> bool:
+        return self._amortized
+
+    def get_posterior_samples(
+        self,
+        rng_key=None,
+        n_samples: int = 100,
+        counts=None,
+        store_samples: bool = False,
+        **_kwargs,
+    ):
+        def _take(arr):
+            S = int(arr.shape[0])
+            if n_samples <= S:
+                return arr[:n_samples]
+            # Tile-then-trim so the test can request more than the cache.
+            reps = (n_samples + S - 1) // S
+            tiled = jnp.tile(arr, (reps,) + (1,) * (arr.ndim - 1))
+            return tiled[:n_samples]
+        return {
+            "r": _take(self._r),
+            "mu": _take(self._mu),
+            "eta_capture": _take(self._eta),
+        }
+
+
+def _frozen_nbln_result_with_cascade(
+    *,
+    G: int = 8,
+    C: int = 5,
+    k: int = 2,
+    n_cascade_samples: int = 50,
+    frozen: frozenset = frozenset({"r", "eta"}),
+    seed: int = 0,
+) -> ScribeLaplaceResults:
+    """Build a frozen-cascade NBLN result with a stub ``cascade_source``.
+
+    Mirrors the production result shape for default freeze:
+
+    - ``frozen_params = {"r", "eta"}``
+    - ``r_scale`` is the NaN sentinel (no Laplace Hessian for frozen r).
+    - ``mu_loc`` / ``mu_scale`` are finite (non-frozen mu).
+    - ``cascade_source`` returns plausible positive ``r``, ``mu``, and
+      ``eta_capture`` samples.
+    """
+    rng = np.random.default_rng(seed)
+    mu = jnp.asarray(rng.normal(0, 0.5, G).astype(np.float32))
+    W = jnp.asarray((0.3 * rng.normal(size=(G, k))).astype(np.float32))
+    d = jnp.asarray(np.full(G, 0.05, dtype=np.float32))
+    x_loc = jnp.asarray(rng.normal(0, 1, (C, G)).astype(np.float32))
+    r = jnp.asarray(rng.uniform(0.5, 5.0, G).astype(np.float32))
+    eta_loc = jnp.asarray(rng.uniform(0.2, 1.5, C).astype(np.float32))
+
+    mc = ModelConfig(
+        base_model="nbln",
+        parameterization=Parameterization.COUNT_LOGNORMAL,
+        inference_method=InferenceMethod.LAPLACE,
+        positive_transform="softplus",
+    )
+
+    # NaN sentinel for frozen r_scale (matches production
+    # compute_global_uncertainty when "r" is frozen).
+    r_loc = resolve_positive_fns(mc)[1](r)
+    r_scale_nan = (
+        jnp.full((G,), jnp.nan)
+        if "r" in frozen
+        else jnp.asarray(rng.uniform(0.01, 0.2, G).astype(np.float32))
+    )
+    # mu_loc / mu_scale: finite if not frozen, NaN if frozen.
+    mu_loc = mu
+    mu_scale = (
+        jnp.full((G,), jnp.nan)
+        if "mu" in frozen
+        else jnp.asarray(rng.uniform(0.01, 0.2, G).astype(np.float32))
+    )
+
+    # Build cascade samples.  SVI r and mu live in positive space; eta in [0,∞).
+    r_svi = jnp.asarray(
+        rng.lognormal(mean=0.5, sigma=0.3, size=(n_cascade_samples, G))
+        .astype(np.float32)
+    )
+    mu_svi = jnp.asarray(
+        rng.lognormal(mean=1.0, sigma=0.2, size=(n_cascade_samples, G))
+        .astype(np.float32)
+    )
+    eta_svi = jnp.asarray(
+        np.abs(rng.normal(0.6, 0.2, size=(n_cascade_samples, C)))
+        .astype(np.float32)
+    )
+    cascade = _StubCascadeSource(r_svi, mu_svi, eta_svi)
+
+    return ScribeLaplaceResults(
+        model_config=mc,
+        mu=mu,
+        W=W,
+        d=d,
+        n_genes=G,
+        n_cells=C,
+        x_loc=x_loc,
+        r=r,
+        eta_loc=eta_loc,
+        r_loc=r_loc,
+        r_scale=r_scale_nan,
+        mu_loc=mu_loc,
+        mu_scale=mu_scale,
+        losses=jnp.zeros(1),
+        final_grad_norms=jnp.zeros(1),
+        frozen_params=frozen,
+        cascade_source=cascade,
+    )
+
+
+class TestCascadeAwarePPC:
+    """Phase-2 R5-2: PPC routing for cascade-frozen NBLN results.
+
+    Production-critical regression: with default freeze ``("r", "eta")``,
+    ``r_scale`` is NaN.  The legacy PPC path drew ``Normal(r_loc, NaN)``,
+    producing all-NaN samples.  These tests guard the cascade-routing
+    fix that draws ``r`` and ``eta`` from ``cascade_source`` instead.
+    """
+
+    def test_default_freeze_marginal_ppc_is_finite(self):
+        """Marginal PPC with default freeze must NOT produce NaN counts."""
+        res = _frozen_nbln_result_with_cascade()
+        samples = res.get_ppc_samples(
+            rng_key=jax.random.PRNGKey(1),
+            n_samples=24,
+            level="marginal",
+        )
+        assert samples.shape == (24, 8)
+        assert jnp.all(jnp.isfinite(samples)), (
+            "Marginal PPC produced NaN/Inf — cascade routing for frozen r/eta "
+            "is not active or is broken."
+        )
+
+    def test_default_freeze_per_cell_laplace_ppc_is_finite(self):
+        """Per-cell Laplace PPC with default freeze must NOT produce NaN."""
+        res = _frozen_nbln_result_with_cascade()
+        samples = res.get_per_cell_predictive_samples(
+            rng_key=jax.random.PRNGKey(2),
+            n_samples=16,
+        )
+        assert samples.shape == (16, 5, 8)
+        assert jnp.all(jnp.isfinite(samples)), (
+            "Per-cell Laplace PPC produced NaN/Inf — cascade routing for "
+            "frozen r/eta is not active or is broken."
+        )
+
+    def test_marginal_ppc_eta_distribution_reflects_cascade(self):
+        """Per-draw eta should span the cascade's eta posterior range.
+
+        Indirect check: predictive counts vary across draws (rules out
+        the case where eta resolution silently degenerated to a single
+        value).  Combined with finiteness, this catches all-NaN and
+        all-zero PPC failure modes.
+        """
+        res = _frozen_nbln_result_with_cascade(n_cascade_samples=200)
+        samples = res.get_ppc_samples(
+            rng_key=jax.random.PRNGKey(3),
+            n_samples=64,
+            level="marginal",
+        )
+        # Per-gene variance across the 64 draws should be > 0 for at
+        # least one gene (sanity that the sampler is exercising
+        # uncertainty rather than emitting a constant).
+        gene_var = jnp.var(samples.astype(jnp.float32), axis=0)
+        assert float(jnp.max(gene_var)) > 0.0
+
+    def test_no_freeze_no_nan_when_laplace_scales_finite(self):
+        """Non-frozen Laplace fit: existing path still works post-fix."""
+        # frozen=∅, r_scale and mu_scale are finite arrays.
+        res = _frozen_nbln_result_with_cascade(frozen=frozenset())
+        # No cascade routing should happen (frozen empty), but mu Normal
+        # sampling now also kicks in for non-frozen mu (new behavior).
+        samples = res.get_ppc_samples(
+            rng_key=jax.random.PRNGKey(4),
+            n_samples=12,
+            level="marginal",
+        )
+        assert jnp.all(jnp.isfinite(samples))
+
+    def test_resolver_returns_none_for_non_frozen_without_scales(self):
+        """Helper bails gracefully when neither cascade nor Laplace scale exists."""
+        from scribe.laplace._sampling import _resolve_nbln_ppc_arrays
+        # Build a result with no uncertainty fields at all.
+        res = _nbln_result(G=6, C=4, k=2, with_uncertainty=False)
+        arrays = _resolve_nbln_ppc_arrays(
+            res, jax.random.PRNGKey(0), n_samples=8, per_cell=False,
+        )
+        assert arrays["r_samples"] is None
+        assert arrays["mu_samples"] is None
+        assert arrays["eta_samples"] is None

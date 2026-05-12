@@ -94,6 +94,10 @@ def _ppc_pln_library_anchored(
     W: jnp.ndarray,
     d: jnp.ndarray,
     counts: jnp.ndarray,
+    # Phase-2 R5-2: per-draw mu override for NBLN frozen-mu cascade fits.
+    # Shape (S, G).  When provided, replaces the broadcast point ``mu``.
+    # PLN never sets this (no cascade-freeze on PLN).
+    mu_samples: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
     """Draw PLN library-anchored predictive samples.
 
@@ -136,13 +140,23 @@ def _ppc_pln_library_anchored(
     g_genes = int(mu.shape[0])
     k_factors = int(W.shape[1])
 
+    mu_samples_arr = (
+        jnp.asarray(mu_samples) if mu_samples is not None else None
+    )
+
+    def _mu_term(start: int, size: int) -> jnp.ndarray:
+        # Returns shape (size, 1, G) for broadcast against (size, n_cells, G).
+        if mu_samples_arr is not None:
+            return mu_samples_arr[start : start + size, None, :]
+        return mu[None, None, :]
+
     chunk_size = _PPC_DEFAULT_SAMPLE_CHUNK
     if chunk_size is None or chunk_size >= n_samples:
         size = int(n_samples)
         k1, k2, k3 = jax.random.split(rng_key, 3)
         z = jax.random.normal(k1, (size, n_cells, k_factors), dtype=mu.dtype)
         eps = jax.random.normal(k2, (size, n_cells, g_genes), dtype=mu.dtype)
-        x = mu[None, None, :] + z @ W.T + jnp.sqrt(d)[None, None, :] * eps
+        x = _mu_term(0, size) + z @ W.T + jnp.sqrt(d)[None, None, :] * eps
         p = jax.nn.softmax(x, axis=-1)
         n_b = jnp.broadcast_to(library_sizes, (size,) + library_sizes.shape)
         return np.asarray(_multinomial_sample(k3, n_b, p))
@@ -157,7 +171,7 @@ def _ppc_pln_library_anchored(
         k1, k2, k3 = jax.random.split(chunk_keys[i], 3)
         z = jax.random.normal(k1, (size, n_cells, k_factors), dtype=mu.dtype)
         eps = jax.random.normal(k2, (size, n_cells, g_genes), dtype=mu.dtype)
-        x = mu[None, None, :] + z @ W.T + jnp.sqrt(d)[None, None, :] * eps
+        x = _mu_term(start, size) + z @ W.T + jnp.sqrt(d)[None, None, :] * eps
         p = jax.nn.softmax(x, axis=-1)
         n_b = jnp.broadcast_to(library_sizes, (size,) + library_sizes.shape)
         pieces.append(np.asarray(_multinomial_sample(k3, n_b, p)))
@@ -361,14 +375,27 @@ def _ppc_nbln_marginal(
     r_loc: Optional[jnp.ndarray] = None,
     r_scale: Optional[jnp.ndarray] = None,
     pos_forward=None,
+    # Phase-2 R5-2: pre-resolved per-draw arrays override the in-helper
+    # construction.  Used by the cascade-aware dispatcher in `_sampling.py`
+    # to inject SVI-cascade samples for frozen parameters and/or Laplace
+    # ``Normal(mu_loc, mu_scale)`` samples for non-frozen ``mu``.
+    r_samples: Optional[jnp.ndarray] = None,
+    mu_samples: Optional[jnp.ndarray] = None,
+    eta_samples: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
     """Fully marginal NBLN posterior predictive samples.
 
     Mirrors :func:`_ppc_pln_marginal` but emits NB counts.
-    Global uncertainty in ``r`` is included by default when
-    ``r_loc`` and ``r_scale`` are provided: each sample draws
-    ``r_unconstrained ~ Normal(r_loc, r_scale)`` and maps to
-    constrained space via ``pos_forward``.
+
+    Per-draw uncertainty sources (in priority order):
+
+    - ``r``: ``r_samples`` if provided (already constrained, shape
+      ``(S, G)``); else ``Normal(r_loc, r_scale)`` mapped through
+      ``pos_forward`` if available; else the point ``r``.
+    - ``mu``: ``mu_samples`` if provided (shape ``(S, G)``, log-rate
+      space — i.e. NBLN's target coord); else the point ``mu``.
+    - ``eta``: ``eta_samples`` if provided (shape ``(S,)``, constrained
+      ``[0, ∞)``); else legacy uniform-pick from ``eta_loc``.
     """
     from ..stats.distributions import LogMeanNegativeBinomial
 
@@ -377,18 +404,31 @@ def _ppc_nbln_marginal(
     k1, k2, k3, k4, k5 = jax.random.split(rng_key, 5)
     z = jax.random.normal(k1, (n_samples, k_factors), dtype=mu.dtype)
     eps = jax.random.normal(k2, (n_samples, g_genes), dtype=mu.dtype)
-    x = mu[None, :] + z @ W.T + jnp.sqrt(d)[None, :] * eps
-    if eta_loc is not None:
+
+    # mu: per-draw if provided, else broadcast point.
+    if mu_samples is not None:
+        mu_b = jnp.asarray(mu_samples)  # (S, G)
+    else:
+        mu_b = mu[None, :]  # broadcasts over S
+    x = mu_b + z @ W.T + jnp.sqrt(d)[None, :] * eps
+
+    # eta: per-draw if provided; else legacy uniform-pick from eta_loc; else 0.
+    if eta_samples is not None:
+        eta_per_draw = jnp.asarray(eta_samples).reshape(-1)  # (S,)
+        log_mean = x - eta_per_draw[:, None]
+    elif eta_loc is not None:
         eta_loc_arr = jnp.asarray(eta_loc).reshape(-1)
         idx = jax.random.randint(k3, (n_samples,), 0, eta_loc_arr.shape[0])
-        eta_sample = eta_loc_arr[idx]
-        log_mean = x - eta_sample[:, None]
+        eta_pick = eta_loc_arr[idx]
+        log_mean = x - eta_pick[:, None]
     else:
         log_mean = x
     log_mean = jnp.clip(log_mean, _LOG_RATE_MIN, _LOG_RATE_MAX)
 
-    # Sample r per draw when global uncertainty is available.
-    if r_loc is not None and r_scale is not None and pos_forward is not None:
+    # r: pre-resolved samples > Normal posterior > point.
+    if r_samples is not None:
+        r_draw = jnp.asarray(r_samples)  # (S, G), constrained
+    elif r_loc is not None and r_scale is not None and pos_forward is not None:
         r_unconstrained = (
             r_loc[None, :]
             + r_scale[None, :] * jax.random.normal(k5, (n_samples, g_genes))
@@ -440,14 +480,26 @@ def _ppc_nbln_per_cell_laplace(
     r_loc: Optional[jnp.ndarray] = None,
     r_scale: Optional[jnp.ndarray] = None,
     pos_forward=None,
+    # Phase-2 R5-2: pre-resolved per-draw arrays from cascade or Laplace.
+    # See ``_ppc_nbln_marginal`` for the semantics.  In the per-cell path:
+    # ``r_samples`` (S, G) is broadcast across cells; ``eta_samples`` (S, N)
+    # gives a per-cell eta per draw; ``mu_samples`` is NOT used here because
+    # the per-cell path conditions on the cell-specific MAP ``x_loc`` rather
+    # than redrawing ``x`` from its prior.
+    r_samples: Optional[jnp.ndarray] = None,
+    eta_samples: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
     """Per-cell Laplace-perturbed NBLN predictive samples.
 
     Adds Gaussian noise from the prior covariance ``Sigma = W W^T +
     diag(d)`` to the per-cell MAP log-rate ``x_loc`` before drawing
-    NB counts.  Global uncertainty in ``r`` is included by default
-    when ``r_loc`` and ``r_scale`` are provided: one shared ``r``
-    draw per posterior predictive sample.
+    NB counts.  Per-draw uncertainty sources (priority order):
+
+    - ``r``: ``r_samples`` (S, G) if provided (constrained); else
+      ``Normal(r_loc, r_scale)`` via ``pos_forward``; else the point ``r``.
+    - ``eta``: ``eta_samples`` (S, N) if provided (constrained, one entry
+      per cell per draw — full SVI posterior fidelity for frozen-eta
+      cascade fits); else legacy point ``eta_loc[None, :, None]``.
     """
     from ..stats.distributions import LogMeanNegativeBinomial
 
@@ -461,14 +513,22 @@ def _ppc_nbln_per_cell_laplace(
         k2, (n_samples, n_cells, g_genes), dtype=x_loc.dtype
     )
     x = x_loc[None, :, :] + z @ W.T + jnp.sqrt(d)[None, None, :] * eps
-    if eta_loc is not None:
+
+    # eta: per-draw per-cell if provided; else legacy point.
+    if eta_samples is not None:
+        eta_arr = jnp.asarray(eta_samples)  # (S, N)
+        log_mean = x - eta_arr[:, :, None]
+    elif eta_loc is not None:
         log_mean = x - eta_loc[None, :, None]
     else:
         log_mean = x
     log_mean = jnp.clip(log_mean, _LOG_RATE_MIN, _LOG_RATE_MAX)
 
-    # Sample r once per posterior predictive draw (shared across cells).
-    if r_loc is not None and r_scale is not None and pos_forward is not None:
+    # r: pre-resolved samples > Normal posterior > point.  Same shared-
+    # across-cells semantic as before; the SVI ``r`` is a per-gene global.
+    if r_samples is not None:
+        r_draw = jnp.asarray(r_samples)[:, None, :]  # (S, 1, G)
+    elif r_loc is not None and r_scale is not None and pos_forward is not None:
         r_unconstrained = (
             r_loc[None, :]
             + r_scale[None, :] * jax.random.normal(k4, (n_samples, g_genes))

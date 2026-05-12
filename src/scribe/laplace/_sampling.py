@@ -8,11 +8,12 @@ across PLN and LNM-family Laplace fits.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Dict, Optional
 
 import jax
 import jax.numpy as jnp
 
+from ._dispatch import _resolve_cascade_counts
 from ._global_uncertainty import resolve_positive_fns
 from ._results_sampling_helpers import (
     _ppc_lnm_library_anchored,
@@ -28,6 +29,176 @@ from ._results_sampling_helpers import (
     _ppc_pln_per_cell_laplace,
 )
 from ._results_shared import _base_model
+
+
+# =====================================================================
+# Phase-2 R5-2: cascade-aware NBLN PPC array resolver.
+# =====================================================================
+#
+# When a Phase-2 cascade-freeze is active, the post-fit Laplace ``r_scale``
+# / ``mu_scale`` fields hold the NaN sentinel from
+# ``compute_global_uncertainty``.  Naively sampling
+# ``Normal(loc, NaN).sample()`` would produce all-NaN PPC counts.  The
+# resolver routes frozen parameters through ``cascade_source``'s SVI
+# posterior samples (full guide fidelity preserved) and the non-frozen
+# ``mu`` through its Laplace ``Normal(mu_loc, mu_scale)`` posterior — a
+# capability the helpers also lacked previously.
+def _draw_nbln_cascade_samples(
+    cascade,
+    cascade_counts: Optional[jnp.ndarray],
+    n_samples: int,
+    rng_key: jax.Array,
+) -> Optional[Dict[str, jnp.ndarray]]:
+    """Draw ``n_samples`` SVI posterior samples from the cascade source.
+
+    Returns ``None`` when the cascade reference is missing.  Otherwise
+    forwards ``counts`` (resolved from the dedicated cache field or the
+    SVI source's own ``_original_counts``) only when the source needs
+    them (amortized capture).
+    """
+    if cascade is None:
+        return None
+    sample_kwargs = {
+        "rng_key": rng_key,
+        "n_samples": int(n_samples),
+        "store_samples": False,
+    }
+    counts = _resolve_cascade_counts(cascade, cascade_counts)
+    if counts is not None:
+        sample_kwargs["counts"] = counts
+    return cascade.get_posterior_samples(**sample_kwargs)
+
+
+def _resolve_nbln_ppc_arrays(
+    result,
+    rng_key: jax.Array,
+    n_samples: int,
+    per_cell: bool,
+) -> Dict[str, Optional[jnp.ndarray]]:
+    """Build per-draw r/mu/eta sample arrays for NBLN PPC.
+
+    For each parameter the source is picked in this priority order:
+
+    1. **Cascade-frozen + cascade available**: SVI samples from
+       ``cascade_source``, coordinate-transformed to NBLN target space.
+    2. **Non-frozen + Laplace Normal posterior available**: draw
+       ``Normal(loc, scale)`` per draw and (for ``r``) apply
+       ``pos_forward``.
+    3. **Else**: ``None`` — the helper falls back to the legacy point /
+       MAP-shuffle path.
+
+    Parameters
+    ----------
+    result : ScribeLaplaceResults-like
+        Provides ``frozen_params``, ``cascade_source``,
+        ``cascade_source_counts``, ``mu_loc``, ``mu_scale``, ``r_loc``,
+        ``r_scale``, and ``model_config``.
+    rng_key : jax.Array
+        PRNG key used both for the cascade SVI draws and for the Laplace
+        Normal draws.
+    n_samples : int
+        Predictive sample count.  Cascade samples are drawn to match.
+    per_cell : bool
+        If ``True``, ``eta_samples`` has shape ``(S, N)`` (per-cell SVI
+        eta posterior).  If ``False``, ``eta_samples`` has shape
+        ``(S,)`` (one eta per imaginary cell, chosen by random cell
+        index from the per-draw cascade slice — preserves SVI
+        uncertainty while remaining a marginal sampler).
+
+    Returns
+    -------
+    Dict with keys ``"r_samples"``, ``"mu_samples"``, ``"eta_samples"``.
+    Any entry may be ``None``.
+    """
+    frozen = getattr(result, "frozen_params", frozenset()) or frozenset()
+    cascade = getattr(result, "cascade_source", None)
+    cascade_counts = getattr(result, "cascade_source_counts", None)
+
+    k_cascade, k_r_lap, k_mu_lap, k_eta_pick = jax.random.split(rng_key, 4)
+
+    cascade_samples = None
+    if frozen and cascade is not None:
+        cascade_samples = _draw_nbln_cascade_samples(
+            cascade, cascade_counts, n_samples, k_cascade,
+        )
+
+    r_samples: Optional[jnp.ndarray] = None
+    mu_samples: Optional[jnp.ndarray] = None
+    eta_samples: Optional[jnp.ndarray] = None
+
+    # ---- r ---------------------------------------------------------
+    if (
+        "r" in frozen
+        and cascade_samples is not None
+        and "r" in cascade_samples
+    ):
+        # SVI ``r`` is in positive (constrained) space — feed directly
+        # to ``LogMeanNegativeBinomial(concentration=...)``.
+        r_samples = jnp.asarray(cascade_samples["r"])  # (S, G)
+    elif (
+        "r" not in frozen
+        and getattr(result, "r_loc", None) is not None
+        and getattr(result, "r_scale", None) is not None
+    ):
+        r_loc = jnp.asarray(result.r_loc)
+        r_scale = jnp.asarray(result.r_scale)
+        # NaN sentinel guard: only sample if the Laplace path actually
+        # produced a finite scale.  If any entry is NaN the resolver
+        # bails out so the helper can fall back to the point ``r``.
+        if jnp.all(jnp.isfinite(r_scale)):
+            pos_fwd, _ = resolve_positive_fns(result.model_config)
+            g_genes = int(r_loc.shape[0])
+            r_un = r_loc[None, :] + r_scale[None, :] * jax.random.normal(
+                k_r_lap, (n_samples, g_genes), dtype=r_loc.dtype
+            )
+            r_samples = pos_fwd(r_un)
+
+    # ---- mu --------------------------------------------------------
+    if (
+        "mu" in frozen
+        and cascade_samples is not None
+        and "mu" in cascade_samples
+    ):
+        # SVI ``mu`` is the NB mean (positive); NBLN's ``mu`` is the
+        # log-rate prior mean — apply ``log`` per sample.
+        mu_pos = jnp.asarray(cascade_samples["mu"])  # (S, G)
+        mu_samples = jnp.log(jnp.maximum(mu_pos, 1e-8))
+    elif (
+        "mu" not in frozen
+        and getattr(result, "mu_loc", None) is not None
+        and getattr(result, "mu_scale", None) is not None
+    ):
+        mu_loc = jnp.asarray(result.mu_loc)
+        mu_scale = jnp.asarray(result.mu_scale)
+        if jnp.all(jnp.isfinite(mu_scale)):
+            g_genes = int(mu_loc.shape[0])
+            mu_samples = mu_loc[None, :] + mu_scale[None, :] * jax.random.normal(
+                k_mu_lap, (n_samples, g_genes), dtype=mu_loc.dtype
+            )
+
+    # ---- eta -------------------------------------------------------
+    if (
+        "eta" in frozen
+        and cascade_samples is not None
+        and "eta_capture" in cascade_samples
+    ):
+        eta_full = jnp.asarray(cascade_samples["eta_capture"])  # (S, N)
+        if per_cell:
+            eta_samples = eta_full
+        else:
+            n_cells = int(eta_full.shape[1])
+            cell_idx = jax.random.randint(
+                k_eta_pick, (n_samples,), 0, n_cells
+            )
+            # One eta per draw, picked from that draw's per-cell slice —
+            # preserves SVI uncertainty AND across-cell heterogeneity.
+            eta_samples = eta_full[jnp.arange(n_samples), cell_idx]
+
+    return {
+        "r_samples": r_samples,
+        "mu_samples": mu_samples,
+        "eta_samples": eta_samples,
+    }
 
 
 class SamplingResultsMixin:
@@ -103,8 +274,19 @@ class SamplingResultsMixin:
                 # Multinomial`` against observed library size; the NB
                 # vs Poisson choice does not enter (no count-noise
                 # layer at this level), so NBLN reuses the PLN helper.
+                # For NBLN cascade fits, resolve a per-draw ``mu``
+                # array (frozen-mu → cascade samples; non-frozen-mu
+                # with Laplace Normal → Normal(mu_loc, mu_scale)).
+                # PLN never supplies ``mu_samples``.
+                mu_samples = None
+                if bm == "nbln":
+                    arrays = _resolve_nbln_ppc_arrays(
+                        self, rng_key, n_samples, per_cell=False,
+                    )
+                    mu_samples = arrays["mu_samples"]
                 return _ppc_pln_library_anchored(
-                    rng_key, n_samples, self.mu, self.W, self.d, counts=counts
+                    rng_key, n_samples, self.mu, self.W, self.d,
+                    counts=counts, mu_samples=mu_samples,
                 )
             if bm in ("lnm", "lnmvcp"):
                 return _ppc_lnm_library_anchored(
@@ -135,6 +317,13 @@ class SamplingResultsMixin:
                     "NBLN PPC requires the gene dispersion 'r' field."
                 )
             pos_fwd, _ = resolve_positive_fns(self.model_config)
+            # Resolve per-draw r/mu/eta arrays:
+            # - cascade-frozen keys → SVI samples (full guide fidelity);
+            # - non-frozen with Laplace Normal → Normal(loc, scale);
+            # - otherwise → None, helper falls back to legacy logic.
+            arrays = _resolve_nbln_ppc_arrays(
+                self, rng_key, n_samples, per_cell=False,
+            )
             return _ppc_nbln_marginal(
                 rng_key,
                 n_samples,
@@ -146,6 +335,9 @@ class SamplingResultsMixin:
                 r_loc=self.r_loc,
                 r_scale=self.r_scale,
                 pos_forward=pos_fwd,
+                r_samples=arrays["r_samples"],
+                mu_samples=arrays["mu_samples"],
+                eta_samples=arrays["eta_samples"],
             )
         if bm in ("lnm", "lnmvcp"):
             pos_fwd, _ = resolve_positive_fns(self.model_config)
@@ -232,6 +424,14 @@ class SamplingResultsMixin:
                     "NBLN PPC requires the gene dispersion 'r' field."
                 )
             pos_fwd, _ = resolve_positive_fns(self.model_config)
+            # Per-cell path: eta_samples shape (S, N) when cascade
+            # frozen-eta is active; per-draw per-cell r_samples for
+            # frozen-r.  mu_samples is unused here (per-cell PPC
+            # conditions on the cell-specific MAP ``x_loc`` rather
+            # than redrawing ``x`` from its prior).
+            arrays = _resolve_nbln_ppc_arrays(
+                self, rng_key, n_samples, per_cell=True,
+            )
             return _ppc_nbln_per_cell_laplace(
                 rng_key,
                 n_samples,
@@ -243,6 +443,8 @@ class SamplingResultsMixin:
                 r_loc=self.r_loc,
                 r_scale=self.r_scale,
                 pos_forward=pos_fwd,
+                r_samples=arrays["r_samples"],
+                eta_samples=arrays["eta_samples"],
             )
         if bm in ("lnm", "lnmvcp"):
             pos_fwd, _ = resolve_positive_fns(self.model_config)
