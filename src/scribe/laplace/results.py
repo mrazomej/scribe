@@ -24,7 +24,7 @@ from ._sampling import SamplingResultsMixin
 from ._serialization import SerializationResultsMixin
 
 
-@dataclass
+@dataclass(repr=False)
 class ScribeLaplaceResults(
     CoreResultsMixin,
     DispatchResultsMixin,
@@ -192,6 +192,128 @@ class ScribeLaplaceResults(
 
     _subset_gene_index: Optional[np.ndarray] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __repr__(self) -> str:
+        """Return a concise text summary for interactive inspection.
+
+        The dataclass default representation recursively expands all fields,
+        including large arrays and metadata dictionaries. This compact repr
+        keeps notebook output readable by showing only high-value summary
+        fields and lightweight status flags.
+
+        Returns
+        -------
+        str
+            Stable summary string with model identity, dataset shape,
+            optimization history length, latent-state branch, and global
+            uncertainty status.
+        """
+        n_steps = int(len(self.losses)) if self.losses is not None else 0
+        base_model = self._base_model_name()
+        latent_state = self._summarize_latent_state()
+        uncertainty = self._summarize_global_uncertainty()
+        return (
+            "ScribeLaplaceResults("
+            f"model={base_model!r}, "
+            f"n_cells={self.n_cells}, "
+            f"n_genes={self.n_genes}, "
+            f"n_steps={n_steps}, "
+            f"latent={latent_state!r}, "
+            f"uncertainty={uncertainty!r})"
+        )
+
+    def _repr_html_(self) -> str:
+        """Return a compact HTML table for notebook frontends.
+
+        Notebook frontends such as Jupyter and marimo use ``_repr_html_`` when
+        available. This HTML mirrors the key fields from ``__repr__`` so users
+        see the same summary information without large tensor dumps.
+
+        Returns
+        -------
+        str
+            HTML snippet containing a small summary table.
+        """
+        import html
+
+        n_steps = int(len(self.losses)) if self.losses is not None else 0
+        # Escape user- or config-derived strings to keep HTML rendering safe.
+        base_model = html.escape(self._base_model_name())
+        latent_state = html.escape(self._summarize_latent_state())
+        uncertainty = html.escape(self._summarize_global_uncertainty())
+        return (
+            "<div>"
+            "<strong>ScribeLaplaceResults</strong>"
+            "<table>"
+            f"<tr><td>model</td><td>{base_model}</td></tr>"
+            f"<tr><td>n_cells</td><td>{self.n_cells}</td></tr>"
+            f"<tr><td>n_genes</td><td>{self.n_genes}</td></tr>"
+            f"<tr><td>n_steps</td><td>{n_steps}</td></tr>"
+            f"<tr><td>latent</td><td>{latent_state}</td></tr>"
+            f"<tr><td>uncertainty</td><td>{uncertainty}</td></tr>"
+            "</table>"
+            "</div>"
+        )
+
+    def _base_model_name(self) -> str:
+        """Return the resolved base model name for display.
+
+        Returns
+        -------
+        str
+            ``model_config.base_model`` when available, otherwise
+            ``"unknown"``.
+        """
+        if self.model_config is None:
+            return "unknown"
+        return str(getattr(self.model_config, "base_model", "unknown"))
+
+    def _summarize_latent_state(self) -> str:
+        """Summarize which latent MAP slots are populated.
+
+        Returns
+        -------
+        str
+            Short descriptor of active latent branches.
+        """
+        components: List[str] = []
+        # Report the dominant latent branch first for readability.
+        if self.x_loc is not None:
+            components.append("x")
+        if self.z_loc is not None:
+            components.append("z")
+        if self.y_alr_loc is not None:
+            components.append("y_alr")
+        if self.eta_loc is not None:
+            components.append("eta")
+        if self.p_capture_loc is not None:
+            components.append("p_capture")
+        return ",".join(components) if components else "none"
+
+    def _summarize_global_uncertainty(self) -> str:
+        """Summarize availability of global uncertainty fields.
+
+        Returns
+        -------
+        str
+            Short descriptor of populated uncertainty blocks.
+        """
+        components: List[str] = []
+        # NBLN uncertainty block.
+        if self.r_loc is not None or self.r_scale is not None:
+            components.append("r")
+        if self.mu_loc is not None or self.mu_scale is not None:
+            components.append("mu")
+        # LNM/LNMVCP totals uncertainty block.
+        if (
+            self.mu_T_loc is not None
+            or self.mu_T_scale is not None
+            or self.r_T_loc is not None
+            or self.r_T_scale is not None
+            or self.totals_cov is not None
+        ):
+            components.append("totals")
+        return ",".join(components) if components else "none"
 
 
 __all__ = ["ScribeLaplaceResults"]

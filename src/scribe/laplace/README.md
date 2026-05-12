@@ -103,6 +103,17 @@ find and maintain.
 - `SerializationResultsMixin`: pickle-safe state handling and compatibility
   sample-cache properties (`predictive_samples`, `posterior_samples`)
 
+### Interactive result display
+
+`ScribeLaplaceResults` implements compact `__repr__` and `_repr_html_`
+representations so notebook frontends render a small summary table instead of
+expanding every array field in the dataclass. The summary includes:
+
+- `model` (`base_model` from `model_config`)
+- `n_cells`, `n_genes`, and `n_steps` (from `losses`)
+- `latent` slots currently populated (for example `x,eta` or `y_alr`)
+- `uncertainty` blocks currently populated (for example `r`, `mu`, `totals`)
+
 ## Configuration via `LaplaceConfig`
 
 The full set of inner-loop and outer-loop knobs lives in

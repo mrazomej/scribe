@@ -15,6 +15,7 @@ from scribe.de.results import (
     ScribeEmpiricalDEResults,
     ScribeShrinkageDEResults,
 )
+from scribe.laplace.results import ScribeLaplaceResults
 from scribe.mc.results import ScribeModelComparisonResults
 from scribe.mcmc.results import ScribeMCMCResults
 from scribe.models.config import GuideFamilyConfig, ModelConfigBuilder
@@ -205,6 +206,61 @@ def test_svi_results_repr_html_compact_summary():
     assert "<td>n_steps</td><td>3</td>" in rendered
     assert "<td>guide</td><td>mean_field</td>" in rendered
     assert "params={" not in rendered
+
+
+def test_laplace_results_repr_compact_summary():
+    """Laplace repr should stay compact and report key summary fields."""
+    cfg = ModelConfigBuilder().for_model("pln").with_inference("laplace").build()
+    results = ScribeLaplaceResults(
+        model_config=cfg,
+        mu=jnp.zeros(3),
+        W=jnp.zeros((3, 2)),
+        d=jnp.ones(3),
+        final_grad_norms=jnp.zeros(4),
+        losses=jnp.array([10.0, 8.0, 6.0]),
+        n_genes=3,
+        n_cells=4,
+        x_loc=jnp.zeros((4, 3)),
+        eta_loc=jnp.zeros(4),
+    )
+
+    rendered = repr(results)
+    assert rendered.startswith("ScribeLaplaceResults(")
+    assert "model='pln'" in rendered
+    assert "n_cells=4" in rendered
+    assert "n_genes=3" in rendered
+    assert "n_steps=3" in rendered
+    assert "latent='x,eta'" in rendered
+    assert "uncertainty='none'" in rendered
+    assert "x_loc=Array" not in rendered
+
+
+def test_laplace_results_repr_html_compact_summary():
+    """Laplace HTML repr should include the compact summary table."""
+    cfg = ModelConfigBuilder().for_model("nbln").with_inference("laplace").build()
+    results = ScribeLaplaceResults(
+        model_config=cfg,
+        mu=jnp.zeros(3),
+        W=jnp.zeros((3, 2)),
+        d=jnp.ones(3),
+        final_grad_norms=jnp.zeros(4),
+        losses=jnp.array([10.0, 8.0]),
+        n_genes=3,
+        n_cells=4,
+        x_loc=jnp.zeros((4, 3)),
+        r_loc=jnp.zeros(3),
+        r_scale=jnp.ones(3),
+    )
+
+    rendered = results._repr_html_()
+    assert rendered.startswith("<div>")
+    assert "ScribeLaplaceResults" in rendered
+    assert "<td>model</td><td>nbln</td>" in rendered
+    assert "<td>n_cells</td><td>4</td>" in rendered
+    assert "<td>n_genes</td><td>3</td>" in rendered
+    assert "<td>n_steps</td><td>2</td>" in rendered
+    assert "<td>latent</td><td>x</td>" in rendered
+    assert "<td>uncertainty</td><td>r</td>" in rendered
 
 
 def test_mcmc_results_pickle_roundtrip_drops_unpicklable_mcmc():
