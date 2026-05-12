@@ -688,6 +688,16 @@ clustering), **use `get_W_compositional()` rather than the raw `W`**
 recommendations in
 [`paper/_diffexp_nbln_robustness.qmd`](../../../paper/_diffexp_nbln_robustness.qmd).
 
+`get_compositional_samples()` consumes `W_⟂` internally for PLN/NBLN.
+Mathematically this is a no-op (softmax kills the rigid-translation
+gauge regardless of which `W` enters), but it makes the gauge
+invariance manifest in the code and is friendlier to floating-point
+precision when the gauge contamination ratio is non-negligible. The
+companion plotting entry points `scribe.viz.plot_compositional_ppc`
+and `scribe.viz.plot_compositional_corner_ppc` render compositional
+PPCs against per-cell empirical and dataset-level pseudobulk
+comparators — see [`src/scribe/viz/README.md`](../viz/README.md).
+
 ## See also
 
 * [`paper/_poisson_lognormal.qmd`](../../../paper/_poisson_lognormal.qmd)

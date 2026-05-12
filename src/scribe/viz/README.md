@@ -115,6 +115,48 @@ The default `hist2d` estimator is designed for speed on large pooled PPC
 samples.  When `density_method="kde"`, pooled samples are subsampled to at most
 50 000 points and tiny jitter is added to break integer ties for KDE stability.
 
+## Compositional PPCs (`plot_compositional_ppc`, `plot_compositional_corner_ppc`)
+
+`plot_compositional_ppc` and `plot_compositional_corner_ppc` render
+**compositional** posterior predictive checks: they consume
+`results.get_compositional_samples(...)` (population-level simplex draws,
+*pre-observation-noise*) and compare against two empirical comparators:
+
+1. **Per-cell empirical compositions** — the cloud of `u_c / N_c` across
+   cells. Carries per-cell Multinomial sampling noise on top of the true
+   compositions.
+2. **Dataset-level pseudobulk** — single point `sum_c u_c / sum_c N_c`.
+   Noise averages away, leaving an unbiased estimator of the population
+   mean composition.
+
+Layout per panel:
+
+- 1-D (diagonals + `plot_compositional_ppc`):
+  - shaded model histogram (population compositional distribution),
+  - step empirical histogram (per-cell `u_c,g / N_c`),
+  - dashed vertical line at the pseudobulk value.
+- 2-D (lower-triangle of `plot_compositional_corner_ppc`):
+  - filled HPD contours from the pooled model samples,
+  - per-cell empirical scatter,
+  - large pseudobulk marker (`X`).
+
+These are the cleanest available diagnostics for the **gauge-invariant
+compositional structure** (Theorem 1 in
+`paper/_diffexp_nbln_robustness.qmd`). Unlike `plot_ppc(level="library_anchored")`,
+which adds Multinomial sampling noise to the model output, the
+compositional PPC exposes the model's simplex distribution directly —
+making it the right tool for inspecting cross-gene relationships
+regardless of how the freeze pinned the gauge.
+
+**Caveat — low-abundance noise floor.** Per-cell empirical compositions
+have Multinomial sampling variance `p_g(1-p_g)/N_c`. For genes with
+`p_g ≪ 1/N`, the empirical histogram is noise-dominated and the model
+distribution will be *narrower* than the empirical one. That is a
+correct prediction, not a misfit. The default `min_mean_umi=5.0`
+filters auto-selected genes above this noise floor; lower it explicitly
+only when the dataset has uniformly low expression and you understand
+the caveat.
+
 ## `plot_ppc` conditioning levels
 
 `plot_ppc(results, counts, ppc_level=...)` selects how much observed

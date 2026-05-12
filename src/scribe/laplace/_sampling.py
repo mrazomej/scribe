@@ -689,8 +689,22 @@ class SamplingResultsMixin:
             # softmax of those log-rates gives the compositional sample.
             # The NB vs Poisson choice never enters here -- compositions
             # are pre-observation-noise.
+            #
+            # Use the gauge-invariant projection ``W_perp = W − mean(W, axis=0)``
+            # via :meth:`get_W_compositional`.  Math note: ``softmax(mu + W z
+            # + √d ε) == softmax(mu + W_perp z + √d ε)`` exactly, because the
+            # difference is a per-draw scalar times the all-ones vector and
+            # softmax is translation-invariant.  Using W_perp here therefore
+            # changes nothing about the output values, but it makes the
+            # gauge-invariance (Theorem 1 in `_diffexp_nbln_robustness.qmd`)
+            # manifest in the implementation rather than relying on softmax
+            # to project the gauge out at evaluation time.  For fits with
+            # non-trivial ``gauge_contamination_ratio`` it also keeps the
+            # pre-softmax latent magnitudes smaller, which is friendlier to
+            # floating-point precision.  For PLN where gauge contamination is
+            # typically smaller this is functionally a no-op.
             mu = jnp.asarray(self.mu)
-            W = jnp.asarray(self.W)
+            W = jnp.asarray(self.get_W_compositional())
             d = self.d
             ref_idx = None
             n_genes_full = int(W.shape[0])
