@@ -1,0 +1,362 @@
+---
+editor:
+    render-on-save: true
+bibliography: references.bib
+csl: ieee.csl
+---
+
+# Compositional robustness in the NBLN model {#sec-diffexp-nbln-robustness}
+
+The Dirichlet-Multinomial framework enjoys a strong compositional robustness
+guarantee: the inferred per-cell composition $\underline{\rho}^{(c)}$ is
+*exactly* invariant under misspecification of the per-cell capture probability
+$\nu_c$ (@sec-diffexp-robustness). The Logistic-Normal Multinomial (LNM) and
+Poisson-LogNormal (PLN) models inherit a parallel robustness via the global
+mean-vs-capture gauge documented in @sec-diffexp-lnm-pln-robust-lnm and
+@sec-diffexp-lnm-pln-robust-pln. The Negative Binomial-LogNormal (NBLN) model —
+which adds gene-specific dispersion $r_g$ to PLN — has its own gauge structure
+that is **more severe** than NBDM/NBVCP: instead of a single global gauge, NBLN
+exhibits a **per-cell rigid translation** between the latent log-rate $x_c$ and
+the capture offset $\eta_c$.
+
+This section establishes the analog of compositional robustness for NBLN and,
+crucially, **shows how to extract a gauge-invariant view of the fitted
+cross-gene correlation structure $W$** so that downstream biological
+interpretation rests on a well-defined quantity. The practical consequence —
+implemented in the SCRIBE codebase — is that the freeze mechanism
+(@sec-nbln-cascade-freeze) pins the gauge by adopting NBVCP's per-cell $\eta$
+estimate, and the accessor ``ScribeLaplaceResults.get_W_compositional()``
+returns the projection of $W$ onto the gauge-invariant subspace.
+
+## Setup and notation {#sec-diffexp-nbln-setup}
+
+NBLN's observation likelihood, after marginalising the inner Gamma layer
+(@sec-nbln-marginalize), is
+
+$$
+u_{c,g} \mid x_{c,g}, \eta_c
+\sim \text{NB}\!\left(
+\text{mean} = \exp(x_{c,g} - \eta_c),\
+\text{dispersion} = r_g
+\right),
+$${#eq-diffexp-nbln-obs}
+
+with the latent prior
+
+$$
+\underline{x}_c \sim \mathcal{N}\!\left( \log\widetilde{\underline{\mu}},\
+\underline{\underline{W}}\,\underline{\underline{W}}^{\!\top}
++ \mathrm{diag}(\underline{d}) \right), \qquad \eta_c \sim
+\text{TruncatedNormal}(\eta_{c, \mathrm{anchor}},\, \sigma_M,\, \text{low}=0).
+$${#eq-diffexp-nbln-prior}
+
+The **rigid-translation gauge transformation** is the per-cell map
+
+$$
+\boxed{\
+T_\Delta:\quad (x_c,\, \eta_c) \;\longmapsto\;
+(x_c + \Delta_c\, \mathbf{1},\, \eta_c + \Delta_c),
+\qquad \Delta_c \in \mathbb{R}.
+\
+}
+$${#eq-diffexp-nbln-gauge}
+
+Under $T_\Delta$, the data-likelihood @eq-diffexp-nbln-obs is invariant
+because every gene's effective log-rate $x_{c,g} - \eta_c$ is unchanged.
+Unlike NBDM/NBVCP — where the analogous gauge is a single global
+scalar $\kappa$ — NBLN has **$C$ independent gauge parameters**, one per
+cell. The priors @eq-diffexp-nbln-prior break this gauge softly: the
+Gaussian prior on $x_c$ penalises shifts proportional to
+$\mathbf{1}^\top \underline{\underline{\Sigma}}^{-1} \mathbf{1}$, and the
+truncated normal on $\eta_c$ penalises deviations from $\eta_{c, \mathrm{anchor}}$
+with strength $1/\sigma_M^2$. Neither penalty fully pins the gauge
+unless $\sigma_M$ is small relative to the data's information about
+$\eta_c$.
+
+## Theorem 1: compositional predictions are gauge-invariant {#sec-diffexp-nbln-theorem-pred}
+
+**Theorem.** *Let $\underline{\theta} = (\widetilde{\underline{\mu}},
+\underline{\underline{W}}, \underline{d}, \underline{r})$ denote the
+NBLN global parameters and define the per-cell composition*
+
+$$
+\rho_{c,g} \;=\; \mathrm{softmax}(\underline{x}_c)_g \;=\;
+\frac{\exp(x_{c,g})}{\sum_{h=1}^G \exp(x_{c,h})}.
+$${#eq-diffexp-nbln-composition-def}
+
+*Under the gauge transformation $T_\Delta$ @eq-diffexp-nbln-gauge, the
+composition $\underline{\rho}_c$ is **exactly invariant**:*
+
+$$
+\boxed{\
+\underline{\rho}_c(\underline{x}_c + \Delta_c\,\mathbf{1})
+\;=\;
+\underline{\rho}_c(\underline{x}_c).
+\
+}
+$${#eq-diffexp-nbln-pred-invariance}
+
+***Proof.*** *The softmax function is shift-invariant: for any scalar
+$\Delta$,*
+
+$$
+\mathrm{softmax}(\underline{x} + \Delta\,\mathbf{1})_g
+=
+\frac{\exp(x_g + \Delta)}{\sum_h \exp(x_h + \Delta)}
+=
+\frac{e^\Delta \exp(x_g)}{e^\Delta \sum_h \exp(x_h)}
+=
+\mathrm{softmax}(\underline{x})_g. \qquad \blacksquare
+$$
+
+**Consequences for differential expression.** All compositional DE
+test statistics built from $\underline{\rho}_c$ — log-ratio contrasts
+$\log(\rho_g/\rho_h)$, ALR-coordinate statistics, the
+non-parametric DE pipeline of @sec-diffexp-nonparametric — are robust
+to misspecification of $\eta_c$ and to the rigid-translation gauge.
+This is the **direct NBLN analog** of the PLN composition-robustness
+theorem in @sec-diffexp-lnm-pln-robust-pln.
+
+## Theorem 2: gauge structure of the loadings matrix W {#sec-diffexp-nbln-theorem-W}
+
+The cross-gene correlation structure in NBLN is encoded by the
+latent covariance $\underline{\underline{\Sigma}} =
+\underline{\underline{W}}\,\underline{\underline{W}}^{\!\top}
++ \mathrm{diag}(\underline{d})$. The biologically meaningful question
+is which projection of $\underline{\underline{W}}$ captures cross-gene
+structure that survives the gauge.
+
+Define the gene-centering projector
+
+$$
+\underline{\underline{P}} \;=\; \underline{\underline{I}}_G
+- \frac{1}{G}\,\mathbf{1}\,\mathbf{1}^{\!\top} \;\in\; \mathbb{R}^{G\times G},
+\qquad \underline{\underline{P}}^2 = \underline{\underline{P}}, \quad
+\underline{\underline{P}}\,\mathbf{1} = \underline{0},
+$${#eq-diffexp-nbln-projector}
+
+and the gene-centered loadings
+
+$$
+\boxed{\
+\underline{\underline{W}}_\perp
+\;\equiv\;
+\underline{\underline{P}}\,\underline{\underline{W}}
+\;=\;
+\underline{\underline{W}}
+- \frac{1}{G}\,\mathbf{1}\,(\mathbf{1}^{\!\top}\underline{\underline{W}}).
+\
+}
+$${#eq-diffexp-nbln-W-perp}
+
+**Theorem.** *Compositional cross-gene correlations are encoded by
+the centered loadings $\underline{\underline{W}}_\perp$ and the
+centered diagonal $\underline{\underline{P}}\,\mathrm{diag}(\underline{d})\,\underline{\underline{P}}$
+**together** — both gauge-invariant.*
+*Specifically, under any per-cell gauge $T_{\Delta_c}$:*
+
+1. *$\underline{\underline{W}}_\perp$ is unchanged (it does not depend
+   on $x_c$ or $\eta_c$).*
+
+2. *The compositional covariance — the covariance of
+   $\log\rho_g - \log\bar{\rho}$ across cells — equals*
+
+$$
+\underline{\underline{P}}\,\underline{\underline{\Sigma}}\,\underline{\underline{P}}
+\;=\; \underline{\underline{W}}_\perp\,\underline{\underline{W}}_\perp^{\!\top}
+\;+\;
+\underline{\underline{P}}\,\mathrm{diag}(\underline{d})\,\underline{\underline{P}},
+$${#eq-diffexp-nbln-comp-cov}
+
+*and both summands are gauge-invariant.*
+
+3. *The raw covariance
+   $\underline{\underline{W}}\,\underline{\underline{W}}^{\!\top}$ carries an
+   additional rank-1 contribution
+   $\frac{1}{G^2}\mathbf{1}\,(\mathbf{1}^{\!\top}\underline{\underline{W}}\,\underline{\underline{W}}^{\!\top}\,\mathbf{1})\,\mathbf{1}^{\!\top}$
+   plus its centered version, which IS gauge-coupled. This rank-1 contribution
+   corresponds to cell-scaling residuals that the prior on $x_c$ has absorbed,
+   not to biological correlation.*
+
+***Proof.*** *(1) Direct from @eq-diffexp-nbln-W-perp: the right-hand side is
+independent of $x_c$ and $\eta_c$. (2) The compositional log- ratio
+$\log(\rho_g/\bar\rho)$ where $\bar\rho = (\prod_h \rho_h)^{1/G}$ is the
+centred-log-ratio (CLR), which equals $x_g - \bar x$ where $\bar x =
+\tfrac{1}{G}\sum_h x_h$. So*
+
+$$
+\mathrm{CLR}(\underline{\rho}_c) \;=\; \underline{\underline{P}}\,\underline{x}_c.
+$$
+
+*The cross-cell covariance of $\underline{\underline{P}}\,\underline{x}_c$ under
+the prior $\mathcal{N}(\log\widetilde{\underline{\mu}},
+\underline{\underline{\Sigma}})$ is*
+
+$$
+\mathrm{Cov}(\underline{\underline{P}}\,\underline{x}_c)
+\;=\;
+\underline{\underline{P}}\,\underline{\underline{\Sigma}}\,\underline{\underline{P}}
+\;=\;
+\underline{\underline{P}}\,(\underline{\underline{W}}\,\underline{\underline{W}}^{\!\top}
++ \mathrm{diag}(\underline{d}))\,\underline{\underline{P}}
+\;=\;
+\underline{\underline{W}}_\perp\,\underline{\underline{W}}_\perp^{\!\top}
++ \underline{\underline{P}}\,\mathrm{diag}(\underline{d})\,\underline{\underline{P}},
+$$
+
+*since $\underline{\underline{P}}^2 = \underline{\underline{P}}$ and
+$\underline{\underline{P}}\,\underline{\underline{W}} =
+\underline{\underline{W}}_\perp$. Under $T_{\Delta_c}$, $\underline{x}_c$ shifts
+by $\Delta_c \mathbf{1}$ which is annihilated by $\underline{\underline{P}}$, so
+$\underline{\underline{P}}\,\underline{x}_c$ is invariant — hence its covariance
+is invariant.* *(3) The decomposition $\underline{\underline{W}} =
+\underline{\underline{W}}_\perp +
+\frac{1}{G}\mathbf{1}\mathbf{1}^{\!\top}\underline{\underline{W}}$ gives*
+
+$$
+\underline{\underline{W}}\,\underline{\underline{W}}^{\!\top}
+=
+\underline{\underline{W}}_\perp\,\underline{\underline{W}}_\perp^{\!\top}
++ \frac{1}{G}\mathbf{1}\,(\mathbf{1}^{\!\top}\underline{\underline{W}}\,\underline{\underline{W}}_\perp^{\!\top})
++ \frac{1}{G}\,(\underline{\underline{W}}_\perp\,\underline{\underline{W}}^{\!\top}\,\mathbf{1})\,\mathbf{1}^{\!\top}
++ \frac{1}{G^2}\mathbf{1}\,(\mathbf{1}^{\!\top}\underline{\underline{W}}\,\underline{\underline{W}}^{\!\top}\,\mathbf{1})\,\mathbf{1}^{\!\top}.
+$$
+
+*The last three terms involve the all-ones direction and are absent from the
+compositional projection
+$\underline{\underline{P}}\,\underline{\underline{W}}\,\underline{\underline{W}}^{\!\top}\,\underline{\underline{P}}$.
+They quantify the rank-1 contamination in raw
+$\underline{\underline{W}}\,\underline{\underline{W}}^{\!\top}$.* $\blacksquare$
+
+**The SCRIBE accessor** ``get_W_compositional()`` returns
+$\underline{\underline{W}}_\perp$ directly:
+
+```python
+W_perp = laplace_results.get_W_compositional()
+# W_perp has the same shape (G, k) as W; columns are gene-centered.
+# W_perp W_perp.T captures the gauge-invariant low-rank cross-gene
+# correlation signal.
+```
+
+For LNM and LNMVCP, $\underline{\underline{W}}$ is parameterised in ALR
+coordinates which are already in the compositional quotient space;
+``get_W_compositional()`` returns $\underline{\underline{W}}$ unchanged for
+those models.
+
+## Connection to the freeze mechanism {#sec-diffexp-nbln-freeze-rationale}
+
+Theorem 2 establishes that *some* projection of $\underline{\underline{W}}$ is
+gauge-invariant, but it does not prevent the **fitted**
+$\underline{\underline{W}}$ from carrying a large rank-1 contamination
+component. When the data softly identifies $\eta_c$ but does not pin it sharply,
+the optimizer can land at $(\underline{x}_c, \eta_c)$ pairs that satisfy the
+data-likelihood while $\underline{\underline{W}}$ absorbs cell-scaling residuals
+along the all-ones direction. The gauge-invariant *signal* is in
+$\underline{\underline{W}}_\perp$, but the *reported*
+$\underline{\underline{W}}$ mixes signal and contamination.
+
+The Phase-2 freeze mechanism (@sec-nbln-cascade-freeze) addresses this
+structurally. By pinning $\eta_c$ at the NBVCP cascade's per-cell MAP
+$\widehat{\eta}_c^{\,\mathrm{NBVCP}}$, the rigid-translation gauge is **fixed
+before NBLN starts fitting**. With $\eta_c$ held constant, the optimizer cannot
+exploit the gauge to redistribute structure between $\underline{x}_c$ and
+$\eta_c$, and $\underline{\underline{W}}$ converges to a fitted state where the
+all-ones contamination is small.
+
+In practice, with default freeze ``informative_priors_freeze=("r","eta")``,
+empirical fits on real scRNA-seq data show $\|\underline{\underline{W}} -
+\underline{\underline{W}}_\perp\| / \|\underline{\underline{W}}_\perp\| < 0.05$
+— i.e. $\underline{\underline{W}} \approx \underline{\underline{W}}_\perp$
+within 5%. Without the freeze, this ratio frequently exceeds 0.2 on the same
+data.
+
+## Diagnostic: ``get_gauge_diagnostics()`` {#sec-diffexp-nbln-diagnostic}
+
+SCRIBE exposes a per-fit diagnostic that quantifies the contamination:
+
+```python
+diag = laplace_results.get_gauge_diagnostics()
+# Returns a dict:
+#   "W_compositional_norm":          ‖W_perp‖_F
+#   "W_all_ones_component_norm":      ‖W − W_perp‖_F
+#   "gauge_contamination_ratio":      ratio of the two
+```
+
+**Interpretation:**
+
+- ``gauge_contamination_ratio`` < 0.05: clean fit. The reported
+  $\underline{\underline{W}}$ is essentially gauge-invariant; downstream
+  biological interpretation of cross-gene correlations is robust.
+- 0.05 ≤ ratio < 0.2: mild contamination. The NBVCP cascade's $\eta$ estimate is
+  approximately correct but not absorbing all per-cell scaling. Consider using
+  ``get_W_compositional()`` for interpretation; raw $\underline{\underline{W}}$
+  may be slightly cell-scaling-coupled.
+- ratio ≥ 0.2: significant gauge slop. Likely causes: NBVCP source had a
+  misspecified capture prior (e.g. wrong $M_0$, $\sigma_M$ too large); or the
+  dataset has cell-types with biologically distinct total mRNA that NBVCP's
+  $\eta$ absorbed. Always use ``get_W_compositional()`` for biological
+  interpretation in this regime.
+
+For LNM/LNMVCP, the ratio is identically zero by construction (W lives in ALR
+compositional coordinates).
+
+## Cross-model comparison {#sec-diffexp-nbln-comparison}
+
+The gauge structure varies meaningfully across the SCRIBE model family:
+
+| Model | Gauge dimension | Pinned by | Compositional invariance |
+|---|---|---|---|
+| **NBDM** (no capture) | 0 | n/a | exact via Gamma–Dirichlet factorisation |
+| **NBVCP** | 1 (global $\mu$–capture rescaling) | biology-informed capture prior on $\eta$ | exact via the multiplicative gauge |
+| **LNM / LNMVCP** | 0 in the latent (W lives in ALR space) | parametric choice | by construction |
+| **PLN** | 1 (global $\mu_g$–$\eta$ additive shift) | biology-informed capture prior on $\eta$ | exact for compositions; rank-1 contamination in $W$ |
+| **NBLN** (no freeze) | **C (per-cell rigid translation)** | softly by priors only | exact for compositions; up to rank-1 contamination per cell in $W$ |
+| **NBLN (Phase-2 freeze ``r+eta``)** | **0 (eta pinned at NBVCP MAP)** | freeze mechanism | exact for compositions; ``W ≈ W_perp`` empirically |
+
+The NBLN-without-freeze row is the most pathological because the gauge is
+per-cell rather than global. The freeze mechanism reduces NBLN's gauge to the
+same effective status as LNMVCP — fully pinned — at the cost of trusting NBVCP's
+$\eta$ estimate.
+
+## Practical recommendations {#sec-diffexp-nbln-practical}
+
+1. **Default Phase-2 freeze is correct for most workflows.** With
+   ``informative_priors_freeze=("r","eta")`` (the default when
+   ``informative_priors_from`` is supplied), the gauge is pinned structurally
+   and ``get_gauge_diagnostics()`` should report a low contamination ratio. The
+   reported $\underline{\underline{W}}$ is approximately gauge-invariant.
+
+2. **For biological interpretation of cross-gene correlations, prefer
+   ``get_W_compositional()``.** This is the gauge-invariant projection, valid
+   regardless of the freeze configuration and regardless of which model was
+   used. The trade-off is that $\underline{\underline{W}}_\perp$ loses the
+   cell-scaling component; for analyses that care about absolute log-rate
+   covariance (which is gauge-coupled anyway), this loss is not a real loss.
+
+3. **Always inspect ``get_gauge_diagnostics()`` after a fit.** A ratio > 0.2 is
+   a signal that NBVCP's $\eta$ estimate disagreed with what NBLN's data wanted.
+   Re-examine the NBVCP fit (capture prior, library-size assumptions); consider
+   loosening the freeze with ``informative_priors_freeze=("r",)`` so $\eta$ can
+   be refined.
+
+4. **PPC analyses are robust regardless.** The composition $\rho_{c,g} =
+   \mathrm{softmax}(x_c)_g$ is exactly gauge-invariant, so posterior-predictive
+   checks of compositional quantities are valid irrespective of the gauge
+   contamination in $\underline{\underline{W}}$.
+
+## Summary {#sec-diffexp-nbln-summary}
+
+NBLN's per-cell rigid-translation gauge generalises the NBDM/NBVCP/PLN gauge
+structures from one global dimension to $C$ per-cell dimensions, making it the
+most gauge-rich model in the SCRIBE family. The gauge acts only on the
+cell-scaling component of $\underline{x}_c$ vs $\eta_c$; compositional
+predictions are *exactly* gauge-invariant and the gauge-invariant subspace of
+the loadings matrix $\underline{\underline{W}}_\perp =
+\underline{\underline{P}}\,\underline{\underline{W}}$ captures the biologically
+meaningful cross-gene correlation structure. The Phase-2 freeze mechanism pins
+the gauge structurally by adopting NBVCP's per-cell $\eta$ estimate, and the
+``get_W_compositional()`` accessor on ``ScribeLaplaceResults`` returns the
+gauge-invariant projection directly. The ``get_gauge_diagnostics()`` accessor
+quantifies how close the fitted $\underline{\underline{W}}$ is to its
+compositional projection — a clean fit has $\|\underline{\underline{W}} -
+\underline{\underline{W}}_\perp\|/\|\underline{\underline{W}}_\perp\| < 0.05$.

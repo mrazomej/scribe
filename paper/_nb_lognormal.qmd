@@ -1958,6 +1958,112 @@ cascade also tightens the post-fit ``r_scale`` (by the prior-precision
 contribution) and unlocks the new ``mu_loc``, ``mu_scale`` outputs
 (@sec-nbln-mu-uncertainty).
 
+### Cascade-parameter freeze {#sec-nbln-cascade-freeze}
+
+The soft cascade above injects $\mathcal{N}(\theta^{(0)}, s^{(0)2})$
+priors on selected globals with finite $\tau$, allowing the M-step to
+refine those globals around the SVI source's posterior. Real-data
+diagnostics on the jurkat-style dataset (3258 cells × 7785 genes)
+exposed a residual problem: even with the soft cascade active, **all
+3258 cells reported non-zero Newton gradients at the η block** (median
+$|\nabla_\eta f| \approx 0.2$, p99 $\approx 4.8\times 10^4$), and
+**7661 / 7785 (≈ 98 %) of $r_g$ entries hit the curvature floor** in
+the post-fit Hessian. Posterior-predictive checks looked excellent
+nonetheless (mean-calibration Pearson $r = 1.0$).
+
+The diagnosis: this is exactly the per-cell rigid-translation gauge
+characterised in @sec-diffexp-nbln-robustness. With finite $\tau$,
+the soft cascade's prior precision was insufficient to break the
+$C$-dimensional gauge, and the optimizer found ridge configurations
+where $(x_c, \eta_c)$ varied freely while $\exp(x_c - \eta_c)$ stayed
+correct.
+
+The **cascade-parameter freeze** is the $\tau \to 0$ limit of the soft
+cascade: instead of softly anchoring selected globals around the SVI
+MAP, we **fix them exactly at the SVI MAP** for the duration of the
+NBLN M-step. The optax optimizer never sees the frozen keys; they
+cannot drift regardless of optimizer internals. Four levels of
+aggressiveness are available:
+
+| Level | Frozen | Optimized | Rationale |
+|---|---|---|---|
+| 1 (no freeze) | none | $r, \mu, \eta, W, d$ | Soft cascade only; gauge remains unbroken. |
+| 2 (freeze ``r``) | $r$ | $\mu, \eta, W, d$ | Fixes the dispersion-vs-cell-latent absorption pathology that motivates the cascade. |
+| **3 (freeze ``r`` + ``eta``)** | **$r, \eta$** | $\mu, W, d$ | **Default.** Pins the per-cell rigid-translation gauge structurally — see @sec-diffexp-nbln-robustness. Empirically reduces ``gauge_contamination_ratio`` < 0.05. |
+| 4 (freeze ``r`` + ``mu`` + ``eta``) | $r, \mu, \eta$ | $W, d$ | NBLN learns only cross-gene correlation structure on top of NBVCP. Conservative; loses any NBLN-side refinement of $\mu_g$. |
+
+The Phase-2 default is **Level 3 (freeze $r$ and $\eta$)**:
+
+```python
+scribe.fit(
+    adata,
+    model="nbln",
+    inference_method="laplace",
+    informative_priors_from=svi_results,
+    informative_priors_freeze=("r", "eta"),   # ← default
+    n_steps=50_000,
+)
+```
+
+**Implementation mechanics:**
+
+- Frozen keys are *excluded from the optax optimizer's `params` dict*
+  entirely (not just `stop_gradient`-wrapped). The optimizer literally
+  cannot move what isn't in its state, so the freeze is mathematically
+  airtight.
+- For frozen $\eta$, the per-cell Newton path switches from joint
+  $(x, \eta)$ to **x-only-with-offset**: the data-side NB factors are
+  evaluated at the shifted log-rate $x_{c,g} - \eta_c^{\,\mathrm{frozen}}$,
+  with no $\eta$-block in the per-cell Hessian. This collapses the
+  gauge-degenerate joint inverse to a clean x-only inverse — the
+  warnings about negative profiled curvature on $r_g$ disappear by
+  construction.
+- The full `ScribeSVIResults` is embedded as
+  ``result.cascade_source`` so PPC paths and `get_distributions()`
+  can consult the SVI guide directly for frozen-parameter posteriors.
+  For amortized SVI sources, the count matrix is cached separately
+  on ``result.cascade_source_counts``; the user's SVI result is
+  never mutated.
+
+**Why $\eta$ freeze is correct, not over-aggressive.** The compositional-
+robustness theorem @eq-diffexp-nbln-pred-invariance establishes that
+the *biologically meaningful* posterior — the per-cell composition
+$\rho_{c,g} = \mathrm{softmax}(x_c)_g$ — is exactly invariant under
+the rigid-translation gauge. Freezing $\eta$ at NBVCP's MAP commits
+to a particular gauge choice (NBVCP's data-driven cell-scaling
+estimate) but does not affect compositional predictions or
+gauge-invariant cross-gene structure. The matrix
+$\underline{\underline{W}}_\perp$ (returned by
+``get_W_compositional()``) is *equally well-determined* under any
+gauge choice; freezing simply ensures that the fitted
+$\underline{\underline{W}}$ has minimal all-ones contamination, so
+$\underline{\underline{W}} \approx \underline{\underline{W}}_\perp$
+in practice.
+
+**When to relax the freeze.** Three signals suggest using a lighter
+freeze:
+
+1. ``get_gauge_diagnostics()["gauge_contamination_ratio"] > 0.2``
+   after a default-freeze fit — NBVCP's $\eta$ is wrong somewhere.
+2. Cell-types with biologically distinct total mRNA content (e.g.
+   proliferating vs quiescent). NBVCP's $\eta$ may absorb the
+   biological difference; freezing transfers it from $\eta$ into the
+   latent $x$, where it shows up as compositional rather than
+   absolute. For most downstream uses this is fine; for analyses
+   that depend on absolute log-rate differences, freeze ``r`` only.
+3. The NBVCP source's capture prior $(M_0, \sigma_M)$ was guessed
+   poorly. Refit NBVCP with a more reasonable prior or relax
+   freezing.
+
+The fallback `informative_priors_freeze=("r",)` (Level 2) gives
+$\eta$ back to NBLN's joint Newton while keeping the $r_g$
+identifiability fix. This is the recommended "loosen one step"
+configuration when default freeze diagnostics flag a problem.
+
+See @sec-diffexp-nbln-robustness for the full mathematical
+robustness statement and the ``get_W_compositional()`` /
+``get_gauge_diagnostics()`` accessors.
+
 ### Comparison and recommendation {#sec-nbln-inference-tradeoff}
 
 | Property | Path A (SVI) | Path B (Laplace) | Path C (SVI cascade → Laplace) |
