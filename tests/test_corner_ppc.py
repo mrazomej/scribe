@@ -207,6 +207,24 @@ class TestRenderOffdiagPanel:
         assert len(ax.collections) > 0
         plt.close(fig)
 
+    def test_contours_are_drawn_above_scatter(self):
+        """Contours should use a higher z-order than scatter points."""
+        rng = np.random.default_rng(123)
+        ppc_x = rng.negative_binomial(n=5, p=0.3, size=(12, 35))
+        ppc_y = rng.negative_binomial(n=7, p=0.4, size=(12, 35))
+        obs_x = rng.negative_binomial(n=5, p=0.3, size=35)
+        obs_y = rng.negative_binomial(n=7, p=0.4, size=35)
+
+        fig, ax = plt.subplots()
+        # Render one off-diagonal panel, then inspect collection layering.
+        _render_offdiag_panel(ax, ppc_x, ppc_y, obs_x, obs_y)
+        zorders = {float(coll.get_zorder()) for coll in ax.collections}
+
+        # Scatter should be at zorder=1 and contour levels at zorder=2.
+        assert 1.0 in zorders
+        assert 2.0 in zorders
+        plt.close(fig)
+
     def test_log_scale(self):
         """Off-diagonal panel works with log_scale=True."""
         rng = np.random.default_rng(11)

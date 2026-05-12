@@ -489,7 +489,8 @@ def _render_offdiag_panel(
     """Render one lower-triangle panel (2-D PPC contour + observed scatter).
 
     Pools posterior predictive samples across draws, estimates a 2-D KDE,
-    and renders filled contour levels.  Observed data is scattered on top.
+    and renders filled contour levels. Observed data is scattered first so the
+    contour structure can be overlaid on top with transparency.
 
     Parameters
     ----------
@@ -576,19 +577,20 @@ def _render_offdiag_panel(
     positions = np.vstack([_xx.ravel(), _yy.ravel()])
     _zz = kde(positions).reshape(_xx.shape)
 
-    # Filled contour of the PPC joint density
+    # Draw observed data first so contours remain legible in dense clouds.
+    ax.scatter(
+        obs_x_plot, obs_y_plot,
+        s=scatter_size, alpha=scatter_alpha, color=scatter_color,
+        edgecolors="none", rasterized=True, zorder=1,
+    )
+
+    # Overlay contour fill above points with transparency to preserve context.
     ax.contourf(
         _xx, _yy, _zz,
         levels=n_contour_levels,
         cmap=contour_cmap,
         alpha=contour_alpha,
-    )
-
-    # Observed data scatter on top
-    ax.scatter(
-        obs_x_plot, obs_y_plot,
-        s=scatter_size, alpha=scatter_alpha, color=scatter_color,
-        edgecolors="none", rasterized=True,
+        zorder=2,
     )
 
 
@@ -629,9 +631,9 @@ def plot_corner_ppc(
 
     - **Diagonal**: marginal PPC histograms (shaded predictive credible
       bands + observed count histogram), identical to :func:`plot_ppc`.
-    - **Lower triangle**: bivariate PPC panels showing 2-D density
-      contours from pooled posterior predictive samples with the observed
-      gene-gene scatter overlaid.
+    - **Lower triangle**: bivariate PPC panels showing observed gene-gene
+      scatter with semi-transparent 2-D density contours from pooled posterior
+      predictive samples overlaid.
     - **Upper triangle**: hidden.
 
     Parameters

@@ -59,9 +59,9 @@ a single figure:
 - **Diagonal panels** — marginal PPC histograms identical to `plot_ppc`: shaded
   credible-region bands from posterior predictive draws with the observed count
   histogram overlaid.
-- **Lower-triangle panels** — bivariate PPC panels: 2-D density contour levels
-  computed via `scipy.stats.gaussian_kde` on pooled posterior predictive samples,
-  with the observed gene-gene scatter plotted on top.
+- **Lower-triangle panels** — bivariate PPC panels: observed gene-gene scatter
+  with semi-transparent 2-D density contour levels computed via
+  `scipy.stats.gaussian_kde` on pooled posterior predictive samples overlaid.
 - **Upper triangle** — hidden.
 
 ### Gene selection
