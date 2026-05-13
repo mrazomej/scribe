@@ -2044,7 +2044,10 @@ in practice.
 freeze:
 
 1. ``get_gauge_diagnostics()["gauge_contamination_ratio"] > 0.2``
-   after a default-freeze fit — NBVCP's $\eta$ is wrong somewhere.
+   after a default-freeze fit **without** loadings shrinkage — NBVCP's $\eta$
+   is wrong somewhere.  (Note: with Phase-3 loadings shrinkage active, ratios
+   of $0.5$–$0.8$ are routine and benign; inspect absolute norms instead.
+   See [@sec-loadings-shrinkage] and [@sec-diffexp-nbln-diagnostic].)
 2. Cell-types with biologically distinct total mRNA content (e.g.
    proliferating vs quiescent). NBVCP's $\eta$ may absorb the
    biological difference; freezing transfers it from $\eta$ into the
@@ -2129,10 +2132,17 @@ trusting downstream correlation analyses is:
    the generative tuple $(\underline{\mu}, \underline{\underline{W}},
    \underline{d}, \underline{r}, \underline{\eta})$ is internally
    consistent with the data.
-2. Inspect ``get_gauge_diagnostics()``. A
+2. Inspect ``get_gauge_diagnostics()``. **Without loadings shrinkage**, a
    ``gauge_contamination_ratio`` below $0.05$ indicates the cascade
    freeze fully pinned the rigid-translation gauge and
    $\underline{\underline{W}} \approx \underline{\underline{W}}_\perp$.
+   **With loadings shrinkage active** (Phase-3 ``priors={"loadings": {...}}``),
+   ratios of $0.5$–$0.8$ are routine and benign — the prior shrinks
+   $\underline{\underline{W}}_\perp$ much faster than
+   $\underline{\underline{W}}_\parallel$; inspect absolute norms (both
+   should be modest) and the ratio's stability across shrinkage prior
+   families (NEG vs horseshoe) instead. See [@sec-loadings-shrinkage]
+   and [@sec-diffexp-nbln-diagnostic] for the full discussion.
 3. Extract correlations from
    ``get_W_compositional()`` — the gauge-invariant projection
    $\underline{\underline{W}}_\perp$. The cross-gene correlation

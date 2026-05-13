@@ -248,6 +248,51 @@ The 5-step recipe:
 
 ---
 
+## Gauge-contamination diagnostic in the shrinkage regime
+
+The `get_gauge_diagnostics()` method on `ScribeLaplaceResults` returns
+three numbers — `W_compositional_norm` (\(\|W_\perp\|\)),
+`W_all_ones_component_norm` (\(\|W_\parallel\|\)), and their ratio.
+For **unshrunk** fits the ratio is the headline diagnostic with
+clear thresholds (< 0.05 clean, > 0.2 trouble). For **shrunk** fits
+the ratio means something qualitatively different and needs a
+different reading.
+
+The shrinkage prior targets `W_⟂` aggressively and leaves
+`W_∥` unconstrained — the cascade freeze on \(\eta\) is the
+gauge-pinning mechanism, not a ridge on the loadings gauge
+component. With the prior in place, `W_⟂` shrinks rapidly to
+match the data-supported rank, while `W_∥` only shrinks via the
+implicit constraint from the likelihood + frozen \(\eta\). The
+ratio therefore climbs **as a consequence of `W_⟂` shrinking**,
+not because `W_∥` is growing.
+
+On real cascade-frozen NBLN fits with horseshoe or NEG at default
+hyperparameters, ratios of 0.5–0.8 on clean fits are routine. The
+diagnostic to inspect in this regime is the **absolute norms**:
+
+| Pattern | Reading |
+|---|---|
+| Both norms modest; ratio 0.5–0.8 differs across shrinkage prior families | **Healthy.** The shrinkage has done its job on `W_⟂`. The ratio differing across NEG vs horseshoe is the expected signature of the unidentified all-ones direction — different priors put it in different places. |
+| Both norms modest; ratio similar across prior families | Healthy and the gauge component is well-determined by the cascade freeze. |
+| Ratio ≫ 1 *and* both norms large in absolute terms | Concerning — the original failure mode (gauge component carrying real signal). Rare when cascade freeze is active. |
+
+The rank convergence between NEG and horseshoe — both selecting the
+same effective rank on the same data despite landing at different
+`W_∥` magnitudes — is itself the strongest evidence that the
+all-ones direction is data-unidentified and that the biological
+signal lives entirely in `W_⟂`.
+
+**Bottom line for downstream analyses:** for compositional PPCs,
+cross-gene correlations via `get_W_compositional()`, and any
+quantity that's gauge-invariant by Theorem 1 or 2, the ratio is
+irrelevant. The only analyses sensitive to the all-ones component
+are those that interpret raw `W` or per-cell `x_loc` as absolute
+log-rates, and those weren't meaningful under the per-cell gauge
+to begin with.
+
+---
+
 ## Compatibility and scope (v1)
 
 - **PLN and NBLN Laplace fits** are supported. The engine raises

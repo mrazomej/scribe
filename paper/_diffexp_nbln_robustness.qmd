@@ -282,7 +282,7 @@ diag = laplace_results.get_gauge_diagnostics()
 #   "gauge_contamination_ratio":      ratio of the two
 ```
 
-**Interpretation:**
+**Interpretation (without loadings shrinkage on $\underline{\underline{W}}$):**
 
 - ``gauge_contamination_ratio`` < 0.05: clean fit. The reported
   $\underline{\underline{W}}$ is essentially gauge-invariant; downstream
@@ -296,6 +296,38 @@ diag = laplace_results.get_gauge_diagnostics()
   dataset has cell-types with biologically distinct total mRNA that NBVCP's
   $\eta$ absorbed. Always use ``get_W_compositional()`` for biological
   interpretation in this regime.
+
+**With loadings shrinkage active** (Phase-3 ``priors={"loadings":
+{...}}``, see [@sec-loadings-shrinkage]), the ratio interpretation
+shifts qualitatively. The shrinkage prior targets
+$\underline{\underline{W}}_\perp$ aggressively while leaving the
+all-ones component $\underline{\underline{W}}_\parallel$ unconstrained
+(the cascade freeze on $\eta$ is the gauge-pinning mechanism, not a
+ridge on the loadings gauge component). The ratio therefore climbs as
+the denominator shrinks, *not* because the numerator grows.
+
+On real cascade-frozen NBLN fits with horseshoe or NEG shrinkage at
+default hyperparameters, we routinely see
+``gauge_contamination_ratio`` in the range 0.5--0.8 on clean fits.
+The diagnostic to inspect in this regime is **the absolute norms**:
+
+- Healthy: both ``W_compositional_norm`` and
+  ``W_all_ones_component_norm`` are modest in absolute terms, and the
+  ratio differs across shrinkage prior families (e.g. NEG and
+  horseshoe land at different $\underline{\underline{W}}_\parallel$
+  magnitudes on the same data). The ratio differing across priors is
+  the expected signature of an under-determined parameter — the
+  all-ones direction is parametrically free, so different priors put
+  it in different places.
+- Concerning: ratio $\gg$ 1 *and* both norms large in absolute terms.
+  This would still flag the original failure mode (the gauge component
+  taking real signal), but is rare when the cascade freeze is active.
+
+This regime distinction matters because the rank convergence between
+NEG and horseshoe — both selecting the same effective rank on the
+same data despite landing at different $\underline{\underline{W}}_\parallel$
+magnitudes — is itself evidence that the all-ones direction is
+data-unidentified, which is exactly the property Theorem 2 predicts.
 
 For LNM/LNMVCP, the ratio is identically zero by construction (W lives in ALR
 compositional coordinates).
@@ -333,11 +365,17 @@ $\eta$ estimate.
    cell-scaling component; for analyses that care about absolute log-rate
    covariance (which is gauge-coupled anyway), this loss is not a real loss.
 
-3. **Always inspect ``get_gauge_diagnostics()`` after a fit.** A ratio > 0.2 is
-   a signal that NBVCP's $\eta$ estimate disagreed with what NBLN's data wanted.
-   Re-examine the NBVCP fit (capture prior, library-size assumptions); consider
-   loosening the freeze with ``informative_priors_freeze=("r",)`` so $\eta$ can
-   be refined.
+3. **Always inspect ``get_gauge_diagnostics()`` after a fit.** Without
+   loadings shrinkage, a ratio > 0.2 is a signal that NBVCP's $\eta$ estimate
+   disagreed with what NBLN's data wanted — re-examine the NBVCP fit
+   (capture prior, library-size assumptions); consider loosening the freeze
+   with ``informative_priors_freeze=("r",)`` so $\eta$ can be refined. With
+   loadings shrinkage active, the threshold no longer applies in the same
+   way (the prior shrinks $\underline{\underline{W}}_\perp$ much faster than
+   $\underline{\underline{W}}_\parallel$, driving the ratio up by design);
+   inspect absolute norms instead, and treat the ratio differing across
+   prior families as the expected signature of the unidentified gauge
+   direction.
 
 4. **PPC analyses are robust regardless.** The composition $\rho_{c,g} =
    \mathrm{softmax}(x_c)_g$ is exactly gauge-invariant, so posterior-predictive
@@ -378,13 +416,24 @@ Laplace fit:
 
 2. **Gauge-contamination diagnostic**.
 
-   Call ``get_gauge_diagnostics()`` and check that the
-   ``gauge_contamination_ratio`` is small (heuristic threshold: $< 0.05$ for a
-   clean Phase-2 frozen fit, $< 0.2$ acceptable, larger flags trouble). This
-   confirms that $\underline{\underline{W}} \approx
-   \underline{\underline{W}}_\perp$ — the rank-1 all-ones-direction component
-   has been absorbed into $\eta$ by the cascade freeze, and the loadings matrix
-   is operating in the gauge-invariant subspace.
+   Call ``get_gauge_diagnostics()`` and inspect the result. The interpretation
+   depends on whether Phase-3 loadings shrinkage is active:
+
+   - **No loadings shrinkage**: ``gauge_contamination_ratio`` $< 0.05$ for a
+     clean Phase-2 frozen fit, $< 0.2$ acceptable, larger flags trouble (see
+     [@sec-diffexp-nbln-diagnostic]).
+   - **Loadings shrinkage active**: the ratio routinely climbs to $0.5$--$0.8$
+     on clean fits because the prior shrinks $\underline{\underline{W}}_\perp$
+     much faster than $\underline{\underline{W}}_\parallel$. Inspect absolute
+     norms instead — both ``W_compositional_norm`` and
+     ``W_all_ones_component_norm`` should be modest, and the ratio should
+     differ across shrinkage prior families (NEG vs horseshoe), reflecting
+     the unidentified all-ones direction.
+
+   Either way, $\underline{\underline{W}}_\perp$ (returned by
+   ``get_W_compositional()``) is the gauge-invariant signal the next step
+   uses for correlations — its trustworthiness comes from Theorem 2, not from
+   the ratio crossing a particular threshold.
 
 3. **Extract correlations from the gauge-invariant projection**.
 

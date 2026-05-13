@@ -364,8 +364,12 @@ recovery, cascade-frozen fits with adaptive rank selection.
   \(\underline{\underline{W}}_\perp\). Use this (not raw
   \(\underline{\underline{W}}\)) for cross-gene correlation analysis.
 - **`get_gauge_diagnostics()`**: quantifies how much of raw
-  \(\underline{\underline{W}}\) is gauge slop. Clean fits show
-  `gauge_contamination_ratio < 0.05`.
+  \(\underline{\underline{W}}\) is gauge slop. **Without loadings
+  shrinkage**, clean fits show `gauge_contamination_ratio < 0.05`.
+  **With loadings shrinkage active**, ratios of 0.5–0.8 are routine
+  and benign — the prior shrinks `W_⟂` much faster than `W_∥`, so
+  the ratio climbs by design; inspect absolute norms instead.
+  See [Loadings Shrinkage](../theory/loadings-shrinkage.md#gauge-contamination-diagnostic-in-the-shrinkage-regime).
 
 **See also:** [Theory: NB Log-Normal](../theory/nb-lognormal.md) and
 [Theory: Loadings Shrinkage](../theory/loadings-shrinkage.md).

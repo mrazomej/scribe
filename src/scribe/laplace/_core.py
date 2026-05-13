@@ -262,10 +262,42 @@ class CoreResultsMixin:
         meaningful gene-centered component (``W_perp``) and a
         gauge-coupled all-ones-direction component (``W_para``).  This
         method returns the Frobenius norms of both plus their ratio.
-        A clean cascade-frozen fit (default Phase-2 freeze of ``r`` and
-        ``eta``) should produce a ``gauge_contamination_ratio`` < 0.05;
-        values > 0.2 flag that NBVCP's eta estimate is not absorbing
-        all the cell-scaling.
+
+        **Threshold interpretation depends on whether a Phase-3
+        loadings shrinkage prior is active.**
+
+        - **Without loadings shrinkage** (no ``priors={"loadings":
+          ...}``).  A clean cascade-frozen fit (default Phase-2 freeze
+          of ``r`` and ``eta``) should produce a
+          ``gauge_contamination_ratio`` < 0.05; values > 0.2 flag that
+          NBVCP's eta estimate is not absorbing all the cell-scaling,
+          and the gauge component is taking signal that should live in
+          ``W_perp``.
+
+        - **With loadings shrinkage** (e.g.
+          ``priors={"loadings": {"type": "horseshoe_columnwise",
+          ...}}``).  The shrinkage prior aggressively shrinks
+          ``W_perp`` to the data-supported rank while leaving the
+          all-ones component ``W_para`` unconstrained — the prior
+          targets ``W_perp`` only.  This is by design (the cascade
+          freeze on ``eta`` is what pins the gauge structurally, not
+          a ridge on the W gauge component).  As a result the *ratio*
+          can climb to 0.5–0.8 even on a clean fit, driven by the
+          denominator shrinking, not the numerator growing.  Inspect
+          the **absolute norms** instead:
+
+            * Healthy: both ``W_compositional_norm`` and
+              ``W_all_ones_component_norm`` are modest in absolute
+              terms (each a few × the per-gene SD of the data) and
+              are similar in scale across different shrinkage prior
+              families (e.g. NEG vs horseshoe).  The ratio differing
+              across prior families is the *expected* signature of
+              an under-determined parameter — the all-ones direction
+              is parametrically free, so different priors put it in
+              different places.
+            * Concerning: ratio ≫ 1 *and* both norms large in
+              absolute terms.  This would still flag the original
+              failure mode (gauge component taking real signal).
 
         For LNM/LNMVCP, W is in ALR coordinates by construction and the
         ratio is identically zero (no all-ones contamination possible).
