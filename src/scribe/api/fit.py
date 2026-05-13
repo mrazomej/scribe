@@ -233,15 +233,14 @@ def fit(
     # paper/_diffexp_nbln_robustness.qmd and the Cascade-parameter
     # freeze subsection in paper/_nb_lognormal.qmd for the rationale.
     informative_priors_freeze: tuple = ("r", "eta"),
-    # Phase-3: shrinkage prior on the loadings matrix W.  Dict form
-    #   {"type": "horseshoe_columnwise", "tau_scale": 1.0}
-    # or any of the registered strategies in scribe.laplace._w_priors:
-    #   "none" (no-op default), "gaussian", "horseshoe_columnwise",
-    #   "neg_columnwise".  Supported for model="nbln" / model="pln"
-    #   with inference_method="laplace".  Default None leaves W
-    #   unregularized (existing behavior).  See
-    #   src/scribe/laplace/README.md for the full strategy catalog
-    #   and paper/_diffexp_nbln_robustness.qmd for the motivation.
+    # DEPRECATED: shrinkage prior on the loadings matrix W.
+    # The preferred API is to pass the strategy spec inside the
+    # ``priors`` dict under the descriptive ``"loadings"`` key:
+    #   priors = {"loadings": {"type": "horseshoe_columnwise",
+    #                          "tau_scale": 1.0}}
+    # This top-level kwarg is retained for backward compatibility and
+    # emits a ``DeprecationWarning`` when used.  Passing both the dict
+    # form and the kwarg raises ``ValueError``.
     w_prior: Optional[dict] = None,
     # Float64 precision -- defaults to True for MCMC, False for SVI/VAE
     enable_x64: Optional[bool] = None,
@@ -572,9 +571,24 @@ def fit(
     -------------------------------------
     priors : Dict[str, Any], optional
         Dictionary of prior hyperparameters keyed by parameter name.
-        Values should be tuples of prior hyperparameters.  Example:
+        Most entries are tuples of hyperparameters — e.g.
         ``{"p": (1.0, 1.0), "r": (0.0, 1.0)}``.  For ``"mixing"``,
         a single scalar is broadcast to all ``n_components``.
+
+        Two entries have *dict-shaped* values rather than tuples:
+
+        - ``"capture_efficiency"`` (alias for ``"eta_capture"``): the
+          biology-informed capture-anchor prior for PLN/NBLN/LNMVCP.
+        - ``"loadings"`` (alias for the W matrix): the **shrinkage
+          prior on the low-rank loadings matrix** for PLN/NBLN
+          Laplace fits.  Value is a strategy spec — e.g.
+          ``{"type": "horseshoe_columnwise", "tau_scale": 1.0}``.
+          See ``src/scribe/laplace/_w_priors.py`` for the four
+          registered strategies (``none``, ``gaussian``,
+          ``horseshoe_columnwise``, ``neg_columnwise``).  When passed,
+          this entry is extracted from the dict before downstream
+          stages see it, so the rest of the priors dict stays tuple-
+          shaped as usual.
 
     latent_dim : int, optional
         Rank of the low-rank loadings matrix ``W ∈ R^{G × k}`` in the
@@ -872,11 +886,67 @@ def fit(
         else (vae_latent_dim if vae_latent_dim is not None else 10)
     )
 
+    # -- Extract the W-prior strategy spec from ``priors`` ------------------
+    # Preferred API: ``priors={"loadings": {"type": "horseshoe_columnwise",
+    # ...}}`` lives alongside other parameter priors instead of as a
+    # top-level kwarg.  Legacy ``w_prior=`` is still accepted but
+    # deprecated.  Both forms point to the same downstream plumbing.
+    #
+    # The W-prior entry is *popped* from the priors dict before the
+    # FitContext sees it — downstream stages (build_model_config,
+    # normalize_prior_keys, etc.) operate on tuple-shaped entries only.
+    _priors_for_ctx = priors
+    _w_prior_from_priors = None
+    if priors is not None:
+        # Resolve both the descriptive alias and the internal key.
+        if "loadings" in priors and "W" in priors:
+            raise ValueError(
+                "priors dict contains both 'loadings' and 'W' "
+                "(internal key for the same parameter).  Use only "
+                "one — 'loadings' is the preferred descriptive form."
+            )
+        for _key in ("loadings", "W"):
+            if _key in priors:
+                _w_prior_from_priors = priors[_key]
+                # Build a copy with the entry removed.
+                _priors_for_ctx = {
+                    k: v for k, v in priors.items() if k != _key
+                }
+                # Empty dicts pass through as None to keep the
+                # downstream "no priors" path clean.
+                if not _priors_for_ctx:
+                    _priors_for_ctx = None
+                break
+
+    # Reconcile with the deprecated top-level kwarg.  Two values =
+    # ambiguous; one of either = use it.  ``w_prior`` is the legacy
+    # path and emits a DeprecationWarning when used.
+    if _w_prior_from_priors is not None and w_prior is not None:
+        raise ValueError(
+            "W-shrinkage prior was specified both via "
+            "`priors={'loadings': ...}` (preferred) and the legacy "
+            "`w_prior=` kwarg.  Pass it only via the priors dict; "
+            "`w_prior=` is retained for backward compatibility but "
+            "is deprecated."
+        )
+    if w_prior is not None:
+        import warnings as _warnings
+        _warnings.warn(
+            "`w_prior=` kwarg is deprecated; pass the W-shrinkage "
+            "prior inside the priors dict as "
+            "`priors={'loadings': {'type': '...', ...}}` instead. "
+            "Both routes resolve to the same internal plumbing.",
+            DeprecationWarning, stacklevel=2,
+        )
+        _effective_w_prior = w_prior
+    else:
+        _effective_w_prior = _w_prior_from_priors
+
     # -- Pack all named arguments into FitContext for stage consumption --------
     ctx = FitContext(
         counts=counts,
         model=model,
-        priors=priors,
+        priors=_priors_for_ctx,
         n_components=n_components,
         kwargs=dict(
             variable_capture=variable_capture,
@@ -971,7 +1041,7 @@ def fit(
             informative_priors_n_samples=informative_priors_n_samples,
             informative_priors_verbose=informative_priors_verbose,
             informative_priors_freeze=informative_priors_freeze,
-            w_prior=w_prior,
+            w_prior=_effective_w_prior,
             enable_x64=enable_x64,
             model_config=model_config,
             inference_config=inference_config,

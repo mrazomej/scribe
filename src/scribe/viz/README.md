@@ -167,8 +167,10 @@ with collapsed cross-block diagonals in the compositional corner panels.
 ```python
 result = scribe.fit(
     adata, model="nbln", inference_method="laplace",
-    w_prior={"type": "horseshoe_columnwise", "tau_scale": 1.0},
-    vae_latent_dim=16,
+    priors={
+        "loadings": {"type": "horseshoe_columnwise", "tau_scale": 1.0},
+    },
+    latent_dim=16,
 )
 scribe.viz.plot_w_shrinkage_spectrum(result, figsize=(5, 3.5))
 ```

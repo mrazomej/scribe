@@ -713,7 +713,9 @@ results = scribe.fit(
     adata, model="nbln", inference_method="laplace",
     informative_priors_from=svi_results,        # Phase-2 cascade (optional)
     informative_priors_freeze=("r", "eta"),     # Phase-2 freeze (default)
-    w_prior={"type": "horseshoe_columnwise", "tau_scale": 1.0},
+    priors={
+        "loadings": {"type": "horseshoe_columnwise", "tau_scale": 1.0},
+    },
     latent_dim=16,
     n_steps=20_000,
 )
@@ -723,6 +725,14 @@ print(results.w_prior_diagnostics["sigma_k"])            # per-factor scales
 # Companion diagnostic plot (singular-value-style elbow).
 scribe.viz.plot_w_shrinkage_spectrum(results)
 ```
+
+The W-prior strategy spec lives inside the canonical ``priors`` dict
+under the descriptive key ``"loadings"`` (the factor-analysis term for
+``W``).  The internal alias ``"W"`` is also accepted.  The legacy
+top-level ``w_prior=`` kwarg still works for backward compatibility
+but emits a ``DeprecationWarning``; new code should use the priors
+dict form so the API stays uniform across cascade priors, capture
+priors, and parameter overrides.
 
 ### Strategies registered in v1
 

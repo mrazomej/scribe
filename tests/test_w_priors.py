@@ -525,6 +525,106 @@ def test_latent_dim_and_vae_latent_dim_conflict_raises():
         )
 
 
+def test_priors_dict_loadings_routes_to_w_prior():
+    """Preferred API: ``priors={"loadings": {...}}`` configures shrinkage."""
+    import scribe
+    adata = _toy_adata()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = scribe.fit(
+            adata, model="nbln", inference_method="laplace",
+            n_steps=10, latent_dim=3,
+            priors={
+                "loadings": {"type": "horseshoe_columnwise", "tau_scale": 1.0},
+            },
+            laplace_config={"n_newton_steps": 2, "newton_max_step": 5.0},
+        )
+    assert result.w_prior_diagnostics["strategy_type"] == "horseshoe_columnwise"
+
+
+def test_priors_dict_internal_W_key_also_works():
+    """Internal key ``"W"`` is accepted (alias normalization)."""
+    import scribe
+    adata = _toy_adata()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = scribe.fit(
+            adata, model="nbln", inference_method="laplace",
+            n_steps=10, latent_dim=3,
+            priors={"W": {"type": "gaussian", "scale": 0.5}},
+            laplace_config={"n_newton_steps": 2, "newton_max_step": 5.0},
+        )
+    assert result.w_prior_diagnostics["strategy_type"] == "gaussian"
+
+
+def test_priors_dict_loadings_and_W_both_present_raises():
+    """Both ``loadings`` and ``W`` in the priors dict is ambiguous."""
+    import scribe
+    adata = _toy_adata()
+    with pytest.raises(ValueError, match="loadings.*W"):
+        scribe.fit(
+            adata, model="nbln", inference_method="laplace",
+            n_steps=10, latent_dim=3,
+            priors={
+                "loadings": {"type": "gaussian"},
+                "W": {"type": "horseshoe_columnwise"},
+            },
+            laplace_config={"n_newton_steps": 2, "newton_max_step": 5.0},
+        )
+
+
+def test_priors_dict_loadings_combined_with_other_priors():
+    """Loadings entry coexists with tuple-shaped entries like capture_efficiency."""
+    import scribe
+    adata = _toy_adata()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = scribe.fit(
+            adata, model="nbln", inference_method="laplace",
+            n_steps=10, latent_dim=3,
+            priors={
+                "capture_efficiency": (float(np.log(1000.0)), 0.5),
+                "loadings": {"type": "gaussian", "scale": 0.5},
+            },
+            laplace_config={"n_newton_steps": 2, "newton_max_step": 5.0},
+        )
+    assert result.w_prior_diagnostics["strategy_type"] == "gaussian"
+
+
+def test_legacy_w_prior_kwarg_emits_deprecation_warning():
+    """Legacy ``w_prior=`` kwarg works but emits a DeprecationWarning."""
+    import scribe
+    adata = _toy_adata()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        scribe.fit(
+            adata, model="nbln", inference_method="laplace",
+            n_steps=10, latent_dim=3,
+            w_prior={"type": "horseshoe_columnwise"},
+            laplace_config={"n_newton_steps": 2, "newton_max_step": 5.0},
+        )
+    dep = [
+        w for w in caught
+        if issubclass(w.category, DeprecationWarning)
+        and "w_prior" in str(w.message)
+    ]
+    assert len(dep) >= 1, "expected DeprecationWarning for legacy w_prior= kwarg"
+
+
+def test_priors_dict_loadings_and_legacy_w_prior_conflict_raises():
+    """Passing both the new dict form and the legacy kwarg is an error."""
+    import scribe
+    adata = _toy_adata()
+    with pytest.raises(ValueError, match="priors.*loadings.*w_prior"):
+        scribe.fit(
+            adata, model="nbln", inference_method="laplace",
+            n_steps=10, latent_dim=3,
+            priors={"loadings": {"type": "gaussian"}},
+            w_prior={"type": "horseshoe_columnwise"},
+            laplace_config={"n_newton_steps": 2, "newton_max_step": 5.0},
+        )
+
+
 def test_plot_w_shrinkage_spectrum_raises_when_no_diagnostics():
     """Plot requires a populated diagnostics dict — None raises."""
     import matplotlib

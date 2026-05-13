@@ -717,6 +717,12 @@ DESCRIPTIVE_NAMES: Dict[str, str] = {
     "p_capture": "capture_prob",
     "phi_capture": "capture_odds_ratio",
     "eta_capture": "capture_efficiency",
+    # Low-rank loadings matrix W (PLN/NBLN/LNM-family).
+    # Descriptive name carries the factor-analysis meaning ("loadings")
+    # to match how users think about cross-gene structure, and to anchor
+    # the ``priors`` dict spec form
+    # ``priors={"loadings": {"type": "horseshoe_columnwise", ...}}``.
+    "W": "loadings",
     # LNM compositional parameters
     "y_alr": "alr_coordinates",
     "d_lnm": "alr_residual_scale",
@@ -764,6 +770,12 @@ PRIOR_KEY_ALIASES: Dict[str, str] = {
     # Capture-specific priors
     "capture_efficiency": "eta_capture",
     "capture_scaling": "mu_eta",
+    # Low-rank loadings shrinkage prior (PLN/NBLN Laplace).
+    # Value is a dict-shaped strategy spec, not a tuple:
+    # ``priors={"loadings": {"type": "horseshoe_columnwise", ...}}``.
+    # The fit() entry point routes this to the W-prior strategy
+    # plumbing before the priors dict reaches downstream stages.
+    "loadings": "W",
 }
 
 # Inverse: internal -> descriptive alias (for documentation / YAML comments)
