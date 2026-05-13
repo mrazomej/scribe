@@ -157,6 +157,42 @@ filters auto-selected genes above this noise floor; lower it explicitly
 only when the dataset has uniformly low expression and you understand
 the caveat.
 
+## W-shrinkage spectrum (`plot_w_shrinkage_spectrum`)
+
+Renders the per-factor compositional-loading spectrum from a Phase-3
+Laplace fit configured with a `w_prior` strategy. Companion diagnostic
+to `plot_compositional_corner_ppc`: a clean elbow here correlates
+with collapsed cross-block diagonals in the compositional corner panels.
+
+```python
+result = scribe.fit(
+    adata, model="nbln", inference_method="laplace",
+    w_prior={"type": "horseshoe_columnwise", "tau_scale": 1.0},
+    vae_latent_dim=16,
+)
+scribe.viz.plot_w_shrinkage_spectrum(result, figsize=(5, 3.5))
+```
+
+What's drawn:
+
+- **Primary (solid)**: `||W_⟂[:, k]||` sorted descending — the
+  data-supported, gauge-invariant per-factor norm. Pulled from
+  `result.w_prior_diagnostics["column_frobenius_compositional"]`. This
+  is the spectrum that drives `column_norm_effective_rank` (the
+  headline rank diagnostic, also exposed as `effective_rank`).
+- **Secondary (dashed, when `show_sigma_k=True`)**: the strategy's
+  aux MAP scales `σ_k`. Provided for comparison so users can see how
+  the prior's aux scales relate to the data-supported column norms.
+  Gracefully omitted for strategies without aux scales (`gaussian`).
+- **Threshold (gray dotted)**: 5%-of-max line marking the
+  `column_norm_effective_rank` cutoff.
+
+Requires `result.w_prior_diagnostics is not None` — raises
+`ValueError` for LNM-family results (which don't run the W-prior
+integration in v1) and for fits without a `w_prior` configured. See
+[`src/scribe/laplace/README.md`](../laplace/README.md) for the strategy
+catalog and calibration workflow.
+
 ## `plot_ppc` conditioning levels
 
 `plot_ppc(results, counts, ppc_level=...)` selects how much observed

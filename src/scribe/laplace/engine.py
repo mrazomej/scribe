@@ -65,6 +65,7 @@ class LaplaceInferenceEngine:
         informative_priors: Optional[Dict[str, Dict[str, Any]]] = None,
         freeze_values: Optional[Dict[str, Dict[str, Any]]] = None,
         freeze_params: Tuple[str, ...] = (),
+        w_prior: Optional[Dict[str, Any]] = None,
     ) -> LaplaceRunResult:
         """Run Laplace-mode training for any supported observation model.
 
@@ -115,6 +116,14 @@ class LaplaceInferenceEngine:
         bm = getattr(model_config, "base_model", "pln")
 
         from ._em import run_laplace_em
+        from ._w_priors import build_w_prior_strategy
+
+        # Phase-3: build the W-prior strategy once from the user-facing
+        # dict config.  ``None`` and ``{"type": "none"}`` both produce
+        # NoneWPrior (no-op).  LNM-family raises NotImplementedError for
+        # non-no-op configs since ALR-space W has different shrinkage
+        # semantics that need a separate design pass.
+        w_prior_strategy = build_w_prior_strategy(w_prior)
 
         if bm == "pln":
             from ._obs_pln import PLNObservationModel
@@ -122,6 +131,7 @@ class LaplaceInferenceEngine:
             obs_model = PLNObservationModel(
                 capture_anchor=capture_anchor,
                 model_config=model_config,
+                w_prior_strategy=w_prior_strategy,
             )
         elif bm == "nbln":
             from ._obs_nbln import NBLNObservationModel
@@ -132,6 +142,7 @@ class LaplaceInferenceEngine:
                 informative_priors=informative_priors,
                 freeze_values=freeze_values,
                 freeze_params=freeze_params,
+                w_prior_strategy=w_prior_strategy,
                 max_step=float(
                     getattr(laplace_config, "newton_max_step", 5.0)
                 ),
@@ -139,6 +150,18 @@ class LaplaceInferenceEngine:
         elif bm in ("lnm", "lnmvcp"):
             from ._obs_lnm import LNMObservationModel
 
+            # v1: LNM-family doesn't yet support W-shrinkage priors.
+            # Build_w_prior_strategy already normalized {"type": "none"}
+            # → NoneWPrior, so any non-NoneWPrior strategy here means
+            # the user requested an unsupported config.
+            if w_prior_strategy.type_name != "none":
+                raise NotImplementedError(
+                    "w_prior is currently supported for PLN and NBLN "
+                    f"only; got base_model={bm!r} with w_prior type "
+                    f"{w_prior_strategy.type_name!r}.  LNM-family W "
+                    "lives in ALR compositional coordinates and "
+                    "needs a separate design pass for shrinkage."
+                )
             d_mode = getattr(model_config, "d_mode", "learned") or "learned"
             alr_reference_idx = int(
                 getattr(model_config, "alr_reference_idx", -1)

@@ -219,6 +219,16 @@ def fit(
     # paper/_diffexp_nbln_robustness.qmd and the Cascade-parameter
     # freeze subsection in paper/_nb_lognormal.qmd for the rationale.
     informative_priors_freeze: tuple = ("r", "eta"),
+    # Phase-3: shrinkage prior on the loadings matrix W.  Dict form
+    #   {"type": "horseshoe_columnwise", "tau_scale": 1.0}
+    # or any of the registered strategies in scribe.laplace._w_priors:
+    #   "none" (no-op default), "gaussian", "horseshoe_columnwise",
+    #   "neg_columnwise".  Supported for model="nbln" / model="pln"
+    #   with inference_method="laplace".  Default None leaves W
+    #   unregularized (existing behavior).  See
+    #   src/scribe/laplace/README.md for the full strategy catalog
+    #   and paper/_diffexp_nbln_robustness.qmd for the motivation.
+    w_prior: Optional[dict] = None,
     # Float64 precision -- defaults to True for MCMC, False for SVI/VAE
     enable_x64: Optional[bool] = None,
     # Power user: explicit configs override above
@@ -912,6 +922,7 @@ def fit(
             informative_priors_n_samples=informative_priors_n_samples,
             informative_priors_verbose=informative_priors_verbose,
             informative_priors_freeze=informative_priors_freeze,
+            w_prior=w_prior,
             enable_x64=enable_x64,
             model_config=model_config,
             inference_config=inference_config,

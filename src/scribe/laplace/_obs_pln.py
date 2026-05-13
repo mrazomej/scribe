@@ -25,12 +25,15 @@ Result packaging: ``x_loc = latent_loc``; ``globals`` exposes
 
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import numpyro.distributions as dist
+
+if TYPE_CHECKING:
+    from ._w_priors import WPriorStrategy
 
 from ..core.pln_data_init import (
     empirical_log_mean_from_counts,
@@ -115,6 +118,7 @@ class PLNObservationModel(LaplaceObservationModel):
         self,
         capture_anchor: Optional[Tuple[float, float]] = None,
         model_config: Optional[ModelConfig] = None,
+        w_prior_strategy: Optional["WPriorStrategy"] = None,
     ):
         if capture_anchor is None:
             self._capture_anchor = None
@@ -128,6 +132,14 @@ class PLNObservationModel(LaplaceObservationModel):
         # final_sweep, and init_state all share the same coordinate.
         self._pos_forward, self._pos_inverse = resolve_positive_fns(
             model_config
+        )
+
+        # Phase-3: pluggable shrinkage prior on W.  Default no-op so
+        # existing callers are unaffected.
+        from ._w_priors import NoneWPrior
+
+        self._w_prior = (
+            w_prior_strategy if w_prior_strategy is not None else NoneWPrior()
         )
 
     @property
@@ -161,6 +173,16 @@ class PLNObservationModel(LaplaceObservationModel):
             jnp.full((n_genes,), 0.1, dtype=jnp.float32)
         )
         params = {"mu": mu_init, "W": W_init, "d_loc": d_loc_init}
+
+        # Phase-3: W-prior aux params (same pattern as NBLN).
+        _w_aux_key = jax.random.fold_in(jax.random.PRNGKey(seed), 0)
+        params.update(
+            self._w_prior.init_aux_params(
+                G=n_genes,
+                k_latent=latent_dim,
+                rng_key=_w_aux_key,
+            )
+        )
 
         if self.uses_capture:
             log_M0, _sigma_M = self._capture_anchor
@@ -281,8 +303,8 @@ class PLNObservationModel(LaplaceObservationModel):
         quad = _woodbury_quadform(W, d, diff)
         log_det_sigma = _woodbury_logdet_sigma(W, d)
         G = mu.shape[0]
-        mvn_lp = -0.5 * quad - 0.5 * log_det_sigma - 0.5 * G * jnp.log(
-            2 * jnp.pi
+        mvn_lp = (
+            -0.5 * quad - 0.5 * log_det_sigma - 0.5 * G * jnp.log(2 * jnp.pi)
         )
 
         if self.uses_capture:
@@ -299,7 +321,26 @@ class PLNObservationModel(LaplaceObservationModel):
             elbo_per_cell,
             jnp.zeros_like(elbo_per_cell),
         )
-        loss = -data_scale * jnp.sum(elbo_per_cell)
+
+        # Phase-3: introduce the global_prior_lp accumulator (PLN
+        # didn't previously have one — only NBLN did).  Future PLN-side
+        # cascade priors would slot in here alongside the W-prior
+        # contribution.
+        global_prior_lp = jnp.zeros(())
+
+        # Phase-3: W-prior on the gauge-invariant projection.  Same
+        # convention as NBLN: pass W_⟂ and n_constraints=1 so the
+        # strategy uses the (G-1)-dim subspace normalizer.
+        _W_raw = params["W"]
+        _W_for_prior = _W_raw - jnp.mean(_W_raw, axis=0, keepdims=True)
+        w_aux = {name: params[name] for name in self._w_prior.aux_param_names}
+        global_prior_lp = global_prior_lp + self._w_prior.log_prior(
+            _W_for_prior,
+            w_aux,
+            n_constraints=1,
+        )
+
+        loss = -data_scale * jnp.sum(elbo_per_cell) - global_prior_lp
         return loss, (x_new, eta_new, gn_blocks)
 
     # --- Final convergence check ----------------------------------------
@@ -366,6 +407,23 @@ class PLNObservationModel(LaplaceObservationModel):
         divergence_aborted: bool,
         global_uncertainty: Optional[Dict[str, jnp.ndarray]] = None,
     ) -> LaplaceRunResult:
+        # Phase-3: W-prior diagnostics.  Same W_⟂ projection + n_constraints=1
+        # convention as loss_fn so the headline rank aligns with the
+        # prior the loss actually used.
+        _W_raw = params["W"]
+        _W_for_prior = _W_raw - jnp.mean(_W_raw, axis=0, keepdims=True)
+        w_aux = {name: params[name] for name in self._w_prior.aux_param_names}
+        strategy_diag = self._w_prior.diagnostics(
+            _W_for_prior,
+            w_aux,
+            n_constraints=1,
+        )
+        strategy_diag["column_frobenius_raw"] = jnp.linalg.norm(_W_raw, axis=0)
+        w_prior_diagnostics = {
+            "strategy_type": self._w_prior.type_name,
+            **strategy_diag,
+        }
+
         return LaplaceRunResult(
             globals=params,
             x_loc=final.latent_loc,
@@ -379,4 +437,5 @@ class PLNObservationModel(LaplaceObservationModel):
             stopped_at_step=stopped_at_step,
             divergence_aborted=divergence_aborted,
             global_uncertainty=global_uncertainty or {},
+            w_prior_diagnostics=w_prior_diagnostics,
         )

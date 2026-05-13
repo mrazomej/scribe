@@ -241,6 +241,13 @@ class DispatchResultsMixin:
                 out["r_frozen"] = "r" in frozen
                 out["mu_frozen"] = "mu" in frozen
                 out["eta_frozen"] = "eta" in frozen
+            # Phase-3: surface W-prior diagnostics under a single key.
+            # Callers can read either the field directly
+            # (``self.w_prior_diagnostics``) or via ``get_map()``;
+            # both routes return the same dict object.
+            wpd = getattr(self, "w_prior_diagnostics", None)
+            if wpd is not None:
+                out["w_prior_diagnostics"] = wpd
             return out
 
         if bm in ("lnm", "lnmvcp"):

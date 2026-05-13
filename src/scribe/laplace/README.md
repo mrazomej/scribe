@@ -698,6 +698,98 @@ and `scribe.viz.plot_compositional_corner_ppc` render compositional
 PPCs against per-cell empirical and dataset-level pseudobulk
 comparators — see [`src/scribe/viz/README.md`](../viz/README.md).
 
+## Phase 3: shrinkage priors on the loadings matrix W
+
+At generous `vae_latent_dim` (e.g. 32), the gauge-invariant singular
+value spectrum of `W_⟂` often shows a flat shelf — the model uses
+every available latent dimension to fit noise, producing spurious
+cross-gene correlations visible in `plot_compositional_corner_ppc`. A
+**shrinkage prior on W** lets users keep `vae_latent_dim` generous
+and have the prior pick the effective rank adaptively, replacing manual
+`vae_latent_dim` capping with a soft selection.
+
+```python
+results = scribe.fit(
+    adata, model="nbln", inference_method="laplace",
+    informative_priors_from=svi_results,        # Phase-2 cascade (optional)
+    informative_priors_freeze=("r", "eta"),     # Phase-2 freeze (default)
+    w_prior={"type": "horseshoe_columnwise", "tau_scale": 1.0},
+    vae_latent_dim=16,
+    n_steps=20_000,
+)
+print(results.w_prior_diagnostics["effective_rank"])     # e.g. 3
+print(results.w_prior_diagnostics["sigma_k"])            # per-factor scales
+
+# Companion diagnostic plot (singular-value-style elbow).
+scribe.viz.plot_w_shrinkage_spectrum(results)
+```
+
+### Strategies registered in v1
+
+All v1 strategies are **column-wise** (per-factor scales). Future
+row-wise / element-wise families plug in with one new class and one
+registry entry — see `src/scribe/laplace/_w_priors.py`.
+
+| `type` string | Hierarchy | When to use |
+|---|---|---|
+| `none` (default) | — | No shrinkage. Byte-identical to plain Laplace fit. |
+| `gaussian` | `W[:, k] ~ N(0, scale)` | Simple ridge baseline. Tells you if the symptom is "any shrinkage helps" vs "specifically sparsity helps". |
+| `horseshoe_columnwise` | `λ_k ~ HalfCauchy(τ)`, `τ ~ HalfCauchy(tau_scale)`, `W[:, k] ~ N(0, λ_k)` | Recommended default for cascade-frozen fits. Kills unused factors cleanly while preserving strong ones. |
+| `neg_columnwise` | `ψ_k ~ Exponential(γ)`, `γ ~ Gamma(α, β)`, `W[:, k] ~ N(0, √ψ_k)` | More aggressive near-zero shrinkage than horseshoe. Useful when horseshoe is insufficient to kill noise factors. |
+
+### Design choices baked into the implementation
+
+- **Targets `W_⟂`, not raw `W`.** The obs model gauge-cleans `W` before
+  passing to the strategy (`W_for_prior = W − mean(W, axis=0)`) and
+  passes `n_constraints=1` so the strategy uses `d_eff = G - 1` in the
+  centered-column Gaussian normalizer. Result: the prior targets only
+  the biologically meaningful signal, never the all-ones gauge
+  component.
+- **Softplus-floor reparameterization** on all positive aux scales
+  (`λ_k = lambda_min + softplus(raw_λ_k)`). Blocks the
+  scale-collapse-to-zero MAP singularity that an unconstrained
+  `exp(log_*)` parameterization would have when `W → 0` and aux
+  scale `→ 0` simultaneously.
+- **Headline rank is `||W_⟂[:, k]||`**, not the aux MAP `σ_k`. The
+  column norm directly enters `W_⟂ W_⟂^⊤` and hence the compositional
+  covariance; aux scales can be weakly identified under heavy-tailed
+  priors.
+
+### Calibration workflow
+
+The W-prior log-density enters `loss_fn` **unscaled** while the
+likelihood is `O(N_cells)`. The prior's effective strength therefore
+scales inversely with dataset size — re-tune `tau_scale` /
+`alpha,beta` when transferring between substantially different
+datasets. Rule of thumb: multiply `tau_scale` by `sqrt(N_old / N_new)`
+for cross-dataset transfer.
+
+1. Fit with the default (`tau_scale=1.0`) and a generous `vae_latent_dim`.
+2. Inspect `results.w_prior_diagnostics["column_norm_effective_rank"]`
+   (alias `["effective_rank"]`):
+   - `== vae_latent_dim`: no shrinkage — tighten by reducing `tau_scale` 10×.
+   - `== 1`: over-shrunk — loosen by 10×.
+   - In a reasonable range (`2` – `latent_dim/2`): keep.
+3. Inspect `plot_w_shrinkage_spectrum(results)` — a clean fit shows
+   a sharp elbow; factors beyond should collapse to near-zero.
+4. Sanity-check `results.w_prior_diagnostics["sigma_k"].min()` is
+   well above `lambda_min` (default `1e-3`) for active factors. A
+   handful touching the floor is expected for dead factors.
+5. Re-run the compositional corner PPC — spurious diagonal contours
+   should collapse to data-consistent ones.
+
+### Compatibility
+
+- **Combines cleanly with Phase-2 cascade freeze.** The W-prior
+  strategy is orthogonal to `informative_priors_freeze` — freeze pins
+  `r`/`η`; shrinkage regularizes `W`. The two can be combined freely.
+- **LNM-family (LNM / LNMVCP) is not supported in v1.** ALR-space W
+  has different shrinkage semantics that need a separate design pass.
+  Engine raises `NotImplementedError` for non-`none` configs.
+- **`w_prior={"type": "none"}`** is normalized to `None` *before*
+  scope validation, so the explicit no-op config is universally
+  accepted (useful for parameterized testing).
+
 ## See also
 
 * [`paper/_poisson_lognormal.qmd`](../../../paper/_poisson_lognormal.qmd)

@@ -28,12 +28,15 @@ r_loc``.
 
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import numpyro.distributions as dist
+
+if TYPE_CHECKING:
+    from ._w_priors import WPriorStrategy
 
 from ..core.nbln_data_init import (
     empirical_dispersion_from_counts,
@@ -157,9 +160,18 @@ class NBLNObservationModel(LaplaceObservationModel):
         informative_priors: Optional[Dict[str, Dict[str, jnp.ndarray]]] = None,
         freeze_values: Optional[Dict[str, Dict[str, jnp.ndarray]]] = None,
         freeze_params: Tuple[str, ...] = (),
+        w_prior_strategy: Optional["WPriorStrategy"] = None,
         max_step: float = 5.0,
     ):
         self._max_step = float(max_step)
+
+        # Phase-3: pluggable shrinkage prior on W.  Default no-op so
+        # existing callers are unaffected.
+        from ._w_priors import NoneWPrior
+
+        self._w_prior = (
+            w_prior_strategy if w_prior_strategy is not None else NoneWPrior()
+        )
         if capture_anchor is None:
             self._capture_anchor = None
             self._sigma_M = 1.0  # placeholder; never read when capture is off
@@ -302,9 +314,7 @@ class NBLNObservationModel(LaplaceObservationModel):
                 self._freeze_values["r"]["loc"], dtype=jnp.float32
             )
         elif self._prior_r is not None:
-            r_loc_init = jnp.asarray(
-                self._prior_r["loc"], dtype=jnp.float32
-            )
+            r_loc_init = jnp.asarray(self._prior_r["loc"], dtype=jnp.float32)
         else:
             r_init = jnp.asarray(
                 empirical_dispersion_from_counts(counts_np), dtype=jnp.float32
@@ -320,6 +330,20 @@ class NBLNObservationModel(LaplaceObservationModel):
             "d_loc": d_loc_init,
             "r_loc": r_loc_init,
         }
+
+        # --- Phase-3: W-prior aux params ---
+        # The strategy decides which aux params (if any) to register.
+        # NoneWPrior returns {} — equivalent to no shrinkage.  Other
+        # strategies add per-factor scales (and a global scale) in
+        # unconstrained (``raw``) space; they ride through optax's
+        # M-step automatically since they're in the params dict.
+        _w_aux_key = jax.random.fold_in(jax.random.PRNGKey(seed), 0)
+        w_aux_init = self._w_prior.init_aux_params(
+            G=n_genes,
+            k_latent=latent_dim,
+            rng_key=_w_aux_key,
+        )
+        full_init.update(w_aux_init)
 
         # --- Exclude frozen keys from the optimizer dict (Round-4 R4) ---
         # Stash frozen values on `self._frozen_runtime` for splicing into
@@ -353,9 +377,7 @@ class NBLNObservationModel(LaplaceObservationModel):
             latent_loc = jnp.log(count_data + 1.0) + eta_loc[:, None]
         elif self._prior_eta is not None:
             # SVI-derived soft-cascade per-cell capture (mode "eta").
-            eta_anchor = jnp.asarray(
-                self._prior_eta["loc"], dtype=jnp.float32
-            )
+            eta_anchor = jnp.asarray(self._prior_eta["loc"], dtype=jnp.float32)
             eta_scale_per_cell = jnp.asarray(
                 self._prior_eta["scale"], dtype=jnp.float32
             )
@@ -487,7 +509,12 @@ class NBLNObservationModel(LaplaceObservationModel):
             x_new = jax.lax.stop_gradient(x_new)
             eta_new = eta_offset_batch  # carried forward to result/PPC.
             log_det = laplace_log_det_neg_H_batch_x_only_offset(
-                x_new, eta_offset_batch, counts_batch, r, W, d,
+                x_new,
+                eta_offset_batch,
+                counts_batch,
+                r,
+                W,
+                d,
             )
             log_mean = x_new - eta_offset_batch[:, None]
             # Per-block grad split: only x-block exists in this path.
@@ -500,7 +527,12 @@ class NBLNObservationModel(LaplaceObservationModel):
             # (the latter saturates ``p → 0`` and produces enormous
             # spurious gradients while the Newton MAP is actually fine).
             gn_x = nbln_grad_x_only_offset_norm_batch(
-                x_new, counts_batch, mu_sg, W_sg, d_sg, r_sg,
+                x_new,
+                counts_batch,
+                mu_sg,
+                W_sg,
+                d_sg,
+                r_sg,
                 eta_offset_sg,
             )
             gn_blocks = {"x": gn_x}
@@ -631,6 +663,26 @@ class NBLNObservationModel(LaplaceObservationModel):
                     params_full["mu"]
                 )
             )
+
+        # Phase-3: W-prior contribution on the gauge-invariant projection.
+        # For NBLN, the rigid-translation gauge means raw W has an
+        # unidentified rank-1 all-ones component; shrinking that
+        # component is wasted regularization capacity and biases the
+        # column norms used for the rank diagnostic.  Project to W_⟂
+        # here so the prior targets the biologically meaningful signal.
+        # n_constraints=1 tells the strategy that each column lives in
+        # a (G-1)-dim subspace (sums to zero) so it uses the correct
+        # normalizer ``-(G-1) log σ_k`` instead of ``-G log σ_k``.
+        _W_raw = params_full["W"]
+        _W_for_prior = _W_raw - jnp.mean(_W_raw, axis=0, keepdims=True)
+        w_aux = {
+            name: params_full[name] for name in self._w_prior.aux_param_names
+        }
+        global_prior_lp = global_prior_lp + self._w_prior.log_prior(
+            _W_for_prior,
+            w_aux,
+            n_constraints=1,
+        )
 
         loss = -data_scale * jnp.sum(elbo_per_cell) - global_prior_lp
         return loss, (x_new, eta_new, gn_blocks)
@@ -890,9 +942,7 @@ class NBLNObservationModel(LaplaceObservationModel):
             V_scaled = m_inv[:, None] * V  # (G, k)
             # Solve L_S Y = V_scaled^T  =>  Y = L_S^{-1} V_scaled^T  (k, G).
             # Then rowsumsq(V_scaled L_S^{-T}) = colsumsq(Y).
-            Y = jax.scipy.linalg.solve_triangular(
-                L_S, V_scaled.T, lower=True
-            )
+            Y = jax.scipy.linalg.solve_triangular(L_S, V_scaled.T, lower=True)
             correction = jnp.sum(Y * Y, axis=0)  # (G,)
             return m_inv + correction
 
@@ -909,11 +959,12 @@ class NBLNObservationModel(LaplaceObservationModel):
             if capture_on:
                 A_inv_a = _solve_A(factors, a_c)  # (G,)
                 s_eta = jnp.maximum(
-                    jnp.sum(a_c) + 1.0 / (sigma_eta_c ** 2)
+                    jnp.sum(a_c)
+                    + 1.0 / (sigma_eta_c**2)
                     - jnp.dot(a_c, A_inv_a),
                     1e-30,
                 )
-                joint_inv_xx_diag = A_inv_diag + (A_inv_a ** 2) / s_eta
+                joint_inv_xx_diag = A_inv_diag + (A_inv_a**2) / s_eta
                 joint_inv_xeta = A_inv_a / s_eta
                 joint_inv_etaeta = 1.0 / s_eta
             else:
@@ -922,19 +973,15 @@ class NBLNObservationModel(LaplaceObservationModel):
                 joint_inv_etaeta = jnp.asarray(0.0, dtype=a_c.dtype)
             return joint_inv_xx_diag, joint_inv_xeta, joint_inv_etaeta
 
-        _per_cell_vmap = jax.vmap(
-            _per_cell_inverse_blocks, in_axes=(0, 0, 0)
-        )
+        _per_cell_vmap = jax.vmap(_per_cell_inverse_blocks, in_axes=(0, 0, 0))
 
         # Chunked pass over cells to keep GPU memory bounded.
         _chunk_size = min(256, N)
         _chunks_lr = [
-            log_rate_all[i : i + _chunk_size]
-            for i in range(0, N, _chunk_size)
+            log_rate_all[i : i + _chunk_size] for i in range(0, N, _chunk_size)
         ]
         _chunks_u = [
-            count_data[i : i + _chunk_size]
-            for i in range(0, N, _chunk_size)
+            count_data[i : i + _chunk_size] for i in range(0, N, _chunk_size)
         ]
         _chunks_sigma = [
             sigma_eta_full[i : i + _chunk_size]
@@ -948,8 +995,12 @@ class NBLNObservationModel(LaplaceObservationModel):
             _joint_xx_chunks.append(jx)
             _joint_xeta_chunks.append(jxe)
             _joint_etaeta_chunks.append(jee)
-        joint_inv_xx_diag_all = jnp.concatenate(_joint_xx_chunks, axis=0)  # (N, G)
-        joint_inv_xeta_all = jnp.concatenate(_joint_xeta_chunks, axis=0)  # (N, G)
+        joint_inv_xx_diag_all = jnp.concatenate(
+            _joint_xx_chunks, axis=0
+        )  # (N, G)
+        joint_inv_xeta_all = jnp.concatenate(
+            _joint_xeta_chunks, axis=0
+        )  # (N, G)
         joint_inv_etaeta_all = jnp.concatenate(
             _joint_etaeta_chunks, axis=0
         )  # (N,)
@@ -971,13 +1022,13 @@ class NBLNObservationModel(LaplaceObservationModel):
             )  # (N, G)
         else:
             bracket = joint_inv_xx_diag_all
-        r_schur = jnp.sum(H_rx_all ** 2 * bracket, axis=0)  # (G,)
+        r_schur = jnp.sum(H_rx_all**2 * bracket, axis=0)  # (G,)
         H_r_profiled_diag = H_rr_summed - r_schur
 
         # Prior precision injection on r_loc (Round-1 Finding 2).
         if self._prior_r is not None and "r" not in self._frozen_params:
-            H_r_profiled_diag = (
-                H_r_profiled_diag + 1.0 / (self._prior_r["scale"] ** 2)
+            H_r_profiled_diag = H_r_profiled_diag + 1.0 / (
+                self._prior_r["scale"] ** 2
             )
 
         if "r" in self._frozen_params:
@@ -1011,8 +1062,8 @@ class NBLNObservationModel(LaplaceObservationModel):
 
         # Prior precision injection on mu.
         if self._prior_mu is not None and "mu" not in self._frozen_params:
-            H_mu_profiled_diag = (
-                H_mu_profiled_diag + 1.0 / (self._prior_mu["scale"] ** 2)
+            H_mu_profiled_diag = H_mu_profiled_diag + 1.0 / (
+                self._prior_mu["scale"] ** 2
             )
 
         if "mu" in self._frozen_params:
@@ -1065,6 +1116,28 @@ class NBLNObservationModel(LaplaceObservationModel):
         # ``stop_gradient``-wrapped entries from _splice_frozen are fine
         # here because we're outside the autodiff graph at result-
         # packaging time; the jax tracer simply unwraps them.
+
+        # Phase-3: W-prior diagnostics.  Same W_⟂ projection convention as
+        # loss_fn — the strategy's headline rank lives in compositional
+        # coordinates so it aligns with the prior the loss actually used.
+        # The obs model adds the ``column_frobenius_raw`` side-channel
+        # from the raw W (parallel to the compositional norm).
+        _W_raw = params_full["W"]
+        _W_for_prior = _W_raw - jnp.mean(_W_raw, axis=0, keepdims=True)
+        w_aux = {
+            name: params_full[name] for name in self._w_prior.aux_param_names
+        }
+        strategy_diag = self._w_prior.diagnostics(
+            _W_for_prior,
+            w_aux,
+            n_constraints=1,
+        )
+        strategy_diag["column_frobenius_raw"] = jnp.linalg.norm(_W_raw, axis=0)
+        w_prior_diagnostics = {
+            "strategy_type": self._w_prior.type_name,
+            **strategy_diag,
+        }
+
         return LaplaceRunResult(
             globals=params_full,
             x_loc=final.latent_loc,
@@ -1079,4 +1152,5 @@ class NBLNObservationModel(LaplaceObservationModel):
             divergence_aborted=divergence_aborted,
             global_uncertainty=global_uncertainty or {},
             frozen_params=self._frozen_params,
+            w_prior_diagnostics=w_prior_diagnostics,
         )

@@ -149,6 +149,27 @@ def dispatch_inference(ctx: FitContext) -> None:
                 # priors_from_results above) so pickle-then-PPC works.
                 cascade_source_counts = ctx.count_data
 
+    # Phase-3: W-shrinkage prior plumbing.  Normalize the explicit no-op
+    # config {"type": "none"} to None *before* scope validation so the
+    # no-op config is universally accepted (Round-1 fix 7).  Validate
+    # against base_model ∈ {nbln, pln} and method == laplace.
+    w_prior = ctx.kwargs.get("w_prior")
+    if isinstance(w_prior, dict) and w_prior.get("type") == "none":
+        w_prior = None
+    if w_prior is not None:
+        bm = getattr(ctx.model_config, "base_model", None)
+        method = getattr(ctx.inference_config, "method", None)
+        method_value = getattr(method, "value", method)
+        if (
+            bm not in ("nbln", "pln")
+            or str(method_value).lower() != "laplace"
+        ):
+            raise ValueError(
+                "w_prior is supported only for model='nbln' or 'pln' "
+                "with inference_method='laplace'; got "
+                f"base_model={bm!r}, method={method_value!r}."
+            )
+
     results = _run_inference(
         ctx.inference_config.method,
         model_config=ctx.model_config,
@@ -168,5 +189,6 @@ def dispatch_inference(ctx: FitContext) -> None:
         freeze_params=freeze_params,
         cascade_source=cascade_source,
         cascade_source_counts=cascade_source_counts,
+        w_prior=w_prior,
     )
     ctx.results = results

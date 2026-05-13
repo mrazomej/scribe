@@ -208,6 +208,16 @@ class ScribeLaplaceResults(
     # avoids mutating the user's SVI result.
     cascade_source_counts: Optional[jnp.ndarray] = None
 
+    # Phase-3 W-shrinkage prior diagnostics.  Populated by the obs
+    # model's ``pack_result`` when a W-prior strategy is configured
+    # (always populated for PLN/NBLN — even ``NoneWPrior`` produces a
+    # minimal dict with ``{"strategy_type": "none", ...}``).  ``None``
+    # for LNM-family results in v1 since shrinkage isn't yet supported
+    # there.  See ``scribe.laplace._w_priors`` for the strategy
+    # protocol and ``scribe.viz.plot_w_shrinkage_spectrum`` for the
+    # companion elbow plot.
+    w_prior_diagnostics: Optional[Dict[str, Any]] = None
+
     _gene_coverage: Optional[float] = None
     _gene_coverage_mask: Optional[np.ndarray] = None
     _excluded_gene_names: Optional[List[str]] = None

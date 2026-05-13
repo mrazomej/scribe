@@ -38,6 +38,7 @@ def _run_laplace_inference(
     freeze_params: tuple = (),
     cascade_source: Optional[Any] = None,
     cascade_source_counts: Optional[jnp.ndarray] = None,
+    w_prior: Optional[Dict[str, Any]] = None,
 ) -> ScribeLaplaceResults:
     """Run Laplace inference (PLN or LNM) and package results.
 
@@ -138,6 +139,7 @@ def _run_laplace_inference(
         informative_priors=informative_priors,
         freeze_values=freeze_values,
         freeze_params=freeze_params,
+        w_prior=w_prior,
     )
 
     g = run_result.globals
@@ -169,6 +171,10 @@ def _run_laplace_inference(
         best_loss=run_result.best_loss,
         stopped_at_step=run_result.stopped_at_step,
         divergence_aborted=run_result.divergence_aborted,
+        # Phase-3: propagate W-prior diagnostics dict from the engine.
+        # Always present for PLN/NBLN (NoneWPrior populates a minimal
+        # dict); None for LNM-family in v1.
+        w_prior_diagnostics=run_result.w_prior_diagnostics,
     )
 
     # Populate NB-on-totals globals when the LNM family fitted them

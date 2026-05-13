@@ -81,6 +81,10 @@ _LAZY_EXPORTS = {
         "scribe.viz.compositional_corner_ppc",
         "plot_compositional_corner_ppc",
     ),
+    "plot_w_shrinkage_spectrum": (
+        "scribe.viz.w_shrinkage",
+        "plot_w_shrinkage_spectrum",
+    ),
     "plot_mu_pairwise": ("scribe.viz.mu_pairwise", "plot_mu_pairwise"),
     "plot_de_mean_expression": ("scribe.viz.de", "plot_de_mean_expression"),
     "plot_de_volcano": ("scribe.viz.de", "plot_de_volcano"),

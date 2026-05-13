@@ -184,6 +184,13 @@ class LaplaceRunResult:
     # so the final ``ScribeLaplaceResults`` carries the same marker.
     # Empty frozenset for non-NBLN base models and for unfrozen fits.
     frozen_params: frozenset = field(default_factory=frozenset)
+    # Phase-3 W-shrinkage prior diagnostics.  Populated by the obs
+    # model's ``pack_result`` when a w_prior strategy is configured.
+    # Always present (the no-op NoneWPrior populates
+    # ``{"strategy_type": "none", "column_frobenius_compositional": …}``);
+    # ``None`` only when the obs model itself doesn't run the W-prior
+    # integration (e.g. LNM-family in v1).
+    w_prior_diagnostics: Optional[Dict[str, Any]] = None
 
 
 @dataclass

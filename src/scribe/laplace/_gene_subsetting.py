@@ -8,12 +8,48 @@ reference-gene convention when creating subset views.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Union
+from typing import Any, Dict, Optional, Union
 
 import jax.numpy as jnp
 import numpy as np
 
 from ._results_shared import _base_model, _subset_var
+
+
+def _subset_w_prior_diagnostics(
+    diag: Optional[Dict[str, Any]],
+    W_subset: jnp.ndarray,
+) -> Optional[Dict[str, Any]]:
+    """Recompute gene-dependent W-prior diagnostics on a subsetted W.
+
+    Phase-3 Round-1 fix 5 + Round-3 fix 2: the headline rank diagnostic
+    must be computed from the *subset-centered* loadings so it stays
+    consistent with the gauge-invariant convention used during fitting
+    (the prior targets ``W_⟂``, not raw ``W``).  Factor-level entries
+    (``sigma_k``, ``tau``, ``psi_k``, ``gamma``, ``scale_effective_rank``,
+    ``strategy_type``) carry over unchanged; gene-dependent entries
+    (``column_frobenius_compositional``, ``column_frobenius_raw``,
+    ``column_norm_effective_rank``, ``effective_rank``) are recomputed
+    from the subsetted W.  A ``"_subset_view": True`` marker is added
+    so downstream consumers can distinguish a full-fit diagnostics dict
+    from a subset-view one.
+    """
+    if diag is None:
+        return None
+    out = dict(diag)
+    # Compositional (gauge-cleaned) subset columns drive the headline rank.
+    W_subset_perp = W_subset - jnp.mean(W_subset, axis=0, keepdims=True)
+    col_norm_comp = jnp.linalg.norm(W_subset_perp, axis=0)
+    col_norm_raw = jnp.linalg.norm(W_subset, axis=0)
+    out["column_frobenius_compositional"] = col_norm_comp
+    out["column_frobenius_raw"] = col_norm_raw
+    if col_norm_comp.size > 0:
+        thr = 0.05 * float(jnp.max(col_norm_comp))
+        rank = int(jnp.sum(col_norm_comp > thr))
+        out["column_norm_effective_rank"] = rank
+        out["effective_rank"] = rank
+    out["_subset_view"] = True
+    return out
 
 
 class GeneSubsettingResultsMixin:
@@ -83,10 +119,11 @@ class GeneSubsettingResultsMixin:
         posterior one would obtain by refitting on only the selected genes.
         """
         idx_jnp = jnp.asarray(idx)
+        W_subset = self.W[idx_jnp, :]
         return replace(
             self,
             mu=self.mu[idx_jnp],
-            W=self.W[idx_jnp, :],
+            W=W_subset,
             d=self.d[idx_jnp],
             x_loc=self.x_loc[:, idx_jnp] if self.x_loc is not None else None,
             r=self.r[idx_jnp] if self.r is not None else None,
@@ -99,6 +136,13 @@ class GeneSubsettingResultsMixin:
             ),
             mu_scale=(
                 self.mu_scale[idx_jnp] if self.mu_scale is not None else None
+            ),
+            # Phase-3: recompute gene-dependent W-prior diagnostics
+            # against the subsetted W.  Factor-level entries (sigma_k,
+            # tau, etc.) carry over unchanged.  See Round-3 fix 2 +
+            # Round-1 fix 5 in the plan.
+            w_prior_diagnostics=_subset_w_prior_diagnostics(
+                getattr(self, "w_prior_diagnostics", None), W_subset,
             ),
             n_genes=int(len(idx)),
             n_vars=int(len(idx)) if self.n_vars is not None else None,
