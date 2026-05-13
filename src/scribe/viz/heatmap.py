@@ -363,10 +363,6 @@ def plot_correlation_heatmap(
     counts : array-like or None
         Count matrix; used when posterior samples must be generated on the fly
         (SVI-style results).
-    figs_dir : str, optional
-        Output directory when ``save`` resolves to ``True``.
-    cfg : OmegaConf, optional
-        Run configuration used for filename generation.
     viz_cfg : OmegaConf or dict or None
         May include ``heatmap_opts`` with ``n_genes``, ``n_samples``,
         ``figsize``, and ``cmap``. Used when explicit keyword arguments are
@@ -388,8 +384,6 @@ def plot_correlation_heatmap(
         (scalar side length) when given.
     fig, axes, ax : optional
         Unsupported; correlation heatmaps use ``seaborn.clustermap``.
-    save, show, close : bool, optional
-        Rendering controls injected by ``@plot_function``.
 
     Returns
     -------

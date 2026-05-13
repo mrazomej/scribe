@@ -29,10 +29,6 @@ def plot_loss(
     ----------
     results : object
         Fitted result object exposing training diagnostics.
-    figs_dir : str, optional
-        Output directory used when ``save`` resolves to ``True``.
-    cfg : OmegaConf, optional
-        Run configuration used to build default filenames.
     viz_cfg : OmegaConf, optional
         Visualization configuration with optional ``format`` key.
     fig : matplotlib.figure.Figure, optional
@@ -42,12 +38,6 @@ def plot_loss(
         requires ``fig`` or ``axes``).
     axes : array-like of matplotlib.axes.Axes, optional
         Optional explicit axes for multi-panel layouts.
-    save : bool, optional
-        Save policy. Defaults to ``True`` when ``figs_dir`` is provided.
-    show : bool, optional
-        Whether to display the figure interactively.
-    close : bool, optional
-        Whether to close the figure after rendering.
 
     Returns
     -------

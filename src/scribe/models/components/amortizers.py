@@ -342,7 +342,7 @@ class Amortizer(nn.Module):
     Each output head is a separate linear layer producing one variational
     parameter per data point.
 
-    Parameters
+    Attributes
     ----------
     sufficient_statistic : SufficientStatistic
         Defines how to compute input features from count data.

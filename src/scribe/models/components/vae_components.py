@@ -355,7 +355,7 @@ class AbstractEncoder(nn.Module):
     Subclasses must override :meth:`encode_to_params` to define the
     output head(s) and their distributional interpretation.
 
-    Parameters
+    Attributes
     ----------
     input_dim : int
         Dimensionality of the observed data.
@@ -510,7 +510,7 @@ class LNMGaussianEncoder(GaussianEncoder):
     a soft fence that almost never binds in practice, it does not change
     the model's expressive capacity once training has converged.
 
-    Parameters
+    Attributes
     ----------
     log_scale_min : float, default=-7.0
         Lower bound for ``log σ``. The default corresponds to
@@ -588,7 +588,7 @@ class AbstractDecoder(nn.Module):
 
     Subclasses must override :meth:`decode_to_output`.
 
-    Parameters
+    Attributes
     ----------
     output_dim : int
         Dimensionality of the reconstruction target.
@@ -672,7 +672,7 @@ class MultiHeadDecoder(AbstractDecoder):
     from :data:`OUTPUT_TRANSFORMS`.  The decoder returns a dict mapping
     ``param_name → constrained_array``.
 
-    Parameters
+    Attributes
     ----------
     output_heads : Tuple[DecoderOutputHead, ...]
         One entry per model parameter produced by the decoder.

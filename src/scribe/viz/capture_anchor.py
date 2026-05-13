@@ -168,10 +168,6 @@ def plot_capture_anchor(
         Fitted model results object for the current dataset view.
     counts : array-like
         Observed UMI count matrix with shape ``(n_cells, n_genes)``.
-    figs_dir : str
-        Output directory where the figure will be written.
-    cfg : OmegaConf
-        Hydra configuration loaded from the run directory.
     viz_cfg : OmegaConf
         Visualization configuration with optional ``capture_anchor_opts``:
         ``n_bins`` (int), ``scatter_size`` (float), and ``scatter_alpha``
@@ -496,10 +492,6 @@ def plot_p_capture_scaling(
         Fitted model results object.
     counts : array-like
         Observed UMI count matrix ``(n_cells, n_genes)``.
-    figs_dir : str
-        Directory where output figure is saved.
-    cfg : OmegaConf
-        Hydra run configuration loaded from ``.hydra/config.yaml``.
     viz_cfg : OmegaConf
         Visualization config. Expected to include ``p_capture_scaling_opts``.
     is_mixture : bool, optional

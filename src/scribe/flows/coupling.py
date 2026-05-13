@@ -223,7 +223,7 @@ class AffineCoupling(nn.Module):
     ``y = x * exp(s) + t`` to the unmasked half, where ``(s, t)`` are
     predicted from the masked half by a conditioner MLP.
 
-    Parameters
+    Attributes
     ----------
     features : int
         Dimensionality of the input.
@@ -391,7 +391,7 @@ class SplineCoupling(nn.Module):
     a monotone rational-quadratic spline instead of an affine transform.
     Strictly more expressive per layer than affine coupling.
 
-    Parameters
+    Attributes
     ----------
     features : int
         Dimensionality of the input.

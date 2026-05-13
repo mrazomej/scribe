@@ -36,10 +36,6 @@ def plot_ecdf(
     ----------
     counts : array-like
         Observed UMI count matrix ``(n_cells, n_genes)``.
-    figs_dir : str, optional
-        Output directory used when ``save`` resolves to ``True``.
-    cfg : OmegaConf, optional
-        Run configuration used to build output filenames.
     viz_cfg : OmegaConf or None
         Visualization config containing ``ecdf_opts``.  Optional in
         interactive sessions — a default of 25 genes is used when ``None``.
@@ -49,8 +45,6 @@ def plot_ecdf(
     fig, ax, axes : matplotlib objects, optional
         Interactive plotting handles. For this single-panel plot, provide
         either ``ax`` or one-item ``axes``.
-    save, show, close : bool, optional
-        Rendering controls for dual-mode usage.
 
     Returns
     -------

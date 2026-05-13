@@ -75,10 +75,6 @@ def plot_bio_ppc(
         Fitted model results.
     counts : array-like
         Observed UMI count matrix ``(n_cells, n_genes)``.
-    figs_dir : str, optional
-        Directory to save the output figure.
-    cfg : OmegaConf, optional
-        Hydra run configuration.
     viz_cfg : OmegaConf or None
         Visualization configuration.  Optional in interactive sessions —
         built-in defaults are used when ``None``.

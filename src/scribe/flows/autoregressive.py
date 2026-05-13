@@ -166,7 +166,7 @@ class MADE(nn.Module):
     Outputs ``2 * features`` values: ``(shift, log_scale)`` for each
     input dimension.
 
-    Parameters
+    Attributes
     ----------
     features : int
         Input dimensionality.
@@ -284,7 +284,7 @@ class MAF(nn.Module):
     Forward transform (data → latent): parallel, O(1) MADE calls.
     Inverse transform (latent → data): sequential, O(D) MADE calls.
 
-    Parameters
+    Attributes
     ----------
     features : int
         Input dimensionality.
@@ -382,7 +382,7 @@ class IAF(nn.Module):
     Forward transform (data → latent): sequential, O(D) MADE calls.
     Inverse transform (latent → data): parallel, O(1) MADE calls.
 
-    Parameters
+    Attributes
     ----------
     features : int
         Input dimensionality.

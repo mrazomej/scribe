@@ -870,10 +870,6 @@ def plot_mean_calibration(
         Fitted model results object.
     counts : array-like
         Observed UMI count matrix ``(n_cells, n_genes)``.
-    figs_dir : str
-        Directory where output figure is saved.
-    cfg : OmegaConf
-        Hydra run configuration loaded from ``.hydra/config.yaml``.
     viz_cfg : OmegaConf
         Visualization config.
     is_mixture : bool, optional

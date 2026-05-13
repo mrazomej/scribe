@@ -922,7 +922,7 @@ class PoissonLogNormalParameterization(Parameterization):
     the linear decoder.  There are no canonical/mean_prob/mean_odds
     variants because there is no NB to reparameterize.
 
-    Parameters
+    Attributes
     ----------
     d_mode : {"low_rank", "learned"}, default="low_rank"
         Controls the diagonal noise model.  Same semantics as the LNM.

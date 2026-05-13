@@ -81,7 +81,7 @@ class CovariateEmbedding(nn.Module):
     producing a dense vector. All embeddings are concatenated along the
     last axis to form a single conditioning vector.
 
-    Parameters
+    Attributes
     ----------
     covariate_specs : List[CovariateSpec]
         One specification per categorical covariate.

@@ -90,7 +90,7 @@ class GuideFamilyConfig(BaseModel):
 
     Parameters that are not specified default to `MeanFieldGuide()`.
 
-    Parameters
+    Attributes
     ----------
     p : GuideFamily, optional
         Guide family for the success probability parameter (canonical, linked,
@@ -246,7 +246,7 @@ class AmortizationConfig(BaseModel):
     The MLP architecture is:
         sufficient_statistic → [Linear → activation] × n_layers → output_heads
 
-    Parameters
+    Attributes
     ----------
     enabled : bool, default=False
         Whether to use amortized inference for this parameter.
@@ -635,7 +635,7 @@ class EarlyStoppingConfig(BaseModel):
     The implementation uses a smoothed loss (moving average) to reduce noise in
     the stopping decision.
 
-    Parameters
+    Attributes
     ----------
     enabled : bool, default=True
         Whether to enable early stopping. If False, training runs for the full
@@ -903,7 +903,7 @@ class KLAnnealingConfig(BaseModel):
     importance-sampled marginal log-likelihood) all use the full
     ``beta=1`` ELBO regardless of the schedule used during training.
 
-    Parameters
+    Attributes
     ----------
     enabled : bool, default=True
         Whether to apply KL annealing. When ``False`` the schedule is
@@ -1029,7 +1029,7 @@ class SVIConfig(BaseModel):
     This class configures the SVI optimization process, including the optimizer,
     loss function, number of steps, mini-batching, and early stopping.
 
-    Parameters
+    Attributes
     ----------
     optimizer : Any, optional
         Prebuilt NumPyro optimizer object for variational inference.
@@ -1087,7 +1087,7 @@ class SVIConfig(BaseModel):
     class OptimizerConfig(BaseModel):
         """Serializable optimizer specification for SVI/VAE training.
 
-        Parameters
+        Attributes
         ----------
         name : str, default="adam"
             Optimizer name. Supported values are ``"adam"``,
@@ -1332,7 +1332,7 @@ class LaplaceConfig(BaseModel):
     serving pipelines that need to score new cells at high throughput
     would need the encoder VAE path instead.
 
-    Parameters
+    Attributes
     ----------
     n_steps : int, default=50_000
         Number of outer SVI steps over the global parameters. Lower
@@ -1583,7 +1583,7 @@ class InferenceConfig(BaseModel):
     configurations (SVI, MCMC, VAE), with automatic validation to ensure the
     correct config type is provided for each inference method.
 
-    Parameters
+    Attributes
     ----------
     method : InferenceMethod
         The inference method this configuration is for.

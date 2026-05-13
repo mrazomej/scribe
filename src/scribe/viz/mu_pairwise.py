@@ -188,10 +188,6 @@ def plot_mu_pairwise(
     counts : array-like
         Observed count matrix. This is forwarded to MAP extraction to support
         models that require counts-aware MAP reconstruction.
-    figs_dir : str
-        Output figure directory.
-    cfg : OmegaConf
-        Run configuration loaded from ``.hydra/config.yaml``.
     viz_cfg : OmegaConf
         Visualization configuration.
     dataset_names : sequence of str, optional

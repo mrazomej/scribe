@@ -245,10 +245,6 @@ def plot_ppc(
         Fitted result object exposing predictive sampling.
     counts : array-like
         Observed count matrix ``(n_cells, n_genes)``.
-    figs_dir : str, optional
-        Output directory used when ``save`` resolves to ``True``.
-    cfg : OmegaConf, optional
-        Run configuration used for filename generation.
     viz_cfg : OmegaConf or None
         Visualization config containing ``ppc_opts``.  Optional in
         interactive sessions — built-in defaults are used when ``None``.
@@ -268,8 +264,6 @@ def plot_ppc(
         Explicit axis collection with exactly ``n_rows * n_cols`` axes.
     ax : matplotlib.axes.Axes, optional
         Unsupported for this multi-panel plot. Use ``fig`` or ``axes``.
-    save, show, close : bool, optional
-        Rendering controls for dual-mode usage.
 
     Returns
     -------

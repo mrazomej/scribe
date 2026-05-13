@@ -47,7 +47,7 @@ class ModelConfig(BaseModel):
     The actual model and guide functions are created by the unified factory
     `create_model(model_config)` in `scribe.models.presets.factory`.
 
-    Parameters
+    Attributes
     ----------
     base_model : str
         The core model family (e.g., 'nbdm', 'zinb', 'nbvcp', 'zinbvcp').

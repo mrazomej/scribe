@@ -245,7 +245,7 @@ class ParamSpec(BaseModel):
     - Whether the parameter is mixture-specific (per-component)
     - Which guide family to use for variational inference
 
-    Parameters
+    Attributes
     ----------
     name : str
         Name of the parameter (e.g., "p", "r", "mu", "phi", "gate",
@@ -556,7 +556,7 @@ class LayoutOnlySpec(ParamSpec):
     and will raise at runtime if anything tries to use it as a real
     distribution spec.
 
-    Parameters
+    Attributes
     ----------
     name : str
         Sample-site name.
@@ -603,7 +603,7 @@ class BetaSpec(ParamSpec):
         - Zero-inflation gate probability
         - Capture probability p_capture
 
-    Parameters
+    Attributes
     ----------
     name : str
         Parameter name.
@@ -670,7 +670,7 @@ class LogNormalSpec(ParamSpec):
         - Dispersion parameter r
         - Mean expression mu
 
-    Parameters
+    Attributes
     ----------
     name : str
         Parameter name.
@@ -722,7 +722,7 @@ class BetaPrimeSpec(ParamSpec):
     The BetaPrime distribution is used for:
         - Odds ratio phi in the odds_ratio parameterization
 
-    Parameters
+    Attributes
     ----------
     name : str
         Parameter name.
@@ -794,7 +794,7 @@ class DirichletSpec(ParamSpec):
         - Mixture weights in mixture models
         - Compositional parameters
 
-    Parameters
+    Attributes
     ----------
     name : str
         Parameter name.
@@ -915,7 +915,7 @@ class NormalWithTransformSpec(ParamSpec):
     - Proper Jacobian computation for ELBO
     - Native TransformedDistribution integration
 
-    Parameters
+    Attributes
     ----------
     name : str
         Parameter name.
@@ -1033,7 +1033,7 @@ class SigmoidNormalSpec(NormalWithTransformSpec):
     when you want the unconstrained parameterization but need values in the unit
     interval.
 
-    Parameters
+    Attributes
     ----------
     name : str
         Parameter name.
@@ -1075,7 +1075,7 @@ class PositiveNormalSpec(NormalWithTransformSpec):
     numerical stability) to constrain to positive values.
     Equivalent to LogNormal in the unconstrained parameterization.
 
-    Parameters
+    Attributes
     ----------
     name : str
         Parameter name.
@@ -1110,7 +1110,7 @@ class SoftplusNormalSpec(NormalWithTransformSpec):
     Samples from Normal, then applies softplus to constrain to positive.
     Softplus is smoother than exp near zero: softplus(x) = log(1 + exp(x)).
 
-    Parameters
+    Attributes
     ----------
     name : str
         Parameter name.
@@ -1155,7 +1155,7 @@ class AnchoredNormalSpec(NormalWithTransformSpec):
     Per-gene centers are stored as a numpy/JAX array for efficiency;
     Python tuples are also accepted but converted on first use.
 
-    Parameters
+    Attributes
     ----------
     name : str
         Parameter name (e.g. "log_mu_loc", "log_mu_dataset_loc").
@@ -1215,7 +1215,7 @@ class BiologyInformedCaptureSpec(ParamSpec):
     The shrinkage type (Gaussian, Horseshoe, NEG) is selected via
     ``mu_eta_prior``.
 
-    Parameters
+    Attributes
     ----------
     name : str
         Capture parameter name ("phi_capture" or "p_capture").
@@ -1402,7 +1402,7 @@ class HierarchicalNormalWithTransformSpec(NormalWithTransformSpec):
     This enables gene-specific parameters (e.g., p_g, phi_g) whose prior
     is learned from data, providing adaptive shrinkage.
 
-    Parameters
+    Attributes
     ----------
     name : str
         Parameter name (e.g., ``"p"``).  Used as the NumPyro sample site.
@@ -1529,7 +1529,7 @@ class HierarchicalSigmoidNormalSpec(HierarchicalNormalWithTransformSpec):
     gene-specific success probability ``p_g`` in the hierarchical
     canonical and mean_prob parameterizations.
 
-    Parameters
+    Attributes
     ----------
     name : str
         Parameter name (typically ``"p"``).
@@ -1586,7 +1586,7 @@ class HierarchicalPositiveNormalSpec(HierarchicalNormalWithTransformSpec):
     gene-specific odds ratio ``phi_g`` in the hierarchical mean_odds
     parameterization.
 
-    Parameters
+    Attributes
     ----------
     name : str
         Parameter name (typically ``"phi"``).
@@ -1646,7 +1646,7 @@ class HorseshoeHierarchicalSigmoidNormalSpec(
         z_g       ~ Normal(0, 1)                       [NCP raw]
         p_g       = sigmoid(hyper_loc + tau * lt_g * z_g) [deterministic]
 
-    Parameters
+    Attributes
     ----------
     name : str
         Parameter name (e.g. ``"p"`` or ``"gate"``).
@@ -1852,7 +1852,7 @@ class DatasetHierarchicalNormalWithTransformSpec(NormalWithTransformSpec):
     For gene-specific dataset parameters the shape is ``(n_datasets, n_genes)``
     and the hierarchy is over the leading dataset axis.
 
-    Parameters
+    Attributes
     ----------
     name : str
         Parameter name (e.g., ``"mu"``).
@@ -2088,7 +2088,7 @@ class HorseshoeDatasetPositiveNormalSpec(
         z_{g,d}    ~ Normal(0, 1)                        [NCP raw, (D, G)]
         mu_g^{(d)} = transform(hyper_loc_g + tau * lt_g * z_{g,d})  [deterministic; transform = exp or softplus]
 
-    Parameters
+    Attributes
     ----------
     tau_name : str
         Name of the global shrinkage site.
@@ -2202,7 +2202,7 @@ class HorseshoeDatasetSigmoidNormalSpec(
         z_{g,d}    ~ Normal(0, 1)                        [NCP raw]
         p_g^{(d)}  = sigmoid(hyper_loc_g + tau * lt_g * z_{g,d})
 
-    Parameters
+    Attributes
     ----------
     tau_name : str
         Name of the global shrinkage site.
@@ -2307,7 +2307,7 @@ class HalfCauchySpec(ParamSpec):
     Used for the global shrinkage ``tau`` (scalar) and per-gene local
     scales ``lambda_g`` (gene-specific) in the regularized horseshoe.
 
-    Parameters
+    Attributes
     ----------
     name : str
         Parameter name (e.g. ``"tau_p"``, ``"lambda_p"``).
@@ -2343,7 +2343,7 @@ class InverseGammaSpec(ParamSpec):
     Used for the slab ``c^2`` that bounds the maximum effective scale
     in the regularized horseshoe.
 
-    Parameters
+    Attributes
     ----------
     name : str
         Parameter name (e.g. ``"c_sq_p"``).
@@ -2396,7 +2396,7 @@ class GammaSpec(ParamSpec):
         psi_g  ~ Gamma(u, zeta_g)     [per-gene variance; u=1 => Exponential]
         beta_g ~ Normal(0, sqrt(psi)) [coefficient]
 
-    Parameters
+    Attributes
     ----------
     name : str
         Parameter name (e.g. ``"psi_p"``, ``"zeta_p"``).
@@ -2471,7 +2471,7 @@ class NEGHierarchicalSigmoidNormalSpec(HierarchicalNormalWithTransformSpec):
         z_g     ~ Normal(0, 1)           [NCP raw]
         p_g     = sigmoid(hyper_loc + sqrt(psi_g) * z_g)  [deterministic]
 
-    Parameters
+    Attributes
     ----------
     name : str
         Parameter name (e.g. ``"p"`` or ``"gate"``).
@@ -2738,7 +2738,7 @@ class LatentSpec(BaseModel):
     ParamSpec.make_amortized_guide_dist. Subclasses implement make_guide_dist
     for concrete latent families (e.g. Gaussian).
 
-    Parameters
+    Attributes
     ----------
     sample_site : str
         NumPyro sample site name for the latent (e.g. "z").
@@ -2816,7 +2816,7 @@ class GaussianLatentSpec(LatentSpec):
     Encoder is assumed to output log-variance (same as legacy VAE), so
     scale = exp(0.5 * log_scale) for the Normal distribution.
 
-    Parameters
+    Attributes
     ----------
     latent_dim : int
         Dimensionality of the latent space.
@@ -3412,7 +3412,7 @@ class HorseshoeBNBConcentrationSpec(HierarchicalNormalWithTransformSpec):
         z_g         ~ Normal(0, 1)
         omega_g     = softplus(hyper_loc + tau * lt_g * z_g)
 
-    Parameters
+    Attributes
     ----------
     name : str
         Constrained parameter name (``"bnb_concentration"``).
@@ -3504,7 +3504,7 @@ class NEGBNBConcentrationSpec(HierarchicalNormalWithTransformSpec):
         z_g     ~ Normal(0, 1)
         omega_g = softplus(hyper_loc + sqrt(psi_g) * z_g)
 
-    Parameters
+    Attributes
     ----------
     name : str
         Constrained parameter name (``"bnb_concentration"``).

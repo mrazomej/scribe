@@ -224,7 +224,7 @@ class FlowChain(nn.Module):
     (inverse), accumulating log-determinant Jacobians across layers.
     Alternating mask parities are applied automatically for coupling flows.
 
-    Parameters
+    Attributes
     ----------
     features : int
         Dimensionality of the input/output space.
