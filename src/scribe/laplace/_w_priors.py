@@ -6,11 +6,11 @@ the PLN and NBLN observation models in the Laplace inference path.
 
 Motivation
 ----------
-At generous ``vae_latent_dim`` (e.g. 32), the gauge-invariant singular
+At generous ``latent_dim`` (e.g. 32), the gauge-invariant singular
 value spectrum of ``W_⟂`` shows a long flat shelf — the model uses all
 available latent dimensions to fit noise, producing spurious cross-gene
 correlations visible in ``plot_compositional_corner_ppc``. A shrinkage
-prior on the per-factor column scales lets users keep ``vae_latent_dim``
+prior on the per-factor column scales lets users keep ``latent_dim``
 generous and have the prior pick the effective rank adaptively.
 
 The four strategies in v1 are all **column-wise** (per-factor scales).

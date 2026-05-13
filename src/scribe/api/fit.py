@@ -137,8 +137,22 @@ def fit(
     guide_flow_loft: bool = True,
     guide_flow_log_det_f64: bool = False,
     priors: Optional[Dict[str, Any]] = None,
+    # Latent factor dimension.  ``latent_dim`` is the rank of the
+    # low-rank loadings matrix ``W ∈ R^{G x k}`` in the generative
+    # model — the ``k`` in PLN / LNM / NBLN's
+    # ``Σ = W W^T + diag(d)``.  Same quantity drives the VAE
+    # encoder/decoder latent dimensionality.  When ``inference_method``
+    # is ``"laplace"`` or ``"svi"`` (non-amortized), this is the model
+    # rank; when ``"vae"``, it's both the model rank and the encoder
+    # latent.  ``None`` falls back to ``vae_latent_dim`` (legacy alias,
+    # default 10).  Passing both raises ValueError.
+    latent_dim: Optional[int] = None,
     # VAE architecture options (when inference_method="vae")
-    vae_latent_dim: int = 10,
+    # Legacy alias for ``latent_dim``.  Retained for backward compat;
+    # new code should use ``latent_dim`` directly.  ``None`` here means
+    # "not explicitly set"; default falls back to ``10`` when neither
+    # ``latent_dim`` nor ``vae_latent_dim`` is supplied.
+    vae_latent_dim: Optional[int] = None,
     vae_encoder_hidden_dims: Optional[List[int]] = None,
     vae_decoder_hidden_dims: Optional[List[int]] = None,
     vae_activation: Optional[str] = None,
@@ -562,8 +576,25 @@ def fit(
         ``{"p": (1.0, 1.0), "r": (0.0, 1.0)}``.  For ``"mixing"``,
         a single scalar is broadcast to all ``n_components``.
 
-    vae_latent_dim : int, default=10
-        Latent dimensionality for VAE inference.
+    latent_dim : int, optional
+        Rank of the low-rank loadings matrix ``W ∈ R^{G × k}`` in the
+        generative model — the ``k`` in PLN / NBLN / LNM's
+        ``Σ = W W^T + diag(d)``.  Used by all inference methods that
+        fit PLN-family models (Laplace, SVI, MCMC, VAE).  For VAE, this
+        is also the encoder/decoder latent dimensionality.  ``None``
+        (default) falls back to ``vae_latent_dim`` (or ``10`` if neither
+        is set).  Passing both ``latent_dim`` and ``vae_latent_dim``
+        raises ``ValueError``.
+
+        This is the **preferred** kwarg for setting the latent factor
+        dimension.  ``vae_latent_dim`` is retained as a legacy alias
+        because the kwarg was originally introduced for VAE inference;
+        it works identically but is misnamed for non-VAE methods.
+
+    vae_latent_dim : int, optional
+        Legacy alias for ``latent_dim``.  ``None`` (default) means "not
+        explicitly set"; resolves to ``latent_dim`` if supplied, else
+        ``10``.  Prefer ``latent_dim`` in new code.
 
     vae_encoder_hidden_dims : List[int], optional
         Hidden layer widths for the VAE encoder network.
@@ -823,6 +854,24 @@ def fit(
     ModelConfigBuilder : Builder for creating ModelConfig objects.
     InferenceConfig : Unified inference configuration class.
     """
+    # -- Resolve the latent-factor dimension --------------------------------
+    # ``latent_dim`` is the new primary kwarg; ``vae_latent_dim`` is the
+    # legacy alias retained for back-compat.  They are aliases — passing
+    # both is an error.  Default falls back to ``10`` when neither is
+    # supplied (preserves the previous default).
+    if latent_dim is not None and vae_latent_dim is not None:
+        raise ValueError(
+            "Pass either `latent_dim` (preferred) or `vae_latent_dim` "
+            "(legacy alias), not both — they refer to the same quantity "
+            "(rank of the low-rank loadings matrix W).  Use `latent_dim` "
+            "in new code; `vae_latent_dim` is retained for backward "
+            "compatibility."
+        )
+    _effective_latent_dim = (
+        latent_dim if latent_dim is not None
+        else (vae_latent_dim if vae_latent_dim is not None else 10)
+    )
+
     # -- Pack all named arguments into FitContext for stage consumption --------
     ctx = FitContext(
         counts=counts,
@@ -877,7 +926,7 @@ def fit(
             guide_flow_loft=guide_flow_loft,
             guide_flow_log_det_f64=guide_flow_log_det_f64,
             priors=priors,
-            vae_latent_dim=vae_latent_dim,
+            vae_latent_dim=_effective_latent_dim,
             vae_encoder_hidden_dims=vae_encoder_hidden_dims,
             vae_decoder_hidden_dims=vae_decoder_hidden_dims,
             vae_activation=vae_activation,

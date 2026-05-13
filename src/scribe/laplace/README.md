@@ -700,13 +700,13 @@ comparators — see [`src/scribe/viz/README.md`](../viz/README.md).
 
 ## Phase 3: shrinkage priors on the loadings matrix W
 
-At generous `vae_latent_dim` (e.g. 32), the gauge-invariant singular
+At generous `latent_dim` (e.g. 32), the gauge-invariant singular
 value spectrum of `W_⟂` often shows a flat shelf — the model uses
 every available latent dimension to fit noise, producing spurious
 cross-gene correlations visible in `plot_compositional_corner_ppc`. A
-**shrinkage prior on W** lets users keep `vae_latent_dim` generous
+**shrinkage prior on W** lets users keep `latent_dim` generous
 and have the prior pick the effective rank adaptively, replacing manual
-`vae_latent_dim` capping with a soft selection.
+`latent_dim` capping with a soft selection.
 
 ```python
 results = scribe.fit(
@@ -714,7 +714,7 @@ results = scribe.fit(
     informative_priors_from=svi_results,        # Phase-2 cascade (optional)
     informative_priors_freeze=("r", "eta"),     # Phase-2 freeze (default)
     w_prior={"type": "horseshoe_columnwise", "tau_scale": 1.0},
-    vae_latent_dim=16,
+    latent_dim=16,
     n_steps=20_000,
 )
 print(results.w_prior_diagnostics["effective_rank"])     # e.g. 3
@@ -764,10 +764,10 @@ scales inversely with dataset size — re-tune `tau_scale` /
 datasets. Rule of thumb: multiply `tau_scale` by `sqrt(N_old / N_new)`
 for cross-dataset transfer.
 
-1. Fit with the default (`tau_scale=1.0`) and a generous `vae_latent_dim`.
+1. Fit with the default (`tau_scale=1.0`) and a generous `latent_dim`.
 2. Inspect `results.w_prior_diagnostics["column_norm_effective_rank"]`
    (alias `["effective_rank"]`):
-   - `== vae_latent_dim`: no shrinkage — tighten by reducing `tau_scale` 10×.
+   - `== latent_dim`: no shrinkage — tighten by reducing `tau_scale` 10×.
    - `== 1`: over-shrunk — loosen by 10×.
    - In a reasonable range (`2` – `latent_dim/2`): keep.
 3. Inspect `plot_w_shrinkage_spectrum(results)` — a clean fit shows

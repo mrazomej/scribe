@@ -485,6 +485,46 @@ def test_plot_w_shrinkage_spectrum_runs():
     assert out.fig is not None
 
 
+def test_latent_dim_kwarg_sets_W_rank():
+    """``latent_dim`` is the new primary kwarg for the rank of W."""
+    import scribe
+    adata = _toy_adata(n_cells=30, n_genes=10)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = scribe.fit(
+            adata, model="nbln", inference_method="laplace",
+            n_steps=10, latent_dim=4,
+            laplace_config={"n_newton_steps": 2, "newton_max_step": 5.0},
+        )
+    assert result.W.shape == (10, 4)
+
+
+def test_vae_latent_dim_legacy_alias_still_works():
+    """Legacy ``vae_latent_dim`` kwarg routes to the same W rank."""
+    import scribe
+    adata = _toy_adata(n_cells=30, n_genes=10)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = scribe.fit(
+            adata, model="nbln", inference_method="laplace",
+            n_steps=10, vae_latent_dim=4,
+            laplace_config={"n_newton_steps": 2, "newton_max_step": 5.0},
+        )
+    assert result.W.shape == (10, 4)
+
+
+def test_latent_dim_and_vae_latent_dim_conflict_raises():
+    """Passing both new and legacy kwargs is an error (they're aliases)."""
+    import scribe
+    adata = _toy_adata(n_cells=30, n_genes=10)
+    with pytest.raises(ValueError, match="latent_dim.*vae_latent_dim"):
+        scribe.fit(
+            adata, model="nbln", inference_method="laplace",
+            n_steps=10, latent_dim=4, vae_latent_dim=5,
+            laplace_config={"n_newton_steps": 2, "newton_max_step": 5.0},
+        )
+
+
 def test_plot_w_shrinkage_spectrum_raises_when_no_diagnostics():
     """Plot requires a populated diagnostics dict — None raises."""
     import matplotlib
