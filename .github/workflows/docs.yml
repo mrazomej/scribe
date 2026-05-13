@@ -6,7 +6,7 @@ on:
       - main
     paths:
       - "docs/**"
-      - "mkdocs.yml"
+      - "properdocs.yml"
       - "src/scribe/**"
 
 permissions:
@@ -32,4 +32,4 @@ jobs:
         run: uv sync --only-group docs
 
       - name: Build and deploy documentation
-        run: uv run mkdocs gh-deploy --force
+        run: uv run properdocs gh-deploy --force

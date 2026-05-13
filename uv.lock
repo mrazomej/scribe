@@ -3958,13 +3958,13 @@ dev = [
     { name = "umap-learn" },
 ]
 docs = [
-    { name = "mkdocs" },
     { name = "mkdocs-gen-files" },
     { name = "mkdocs-literate-nav" },
     { name = "mkdocs-marimo" },
     { name = "mkdocs-material" },
     { name = "mkdocs-section-index" },
     { name = "mkdocstrings", extra = ["python"] },
+    { name = "properdocs" },
 ]
 
 [package.metadata]
@@ -4016,13 +4016,13 @@ dev = [
     { name = "umap-learn", specifier = ">=0.5.7" },
 ]
 docs = [
-    { name = "mkdocs", specifier = ">=1.6" },
     { name = "mkdocs-gen-files", specifier = ">=0.5" },
     { name = "mkdocs-literate-nav", specifier = ">=0.6" },
     { name = "mkdocs-marimo", specifier = ">=0.2.1" },
     { name = "mkdocs-material", specifier = ">=9.5" },
     { name = "mkdocs-section-index", specifier = ">=0.3" },
     { name = "mkdocstrings", extras = ["python"], specifier = ">=0.27" },
+    { name = "properdocs", specifier = ">=1.6" },
 ]
 
 [[package]]

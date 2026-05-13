@@ -10,7 +10,7 @@ on GitHub.
 
 ## Building the Documentation Locally
 
-The documentation is built with [MkDocs](https://www.mkdocs.org/) and the
+The documentation is built with [ProperDocs](https://properdocs.org/) and the
 [Material for MkDocs](https://squidfunk.github.io/mkdocs-material/) theme.
 
 ### Setup
@@ -26,7 +26,7 @@ uv sync --only-group docs
 Start a local development server with live-reload:
 
 ```bash
-uv run mkdocs serve
+uv run properdocs serve
 ```
 
 Then open <http://127.0.0.1:8000> in your browser. Changes to any Markdown
@@ -37,7 +37,7 @@ file will be reflected instantly.
 To build the static site:
 
 ```bash
-uv run mkdocs build --strict
+uv run properdocs build --strict
 ```
 
 The `--strict` flag treats warnings as errors, ensuring all links are valid
