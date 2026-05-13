@@ -150,7 +150,9 @@ nav:
     - Hierarchical Priors: theory/hierarchical-priors.md
     - GRN Biophysics: theory/grn-biophysics.md
     - Poisson Log-Normal Model: theory/poisson-lognormal.md
+    - NB Log-Normal Model: theory/nb-lognormal.md
     - Logistic-Normal Multinomial Model: theory/logistic-normal-multinomial.md
+    - Loadings-Matrix Shrinkage Priors: theory/loadings-shrinkage.md
     - Bayesian Denoising: theory/denoising.md
     - Differential Expression: theory/differential-expression.md
     - Model Comparison: theory/model-comparison.md

@@ -69,10 +69,26 @@ covariance explicitly, enabling recovery of gene-gene correlation programs.
   the exponentiated log-abundance, yielding log-concave posteriors, natural
   total-count coupling, and efficient Laplace inference via Woodbury Newton.
 
+- :material-chart-bell-curve:{ .middle } [**NB Log-Normal Model**](nb-lognormal.md) — Extends PLN's Poisson
+  observation channel to a Negative Binomial with per-gene dispersion
+  \(r_g\), restoring bursty-transcription overdispersion at the
+  per-gene level while retaining PLN's log-concave posterior and
+  cross-gene covariance structure. Introduces the per-cell rigid-
+  translation gauge and the SVI-cascade + freeze workflow that pins
+  it structurally.
+
 - :material-vector-polyline:{ .middle } [**Logistic-Normal Multinomial Model**](logistic-normal-multinomial.md) — Replaces
   the Dirichlet prior on compositions with a logistic-normal distribution,
   enabling arbitrary cross-gene correlations in log-ratio space with inference
   via Laplace approximation or VAE.
+
+- :material-tune-vertical:{ .middle } [**Loadings-Matrix Shrinkage Priors**](loadings-shrinkage.md) — A
+  modular framework for shrinking the columns of the low-rank loadings
+  matrix \(\underline{\underline{W}}\). Lets users keep `latent_dim`
+  generous and have the prior pick the effective rank adaptively.
+  Ships three column-wise strategies (Gaussian, horseshoe, NEG) plus
+  the math fixes (softplus-floor, subspace correction) that keep the
+  MAP well-defined.
 
 ---
 

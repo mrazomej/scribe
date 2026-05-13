@@ -257,22 +257,24 @@ results = scribe.fit(
 
 ---
 
-## Log-Normal model family (PLN / LNM / LNMVCP)
+## Log-Normal model family (PLN / NBLN / LNM / LNMVCP)
 
 Beyond the Negative Binomial family above, SCRIBE offers a second model family
 rooted in the [biophysics of gene regulatory networks](../theory/grn-biophysics.md).
 When genes interact, the steady-state distribution of log-abundances is a
-**multivariate Gaussian**, whose covariance encodes regulatory structure. Two
-observation models connect this latent Gaussian to observed counts:
+**multivariate Gaussian**, whose covariance encodes regulatory structure.
+Several observation models connect this latent Gaussian to observed counts:
 
 ```mermaid
 graph TD
     GRN["Multivariate Gaussian<br/>on log-abundances<br/>(GRN steady state)"]
-    PLN["Poisson Log-Normal<br/><b>model='pln'</b><br/><i>direct Poisson emission</i>"]
+    PLN["Poisson Log-Normal<br/><b>model='pln'</b><br/><i>Poisson on rate</i>"]
+    NBLN["NB Log-Normal<br/><b>model='nbln'</b><br/><i>NB on rate, per-gene r_g</i>"]
     LNM["Logistic-Normal Multinomial<br/><b>model='lnm'</b><br/><i>softmax + Multinomial</i>"]
     LNMVCP["LNM + Variable Capture<br/><b>model='lnmvcp'</b><br/><i>+ per-cell NB totals</i>"]
 
     GRN -->|"exp(x_g) -> Poisson"| PLN
+    GRN -->|"exp(x_g) -> NB(r_g)"| NBLN
     GRN -->|"softmax -> compositions"| LNM
     LNM -->|"+ capture eta"| LNMVCP
 ```
@@ -306,6 +308,67 @@ results = scribe.fit(
 total counts, log-concave posterior guarantees.
 
 **See also:** [Theory: Poisson Log-Normal](../theory/poisson-lognormal.md)
+
+### NB Log-Normal (`model="nbln"`)
+
+PLN's heavier-tailed sibling: same multivariate-Gaussian prior on
+log-rates, but replaces the Poisson observation channel with a
+Negative Binomial that gives each gene an explicit dispersion
+parameter \(r_g\). Restores bursty-transcription overdispersion at the
+per-gene level while preserving PLN's log-concave posterior and
+cross-gene covariance structure. Recommended pipeline is an
+**SVI-cascade + freeze + loadings shrinkage** fit:
+
+```python
+import numpy as np
+
+# Step 1: NBVCP-SVI cascade source
+svi_results = scribe.fit(
+    adata, model="nbvcp", parameterization="mean_odds",
+    priors={"capture_efficiency": (np.log(100_000), 0.5)},
+    inference_method="svi", n_steps=50_000,
+)
+
+# Step 2: NBLN-Laplace with cascade freeze + loadings shrinkage
+laplace_results = scribe.fit(
+    adata, model="nbln", inference_method="laplace",
+    informative_priors_from=svi_results,        # Phase-1 soft cascade
+    informative_priors_freeze=("r", "eta"),     # Phase-2 freeze (default)
+    priors={
+        "capture_efficiency": (np.log(100_000), 0.5),
+        "loadings": {                            # Phase-3 shrinkage
+            "type": "horseshoe_columnwise", "tau_scale": 1.0,
+        },
+    },
+    latent_dim=16,
+    n_steps=20_000,
+)
+
+# Inspect effective rank + correlation structure
+print(laplace_results.w_prior_diagnostics["effective_rank"])
+W_perp = laplace_results.get_W_compositional()
+```
+
+**Best for:** Bursty scRNA-seq data, cross-gene regulatory correlation
+recovery, cascade-frozen fits with adaptive rank selection.
+
+**Key concepts:**
+
+- [**Per-cell rigid-translation gauge**](../theory/nb-lognormal.md):
+  NBLN has a \(C\)-dimensional gauge (one per cell) that the Phase-2
+  freeze on \(\eta\) pins structurally.
+- [**Loadings shrinkage**](../theory/loadings-shrinkage.md): adaptive
+  rank selection via `priors={"loadings": {...}}` — lets you keep
+  `latent_dim` generous.
+- **`get_W_compositional()`**: gauge-invariant projection
+  \(\underline{\underline{W}}_\perp\). Use this (not raw
+  \(\underline{\underline{W}}\)) for cross-gene correlation analysis.
+- **`get_gauge_diagnostics()`**: quantifies how much of raw
+  \(\underline{\underline{W}}\) is gauge slop. Clean fits show
+  `gauge_contamination_ratio < 0.05`.
+
+**See also:** [Theory: NB Log-Normal](../theory/nb-lognormal.md) and
+[Theory: Loadings Shrinkage](../theory/loadings-shrinkage.md).
 
 ### Logistic-Normal Multinomial (`model="lnm"`)
 
@@ -358,6 +421,7 @@ encoder collapse on the capture latent.
 | `"zinb"` (`zero_inflation=True`)                             |      Yes      |        --        | opt.  |  opt.   | Excess zeros **after** VCP ruled out / no VCP |
 | `"zinbvcp"` (`variable_capture=True`, `zero_inflation=True`) |      Yes      |       Yes        | opt.  |  opt.   | Strong evidence for **both** ZI and VCP       |
 | `"pln"`                                                      |      --       |   log-offset     |  --   |   --    | Gene-level correlation recovery, heavy tails  |
+| `"nbln"`                                                     |      --       |   log-offset     |  --   |   --    | Bursty cross-gene correlations, cascade-frozen fits |
 | `"lnm"`                                                      |      --       |        --        |  --   |   --    | Compositional analysis, arbitrary correlations |
 | `"lnmvcp"`                                                   |      --       |   per-cell η     |  --   |   --    | Compositional + heterogeneous library sizes   |
 

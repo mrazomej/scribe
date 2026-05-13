@@ -11,15 +11,20 @@ entry point. Choose the one that best fits your goals and computational budget.
 | **Scalability**       | Excellent (mini-batching)  | Limited (full data)       | Excellent (mini-batching)  | Good (mini-batching)                |
 | **Posterior quality** | Approximate                | Exact                     | Approximate (neural)       | Approximate (Hessian)               |
 | **Latent embeddings** | No                         | No                        | Yes                        | No                                  |
-| **Models supported**  | All                        | NB-family                 | All                        | PLN, LNM, LNMVCP                    |
+| **Models supported**  | All                        | NB-family                 | All                        | PLN, NBLN, LNM, LNMVCP              |
 | **Best for**          | Exploration and production | Gold-standard uncertainty | Representation learning    | Correlation recovery, rigorous PPCs |
 
 !!! tip "Default recommendation"
-    Start with **SVI** for NB-family models. For PLN/LNM/LNMVCP models, use
-    **Laplace** --- it avoids encoder collapse, produces rigorous per-cell
+    Start with **SVI** for NB-family models. For PLN/NBLN/LNM/LNMVCP models,
+    use **Laplace** --- it avoids encoder collapse, produces rigorous per-cell
     posteriors from the Hessian, and has no aggregate-posterior drift. Switch to
     **MCMC** when you need exact posteriors for a publication, or use **VAE**
     when you need amortized scoring of new cells or low-dimensional embeddings.
+
+    For NBLN specifically, the recommended pipeline is **SVI-cascade +
+    freeze + loadings shrinkage** — see the
+    [NBLN cascade + freeze + shrinkage workflow](#nbln-cascade--freeze--shrinkage-workflow)
+    section below.
 
 ---
 
@@ -320,9 +325,18 @@ results = scribe.fit(
     adata,
     model="pln",
     inference_method="laplace",
-    guide_rank=64,
+    latent_dim=16,
     n_steps=50_000,
     batch_size=256,
+)
+
+# NBLN with Laplace inference (cascade-frozen workflow below)
+results = scribe.fit(
+    adata,
+    model="nbln",
+    inference_method="laplace",
+    latent_dim=16,
+    n_steps=50_000,
 )
 
 # LNMVCP with Laplace inference
@@ -330,21 +344,32 @@ results = scribe.fit(
     adata,
     model="lnmvcp",
     inference_method="laplace",
-    guide_rank=64,
+    latent_dim=16,
     n_steps=50_000,
 )
 ```
+
+!!! info "`latent_dim` vs `vae_latent_dim`"
+    The `latent_dim` kwarg is the preferred name for the rank of the
+    low-rank loadings matrix \(\underline{\underline{W}} \in
+    \mathbb{R}^{G \times k}\). For backward compatibility, the legacy
+    `vae_latent_dim` kwarg is still accepted (it was the original
+    name when Laplace inference didn't yet exist). Passing both
+    raises `ValueError`.
 
 ### Key parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `inference_method` | `"svi"` | Set to `"laplace"` for Laplace inference |
-| `model` | `"nbvcp"` | Must be `"pln"`, `"lnm"`, or `"lnmvcp"` for Laplace |
+| `model` | `"nbvcp"` | Must be `"pln"`, `"nbln"`, `"lnm"`, or `"lnmvcp"` for Laplace |
 | `n_steps` | `50_000` | Outer optimization steps |
 | `batch_size` | `None` | Mini-batch size for stochastic gradient estimation |
-| `guide_rank` | `None` | Rank \(k\) of the low-rank covariance \(\Sigma = WW^\top + \text{diag}(d)\) |
+| `latent_dim` | `None` | Rank \(k\) of the low-rank covariance \(\Sigma = WW^\top + \text{diag}(d)\). Legacy alias: `vae_latent_dim`. |
 | `laplace_config` | `None` | Dict of Newton solver settings (see below) |
+| `informative_priors_from` | `None` | Cascade source for NBLN (Phase-1 soft cascade) — see [NBLN workflow](#nbln-cascade--freeze--shrinkage-workflow) below |
+| `informative_priors_freeze` | `("r", "eta")` | Cascade freeze parameters for NBLN (Phase-2) |
+| `priors={"loadings": ...}` | `None` | Loadings-matrix shrinkage strategy spec for PLN/NBLN (Phase-3) |
 
 ### Laplace configuration
 
@@ -436,6 +461,71 @@ If a divergence abort fires, typical remedies are:
 - Increase `n_newton_steps` to 20--30
 - Tighten `damping` to 1e-3 or below
 - Pre-filter outlier cells (very low \(u_T\) or extreme compositional skew)
+
+### NBLN cascade + freeze + shrinkage workflow
+
+[NBLN](../theory/nb-lognormal.md) has a per-cell rigid-translation
+gauge (\(C\) degrees of freedom, one per cell) that needs structural
+pinning to produce a well-identified fit. SCRIBE addresses this with
+a three-phase pipeline:
+
+```python
+import scribe, numpy as np
+
+# Phase 1: SVI cascade source (NBVCP-SVI on the same data)
+svi_results = scribe.fit(
+    adata, model="nbvcp", parameterization="mean_odds",
+    priors={"capture_efficiency": (np.log(100_000), 0.5)},
+    inference_method="svi", n_steps=50_000,
+)
+
+# Phases 2+3: NBLN-Laplace with cascade freeze + loadings shrinkage
+laplace_results = scribe.fit(
+    adata, model="nbln", inference_method="laplace",
+    # Phase 1: pass the cascade source. Empirical Gaussian priors on
+    # r, mu, eta from the SVI posterior are derived and injected as
+    # soft priors in the Laplace loss.
+    informative_priors_from=svi_results,
+    informative_priors_tau=1.0,
+    # Phase 2: freeze r and eta at the cascade MAPs. Pins the per-cell
+    # rigid-translation gauge structurally. Frozen params route
+    # through cascade_source for PPC and distributions to preserve
+    # full SVI guide fidelity.
+    informative_priors_freeze=("r", "eta"),       # default
+    # Phase 3: loadings shrinkage. Lets latent_dim be generous and
+    # picks the effective rank adaptively. See the loadings-shrinkage
+    # theory page for the strategy catalog and calibration workflow.
+    priors={
+        "capture_efficiency": (np.log(100_000), 0.5),
+        "loadings": {
+            "type": "horseshoe_columnwise",
+            "tau_scale": 1.0,
+        },
+    },
+    latent_dim=16,
+    n_steps=20_000,
+)
+
+# Inspect effective rank + correlation structure
+print(laplace_results.w_prior_diagnostics["effective_rank"])  # adaptive rank
+diag = laplace_results.get_gauge_diagnostics()
+print(diag["gauge_contamination_ratio"])                      # should be < 0.05
+
+# Gauge-invariant loadings for cross-gene correlation analysis
+W_perp = laplace_results.get_W_compositional()
+```
+
+| Phase | Mechanism | Default |
+|---|---|---|
+| **1. Soft cascade** | SVI posterior → empirical Gaussian priors → Laplace loss | Activated by `informative_priors_from=` |
+| **2. Hard freeze** | Selected cascade-derived params pinned at MAP, excluded from optimizer | `("r", "eta")` |
+| **3. Loadings shrinkage** | Adaptive rank selection on the columns of \(W_\perp\) | None (opt-in) |
+
+The three phases are **orthogonal** — you can use any subset. The
+combined recipe above is the recommended production workflow for
+NBLN fits.
+
+**Theory:** [NB Log-Normal Model](../theory/nb-lognormal.md), [Loadings-Matrix Shrinkage Priors](../theory/loadings-shrinkage.md)
 
 ### Results
 
