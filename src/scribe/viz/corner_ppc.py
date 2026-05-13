@@ -148,7 +148,14 @@ def _get_correlation_matrix_for_selection(
     """
     n_genes_counts = int(counts.shape[1])
 
-    # Laplace fits expose analytic correlation (and residual) from W, d
+    # Laplace fits expose analytic correlation (and residual) from W, d.
+    # When no explicit ``subtract_direction`` is requested, use the
+    # gauge-invariant compositional correlation derived from W_perp
+    # rather than the raw W -- pairwise rankings from raw W are biased
+    # by the rigid-translation gauge contamination at non-trivial
+    # ``gauge_contamination_ratio`` (Theorem 2 in
+    # ``paper/_diffexp_nbln_robustness.qmd``).  For LNM/LNMVCP this
+    # is identical to ``get_correlation()`` by construction.
     if isinstance(results, scribe.ScribeLaplaceResults):
         if subtract_direction is not None:
             corr = np.asarray(results.get_correlation_residual(
@@ -157,7 +164,7 @@ def _get_correlation_matrix_for_selection(
                 include_diagonal_d=False,
             ))
         else:
-            corr = np.asarray(results.get_correlation())
+            corr = np.asarray(results.get_correlation_compositional())
         return corr, n_genes_counts
 
     # VAE PLN-family fits expose an analytic correlation in log-rate

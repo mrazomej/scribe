@@ -33,6 +33,7 @@ from .compositional_ppc import (
     _compute_empirical_compositions,
     _render_compositional_diagonal_panel,
     _resolve_compositional_bin_range,
+    _select_compositional_correlation_diverse_genes,
     _select_compositional_genes,
 )
 from .gene_selection import (
@@ -74,6 +75,7 @@ def _render_compositional_offdiag_panel(
     x_range=None,
     y_range=None,
     rng=None,
+    empirical_clip_percentiles=(0.5, 99.5),
 ):
     """Render one lower-triangle compositional panel.
 
@@ -96,18 +98,28 @@ def _render_compositional_offdiag_panel(
     if density_method not in {"hist2d", "kde"}:
         raise ValueError("density_method must be one of {'hist2d', 'kde'}.")
 
-    # Build plotting domain: shared range across model + empirical with
-    # small padding (compositional fractions live in [0, 1]).
+    # Build plotting domain: empirical extents are clipped to robust
+    # percentiles so a handful of outlier cells (e.g. unusually high
+    # mitochondrial fraction) don't stretch the axis and hide the
+    # bulk distribution.  Model extents enter as min/max because the
+    # model samples are draws from the fitted population — they don't
+    # carry biological outliers in the same way.
+    p_lo, p_hi = empirical_clip_percentiles
+    obs_x_lo = float(np.percentile(obs_x, p_lo))
+    obs_x_hi = float(np.percentile(obs_x, p_hi))
+    obs_y_lo = float(np.percentile(obs_y, p_lo))
+    obs_y_hi = float(np.percentile(obs_y, p_hi))
+
     if x_range is None:
-        lo_x = float(min(pooled_x.min(), obs_x.min(), float(pseudobulk_x)))
-        hi_x = float(max(pooled_x.max(), obs_x.max(), float(pseudobulk_x)))
+        lo_x = float(min(pooled_x.min(), obs_x_lo, float(pseudobulk_x)))
+        hi_x = float(max(pooled_x.max(), obs_x_hi, float(pseudobulk_x)))
         pad_x = max((hi_x - lo_x) * 0.05, 1e-6)
         x_lo, x_hi = max(0.0, lo_x - pad_x), min(1.0, hi_x + pad_x)
     else:
         x_lo, x_hi = float(x_range[0]), float(x_range[1])
     if y_range is None:
-        lo_y = float(min(pooled_y.min(), obs_y.min(), float(pseudobulk_y)))
-        hi_y = float(max(pooled_y.max(), obs_y.max(), float(pseudobulk_y)))
+        lo_y = float(min(pooled_y.min(), obs_y_lo, float(pseudobulk_y)))
+        hi_y = float(max(pooled_y.max(), obs_y_hi, float(pseudobulk_y)))
         pad_y = max((hi_y - lo_y) * 0.05, 1e-6)
         y_lo, y_hi = max(0.0, lo_y - pad_y), min(1.0, hi_y + pad_y)
     else:
@@ -236,6 +248,8 @@ def plot_compositional_corner_ppc(
     density_method="hist2d",
     hist2d_bins=80,
     match_offdiag_limits_to_marginals=True,
+    gene_selection="correlation_diverse",
+    empirical_clip_percentiles=(0.5, 99.5),
     figsize=None,
     fig=None,
     axes=None,
@@ -297,6 +311,21 @@ def plot_compositional_corner_ppc(
     match_offdiag_limits_to_marginals : bool, default True
         Enforce off-diagonal axis limits to match the corresponding
         diagonal panels.  Keeps the corner geometry visually consistent.
+    gene_selection : {"correlation_diverse", "abundance"}
+        Auto-selection strategy.  ``"correlation_diverse"`` (default)
+        seeds with the most + and most − correlated gene pairs in the
+        model's compositional correlation matrix
+        (``W_perp W_perp^T + diag(d)`` for Laplace fits) and greedily
+        fills with diversity — produces a panel set that exhibits
+        meaningful cross-gene structure (positive + negative + diverse).
+        ``"abundance"`` falls back to log-spaced quantiles of mean UMI.
+    empirical_clip_percentiles : tuple of two floats
+        Robust ``(low, high)`` percentile range applied to per-cell
+        empirical compositions when choosing per-panel axis limits.
+        Default ``(0.5, 99.5)`` keeps a handful of outlier cells (e.g.
+        very high mitochondrial fraction) from stretching the axes
+        and hiding the bulk distribution.  The data points themselves
+        are not removed; only the rendered range is adjusted.
     figsize : tuple or None
         Figure size; defaults to ``(3.0 * N, 3.0 * N)``.
     fig, axes : matplotlib objects, optional
@@ -333,12 +362,25 @@ def plot_compositional_corner_ppc(
         raw_counts, results, context="plot_compositional_corner_ppc",
     )
 
-    # Gene selection.
+    # Gene selection.  Default ``correlation_diverse`` uses the model's
+    # *compositional* correlation matrix (W_perp W_perp^T + diag(d) for
+    # Laplace fits; empirical fallback otherwise) to seed with the
+    # most + and most − correlated gene pairs, then greedily fills.
+    # Use ``"abundance"`` for the legacy log-spaced-by-mean-UMI behaviour.
     if gene_indices is not None:
         selected_idx = np.asarray(gene_indices, dtype=int)
-    else:
+    elif gene_selection == "correlation_diverse":
+        selected_idx = _select_compositional_correlation_diverse_genes(
+            results, counts, n_genes, min_mean_umi=min_mean_umi,
+        )
+    elif gene_selection == "abundance":
         selected_idx = _select_compositional_genes(
             counts, n_genes, min_mean_umi=min_mean_umi,
+        )
+    else:
+        raise ValueError(
+            "gene_selection must be 'correlation_diverse' or 'abundance'; "
+            f"got {gene_selection!r}."
         )
     n_panel = int(selected_idx.size)
     gene_names = _get_gene_names(results)
@@ -394,6 +436,7 @@ def plot_compositional_corner_ppc(
             per_cell[:, gene_idx],
             float(pseudobulk[gene_idx]),
             gene_label=label,
+            empirical_clip_percentiles=empirical_clip_percentiles,
         )
         axes_grid[diag_idx, diag_idx].set_yticks([])
         _diag_rendered[diag_idx] = True
@@ -457,6 +500,9 @@ def plot_compositional_corner_ppc(
                         x_range=x_range,
                         y_range=y_range,
                         rng=_rng,
+                        empirical_clip_percentiles=(
+                            empirical_clip_percentiles
+                        ),
                     )
                     progress.update(task, advance=1)
                 else:

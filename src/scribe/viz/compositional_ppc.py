@@ -84,19 +84,57 @@ def _compute_empirical_compositions(counts):
     return per_cell, pseudobulk
 
 
-def _resolve_compositional_bin_range(model_g, empirical_g, n_bins=40):
+def _resolve_compositional_bin_range(
+    model_g,
+    empirical_g,
+    *,
+    n_bins=40,
+    empirical_clip_percentiles=(0.5, 99.5),
+):
     """Pick a shared bin grid for the model and empirical histograms.
 
-    Uses the union of the two value ranges with a small padding so
-    rare extremes from one source are not clipped against the other's
-    range.  Returns the bin edges and the (lo, hi) tuple in case
-    callers want to set axis limits to match.
+    Uses a robust percentile range on the empirical per-cell
+    compositions to keep biological outlier cells (e.g. a few cells
+    with very high mitochondrial fraction) from stretching the axis
+    and hiding the bulk distribution.  The model side typically does
+    not produce extreme tails — it draws from the fitted population
+    distribution — so model min/max is included intersected with the
+    empirical robust range.
+
+    Parameters
+    ----------
+    model_g : ndarray
+        Model compositional draws for one gene.
+    empirical_g : ndarray
+        Per-cell empirical compositions for one gene.
+    n_bins : int
+        Number of histogram bins.
+    empirical_clip_percentiles : tuple of two floats
+        ``(low, high)`` percentiles used to clip the empirical
+        distribution for *axis-range purposes only*.  Default
+        ``(0.5, 99.5)`` matches the standard "remove the most
+        extreme 1% of cells" convention.  The actual data points are
+        not removed; only the rendered range is adjusted.
+
+    Returns
+    -------
+    edges : ndarray
+        Bin edges spanning the chosen range.
+    (lo, hi) : tuple of float
+        The chosen lower/upper bounds for axis limit alignment.
     """
-    lo = float(min(np.min(model_g), np.min(empirical_g)))
-    hi = float(max(np.max(model_g), np.max(empirical_g)))
+    p_lo, p_hi = empirical_clip_percentiles
+    emp_lo = float(np.percentile(empirical_g, p_lo))
+    emp_hi = float(np.percentile(empirical_g, p_hi))
+    model_lo = float(np.min(model_g))
+    model_hi = float(np.max(model_g))
+    # Bound the range by the *empirical* robust extents but allow the
+    # model histogram to extend slightly past them when the model has
+    # broader tails than the bulk empirical data.
+    lo = min(model_lo, emp_lo)
+    hi = max(model_hi, emp_hi)
     span = hi - lo
     if span <= 0:
-        # All values equal — render a degenerate symmetric range.
         center = lo
         eps = max(abs(center) * 1e-3, 1e-6)
         lo, hi = center - eps, center + eps
@@ -120,6 +158,7 @@ def _render_compositional_diagonal_panel(
     empirical_color="black",
     pseudobulk_color="crimson",
     n_bins=40,
+    empirical_clip_percentiles=(0.5, 99.5),
 ):
     """Render a single 1-D compositional PPC panel.
 
@@ -145,7 +184,9 @@ def _render_compositional_diagonal_panel(
         Optional title text for the panel.
     """
     edges, (lo, hi) = _resolve_compositional_bin_range(
-        model_samples_g, empirical_per_cell_g, n_bins=n_bins,
+        model_samples_g, empirical_per_cell_g,
+        n_bins=n_bins,
+        empirical_clip_percentiles=empirical_clip_percentiles,
     )
 
     ax.hist(
@@ -188,9 +229,12 @@ def _select_compositional_genes(counts, n_genes, min_mean_umi=5.0):
 
     Compositional comparisons are noise-floor-dominated for very low
     abundance genes (where per-cell Multinomial noise exceeds ``p_g``).
-    Filter candidates by mean UMI then select using the existing
-    log-spaced binning helper so the chosen genes span the dynamic
-    range of the dataset.
+    Filter candidates by mean UMI then select using log-spaced quantiles
+    so the chosen genes span the dynamic range of the dataset.
+
+    Use this when ``results`` does not expose a correlation accessor
+    (e.g. MCMC results outside the LNM family); for Laplace / VAE-PLN
+    fits prefer :func:`_select_compositional_correlation_diverse_genes`.
     """
     counts_arr = _coerce_counts(counts)
     mean_umi = np.asarray(counts_arr, dtype=float).mean(axis=0)
@@ -202,8 +246,6 @@ def _select_compositional_genes(counts, n_genes, min_mean_umi=5.0):
             "supply explicit gene indices."
         )
     n_to_pick = int(min(n_genes, candidate_pool.size))
-    # Among the pool, pick log-spaced quantiles of mean UMI so the panel
-    # set spans low → high abundance.
     pool_means = mean_umi[candidate_pool]
     sort_order = np.argsort(pool_means)
     sorted_pool = candidate_pool[sort_order]
@@ -220,8 +262,6 @@ def _select_compositional_genes(counts, n_genes, min_mean_umi=5.0):
         selected_positions, 0, sorted_pool.size - 1,
     )
     selected_positions = np.unique(selected_positions)
-    # If unique-ing collapsed the set, top up with the largest unused
-    # positions until we hit n_to_pick (or run out).
     if selected_positions.size < n_to_pick:
         remaining = np.setdiff1d(
             np.arange(sorted_pool.size), selected_positions,
@@ -231,6 +271,82 @@ def _select_compositional_genes(counts, n_genes, min_mean_umi=5.0):
             np.concatenate([selected_positions, fill])
         )
     return sorted_pool[selected_positions]
+
+
+def _select_compositional_correlation_diverse_genes(
+    results,
+    counts,
+    n_genes,
+    *,
+    min_mean_umi=5.0,
+):
+    """Pick genes that span the compositional correlation spectrum.
+
+    Seeds with the most positively and most negatively correlated gene
+    pairs (from the model's *compositional* correlation matrix —
+    ``W_perp W_perp^T + diag(d)`` for Laplace fits, the empirical
+    Pearson on ``log1p(counts)`` as fallback), then greedily fills the
+    remaining slots by choosing genes that maximise pairwise diversity.
+
+    The compositional correlation source matters: raw ``W``-based
+    correlation is biased by the rigid-translation gauge contamination
+    at non-trivial ``gauge_contamination_ratio`` (see
+    ``paper/_diffexp_nbln_robustness.qmd``).  Using ``W_perp`` directly
+    here means the selection picks gene pairs that are biologically
+    co-/anti-correlated, not pairs that happen to be ranked by gauge
+    slop.
+
+    Genes below ``min_mean_umi`` are excluded from the candidate pool
+    because their per-cell empirical compositions are noise-floor
+    dominated and the panel would not be visually interpretable.
+
+    Parameters
+    ----------
+    results : object
+        Fitted SCRIBE results.  When the object exposes
+        :meth:`get_correlation_compositional` (Laplace family), the
+        compositional analytical correlation is used.  Otherwise the
+        empirical Pearson on ``log1p(counts)`` is used as a fallback —
+        this is less ideal for non-LNM models because the empirical
+        correlation is gauge-contaminated by library-size variation.
+    counts : ndarray
+        Observed count matrix.
+    n_genes : int
+        Target number of genes.
+    min_mean_umi : float
+        Lower threshold on per-gene mean UMI for inclusion.
+    """
+    # Lazy import to avoid pulling the corner_ppc module unless needed.
+    from .corner_ppc import _select_genes_by_correlation_diversity
+
+    counts_arr = _coerce_counts(counts)
+    n_genes_counts = int(counts_arr.shape[1])
+
+    corr = None
+    if hasattr(results, "get_correlation_compositional"):
+        try:
+            corr = np.asarray(results.get_correlation_compositional())
+        except Exception:
+            corr = None
+    if corr is None:
+        log_counts = np.log1p(counts_arr.astype(float))
+        corr = np.corrcoef(log_counts, rowvar=False)
+
+    # Pad to (n_genes_counts, n_genes_counts) when the correlation
+    # source is smaller (LNM ALR has G-1 dims).
+    # The selector handles this via candidate_pool sizing, but we
+    # need to expose a square matrix of consistent dimension.
+    selected = _select_genes_by_correlation_diversity(
+        corr, int(n_genes), counts_arr,
+        min_mean_umi_for_selection=float(min_mean_umi),
+    )
+    if selected.size == 0:
+        raise ValueError(
+            "No genes passed the compositional-PPC abundance filter "
+            f"(min_mean_umi={min_mean_umi}). Lower the threshold or "
+            "supply explicit gene indices."
+        )
+    return selected
 
 
 @plot_function(
@@ -255,6 +371,8 @@ def plot_compositional_ppc(
     axes=None,
     ax=None,
     gene_indices=None,
+    gene_selection="correlation_diverse",
+    empirical_clip_percentiles=(0.5, 99.5),
 ):
     """Plot compositional posterior predictive checks for selected genes.
 
@@ -310,6 +428,22 @@ def plot_compositional_ppc(
         Unsupported — multi-panel plot requires a grid.
     gene_indices : array-like of int, optional
         Explicit column indices to display.  Bypasses auto-selection.
+    gene_selection : {"correlation_diverse", "abundance"}
+        Auto-selection strategy.  ``"correlation_diverse"`` (default)
+        seeds with the most + and most − correlated gene pairs from the
+        model's compositional correlation matrix
+        (``W_perp W_perp^T + diag(d)`` for Laplace fits) and greedily
+        fills with diversity, producing a panel set that exhibits
+        strong cross-gene structure.  ``"abundance"`` falls back to
+        log-spaced quantiles of mean UMI (legacy behaviour).
+    empirical_clip_percentiles : tuple of two floats
+        Robust ``(low, high)`` percentile range applied to per-cell
+        empirical compositions when choosing axis limits.  Default
+        ``(0.5, 99.5)`` excludes the most extreme 1% of cells from
+        the rendered range so biological outliers (e.g. high-MT cells)
+        don't stretch the histogram view and hide the bulk
+        distribution.  The data points themselves are not removed;
+        only the rendered range is adjusted.
 
     Returns
     -------
@@ -365,9 +499,18 @@ def plot_compositional_ppc(
     # ------------------------------------------------------------------
     if gene_indices is not None:
         selected_idx = np.asarray(gene_indices, dtype=int)
-    else:
+    elif gene_selection == "correlation_diverse":
+        selected_idx = _select_compositional_correlation_diverse_genes(
+            results, counts, n_panel, min_mean_umi=min_mean_umi,
+        )
+    elif gene_selection == "abundance":
         selected_idx = _select_compositional_genes(
             counts, n_panel, min_mean_umi=min_mean_umi,
+        )
+    else:
+        raise ValueError(
+            "gene_selection must be 'correlation_diverse' or 'abundance'; "
+            f"got {gene_selection!r}."
         )
     n_panel = int(selected_idx.size)
 
@@ -428,6 +571,7 @@ def plot_compositional_ppc(
                 per_cell[:, gene_idx],
                 float(pseudobulk[gene_idx]),
                 gene_label=label,
+                empirical_clip_percentiles=empirical_clip_percentiles,
             )
             if i == 0:
                 # Legend on the first panel only — avoids visual clutter.

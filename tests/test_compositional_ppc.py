@@ -27,6 +27,7 @@ import pytest
 from scribe.viz.compositional_ppc import (
     _compute_empirical_compositions,
     _resolve_compositional_bin_range,
+    _select_compositional_correlation_diverse_genes,
     _select_compositional_genes,
 )
 
@@ -95,6 +96,35 @@ def test_resolve_compositional_bin_range_handles_degenerate():
     assert lo >= 0.0
 
 
+def test_resolve_compositional_bin_range_clips_empirical_outliers():
+    """Outlier empirical values should not stretch the bin range.
+
+    Regression guard for the MT-ND2-style failure where a handful of
+    high-mitochondrial cells produced empirical compositions up to
+    ~0.08 while the bulk lives near 0.005, distorting the axis.
+    """
+    rng = np.random.default_rng(0)
+    # Bulk empirical ~ 0.005 ± 0.001 with three outliers at 0.08.
+    bulk = rng.normal(loc=0.005, scale=0.001, size=500)
+    bulk = np.clip(bulk, 0.0, 1.0)
+    outliers = np.array([0.08, 0.09, 0.075])
+    emp_g = np.concatenate([bulk, outliers])
+    # Model is tight near 0.005 (matches the bulk).
+    model_g = rng.normal(loc=0.005, scale=0.0008, size=1000)
+    model_g = np.clip(model_g, 0.0, 1.0)
+    edges, (lo, hi) = _resolve_compositional_bin_range(
+        model_g, emp_g,
+        empirical_clip_percentiles=(0.5, 99.5),
+    )
+    # Upper bound should reflect the empirical 99.5 percentile, not
+    # the outlier maximum.  99.5 percentile of the bulk ≈ 0.008.
+    assert hi < 0.05, (
+        f"Outliers leaked into range: hi={hi}; should be << 0.08."
+    )
+    # Lower bound is non-negative.
+    assert lo >= 0.0
+
+
 # =====================================================================
 # Theorem-1 invariance check on get_compositional_samples
 # =====================================================================
@@ -146,6 +176,22 @@ def test_compositional_samples_use_W_perp_for_nbln():
     np.testing.assert_allclose(std_prod, std_raw, atol=0.05)
 
 
+def test_get_correlation_compositional_for_nbln():
+    """``get_correlation_compositional`` differs from ``get_correlation``
+    only by the gene-centering projection on W."""
+    res = _nbln_result(G=6, C=4, k=2, with_uncertainty=False)
+    corr_raw = np.asarray(res.get_correlation())
+    corr_perp = np.asarray(res.get_correlation_compositional())
+    # Same shape.
+    assert corr_raw.shape == corr_perp.shape == (6, 6)
+    # Both are valid correlation matrices on the diagonal.
+    np.testing.assert_allclose(np.diag(corr_raw), 1.0, atol=1e-5)
+    np.testing.assert_allclose(np.diag(corr_perp), 1.0, atol=1e-5)
+    # In general they're not identical (W is not already centered).
+    if not np.allclose(np.asarray(res.W).mean(axis=0), 0.0, atol=1e-5):
+        assert not np.allclose(corr_raw, corr_perp, atol=1e-4)
+
+
 def test_compositional_samples_sum_to_one():
     res = _nbln_result(G=10, C=8, k=2, with_uncertainty=False)
     samples = np.asarray(
@@ -189,6 +235,37 @@ def test_plot_compositional_corner_ppc_runs_end_to_end():
     )
     assert out is not None
     assert hasattr(out, "fig") or hasattr(out, "axes")
+
+
+def test_correlation_diverse_selector_uses_compositional_correlation():
+    """Smart selector should pick genes spanning the correlation spectrum.
+
+    Build a synthetic NBLN result whose W has a clear two-block structure
+    (genes 0-3 correlated; genes 4-7 anti-correlated with 0-3); the
+    correlation-diversity selector should pick at least one gene from
+    each block.
+    """
+    res = _nbln_result(G=8, C=12, k=1, with_uncertainty=False)
+    # Override W to a two-block sign pattern.
+    import jax.numpy as jnp
+    object.__setattr__(
+        res, "W", jnp.asarray(np.array([1, 1, 1, 1, -1, -1, -1, -1])[:, None],
+                              dtype=jnp.float32),
+    )
+    object.__setattr__(res, "d", jnp.full((8,), 0.1, dtype=jnp.float32))
+    rng = np.random.default_rng(0)
+    counts = rng.poisson(lam=15.0, size=(12, 8))
+    selected = _select_compositional_correlation_diverse_genes(
+        res, counts, n_genes=4, min_mean_umi=0.0,
+    )
+    selected_set = set(int(g) for g in selected)
+    # At least one of each block should appear in the seed pair
+    # (the seed pair includes the most + and most − correlated pair).
+    has_block_a = any(g <= 3 for g in selected_set)
+    has_block_b = any(g >= 4 for g in selected_set)
+    assert has_block_a and has_block_b, (
+        f"Selector missed cross-block diversity; picked {selected_set}"
+    )
 
 
 def test_plot_compositional_ppc_rejects_results_without_method():

@@ -301,3 +301,37 @@ class CoreResultsMixin:
             "gauge_contamination_ratio": 0.0,
         }
 
+    def get_correlation_compositional(self) -> jnp.ndarray:
+        """Return correlation derived from the gauge-invariant ``W_perp``.
+
+        For PLN and NBLN, this is the correlation matrix of
+        ``W_perp W_perp^T + diag(d)`` — the biologically meaningful
+        cross-gene correlation structure, after projecting out the
+        rigid-translation gauge contamination.  For LNM and LNMVCP, ``W``
+        is already in ALR compositional coordinates so this returns the
+        same value as :meth:`get_correlation`.
+
+        This is the recommended source for downstream "smart" gene
+        selection (most positively correlated, most negatively
+        correlated, etc.) since pairwise correlations from raw ``W``
+        are biased by the all-ones gauge contamination at non-trivial
+        ``gauge_contamination_ratio``.
+
+        Returns
+        -------
+        jnp.ndarray
+            Correlation matrix of shape ``(G, G)`` for PLN/NBLN, or
+            ``(G-1, G-1)`` for LNM-family — same shape as
+            :meth:`get_correlation`.
+
+        See Also
+        --------
+        get_W_compositional : the underlying gauge-invariant loadings.
+        get_correlation : full ``W``-based correlation, gauge-contaminated
+            for PLN/NBLN at non-trivial ``gauge_contamination_ratio``.
+        """
+        W_perp = self.get_W_compositional()
+        sigma_perp = W_perp @ W_perp.T + jnp.diag(self.d)
+        std = jnp.sqrt(jnp.maximum(jnp.diag(sigma_perp), 1e-30))
+        return sigma_perp / (std[:, None] * std[None, :])
+
