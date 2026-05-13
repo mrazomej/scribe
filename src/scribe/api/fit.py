@@ -229,8 +229,20 @@ def fit(
     # MAP rather than refined during the M-step.  Default ("r", "eta")
     # eliminates the rigid-translation gauge degeneracy and yields the
     # cleanest cross-gene correlation structure in W.  Pass () to
-    # disable freezing entirely (Phase-1 soft cascade only).  See
-    # paper/_diffexp_nbln_robustness.qmd and the Cascade-parameter
+    # disable freezing entirely (Phase-1 soft cascade only).
+    #
+    # Accepts either the internal short names ("r", "mu", "eta") or
+    # their descriptive aliases:
+    #   - "r"   <-> "dispersion"
+    #   - "mu"  <-> "expression" or "mean_expression"
+    #   - "eta" <-> "capture_efficiency"
+    # Both forms work, e.g. ("dispersion", "capture_efficiency") is
+    # equivalent to ("r", "eta").  Passing both an internal name and
+    # its alias (e.g. ("r", "dispersion")) raises ValueError.  See
+    # FREEZE_KEY_ALIASES in scribe.models.config.parameter_mapping for
+    # the canonical mapping.
+    #
+    # See paper/_diffexp_nbln_robustness.qmd and the Cascade-parameter
     # freeze subsection in paper/_nb_lognormal.qmd for the rationale.
     informative_priors_freeze: tuple = ("r", "eta"),
     # DEPRECATED: shrinkage prior on the loadings matrix W.

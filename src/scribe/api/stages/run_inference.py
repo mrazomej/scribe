@@ -113,12 +113,18 @@ def dispatch_inference(ctx: FitContext) -> None:
     cascade_source_counts = None
     if informative_priors_from is not None:
         # Read and normalize the freeze tuple.  Accept any iterable
-        # of {"r", "mu", "eta"}; coerce to a tuple of strings.
+        # of {"r", "mu", "eta"} OR their descriptive aliases
+        # ({"dispersion", "expression"/"mean_expression",
+        # "capture_efficiency"}) — see FREEZE_KEY_ALIASES in
+        # parameter_mapping.py.  ``normalize_freeze_keys`` resolves
+        # aliases to internal short names and raises on ambiguity
+        # (e.g. ("r", "dispersion")).
+        from ...models.config.parameter_mapping import normalize_freeze_keys
         raw_freeze = ctx.kwargs.get("informative_priors_freeze", ("r", "eta"))
         if raw_freeze is None:
             freeze_params = ()
         else:
-            freeze_params = tuple(raw_freeze)
+            freeze_params = normalize_freeze_keys(raw_freeze)
         # Build the freeze-values bundle from SVI's get_map().
         if freeze_params:
             from ...laplace.priors import freeze_values_from_results

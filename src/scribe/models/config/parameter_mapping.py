@@ -9,7 +9,7 @@ names and user-friendly descriptive names, used by the ``priors`` dict alias
 system and the ``descriptive_names`` option on results objects.
 """
 
-from typing import Any, Dict, Set, List, NamedTuple
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Union
 from dataclasses import dataclass
 from .enums import Parameterization
 
@@ -782,6 +782,79 @@ PRIOR_KEY_ALIASES: Dict[str, str] = {
 _INTERNAL_TO_PRIOR_ALIAS: Dict[str, str] = {
     v: k for k, v in PRIOR_KEY_ALIASES.items()
 }
+
+
+# ==============================================================================
+# NBLN cascade freeze key aliases
+# ==============================================================================
+
+# Maps user-facing descriptive aliases for NBLN cascade-freeze parameter
+# names to the internal short names used by the obs model's freeze
+# logic.  The freeze internal names are short -- ``"r"``, ``"mu"``,
+# ``"eta"`` -- and they intentionally differ from the per-site names
+# (``"eta"`` is short for the ``eta_capture`` site; ``"mu"`` is the
+# log-rate prior mean, not the ``mu_T`` totals parameter).  This map
+# bridges the two naming conventions so that
+#
+#     informative_priors_freeze=("dispersion", "capture_efficiency")
+#
+# resolves identically to the historic
+#
+#     informative_priors_freeze=("r", "eta").
+#
+# Resolved by ``normalize_freeze_keys`` in the API run-inference stage
+# before the tuple is passed to the obs model.
+FREEZE_KEY_ALIASES: Dict[str, str] = {
+    "dispersion": "r",
+    "expression": "mu",
+    "mean_expression": "mu",
+    "capture_efficiency": "eta",
+}
+
+
+def normalize_freeze_keys(freeze):
+    """Translate descriptive ``informative_priors_freeze`` aliases.
+
+    Accepts any iterable of strings drawn from
+    ``{"r", "mu", "eta"}`` and/or their descriptive aliases
+    (``"dispersion"``, ``"expression"`` / ``"mean_expression"``,
+    ``"capture_efficiency"``).  Returns a tuple of the internal short
+    names.  Empty / ``None`` input passes through unchanged.
+
+    Raises
+    ------
+    ValueError
+        If both an alias and its internal target are present (e.g.
+        ``("r", "dispersion")``) — ambiguous.
+
+    Examples
+    --------
+    >>> normalize_freeze_keys(("r", "eta"))
+    ('r', 'eta')
+    >>> normalize_freeze_keys(("dispersion", "capture_efficiency"))
+    ('r', 'eta')
+    >>> normalize_freeze_keys(("r", "dispersion"))
+    Traceback (most recent call last):
+        ...
+    ValueError: Duplicate freeze key: ...
+    """
+    if not freeze:
+        return tuple(freeze) if freeze is not None else freeze
+    resolved: List[str] = []
+    seen: Set[str] = set()
+    for k in freeze:
+        internal = FREEZE_KEY_ALIASES.get(k, k)
+        if internal in seen:
+            raise ValueError(
+                f"Duplicate freeze key: '{k}' resolves to internal "
+                f"name '{internal}', which is already present in "
+                f"informative_priors_freeze. Pass each parameter once, "
+                f"using either the internal short name (e.g. 'r') or "
+                f"its descriptive alias (e.g. 'dispersion'), not both."
+            )
+        seen.add(internal)
+        resolved.append(internal)
+    return tuple(resolved)
 
 
 # ==============================================================================

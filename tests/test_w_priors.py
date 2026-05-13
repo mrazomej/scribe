@@ -625,6 +625,81 @@ def test_priors_dict_loadings_and_legacy_w_prior_conflict_raises():
         )
 
 
+def test_normalize_freeze_keys_internal_names_passthrough():
+    from scribe.models.config.parameter_mapping import normalize_freeze_keys
+    assert normalize_freeze_keys(("r", "eta")) == ("r", "eta")
+    assert normalize_freeze_keys(("r", "mu", "eta")) == ("r", "mu", "eta")
+
+
+def test_normalize_freeze_keys_descriptive_aliases_resolve():
+    from scribe.models.config.parameter_mapping import normalize_freeze_keys
+    assert normalize_freeze_keys(("dispersion", "capture_efficiency")) == (
+        "r", "eta",
+    )
+    assert normalize_freeze_keys(
+        ("dispersion", "mean_expression", "capture_efficiency")
+    ) == ("r", "mu", "eta")
+    assert normalize_freeze_keys(("expression",)) == ("mu",)
+
+
+def test_normalize_freeze_keys_mixed_forms():
+    from scribe.models.config.parameter_mapping import normalize_freeze_keys
+    assert normalize_freeze_keys(("dispersion", "eta")) == ("r", "eta")
+    assert normalize_freeze_keys(("r", "capture_efficiency")) == ("r", "eta")
+
+
+def test_normalize_freeze_keys_conflict_raises():
+    from scribe.models.config.parameter_mapping import normalize_freeze_keys
+    with pytest.raises(ValueError, match="Duplicate freeze key"):
+        normalize_freeze_keys(("r", "dispersion"))
+    with pytest.raises(ValueError, match="Duplicate freeze key"):
+        normalize_freeze_keys(("expression", "mean_expression"))
+
+
+def test_normalize_freeze_keys_empty_passthrough():
+    from scribe.models.config.parameter_mapping import normalize_freeze_keys
+    assert normalize_freeze_keys(()) == ()
+    assert normalize_freeze_keys(None) is None
+
+
+def test_freeze_with_descriptive_aliases_through_fit():
+    """End-to-end: ``informative_priors_freeze=('dispersion',
+    'capture_efficiency')`` produces the same result as ``('r', 'eta')``."""
+    import scribe
+
+    rng = np.random.default_rng(0)
+    counts = rng.poisson(lam=5.0, size=(30, 10))
+    import anndata as ad
+    adata = ad.AnnData(X=counts.astype(np.float32))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        svi = scribe.fit(
+            adata, model="nbvcp", parameterization="mean_odds",
+            priors={"capture_efficiency": (float(np.log(1000.0)), 0.5)},
+            inference_method="svi", n_steps=20,
+        )
+        r_internal = scribe.fit(
+            adata, model="nbln", inference_method="laplace",
+            informative_priors_from=svi,
+            informative_priors_freeze=("r", "eta"),
+            priors={"capture_efficiency": (float(np.log(1000.0)), 0.5)},
+            n_steps=5, latent_dim=3,
+            laplace_config={"n_newton_steps": 2, "newton_max_step": 5.0},
+        )
+        r_descriptive = scribe.fit(
+            adata, model="nbln", inference_method="laplace",
+            informative_priors_from=svi,
+            informative_priors_freeze=("dispersion", "capture_efficiency"),
+            priors={"capture_efficiency": (float(np.log(1000.0)), 0.5)},
+            n_steps=5, latent_dim=3,
+            laplace_config={"n_newton_steps": 2, "newton_max_step": 5.0},
+        )
+    assert r_internal.frozen_params == frozenset({"r", "eta"})
+    assert r_descriptive.frozen_params == frozenset({"r", "eta"})
+    assert r_internal.frozen_params == r_descriptive.frozen_params
+
+
 def test_plot_w_shrinkage_spectrum_raises_when_no_diagnostics():
     """Plot requires a populated diagnostics dict — None raises."""
     import matplotlib

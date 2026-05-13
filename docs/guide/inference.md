@@ -368,7 +368,7 @@ results = scribe.fit(
 | `latent_dim` | `None` | Rank \(k\) of the low-rank covariance \(\Sigma = WW^\top + \text{diag}(d)\). Legacy alias: `vae_latent_dim`. |
 | `laplace_config` | `None` | Dict of Newton solver settings (see below) |
 | `informative_priors_from` | `None` | Cascade source for NBLN (Phase-1 soft cascade) — see [NBLN workflow](#nbln-cascade--freeze--shrinkage-workflow) below |
-| `informative_priors_freeze` | `("r", "eta")` | Cascade freeze parameters for NBLN (Phase-2) |
+| `informative_priors_freeze` | `("r", "eta")` | Cascade freeze parameters for NBLN (Phase-2). Accepts either internal short names (`"r"`, `"mu"`, `"eta"`) or their descriptive aliases (`"dispersion"`, `"expression"`/`"mean_expression"`, `"capture_efficiency"`). Both forms work identically. |
 | `priors={"loadings": ...}` | `None` | Loadings-matrix shrinkage strategy spec for PLN/NBLN (Phase-3) |
 
 ### Laplace configuration

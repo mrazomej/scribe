@@ -214,6 +214,20 @@ cascade's full SVI posterior (not a moment-matched Gaussian summary)
 | **Level 3** | **`("r", "eta")`** | **Default.** Pins the gauge structurally. Recommended for production. |
 | Level 4 | `("r", "mu", "eta")` | NBLN learns only \(\underline{\underline{W}}\) and \(\underline{d}\) on top of NBVCP. |
 
+!!! tip "Descriptive aliases for freeze keys"
+    `informative_priors_freeze` accepts either the internal short
+    names shown above or their descriptive aliases:
+
+    - `"r"` ↔ `"dispersion"`
+    - `"mu"` ↔ `"expression"` or `"mean_expression"`
+    - `"eta"` ↔ `"capture_efficiency"`
+
+    So `("dispersion", "capture_efficiency")` is equivalent to
+    `("r", "eta")`. Both forms work; the descriptive form matches
+    the convention used in `priors={"capture_efficiency": ...}`.
+    Passing both an internal name and its alias (e.g.
+    `("r", "dispersion")`) raises `ValueError`.
+
 ---
 
 ## Loadings shrinkage for adaptive rank selection
