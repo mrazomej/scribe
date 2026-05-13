@@ -36,12 +36,11 @@ class ModelConfigBuilder:
     correctness and a clear, user-friendly experience for interactive use,
     scripting, or integration with pipelines.
 
-    Parameters
-    ----------
-    None at initialization. All configuration is done via method chaining.
-
     Notes
     -----
+    This builder has no required initialization arguments. All configuration is
+    provided via method chaining.
+
     - The builder enforces validation at each step, refusing to build invalid or
       inconsistent configurations.
     - All constructed config objects are immutable and type-checked.

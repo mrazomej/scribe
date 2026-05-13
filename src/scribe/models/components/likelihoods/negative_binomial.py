@@ -82,9 +82,9 @@ class NegativeBinomialLikelihood(Likelihood):
         - r > 0 is the dispersion parameter (``total_count`` in NumPyro)
         - p in (0, 1) is the ``NegativeBinomialProbs`` probability parameter
 
-    Parameters
-    ----------
-    None
+    Notes
+    -----
+    This likelihood class has no required initialization arguments.
 
     Examples
     --------

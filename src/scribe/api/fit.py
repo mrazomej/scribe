@@ -257,8 +257,6 @@ def fit(
 
     Parameters
     ----------
-    Data input and model composition
-    --------------------------------
     counts : Union[jnp.ndarray, AnnData]
         Count matrix or AnnData object containing single-cell RNA-seq counts.
         Shape should be (n_cells, n_genes) if cells_axis=0.

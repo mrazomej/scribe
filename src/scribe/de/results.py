@@ -116,8 +116,7 @@ class ScribeEmpiricalDEResults(EmpiricalResultsMixin, ScribeDEResults):
         Posterior CLR differences with shape ``(N, D)``.
     r_samples_A, r_samples_B, p_samples_A, p_samples_B : jnp.ndarray, optional
         Raw NB posterior samples for biological-level metrics.
-    mu_samples_A, mu_samples_B, phi_samples_A, phi_samples_B : jnp.ndarray,
-    optional
+    mu_samples_A, mu_samples_B, phi_samples_A, phi_samples_B : jnp.ndarray, optional
         Native parameterization samples used for numerically stable
         biological-level computations.
     simplex_A, simplex_B : jnp.ndarray, optional

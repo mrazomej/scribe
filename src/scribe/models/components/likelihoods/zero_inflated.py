@@ -82,9 +82,9 @@ class ZeroInflatedNBLikelihood(Likelihood):
     With probability `gate`, the count is zero (structural zero).
     With probability `1 - gate`, the count follows NegativeBinomialProbs(r, p).
 
-    Parameters
-    ----------
-    None
+    Notes
+    -----
+    This likelihood class has no required initialization arguments.
 
     Examples
     --------
