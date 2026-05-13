@@ -734,6 +734,13 @@ but emits a ``DeprecationWarning``; new code should use the priors
 dict form so the API stays uniform across cascade priors, capture
 priors, and parameter overrides.
 
+The math (softplus-floor parameterization, (G−1)-dim subspace
+correction, std-vs-variance conventions), the calibration workflow,
+and the extension roadmap for future row-wise / element-wise /
+LNM-family strategies are documented canonically in the paper
+section ``paper/_loadings_shrinkage_priors.qmd`` (anchor
+``sec-loadings-shrinkage``).
+
 ### Strategies registered in v1
 
 All v1 strategies are **column-wise** (per-factor scales). Future

@@ -4,6 +4,12 @@ This module introduces a pluggable strategy interface for shrinkage
 priors on the per-factor columns of the loadings matrix ``W`` used by
 the PLN and NBLN observation models in the Laplace inference path.
 
+The math, calibration workflow, and extension roadmap are documented
+canonically in the paper section
+``paper/_loadings_shrinkage_priors.qmd`` (anchor
+``sec-loadings-shrinkage``).  Cross-references to that section appear
+throughout the strategy class docstrings.
+
 Motivation
 ----------
 At generous ``latent_dim`` (e.g. 32), the gauge-invariant singular

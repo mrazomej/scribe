@@ -1,0 +1,435 @@
+---
+editor:
+    render-on-save: true
+# bibliography: references.bib
+csl: ieee.csl
+format:
+  html:
+    theme:
+      light: cosmo
+      dark: superhero
+---
+
+# Loadings-matrix shrinkage priors for low-rank covariance models {#sec-loadings-shrinkage}
+
+The low-rank covariance parameterization
+$$
+\underline{\underline{\Sigma}} =
+\underline{\underline{W}}\,\underline{\underline{W}}^{\top}
++ \mathrm{diag}(\underline{d}),
+\qquad \underline{\underline{W}} \in \mathbb{R}^{G \times k}
+$${#eq-loadings-low-rank-recap}
+
+underlies the LNM, PLN, and NBLN observation models
+([@sec-logistic-normal-multinomial], [@sec-poisson-lognormal],
+[@sec-nb-lognormal]). The latent dimension $k$ controls how many
+regulatory programs the model can represent. In the original
+formulations $k$ was a hyperparameter to be picked manually — too
+small loses real structure; too large lets the model fit noise. This
+section develops a **shrinkage prior on the columns of
+$\underline{\underline{W}}$** that turns $k$ into an upper bound and
+lets the prior pick the effective rank adaptively. The prior is
+implemented as a modular *strategy framework* in
+``src/scribe/laplace/_w_priors.py``: each strategy plugs into the
+PLN/NBLN Laplace path through a small protocol (initialization,
+log-prior, diagnostics), and adding new families (row-wise,
+element-wise, etc.) requires one new class plus one registry entry.
+
+## Motivation: the singular-value-shelf failure mode {#sec-loadings-motivation}
+
+At generous $k$ (say $k = 32$) with no shrinkage on
+$\underline{\underline{W}}$, the gauge-invariant singular-value
+spectrum of
+$\underline{\underline{W}}_\perp = \underline{\underline{P}}\,
+\underline{\underline{W}}$ (see [@sec-diffexp-nbln-robustness] for
+the projection) typically shows a *flat shelf*: the dominant 2–3
+factors carry strong signal, but the remaining $k - 3$ factors sit at
+~20% of the dominant factor's energy each, contributing roughly
+half the cumulative cross-gene compositional covariance. This excess
+capacity paints **spurious cross-block diagonal contours** in
+compositional corner PPCs: model density extends in coordinated
+directions that the empirical scatter does not support.
+
+Manually capping $k$ (e.g. $k = 5$) fixes the symptom but is not
+portable across datasets — different tissues and assays support
+different effective ranks. The principled fix is to keep $k$
+generous and let a **shrinkage prior on the columns of
+$\underline{\underline{W}}$** drive unused factors toward zero. The
+prior pays no penalty for keeping data-supported factors at their
+natural scale and pays a heavy penalty for filling unused factors
+with noise; the resulting MAP is approximately rank-sparse on the
+column index.
+
+## Where the prior acts: $\underline{\underline{W}}_\perp$, not raw $\underline{\underline{W}}$ {#sec-loadings-projection}
+
+For PLN/NBLN, raw $\underline{\underline{W}}$ has a rigid-translation
+gauge component along the all-ones direction (Theorem 2 in
+[@sec-diffexp-nbln-robustness]): writing
+$\underline{\underline{W}} = \underline{\underline{W}}_\perp +
+\underline{\underline{W}}_{\parallel}$ with
+$\underline{\underline{W}}_{\parallel} = \mathbf{1}\,\mathbf{u}^{\top}$
+for some $\mathbf{u} \in \mathbb{R}^{k}$, only the gene-centered
+projection $\underline{\underline{W}}_\perp$ carries
+biologically meaningful cross-gene signal; the
+$\underline{\underline{W}}_{\parallel}$ component is a per-cell
+scaling slop coupled to $\underline{\eta}$.
+
+Applying shrinkage to raw $\underline{\underline{W}}$ would dissipate
+prior mass on the gauge component as well as the biological one. The
+observation-model integration layer in SCRIBE therefore projects
+$\underline{\underline{W}} \to \underline{\underline{W}}_\perp$ at
+the strategy boundary:
+
+```python
+W_for_prior = W - mean(W, axis=0)            # gauge-cleaned
+log_prior = strategy.log_prior(W_for_prior, aux, n_constraints=1)
+```
+
+The flag ``n_constraints=1`` declares that each column of
+``W_for_prior`` lives in a $(G-1)$-dimensional subspace
+(centered columns sum to zero). The strategy itself stays
+*model-agnostic*: it accepts whatever ``W_for_prior`` is handed in
+and uses ``n_constraints`` to scale the Gaussian normalizer
+correctly. For LNM-family models (where $\underline{\underline{W}}$
+already lives in ALR-quotient coordinates and the
+all-ones-gauge does not exist) the obs model would pass raw
+$\underline{\underline{W}}$ with ``n_constraints=0`` — same strategy
+code, different boundary treatment.
+
+## Strategy protocol {#sec-loadings-protocol}
+
+Each shrinkage strategy declares three pieces of information and
+implements three methods:
+
+- ``type_name``: registry key (e.g. ``"horseshoe_columnwise"``).
+- ``aux_param_names``: tuple of optimizer-state parameter names
+  this strategy adds (e.g. ``("w_raw_lambda_k", "w_raw_tau")`` for
+  horseshoe). Names are ``w_``-prefixed to namespace them within the
+  optax params dict.
+- ``init_aux_params(G, k, rng_key) -> dict``: initial unconstrained
+  values for the aux parameters.
+- ``log_prior(W_for_prior, aux, *, n_constraints=0) -> scalar``:
+  the log-prior contribution added to the outer ELBO at every
+  optimization step. Includes Jacobian terms for any
+  constrained-positive aux parameters.
+- ``diagnostics(W_for_prior, aux, *, n_constraints=0) -> dict``:
+  post-fit interpretable quantities reported on
+  ``result.w_prior_diagnostics``.
+
+The user-facing API routes through the canonical ``priors`` dict:
+
+```python
+scribe.fit(
+    adata, model="nbln", inference_method="laplace",
+    priors={
+        "capture_efficiency": (np.log(M_0), sigma_M),
+        "loadings": {"type": "horseshoe_columnwise", "tau_scale": 1.0},
+    },
+    latent_dim=16,
+)
+```
+
+The descriptive key ``"loadings"`` is the factor-analysis term for
+$\underline{\underline{W}}$ and aliases the internal key ``"W"``.
+
+## The three column-wise strategies {#sec-loadings-strategies}
+
+The v1 implementation ships three column-wise strategies (per-factor
+scales). All math fixes documented below apply identically to each.
+
+### Gaussian (ridge) — ``"gaussian"`` {#sec-loadings-gaussian}
+
+Shared fixed scale:
+$$
+\underline{\underline{W}}_\perp[:, k] \sim
+\mathcal{N}\!\left(\underline{0},\; \sigma^{2}\,
+\underline{\underline{I}}_{G}\right),
+\qquad k = 1, \ldots, K,
+$${#eq-loadings-gaussian}
+
+with $\sigma$ a fixed hyperparameter. No auxiliary parameters. The
+sanity-check baseline: tells you whether the symptom is "any
+shrinkage helps" or "specifically *sparsity* helps" — if Gaussian
+gives the right answer, you do not need the heavier machinery.
+
+### Column-wise horseshoe — ``"horseshoe_columnwise"`` {#sec-loadings-horseshoe}
+
+Local-global hierarchy with **standard-deviation** local scales:
+$$
+\underline{\underline{W}}_\perp[:, k] \mid \lambda_{k} \sim
+\mathcal{N}\!\left(\underline{0},\; \lambda_{k}\,
+\underline{\underline{I}}_{G}\right),
+\qquad
+\lambda_{k} \mid \tau \sim \mathrm{HalfCauchy}(\tau),
+\qquad
+\tau \sim \mathrm{HalfCauchy}(\tau_{0}).
+$${#eq-loadings-horseshoe}
+
+Aux parameters: $\mathrm{raw}_{\lambda_{k}}$, $\mathrm{raw}_{\tau}$ —
+the softplus-floor parameterization detailed in
+[@sec-loadings-softplus]. Recommended default for cascade-frozen
+NBLN fits: horseshoe combines a heavy tail (lets strong factors
+through) with a sharp peak at zero (kills unused factors).
+
+### Column-wise NEG — ``"neg_columnwise"`` {#sec-loadings-neg}
+
+Normal-Exponential-Gamma hierarchy with **variance** local scales:
+$$
+\underline{\underline{W}}_\perp[:, k] \mid \psi_{k} \sim
+\mathcal{N}\!\left(\underline{0},\; \sqrt{\psi_{k}}\,
+\underline{\underline{I}}_{G}\right),
+\qquad
+\psi_{k} \mid \gamma \sim \mathrm{Exponential}(\mathrm{rate}=\gamma),
+\qquad
+\gamma \sim \mathrm{Gamma}(\alpha, \beta).
+$${#eq-loadings-neg}
+
+More aggressive near-zero shrinkage than horseshoe at default
+hyperparameters; useful when horseshoe is insufficient to kill
+noise factors on a particular dataset.
+
+## Math fixes that matter {#sec-loadings-math-fixes}
+
+Three subtle implementation details have to be right or the prior
+runs but silently produces a wrong fit.
+
+### Standard deviation vs variance {#sec-loadings-std-vs-variance}
+
+The NumPyro ``Normal(loc, scale)`` parameterization uses **scale =
+standard deviation**. The horseshoe pseudocode above writes
+$\mathcal{N}(\underline{0}, \lambda_{k})$ where $\lambda_{k}$ is
+explicitly the std (variance is $\lambda_{k}^{2}$); the NEG
+pseudocode writes $\mathcal{N}(\underline{0}, \sqrt{\psi_{k}})$
+where $\psi_{k}$ is explicitly the variance.
+
+Conflating these — writing $\mathcal{N}(\underline{0},
+\lambda_{k}^{2})$ for horseshoe or $\mathcal{N}(\underline{0},
+\psi_{k})$ for NEG — produces a fit that runs but converges to the
+wrong $\lambda_{k}$ / $\psi_{k}$ by a factor of two in log-units.
+The unit tests in ``tests/test_w_priors.py`` include explicit
+numerical checks: for horseshoe with $\lambda_{k} = 2$ and
+$\underline{\underline{W}}_\perp = 1$, the Normal log-density
+should match $\log \mathcal{N}(1; 0, 2) \approx -1.74$, **not**
+$\log \mathcal{N}(1; 0, 4) \approx -2.61$.
+
+### Softplus-floor reparameterization {#sec-loadings-softplus}
+
+A naïve log-space parameterization
+$\lambda_{k} = \exp(\log \lambda_{k})$ combined with the Gaussian
+likelihood produces an *unbounded above* log-prior as
+$\lambda_{k} \to 0$. The dominant terms are
+$$
+\log p(\underline{\underline{W}}_\perp[:, k] \mid \lambda_{k}) =
+- \tfrac{1}{2} \| \underline{\underline{W}}_\perp[:, k] \|^{2}\,
+\lambda_{k}^{-2}
+- (G - 1) \log \lambda_{k}
++ \text{const},
+$${#eq-loadings-collapse-likelihood}
+
+and the change-of-variables Jacobian for $\log \lambda_{k}$
+contributes $+\log \lambda_{k}$. Their sum, on the
+$\log \lambda_{k}$-axis, is
+$-(G - 1) \log \lambda_{k} + \log \lambda_{k} =
+-(G - 2) \log \lambda_{k}$, which **diverges to $+\infty$** as
+$\log \lambda_{k} \to -\infty$ for $G > 2$. The negative-log-likelihood
+loss therefore diverges to $-\infty$ along the ridge
+$\underline{\underline{W}}_\perp \to \underline{0},\,
+\lambda_{k} \to 0$ — the optimizer collapses to that degenerate MAP
+in just a few steps. (NEG has the same pathology for $G > 4$ via
+$-\tfrac{1}{2}(G - 1) \log \psi_{k}$ minus the Jacobian.)
+
+The fix is the **softplus-floor reparameterization**:
+$$
+\lambda_{k} = \lambda_{\min} + \mathrm{softplus}(\mathrm{raw}_{\lambda_{k}}),
+\qquad
+\mathrm{raw}_{\lambda_{k}} \in \mathbb{R},
+\qquad
+\lambda_{\min} > 0.
+$${#eq-loadings-softplus}
+
+Default $\lambda_{\min} = 10^{-3}$ for horseshoe and
+$\psi_{\min} = 10^{-6}$ for NEG (variance scale). The Jacobian for
+$\mathrm{raw}_{\lambda_{k}} \to \lambda_{k}$ is
+$\sigma(\mathrm{raw}_{\lambda_{k}})$ where $\sigma$ is the logistic
+sigmoid, so the log-Jacobian is
+$\log \sigma(\mathrm{raw}_{\lambda_{k}})$ — **bounded above by 0**
+and tending to $-\infty$ as $\mathrm{raw}_{\lambda_{k}} \to -\infty$.
+The Jacobian therefore actively *prevents* the optimizer from
+collapsing $\lambda_{k}$ toward zero; any savings in
+$-\log p(\underline{\underline{W}}_\perp[:, k] \mid \lambda_{k})$
+from a smaller $\lambda_{k}$ are paid back through the bounded
+Jacobian.
+
+A subtle point: this is **log-scale constrained MAP**, not the MCMC
+non-centered parameterization (NCP). True NCP would optimize a
+separate $\underline{\underline{Z}}$ with
+$\underline{\underline{W}}_\perp[:, k] = \lambda_{k}\,
+\underline{\underline{Z}}[:, k]$; we optimize
+$\underline{\underline{W}}_\perp$ directly with $\lambda_{k}$ as a
+constrained scale parameter. The two parameterizations both block
+the collapse-to-zero singularity, but NCP introduces a different
+optimization ridge along $\lambda \cdot Z = \mathrm{const}$ that we
+prefer to avoid.
+
+### Subspace correction {#sec-loadings-subspace}
+
+When the obs model passes $\underline{\underline{W}}_\perp$ to the
+strategy (as it does for PLN/NBLN), each column of
+$\underline{\underline{W}}_\perp$ satisfies the constraint
+$\sum_{g=1}^{G} W_{\perp,gk} = 0$ — every column lives in a
+$(G - 1)$-dimensional subspace of $\mathbb{R}^{G}$, not all of
+$\mathbb{R}^{G}$.
+
+The centered-column Gaussian log-density must therefore use the
+**effective dimension**
+$d_{\mathrm{eff}} = G - n_{\mathrm{constraints}}$ in its normalizer:
+$$
+\log p(\underline{\underline{W}}_\perp[:, k]) =
+- \tfrac{1}{2}\, \frac{\| \underline{\underline{W}}_\perp[:, k] \|^{2}}{\lambda_{k}^{2}}
+- d_{\mathrm{eff}}\, \log \lambda_{k}
+- \tfrac{1}{2}\, d_{\mathrm{eff}}\, \log(2\pi).
+$${#eq-loadings-subspace-density}
+
+The obs model passes ``n_constraints=1`` for centered columns; LNM
+or raw-W debugging paths pass ``0``. Calling
+``dist.Normal(0.0, lambda_k).log_prob(W_perp).sum()`` naïvely uses
+$d_{\mathrm{eff}} = G$ in the normalizer and over-counts the
+$-\log \lambda_{k}$ term by 1. The bias on the optimal
+$\lambda_{k}$ is a factor of
+$\sqrt{G / (G - 1)} \approx 1 + \tfrac{1}{2G}$ — negligible at
+$G \sim 10^{4}$ (real scRNA-seq) but material on small synthetic
+benchmarks at $G \sim 10$. Writing the centered-column density
+manually with the correct $d_{\mathrm{eff}}$ keeps the math right
+across both scales.
+
+## Diagnostics: headline rank from $\| \underline{\underline{W}}_\perp[:, k] \|$, not $\sigma_{k}$ {#sec-loadings-diagnostics}
+
+The strategy's ``diagnostics`` method reports a primary
+*column-norm-based* rank and a secondary *scale-based* rank:
+
+- ``column_frobenius_compositional`` $= \| \underline{\underline{W}}_\perp[:, k] \|$ per factor.
+- ``column_norm_effective_rank`` = number of factors whose column
+  norm exceeds 5% of the dominant factor's norm. **Headline
+  diagnostic.** Also exposed under the alias ``effective_rank`` for
+  terse client code.
+- ``sigma_k`` = per-column scales from the aux MAP
+  ($\lambda_{k}$ for horseshoe, $\sqrt{\psi_{k}}$ for NEG).
+- ``scale_effective_rank`` = same threshold applied to ``sigma_k``.
+  Secondary diagnostic.
+
+The headline anchors on the column norm because **only the column
+norm directly enters
+$\underline{\underline{W}}_\perp\, \underline{\underline{W}}_\perp^{\top}$**
+and hence the compositional covariance that downstream
+correlation analyses and PPCs visualize. Aux scales can be weakly
+identified under heavy-tailed priors — a horseshoe fit can drive
+$\lambda_{k}$ to its softplus floor while the data still supports a
+small but non-zero column norm in that direction. Reporting both
+diagnostics surfaces the disagreement when it happens.
+
+The companion visualization
+``scribe.viz.plot_w_shrinkage_spectrum`` plots
+$\| \underline{\underline{W}}_\perp[:, k] \|$ on a log-scale primary
+axis with $\sigma_{k}$ as an optional dashed-secondary overlay; the
+threshold for ``column_norm_effective_rank`` is drawn as a
+horizontal line.
+
+## Calibration workflow {#sec-loadings-calibration}
+
+The W-prior log-density enters the loss **unscaled** while the
+likelihood scales as $\mathcal{O}(N_{\mathrm{cells}})$. The prior's
+*effective strength* therefore scales inversely with dataset size —
+the same $\tau_{0}$ that produces a clean elbow on a 10k-cell
+dataset may produce no visible shrinkage on a 100k-cell dataset.
+Re-tune hyperparameters when transferring across datasets; as a
+rule of thumb, multiply $\tau_{0}$ by
+$\sqrt{N_{\mathrm{old}} / N_{\mathrm{new}}}$ for cross-dataset
+transfer.
+
+The 5-step calibration recipe:
+
+1. **Fit with the default** ($\tau_{0} = 1.0$) and a generous
+   ``latent_dim`` (e.g. 16).
+2. **Inspect ``column_norm_effective_rank``**:
+   - If it equals ``latent_dim``: no shrinkage is happening —
+     tighten by reducing $\tau_{0}$ by 10x.
+   - If it equals 1: over-shrunk — loosen by 10x.
+   - If it falls in $[2, \texttt{latent\_dim}/2]$: keep.
+3. **Inspect the spectrum plot.** A clean fit shows a sharp elbow
+   at the effective rank with factors beyond collapsing to
+   near-zero.
+4. **Sanity-check the aux-scale floor.** Confirm
+   ``sigma_k.min()`` is well above $\lambda_{\min}$ for active
+   factors. A handful of "dead" factors touching the floor is
+   expected and OK.
+5. **Re-run the compositional corner PPC.** Spurious diagonal
+   contours should collapse to data-consistent ones.
+
+## Compatibility and scope {#sec-loadings-scope}
+
+The v1 implementation:
+
+- **Targets PLN and NBLN Laplace fits.** Engine raises
+  ``NotImplementedError`` for ``model="lnm"`` or ``"lnmvcp"``
+  with a non-``"none"`` ``w_prior`` config — ALR-space W has
+  different shrinkage semantics that need a separate design pass.
+- **Combines cleanly with Phase-2 cascade freeze.** The shrinkage
+  strategy is orthogonal to ``informative_priors_freeze`` — freeze
+  pins $\underline{r}$ and $\underline{\eta}$ at cascade values;
+  shrinkage regularizes $\underline{\underline{W}}$. Both
+  mechanisms run together by default for cascade-frozen NBLN fits
+  with the loadings prior active.
+- **Leaves the gauge component unregularized by ``w_prior``.** The
+  prior targets $\underline{\underline{W}}_\perp$ only; the
+  all-ones component of raw $\underline{\underline{W}}$ is pinned
+  structurally by the cascade freeze on $\underline{\eta}$, not by
+  the shrinkage prior. Users monitor drift via
+  ``get_gauge_diagnostics()`` — if
+  ``gauge_contamination_ratio > 0.2``, the upstream fix is to
+  re-examine the NBVCP source / capture prior, not to add a
+  ridge on the gauge component.
+
+## Extension roadmap {#sec-loadings-roadmap}
+
+The strategy protocol is W-shape-agnostic and accommodates future
+families with one new class and one registry entry. Three
+extensions are likely candidates:
+
+- **Row-wise shrinkage.** Per-gene scales
+  $\sigma_{g} \sim \mathrm{HalfCauchy}(\tau)$ with
+  $\underline{\underline{W}}_\perp[g, :] \mid \sigma_{g} \sim
+  \mathcal{N}(\underline{0}, \sigma_{g}^{2}\,
+  \underline{\underline{I}}_{k})$. Useful when sparsity is
+  expected per-gene (most genes load on nothing, a few load on
+  multiple factors) rather than per-factor.
+- **Element-wise shrinkage.** Per-(gene, factor) scales
+  $\sigma_{gk}$. Maximum flexibility but $G \times k$ extra
+  parameters — typically only justified when the data has
+  enough cells to identify them.
+- **LNM-family compatibility.** ALR-space
+  $\underline{\underline{W}}$ has shape $(G-1) \times k$ and lives
+  in a gauge-fixed quotient space, so the projection step
+  ([@sec-loadings-projection]) is a no-op. Adding LNM support is
+  one ``elif`` branch in the engine plus the obs-model
+  integration pattern; no new strategy code.
+
+## Summary {#sec-loadings-summary}
+
+The loadings-matrix shrinkage prior turns the latent dimension from
+a hyperparameter the user must guess into an upper bound the data
+selects. The v1 framework ships three column-wise strategies
+(Gaussian, horseshoe, NEG) accessed through the standard ``priors``
+dict under the descriptive key ``"loadings"``. Three implementation
+details (std-vs-variance, softplus-floor against the scale-collapse
+singularity, subspace correction for the $(G-1)$-dimensional
+centered-column subspace) keep the math right at any data size.
+The headline diagnostic ``column_norm_effective_rank`` anchors on
+the data-supported column norm of
+$\underline{\underline{W}}_\perp$ rather than the aux MAP
+$\sigma_{k}$, which can be weakly identified under heavy-tailed
+priors. The companion visualization
+``scribe.viz.plot_w_shrinkage_spectrum`` renders the elbow plot for
+inspection. The framework combines orthogonally with the Phase-2
+cascade freeze on $\underline{r}$ and $\underline{\eta}$
+([@sec-nbln-cascade-freeze]) and is the recommended setup for
+modern NBLN Laplace fits at generous ``latent_dim``.

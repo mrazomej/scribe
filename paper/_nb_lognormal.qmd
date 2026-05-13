@@ -2064,6 +2064,61 @@ See @sec-diffexp-nbln-robustness for the full mathematical
 robustness statement and the ``get_W_compositional()`` /
 ``get_gauge_diagnostics()`` accessors.
 
+#### Residual W overfitting at generous latent dimension {#sec-nbln-cascade-freeze-shrinkage}
+
+The Phase-2 freeze pins the per-cell rigid-translation gauge
+*structurally* by adopting NBVCP's $\underline{\eta}$ — but it
+does not constrain how many latent factors of
+$\underline{\underline{W}}$ the model uses to fit the
+compositional signal. At generous ``latent_dim`` the singular-value
+spectrum of $\underline{\underline{W}}_\perp$ typically shows a
+flat shelf: the dominant 2–3 factors carry real biological
+structure, while the remaining $k-3$ factors fit noise. The visible
+symptom is **spurious cross-block diagonal contours** in
+``plot_compositional_corner_ppc``: model density extends in
+coordinated directions that the empirical scatter does not support.
+
+The principled fix is a **column-wise shrinkage prior on
+$\underline{\underline{W}}_\perp$** — keeps ``latent_dim`` generous
+and lets the prior pick the effective rank adaptively. SCRIBE
+exposes this through the standard ``priors`` dict:
+
+```python
+laplace_results = scribe.fit(
+    adata, model="nbln", inference_method="laplace",
+    informative_priors_from=svi_results,      # Phase-2 cascade
+    informative_priors_freeze=("r", "eta"),   # Phase-2 freeze (default)
+    priors={
+        "capture_efficiency": (np.log(M_0), sigma_M),
+        "loadings": {"type": "horseshoe_columnwise", "tau_scale": 1.0},
+    },
+    latent_dim=16,
+)
+print(laplace_results.w_prior_diagnostics["effective_rank"])    # e.g. 3
+scribe.viz.plot_w_shrinkage_spectrum(laplace_results)
+```
+
+The freeze and the shrinkage prior are **orthogonal mechanisms**
+that combine cleanly: the freeze pins $\underline{r}$ and
+$\underline{\eta}$ at cascade values; the shrinkage prior
+regularizes $\underline{\underline{W}}$. The freeze leaves the
+all-ones gauge component of $\underline{\underline{W}}$ free; the
+shrinkage prior targets only $\underline{\underline{W}}_\perp$, so
+the gauge component remains pinned structurally through frozen
+$\underline{\eta}$ rather than via a prior on $\underline{\underline{W}}$.
+
+The math behind the prior — softplus-floor reparameterization to
+block a MAP scale-collapse singularity, the
+$(G-1)$-dimensional subspace correction for the centered columns,
+the choice of the column norm $\| \underline{\underline{W}}_\perp[:, k] \|$
+(not the aux MAP scale $\sigma_k$) as the headline rank
+diagnostic — lives in [@sec-loadings-shrinkage], which also
+catalogues the three v1 strategies (``"gaussian"``,
+``"horseshoe_columnwise"``, ``"neg_columnwise"``) and gives the
+calibration workflow for choosing ``tau_scale``. The companion
+plot ``scribe.viz.plot_w_shrinkage_spectrum`` renders the
+gauge-invariant singular-value-style elbow.
+
 **Validation workflow for cross-gene correlations.** Once a Phase-2
 frozen NBLN fit is in hand, the practical acceptance chain for
 trusting downstream correlation analyses is:

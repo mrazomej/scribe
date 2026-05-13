@@ -947,6 +947,59 @@ are returned as a ``ScribeLaplaceResults`` (see
 methods ``get_laplace_x_loc``, ``get_laplace_eta_loc``,
 ``get_laplace_p_capture``, and per-cell predictive sampling.
 
+### Effective-rank selection via shrinkage on $\underline{\underline{W}}$ {#sec-pln-laplace-loadings-shrinkage}
+
+The latent dimension $k$ — set via the ``latent_dim`` kwarg —
+controls how many regulatory programs $\underline{\underline{W}}$
+can represent. Too small loses real structure; too large lets the
+model fit noise (the singular-value spectrum of
+$\underline{\underline{W}}_\perp = \underline{\underline{P}}\,
+\underline{\underline{W}}$ shows a flat shelf rather than a clean
+elbow, and compositional corner PPCs gain spurious cross-block
+diagonal contours). Manually capping ``latent_dim`` works but is
+not portable across datasets — different cell-type panels support
+different effective ranks.
+
+The principled fix for PLN Laplace fits is the same as for NBLN
+([@sec-nbln-cascade-freeze-shrinkage]): a **column-wise
+shrinkage prior on $\underline{\underline{W}}_\perp$**, configured
+through the standard ``priors`` dict:
+
+```python
+results = scribe.fit(
+    adata, model="pln", inference_method="laplace",
+    priors={
+        "capture_efficiency": (np.log(M_0), sigma_M),
+        "loadings": {"type": "horseshoe_columnwise", "tau_scale": 1.0},
+    },
+    latent_dim=16,
+    n_steps=20_000,
+)
+print(results.w_prior_diagnostics["effective_rank"])
+scribe.viz.plot_w_shrinkage_spectrum(results)
+```
+
+PLN's situation is simpler than NBLN's in one structural respect:
+PLN has a single global gauge along $\mathbf{1}$ rather than the
+$C$-dimensional per-cell rigid translation of NBLN
+([@sec-diffexp-lnm-pln-robustness]), so there is no cascade-freeze
+interaction to manage. The shrinkage prior is purely about
+effective-rank selection — it lets users keep ``latent_dim``
+generous on a new dataset and have the prior find the right rank
+adaptively, rather than rerunning a coarse-grained
+``latent_dim`` sweep.
+
+The full math (softplus-floor parameterization that blocks a
+scale-collapse singularity, $(G-1)$-dimensional subspace correction
+for the centered columns of $\underline{\underline{W}}_\perp$, the
+column-norm versus aux-scale split in the effective-rank
+diagnostic) and the three v1 strategies (``"gaussian"``,
+``"horseshoe_columnwise"``, ``"neg_columnwise"``) are documented in
+[@sec-loadings-shrinkage]. The companion plot
+``scribe.viz.plot_w_shrinkage_spectrum`` renders the
+gauge-invariant singular-value-style elbow that complements the
+compositional corner PPCs.
+
 ### Remark on global parameter uncertainty {#sec-pln-global-uncertainty-remark}
 
 The NBLN and LNM Laplace paths provide post-hoc posterior uncertainty on their

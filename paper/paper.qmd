@@ -98,7 +98,48 @@ repository](https://github.com/mrazomej/scribe)
 {{< include _hierarchical_datasets.qmd >}}
 
 <!-- ============================================================ -->
-<!-- Block 6: Normalization & Differential Expression -->
+<!-- Block 6: GRN-based log-normal models -->
+<!-- ============================================================ -->
+<!--
+  This block collects the gene-regulatory-network-driven observation
+  models that share the same biophysical foundation: a multivariate
+  Gaussian on log-rates from the linear-noise approximation, observed
+  through a model-specific count channel.
+
+  Reading order:
+    _grn_biophysics.qmd            – LNA derivation, log-rate prior
+    _logistic_normal_multinomial.qmd – LNM (compositions via softmax + Multinomial)
+    _poisson_lognormal.qmd          – PLN (per-gene Poisson on log-rate)
+    _nb_lognormal.qmd               – NBLN (per-gene NB on log-rate)
+    _diffexp_lnm_pln_robustness.qmd  – gauge theorem for LNM/PLN
+    _diffexp_nbln_robustness.qmd    – gauge theorem for NBLN (per-cell gauge)
+    _loadings_shrinkage_priors.qmd  – shrinkage on the loadings matrix W
+                                       for adaptive effective-rank selection
+-->
+
+<!-- Biophysical foundation: LNA on gene regulatory networks -->
+{{< include _grn_biophysics.qmd >}}
+
+<!-- LNM observation model: softmax + Multinomial on compositions -->
+{{< include _logistic_normal_multinomial.qmd >}}
+
+<!-- PLN observation model: per-gene Poisson on the exponentiated log-rate -->
+{{< include _poisson_lognormal.qmd >}}
+
+<!-- NBLN observation model: per-gene Negative Binomial on the log-rate -->
+{{< include _nb_lognormal.qmd >}}
+
+<!-- Compositional gauge theorem for LNM/PLN -->
+{{< include _diffexp_lnm_pln_robustness.qmd >}}
+
+<!-- Per-cell gauge theorem for NBLN -->
+{{< include _diffexp_nbln_robustness.qmd >}}
+
+<!-- Modular shrinkage priors on the loadings matrix W (effective-rank selection) -->
+{{< include _loadings_shrinkage_priors.qmd >}}
+
+<!-- ============================================================ -->
+<!-- Block 7: Normalization & Differential Expression -->
 <!-- ============================================================ -->
 
 <!-- Low-rank logistic-normal approximation for normalized expression -->
