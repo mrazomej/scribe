@@ -102,6 +102,31 @@ class ScribeLaplaceResults(
     metadata : dict, default_factory=dict
         Free-form metadata and compatibility storage used by plotting helpers
         (for example ``predictive_samples`` and ``posterior_samples`` caches).
+    frozen_params : frozenset[str], default=empty
+        Set of NBLN parameter short-names ``{"r", "mu", "eta"}`` that were
+        pinned at the SVI-cascade-source MAP during the Laplace M-step (see
+        ``informative_priors_freeze`` on ``scribe.fit``).  Metadata only:
+        indicates *provenance* of the corresponding posterior — when a key
+        is present here, ``get_distributions()`` and PPC paths route through
+        ``cascade_source`` rather than the NBLN profiled Hessian.
+    cascade_source : ScribeSVIResults, optional
+        Source SVI results object embedded by reference when a freeze cascade
+        was active.  Used to recover full-fidelity posterior samples and
+        moment-matched distributions for any parameter listed in
+        ``frozen_params``.  ``None`` for non-cascade fits.
+    cascade_source_counts : jnp.ndarray, optional
+        Cached count matrix written when the embedded cascade source uses
+        amortized capture **and** its own ``_original_counts`` is unset, so
+        that PPC sampling can evaluate the amortized encoder after pickle.
+        Set from ``ctx.count_data`` at bridge time; never mutates the source.
+    w_prior_diagnostics : dict, optional
+        Per-fit summary of the loadings-shrinkage prior — keys include
+        ``strategy_type``, ``sigma_k``, ``column_frobenius_compositional``
+        (the gauge-invariant per-factor norm — the **headline** rank
+        diagnostic), ``column_frobenius_raw``, ``column_norm_effective_rank``
+        / ``effective_rank``, and strategy-specific aux MAPs (e.g. ``tau``
+        for horseshoe, ``gamma`` for NEG).  ``None`` when no shrinkage prior
+        was active.  See ``scribe.viz.plot_w_shrinkage_spectrum``.
 
     Notes
     -----

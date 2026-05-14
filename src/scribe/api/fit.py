@@ -738,6 +738,53 @@ def fit(
     laplace_config : LaplaceConfig or dict, optional
         Laplace-specific overrides (e.g. ``{"n_newton_steps": 15}``).
 
+    SVI-to-Laplace cascade (NBLN-Laplace only)
+    -------------------------------------------
+    informative_priors_from : ScribeSVIResults, optional
+        Source SVI results (typically a converged NBVCP-SVI fit on the
+        same dataset).  Empirical Gaussian priors are derived from this
+        source's posterior samples and injected into the NBLN-Laplace
+        loss for ``r_g``, ``mu_g``, and per-cell ``eta_c``.  Restricted
+        to ``model="nbln"`` with ``inference_method="laplace"``; any
+        other combination raises ``ValueError`` early.  See
+        ``paper/_nb_lognormal.qmd`` (``sec-nbln-svi-cascade``).
+
+    informative_priors_tau : float, default=1.0
+        Scale-inflation factor for the cascade priors' standard
+        deviations.  Values ``> 1`` loosen the prior; ``2``-``3`` is a
+        reasonable starting point for noisy/sparse data.
+
+    informative_priors_n_samples : int, default=1000
+        Number of posterior samples drawn from the cascade source for
+        moment-matching the empirical Gaussian priors.
+
+    informative_priors_verbose : bool, default=True
+        Emit informational messages describing the cascade contract
+        (capture-mode detection, gene-identity check outcome, freeze
+        choice).
+
+    informative_priors_freeze : tuple of str, default=("r", "eta")
+        Subset of ``{"r", "mu", "eta"}`` whose values are *pinned* at
+        the cascade-source MAP and excluded from the NBLN optimizer
+        dict.  Default ``("r", "eta")`` eliminates the rigid-translation
+        gauge degeneracy by structurally fixing per-cell ``eta`` while
+        the NBLN M-step refines ``mu``, ``W``, and ``d``.  Descriptive
+        aliases are accepted: ``"dispersion" -> "r"``,
+        ``"mean_expression"`` (or ``"expression"``) ``-> "mu"``,
+        ``"capture_efficiency" -> "eta"`` — see
+        ``FREEZE_KEY_ALIASES`` in
+        ``scribe.models.config.parameter_mapping``.  Pass ``()`` for
+        plain (no-freeze) cascade behaviour.  See
+        ``paper/_diffexp_nbln_robustness.qmd`` and
+        ``sec-nbln-cascade-freeze``.
+
+    w_prior : dict, optional
+        **Deprecated.** Legacy alias for the W-loadings shrinkage
+        prior.  Pass it as ``priors={"loadings": {...}}`` instead (see
+        the ``priors`` entry above).  Both routes resolve to the same
+        internal plumbing; passing both raises ``ValueError``.  Emits
+        ``DeprecationWarning`` when used.
+
     Data access, annotations, and initialization
     ---------------------------------------------
     cells_axis : int, default=0

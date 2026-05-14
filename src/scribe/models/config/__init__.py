@@ -31,9 +31,12 @@ from .groups import (
 from .base import ModelConfig
 from .builder import ModelConfigBuilder
 from .parameter_mapping import (
+    FREEZE_KEY_ALIASES,
+    PRIOR_KEY_ALIASES,
     get_active_parameters,
     get_required_parameters,
     get_parameterization_mapping,
+    normalize_freeze_keys,
     validate_parameter_consistency,
     get_parameterization_summary,
 )
@@ -66,9 +69,12 @@ __all__ = [
     "VAEMaskType",
     "VAEActivation",
     # Parameter mapping utilities
+    "FREEZE_KEY_ALIASES",
+    "PRIOR_KEY_ALIASES",
     "get_active_parameters",
     "get_required_parameters",
     "get_parameterization_mapping",
+    "normalize_freeze_keys",
     "validate_parameter_consistency",
     "get_parameterization_summary",
 ]
