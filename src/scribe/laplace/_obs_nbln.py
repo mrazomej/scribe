@@ -187,8 +187,9 @@ class NBLNObservationModel(LaplaceObservationModel):
             model_config
         )
 
-        # Informative priors (Round-2/3 audit: split per-parameter
-        # storage; validate keys ⊆ {"r", "mu", "eta"}).
+        # Informative priors — per-parameter storage with key validation.
+        # Each key (r/mu/eta) is stored separately so the loss can consult
+        # them independently without ambiguity.
         if informative_priors is not None:
             valid = {"r", "mu", "eta"}
             invalid = set(informative_priors) - valid
@@ -213,9 +214,11 @@ class NBLNObservationModel(LaplaceObservationModel):
             else None
         )
 
-        # Freeze values (Round-4 / Round-5).  freeze_values lives
-        # SEPARATE from informative_priors: the soft-cascade and the
-        # hard-freeze can coexist (e.g. freeze r+eta, soft-cascade mu).
+        # Freeze values — stored SEPARATE from informative_priors so the
+        # soft-cascade (Gaussian prior log-density in the loss) and the
+        # hard-freeze (exclusion from the optimizer dict) can coexist on
+        # different parameters within the same fit (e.g. freeze r+eta,
+        # soft-cascade mu).
         valid_frozen = {"r", "mu", "eta"}
         bad_frozen = set(freeze_params) - valid_frozen
         if bad_frozen:
@@ -256,12 +259,12 @@ class NBLNObservationModel(LaplaceObservationModel):
     @property
     def uses_capture(self) -> bool:
         # Capture activates when ANY of:
-        # - The user passed a scalar capture_anchor (legacy path).
-        # - The user passed a soft-cascade prior on eta (Phase 1 path).
-        # - The user froze eta at SVI's MAP (Phase 2 path).
-        # The third clause is the Round-4 R5-1 fix: without it,
-        # frozen-eta fits silently degrade to the x-only-no-capture
-        # branch in loss_fn / final_sweep.
+        # - The user passed a scalar capture_anchor (biology-anchored).
+        # - The user passed a soft-cascade prior on eta (SVI-derived).
+        # - The user froze eta at SVI's MAP (hard-cascade).
+        # The third clause is essential: without it, frozen-eta fits
+        # silently degrade to the x-only-no-capture branch in loss_fn /
+        # final_sweep.
         return (
             self._capture_anchor is not None
             or self._prior_eta is not None

@@ -18,17 +18,17 @@ from ._results_shared import _base_model
 
 
 # =====================================================================
-# Frozen-parameter distribution helpers (Phase-2 R5-2 / R5-3 / R5-5).
+# Frozen-parameter distribution helpers
 # =====================================================================
 #
-# When a Phase-2 cascade-freeze is active, the NBLN result's r_scale /
-# mu_scale fields are NaN sentinels (the post-fit profiled Hessian
-# computation was skipped for frozen keys).  Authoritative posterior
-# information lives on the embedded `cascade_source` SVI results
-# object.  These helpers draw samples from the cascade source and
-# moment-match in NBLN's target coordinate to construct distribution
-# objects for `get_distributions()`.  PPC sampling uses the raw
-# samples directly (full SVI fidelity) — see `_sampling.py`.
+# When a cascade-freeze is active, the NBLN result's r_scale / mu_scale
+# fields are NaN sentinels (the post-fit profiled Hessian computation
+# was skipped for frozen keys).  Authoritative posterior information
+# lives on the embedded `cascade_source` SVI results object.  These
+# helpers draw samples from the cascade source and moment-match in
+# NBLN's target coordinate to construct distribution objects for
+# `get_distributions()`.  PPC sampling uses the raw samples directly
+# (full SVI fidelity) — see `_sampling.py`.
 
 
 def _resolve_cascade_counts(
@@ -56,7 +56,7 @@ def _nbln_frozen_distributions(
 ) -> Dict[str, Any]:
     """Build moment-matched Distributions for frozen NBLN parameters.
 
-    Routing per parameter (Round-4 walkback locked in Round-5):
+    Routing per parameter:
 
     - **r**: SVI samples are positive; transform to NBLN unconstrained
       space via ``positive_transform`` inverse, fit per-gene Normal,
@@ -341,10 +341,11 @@ class DispatchResultsMixin:
                     loc=self.mu, cov_factor=self.W, cov_diag=self.d
                 )
             if bm == "nbln":
-                # Phase-2 cascade-freeze: when a parameter is frozen,
-                # NBLN's profiled-Hessian r_scale/mu_scale is NaN (Round-5
-                # R5-2 sentinel).  Route through cascade_source's SVI
-                # posterior samples and moment-match in NBLN target coord.
+                # Cascade-freeze: when a parameter is frozen, NBLN's
+                # profiled-Hessian r_scale/mu_scale is the NaN sentinel
+                # (the Hessian computation was skipped).  Route through
+                # cascade_source's SVI posterior samples and moment-match
+                # in NBLN target coord.
                 frozen = getattr(self, "frozen_params", frozenset())
                 cascade = getattr(self, "cascade_source", None)
                 cascade_counts = getattr(

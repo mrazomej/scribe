@@ -102,11 +102,11 @@ def dispatch_inference(ctx: FitContext) -> None:
             verbose=bool(ctx.kwargs.get("informative_priors_verbose", True)),
         )
 
-    # --- Phase 2 freeze: extract point estimates + resolve cascade source ---
+    # --- Freeze API: extract point estimates + resolve cascade source ---
     # The freeze API is activated only when a cascade is supplied.  When
     # `informative_priors_from is None`, normalize freeze to empty so a
     # plain Laplace fit (no cascade) is unaffected by the default-on
-    # `informative_priors_freeze=("r", "eta")` kwarg (Round-4 R5-2 fix).
+    # `informative_priors_freeze=("r", "eta")` kwarg.
     freeze_values = None
     freeze_params: tuple = ()
     cascade_source = None

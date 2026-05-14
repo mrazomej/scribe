@@ -204,7 +204,7 @@ class ScribeLaplaceResults(
     n_obs: Optional[int] = None
     n_vars: Optional[int] = None
 
-    # --- Phase-2 cascade-freeze fields (Round-5 R5-5 contract) ----
+    # --- SVI-cascade freeze fields --------------------------------
     #
     # ``frozen_params`` is the subset of ``{"r", "mu", "eta"}`` that
     # was excluded from the optax optimizer during the M-step.  Their
