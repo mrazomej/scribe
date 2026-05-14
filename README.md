@@ -181,6 +181,65 @@ levels and want to avoid the composition/totals decoupling assumption. Use LNM
 when you need compositional DE in ALR/CLR coordinates or when the data naturally
 separates into composition and library size.
 
+#### Negative-Binomial LogNormal (NBLN) Family
+
+NBLN is the heavier-tailed sibling of PLN: per-gene NB counts with a
+per-gene dispersion ``r_g`` instead of Poisson, drawn from the same
+correlated log-normal rate structure ``Σ = WW^⊤ + diag(d)``. Use it
+when PLN's residual variance underfits gene-level overdispersion (the
+common case on real scRNA-seq).
+
+| Likelihood | Code string | Construction        | When to Use                                                                                     |
+| ---------- | ----------- | ------------------- | ----------------------------------------------------------------------------------------------- |
+| **NBLN**   | `"nbln"`    | NB + low-rank LN    | Absolute-count compositional model with per-gene overdispersion; uses Laplace inference.        |
+
+NBLN-Laplace ships with a three-stage stable workflow:
+
+1. **SVI cascade** — fit NBVCP-SVI first, then pass the result via
+   ``informative_priors_from=svi_result`` to seed NBLN-Laplace with
+   data-derived empirical priors on ``r``, ``mu``, ``eta``.
+2. **Cascade freeze** — the default ``informative_priors_freeze=("r",
+   "eta")`` pins the rigid-translation gauge structurally; only the
+   free parameters (``mu``, ``W``, ``d``) refine during the NBLN
+   M-step. Descriptive aliases like ``("dispersion",
+   "capture_efficiency")`` are also accepted.
+3. **Loadings shrinkage** — pass
+   ``priors={"loadings": {"type": "horseshoe_columnwise", ...}}`` to
+   regularize the low-rank loadings matrix and pick the effective
+   rank adaptively (also ``gaussian`` and ``neg_columnwise``).
+
+```python
+# 1. SVI cascade source (NBVCP).
+svi_results = scribe.fit(
+    adata,
+    model="nbvcp",
+    parameterization="mean_odds",
+    priors={"capture_efficiency": (np.log(100_000), 0.5)},
+    inference_method="svi",
+    n_steps=250_000,
+)
+
+# 2 + 3. NBLN-Laplace with cascade freeze + horseshoe loadings shrinkage.
+nbln_results = scribe.fit(
+    adata,
+    model="nbln",
+    inference_method="laplace",
+    informative_priors_from=svi_results,
+    informative_priors_freeze=("dispersion", "capture_efficiency"),
+    priors={"loadings": {"type": "horseshoe_columnwise", "tau_scale": 1.0}},
+    latent_dim=16,
+    n_steps=25_000,
+)
+
+# Gauge-invariant compositional loadings + rank diagnostic.
+W_perp = nbln_results.get_W_compositional()
+print(nbln_results.w_prior_diagnostics["effective_rank"])
+```
+
+See ``docs/theory/nb-lognormal.md`` and
+``docs/theory/loadings-shrinkage.md`` for the math and the
+calibration workflow.
+
 ### Parameterizations
 
 Each likelihood can be parameterized in three ways:

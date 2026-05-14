@@ -111,9 +111,10 @@ $$
 
 **Consequences for differential expression.** All compositional DE
 test statistics built from $\underline{\rho}_c$ — log-ratio contrasts
-$\log(\rho_g/\rho_h)$, ALR-coordinate statistics, the
-non-parametric DE pipeline of @sec-diffexp-nonparametric — are robust
-to misspecification of $\eta_c$ and to the rigid-translation gauge.
+$\log(\rho_g/\rho_h)$, ALR-coordinate statistics, the empirical
+CLR pipeline of @sec-diffexp-empirical, and the ILR-balance pathway
+pipeline of @sec-diffexp-empirical-pathway — are robust to
+misspecification of $\eta_c$ and to the rigid-translation gauge.
 This is the **direct NBLN analog** of the PLN composition-robustness
 theorem in @sec-diffexp-lnm-pln-robust-pln.
 
