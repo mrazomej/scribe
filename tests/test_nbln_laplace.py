@@ -842,20 +842,22 @@ class TestInformativePriorsIntegration:
 
 
 class TestFrozenCascade:
-    """Phase-2 cascade-parameter-freeze unit tests (NBLN-only).
+    """Cascade-parameter-freeze unit tests (NBLN-only).
 
     Tests cover:
     - Constructor validation (invalid keys, missing freeze_values entries).
-    - ``uses_capture`` activation by frozen eta (Round-4 R5-1).
+    - ``uses_capture`` activation by frozen eta.
     - ``init_state`` excludes frozen keys from optimizer params and
-      stashes them on ``self._frozen_runtime`` (Round-4 R4 mechanism).
+      stashes them on ``self._frozen_runtime``.
     - ``aux_data["eta_frozen"]`` is populated when eta is frozen.
     - ``compute_global_uncertainty`` emits NaN sentinels for frozen
-      scales (Round-5 R5-2).
+      scales.
     - ``pack_result`` splices frozen values back so ``run_result.globals``
-      carries the full params dict (Round-5 R5-5).
+      carries the full params dict.
     - ``get_W_compositional`` / ``get_gauge_diagnostics`` model-aware
       dispatch (PLN/NBLN project; LNM no-op).
+    - Default-freeze tuple normalizes to ``()`` when no cascade source is
+      supplied (so the default-on kwarg never disrupts plain Laplace fits).
     """
 
     def _mc(self, transform: str = "softplus") -> ModelConfig:
@@ -895,10 +897,46 @@ class TestFrozenCascade:
                 freeze_values={"r": {}},  # missing 'loc'
             )
 
+    # ---- Default-freeze normalization (no cascade source) ----
+
+    def test_default_freeze_normalizes_to_empty_without_cascade(self):
+        """Without ``informative_priors_from``, the default-on
+        ``informative_priors_freeze=("r", "eta")`` kwarg must normalize
+        to ``()`` so plain Laplace fits are unaffected.  Regression for
+        the bridge-stage gating in
+        ``api/stages/run_inference.py``: without this guard, the freeze
+        machinery would attempt to populate ``freeze_values`` from a
+        non-existent cascade source.
+        """
+        import scribe
+        from scribe.laplace.results import ScribeLaplaceResults
+
+        N, G = 6, 4
+        rng = np.random.default_rng(31)
+        counts = jnp.asarray(rng.integers(0, 8, (N, G)), dtype=jnp.float32)
+        # No informative_priors_from kwarg → freeze should normalize to ().
+        result = scribe.fit(
+            counts,
+            model="nbln",
+            inference_method="laplace",
+            latent_dim=2,
+            n_steps=2,
+            seed=0,
+        )
+        assert isinstance(result, ScribeLaplaceResults)
+        assert result.frozen_params == frozenset(), (
+            "Default informative_priors_freeze=('r','eta') was not "
+            "normalized to () in the absence of a cascade source. "
+            "Plain Laplace fits must be unaffected by the default-on kwarg."
+        )
+        # Cascade-source fields should also be cleared.
+        assert result.cascade_source is None
+        assert result.cascade_source_counts is None
+
     # ---- uses_capture activation ----
 
     def test_frozen_eta_activates_uses_capture(self):
-        """Round-5 R5-1: uses_capture must include 'eta' in frozen_params."""
+        """uses_capture must include 'eta' in frozen_params."""
         from scribe.laplace._obs_nbln import NBLNObservationModel
         N = 4
         obs = NBLNObservationModel(
