@@ -195,7 +195,7 @@ def _get_predictive_samples_for_plot(
     counts,
     batch_size=None,
     store_samples=True,
-    ppc_level: str = "library_anchored",
+    ppc_level: str = "marginal",
 ):
     """Get PPC samples for plotting from Laplace results.
 
@@ -204,11 +204,11 @@ def _get_predictive_samples_for_plot(
     * ``"per_cell"`` — per-cell Laplace posterior (conditional
       on each observed cell). Calibrated for per-cell uncertainty
       but circular as a population-level fit test.
-    * ``"library_anchored"`` (default) — fresh latents from
+    * ``"library_anchored"`` — fresh latents from
       𝒩(μ, 𝑊𝑊ᵗ + diag(d)) paired with each cell's observed
       library size. Tests the compositional fit independently
-      of the totals/capture submodel. Recommended default.
-    * ``"marginal"`` — fully marginal: latent factors, capture
+      of the totals/capture submodel.
+    * ``"marginal"`` (default) — fully marginal: latent factors, capture
       (η/p_capture bootstrapped from fitted per-cell values),
       totals, and observation noise are all sampled fresh.
       Most honest test of the entire generative story.

@@ -1081,6 +1081,24 @@ def test_plot_umap_auto_aligns_original_gene_space_counts(monkeypatch):
     plt.close(result.fig)
 
 
+def test_plot_ppc_default_ppc_level_is_marginal():
+    """``plot_ppc`` / ``_prepare_ppc_data`` should default to marginal PPC draws."""
+    import inspect
+
+    import scribe.viz.ppc as ppc_module
+
+    assert (
+        inspect.signature(ppc_module.plot_ppc).parameters["ppc_level"].default
+        == "marginal"
+    )
+    assert (
+        inspect.signature(ppc_module._prepare_ppc_data).parameters[
+            "ppc_level"
+        ].default
+        == "marginal"
+    )
+
+
 def test_plot_ppc_auto_aligns_counts_before_preparation(monkeypatch):
     """PPC should align raw counts to model gene-space before prep."""
     import scribe.viz.ppc as ppc_module

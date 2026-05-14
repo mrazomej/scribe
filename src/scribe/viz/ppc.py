@@ -119,7 +119,7 @@ def _prepare_ppc_data(
     n_rows,
     n_cols,
     n_samples,
-    ppc_level: str = "library_anchored",
+    ppc_level: str = "marginal",
 ):
     """Prepare gene selection and predictive samples for PPC plotting.
 
@@ -133,7 +133,7 @@ def _prepare_ppc_data(
         Fitted model results exposing predictive sampling.
     counts : array-like
         Observed count matrix ``(n_cells, n_genes)``.
-    counts_for_sampling : array-like
+    counts_for_sampling : array-like or None
         Count matrix used by posterior/predictive sampling calls. This can
         differ from ``counts`` when amortized subset results require original
         full-gene counts for sufficient-statistic computation.
@@ -145,6 +145,14 @@ def _prepare_ppc_data(
         Number of grid columns (already resolved).
     n_samples : int
         Number of posterior predictive samples (already resolved).
+    ppc_level : str, optional
+        How much conditioning on observed counts enters each predictive draw
+        (Laplace / applicable backends via
+        ``_get_predictive_samples_for_plot``). Common values are
+        ``"marginal"`` (fully generative replay; default here),
+        ``"library_anchored"`` (fresh composition paired with observed
+        library sizes), and ``"per_cell"`` (most conditioned on observed
+        cells). Exact support depends on the results type.
 
     Returns
     -------
@@ -235,7 +243,7 @@ def plot_ppc(
     fig=None,
     axes=None,
     ax=None,
-    ppc_level: str = "library_anchored",
+    ppc_level: str = "marginal",
 ):
     """Plot posterior predictive checks for selected genes.
 
@@ -264,6 +272,13 @@ def plot_ppc(
         Explicit axis collection with exactly ``n_rows * n_cols`` axes.
     ax : matplotlib.axes.Axes, optional
         Unsupported for this multi-panel plot. Use ``fig`` or ``axes``.
+    ppc_level : str, optional
+        Conditioning level for posterior predictive sampling (forwarded to
+        ``_get_predictive_samples_for_plot``). Default ``"marginal"`` draws a
+        fully generative replay of the model. Use ``"library_anchored"`` to
+        test compositional structure with observed per-cell totals, or
+        ``"per_cell"`` for the most observation-conditioned draws. Support
+        depends on the fitted results class (e.g. Laplace supports all three).
 
     Returns
     -------

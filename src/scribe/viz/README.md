@@ -202,8 +202,8 @@ data enters each predictive draw:
 
 | `ppc_level` | Conditioning | Use case |
 |---|---|---|
-| `"library_anchored"` (default) | Fresh composition from prior; **observed per-cell totals** pin the Multinomial | Compositional fit test, isolated from totals/capture |
-| `"marginal"` | Fully unconditional — `x`, `η`, `N_c` all drawn from the model | Honest "does the generative story match the data?" |
+| `"marginal"` (default) | Fully unconditional — `x`, `η`, `N_c` all drawn from the model | Honest "does the generative story match the data?" |
+| `"library_anchored"` | Fresh composition from prior; **observed per-cell totals** pin the Multinomial | Compositional fit test, isolated from totals/capture |
 | `"per_cell"` | Per-cell MAP latents + Laplace noise; observed totals | Per-cell predictive — most conditioned |
 
 For NBLN Laplace fits using the Phase-2 cascade freeze, **marginal**
