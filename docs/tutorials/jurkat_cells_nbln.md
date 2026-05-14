@@ -16,7 +16,7 @@ reported gene–gene correlations are easier to interpret and defend.
 [:material-open-in-new: Open notebook in full page](jurkat_cells_nbln.html){:target="_blank"}
 
 <iframe
-  src="jurkat_cells_nbln.html"
+  src="/tutorials/jurkat_cells_nbln.html"
   width="100%"
   height="900px"
   style="border: none; display: block;"
