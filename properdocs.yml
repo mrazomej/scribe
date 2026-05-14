@@ -172,5 +172,6 @@ nav:
   - Tutorials:
     - Modeling Assumptions for scRNA-seq: tutorials/jurkat_cells.md
     - Mixture Models & Differential Expression: tutorials/5050_jurkat_293t.md
+    - Gene–gene correlations with NBLN: tutorials/jurkat_cells_nbln.md
   - API Reference: reference/
   - Contributing: contributing.md
