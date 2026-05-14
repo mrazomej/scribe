@@ -204,6 +204,12 @@
 /* --------------------------------------------------------------------------
    Header / Search bar refinement
    -------------------------------------------------------------------------- */
+/* Increase header logo size for better brand visibility. */
+.md-header__button.md-logo :is(img, svg) {
+  height: 2rem;
+  width: auto;
+}
+
 .md-search__input {
   background-color: #4651A2;
 }

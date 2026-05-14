@@ -14,6 +14,7 @@ repo_name: mrazomej/scribe
 # Theme configuration
 theme:
   name: material
+  logo: assets/images/logo_icon.svg
   features:
     - navigation.tabs
     - navigation.sections
