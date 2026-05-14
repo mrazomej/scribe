@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./logo.png" alt="SCRIBE Logo" width="600"/>
+</p>
+
 # SCRIBE: Single-Cell RNA-seq Inference with Bayesian Estimation
 
 SCRIBE is a comprehensive Python package for Bayesian analysis of single-cell
