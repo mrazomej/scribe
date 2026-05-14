@@ -16,7 +16,7 @@ heterogeneity.
 [:material-open-in-new: Open notebook in full page](jurkat_cells.html){:target="_blank"}
 
 <iframe
-  src="/tutorials/jurkat_cells.html"
+  src="../jurkat_cells.html"
   width="100%"
   height="900px"
   style="border: none; display: block;"
