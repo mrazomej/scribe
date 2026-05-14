@@ -690,6 +690,93 @@ class TestInformativePriorsIntegration:
         assert jnp.all(jnp.isfinite(gu["r_scale"]))
         assert jnp.all(jnp.isfinite(gu["mu_scale"]))
 
+    def test_global_uncertainty_uses_per_cell_eta_scale(self):
+        """Regression: ``compute_global_uncertainty`` must consume the
+        per-cell ``aux_data["eta_scale"]`` (soft-cascade scales from
+        SVI samples) rather than a placeholder scalar.  Earlier code
+        used ``self._sigma_M = 1.0`` here, which silently inflated
+        ``r_scale`` and ``mu_scale`` on Phase-1 cascade fits because
+        the joint (x, η) Schur correction was computed against a
+        too-loose η precision.  The fix is to (a) read
+        ``aux_data["eta_scale"]`` directly and (b) collapse to the
+        x-only path when η is frozen.
+        """
+        from scribe.laplace._obs_nbln import NBLNObservationModel
+
+        N, G, k = 8, 6, 2
+        rng = np.random.default_rng(23)
+        counts = jnp.asarray(rng.integers(1, 12, (N, G)), dtype=jnp.float32)
+        mc = ModelConfig(
+            base_model="nbln",
+            parameterization=Parameterization.COUNT_LOGNORMAL,
+            inference_method=InferenceMethod.LAPLACE,
+            positive_transform="softplus",
+        )
+        eta_loc = jnp.asarray(rng.uniform(0.5, 1.5, (N,)), dtype=jnp.float32)
+
+        # --- Tight σ_η: every cell uses 0.01.
+        priors_tight = {
+            "eta": {
+                "loc": eta_loc,
+                "scale": jnp.full((N,), 0.01, dtype=jnp.float32),
+            }
+        }
+        obs_tight = NBLNObservationModel(
+            capture_anchor=None, model_config=mc,
+            informative_priors=priors_tight,
+        )
+        init_tight = obs_tight.init_state(
+            count_data=counts, n_cells=N, n_genes=G, latent_dim=k, seed=0
+        )
+        # Sanity check: aux_data carries the per-cell σ_η we passed in.
+        assert "eta_scale" in init_tight.aux_data
+        assert jnp.allclose(
+            init_tight.aux_data["eta_scale"],
+            jnp.full((N,), 0.01, dtype=jnp.float32),
+        )
+        gu_tight = obs_tight.compute_global_uncertainty(
+            params=init_tight.params, latent_loc=init_tight.latent_loc,
+            eta_loc=init_tight.eta_loc, eta_anchor=init_tight.eta_anchor,
+            count_data=counts, aux_data=init_tight.aux_data, model_config=mc,
+        )
+
+        # --- Loose σ_η: every cell uses 1.0 (the old placeholder).
+        priors_loose = {
+            "eta": {
+                "loc": eta_loc,
+                "scale": jnp.full((N,), 1.0, dtype=jnp.float32),
+            }
+        }
+        obs_loose = NBLNObservationModel(
+            capture_anchor=None, model_config=mc,
+            informative_priors=priors_loose,
+        )
+        init_loose = obs_loose.init_state(
+            count_data=counts, n_cells=N, n_genes=G, latent_dim=k, seed=0
+        )
+        gu_loose = obs_loose.compute_global_uncertainty(
+            params=init_loose.params, latent_loc=init_loose.latent_loc,
+            eta_loc=init_loose.eta_loc, eta_anchor=init_loose.eta_anchor,
+            count_data=counts, aux_data=init_loose.aux_data, model_config=mc,
+        )
+
+        # Both finite + positive.
+        assert jnp.all(jnp.isfinite(gu_tight["r_scale"]))
+        assert jnp.all(jnp.isfinite(gu_loose["r_scale"]))
+        assert jnp.all(gu_tight["r_scale"] > 0)
+        assert jnp.all(gu_loose["r_scale"] > 0)
+
+        # Tight σ_η means η has higher precision in the joint inverse →
+        # less η-uncertainty leaks into the r profile → smaller r_scale.
+        # If the bug were present, both calls would silently use σ_η=1.0
+        # and r_scale would be IDENTICAL between the two configs.  With
+        # the fix in place we expect a meaningful gap.
+        assert not jnp.allclose(gu_tight["r_scale"], gu_loose["r_scale"]), (
+            "r_scale identical across σ_η configs — compute_global_uncertainty "
+            "is ignoring aux_data['eta_scale'] (bug regressed)."
+        )
+        assert jnp.all(gu_tight["r_scale"] <= gu_loose["r_scale"] + 1e-6)
+
     def test_results_propagates_mu_fields(self):
         """``ScribeLaplaceResults`` round-trip preserves mu_loc/mu_scale."""
         G, C = 6, 4

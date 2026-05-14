@@ -919,12 +919,23 @@ class NBLNObservationModel(LaplaceObservationModel):
             _solve_A,
         )
 
-        capture_on = self.uses_capture and eta_loc is not None
+        # Frozen-eta acts as infinite-precision capture: η is a fixed
+        # constant, so its contribution to the joint (x, η) inverse
+        # collapses (s_η → ∞, joint_inv_xη → 0, joint_inv_ηη → 0).  We
+        # take the x-only path here, matching the conceptual reduction.
+        # For soft-cascade / capture-anchor fits the per-cell σ_η lives
+        # in ``aux_data["eta_scale"]`` (populated by ``init_state``
+        # whenever ``eta_scale_per_cell is not None``); reading it
+        # directly mirrors ``final_sweep`` and avoids the placeholder
+        # ``self._sigma_M = 1.0`` that biased the r_scale / mu_scale
+        # diagnostics on soft-eta cascade fits.
+        capture_on = (
+            self.uses_capture
+            and eta_loc is not None
+            and not self.freezes_eta
+        )
         if capture_on:
-            # Resolve per-cell sigma_eta — prefer aux_data["eta_scale"]
-            # (the per-cell array used by the loss); fall back to scalar
-            # ``self._sigma_M`` broadcast for backward compatibility.
-            sigma_eta_full = jnp.full((N,), self._sigma_M, dtype=jnp.float32)
+            sigma_eta_full = aux_data["eta_scale"]
         else:
             sigma_eta_full = jnp.ones((N,))  # unused in capture-off path
 
