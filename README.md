@@ -26,15 +26,32 @@ sub-sampling of $m_g$. Marginalizing over the latent counts yields a Negative
 Binomial likelihood for the observations with an effective success probability
 $\hat{p}_g^{(c)}$ that absorbs the capture efficiency.
 
+For modeling gene-gene covariance directly, SCRIBE also implements **GRN-derived
+joint models** (PLN and NBLN) in which the per-cell latent log-rate vector
+$\mathbf{x}^{(c)}$ is drawn from a multivariate Gaussian with low-rank
+covariance $\Sigma = \mathbf{W}\mathbf{W}^\top + \mathrm{diag}(\mathbf{d})$.
+The loadings matrix $\mathbf{W}$ is the model's account of co-expression
+structure -- a generative property that distinguishes these models from
+NBDM/NBVCP families, where any apparent gene-gene coupling lives only in the
+variational guide. Inference for PLN and NBLN uses a Laplace-EM procedure that
+maintains a per-cell latent MAP alongside the global parameters; the NBLN
+branch additionally supports an SVI-to-Laplace cascade with column-wise
+shrinkage priors on $\mathbf{W}$ for adaptive rank selection.
+
 ## Why SCRIBE?
 
-- **Unified Framework**: Single `scribe.fit()` interface for SVI, MCMC, and VAE
-  inference methods
-- **Compositional Models**: Four constructive likelihoods -- from the base
-  Negative Binomial up to zero-inflated models with variable capture probability
-- **Poisson-LogNormal (PLN)**: Direct Poisson emission from correlated
-  log-normal rates, coupling composition and total counts through a shared
-  covariance
+- **Unified Framework**: Single `scribe.fit()` interface for SVI, MCMC, VAE, and
+  Laplace inference methods
+- **Compositional Models**: Constructive likelihoods -- from the base Negative
+  Binomial up to zero-inflated models with variable capture probability
+- **GRN-Inspired Joint Models (PLN / NBLN)**: Correlated log-normal rates with
+  low-rank covariance $\Sigma = \mathbf{W}\mathbf{W}^\top + \mathrm{diag}(\mathbf{d})$
+  give a generative story for *gene-gene covariance itself*, not just per-gene
+  marginals -- principled co-expression structure instead of variational-guide
+  artifacts
+- **SVI-to-Laplace Cascade**: Anchor the harder NBLN-Laplace fit on a converged
+  NBVCP-SVI source, freeze the gauge-vulnerable parameters, and let a horseshoe
+  shrinkage prior pick the effective rank of the loadings matrix adaptively
 - **Compositional Differential Expression**: Bayesian DE in log-ratio
   coordinates with proper uncertainty propagation and error control (lfsr, PEFP)
 - **Model Comparison**: WAIC, PSIS-LOO, stacking weights, and goodness-of-fit
@@ -47,12 +64,22 @@ $\hat{p}_g^{(c)}$ that absorbs the capture efficiency.
 
 ## Key Features
 
-- **Three Inference Methods**:
+- **Four Inference Methods**:
   - SVI for speed and scalability
   - MCMC (NUTS) for exact Bayesian inference
   - VAE for representation learning with normalizing flow priors
+  - Laplace approximation for PLN- and NBLN-family models with per-cell latents
 - **Constructive Likelihood System**: Negative Binomial as the base, extended
   with zero inflation and/or variable capture probability
+- **GRN-Inspired Joint Models**: PLN (Poisson + low-rank log-normal) and NBLN
+  (NB + low-rank log-normal) for gene-gene covariance from a correlated
+  log-rate prior, with EM-based Laplace inference and gauge-invariant
+  compositional accessors
+- **SVI Cascade Workflow**: `informative_priors_from`,
+  `informative_priors_freeze`, and `priors={"loadings": {...}}` chain a
+  well-identified NBVCP-SVI fit into the harder NBLN-Laplace problem -- pinning
+  the gauge, regularizing the loadings matrix with horseshoe / NEG sparsity,
+  and adaptively selecting the effective rank
 - **Multiple Parameterizations**: Canonical, linked (mean-prob), and odds-ratio
   with constrained or unconstrained priors
 - **Advanced Guide Families**: Mean-field, low-rank, joint low-rank, and
@@ -63,6 +90,9 @@ $\hat{p}_g^{(c)}$ that absorbs the capture efficiency.
   structures with optional horseshoe sparsity
 - **Bayesian Differential Expression**: Parametric, empirical (Monte Carlo), and
   shrinkage (empirical Bayes) methods in CLR/ILR coordinates
+- **Compositional PPC Diagnostics**: 1D and corner-grid posterior predictive
+  checks on cell compositions, count-space joints, and the W-shrinkage spectrum
+  for rank-selection sanity
 - **Model Comparison**: WAIC, PSIS-LOO, stacking, per-gene elpd, and
   goodness-of-fit via randomized quantile residuals
 - **Seamless Integration**: Works with AnnData and the scanpy ecosystem
@@ -85,14 +115,16 @@ graph TD
         ZINBcapture["ZINB + variable capture"]
         LNM["LNM<br/><i>NB totals + ALR composition</i>"]
         LNMcapture["LNM + variable capture"]
-        PLN["PLN<br/><i>Poisson-LogNormal</i>"]
+        PLN["PLN<br/><i>Poisson + low-rank LN</i>"]
+        NBLN["NBLN<br/><i>NB + low-rank LN</i>"]
         NB -->|"+ zero inflation"| ZINB
         NB -->|"+ variable capture"| NBcapture
         ZINB -->|"+ variable capture"| ZINBcapture
         NBcapture -->|"+ zero inflation"| ZINBcapture
         NB -->|"+ VAE composition"| LNM
         LNM -->|"+ variable capture"| LNMcapture
-        NB -->|"+ direct Poisson"| PLN
+        NB -->|"+ direct Poisson + LR-LN"| PLN
+        NB -->|"+ low-rank LN on log-rates"| NBLN
     end
 
     subgraph parameterization ["2 - Parameterization"]
@@ -113,12 +145,15 @@ graph TD
         horseshoe["Horseshoe<br/><i>sparsity priors</i>"]
         annotationPrior["Annotation Priors<br/><i>soft cell-type labels</i>"]
         bioCap["Biology-Informed<br/><i>capture prior</i>"]
+        cascade["SVI-to-Laplace Cascade<br/><i>informative_priors_from + freeze</i>"]
+        loadings["Loadings Shrinkage<br/><i>horseshoe / NEG on W</i>"]
     end
 
     subgraph infer ["5 - Inference Method"]
         SVI_node["SVI<br/><i>fast, scalable</i>"]
         MCMC_node["MCMC<br/><i>exact posterior</i>"]
         VAE_node["VAE<br/><i>learned representations</i>"]
+        Laplace_node["Laplace<br/><i>per-cell EM + Newton</i>"]
     end
 
     subgraph guide ["6 - Guide Family"]
@@ -137,10 +172,12 @@ graph TD
     VAE_node --> guide
 ```
 
-This compositional design means you can combine **4 DM likelihoods x 3
+This compositional design means you can combine **6 likelihood families x 3
 parameterizations x 2 constraint modes** as a starting point, then layer on
 mixture components, hierarchical priors, multi-dataset structure, and more.
-The LNM and PLN families extend this with VAE-based compositional inference.
+The LNM, PLN, and NBLN families extend the NB core with low-rank
+log-normal latent structure for gene-gene covariance; PLN and NBLN are
+fit with Laplace inference, while LNM is fit through the VAE path.
 
 ## Available Models
 
@@ -363,6 +400,56 @@ W = results.get_pln_W()       # (G, k) low-rank factor
 corr = results.get_pln_correlation()  # (G, G) gene-gene correlations
 ```
 
+### Negative-Binomial LogNormal with the Cascade Workflow
+
+NBLN extends PLN with per-gene NB dispersion. Because the NBLN likelihood
+has a rigid-translation gauge that couples per-cell capture, per-cell latent
+log-rates, and per-gene dispersion, we fit it through a three-stage cascade:
+a converged NBVCP-SVI source seeds the priors; a freeze pins the
+gauge-vulnerable parameters; and a horseshoe shrinkage prior on the loadings
+matrix `W` picks the effective rank from data.
+
+```python
+import numpy as np
+
+# Stage 1: NBVCP-SVI source with a biology-informed capture prior.
+svi_results = scribe.fit(
+    adata,
+    model="nbvcp",
+    parameterization="mean_odds",
+    priors={"capture_efficiency": (np.log(100_000), 0.1)},
+    inference_method="svi",
+    n_steps=250_000,
+)
+
+# Stages 2 + 3: NBLN-Laplace with cascade freeze + loadings shrinkage.
+nbln_results = scribe.fit(
+    adata,
+    model="nbln",
+    inference_method="laplace",
+    informative_priors_from=svi_results,
+    informative_priors_freeze=("dispersion", "capture_efficiency"),  # default
+    priors={
+        "capture_efficiency": (np.log(100_000), 0.1),
+        "loadings": {"type": "horseshoe_columnwise", "tau_scale": 1.0},
+    },
+    latent_dim=32,
+    n_steps=20_000,
+)
+
+# Gauge-invariant compositional loadings + adaptive-rank diagnostic.
+W_perp = nbln_results.get_W_compositional()
+print(nbln_results.w_prior_diagnostics["effective_rank"])
+
+# Gene-gene correlation from the model's own covariance structure
+# (not from a variational guide on an independent-counts model).
+corr = nbln_results.get_correlation_compositional()
+```
+
+End-to-end tutorial: [`docs/tutorials/jurkat_cells_nbln.py`](docs/tutorials/jurkat_cells_nbln.py).
+Theory: [`docs/theory/nb-lognormal.md`](docs/theory/nb-lognormal.md) and
+[`docs/theory/loadings-shrinkage.md`](docs/theory/loadings-shrinkage.md).
+
 ### Choose Your Inference Method
 
 ```python
@@ -385,20 +472,31 @@ vae_results = scribe.fit(
     inference_method="vae",
     n_steps=50000,
 )
+
+# Joint gene-gene covariance with Laplace (PLN or NBLN)
+laplace_results = scribe.fit(
+    adata,
+    model="pln",
+    inference_method="laplace",
+    latent_dim=16,
+    n_steps=50000,
+)
 ```
 
 ## Inference Methods and Guide Families
 
 ### Inference Methods
 
-| Method   | Engine          | Precision | Use Case                           |
-| -------- | --------------- | --------- | ---------------------------------- |
-| **SVI**  | Adam optimizer  | float32   | Fast exploration, large datasets   |
-| **MCMC** | NUTS sampler    | float64   | Exact posterior, gold standard     |
-| **VAE**  | Encoder-decoder | float32   | Latent representations, embeddings |
+| Method      | Engine                            | Precision | Use Case                                                                          |
+| ----------- | --------------------------------- | --------- | --------------------------------------------------------------------------------- |
+| **SVI**     | Adam optimizer                    | float32   | Fast exploration, large datasets                                                  |
+| **MCMC**    | NUTS sampler                      | float64   | Exact posterior, gold standard                                                    |
+| **VAE**     | Encoder-decoder                   | float32   | Latent representations, embeddings                                                |
+| **Laplace** | EM + per-cell Newton + outer Adam | float32   | PLN- / NBLN-family models with per-cell latents; gene-gene covariance via $WW^\top$ |
 
 SVI results can initialize MCMC chains for faster convergence, even across
-different parameterizations:
+different parameterizations. They can also seed an NBLN-Laplace fit via the
+`informative_priors_from` cascade (see the [NBLN section above](#negative-binomial-lognormal-nbln-family)):
 
 ```python
 svi_results = scribe.fit(adata, model="nbdm", parameterization="linked")
@@ -773,6 +871,23 @@ Comprehensive documentation is available in each module:
 - **[MCMC](src/scribe/mcmc/README.md)**: Markov Chain Monte Carlo (NUTS)
 - **[VAE](src/scribe/vae/README.md)**: Variational autoencoders with
   normalizing flows
+- **[Laplace](src/scribe/laplace/README.md)**: Per-cell EM with Newton inner
+  step, SVI-to-Laplace cascade, cascade-parameter freeze, and W-shrinkage
+  priors (PLN / NBLN / LNM)
+
+### Tutorials and Theory
+
+- **[Modeling Assumptions Tutorial](docs/tutorials/jurkat_cells.py)**: Walk
+  through count models, capture, parameterizations, and structured guides on a
+  monoculture dataset
+- **[NBLN Cascade Tutorial](docs/tutorials/jurkat_cells_nbln.py)**: Principled
+  gene-gene correlations via the SVI cascade + freeze + loadings shrinkage
+  workflow
+- **[NBLN Theory](docs/theory/nb-lognormal.md)**: Generative story,
+  identifiability, and the cascade-freeze rationale
+- **[Loadings Shrinkage Theory](docs/theory/loadings-shrinkage.md)**:
+  Column-wise horseshoe / NEG priors on $\mathbf{W}$, the W-perp projection,
+  and adaptive rank selection
 
 ### Analysis
 
