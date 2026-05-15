@@ -1278,8 +1278,10 @@ def twostate_log_prob(
         ``(n_cells, n_genes)`` when ``cells_axis=0`` (default), else
         ``(n_genes, n_cells)`` and we transpose.
     params : dict
-        Must contain ``"mu"``, ``"burst_size"``, ``"k_off"``. May
-        contain ``"p_capture"`` for the VCP variant.
+        Must contain ``"mu"``, ``"burst_size"``, and one of
+        ``"k_off"`` (natural parameterization) or
+        ``"switching_ratio"`` (ratio parameterization). May contain
+        ``"p_capture"`` for the VCP variant.
     return_by : {"cell", "gene"}, default="cell"
         Reduction axis of the output.
     cells_axis : int, default=0
@@ -1293,7 +1295,7 @@ def twostate_log_prob(
         Log-likelihood values, shape ``(n_cells,)`` or ``(n_genes,)``.
     """
     from ....stats.distributions import PoissonBetaCompound
-    from .two_state import _twostate_reparam
+    from .two_state import _twostate_reparam, _twostate_ratio_reparam
 
     _check_return_by(return_by)
 
@@ -1302,10 +1304,17 @@ def twostate_log_prob(
 
     mu = jnp.asarray(params["mu"], dtype=dtype)
     burst_size = jnp.asarray(params["burst_size"], dtype=dtype)
-    k_off = jnp.asarray(params["k_off"], dtype=dtype)
-    alpha, beta, rate_gene, _eff_burst_size = _twostate_reparam(
-        mu, burst_size, k_off
-    )
+    if "switching_ratio" in params:
+        # Ratio parameterization: k_off is derived from switching_ratio.
+        s = jnp.asarray(params["switching_ratio"], dtype=dtype)
+        alpha, beta, rate_gene, _eff_burst_size = _twostate_ratio_reparam(
+            mu, burst_size, s
+        )
+    else:
+        k_off = jnp.asarray(params["k_off"], dtype=dtype)
+        alpha, beta, rate_gene, _eff_burst_size = _twostate_reparam(
+            mu, burst_size, k_off
+        )
 
     if "p_capture" in params:
         p_capture = jnp.asarray(params["p_capture"], dtype=dtype)

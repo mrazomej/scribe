@@ -1104,6 +1104,19 @@ def create_model(
     # ==========================================================================
     effective_hierarchical_gate = model_config.zero_inflation_prior != _NONE
     extra_param_names = list(MODEL_EXTRA_PARAMS[base_model])
+    # TwoState ratio parameterization replaces k_off with switching_ratio.
+    # The base model's MODEL_EXTRA_PARAMS entry always lists k_off; we
+    # swap it here based on the configured parameterization so the
+    # downstream dispatch (build_extra_param_spec) builds the right
+    # spec and the rest of the factory stays parameterization-agnostic.
+    if (
+        base_model in ("twostate", "twostatevcp")
+        and model_config.parameterization == ParamEnum.TWO_STATE_RATIO
+    ):
+        extra_param_names = [
+            "switching_ratio" if n == "k_off" else n
+            for n in extra_param_names
+        ]
     # Append BNB concentration when overdispersion is enabled
     if model_config.is_bnb:
         extra_param_names.append("bnb_concentration")
@@ -1326,7 +1339,14 @@ def create_model(
         # Skip validation if any guide uses amortization (requires actual data)
         has_amortized = _has_amortized_guide(model_config.guide_families)
         if needs_guide and not is_mixture and not has_amortized:
-            validate_model_guide_compatibility(model, guide, model_config)
+            # Use the real ``n_genes`` for validation when known.  When
+            # any spec carries a per-gene array (e.g. TwoState's
+            # data-driven ``mu_prior_loc``), validation with the
+            # default ``n_genes=5`` would mismatch the array shape.
+            _val_n_genes = n_genes if n_genes is not None else 5
+            validate_model_guide_compatibility(
+                model, guide, model_config, n_genes=_val_n_genes
+            )
 
     return model, guide, param_specs
 

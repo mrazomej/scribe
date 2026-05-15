@@ -641,11 +641,16 @@ def _apply_base_parameterization(
         distributions.update(
             _build_poisson_lognormal_posteriors(params, is_mixture, split)
         )
-    elif parameterization == Parameterization.TWO_STATE_NATURAL:
+    elif parameterization in (
+        Parameterization.TWO_STATE_NATURAL,
+        Parameterization.TWO_STATE_RATIO,
+    ):
         # TwoState (Poisson-Beta compound). The three per-gene
-        # parameters mu / burst_size / k_off are positive Normals
-        # under softplus (or exp). Phase 1 does not support mixtures
-        # or low-rank guides for this family.
+        # parameters (mu, burst_size, k_off-or-switching_ratio) are
+        # positive Normals under softplus (or exp). The builder
+        # detects which third parameter was sampled by scanning
+        # ``params`` keys; no parameterization-specific branch needed
+        # here. Phase 1 does not support mixtures.
         distributions.update(
             _build_two_state_posteriors(
                 params,
@@ -3110,7 +3115,22 @@ def _build_two_state_posteriors(
     skip = skip or set()
     del low_rank, is_mixture  # dispatch handles low-rank per-name; no mixtures
 
-    for name in ("mu", "burst_size", "k_off"):
+    # Detect the parameterization by which third parameter was sampled.
+    # The variational guide writes ``{name}_loc`` (mean-field /
+    # standalone low-rank) or ``joint_{group}_{name}_loc`` (joint
+    # low-rank); checking for any key containing the name suffix
+    # handles both.
+    has_switching_ratio = any(
+        k == "switching_ratio_loc"
+        or (k.startswith("joint_") and k.endswith("_switching_ratio_loc"))
+        or k == "switching_ratio_W"
+        or k == "log_switching_ratio_W"
+        for k in params
+    )
+    third_param = "switching_ratio" if has_switching_ratio else "k_off"
+    param_names = ("mu", "burst_size", third_param)
+
+    for name in param_names:
         if name in skip:
             continue
         jp = _find_joint_prefix(params, name)

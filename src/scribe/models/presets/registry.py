@@ -928,6 +928,54 @@ def build_k_off_spec(
     ]
 
 
+def build_switching_ratio_spec(
+    unconstrained: bool,
+    guide_families: GuideFamilyConfig,
+    n_components: Optional[int] = None,
+    mixture_params: Optional[List[str]] = None,
+    positive_transform: Any = None,
+    prior_loc: float = 3.0,
+    prior_scale: float = 2.0,
+) -> List[ParamSpec]:
+    """Build the switching_ratio parameter spec for TwoState (ratio variant).
+
+    The switching ratio is ``s = k_off / k_on``: the regime variable.
+    Large ``s`` favours the NB limit (k_off >> k_on); small ``s``
+    produces bursty / bimodal counts.  Unlike absolute ``k_off``, this
+    quantity is *scale-invariant across genes* — a highly-expressed
+    NB-regime gene has the same ``s`` as a low-expression NB-regime
+    gene.  That makes mean-field q(s) approximately independent of
+    q(mu) and q(burst_size), which is the structural motivation for
+    the ``two_state_ratio`` parameterization (analogous to NBDM's
+    mean_prob aligning with the data's mean axis).
+
+    Default prior loc=3 scale=2 mirrors ``build_k_off_spec`` because
+    the prior is conceptually about "how NB-like is this gene"; in the
+    NB limit ``k_on`` is moderate, so ``s ≈ k_off``.  Strict NB
+    defaults are achieved by tightening this prior via
+    ``with_priors(switching_ratio=(loc, scale))``.
+    """
+    del unconstrained
+    is_mixture = False
+    if n_components is not None:
+        if mixture_params is None:
+            is_mixture = True
+        else:
+            is_mixture = "switching_ratio" in mixture_params
+
+    spec_cls = _select_positive_spec(positive_transform)
+    return [
+        spec_cls(
+            name="switching_ratio",
+            shape_dims=("n_genes",),
+            default_params=(prior_loc, prior_scale),
+            is_gene_specific=True,
+            guide_family=guide_families.get("switching_ratio"),
+            is_mixture=is_mixture,
+        )
+    ]
+
+
 # ------------------------------------------------------------------------------
 
 
@@ -1061,11 +1109,19 @@ def build_extra_param_spec(
             mixture_params=mixture_params,
             positive_transform=positive_transform,
         )
+    elif param_name == "switching_ratio":
+        return build_switching_ratio_spec(
+            unconstrained=unconstrained,
+            guide_families=guide_families,
+            n_components=n_components,
+            mixture_params=mixture_params,
+            positive_transform=positive_transform,
+        )
     else:
         raise ValueError(
             f"Unknown extra parameter: {param_name}. "
             f"Valid parameters are: gate, p_capture, bnb_concentration, r, "
-            f"burst_size, k_off"
+            f"burst_size, k_off, switching_ratio"
         )
 
 

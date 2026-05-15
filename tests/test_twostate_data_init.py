@@ -160,6 +160,34 @@ class TestInjectAndThread:
         # For ribosomal-scale means, softplus_inv ≈ identity.
         assert abs(mu_loc[-1] - rps2_mean) / rps2_mean < 0.01
 
+    def test_validation_threads_real_n_genes(self):
+        """Regression: the factory's dry-run validation must use the
+        real ``n_genes`` from the data, not the default ``n_genes=5``.
+        Without this, a per-gene ``mu_prior_loc`` array of shape
+        ``(real_n_genes,)`` cannot broadcast against the dry-run's
+        ``(5,)`` and SVI init raises a ``ValueError``.
+        """
+        import scribe
+
+        # Use n_genes != 5 to expose the broadcast bug.  10 is enough.
+        rng = np.random.default_rng(0)
+        n_cells, n_genes = 32, 10
+        per_gene = rng.uniform(0.5, 50.0, n_genes)
+        counts = np.stack(
+            [rng.poisson(m, n_cells) for m in per_gene], axis=1
+        )
+        # Bare-bones fit, no joint guide; just the per-gene mu init
+        # path threading through.
+        res = scribe.fit(
+            counts,
+            model="twostatevcp",
+            parameterization="natural",
+            inference_method="svi",
+            n_steps=2,
+            unconstrained=True,
+        )
+        assert jnp.isfinite(res.loss_history[-1])
+
     def test_svi_initial_loss_finite_with_high_expression_gene(self):
         """Without the per-gene anchor, the high-expression gene's
         log-PMF would be -∞ at step 0 (softplus(scalar median) ≈ 1

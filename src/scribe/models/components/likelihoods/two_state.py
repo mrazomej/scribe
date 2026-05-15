@@ -116,6 +116,80 @@ def _twostate_reparam(
     return alpha, beta, rate, eff_burst_size
 
 
+def _twostate_ratio_reparam(
+    mu: jnp.ndarray,
+    burst_size: jnp.ndarray,
+    switching_ratio: jnp.ndarray,
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """(µ, b, s) → (α, β, rate, effective_burst_size).
+
+    Relative-switching parameterization (analogous to NBDM's
+    ``mean_prob`` / ``mean_odds`` aligning with the data's mean axis).
+    Sampled parameters are ``mu`` (gene mean), ``burst_size``, and
+    ``switching_ratio = k_off / k_on``.
+
+    Natural forward map (mean-preserving by construction):
+
+        k_on  = µ / b
+        k_off = s · k_on
+        α_nat = k_on
+        β_nat = k_off
+        rate_nat = µ · (1 + s)
+        E[count] = rate_nat · α_nat / (α_nat + β_nat)
+                 = µ(1+s) · k_on / (k_on + s·k_on)
+                 = µ                          identically.
+
+    Quadrature-safety clamps are applied identically to
+    :func:`_twostate_reparam`: when ``α`` or ``β`` fall outside
+    ``[_ALPHA_MIN, _ALPHA_MAX]`` or ``[_K_OFF_MIN, _K_OFF_MAX]`` the
+    mean-preserving rescaling ``rate = µ · (α + β) / α`` recovers the
+    target mean exactly. The natural ``rate = µ(1+s)`` matches this
+    formula when no clamp activates (then ``α = k_on``, ``β = k_off``,
+    and ``α + β = k_on(1+s)``, giving ``rate = µ(1+s)``).
+    """
+    burst_size = jnp.maximum(burst_size, _BURST_MIN)
+    k_on = mu / burst_size
+    k_off = switching_ratio * k_on
+    alpha = jnp.clip(k_on, min=_ALPHA_MIN, max=_ALPHA_MAX)
+    beta = jnp.clip(k_off, min=_K_OFF_MIN, max=_K_OFF_MAX)
+    # Mean-preserving rescaling: when no clamp triggers this equals
+    # µ · (1 + s) by construction; when a clamp triggers it preserves
+    # the mean exactly (rate · α / (α + β) = µ).
+    rate = mu * (alpha + beta) / alpha
+    eff_burst_size = mu / alpha
+    return alpha, beta, rate, eff_burst_size
+
+
+def _twostate_dispatch_reparam(
+    param_values: Dict[str, jnp.ndarray],
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Pick the right reparam based on which third parameter was sampled.
+
+    Returns ``(alpha, beta, rate, eff_burst_size, raw_k_off)``.
+
+    ``raw_k_off`` is the un-clamped ``k_off`` value — used downstream
+    only to compute the ``beta_floor_active`` indicator (which checks
+    whether the *natural* β fell below the clamp lower bound). In the
+    ratio parameterization ``k_off`` is derived (``s · k_on``); in the
+    natural parameterization it's the sampled value.
+    """
+    mu = param_values["mu"]
+    burst_size = param_values["burst_size"]
+    if "switching_ratio" in param_values:
+        s = param_values["switching_ratio"]
+        burst_safe = jnp.maximum(burst_size, _BURST_MIN)
+        raw_k_off = s * (mu / burst_safe)
+        alpha, beta, rate, eff_burst_size = _twostate_ratio_reparam(
+            mu, burst_size, s
+        )
+    else:
+        raw_k_off = param_values["k_off"]
+        alpha, beta, rate, eff_burst_size = _twostate_reparam(
+            mu, burst_size, raw_k_off
+        )
+    return alpha, beta, rate, eff_burst_size, raw_k_off
+
+
 # ==============================================================================
 # Phase-1 guard helper
 # ==============================================================================
@@ -187,7 +261,14 @@ class TwoStateLikelihood(Likelihood):
         self,
         param_values: Dict[str, jnp.ndarray],
     ) -> dist.Distribution:
-        """Run the (µ, b, k_off) → (α, β, rate) map and emit deterministics.
+        """Run the (µ, b, *third*) → (α, β, rate) map and emit
+        deterministics.
+
+        The "third" sampled parameter is either ``k_off`` (natural
+        parameterization) or ``switching_ratio`` (ratio
+        parameterization); the dispatcher in
+        :func:`_twostate_dispatch_reparam` picks the right reparam by
+        inspecting ``param_values``.
 
         Returns the to-event-1 Poisson-Beta compound at gene rank;
         caller is responsible for entering the cell plate around the
@@ -199,15 +280,18 @@ class TwoStateLikelihood(Likelihood):
 
         mu = param_values["mu"]
         burst_size = param_values["burst_size"]
-        k_off = param_values["k_off"]
-
-        alpha, beta, rate, eff_burst_size = _twostate_reparam(
-            mu, burst_size, k_off
+        alpha, beta, rate, eff_burst_size, raw_k_off = (
+            _twostate_dispatch_reparam(param_values)
         )
 
         # Expose derived quantities for posterior summaries (computed
-        # OUTSIDE the cell plate, so they emit at gene rank).
+        # OUTSIDE the cell plate, so they emit at gene rank).  In the
+        # ratio parameterization ``k_off`` is derived and we emit it
+        # as a deterministic; in the natural parameterization ``k_off``
+        # is a sampled site so emitting it again would collide.
         numpyro.deterministic("k_on", alpha)
+        if "switching_ratio" in param_values:
+            numpyro.deterministic("k_off", beta)
         numpyro.deterministic("alpha", alpha)
         numpyro.deterministic("beta", beta)
         numpyro.deterministic("r_hat", rate)
@@ -218,7 +302,7 @@ class TwoStateLikelihood(Likelihood):
         )
         numpyro.deterministic(
             "beta_floor_active",
-            k_off < _K_OFF_MIN,
+            raw_k_off < _K_OFF_MIN,
         )
 
         return PoissonBetaCompound(alpha=alpha, beta=beta, rate=rate).to_event(
@@ -424,13 +508,20 @@ class TwoStateVCPLikelihood(Likelihood):
         n_cells = dims["n_cells"]
 
         # ----- gene-level reparam: OUTSIDE the cell plate -----
+        # Dispatcher picks _twostate_reparam (natural) or
+        # _twostate_ratio_reparam (ratio) based on which third
+        # parameter is in param_values.
         mu = param_values["mu"]
         burst_size = param_values["burst_size"]
-        k_off = param_values["k_off"]
-        alpha, beta, rate_gene, eff_burst_size = _twostate_reparam(
-            mu, burst_size, k_off
+        alpha, beta, rate_gene, eff_burst_size, raw_k_off = (
+            _twostate_dispatch_reparam(param_values)
         )
         numpyro.deterministic("k_on", alpha)
+        # k_off is a sampled site in natural mode; only emit it as a
+        # deterministic in ratio mode where it's derived from
+        # switching_ratio.
+        if "switching_ratio" in param_values:
+            numpyro.deterministic("k_off", beta)
         numpyro.deterministic("alpha", alpha)
         numpyro.deterministic("beta", beta)
         numpyro.deterministic("r_hat", rate_gene)
@@ -441,7 +532,7 @@ class TwoStateVCPLikelihood(Likelihood):
         )
         numpyro.deterministic(
             "beta_floor_active",
-            k_off < _K_OFF_MIN,
+            raw_k_off < _K_OFF_MIN,
         )
 
         # Capture prior parameters: read from param_specs the same

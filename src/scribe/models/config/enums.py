@@ -114,6 +114,12 @@ class Parameterization(str, Enum):
     # for the twostate / twostatevcp models. See the TwoStateParameterization
     # class in parameterizations/__init__.py.
     TWO_STATE_NATURAL = "two_state_natural"
+    # Two-state RELATIVE parameterization: samples (mu, burst_size,
+    # switching_ratio = k_off/k_on) instead of absolute k_off.  This
+    # orthogonalises the "NB-vs-bursty regime" axis from gene magnitude
+    # — analogous to NBDM's mean_prob/mean_odds vs canonical (r, p).
+    # See TwoStateRatioParameterization in parameterizations/__init__.py.
+    TWO_STATE_RATIO = "two_state_ratio"
 
     # ------------------------------------------------------------------
     # Backward-compatible deserialization of removed hierarchical values.
@@ -150,6 +156,10 @@ class Parameterization(str, Enum):
             # interactive use; ``two_state_natural`` is the canonical
             # form persisted in serialised configs.
             "natural": "two_state_natural",
+            # Short alias for the TwoState relative-switching
+            # parameterization. ``parameterization='ratio'`` resolves
+            # to ``two_state_ratio``.
+            "ratio": "two_state_ratio",
         }
         if isinstance(value, str):
             base = _legacy.get(value)

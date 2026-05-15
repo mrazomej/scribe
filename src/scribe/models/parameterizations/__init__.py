@@ -1236,6 +1236,99 @@ class TwoStateParameterization(Parameterization):
         return []
 
 
+class TwoStateRatioParameterization(Parameterization):
+    """Relative-switching parameterization for the Poisson-Beta compound.
+
+    Samples ``mu`` (per-gene mean) as the only core parameter, exactly
+    like :class:`TwoStateParameterization`.  The third per-gene
+    parameter — the regime variable — is :math:`s = k_{off} / k_{on}`
+    (``switching_ratio``), in place of the absolute ``k_off`` used by
+    ``two_state_natural``.  ``burst_size`` is shared between both
+    parameterizations.
+
+    Why this exists
+    ---------------
+    The data identifies the gene's regime — NB-like vs bursty — through
+    the ratio :math:`k_{off}/k_{on}`, not through absolute ``k_off``.
+    Sampling ``k_off`` directly forces mean-field q to factor across
+    coordinates that are *not* approximately independent in the
+    posterior: q(k_off) is geometrically coupled to q(mu) and
+    q(burst_size).  Sampling the ratio aligns the variational
+    factorisation with the data's identifiability axes, mirroring how
+    NBDM's ``mean_prob`` / ``mean_odds`` aligns with (mean, dispersion)
+    rather than (r, p).
+
+    Forward map (computed in the likelihood)::
+
+        k_on  = mu / burst_size
+        k_off = switching_ratio * k_on   (= s · k_on)
+        alpha = k_on
+        beta  = k_off
+        r_hat = mu · (1 + switching_ratio)
+
+    Mean preservation::
+
+        E[count] = r_hat · alpha / (alpha + beta)
+                 = mu(1+s) · k_on / (k_on + s · k_on)
+                 = mu
+
+    NB limit (``switching_ratio → ∞``)::
+
+        beta → ∞ at fixed alpha = mu/burst_size  →  NB(r=mu/burst_size,
+        burst=burst_size).
+
+    Implementation notes
+    --------------------
+    - ``switching_ratio`` is the third per-gene extra (instead of
+      ``k_off``) for the ``twostate`` / ``twostatevcp`` models; the
+      factory dispatches the extras list at build time based on the
+      configured parameterization (see ``presets/factory.py``).
+    - ``alpha``, ``beta``, ``r_hat`` are still computed inside
+      ``TwoStateLikelihood._build_dist`` and exposed as
+      ``numpyro.deterministic`` sites for posterior introspection.
+    """
+
+    @property
+    def name(self) -> str:
+        return "two_state_ratio"
+
+    @property
+    def core_parameters(self) -> List[str]:
+        return ["mu"]
+
+    @property
+    def gene_param_name(self) -> str:
+        return "mu"
+
+    def build_param_specs(
+        self,
+        unconstrained: bool,
+        guide_families: GuideFamilyConfig,
+        n_components: Optional[int] = None,
+        mixture_params: Optional[List[str]] = None,
+    ) -> List[ParamSpec]:
+        """Build the mu spec — identical to the natural parameterization.
+
+        The other two per-gene specs (``burst_size``,
+        ``switching_ratio``) come from the model extras dispatch.
+        """
+        del unconstrained, n_components, mixture_params
+        mu_family = guide_families.get("mu")
+        return [
+            PositiveNormalSpec(
+                name="mu",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=mu_family,
+                is_mixture=False,
+            ),
+        ]
+
+    def build_derived_params(self) -> List[DerivedParam]:
+        return []
+
+
 # ==============================================================================
 # Parameterization Registry
 # ==============================================================================
@@ -1253,6 +1346,7 @@ _logistic_normal_mean_prob = LogisticNormalParameterization(variant="mean_prob")
 _logistic_normal_mean_odds = LogisticNormalParameterization(variant="mean_odds")
 _poisson_lognormal = PoissonLogNormalParameterization()
 _two_state_natural = TwoStateParameterization()
+_two_state_ratio = TwoStateRatioParameterization()
 
 # Registry mapping internal parameterization keys to singleton instances.
 # The LNM family appears under three keys mirroring the DM-family trio.
@@ -1273,11 +1367,17 @@ PARAMETERIZATIONS = {
     # Two-state natural parameterization (Poisson-Beta compound; samples
     # mu only — burst_size and k_off come in as MODEL_EXTRA_PARAMS).
     "two_state_natural": _two_state_natural,
+    # Two-state relative-switching parameterization: samples (mu,
+    # burst_size, switching_ratio) where ratio = k_off/k_on.  See
+    # TwoStateRatioParameterization for the math.
+    "two_state_ratio": _two_state_ratio,
     # Short alias for the two-state natural parameterization. Both keys
     # resolve to the same singleton; ``"natural"`` is preferred for
     # interactive use, ``"two_state_natural"`` is the canonical form
     # appearing in serialised configs.
     "natural": _two_state_natural,
+    # Short alias for the relative-switching parameterization.
+    "ratio": _two_state_ratio,
     # Backward compatibility for the DM family
     "standard": _canonical,
     "linked": _mean_prob,
@@ -1415,17 +1515,22 @@ def resolve_user_parameterization_for_model(
     if model_lower in ("pln", "nbln"):
         return "count_lognormal"
 
-    # TwoState (Poisson-Beta compound) accepts only its own
-    # parameterization. Reject DM-family strings with a directive to
-    # the supported value rather than silently re-mapping.
+    # TwoState (Poisson-Beta compound) accepts its own two
+    # parameterizations: ``two_state_natural`` (samples k_off directly)
+    # and ``two_state_ratio`` (samples switching_ratio = k_off/k_on).
+    # Reject DM-family strings with a directive to the supported
+    # values rather than silently re-mapping.
     if model_lower in ("twostate", "twostatevcp"):
         param_lower = parameterization.lower()
         if param_lower in ("two_state_natural", "natural"):
             return "two_state_natural"
+        if param_lower in ("two_state_ratio", "ratio"):
+            return "two_state_ratio"
         raise ValueError(
             f"parameterization={parameterization!r} is not supported for "
-            f"model={model!r}. Use parameterization='two_state_natural' "
-            f"(the Poisson-Beta compound's natural parameterization)."
+            f"model={model!r}. Choose 'two_state_natural' (samples k_off "
+            f"directly; aliases: 'natural') or 'two_state_ratio' "
+            f"(samples switching_ratio = k_off/k_on; aliases: 'ratio')."
         )
 
     param_lower = parameterization.lower()
@@ -1478,6 +1583,7 @@ __all__ = [
     "LogisticNormalParameterization",
     "PoissonLogNormalParameterization",
     "TwoStateParameterization",
+    "TwoStateRatioParameterization",
     "PARAMETERIZATIONS",
     # Family helpers
     "is_logistic_normal_family",

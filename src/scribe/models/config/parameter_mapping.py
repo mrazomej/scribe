@@ -388,6 +388,71 @@ PARAMETERIZATION_MAPPINGS = {
         },
     ),
     # ------------------------------------------------------------------
+    # Two-state promoter — RELATIVE-switching variant.
+    # Samples ``mu`` as the only core parameter; the extras are
+    # ``burst_size`` and ``switching_ratio = k_off / k_on`` instead of
+    # absolute ``k_off``.  Mean-preserving and analogous to NBDM's
+    # mean_prob/mean_odds: the regime axis is orthogonal to gene
+    # magnitude, which helps mean-field VI.
+    # ------------------------------------------------------------------
+    Parameterization.TWO_STATE_RATIO: ParameterizationMapping(
+        parameterization=Parameterization.TWO_STATE_RATIO,
+        core_parameters={"mu"},
+        optional_parameters={
+            "burst_size",
+            "switching_ratio",
+            # Derived per-gene quantities (deterministic sites)
+            "alpha",
+            "beta",
+            "k_on",
+            "k_off",
+            "r_hat",
+            "effective_burst_size",
+            "alpha_floor_active",
+            "beta_floor_active",
+        },
+        parameter_descriptions={
+            "mu": (
+                "Per-gene mean expression. "
+                "PositiveNormal / SoftplusNormal."
+            ),
+            "burst_size": (
+                "Per-gene NB-limit mean burst size. Same role as in "
+                "the natural parameterization."
+            ),
+            "switching_ratio": (
+                "Per-gene regime variable s = k_off / k_on. "
+                "Large s → NB regime; small s → bursty / Poisson-like. "
+                "PositiveNormal / SoftplusNormal."
+            ),
+            "p_capture": (
+                "Per-cell capture probability "
+                "(Beta / SigmoidNormal). TwoStateVCP only."
+            ),
+            "alpha": "DERIVED: Beta first shape = mu / burst_size (= k_on).",
+            "beta": (
+                "DERIVED: Beta second shape = k_off = switching_ratio · k_on."
+            ),
+            "k_on": "DERIVED: ON rate = mu / burst_size.",
+            "k_off": "DERIVED: OFF rate = switching_ratio · k_on.",
+            "r_hat": (
+                "DERIVED: Poisson rate scale = mu · (1 + switching_ratio) "
+                "(mean-preserving)."
+            ),
+            "effective_burst_size": (
+                "DERIVED: burst size implied by the floored alpha."
+            ),
+            "alpha_floor_active": (
+                "DERIVED: boolean indicator; True when alpha hits the "
+                "numerical floor in the likelihood."
+            ),
+            "beta_floor_active": (
+                "DERIVED: boolean indicator; True when beta = k_off hits "
+                "the numerical floor in the likelihood."
+            ),
+        },
+    ),
+    # ------------------------------------------------------------------
     # PLN (Poisson-LogNormal) — single variant, no totals submodel
     # ------------------------------------------------------------------
     Parameterization.COUNT_LOGNORMAL: ParameterizationMapping(
@@ -571,13 +636,21 @@ def get_active_parameters(
     if model_type == "nbln":
         active_params.add("r")
 
-    # Two-state promoter: ``burst_size`` and ``k_off`` are gene-specific
-    # extras on top of the core ``mu``. ``p_capture`` is added for the
-    # VCP variant. Derived per-gene deterministics (alpha, beta, r_hat,
-    # effective_burst_size, floor indicators) are exposed by the
-    # likelihood and stay in the mapping's optional set.
+    # Two-state promoter: ``burst_size`` is always a gene-specific
+    # extra on top of the core ``mu``.  The third per-gene parameter
+    # depends on the parameterization:
+    #   - TWO_STATE_NATURAL:  k_off (absolute OFF rate)
+    #   - TWO_STATE_RATIO:    switching_ratio (= k_off / k_on)
+    # ``p_capture`` is added for the VCP variant.  Derived per-gene
+    # deterministics (alpha, beta, r_hat, effective_burst_size, floor
+    # indicators) are exposed by the likelihood and stay in the
+    # mapping's optional set.
     if model_type in ("twostate", "twostatevcp"):
-        active_params.update({"burst_size", "k_off"})
+        active_params.add("burst_size")
+        if parameterization == Parameterization.TWO_STATE_RATIO:
+            active_params.add("switching_ratio")
+        else:
+            active_params.add("k_off")
         if model_type == "twostatevcp" or uses_variable_capture:
             active_params.add("p_capture")
 

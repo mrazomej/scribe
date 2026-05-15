@@ -1460,7 +1460,9 @@ class ModelConfig(BaseModel):
 
         Phase-1 constraints enforced:
 
-        - ``parameterization`` must be ``TWO_STATE_NATURAL``.
+        - ``parameterization`` must be one of ``TWO_STATE_NATURAL``
+          (samples k_off directly) or ``TWO_STATE_RATIO`` (samples the
+          relative switching ratio).
         - ``overdispersion`` must be ``NONE`` (no BNB on TwoState).
         - ``n_components`` must be ``None`` or ``1`` (no mixtures).
         - ``inference_method`` must NOT be ``VAE`` (no VAE on TwoState).
@@ -1470,13 +1472,19 @@ class ModelConfig(BaseModel):
         if self.base_model not in ("twostate", "twostatevcp"):
             return self
 
-        # (1) Parameterization must be two_state_natural.
-        if self.parameterization != Parameterization.TWO_STATE_NATURAL:
+        # (1) Parameterization must be a TwoState-family value.
+        _two_state_param = (
+            Parameterization.TWO_STATE_NATURAL,
+            Parameterization.TWO_STATE_RATIO,
+        )
+        if self.parameterization not in _two_state_param:
             raise ValueError(
-                f"base_model={self.base_model!r} requires "
-                f"parameterization='two_state_natural'; got "
+                f"base_model={self.base_model!r} requires a TwoState "
+                f"parameterization (one of 'two_state_natural', "
+                f"'two_state_ratio'); got "
                 f"{self.parameterization.value!r}. Use "
-                f"ModelConfigBuilder().with_parameterization('two_state_natural')."
+                f"ModelConfigBuilder().with_parameterization("
+                f"'two_state_natural') or 'two_state_ratio'."
             )
 
         # (2) BNB overdispersion is not supported in phase 1.

@@ -197,6 +197,14 @@ class GuideFamilyConfig(BaseModel):
             "Guide family for the TwoState OFF rate (per gene, positive)."
         ),
     )
+    switching_ratio: Optional[GuideFamily] = Field(
+        None,
+        description=(
+            "Guide family for the TwoState relative switching ratio "
+            "s = k_off / k_on (per gene, positive). Used by the "
+            "two_state_ratio parameterization."
+        ),
+    )
 
     # --------------------------------------------------------------------------
     # Amortization Configuration
