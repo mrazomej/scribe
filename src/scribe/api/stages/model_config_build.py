@@ -226,6 +226,26 @@ def _inject_twostate_data_init(ctx, model_config):
     from ...core.twostate_data_init import inject_twostate_data_init
 
     import jax.numpy as _jnp
+    import warnings as _warnings
+
+    # Honour an explicit user override on ``priors['mu']`` (or
+    # ``priors['mu_prior_loc']``) by skipping the empirical anchor —
+    # otherwise the user-supplied prior would be silently clobbered.
+    # The factory always seeds ``model_config.priors.mu`` to its
+    # default value, so we check ``ctx.kwargs['priors']`` (the
+    # original user-passed dict) rather than the merged config.
+    _user_priors = ctx.kwargs.get("priors") or {}
+    if isinstance(_user_priors, dict) and (
+        "mu" in _user_priors or "mu_prior_loc" in _user_priors
+    ):
+        _warnings.warn(
+            "TwoState: skipping the default data-driven mu_prior_loc "
+            "init because priors['mu'] (or priors['mu_prior_loc']) was "
+            "provided by the user.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return model_config
 
     model_config = inject_twostate_data_init(model_config, ctx.count_data)
     _extra = (
@@ -233,23 +253,41 @@ def _inject_twostate_data_init(ctx, model_config):
     )
     _anchor = _extra.get("mu_prior_loc")
     # ``mu_prior_loc`` is now a per-gene array (post-rev: data-driven
-    # anchor); log the summary range rather than a single scalar.
+    # anchor); surface the summary range so the user can sanity-check
+    # the magnitudes (especially important for high-expression genes
+    # like ribosomal markers).
     _anchor_arr = _jnp.asarray(_anchor)
+    _transform = getattr(model_config, "positive_transform", "softplus")
     if _anchor_arr.ndim == 0:
-        _log.info(
-            "TwoState: injected mu_prior_loc=%.3f from %d-gene count matrix.",
+        _msg = (
+            "TwoState: applied data-driven mu_prior_loc=%.3f from "
+            "%d-gene count matrix (transform=%s).  Override by "
+            "passing priors={'mu': (loc, scale)} to scribe.fit."
+        ) % (
             float(_anchor_arr),
             ctx.count_data.shape[1] if ctx.count_data.ndim == 2 else -1,
+            _transform,
         )
+        _warnings.warn(_msg, UserWarning, stacklevel=2)
+        _log.info(_msg)
     else:
-        _log.info(
-            "TwoState: injected per-gene mu_prior_loc with %d entries "
-            "(min=%.3f, median=%.3f, max=%.3f).",
+        _msg = (
+            "TwoState: applied per-gene mu_prior_loc to %d genes "
+            "(transform=%s, unconstrained-space range: min=%.2f, "
+            "median=%.2f, max=%.2f).  Each gene's variational mu_loc "
+            "starts at its empirical mean; without this anchor "
+            "highly-expressed genes can be slow to recover under SVI. "
+            "Override the data-driven anchor by passing "
+            "priors={'mu': (loc, scale)} to scribe.fit."
+        ) % (
             int(_anchor_arr.size),
+            _transform,
             float(_jnp.min(_anchor_arr)),
             float(_jnp.median(_anchor_arr)),
             float(_jnp.max(_anchor_arr)),
         )
+        _warnings.warn(_msg, UserWarning, stacklevel=2)
+        _log.info(_msg)
     return model_config
 
 

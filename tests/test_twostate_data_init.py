@@ -160,6 +160,70 @@ class TestInjectAndThread:
         # For ribosomal-scale means, softplus_inv ≈ identity.
         assert abs(mu_loc[-1] - rps2_mean) / rps2_mean < 0.01
 
+    def test_user_warning_fires_by_default(self):
+        """The data-driven mu init must surface a ``UserWarning`` so
+        the user sees the anchor is being applied (Python's logging
+        is silent at INFO level without explicit config).
+        """
+        import scribe
+        import warnings
+
+        rng = np.random.default_rng(0)
+        n_cells, n_genes = 32, 8
+        per_gene = rng.uniform(0.5, 50.0, n_genes)
+        counts = np.stack(
+            [rng.poisson(m, n_cells) for m in per_gene], axis=1
+        )
+        with warnings.catch_warnings(record=True) as wlist:
+            warnings.simplefilter("always", UserWarning)
+            scribe.fit(
+                counts,
+                model="twostatevcp",
+                parameterization="natural",
+                inference_method="svi",
+                n_steps=1,
+                unconstrained=True,
+            )
+        matched = [
+            str(w.message)
+            for w in wlist
+            if "TwoState" in str(w.message) and "mu_prior_loc" in str(w.message)
+        ]
+        assert matched, "Expected a TwoState mu_prior_loc UserWarning"
+        # Sanity-check the message includes the range summary.
+        assert "applied per-gene mu_prior_loc" in matched[0]
+
+    def test_user_warning_for_skip_with_explicit_prior(self):
+        """Passing ``priors={'mu': ...}`` must short-circuit the anchor
+        AND emit a UserWarning so the user knows the empirical init
+        was skipped."""
+        import scribe
+        import warnings
+
+        rng = np.random.default_rng(0)
+        n_cells, n_genes = 32, 8
+        per_gene = rng.uniform(0.5, 50.0, n_genes)
+        counts = np.stack(
+            [rng.poisson(m, n_cells) for m in per_gene], axis=1
+        )
+        with warnings.catch_warnings(record=True) as wlist:
+            warnings.simplefilter("always", UserWarning)
+            scribe.fit(
+                counts,
+                model="twostatevcp",
+                parameterization="natural",
+                inference_method="svi",
+                n_steps=1,
+                unconstrained=True,
+                priors={"mu": (1.5, 2.0)},
+            )
+        matched = [
+            str(w.message)
+            for w in wlist
+            if "skipping" in str(w.message) and "mu_prior_loc" in str(w.message)
+        ]
+        assert matched, "Expected a 'skipping mu_prior_loc' UserWarning"
+
     def test_validation_threads_real_n_genes(self):
         """Regression: the factory's dry-run validation must use the
         real ``n_genes`` from the data, not the default ``n_genes=5``.
