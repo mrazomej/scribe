@@ -17,6 +17,9 @@ VALID_MODELS = {
     "lnmvcp",
     "pln",
     "nbln",
+    # Two-state promoter (Poisson-Beta compound). Phase 1.
+    "twostate",
+    "twostatevcp",
 }
 
 # Deprecated model name aliases mapped to their canonical replacements.
