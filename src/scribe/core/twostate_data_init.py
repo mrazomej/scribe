@@ -61,6 +61,31 @@ _BURST_FLOOR = 0.05
 # do not include them in the burst-size estimator.
 _MEAN_FLOOR = 1e-3
 
+# Upper cap on the *final scalar* burst-size anchor. Real UMI-based
+# scRNA-seq Fano factors are routinely inflated by sources of
+# variance that the TwoState likelihood does not aim to absorb:
+#
+#   - Latent cell-type or cell-state heterogeneity (a mixture-model
+#     concern, not a single-component TwoState concern).
+#   - Per-cell capture-efficiency variation not fully captured by
+#     ``p_capture`` (e.g. when capture is mis-specified or its prior
+#     is too tight).
+#   - True extrinsic burstiness — variation in transcription rate
+#     across cells that the non-bursty two-state model only partially
+#     represents.
+#
+# Raw method-of-moments estimates ``b_hat = Fano − 1`` can therefore
+# be in the tens or hundreds, which destabilises SVI by forcing the
+# variational guide to start at an extreme burst_size where the rate
+# ``rate = mu + b · k_off`` explodes. Capping at 5 keeps the anchor
+# in a benign initialisation regime while still being a much better
+# starting point than the default ``softplus(Normal(0, 1.5))`` ≈ 0.7.
+#
+# Users wanting a stronger data-anchored prior can pass an explicit
+# ``priors={"burst_size": (loc, scale)}`` override on the model
+# config; it is applied later in the factory and takes precedence.
+_BURST_ANCHOR_CAP = 5.0
+
 
 def _inverse_positive_transform(values, transform: str) -> jnp.ndarray:
     """Invert the configured positive transform.
@@ -209,15 +234,28 @@ def inject_twostate_data_init(model_config, counts):
     )
 
     # burst_size anchor: median of the per-gene Fano − 1 estimates,
-    # in linear space, then inverse-transformed.
+    # in linear space, then inverse-transformed. The estimator is
+    # CAPPED at ``_BURST_ANCHOR_CAP`` because real scRNA-seq Fano
+    # factors are routinely inflated by sources of variance the
+    # TwoState likelihood does not aim to absorb (PCR amplification,
+    # zero inflation, capture noise beyond p_capture). An
+    # uncapped anchor at burst ≈ 100 forces the variational guide to
+    # start with rate = mu + 100·k_off ≈ several hundred per gene,
+    # which destabilises SVI for low-expression genes and produces
+    # persistent NaN losses. The cap at 5 keeps the anchor in a
+    # benign initialisation regime while still being a much better
+    # starting point than the default softplus(Normal(0, 1.5)) ≈ 0.7.
     burst_per_gene = empirical_burst_size_from_counts(counts)
     burst_median = float(jnp.nanmedian(burst_per_gene))
     # Guard against the edge case where every gene is invalid
     # (degenerate input); fall back to a sensible default of 1.0.
     if not jnp.isfinite(jnp.asarray(burst_median)):
         burst_median = 1.0
+    burst_median_capped = min(burst_median, _BURST_ANCHOR_CAP)
     burst_size_prior_loc = float(
-        _inverse_positive_transform(jnp.asarray(burst_median), transform)
+        _inverse_positive_transform(
+            jnp.asarray(burst_median_capped), transform
+        )
     )
 
     from ..models.config.groups import PriorOverrides
