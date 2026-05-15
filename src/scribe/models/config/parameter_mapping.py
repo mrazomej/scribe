@@ -314,6 +314,80 @@ PARAMETERIZATION_MAPPINGS = {
         },
     ),
     # ------------------------------------------------------------------
+    # Two-state promoter (Poisson-Beta compound) — single variant.
+    # Samples ``mu`` (per-gene mean) as the only core parameter; the
+    # additional per-gene parameters ``burst_size`` and ``k_off`` come
+    # in via ``MODEL_EXTRA_PARAMS["twostate"]`` / ``["twostatevcp"]``.
+    # The derived (alpha, beta, rate, effective_burst_size) quantities
+    # are emitted at gene rank via ``numpyro.deterministic`` inside
+    # the likelihood for posterior inspection.
+    # ------------------------------------------------------------------
+    Parameterization.TWO_STATE_NATURAL: ParameterizationMapping(
+        parameterization=Parameterization.TWO_STATE_NATURAL,
+        core_parameters={"mu"},
+        # ``p_capture`` is deliberately NOT in optional_parameters here;
+        # ``get_active_parameters`` adds it only for the ``twostatevcp``
+        # variant or when ``uses_variable_capture=True``, mirroring how
+        # the standard NB family conditionally adds it.
+        optional_parameters={
+            # Per-gene extras
+            "burst_size",
+            "k_off",
+            # Derived per-gene quantities (deterministic sites)
+            "alpha",
+            "beta",
+            "k_on",
+            "r_hat",
+            "effective_burst_size",
+            "alpha_floor_active",
+            "beta_floor_active",
+        },
+        parameter_descriptions={
+            "mu": (
+                "Per-gene mean expression "
+                "(LogNormal / PositiveNormal). Descriptive alias: "
+                "``mean_expression``."
+            ),
+            "burst_size": (
+                "Per-gene NB-limit mean burst size "
+                "(b = r_hat / k_off in the NB limit). "
+                "PositiveNormal / SoftplusNormal."
+            ),
+            "k_off": (
+                "Per-gene OFF rate (non-dimensionalised by mRNA decay). "
+                "Large values favour the NB regime; small values "
+                "produce bursty / bimodal counts. "
+                "PositiveNormal / SoftplusNormal."
+            ),
+            "p_capture": (
+                "Per-cell capture probability "
+                "(Beta / SigmoidNormal). TwoStateVCP only."
+            ),
+            "alpha": "DERIVED: Beta first shape = mu / burst_size.",
+            "beta": "DERIVED: Beta second shape = k_off.",
+            "k_on": "DERIVED: ON rate = mu / burst_size (= alpha).",
+            "r_hat": (
+                "DERIVED: Poisson rate scale = mu + burst_size · k_off "
+                "(mean-preserving by construction)."
+            ),
+            "effective_burst_size": (
+                "DERIVED: burst size implied by the floored alpha "
+                "(= mu / alpha). Equals burst_size when no floor "
+                "activates."
+            ),
+            "alpha_floor_active": (
+                "DERIVED: boolean indicator per gene; True when the "
+                "alpha = mu / burst_size value hits the numerical "
+                "floor in the likelihood. Genes with this flag set "
+                "should be interpreted with care."
+            ),
+            "beta_floor_active": (
+                "DERIVED: boolean indicator per gene; True when k_off "
+                "hits the numerical floor in the likelihood."
+            ),
+        },
+    ),
+    # ------------------------------------------------------------------
     # PLN (Poisson-LogNormal) — single variant, no totals submodel
     # ------------------------------------------------------------------
     Parameterization.COUNT_LOGNORMAL: ParameterizationMapping(
@@ -496,6 +570,16 @@ def get_active_parameters(
     # ``build_r_spec`` in the registry.
     if model_type == "nbln":
         active_params.add("r")
+
+    # Two-state promoter: ``burst_size`` and ``k_off`` are gene-specific
+    # extras on top of the core ``mu``. ``p_capture`` is added for the
+    # VCP variant. Derived per-gene deterministics (alpha, beta, r_hat,
+    # effective_burst_size, floor indicators) are exposed by the
+    # likelihood and stay in the mapping's optional set.
+    if model_type in ("twostate", "twostatevcp"):
+        active_params.update({"burst_size", "k_off"})
+        if model_type == "twostatevcp" or uses_variable_capture:
+            active_params.add("p_capture")
 
     return active_params
 

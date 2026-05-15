@@ -1,0 +1,448 @@
+---
+editor:
+    render-on-save: true
+csl: ieee.csl
+format:
+  html:
+    filters: [tikz.lua, strip-yaml-frontmatter.lua, maintext-filter.lua, sitext-filter.lua]
+---
+
+# Beyond shape rigidity: the two-state promoter model {#sec-twostate}
+
+In the preceding sections we developed a family of models centred on
+the Negative Binomial (NB) distribution: the NB with shared $p$
+(@sec-dirichlet-multinomial), gene-specific $p_g$
+(@sec-hierarchical-p), variable capture probability
+(@sec-capture-prior), and a zero-inflation gate
+(@sec-hierarchical-gate). Despite the flexibility afforded by
+gene-specific parameters $r_g$ and $p_g$, the NB constrains every
+gene to the same parametric *shape* — its distribution is always
+either monotone-decreasing from $0$ or unimodal away from the
+boundary, and it can never represent a genuinely bimodal histogram.
+
+For a class of genes that we will call **bursty / bimodal** the NB
+fails empirically in two characteristic ways: an excess of zero
+counts beyond what any NB can simultaneously fit with a heavy right
+tail, and — sometimes — a literal bimodal histogram with one mode
+at zero and a second mode at moderate-to-high counts. The physical
+origin of these signatures is **slow promoter switching**: when the
+promoter's on / off rates are slow relative to mRNA decay, single
+cells get caught either in long off stretches (producing near-zero
+counts) or in long on stretches (producing Poisson-like counts
+around a moderate mean), and the aggregate distribution across
+cells has two modes.
+
+In this section we introduce the **non-bursty two-state promoter
+model** as a flexible likelihood for these genes, and show that:
+
+1. The non-bursty two-state master equation has a closed-form
+   steady-state PMF involving the confluent hypergeometric function
+   ${}_1F_1$ — historically the way the model is written, but a
+   form we will *not* evaluate numerically.
+
+2. The same distribution has an exact **Poisson-Beta compound
+   representation** that avoids special functions and exposes the
+   right latent structure for inference.
+
+3. The Poisson-Beta marginal is **closed under binomial thinning**,
+   so the model composes with the capture-efficiency machinery
+   (@sec-capture-prior) without modification.
+
+4. The Negative Binomial is recovered as a special case in the
+   fast-OFF limit ($k^- \gg 1$ relative to mRNA decay). The
+   two-state model is therefore a *generalisation* of the NB, not a
+   competitor — it adds expressive capacity exactly where the NB
+   runs out.
+
+5. The natural rate parameters $(\hat r, k^+, k^-)$ have a
+   well-known identifiability ridge, so we reparameterise in terms
+   of $(\mu, b, k^-)$ — gene mean, NB-limit mean burst size, and
+   OFF rate — under which the priors decouple and "default to NB"
+   is encoded by a simple shift of the $k^-$ prior.
+
+6. The marginal log-likelihood is evaluated by **Gauss-Jacobi
+   quadrature** over the latent ON-fraction, which is stable across
+   the full parameter range and differentiable through the
+   underlying eigendecomposition.
+
+## The non-bursty two-state master equation {#sec-twostate-master}
+
+The non-bursty two-state promoter model has a binary promoter state
+$s(t) \in \{\text{ON}, \text{OFF}\}$ that switches as
+
+$$
+\text{OFF} \xrightarrow{k^+} \text{ON}, \qquad
+\text{ON}  \xrightarrow{k^-} \text{OFF},
+$$ {#eq-promoter-switching}
+
+an mRNA production rate $r$ (active only in the ON state) and a
+first-order degradation rate $\gamma$ for each mRNA molecule. The
+joint probability $P_s(m, t)$ that the promoter is in state $s$ and
+that the cell contains $m$ mRNAs satisfies a coupled master
+equation. Defining the non-dimensional rates
+$\hat r = r/\gamma$, $\hat k^+ = k^+/\gamma$,
+$\hat k^- = k^-/\gamma$ — all measured in units of the mRNA
+lifetime — the steady-state marginal $\pi_{\rm ss}(m) = P_{\rm ON}(m) + P_{\rm OFF}(m)$
+has a closed form due to Peccoud and Ycart:
+
+$$
+\pi_{\rm ss}(m \mid \hat r, \hat k^+, \hat k^-)
+=
+\frac{\Gamma(\hat k^+ + m)}{\Gamma(m+1)\,\Gamma(\hat k^+)}
+\cdot
+\frac{\Gamma(\hat k^+ + \hat k^-)}{\Gamma(\hat k^+ + \hat k^- + m)}
+\cdot
+\hat r^{\,m}
+\cdot
+{}_1F_1\!\big(\hat k^+ + m,\; \hat k^+ + \hat k^- + m,\; -\hat r\big),
+$$ {#eq-twostate-closed-form}
+
+where ${}_1F_1$ is the confluent hypergeometric function of the
+first kind. This is the form most often quoted in the biophysics
+literature. We will *not* evaluate it numerically: the series for
+${}_1F_1$ has alternating signs in our parameter regime, requires
+arbitrary-precision arithmetic to be stable, and is at its most
+fragile precisely where the model is most interesting (small $\hat
+k^+, \hat k^-$). The Poisson-Beta representation in the next
+subsection gives access to the same marginal through a much more
+benign numerical route.
+
+## The Poisson-Beta compound representation {#sec-twostate-poisson-beta}
+
+The same steady-state distribution can be written exactly as a
+compound:
+
+$$
+p \sim \mathrm{Beta}(\hat k^+, \hat k^-),
+\qquad
+m \mid p \sim \mathrm{Poisson}(\hat r\, p).
+$$ {#eq-poisson-beta}
+
+That is: the latent variable $p \in [0, 1]$ is drawn from a Beta
+distribution whose shape parameters are the non-dimensional
+switching rates, and the mRNA count is Poisson with rate
+$\hat r\, p$. Marginalising over $p$ recovers
+@eq-twostate-closed-form term by term, but numerically the
+compound is what we will use.
+
+**Physical interpretation of $p$.** Direct integration of the
+master equation reveals that $p$ is the
+*memory-weighted ON fraction* of the promoter,
+
+$$
+p(t) = \gamma \int_0^\infty e^{-\gamma\tau}\, \mathbb{1}_{\rm ON}(t - \tau)\, d\tau,
+$$ {#eq-on-fraction}
+
+where $\mathbb{1}_{\rm ON}(\cdot)$ is the indicator that the
+promoter was ON at the indicated time. The integration kernel is
+the exponential mRNA-lifetime distribution; this is why $p$
+naturally takes values in $[0, 1]$ and follows a Beta distribution
+with the switching rates as shape parameters at steady state. A
+fuller derivation is in (@sec-beta-origin); for the present
+purpose, $p$ is the *fraction of recent promoter activity weighted
+by the mRNA-lifetime kernel*. As we abuse notation throughout this
+section by writing $\pi(\cdot)$ for the density of whatever
+distribution context makes obvious (cf. @sec-dirichlet-multinomial),
+@eq-poisson-beta becomes
+
+$$
+\pi(m \mid \hat r, \hat k^+, \hat k^-)
+= \int_0^1 \pi(m \mid \hat r\, p)\, \pi(p \mid \hat k^+, \hat k^-)\, dp,
+$$ {#eq-poisson-beta-marginal}
+
+with the inner densities Poisson and Beta respectively.
+
+## Closure under binomial thinning {#sec-twostate-thinning}
+
+A single cell does not yield direct observations of $m$. The
+sequencing pipeline captures each mRNA molecule independently with
+probability $\nu_c$, so the observed UMI count is a binomial
+thinning,
+
+$$
+u \mid m, \nu_c \sim \mathrm{Binomial}(m, \nu_c).
+$$ {#eq-twostate-thinning}
+
+Marginalising the latent mRNA count via the Poisson-Beta
+representation is straightforward: a binomial-of-Poisson is again
+Poisson, so
+
+$$
+u \mid p, \nu_c \sim \mathrm{Poisson}(\hat r\, p\, \nu_c).
+$$ {#eq-twostate-thinning-collapsed}
+
+Equivalently in PGF form (or in the closed-form ${}_1F_1$ marginal
+of @eq-twostate-closed-form), the substitution
+$z \mapsto 1 - \nu_c(1 - z)$ leaves the functional shape of the
+distribution invariant and simply rescales the production rate
+$\hat r \mapsto \nu_c \hat r$. **The two-state distribution is
+closed under binomial thinning.** The capture probability $\nu_c$
+plays the same multiplicative role here that it plays for the NB
+(@sec-capture-prior): it is absorbed into an effective per-gene,
+per-cell rate, and inference machinery written for the bare model
+extends to the thinned model without modification.
+
+The generative model we will use throughout the rest of the section
+is therefore the *thinned* Poisson-Beta:
+
+$$
+p_{gc} \sim \mathrm{Beta}(\hat k^+_g, \hat k^-_g),
+\qquad
+u_{gc} \mid p_{gc} \sim \mathrm{Poisson}(\hat r_g\, p_{gc}\, \nu_c),
+$$ {#eq-twostate-thinned-poisson-beta}
+
+with per-gene rates $(\hat r_g, \hat k^+_g, \hat k^-_g)$ and per-cell
+capture $\nu_c$.
+
+## The NB limit {#sec-twostate-nb-limit}
+
+The two-state distribution reduces to the Negative Binomial when
+the OFF rate is fast compared to mRNA decay, $\hat k^- \gg 1$, with
+$\hat k^+$ and $\hat r$ remaining finite. Intuitively: the
+promoter spends short bursts ON and long stretches OFF, with the
+mRNA lifetime acting as a low-pass filter that averages over the
+fast switching. In this limit, the Beta on the latent $p$
+concentrates near the origin while keeping the product
+$\hat r\, p$ at the right scale, and the marginal collapses to
+
+$$
+\pi_{\rm ss}(m) \;\xrightarrow{\hat k^- \gg 1}\;
+\mathrm{NegBinom}\!\big(m \;\big|\; \hat k^+,\; 1/(1 + \hat r/\hat k^-)\big).
+$$ {#eq-nb-limit}
+
+The effective NB shape is $\hat k^+$ — the *ON rate* — and the
+effective NB burst size is the ratio
+$\hat r/\hat k^- = $ production-rate / OFF-rate, which is exactly
+the **mean number of mRNAs produced per ON visit**. So the NB
+parameters that scribe's NB-family models infer can be read as
+biophysical quantities of an underlying two-state process whenever
+the fast-switching limit applies.
+
+The contrapositive is what motivates the present extension: genes
+the NB fits poorly are precisely those for which the data
+*reject* the fast-switching limit, and require the full two-state
+machinery.
+
+## Identifiability and the $(\mu, b, k^-)$ reparameterisation {#sec-twostate-reparam}
+
+The natural parameters $(\hat r, \hat k^+, \hat k^-)$ are not all
+identifiable from data. In the NB-like regime ($\hat k^- \gg
+\hat k^+$) the data constrain only two combinations of the three —
+the mean and the Fano factor — leaving a one-dimensional ridge
+along which the likelihood is approximately flat. Concretely:
+simultaneously scaling
+$\hat r \to \lambda \hat r$ and $\hat k^+ \to \lambda \hat k^+$
+leaves the mean fixed, and to leading order in
+$\hat k^+/\hat k^-$ also leaves the Fano factor fixed. NUTS or any
+sampler that visits the ridge will produce a banana-shaped
+posterior, and any reported summaries of $(\hat r, \hat k^+,
+\hat k^-)$ in the NB-like regime are misleading.
+
+A clean fix is to **reparameterise in terms of the well-identified
+combinations.** We sample three positive scalars per gene:
+
+$$
+\mu_g \,=\, \text{gene mean expression},
+\qquad
+b_g \,=\, \text{mean burst size (NB-limit)},
+\qquad
+k^-_g \,=\, \text{OFF rate},
+$$ {#eq-twostate-natural-params}
+
+with the natural-parameter quantities derived as
+
+$$
+k^+_g \,=\, \mu_g / b_g,
+\quad
+\alpha_g \,=\, k^+_g,
+\quad
+\beta_g \,=\, k^-_g,
+\quad
+\hat r_g \,=\, \mu_g + b_g\, k^-_g.
+$$ {#eq-twostate-derived}
+
+This map is **mean-preserving by construction**:
+
+$$
+\langle u_{gc}\rangle
+\,=\, \hat r_g \cdot \frac{\alpha_g}{\alpha_g + \beta_g}
+\,=\, (\mu_g + b_g\, k^-_g) \cdot \frac{\mu_g / b_g}{\mu_g / b_g + k^-_g}
+\,=\, \mu_g,
+$$ {#eq-mean-preservation}
+
+independently of $b_g$ and $k^-_g$. The reparameterisation thus
+splits the identification cleanly: $\mu_g$ is anchored by the data
+mean, $b_g$ is interpretable as the NB-limit burst size (and is
+identified through the higher moments / tail behaviour), and
+$k^-_g$ controls how far the gene departs from the NB limit (large
+$k^-_g$ recovers NB; moderate $k^-_g$ admits bimodality).
+
+**Prior recommendations.** A natural choice in unconstrained space
+is Normal-on-each-parameter with a softplus transform to the
+positive real line. We use, by default:
+
+$$
+\log \mu_g \,\sim\, \mathcal{N}(0,\, 3^2),
+\qquad
+\log b_g \,\sim\, \mathcal{N}(0,\, 1.5^2),
+\qquad
+\log k^-_g \,\sim\, \mathcal{N}(3,\, 2^2),
+$$ {#eq-twostate-priors}
+
+(reading $\log$ here as the inverse of softplus, not exp; the
+quantitative difference is small for values away from 0).
+
+The shift of the $k^-$ prior toward a moderately large value
+encodes a **mild NB tilt**: under softplus, $\mathcal{N}(3, 2^2)$
+puts most posterior mass on $k^-_g \in [\sim 0.55, \sim 6.3]$,
+which spans the bursty regime ($k^- \lesssim 1$) and an NB-like
+edge ($k^- \gtrsim 5$). Genes the NB fits well are pushed by the
+likelihood into the upper end; bursty genes are pulled by the
+likelihood toward the lower end. This is intentionally a *mild*
+prior — strong NB defaults are available by tightening the
+$k^-$ prior, or by switching the transform to a heavier-tailed
+log-normal, but at the cost of making it harder for the data to
+overcome the prior when a gene genuinely is bursty.
+
+## Inference: Gauss-Jacobi quadrature instead of ${}_1F_1$ {#sec-twostate-quadrature}
+
+The per-observation marginal log-likelihood, derived from the
+thinned Poisson-Beta @eq-twostate-thinned-poisson-beta, is
+
+$$
+\log \mathcal{L}(u_{gc} \mid \mu_g, b_g, k^-_g, \nu_c)
+\,=\,
+\log \int_0^1 \mathrm{Poisson}\!\big(u_{gc} \,\big|\, \hat r_g\, p\, \nu_c\big)
+\cdot
+\mathrm{Beta}\!\big(p \,\big|\, \alpha_g, \beta_g\big)\, dp,
+$$ {#eq-twostate-loglik}
+
+with $(\alpha_g, \beta_g, \hat r_g)$ as in @eq-twostate-derived.
+The integrand is a smooth function of $p$ on $[0, 1]$ multiplied
+by a Beta density. This is exactly the situation that **Gauss-
+Jacobi quadrature** is designed for.
+
+The standard Gauss-Jacobi rule on $[-1, 1]$ approximates integrals
+weighted by $(1-x)^a (1+x)^b$ as a sum at carefully chosen nodes,
+
+$$
+\int_{-1}^{1} f(x)\, (1-x)^a (1+x)^b\, dx
+\,\approx\,
+\sum_{k=1}^K w_k\, f(x_k),
+$$ {#eq-gauss-jacobi-standard}
+
+with the rule exact for polynomials $f$ of degree up to $2K-1$.
+Mapping to $[0, 1]$ via $p = (1+x)/2$ and matching the Beta weight
+to the standard form ($a = \beta - 1$, $b = \alpha - 1$) gives
+
+$$
+\int_0^1 g(p) \cdot \mathrm{Beta}(p \mid \alpha, \beta)\, dp
+\,\approx\,
+\sum_{k=1}^K \tilde w_k\, g(p_k),
+$$ {#eq-gauss-jacobi-beta}
+
+where the nodes $p_k$ and weights $\tilde w_k$ depend on
+$(\alpha, \beta)$ and the order $K$. The nodes are computed from
+the eigenvalues of a tridiagonal matrix whose entries are the
+classical Jacobi three-term recurrence coefficients; the weights
+are obtained from the first row of the corresponding eigenvectors
+(the Golub-Welsch construction). Both nodes and weights depend
+smoothly on $(\alpha, \beta)$, and the eigendecomposition is
+differentiable via implicit differentiation, so the entire
+log-likelihood can be embedded inside an automatic-differentiation
+inference loop with no special treatment.
+
+We evaluate @eq-twostate-loglik via the log-sum-exp identity
+
+$$
+\log \mathcal{L}(u_{gc} \mid \cdots)
+\,=\,
+\operatorname*{logsumexp}_{k=1, \ldots, K}
+\!\left[
+\log \tilde w_k \,+\, \log\mathrm{Poisson}\!\big(u_{gc} \,\big|\, \hat r_g\, p_k\, \nu_c\big)
+\right],
+$$ {#eq-twostate-loglik-quad}
+
+with the inner log-Poisson computed in log-rate form to keep both
+overflow at large rates and underflow at small $p_k$ from biting.
+
+The choice $K \in \{40, \ldots, 80\}$ is sufficient for UMI counts
+$u_{gc}$ up to several hundred — the Poisson factor has effective
+polynomial degree on the order of $u_{gc}$, and the rule is exact
+through degree $2K - 1$. For exceptional very-high-mean genes the
+quadrature can be augmented with a Gaussian approximation of the
+Poisson kernel at the modal location of $p$, but this is an
+optional refinement that the implementer should profile before
+adding.
+
+## Integration with the existing pipeline {#sec-twostate-integration}
+
+Three properties make the integration with the rest of scribe's
+pipeline frictionless.
+
+1. **Capture efficiency is unchanged.** The thinning closure
+   @eq-twostate-thinning-collapsed means the per-cell capture
+   probability $\nu_c$ enters the two-state likelihood by
+   multiplying the rate, exactly as it enters the NB likelihood in
+   @sec-capture-prior. The same priors, the same hierarchical
+   structures, the same biology-informed anchors all carry over.
+
+2. **The parameter set per gene grows from $(r_g, p_g)$ to
+   $(\mu_g, b_g, k^-_g)$.** Posterior summaries gain a per-gene
+   $k^-_g$ that flags bursty genes: posteriors concentrated above
+   some threshold are NB-like; posteriors near or below $1$ are
+   genuinely bursty and would not have been fit by the NB. The
+   derived $\alpha_g = \mu_g/b_g$ and $b_g$ are NB-limit-natural
+   quantities — readers used to the NB family can compare them
+   directly to the NB shape and burst size from the fast-switching
+   limit @eq-nb-limit.
+
+3. **Compositional inference / differential expression** is the
+   one place that needs more care. The shared-$p$ Dirichlet-
+   multinomial factorisation that makes NBDM such a clean
+   compositional model (@sec-dirichlet-multinomial) relies on a
+   special algebraic property of the Gamma distribution
+   (independent Gammas with a shared rate normalise to a
+   Dirichlet) that the Beta does not share. The per-cell
+   composition $\rho_g = \hat r_g\, p_g / \sum_j \hat r_j\, p_j$
+   is still a well-defined random vector on the simplex, and a
+   sample-based CLR-DE pipeline still applies — but the
+   closed-form Dirichlet step disappears. A full development of
+   the corresponding sample-based DE workflow is forward work; see
+   the broader DE plan for the projected design.
+
+## Practical recommendations {#sec-twostate-practical}
+
+The two-state likelihood is most useful as a *targeted refinement*
+of the NB family rather than a wholesale replacement. Concrete
+recommendations:
+
+- **Default**: keep the NB family for analyses where a per-gene NB
+  fit is adequate. The two-state machinery is more expensive (one
+  quadrature sum per observation) and only purchases extra
+  flexibility on bursty / bimodal genes.
+
+- **Switch to two-state when** a posterior predictive check on
+  the NB shows a systematic mismatch you cannot fix with NB
+  parameter changes: an excess of zeros next to a heavy right
+  tail, or a literal bimodal histogram. For those genes, the
+  two-state $k^-_g$ posterior tells you whether the bimodality is
+  real (posterior of $k^-_g$ concentrated near or below 1) or an
+  artefact of model misspecification elsewhere (posterior of
+  $k^-_g$ pushed up against the prior near a large value).
+
+- **Default-to-NB priors.** The $k^-$ prior in
+  @eq-twostate-priors is a mild lean toward the NB limit; the
+  data dominate the prior whenever the bursty signature is
+  present. Analysts wanting a stronger NB default can tighten the
+  $k^-$ prior; analysts wanting a flat prior can broaden it.
+  Either is a one-line change in the prior specification; the
+  model itself is unchanged.
+
+- **Validation plan.** A reasonable rollout is: (i) synthetic
+  data with known $(\mu, b, k^-)$ per gene to confirm parameter
+  recovery, (ii) a curated subset of ~50 real genes split between
+  NB-easy and NB-poor-fit cases to confirm the two-state model
+  matches the NB on the easy genes and improves the fit on the
+  hard ones, (iii) the full dataset with a per-gene comparison of
+  posterior predictive ECDFs.

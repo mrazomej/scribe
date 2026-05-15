@@ -35,6 +35,8 @@ class ModelType(str, Enum):
     ZINB = "zinb"
     NBVCP = "nbvcp"
     ZINBVCP = "zinbvcp"
+    TWOSTATE = "twostate"
+    TWOSTATEVCP = "twostatevcp"
 
     def with_mixture(self) -> str:
         """Get the mixture version of this model."""
@@ -107,6 +109,11 @@ class Parameterization(str, Enum):
     STANDARD = "standard"
     LINKED = "linked"
     ODDS_RATIO = "odds_ratio"
+    # Two-state promoter natural parameterization: samples mu only as a
+    # core parameter; burst_size and k_off come in as MODEL_EXTRA_PARAMS
+    # for the twostate / twostatevcp models. See the TwoStateParameterization
+    # class in parameterizations/__init__.py.
+    TWO_STATE_NATURAL = "two_state_natural"
 
     # ------------------------------------------------------------------
     # Backward-compatible deserialization of removed hierarchical values.

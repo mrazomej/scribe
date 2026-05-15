@@ -86,6 +86,23 @@ class BiologicalSamplingMixin:
         yields another NB with an effective :math:`\\hat{p}`.  By sampling
         from NB(r, p) directly we recover the pre-capture distribution.
         """
+        # Phase-1 gate: TwoState (Poisson-Beta compound) does not
+        # expose NB-style (r, p). A TwoState-specific biological PPC
+        # would sample from PoissonBetaCompound(α, β, r̂) directly; that
+        # path is deferred to phase 2. For phase 1, the standard
+        # numpyro.infer.Predictive(model, guide) call still works end
+        # to end — use that for a generic PPC.
+        _bm = getattr(self.model_config, "base_model", None)
+        if _bm in ("twostate", "twostatevcp"):
+            raise NotImplementedError(
+                f"get_ppc_samples_biological() is not implemented for "
+                f"base_model={_bm!r} in phase 1. The TwoState (Poisson-"
+                f"Beta compound) likelihood has no NB-style (r, p) "
+                f"parameters; a Poisson-Beta-specific biological PPC "
+                f"is deferred to phase 2. Use numpyro.infer.Predictive "
+                f"on the model + guide directly for a standard PPC."
+            )
+
         # Create default RNG key if not provided
         if rng_key is None:
             rng_key = random.PRNGKey(42)
@@ -193,6 +210,16 @@ class BiologicalSamplingMixin:
         get_map_ppc_samples : MAP PPC including technical noise.
         get_ppc_samples_biological : Full-posterior biological PPC.
         """
+        # Phase-1 gate for TwoState — see ``get_ppc_samples_biological``
+        # above for the same rationale.
+        _bm = getattr(self.model_config, "base_model", None)
+        if _bm in ("twostate", "twostatevcp"):
+            raise NotImplementedError(
+                f"get_map_ppc_samples_biological() is not implemented for "
+                f"base_model={_bm!r} in phase 1. Use numpyro.infer.Predictive "
+                f"on the model directly for a standard PPC."
+            )
+
         if rng_key is None:
             rng_key = random.PRNGKey(42)
 

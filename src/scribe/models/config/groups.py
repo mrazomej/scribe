@@ -180,6 +180,23 @@ class GuideFamilyConfig(BaseModel):
             "Guide family for LNM learned diagonal ALR scales (d_mode=learned)"
         ),
     )
+    # TwoState (Poisson-Beta compound) gene-level extras. Pydantic with
+    # ``extra='forbid'`` rejects unknown fields, so we declare them
+    # explicitly here. Default ``None`` falls back to MeanFieldGuide via
+    # ``GuideFamilyConfig.get``.
+    burst_size: Optional[GuideFamily] = Field(
+        None,
+        description=(
+            "Guide family for the TwoState NB-limit mean burst size "
+            "(per gene, positive)."
+        ),
+    )
+    k_off: Optional[GuideFamily] = Field(
+        None,
+        description=(
+            "Guide family for the TwoState OFF rate (per gene, positive)."
+        ),
+    )
 
     # --------------------------------------------------------------------------
     # Amortization Configuration

@@ -738,7 +738,13 @@ def _create_vae_model(
             likelihood_instance = likelihood_class()
     else:
         likelihood_class = LIKELIHOOD_REGISTRY[base_model]
-        if base_model in ("nbvcp", "zinbvcp"):
+        if base_model in ("nbvcp", "zinbvcp", "twostatevcp"):
+            # TwoStateVCP shares the NBVCP capture-instantiation
+            # contract (same constructor kwargs); the rate-composition
+            # math diverges inside ``sample`` but the wiring here is
+            # identical. Phase 1 honours only ``p_capture`` for the
+            # TwoState family; ``phi_capture`` is rejected at sample
+            # time.
             capture_param_name = param_strategy.transform_model_param(
                 "p_capture"
             )
@@ -1238,8 +1244,11 @@ def create_model(
         likelihood_class = BNB_LIKELIHOOD_REGISTRY[base_model]
     else:
         likelihood_class = LIKELIHOOD_REGISTRY[base_model]
-    if base_model in ("nbvcp", "zinbvcp"):
-        # Get the transformed capture param name (p_capture or phi_capture)
+    if base_model in ("nbvcp", "zinbvcp", "twostatevcp"):
+        # Get the transformed capture param name (p_capture or phi_capture).
+        # TwoStateVCP shares this wiring with NBVCP (same constructor
+        # contract); the rate-composition divergence happens inside
+        # ``sample``, not here.
         capture_param_name = param_strategy.transform_model_param("p_capture")
         # Detect biology-informed capture spec to pass to likelihood
         from ..builders.parameter_specs import BiologyInformedCaptureSpec

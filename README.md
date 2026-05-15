@@ -186,12 +186,14 @@ fit with Laplace inference, while LNM is fit through the VAE path.
 SCRIBE's four likelihoods build on each other -- the base Negative Binomial model
 can be extended with zero inflation and/or variable capture probability:
 
-| Likelihood                  | Code string | Construction               | Extra Parameters    | Best For                    |
-| --------------------------- | ----------- | -------------------------- | ------------------- | --------------------------- |
-| **Negative Binomial**       | `"nbdm"`    | Base model                 | --                  | Baseline analysis, fast     |
-| **Zero-Inflated NB**        | `"zinb"`    | NB + zero inflation        | `gate`              | Data with excess zeros      |
-| **NB + variable capture**   | `"nbvcp"`   | NB + capture probability   | `p_capture`         | Variable sequencing depth   |
-| **ZINB + variable capture** | `"zinbvcp"` | ZINB + capture probability | `gate`, `p_capture` | Complex technical variation |
+| Likelihood                       | Code string     | Construction               | Extra Parameters                   | Best For                         |
+| -------------------------------- | --------------- | -------------------------- | ---------------------------------- | -------------------------------- |
+| **Negative Binomial**            | `"nbdm"`        | Base model                 | --                                 | Baseline analysis, fast          |
+| **Zero-Inflated NB**             | `"zinb"`        | NB + zero inflation        | `gate`                             | Data with excess zeros           |
+| **NB + variable capture**        | `"nbvcp"`       | NB + capture probability   | `p_capture`                        | Variable sequencing depth        |
+| **ZINB + variable capture**      | `"zinbvcp"`     | ZINB + capture probability | `gate`, `p_capture`                | Complex technical variation      |
+| **Two-state promoter**           | `"twostate"`    | Poisson-Beta compound      | `burst_size`, `k_off`              | Bursty / bimodal genes (Phase 1) |
+| **Two-state + variable capture** | `"twostatevcp"` | Two-state + capture prob   | `burst_size`, `k_off`, `p_capture` | Bursty genes with variable depth |
 
 #### Logistic-Normal Multinomial (LNM) Family
 
@@ -222,17 +224,44 @@ levels and want to avoid the composition/totals decoupling assumption. Use LNM
 when you need compositional DE in ALR/CLR coordinates or when the data naturally
 separates into composition and library size.
 
+#### Two-state Promoter (Poisson-Beta) Family
+
+The two-state promoter likelihood is a Poisson-Beta compound — per-gene counts
+emerge from `p_gc ~ Beta(α_g, β_g)` and `u_gc | p_gc ~ Poisson(r̂_g · p_gc ·
+ν_c)`. It captures the bursty / bimodal genes the NB family cannot fit (excess
+zeros simultaneously with a heavy right tail, or literal bimodal histograms from
+slow promoter switching). The closed-form NB is recovered in the `k_off → ∞`
+limit, so the two-state model nests inside the NB family rather than competing
+with it.
+
+The marginal log-likelihood is evaluated via Gauss-Jacobi quadrature over `p`
+(the closed-form ₁F₁ is numerically fragile in the bursty regime). The natural
+parameterization samples three positive per-gene parameters via Normal+softplus:
+`mu` (mean expression), `burst_size` (NB-limit burst size), and `k_off` (OFF
+rate; large favours the NB regime).
+
+| Likelihood                 | Code string     | Construction            | When to Use                                 |
+| -------------------------- | --------------- | ----------------------- | ------------------------------------------- |
+| **TwoState**               | `"twostate"`    | Poisson-Beta compound   | Bursty / bimodal genes the NB cannot fit    |
+| **TwoState + var capture** | `"twostatevcp"` | TwoState + capture prob | Bursty genes with variable sequencing depth |
+
+**Phase 1 limitations**: mixtures, VAE inference, multi-dataset indexing, BNB
+overdispersion, biology-informed capture priors, and the existing biological-PPC
+/ denoising helpers are not yet wired for the TwoState family. Build-time
+validation rejects these combinations with a clear directive. See
+[paper/_two_state_promoter.qmd](paper/_two_state_promoter.qmd) for the
+mathematics.
+
 #### Negative-Binomial LogNormal (NBLN) Family
 
-NBLN is the heavier-tailed sibling of PLN: per-gene NB counts with a
-per-gene dispersion ``r_g`` instead of Poisson, drawn from the same
-correlated log-normal rate structure ``Σ = WW^⊤ + diag(d)``. Use it
-when PLN's residual variance underfits gene-level overdispersion (the
-common case on real scRNA-seq).
+NBLN is the heavier-tailed sibling of PLN: per-gene NB counts with a per-gene
+dispersion ``r_g`` instead of Poisson, drawn from the same correlated log-normal
+rate structure ``Σ = WW^⊤ + diag(d)``. Use it when PLN's residual variance
+underfits gene-level overdispersion (the common case on real scRNA-seq).
 
-| Likelihood | Code string | Construction        | When to Use                                                                                     |
-| ---------- | ----------- | ------------------- | ----------------------------------------------------------------------------------------------- |
-| **NBLN**   | `"nbln"`    | NB + low-rank LN    | Absolute-count compositional model with per-gene overdispersion; uses Laplace inference.        |
+| Likelihood | Code string | Construction     | When to Use                                                                              |
+| ---------- | ----------- | ---------------- | ---------------------------------------------------------------------------------------- |
+| **NBLN**   | `"nbln"`    | NB + low-rank LN | Absolute-count compositional model with per-gene overdispersion; uses Laplace inference. |
 
 NBLN-Laplace ships with a three-stage stable workflow:
 
@@ -487,11 +516,11 @@ laplace_results = scribe.fit(
 
 ### Inference Methods
 
-| Method      | Engine                            | Precision | Use Case                                                                          |
-| ----------- | --------------------------------- | --------- | --------------------------------------------------------------------------------- |
-| **SVI**     | Adam optimizer                    | float32   | Fast exploration, large datasets                                                  |
-| **MCMC**    | NUTS sampler                      | float64   | Exact posterior, gold standard                                                    |
-| **VAE**     | Encoder-decoder                   | float32   | Latent representations, embeddings                                                |
+| Method      | Engine                            | Precision | Use Case                                                                            |
+| ----------- | --------------------------------- | --------- | ----------------------------------------------------------------------------------- |
+| **SVI**     | Adam optimizer                    | float32   | Fast exploration, large datasets                                                    |
+| **MCMC**    | NUTS sampler                      | float64   | Exact posterior, gold standard                                                      |
+| **VAE**     | Encoder-decoder                   | float32   | Latent representations, embeddings                                                  |
 | **Laplace** | EM + per-cell Newton + outer Adam | float32   | PLN- / NBLN-family models with per-cell latents; gene-gene covariance via $WW^\top$ |
 
 SVI results can initialize MCMC chains for faster convergence, even across

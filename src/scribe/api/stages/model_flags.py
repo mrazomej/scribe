@@ -42,6 +42,7 @@ def resolve_model_flags(ctx: FitContext) -> None:
     # path and the POISSON_LOGNORMAL parameterization, with capture as
     # an internal flag (no separate "nblnvcp" model string).
     _is_pln_model = model.lower() in ("pln", "nbln")
+    _is_twostate_model = model.lower() in ("twostate", "twostatevcp")
     _default_model = "nbvcp"
 
     if variable_capture is None and zero_inflation is None:
@@ -83,6 +84,28 @@ def resolve_model_flags(ctx: FitContext) -> None:
                     UserWarning,
                     stacklevel=2,
                 )
+
+    # -- TwoState (Poisson-Beta) family: zero-inflation not supported in phase 1
+    elif _is_twostate_model:
+        if _zi:
+            raise ValueError(
+                "Zero-inflation is not supported for the TwoState family in "
+                "phase 1. Drop zero_inflation=True or pick a DM-family model."
+            )
+        _resolved = "twostatevcp" if _vc else "twostate"
+        # Accept the hint when ``model='twostate'`` was passed alongside
+        # ``variable_capture=True``; reject the contradictory inverse
+        # (``model='twostatevcp', variable_capture=False``).
+        if model.lower() != "twostate" and model.lower() != _resolved:
+            raise ValueError(
+                f"model='{model}' conflicts with the feature flags "
+                f"(zero_inflation={zero_inflation}, "
+                f"variable_capture={variable_capture}) which resolve to "
+                f"'{_resolved}'. Pass model='twostate' to let "
+                f"variable_capture select the variant, or set "
+                f"variable_capture to match the model name."
+            )
+        ctx.model = _resolved
 
     # -- LNM family: zero-inflation not supported -----------------------------
     elif _is_lnm_model:

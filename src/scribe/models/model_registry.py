@@ -87,6 +87,8 @@ def _likelihood_class_for(model_type: str):
             ZeroInflatedNBLikelihood,
             NBWithVCPLikelihood,
             ZINBWithVCPLikelihood,
+            TwoStateLikelihood,
+            TwoStateVCPLikelihood,
         )
 
         _LIKELIHOOD_CLASS_BY_MODEL_TYPE = {
@@ -101,6 +103,10 @@ def _likelihood_class_for(model_type: str):
             "zinb_mix": ZeroInflatedNBLikelihood,
             "nbvcp_mix": NBWithVCPLikelihood,
             "zinbvcp_mix": ZINBWithVCPLikelihood,
+            # Two-state promoter (Poisson-Beta compound). Phase 1 does
+            # not support mixtures, so no ``_mix`` entries here.
+            "twostate": TwoStateLikelihood,
+            "twostatevcp": TwoStateVCPLikelihood,
         }
 
     cls = _LIKELIHOOD_CLASS_BY_MODEL_TYPE.get(model_type)

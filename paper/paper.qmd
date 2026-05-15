@@ -51,6 +51,9 @@ repository](https://github.com/mrazomej/scribe)
 <!-- Extension: Beta Negative Binomial for heavier tails -->
 {{< include _beta_negative_binomial.qmd >}}
 
+<!-- Extension: Two-state promoter (Poisson-Beta) for bursty / bimodal genes -->
+{{< include _two_state_promoter.qmd >}}
+
 <!-- ============================================================ -->
 <!-- Block 2: Model Comparison & Diagnostics -->
 <!-- ============================================================ -->

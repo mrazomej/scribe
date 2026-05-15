@@ -1444,6 +1444,94 @@ class ModelConfig(BaseModel):
         )
 
     # --------------------------------------------------------------------------
+    # Phase-1 build-time validation for the TwoState (Poisson-Beta) family
+    # --------------------------------------------------------------------------
+
+    @model_validator(mode="after")
+    def validate_twostate_phase1_constraints(self) -> "ModelConfig":
+        """Reject unsupported TwoState combinations at config build time.
+
+        The TwoState family is phase 1 of an incremental rollout; many
+        cross-cutting features (mixtures, VAE, multi-dataset, BNB
+        overdispersion, biology-informed capture priors) are deferred
+        to phase 2. Catching the offending config here gives the user a
+        clear error at builder time rather than a deep
+        ``NotImplementedError`` from inside the cell plate.
+
+        Phase-1 constraints enforced:
+
+        - ``parameterization`` must be ``TWO_STATE_NATURAL``.
+        - ``overdispersion`` must be ``NONE`` (no BNB on TwoState).
+        - ``n_components`` must be ``None`` or ``1`` (no mixtures).
+        - ``inference_method`` must NOT be ``VAE`` (no VAE on TwoState).
+        - ``n_datasets`` must be ``None`` or ``1`` (no multi-dataset).
+        - Biology-informed capture priors on ``twostatevcp`` are rejected.
+        """
+        if self.base_model not in ("twostate", "twostatevcp"):
+            return self
+
+        # (1) Parameterization must be two_state_natural.
+        if self.parameterization != Parameterization.TWO_STATE_NATURAL:
+            raise ValueError(
+                f"base_model={self.base_model!r} requires "
+                f"parameterization='two_state_natural'; got "
+                f"{self.parameterization.value!r}. Use "
+                f"ModelConfigBuilder().with_parameterization('two_state_natural')."
+            )
+
+        # (2) BNB overdispersion is not supported in phase 1.
+        if self.overdispersion != OverdispersionType.NONE:
+            raise ValueError(
+                "TwoState + BNB overdispersion is not supported in phase 1; "
+                "drop overdispersion='bnb' or pick an NB-family model."
+            )
+
+        # (3) Mixtures are not supported in phase 1.
+        if self.n_components is not None and self.n_components > 1:
+            raise ValueError(
+                "TwoState mixtures are not supported in phase 1; "
+                "drop n_components or set it to 1."
+            )
+
+        # (4) VAE inference is not supported in phase 1.
+        if self.inference_method == InferenceMethod.VAE:
+            raise ValueError(
+                "TwoState + VAE inference is not supported in phase 1; "
+                "use inference_method='svi' or 'mcmc'."
+            )
+
+        # (5) Multi-dataset indexing is not supported in phase 1.
+        if self.n_datasets is not None and self.n_datasets > 1:
+            raise ValueError(
+                "TwoState + multi-dataset is not supported in phase 1; "
+                "drop n_datasets or set it to 1."
+            )
+
+        # (6) Biology-informed capture priors on twostatevcp are not
+        # supported. We detect them via either direct fields on the
+        # priors object or extras carried in ``__pydantic_extra__``.
+        if self.base_model == "twostatevcp" and self.priors is not None:
+            bio_keys = ("eta_capture", "organism", "mu_eta")
+            prior_extras = (
+                getattr(self.priors, "__pydantic_extra__", None) or {}
+            )
+            hit = any(
+                getattr(self.priors, k, None) is not None
+                or prior_extras.get(k) is not None
+                for k in bio_keys
+            )
+            if hit:
+                raise ValueError(
+                    "TwoState + biology-informed capture priors "
+                    "(priors.eta_capture / priors.organism / priors.mu_eta) "
+                    "are not supported in phase 1. Pass a flat Beta prior "
+                    "on p_capture via priors={'p_capture': (alpha, beta)} "
+                    "instead."
+                )
+
+        return self
+
+    # --------------------------------------------------------------------------
     # Serialization Methods
     # --------------------------------------------------------------------------
 

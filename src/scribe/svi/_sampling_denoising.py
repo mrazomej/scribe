@@ -256,6 +256,22 @@ class DenoisingSamplingMixin:
         get_map_ppc_samples_biological : MAP-based biological PPC.
         scribe.sampling.denoise_counts : Core denoising utility.
         """
+        # TwoState (Poisson-Beta compound) does not expose ``r`` and
+        # ``p`` as canonical parameters; the denoising posterior
+        # derivation in ``paper/_denoising.qmd`` is NB/BNB-specific.
+        # A TwoState-specific denoiser is phase 2 work. Gate this
+        # entry point early so users get a clear message.
+        _bm = getattr(self.model_config, "base_model", None)
+        if _bm in ("twostate", "twostatevcp"):
+            raise NotImplementedError(
+                f"denoise_counts_map() is not implemented for "
+                f"base_model={_bm!r} in phase 1. The closed-form "
+                f"Poisson-Gamma posterior used by the NB-family denoiser "
+                f"does not apply to the TwoState (Poisson-Beta compound) "
+                f"likelihood; a Poisson-Beta-specific denoiser is "
+                f"deferred to phase 2."
+            )
+
         if rng_key is None:
             rng_key = random.PRNGKey(42)
 
@@ -426,6 +442,20 @@ class DenoisingSamplingMixin:
         get_ppc_samples_biological : Full-posterior biological PPC.
         scribe.sampling.denoise_counts : Core denoising utility.
         """
+        # Phase-1 gate: TwoState (Poisson-Beta compound) has no
+        # NB-style ``(r, p)`` parameters and the existing
+        # Poisson-Gamma denoising posterior does not apply. A
+        # TwoState-specific denoiser is phase 2 work.
+        _bm = getattr(self.model_config, "base_model", None)
+        if _bm in ("twostate", "twostatevcp"):
+            raise NotImplementedError(
+                f"denoise_counts_posterior() is not implemented for "
+                f"base_model={_bm!r} in phase 1. The closed-form "
+                f"Poisson-Gamma posterior used by the NB-family "
+                f"denoiser does not apply to the TwoState "
+                f"(Poisson-Beta compound) likelihood; a "
+                f"Poisson-Beta-specific denoiser is deferred to phase 2."
+            )
         if rng_key is None:
             rng_key = random.PRNGKey(42)
 

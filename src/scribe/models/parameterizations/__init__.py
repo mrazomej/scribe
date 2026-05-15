@@ -1154,6 +1154,89 @@ def _compute_p_from_phi_T(phi_T: jnp.ndarray) -> jnp.ndarray:
 
 
 # ==============================================================================
+# Two-State Natural Parameterization
+# ==============================================================================
+
+
+class TwoStateParameterization(Parameterization):
+    """Two-state natural parameterization for the Poisson-Beta compound.
+
+    Samples ``mu`` (per-gene mean) as the only core parameter. The
+    two other per-gene parameters of the two-state model —
+    ``burst_size`` and ``k_off`` — are introduced via
+    ``MODEL_EXTRA_PARAMS`` rather than as core parameters of this
+    class so that the parameterization layer remains a thin
+    description of the "mean expression" sampling strategy and the
+    model-specific extras describe how that mean is shaped into the
+    full distribution. See the paper section
+    @sec-twostate-reparam for the math.
+
+    Implementation notes
+    --------------------
+    - There are no NB-style derived parameters (``r``, ``p``, ``phi``).
+      The derived (alpha, beta, rate) quantities are computed inside
+      ``TwoStateLikelihood._build_dist`` from (mu, burst_size, k_off)
+      and exposed as ``numpyro.deterministic`` sites.
+    - The ``unconstrained`` argument to :meth:`build_param_specs` is
+      kept for signature compatibility but ignored — the spec class
+      chosen reflects the model config's ``positive_transform`` field
+      (the factory passes the resolved transform via the constructor).
+    """
+
+    @property
+    def name(self) -> str:
+        return "two_state_natural"
+
+    @property
+    def core_parameters(self) -> List[str]:
+        return ["mu"]
+
+    @property
+    def gene_param_name(self) -> str:
+        return "mu"
+
+    def build_param_specs(
+        self,
+        unconstrained: bool,
+        guide_families: GuideFamilyConfig,
+        n_components: Optional[int] = None,
+        mixture_params: Optional[List[str]] = None,
+    ) -> List[ParamSpec]:
+        """Build the mu spec.
+
+        Uses :class:`PositiveNormalSpec` (Normal + transform). The
+        transform itself is set by the factory based on the model
+        config's ``positive_transform`` field; this method just
+        provides the loc/scale defaults.
+
+        Phase 1 explicitly does not support mixtures, so we ignore
+        ``n_components`` and ``mixture_params``.
+        """
+        del unconstrained, n_components, mixture_params  # phase 1 ignores
+        mu_family = guide_families.get("mu")
+        return [
+            PositiveNormalSpec(
+                name="mu",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=mu_family,
+                is_mixture=False,
+            ),
+        ]
+
+    def build_derived_params(self) -> List[DerivedParam]:
+        """No NB-style derived parameters at the parameterization layer.
+
+        ``alpha``, ``beta``, and ``rate`` are computed inside
+        :class:`TwoStateLikelihood._build_dist` from
+        (mu, burst_size, k_off) and exposed as
+        :func:`numpyro.deterministic` sites at gene rank.
+        """
+        return []
+
+
+# ==============================================================================
 # Parameterization Registry
 # ==============================================================================
 
@@ -1169,6 +1252,7 @@ _logistic_normal_canonical = LogisticNormalParameterization(variant="canonical")
 _logistic_normal_mean_prob = LogisticNormalParameterization(variant="mean_prob")
 _logistic_normal_mean_odds = LogisticNormalParameterization(variant="mean_odds")
 _poisson_lognormal = PoissonLogNormalParameterization()
+_two_state_natural = TwoStateParameterization()
 
 # Registry mapping internal parameterization keys to singleton instances.
 # The LNM family appears under three keys mirroring the DM-family trio.
@@ -1186,6 +1270,9 @@ PARAMETERIZATIONS = {
     "logistic_normal_mean_odds": _logistic_normal_mean_odds,
     # PLN parameterization (single variant, no totals submodel)
     "count_lognormal": _poisson_lognormal,
+    # Two-state natural parameterization (Poisson-Beta compound; samples
+    # mu only — burst_size and k_off come in as MODEL_EXTRA_PARAMS).
+    "two_state_natural": _two_state_natural,
     # Backward compatibility for the DM family
     "standard": _canonical,
     "linked": _mean_prob,
@@ -1323,6 +1410,19 @@ def resolve_user_parameterization_for_model(
     if model_lower in ("pln", "nbln"):
         return "count_lognormal"
 
+    # TwoState (Poisson-Beta compound) accepts only its own
+    # parameterization. Reject DM-family strings with a directive to
+    # the supported value rather than silently re-mapping.
+    if model_lower in ("twostate", "twostatevcp"):
+        param_lower = parameterization.lower()
+        if param_lower in ("two_state_natural", "natural"):
+            return "two_state_natural"
+        raise ValueError(
+            f"parameterization={parameterization!r} is not supported for "
+            f"model={model!r}. Use parameterization='two_state_natural' "
+            f"(the Poisson-Beta compound's natural parameterization)."
+        )
+
     param_lower = parameterization.lower()
 
     # Backward-compat: the legacy DM-family aliases collapse to the
@@ -1372,6 +1472,7 @@ __all__ = [
     "MeanOddsParameterization",
     "LogisticNormalParameterization",
     "PoissonLogNormalParameterization",
+    "TwoStateParameterization",
     "PARAMETERIZATIONS",
     # Family helpers
     "is_logistic_normal_family",

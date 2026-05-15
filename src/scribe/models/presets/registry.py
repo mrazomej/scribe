@@ -69,6 +69,8 @@ from ..components.likelihoods import (
     ZeroInflatedBNBLikelihood,
     BNBWithVCPLikelihood,
     ZIBNBWithVCPLikelihood,
+    TwoStateLikelihood,
+    TwoStateVCPLikelihood,
 )
 from ..config import GuideFamilyConfig
 from ..parameterizations import Parameterization
@@ -91,6 +93,12 @@ MODEL_EXTRA_PARAMS: Dict[str, List[str]] = {
     "zinb": ["gate"],
     "nbvcp": ["p_capture"],
     "zinbvcp": ["gate", "p_capture"],
+    # TwoState (Poisson-Beta compound). mu comes from the
+    # TwoStateParameterization core parameter; burst_size and k_off
+    # are gene-specific extras built via build_burst_size_spec /
+    # build_k_off_spec.
+    "twostate": ["burst_size", "k_off"],
+    "twostatevcp": ["burst_size", "k_off", "p_capture"],
 }
 
 # Likelihood class registry - maps model type to likelihood class
@@ -103,6 +111,8 @@ LIKELIHOOD_REGISTRY: Dict[str, Type[Likelihood]] = {
     "zinb": ZeroInflatedNBLikelihood,
     "nbvcp": NBWithVCPLikelihood,
     "zinbvcp": ZINBWithVCPLikelihood,
+    "twostate": TwoStateLikelihood,
+    "twostatevcp": TwoStateVCPLikelihood,
 }
 
 # BNB counterparts -- selected when overdispersion='bnb'
@@ -795,6 +805,132 @@ def build_r_spec(
 # ------------------------------------------------------------------------------
 
 
+def _select_positive_spec(positive_transform):
+    """Return ``SoftplusNormalSpec`` or ``PositiveNormalSpec`` based on the
+    configured ``positive_transform`` on the model config.
+
+    Centralised so ``build_burst_size_spec``, ``build_k_off_spec`` and
+    ``TwoStateParameterization.build_param_specs`` agree on the
+    mapping. The factory resolves ``positive_transform`` to a string
+    or transform instance from ``ModelConfig``; we accept either.
+    """
+    import numpyro.distributions as _dist
+
+    # Accept transform instances (preferred), strings, or None.
+    if positive_transform is None:
+        return SoftplusNormalSpec
+    if isinstance(positive_transform, str):
+        if positive_transform.lower() == "softplus":
+            return SoftplusNormalSpec
+        if positive_transform.lower() == "exp":
+            return PositiveNormalSpec
+        raise ValueError(
+            f"positive_transform={positive_transform!r} not recognised; "
+            f"expected 'softplus' or 'exp'."
+        )
+    # Transform instance.
+    if isinstance(positive_transform, _dist.transforms.SoftplusTransform):
+        return SoftplusNormalSpec
+    if isinstance(positive_transform, _dist.transforms.ExpTransform):
+        return PositiveNormalSpec
+    raise ValueError(
+        f"positive_transform={positive_transform!r} not recognised; "
+        f"expected a SoftplusTransform or ExpTransform instance."
+    )
+
+
+def build_burst_size_spec(
+    unconstrained: bool,
+    guide_families: GuideFamilyConfig,
+    n_components: Optional[int] = None,
+    mixture_params: Optional[List[str]] = None,
+    positive_transform: Any = None,
+    prior_loc: float = 0.0,
+    prior_scale: float = 1.5,
+) -> List[ParamSpec]:
+    """Build the burst_size parameter spec for TwoState models.
+
+    burst_size is the NB-limit mean burst size b_g = r_hat_g / k_off_g.
+    The natural prior is Normal-on-unconstrained-space with a softplus
+    transform (configurable to exp via the model config's
+    ``positive_transform`` field).
+
+    Default prior Normal(0, 1.5) gives, under softplus, an
+    intermediate-broad prior with most mass on b ~ 0.1 to ~5.
+
+    The ``unconstrained`` argument is accepted for signature
+    consistency with other builders but ignored; PositiveNormalSpec /
+    SoftplusNormalSpec are always unconstrained-Normal-with-transform.
+    """
+    del unconstrained  # always unconstrained-with-transform
+    is_mixture = False
+    if n_components is not None:
+        if mixture_params is None:
+            is_mixture = True
+        else:
+            is_mixture = "burst_size" in mixture_params
+
+    spec_cls = _select_positive_spec(positive_transform)
+    return [
+        spec_cls(
+            name="burst_size",
+            shape_dims=("n_genes",),
+            default_params=(prior_loc, prior_scale),
+            is_gene_specific=True,
+            guide_family=guide_families.get("burst_size"),
+            is_mixture=is_mixture,
+        )
+    ]
+
+
+def build_k_off_spec(
+    unconstrained: bool,
+    guide_families: GuideFamilyConfig,
+    n_components: Optional[int] = None,
+    mixture_params: Optional[List[str]] = None,
+    positive_transform: Any = None,
+    prior_loc: float = 3.0,
+    prior_scale: float = 2.0,
+) -> List[ParamSpec]:
+    """Build the k_off parameter spec for TwoState models.
+
+    k_off is the OFF rate (non-dimensionalised by mRNA decay). This
+    is where "default to NB" is encoded — large k_off favors the NB
+    limit. Default prior Normal(3, 2) gives, under softplus,
+    post-softplus quantiles roughly (0.55, 3.05, 6.30) at (5%, 50%,
+    95%), which mildly tilts toward NB while still admitting the
+    bursty regime within ~2 SD.
+
+    Strict NB defaults are available three ways: (i) pass a tighter
+    ``(prior_loc, prior_scale)`` via ``with_priors``, (ii) set
+    ``positive_transform="exp"`` for LogNormal semantics with heavier
+    tails, or (iii) wait for the phase-2 relative-ratio
+    parameterization.
+    """
+    del unconstrained  # always unconstrained-with-transform
+    is_mixture = False
+    if n_components is not None:
+        if mixture_params is None:
+            is_mixture = True
+        else:
+            is_mixture = "k_off" in mixture_params
+
+    spec_cls = _select_positive_spec(positive_transform)
+    return [
+        spec_cls(
+            name="k_off",
+            shape_dims=("n_genes",),
+            default_params=(prior_loc, prior_scale),
+            is_gene_specific=True,
+            guide_family=guide_families.get("k_off"),
+            is_mixture=is_mixture,
+        )
+    ]
+
+
+# ------------------------------------------------------------------------------
+
+
 def build_extra_param_spec(
     param_name: str,
     unconstrained: bool,
@@ -909,10 +1045,27 @@ def build_extra_param_spec(
             mixture_params=mixture_params,
             model_config=model_config,
         )
+    elif param_name == "burst_size":
+        return build_burst_size_spec(
+            unconstrained=unconstrained,
+            guide_families=guide_families,
+            n_components=n_components,
+            mixture_params=mixture_params,
+            positive_transform=positive_transform,
+        )
+    elif param_name == "k_off":
+        return build_k_off_spec(
+            unconstrained=unconstrained,
+            guide_families=guide_families,
+            n_components=n_components,
+            mixture_params=mixture_params,
+            positive_transform=positive_transform,
+        )
     else:
         raise ValueError(
             f"Unknown extra parameter: {param_name}. "
-            f"Valid parameters are: gate, p_capture, bnb_concentration, r"
+            f"Valid parameters are: gate, p_capture, bnb_concentration, r, "
+            f"burst_size, k_off"
         )
 
 
