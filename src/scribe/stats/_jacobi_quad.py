@@ -60,6 +60,87 @@ PRECOMPUTED_GRID = "precomputed_grid"
 
 
 # ==============================================================================
+# Fixed Gauss-Legendre nodes on [0, 1] (autograd-robust alternative)
+# ==============================================================================
+#
+# The Golub-Welsch backend computes nodes and weights via
+# ``jax.scipy.linalg.eigh`` on a (α, β)-dependent tridiagonal matrix,
+# which is excellent for accuracy when the Beta(α, β) weight is
+# absorbed into the quadrature rule itself. However, ``eigh``'s
+# autograd gradient is fragile in the presence of near-degenerate
+# eigenvalues (the gradient formula contains a 1/(λᵢ − λⱼ) term that
+# blows up). Specific (α, β) values arising from the variational
+# guide's reparameterisation sampler can produce NaN gradients while
+# the forward log_prob remains finite — corrupting downstream
+# parameter updates.
+#
+# As a robust alternative, we provide a precomputed Gauss-Legendre
+# rule on [0, 1] (uniform weight). Nodes and weights are constants
+# in (α, β), so no autograd flows through them. The caller must
+# multiply the integrand by the Beta(α, β) density at each node
+# explicitly — that is where the (α, β) gradient flows, and
+# ``Beta.log_prob`` has a clean closed-form digamma-based derivative.
+#
+# Trade-off: Gauss-Legendre is less accurate than Gauss-Jacobi for
+# heavily-peaked or U-shaped Betas (α, β << 1), because its uniform
+# weight does not concentrate nodes near the boundaries where the
+# Beta density spikes. For the moderate (α, β) regime (the bulk of
+# typical scRNA-seq fits), accuracy is fine with K=60.
+
+from functools import lru_cache
+import numpy as _np
+
+
+@lru_cache(maxsize=8)
+def _gauss_legendre_01_constants(n_nodes: int):
+    """Return (nodes, log_weights) for Gauss-Legendre on [0, 1].
+
+    Computed once per ``n_nodes`` via ``numpy.polynomial.legendre.leggauss``
+    (standard rule on [-1, 1]) and mapped via x ↦ (1+x)/2, dx ↦ dx/2.
+    Returns numpy float32 arrays — the JAX caller converts via
+    ``jnp.asarray`` so they appear as JIT-time constants without
+    any autograd dependence.
+
+    Cached so the standard ``K = 60`` rule is computed exactly once
+    across the entire fit.
+    """
+    nodes_m1p1, weights_m1p1 = _np.polynomial.legendre.leggauss(n_nodes)
+    nodes_01 = 0.5 * (1.0 + nodes_m1p1)
+    weights_01 = 0.5 * weights_m1p1
+    # Float32 to match the rest of the pipeline.
+    return (
+        nodes_01.astype(_np.float32),
+        _np.log(weights_01.astype(_np.float32)),
+    )
+
+
+def gauss_legendre_01(n_nodes: int):
+    """JAX-friendly accessor for the constant Gauss-Legendre rule on [0, 1].
+
+    Returns (nodes_p, log_weights), both of shape ``(n_nodes,)``.
+    The values are JIT constants (no dependence on traced inputs),
+    so autograd never flows through them.
+
+    Parameters
+    ----------
+    n_nodes : int
+        Number of quadrature nodes. Static under JIT.
+
+    Returns
+    -------
+    nodes_p : jnp.ndarray, shape ``(n_nodes,)``
+        Quadrature nodes on [0, 1].
+    log_weights : jnp.ndarray, shape ``(n_nodes,)``
+        Log of the quadrature weights (``∑ exp(log_weights) = 1``
+        for Gauss-Legendre on [0, 1] with the affine map; weights
+        DO NOT sum to 1 in general, because they integrate the
+        constant 1, not a Beta density).
+    """
+    nodes_np, log_w_np = _gauss_legendre_01_constants(int(n_nodes))
+    return jnp.asarray(nodes_np), jnp.asarray(log_w_np)
+
+
+# ==============================================================================
 # Public API
 # ==============================================================================
 

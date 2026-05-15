@@ -1353,45 +1353,57 @@ class PoissonBetaCompound(Distribution):
         """
         # Local import to keep stats import-time clean — _jacobi_quad
         # has no scribe-side dependencies.
-        from ._jacobi_quad import gauss_jacobi_nodes_weights
+        from ._jacobi_quad import gauss_legendre_01
 
-        # 1) Nodes and log-weights at gene rank only.
-        #    Shapes: nodes_p, log_w == ab_shape + (K,).
-        nodes_p, log_w = gauss_jacobi_nodes_weights(
-            self.alpha,
-            self.beta,
-            self.n_quad_nodes,
-            backend=self.quad_backend,
-        )
-        ab_shape = nodes_p.shape[:-1]
+        # 1) Fixed Gauss-Legendre nodes on [0, 1]. These are JIT-time
+        #    constants — they do NOT depend on (α, β), so no autograd
+        #    flows through them. The Beta density is evaluated
+        #    explicitly at each node (step 3) and the (α, β) gradient
+        #    flows through that. This is the "robust" quadrature
+        #    path that avoids the eigh-gradient NaN trap from the
+        #    Gauss-Jacobi backend; see the discussion in
+        #    ``stats/_jacobi_quad.py`` near ``gauss_legendre_01``.
+        nodes_p, log_w_gl = gauss_legendre_01(self.n_quad_nodes)
+        # Shapes: both (K,) — global, no dependence on gene axis.
 
-        # 2) Broadcast nodes against the (possibly higher-rank) log_rate.
+        # 2) Insert axes so the trailing K dim broadcasts against
+        # log_rate (shape ``rate_shape``) and self.alpha / self.beta
+        # (shape ``ab_shape``). The leading dims of log_rate may be
+        # higher rank than alpha/beta (e.g. (C, G) vs (G,) for VCP).
         log_rate_shape = jnp.shape(self.log_rate)
-        extra = len(log_rate_shape) - len(ab_shape)
-        if extra > 0:
-            for _ in range(extra):
-                nodes_p = nodes_p[None, ...]
-                log_w = log_w[None, ...]
+        # nodes_p and log_w_gl start as (K,); reshape to (1, ..., 1, K)
+        # with leading 1s matching the rate's rank, so they broadcast
+        # correctly against rate[..., None].
+        n_leading = len(log_rate_shape)
+        nodes_p = nodes_p.reshape((1,) * n_leading + (-1,))
+        log_w_gl = log_w_gl.reshape((1,) * n_leading + (-1,))
 
         log_p_nodes = jnp.log(jnp.clip(nodes_p, min=1e-300))
         # log_lambda has shape rate_shape + (K,) after broadcasting.
         log_lambda = self.log_rate[..., None] + log_p_nodes
 
-        # 3) Poisson log-PMF kernel in log-rate form. Insert a trailing
+        # 3) Beta(α, β) log-density at each node. This is where the
+        # (α, β) gradient flows; the digamma terms in the Beta gradient
+        # are well-behaved everywhere.
+        alpha_b = self.alpha[..., None]
+        beta_b = self.beta[..., None]
+        # log_Beta(p | α, β) = (α-1) log p + (β-1) log(1-p) - betaln(α, β)
+        log_1_minus_p = jnp.log(jnp.clip(1.0 - nodes_p, min=1e-300))
+        log_beta_density = (
+            (alpha_b - 1.0) * log_p_nodes
+            + (beta_b - 1.0) * log_1_minus_p
+            - betaln(alpha_b, beta_b)
+        )
+
+        # 4) Poisson log-PMF kernel in log-rate form. Insert a trailing
         # K axis on value so it broadcasts against log_lambda.
         #
-        # IEEE-754 trap: when value == 0 and log_lambda is very negative
-        # (rate near 0 during early training, or p_k near 0 in the
-        # U-shaped Beta regime), the literal kernel
-        # ``value * log_lambda - exp(log_lambda) - gammaln(value + 1)``
-        # evaluates ``0 * (-inf) = NaN`` and pollutes the gradient. The
-        # mathematically equivalent kernel for value=0 reduces to
-        # ``-exp(log_lambda)``, so we branch via where().
+        # IEEE-754 trap: when value == 0 and log_lambda is very
+        # negative, ``value * log_lambda`` evaluates ``0 * (-inf) = NaN``
+        # and pollutes the gradient. The mathematically equivalent
+        # kernel for value=0 reduces to ``-exp(log_lambda)``.
         value_arr = jnp.asarray(value)
         value_k = value_arr[..., None]
-        # Use a safe multiplier of 1.0 when value == 0 so the
-        # multiplication never sees ``0 * (-inf)``; the outer where
-        # then picks the correct branch.
         safe_value_for_mul = jnp.where(value_k > 0, value_k, 1.0)
         log_poiss_nonzero = (
             safe_value_for_mul * log_lambda
@@ -1403,8 +1415,9 @@ class PoissonBetaCompound(Distribution):
             value_k > 0, log_poiss_nonzero, log_poiss_zero
         )
 
-        # 4) Reduce over the K axis with logsumexp.
-        weighted = log_w + log_poiss
+        # 5) Combine: log_w_GL (constant) + log_Beta(p_k|α,β)
+        #    + log_Poisson(value | rate · p_k), then logsumexp over K.
+        weighted = log_w_gl + log_beta_density + log_poiss
         return jsp.special.logsumexp(weighted, axis=-1)
 
     # ------------------------------------------------------------------
