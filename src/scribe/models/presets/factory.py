@@ -986,6 +986,11 @@ def create_model(
     # right gene-mean neighborhood. The user can still override this
     # via ``priors={"mu": (loc, scale)}``; the override is applied
     # later in step 5.5+ and takes precedence.
+    #
+    # ``mu_prior_loc`` may be a scalar (legacy) or a per-gene array
+    # (current ``inject_twostate_data_init``). Both are valid loc
+    # arguments to ``dist.Normal`` and to ``numpyro.param``; ``Tuple
+    # [Any, ...]`` on ``ParamSpec.default_params`` accepts either.
     if base_model in ("twostate", "twostatevcp"):
         _twostate_priors_extra = (
             getattr(model_config.priors, "__pydantic_extra__", None) or {}
@@ -995,10 +1000,18 @@ def create_model(
             for i, spec in enumerate(param_specs):
                 if spec.name == "mu":
                     _, _scale = spec.default_params
+                    # Preserve array rank if the caller stashed a
+                    # per-gene anchor; coerce JAX arrays via
+                    # ``jnp.asarray`` rather than ``float`` so we don't
+                    # collapse the gene axis to a single number.
+                    if jnp.ndim(_mu_prior_loc) == 0:
+                        _new_loc = float(_mu_prior_loc)
+                    else:
+                        _new_loc = jnp.asarray(_mu_prior_loc)
                     param_specs[i] = spec.model_copy(
                         update={
                             "default_params": (
-                                float(_mu_prior_loc),
+                                _new_loc,
                                 _scale,
                             )
                         }

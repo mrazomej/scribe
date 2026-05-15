@@ -307,7 +307,11 @@ class ParamSpec(BaseModel):
 
     name: str
     shape_dims: Tuple[str, ...]
-    default_params: Tuple[float, ...]
+    # NOTE: ``Tuple[Any, ...]`` rather than ``Tuple[float, ...]`` so the
+    # entries can be JAX arrays (per-gene anchors) as well as scalars.
+    # All downstream code paths (sample_prior, setup_guide) handle both
+    # ranks via JAX broadcasting; the type relaxation is intentional.
+    default_params: Tuple[Any, ...]
     prior: Optional[Tuple[float, float]] = Field(
         None,
         description="Prior hyperparameters (validated based on distribution)",

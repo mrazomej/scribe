@@ -1,23 +1,21 @@
 """Data-derived initialization for the TwoState (Poisson-Beta) family.
 
-Mirrors the NBLN data-init pattern (``r_prior_loc``) but for the
-TwoState model's gene-mean parameter ``mu``. Without this, the default
-prior ``softplus(Normal(0, 1))`` puts mu ~ 0.7 with a 95% upper bound
-near 5 — many orders of magnitude below realistic gene means after the
-gene-coverage filter (which keeps the top-expressing genes). The
-result is a Poisson rate vastly smaller than the observed counts at
-SVI step 0, producing log-PMF underflow and NaN gradients that take
-thousands of steps to recover from.
+For each gene ``g``, we anchor the prior loc of ``mu_g`` at the
+unconstrained-space value whose transformed image equals the empirical
+mean.  Concretely:
 
-The fix is the same as for NBLN: compute an empirical log-mean per
-gene, take the median as a global anchor, and stash it as
-``mu_prior_loc`` on the priors extras. The factory reads this on the
-next pass and overrides the ``mu`` spec's prior loc accordingly.
+- For ``positive_transform="softplus"`` (default): ``loc_g = softplus_inv
+  (empirical_mean_g)`` so that ``softplus(loc_g) ≈ empirical_mean_g``.
+  Softplus is asymptotically linear, so ``loc_g`` numerically equals
+  ``empirical_mean_g`` for moderately or strongly expressed genes.
+- For ``positive_transform="exp"``: ``loc_g = log(empirical_mean_g)``,
+  the classic log-mean anchor (mirrors NBLN's ``r_prior_loc`` shape).
 
-This is a *global scalar* anchor, not a per-gene one — the spec API
-is scalar by contract. Per-gene initialization would require a
-spec-level change; the scalar anchor is sufficient to start SVI in
-the right neighborhood, and the per-gene posterior moves from there.
+This anchors each gene's variational ``mu_loc`` at the right *order of
+magnitude* on the first SVI step — without it, highly-expressed genes
+(e.g. ribosomal genes with mean ≈ 100–500) start at ``mu ≈ 1`` and
+have to climb 4-5 decades against bounded SVI gradients, which the
+optimizer may not finish inside a reasonable step budget.
 """
 
 from __future__ import annotations
@@ -27,6 +25,7 @@ import jax.numpy as jnp
 
 __all__ = [
     "empirical_log_mean_from_counts",
+    "empirical_mu_anchor_from_counts",
     "inject_twostate_data_init",
 ]
 
@@ -55,31 +54,85 @@ def empirical_log_mean_from_counts(
     return jnp.log(per_gene_mean + pseudocount)
 
 
-def inject_twostate_data_init(model_config, counts):
-    """Stash a data-derived ``mu_prior_loc`` on the priors extras.
+def empirical_mu_anchor_from_counts(
+    counts,
+    transform: str = "softplus",
+    floor: float = 1e-3,
+    ceil: float = 1e6,
+) -> jnp.ndarray:
+    """Per-gene unconstrained-space anchor for ``mu``.
 
-    The factory reads ``priors.__pydantic_extra__["mu_prior_loc"]`` to
-    override the default prior loc on ``mu`` for TwoState models. We
-    use the *median* of the per-gene log-means rather than the mean
-    because the right tail (housekeeping genes) is much longer than
-    the left tail; the median is a more robust centre for the
-    Normal-on-unconstrained prior.
+    Computes the empirical per-gene mean, clamps it to ``[floor, ceil]``,
+    then maps through the inverse of the configured positive transform.
+
+    Parameters
+    ----------
+    counts : array_like, shape ``(n_cells, n_genes)``
+        Raw count matrix.
+    transform : {"softplus", "exp"}, default "softplus"
+        The positive transform used in the model.  The inverse used
+        here is ``log(expm1(x))`` for softplus and ``log(x)`` for exp.
+    floor : float, default 1e-3
+        Lower clamp on the empirical mean before inversion (keeps zero-
+        expression genes finite under both ``log`` and ``log·expm1``).
+    ceil : float, default 1e6
+        Upper clamp; protects ``expm1`` from overflowing in float32.
+
+    Returns
+    -------
+    jnp.ndarray, shape ``(n_genes,)``
+        Per-gene unconstrained-space loc for the ``mu`` prior.
+    """
+    counts_arr = jnp.asarray(counts, dtype=jnp.float32)
+    per_gene_mean = counts_arr.mean(axis=0)
+    per_gene_mean = jnp.clip(per_gene_mean, min=floor, max=ceil)
+
+    if transform == "softplus":
+        # Stable softplus_inv: log(expm1(x)) overflows in float32
+        # for x ≳ 88, so we split on a threshold.
+        # For x <= 20: log(expm1(x))   — the naive form, stable here.
+        # For x  > 20: x + log1p(-exp(-x))
+        #              ≡ log(exp(x) - 1) without computing exp(x).
+        # The two branches agree to high precision around x=20.
+        return jnp.where(
+            per_gene_mean > 20.0,
+            per_gene_mean + jnp.log1p(-jnp.exp(-per_gene_mean)),
+            jnp.log(jnp.expm1(per_gene_mean)),
+        )
+    if transform == "exp":
+        return jnp.log(per_gene_mean)
+    raise ValueError(
+        f"Unknown positive transform {transform!r}; expected "
+        "'softplus' or 'exp'."
+    )
+
+
+def inject_twostate_data_init(model_config, counts):
+    """Stash a per-gene ``mu_prior_loc`` array on the priors extras.
+
+    The factory reads ``priors.__pydantic_extra__["mu_prior_loc"]`` and
+    replaces the default scalar prior loc on ``mu`` with this array.
+    Each gene's variational ``mu_loc`` then initializes at its own
+    empirical mean (in unconstrained space), so the optimizer doesn't
+    need to climb decades on the first SVI step.
 
     Parameters
     ----------
     model_config : ModelConfig
-        Freshly built configuration.
+        Freshly built configuration.  The ``positive_transform`` field
+        (default "softplus") controls the inverse-transform used to
+        compute the per-gene anchor.
     counts : array_like, shape ``(n_cells, n_genes)``
         Count matrix after gene-coverage filtering.
 
     Returns
     -------
     ModelConfig
-        New ``ModelConfig`` with the priors extras augmented. The
+        New ``ModelConfig`` with the priors extras augmented.  The
         original is not mutated.
     """
-    log_means = empirical_log_mean_from_counts(counts)
-    mu_prior_loc = float(jnp.median(log_means))
+    transform = getattr(model_config, "positive_transform", "softplus")
+    mu_prior_loc = empirical_mu_anchor_from_counts(counts, transform=transform)
 
     from ..models.config.groups import PriorOverrides
 
