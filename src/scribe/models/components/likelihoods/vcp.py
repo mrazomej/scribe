@@ -29,6 +29,7 @@ from .base import (
     _sample_p_capture_unconstrained,
     _sample_capture_biology_informed,
     _sample_hierarchical_mu_eta,
+    sample_capture_param,
 )
 from ._log_prob import nbvcp_log_prob, zinbvcp_log_prob
 from ....core.axis_layout import (
@@ -214,23 +215,18 @@ class NBWithVCPLikelihood(Likelihood):
     ) -> jnp.ndarray:
         """Sample the capture parameter using pre-configured sampling strategy.
 
-        This method uses the configuration set at construction time to avoid
-        runtime isinstance checks that can slow down JIT compilation.
+        Thin wrapper around :func:`sample_capture_param` (module-level
+        helper in :mod:`scribe.models.components.likelihoods.base`).
+        Kept as a method for backward-compatibility with subclasses
+        that override it.
         """
-        if use_phi_capture:
-            if self.is_unconstrained and self.transform is not None:
-                return _sample_phi_capture_unconstrained(
-                    capture_prior_params, self.transform, self.constrained_name
-                )
-            else:
-                return _sample_phi_capture_constrained(capture_prior_params)
-        else:
-            if self.is_unconstrained and self.transform is not None:
-                return _sample_p_capture_unconstrained(
-                    capture_prior_params, self.transform, self.constrained_name
-                )
-            else:
-                return _sample_p_capture_constrained(capture_prior_params)
+        return sample_capture_param(
+            use_phi_capture=use_phi_capture,
+            prior_params=capture_prior_params,
+            is_unconstrained=self.is_unconstrained,
+            transform=self.transform,
+            constrained_name=self.constrained_name,
+        )
 
     # --------------------------------------------------------------------------
 
@@ -779,21 +775,18 @@ class ZINBWithVCPLikelihood(Likelihood):
         use_phi_capture: bool,
         capture_prior_params: Tuple[float, float],
     ) -> jnp.ndarray:
-        """Sample the capture parameter using pre-configured sampling strategy."""
-        if use_phi_capture:
-            if self.is_unconstrained and self.transform is not None:
-                return _sample_phi_capture_unconstrained(
-                    capture_prior_params, self.transform, self.constrained_name
-                )
-            else:
-                return _sample_phi_capture_constrained(capture_prior_params)
-        else:
-            if self.is_unconstrained and self.transform is not None:
-                return _sample_p_capture_unconstrained(
-                    capture_prior_params, self.transform, self.constrained_name
-                )
-            else:
-                return _sample_p_capture_constrained(capture_prior_params)
+        """Sample the capture parameter using pre-configured sampling strategy.
+
+        Thin wrapper around :func:`sample_capture_param` (module-level
+        helper in :mod:`scribe.models.components.likelihoods.base`).
+        """
+        return sample_capture_param(
+            use_phi_capture=use_phi_capture,
+            prior_params=capture_prior_params,
+            is_unconstrained=self.is_unconstrained,
+            transform=self.transform,
+            constrained_name=self.constrained_name,
+        )
 
     # --------------------------------------------------------------------------
 

@@ -67,6 +67,7 @@ from .lnm import (
 )
 from .pln import PoissonLogNormalLikelihood
 from .nbln import NBLogNormalLikelihood
+from .two_state import TwoStateLikelihood, TwoStateVCPLikelihood
 
 __all__ = [
     "Likelihood",
@@ -89,4 +90,7 @@ __all__ = [
     "PoissonLogNormalLikelihood",
     # NBLN (NB-LogNormal)
     "NBLogNormalLikelihood",
+    # Two-state promoter (Poisson-Beta compound)
+    "TwoStateLikelihood",
+    "TwoStateVCPLikelihood",
 ]

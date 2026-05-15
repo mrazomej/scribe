@@ -1170,3 +1170,248 @@ class SoftmaxNormal(Distribution):
         key = random.PRNGKey(0)
         samples = self.sample(key, (10000,))
         return jnp.mean(samples, axis=0)
+
+
+# ==============================================================================
+# Poisson-Beta Compound Distribution (two-state promoter)
+# ==============================================================================
+
+
+class PoissonBetaCompound(Distribution):
+    """Poisson-Beta compound distribution (non-bursty two-state promoter).
+
+    Marginalises a Beta-distributed latent fraction p out of a Poisson:
+
+        p ~ Beta(α, β)
+        X | p ~ Poisson(rate · p)
+
+    The marginal distribution is the steady-state mRNA count distribution
+    for the non-bursty two-state promoter model (Peccoud-Ycart 1995). The
+    closed-form marginal involves the confluent hypergeometric function
+    ₁F₁ and is numerically fragile in the bursty regime; this class
+    evaluates log_prob via Gauss-Jacobi quadrature over p, which is
+    stable across the full parameter range.
+
+    Shape conventions
+    -----------------
+    α and β are typically gene-rank (G,). ``rate`` may be gene-rank
+    (G,) for the no-capture model or cell-by-gene (C, G) for the
+    variable-capture model. The class deliberately does NOT promote
+    α/β to the rate's rank: the quadrature nodes depend only on
+    (α, β), so computing them at the gene rank avoids a
+    per-(cell, gene) eigendecomposition.
+
+    Parameters
+    ----------
+    alpha : jnp.ndarray
+        Beta first shape parameter α (positive). Gene-rank.
+    beta : jnp.ndarray
+        Beta second shape parameter β (positive). Gene-rank.
+    rate : jnp.ndarray, optional
+        Poisson rate scale. At least one of ``rate`` or ``log_rate``
+        must be provided; the other is derived.
+    log_rate : jnp.ndarray, optional
+        Logarithm of the Poisson rate scale. Equivalent to ``rate``;
+        passing this directly is useful when the caller already has
+        the log form and wants to avoid a redundant exp/log round-trip.
+    n_quad_nodes : int, default=60
+        Number of Gauss-Jacobi nodes used for log_prob. Static under JIT.
+    quad_backend : str, default="golub_welsch"
+        Quadrature backend; see :mod:`scribe.stats._jacobi_quad`.
+
+    Notes
+    -----
+    The attributes ``self.alpha`` and ``self.beta`` are stored at
+    their original (gene-rank) shape and MUST NOT be reshaped to the
+    distribution's broadcast ``batch_shape``. Code that uses them
+    for quadrature must respect this contract.
+    """
+
+    arg_constraints = {
+        "alpha": constraints.positive,
+        "beta": constraints.positive,
+        "rate": constraints.positive,
+    }
+    support = constraints.nonnegative_integer
+    has_rsample = False
+    pytree_data_fields = ("alpha", "beta", "rate", "log_rate")
+    pytree_aux_fields = ("n_quad_nodes", "quad_backend")
+
+    def __init__(
+        self,
+        alpha,
+        beta,
+        rate=None,
+        *,
+        log_rate=None,
+        n_quad_nodes: int = 60,
+        quad_backend: str = "golub_welsch",
+        validate_args=None,
+    ):
+        if rate is None and log_rate is None:
+            raise ValueError(
+                "PoissonBetaCompound requires at least one of "
+                "'rate' or 'log_rate'."
+            )
+
+        # Gene-rank storage; DO NOT promote to the broadcast shape.
+        # The quadrature backend reads self.alpha / self.beta at their
+        # native rank, which is the whole point of the design.
+        self.alpha = jnp.asarray(alpha)
+        self.beta = jnp.asarray(beta)
+        if rate is not None:
+            self.rate = jnp.asarray(rate)
+            self.log_rate = (
+                jnp.asarray(log_rate)
+                if log_rate is not None
+                else jnp.log(jnp.clip(self.rate, a_min=1e-300))
+            )
+        else:
+            self.log_rate = jnp.asarray(log_rate)
+            self.rate = jnp.exp(self.log_rate)
+
+        # Static aux fields (Python int/str — not traced).
+        self.n_quad_nodes = int(n_quad_nodes)
+        self.quad_backend = str(quad_backend)
+
+        batch_shape = lax.broadcast_shapes(
+            jnp.shape(self.rate),
+            jnp.shape(self.alpha),
+            jnp.shape(self.beta),
+        )
+        super().__init__(batch_shape=batch_shape, validate_args=validate_args)
+
+    # ------------------------------------------------------------------
+
+    def sample(self, key, sample_shape=()):
+        """Ancestral sampling: p ~ Beta(α, β); x ~ Poisson(rate · p).
+
+        Handles ``rate`` of higher rank than (α, β) — e.g. VCP with
+        ``rate.shape == (C, G)`` and ``alpha.shape == (G,)`` — by
+        inserting axes into the drawn ``p`` so multiplication
+        broadcasts correctly.
+        """
+        assert is_prng_key(key)
+        k_beta, k_pois = random.split(key)
+
+        # Draw p at the gene rank, optionally prefixed by sample_shape.
+        ab_shape = lax.broadcast_shapes(
+            jnp.shape(self.alpha), jnp.shape(self.beta)
+        )
+        alpha_b = jnp.broadcast_to(self.alpha, ab_shape)
+        beta_b = jnp.broadcast_to(self.beta, ab_shape)
+        p = Beta(alpha_b, beta_b).sample(k_beta, sample_shape)
+        # p now has shape sample_shape + ab_shape.
+
+        # If rate has extra leading dims (e.g. cell axis), insert
+        # size-1 axes into p so multiplication broadcasts cell → 1.
+        # Both p and self.rate share the trailing gene axis.
+        rate_shape = jnp.shape(self.rate)
+        extra = len(rate_shape) - len(ab_shape)
+        if extra > 0:
+            insert_at = tuple(
+                range(len(sample_shape), len(sample_shape) + extra)
+            )
+            p = jnp.expand_dims(p, axis=insert_at)
+
+        # Compute λ; clamp to tiny positive to avoid Poisson(0) edge
+        # cases at extreme parameter values.
+        lam = self.rate * p
+        lam = jnp.clip(lam, a_min=1e-30)
+
+        return random.poisson(k_pois, lam).astype(jnp.int32)
+
+    # ------------------------------------------------------------------
+
+    def log_prob(self, value):
+        """Log-PMF via Gauss-Jacobi quadrature over the latent p.
+
+        Computes
+
+            log L(value | α, β, rate)
+              = log ∫₀¹ Poisson(value | rate · p) · Beta(p | α, β) dp
+
+        using ``self.n_quad_nodes`` Gauss-Jacobi nodes. The Poisson
+        log-PMF is evaluated in log-rate form,
+
+            value · log λ − exp(log λ) − lgamma(value + 1),
+
+        with log λ = log(rate) + log(p_k). This stays numerically
+        stable when ``rate`` is large or when ``p_k`` is near 0 in
+        the U-shaped Beta regime.
+
+        Parameters
+        ----------
+        value : jnp.ndarray
+            Non-negative integer counts, broadcastable to
+            ``self.batch_shape``.
+
+        Returns
+        -------
+        jnp.ndarray
+            Log-probability values of shape ``self.batch_shape``.
+        """
+        # Local import to keep stats import-time clean — _jacobi_quad
+        # has no scribe-side dependencies.
+        from ._jacobi_quad import gauss_jacobi_nodes_weights
+
+        # 1) Nodes and log-weights at gene rank only.
+        #    Shapes: nodes_p, log_w == ab_shape + (K,).
+        nodes_p, log_w = gauss_jacobi_nodes_weights(
+            self.alpha,
+            self.beta,
+            self.n_quad_nodes,
+            backend=self.quad_backend,
+        )
+        ab_shape = nodes_p.shape[:-1]
+
+        # 2) Broadcast nodes against the (possibly higher-rank) log_rate.
+        log_rate_shape = jnp.shape(self.log_rate)
+        extra = len(log_rate_shape) - len(ab_shape)
+        if extra > 0:
+            for _ in range(extra):
+                nodes_p = nodes_p[None, ...]
+                log_w = log_w[None, ...]
+
+        log_p_nodes = jnp.log(jnp.clip(nodes_p, a_min=1e-300))
+        # log_lambda has shape rate_shape + (K,) after broadcasting.
+        log_lambda = self.log_rate[..., None] + log_p_nodes
+
+        # 3) Poisson log-PMF kernel in log-rate form. Insert a trailing
+        # K axis on value so it broadcasts against log_lambda.
+        value_arr = jnp.asarray(value)
+        value_k = value_arr[..., None]
+        log_poiss = (
+            value_k * log_lambda - jnp.exp(log_lambda) - gammaln(value_k + 1.0)
+        )
+
+        # 4) Reduce over the K axis with logsumexp.
+        weighted = log_w + log_poiss
+        return jsp.special.logsumexp(weighted, axis=-1)
+
+    # ------------------------------------------------------------------
+    # Closed-form moments (cheap; no quadrature).
+    # ------------------------------------------------------------------
+
+    @property
+    def mean(self):
+        """⟨X⟩ = rate · α / (α + β)."""
+
+        return self.rate * self.alpha / (self.alpha + self.beta)
+
+    @property
+    def variance(self):
+        """Var[X] = ⟨X⟩ + rate² · Var[p].
+
+        Law of total variance:
+            Var[X] = ⟨Var[X|p]⟩ + Var(⟨X|p⟩)
+                  = ⟨rate · p⟩  + Var(rate · p)
+                  = rate · ⟨p⟩  + rate² · Var[p]
+        with
+            ⟨p⟩   = α / (α + β)
+            Var[p] = α·β / ((α + β)² · (α + β + 1))
+
+        """
+        ab = self.alpha + self.beta
+        var_p = self.alpha * self.beta / (ab**2 * (ab + 1.0))
+        return self.mean + self.rate**2 * var_p

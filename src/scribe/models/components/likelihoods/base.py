@@ -140,6 +140,61 @@ def _sample_capture_biology_informed(
     return capture_value
 
 
+# ------------------------------------------------------------------------------
+
+
+def sample_capture_param(
+    use_phi_capture: bool,
+    prior_params: Tuple[float, float],
+    is_unconstrained: bool,
+    transform: Optional[dist.transforms.Transform],
+    constrained_name: Optional[str],
+) -> jnp.ndarray:
+    """Module-level helper for sampling the per-cell capture parameter.
+
+    Promoted out of ``NBWithVCPLikelihood._sample_capture_param`` /
+    ``ZINBWithVCPLikelihood._sample_capture_param`` so any new VCP-
+    style likelihood (e.g. ``TwoStateVCPLikelihood``) can reuse the
+    same dispatch logic without inheriting from the NB classes.
+    Behaviour is identical to the original methods.
+
+    Parameters
+    ----------
+    use_phi_capture : bool
+        If True, sample ``phi_capture`` (BetaPrime / TransformedNormal);
+        otherwise sample ``p_capture`` (Beta / TransformedNormal).
+    prior_params : tuple of float
+        ``(loc, scale)`` of the underlying Normal in the unconstrained
+        path, or the Beta / BetaPrime shape parameters in the
+        constrained path.
+    is_unconstrained : bool
+        If True, dispatch to the TransformedDistribution path with
+        ``transform``; otherwise dispatch to the constrained path.
+    transform : Transform, optional
+        Required when ``is_unconstrained=True``.
+    constrained_name : str, optional
+        The deterministic site name for the constrained value in the
+        unconstrained path (e.g. ``"phi_capture"`` when the base site
+        is ``"phi_capture_unconstrained"``).
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled capture parameter (cell-rank inside the cell plate).
+    """
+    if use_phi_capture:
+        if is_unconstrained and transform is not None:
+            return _sample_phi_capture_unconstrained(
+                prior_params, transform, constrained_name
+            )
+        return _sample_phi_capture_constrained(prior_params)
+    if is_unconstrained and transform is not None:
+        return _sample_p_capture_unconstrained(
+            prior_params, transform, constrained_name
+        )
+    return _sample_p_capture_constrained(prior_params)
+
+
 # ==============================================================================
 # Hierarchical per-dataset mu_eta sampling helpers
 # ==============================================================================

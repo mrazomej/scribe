@@ -1244,3 +1244,82 @@ def zinbvcp_log_prob(
         weights=weights,
         weight_type=weight_type,
     )
+
+
+# ==============================================================================
+# Two-state promoter (Poisson-Beta compound) log-prob
+# ==============================================================================
+
+
+def twostate_log_prob(
+    counts: jnp.ndarray,
+    params: Dict,
+    *,
+    return_by: str = "cell",
+    cells_axis: int = 0,
+    dtype: jnp.dtype = jnp.float32,
+) -> jnp.ndarray:
+    """Full-array log-likelihood for the TwoState / TwoStateVCP model.
+
+    Phase 1 supports only the non-mixture, non-BNB path. The caller
+    (``TwoStateLikelihood.log_prob`` / ``TwoStateVCPLikelihood.log_prob``)
+    enforces this.
+
+    Dispatch:
+    - If ``"p_capture"`` is in ``params``, build the per-cell rate as
+      ``rate_gene[None, :] * p_capture[:, None]`` (shape ``(C, G)``).
+    - Otherwise, ``rate`` stays gene-rank ``(G,)`` and the
+      ``PoissonBetaCompound`` log_prob naturally broadcasts across
+      the cell axis of ``counts``.
+
+    Parameters
+    ----------
+    counts : jnp.ndarray
+        ``(n_cells, n_genes)`` when ``cells_axis=0`` (default), else
+        ``(n_genes, n_cells)`` and we transpose.
+    params : dict
+        Must contain ``"mu"``, ``"burst_size"``, ``"k_off"``. May
+        contain ``"p_capture"`` for the VCP variant.
+    return_by : {"cell", "gene"}, default="cell"
+        Reduction axis of the output.
+    cells_axis : int, default=0
+        Orientation of ``counts``.
+    dtype : jnp.dtype, default=jnp.float32
+        Working dtype.
+
+    Returns
+    -------
+    jnp.ndarray
+        Log-likelihood values, shape ``(n_cells,)`` or ``(n_genes,)``.
+    """
+    from ....stats.distributions import PoissonBetaCompound
+    from .two_state import _twostate_reparam
+
+    _check_return_by(return_by)
+
+    counts = _normalize_counts(counts, cells_axis, dtype)
+    n_cells, n_genes = counts.shape
+
+    mu = jnp.asarray(params["mu"], dtype=dtype)
+    burst_size = jnp.asarray(params["burst_size"], dtype=dtype)
+    k_off = jnp.asarray(params["k_off"], dtype=dtype)
+    alpha, beta, rate_gene, _eff_burst_size = _twostate_reparam(
+        mu, burst_size, k_off
+    )
+
+    if "p_capture" in params:
+        p_capture = jnp.asarray(params["p_capture"], dtype=dtype)
+        # p_capture is per-cell; rate composes to (C, G).
+        rate = rate_gene[None, :] * p_capture[:, None]
+    else:
+        rate = rate_gene
+
+    base = PoissonBetaCompound(alpha=alpha, beta=beta, rate=rate)
+    # log_prob over counts: PoissonBetaCompound has batch_shape equal
+    # to broadcast(rate, alpha, beta), so log_prob(counts) returns
+    # log-probabilities at each (cell, gene) cell.
+    log_p_cg = base.log_prob(counts)  # shape (n_cells, n_genes)
+
+    if return_by == "cell":
+        return log_p_cg.sum(axis=1)
+    return log_p_cg.sum(axis=0)
