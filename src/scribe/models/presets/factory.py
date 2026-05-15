@@ -980,6 +980,31 @@ def create_model(
                 update={"transform": _pos_transform}
             )
 
+    # TwoState data-driven init: when the priors carry an empirical
+    # ``mu_prior_loc`` (set by ``inject_twostate_data_init`` in the
+    # API stage), re-anchor the ``mu`` spec's loc so SVI starts in the
+    # right gene-mean neighborhood. The user can still override this
+    # via ``priors={"mu": (loc, scale)}``; the override is applied
+    # later in step 5.5+ and takes precedence.
+    if base_model in ("twostate", "twostatevcp"):
+        _twostate_priors_extra = (
+            getattr(model_config.priors, "__pydantic_extra__", None) or {}
+        )
+        _mu_prior_loc = _twostate_priors_extra.get("mu_prior_loc")
+        if _mu_prior_loc is not None:
+            for i, spec in enumerate(param_specs):
+                if spec.name == "mu":
+                    _, _scale = spec.default_params
+                    param_specs[i] = spec.model_copy(
+                        update={
+                            "default_params": (
+                                float(_mu_prior_loc),
+                                _scale,
+                            )
+                        }
+                    )
+                    break
+
     # ==========================================================================
     # Step 4.5: Apply gene-level p/phi hierarchy (Gaussian, horseshoe, or NEG)
     # ==========================================================================

@@ -1379,10 +1379,28 @@ class PoissonBetaCompound(Distribution):
 
         # 3) Poisson log-PMF kernel in log-rate form. Insert a trailing
         # K axis on value so it broadcasts against log_lambda.
+        #
+        # IEEE-754 trap: when value == 0 and log_lambda is very negative
+        # (rate near 0 during early training, or p_k near 0 in the
+        # U-shaped Beta regime), the literal kernel
+        # ``value * log_lambda - exp(log_lambda) - gammaln(value + 1)``
+        # evaluates ``0 * (-inf) = NaN`` and pollutes the gradient. The
+        # mathematically equivalent kernel for value=0 reduces to
+        # ``-exp(log_lambda)``, so we branch via where().
         value_arr = jnp.asarray(value)
         value_k = value_arr[..., None]
-        log_poiss = (
-            value_k * log_lambda - jnp.exp(log_lambda) - gammaln(value_k + 1.0)
+        # Use a safe multiplier of 1.0 when value == 0 so the
+        # multiplication never sees ``0 * (-inf)``; the outer where
+        # then picks the correct branch.
+        safe_value_for_mul = jnp.where(value_k > 0, value_k, 1.0)
+        log_poiss_nonzero = (
+            safe_value_for_mul * log_lambda
+            - jnp.exp(log_lambda)
+            - gammaln(value_k + 1.0)
+        )
+        log_poiss_zero = -jnp.exp(log_lambda)
+        log_poiss = jnp.where(
+            value_k > 0, log_poiss_nonzero, log_poiss_zero
         )
 
         # 4) Reduce over the K axis with logsumexp.

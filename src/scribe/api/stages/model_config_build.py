@@ -199,6 +199,42 @@ def _post_process(ctx, kw, model_config):
         else:
             model_config = _inject_pln_vae_init(ctx, model_config)
 
+    # TwoState: stash an empirical mu prior loc so SVI starts in the
+    # right gene-mean neighborhood. Without this, the default
+    # softplus(Normal(0, 1)) prior is many orders of magnitude below
+    # realistic gene means and SVI begins with NaN losses that take
+    # thousands of steps to recover from.
+    _base = (
+        model_config.base_model.value
+        if hasattr(model_config.base_model, "value")
+        else str(model_config.base_model)
+    )
+    if _base in ("twostate", "twostatevcp"):
+        model_config = _inject_twostate_data_init(ctx, model_config)
+
+    return model_config
+
+
+def _inject_twostate_data_init(ctx, model_config):
+    """Inject an empirical ``mu_prior_loc`` for TwoState models.
+
+    Computes the median per-gene log-mean from the (gene-coverage-
+    filtered) count matrix and stashes it as the prior loc for ``mu``
+    on the priors extras. The factory reads this when building the
+    parameterization's specs.
+    """
+    from ...core.twostate_data_init import inject_twostate_data_init
+
+    model_config = inject_twostate_data_init(model_config, ctx.count_data)
+    _extra = (
+        getattr(model_config.priors, "__pydantic_extra__", None) or {}
+    )
+    _log.info(
+        "TwoState: injected empirical mu_prior_loc=%.3f from %d-gene "
+        "count matrix.",
+        float(_extra.get("mu_prior_loc")),
+        ctx.count_data.shape[1] if ctx.count_data.ndim == 2 else -1,
+    )
     return model_config
 
 
