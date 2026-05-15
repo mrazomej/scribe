@@ -145,6 +145,11 @@ class Parameterization(str, Enum):
             # pickles persisting the legacy value still load via this
             # mapping.
             "poisson_lognormal": "count_lognormal",
+            # Short alias for the TwoState natural parameterization.
+            # ``parameterization='natural'`` is friendlier for
+            # interactive use; ``two_state_natural`` is the canonical
+            # form persisted in serialised configs.
+            "natural": "two_state_natural",
         }
         if isinstance(value, str):
             base = _legacy.get(value)

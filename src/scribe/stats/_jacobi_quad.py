@@ -188,7 +188,7 @@ def _jacobi_recurrence_coeffs(
     )
     # Numerical guard: tiny negative values can appear from float
     # round-off near the recurrence boundary; clamp to 0 before sqrt.
-    beta_n = jnp.sqrt(jnp.clip(beta_sq, a_min=0.0))
+    beta_n = jnp.sqrt(jnp.clip(beta_sq, min=0.0))
 
     return alpha_n, beta_n
 
@@ -258,7 +258,7 @@ def _golub_welsch_single(
     # Equivalently: this absorbs the zeroth-moment constant and the
     # Jacobian of the affine map. Using log-space to keep small
     # weights representable.
-    log_w_unnorm = jnp.log(jnp.clip(w_unnorm, a_min=1e-300))
+    log_w_unnorm = jnp.log(jnp.clip(w_unnorm, min=1e-300))
     log_weights = log_w_unnorm - jsp.special.logsumexp(log_w_unnorm)
 
     return nodes_p, log_weights

@@ -1273,6 +1273,11 @@ PARAMETERIZATIONS = {
     # Two-state natural parameterization (Poisson-Beta compound; samples
     # mu only — burst_size and k_off come in as MODEL_EXTRA_PARAMS).
     "two_state_natural": _two_state_natural,
+    # Short alias for the two-state natural parameterization. Both keys
+    # resolve to the same singleton; ``"natural"`` is preferred for
+    # interactive use, ``"two_state_natural"`` is the canonical form
+    # appearing in serialised configs.
+    "natural": _two_state_natural,
     # Backward compatibility for the DM family
     "standard": _canonical,
     "linked": _mean_prob,

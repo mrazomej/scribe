@@ -1264,7 +1264,7 @@ class PoissonBetaCompound(Distribution):
             self.log_rate = (
                 jnp.asarray(log_rate)
                 if log_rate is not None
-                else jnp.log(jnp.clip(self.rate, a_min=1e-300))
+                else jnp.log(jnp.clip(self.rate, min=1e-300))
             )
         else:
             self.log_rate = jnp.asarray(log_rate)
@@ -1317,7 +1317,7 @@ class PoissonBetaCompound(Distribution):
         # Compute λ; clamp to tiny positive to avoid Poisson(0) edge
         # cases at extreme parameter values.
         lam = self.rate * p
-        lam = jnp.clip(lam, a_min=1e-30)
+        lam = jnp.clip(lam, min=1e-30)
 
         return random.poisson(k_pois, lam).astype(jnp.int32)
 
@@ -1373,7 +1373,7 @@ class PoissonBetaCompound(Distribution):
                 nodes_p = nodes_p[None, ...]
                 log_w = log_w[None, ...]
 
-        log_p_nodes = jnp.log(jnp.clip(nodes_p, a_min=1e-300))
+        log_p_nodes = jnp.log(jnp.clip(nodes_p, min=1e-300))
         # log_lambda has shape rate_shape + (K,) after broadcasting.
         log_lambda = self.log_rate[..., None] + log_p_nodes
 
