@@ -641,6 +641,22 @@ def _apply_base_parameterization(
         distributions.update(
             _build_poisson_lognormal_posteriors(params, is_mixture, split)
         )
+    elif parameterization == Parameterization.TWO_STATE_NATURAL:
+        # TwoState (Poisson-Beta compound). The three per-gene
+        # parameters mu / burst_size / k_off are positive Normals
+        # under softplus (or exp). Phase 1 does not support mixtures
+        # or low-rank guides for this family.
+        distributions.update(
+            _build_two_state_posteriors(
+                params,
+                unconstrained,
+                is_mixture,
+                low_rank,
+                split,
+                skip,
+                pos_transform=pos_transform,
+            )
+        )
     else:
         raise ValueError(f"Unknown parameterization: {parameterization}")
 
@@ -3052,6 +3068,55 @@ def _build_mean_odds_posteriors(
                 distributions["mu"] = _build_lognormal_posterior(
                     params, "mu", is_mixture, split
                 )
+
+    return distributions
+
+
+def _build_two_state_posteriors(
+    params: Dict[str, jnp.ndarray],
+    unconstrained: bool,
+    is_mixture: bool,
+    low_rank: bool,
+    split: bool,
+    skip: Optional[set] = None,
+    *,
+    pos_transform=None,
+) -> Dict[str, Any]:
+    """Build posteriors for the TwoState (Poisson-Beta compound) family.
+
+    All three per-gene parameters (``mu``, ``burst_size``, ``k_off``)
+    are positive-valued in unconstrained-Normal-with-softplus form
+    (configurable to exp via ``positive_transform``). The constrained
+    fallback (``unconstrained=False``) uses LogNormal — practically
+    equivalent to the unconstrained-with-exp path.
+
+    Phase 1 does not support mixtures or low-rank joint guides for
+    the TwoState family; ``is_mixture`` and ``low_rank`` are accepted
+    for signature consistency but only the simple per-gene path is
+    exercised.
+    """
+    distributions = {}
+    skip = skip or set()
+    del low_rank  # phase 1: no low-rank joint guides for TwoState
+
+    if unconstrained:
+        for name in ("mu", "burst_size", "k_off"):
+            if name in skip:
+                continue
+            distributions[name] = _build_positive_normal_posterior(
+                params,
+                name,
+                is_mixture=False,  # phase 1: no mixtures
+                split=split,
+                transform=pos_transform,
+            )
+    else:
+        for name in ("mu", "burst_size", "k_off"):
+            if name in skip:
+                continue
+            distributions[name] = _build_lognormal_posterior(
+                params, name, is_mixture=False, split=split
+            )
 
     return distributions
 
