@@ -58,7 +58,9 @@ if TYPE_CHECKING:
 
 _BURST_MIN = 1e-4
 _ALPHA_MIN = 0.05
+_ALPHA_MAX = 1.0e3
 _K_OFF_MIN = 0.05
+_K_OFF_MAX = 1.0e3
 
 
 def _twostate_reparam(
@@ -77,30 +79,38 @@ def _twostate_reparam(
            rate_nat = µ + b · k_off
            E[count] = rate_nat · α_nat / (α_nat + β_nat) = µ.
 
-    2. Quadrature-safety floors. When α_nat drops below ``_ALPHA_MIN``
-       (low-expression gene) or k_off drops below ``_K_OFF_MIN`` (
-       bursty gene), the clamped values would shift the mean unless
-       we also adjust rate. The mean-preserving correction is
+    2. Quadrature-safety floors AND ceilings, with mean-preserving
+       rescaling. Below the lower floor (``_ALPHA_MIN`` /
+       ``_K_OFF_MIN``) the Beta is so U-shaped that Golub-Welsch
+       recurrence coefficients lose precision; above the upper cap
+       (``_ALPHA_MAX`` / ``_K_OFF_MAX``) the Jacobi recurrence
+       coefficient ``b² − a²`` suffers float32 catastrophic
+       cancellation for very large b. Both clamps preserve the mean
+       via
 
-           rate = µ · (α + β) / α
+           rate = µ · (α + β) / α,
 
-       which gives ``rate · α / (α + β) = µ`` identically. The clamp
-       changes the *shape* of the marginal in the bursty regime (less
-       U-shaped Beta) but does not bias the mean.
+       which gives ``rate · α / (α + β) = µ`` identically.
+
+       The upper cap matters most for highly-expressed genes that
+       give ``α_nat = µ/burst_size`` in the thousands at init (e.g.
+       a "pooled-other" gene-coverage column with µ ≈ 10⁴ and a
+       default burst_size ≈ 0.7 gives α_nat ≈ 14000, well into the
+       cancellation regime in float32).
 
     Returns
     -------
     alpha, beta, rate : jnp.ndarray
-        Floored, mean-preserving (α, β, rate) at gene rank.
+        Floored-and-capped, mean-preserving (α, β, rate) at gene rank.
     eff_burst_size : jnp.ndarray
-        ``µ / α`` — the burst size implied by the floored α. Equals
-        the input ``burst_size`` when no floor activated; otherwise
-        reflects the effective shape under the safety clamp.
+        ``µ / α`` — the burst size implied by the (floored, capped) α.
+        Equals the input ``burst_size`` when neither clamp activated;
+        otherwise reflects the effective shape under the safety clamp.
     """
     burst_size = jnp.maximum(burst_size, _BURST_MIN)
     alpha_nat = mu / burst_size
-    alpha = jnp.maximum(alpha_nat, _ALPHA_MIN)
-    beta = jnp.maximum(k_off, _K_OFF_MIN)
+    alpha = jnp.clip(alpha_nat, min=_ALPHA_MIN, max=_ALPHA_MAX)
+    beta = jnp.clip(k_off, min=_K_OFF_MIN, max=_K_OFF_MAX)
     rate = mu * (alpha + beta) / alpha
     eff_burst_size = mu / alpha
     return alpha, beta, rate, eff_burst_size
