@@ -19,7 +19,10 @@ from ._interactive import (
     _resolve_ppc_grid,
     plot_function,
 )
-from .dispatch import _get_predictive_samples_for_plot
+from .dispatch import (
+    _get_map_like_predictive_samples_for_plot,
+    _get_predictive_samples_for_plot,
+)
 from .gene_selection import (
     _coerce_and_align_counts_to_results,
     _coerce_counts,
@@ -120,6 +123,7 @@ def _prepare_ppc_data(
     n_cols,
     n_samples,
     ppc_level: str = "marginal",
+    map_sampling: bool = False,
 ):
     """Prepare gene selection and predictive samples for PPC plotting.
 
@@ -152,7 +156,18 @@ def _prepare_ppc_data(
         ``"marginal"`` (fully generative replay; default here),
         ``"library_anchored"`` (fresh composition paired with observed
         library sizes), and ``"per_cell"`` (most conditioned on observed
-        cells). Exact support depends on the results type.
+        cells). Exact support depends on the results type. Ignored when
+        ``map_sampling=True`` (MAP draws have no posterior to condition on).
+    map_sampling : bool, default False
+        If True, generate predictive samples by fixing the variational
+        parameters at their MAP / posterior mean and drawing
+        observations from the likelihood at that single point. This is
+        a diagnostic for guide geometry: if the MAP PPC is tight but
+        the full-posterior PPC is wide, the posterior is well-localized
+        and the wide bands come from guide spread; if the MAP PPC is
+        already wide, the issue lives in the model or likelihood
+        normalization (capture, hierarchy) and a richer guide will not
+        help.
 
     Returns
     -------
@@ -187,17 +202,36 @@ def _prepare_ppc_data(
         sampling_results = results[selected_idx]
         sampling_counts = counts[:, selected_idx]
 
-    console.print(
-        f"[dim]Generating {n_samples} posterior predictive samples...[/dim]"
-    )
-    _ = _get_predictive_samples_for_plot(
-        sampling_results,
-        rng_key=random.PRNGKey(42),
-        n_samples=n_samples,
-        counts=sampling_counts,
-        store_samples=True,
-        ppc_level=ppc_level,
-    )
+    if map_sampling:
+        console.print(
+            f"[dim]Generating {n_samples} MAP-anchored predictive samples...[/dim]"
+        )
+        # MAP-anchored draws fix the variational parameters at their
+        # posterior mean and draw observations from the likelihood at
+        # that point.  ``ppc_level`` is ignored: there is no posterior
+        # to condition on.
+        _ = _get_map_like_predictive_samples_for_plot(
+            sampling_results,
+            rng_key=random.PRNGKey(42),
+            n_samples=n_samples,
+            cell_batch_size=None,
+            use_mean=True,
+            counts=sampling_counts,
+            store_samples=True,
+            verbose=False,
+        )
+    else:
+        console.print(
+            f"[dim]Generating {n_samples} posterior predictive samples...[/dim]"
+        )
+        _ = _get_predictive_samples_for_plot(
+            sampling_results,
+            rng_key=random.PRNGKey(42),
+            n_samples=n_samples,
+            counts=sampling_counts,
+            store_samples=True,
+            ppc_level=ppc_level,
+        )
     # Reuse the object that received predictive samples. For the subset
     # sampling path, sampling_results is already gene-aligned and now carries
     # predictive_samples. Re-creating results[selected_idx] here would drop the
@@ -244,6 +278,7 @@ def plot_ppc(
     axes=None,
     ax=None,
     ppc_level: str = "marginal",
+    map_sampling: bool = False,
 ):
     """Plot posterior predictive checks for selected genes.
 
@@ -279,6 +314,16 @@ def plot_ppc(
         test compositional structure with observed per-cell totals, or
         ``"per_cell"`` for the most observation-conditioned draws. Support
         depends on the fitted results class (e.g. Laplace supports all three).
+        Ignored when ``map_sampling=True``.
+    map_sampling : bool, default False
+        If True, generate predictive samples by fixing the variational
+        parameters at their MAP / posterior mean and drawing
+        observations from the likelihood at that single point.
+        Diagnostic for guide geometry: a tight MAP PPC alongside a
+        wide full-posterior PPC indicates the wide bands come from
+        variational spread; a wide MAP PPC indicates the issue lives
+        in the model / capture / hierarchy and a richer guide will
+        not help.
 
     Returns
     -------
@@ -314,6 +359,7 @@ def plot_ppc(
         n_cols=grid["n_cols"],
         n_samples=grid["n_samples"],
         ppc_level=ppc_level,
+        map_sampling=map_sampling,
     )
     n_rows = prep["n_rows"]
     n_cols = prep["n_cols"]

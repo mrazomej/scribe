@@ -138,6 +138,27 @@ class MapPredictiveSamplingMixin:
             use_mean=use_mean, canonical=True, verbose=False, counts=counts
         )
 
+        # ----- TwoState (Poisson-Beta compound) branch --------------------
+        # The NB-family extraction below assumes ``(r, p)`` exist in the
+        # MAP dict, which is not the case for the TwoState parameterizations.
+        # Dispatch to the TwoState-specific MAP-PPC helper before the
+        # NB-family extraction even attempts the ``r/p`` keys.
+        _bm = getattr(self.model_config, "base_model", None)
+        if _bm in ("twostate", "twostatevcp"):
+            samples = self._twostate_map_ppc_samples(
+                map_estimates=map_estimates,
+                rng_key=rng_key,
+                n_samples=n_samples,
+            )
+            if verbose:
+                print(
+                    "Generated TwoState MAP predictive samples with "
+                    f"shape {samples.shape}"
+                )
+            if store_samples:
+                self.predictive_samples = samples
+            return samples
+
         # Extract common parameters
         r = map_estimates.get("r")
         p = map_estimates.get("p")
@@ -226,6 +247,68 @@ class MapPredictiveSamplingMixin:
             self.predictive_samples = samples
 
         return samples
+
+    # ------------------------------------------------------------------
+    # TwoState MAP-anchored predictive samples
+    # ------------------------------------------------------------------
+
+    def _twostate_map_ppc_samples(
+        self,
+        *,
+        map_estimates: dict,
+        rng_key: random.PRNGKey,
+        n_samples: int,
+    ) -> jnp.ndarray:
+        """MAP-anchored predictive samples for the TwoState family.
+
+        Builds the Poisson-Beta compound at the MAP/mean variational
+        parameters and draws ``n_samples`` replicate count matrices
+        from it. Supports all three TwoState parameterizations
+        (natural / ratio / mean_fano / moment_delta) by dispatching
+        via :func:`_twostate_dispatch_reparam` on the keys present
+        in ``map_estimates``.
+
+        Returns
+        -------
+        jnp.ndarray, shape ``(n_samples, n_cells, n_genes)``
+        """
+        from ..models.components.likelihoods.two_state import (
+            _twostate_dispatch_reparam,
+        )
+        from ..stats.distributions import PoissonBetaCompound
+
+        # The dispatcher reads sampled-parameter keys; the MAP dict
+        # carries the same keys (mu plus one of the third-coordinate
+        # extras) so we can pass it directly.
+        alpha, beta, rate_gene, _eff_burst_size, _raw_k_off = (
+            _twostate_dispatch_reparam(map_estimates)
+        )
+
+        # Compose the per-cell rate for the VCP variant; gene-rank
+        # rate stays (G,) for the no-capture variant.
+        p_capture = map_estimates.get("p_capture")
+        if p_capture is not None:
+            p_capture_arr = jnp.asarray(p_capture)
+            rate = rate_gene[None, :] * p_capture_arr[:, None]  # (C, G)
+        else:
+            rate = rate_gene  # (G,)
+
+        # Build the compound and draw ``n_samples`` count matrices.
+        # PoissonBetaCompound's batch_shape broadcasts (alpha, beta,
+        # rate); for VCP this gives batch_shape (n_cells, n_genes) and
+        # sample_shape (n_samples,) yields (n_samples, n_cells, n_genes).
+        # For the no-capture path batch_shape is (n_genes,) and we
+        # wrap in an explicit cell-replicate dimension.
+        compound = PoissonBetaCompound(alpha=alpha, beta=beta, rate=rate)
+        if p_capture is None:
+            # Replicate across cells: sample shape becomes
+            # (n_samples, n_cells, n_genes).
+            samples = compound.sample(
+                rng_key, sample_shape=(n_samples, self.n_cells)
+            )
+        else:
+            samples = compound.sample(rng_key, sample_shape=(n_samples,))
+        return jnp.asarray(samples)
 
     def get_posterior_ppc_samples(
         self,
