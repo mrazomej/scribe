@@ -928,6 +928,99 @@ def build_k_off_spec(
     ]
 
 
+def build_excess_fano_spec(
+    unconstrained: bool,
+    guide_families: GuideFamilyConfig,
+    n_components: Optional[int] = None,
+    mixture_params: Optional[List[str]] = None,
+    positive_transform: Any = None,
+    prior_loc: float = 0.0,
+    prior_scale: float = 1.5,
+) -> List[ParamSpec]:
+    """Build the excess_fano parameter spec for TwoState (mean-Fano variant).
+
+    ``excess_fano = Var[X] / E[X] − 1`` is the per-gene excess Fano
+    factor.  Under the mean-Fano parameterization q(excess_fano)
+    directly bounds the posterior-predictive marginal variance per
+    gene (since ``Var[X] = mu · (1 + excess_fano)`` by construction).
+    A Poisson gene has excess_fano = 0; an NB gene has excess_fano
+    equal to its burst size.
+
+    Default prior Normal(0, 1.5) in unconstrained space; under
+    softplus this gives post-softplus quantiles approximately
+    ``(0.08, 0.69, 2.56)`` at ``(5%, 50%, 95%)`` — broad over the
+    Poisson-to-modestly-overdispersed range.  For strongly bursty
+    datasets the prior can be widened or shifted via
+    ``with_priors(excess_fano=(loc, scale))``.
+    """
+    del unconstrained
+    is_mixture = False
+    if n_components is not None:
+        if mixture_params is None:
+            is_mixture = True
+        else:
+            is_mixture = "excess_fano" in mixture_params
+
+    spec_cls = _select_positive_spec(positive_transform)
+    return [
+        spec_cls(
+            name="excess_fano",
+            shape_dims=("n_genes",),
+            default_params=(prior_loc, prior_scale),
+            is_gene_specific=True,
+            guide_family=guide_families.get("excess_fano"),
+            is_mixture=is_mixture,
+        )
+    ]
+
+
+def build_concentration_spec(
+    unconstrained: bool,
+    guide_families: GuideFamilyConfig,
+    n_components: Optional[int] = None,
+    mixture_params: Optional[List[str]] = None,
+    positive_transform: Any = None,
+    prior_loc: float = 3.0,
+    prior_scale: float = 2.0,
+) -> List[ParamSpec]:
+    """Build the concentration parameter spec for TwoState (mean-Fano variant).
+
+    ``concentration = alpha + beta`` is the Beta concentration of
+    the latent ON-fraction p_g.  Large ``concentration`` peaks the
+    Beta and yields an NB-like count distribution; small
+    ``concentration`` admits a U-shaped Beta and bursty / bimodal
+    counts.  Putting the "NB-default" prior tilt on
+    ``concentration`` (rather than on the Fano) is the right
+    structure: width is set by ``excess_fano``, regime is set by
+    ``concentration``.
+
+    Default prior Normal(3, 2) — same shape as ``build_k_off_spec``,
+    giving post-softplus median ≈ 3 and a substantial tail towards
+    moderately large NB-like values without forbidding the bursty
+    regime.  Tighten via ``with_priors(concentration=(loc, scale))``
+    for a stronger NB tilt.
+    """
+    del unconstrained
+    is_mixture = False
+    if n_components is not None:
+        if mixture_params is None:
+            is_mixture = True
+        else:
+            is_mixture = "concentration" in mixture_params
+
+    spec_cls = _select_positive_spec(positive_transform)
+    return [
+        spec_cls(
+            name="concentration",
+            shape_dims=("n_genes",),
+            default_params=(prior_loc, prior_scale),
+            is_gene_specific=True,
+            guide_family=guide_families.get("concentration"),
+            is_mixture=is_mixture,
+        )
+    ]
+
+
 def build_switching_ratio_spec(
     unconstrained: bool,
     guide_families: GuideFamilyConfig,
@@ -1117,11 +1210,27 @@ def build_extra_param_spec(
             mixture_params=mixture_params,
             positive_transform=positive_transform,
         )
+    elif param_name == "excess_fano":
+        return build_excess_fano_spec(
+            unconstrained=unconstrained,
+            guide_families=guide_families,
+            n_components=n_components,
+            mixture_params=mixture_params,
+            positive_transform=positive_transform,
+        )
+    elif param_name == "concentration":
+        return build_concentration_spec(
+            unconstrained=unconstrained,
+            guide_families=guide_families,
+            n_components=n_components,
+            mixture_params=mixture_params,
+            positive_transform=positive_transform,
+        )
     else:
         raise ValueError(
             f"Unknown extra parameter: {param_name}. "
             f"Valid parameters are: gate, p_capture, bnb_concentration, r, "
-            f"burst_size, k_off, switching_ratio"
+            f"burst_size, k_off, switching_ratio, excess_fano, concentration"
         )
 
 

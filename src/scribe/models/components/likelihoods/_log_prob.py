@@ -1295,7 +1295,11 @@ def twostate_log_prob(
         Log-likelihood values, shape ``(n_cells,)`` or ``(n_genes,)``.
     """
     from ....stats.distributions import PoissonBetaCompound
-    from .two_state import _twostate_reparam, _twostate_ratio_reparam
+    from .two_state import (
+        _twostate_moments_reparam,
+        _twostate_ratio_reparam,
+        _twostate_reparam,
+    )
 
     _check_return_by(return_by)
 
@@ -1303,14 +1307,23 @@ def twostate_log_prob(
     n_cells, n_genes = counts.shape
 
     mu = jnp.asarray(params["mu"], dtype=dtype)
-    burst_size = jnp.asarray(params["burst_size"], dtype=dtype)
-    if "switching_ratio" in params:
+    if "excess_fano" in params:
+        # Mean-Fano parameterization: alpha, beta derived from
+        # (mu, excess_fano, concentration).
+        excess_fano = jnp.asarray(params["excess_fano"], dtype=dtype)
+        concentration = jnp.asarray(params["concentration"], dtype=dtype)
+        alpha, beta, rate_gene, _eff_burst_size = (
+            _twostate_moments_reparam(mu, excess_fano, concentration)
+        )
+    elif "switching_ratio" in params:
         # Ratio parameterization: k_off is derived from switching_ratio.
+        burst_size = jnp.asarray(params["burst_size"], dtype=dtype)
         s = jnp.asarray(params["switching_ratio"], dtype=dtype)
         alpha, beta, rate_gene, _eff_burst_size = _twostate_ratio_reparam(
             mu, burst_size, s
         )
     else:
+        burst_size = jnp.asarray(params["burst_size"], dtype=dtype)
         k_off = jnp.asarray(params["k_off"], dtype=dtype)
         alpha, beta, rate_gene, _eff_burst_size = _twostate_reparam(
             mu, burst_size, k_off

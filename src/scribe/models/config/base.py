@@ -1476,15 +1476,17 @@ class ModelConfig(BaseModel):
         _two_state_param = (
             Parameterization.TWO_STATE_NATURAL,
             Parameterization.TWO_STATE_RATIO,
+            Parameterization.TWO_STATE_MEAN_FANO,
         )
         if self.parameterization not in _two_state_param:
             raise ValueError(
                 f"base_model={self.base_model!r} requires a TwoState "
                 f"parameterization (one of 'two_state_natural', "
-                f"'two_state_ratio'); got "
+                f"'two_state_ratio', 'two_state_mean_fano'); got "
                 f"{self.parameterization.value!r}. Use "
                 f"ModelConfigBuilder().with_parameterization("
-                f"'two_state_natural') or 'two_state_ratio'."
+                f"'two_state_natural'), 'two_state_ratio', or "
+                f"'two_state_mean_fano'."
             )
 
         # (2) BNB overdispersion is not supported in phase 1.

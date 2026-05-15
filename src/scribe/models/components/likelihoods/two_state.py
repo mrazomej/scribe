@@ -160,6 +160,54 @@ def _twostate_ratio_reparam(
     return alpha, beta, rate, eff_burst_size
 
 
+def _twostate_moments_reparam(
+    mu: jnp.ndarray,
+    excess_fano: jnp.ndarray,
+    concentration: jnp.ndarray,
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """(µ, excess_fano, κ) → (α, β, rate, effective_burst_size).
+
+    Mean-Fano parameterization (analog of NBDM's ``mean_odds``).
+    Sampled parameters are ``mu`` (gene mean), ``excess_fano`` (the
+    excess Fano factor Var/Mean − 1), and ``concentration`` (Beta
+    concentration κ = α + β).
+
+    Natural forward map::
+
+        denom = µ + excess_fano · (κ + 1)
+        α     = κ · µ / denom            ( = k_on )
+        β     = κ · excess_fano · (κ + 1) / denom    ( = k_off )
+        rate  = denom
+
+    Moment guarantees (by construction)::
+
+        E[count]                  = µ
+        Var[count] / E[count] − 1 = excess_fano
+
+    Quadrature-safety clamps mirror :func:`_twostate_reparam`: when
+    ``α`` or ``β`` fall outside ``[_ALPHA_MIN, _ALPHA_MAX]`` or
+    ``[_K_OFF_MIN, _K_OFF_MAX]`` the mean-preserving rescaling
+    ``rate = µ · (α + β) / α`` recovers the target mean exactly.
+    The natural ``rate = denom`` already matches that formula when
+    no clamp activates, so the clamp does not change the unclamped
+    answer.
+    """
+    # Materialise the natural alpha, beta, rate.
+    denom = mu + excess_fano * (concentration + 1.0)
+    # Avoid division by zero in the degenerate excess_fano=0,
+    # concentration=0 corner; the clamps below take care of the
+    # downstream alpha/beta.
+    denom_safe = jnp.maximum(denom, _BURST_MIN * _BURST_MIN)
+    alpha_nat = concentration * mu / denom_safe
+    beta_nat = concentration * excess_fano * (concentration + 1.0) / denom_safe
+
+    alpha = jnp.clip(alpha_nat, min=_ALPHA_MIN, max=_ALPHA_MAX)
+    beta = jnp.clip(beta_nat, min=_K_OFF_MIN, max=_K_OFF_MAX)
+    rate = mu * (alpha + beta) / alpha
+    eff_burst_size = mu / alpha
+    return alpha, beta, rate, eff_burst_size
+
+
 def _twostate_dispatch_reparam(
     param_values: Dict[str, jnp.ndarray],
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
@@ -167,15 +215,29 @@ def _twostate_dispatch_reparam(
 
     Returns ``(alpha, beta, rate, eff_burst_size, raw_k_off)``.
 
-    ``raw_k_off`` is the un-clamped ``k_off`` value — used downstream
-    only to compute the ``beta_floor_active`` indicator (which checks
-    whether the *natural* β fell below the clamp lower bound). In the
-    ratio parameterization ``k_off`` is derived (``s · k_on``); in the
-    natural parameterization it's the sampled value.
+    ``raw_k_off`` is the un-clamped ``β`` value — used downstream only
+    to compute the ``beta_floor_active`` indicator. For each
+    parameterization:
+
+    - ``natural``  : raw_k_off is the sampled value.
+    - ``ratio``    : raw_k_off = switching_ratio · k_on  (derived).
+    - ``mean_fano``: raw_k_off = κ · excess_fano · (κ + 1) / denom
+      (derived).
     """
     mu = param_values["mu"]
-    burst_size = param_values["burst_size"]
-    if "switching_ratio" in param_values:
+    if "excess_fano" in param_values:
+        excess_fano = param_values["excess_fano"]
+        concentration = param_values["concentration"]
+        denom = mu + excess_fano * (concentration + 1.0)
+        denom_safe = jnp.maximum(denom, _BURST_MIN * _BURST_MIN)
+        raw_k_off = (
+            concentration * excess_fano * (concentration + 1.0) / denom_safe
+        )
+        alpha, beta, rate, eff_burst_size = _twostate_moments_reparam(
+            mu, excess_fano, concentration
+        )
+    elif "switching_ratio" in param_values:
+        burst_size = param_values["burst_size"]
         s = param_values["switching_ratio"]
         burst_safe = jnp.maximum(burst_size, _BURST_MIN)
         raw_k_off = s * (mu / burst_safe)
@@ -183,6 +245,7 @@ def _twostate_dispatch_reparam(
             mu, burst_size, s
         )
     else:
+        burst_size = param_values["burst_size"]
         raw_k_off = param_values["k_off"]
         alpha, beta, rate, eff_burst_size = _twostate_reparam(
             mu, burst_size, raw_k_off
@@ -279,27 +342,41 @@ class TwoStateLikelihood(Likelihood):
         from ....stats.distributions import PoissonBetaCompound
 
         mu = param_values["mu"]
-        burst_size = param_values["burst_size"]
         alpha, beta, rate, eff_burst_size, raw_k_off = (
             _twostate_dispatch_reparam(param_values)
         )
 
         # Expose derived quantities for posterior summaries (computed
-        # OUTSIDE the cell plate, so they emit at gene rank).  In the
-        # ratio parameterization ``k_off`` is derived and we emit it
-        # as a deterministic; in the natural parameterization ``k_off``
-        # is a sampled site so emitting it again would collide.
+        # OUTSIDE the cell plate, so they emit at gene rank).
+        #   - In ``natural``: burst_size and k_off are sampled; the
+        #     ``alpha_floor_active`` check uses sampled burst_size.
+        #   - In ``ratio``: burst_size sampled, k_off derived.
+        #   - In ``mean_fano``: neither burst_size nor k_off sampled —
+        #     both are derived. ``burst_size`` is exposed as the
+        #     effective burst size (= mu/alpha), and ``alpha_floor_active``
+        #     reads alpha directly.
         numpyro.deterministic("k_on", alpha)
-        if "switching_ratio" in param_values:
+        is_mean_fano = "excess_fano" in param_values
+        is_ratio = "switching_ratio" in param_values
+        if is_ratio or is_mean_fano:
             numpyro.deterministic("k_off", beta)
+        if is_mean_fano:
+            numpyro.deterministic("burst_size", eff_burst_size)
         numpyro.deterministic("alpha", alpha)
         numpyro.deterministic("beta", beta)
         numpyro.deterministic("r_hat", rate)
         numpyro.deterministic("effective_burst_size", eff_burst_size)
-        numpyro.deterministic(
-            "alpha_floor_active",
-            (mu / jnp.maximum(burst_size, _BURST_MIN)) < _ALPHA_MIN,
-        )
+        if is_mean_fano:
+            numpyro.deterministic(
+                "alpha_floor_active",
+                alpha <= _ALPHA_MIN,
+            )
+        else:
+            burst_size = param_values["burst_size"]
+            numpyro.deterministic(
+                "alpha_floor_active",
+                (mu / jnp.maximum(burst_size, _BURST_MIN)) < _ALPHA_MIN,
+            )
         numpyro.deterministic(
             "beta_floor_active",
             raw_k_off < _K_OFF_MIN,
@@ -508,28 +585,36 @@ class TwoStateVCPLikelihood(Likelihood):
         n_cells = dims["n_cells"]
 
         # ----- gene-level reparam: OUTSIDE the cell plate -----
-        # Dispatcher picks _twostate_reparam (natural) or
-        # _twostate_ratio_reparam (ratio) based on which third
-        # parameter is in param_values.
+        # Dispatcher selects natural / ratio / mean-Fano based on
+        # which third parameter is in param_values.
         mu = param_values["mu"]
-        burst_size = param_values["burst_size"]
         alpha, beta, rate_gene, eff_burst_size, raw_k_off = (
             _twostate_dispatch_reparam(param_values)
         )
+        is_mean_fano = "excess_fano" in param_values
+        is_ratio = "switching_ratio" in param_values
         numpyro.deterministic("k_on", alpha)
-        # k_off is a sampled site in natural mode; only emit it as a
-        # deterministic in ratio mode where it's derived from
-        # switching_ratio.
-        if "switching_ratio" in param_values:
+        if is_ratio or is_mean_fano:
+            # k_off is derived (not a sampled site).
             numpyro.deterministic("k_off", beta)
+        if is_mean_fano:
+            # burst_size is not sampled in mean-Fano mode.
+            numpyro.deterministic("burst_size", eff_burst_size)
         numpyro.deterministic("alpha", alpha)
         numpyro.deterministic("beta", beta)
         numpyro.deterministic("r_hat", rate_gene)
         numpyro.deterministic("effective_burst_size", eff_burst_size)
-        numpyro.deterministic(
-            "alpha_floor_active",
-            (mu / jnp.maximum(burst_size, _BURST_MIN)) < _ALPHA_MIN,
-        )
+        if is_mean_fano:
+            numpyro.deterministic(
+                "alpha_floor_active",
+                alpha <= _ALPHA_MIN,
+            )
+        else:
+            burst_size = param_values["burst_size"]
+            numpyro.deterministic(
+                "alpha_floor_active",
+                (mu / jnp.maximum(burst_size, _BURST_MIN)) < _ALPHA_MIN,
+            )
         numpyro.deterministic(
             "beta_floor_active",
             raw_k_off < _K_OFF_MIN,

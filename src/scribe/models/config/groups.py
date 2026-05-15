@@ -205,6 +205,22 @@ class GuideFamilyConfig(BaseModel):
             "two_state_ratio parameterization."
         ),
     )
+    excess_fano: Optional[GuideFamily] = Field(
+        None,
+        description=(
+            "Guide family for the TwoState excess Fano factor "
+            "(Var/Mean - 1, per gene, positive). Used by the "
+            "two_state_mean_fano parameterization."
+        ),
+    )
+    concentration: Optional[GuideFamily] = Field(
+        None,
+        description=(
+            "Guide family for the TwoState Beta concentration "
+            "alpha + beta (per gene, positive). Used by the "
+            "two_state_mean_fano parameterization."
+        ),
+    )
 
     # --------------------------------------------------------------------------
     # Amortization Configuration

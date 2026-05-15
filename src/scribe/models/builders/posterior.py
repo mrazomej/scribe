@@ -644,6 +644,7 @@ def _apply_base_parameterization(
     elif parameterization in (
         Parameterization.TWO_STATE_NATURAL,
         Parameterization.TWO_STATE_RATIO,
+        Parameterization.TWO_STATE_MEAN_FANO,
     ):
         # TwoState (Poisson-Beta compound). The three per-gene
         # parameters (mu, burst_size, k_off-or-switching_ratio) are
@@ -3115,20 +3116,31 @@ def _build_two_state_posteriors(
     skip = skip or set()
     del low_rank, is_mixture  # dispatch handles low-rank per-name; no mixtures
 
-    # Detect the parameterization by which third parameter was sampled.
+    # Detect the parameterization by which extras were sampled.
     # The variational guide writes ``{name}_loc`` (mean-field /
     # standalone low-rank) or ``joint_{group}_{name}_loc`` (joint
     # low-rank); checking for any key containing the name suffix
     # handles both.
-    has_switching_ratio = any(
-        k == "switching_ratio_loc"
-        or (k.startswith("joint_") and k.endswith("_switching_ratio_loc"))
-        or k == "switching_ratio_W"
-        or k == "log_switching_ratio_W"
-        for k in params
-    )
-    third_param = "switching_ratio" if has_switching_ratio else "k_off"
-    param_names = ("mu", "burst_size", third_param)
+    def _has(name: str) -> bool:
+        suffix = f"_{name}_loc"
+        for k in params:
+            if k == f"{name}_loc":
+                return True
+            if k.startswith("joint_") and k.endswith(suffix):
+                return True
+            if k in (f"{name}_W", f"log_{name}_W"):
+                return True
+        return False
+
+    if _has("excess_fano"):
+        # Mean-Fano: samples (mu, excess_fano, concentration).
+        param_names = ("mu", "excess_fano", "concentration")
+    elif _has("switching_ratio"):
+        # Ratio: samples (mu, burst_size, switching_ratio).
+        param_names = ("mu", "burst_size", "switching_ratio")
+    else:
+        # Natural: samples (mu, burst_size, k_off).
+        param_names = ("mu", "burst_size", "k_off")
 
     for name in param_names:
         if name in skip:

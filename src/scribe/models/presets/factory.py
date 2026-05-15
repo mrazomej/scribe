@@ -1104,19 +1104,36 @@ def create_model(
     # ==========================================================================
     effective_hierarchical_gate = model_config.zero_inflation_prior != _NONE
     extra_param_names = list(MODEL_EXTRA_PARAMS[base_model])
-    # TwoState ratio parameterization replaces k_off with switching_ratio.
-    # The base model's MODEL_EXTRA_PARAMS entry always lists k_off; we
-    # swap it here based on the configured parameterization so the
-    # downstream dispatch (build_extra_param_spec) builds the right
-    # spec and the rest of the factory stays parameterization-agnostic.
-    if (
-        base_model in ("twostate", "twostatevcp")
-        and model_config.parameterization == ParamEnum.TWO_STATE_RATIO
-    ):
-        extra_param_names = [
-            "switching_ratio" if n == "k_off" else n
-            for n in extra_param_names
-        ]
+    # TwoState alternative parameterizations rename or replace the
+    # gene-level extras.  The base model's MODEL_EXTRA_PARAMS entry
+    # always lists (burst_size, k_off) plus p_capture for the VCP
+    # variant; we rewrite that list here based on the configured
+    # parameterization so the downstream dispatch
+    # (``build_extra_param_spec``) builds the right specs and the rest
+    # of the factory stays parameterization-agnostic.
+    if base_model in ("twostate", "twostatevcp"):
+        if model_config.parameterization == ParamEnum.TWO_STATE_RATIO:
+            # natural -> ratio: k_off becomes switching_ratio,
+            # burst_size unchanged.
+            extra_param_names = [
+                "switching_ratio" if n == "k_off" else n
+                for n in extra_param_names
+            ]
+        elif model_config.parameterization == ParamEnum.TWO_STATE_MEAN_FANO:
+            # natural -> mean_fano: (burst_size, k_off) → (excess_fano,
+            # concentration); preserve p_capture position for the VCP
+            # variant.
+            rewritten: list = []
+            replaced = False
+            for n in extra_param_names:
+                if n in ("burst_size", "k_off"):
+                    if not replaced:
+                        rewritten.extend(["excess_fano", "concentration"])
+                        replaced = True
+                    # drop both burst_size and k_off; replaced is now True
+                else:
+                    rewritten.append(n)
+            extra_param_names = rewritten
     # Append BNB concentration when overdispersion is enabled
     if model_config.is_bnb:
         extra_param_names.append("bnb_concentration")

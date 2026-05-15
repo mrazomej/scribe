@@ -120,6 +120,13 @@ class Parameterization(str, Enum):
     # — analogous to NBDM's mean_prob/mean_odds vs canonical (r, p).
     # See TwoStateRatioParameterization in parameterizations/__init__.py.
     TWO_STATE_RATIO = "two_state_ratio"
+    # Two-state MEAN-FANO parameterization: samples (mu, excess_fano,
+    # concentration) where ``excess_fano = Var/Mean - 1`` and
+    # ``concentration = alpha + beta``.  Mean- AND Fano-preserving by
+    # construction; q(excess_fano) directly controls PPC width while
+    # q(concentration) carries the "departure from NB" shape.  See
+    # TwoStateMeanFanoParameterization in parameterizations/__init__.py.
+    TWO_STATE_MEAN_FANO = "two_state_mean_fano"
 
     # ------------------------------------------------------------------
     # Backward-compatible deserialization of removed hierarchical values.
@@ -160,6 +167,9 @@ class Parameterization(str, Enum):
             # parameterization. ``parameterization='ratio'`` resolves
             # to ``two_state_ratio``.
             "ratio": "two_state_ratio",
+            # Short aliases for the mean-Fano parameterization.
+            "mean_fano": "two_state_mean_fano",
+            "fano": "two_state_mean_fano",
         }
         if isinstance(value, str):
             base = _legacy.get(value)

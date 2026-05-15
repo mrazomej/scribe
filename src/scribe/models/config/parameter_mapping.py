@@ -453,6 +453,80 @@ PARAMETERIZATION_MAPPINGS = {
         },
     ),
     # ------------------------------------------------------------------
+    # Two-state promoter — MEAN-FANO variant.
+    # Samples ``mu`` as the only core parameter; the extras are
+    # ``excess_fano`` (Var/Mean − 1) and ``concentration`` (α + β).
+    # Mean- and Fano-preserving by construction.
+    # ------------------------------------------------------------------
+    Parameterization.TWO_STATE_MEAN_FANO: ParameterizationMapping(
+        parameterization=Parameterization.TWO_STATE_MEAN_FANO,
+        core_parameters={"mu"},
+        optional_parameters={
+            "excess_fano",
+            "concentration",
+            # Derived per-gene quantities (deterministic sites)
+            "alpha",
+            "beta",
+            "k_on",
+            "k_off",
+            "burst_size",
+            "r_hat",
+            "effective_burst_size",
+            "alpha_floor_active",
+            "beta_floor_active",
+        },
+        parameter_descriptions={
+            "mu": (
+                "Per-gene mean expression. "
+                "PositiveNormal / SoftplusNormal."
+            ),
+            "excess_fano": (
+                "Per-gene excess Fano factor: Var/Mean − 1. "
+                "Directly bounds posterior-predictive variance. "
+                "PositiveNormal / SoftplusNormal."
+            ),
+            "concentration": (
+                "Per-gene Beta concentration κ = α + β. Large κ "
+                "approaches the NB shape (peaked latent p); small κ "
+                "admits a U-shaped Beta and bursty / bimodal counts. "
+                "PositiveNormal / SoftplusNormal."
+            ),
+            "p_capture": (
+                "Per-cell capture probability "
+                "(Beta / SigmoidNormal). TwoStateVCP only."
+            ),
+            "alpha": (
+                "DERIVED: Beta first shape = κ · μ / "
+                "(μ + excess_fano · (κ + 1)). Equals k_on."
+            ),
+            "beta": (
+                "DERIVED: Beta second shape = κ · excess_fano · "
+                "(κ + 1) / (μ + excess_fano · (κ + 1)). Equals k_off."
+            ),
+            "k_on": "DERIVED: ON rate; equals alpha.",
+            "k_off": "DERIVED: OFF rate; equals beta.",
+            "burst_size": (
+                "DERIVED: NB-limit burst size = mu / alpha. Equals "
+                "excess_fano in the NB limit (large concentration)."
+            ),
+            "r_hat": (
+                "DERIVED: Poisson rate scale = mu + excess_fano · "
+                "(concentration + 1) (mean-preserving)."
+            ),
+            "effective_burst_size": (
+                "DERIVED: burst size implied by the floored alpha."
+            ),
+            "alpha_floor_active": (
+                "DERIVED: boolean indicator; True when alpha hits "
+                "the numerical floor in the likelihood."
+            ),
+            "beta_floor_active": (
+                "DERIVED: boolean indicator; True when beta hits "
+                "the numerical floor in the likelihood."
+            ),
+        },
+    ),
+    # ------------------------------------------------------------------
     # PLN (Poisson-LogNormal) — single variant, no totals submodel
     # ------------------------------------------------------------------
     Parameterization.COUNT_LOGNORMAL: ParameterizationMapping(
@@ -636,21 +710,22 @@ def get_active_parameters(
     if model_type == "nbln":
         active_params.add("r")
 
-    # Two-state promoter: ``burst_size`` is always a gene-specific
-    # extra on top of the core ``mu``.  The third per-gene parameter
-    # depends on the parameterization:
-    #   - TWO_STATE_NATURAL:  k_off (absolute OFF rate)
-    #   - TWO_STATE_RATIO:    switching_ratio (= k_off / k_on)
+    # Two-state promoter: the gene-level extras depend on the
+    # parameterization.
+    #   - TWO_STATE_NATURAL:  (burst_size, k_off)
+    #   - TWO_STATE_RATIO:    (burst_size, switching_ratio)
+    #   - TWO_STATE_MEAN_FANO: (excess_fano, concentration)  — no burst_size
     # ``p_capture`` is added for the VCP variant.  Derived per-gene
     # deterministics (alpha, beta, r_hat, effective_burst_size, floor
     # indicators) are exposed by the likelihood and stay in the
     # mapping's optional set.
     if model_type in ("twostate", "twostatevcp"):
-        active_params.add("burst_size")
-        if parameterization == Parameterization.TWO_STATE_RATIO:
-            active_params.add("switching_ratio")
+        if parameterization == Parameterization.TWO_STATE_MEAN_FANO:
+            active_params.update({"excess_fano", "concentration"})
+        elif parameterization == Parameterization.TWO_STATE_RATIO:
+            active_params.update({"burst_size", "switching_ratio"})
         else:
-            active_params.add("k_off")
+            active_params.update({"burst_size", "k_off"})
         if model_type == "twostatevcp" or uses_variable_capture:
             active_params.add("p_capture")
 

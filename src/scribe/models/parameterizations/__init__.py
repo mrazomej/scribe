@@ -1329,6 +1329,101 @@ class TwoStateRatioParameterization(Parameterization):
         return []
 
 
+class TwoStateMeanFanoParameterization(Parameterization):
+    """Mean-Fano parameterization for the Poisson-Beta compound.
+
+    Samples ``(mu, excess_fano, concentration)`` where:
+
+    * ``mu`` is the per-gene mean (same as the other TwoState
+      parameterizations).
+    * ``excess_fano = Var[X]/E[X] − 1`` is the excess Fano factor.
+      Directly bounds the posterior-predictive variance per gene.
+    * ``concentration = α + β`` is the Beta concentration (sum of
+      ON and OFF rates).  Large ``concentration`` peaks the
+      latent ``p`` distribution and yields an NB-like shape;
+      small ``concentration`` admits a U-shaped Beta and bursty /
+      bimodal counts.
+
+    Forward map (computed in the likelihood)::
+
+        denom = mu + excess_fano · (concentration + 1)
+        alpha = concentration · mu / denom        ( = k_on )
+        beta  = concentration · excess_fano · (concentration + 1)
+              / denom                             ( = k_off )
+        r_hat = denom
+
+    Moment guarantees::
+
+        E[count]            = mu                  identically.
+        Var[count] / E[count] − 1 = excess_fano   identically.
+
+    NB limit (``concentration → ∞``)::
+
+        alpha → mu / excess_fano   ( = NB shape r_NB )
+        beta  → concentration
+        r_hat → excess_fano · concentration
+        Equivalent NB:  NegBin(r_NB = mu/excess_fano,
+                               burst_size = excess_fano).
+
+    Why this parameterization
+    -------------------------
+    The PPC width — i.e. the posterior-predictive marginal variance
+    per gene — is governed by ``Var[count] = mu · (1 + excess_fano)``.
+    Mean-field q on the natural parameters ``(b, k_off)`` is forced
+    to discover a curved manifold along which the implied Fano stays
+    consistent across gene magnitudes; independent q-draws on ``b``
+    and ``k_off`` (or on ``b`` and ``switching_ratio``) easily mix
+    into too-wide an implied Fano.
+
+    Sampling ``excess_fano`` directly removes that constraint: q(
+    excess_fano) is *the* PPC-width control, and q(concentration)
+    only describes how peaked the latent Beta is.  This is the
+    closest TwoState analog of NBDM's ``mean_odds`` — sample the
+    quantities that determine the first two observable moments,
+    leave the third for shape.
+    """
+
+    @property
+    def name(self) -> str:
+        return "two_state_mean_fano"
+
+    @property
+    def core_parameters(self) -> List[str]:
+        return ["mu"]
+
+    @property
+    def gene_param_name(self) -> str:
+        return "mu"
+
+    def build_param_specs(
+        self,
+        unconstrained: bool,
+        guide_families: GuideFamilyConfig,
+        n_components: Optional[int] = None,
+        mixture_params: Optional[List[str]] = None,
+    ) -> List[ParamSpec]:
+        """Build the mu spec — identical to the other TwoState parameterizations.
+
+        The other two per-gene specs (``excess_fano``,
+        ``concentration``) come from the model extras dispatch.
+        """
+        del unconstrained, n_components, mixture_params
+        mu_family = guide_families.get("mu")
+        return [
+            PositiveNormalSpec(
+                name="mu",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=mu_family,
+                is_mixture=False,
+            ),
+        ]
+
+    def build_derived_params(self) -> List[DerivedParam]:
+        return []
+
+
 # ==============================================================================
 # Parameterization Registry
 # ==============================================================================
@@ -1347,6 +1442,7 @@ _logistic_normal_mean_odds = LogisticNormalParameterization(variant="mean_odds")
 _poisson_lognormal = PoissonLogNormalParameterization()
 _two_state_natural = TwoStateParameterization()
 _two_state_ratio = TwoStateRatioParameterization()
+_two_state_mean_fano = TwoStateMeanFanoParameterization()
 
 # Registry mapping internal parameterization keys to singleton instances.
 # The LNM family appears under three keys mirroring the DM-family trio.
@@ -1371,6 +1467,11 @@ PARAMETERIZATIONS = {
     # burst_size, switching_ratio) where ratio = k_off/k_on.  See
     # TwoStateRatioParameterization for the math.
     "two_state_ratio": _two_state_ratio,
+    # Two-state mean-Fano parameterization: samples (mu, excess_fano,
+    # concentration).  Targets PPC width directly via q(excess_fano);
+    # concentration carries the NB-vs-bursty shape.  See
+    # TwoStateMeanFanoParameterization for the math.
+    "two_state_mean_fano": _two_state_mean_fano,
     # Short alias for the two-state natural parameterization. Both keys
     # resolve to the same singleton; ``"natural"`` is preferred for
     # interactive use, ``"two_state_natural"`` is the canonical form
@@ -1378,6 +1479,9 @@ PARAMETERIZATIONS = {
     "natural": _two_state_natural,
     # Short alias for the relative-switching parameterization.
     "ratio": _two_state_ratio,
+    # Short aliases for the mean-Fano parameterization.
+    "mean_fano": _two_state_mean_fano,
+    "fano": _two_state_mean_fano,
     # Backward compatibility for the DM family
     "standard": _canonical,
     "linked": _mean_prob,
@@ -1515,9 +1619,10 @@ def resolve_user_parameterization_for_model(
     if model_lower in ("pln", "nbln"):
         return "count_lognormal"
 
-    # TwoState (Poisson-Beta compound) accepts its own two
-    # parameterizations: ``two_state_natural`` (samples k_off directly)
-    # and ``two_state_ratio`` (samples switching_ratio = k_off/k_on).
+    # TwoState (Poisson-Beta compound) accepts three parameterizations:
+    # ``two_state_natural``     — samples (mu, burst_size, k_off)
+    # ``two_state_ratio``       — samples (mu, burst_size, switching_ratio)
+    # ``two_state_mean_fano``   — samples (mu, excess_fano, concentration)
     # Reject DM-family strings with a directive to the supported
     # values rather than silently re-mapping.
     if model_lower in ("twostate", "twostatevcp"):
@@ -1526,11 +1631,15 @@ def resolve_user_parameterization_for_model(
             return "two_state_natural"
         if param_lower in ("two_state_ratio", "ratio"):
             return "two_state_ratio"
+        if param_lower in ("two_state_mean_fano", "mean_fano", "fano"):
+            return "two_state_mean_fano"
         raise ValueError(
             f"parameterization={parameterization!r} is not supported for "
             f"model={model!r}. Choose 'two_state_natural' (samples k_off "
-            f"directly; aliases: 'natural') or 'two_state_ratio' "
-            f"(samples switching_ratio = k_off/k_on; aliases: 'ratio')."
+            f"directly; aliases: 'natural'), 'two_state_ratio' (samples "
+            f"switching_ratio = k_off/k_on; aliases: 'ratio'), or "
+            f"'two_state_mean_fano' (samples excess_fano + concentration; "
+            f"aliases: 'mean_fano', 'fano')."
         )
 
     param_lower = parameterization.lower()
@@ -1584,6 +1693,7 @@ __all__ = [
     "PoissonLogNormalParameterization",
     "TwoStateParameterization",
     "TwoStateRatioParameterization",
+    "TwoStateMeanFanoParameterization",
     "PARAMETERIZATIONS",
     # Family helpers
     "is_logistic_normal_family",
