@@ -225,16 +225,31 @@ def _inject_twostate_data_init(ctx, model_config):
     """
     from ...core.twostate_data_init import inject_twostate_data_init
 
+    import jax.numpy as _jnp
+
     model_config = inject_twostate_data_init(model_config, ctx.count_data)
     _extra = (
         getattr(model_config.priors, "__pydantic_extra__", None) or {}
     )
-    _log.info(
-        "TwoState: injected empirical mu_prior_loc=%.3f from %d-gene "
-        "count matrix.",
-        float(_extra.get("mu_prior_loc")),
-        ctx.count_data.shape[1] if ctx.count_data.ndim == 2 else -1,
-    )
+    _anchor = _extra.get("mu_prior_loc")
+    # ``mu_prior_loc`` is now a per-gene array (post-rev: data-driven
+    # anchor); log the summary range rather than a single scalar.
+    _anchor_arr = _jnp.asarray(_anchor)
+    if _anchor_arr.ndim == 0:
+        _log.info(
+            "TwoState: injected mu_prior_loc=%.3f from %d-gene count matrix.",
+            float(_anchor_arr),
+            ctx.count_data.shape[1] if ctx.count_data.ndim == 2 else -1,
+        )
+    else:
+        _log.info(
+            "TwoState: injected per-gene mu_prior_loc with %d entries "
+            "(min=%.3f, median=%.3f, max=%.3f).",
+            int(_anchor_arr.size),
+            float(_jnp.min(_anchor_arr)),
+            float(_jnp.median(_anchor_arr)),
+            float(_jnp.max(_anchor_arr)),
+        )
     return model_config
 
 
