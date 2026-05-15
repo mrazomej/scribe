@@ -60,7 +60,15 @@ model** as a flexible likelihood for these genes, and show that:
    OFF rate — under which the priors decouple and "default to NB"
    is encoded by a simple shift of the $k^-$ prior.
 
-6. The marginal log-likelihood is evaluated by **Gauss-Jacobi
+6. Two further bijective reparameterisations — the regime ratio
+   $s = k^-/k^+$ and the mean–Fano coordinates $(\mu, F, \kappa)$
+   — leave the likelihood unchanged but rotate the sampled axes
+   into directions the data identify approximately independently.
+   The mean–Fano variant makes the first two observable moments
+   the sampled coordinates and directly bounds the
+   posterior-predictive variance per gene.
+
+7. The marginal log-likelihood is evaluated by **Gauss-Jacobi
    quadrature** over the latent ON-fraction, which is stable across
    the full parameter range and differentiable through the
    underlying eigendecomposition.
@@ -303,6 +311,250 @@ prior — strong NB defaults are available by tightening the
 $k^-$ prior, or by switching the transform to a heavier-tailed
 log-normal, but at the cost of making it harder for the data to
 overcome the prior when a gene genuinely is bursty.
+
+## Alternative reparameterisations {#sec-twostate-altreparam}
+
+The map @eq-twostate-derived eliminates the identifiability ridge by
+making $\mu_g$ the *sampled* mean — a quantity the data anchor
+directly — and demotes $b_g$ and $k^-_g$ to derived shape variables.
+This is a substantial improvement over the bare $(\hat r,\,
+\hat k^+,\, \hat k^-)$ coordinates, but it is not the end of the
+story when inference is done by **mean-field variational inference
+(VI)**. Mean-field approximates the posterior by an independent
+product
+
+$$
+q(\mu_g,\, b_g,\, k^-_g)
+\;\approx\;
+q(\mu_g)\, q(b_g)\, q(k^-_g),
+$$ {#eq-meanfield-product}
+
+with each marginal $q(\cdot)$ a transformed Gaussian in
+unconstrained space. The Kullback-Leibler divergence
+$\mathrm{KL}(q\,\|\,\pi)$ being minimised is, at fixed marginals,
+penalised by every direction of *posterior correlation* the product
+form cannot represent. The quality of mean-field therefore depends
+not just on whether the parameters are identifiable but on whether
+they are *approximately uncorrelated in the posterior*. Two
+parameterisations that yield the same likelihood can give very
+different mean-field approximations: the one whose coordinates
+align with the directions the data inform independently will
+produce tighter posteriors and, in turn, tighter posterior
+predictive distributions.
+
+This subsection introduces two reparameterisations that target
+this geometric question. Both are exact bijections of
+@eq-twostate-derived — the likelihood, the NB limit, and the
+binomial-thinning closure are unchanged. What changes is which
+*axes of the posterior* the variational guide is asked to
+represent.
+
+### The regime ratio $s = k^-/k^+$ {#sec-twostate-ratio}
+
+The Negative Binomial limit @eq-nb-limit is reached not at large
+$k^-_g$ alone but at large $k^-_g$ *relative to* $k^+_g$ — when
+the promoter spends a vanishing fraction $k^+/(k^++k^-)$ of its
+time ON. The natural ratio
+
+$$
+s_g
+\;=\;
+\frac{k^-_g}{k^+_g}
+\;=\;
+\frac{b_g\, k^-_g}{\mu_g}
+$$ {#eq-switching-ratio}
+
+is dimensionless, scale-invariant across genes, and directly
+measures how far a gene sits from the NB limit ($s_g \to \infty$
+gives NB, $s_g$ moderate gives bursty). A gene that is "NB-like"
+at $\mu = 5$ and a gene that is "NB-like" at $\mu = 500$ share the
+same characteristic $s$; their absolute $k^-$ values differ by an
+order of magnitude.
+
+Sampling $(\mu_g,\, b_g,\, s_g)$ in place of $(\mu_g,\, b_g,\,
+k^-_g)$ recovers the natural-parameter quantities via
+
+$$
+\alpha_g \,=\, k^+_g \,=\, \mu_g / b_g,
+\quad
+\beta_g \,=\, k^-_g \,=\, s_g\, k^+_g \,=\, s_g\, \mu_g / b_g,
+\quad
+\hat r_g \,=\, \mu_g\, (1 + s_g),
+$$ {#eq-twostate-ratio-derived}
+
+and the mean is preserved identically:
+
+$$
+\langle u_{gc}\rangle
+\,=\, \hat r_g \cdot \frac{\alpha_g}{\alpha_g + \beta_g}
+\,=\, \mu_g\,(1+s_g) \cdot \frac{k^+_g}{k^+_g + s_g\,k^+_g}
+\,=\, \mu_g.
+$$ {#eq-mean-preservation-ratio}
+
+The geometric improvement is that mean-field on
+$(\log\mu,\, \log b,\, \log s)$ no longer asks the guide to
+discover a curved manifold along which independent draws of $b$
+and $k^-$ must conspire to keep the regime ratio sensible. The
+data informs $s_g$ approximately independently of $\mu_g$ and
+$b_g$ — a gene's regime classification (NB vs bursty) is
+essentially scale-free — so the product form @eq-meanfield-product
+written in $(\mu, b, s)$ coordinates is a much closer fit to the
+true posterior than the same form written in
+$(\mu, b, k^-)$ coordinates. The NB-limit prior tilt that
+@eq-twostate-priors places on $\log k^-$ shifts naturally to the
+regime axis: $\log s_g \sim \mathcal{N}(3, 2^2)$ encodes the same
+"mildly favour NB" preference but does so in a scale-invariant way
+that applies uniformly across high- and low-expression genes.
+
+### The mean and Fano factor as sampled coordinates {#sec-twostate-mean-fano}
+
+The regime ratio addresses one geometric coupling but not the only
+one. The posterior-predictive *variance* of a gene under
+@eq-twostate-thinned-poisson-beta is
+
+$$
+\mathrm{Var}[u_{gc}]
+\,=\, \langle u_{gc}\rangle
+\,+\, \hat r_g^{\,2}\, \mathrm{Var}[p_{gc}]
+\,=\, \mu_g \,+\, \hat r_g^{\,2} \cdot
+\frac{\alpha_g\,\beta_g}{(\alpha_g+\beta_g)^2\,(\alpha_g+\beta_g+1)},
+$$ {#eq-twostate-variance}
+
+a function of all three parameters. Substituting any of the
+foregoing parameterisations gives a *nonlinear* relationship
+between the sampled coordinates and the implied variance. In
+$(\mu, b, k^-)$ coordinates,
+
+$$
+\mathrm{Var}[u_{gc}] - \mu_g
+\,=\,
+\frac{b_g^{\,2}\, \mu_g\, k^-_g}{\mu_g + b_g\, k^-_g + b_g};
+$$ {#eq-twostate-excess-var-mubk}
+
+in $(\mu, b, s)$ coordinates an analogous expression holds with
+$k^-_g$ replaced by $s_g \mu_g/b_g$. Independent mean-field draws
+of two coordinates that *both* enter the variance multiplicatively
+combine into an implied variance whose distribution is much
+wider than the true posterior on $\mathrm{Var}[u_{gc}]$ —
+*exactly* the failure mode that surfaces as posterior-predictive
+bands too wide to match observed empirical distributions.
+
+The fix at the parameterisation level is to make the variance
+itself one of the sampled coordinates. Define
+
+$$
+F_g
+\,=\,
+\frac{\mathrm{Var}[u_{gc}]}{\langle u_{gc}\rangle} - 1
+\;\geq\; 0,
+\qquad
+\kappa_g \,=\, \alpha_g + \beta_g,
+$$ {#eq-twostate-mean-fano-defs}
+
+the **excess Fano factor** and the **Beta concentration**.
+Sampling $(\mu_g,\, F_g,\, \kappa_g)$ in unconstrained-positive
+space, the natural-parameter quantities are derived as
+
+$$
+\alpha_g \,=\,
+\frac{\kappa_g\, \mu_g}{\mu_g + F_g\,(\kappa_g + 1)},
+\qquad
+\beta_g \,=\,
+\frac{\kappa_g\, F_g\,(\kappa_g + 1)}{\mu_g + F_g\,(\kappa_g + 1)},
+\qquad
+\hat r_g \,=\, \mu_g + F_g\,(\kappa_g + 1).
+$$ {#eq-twostate-mean-fano-derived}
+
+A short verification confirms that *both* the first two moments
+are preserved by construction:
+
+$$
+\langle u_{gc}\rangle
+\,=\, \hat r_g \cdot \frac{\alpha_g}{\alpha_g + \beta_g}
+\,=\, \mu_g,
+\qquad
+\frac{\mathrm{Var}[u_{gc}]}{\langle u_{gc}\rangle} - 1
+\,=\, F_g,
+$$ {#eq-mean-fano-preserved}
+
+independently of all other parameters. The variational guide is
+now asked to factorise across coordinates that *each* control a
+distinct, data-anchored quantity: $\mu_g$ sets location, $F_g$
+sets predictive variance, and $\kappa_g$ sets the latent-Beta
+shape — equivalently, the gene's departure from the NB limit.
+
+The NB limit reads cleanly in these coordinates as $\kappa_g \to
+\infty$. From @eq-twostate-mean-fano-derived,
+
+$$
+\alpha_g \,\to\, \mu_g / F_g,
+\qquad
+\beta_g \,\to\, \kappa_g,
+\qquad
+\hat r_g \,\to\, F_g\, \kappa_g,
+$$ {#eq-mean-fano-nb-limit}
+
+and the two-state distribution collapses to an NB with shape
+$\mu_g / F_g$ and burst size $F_g$. Two consequences:
+
+1. In the NB limit, the **NB burst size equals the excess Fano
+   factor**. This is the well-known identity
+   $\mathrm{Var}/\mu = 1 + \mu/r_{\mathrm{NB}}$ written in a more
+   directly observable form. The single variable $F_g$ carries the
+   information the NB encoded in its dispersion parameter.
+
+2. The "default to NB" tilt now goes on $\kappa_g$, *not* on $F_g$:
+   a strong NB-default prior is $\log \kappa_g \sim \mathcal{N}(c,
+   \sigma^2)$ with $c$ large. The prior on $F_g$ is left broad
+   because the data informs the predictive variance directly.
+
+This is the two-state analogue of the NB-family mean–odds
+strategy used elsewhere in the pipeline: sample directly the
+quantities the data anchor through low-order moments, and demote
+the remaining freedom to a shape coordinate whose prior carries
+the regime preference. There, the mean and the mean-odds ratio
+$\phi = (1-p)/p$ are the sampled coordinates and $r$ is derived;
+here, the mean and the excess Fano factor are the sampled
+coordinates and the latent-Beta concentration is the shape knob.
+In both cases the variational guide's product form factorises
+along axes the data informs approximately independently.
+
+### Choosing among the three parameterisations {#sec-twostate-altreparam-choice}
+
+All three parameterisations describe the same family of
+distributions; they differ only in which axes of the posterior
+mean-field VI is asked to represent independently.
+
+- $(\mu, b, k^-)$ is the physics-natural choice: $b$ is the
+  NB-limit mean burst size, $k^-$ is the OFF rate non-
+  dimensionalised by mRNA decay. Recommended when the analyst
+  wants the most direct biophysical interpretation and is using
+  posterior sampling (NUTS) that recovers correlations exactly.
+
+- $(\mu, b, s)$ replaces the absolute OFF rate by the
+  dimensionless regime ratio $s = k^-/k^+$. The "NB-ness" of a
+  gene is now a single scalar, scale-invariant across genes, and
+  the variational guide does not have to learn a curved manifold
+  along which $b$ and $k^-$ co-vary to keep $s$ sensible.
+  Recommended when fitting many genes with widely varying $\mu$
+  by mean-field VI.
+
+- $(\mu, F, \kappa)$ makes the first two observable moments the
+  sampled coordinates. Posterior uncertainty in $F$ directly
+  controls the width of the posterior predictive distribution per
+  gene; uncertainty in $\kappa$ controls only the shape of the
+  latent Beta. Recommended when posterior-predictive bands under
+  the foregoing parameterisations are systematically wider than
+  the observed gene-level variance — a signature of mean-field
+  smearing across the implied-variance manifold.
+
+The three are mathematically equivalent; the distinction is
+operational, governed by how mean-field's independence assumption
+interacts with the data's identifiability structure. An analyst
+running NUTS does not need to choose: any of the three will
+recover the same posterior up to MCMC noise. An analyst running
+SVI should match the parameterisation to the failure mode the
+posterior-predictive checks expose.
 
 ## Inference: Gauss-Jacobi quadrature instead of ${}_1F_1$ {#sec-twostate-quadrature}
 
