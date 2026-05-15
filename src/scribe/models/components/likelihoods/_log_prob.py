@@ -331,9 +331,9 @@ def _extract_capture(
     *,
     context: str,
 ) -> tuple:
-    """Return ``(p_capture, p_capture_layout)`` under either parameterisation.
+    """Return ``(p_capture, p_capture_layout)`` under either parameterization.
 
-    SCRIBE supports two capture parameterisations:
+    SCRIBE supports two capture parameterizations:
 
     - Native constrained: ``p_capture`` directly.
     - Odds-ratio:         ``phi_capture``; the capture probability is
@@ -633,13 +633,13 @@ def _mixture_reduce(
         - ``gene`` + not split:  ``(n_genes,)``
         - ``gene`` + split:      ``(n_genes, n_components)``
     """
-    # Apply weights first: behaviour preserves the axis conventions of the
+    # Apply weights first: behavior preserves the axis conventions of the
     # legacy free-function implementation exactly.
     if weights is not None and weight_type is not None:
         if return_by == "cell":
             # Cell branch: weights has shape (n_genes,).
             if weight_type == "multiplicative":
-                # Legacy behaviour: direct multiplication (rightmost-axis
+                # Legacy behavior: direct multiplication (rightmost-axis
                 # broadcast). Preserved verbatim for numerical parity.
                 gene_log_probs = gene_log_probs * weights
             else:  # additive
@@ -1296,6 +1296,7 @@ def twostate_log_prob(
     """
     from ....stats.distributions import PoissonBetaCompound
     from .two_state import (
+        _twostate_moment_delta_reparam,
         _twostate_moments_reparam,
         _twostate_ratio_reparam,
         _twostate_reparam,
@@ -1307,7 +1308,14 @@ def twostate_log_prob(
     n_cells, n_genes = counts.shape
 
     mu = jnp.asarray(params["mu"], dtype=dtype)
-    if "excess_fano" in params:
+    if "inv_concentration" in params:
+        # Moment-delta parameterization: (mu, excess_fano, delta).
+        excess_fano = jnp.asarray(params["excess_fano"], dtype=dtype)
+        delta = jnp.asarray(params["inv_concentration"], dtype=dtype)
+        alpha, beta, rate_gene, _eff_burst_size = (
+            _twostate_moment_delta_reparam(mu, excess_fano, delta)
+        )
+    elif "excess_fano" in params:
         # Mean-Fano parameterization: alpha, beta derived from
         # (mu, excess_fano, concentration).
         excess_fano = jnp.asarray(params["excess_fano"], dtype=dtype)

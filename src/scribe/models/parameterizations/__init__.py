@@ -1254,7 +1254,7 @@ class TwoStateRatioParameterization(Parameterization):
     coordinates that are *not* approximately independent in the
     posterior: q(k_off) is geometrically coupled to q(mu) and
     q(burst_size).  Sampling the ratio aligns the variational
-    factorisation with the data's identifiability axes, mirroring how
+    factorization with the data's identifiability axes, mirroring how
     NBDM's ``mean_prob`` / ``mean_odds`` aligns with (mean, dispersion)
     rather than (r, p).
 
@@ -1424,6 +1424,101 @@ class TwoStateMeanFanoParameterization(Parameterization):
         return []
 
 
+class TwoStateMomentDeltaParameterization(Parameterization):
+    """Moment-delta parameterization for the Poisson-Beta compound.
+
+    Samples ``(mu, excess_fano, inv_concentration)`` where:
+
+    * ``mu`` is the per-gene mean.
+    * ``excess_fano`` is ``Var[X]/E[X] − 1`` (identical to its role
+      in the mean-Fano parameterization).
+    * ``inv_concentration = delta = 1 / (concentration + 1) ∈ (0, 1)``
+      is the bounded shape coordinate.
+
+    Same first-two-moment guarantees as the mean-Fano variant
+    (``E[count] = mu`` and ``Var/Mean - 1 = excess_fano`` by
+    construction), but with the shape axis re-mapped from the
+    unbounded ``concentration > 0`` to a bounded ``delta ∈ (0, 1)``.
+
+    Why this exists
+    ---------------
+    The NB limit in the mean-Fano coordinates is ``concentration →
+    ∞`` — an unbounded direction along which the mean-field guide
+    can waste posterior mass.  Mapping ``delta = 1/(concentration +
+    1)`` compresses that ridge into ``delta → 0``.  Since ``delta``
+    is bounded, a logit-normal (sigmoid-Normal) guide is the
+    natural choice: ``logit(delta) ~ Normal(loc, scale)`` and
+    ``delta = sigmoid(logit(delta))``.  The NB-default prior tilt
+    becomes a left-shifted mean on the logit (``loc ≈ -4`` puts
+    most mass at small delta, i.e. NB-like concentrations).
+
+    Forward map (computed in the likelihood)::
+
+        denom = mu·delta + excess_fano                 ( = (mu + e/delta) · delta )
+        alpha = mu · (1 - delta) / denom               ( = k_on )
+        beta  = excess_fano · (1 - delta) / (delta · denom)
+                                                       ( = k_off )
+        r_hat = (mu·delta + excess_fano) / delta       ( = mu + e/delta )
+
+    Equivalent forms (with ``kappa = (1 - delta)/delta``,
+    ``s = excess_fano / (mu·delta)``)::
+
+        alpha = kappa · mu·delta / denom = kappa / (1 + s)
+        beta  = kappa · s / (1 + s)
+        r_hat = mu · (1 + s)
+
+    Moment guarantees::
+
+        E[count]                   = mu
+        Var[count] / E[count] - 1  = excess_fano
+
+    NB limit (``delta → 0``)::
+
+        alpha → mu / excess_fano
+        beta  → ∞
+        r_hat → excess_fano / delta → ∞
+
+    recovering NB(shape = mu/excess_fano, burst = excess_fano).
+    """
+
+    @property
+    def name(self) -> str:
+        return "two_state_moment_delta"
+
+    @property
+    def core_parameters(self) -> List[str]:
+        return ["mu"]
+
+    @property
+    def gene_param_name(self) -> str:
+        return "mu"
+
+    def build_param_specs(
+        self,
+        unconstrained: bool,
+        guide_families: GuideFamilyConfig,
+        n_components: Optional[int] = None,
+        mixture_params: Optional[List[str]] = None,
+    ) -> List[ParamSpec]:
+        """Build the mu spec; ``excess_fano`` and ``inv_concentration``
+        come from the model extras dispatch."""
+        del unconstrained, n_components, mixture_params
+        mu_family = guide_families.get("mu")
+        return [
+            PositiveNormalSpec(
+                name="mu",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=mu_family,
+                is_mixture=False,
+            ),
+        ]
+
+    def build_derived_params(self) -> List[DerivedParam]:
+        return []
+
+
 # ==============================================================================
 # Parameterization Registry
 # ==============================================================================
@@ -1443,6 +1538,7 @@ _poisson_lognormal = PoissonLogNormalParameterization()
 _two_state_natural = TwoStateParameterization()
 _two_state_ratio = TwoStateRatioParameterization()
 _two_state_mean_fano = TwoStateMeanFanoParameterization()
+_two_state_moment_delta = TwoStateMomentDeltaParameterization()
 
 # Registry mapping internal parameterization keys to singleton instances.
 # The LNM family appears under three keys mirroring the DM-family trio.
@@ -1472,6 +1568,13 @@ PARAMETERIZATIONS = {
     # concentration carries the NB-vs-bursty shape.  See
     # TwoStateMeanFanoParameterization for the math.
     "two_state_mean_fano": _two_state_mean_fano,
+    # Two-state moment-delta parameterization: samples (mu,
+    # excess_fano, inv_concentration) with delta = 1/(kappa+1) in
+    # (0, 1).  Same moment guarantees as mean_fano; bounded shape
+    # coordinate avoids wasted mass over arbitrarily large
+    # concentration values.  See TwoStateMomentDeltaParameterization
+    # for the math.
+    "two_state_moment_delta": _two_state_moment_delta,
     # Short alias for the two-state natural parameterization. Both keys
     # resolve to the same singleton; ``"natural"`` is preferred for
     # interactive use, ``"two_state_natural"`` is the canonical form
@@ -1482,6 +1585,9 @@ PARAMETERIZATIONS = {
     # Short aliases for the mean-Fano parameterization.
     "mean_fano": _two_state_mean_fano,
     "fano": _two_state_mean_fano,
+    # Short aliases for the moment-delta parameterization.
+    "moment_delta": _two_state_moment_delta,
+    "delta": _two_state_moment_delta,
     # Backward compatibility for the DM family
     "standard": _canonical,
     "linked": _mean_prob,
@@ -1619,10 +1725,11 @@ def resolve_user_parameterization_for_model(
     if model_lower in ("pln", "nbln"):
         return "count_lognormal"
 
-    # TwoState (Poisson-Beta compound) accepts three parameterizations:
-    # ``two_state_natural``     — samples (mu, burst_size, k_off)
-    # ``two_state_ratio``       — samples (mu, burst_size, switching_ratio)
-    # ``two_state_mean_fano``   — samples (mu, excess_fano, concentration)
+    # TwoState (Poisson-Beta compound) accepts four parameterizations:
+    # ``two_state_natural``      — samples (mu, burst_size, k_off)
+    # ``two_state_ratio``        — samples (mu, burst_size, switching_ratio)
+    # ``two_state_mean_fano``    — samples (mu, excess_fano, concentration)
+    # ``two_state_moment_delta`` — samples (mu, excess_fano, inv_concentration)
     # Reject DM-family strings with a directive to the supported
     # values rather than silently re-mapping.
     if model_lower in ("twostate", "twostatevcp"):
@@ -1633,13 +1740,17 @@ def resolve_user_parameterization_for_model(
             return "two_state_ratio"
         if param_lower in ("two_state_mean_fano", "mean_fano", "fano"):
             return "two_state_mean_fano"
+        if param_lower in ("two_state_moment_delta", "moment_delta", "delta"):
+            return "two_state_moment_delta"
         raise ValueError(
             f"parameterization={parameterization!r} is not supported for "
             f"model={model!r}. Choose 'two_state_natural' (samples k_off "
             f"directly; aliases: 'natural'), 'two_state_ratio' (samples "
-            f"switching_ratio = k_off/k_on; aliases: 'ratio'), or "
+            f"switching_ratio = k_off/k_on; aliases: 'ratio'), "
             f"'two_state_mean_fano' (samples excess_fano + concentration; "
-            f"aliases: 'mean_fano', 'fano')."
+            f"aliases: 'mean_fano', 'fano'), or 'two_state_moment_delta' "
+            f"(samples excess_fano + inv_concentration; aliases: "
+            f"'moment_delta', 'delta')."
         )
 
     param_lower = parameterization.lower()
@@ -1694,6 +1805,7 @@ __all__ = [
     "TwoStateParameterization",
     "TwoStateRatioParameterization",
     "TwoStateMeanFanoParameterization",
+    "TwoStateMomentDeltaParameterization",
     "PARAMETERIZATIONS",
     # Family helpers
     "is_logistic_normal_family",

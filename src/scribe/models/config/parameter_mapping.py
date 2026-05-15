@@ -527,6 +527,86 @@ PARAMETERIZATION_MAPPINGS = {
         },
     ),
     # ------------------------------------------------------------------
+    # Two-state promoter — MOMENT-DELTA variant.
+    # Samples ``mu`` as the only core parameter; the extras are
+    # ``excess_fano`` and ``inv_concentration = 1 / (kappa + 1) in
+    # (0, 1)``.  Bounded shape coordinate; sigmoid-normal guide.
+    # Same moment guarantees as TWO_STATE_MEAN_FANO.
+    # ------------------------------------------------------------------
+    Parameterization.TWO_STATE_MOMENT_DELTA: ParameterizationMapping(
+        parameterization=Parameterization.TWO_STATE_MOMENT_DELTA,
+        core_parameters={"mu"},
+        optional_parameters={
+            "excess_fano",
+            "inv_concentration",
+            # Derived per-gene quantities (deterministic sites)
+            "alpha",
+            "beta",
+            "k_on",
+            "k_off",
+            "burst_size",
+            "concentration",
+            "r_hat",
+            "effective_burst_size",
+            "alpha_floor_active",
+            "beta_floor_active",
+        },
+        parameter_descriptions={
+            "mu": (
+                "Per-gene mean expression. "
+                "PositiveNormal / SoftplusNormal."
+            ),
+            "excess_fano": (
+                "Per-gene excess Fano factor: Var/Mean - 1. "
+                "Directly bounds posterior-predictive variance. "
+                "PositiveNormal / SoftplusNormal."
+            ),
+            "inv_concentration": (
+                "Per-gene shape coordinate delta = 1/(kappa + 1) "
+                "in (0, 1). delta -> 0 is the NB limit, delta near "
+                "1 is the extreme bursty regime. SigmoidNormal."
+            ),
+            "p_capture": (
+                "Per-cell capture probability "
+                "(Beta / SigmoidNormal). TwoStateVCP only."
+            ),
+            "alpha": (
+                "DERIVED: Beta first shape = mu * (1 - delta) / "
+                "(mu * delta + excess_fano). Equals k_on."
+            ),
+            "beta": (
+                "DERIVED: Beta second shape = excess_fano * (1 - "
+                "delta) / (delta * (mu * delta + excess_fano)). "
+                "Equals k_off."
+            ),
+            "k_on": "DERIVED: ON rate; equals alpha.",
+            "k_off": "DERIVED: OFF rate; equals beta.",
+            "burst_size": (
+                "DERIVED: NB-limit burst size = mu / alpha. Equals "
+                "excess_fano in the NB limit (delta -> 0)."
+            ),
+            "concentration": (
+                "DERIVED: Beta concentration kappa = (1 - delta) / "
+                "delta."
+            ),
+            "r_hat": (
+                "DERIVED: Poisson rate scale = (mu * delta + "
+                "excess_fano) / delta (mean-preserving)."
+            ),
+            "effective_burst_size": (
+                "DERIVED: burst size implied by the floored alpha."
+            ),
+            "alpha_floor_active": (
+                "DERIVED: boolean indicator; True when alpha hits "
+                "the numerical floor in the likelihood."
+            ),
+            "beta_floor_active": (
+                "DERIVED: boolean indicator; True when beta hits "
+                "the numerical floor in the likelihood."
+            ),
+        },
+    ),
+    # ------------------------------------------------------------------
     # PLN (Poisson-LogNormal) — single variant, no totals submodel
     # ------------------------------------------------------------------
     Parameterization.COUNT_LOGNORMAL: ParameterizationMapping(
@@ -712,15 +792,18 @@ def get_active_parameters(
 
     # Two-state promoter: the gene-level extras depend on the
     # parameterization.
-    #   - TWO_STATE_NATURAL:  (burst_size, k_off)
-    #   - TWO_STATE_RATIO:    (burst_size, switching_ratio)
-    #   - TWO_STATE_MEAN_FANO: (excess_fano, concentration)  — no burst_size
+    #   - TWO_STATE_NATURAL:      (burst_size, k_off)
+    #   - TWO_STATE_RATIO:        (burst_size, switching_ratio)
+    #   - TWO_STATE_MEAN_FANO:    (excess_fano, concentration)
+    #   - TWO_STATE_MOMENT_DELTA: (excess_fano, inv_concentration)
     # ``p_capture`` is added for the VCP variant.  Derived per-gene
     # deterministics (alpha, beta, r_hat, effective_burst_size, floor
     # indicators) are exposed by the likelihood and stay in the
     # mapping's optional set.
     if model_type in ("twostate", "twostatevcp"):
-        if parameterization == Parameterization.TWO_STATE_MEAN_FANO:
+        if parameterization == Parameterization.TWO_STATE_MOMENT_DELTA:
+            active_params.update({"excess_fano", "inv_concentration"})
+        elif parameterization == Parameterization.TWO_STATE_MEAN_FANO:
             active_params.update({"excess_fano", "concentration"})
         elif parameterization == Parameterization.TWO_STATE_RATIO:
             active_params.update({"burst_size", "switching_ratio"})

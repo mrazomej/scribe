@@ -597,7 +597,7 @@ def build_bnb_concentration_spec(
         return specs
 
     # Shared location in unconstrained space (strongly negative so that
-    # softplus(loc) ~ 0, defaulting to NB behaviour).
+    # softplus(loc) ~ 0, defaulting to NB behavior).
     specs.append(
         NormalWithTransformSpec(
             name="bnb_concentration_loc",
@@ -1021,6 +1021,57 @@ def build_concentration_spec(
     ]
 
 
+def build_inv_concentration_spec(
+    unconstrained: bool,
+    guide_families: GuideFamilyConfig,
+    n_components: Optional[int] = None,
+    mixture_params: Optional[List[str]] = None,
+    positive_transform: Any = None,
+    prior_loc: float = -4.0,
+    prior_scale: float = 2.0,
+) -> List[ParamSpec]:
+    """Build the inv_concentration spec for TwoState (moment-delta variant).
+
+    ``inv_concentration = delta = 1 / (kappa + 1)`` is in (0, 1).
+    ``delta -> 0`` is the NB limit; ``delta`` near 1 is the extreme
+    bursty regime.  We sample logit(delta) ~ Normal(loc, scale) and
+    apply a sigmoid transform — naturally bounded in unconstrained
+    space, so the variational guide doesn't waste mass over
+    arbitrarily large concentration values.
+
+    Default prior Normal(-4, 2) in logit-space gives, under sigmoid,
+    median delta ~ 0.018 (kappa ~ 55, mildly NB-like) with a
+    substantial tail toward larger delta (smaller kappa, more
+    bursty).  For a stronger NB default, shift ``prior_loc`` more
+    negative; for a flatter prior, widen ``prior_scale``.
+
+    The ``positive_transform`` argument is accepted for signature
+    consistency with the sibling builders but ignored — the spec
+    is a SigmoidNormal regardless of the model config's
+    positive_transform.
+    """
+    del unconstrained, positive_transform
+    is_mixture = False
+    if n_components is not None:
+        if mixture_params is None:
+            is_mixture = True
+        else:
+            is_mixture = "inv_concentration" in mixture_params
+
+    from ..builders.parameter_specs import SigmoidNormalSpec
+
+    return [
+        SigmoidNormalSpec(
+            name="inv_concentration",
+            shape_dims=("n_genes",),
+            default_params=(prior_loc, prior_scale),
+            is_gene_specific=True,
+            guide_family=guide_families.get("inv_concentration"),
+            is_mixture=is_mixture,
+        )
+    ]
+
+
 def build_switching_ratio_spec(
     unconstrained: bool,
     guide_families: GuideFamilyConfig,
@@ -1226,11 +1277,20 @@ def build_extra_param_spec(
             mixture_params=mixture_params,
             positive_transform=positive_transform,
         )
+    elif param_name == "inv_concentration":
+        return build_inv_concentration_spec(
+            unconstrained=unconstrained,
+            guide_families=guide_families,
+            n_components=n_components,
+            mixture_params=mixture_params,
+            positive_transform=positive_transform,
+        )
     else:
         raise ValueError(
             f"Unknown extra parameter: {param_name}. "
             f"Valid parameters are: gate, p_capture, bnb_concentration, r, "
-            f"burst_size, k_off, switching_ratio, excess_fano, concentration"
+            f"burst_size, k_off, switching_ratio, excess_fano, "
+            f"concentration, inv_concentration"
         )
 
 

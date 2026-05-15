@@ -88,7 +88,7 @@ class Parameterization(str, Enum):
     # - ``base_model="nbln"`` →  Negative Binomial observation channel
     #
     # The structural form (Gaussian-on-log-rates with low-rank
-    # factorisation) is shared; observation channels are distinguished
+    # factorization) is shared; observation channels are distinguished
     # by ``base_model``, mirroring how CANONICAL covers ``nbdm``,
     # ``nbvcp``, ``zinb``, ``zinbvcp``.  Per-model differences in
     # site names (``d_pln`` vs ``d_nbln``) and extra globals (``r_g``
@@ -127,6 +127,15 @@ class Parameterization(str, Enum):
     # q(concentration) carries the "departure from NB" shape.  See
     # TwoStateMeanFanoParameterization in parameterizations/__init__.py.
     TWO_STATE_MEAN_FANO = "two_state_mean_fano"
+    # Two-state MOMENT-DELTA parameterization: same moment structure
+    # as mean_fano but reparameterises the shape coordinate as
+    # ``inv_concentration = delta = 1/(kappa + 1) in (0, 1)`` and
+    # samples ``delta`` via a SigmoidNormal.  Compresses the
+    # unbounded NB-limit ridge (kappa → ∞) into delta → 0 so
+    # mean-field q doesn't waste mass over arbitrarily large
+    # concentration values.  See TwoStateMomentDeltaParameterization
+    # in parameterizations/__init__.py.
+    TWO_STATE_MOMENT_DELTA = "two_state_moment_delta"
 
     # ------------------------------------------------------------------
     # Backward-compatible deserialization of removed hierarchical values.
@@ -170,6 +179,9 @@ class Parameterization(str, Enum):
             # Short aliases for the mean-Fano parameterization.
             "mean_fano": "two_state_mean_fano",
             "fano": "two_state_mean_fano",
+            # Short aliases for the moment-delta parameterization.
+            "moment_delta": "two_state_moment_delta",
+            "delta": "two_state_moment_delta",
         }
         if isinstance(value, str):
             base = _legacy.get(value)

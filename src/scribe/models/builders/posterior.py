@@ -645,6 +645,7 @@ def _apply_base_parameterization(
         Parameterization.TWO_STATE_NATURAL,
         Parameterization.TWO_STATE_RATIO,
         Parameterization.TWO_STATE_MEAN_FANO,
+        Parameterization.TWO_STATE_MOMENT_DELTA,
     ):
         # TwoState (Poisson-Beta compound). The three per-gene
         # parameters (mu, burst_size, k_off-or-switching_ratio) are
@@ -3132,7 +3133,10 @@ def _build_two_state_posteriors(
                 return True
         return False
 
-    if _has("excess_fano"):
+    if _has("inv_concentration"):
+        # Moment-delta: samples (mu, excess_fano, inv_concentration).
+        param_names = ("mu", "excess_fano", "inv_concentration")
+    elif _has("excess_fano"):
         # Mean-Fano: samples (mu, excess_fano, concentration).
         param_names = ("mu", "excess_fano", "concentration")
     elif _has("switching_ratio"):
@@ -3146,6 +3150,38 @@ def _build_two_state_posteriors(
         if name in skip:
             continue
         jp = _find_joint_prefix(params, name)
+
+        # ``inv_concentration`` lives in (0, 1) under a sigmoid
+        # transform — different from the other TwoState extras
+        # which are positive-real under softplus/exp.  Dispatch to
+        # the sigmoid-normal builder regardless of ``unconstrained``.
+        if name == "inv_concentration":
+            if jp is not None:
+                distributions[name] = _build_joint_low_rank_posterior(
+                    params,
+                    name,
+                    jp,
+                    split,
+                    transform=dist.transforms.SigmoidTransform(),
+                )
+            elif f"{name}_W" in params:
+                distributions[name] = (
+                    _build_low_rank_positive_normal_posterior(
+                        params,
+                        name,
+                        is_mixture=False,
+                        split=split,
+                        transform=dist.transforms.SigmoidTransform(),
+                    )
+                )
+            else:
+                distributions[name] = _build_sigmoid_normal_posterior(
+                    params,
+                    name,
+                    is_scalar=False,
+                    split=split,
+                )
+            continue
 
         if unconstrained:
             if jp is not None:

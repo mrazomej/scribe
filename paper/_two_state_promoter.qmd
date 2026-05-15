@@ -55,18 +55,22 @@ model** as a flexible likelihood for these genes, and show that:
    runs out.
 
 5. The natural rate parameters $(\hat r, k^+, k^-)$ have a
-   well-known identifiability ridge, so we reparameterise in terms
+   well-known identifiability ridge, so we reparameterize in terms
    of $(\mu, b, k^-)$ — gene mean, NB-limit mean burst size, and
    OFF rate — under which the priors decouple and "default to NB"
    is encoded by a simple shift of the $k^-$ prior.
 
-6. Two further bijective reparameterisations — the regime ratio
-   $s = k^-/k^+$ and the mean–Fano coordinates $(\mu, F, \kappa)$
+6. Three further bijective reparameterizations — the regime
+   ratio $s = k^-/k^+$, the mean–Fano coordinates
+   $(\mu, F, \kappa)$, and the moment-delta coordinates
+   $(\mu, F, \delta)$ with $\delta = 1/(\kappa + 1) \in (0, 1)$
    — leave the likelihood unchanged but rotate the sampled axes
-   into directions the data identify approximately independently.
-   The mean–Fano variant makes the first two observable moments
-   the sampled coordinates and directly bounds the
-   posterior-predictive variance per gene.
+   into directions the data identify approximately
+   independently. The mean–Fano variant makes the first two
+   observable moments the sampled coordinates and directly bounds
+   the posterior-predictive variance per gene; the moment-delta
+   variant additionally compresses the unbounded NB-limit ridge
+   to a bounded shape coordinate.
 
 7. The marginal log-likelihood is evaluated by **Gauss-Legendre
    quadrature** over the latent ON-fraction, with the Beta density
@@ -133,7 +137,7 @@ $$ {#eq-poisson-beta}
 That is: the latent variable $p \in [0, 1]$ is drawn from a Beta
 distribution whose shape parameters are the non-dimensional
 switching rates, and the mRNA count is Poisson with rate
-$\hat r\, p$. Marginalising over $p$ recovers
+$\hat r\, p$. Marginalizing over $p$ recovers
 @eq-twostate-closed-form term by term, but numerically the
 compound is what we will use.
 
@@ -175,7 +179,7 @@ $$
 u \mid m, \nu_c \sim \mathrm{Binomial}(m, \nu_c).
 $$ {#eq-twostate-thinning}
 
-Marginalising the latent mRNA count via the Poisson-Beta
+Marginalizing the latent mRNA count via the Poisson-Beta
 representation is straightforward: a binomial-of-Poisson is again
 Poisson, so
 
@@ -235,7 +239,7 @@ the NB fits poorly are precisely those for which the data
 *reject* the fast-switching limit, and require the full two-state
 machinery.
 
-## Identifiability and the $(\mu, b, k^-)$ reparameterisation {#sec-twostate-reparam}
+## Identifiability and the $(\mu, b, k^-)$ reparameterization {#sec-twostate-reparam}
 
 The natural parameters $(\hat r, \hat k^+, \hat k^-)$ are not all
 identifiable from data. In the NB-like regime ($\hat k^- \gg
@@ -250,7 +254,7 @@ sampler that visits the ridge will produce a banana-shaped
 posterior, and any reported summaries of $(\hat r, \hat k^+,
 \hat k^-)$ in the NB-like regime are misleading.
 
-A clean fix is to **reparameterise in terms of the well-identified
+A clean fix is to **reparameterize in terms of the well-identified
 combinations.** We sample three positive scalars per gene:
 
 $$
@@ -282,10 +286,10 @@ $$
 \,=\, \mu_g,
 $$ {#eq-mean-preservation}
 
-independently of $b_g$ and $k^-_g$. The reparameterisation thus
+independently of $b_g$ and $k^-_g$. The reparameterization thus
 splits the identification cleanly: $\mu_g$ is anchored by the data
 mean, $b_g$ is interpretable as the NB-limit burst size (and is
-identified through the higher moments / tail behaviour), and
+identified through the higher moments / tail behavior), and
 $k^-_g$ controls how far the gene departs from the NB limit (large
 $k^-_g$ recovers NB; moderate $k^-_g$ admits bimodality).
 
@@ -316,7 +320,7 @@ $k^-$ prior, or by switching the transform to a heavier-tailed
 log-normal, but at the cost of making it harder for the data to
 overcome the prior when a gene genuinely is bursty.
 
-## Alternative reparameterisations {#sec-twostate-altreparam}
+## Alternative reparameterizations {#sec-twostate-altreparam}
 
 The map @eq-twostate-derived eliminates the identifiability ridge by
 making $\mu_g$ the *sampled* mean — a quantity the data anchor
@@ -340,13 +344,13 @@ penalised by every direction of *posterior correlation* the product
 form cannot represent. The quality of mean-field therefore depends
 not just on whether the parameters are identifiable but on whether
 they are *approximately uncorrelated in the posterior*. Two
-parameterisations that yield the same likelihood can give very
+parameterizations that yield the same likelihood can give very
 different mean-field approximations: the one whose coordinates
 align with the directions the data inform independently will
 produce tighter posteriors and, in turn, tighter posterior
 predictive distributions.
 
-This subsection introduces two reparameterisations that target
+This subsection introduces two reparameterizations that target
 this geometric question. Both are exact bijections of
 @eq-twostate-derived — the likelihood, the NB limit, and the
 binomial-thinning closure are unchanged. What changes is which
@@ -425,7 +429,7 @@ $$
 $$ {#eq-twostate-variance}
 
 a function of all three parameters. Substituting any of the
-foregoing parameterisations gives a *nonlinear* relationship
+foregoing parameterizations gives a *nonlinear* relationship
 between the sampled coordinates and the implied variance. In
 $(\mu, b, k^-)$ coordinates,
 
@@ -443,7 +447,7 @@ wider than the true posterior on $\mathrm{Var}[u_{gc}]$ —
 *exactly* the failure mode that surfaces as posterior-predictive
 bands too wide to match observed empirical distributions.
 
-The fix at the parameterisation level is to make the variance
+The fix at the parameterization level is to make the variance
 itself one of the sampled coordinates. Define
 
 $$
@@ -482,7 +486,7 @@ $$
 $$ {#eq-mean-fano-preserved}
 
 independently of all other parameters. The variational guide is
-now asked to factorise across coordinates that *each* control a
+now asked to factorize across coordinates that *each* control a
 distinct, data-anchored quantity: $\mu_g$ sets location, $F_g$
 sets predictive variance, and $\kappa_g$ sets the latent-Beta
 shape — equivalently, the gene's departure from the NB limit.
@@ -512,7 +516,7 @@ $\mu_g / F_g$ and burst size $F_g$. Two consequences:
    \sigma^2)$ with $c$ large. The prior on $F_g$ is left broad
    because the data informs the predictive variance directly.
 
-This is the two-state analogue of the NB-family mean–odds
+This is the two-state analog of the NB-family mean–odds
 strategy used elsewhere in the pipeline: sample directly the
 quantities the data anchor through low-order moments, and demote
 the remaining freedom to a shape coordinate whose prior carries
@@ -520,20 +524,108 @@ the regime preference. There, the mean and the mean-odds ratio
 $\phi = (1-p)/p$ are the sampled coordinates and $r$ is derived;
 here, the mean and the excess Fano factor are the sampled
 coordinates and the latent-Beta concentration is the shape knob.
-In both cases the variational guide's product form factorises
+In both cases the variational guide's product form factorizes
 along axes the data informs approximately independently.
 
-### Choosing among the three parameterisations {#sec-twostate-altreparam-choice}
+### Compressing the NB-limit ridge: $\delta = 1/(\kappa + 1)$ {#sec-twostate-moment-delta}
 
-All three parameterisations describe the same family of
+The mean-Fano parameterization removes the geometric coupling
+between predictive variance and gene magnitude, but leaves one
+operational nuisance: the NB limit is $\kappa \to \infty$, an
+unbounded direction. Under a mean-field $\log$-Normal guide on
+$\kappa$, the variational posterior is forced to allocate
+probability mass over the entire positive real line, and for
+NB-like genes the data does not localize $\kappa$ — the
+posterior just inherits the prior's tail. That is mass spent
+representing irrelevant variation in a parameter the data only
+distinguishes up to "large."
+
+A natural fix is to map the unbounded $\kappa \geq 0$ to a
+bounded coordinate. The substitution
+
+$$
+\delta_g \,=\, \frac{1}{\kappa_g + 1}
+\;\in\; (0, 1)
+$$ {#eq-delta-defn}
+
+is well-suited: $\delta_g \to 0$ corresponds to the NB limit
+($\kappa_g \to \infty$), $\delta_g \to 1$ corresponds to the
+extreme bursty regime ($\kappa_g \to 0$, the Beta degenerates to
+a delta at $\{0, 1\}$), and every value in between is a
+well-defined two-state shape. Sampling $\delta_g$ via a
+logit-Normal $\operatorname{logit}\delta_g \sim
+\mathcal{N}(\ell, \sigma^2)$ — equivalently $\delta_g =
+\operatorname{sigmoid}(\ell + \sigma z)$ for $z \sim
+\mathcal{N}(0, 1)$ — gives a smooth, bounded variational
+distribution over the entire shape range.
+
+Inverting @eq-delta-defn as $\kappa_g = (1 - \delta_g)/\delta_g$
+and substituting into @eq-twostate-mean-fano-derived gives the
+$(\mu, F, \delta)$ forward map:
+
+$$
+\alpha_g \,=\, \frac{\mu_g\,(1 - \delta_g)}{\mu_g\, \delta_g + F_g},
+\qquad
+\beta_g \,=\, \frac{F_g\,(1 - \delta_g)}{\delta_g\,(\mu_g\, \delta_g + F_g)},
+\qquad
+\hat r_g \,=\, \frac{\mu_g\, \delta_g + F_g}{\delta_g}.
+$$ {#eq-moment-delta-derived}
+
+A direct verification (or applying the chain rule to
+@eq-mean-fano-preserved) confirms that the first two moments are
+preserved by construction in the new coordinates as well:
+
+$$
+\langle u_{gc}\rangle \,=\, \mu_g,
+\qquad
+\frac{\mathrm{Var}[u_{gc}]}{\langle u_{gc}\rangle} - 1 \,=\, F_g.
+$$ {#eq-moment-delta-moments-preserved}
+
+The NB limit is now compressed into a *boundary* of the
+parameter space rather than scattered across an unbounded ridge.
+Taking $\delta_g \to 0$ in @eq-moment-delta-derived,
+
+$$
+\alpha_g \,\to\, \mu_g / F_g,
+\qquad
+\beta_g \,\to\, \infty,
+\qquad
+\hat r_g \,\to\, F_g / \delta_g \,\to\, \infty,
+$$ {#eq-moment-delta-nb-limit}
+
+so the same NB(shape = $\mu/F$, burst = $F$) limit is recovered,
+but accessed through a single coordinate $\delta_g \to 0$ rather
+than the full $\kappa_g \to \infty$ axis. The "default to NB"
+prior tilt becomes a left-shift on $\operatorname{logit}\delta$:
+$\operatorname{logit}\delta_g \sim \mathcal{N}(\ell, \sigma^2)$
+with $\ell$ negative puts most mass at small $\delta$, hence at
+large $\kappa$, hence near the NB limit. Concretely
+$\operatorname{logit}\delta_g \sim \mathcal{N}(-4, 4)$ gives
+median $\delta_g \approx 0.018$, corresponding to $\kappa_g
+\approx 55$ — moderately NB-like — with a substantial tail
+toward larger $\delta$ admitting bursty genes.
+
+The operational difference from $(\mu, F, \kappa)$ is that the
+mean-field guide on $(\log\mu, \log F, \operatorname{logit}
+\delta)$ no longer wastes mass on the unbounded ridge. For
+NB-like genes the data localizes $\delta$ near 0 and $q(\delta)$
+sits on a tight, bounded region; for bursty genes the data pulls
+$\delta$ toward moderate values and $q(\delta)$ widens within
+$(0, 1)$. The variational support exactly matches the support of
+the data's identifying information.
+
+### Choosing among the four parameterizations {#sec-twostate-altreparam-choice}
+
+All four parameterizations describe the same family of
 distributions; they differ only in which axes of the posterior
 mean-field VI is asked to represent independently.
 
 - $(\mu, b, k^-)$ is the physics-natural choice: $b$ is the
-  NB-limit mean burst size, $k^-$ is the OFF rate non-
-  dimensionalised by mRNA decay. Recommended when the analyst
-  wants the most direct biophysical interpretation and is using
-  posterior sampling (NUTS) that recovers correlations exactly.
+  NB-limit mean burst size, $k^-$ is the OFF rate
+  non-dimensionalized by mRNA decay. Recommended when the
+  analyst wants the most direct biophysical interpretation and
+  is using posterior sampling (NUTS) that recovers correlations
+  exactly.
 
 - $(\mu, b, s)$ replaces the absolute OFF rate by the
   dimensionless regime ratio $s = k^-/k^+$. The "NB-ness" of a
@@ -545,19 +637,29 @@ mean-field VI is asked to represent independently.
 
 - $(\mu, F, \kappa)$ makes the first two observable moments the
   sampled coordinates. Posterior uncertainty in $F$ directly
-  controls the width of the posterior predictive distribution per
-  gene; uncertainty in $\kappa$ controls only the shape of the
-  latent Beta. Recommended when posterior-predictive bands under
-  the foregoing parameterisations are systematically wider than
-  the observed gene-level variance — a signature of mean-field
-  smearing across the implied-variance manifold.
+  controls the width of the posterior predictive distribution
+  per gene; uncertainty in $\kappa$ controls only the shape of
+  the latent Beta. Recommended when posterior-predictive bands
+  under the natural or ratio parameterizations are
+  systematically wider than the observed gene-level variance — a
+  signature of mean-field smearing across the implied-variance
+  manifold.
 
-The three are mathematically equivalent; the distinction is
+- $(\mu, F, \delta)$ replaces $\kappa$ by the bounded
+  $\delta = 1/(\kappa+1) \in (0, 1)$. Same first-two-moment
+  guarantees as $(\mu, F, \kappa)$, but the NB-limit ridge is
+  compressed to a boundary rather than an unbounded direction.
+  Recommended when $(\mu, F, \kappa)$ fits but with a posterior
+  on $\kappa$ that visibly tracks its prior — i.e. when the data
+  classifies a gene as "NB-like" without identifying *how* far
+  into the NB regime it sits.
+
+The four are mathematically equivalent; the distinction is
 operational, governed by how mean-field's independence assumption
 interacts with the data's identifiability structure. An analyst
-running NUTS does not need to choose: any of the three will
+running NUTS does not need to choose: any of the four will
 recover the same posterior up to MCMC noise. An analyst running
-SVI should match the parameterisation to the failure mode the
+SVI should match the parameterization to the failure mode the
 posterior-predictive checks expose.
 
 ## Inference: Gauss-Legendre quadrature instead of ${}_1F_1$ {#sec-twostate-quadrature}
@@ -598,7 +700,7 @@ the eigenvalue problem of the tridiagonal matrix encoding the
 Jacobi three-term recurrence (the Golub-Welsch construction).
 This is exact through polynomial degree $2K-1$ for the smooth
 factor $g$ and has the appealing property that the difficult
-boundary behaviour of the Beta — vanishing at $0, 1$ for
+boundary behavior of the Beta — vanishing at $0, 1$ for
 $\alpha, \beta > 1$, diverging there for $\alpha, \beta < 1$ — is
 absorbed into the weight rather than the integrand.
 
@@ -734,10 +836,10 @@ pipeline frictionless.
 
 3. **Compositional inference / differential expression** is the
    one place that needs more care. The shared-$p$ Dirichlet-
-   multinomial factorisation that makes NBDM such a clean
+   multinomial factorization that makes NBDM such a clean
    compositional model (@sec-dirichlet-multinomial) relies on a
    special algebraic property of the Gamma distribution
-   (independent Gammas with a shared rate normalise to a
+   (independent Gammas with a shared rate normalize to a
    Dirichlet) that the Beta does not share. The per-cell
    composition $\rho_g = \hat r_g\, p_g / \sum_j \hat r_j\, p_j$
    is still a well-defined random vector on the simplex, and a

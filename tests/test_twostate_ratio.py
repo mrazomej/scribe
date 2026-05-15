@@ -3,7 +3,7 @@
 Validates:
 
 - The reparam helper algebra: mean-preserving, NB-limit reduces to
-  the natural parameterization's NB limit, clamp behaviour matches
+  the natural parameterization's NB limit, clamp behavior matches
   ``_twostate_reparam``.
 - The new ``Parameterization.TWO_STATE_RATIO`` enum + ``'ratio'``
   alias resolve correctly.

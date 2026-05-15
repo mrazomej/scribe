@@ -5,7 +5,7 @@ Implements the Poisson-Beta compound likelihood
     p_gc ~ Beta(α_g, β_g)
     u_gc | p_gc ~ Poisson(r̂_g · p_gc · ν_c)
 
-with the sampled (µ_g, b_g, k_off_g) parameterisation:
+with the sampled (µ_g, b_g, k_off_g) parameterization:
 
     α_g = k_on  = µ_g / b_g
     β_g = k_off = k_off_g
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 
 
 # ==============================================================================
-# Numerical floors for the (µ, b, k_off) → (α, β, rate) reparameterisation
+# Numerical floors for the (µ, b, k_off) → (α, β, rate) reparameterization
 # ==============================================================================
 #
 # Floors keep α and β away from the Jacobi-fragile regime (values
@@ -208,6 +208,56 @@ def _twostate_moments_reparam(
     return alpha, beta, rate, eff_burst_size
 
 
+def _twostate_moment_delta_reparam(
+    mu: jnp.ndarray,
+    excess_fano: jnp.ndarray,
+    inv_concentration: jnp.ndarray,
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """(mu, excess_fano, delta) → (alpha, beta, rate, eff_burst_size).
+
+    Moment-delta parameterization (mean and Fano preserved by
+    construction; shape coordinate bounded in (0, 1)).  Sampled
+    parameters are ``mu`` (gene mean), ``excess_fano`` (Fano - 1),
+    and ``delta = 1/(kappa + 1)``.
+
+    Natural forward map (mean- and Fano-preserving)::
+
+        denom = mu * delta + excess_fano
+        alpha = mu * (1 - delta) / denom               ( = k_on )
+        beta  = excess_fano * (1 - delta) / (delta * denom)
+                                                       ( = k_off )
+        rate  = denom / delta                          ( = mu + e/delta )
+
+    Moment guarantees::
+
+        E[count]                     = mu
+        Var[count] / E[count] - 1    = excess_fano
+
+    Quadrature-safety clamps mirror :func:`_twostate_moments_reparam`:
+    when alpha or beta land outside ``[_ALPHA_MIN, _ALPHA_MAX]`` or
+    ``[_K_OFF_MIN, _K_OFF_MAX]``, the mean-preserving rescaling
+    ``rate = mu * (alpha + beta) / alpha`` recovers the target
+    mean exactly.
+    """
+    # Keep delta strictly inside (0, 1) to avoid 1/delta or
+    # (1-delta) blowups at the boundary.  The sigmoid output is
+    # already in (0, 1) but can produce values arbitrarily close
+    # to 0 or 1 in float32; clamp with a small epsilon.
+    _DELTA_EPS = 1e-6
+    delta = jnp.clip(inv_concentration, _DELTA_EPS, 1.0 - _DELTA_EPS)
+    one_minus_delta = 1.0 - delta
+    denom = mu * delta + excess_fano
+    denom_safe = jnp.maximum(denom, _BURST_MIN * _BURST_MIN)
+    alpha_nat = mu * one_minus_delta / denom_safe
+    beta_nat = excess_fano * one_minus_delta / (delta * denom_safe)
+
+    alpha = jnp.clip(alpha_nat, min=_ALPHA_MIN, max=_ALPHA_MAX)
+    beta = jnp.clip(beta_nat, min=_K_OFF_MIN, max=_K_OFF_MAX)
+    rate = mu * (alpha + beta) / alpha
+    eff_burst_size = mu / alpha
+    return alpha, beta, rate, eff_burst_size
+
+
 def _twostate_dispatch_reparam(
     param_values: Dict[str, jnp.ndarray],
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
@@ -225,7 +275,21 @@ def _twostate_dispatch_reparam(
       (derived).
     """
     mu = param_values["mu"]
-    if "excess_fano" in param_values:
+    if "inv_concentration" in param_values:
+        # Moment-delta parameterization: (mu, excess_fano, delta).
+        excess_fano = param_values["excess_fano"]
+        delta = param_values["inv_concentration"]
+        _DELTA_EPS = 1e-6
+        delta_safe = jnp.clip(delta, _DELTA_EPS, 1.0 - _DELTA_EPS)
+        denom = mu * delta_safe + excess_fano
+        denom_safe = jnp.maximum(denom, _BURST_MIN * _BURST_MIN)
+        raw_k_off = (
+            excess_fano * (1.0 - delta_safe) / (delta_safe * denom_safe)
+        )
+        alpha, beta, rate, eff_burst_size = _twostate_moment_delta_reparam(
+            mu, excess_fano, delta
+        )
+    elif "excess_fano" in param_values:
         excess_fano = param_values["excess_fano"]
         concentration = param_values["concentration"]
         denom = mu + excess_fano * (concentration + 1.0)
@@ -348,25 +412,37 @@ class TwoStateLikelihood(Likelihood):
 
         # Expose derived quantities for posterior summaries (computed
         # OUTSIDE the cell plate, so they emit at gene rank).
-        #   - In ``natural``: burst_size and k_off are sampled; the
-        #     ``alpha_floor_active`` check uses sampled burst_size.
-        #   - In ``ratio``: burst_size sampled, k_off derived.
-        #   - In ``mean_fano``: neither burst_size nor k_off sampled —
-        #     both are derived. ``burst_size`` is exposed as the
-        #     effective burst size (= mu/alpha), and ``alpha_floor_active``
-        #     reads alpha directly.
-        numpyro.deterministic("k_on", alpha)
-        is_mean_fano = "excess_fano" in param_values
+        #   - In ``natural``:      burst_size and k_off are sampled.
+        #   - In ``ratio``:        burst_size sampled; k_off derived.
+        #   - In ``mean_fano``:    neither sampled; both derived.
+        #   - In ``moment_delta``: neither sampled; both derived,
+        #                          and ``concentration`` is also derived.
+        is_moment_delta = "inv_concentration" in param_values
+        is_mean_fano = "excess_fano" in param_values and not is_moment_delta
         is_ratio = "switching_ratio" in param_values
-        if is_ratio or is_mean_fano:
+        # k_off is a sampled site only in natural mode.
+        if is_ratio or is_mean_fano or is_moment_delta:
             numpyro.deterministic("k_off", beta)
-        if is_mean_fano:
+        # burst_size is a sampled site in natural and ratio modes;
+        # derived in mean_fano and moment_delta.
+        if is_mean_fano or is_moment_delta:
             numpyro.deterministic("burst_size", eff_burst_size)
+        # Concentration is a sampled site in mean_fano mode; derived
+        # in moment_delta from delta = 1 / (concentration + 1).
+        if is_moment_delta:
+            _delta = param_values["inv_concentration"]
+            _delta_safe = jnp.clip(_delta, 1e-6, 1.0 - 1e-6)
+            numpyro.deterministic(
+                "concentration", (1.0 - _delta_safe) / _delta_safe
+            )
+        numpyro.deterministic("k_on", alpha)
         numpyro.deterministic("alpha", alpha)
         numpyro.deterministic("beta", beta)
         numpyro.deterministic("r_hat", rate)
         numpyro.deterministic("effective_burst_size", eff_burst_size)
-        if is_mean_fano:
+        if is_mean_fano or is_moment_delta:
+            # In moments-based modes, ``burst_size`` is derived; the
+            # alpha-floor indicator reads alpha directly.
             numpyro.deterministic(
                 "alpha_floor_active",
                 alpha <= _ALPHA_MIN,
@@ -585,26 +661,33 @@ class TwoStateVCPLikelihood(Likelihood):
         n_cells = dims["n_cells"]
 
         # ----- gene-level reparam: OUTSIDE the cell plate -----
-        # Dispatcher selects natural / ratio / mean-Fano based on
-        # which third parameter is in param_values.
+        # Dispatcher selects natural / ratio / mean-Fano /
+        # moment-delta based on which extras are in param_values.
         mu = param_values["mu"]
         alpha, beta, rate_gene, eff_burst_size, raw_k_off = (
             _twostate_dispatch_reparam(param_values)
         )
-        is_mean_fano = "excess_fano" in param_values
+        is_moment_delta = "inv_concentration" in param_values
+        is_mean_fano = (
+            "excess_fano" in param_values and not is_moment_delta
+        )
         is_ratio = "switching_ratio" in param_values
-        numpyro.deterministic("k_on", alpha)
-        if is_ratio or is_mean_fano:
-            # k_off is derived (not a sampled site).
+        if is_ratio or is_mean_fano or is_moment_delta:
             numpyro.deterministic("k_off", beta)
-        if is_mean_fano:
-            # burst_size is not sampled in mean-Fano mode.
+        if is_mean_fano or is_moment_delta:
             numpyro.deterministic("burst_size", eff_burst_size)
+        if is_moment_delta:
+            _delta = param_values["inv_concentration"]
+            _delta_safe = jnp.clip(_delta, 1e-6, 1.0 - 1e-6)
+            numpyro.deterministic(
+                "concentration", (1.0 - _delta_safe) / _delta_safe
+            )
+        numpyro.deterministic("k_on", alpha)
         numpyro.deterministic("alpha", alpha)
         numpyro.deterministic("beta", beta)
         numpyro.deterministic("r_hat", rate_gene)
         numpyro.deterministic("effective_burst_size", eff_burst_size)
-        if is_mean_fano:
+        if is_mean_fano or is_moment_delta:
             numpyro.deterministic(
                 "alpha_floor_active",
                 alpha <= _ALPHA_MIN,

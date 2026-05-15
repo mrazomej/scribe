@@ -221,6 +221,14 @@ class GuideFamilyConfig(BaseModel):
             "two_state_mean_fano parameterization."
         ),
     )
+    inv_concentration: Optional[GuideFamily] = Field(
+        None,
+        description=(
+            "Guide family for the TwoState bounded shape coordinate "
+            "delta = 1/(kappa + 1) in (0, 1) (per gene). Used by "
+            "the two_state_moment_delta parameterization."
+        ),
+    )
 
     # --------------------------------------------------------------------------
     # Amortization Configuration

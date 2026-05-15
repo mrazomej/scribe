@@ -1134,6 +1134,25 @@ def create_model(
                 else:
                     rewritten.append(n)
             extra_param_names = rewritten
+        elif (
+            model_config.parameterization
+            == ParamEnum.TWO_STATE_MOMENT_DELTA
+        ):
+            # natural -> moment_delta: (burst_size, k_off) →
+            # (excess_fano, inv_concentration). Same structure as
+            # the mean_fano swap above.
+            rewritten = []
+            replaced = False
+            for n in extra_param_names:
+                if n in ("burst_size", "k_off"):
+                    if not replaced:
+                        rewritten.extend(
+                            ["excess_fano", "inv_concentration"]
+                        )
+                        replaced = True
+                else:
+                    rewritten.append(n)
+            extra_param_names = rewritten
     # Append BNB concentration when overdispersion is enabled
     if model_config.is_bnb:
         extra_param_names.append("bnb_concentration")
