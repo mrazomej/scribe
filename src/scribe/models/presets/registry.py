@@ -847,6 +847,7 @@ def build_burst_size_spec(
     positive_transform: Any = None,
     prior_loc: float = 0.0,
     prior_scale: float = 1.5,
+    model_config: Optional[Any] = None,
 ) -> List[ParamSpec]:
     """Build the burst_size parameter spec for TwoState models.
 
@@ -857,6 +858,12 @@ def build_burst_size_spec(
 
     Default prior Normal(0, 1.5) gives, under softplus, an
     intermediate-broad prior with most mass on b ~ 0.1 to ~5.
+
+    When ``model_config.priors`` carries a ``burst_size_prior_loc``
+    extra (set by :func:`scribe.core.twostate_data_init.inject_twostate_data_init`
+    from the method-of-moments Fano-1 estimator), we use it as the
+    prior loc instead of the generic ``0.0``. This anchors the prior
+    near the data-implied burst size on the first iteration.
 
     The ``unconstrained`` argument is accepted for signature
     consistency with other builders but ignored; PositiveNormalSpec /
@@ -869,6 +876,17 @@ def build_burst_size_spec(
             is_mixture = True
         else:
             is_mixture = "burst_size" in mixture_params
+
+    # Pull data-driven anchor when present.
+    if model_config is not None and getattr(
+        model_config, "priors", None
+    ) is not None:
+        priors_extra = (
+            getattr(model_config.priors, "__pydantic_extra__", None) or {}
+        )
+        _b_loc = priors_extra.get("burst_size_prior_loc")
+        if _b_loc is not None:
+            prior_loc = float(_b_loc)
 
     spec_cls = _select_positive_spec(positive_transform)
     return [
@@ -1052,6 +1070,7 @@ def build_extra_param_spec(
             n_components=n_components,
             mixture_params=mixture_params,
             positive_transform=positive_transform,
+            model_config=model_config,
         )
     elif param_name == "k_off":
         return build_k_off_spec(

@@ -230,9 +230,10 @@ def _inject_twostate_data_init(ctx, model_config):
         getattr(model_config.priors, "__pydantic_extra__", None) or {}
     )
     _log.info(
-        "TwoState: injected empirical mu_prior_loc=%.3f from %d-gene "
-        "count matrix.",
+        "TwoState: injected data anchors mu_prior_loc=%.3f, "
+        "burst_size_prior_loc=%.3f from %d-gene count matrix.",
         float(_extra.get("mu_prior_loc")),
+        float(_extra.get("burst_size_prior_loc")),
         ctx.count_data.shape[1] if ctx.count_data.ndim == 2 else -1,
     )
     return model_config
