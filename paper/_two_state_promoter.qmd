@@ -68,10 +68,14 @@ model** as a flexible likelihood for these genes, and show that:
    the sampled coordinates and directly bounds the
    posterior-predictive variance per gene.
 
-7. The marginal log-likelihood is evaluated by **Gauss-Jacobi
-   quadrature** over the latent ON-fraction, which is stable across
-   the full parameter range and differentiable through the
-   underlying eigendecomposition.
+7. The marginal log-likelihood is evaluated by **Gauss-Legendre
+   quadrature** over the latent ON-fraction, with the Beta density
+   evaluated at fixed nodes inside the integrand. Gauss-Jacobi —
+   the more elegant choice on paper — is rejected because its
+   nodes and weights depend on $(\alpha, \beta)$ through an
+   eigendecomposition whose adjoint develops NaN gradients near
+   degenerate eigenvalues in the U-shaped Beta regime, exactly
+   the bursty regime the two-state model is meant to capture.
 
 ## The non-bursty two-state master equation {#sec-twostate-master}
 
@@ -556,7 +560,7 @@ recover the same posterior up to MCMC noise. An analyst running
 SVI should match the parameterisation to the failure mode the
 posterior-predictive checks expose.
 
-## Inference: Gauss-Jacobi quadrature instead of ${}_1F_1$ {#sec-twostate-quadrature}
+## Inference: Gauss-Legendre quadrature instead of ${}_1F_1$ {#sec-twostate-quadrature}
 
 The per-observation marginal log-likelihood, derived from the
 thinned Poisson-Beta @eq-twostate-thinned-poisson-beta, is
@@ -570,22 +574,17 @@ $$
 $$ {#eq-twostate-loglik}
 
 with $(\alpha_g, \beta_g, \hat r_g)$ as in @eq-twostate-derived.
-The integrand is a smooth function of $p$ on $[0, 1]$ multiplied
-by a Beta density. This is exactly the situation that **Gauss-
-Jacobi quadrature** is designed for.
+The integrand is a smooth, strictly positive function of
+$p \in [0, 1]$, and the integral is a one-dimensional definite
+integral against a fixed reference measure. Two quadrature
+strategies present themselves for this integrand.
 
-The standard Gauss-Jacobi rule on $[-1, 1]$ approximates integrals
-weighted by $(1-x)^a (1+x)^b$ as a sum at carefully chosen nodes,
+### Two possible quadratures {#sec-twostate-quad-options}
 
-$$
-\int_{-1}^{1} f(x)\, (1-x)^a (1+x)^b\, dx
-\,\approx\,
-\sum_{k=1}^K w_k\, f(x_k),
-$$ {#eq-gauss-jacobi-standard}
-
-with the rule exact for polynomials $f$ of degree up to $2K-1$.
-Mapping to $[0, 1]$ via $p = (1+x)/2$ and matching the Beta weight
-to the standard form ($a = \beta - 1$, $b = \alpha - 1$) gives
+**Option A: absorb the Beta into the quadrature weight (Gauss-
+Jacobi).** Map $[0,1]$ to $[-1,1]$ via $p = (1+x)/2$ and match
+the Beta weight to the standard Jacobi weight $(1-x)^a (1+x)^b$
+with $a = \beta - 1$ and $b = \alpha - 1$:
 
 $$
 \int_0^1 g(p) \cdot \mathrm{Beta}(p \mid \alpha, \beta)\, dp
@@ -594,15 +593,91 @@ $$
 $$ {#eq-gauss-jacobi-beta}
 
 where the nodes $p_k$ and weights $\tilde w_k$ depend on
-$(\alpha, \beta)$ and the order $K$. The nodes are computed from
-the eigenvalues of a tridiagonal matrix whose entries are the
-classical Jacobi three-term recurrence coefficients; the weights
-are obtained from the first row of the corresponding eigenvectors
-(the Golub-Welsch construction). Both nodes and weights depend
-smoothly on $(\alpha, \beta)$, and the eigendecomposition is
-differentiable via implicit differentiation, so the entire
-log-likelihood can be embedded inside an automatic-differentiation
-inference loop with no special treatment.
+$(\alpha, \beta)$. Computing them at fit time requires solving
+the eigenvalue problem of the tridiagonal matrix encoding the
+Jacobi three-term recurrence (the Golub-Welsch construction).
+This is exact through polynomial degree $2K-1$ for the smooth
+factor $g$ and has the appealing property that the difficult
+boundary behaviour of the Beta — vanishing at $0, 1$ for
+$\alpha, \beta > 1$, diverging there for $\alpha, \beta < 1$ — is
+absorbed into the weight rather than the integrand.
+
+**Option B: keep a fixed quadrature and evaluate the Beta at
+nodes (Gauss-Legendre).** Use the standard Gauss-Legendre rule on
+$[0,1]$ (uniform reference measure) and write
+
+$$
+\int_0^1 f(p)\, dp
+\,\approx\,
+\sum_{k=1}^K w_k\, f(p_k),
+$$ {#eq-gauss-legendre-01}
+
+with $f(p) = \mathrm{Poisson}(u_{gc} \mid \hat r_g\, p\, \nu_c)
+\cdot \mathrm{Beta}(p \mid \alpha_g, \beta_g)$. The nodes $p_k$
+and weights $w_k$ depend only on $K$ — *not* on
+$(\alpha, \beta)$ — so they are computed once at the start of
+inference and cached. The Beta density is evaluated at the fixed
+nodes inside the integrand.
+
+### Why we use Gauss-Legendre {#sec-twostate-quad-choice}
+
+Mathematically the two options are equivalent at infinite $K$. At
+finite $K$ Gauss-Jacobi is more efficient *per node* because it
+matches the integrand's reference measure. But under
+automatic-differentiation, where gradients flow back from the
+log-likelihood through nodes and weights into the upstream
+$(\alpha, \beta)$, the two options behave very differently.
+
+The Golub-Welsch eigendecomposition is differentiable in
+exact arithmetic, but the implicit-differentiation formula for
+eigenvectors of a symmetric matrix involves the reciprocal of
+*differences* between eigenvalues:
+
+$$
+\frac{\partial v_i}{\partial \theta}
+\,\propto\,
+\sum_{j \neq i}
+\frac{v_j^{\!\top} (\partial M / \partial \theta) v_i}{\lambda_i - \lambda_j}\, v_j,
+$$ {#eq-eigh-gradient}
+
+where $(M, \lambda_i, v_i)$ is the tridiagonal Jacobi matrix
+and its eigenpairs and $\theta$ stands for $\alpha$ or $\beta$.
+The Jacobi recurrence coefficients depend smoothly on
+$(\alpha, \beta)$, but for ill-conditioned regimes —
+specifically the U-shaped Beta with $\alpha, \beta < 1$, exactly
+the bursty regime the two-state model is meant to capture —
+neighbouring eigenvalues of the truncated tridiagonal matrix can
+get arbitrarily close. Floating-point evaluation of
+@eq-eigh-gradient with $\lambda_i \approx \lambda_j$ produces NaN
+gradients even when the forward eigendecomposition gives a finite
+loss. In practice the forward log-likelihood is finite; the
+backward pass is what blows up.
+
+Gauss-Legendre sidesteps this entirely. Its nodes and weights
+are *constants*: no autodiff path runs through an
+eigendecomposition. The Beta density `Beta(p_k | α, β)` is a
+plain, autodiff-friendly function of $(\alpha, \beta)$ at fixed
+$p_k$:
+
+$$
+\log \mathrm{Beta}(p_k \mid \alpha, \beta)
+\,=\,
+(\alpha - 1)\log p_k
+\,+\, (\beta - 1)\log(1 - p_k)
+\,-\, \log B(\alpha, \beta),
+$$ {#eq-beta-logpdf-at-node}
+
+with $\log B(\alpha, \beta) = \log\Gamma(\alpha) +
+\log\Gamma(\beta) - \log\Gamma(\alpha + \beta)$. Every term is
+differentiable with no eigenvalue gap to worry about. The price
+is more variation of the integrand at the boundaries (since the
+Beta singularity is no longer absorbed by the weight), and
+correspondingly a larger $K$ to maintain accuracy in the U-shaped
+regime. For the parameter ranges encountered in single-cell data
+the trade is worth taking: a robust autodiff path is more
+valuable than a smaller node count.
+
+### Log-sum-exp evaluation {#sec-twostate-loglik-logsumexp}
 
 We evaluate @eq-twostate-loglik via the log-sum-exp identity
 
@@ -611,21 +686,29 @@ $$
 \,=\,
 \operatorname*{logsumexp}_{k=1, \ldots, K}
 \!\left[
-\log \tilde w_k \,+\, \log\mathrm{Poisson}\!\big(u_{gc} \,\big|\, \hat r_g\, p_k\, \nu_c\big)
+\log w_k
+\,+\, \log \mathrm{Beta}(p_k \mid \alpha_g, \beta_g)
+\,+\, \log \mathrm{Poisson}\!\big(u_{gc} \,\big|\, \hat r_g\, p_k\, \nu_c\big)
 \right],
 $$ {#eq-twostate-loglik-quad}
 
-with the inner log-Poisson computed in log-rate form to keep both
-overflow at large rates and underflow at small $p_k$ from biting.
+with the inner log-Poisson computed in log-rate form
+($\log \mathrm{Poisson}(u \mid \lambda) = u\log\lambda - \lambda
+- \log u!$ with $\log\lambda = \log\hat r_g + \log p_k +
+\log\nu_c$) to keep both overflow at large rates and underflow at
+small $p_k$ from biting. The $u = 0$ case is handled separately
+to avoid the IEEE-754 trap $0 \cdot (-\infty) = \mathrm{NaN}$
+that arises from $u \cdot \log p_k$ when $p_k$ underflows.
 
-The choice $K \in \{40, \ldots, 80\}$ is sufficient for UMI counts
-$u_{gc}$ up to several hundred — the Poisson factor has effective
-polynomial degree on the order of $u_{gc}$, and the rule is exact
-through degree $2K - 1$. For exceptional very-high-mean genes the
-quadrature can be augmented with a Gaussian approximation of the
-Poisson kernel at the modal location of $p$, but this is an
-optional refinement that the implementer should profile before
-adding.
+The choice $K \in \{40, \ldots, 80\}$ is sufficient for UMI
+counts $u_{gc}$ up to several hundred. The Poisson factor has
+effective polynomial degree on the order of $u_{gc}$, and the
+Gauss-Legendre rule is exact through degree $2K-1$ for the
+combined Beta·Poisson integrand against the uniform weight. For
+exceptional very-high-mean genes the quadrature can be augmented
+with a Gaussian approximation of the Poisson kernel at the modal
+location of $p$, but this is an optional refinement that the
+implementer should profile before adding.
 
 ## Integration with the existing pipeline {#sec-twostate-integration}
 
