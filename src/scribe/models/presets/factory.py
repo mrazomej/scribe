@@ -982,17 +982,10 @@ def create_model(
 
     # TwoState data-driven init: when the priors carry an empirical
     # ``mu_prior_loc`` (set by ``inject_twostate_data_init`` in the
-    # API stage), re-anchor the ``mu`` core spec's loc so SVI starts
-    # in the right gene-mean neighborhood. User-supplied
-    # ``priors={"mu": (loc, scale)}`` still wins via the later
-    # ``apply_prior_guide_overrides`` pass in step 5.5+.
-    #
-    # ``burst_size`` is anchored separately inside
-    # ``build_burst_size_spec`` (it is a MODEL_EXTRA_PARAM, not a
-    # core spec, so it does not exist in ``param_specs`` yet at this
-    # point). ``k_off`` is left at its default prior since it is
-    # structurally under-identified by the data moments in the NB
-    # limit.
+    # API stage), re-anchor the ``mu`` spec's loc so SVI starts in the
+    # right gene-mean neighborhood. The user can still override this
+    # via ``priors={"mu": (loc, scale)}``; the override is applied
+    # later in step 5.5+ and takes precedence.
     if base_model in ("twostate", "twostatevcp"):
         _twostate_priors_extra = (
             getattr(model_config.priors, "__pydantic_extra__", None) or {}
