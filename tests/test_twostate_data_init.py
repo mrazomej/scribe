@@ -224,6 +224,42 @@ class TestInjectAndThread:
         ]
         assert matched, "Expected a 'skipping mu_prior_loc' UserWarning"
 
+    def test_post_fit_predictive_after_per_gene_anchor(self):
+        """Regression: after a fit with the per-gene mu anchor,
+        ``get_posterior_samples`` rebuilds (model, guide) via
+        ``_model_and_guide`` which calls ``get_model_and_guide``
+        again.  If ``_factory_n_genes()`` returns ``None`` (as it
+        used to for non-VAE results), the factory's validation
+        falls back to ``n_genes=5`` and trips on the per-gene
+        anchor array.  This test guards the post-fit path.
+        """
+        import scribe
+        import jax
+
+        rng = np.random.default_rng(0)
+        n_cells, n_genes = 32, 12
+        per_gene = rng.uniform(0.5, 100.0, n_genes)
+        counts = np.stack(
+            [rng.poisson(m, n_cells) for m in per_gene], axis=1
+        )
+        res = scribe.fit(
+            counts,
+            model="twostatevcp",
+            parameterization="natural",
+            inference_method="svi",
+            n_steps=2,
+            unconstrained=True,
+        )
+        # This call invokes ``_model_and_guide``, which previously
+        # failed with the per-gene anchor.
+        samples = res.get_posterior_samples(
+            rng_key=jax.random.PRNGKey(0),
+            n_samples=4,
+            counts=counts,
+        )
+        assert "mu" in samples
+        assert np.asarray(samples["mu"]).shape == (4, n_genes)
+
     def test_validation_threads_real_n_genes(self):
         """Regression: the factory's dry-run validation must use the
         real ``n_genes`` from the data, not the default ``n_genes=5``.

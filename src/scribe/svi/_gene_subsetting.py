@@ -322,6 +322,45 @@ class GeneSubsettingMixin:
             getattr(self, "_original_n_genes", None) or self.n_genes
         )
 
+        # Slice gene-rank arrays in ``model_config.priors.__pydantic_extra__``
+        # so post-fit operations (predictive sampling, ``plot_ppc``) that
+        # rebuild model+guide via ``get_model_and_guide`` see consistent
+        # shapes.  The TwoState data-driven ``mu_prior_loc`` is the main
+        # offender: a (n_genes_full,) array would mismatch a smaller
+        # subset's ``n_genes`` and trip the factory's dry-run validation.
+        sliced_model_config = self.model_config
+        _priors = getattr(self.model_config, "priors", None)
+        if _priors is not None:
+            _extras = getattr(_priors, "__pydantic_extra__", None) or {}
+            _per_gene_keys = []
+            for _k, _v in _extras.items():
+                _shape = getattr(_v, "shape", None)
+                if (
+                    _shape is not None
+                    and len(_shape) >= 1
+                    and _shape[-1] == self.n_genes
+                ):
+                    _per_gene_keys.append(_k)
+            if _per_gene_keys:
+                # PriorOverrides has extra="allow"; rebuild it with
+                # sliced per-gene arrays and unchanged scalar extras.
+                from ..models.config.groups import PriorOverrides
+
+                _new_extras = dict(_extras)
+                for _k in _per_gene_keys:
+                    _arr = _extras[_k]
+                    # Index along the gene axis (last); the dtype-preserving
+                    # ``__getitem__`` works for both numpy and JAX arrays.
+                    _new_extras[_k] = _arr[..., index]
+                # Carry forward any structured priors fields too.
+                for _name in _priors.model_fields_set:
+                    if _name not in _new_extras:
+                        _new_extras[_name] = getattr(_priors, _name)
+                _new_priors = PriorOverrides(**_new_extras)
+                sliced_model_config = self.model_config.model_copy(
+                    update={"priors": _new_priors}
+                )
+
         # Compose gene indices when re-subsetting an already-subsetted result
         # so that the final index is always relative to the original gene list.
         prev_gene_idx = getattr(self, "_subset_gene_index", None)
@@ -349,7 +388,7 @@ class GeneSubsettingMixin:
                 else len(index)
             ),
             model_type=self.model_type,
-            model_config=self.model_config,
+            model_config=sliced_model_config,
             prior_params=self.prior_params,
             obs=self.obs,
             var=new_var,

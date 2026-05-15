@@ -149,15 +149,17 @@ class ModelHelpersMixin:
     def _factory_n_genes(self) -> Optional[int]:
         """Resolve ``n_genes`` used to rebuild model and guide callables.
 
-        Returns
-        -------
-        Optional[int]
-            ``None`` for non-VAE results (factory does not require the value),
-            otherwise the active results gene width.
+        Returns the fitted-results gene width.  For VAE results the
+        width may require an alignment step (``_resolve_vae_factory_n_genes``);
+        for non-VAE results we still need to pass ``n_genes`` so the
+        factory's dry-run validation works against parameterizations
+        whose specs carry per-gene arrays (e.g. TwoState's
+        data-driven ``mu_prior_loc``).  Without that the validation
+        falls back to ``n_genes=5`` and trips on the array shape.
         """
-        if not self._is_vae_result_config():
-            return None
         n_genes = int(getattr(self, "n_genes"))
+        if not self._is_vae_result_config():
+            return n_genes
         return self._resolve_vae_factory_n_genes(n_genes)
 
     # --------------------------------------------------------------------------
