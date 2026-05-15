@@ -312,7 +312,9 @@ class ScribeSVIResults(
         # Collect only explicit per-parameter guide overrides from config.
         # Unset fields imply mean-field and are omitted from the override map.
         param_names = (
+            "burst_size",
             "gate",
+            "k_off",
             "mixing",
             "mu",
             "p",

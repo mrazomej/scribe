@@ -294,3 +294,97 @@ class TestTwoStateSamplingGates:
 
         with pytest.raises(NotImplementedError, match="TwoState"):
             _Stub().get_ppc_samples_biological()
+
+
+# ==============================================================================
+# Posterior builder honors low-rank / joint-low-rank guides
+# ==============================================================================
+
+
+class TestTwoStatePosteriorBuilderLowRank:
+    """``get_posterior_distributions`` does not crash when the user
+    requests joint low-rank guides on ``(burst_size, k_off)`` (which
+    also causes the preset builder to auto-add a ``LowRankGuide`` on
+    ``mu``).  Regression for KeyError 'mu_scale' bug.
+    """
+
+    def _build_lowrank_params(self, n_genes=4, rank=2):
+        """Synthesize the param dict shape a fit with ``joint_params=
+        ('burst_size', 'k_off'), guide_rank=2`` would produce."""
+        rng = np.random.default_rng(0)
+        # mu got the auto-added LowRankGuide → stand-alone (mu_loc,
+        # mu_W, mu_raw_diag) at gene rank.
+        mu_params = {
+            "mu_loc": jnp.asarray(rng.normal(size=(n_genes,))),
+            "mu_W": jnp.asarray(rng.normal(size=(n_genes, rank))),
+            "mu_raw_diag": jnp.asarray(rng.normal(size=(n_genes,))),
+        }
+        # burst_size and k_off share a JointLowRankGuide(group="joint").
+        # That stores: joint_joint_{name}_loc, joint_joint_{name}_W,
+        # joint_joint_{name}_raw_diag, each at gene rank.
+        joint_params = {}
+        for name in ("burst_size", "k_off"):
+            joint_params[f"joint_joint_{name}_loc"] = jnp.asarray(
+                rng.normal(size=(n_genes,))
+            )
+            joint_params[f"joint_joint_{name}_W"] = jnp.asarray(
+                rng.normal(size=(n_genes, rank))
+            )
+            joint_params[f"joint_joint_{name}_raw_diag"] = jnp.asarray(
+                rng.normal(size=(n_genes,))
+            )
+        return {**mu_params, **joint_params}
+
+    def _build_unconstrained_cfg(self, model="twostate"):
+        """Mirror the user scenario: unconstrained=True at builder time."""
+        builder = (
+            ModelConfigBuilder()
+            .for_model(model)
+            .with_parameterization("two_state_natural")
+            .with_inference("svi")
+            .unconstrained()
+        )
+        if model == "twostatevcp":
+            builder = builder.with_priors(p_capture=(1.0, 1.0))
+        return builder.build()
+
+    def test_get_posterior_distributions_with_low_rank_mu(self):
+        """LowRankGuide on mu + JointLowRankGuide on (burst_size, k_off)
+        must dispatch correctly through _build_two_state_posteriors.
+
+        Matches the real-user scenario: ``scribe.fit(..., unconstrained=
+        True, joint_params=('burst_size', 'k_off'), guide_rank=2)``.
+        """
+        from scribe.models.builders import get_posterior_distributions
+
+        cfg = self._build_unconstrained_cfg("twostate")
+        params = self._build_lowrank_params(n_genes=N_GENES, rank=2)
+
+        dists = get_posterior_distributions(params, cfg, split=False)
+
+        # All three sites must be present and constructible.
+        assert "mu" in dists
+        assert "burst_size" in dists
+        assert "k_off" in dists
+
+    def test_summary_string_lists_burst_size_and_k_off(self):
+        """The repr's guide summary must enumerate burst_size and
+        k_off, not silently drop them.  Regression for the misleading
+        ``low_rank(k=2) on mu`` display."""
+        from scribe.models.components.guide_families import LowRankGuide
+        from scribe.models.config.groups import GuideFamilyConfig
+        from scribe.svi.results import ScribeSVIResults
+
+        gfc = GuideFamilyConfig(
+            burst_size=LowRankGuide(rank=2),
+            k_off=LowRankGuide(rank=2),
+        )
+
+        class _CfgStub:
+            guide_families = gfc
+
+        stub = ScribeSVIResults.__new__(ScribeSVIResults)
+        stub.model_config = _CfgStub()
+        summary = stub._summarize_guide_families()
+        assert "burst_size" in summary
+        assert "k_off" in summary

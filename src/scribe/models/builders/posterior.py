@@ -3087,36 +3087,74 @@ def _build_two_state_posteriors(
     All three per-gene parameters (``mu``, ``burst_size``, ``k_off``)
     are positive-valued in unconstrained-Normal-with-softplus form
     (configurable to exp via ``positive_transform``). The constrained
-    fallback (``unconstrained=False``) uses LogNormal — practically
-    equivalent to the unconstrained-with-exp path.
+    fallback (``unconstrained=False``) uses LogNormal.
 
-    Phase 1 does not support mixtures or low-rank joint guides for
-    the TwoState family; ``is_mixture`` and ``low_rank`` are accepted
-    for signature consistency but only the simple per-gene path is
-    exercised.
+    Per-parameter dispatch mirrors the NBDM gene-level builder:
+      1. ``_find_joint_prefix(params, name)`` hit → joint low-rank
+         marginal via ``_build_joint_low_rank_posterior`` (used when
+         the user passes ``joint_params=(..., name, ...)`` with
+         ``guide_rank``).
+      2. Standalone ``{name}_W`` (or ``log_{name}_W`` in the
+         constrained path) present → ``_build_low_rank_*`` (used when
+         the gene_param fallback in ``preset_builder.py`` auto-installs
+         a ``LowRankGuide`` on ``mu``).
+      3. Otherwise → mean-field ``_build_positive_normal_posterior``
+         (or ``_build_lognormal_posterior``).
+
+    Phase 1 still does not support mixtures for the TwoState family;
+    ``is_mixture`` is accepted for signature consistency but the
+    builder always passes ``is_mixture=False`` to the per-parameter
+    helpers.
     """
     distributions = {}
     skip = skip or set()
-    del low_rank  # phase 1: no low-rank joint guides for TwoState
+    del low_rank, is_mixture  # dispatch handles low-rank per-name; no mixtures
 
-    if unconstrained:
-        for name in ("mu", "burst_size", "k_off"):
-            if name in skip:
-                continue
-            distributions[name] = _build_positive_normal_posterior(
-                params,
-                name,
-                is_mixture=False,  # phase 1: no mixtures
-                split=split,
-                transform=pos_transform,
-            )
-    else:
-        for name in ("mu", "burst_size", "k_off"):
-            if name in skip:
-                continue
-            distributions[name] = _build_lognormal_posterior(
-                params, name, is_mixture=False, split=split
-            )
+    for name in ("mu", "burst_size", "k_off"):
+        if name in skip:
+            continue
+        jp = _find_joint_prefix(params, name)
+
+        if unconstrained:
+            if jp is not None:
+                distributions[name] = _build_joint_low_rank_posterior(
+                    params,
+                    name,
+                    jp,
+                    split,
+                    transform=pos_transform,
+                )
+            elif f"{name}_W" in params:
+                distributions[name] = (
+                    _build_low_rank_positive_normal_posterior(
+                        params,
+                        name,
+                        is_mixture=False,
+                        split=split,
+                        transform=pos_transform,
+                    )
+                )
+            else:
+                distributions[name] = _build_positive_normal_posterior(
+                    params,
+                    name,
+                    is_mixture=False,
+                    split=split,
+                    transform=pos_transform,
+                )
+        else:
+            if jp is not None:
+                distributions[name] = _build_joint_low_rank_posterior(
+                    params, name, jp, split, transform=None
+                )
+            elif f"log_{name}_W" in params:
+                distributions[name] = _build_low_rank_lognormal_posterior(
+                    params, name, is_mixture=False, split=split
+                )
+            else:
+                distributions[name] = _build_lognormal_posterior(
+                    params, name, is_mixture=False, split=split
+                )
 
     return distributions
 
