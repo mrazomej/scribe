@@ -124,6 +124,26 @@ class CompositionalSamplingMixin:
                 counts=counts,
             )
 
+        # ----- TwoState (Poisson-Beta compound) branch -----
+        # The NB family stores ``r`` and ``p`` and composes
+        # ``rho_g ∝ r_g · (1-p_g)/p_g`` via the existing
+        # ``sample_composition`` helper. TwoState has no ``r`` /
+        # ``p`` — its compositional structure is described by
+        #
+        #     p_gc ~ Beta(α_g, β_g),  ρ_gc ∝ rate_g · p_gc
+        #
+        # (see paper/_two_state_promoter.qmd §sec-twostate-integration
+        # and ``tmp.md`` §8.2). Each posterior sample produces ONE
+        # composition draw representing a hypothetical cell drawn from
+        # the steady-state distribution.
+        _bm = getattr(self.model_config, "base_model", None)
+        if _bm in ("twostate", "twostatevcp"):
+            return self._twostate_composition_samples(
+                n_samples_dirichlet=n_samples_dirichlet,
+                rng_key=rng_key,
+                store_samples=store_samples,
+            )
+
         # Extract r and (optionally) p from the cached posterior samples
         r_samples = self.posterior_samples["r"]
         p_samples = self.posterior_samples.get("p")
@@ -156,6 +176,95 @@ class CompositionalSamplingMixin:
             batch_size=batch_size,
             param_layouts=param_layouts,
         )
+
+        if store_samples:
+            self.compositional_samples = simplex
+
+        return simplex
+
+    # ------------------------------------------------------------------
+    # TwoState compositional sampler
+    # ------------------------------------------------------------------
+
+    def _twostate_composition_samples(
+        self,
+        *,
+        n_samples_dirichlet: int,
+        rng_key,
+        store_samples: bool,
+    ) -> np.ndarray:
+        """Beta-based composition sampler for the TwoState family.
+
+        Per posterior sample ``s`` and per "replicate" draw:
+
+            p_g^(s) ~ Beta(α_g^(s), β_g^(s))
+            ρ_g^(s) = (r_hat_g^(s) · p_g^(s)) / Σ_j (r_hat_j^(s) · p_j^(s))
+
+        Returns a ``(N_posterior · n_samples_dirichlet, n_genes)``
+        simplex array on the host, matching the contract of the
+        NB-family path in ``get_compositional_samples``.
+
+        Notes
+        -----
+        Each posterior draw of (α_g, β_g, r_hat_g) deterministically
+        sets the gene's expression scale; the random ``p_g`` sample
+        represents the stochasticity of one hypothetical cell's
+        steady-state ON fraction (see paper §sec-twostate-integration
+        and ``tmp.md`` §8.7 for the per-cell-vs-pseudobulk discussion).
+        """
+        import numpy as _np
+        import jax.numpy as jnp
+        import jax.random as _random
+
+        # All three quantities are exposed by the model as
+        # ``numpyro.deterministic`` sites: alpha = mu/burst_size,
+        # beta = k_off, r_hat = mu + burst_size · k_off.
+        alpha = _np.asarray(self.posterior_samples["alpha"])
+        beta = _np.asarray(self.posterior_samples["beta"])
+        r_hat = _np.asarray(self.posterior_samples["r_hat"])
+        # Shapes are (N_posterior, n_genes); guard against an
+        # unexpected leading rank by reshaping if needed.
+        if alpha.ndim != 2 or alpha.shape != beta.shape or alpha.shape != r_hat.shape:
+            raise ValueError(
+                "TwoState compositional sampler expects alpha, beta, "
+                f"r_hat at shape (n_posterior, n_genes); got "
+                f"alpha={alpha.shape}, beta={beta.shape}, "
+                f"r_hat={r_hat.shape}."
+            )
+
+        n_post, n_genes = alpha.shape
+
+        # Stable PRNG handling: a None key means "fresh randomness on
+        # each call"; otherwise honour the supplied seed.
+        if rng_key is None:
+            rng_key = _random.PRNGKey(_np.random.SeedSequence().entropy & 0xFFFFFFFF)
+
+        # Draw n_samples_dirichlet replicates per posterior draw of
+        # the Beta-sampled p_g; concatenate along the sample axis.
+        rng_keys = _random.split(rng_key, max(1, int(n_samples_dirichlet)))
+        rho_chunks = []
+        for k in rng_keys:
+            # Beta sample; shape (n_post, n_genes).
+            p_draw = _np.asarray(
+                _random.beta(
+                    k,
+                    jnp.asarray(alpha, dtype=jnp.float32),
+                    jnp.asarray(beta, dtype=jnp.float32),
+                )
+            )
+            # Clip away from {0, 1} to keep the rate finite. We DO
+            # NOT normalise here; per-gene scales r_hat may differ
+            # by orders of magnitude and the normalisation is what
+            # gives a valid composition.
+            p_draw = _np.clip(p_draw, 1e-30, 1.0 - 1e-30)
+            lam = r_hat * p_draw  # (n_post, n_genes)
+            # Sum-normalise to the simplex.
+            lam_sum = lam.sum(axis=-1, keepdims=True)
+            lam_sum = _np.where(lam_sum > 0, lam_sum, 1.0)
+            rho = lam / lam_sum
+            rho_chunks.append(rho)
+
+        simplex = _np.concatenate(rho_chunks, axis=0).astype(_np.float32)
 
         if store_samples:
             self.compositional_samples = simplex
