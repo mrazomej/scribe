@@ -462,29 +462,32 @@ additionally preserve the Fano factor:
 See [Two-state promoter theory](../theory/two-state-promoter.md) for the
 full math and a decision guide.
 
-**Phase 1 limitations**: mixtures, VAE inference, multi-dataset indexing,
-BNB overdispersion, and the Poisson-Gamma denoiser are not yet wired for
-TwoState. Biology-informed capture priors and the biological PPC sampler
-*are* supported — both rely on the closure-under-binomial-thinning
-property that makes the capture factor likelihood-agnostic. Build-time
-validation rejects the still-unsupported combinations with a clear error.
+**Mixture models** (`n_components=K`) are fully supported for all four TwoState
+parameterizations, with the same API as the NB family. Biology-informed capture
+priors and the biological PPC sampler are also supported — both rely on the
+closure-under-binomial-thinning property that makes the capture factor
+likelihood-agnostic.
+
+**Current limitations**: VAE inference, multi-dataset indexing, BNB
+overdispersion, and the Poisson-Gamma denoiser are not yet wired for TwoState.
+Build-time validation rejects these combinations with a clear error.
 
 ---
 
 ## Comparison table
 
-| Model                                                        | Zero Inflated | Variable Capture |  BNB  | Mixture | Best For                                      |
-| ------------------------------------------------------------ | :-----------: | :--------------: | :---: | :-----: | --------------------------------------------- |
-| `"nbdm"` (`variable_capture=False`)                          |      --       |        --        | opt.  |  opt.   | **Tight** total-UMI distribution (~within 2x) |
-| `"nbvcp"` (**default**)                                      |      --       |       Yes        | opt.  |  opt.   | **Typical** data; heterogeneous library sizes |
-| `"zinb"` (`zero_inflation=True`)                             |      Yes      |        --        | opt.  |  opt.   | Excess zeros **after** VCP ruled out / no VCP |
-| `"zinbvcp"` (`variable_capture=True`, `zero_inflation=True`) |      Yes      |       Yes        | opt.  |  opt.   | Strong evidence for **both** ZI and VCP       |
-| `"pln"`                                                      |      --       |   log-offset     |  --   |   --    | Gene-level correlation recovery, heavy tails  |
-| `"nbln"`                                                     |      --       |   log-offset     |  --   |   --    | Bursty cross-gene correlations, cascade-frozen fits |
-| `"lnm"`                                                      |      --       |        --        |  --   |   --    | Compositional analysis, arbitrary correlations |
-| `"lnmvcp"`                                                   |      --       |   per-cell η     |  --   |   --    | Compositional + heterogeneous library sizes   |
-| `"twostate"`                                                 |      --       |        --        |  --   |   --    | Bursty / bimodal genes the NB cannot fit (no capture) |
-| `"twostatevcp"`                                              |      --       |   per-cell ν     |  --   |   --    | Bursty / bimodal genes with variable library sizes |
+| Model                                                        | Zero Inflated | Variable Capture |  BNB  | Mixture | Best For                                              |
+| ------------------------------------------------------------ | :-----------: | :--------------: | :---: | :-----: | ----------------------------------------------------- |
+| `"nbdm"` (`variable_capture=False`)                          |      --       |        --        | opt.  |  opt.   | **Tight** total-UMI distribution (~within 2x)         |
+| `"nbvcp"` (**default**)                                      |      --       |       Yes        | opt.  |  opt.   | **Typical** data; heterogeneous library sizes         |
+| `"zinb"` (`zero_inflation=True`)                             |      Yes      |        --        | opt.  |  opt.   | Excess zeros **after** VCP ruled out / no VCP         |
+| `"zinbvcp"` (`variable_capture=True`, `zero_inflation=True`) |      Yes      |       Yes        | opt.  |  opt.   | Strong evidence for **both** ZI and VCP               |
+| `"pln"`                                                      |      --       |    log-offset    |  --   |   --    | Gene-level correlation recovery, heavy tails          |
+| `"nbln"`                                                     |      --       |    log-offset    |  --   |   --    | Bursty cross-gene correlations, cascade-frozen fits   |
+| `"lnm"`                                                      |      --       |        --        |  --   |   --    | Compositional analysis, arbitrary correlations        |
+| `"lnmvcp"`                                                   |      --       |    per-cell η    |  --   |   --    | Compositional + heterogeneous library sizes           |
+| `"twostate"`                                                 |      --       |        --        |  --   |  opt.   | Bursty / bimodal genes the NB cannot fit (no capture) |
+| `"twostatevcp"`                                              |      --       |    per-cell ν    |  --   |  opt.   | Bursty / bimodal genes with variable library sizes    |
 
 "opt." = add `overdispersion="bnb"` or `n_components=K`.
 

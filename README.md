@@ -273,18 +273,18 @@ prevents wasted variational mass on the unbounded NB-limit ridge. See
 
 ##### Constrained vs unconstrained guides
 
-All TwoState parameterizations support both `unconstrained=True` (the
-default — Normal + transform variational posteriors) and
-`unconstrained=False` (direct constrained distributions). The mapping is:
+All TwoState parameterizations support both `unconstrained=False` (the default —
+direct constrained distributions) and `unconstrained=True` (Normal + transform
+variational posteriors). The mapping is:
 
 | Parameter                                                                      | `unconstrained=True`                                                | `unconstrained=False` |
 | ------------------------------------------------------------------------------ | ------------------------------------------------------------------- | --------------------- |
 | `mu`, `burst_size`, `k_off`, `switching_ratio`, `excess_fano`, `concentration` | `PositiveNormalSpec` / `SoftplusNormalSpec` (Normal + softplus/exp) | `LogNormalSpec`       |
 | `inv_concentration` (∈ (0, 1))                                                 | `SigmoidNormalSpec` (Normal + sigmoid)                              | `BetaSpec`            |
 
-This mirrors the NBDM family's constrained guide support. Set
-`unconstrained=False` in the model config (or omit `.unconstrained()` in
-the builder) to use the constrained path.
+This mirrors the NBDM family's constrained guide support. The constrained path
+is the default; set `unconstrained=True` (or call `.unconstrained()` in the
+builder) to switch to the Normal + transform path.
 
 ##### Per-parameter `positive_transform`
 

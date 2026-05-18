@@ -591,13 +591,13 @@ results = scribe.fit(
 Mixture models discover cell subpopulations by fitting \(K\) sets of
 gene-specific parameters. Each cell is softly assigned to a component.
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `n_components` | `None` | Number of mixture components. `None` = single component (no mixture). Must be >= 2 if set |
-| `mixture_params` | `"all"` | Which parameters are component-specific. Accepts shorthands: `"all"` (every param incl. gate), `"biological"` (core NB params only), `"mean"`, `"prob"`, `"gate"`, or an explicit list like `["r"]` |
+| Parameter        | Default | Description                                                                                                                                                                                                                                                             |
+| ---------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `n_components`   | `None`  | Number of mixture components. `None` = single component (no mixture). Must be >= 2 if set                                                                                                                                                                               |
+| `mixture_params` | `"all"` | Which parameters are component-specific. Accepts shorthands: `"all"` (every param incl. gate), `"biological"` (core params only — NB: `r`, `p`/`phi`, `mu`; TwoState: parameterization-specific extras), `"mean"`, `"prob"`, `"gate"`, or an explicit list like `["r"]` |
 
 ```python
-# Discover 5 cell types
+# NB-family: discover 5 cell types
 results = scribe.fit(
     adata,
     variable_capture=True,
@@ -608,6 +608,26 @@ results = scribe.fit(
 
 # Extract assignments
 assignments = results.cell_type_assignments(counts=adata.X)
+```
+
+TwoState models support the same mixture API.  All four parameterizations
+work; the factory automatically resolves parameter names for the active
+parameterization:
+
+```python
+# TwoState mixture: 3 components with per-component mu and shape params
+ts_results = scribe.fit(
+    adata,
+    model="twostatevcp",
+    parameterization="two_state_natural",
+    n_components=3,
+    mixture_params=["mu", "burst_size", "k_off"],
+    n_steps=150_000,
+)
+
+# Same downstream API: assignments, denoising, log-prob decomposition
+assignments = ts_results.cell_type_assignments(counts=adata.X)
+denoised = ts_results.get_denoised_counts_map(counts=adata.X)
 ```
 
 ### Annotation priors

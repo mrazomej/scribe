@@ -258,18 +258,29 @@ marginalizes \(p_{gc}\) independently per \((c, g)\) by construction.
 
 ---
 
-## Phase 1 limitations
+## Supported and unsupported features
 
-The TwoState family in the current release **does not yet support**
-mixtures, VAE inference, multi-dataset indexing, BNB overdispersion,
-or the Poisson-Gamma denoiser. Build-time validation rejects these
-combinations with a clear directive. Biology-informed capture priors
-(``priors={"capture_efficiency": (log_M0, sigma_M)}``) *are* supported;
-the closure under binomial thinning makes the capture factor enter the
-rate identically to its role in the NB family, so the prior math
-applies unchanged. The biological PPC sampler (``get_ppc_samples_biological``
-and the MAP variant) is also wired — by the same closure argument,
-the pre-capture distribution is exactly the gene-rank Poisson-Beta
-compound with ``p_capture`` dropped from the rate.
+**Fully supported:**
+
+- **Mixture models** (`n_components=K`): the observation distribution becomes a
+  `MixtureGeneral` over K `PoissonBetaCompound` components weighted by
+  `mixing_weights`.  All four parameterizations work. Denoising marginalises
+  over components (soft) or uses hard assignments. Log-prob decomposition
+  supports `split_components`, `weights`, and `weight_type` for per-component
+  analysis.
+- **Biology-informed capture priors** (``priors={"capture_efficiency": (log_M0,
+  sigma_M)}``): the closure under binomial thinning makes the capture factor
+  enter the rate identically to its role in the NB family, so the prior math
+  applies unchanged.
+- **Biological PPC sampler** (``get_ppc_samples_biological`` and the MAP
+  variant): by the same closure argument, the pre-capture distribution is
+  exactly the gene-rank Poisson-Beta compound with ``p_capture`` dropped from
+  the rate.
+
+**Not yet supported:**
+
+VAE inference, multi-dataset indexing, BNB overdispersion, and the Poisson-Gamma
+denoiser are not wired for TwoState. Build-time validation rejects these
+combinations with a clear directive.
 
 See `paper/_two_state_promoter.qmd` for the long-form derivations.

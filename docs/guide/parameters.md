@@ -127,8 +127,18 @@ where \(w_k\) are the mixing weights and \(\theta_g^{(k)}\) includes the
 component-specific gene parameters. The `mixture_params` argument controls
 which parameters vary by component (default: `"all"` — every parameter
 including gate). Accepts semantic shorthands: `"all"`, `"biological"`
-(core NB params only, excluding gate), `"mean"`, `"prob"`, `"gate"`,
+(core params only, excluding gate/capture), `"mean"`, `"prob"`, `"gate"`,
 or an explicit list of internal parameter names.
+
+For NB-family models, `"biological"` resolves to the core NB parameters (`r`,
+`p`/`phi`, `mu`).  For TwoState-family models, `"biological"` resolves to the
+parameterization-specific extras (e.g. `mu`, `burst_size`, `k_off` for
+`two_state_natural`; `mu`, `excess_fano`, `concentration` for
+`two_state_mean_fano`).  The factory automatically rewrites extra-parameter
+names to match the active parameterization, so `mixture_params=["mu",
+"burst_size"]` works for `two_state_natural` / `two_state_ratio`, and
+`mixture_params=["mu", "excess_fano"]` for `two_state_mean_fano` /
+`two_state_moment_delta`.
 
 ---
 
@@ -216,8 +226,9 @@ Forward maps:
 
 The capture parameter for `twostatevcp` is always `p_capture` (in
 \((0, 1)\)) regardless of which TwoState parameterization is chosen.
-Biology-informed capture priors are not yet supported for TwoState
-(phase-1 limitation).
+Biology-informed capture priors are supported
+(``priors={"capture_efficiency": (log_M0, sigma_M)}``); the closure
+under binomial thinning makes the prior math likelihood-agnostic.
 
 ---
 
@@ -230,7 +241,7 @@ Biology-informed capture priors are not yet supported for TwoState
 | `mu`                | \(\color{#81b29a}{\mu_g}\)     | Biological mean expression per gene (before capture)                                         | \(\mathbb{R}^+\) | All                            | Sampled in mean_prob and mean_odds; not directly in canonical |
 | `phi`               | \(\color{#f2cc8f}{\phi}\)      | Odds of success probability: \(\phi = (1-p)/p\)                                              | \(\mathbb{R}^+\) | All                            | Sampled only in mean_odds                                     |
 | `gate`              | \(\color{#e74c3c}{\pi_g}\)     | Per-gene zero-inflation probability (technical dropout)                                      | \((0, 1)\)       | ZINB, ZINBVCP                  | All parameterizations                                         |
-| `p_capture`         | \(\color{#9b59b6}{\nu^{(c)}}\) | Cell-specific capture probability (library-size factor)                                      | \((0, 1)\)       | NBVCP, ZINBVCP                 | Canonical, mean_prob                                          |
+| `p_capture`         | \(\color{#9b59b6}{\nu^{(c)}}\) | Cell-specific capture probability (library-size factor)                                      | \((0, 1)\)       | NBVCP, ZINBVCP, TwoStateVCP    | Canonical, mean_prob; always for TwoState                     |
 | `phi_capture`       | \(\phi^{(c)}_{\text{cap}}\)    | Cell-specific capture odds                                                                   | \(\mathbb{R}^+\) | NBVCP, ZINBVCP                 | Mean odds only                                                |
 | `eta_capture`       | \(\eta_c\)                     | Latent log-ratio \(\log(M_c / L_c)\) under biology-informed prior                            | \(\mathbb{R}^+\) | NBVCP, ZINBVCP                 | Any (when biology-informed prior is active)                   |
 | `bnb_concentration` | \(\color{#f39c12}{\kappa_g}\)  | Beta concentration controlling BNB tail heaviness. \(\kappa_g \to \infty\) recovers NB       | \((2, \infty)\)  | Any + `overdispersion="bnb"`   | All parameterizations                                         |
@@ -271,6 +282,18 @@ as Normals:
 Unconstrained mode is **required** for hierarchical priors and BNB
 overdispersion, and is the natural setting for
 [normalizing flow guides](guide-families.md#normalizing-flow).
+
+The TwoState family follows the same pattern.  Under `unconstrained=False`
+(the default), positive parameters use `LogNormalSpec` and the bounded
+`inv_concentration ∈ (0, 1)` uses `BetaSpec`.  Under `unconstrained=True`,
+positive parameters use `PositiveNormalSpec` / `SoftplusNormalSpec`
+(Normal + softplus/exp) and `inv_concentration` uses `SigmoidNormalSpec`
+(Normal + sigmoid).
+
+| TwoState Parameter                                                             | `unconstrained=True`                         | `unconstrained=False` |
+| ------------------------------------------------------------------------------ | -------------------------------------------- | --------------------- |
+| `mu`, `burst_size`, `k_off`, `switching_ratio`, `excess_fano`, `concentration` | `PositiveNormalSpec` (Normal + softplus/exp) | `LogNormalSpec`       |
+| `inv_concentration` ∈ (0, 1)                                                   | `SigmoidNormalSpec` (Normal + sigmoid)       | `BetaSpec`            |
 
 ---
 
@@ -417,6 +440,8 @@ See [Theory: Hierarchical Priors --- Multi-dataset](../theory/hierarchical-prior
 
 Which parameters appear in which model configuration:
 
+### NB-family models
+
 | Parameter                   | NBDM  | NBVCP | ZINB  | ZINBVCP | + BNB |   + Mixture   |
 | --------------------------- | :---: | :---: | :---: | :-----: | :---: | :-----------: |
 | `r` / `r_g`                 |  yes  |  yes  |  yes  |   yes   |  yes  | per-component |
@@ -429,6 +454,20 @@ Which parameters appear in which model configuration:
 | `bnb_concentration`         |  ---  |  ---  |  ---  |   ---   |  yes  | per-component |
 | `mixing_weights`            |  ---  |  ---  |  ---  |   ---   |  ---  |      yes      |
 | `z` (VAE latent)            |  VAE  |  VAE  |  VAE  |   VAE   |  VAE  |      VAE      |
+
+### TwoState-family models
+
+| Parameter                               | TwoState | TwoStateVCP |   + Mixture   |
+| --------------------------------------- | :------: | :---------: | :-----------: |
+| `mu`                                    |   yes    |     yes     | per-component |
+| `burst_size` (natural, ratio)           |   yes    |     yes     | per-component |
+| `k_off` (natural only)                  |   yes    |     yes     | per-component |
+| `switching_ratio` (ratio only)          |   yes    |     yes     | per-component |
+| `excess_fano` (mean_fano, moment_delta) |   yes    |     yes     | per-component |
+| `concentration` (mean_fano only)        |   yes    |     yes     | per-component |
+| `inv_concentration` (moment_delta only) |   yes    |     yes     | per-component |
+| `p_capture`                             |   ---    |     yes     |      yes      |
+| `mixing_weights`                        |   ---    |     ---     |      yes      |
 
 **Legend:** "yes" = always present; "MP/MO" = only with mean_prob or mean_odds
 parameterization; "MO" = only with mean_odds; "opt" = optional (biology-informed

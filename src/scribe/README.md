@@ -576,6 +576,38 @@ PLN, NBLN, LNM, and LNMVCP use their own decoder-based parameterizations
 auto-selected by the factory; the `parameterization` argument is not exposed
 for these families.
 
+#### Constrained vs unconstrained guides
+
+All TwoState parameterizations support both `unconstrained=False` (the
+default — direct constrained distributions) and `unconstrained=True`
+(Normal + transform variational posteriors):
+
+| TwoState Parameter                                                             | `unconstrained=True`                         | `unconstrained=False` |
+| ------------------------------------------------------------------------------ | -------------------------------------------- | --------------------- |
+| `mu`, `burst_size`, `k_off`, `switching_ratio`, `excess_fano`, `concentration` | `PositiveNormalSpec` (Normal + softplus/exp) | `LogNormalSpec`       |
+| `inv_concentration` ∈ (0, 1)                                                   | `SigmoidNormalSpec` (Normal + sigmoid)       | `BetaSpec`            |
+
+#### Mixture models
+
+TwoState models support K-component mixture models via the same API as
+the NB family:
+
+```python
+results = scribe.fit(
+    adata,
+    model="twostatevcp",
+    parameterization="two_state_natural",
+    n_components=3,
+    mixture_params=["mu", "burst_size", "k_off"],
+)
+```
+
+All four parameterizations work.  The observation distribution becomes a
+`MixtureGeneral` over K `PoissonBetaCompound` components weighted by
+`mixing_weights`.  Denoising marginalises over components (soft) or uses hard
+assignments.  Log-prob decomposition supports `split_components`, `weights`, and
+`weight_type` for per-component analysis.
+
 ### Positive-Parameter Transform
 
 When `unconstrained=True`, every positive parameter is sampled as a Normal
@@ -644,6 +676,23 @@ component_entropy = mixture_results.mixture_component_entropy()
 for i in range(5):
     component = mixture_results.get_component(i)
     print(f"Component {i} MAP estimates:", component.get_map())
+```
+
+TwoState mixtures use the same API — the factory resolves parameter names
+for the active parameterization:
+
+```python
+# TwoState mixture: 3 bursty subpopulations
+ts_mix = scribe.fit(
+    adata,
+    model="twostatevcp",
+    parameterization="two_state_natural",
+    n_components=3,
+    mixture_params=["mu", "burst_size", "k_off"],
+    n_steps=150_000,
+)
+assignments = ts_mix.cell_type_assignments(counts=adata.X)
+denoised = ts_mix.get_denoised_counts_map(counts=adata.X)
 ```
 
 When using annotation-guided mixtures via `annotation_key` with inferred

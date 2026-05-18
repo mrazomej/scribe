@@ -241,7 +241,12 @@ Gauss-Legendre quadrature over `p`.
 
 The TwoState family ships with four parameterizations of its shape coordinate
 — `two_state_natural`, `two_state_ratio`, `two_state_mean_fano`,
-`two_state_moment_delta`. See [Two-state promoter](theory/two-state-promoter.md)
+`two_state_moment_delta`. All four support **mixture models** (`n_components=K`)
+via the same API as the NB family and both **constrained** (`LogNormalSpec`,
+`BetaSpec`) and **unconstrained** (`Normal + transform`) guides.  Under
+`unconstrained=True`, the default `positive_transform` is `{"mu": "exp"}`
+(multiplicative-step geometry for gene means that span orders of magnitude).
+See [Two-state promoter](theory/two-state-promoter.md)
 for the full math and a decision guide.
 
 ### Parameterizations

@@ -364,30 +364,53 @@ on the distributions used.
 
 === "TwoState (twostate / twostatevcp)"
 
-    The TwoState family uses an unconstrained Normal+softplus
-    parameterization and the variational parameters depend on which of
-    the four sampled parameterizations was used.  All four share `mu_*`;
-    the second-and-third extras differ:
+    The variational parameters depend on which of the four
+    parameterizations was used and on `unconstrained`.
+
+    **`unconstrained=True`** (Normal + transform):
 
     ```python
     # Natural: samples (mu, burst_size, k_off)
     ts_results = scribe.fit(adata, model="twostatevcp",
                             parameterization="two_state_natural",
                             unconstrained=True)
-    mu_loc = ts_results.params["mu_loc"]
+    mu_loc = ts_results.params["mu_loc"]          # shape: (n_genes,)
     burst_size_loc = ts_results.params["burst_size_loc"]
     k_off_loc = ts_results.params["k_off_loc"]
 
-    # Ratio: samples (mu, burst_size, switching_ratio)
-    # → key is switching_ratio_loc / switching_ratio_scale
+    # Ratio:         → switching_ratio_loc / switching_ratio_scale
+    # Mean-Fano:     → excess_fano_*, concentration_*
+    # Moment-delta:  → excess_fano_*, inv_concentration_* (sigmoid-Normal)
+    ```
 
-    # Mean-Fano: samples (mu, excess_fano, concentration)
-    # → keys are excess_fano_* and concentration_*
+    **`unconstrained=False`** (constrained distributions, the default):
 
-    # Moment-delta: samples (mu, excess_fano, inv_concentration)
-    # → key is inv_concentration_* (sigmoid-Normal in (0, 1))
+    ```python
+    # Same model, constrained guides
+    ts_results = scribe.fit(adata, model="twostatevcp",
+                            parameterization="two_state_natural")
+    # LogNormal params for positive parameters
+    mu_loc = ts_results.params["mu_loc"]           # LogNormal loc
+    mu_scale = ts_results.params["mu_scale"]       # LogNormal scale
+    # BetaSpec params for inv_concentration (moment_delta only)
+    # → inv_concentration_concentration1 / _concentration0
+    ```
 
-    # Posterior samples include derived deterministics too:
+    **Mixture models** (`n_components=K`): component-specific parameters
+    gain a leading component dimension:
+
+    ```python
+    ts_mix = scribe.fit(adata, model="twostatevcp",
+                        parameterization="two_state_natural",
+                        n_components=3,
+                        mixture_params=["mu", "burst_size", "k_off"])
+    # mu_loc shape: (n_components, n_genes)
+    # mixing_concentration shape: (n_components,)
+    ```
+
+    **Posterior samples** include derived deterministics:
+
+    ```python
     samples = ts_results.get_posterior_samples()
     # samples["mu"], samples["burst_size"], samples["k_off"],
     # samples["alpha"], samples["beta"], samples["r_hat"],
