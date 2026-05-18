@@ -1,0 +1,339 @@
+---
+editor:
+    render-on-save: true
+csl: ieee.csl
+format:
+  html:
+    filters: [tikz.lua, strip-yaml-frontmatter.lua, maintext-filter.lua, sitext-filter.lua]
+---
+
+## Compositional inference under the two-state promoter model {#sec-twostate-composition}
+
+In @sec-hierarchical-p we showed that relaxing the shared-$p$ assumption
+breaks the elegant Dirichlet-Multinomial factorization but does *not* break
+compositional inference: the Gamma-based composition sampler strictly
+generalizes Dirichlet sampling, reduces to it in the shared-$p$ limit, and
+is invariant to per-cell capture efficiency. The move to the two-state
+promoter model (@sec-twostate) introduces an analogous structural change ---
+the latent rate distribution changes from Gamma to scaled-Beta --- and the
+same reasoning applies. In this section we:
+
+1. Derive the correct composition-sampling procedure under the two-state
+   model: draw independent Beta latents per gene, scale by the gene-specific
+   rate, and normalise.
+
+2. Prove that per-cell capture efficiency cancels exactly from the
+   composition, preserving the robustness result of
+   @sec-diffexp-compositional-robustness.
+
+3. Show that the procedure reduces to the hierarchical-$p$ Gamma-based
+   sampler in the NB limit ($k^- \to \infty$), which in turn reduces to
+   Dirichlet sampling when the implied Gamma scales are shared.
+
+4. Establish that the composition point estimate is anchored at
+   $\mu_g / \mu_T$ --- the same mean-calibration constraint that drives
+   the robustness argument for all model variants.
+
+5. Explain what the two-state model adds to the *uncertainty* of
+   compositions: gene-specific overdispersion that depends on the
+   promoter switching kinetics, not merely on the NB dispersion $r_g$.
+
+### The Poisson-mixture framework {#sec-twostate-comp-poisson-mixture}
+
+Every count model in scribe is a **Poisson mixture**: the observation
+$u_{gc}$ for gene $g$ in cell $c$ is Poisson-distributed given a latent
+biological rate $\lambda_{gc}$ and a cell-specific capture efficiency
+$\nu_c$:
+
+$$
+u_{gc} \mid \lambda_{gc}, \nu_c \sim \text{Poisson}(\nu_c \lambda_{gc}).
+$${#eq-twostate-comp-obs}
+
+The models differ only in the prior distribution over $\lambda_{gc}$:
+
+| Model | Prior on $\lambda_{gc}$ |
+|-------|------------------------|
+| Shared-$p$ NB | $\lambda_g \sim \text{Gamma}(r_g, \theta)$, common $\theta$ |
+| Hierarchical-$p_g$ NB | $\lambda_g \sim \text{Gamma}(r_g, \theta_g)$, gene-specific $\theta_g$ |
+| Two-state promoter | $\lambda_{gc} = \hat{r}_g \cdot p_{gc}$, where $p_{gc} \sim \text{Beta}(\alpha_g, \beta_g)$ |
+
+The per-cell composition is defined from the latent biological rates:
+
+$$
+\rho_{gc} = \frac{\lambda_{gc}}{\sum_{j=1}^G \lambda_{jc}}.
+$${#eq-twostate-comp-def}
+
+This is the fundamental quantity for differential expression: it represents
+the fraction of total transcriptional output attributable to gene $g$ in cell
+$c$, *before* the capture-efficiency bottleneck.
+
+### Capture efficiency cancels from the composition {#sec-twostate-comp-capture}
+
+Suppose an analyst mistakenly defines the composition from *observed* counts:
+
+$$
+\hat{\rho}_{gc} = \frac{u_{gc}}{\sum_{j=1}^G u_{jc}}.
+$${#eq-twostate-comp-naive}
+
+Under the Poisson observation model @eq-twostate-comp-obs, the conditional
+expected count is $\langle u_{gc} \mid \lambda_{gc}, \nu_c \rangle = \nu_c
+\lambda_{gc}$. Substituting into the composition:
+
+$$
+\frac{\langle u_{gc} \rangle}{\sum_j \langle u_{jc} \rangle}
+= \frac{\nu_c \lambda_{gc}}{\sum_j \nu_c \lambda_{jc}}
+= \frac{\lambda_{gc}}{\sum_j \lambda_{jc}}
+= \rho_{gc}.
+$${#eq-twostate-comp-cancel}
+
+The cell-specific $\nu_c$ cancels identically from numerator and denominator.
+This is the same cancellation that underpins the compositional robustness of
+the shared-$p$ model (@sec-diffexp-compositional-robustness) and the
+hierarchical-$p$ model (@sec-hier-gamma-sampling). The result does not depend
+on the distributional form of $\lambda_{gc}$ --- only on the fact that
+$\nu_c$ enters as a cell-level multiplicative factor common to all genes.
+
+**Therefore, compositional inference under the two-state model is exactly
+invariant to capture-efficiency misspecification**, in the same strong sense
+as for the NB family.
+
+### Composition sampling under the two-state model {#sec-twostate-comp-sampling}
+
+Under the two-state model, the latent biological rate for gene $g$ in a
+hypothetical cell is
+
+$$
+\lambda_g = \hat{r}_g \cdot p_g, \qquad
+p_g \sim \text{Beta}(\alpha_g, \beta_g),
+$${#eq-twostate-comp-lambda}
+
+where $\hat{r}_g$ is the gene-specific Poisson rate scale and
+$(\alpha_g, \beta_g)$ are the Beta shape parameters (equivalently
+$\alpha_g = k^+_g$, $\beta_g = k^-_g$ in the promoter-switching
+notation). The composition for a single cell is obtained by normalising:
+
+$$
+\rho_g = \frac{\hat{r}_g \cdot p_g}{\sum_{j=1}^G \hat{r}_j \cdot p_j}.
+$${#eq-twostate-comp-normalize}
+
+To draw a compositional sample from the posterior predictive distribution
+under the two-state model, we:
+
+1. Draw $p_g^{(s)} \sim \text{Beta}(\alpha_g^{(s)}, \beta_g^{(s)})$
+   independently for each gene $g$.
+2. Compute the latent rate:
+   $\lambda_g^{(s)} = \hat{r}_g^{(s)} \cdot p_g^{(s)}$.
+3. Normalise to obtain the composition:
+   $\rho_g^{(s)} = \lambda_g^{(s)} / \sum_j \lambda_j^{(s)}$.
+
+This is the **Beta-rate composition sampler** --- the direct two-state
+analogue of the Gamma-ratio sampler in @sec-hier-gamma-sampling. The
+procedure uses only the gene-level posterior samples of $(\alpha_g, \beta_g,
+\hat{r}_g)$ and does not depend on the cell-specific capture efficiency.
+
+### Reduction to the hierarchical-$p$ sampler in the NB limit {#sec-twostate-comp-nb-limit}
+
+In @sec-twostate-nb-limit we showed that when $\beta_g = k^-_g \to \infty$
+(fast OFF-switching relative to mRNA decay), the two-state distribution
+collapses to a negative binomial. We now verify that the composition sampler
+inherits this reduction.
+
+When $\beta_g$ is large, the Beta random variable $p_g \sim
+\text{Beta}(\alpha_g, \beta_g)$ concentrates around its mean
+$\alpha_g / (\alpha_g + \beta_g)$, and the rescaled variable
+$\beta_g \cdot p_g$ converges in distribution to a Gamma:
+
+$$
+\beta_g \cdot p_g \;\xrightarrow{d}\; \text{Gamma}(\alpha_g, 1)
+\qquad \text{as } \beta_g \to \infty.
+$${#eq-twostate-comp-beta-gamma}
+
+This is a standard result: the Beta distribution with one parameter growing
+generates Gamma variates in the limit (see, e.g., the Pólya urn derivation
+in @sec-dirichlet-multinomial). The latent rate becomes
+
+$$
+\lambda_g = \hat{r}_g \cdot p_g
+= \frac{\hat{r}_g}{\beta_g} \cdot (\beta_g \cdot p_g)
+\;\xrightarrow{d}\; \frac{\hat{r}_g}{\beta_g} \cdot \text{Gamma}(\alpha_g, 1).
+$${#eq-twostate-comp-rate-limit}
+
+Comparing with the hierarchical-$p$ composition formula
+(@eq-hier-composition-expanded), we identify the gene-specific scaling
+factor as $\hat{r}_g / \beta_g$ and the Gamma shape as $\alpha_g$. In the
+NB-limit parameterisation (see @sec-twostate-nb-limit):
+
+- The NB dispersion is $r_{\text{NB},g} = \alpha_g$.
+- The gene-specific factor is $\hat{r}_g / \beta_g = b_g$ (the burst size).
+- The composition becomes:
+
+$$
+\rho_g = \frac{b_g \cdot \gamma_g}{\sum_j b_j \cdot \gamma_j},
+\qquad \gamma_g \sim \text{Gamma}(\alpha_g, 1).
+$${#eq-twostate-comp-gamma-limit}
+
+This is precisely the Gamma-ratio composition formula from
+@sec-hier-gamma-sampling with the gene-specific scaling factor
+$(1 - p_g)/p_g$ replaced by $b_g$ (the two quantities are equal in the NB
+limit: $(1 - p_g)/p_g = \hat{r}_g / (\beta_g \alpha_g / \alpha_g) = b_g$
+after working through the parameterisation maps).
+
+**When all burst sizes are equal** ($b_g = b$ for all $g$), the common
+factor cancels from the composition:
+
+$$
+\rho_g = \frac{b \cdot \gamma_g}{\sum_j b \cdot \gamma_j}
+= \frac{\gamma_g}{\sum_j \gamma_j}
+\sim \text{Dir}(\underline{\alpha}),
+$${#eq-twostate-comp-dirichlet-limit}
+
+recovering the Dirichlet sampling of the shared-$p$ model. The nesting is
+therefore:
+
+$$
+\boxed{
+\text{Two-state (Beta-rate)}
+\;\xrightarrow{\beta_g \to \infty}\;
+\text{Hierarchical-}p \text{ (Gamma-ratio)}
+\;\xrightarrow{b_g = b}\;
+\text{Shared-}p \text{ (Dirichlet)}
+}
+$${#eq-twostate-comp-nesting}
+
+### Mean anchoring and robustness of composition point estimates {#sec-twostate-comp-mean-anchor}
+
+The expected latent rate under the two-state model is
+
+$$
+\langle \lambda_g \rangle = \hat{r}_g \cdot \frac{\alpha_g}{\alpha_g + \beta_g}
+= \mu_g,
+$${#eq-twostate-comp-expected-rate}
+
+by the mean-preserving construction of the $(\mu, b, k^-)
+\to (\alpha, \beta, \hat{r})$ reparameterisation (@sec-twostate-reparam).
+The expected composition is therefore
+
+$$
+\langle \rho_g \rangle \approx \frac{\mu_g}{\mu_T},
+$${#eq-twostate-comp-mean-comp}
+
+where $\mu_T = \sum_j \mu_j$ and the approximation is excellent for $G \gg
+1$ (by the same law-of-large-numbers argument as in
+@sec-diffexp-why-model-means). Since $\mu_g$ is pinned by the per-gene
+sample mean $\bar{u}_g$ to relative precision $1/\sqrt{C}$ (where $C$ is the
+number of cells), the composition point estimate is anchored with the same
+precision regardless of model choice.
+
+This reproduces the conclusion of @sec-diffexp-why-model: **any model that
+fits the data will match the per-gene means, and therefore the composition
+point estimates, regardless of its internal parameterisation.** The two-state
+model adds value not by improving point estimates --- those are already as
+good as the data allow --- but by providing the correct *uncertainty*
+structure for bursty genes.
+
+### What the two-state model adds: gene-specific compositional variance {#sec-twostate-comp-variance}
+
+Under the shared-$p$ model, the compositional variance is governed by the
+Dirichlet concentration $r_T = \sum_g r_g$, which produces a single global
+overdispersion factor $\omega = (u_T + r_T) / (1 + r_T)$
+(@eq-why-model-overdispersion-factor). All genes share this factor: a
+housekeeping gene and a bursty signalling gene have compositional variance
+inflated by the same $\omega$.
+
+Under the two-state model, each gene contributes to the compositional
+variance according to its own Beta concentration $\kappa_g = \alpha_g +
+\beta_g$. Specifically, the variance of the latent rate is
+
+$$
+\text{Var}(\lambda_g) = \hat{r}_g^2 \cdot \frac{\alpha_g \beta_g}{
+(\alpha_g + \beta_g)^2 (\alpha_g + \beta_g + 1)
+} = \mu_g^2 \cdot \frac{1}{\kappa_g + 1} \cdot \frac{\beta_g}{\alpha_g},
+$${#eq-twostate-comp-var-lambda}
+
+where we used $\hat{r}_g \alpha_g / (\alpha_g + \beta_g) = \mu_g$. The
+normalised contribution of this variance to the composition depends on the
+ratio $\text{Var}(\lambda_g) / \langle \lambda_g \rangle^2 = 1 / (\alpha_g
+(\kappa_g + 1))$ (the squared coefficient of variation of $\lambda_g$). For
+genes in the NB-like regime ($\kappa_g \gg 1$, large $\beta_g$), this
+quantity is small and the gene barely contributes excess compositional
+variance beyond sampling noise. For bursty genes ($\kappa_g \sim 1$, small
+$\beta_g$), the contribution is large and the gene's compositional
+uncertainty is substantially wider.
+
+This **gene-specific compositional variance** is the key addition of the
+two-state model to the DE pipeline. It means that:
+
+- Housekeeping genes in the NB-like regime get tight CLR credible intervals
+  (the data strongly constrain their composition).
+- Bursty / bimodal genes get appropriately wide intervals that reflect the
+  genuine cell-to-cell heterogeneity in their transcriptional state.
+- The overall DE analysis is neither over-conservative (as it would be if all
+  genes were forced to use the wide bursty-gene variance) nor
+  anti-conservative (as it would be if the narrow NB variance were applied
+  to bursty genes).
+
+### Differential expression: modified CLR procedure {#sec-twostate-comp-de}
+
+The empirical DE pipeline from @sec-diffexp-nonparametric extends to the
+two-state model with a single modification: replace the composition-
+generating step. Given posterior samples $(\alpha_g, \beta_g, \hat{r}_g)$
+for each gene in conditions A and B, the CLR differences are computed as:
+
+**Step 1: Sample compositions.** For each posterior draw $s$, sample:
+
+$$
+p_{g}^{(s)} \sim \text{Beta}(\alpha_{g}^{(s)}, \beta_{g}^{(s)}),
+\qquad
+\rho_g^{(s)} = \frac{
+    \hat{r}_g^{(s)} \cdot p_g^{(s)}
+}{
+    \sum_{j=1}^G \hat{r}_j^{(s)} \cdot p_j^{(s)}
+},
+$${#eq-twostate-comp-de-sample}
+
+independently for conditions A and B.
+
+**Step 2: CLR transform.**
+
+$$
+z_{g,\text{CLR}}^{(s)} = \log \rho_g^{(s)} -
+\frac{1}{G} \sum_{j=1}^G \log \rho_j^{(s)}.
+$${#eq-twostate-comp-de-clr}
+
+**Step 3: Paired differences.**
+
+$$
+\Delta_g^{(s)} = z_{A,g,\text{CLR}}^{(s)} - z_{B,g,\text{CLR}}^{(s)}.
+$${#eq-twostate-comp-de-delta}
+
+**Step 4: Downstream statistics.** All gene-level statistics (lfsr,
+prob_effect, PEFP, gene-set tests) are computed from the matrix
+$\Delta_g^{(s)}$ using the same counting procedures as
+@sec-diffexp-nonparametric and @sec-hier-de. No distributional assumptions
+are required.
+
+Steps 2--4 are **completely unchanged** from the existing pipeline. Only
+Step 1 is new: the Beta-rate draw replaces the Gamma-ratio draw (or the
+Dirichlet draw in the shared-$p$ case). The output --- a matrix of CLR
+differences --- has identical structure, so all downstream code operates
+without modification.
+
+### Summary {#sec-twostate-comp-summary}
+
+The two-state promoter model preserves the compositional robustness
+properties that underpin the scribe DE framework:
+
+| Property | Shared-$p$ NB | Hierarchical-$p_g$ NB | Two-state promoter |
+|----------|:---:|:---:|:---:|
+| Capture $\nu_c$ cancels | ✓ | ✓ | ✓ |
+| Mean anchored at $\mu_g / \mu_T$ | ✓ | ✓ | ✓ |
+| CLR pipeline unchanged | ✓ | ✓ | ✓ |
+| Composition distribution | Dirichlet | Normalised scaled-Gamma | Normalised scaled-Beta |
+| Reduces to Dirichlet | (is Dirichlet) | when $p_g = p$ | when $\beta_g \to \infty$ and $b_g$ shared |
+| Gene-specific comp. variance | ✗ (global $r_T$) | ✓ (via $p_g$) | ✓ (via $\kappa_g$) |
+
+The critical addition of the two-state model is gene-specific compositional
+uncertainty that reflects promoter-switching kinetics: NB-like genes get
+tight intervals, bursty genes get wide intervals, and the distinction
+emerges automatically from the fitted $(\alpha_g, \beta_g)$ without
+requiring the analyst to pre-classify genes into regimes.
