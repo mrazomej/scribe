@@ -394,3 +394,186 @@ class TestDecoderOutputSpec:
         p = PARAMETERIZATIONS["mean_odds"]
         spec = p.decoder_output_spec("zinbvcp")
         assert spec == [("mu", "softplus"), ("gate", "sigmoid")]
+
+
+# ==============================================================================
+# TwoState Constrained / Unconstrained Guide Spec Tests
+# ==============================================================================
+
+
+class TestTwoStateParamSpecsBranching:
+    """Test that TwoState parameterizations correctly branch on ``unconstrained``.
+
+    Each of the four TwoState parameterization classes should return
+    ``PositiveNormalSpec`` for ``mu`` when ``unconstrained=True`` and
+    ``LogNormalSpec`` when ``unconstrained=False``.
+    """
+
+    @pytest.fixture
+    def guide_families(self):
+        from scribe.models.config.groups import GuideFamilyConfig
+
+        return GuideFamilyConfig()
+
+    @pytest.mark.parametrize(
+        "param_key",
+        [
+            "two_state_natural",
+            "two_state_ratio",
+            "two_state_mean_fano",
+            "two_state_moment_delta",
+        ],
+    )
+    def test_unconstrained_returns_positive_normal(
+        self, param_key, guide_families
+    ):
+        """unconstrained=True should produce PositiveNormalSpec for mu."""
+        from scribe.models.builders.parameter_specs import PositiveNormalSpec
+        from scribe.models.parameterizations import PARAMETERIZATIONS
+
+        param = PARAMETERIZATIONS[param_key]
+        specs = param.build_param_specs(
+            unconstrained=True, guide_families=guide_families
+        )
+        assert len(specs) == 1
+        assert specs[0].name == "mu"
+        assert isinstance(specs[0], PositiveNormalSpec)
+
+    @pytest.mark.parametrize(
+        "param_key",
+        [
+            "two_state_natural",
+            "two_state_ratio",
+            "two_state_mean_fano",
+            "two_state_moment_delta",
+        ],
+    )
+    def test_constrained_returns_lognormal(self, param_key, guide_families):
+        """unconstrained=False should produce LogNormalSpec for mu."""
+        from scribe.models.builders.parameter_specs import LogNormalSpec
+        from scribe.models.parameterizations import PARAMETERIZATIONS
+
+        param = PARAMETERIZATIONS[param_key]
+        specs = param.build_param_specs(
+            unconstrained=False, guide_families=guide_families
+        )
+        assert len(specs) == 1
+        assert specs[0].name == "mu"
+        assert isinstance(specs[0], LogNormalSpec)
+
+
+class TestTwoStateExtraSpecsBranching:
+    """Test that TwoState extra-param registry builders branch on ``unconstrained``.
+
+    Positive parameters should return ``SoftplusNormalSpec`` /
+    ``PositiveNormalSpec`` when unconstrained, ``LogNormalSpec`` when
+    constrained.  ``inv_concentration`` (unit-interval) should return
+    ``SigmoidNormalSpec`` when unconstrained, ``BetaSpec`` when
+    constrained.
+    """
+
+    @pytest.fixture
+    def guide_families(self):
+        from scribe.models.config.groups import GuideFamilyConfig
+
+        return GuideFamilyConfig()
+
+    # -- Positive extras: unconstrained -> SoftplusNormalSpec (default)
+    @pytest.mark.parametrize(
+        "builder_name,param_name",
+        [
+            ("build_burst_size_spec", "burst_size"),
+            ("build_k_off_spec", "k_off"),
+            ("build_switching_ratio_spec", "switching_ratio"),
+            ("build_excess_fano_spec", "excess_fano"),
+            ("build_concentration_spec", "concentration"),
+        ],
+    )
+    def test_positive_extras_unconstrained(
+        self, builder_name, param_name, guide_families
+    ):
+        """unconstrained=True should return SoftplusNormalSpec for positive params."""
+        from scribe.models.builders.parameter_specs import SoftplusNormalSpec
+        from scribe.models.presets import registry
+
+        builder = getattr(registry, builder_name)
+        specs = builder(unconstrained=True, guide_families=guide_families)
+        assert len(specs) == 1
+        assert specs[0].name == param_name
+        assert isinstance(specs[0], SoftplusNormalSpec)
+
+    # -- Positive extras: constrained -> LogNormalSpec
+    @pytest.mark.parametrize(
+        "builder_name,param_name",
+        [
+            ("build_burst_size_spec", "burst_size"),
+            ("build_k_off_spec", "k_off"),
+            ("build_switching_ratio_spec", "switching_ratio"),
+            ("build_excess_fano_spec", "excess_fano"),
+            ("build_concentration_spec", "concentration"),
+        ],
+    )
+    def test_positive_extras_constrained(
+        self, builder_name, param_name, guide_families
+    ):
+        """unconstrained=False should return LogNormalSpec for positive params."""
+        from scribe.models.builders.parameter_specs import LogNormalSpec
+        from scribe.models.presets import registry
+
+        builder = getattr(registry, builder_name)
+        specs = builder(unconstrained=False, guide_families=guide_families)
+        assert len(specs) == 1
+        assert specs[0].name == param_name
+        assert isinstance(specs[0], LogNormalSpec)
+
+    # -- inv_concentration: unconstrained -> SigmoidNormalSpec
+    def test_inv_concentration_unconstrained(self, guide_families):
+        """unconstrained=True should return SigmoidNormalSpec for inv_concentration."""
+        from scribe.models.builders.parameter_specs import SigmoidNormalSpec
+        from scribe.models.presets.registry import build_inv_concentration_spec
+
+        specs = build_inv_concentration_spec(
+            unconstrained=True, guide_families=guide_families
+        )
+        assert len(specs) == 1
+        assert specs[0].name == "inv_concentration"
+        assert isinstance(specs[0], SigmoidNormalSpec)
+
+    # -- inv_concentration: constrained -> BetaSpec
+    def test_inv_concentration_constrained(self, guide_families):
+        """unconstrained=False should return BetaSpec for inv_concentration."""
+        from scribe.models.builders.parameter_specs import BetaSpec
+        from scribe.models.presets.registry import build_inv_concentration_spec
+
+        specs = build_inv_concentration_spec(
+            unconstrained=False, guide_families=guide_families
+        )
+        assert len(specs) == 1
+        assert specs[0].name == "inv_concentration"
+        assert isinstance(specs[0], BetaSpec)
+        # Beta(1, 50) default: NB-favoring prior with mean ≈ 0.02
+        assert specs[0].default_params == (1.0, 50.0)
+
+    # -- Positive extras with exp transform: unconstrained -> PositiveNormalSpec
+    @pytest.mark.parametrize(
+        "builder_name,param_name",
+        [
+            ("build_burst_size_spec", "burst_size"),
+            ("build_k_off_spec", "k_off"),
+        ],
+    )
+    def test_positive_extras_exp_transform(
+        self, builder_name, param_name, guide_families
+    ):
+        """unconstrained=True with positive_transform='exp' -> PositiveNormalSpec."""
+        from scribe.models.builders.parameter_specs import PositiveNormalSpec
+        from scribe.models.presets import registry
+
+        builder = getattr(registry, builder_name)
+        specs = builder(
+            unconstrained=True,
+            guide_families=guide_families,
+            positive_transform="exp",
+        )
+        assert len(specs) == 1
+        assert isinstance(specs[0], PositiveNormalSpec)

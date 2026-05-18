@@ -271,6 +271,21 @@ prevents wasted variational mass on the unbounded NB-limit ridge. See
 [paper/_two_state_promoter.qmd](paper/_two_state_promoter.qmd) §
 *Alternative reparameterizations* for the full math.
 
+##### Constrained vs unconstrained guides
+
+All TwoState parameterizations support both `unconstrained=True` (the
+default — Normal + transform variational posteriors) and
+`unconstrained=False` (direct constrained distributions). The mapping is:
+
+| Parameter                                                                      | `unconstrained=True`                                                | `unconstrained=False` |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------- | --------------------- |
+| `mu`, `burst_size`, `k_off`, `switching_ratio`, `excess_fano`, `concentration` | `PositiveNormalSpec` / `SoftplusNormalSpec` (Normal + softplus/exp) | `LogNormalSpec`       |
+| `inv_concentration` (∈ (0, 1))                                                 | `SigmoidNormalSpec` (Normal + sigmoid)                              | `BetaSpec`            |
+
+This mirrors the NBDM family's constrained guide support. Set
+`unconstrained=False` in the model config (or omit `.unconstrained()` in
+the builder) to use the constrained path.
+
 **Phase 1 limitations**: mixtures, VAE inference, multi-dataset indexing, BNB
 overdispersion, and the Poisson-Gamma denoiser are not yet wired for the
 TwoState family. Biology-informed capture priors *are* supported (via

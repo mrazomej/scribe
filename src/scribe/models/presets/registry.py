@@ -851,18 +851,18 @@ def build_burst_size_spec(
     """Build the burst_size parameter spec for TwoState models.
 
     burst_size is the NB-limit mean burst size b_g = r_hat_g / k_off_g.
-    The natural prior is Normal-on-unconstrained-space with a softplus
-    transform (configurable to exp via the model config's
-    ``positive_transform`` field).
 
-    Default prior Normal(0, 1.5) gives, under softplus, an
+    When ``unconstrained=True``, uses Normal-on-unconstrained-space
+    with a softplus/exp transform (configurable via
+    ``positive_transform``).  When ``unconstrained=False``, uses
+    :class:`LogNormalSpec` — a direct constrained distribution on
+    (0, ∞) with the same ``(loc, scale)`` semantics in log-space.
+
+    Default prior ``(0.0, 1.5)`` gives, under softplus, an
     intermediate-broad prior with most mass on b ~ 0.1 to ~5.
-
-    The ``unconstrained`` argument is accepted for signature
-    consistency with other builders but ignored; PositiveNormalSpec /
-    SoftplusNormalSpec are always unconstrained-Normal-with-transform.
+    Under LogNormal the median is ``exp(0)=1`` with ~1.5 decades
+    of spread.
     """
-    del unconstrained  # always unconstrained-with-transform
     is_mixture = False
     if n_components is not None:
         if mixture_params is None:
@@ -870,17 +870,29 @@ def build_burst_size_spec(
         else:
             is_mixture = "burst_size" in mixture_params
 
-    spec_cls = _select_positive_spec(positive_transform)
-    return [
-        spec_cls(
-            name="burst_size",
-            shape_dims=("n_genes",),
-            default_params=(prior_loc, prior_scale),
-            is_gene_specific=True,
-            guide_family=guide_families.get("burst_size"),
-            is_mixture=is_mixture,
-        )
-    ]
+    if unconstrained:
+        spec_cls = _select_positive_spec(positive_transform)
+        return [
+            spec_cls(
+                name="burst_size",
+                shape_dims=("n_genes",),
+                default_params=(prior_loc, prior_scale),
+                is_gene_specific=True,
+                guide_family=guide_families.get("burst_size"),
+                is_mixture=is_mixture,
+            )
+        ]
+    else:
+        return [
+            LogNormalSpec(
+                name="burst_size",
+                shape_dims=("n_genes",),
+                default_params=(prior_loc, prior_scale),
+                is_gene_specific=True,
+                guide_family=guide_families.get("burst_size"),
+                is_mixture=is_mixture,
+            )
+        ]
 
 
 def build_k_off_spec(
@@ -896,18 +908,15 @@ def build_k_off_spec(
 
     k_off is the OFF rate (non-dimensionalised by mRNA decay). This
     is where "default to NB" is encoded — large k_off favors the NB
-    limit. Default prior Normal(3, 2) gives, under softplus,
-    post-softplus quantiles roughly (0.55, 3.05, 6.30) at (5%, 50%,
-    95%), which mildly tilts toward NB while still admitting the
-    bursty regime within ~2 SD.
+    limit.
 
-    Strict NB defaults are available three ways: (i) pass a tighter
-    ``(prior_loc, prior_scale)`` via ``with_priors``, (ii) set
-    ``positive_transform="exp"`` for LogNormal semantics with heavier
-    tails, or (iii) wait for the phase-2 relative-ratio
-    parameterization.
+    When ``unconstrained=True``, uses Normal + softplus/exp transform.
+    Default prior Normal(3, 2) gives post-softplus quantiles roughly
+    (0.55, 3.05, 6.30) at (5%, 50%, 95%).  When
+    ``unconstrained=False``, uses :class:`LogNormalSpec` with the same
+    ``(loc, scale)`` in log-space — median ``exp(3) ≈ 20``, tilting
+    toward NB.
     """
-    del unconstrained  # always unconstrained-with-transform
     is_mixture = False
     if n_components is not None:
         if mixture_params is None:
@@ -915,17 +924,29 @@ def build_k_off_spec(
         else:
             is_mixture = "k_off" in mixture_params
 
-    spec_cls = _select_positive_spec(positive_transform)
-    return [
-        spec_cls(
-            name="k_off",
-            shape_dims=("n_genes",),
-            default_params=(prior_loc, prior_scale),
-            is_gene_specific=True,
-            guide_family=guide_families.get("k_off"),
-            is_mixture=is_mixture,
-        )
-    ]
+    if unconstrained:
+        spec_cls = _select_positive_spec(positive_transform)
+        return [
+            spec_cls(
+                name="k_off",
+                shape_dims=("n_genes",),
+                default_params=(prior_loc, prior_scale),
+                is_gene_specific=True,
+                guide_family=guide_families.get("k_off"),
+                is_mixture=is_mixture,
+            )
+        ]
+    else:
+        return [
+            LogNormalSpec(
+                name="k_off",
+                shape_dims=("n_genes",),
+                default_params=(prior_loc, prior_scale),
+                is_gene_specific=True,
+                guide_family=guide_families.get("k_off"),
+                is_mixture=is_mixture,
+            )
+        ]
 
 
 def build_excess_fano_spec(
@@ -946,14 +967,12 @@ def build_excess_fano_spec(
     A Poisson gene has excess_fano = 0; an NB gene has excess_fano
     equal to its burst size.
 
-    Default prior Normal(0, 1.5) in unconstrained space; under
-    softplus this gives post-softplus quantiles approximately
-    ``(0.08, 0.69, 2.56)`` at ``(5%, 50%, 95%)`` — broad over the
-    Poisson-to-modestly-overdispersed range.  For strongly bursty
-    datasets the prior can be widened or shifted via
-    ``with_priors(excess_fano=(loc, scale))``.
+    When ``unconstrained=True``, uses Normal + softplus/exp transform.
+    Default prior Normal(0, 1.5) gives post-softplus quantiles
+    approximately ``(0.08, 0.69, 2.56)`` at ``(5%, 50%, 95%)``.
+    When ``unconstrained=False``, uses :class:`LogNormalSpec` with
+    the same ``(loc, scale)`` in log-space.
     """
-    del unconstrained
     is_mixture = False
     if n_components is not None:
         if mixture_params is None:
@@ -961,17 +980,29 @@ def build_excess_fano_spec(
         else:
             is_mixture = "excess_fano" in mixture_params
 
-    spec_cls = _select_positive_spec(positive_transform)
-    return [
-        spec_cls(
-            name="excess_fano",
-            shape_dims=("n_genes",),
-            default_params=(prior_loc, prior_scale),
-            is_gene_specific=True,
-            guide_family=guide_families.get("excess_fano"),
-            is_mixture=is_mixture,
-        )
-    ]
+    if unconstrained:
+        spec_cls = _select_positive_spec(positive_transform)
+        return [
+            spec_cls(
+                name="excess_fano",
+                shape_dims=("n_genes",),
+                default_params=(prior_loc, prior_scale),
+                is_gene_specific=True,
+                guide_family=guide_families.get("excess_fano"),
+                is_mixture=is_mixture,
+            )
+        ]
+    else:
+        return [
+            LogNormalSpec(
+                name="excess_fano",
+                shape_dims=("n_genes",),
+                default_params=(prior_loc, prior_scale),
+                is_gene_specific=True,
+                guide_family=guide_families.get("excess_fano"),
+                is_mixture=is_mixture,
+            )
+        ]
 
 
 def build_concentration_spec(
@@ -989,18 +1020,14 @@ def build_concentration_spec(
     the latent ON-fraction p_g.  Large ``concentration`` peaks the
     Beta and yields an NB-like count distribution; small
     ``concentration`` admits a U-shaped Beta and bursty / bimodal
-    counts.  Putting the "NB-default" prior tilt on
-    ``concentration`` (rather than on the Fano) is the right
-    structure: width is set by ``excess_fano``, regime is set by
-    ``concentration``.
+    counts.
 
-    Default prior Normal(3, 2) — same shape as ``build_k_off_spec``,
-    giving post-softplus median ≈ 3 and a substantial tail towards
-    moderately large NB-like values without forbidding the bursty
-    regime.  Tighten via ``with_priors(concentration=(loc, scale))``
-    for a stronger NB tilt.
+    When ``unconstrained=True``, uses Normal + softplus/exp transform.
+    Default prior Normal(3, 2) gives post-softplus median ≈ 3 and
+    a substantial tail towards moderately large NB-like values.
+    When ``unconstrained=False``, uses :class:`LogNormalSpec` with
+    the same ``(loc, scale)`` in log-space — median ``exp(3) ≈ 20``.
     """
-    del unconstrained
     is_mixture = False
     if n_components is not None:
         if mixture_params is None:
@@ -1008,17 +1035,29 @@ def build_concentration_spec(
         else:
             is_mixture = "concentration" in mixture_params
 
-    spec_cls = _select_positive_spec(positive_transform)
-    return [
-        spec_cls(
-            name="concentration",
-            shape_dims=("n_genes",),
-            default_params=(prior_loc, prior_scale),
-            is_gene_specific=True,
-            guide_family=guide_families.get("concentration"),
-            is_mixture=is_mixture,
-        )
-    ]
+    if unconstrained:
+        spec_cls = _select_positive_spec(positive_transform)
+        return [
+            spec_cls(
+                name="concentration",
+                shape_dims=("n_genes",),
+                default_params=(prior_loc, prior_scale),
+                is_gene_specific=True,
+                guide_family=guide_families.get("concentration"),
+                is_mixture=is_mixture,
+            )
+        ]
+    else:
+        return [
+            LogNormalSpec(
+                name="concentration",
+                shape_dims=("n_genes",),
+                default_params=(prior_loc, prior_scale),
+                is_gene_specific=True,
+                guide_family=guide_families.get("concentration"),
+                is_mixture=is_mixture,
+            )
+        ]
 
 
 def build_inv_concentration_spec(
@@ -1034,23 +1073,26 @@ def build_inv_concentration_spec(
 
     ``inv_concentration = delta = 1 / (kappa + 1)`` is in (0, 1).
     ``delta -> 0`` is the NB limit; ``delta`` near 1 is the extreme
-    bursty regime.  We sample logit(delta) ~ Normal(loc, scale) and
-    apply a sigmoid transform — naturally bounded in unconstrained
-    space, so the variational guide doesn't waste mass over
-    arbitrarily large concentration values.
+    bursty regime.
 
-    Default prior Normal(-4, 2) in logit-space gives, under sigmoid,
-    median delta ~ 0.018 (kappa ~ 55, mildly NB-like) with a
-    substantial tail toward larger delta (smaller kappa, more
-    bursty).  For a stronger NB default, shift ``prior_loc`` more
-    negative; for a flatter prior, widen ``prior_scale``.
+    When ``unconstrained=True``, uses :class:`SigmoidNormalSpec` —
+    ``logit(delta) ~ Normal(loc, scale)`` with a sigmoid transform.
+    Default prior Normal(-4, 2) in logit-space gives median
+    delta ~ 0.018 (kappa ~ 55, mildly NB-like).
+
+    When ``unconstrained=False``, uses :class:`BetaSpec` — a direct
+    constrained distribution on (0, 1).  Default ``Beta(1, 50)``
+    gives mean ~ 0.02, closely matching the unconstrained prior's
+    median.  The ``prior_loc`` / ``prior_scale`` arguments are
+    reinterpreted as ``(alpha, beta)`` in the constrained branch;
+    callers that override the defaults via ``with_priors`` should
+    pass ``(alpha, beta)`` when ``unconstrained=False``.
 
     The ``positive_transform`` argument is accepted for signature
-    consistency with the sibling builders but ignored — the spec
-    is a SigmoidNormal regardless of the model config's
-    positive_transform.
+    consistency with the sibling builders but ignored — this
+    parameter lives on (0, 1), not (0, ∞).
     """
-    del unconstrained, positive_transform
+    del positive_transform
     is_mixture = False
     if n_components is not None:
         if mixture_params is None:
@@ -1058,18 +1100,33 @@ def build_inv_concentration_spec(
         else:
             is_mixture = "inv_concentration" in mixture_params
 
-    from ..builders.parameter_specs import SigmoidNormalSpec
+    if unconstrained:
+        from ..builders.parameter_specs import SigmoidNormalSpec
 
-    return [
-        SigmoidNormalSpec(
-            name="inv_concentration",
-            shape_dims=("n_genes",),
-            default_params=(prior_loc, prior_scale),
-            is_gene_specific=True,
-            guide_family=guide_families.get("inv_concentration"),
-            is_mixture=is_mixture,
-        )
-    ]
+        return [
+            SigmoidNormalSpec(
+                name="inv_concentration",
+                shape_dims=("n_genes",),
+                default_params=(prior_loc, prior_scale),
+                is_gene_specific=True,
+                guide_family=guide_families.get("inv_concentration"),
+                is_mixture=is_mixture,
+            )
+        ]
+    else:
+        # Beta(1, 50) gives mean ≈ 0.02, matching the sigmoid-Normal
+        # prior's median at loc=-4.  Override via
+        # with_priors(inv_concentration=(alpha, beta)).
+        return [
+            BetaSpec(
+                name="inv_concentration",
+                shape_dims=("n_genes",),
+                default_params=(1.0, 50.0),
+                is_gene_specific=True,
+                guide_family=guide_families.get("inv_concentration"),
+                is_mixture=is_mixture,
+            )
+        ]
 
 
 def build_switching_ratio_spec(
@@ -1085,21 +1142,13 @@ def build_switching_ratio_spec(
 
     The switching ratio is ``s = k_off / k_on``: the regime variable.
     Large ``s`` favours the NB limit (k_off >> k_on); small ``s``
-    produces bursty / bimodal counts.  Unlike absolute ``k_off``, this
-    quantity is *scale-invariant across genes* — a highly-expressed
-    NB-regime gene has the same ``s`` as a low-expression NB-regime
-    gene.  That makes mean-field q(s) approximately independent of
-    q(mu) and q(burst_size), which is the structural motivation for
-    the ``two_state_ratio`` parameterization (analogous to NBDM's
-    mean_prob aligning with the data's mean axis).
+    produces bursty / bimodal counts.
 
-    Default prior loc=3 scale=2 mirrors ``build_k_off_spec`` because
-    the prior is conceptually about "how NB-like is this gene"; in the
-    NB limit ``k_on`` is moderate, so ``s ≈ k_off``.  Strict NB
-    defaults are achieved by tightening this prior via
-    ``with_priors(switching_ratio=(loc, scale))``.
+    When ``unconstrained=True``, uses Normal + softplus/exp transform.
+    Default prior loc=3 scale=2 mirrors ``build_k_off_spec``.
+    When ``unconstrained=False``, uses :class:`LogNormalSpec` with
+    the same ``(loc, scale)`` in log-space.
     """
-    del unconstrained
     is_mixture = False
     if n_components is not None:
         if mixture_params is None:
@@ -1107,17 +1156,29 @@ def build_switching_ratio_spec(
         else:
             is_mixture = "switching_ratio" in mixture_params
 
-    spec_cls = _select_positive_spec(positive_transform)
-    return [
-        spec_cls(
-            name="switching_ratio",
-            shape_dims=("n_genes",),
-            default_params=(prior_loc, prior_scale),
-            is_gene_specific=True,
-            guide_family=guide_families.get("switching_ratio"),
-            is_mixture=is_mixture,
-        )
-    ]
+    if unconstrained:
+        spec_cls = _select_positive_spec(positive_transform)
+        return [
+            spec_cls(
+                name="switching_ratio",
+                shape_dims=("n_genes",),
+                default_params=(prior_loc, prior_scale),
+                is_gene_specific=True,
+                guide_family=guide_families.get("switching_ratio"),
+                is_mixture=is_mixture,
+            )
+        ]
+    else:
+        return [
+            LogNormalSpec(
+                name="switching_ratio",
+                shape_dims=("n_genes",),
+                default_params=(prior_loc, prior_scale),
+                is_gene_specific=True,
+                guide_family=guide_families.get("switching_ratio"),
+                is_mixture=is_mixture,
+            )
+        ]
 
 
 # ------------------------------------------------------------------------------

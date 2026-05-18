@@ -1204,26 +1204,41 @@ class TwoStateParameterization(Parameterization):
     ) -> List[ParamSpec]:
         """Build the mu spec.
 
-        Uses :class:`PositiveNormalSpec` (Normal + transform). The
-        transform itself is set by the factory based on the model
-        config's ``positive_transform`` field; this method just
-        provides the loc/scale defaults.
+        When ``unconstrained=True``, uses :class:`PositiveNormalSpec`
+        (Normal + transform, resolved by the factory from the model
+        config's ``positive_transform`` field).  When
+        ``unconstrained=False``, uses :class:`LogNormalSpec` —
+        a direct constrained distribution on (0, ∞).
 
         Phase 1 explicitly does not support mixtures, so we ignore
         ``n_components`` and ``mixture_params``.
         """
-        del unconstrained, n_components, mixture_params  # phase 1 ignores
+        del n_components, mixture_params  # phase 1 ignores
         mu_family = guide_families.get("mu")
-        return [
-            PositiveNormalSpec(
-                name="mu",
-                shape_dims=("n_genes",),
-                default_params=(0.0, 1.0),
-                is_gene_specific=True,
-                guide_family=mu_family,
-                is_mixture=False,
-            ),
-        ]
+        # Constrained path: LogNormal on (0, ∞); same (loc, scale)
+        # semantics in log-space as the unconstrained Normal.
+        if unconstrained:
+            return [
+                PositiveNormalSpec(
+                    name="mu",
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
+                    is_gene_specific=True,
+                    guide_family=mu_family,
+                    is_mixture=False,
+                ),
+            ]
+        else:
+            return [
+                LogNormalSpec(
+                    name="mu",
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
+                    is_gene_specific=True,
+                    guide_family=mu_family,
+                    is_mixture=False,
+                ),
+            ]
 
     def build_derived_params(self) -> List[DerivedParam]:
         """No NB-style derived parameters at the parameterization layer.
@@ -1307,23 +1322,40 @@ class TwoStateRatioParameterization(Parameterization):
         n_components: Optional[int] = None,
         mixture_params: Optional[List[str]] = None,
     ) -> List[ParamSpec]:
-        """Build the mu spec — identical to the natural parameterization.
+        """Build the mu spec.
+
+        When ``unconstrained=True``, uses :class:`PositiveNormalSpec`
+        (Normal + transform).  When ``unconstrained=False``, uses
+        :class:`LogNormalSpec` — a direct constrained distribution on
+        (0, ∞).
 
         The other two per-gene specs (``burst_size``,
         ``switching_ratio``) come from the model extras dispatch.
         """
-        del unconstrained, n_components, mixture_params
+        del n_components, mixture_params
         mu_family = guide_families.get("mu")
-        return [
-            PositiveNormalSpec(
-                name="mu",
-                shape_dims=("n_genes",),
-                default_params=(0.0, 1.0),
-                is_gene_specific=True,
-                guide_family=mu_family,
-                is_mixture=False,
-            ),
-        ]
+        if unconstrained:
+            return [
+                PositiveNormalSpec(
+                    name="mu",
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
+                    is_gene_specific=True,
+                    guide_family=mu_family,
+                    is_mixture=False,
+                ),
+            ]
+        else:
+            return [
+                LogNormalSpec(
+                    name="mu",
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
+                    is_gene_specific=True,
+                    guide_family=mu_family,
+                    is_mixture=False,
+                ),
+            ]
 
     def build_derived_params(self) -> List[DerivedParam]:
         return []
@@ -1402,23 +1434,40 @@ class TwoStateMeanFanoParameterization(Parameterization):
         n_components: Optional[int] = None,
         mixture_params: Optional[List[str]] = None,
     ) -> List[ParamSpec]:
-        """Build the mu spec — identical to the other TwoState parameterizations.
+        """Build the mu spec.
+
+        When ``unconstrained=True``, uses :class:`PositiveNormalSpec`
+        (Normal + transform).  When ``unconstrained=False``, uses
+        :class:`LogNormalSpec` — a direct constrained distribution on
+        (0, ∞).
 
         The other two per-gene specs (``excess_fano``,
         ``concentration``) come from the model extras dispatch.
         """
-        del unconstrained, n_components, mixture_params
+        del n_components, mixture_params
         mu_family = guide_families.get("mu")
-        return [
-            PositiveNormalSpec(
-                name="mu",
-                shape_dims=("n_genes",),
-                default_params=(0.0, 1.0),
-                is_gene_specific=True,
-                guide_family=mu_family,
-                is_mixture=False,
-            ),
-        ]
+        if unconstrained:
+            return [
+                PositiveNormalSpec(
+                    name="mu",
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
+                    is_gene_specific=True,
+                    guide_family=mu_family,
+                    is_mixture=False,
+                ),
+            ]
+        else:
+            return [
+                LogNormalSpec(
+                    name="mu",
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
+                    is_gene_specific=True,
+                    guide_family=mu_family,
+                    is_mixture=False,
+                ),
+            ]
 
     def build_derived_params(self) -> List[DerivedParam]:
         return []
@@ -1500,20 +1549,40 @@ class TwoStateMomentDeltaParameterization(Parameterization):
         n_components: Optional[int] = None,
         mixture_params: Optional[List[str]] = None,
     ) -> List[ParamSpec]:
-        """Build the mu spec; ``excess_fano`` and ``inv_concentration``
-        come from the model extras dispatch."""
-        del unconstrained, n_components, mixture_params
+        """Build the mu spec.
+
+        When ``unconstrained=True``, uses :class:`PositiveNormalSpec`
+        (Normal + transform).  When ``unconstrained=False``, uses
+        :class:`LogNormalSpec` — a direct constrained distribution on
+        (0, ∞).
+
+        ``excess_fano`` and ``inv_concentration`` come from the model
+        extras dispatch.
+        """
+        del n_components, mixture_params
         mu_family = guide_families.get("mu")
-        return [
-            PositiveNormalSpec(
-                name="mu",
-                shape_dims=("n_genes",),
-                default_params=(0.0, 1.0),
-                is_gene_specific=True,
-                guide_family=mu_family,
-                is_mixture=False,
-            ),
-        ]
+        if unconstrained:
+            return [
+                PositiveNormalSpec(
+                    name="mu",
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
+                    is_gene_specific=True,
+                    guide_family=mu_family,
+                    is_mixture=False,
+                ),
+            ]
+        else:
+            return [
+                LogNormalSpec(
+                    name="mu",
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
+                    is_gene_specific=True,
+                    guide_family=mu_family,
+                    is_mixture=False,
+                ),
+            ]
 
     def build_derived_params(self) -> List[DerivedParam]:
         return []
