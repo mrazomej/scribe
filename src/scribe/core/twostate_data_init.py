@@ -1,24 +1,38 @@
 """Data-derived initialization for the TwoState (Poisson-Beta) family.
 
-For each gene ``g``, we anchor the prior loc of ``mu_g`` at the
-unconstrained-space value whose transformed image equals the empirical
-mean.  Concretely:
+For each gene ``g`` we anchor the prior loc of ``mu_g`` at the
+unconstrained-space value whose transformed image equals the
+**pre-capture** empirical mean — that is, ``mu_g`` is the *biological*
+mean before the per-cell capture factor ``ν_c`` thins it, so the
+anchor must divide the observed sample mean by an estimate of the
+mean capture probability.  Concretely:
 
-- For ``positive_transform="softplus"`` (default): ``loc_g = softplus_inv
-  (empirical_mean_g)`` so that ``softplus(loc_g) ≈ empirical_mean_g``.
-  Softplus is asymptotically linear, so ``loc_g`` numerically equals
-  ``empirical_mean_g`` for moderately or strongly expressed genes.
-- For ``positive_transform="exp"``: ``loc_g = log(empirical_mean_g)``,
-  the classic log-mean anchor (mirrors NBLN's ``r_prior_loc`` shape).
+- ``mu_init_g = softplus_inv(observed_mean_g / mean_capture)``
+  (under softplus; ``log(observed_mean_g / mean_capture)`` under
+  exp).
+- ``mean_capture`` is estimated from the model config:
+  - ``twostate`` (no VCP): ``1.0``.
+  - ``twostatevcp`` with biology-informed prior
+    (``priors={"capture_efficiency": (log_M_0, sigma_M)}``):
+    ``mean(L_c) / M_0``, derived from
+    ``p_c = exp(-eta_c)`` with
+    ``eta_c ~ Normal(log_M_0 - log(L_c), sigma_M^2)``.
+  - ``twostatevcp`` with a flat ``priors.p_capture = (alpha, beta)``:
+    ``alpha / (alpha + beta)``.
+  - ``twostatevcp`` with no explicit capture prior: the Beta(1, 1)
+    mean, ``0.5``.
 
-This anchors each gene's variational ``mu_loc`` at the right *order of
-magnitude* on the first SVI step — without it, highly-expressed genes
-(e.g. ribosomal genes with mean ≈ 100–500) start at ``mu ≈ 1`` and
-have to climb 4-5 decades against bounded SVI gradients, which the
-optimizer may not finish inside a reasonable step budget.
+Without the capture correction, the anchor sits at the *observed*
+mean, which leaves the variational ``mu_loc`` for high-expression
+genes systematically too small by exactly the mean-capture factor.
+Under softplus's asymptotically-linear regime, that bias is sticky
+and produces a downward bend in mean-calibration plots at the high
+end (the symptom the auditor flagged).
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 import jax.numpy as jnp
 
@@ -26,6 +40,7 @@ import jax.numpy as jnp
 __all__ = [
     "empirical_log_mean_from_counts",
     "empirical_mu_anchor_from_counts",
+    "estimate_initial_mean_capture",
     "inject_twostate_data_init",
 ]
 
@@ -54,16 +69,81 @@ def empirical_log_mean_from_counts(
     return jnp.log(per_gene_mean + pseudocount)
 
 
+def estimate_initial_mean_capture(model_config: Any, counts) -> float:
+    """Estimate the prior-mean per-cell capture probability.
+
+    Used to anchor ``mu`` at the pre-capture mean for TwoStateVCP
+    fits (see module docstring for the closure-under-thinning
+    rationale).
+
+    Parameters
+    ----------
+    model_config : ModelConfig
+        Freshly built model config.  The ``base_model`` field plus
+        any ``priors`` extras determine which estimate is appropriate.
+    counts : array_like, shape ``(n_cells, n_genes)``
+        Observed count matrix; used only to compute library sizes
+        when the biology-informed prior is active.
+
+    Returns
+    -------
+    float
+        Estimated ``mean(p_capture)`` over cells under the configured
+        prior.  Returns ``1.0`` for non-VCP models.
+    """
+    base_model = getattr(model_config, "base_model", None)
+    if base_model != "twostatevcp":
+        return 1.0
+
+    extras = (
+        getattr(model_config.priors, "__pydantic_extra__", None) or {}
+    )
+
+    # 1) Biology-informed capture prior: ``priors.eta_capture =
+    #    (log_M_0, sigma_M)``.  Under
+    #    ``eta_c ~ Normal(log_M_0 - log(L_c), sigma_M^2)``,
+    #    ``E[p_c] = exp(-eta_c) ≈ L_c / M_0`` ignoring the small
+    #    Jensen correction.  Average over cells to get
+    #    ``mean(p_c) ≈ mean(L_c) / M_0``.
+    eta_prior = extras.get("eta_capture")
+    if eta_prior is not None and len(eta_prior) >= 1:
+        log_M0 = float(eta_prior[0])
+        lib_sizes = jnp.asarray(counts, dtype=jnp.float32).sum(axis=-1)
+        lib_sizes = jnp.maximum(lib_sizes, 1.0)
+        mean_capture = float(jnp.mean(lib_sizes) / jnp.exp(log_M0))
+        # Defensive clamp: any estimate outside (0, 1) is meaningless
+        # for a probability; fall back to the Beta(1, 1) prior mean.
+        if mean_capture <= 0.0 or mean_capture >= 1.0:
+            return 0.5
+        return mean_capture
+
+    # 2) Flat Beta prior tuple: priors.p_capture = (alpha, beta).
+    p_cap_prior = extras.get("p_capture")
+    if (
+        p_cap_prior is not None
+        and isinstance(p_cap_prior, (tuple, list))
+        and len(p_cap_prior) == 2
+    ):
+        a, b = float(p_cap_prior[0]), float(p_cap_prior[1])
+        if a > 0 and b > 0:
+            return a / (a + b)
+
+    # 3) Default: Beta(1, 1) prior mean.
+    return 0.5
+
+
 def empirical_mu_anchor_from_counts(
     counts,
     transform: str = "softplus",
+    mean_capture: float = 1.0,
     floor: float = 1e-3,
     ceil: float = 1e6,
 ) -> jnp.ndarray:
     """Per-gene unconstrained-space anchor for ``mu``.
 
-    Computes the empirical per-gene mean, clamps it to ``[floor, ceil]``,
-    then maps through the inverse of the configured positive transform.
+    Computes the empirical per-gene mean divided by the estimated
+    ``mean_capture``, clamps the result to ``[floor, ceil]``, then
+    maps through the inverse of the configured positive transform.
 
     Parameters
     ----------
@@ -72,9 +152,16 @@ def empirical_mu_anchor_from_counts(
     transform : {"softplus", "exp"}, default "softplus"
         The positive transform used in the model.  The inverse used
         here is ``log(expm1(x))`` for softplus and ``log(x)`` for exp.
+    mean_capture : float, default 1.0
+        Estimated ``mean(p_capture)`` under the prior.  The observed
+        per-gene mean is divided by this to recover an estimate of
+        the *pre-capture* mean ``mu_g``.  Use ``1.0`` for non-VCP
+        models.  See :func:`estimate_initial_mean_capture` for the
+        VCP routing.
     floor : float, default 1e-3
-        Lower clamp on the empirical mean before inversion (keeps zero-
-        expression genes finite under both ``log`` and ``log·expm1``).
+        Lower clamp on ``observed_mean / mean_capture`` before
+        inversion (keeps zero-expression genes finite under both
+        ``log`` and ``log·expm1``).
     ceil : float, default 1e6
         Upper clamp; protects ``expm1`` from overflowing in float32.
 
@@ -85,6 +172,10 @@ def empirical_mu_anchor_from_counts(
     """
     counts_arr = jnp.asarray(counts, dtype=jnp.float32)
     per_gene_mean = counts_arr.mean(axis=0)
+    # Pre-capture mean estimate: divide the observed sample mean by
+    # the prior mean of the per-cell capture probability.
+    safe_capture = float(max(float(mean_capture), 1e-4))
+    per_gene_mean = per_gene_mean / safe_capture
     per_gene_mean = jnp.clip(per_gene_mean, min=floor, max=ceil)
 
     if transform == "softplus":
@@ -113,8 +204,16 @@ def inject_twostate_data_init(model_config, counts):
     The factory reads ``priors.__pydantic_extra__["mu_prior_loc"]`` and
     replaces the default scalar prior loc on ``mu`` with this array.
     Each gene's variational ``mu_loc`` then initializes at its own
-    empirical mean (in unconstrained space), so the optimizer doesn't
-    need to climb decades on the first SVI step.
+    *pre-capture* empirical mean (in unconstrained space), so the
+    optimizer doesn't need to climb decades on the first SVI step.
+
+    For ``twostatevcp`` fits the observed per-gene mean is divided
+    by an estimate of ``mean(p_capture)`` derived from the configured
+    capture prior — see :func:`estimate_initial_mean_capture`.  This
+    is the fix for the systematic shrinkage of high-expression genes
+    in mean-calibration plots: anchoring at the observed mean leaves
+    the variational ``mu_loc`` too small by exactly the capture
+    factor in the asymptotically-linear softplus regime.
 
     Parameters
     ----------
@@ -132,7 +231,10 @@ def inject_twostate_data_init(model_config, counts):
         original is not mutated.
     """
     transform = getattr(model_config, "positive_transform", "softplus")
-    mu_prior_loc = empirical_mu_anchor_from_counts(counts, transform=transform)
+    mean_capture = estimate_initial_mean_capture(model_config, counts)
+    mu_prior_loc = empirical_mu_anchor_from_counts(
+        counts, transform=transform, mean_capture=mean_capture
+    )
 
     from ..models.config.groups import PriorOverrides
 
@@ -143,6 +245,10 @@ def inject_twostate_data_init(model_config, counts):
     # "allow", so the extra fields round-trip via the constructor.
     updated = dict(existing_extras)
     updated["mu_prior_loc"] = mu_prior_loc
+    # Stash the mean-capture estimate too, so the API-stage logger
+    # can surface it to the user (see ``_inject_twostate_data_init``
+    # in api/stages/model_config_build.py).
+    updated["_mu_init_mean_capture"] = mean_capture
     # Carry forward any structured priors fields from the original
     # PriorOverrides (Beta/LogNormal tuples for p_capture, etc.).
     if model_config.priors is not None:

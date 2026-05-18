@@ -87,6 +87,116 @@ class TestEmpiricalMuAnchor:
         with pytest.raises(ValueError, match="Unknown positive transform"):
             empirical_mu_anchor_from_counts(counts, transform="tanh")
 
+    def test_mean_capture_correction_recovers_pre_capture_mean(self):
+        """Audit fix: with ``mean_capture < 1``, the anchor recovers
+        the *pre-capture* per-gene mean, not the observed mean.
+
+        Under twostatevcp with mean capture ``nu_bar``, the observed
+        per-gene sample mean is ``mu_g * nu_bar``.  Anchoring at the
+        raw observed mean leaves the variational ``mu_loc`` too small
+        by a factor of ``1/nu_bar`` for high-expression genes — the
+        symptom the external auditor diagnosed from the mean-
+        calibration plot's downward bend at the high end.
+        """
+        rng = np.random.default_rng(0)
+        true_mu = np.array([5.0, 50.0, 174.0])
+        nu_bar = 0.5
+        counts = np.stack(
+            [rng.poisson(true_mu[g] * nu_bar, 500) for g in range(3)], axis=1
+        )
+        # With the correction, the recovered anchor (via softplus) is
+        # close to the true pre-capture mu.
+        anchor = empirical_mu_anchor_from_counts(
+            jnp.asarray(counts), mean_capture=nu_bar
+        )
+        # Softplus is asymptotically linear at moderate-to-large
+        # values, so the anchor itself is roughly the recovered mu.
+        # Compare to true_mu within 5% relative tolerance (Monte
+        # Carlo noise at n=500 dominates the error budget).
+        recovered = np.asarray(anchor)
+        rel_err = np.abs(recovered - true_mu) / true_mu
+        assert np.all(rel_err < 0.10), (
+            f"recovered={recovered}, true_mu={true_mu}, "
+            f"rel_err={rel_err}"
+        )
+
+
+# ==============================================================================
+# estimate_initial_mean_capture
+# ==============================================================================
+
+
+class TestEstimateInitialMeanCapture:
+    """Estimate the prior-mean capture probability from the config."""
+
+    def test_non_vcp_returns_one(self):
+        from scribe.core.twostate_data_init import (
+            estimate_initial_mean_capture,
+        )
+
+        class _Cfg:
+            base_model = "twostate"
+            priors = None
+
+        assert estimate_initial_mean_capture(_Cfg(), jnp.zeros((4, 2))) == 1.0
+
+    def test_biology_informed_uses_lib_sizes_over_M0(self):
+        """``priors.eta_capture = (log_M_0, sigma_M)`` activates the
+        biology-informed estimate ``mean(L_c) / M_0``."""
+        from scribe.core.twostate_data_init import (
+            estimate_initial_mean_capture,
+        )
+
+        # Synthesize counts with known library sizes ~ 32000 per cell.
+        rng = np.random.default_rng(0)
+        n_cells, n_genes = 100, 20
+        counts = rng.multinomial(32_000, np.ones(n_genes) / n_genes, n_cells)
+        log_M0 = float(np.log(50_000))
+
+        class _Priors:
+            __pydantic_extra__ = {"eta_capture": (log_M0, 0.5)}
+
+        class _Cfg:
+            base_model = "twostatevcp"
+            priors = _Priors()
+
+        estimate = estimate_initial_mean_capture(_Cfg(), jnp.asarray(counts))
+        # Expect mean(lib) / M_0 = 32000 / 50000 = 0.64.
+        assert abs(estimate - 0.64) < 0.02
+
+    def test_flat_beta_prior_uses_alpha_over_alpha_plus_beta(self):
+        """``priors.p_capture = (alpha, beta)`` activates the flat-Beta
+        prior-mean estimate."""
+        from scribe.core.twostate_data_init import (
+            estimate_initial_mean_capture,
+        )
+
+        class _Priors:
+            __pydantic_extra__ = {"p_capture": (3.0, 1.0)}
+
+        class _Cfg:
+            base_model = "twostatevcp"
+            priors = _Priors()
+
+        # Beta(3, 1) mean = 3/4 = 0.75.
+        estimate = estimate_initial_mean_capture(_Cfg(), jnp.zeros((4, 2)))
+        assert estimate == 0.75
+
+    def test_default_vcp_returns_half(self):
+        """No explicit capture prior → Beta(1, 1) prior mean = 0.5."""
+        from scribe.core.twostate_data_init import (
+            estimate_initial_mean_capture,
+        )
+
+        class _Priors:
+            __pydantic_extra__ = {}
+
+        class _Cfg:
+            base_model = "twostatevcp"
+            priors = _Priors()
+
+        assert estimate_initial_mean_capture(_Cfg(), jnp.zeros((4, 2))) == 0.5
+
 
 # ==============================================================================
 # inject_twostate_data_init + factory threading

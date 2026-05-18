@@ -258,30 +258,41 @@ def _inject_twostate_data_init(ctx, model_config):
     # like ribosomal markers).
     _anchor_arr = _jnp.asarray(_anchor)
     _transform = getattr(model_config, "positive_transform", "softplus")
+    # Surface the mean-capture estimate used to undo per-cell thinning
+    # before anchoring (see core/twostate_data_init.py for the
+    # closure-under-thinning rationale).
+    _mean_capture = _extra.get("_mu_init_mean_capture")
+    _capture_tag = (
+        f" (pre-capture: observed_mean / {float(_mean_capture):.3f})"
+        if _mean_capture is not None and float(_mean_capture) < 0.999
+        else ""
+    )
     if _anchor_arr.ndim == 0:
         _msg = (
             "TwoState: applied data-driven mu_prior_loc=%.3f from "
-            "%d-gene count matrix (transform=%s).  Override by "
+            "%d-gene count matrix (transform=%s%s).  Override by "
             "passing priors={'mu': (loc, scale)} to scribe.fit."
         ) % (
             float(_anchor_arr),
             ctx.count_data.shape[1] if ctx.count_data.ndim == 2 else -1,
             _transform,
+            _capture_tag,
         )
         _warnings.warn(_msg, UserWarning, stacklevel=2)
         _log.info(_msg)
     else:
         _msg = (
             "TwoState: applied per-gene mu_prior_loc to %d genes "
-            "(transform=%s, unconstrained-space range: min=%.2f, "
+            "(transform=%s%s, unconstrained-space range: min=%.2f, "
             "median=%.2f, max=%.2f).  Each gene's variational mu_loc "
-            "starts at its empirical mean; without this anchor "
-            "highly-expressed genes can be slow to recover under SVI. "
-            "Override the data-driven anchor by passing "
+            "starts at its (pre-capture) empirical mean; without this "
+            "anchor highly-expressed genes can be slow to recover "
+            "under SVI.  Override the data-driven anchor by passing "
             "priors={'mu': (loc, scale)} to scribe.fit."
         ) % (
             int(_anchor_arr.size),
             _transform,
+            _capture_tag,
             float(_jnp.min(_anchor_arr)),
             float(_jnp.median(_anchor_arr)),
             float(_jnp.max(_anchor_arr)),
