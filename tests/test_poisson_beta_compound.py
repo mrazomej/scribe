@@ -160,6 +160,83 @@ class TestPoissonBetaCompoundSample:
             f"({n_samples}, {n_cells}, {n_genes})"
         )
 
+    def test_sample_draws_independent_p_per_cell_under_vcp(self):
+        """Regression for the shared-p ancestral-sampling bug.
+
+        The model semantics are p_gc ~ Beta(α_g, β_g) INDEPENDENT per
+        (g, c).  Sharing a single p_g across cells per replicate (the
+        former bug) introduces a replicate-level random effect: when
+        all cells share the same rate, the per-replicate-mean std
+        across replicates would equal Std[p] · rate (~3.5 for a
+        U-shaped Beta(0.5, 0.5) at rate=10).  With independent draws,
+        the per-replicate-mean std collapses to per-cell-std /
+        sqrt(N_cells).
+        """
+        n_cells = 50
+        alpha = jnp.array([0.5])  # U-shaped Beta
+        beta = jnp.array([0.5])
+        rate = jnp.full((n_cells, 1), 10.0)  # constant rate across cells
+        dist = PoissonBetaCompound(alpha, beta, rate)
+        samples = np.asarray(
+            dist.sample(jax.random.PRNGKey(0), (200,))
+        )
+        rep_mean_std = samples[..., 0].mean(axis=1).std()
+        cell_mean_std = samples[..., 0].mean(axis=0).std()
+
+        # Under shared-p (the bug): rep_mean_std ~ 3.5
+        # Under independent p:      rep_mean_std ~ cell_mean_std / sqrt(50)
+        # Empirically the post-fix ratio is ~1.5 (sampling variability
+        # at finite N adds a constant baseline); the bug regime is
+        # ratios near 10x or more.  Set a wide-margin threshold so
+        # this catches the bug without flaking on Monte Carlo noise.
+        assert rep_mean_std < 1.0, (
+            f"per-replicate-mean std={rep_mean_std:.3f} suggests a "
+            "shared latent across cells (expected ~0.5 for "
+            "independent draws; ~3.5 under the shared-p bug)."
+        )
+        # Sanity-check the empirical mean against the analytical
+        # E[u_gc] = rate · α / (α + β) per cell.
+        emp_mean_per_cell = samples[..., 0].mean(axis=0)  # (n_cells,)
+        analytic = float(rate[0, 0]) * float(alpha[0]) / (
+            float(alpha[0]) + float(beta[0])
+        )  # all cells share the same rate
+        assert np.max(np.abs(emp_mean_per_cell - analytic)) < 1.0
+
+    def test_sample_per_cell_mean_matches_per_cell_rate_under_vcp(self):
+        """Audit follow-up: when rate varies per cell, the empirical
+        per-cell sample mean must track ``rate_c · α/(α+β)`` cell by
+        cell, not just average to the gene-level mean.  A shared-p
+        bug would preserve the average but flatten the cell-to-cell
+        signal coming from rate variation.
+        """
+        n_cells = 200
+        alpha = jnp.array([2.0])
+        beta = jnp.array([2.0])  # well-conditioned Beta, fast convergence
+        rate_gene = 10.0
+        p_capture = jnp.linspace(0.1, 1.0, n_cells)
+        rate = rate_gene * p_capture[:, None]  # (n_cells, 1)
+        dist = PoissonBetaCompound(alpha, beta, rate)
+        samples = np.asarray(
+            dist.sample(jax.random.PRNGKey(0), (300,))
+        )
+        emp = samples[..., 0].mean(axis=0)  # (n_cells,)
+        analytic = np.asarray(rate[:, 0]) * float(alpha[0]) / (
+            float(alpha[0]) + float(beta[0])
+        )
+        # Should track the linear trend across cells.
+        slope_emp, _ = np.polyfit(np.asarray(p_capture), emp, 1)
+        slope_analytic = rate_gene * float(alpha[0]) / (
+            float(alpha[0]) + float(beta[0])
+        )
+        # Within 10% of the analytical slope.
+        rel_err = abs(slope_emp - slope_analytic) / slope_analytic
+        assert rel_err < 0.10, (
+            f"empirical slope {slope_emp:.2f} differs from analytic "
+            f"{slope_analytic:.2f} by {rel_err:.2%}; this would happen "
+            "if the latent p were shared across cells (the cell-to-cell "
+            "signal from rate variation would be averaged out)."
+        )
+
 
 # ==============================================================================
 # log_prob shape contract under VCP-shape rate

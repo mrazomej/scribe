@@ -1284,38 +1284,48 @@ class PoissonBetaCompound(Distribution):
     # ------------------------------------------------------------------
 
     def sample(self, key, sample_shape=()):
-        """Ancestral sampling: p ~ Beta(α, β); x ~ Poisson(rate · p).
+        """Ancestral sampling: ``p_gc ~ Beta(α_g, β_g)``,
+        ``x_gc ~ Poisson(rate_gc · p_gc)`` **independently per
+        observation**.
 
-        Handles ``rate`` of higher rank than (α, β) — e.g. VCP with
-        ``rate.shape == (C, G)`` and ``alpha.shape == (G,)`` — by
-        inserting axes into the drawn ``p`` so multiplication
-        broadcasts correctly.
+        Important contract — the latent ``p`` is drawn at the *full
+        batch shape* (e.g. ``(C, G)`` for VCP), not at the gene-rank
+        ``(G,)``.  The model semantics are
+        :math:`p_{gc} \\sim \\mathrm{Beta}(\\alpha_g, \\beta_g)`
+        independently per cell-gene pair; sharing a single
+        ``p_g`` across cells within a replicate would introduce a
+        replicate-level random effect the model does not have and
+        would inflate every per-replicate posterior-predictive
+        histogram by ``Std[p] · rate`` (dominant in the U-shaped
+        Beta regime).
+
+        Note that :meth:`log_prob` keeps ``α, β`` at gene rank and
+        marginalizes ``p_gc`` independently per ``(c, g)`` via
+        quadrature — that is also the correct semantics, just
+        computed in marginal form rather than ancestrally.
         """
         assert is_prng_key(key)
         k_beta, k_pois = random.split(key)
 
-        # Draw p at the gene rank, optionally prefixed by sample_shape.
-        ab_shape = lax.broadcast_shapes(
-            jnp.shape(self.alpha), jnp.shape(self.beta)
+        # Broadcast α, β to the FULL batch_shape so that the drawn p
+        # is independent per (c, g).  For non-VCP shapes where
+        # rate.shape == α.shape == β.shape == (G,), this is a no-op.
+        # For VCP where rate.shape == (C, G) and α, β are (G,), this
+        # promotes α, β to (C, G) — one draw per (c, g) inside Beta.
+        full_shape = lax.broadcast_shapes(
+            jnp.shape(self.alpha),
+            jnp.shape(self.beta),
+            jnp.shape(self.rate),
         )
-        alpha_b = jnp.broadcast_to(self.alpha, ab_shape)
-        beta_b = jnp.broadcast_to(self.beta, ab_shape)
+        alpha_b = jnp.broadcast_to(self.alpha, full_shape)
+        beta_b = jnp.broadcast_to(self.beta, full_shape)
+
         p = Beta(alpha_b, beta_b).sample(k_beta, sample_shape)
-        # p now has shape sample_shape + ab_shape.
+        # p shape == sample_shape + full_shape (independent draws).
 
-        # If rate has extra leading dims (e.g. cell axis), insert
-        # size-1 axes into p so multiplication broadcasts cell → 1.
-        # Both p and self.rate share the trailing gene axis.
-        rate_shape = jnp.shape(self.rate)
-        extra = len(rate_shape) - len(ab_shape)
-        if extra > 0:
-            insert_at = tuple(
-                range(len(sample_shape), len(sample_shape) + extra)
-            )
-            p = jnp.expand_dims(p, axis=insert_at)
-
-        # Compute λ; clamp to tiny positive to avoid Poisson(0) edge
-        # cases at extreme parameter values.
+        # rate broadcasts naturally against p (both have full_shape
+        # trailing axes).  Clamp λ to a tiny positive to avoid
+        # Poisson(0) edge cases at extreme parameter values.
         lam = self.rate * p
         lam = jnp.clip(lam, min=1e-30)
 
