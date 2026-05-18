@@ -272,9 +272,11 @@ prevents wasted variational mass on the unbounded NB-limit ridge. See
 *Alternative reparameterizations* for the full math.
 
 **Phase 1 limitations**: mixtures, VAE inference, multi-dataset indexing, BNB
-overdispersion, biology-informed capture priors, and the existing biological-PPC
-/ denoising helpers are not yet wired for the TwoState family. Build-time
-validation rejects these combinations with a clear directive.
+overdispersion, and the Poisson-Gamma denoiser are not yet wired for the
+TwoState family. Biology-informed capture priors *are* supported (via
+``priors={"capture_efficiency": (log_M0, sigma_M)}``); their math is
+likelihood-agnostic, anchored by closure under binomial thinning. Build-time
+validation rejects the still-unsupported combinations with a clear directive.
 
 #### Negative-Binomial LogNormal (NBLN) Family
 

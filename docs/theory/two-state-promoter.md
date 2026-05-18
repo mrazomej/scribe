@@ -262,11 +262,14 @@ marginalizes \(p_{gc}\) independently per \((c, g)\) by construction.
 
 The TwoState family in the current release **does not yet support**
 mixtures, VAE inference, multi-dataset indexing, BNB overdispersion,
-biology-informed capture priors, or the existing biological-PPC /
-denoising helpers. Build-time validation rejects these combinations
-with a clear directive. These extensions are planned for follow-on
-work; the foundation (likelihood, parameterizations, inference engine,
-posterior reconstruction, gene-subsetting, MAP-PPC diagnostics) is
-fully wired and tested.
+or the Poisson-Gamma denoiser. Build-time validation rejects these
+combinations with a clear directive. Biology-informed capture priors
+(``priors={"capture_efficiency": (log_M0, sigma_M)}``) *are* supported;
+the closure under binomial thinning makes the capture factor enter the
+rate identically to its role in the NB family, so the prior math
+applies unchanged. The biological PPC sampler (``get_ppc_samples_biological``
+and the MAP variant) is also wired — by the same closure argument,
+the pre-capture distribution is exactly the gene-rank Poisson-Beta
+compound with ``p_capture`` dropped from the rate.
 
 See `paper/_two_state_promoter.qmd` for the long-form derivations.

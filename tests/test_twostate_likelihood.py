@@ -292,14 +292,57 @@ class TestPhase1Guards:
                 model_config=_Config(),
             )
 
-    def test_biology_informed_capture_raises(self):
-        """VCP rejects biology-informed capture priors in phase 1."""
-        like = TwoStateVCPLikelihood(biology_informed_spec=object())
+    def test_biology_informed_capture_wired(self):
+        """VCP accepts biology-informed capture priors end to end.
+
+        Closure under binomial thinning (paper/_capture_prior.qmd) makes
+        the capture factor multiplicative, identical to its role in the
+        NB family, so the eta_capture-based prior applies unchanged.
+        """
+        import scribe
+        import jax
+        import numpy as _np
+
+        rng = _np.random.default_rng(0)
+        counts = _np.stack(
+            [rng.poisson(m, 32) for m in [2.0, 5.0, 50.0, 100.0]], axis=1
+        )
+        res = scribe.fit(
+            counts,
+            model="twostatevcp",
+            parameterization="natural",
+            inference_method="svi",
+            n_steps=2,
+            unconstrained=True,
+            priors={"capture_efficiency": (_np.log(50_000), 0.5)},
+        )
+        # eta_capture is sampled when bio-informed prior is active;
+        # p_capture remains as a derived deterministic.
+        samples = res.get_posterior_samples(
+            rng_key=jax.random.PRNGKey(0), n_samples=2, counts=counts
+        )
+        assert "eta_capture" in samples
+        assert "p_capture" in samples
+
+    def test_biology_informed_phi_capture_still_rejected(self):
+        """``phi_capture`` (mean-odds NB compat) remains unsupported
+        for TwoState even under the biology-informed prior."""
+
+        class _BioSpec:
+            use_phi_capture = True
+            mu_eta_prior = None
+            log_M0 = 10.0
+            sigma_M = 0.5
+
+        like = TwoStateVCPLikelihood(
+            capture_param_name="p_capture",
+            biology_informed_spec=_BioSpec(),
+        )
 
         class _Config:
             param_specs = []
 
-        with pytest.raises(NotImplementedError, match="biology-informed"):
+        with pytest.raises(NotImplementedError, match="phi_capture"):
             like.sample(
                 {
                     "mu": jnp.array([1.0]),

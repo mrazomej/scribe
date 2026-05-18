@@ -642,15 +642,10 @@ class TwoStateVCPLikelihood(Likelihood):
                 "dataset_indices": dataset_indices,
             },
         )
-        # Biology-informed capture guard (lives here because it
-        # depends on a constructor-injected spec, not on the model
-        # config alone).
-        if getattr(self, "biology_informed_spec", None) is not None:
-            raise NotImplementedError(
-                "TwoState + biology-informed capture prior is not "
-                "supported in phase 1; pass a flat Beta prior on "
-                "p_capture instead."
-            )
+        # ``phi_capture`` (mean-odds NB compat) remains gated.  The
+        # rate-composition math (Binomial-of-Poisson collapse) is
+        # specifically the p_capture form; phi_capture would require
+        # a separate derivation and is out of scope.
         if self.capture_param_name == "phi_capture":
             raise NotImplementedError(
                 "TwoState + phi_capture (mean-odds NB compatibility) is "
@@ -711,18 +706,75 @@ class TwoStateVCPLikelihood(Likelihood):
                 capture_prior_params = pspec.prior
                 break
 
+        # ----- biology-informed capture pre-plate setup -----
+        # When the user supplies ``priors={"capture_efficiency": (log_M0,
+        # sigma_M)}`` (or any other route that registers a
+        # ``BiologyInformedCaptureSpec``), the constructor receives it
+        # via ``biology_informed_spec`` and we sample p_capture as
+        # ``exp(-eta_c)`` where ``eta_c ~ Normal(log_M0 - log(L_c),
+        # sigma_M^2)``.  See paper/_capture_prior.qmd for the math and
+        # paper/_two_state_promoter.qmd §sec-twostate-thinning for why
+        # the same closure-under-binomial-thinning logic that makes
+        # capture multiplicative in the NB family also makes it
+        # multiplicative here.  Phase 1 only supports the simple
+        # (non-data-driven, single-dataset) variant for TwoState.
+        bio_spec = getattr(self, "biology_informed_spec", None)
+        bio_log_lib_sizes = None
+        bio_log_M0 = None
+        if bio_spec is not None:
+            if bio_spec.use_phi_capture:
+                raise NotImplementedError(
+                    "TwoState + biology-informed phi_capture is not "
+                    "supported; use the p_capture form "
+                    "(``priors={'capture_efficiency': (log_M0, sigma_M)}``)."
+                )
+            if bio_spec.mu_eta_prior is not None:
+                raise NotImplementedError(
+                    "TwoState + data-driven biology-informed capture "
+                    "(hierarchical mu_eta) is not supported in phase 1. "
+                    "Pass fixed (log_M0, sigma_M) instead."
+                )
+            if counts is not None:
+                bio_log_lib_sizes = jnp.log(
+                    jnp.maximum(counts.sum(axis=-1), 1.0).astype(jnp.float32)
+                )
+            else:
+                # Prior predictive: no observed library sizes, fall back
+                # to a synthetic per-cell offset (mirrors NBVCP).
+                bio_log_lib_sizes = jnp.full(n_cells, bio_spec.log_M0 - 1.0)
+            bio_log_M0 = bio_spec.log_M0
+
         # ----- inside the cell plate: sample p_capture, emit counts -----
+        from .base import _sample_capture_biology_informed
+
+        def _sample_p_capture(idx):
+            """Sample p_capture per cell — biology-informed path when
+            ``bio_spec`` is set, else the flat-Beta path."""
+            if bio_spec is not None:
+                log_lib_batch = (
+                    bio_log_lib_sizes[idx]
+                    if idx is not None
+                    else bio_log_lib_sizes
+                )
+                return _sample_capture_biology_informed(
+                    log_lib_batch,
+                    bio_log_M0,
+                    bio_spec.sigma_M,
+                    use_phi_capture=False,
+                )
+            return sample_capture_param(
+                use_phi_capture=False,
+                prior_params=capture_prior_params,
+                is_unconstrained=self.is_unconstrained,
+                transform=self.transform,
+                constrained_name=self.constrained_name,
+            )
+
         if batch_size is not None:
             with numpyro.plate(
                 "cells", n_cells, subsample_size=batch_size
             ) as idx:
-                p_capture = sample_capture_param(
-                    use_phi_capture=False,
-                    prior_params=capture_prior_params,
-                    is_unconstrained=self.is_unconstrained,
-                    transform=self.transform,
-                    constrained_name=self.constrained_name,
-                )
+                p_capture = _sample_p_capture(idx)
                 rate = rate_gene[None, :] * p_capture[:, None]
                 obs = counts[idx] if counts is not None else None
                 numpyro.sample(
@@ -734,13 +786,7 @@ class TwoStateVCPLikelihood(Likelihood):
                 )
         elif counts is None:
             with numpyro.plate("cells", n_cells):
-                p_capture = sample_capture_param(
-                    use_phi_capture=False,
-                    prior_params=capture_prior_params,
-                    is_unconstrained=self.is_unconstrained,
-                    transform=self.transform,
-                    constrained_name=self.constrained_name,
-                )
+                p_capture = _sample_p_capture(None)
                 rate = rate_gene[None, :] * p_capture[:, None]
                 numpyro.sample(
                     "counts",
@@ -750,13 +796,7 @@ class TwoStateVCPLikelihood(Likelihood):
                 )
         else:
             with numpyro.plate("cells", n_cells):
-                p_capture = sample_capture_param(
-                    use_phi_capture=False,
-                    prior_params=capture_prior_params,
-                    is_unconstrained=self.is_unconstrained,
-                    transform=self.transform,
-                    constrained_name=self.constrained_name,
-                )
+                p_capture = _sample_p_capture(None)
                 rate = rate_gene[None, :] * p_capture[:, None]
                 numpyro.sample(
                     "counts",

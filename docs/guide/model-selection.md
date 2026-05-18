@@ -463,9 +463,11 @@ See [Two-state promoter theory](../theory/two-state-promoter.md) for the
 full math and a decision guide.
 
 **Phase 1 limitations**: mixtures, VAE inference, multi-dataset indexing,
-BNB overdispersion, biology-informed capture priors, and the existing
-biological-PPC / denoising helpers are not yet wired for TwoState.
-Build-time validation rejects these combinations with a clear error.
+BNB overdispersion, and the Poisson-Gamma denoiser are not yet wired for
+TwoState. Biology-informed capture priors and the biological PPC sampler
+*are* supported — both rely on the closure-under-binomial-thinning
+property that makes the capture factor likelihood-agnostic. Build-time
+validation rejects the still-unsupported combinations with a clear error.
 
 ---
 

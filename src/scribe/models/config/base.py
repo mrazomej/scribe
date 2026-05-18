@@ -1519,27 +1519,17 @@ class ModelConfig(BaseModel):
                 "drop n_datasets or set it to 1."
             )
 
-        # (6) Biology-informed capture priors on twostatevcp are not
-        # supported. We detect them via either direct fields on the
-        # priors object or extras carried in ``__pydantic_extra__``.
-        if self.base_model == "twostatevcp" and self.priors is not None:
-            bio_keys = ("eta_capture", "organism", "mu_eta")
-            prior_extras = (
-                getattr(self.priors, "__pydantic_extra__", None) or {}
-            )
-            hit = any(
-                getattr(self.priors, k, None) is not None
-                or prior_extras.get(k) is not None
-                for k in bio_keys
-            )
-            if hit:
-                raise ValueError(
-                    "TwoState + biology-informed capture priors "
-                    "(priors.eta_capture / priors.organism / priors.mu_eta) "
-                    "are not supported in phase 1. Pass a flat Beta prior "
-                    "on p_capture via priors={'p_capture': (alpha, beta)} "
-                    "instead."
-                )
+        # (6) Biology-informed capture priors on twostatevcp ARE
+        # supported as of this commit.  The closure-under-binomial-
+        # thinning property (see paper/_two_state_promoter.qmd
+        # @sec-twostate-thinning and paper/_capture_prior.qmd) makes
+        # the capture factor enter the TwoState rate multiplicatively,
+        # identical to its role in the NB family.  The biology-informed
+        # prior on eta_capture = log(M_c / L_c) is therefore
+        # likelihood-agnostic and applies unchanged.  See the
+        # TwoStateVCPLikelihood.sample branch that dispatches to
+        # ``_sample_capture_biology_informed`` when
+        # ``biology_informed_spec`` is present.
 
         return self
 
