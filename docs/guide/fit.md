@@ -32,8 +32,10 @@ results = scribe.fit(adata, guide_rank=64)
 includes cell-specific capture probability. Use **`variable_capture=False`**
 to disable it, or **`zero_inflation=True`** to add a zero-inflation gate.
 The **`model`** keyword still accepts `"nbdm"`, `"nbvcp"`, `"zinb"`, and
-`"zinbvcp"` for the same four combinations. See
-[Model selection](#2-model-selection) for the full resolution table.
+`"zinbvcp"` for the same four NB-family combinations, plus `"lnm"`,
+`"lnmvcp"`, `"pln"`, `"nbln"`, `"twostate"`, and `"twostatevcp"` for the
+log-normal and Poisson-Beta families. See [Model selection](#2-model-selection)
+for the full resolution table.
 
 ---
 
@@ -84,6 +86,16 @@ flags and `model=`, they must agree or SCRIBE raises an error.
 | `variable_capture=False` | `"nbdm"` |
 | `zero_inflation=True` | `"zinbvcp"` |
 | `variable_capture=False, zero_inflation=True` | `"zinb"` |
+| `model="twostate"` | TwoState (no capture) |
+| `model="twostate", variable_capture=True` | `"twostatevcp"` |
+| `model="lnm"` / `model="lnmvcp"` | LNM family |
+| `model="pln"` / `model="nbln"` | Log-normal family |
+
+!!! note "TwoState and log-normal families"
+    The `variable_capture` flag is also recognized for `model="twostate"`
+    (resolves to `"twostatevcp"`).  For `model="lnm"`, `"pln"`, `"nbln"`,
+    use the explicit model string — the `variable_capture` flag is not
+    used for these families.
 
 ```python
 # Default: variable capture is already on
@@ -126,8 +138,10 @@ string (both remain valid; see [Model selection](#2-model-selection)).
 
 | Parameter          | Default       | Description                                                                                                              |
 | ------------------ | ------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `parameterization` | `"canonical"` | `"canonical"` (alias `"standard"`), `"mean_prob"` (alias `"linked"`), or `"mean_odds"` (alias `"odds_ratio"`)            |
+| `parameterization` | `"canonical"` (NB family) / `"two_state_natural"` (TwoState family) | See the per-family tables below. |
 | `unconstrained`    | `False`       | Use Normal + transform instead of constrained distributions. **Required** for hierarchical priors and BNB overdispersion |
+
+**NB-family parameterizations** (`model` in `nbdm` / `zinb` / `nbvcp` / `zinbvcp`):
 
 | Name           | Code          | Samples       | Derives                             | Best for                             |
 | -------------- | ------------- | ------------- | ----------------------------------- | ------------------------------------ |
@@ -135,9 +149,33 @@ string (both remain valid; see [Model selection](#2-model-selection)).
 | **Mean probs** | `"mean_prob"` | \(p, \mu\)    | \(r = \mu(1-p)/p\)                  | Couples mean and success probability |
 | **Mean odds**  | `"mean_odds"` | \(\phi, \mu\) | \(p = 1/(1+\phi)\), \(r = \mu\phi\) | Stable when \(p\) is near 1          |
 
+**TwoState-family parameterizations** (`model` in `twostate` / `twostatevcp`):
+
+| Name             | Code                       | Aliases               | Samples                              | Best for                                       |
+| ---------------- | -------------------------- | --------------------- | ------------------------------------ | ---------------------------------------------- |
+| **Natural**      | `"two_state_natural"`      | `natural`             | \(\mu, b, k^-\)                      | Biophysical interpretation; NUTS               |
+| **Ratio**        | `"two_state_ratio"`        | `ratio`               | \(\mu, b, s = k^-/k^+\)              | Mean-field SVI across widely-varying \(\mu\)  |
+| **Mean-Fano**    | `"two_state_mean_fano"`    | `mean_fano`, `fano`   | \(\mu, F = \text{Var}/\mu - 1, \kappa\) | When PPC bands are systematically wide       |
+| **Moment-delta** | `"two_state_moment_delta"` | `moment_delta`, `delta` | \(\mu, F, \delta = 1/(\kappa+1) \in (0,1)\) | When \(\kappa\) posterior tracks its prior |
+
+All four TwoState parameterizations are mean-preserving by construction;
+`mean_fano` and `moment_delta` additionally preserve the Fano factor. See
+the [Two-state promoter theory page](../theory/two-state-promoter.md) for
+the math.
+
 ```python
-# Mean odds parameterization (often converges faster)
+# Mean odds parameterization (often converges faster) — NB family
 results = scribe.fit(adata, variable_capture=True, parameterization="mean_odds")
+
+# TwoState natural parameterization for bursty / bimodal genes
+results = scribe.fit(adata, model="twostatevcp", parameterization="natural")
+
+# TwoState moment-delta: bounded shape coordinate when the κ posterior
+# tracks its prior under mean_fano
+results = scribe.fit(
+    adata, model="twostatevcp", parameterization="moment_delta",
+    unconstrained=True,
+)
 
 # Unconstrained mode --- needed for hierarchical priors and BNB
 results = scribe.fit(adata, model="nbdm", unconstrained=True)
@@ -148,10 +186,12 @@ results = scribe.fit(adata, model="nbdm", unconstrained=True)
     hierarchical priors (`expression_prior`, `prob_prior`,
     `zero_inflation_prior`), mean anchoring (`expression_anchor`), BNB
     overdispersion (`overdispersion="bnb"`), or dataset-level priors. SCRIBE
-    will raise a `ValueError` if you forget.
+    will raise a `ValueError` if you forget. TwoState parameterizations
+    also require `unconstrained=True`.
 
 **Full guide:** [Model Selection > Parameterizations](model-selection.md#parameterizations) |
-**Parameter cheatsheet:** [Parameter Reference](parameters.md#parameterization-mappings)
+**Parameter cheatsheet:** [Parameter Reference](parameters.md#parameterization-mappings) |
+**TwoState theory:** [Two-state promoter](../theory/two-state-promoter.md)
 
 ---
 

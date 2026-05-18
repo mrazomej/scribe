@@ -416,6 +416,59 @@ encoder collapse on the capture latent.
 
 ---
 
+## Two-state promoter (Poisson-Beta)
+
+For genes that the NB family cannot fit — typically bursty / bimodal genes
+with simultaneous excess zeros AND a heavy right tail, or a literal bimodal
+count histogram — the **two-state promoter** likelihood replaces the NB
+with a Poisson-Beta compound:
+
+\[
+p_g^{(c)} \;\sim\; \text{Beta}(\alpha_g, \beta_g),
+\qquad
+u_g^{(c)} \;\sim\; \text{Poisson}\!\bigl(\hat r_g \, p_g^{(c)} \, \nu^{(c)}\bigr),
+\]
+
+with \(p_g^{(c)}\) independent per (gene, cell). The NB is recovered as a
+limiting case at large \(k^-\), so the two-state model **nests inside the
+NB family** rather than competing with it. Use it when posterior predictive
+checks of the NB family show a systematic mismatch you cannot fix with NB
+parameter changes (excess zeros next to a heavy right tail, or a literal
+bimodal histogram).
+
+```python
+# Bursty genes with variable capture
+results = scribe.fit(
+    adata,
+    model="twostatevcp",
+    parameterization="natural",
+    unconstrained=True,
+    inference_method="svi",
+)
+```
+
+The TwoState family ships with **four parameterizations** of the gene-level
+shape. All four sample `mu` and two additional per-gene parameters; all four
+are mean-preserving by construction; `mean_fano` and `moment_delta`
+additionally preserve the Fano factor:
+
+| Parameterization          | Sampled extras                                            | When to choose                                                       |
+| ------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------- |
+| `two_state_natural`       | `burst_size`, `k_off`                                     | Biophysical interpretation; NUTS                                     |
+| `two_state_ratio`         | `burst_size`, `switching_ratio` (\(k^-/k^+\))             | Mean-field SVI across widely varying \(\mu\)                         |
+| `two_state_mean_fano`     | `excess_fano` (\(F\)), `concentration` (\(\kappa\))       | When PPC bands are systematically wider than the observed variance   |
+| `two_state_moment_delta`  | `excess_fano`, `inv_concentration` (\(\delta = 1/(\kappa+1)\)) | When \(\kappa\) posterior tracks its prior under mean_fano   |
+
+See [Two-state promoter theory](../theory/two-state-promoter.md) for the
+full math and a decision guide.
+
+**Phase 1 limitations**: mixtures, VAE inference, multi-dataset indexing,
+BNB overdispersion, biology-informed capture priors, and the existing
+biological-PPC / denoising helpers are not yet wired for TwoState.
+Build-time validation rejects these combinations with a clear error.
+
+---
+
 ## Comparison table
 
 | Model                                                        | Zero Inflated | Variable Capture |  BNB  | Mixture | Best For                                      |
@@ -428,6 +481,8 @@ encoder collapse on the capture latent.
 | `"nbln"`                                                     |      --       |   log-offset     |  --   |   --    | Bursty cross-gene correlations, cascade-frozen fits |
 | `"lnm"`                                                      |      --       |        --        |  --   |   --    | Compositional analysis, arbitrary correlations |
 | `"lnmvcp"`                                                   |      --       |   per-cell η     |  --   |   --    | Compositional + heterogeneous library sizes   |
+| `"twostate"`                                                 |      --       |        --        |  --   |   --    | Bursty / bimodal genes the NB cannot fit (no capture) |
+| `"twostatevcp"`                                              |      --       |   per-cell ν     |  --   |   --    | Bursty / bimodal genes with variable library sizes |
 
 "opt." = add `overdispersion="bnb"` or `n_components=K`.
 
@@ -435,10 +490,12 @@ encoder collapse on the capture latent.
 
 ## Parameterizations
 
-Each model can be parameterized in three ways (how the NB parameters are
-represented internally). SCRIBE names them **canonical**, **mean probs**, and
-**mean odds**; the `parameterization=` string uses the codes below (aliases in
-parentheses).
+### NB family (`nbdm` / `zinb` / `nbvcp` / `zinbvcp`)
+
+Each NB-family model can be parameterized in three ways (how the NB
+parameters are represented internally). SCRIBE names them **canonical**,
+**mean probs**, and **mean odds**; the `parameterization=` string uses the
+codes below (aliases in parentheses).
 
 | Name           | `parameterization=`                  | Samples       | Derives                             | Best For                             |
 | -------------- | ------------------------------------ | ------------- | ----------------------------------- | ------------------------------------ |
@@ -454,6 +511,32 @@ results = scribe.fit(
 )
 # equivalent: parameterization="linked"
 ```
+
+### TwoState family (`twostate` / `twostatevcp`)
+
+The TwoState family has its own four parameterizations of the gene-level
+shape. All four sample `mu` and two additional per-gene parameters; all
+four are mean-preserving by construction. Each successive variant fixes a
+distinct geometric pathology of mean-field variational inference:
+
+| Name             | `parameterization=`             | Aliases               | Samples                                   |
+| ---------------- | ------------------------------- | --------------------- | ----------------------------------------- |
+| **Natural**      | `"two_state_natural"`           | `natural`             | \(\mu, b, k^-\)                           |
+| **Ratio**        | `"two_state_ratio"`             | `ratio`               | \(\mu, b, s = k^-/k^+\)                   |
+| **Mean-Fano**    | `"two_state_mean_fano"`         | `mean_fano`, `fano`   | \(\mu, F, \kappa\)                        |
+| **Moment-delta** | `"two_state_moment_delta"`      | `moment_delta`, `delta` | \(\mu, F, \delta = 1/(\kappa+1) \in (0, 1)\) |
+
+The **natural** variant is the physics-natural choice and is recommended
+for NUTS or for biophysical interpretation. For mean-field SVI across
+many genes with widely varying expression, the **ratio** variant decouples
+the regime axis from gene magnitude. When posterior-predictive variance
+is the visible failure mode, **mean_fano** samples the Fano factor
+directly, which bounds the PPC width by construction. **Moment-delta**
+additionally maps the unbounded NB-limit ridge to a bounded shape
+coordinate \(\delta \in (0, 1)\) so the variational guide doesn't waste
+mass on arbitrarily-large concentration values. See
+[Two-state promoter theory](../theory/two-state-promoter.md) for the
+math.
 
 For a complete mapping of every parameter name to its symbol, domain, and
 equation context, see the [Parameter Reference](parameters.md).

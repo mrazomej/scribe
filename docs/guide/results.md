@@ -167,6 +167,38 @@ ppc_samples = results.get_ppc_samples(n_samples=1000)
     - Using GPU acceleration if available
     - Running sampling in batches
 
+#### Guide-geometry diagnostic: `map_sampling=True`
+
+`scribe.viz.plot_ppc(..., map_sampling=True)` generates posterior
+predictive samples by fixing the variational parameters at their
+posterior mean (MAP-anchored) rather than sampling from the full
+guide. Compared with the default `map_sampling=False`, the two plots
+together form a clean diagnostic for **where wide PPC bands come
+from**:
+
+| MAP PPC | Posterior PPC | Interpretation                                                                                       |
+| ------- | ------------- | ---------------------------------------------------------------------------------------------------- |
+| Tight   | Tight         | Fit is fine on these genes                                                                           |
+| Tight   | Wide          | Guide geometry: the posterior is well-localized but mean-field q-spread leaks into the PPC. Try a low-rank or flow guide. |
+| Wide    | Wide          | Model / likelihood / capture problem. A richer guide will not help; try a different parameterization or a tighter prior. |
+| Wide    | Tight         | Vanishingly rare — usually indicates a non-converged fit. Re-check loss curves.                       |
+
+```python
+# Default: full-posterior PPC
+scribe.viz.plot_ppc(results, adata, n_genes=16, n_rows=4)
+
+# MAP-anchored PPC: same call, one flag
+scribe.viz.plot_ppc(results, adata, n_genes=16, n_rows=4,
+                    map_sampling=True)
+```
+
+The flag is supported for all NB-family and TwoState-family results.
+For TwoState the MAP-PPC path constructs the Poisson-Beta compound at
+the MAP parameters and draws `p_gc` **independently per (gene, cell)**
+— sharing a single latent across cells would introduce a
+replicate-level random effect the model does not have. (Compositional
+PPCs do not yet expose a MAP path.)
+
 ### Log Likelihood Computation
 
 Computing the log-likelihood of your data under the fitted model can be
@@ -329,6 +361,41 @@ on the distributions used.
     # Shape: (n_components, n_genes)
     r_concentration = mix_results.params["r_concentration"]
     ```
+
+=== "TwoState (twostate / twostatevcp)"
+
+    The TwoState family uses an unconstrained Normal+softplus
+    parameterization and the variational parameters depend on which of
+    the four sampled parameterizations was used.  All four share `mu_*`;
+    the second-and-third extras differ:
+
+    ```python
+    # Natural: samples (mu, burst_size, k_off)
+    ts_results = scribe.fit(adata, model="twostatevcp",
+                            parameterization="two_state_natural",
+                            unconstrained=True)
+    mu_loc = ts_results.params["mu_loc"]
+    burst_size_loc = ts_results.params["burst_size_loc"]
+    k_off_loc = ts_results.params["k_off_loc"]
+
+    # Ratio: samples (mu, burst_size, switching_ratio)
+    # → key is switching_ratio_loc / switching_ratio_scale
+
+    # Mean-Fano: samples (mu, excess_fano, concentration)
+    # → keys are excess_fano_* and concentration_*
+
+    # Moment-delta: samples (mu, excess_fano, inv_concentration)
+    # → key is inv_concentration_* (sigmoid-Normal in (0, 1))
+
+    # Posterior samples include derived deterministics too:
+    samples = ts_results.get_posterior_samples()
+    # samples["mu"], samples["burst_size"], samples["k_off"],
+    # samples["alpha"], samples["beta"], samples["r_hat"],
+    # samples["concentration"] (derived from delta in moment_delta), ...
+    ```
+
+    See [Two-state promoter theory](../theory/two-state-promoter.md) for
+    which parameters are sampled vs derived under each variant.
 
 ## Laplace Results (`ScribeLaplaceResults`)
 

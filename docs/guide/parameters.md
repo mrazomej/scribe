@@ -79,6 +79,28 @@ The per-gene gate \(\color{#e74c3c}{\pi_g}\) mixes a point mass at zero
 \(\hat{p}^{(c)}\) includes the capture factor as above; in ZINB,
 \(\hat{p}^{(c)} = \color{#3d85c6}{p}\).
 
+### TwoState (Poisson-Beta compound)
+
+\[
+\color{#9b59b6}{p_g^{(c)}} \;\sim\; \text{Beta}\!\bigl(\alpha_g, \beta_g\bigr),
+\qquad
+u_g^{(c)} \;\sim\; \text{Poisson}\!\bigl(\hat r_g \, \color{#9b59b6}{p_g^{(c)}}\,\color{#9b59b6}{\nu^{(c)}}\bigr)
+\]
+
+A non-bursty two-state promoter at steady state. The latent
+\(\color{#9b59b6}{p_g^{(c)}} \in [0, 1]\) is the *memory-weighted ON
+fraction* of the promoter for gene \(g\) in cell \(c\), drawn
+independently per \((g, c)\). The natural rate parameters are
+\(\alpha_g = k^+_g\) (ON rate), \(\beta_g = k^-_g\) (OFF rate), and
+\(\hat r_g\) (Poisson rate scale); their relationship to the sampled
+coordinates depends on the parameterization (see below). The capture
+factor \(\color{#9b59b6}{\nu^{(c)}}\) multiplies the rate (closure
+under binomial thinning).
+
+The NB is recovered as a limiting case at large \(k^-\) — the
+two-state likelihood **nests inside the NB family** rather than
+competing with it. See [Two-state promoter](../theory/two-state-promoter.md).
+
 ### BNB overdispersion (any model + `overdispersion="bnb"`)
 
 \[
@@ -162,6 +184,41 @@ When the **biology-informed capture prior** is enabled (via
 `priors={"organism": "human"}`), `eta_capture` is the sampled site and
 `p_capture` or `phi_capture` is registered as a deterministic.
 
+### TwoState parameterizations
+
+The TwoState family (`twostate` / `twostatevcp`) has its own four
+parameterizations of the gene-level shape. All four sample `mu` (gene
+mean expression) plus two additional per-gene parameters; the
+likelihood is identical, only the sampled coordinates differ. All
+four are mean-preserving by construction.
+
+| Parameterization | `parameterization=`                       | Sampled extras                                                | Derived (deterministic)             |
+| ---------------- | ----------------------------------------- | ------------------------------------------------------------- | ----------------------------------- |
+| **Natural**      | `"two_state_natural"` (alias `natural`)   | `burst_size` (\(b_g\)), `k_off` (\(k^-_g\))                   | `k_on`, `alpha`, `beta`, `r_hat`    |
+| **Ratio**        | `"two_state_ratio"` (alias `ratio`)       | `burst_size`, `switching_ratio` (\(s_g = k^-_g/k^+_g\))       | `k_on`, `k_off`, `alpha`, `beta`, `r_hat` |
+| **Mean-Fano**    | `"two_state_mean_fano"` (aliases `mean_fano`, `fano`) | `excess_fano` (\(F_g = \text{Var}/\mu - 1\)), `concentration` (\(\kappa_g = \alpha_g + \beta_g\)) | `burst_size`, `k_on`, `k_off`, `alpha`, `beta`, `r_hat` |
+| **Moment-delta** | `"two_state_moment_delta"` (aliases `moment_delta`, `delta`) | `excess_fano`, `inv_concentration` (\(\delta_g = 1/(\kappa_g + 1) \in (0,1)\)) | `concentration`, `burst_size`, `k_on`, `k_off`, `alpha`, `beta`, `r_hat` |
+
+Forward maps:
+
+* `two_state_natural`: \(\alpha_g = \mu_g/b_g\), \(\beta_g = k^-_g\),
+  \(\hat r_g = \mu_g + b_g\, k^-_g\).
+* `two_state_ratio`: \(\alpha_g = \mu_g/b_g\), \(\beta_g = s_g\,\mu_g/b_g\),
+  \(\hat r_g = \mu_g\,(1 + s_g)\).
+* `two_state_mean_fano`: \(\text{denom} = \mu_g + F_g(\kappa_g + 1)\);
+  \(\alpha_g = \kappa_g \mu_g/\text{denom}\),
+  \(\beta_g = \kappa_g F_g(\kappa_g + 1)/\text{denom}\),
+  \(\hat r_g = \text{denom}\).
+* `two_state_moment_delta`: \(\text{denom} = \mu_g \delta_g + F_g\);
+  \(\alpha_g = \mu_g(1-\delta_g)/\text{denom}\),
+  \(\beta_g = F_g(1-\delta_g)/(\delta_g\,\text{denom})\),
+  \(\hat r_g = \text{denom}/\delta_g\).
+
+The capture parameter for `twostatevcp` is always `p_capture` (in
+\((0, 1)\)) regardless of which TwoState parameterization is chosen.
+Biology-informed capture priors are not yet supported for TwoState
+(phase-1 limitation).
+
 ---
 
 ## Master parameter table
@@ -179,6 +236,12 @@ When the **biology-informed capture prior** is enabled (via
 | `bnb_concentration` | \(\color{#f39c12}{\kappa_g}\)  | Beta concentration controlling BNB tail heaviness. \(\kappa_g \to \infty\) recovers NB       | \((2, \infty)\)  | Any + `overdispersion="bnb"`   | All parameterizations                                         |
 | `mixing_weights`    | \(w_k\)                        | Dirichlet-distributed component probabilities                                                | Simplex          | Any + `n_components >= 2`      | All parameterizations                                         |
 | `z`                 | \(\underline{z}^{(c)}\)        | Per-cell latent embedding (VAE only)                                                         | \(\mathbb{R}^d\) | Any + `inference_method="vae"` | All parameterizations                                         |
+| `burst_size`        | \(b_g\)                        | TwoState NB-limit mean burst size                                                            | \(\mathbb{R}^+\) | TwoState                       | Sampled in natural, ratio; derived in mean_fano, moment_delta |
+| `k_off`             | \(k^-_g\)                      | TwoState OFF rate (non-dim by mRNA decay). Large \(k^-\) approaches the NB limit             | \(\mathbb{R}^+\) | TwoState                       | Sampled in natural; derived otherwise                         |
+| `switching_ratio`   | \(s_g = k^-_g / k^+_g\)        | TwoState dimensionless regime ratio                                                          | \(\mathbb{R}^+\) | TwoState                       | Sampled in ratio                                              |
+| `excess_fano`       | \(F_g = \text{Var}/\mu - 1\)   | TwoState excess Fano factor — directly bounds PPC width per gene                             | \(\mathbb{R}^+\) | TwoState                       | Sampled in mean_fano, moment_delta                            |
+| `concentration`     | \(\kappa_g = \alpha + \beta\)  | TwoState Beta concentration. Large \(\kappa\) approaches the NB limit                        | \(\mathbb{R}^+\) | TwoState                       | Sampled in mean_fano; derived in moment_delta                 |
+| `inv_concentration` | \(\delta_g = 1/(\kappa_g+1)\)  | TwoState bounded shape coordinate. \(\delta \to 0\) is the NB limit                          | \((0, 1)\)       | TwoState                       | Sampled in moment_delta                                       |
 
 ### Derived quantities (not directly sampled)
 
