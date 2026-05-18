@@ -17,6 +17,10 @@ from ._denoising_bnb import (
     _denoise_bnb_quadrature,
     _sample_p_posterior_bnb,
 )
+from ._denoising_twostate import (
+    _denoise_twostate_quadrature,
+    _sample_p_posterior_twostate,
+)
 
 
 # Allowed values for individual method elements
@@ -73,8 +77,8 @@ def _method_needs_rng(method: Union[str, Tuple[str, str]]) -> bool:
 
 def denoise_counts(
     counts: jnp.ndarray,
-    r: jnp.ndarray,
-    p: jnp.ndarray,
+    r: Optional[jnp.ndarray] = None,
+    p: Optional[jnp.ndarray] = None,
     p_capture: Optional[jnp.ndarray] = None,
     gate: Optional[jnp.ndarray] = None,
     method: Union[str, Tuple[str, str]] = "mean",
@@ -85,6 +89,10 @@ def denoise_counts(
     cell_batch_size: Optional[int] = None,
     bnb_concentration: Optional[jnp.ndarray] = None,
     param_layouts: Optional[Dict[str, "AxisLayout"]] = None,
+    *,
+    ts_alpha: Optional[jnp.ndarray] = None,
+    ts_beta: Optional[jnp.ndarray] = None,
+    ts_rate: Optional[jnp.ndarray] = None,
 ) -> Union[jnp.ndarray, Dict[str, jnp.ndarray]]:
     """Denoise observed counts using the Bayesian posterior of true transcripts.
 
@@ -167,6 +175,14 @@ def denoise_counts(
         .. deprecated::
             Omitting *param_layouts* is deprecated and will raise an
             error in a future release.
+    ts_alpha : jnp.ndarray or None, optional
+        Two-State Beta first shape parameter α_g.  When not ``None``,
+        activates the Poisson–Beta denoising path instead of NB.
+        Shape ``(G,)`` or ``(C, G)``.  Keyword-only.
+    ts_beta : jnp.ndarray or None, optional
+        Two-State Beta second shape parameter β_g.  Keyword-only.
+    ts_rate : jnp.ndarray or None, optional
+        Two-State Poisson rate scale r̂_g.  Keyword-only.
 
     Returns
     -------
@@ -220,6 +236,27 @@ def denoise_counts(
     _validate_denoise_method(method)
     if _method_needs_rng(method) and rng_key is None:
         rng_key = random.PRNGKey(42)
+
+    # ── Two-State short-circuit: no mixtures, no layout logic,
+    #    just pass straight through to _denoise_standard. ──────────
+    # This must come BEFORE the param_layouts fallback which
+    # accesses r.ndim (r is None for TwoState calls).
+    _is_twostate = ts_alpha is not None
+    if _is_twostate:
+        return _denoise_standard(
+            counts=counts,
+            r=None,
+            p=None,
+            p_capture=p_capture,
+            gate=gate,
+            method=method,
+            rng_key=rng_key,
+            return_variance=return_variance,
+            cell_batch_size=cell_batch_size,
+            ts_alpha=ts_alpha,
+            ts_beta=ts_beta,
+            ts_rate=ts_rate,
+        )
 
     is_mixture = mixing_weights is not None
 
@@ -537,8 +574,8 @@ def _denoise_single(
 
 def _denoise_standard(
     counts: jnp.ndarray,
-    r: jnp.ndarray,
-    p: jnp.ndarray,
+    r: Optional[jnp.ndarray],
+    p: Optional[jnp.ndarray],
     p_capture: Optional[jnp.ndarray],
     gate: Optional[jnp.ndarray],
     method: Union[str, Tuple[str, str]],
@@ -551,26 +588,33 @@ def _denoise_standard(
     p_is_per_cell: bool = False,
     gate_is_per_cell: bool = False,
     bnb_is_per_cell: bool = False,
+    ts_alpha: Optional[jnp.ndarray] = None,
+    ts_beta: Optional[jnp.ndarray] = None,
+    ts_rate: Optional[jnp.ndarray] = None,
 ) -> Union[jnp.ndarray, Dict[str, jnp.ndarray]]:
     """Denoise counts for a standard (non-mixture) model, single param set.
 
-    Implements the core denoising formulas from ``paper/_denoising.qmd``.
+    Implements the core denoising formulas from ``paper/_denoising.qmd``
+    for NB/BNB models, and from ``paper/_two_state_promoter.qmd`` for
+    Two-State (Poisson–Beta compound) models.
 
-    The key quantity is ``probs_post`` = canonical_p * (1 - nu_c), the
-    numpyro-convention success probability of the posterior NB for the
-    uncaptured transcripts d_g.  When ``p_capture`` is ``None`` (no VCP),
-    ``probs_post = 0`` and denoising reduces to identity (plus any gate
-    correction at zeros).
+    For NB/BNB, the key quantity is ``probs_post`` = canonical_p × (1 − ν_c),
+    the numpyro-convention success probability of the posterior NB for
+    the uncaptured transcripts d_g.
+
+    For Two-State, the denoising posterior integrates over the latent
+    ON-fraction p_{gc} via Gauss–Legendre quadrature.
 
     Parameters
     ----------
     counts : jnp.ndarray
         Observed counts ``(n_cells, n_genes)``.
-    r : jnp.ndarray
-        Dispersion ``(n_genes,)`` or ``(n_cells, n_genes)`` when gathered
-        from mixture component assignments.
-    p : jnp.ndarray
-        Success probability (scalar or broadcastable).
+    r : jnp.ndarray or None
+        NB dispersion ``(n_genes,)`` or ``(n_cells, n_genes)``.
+        ``None`` when the Two-State path is active.
+    p : jnp.ndarray or None
+        NB success probability (scalar or broadcastable).
+        ``None`` when the Two-State path is active.
     p_capture : jnp.ndarray or None
         Capture probability ``(n_cells,)`` or ``None``.
     gate : jnp.ndarray or None
@@ -597,6 +641,12 @@ def _denoise_standard(
     bnb_is_per_cell : bool
         ``True`` when ``bnb_concentration`` has been gathered to
         ``(n_cells, n_genes)`` and must be sliced per batch.
+    ts_alpha : jnp.ndarray or None
+        Two-State α_g.  Activates the Poisson–Beta path when not None.
+    ts_beta : jnp.ndarray or None
+        Two-State β_g.
+    ts_rate : jnp.ndarray or None
+        Two-State r̂_g.
 
     Returns
     -------
@@ -643,6 +693,9 @@ def _denoise_standard(
             method,
             batch_key,
             bnb_concentration=bnb_b,
+            ts_alpha=ts_alpha,
+            ts_beta=ts_beta,
+            ts_rate=ts_rate,
         )
         denoised_parts.append(d)
         if return_variance:
@@ -657,39 +710,52 @@ def _denoise_standard(
 
 def _denoise_batch(
     counts: jnp.ndarray,
-    r: jnp.ndarray,
-    p: jnp.ndarray,
+    r: Optional[jnp.ndarray],
+    p: Optional[jnp.ndarray],
     p_capture: Optional[jnp.ndarray],
     gate: Optional[jnp.ndarray],
     method: Union[str, Tuple[str, str]],
     rng_key: Optional[random.PRNGKey],
     bnb_concentration: Optional[jnp.ndarray] = None,
+    *,
+    ts_alpha: Optional[jnp.ndarray] = None,
+    ts_beta: Optional[jnp.ndarray] = None,
+    ts_rate: Optional[jnp.ndarray] = None,
 ) -> tuple:
     """Denoise a single batch of cells (no further splitting).
 
     Returns ``(denoised, variance)`` where ``variance`` is always computed
     (the caller decides whether to keep it).
 
+    Supports two model families:
+
+    * **NB / BNB** (default): when ``r`` and ``p`` are provided.
+    * **Two-State (Poisson–Beta)**: when ``ts_alpha``, ``ts_beta``,
+      ``ts_rate`` are provided.  The denoising posterior integrates
+      over the latent ON-fraction via quadrature.
+
     Parameters
     ----------
     counts : jnp.ndarray
         Observed counts for this batch, ``(batch_cells, n_genes)``.
-    r : jnp.ndarray
-        Dispersion, ``(n_genes,)`` or ``(batch_cells, n_genes)``.
-    p : jnp.ndarray
-        Success probability: scalar ``()``, gene-specific ``(n_genes,)``,
-        or per-cell ``(batch_cells, 1)`` / ``(batch_cells, n_genes)``.
+    r : jnp.ndarray or None
+        NB dispersion, ``(n_genes,)`` or ``(batch_cells, n_genes)``.
+    p : jnp.ndarray or None
+        NB success probability.
     p_capture : jnp.ndarray or None
         Capture probability ``(batch_cells,)`` or ``None``.
     gate : jnp.ndarray or None
-        Gate probability, ``(n_genes,)`` or ``(batch_cells, n_genes)`` or
-        ``None``.
+        Gate probability.
     method : str or tuple of (str, str)
-        Denoising method.  A single string applies uniformly; a tuple
-        ``(general_method, zi_zero_method)`` allows the ZINB zero
-        correction to use a different method from the rest.
+        Denoising method.
     rng_key : random.PRNGKey or None
         PRNG key (needed when any element of ``method`` is ``'sample'``).
+    ts_alpha : jnp.ndarray or None
+        Two-State α_g.  Activates the Poisson–Beta path when not None.
+    ts_beta : jnp.ndarray or None
+        Two-State β_g.
+    ts_rate : jnp.ndarray or None
+        Two-State r̂_g.
 
     Returns
     -------
@@ -703,6 +769,49 @@ def _denoise_batch(
         general_method, zi_zero_method = method, method
     else:
         general_method, zi_zero_method = method
+
+    # ==================================================================
+    # Two-State (Poisson–Beta) dispatch — completely separate math.
+    # When ts_alpha is provided the NB path is bypassed entirely.
+    # ==================================================================
+    _use_twostate = ts_alpha is not None
+    if _use_twostate:
+        # Phase 1: Two-State does not support ZINB (gate).
+        if gate is not None:
+            raise NotImplementedError(
+                "Two-State denoising does not support zero-inflation "
+                "(gate) in phase 1."
+            )
+
+        # Precompute quadrature mean/var (reused for mean, mode, and
+        # as the variance estimate for sample draws).
+        _ts_mean, _ts_var = _denoise_twostate_quadrature(
+            counts, ts_alpha, ts_beta, ts_rate, p_capture
+        )
+
+        if general_method in ("mean", "mode"):
+            denoised = _ts_mean
+            if general_method == "mode":
+                denoised = jnp.floor(denoised)
+            return denoised, _ts_var
+
+        # general_method == "sample": ancestral sampling via
+        # grid-CDF inversion for the latent p, then a Poisson
+        # draw for dropped counts.
+        key_p, key_d = random.split(rng_key)
+        p_sampled = _sample_p_posterior_twostate(
+            key_p, counts, ts_alpha, ts_beta, ts_rate, p_capture
+        )
+
+        # Dropped-count rate: (1 − ν) r̂ p*
+        if p_capture is not None:
+            nu = p_capture[:, None]
+        else:
+            nu = jnp.ones(())
+        drop_rate = (1.0 - nu) * ts_rate * p_sampled
+        d_sample = random.poisson(key_d, drop_rate)
+        denoised = counts + d_sample
+        return denoised, _ts_var
 
     # Per-cell p arrives as (batch_cells, 1) from the gathering step in
     # _denoise_single / _denoise_mixture_marginal, gene-specific p as

@@ -256,21 +256,8 @@ class DenoisingSamplingMixin:
         get_map_ppc_samples_biological : MAP-based biological PPC.
         scribe.sampling.denoise_counts : Core denoising utility.
         """
-        # TwoState (Poisson-Beta compound) does not expose ``r`` and
-        # ``p`` as canonical parameters; the denoising posterior
-        # derivation in ``paper/_denoising.qmd`` is NB/BNB-specific.
-        # A TwoState-specific denoiser is phase 2 work. Gate this
-        # entry point early so users get a clear message.
         _bm = getattr(self.model_config, "base_model", None)
-        if _bm in ("twostate", "twostatevcp"):
-            raise NotImplementedError(
-                f"denoise_counts_map() is not implemented for "
-                f"base_model={_bm!r} in phase 1. The closed-form "
-                f"Poisson-Gamma posterior used by the NB-family denoiser "
-                f"does not apply to the TwoState (Poisson-Beta compound) "
-                f"likelihood; a Poisson-Beta-specific denoiser is "
-                f"deferred to phase 2."
-            )
+        _is_twostate = _bm in ("twostate", "twostatevcp")
 
         if rng_key is None:
             rng_key = random.PRNGKey(42)
@@ -285,90 +272,133 @@ class DenoisingSamplingMixin:
             counts=counts,
         )
 
-        r = map_estimates.get("r")
-        p = map_estimates.get("p")
-        if r is None or p is None:
-            raise ValueError(
-                "Could not extract r and p from MAP estimates. "
-                f"Available keys: {list(map_estimates.keys())}"
+        # ── Two-State (Poisson–Beta) dispatch ────────────────────
+        # The Two-State model does not expose NB-style (r, p); instead
+        # we recover (α, β, r̂) via _twostate_dispatch_reparam and
+        # pass them through the quadrature denoising path.
+        if _is_twostate:
+            from ..models.components.likelihoods.two_state import (
+                _twostate_dispatch_reparam,
             )
 
-        p_capture = map_estimates.get("p_capture")
-        gate = map_estimates.get("gate")
-        is_mixture = self.n_components is not None and self.n_components > 1
-        mixing_weights = (
-            map_estimates.get("mixing_weights") if is_mixture else None
-        )
-        bnb_concentration = map_estimates.get("bnb_concentration")
-
-        # Build MAP-level canonical layouts (keyed by "r", "p", etc.)
-        # for layout-driven detection inside denoise_counts.
-        _map_layouts = _build_canonical_layouts(
-            map_estimates,
-            self.model_config,
-            n_genes=self.n_genes,
-            n_cells=self.n_cells,
-            n_components=self.n_components,
-            has_sample_dim=False,
-        )
-
-        if verbose:
-            model_desc = (
-                f"mixture ({self.n_components} components)"
-                if is_mixture
-                else "standard"
-            )
-            extras = []
-            if p_capture is not None:
-                extras.append("VCP")
-            if gate is not None:
-                extras.append("gate")
-            extra_str = f" [{', '.join(extras)}]" if extras else ""
-            print(
-                f"Denoising {model_desc} model "
-                f"({self.model_type}){extra_str}, method='{method}'..."
+            # _twostate_dispatch_reparam expects mu + the third-coord
+            # extras (burst_size/k_off, switching_ratio, etc.) but NOT
+            # p_capture.  Strip p_capture before calling.
+            _reparam_inputs = {
+                k: v for k, v in map_estimates.items() if k != "p_capture"
+            }
+            ts_alpha, ts_beta, ts_rate, _eff, _raw = (
+                _twostate_dispatch_reparam(_reparam_inputs)
             )
 
-        # Multi-dataset models: per-dataset parameters have shape
-        # (n_datasets, n_genes).  We denoise each dataset's cells
-        # separately to avoid shape ambiguity in denoise_counts, which
-        # would misinterpret (n_cells, n_genes) as a sample dimension.
-        n_ds = getattr(self.model_config, "n_datasets", None)
-        ds_idx = getattr(self, "_dataset_indices", None)
-        if n_ds is not None and ds_idx is not None:
-            result = _denoise_per_dataset(
-                counts=counts,
-                r=r,
-                p=p,
-                gate=gate,
-                p_capture=p_capture,
-                dataset_indices=ds_idx,
-                n_datasets=n_ds,
-                method=method,
-                rng_key=rng_key,
-                return_variance=return_variance,
-                mixing_weights=mixing_weights,
-                cell_batch_size=cell_batch_size,
-                bnb_concentration=bnb_concentration,
-                param_layouts=_map_layouts,
-            )
-        else:
-            # MAP estimates have no sample dim; pass canonical layouts
-            # for layout-driven sample-dimension detection.
+            p_capture = map_estimates.get("p_capture")
+
+            if verbose:
+                extras = ["VCP"] if p_capture is not None else []
+                extra_str = f" [{', '.join(extras)}]" if extras else ""
+                print(
+                    f"Denoising two-state model"
+                    f" ({self.model_type}){extra_str},"
+                    f" method='{method}'..."
+                )
+
             result = denoise_counts(
                 counts=counts,
-                r=r,
-                p=p,
                 p_capture=p_capture,
-                gate=gate,
                 method=method,
                 rng_key=rng_key,
                 return_variance=return_variance,
-                mixing_weights=mixing_weights,
                 cell_batch_size=cell_batch_size,
-                bnb_concentration=bnb_concentration,
-                param_layouts=_map_layouts,
+                ts_alpha=ts_alpha,
+                ts_beta=ts_beta,
+                ts_rate=ts_rate,
             )
+
+        else:
+            # ── NB / BNB path (unchanged) ────────────────────────
+            r = map_estimates.get("r")
+            p = map_estimates.get("p")
+            if r is None or p is None:
+                raise ValueError(
+                    "Could not extract r and p from MAP estimates. "
+                    f"Available keys: {list(map_estimates.keys())}"
+                )
+
+            p_capture = map_estimates.get("p_capture")
+            gate = map_estimates.get("gate")
+            is_mixture = (
+                self.n_components is not None and self.n_components > 1
+            )
+            mixing_weights = (
+                map_estimates.get("mixing_weights") if is_mixture else None
+            )
+            bnb_concentration = map_estimates.get("bnb_concentration")
+
+            # Build MAP-level canonical layouts (keyed by "r", "p", etc.)
+            # for layout-driven detection inside denoise_counts.
+            _map_layouts = _build_canonical_layouts(
+                map_estimates,
+                self.model_config,
+                n_genes=self.n_genes,
+                n_cells=self.n_cells,
+                n_components=self.n_components,
+                has_sample_dim=False,
+            )
+
+            if verbose:
+                model_desc = (
+                    f"mixture ({self.n_components} components)"
+                    if is_mixture
+                    else "standard"
+                )
+                extras = []
+                if p_capture is not None:
+                    extras.append("VCP")
+                if gate is not None:
+                    extras.append("gate")
+                extra_str = f" [{', '.join(extras)}]" if extras else ""
+                print(
+                    f"Denoising {model_desc} model "
+                    f"({self.model_type}){extra_str}, method='{method}'..."
+                )
+
+            # Multi-dataset models: per-dataset parameters have shape
+            # (n_datasets, n_genes).  We denoise each dataset's cells
+            # separately to avoid shape ambiguity in denoise_counts.
+            n_ds = getattr(self.model_config, "n_datasets", None)
+            ds_idx = getattr(self, "_dataset_indices", None)
+            if n_ds is not None and ds_idx is not None:
+                result = _denoise_per_dataset(
+                    counts=counts,
+                    r=r,
+                    p=p,
+                    gate=gate,
+                    p_capture=p_capture,
+                    dataset_indices=ds_idx,
+                    n_datasets=n_ds,
+                    method=method,
+                    rng_key=rng_key,
+                    return_variance=return_variance,
+                    mixing_weights=mixing_weights,
+                    cell_batch_size=cell_batch_size,
+                    bnb_concentration=bnb_concentration,
+                    param_layouts=_map_layouts,
+                )
+            else:
+                result = denoise_counts(
+                    counts=counts,
+                    r=r,
+                    p=p,
+                    p_capture=p_capture,
+                    gate=gate,
+                    method=method,
+                    rng_key=rng_key,
+                    return_variance=return_variance,
+                    mixing_weights=mixing_weights,
+                    cell_batch_size=cell_batch_size,
+                    bnb_concentration=bnb_concentration,
+                    param_layouts=_map_layouts,
+                )
 
         if verbose:
             shape = (
@@ -442,24 +472,13 @@ class DenoisingSamplingMixin:
         get_ppc_samples_biological : Full-posterior biological PPC.
         scribe.sampling.denoise_counts : Core denoising utility.
         """
-        # Phase-1 gate: TwoState (Poisson-Beta compound) has no
-        # NB-style ``(r, p)`` parameters and the existing
-        # Poisson-Gamma denoising posterior does not apply. A
-        # TwoState-specific denoiser is phase 2 work.
         _bm = getattr(self.model_config, "base_model", None)
-        if _bm in ("twostate", "twostatevcp"):
-            raise NotImplementedError(
-                f"denoise_counts_posterior() is not implemented for "
-                f"base_model={_bm!r} in phase 1. The closed-form "
-                f"Poisson-Gamma posterior used by the NB-family "
-                f"denoiser does not apply to the TwoState "
-                f"(Poisson-Beta compound) likelihood; a "
-                f"Poisson-Beta-specific denoiser is deferred to phase 2."
-            )
+        _is_twostate = _bm in ("twostate", "twostatevcp")
+
         if rng_key is None:
             rng_key = random.PRNGKey(42)
 
-        # Ensure posterior samples exist
+        # Ensure posterior samples exist.
         if self.posterior_samples is None:
             key_post, rng_key = random.split(rng_key)
             if verbose:
@@ -472,55 +491,124 @@ class DenoisingSamplingMixin:
                 counts=counts,
             )
 
-        r = self.posterior_samples["r"]
-        p = self.posterior_samples["p"]
-        p_capture = self.posterior_samples.get("p_capture")
-        gate = self.posterior_samples.get("gate")
-        is_mixture = self.n_components is not None and self.n_components > 1
-        mixing_weights = (
-            self.posterior_samples.get("mixing_weights") if is_mixture else None
-        )
-        bnb_concentration = self.posterior_samples.get("bnb_concentration")
-
-        if verbose:
-            extras = []
-            if p_capture is not None:
-                extras.append("VCP")
-            if gate is not None:
-                extras.append("gate")
-            extra_str = f" [{', '.join(extras)}]" if extras else ""
-            n_post = r.shape[0]
-            print(
-                f"Denoising with {n_post} posterior samples"
-                f" ({self.model_type}){extra_str}, method='{method}'..."
+        # ── Two-State (Poisson–Beta) dispatch ────────────────────
+        # Loop over posterior draws, reparameterize to (α, β, r̂) per
+        # draw, and call denoise_counts with the TwoState kwargs.
+        if _is_twostate:
+            from ..models.components.likelihoods.two_state import (
+                _twostate_dispatch_reparam,
             )
 
-        # Build posterior-level canonical layouts (keyed by "r", "p", etc.)
-        # using the actual posterior tensor shapes and model metadata.
-        _post_layouts = _build_canonical_layouts(
-            self.posterior_samples,
-            self.model_config,
-            n_genes=self.n_genes,
-            n_cells=self.n_cells,
-            n_components=self.n_components,
-            has_sample_dim=True,
-        )
+            post = self.posterior_samples
+            p_capture = post.get("p_capture")
+            n_post = next(iter(post.values())).shape[0]
 
-        _, key_denoise = random.split(rng_key)
-        result = denoise_counts(
-            counts=counts,
-            r=r,
-            p=p,
-            p_capture=p_capture,
-            gate=gate,
-            method=method,
-            rng_key=key_denoise,
-            return_variance=return_variance,
-            mixing_weights=mixing_weights,
-            cell_batch_size=cell_batch_size,
-            bnb_concentration=bnb_concentration,
-            param_layouts=_post_layouts,
-        )
+            if verbose:
+                extras = ["VCP"] if p_capture is not None else []
+                extra_str = f" [{', '.join(extras)}]" if extras else ""
+                print(
+                    f"Denoising with {n_post} posterior samples"
+                    f" (two-state){extra_str}, method='{method}'..."
+                )
+
+            # Accumulate per-draw results.
+            d_parts = []
+            v_parts = []
+            for i in range(n_post):
+                rng_key, draw_key = random.split(rng_key)
+
+                # Slice draw i from posterior samples, skipping
+                # p_capture which is handled separately.
+                draw_i = {
+                    k: v[i]
+                    for k, v in post.items()
+                    if k != "p_capture"
+                }
+                ts_alpha, ts_beta, ts_rate, _eff, _raw = (
+                    _twostate_dispatch_reparam(draw_i)
+                )
+
+                # p_capture may be (S, C) or None; slice to (C,).
+                pc_i = p_capture[i] if p_capture is not None else None
+
+                out_i = denoise_counts(
+                    counts=counts,
+                    p_capture=pc_i,
+                    method=method,
+                    rng_key=draw_key,
+                    return_variance=True,
+                    cell_batch_size=cell_batch_size,
+                    ts_alpha=ts_alpha,
+                    ts_beta=ts_beta,
+                    ts_rate=ts_rate,
+                )
+                d_parts.append(out_i["denoised_counts"])
+                v_parts.append(out_i["variance"])
+
+            d_all = jnp.stack(d_parts, axis=0)  # (S, C, G)
+            v_all = jnp.stack(v_parts, axis=0)
+
+            if return_variance:
+                result = {"denoised_counts": d_all, "variance": v_all}
+            else:
+                result = d_all
+
+        else:
+            # ── NB / BNB path (unchanged) ────────────────────────
+            r = self.posterior_samples["r"]
+            p = self.posterior_samples["p"]
+            p_capture = self.posterior_samples.get("p_capture")
+            gate = self.posterior_samples.get("gate")
+            is_mixture = (
+                self.n_components is not None and self.n_components > 1
+            )
+            mixing_weights = (
+                self.posterior_samples.get("mixing_weights")
+                if is_mixture
+                else None
+            )
+            bnb_concentration = self.posterior_samples.get(
+                "bnb_concentration"
+            )
+
+            if verbose:
+                extras = []
+                if p_capture is not None:
+                    extras.append("VCP")
+                if gate is not None:
+                    extras.append("gate")
+                extra_str = f" [{', '.join(extras)}]" if extras else ""
+                n_post = r.shape[0]
+                print(
+                    f"Denoising with {n_post} posterior samples"
+                    f" ({self.model_type}){extra_str},"
+                    f" method='{method}'..."
+                )
+
+            _post_layouts = _build_canonical_layouts(
+                self.posterior_samples,
+                self.model_config,
+                n_genes=self.n_genes,
+                n_cells=self.n_cells,
+                n_components=self.n_components,
+                has_sample_dim=True,
+            )
+
+            _, key_denoise = random.split(rng_key)
+            result = denoise_counts(
+                counts=counts,
+                r=r,
+                p=p,
+                p_capture=p_capture,
+                gate=gate,
+                method=method,
+                rng_key=key_denoise,
+                return_variance=return_variance,
+                mixing_weights=mixing_weights,
+                cell_batch_size=cell_batch_size,
+                bnb_concentration=bnb_concentration,
+                param_layouts=_post_layouts,
+            )
 
         if verbose:
             shape = (

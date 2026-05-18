@@ -848,6 +848,163 @@ pipeline frictionless.
    the corresponding sample-based DE workflow is forward work; see
    the broader DE plan for the projected design.
 
+## Bayesian denoising {#sec-twostate-denoising}
+
+The NB-family denoiser exploits Poisson–Gamma conjugacy to obtain a
+closed-form posterior for the true molecule count $m_{gc}$ given the
+observed UMI count $u_{gc}$.  The two-state model replaces the Gamma
+latent with a Beta latent $p_{gc}$, which breaks conjugacy but yields
+an equally clean quadrature solution.  We develop both the posterior
+mean and a sampling algorithm below.
+
+### Problem setup
+
+Recall the generative model with binomial capture
+(@sec-twostate-thinning):
+
+$$\begin{aligned}
+p_{gc} &\sim \mathrm{Beta}(\alpha_g, \beta_g),\\
+m_{gc} \mid p_{gc} &\sim \mathrm{Poisson}(\hat r_g\, p_{gc}),\\
+u_{gc} \mid m_{gc},\, \nu_c &\sim \mathrm{Binomial}(m_{gc}, \nu_c).
+\end{aligned}$${#eq-ts-denoise-gen}
+
+By the Poisson thinning property, the observed and *dropped* counts
+$d_{gc} = m_{gc} - u_{gc}$ are conditionally independent given
+$p_{gc}$:
+
+$$\begin{aligned}
+u_{gc} \mid p_{gc},\, \nu_c &\sim
+  \mathrm{Poisson}(\nu_c\, \hat r_g\, p_{gc}),\\
+d_{gc} \mid p_{gc},\, \nu_c &\sim
+  \mathrm{Poisson}\bigl((1-\nu_c)\, \hat r_g\, p_{gc}\bigr).
+\end{aligned}$${#eq-ts-denoise-thin}
+
+The denoising problem is: given the observed count $u_{gc}$ and the
+model parameters $(\alpha_g, \beta_g, \hat r_g, \nu_c)$, compute
+$\langle m_{gc} \mid u_{gc}\rangle$ or draw samples from
+$\pi(m_{gc} \mid u_{gc})$.
+
+### Posterior of the latent ON-fraction
+
+By Bayes' rule, the posterior of $p_{gc}$ given the observation is
+
+$$
+\pi(p \mid u) \propto
+  \mathrm{Poisson}(u \mid \nu\hat r\, p)
+  \;\cdot\;
+  \mathrm{Beta}(p \mid \alpha, \beta),
+$${#eq-ts-denoise-posterior}
+
+where we drop cell/gene subscripts for clarity.
+Expanding, the unnormalized log-posterior is
+
+$$
+\log\tilde\pi(p \mid u) =
+  (\alpha - 1)\log p + (\beta - 1)\log(1-p)
+  - \log B(\alpha,\beta)
+  + u\log(\nu\hat r\, p) - \nu\hat r\, p
+  - \log\Gamma(u+1).
+$${#eq-ts-denoise-logpost}
+
+The exponential tilt $e^{-\nu\hat r\, p}$ from the Poisson likelihood
+prevents the posterior from being a standard Beta.  We therefore
+evaluate it numerically using the same Gauss–Legendre quadrature
+infrastructure developed for the marginal log-likelihood in
+@sec-twostate-quadrature.
+
+Given $K$ Gauss–Legendre nodes $\{p_k\}_{k=1}^K$ and weights
+$\{w_k\}_{k=1}^K$ on $[0,1]$, the unnormalized posterior weight at
+each node is
+
+$$
+\tilde\pi_k \;=\; w_k \cdot
+  \mathrm{Beta}(p_k \mid \alpha,\beta)
+  \cdot
+  \mathrm{Poisson}(u \mid \nu\hat r\, p_k),
+$${#eq-ts-denoise-weights}
+
+and the normalizing constant is $Z = \sum_k \tilde\pi_k$.
+
+### Posterior mean of true counts
+
+Since $m = u + d$ and $d \mid p \sim \mathrm{Poisson}\bigl(
+(1-\nu)\hat r\, p\bigr)$, we have
+
+$$
+\langle m \mid u \rangle
+  = u + \langle d \mid u \rangle
+  = u + (1-\nu)\,\hat r\;\langle p \mid u \rangle,
+$${#eq-ts-denoise-mean}
+
+where the posterior mean of the latent ON-fraction is approximated by
+
+$$
+\langle p \mid u \rangle
+  \;\approx\;
+  \sum_{k=1}^K p_k \;\frac{\tilde\pi_k}{Z}.
+$${#eq-ts-denoise-Ep}
+
+### Posterior variance of true counts
+
+Since $u$ is fixed, $\mathrm{Var}(m \mid u) = \mathrm{Var}(d \mid u)$.
+Applying the law of total variance over $p$:
+
+$$
+\mathrm{Var}(d \mid u) =
+  \bigl\langle \mathrm{Var}(d \mid u, p) \bigr\rangle_{\!p|u}
+  + \mathrm{Var}_{p|u}\!\bigl(\langle d \mid u, p \rangle\bigr).
+$${#eq-ts-denoise-ltv}
+
+The within-variance is
+$\mathrm{Var}(d \mid u, p) = (1-\nu)\hat r\, p$ (Poisson), and the
+conditional mean is $\langle d \mid u, p\rangle = (1-\nu)\hat r\, p$.
+Therefore
+
+$$
+\mathrm{Var}(m \mid u) =
+  (1-\nu)\,\hat r\;\langle p \mid u \rangle
+  + \bigl[(1-\nu)\,\hat r\bigr]^2\,\mathrm{Var}(p \mid u),
+$${#eq-ts-denoise-var}
+
+where $\mathrm{Var}(p \mid u)
+= \langle p^2 \mid u\rangle - \langle p \mid u\rangle^2$ and
+$\langle p^2 \mid u\rangle \approx \sum_k p_k^2\, \tilde\pi_k / Z$.
+
+### Sampling from the posterior of true counts
+
+To draw samples of $m_{gc}$, we use an ancestral approach:
+
+1. **Sample $p^*$**: for each $(c,g)$, draw from the discrete
+   categorical distribution defined by $\{\tilde\pi_k / Z\}$ over the
+   quadrature grid (or a finer uniform grid with inverse-CDF
+   inversion).
+2. **Sample $d^*$**: draw
+   $d^* \sim \mathrm{Poisson}\bigl((1-\nu_c)\,\hat r_g\, p^*\bigr)$.
+3. **Compute $m^*$**: set $m^* = u_{gc} + d^*$.
+
+This produces samples that reflect the full posterior uncertainty,
+including the unobserved promoter activity.
+
+### Recovery of the NB limit
+
+When both $\alpha_g,\, \beta_g \gg 1$ (the NB limit; see
+@sec-twostate-nb-limit), the Beta prior concentrates around its
+mean $\alpha/(\alpha + \beta)$, the posterior
+$\pi(p \mid u)$ becomes a sharp peak, and
+
+$$
+\langle p \mid u \rangle
+  \;\to\;
+  \frac{\alpha}{\alpha + \beta},
+$$
+
+so that
+$\langle m \mid u \rangle \to u + (1-\nu)\hat r \cdot
+\alpha/(\alpha+\beta) = u + (1-\nu)\mu$,
+recovering the NB denoising formula.  This continuity ensures that
+the two-state denoiser gracefully reduces to the NB denoiser for
+genes that do not exhibit promoter switching.
+
 ## Practical recommendations {#sec-twostate-practical}
 
 The two-state likelihood is most useful as a *targeted refinement*

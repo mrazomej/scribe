@@ -67,6 +67,14 @@ from ._denoising_bnb import (  # noqa: F401
     _sample_p_posterior_bnb,
 )
 
+# Two-State (Poisson–Beta) quadrature/grid-sampling helpers
+from ._denoising_twostate import (  # noqa: F401
+    _TS_DENOISE_EPS,
+    _twostate_p_log_posterior_unnorm,
+    _denoise_twostate_quadrature,
+    _sample_p_posterior_twostate,
+)
+
 # Bayesian denoising core
 from ._denoising import (  # noqa: F401
     _VALID_DENOISE_METHODS,
@@ -104,6 +112,11 @@ __all__ = [
     "_bnb_p_log_posterior_unnorm",
     "_denoise_bnb_quadrature",
     "_sample_p_posterior_bnb",
+    # Two-State helpers
+    "_TS_DENOISE_EPS",
+    "_twostate_p_log_posterior_unnorm",
+    "_denoise_twostate_quadrature",
+    "_sample_p_posterior_twostate",
     # denoising
     "_VALID_DENOISE_METHODS",
     "_validate_denoise_method",

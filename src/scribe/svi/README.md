@@ -652,9 +652,12 @@ transformation and zero-inflation gate.
 
 Unlike biological PPCs (which sample synthetic counts from the prior NB),
 Bayesian denoising takes the *observed* count matrix and computes the posterior
-distribution of the true (pre-capture, pre-dropout) transcript counts.  The
-derivation exploits Poisson-Gamma conjugacy and the Poisson thinning property
-(see `paper/_denoising.qmd`).
+distribution of the true (pre-capture, pre-dropout) transcript counts.  For the
+NB/BNB family the derivation exploits Poisson-Gamma conjugacy and the Poisson
+thinning property (see `paper/_denoising.qmd`).  For the Two-State
+(Poisson–Beta compound) family, the posterior of the latent ON-fraction is
+integrated via Gauss–Legendre quadrature (see `paper/_two_state_promoter.qmd`,
+§sec-twostate-denoising).
 
 ```python
 # MAP-based denoising (single point estimate, fast)
@@ -688,7 +691,9 @@ result = results.denoise_counts_map(
 
 For NBDM models the denoised counts equal the observed counts (identity).
 For VCP models the per-cell capture probability inflates counts to recover
-the pre-capture expression level.  For ZINB models, zero observations are
+the pre-capture expression level.  For Two-State models the same VCP
+correction applies, with the quadrature path integrating over the latent
+promoter ON-fraction p_{gc}.  For ZINB models, zero observations are
 additionally corrected for technical dropout using the gate posterior.
 
 **Tuple Method for Independent Control of ZINB Zeros:**

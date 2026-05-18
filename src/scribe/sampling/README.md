@@ -13,30 +13,33 @@ workflows:
    from posterior parameter estimates, either using the full generative model
    (NB / ZINB / VCP / BNB / mixtures) or using only the biological NB
    component (stripping capture efficiency and zero-inflation).
-3. **Bayesian denoising** — compute the closed-form posterior of the true
-   (pre-capture, pre-dropout) transcript counts given observed UMI counts
-   and posterior parameter estimates.
+3. **Bayesian denoising** — compute the posterior of the true (pre-capture,
+   pre-dropout) transcript counts given observed UMI counts and posterior
+   parameter estimates. The NB/BNB family uses closed-form Poisson–Gamma
+   conjugacy; the Two-State (Poisson–Beta) family uses Gauss–Legendre
+   quadrature over the latent promoter ON-fraction.
 
 ## Module Layout
 
 ```
 sampling/
-├── __init__.py            # docstring + re-exports (backward-compatible)
-├── _helpers.py            # shared layout/slicing utilities
-├── _predictive.py         # variational & prior predictive sampling
-├── _biological_ppc.py     # biological NB PPC (no capture/ZI)
-├── _posterior_ppc.py      # full-model PPC (NB + ZINB + VCP + BNB + mixture)
-├── _denoising.py          # Bayesian denoising core
-└── _denoising_bnb.py      # BNB-specific quadrature helpers
+├── __init__.py              # docstring + re-exports (backward-compatible)
+├── _helpers.py              # shared layout/slicing utilities
+├── _predictive.py           # variational & prior predictive sampling
+├── _biological_ppc.py       # biological NB PPC (no capture/ZI)
+├── _posterior_ppc.py        # full-model PPC (NB + ZINB + VCP + BNB + mixture)
+├── _denoising.py            # Bayesian denoising core (dispatch + NB closed-form)
+├── _denoising_bnb.py        # BNB-specific quadrature helpers
+└── _denoising_twostate.py   # Two-State (Poisson–Beta) quadrature helpers
 ```
 
 ### Internal Dependencies
 
 ```
-_predictive.py        → _helpers.py
-_biological_ppc.py    → _helpers.py
-_posterior_ppc.py     → _helpers.py
-_denoising.py         → _helpers.py, _denoising_bnb.py
+_predictive.py           → _helpers.py
+_biological_ppc.py       → _helpers.py
+_posterior_ppc.py        → _helpers.py
+_denoising.py            → _helpers.py, _denoising_bnb.py, _denoising_twostate.py
 ```
 
 All public and underscore names used by external code are re-exported from
@@ -53,7 +56,7 @@ to work unchanged.
 | `generate_prior_predictive_samples` | `_predictive`     | Draw counts from the prior predictive                 |
 | `sample_biological_nb`              | `_biological_ppc` | Biological NB PPC (strips technical noise)            |
 | `sample_posterior_ppc`              | `_posterior_ppc`  | Full-model PPC (all noise components)                 |
-| `denoise_counts`                    | `_denoising`      | Bayesian denoising of observed UMI counts             |
+| `denoise_counts`                    | `_denoising`      | Bayesian denoising of observed UMI counts (NB + TwoState) |
 | `_build_canonical_layouts`          | `_helpers`        | Build `AxisLayout` dicts for canonical parameter keys |
 | `_slice_posterior_draw`             | `_helpers`        | Extract a single posterior draw using layout metadata |
 | `_slice_gene_axis`                  | `_helpers`        | Subset the gene dimension using layout metadata       |
@@ -105,6 +108,10 @@ variance array is discarded when the caller did not request it.
 - **`models.components.likelihoods.beta_negative_binomial`** provides
   `build_count_dist`, used by PPC and denoising to construct the
   appropriate NB/BNB distribution objects.
+- **`models.components.likelihoods.two_state`** provides
+  `_twostate_dispatch_reparam`, used by the SVI denoising mixin to
+  convert posterior parameter samples into `(α, β, r̂)` for the
+  Two-State quadrature denoiser.
 
 ## VAE Replay Modes and Parameter Binding
 
