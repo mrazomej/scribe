@@ -70,27 +70,50 @@ def empirical_log_mean_from_counts(
 
 
 def estimate_initial_mean_capture(model_config: Any, counts) -> float:
-    """Estimate the prior-mean per-cell capture probability.
+    """Estimate a robust initial-mean per-cell capture probability.
 
     Used to anchor ``mu`` at the pre-capture mean for TwoStateVCP
     fits (see module docstring for the closure-under-thinning
     rationale).
 
+    **This is an initialization heuristic, not a posterior estimate.**
+    We intentionally do **not** read the biology-informed prior
+    (``priors.eta_capture = (log_M_0, sigma_M)``) here.  That prior
+    encodes an order-of-magnitude *belief* about ``M_0``; when the
+    true posterior median of ``mean(p_capture)`` is far from the
+    prior median (the typical case for a loose prior),
+    using the prior median as a divisor for ``mu_init`` over-shoots
+    by exactly the ratio, leaving the anchor too high and the
+    posterior-predictive bands above the data.  Empirically a
+    ``M_0 = 100_000`` prior on a dataset whose fitted ``ν̄ ≈ 0.6``
+    yields a prior-implied ``mean(p_c) ≈ 0.16`` — an over-correction
+    of ~4× when used as an initialization divisor.
+
+    The robust alternative is a fixed conservative default
+    (Beta(1, 1) prior mean) that overshoots by at most ~2× for any
+    realistic ``ν̄``, which softplus-Normal can recover within a
+    modest number of SVI steps.  Users who want to override the
+    default can pass an explicit ``priors={"p_capture": (alpha,
+    beta)}`` with a tighter ``alpha / (alpha + beta)``.
+
     Parameters
     ----------
     model_config : ModelConfig
         Freshly built model config.  The ``base_model`` field plus
-        any ``priors`` extras determine which estimate is appropriate.
+        an explicit ``priors.p_capture`` tuple control the estimate.
     counts : array_like, shape ``(n_cells, n_genes)``
-        Observed count matrix; used only to compute library sizes
-        when the biology-informed prior is active.
+        Observed count matrix.  Not used in the current heuristic
+        but accepted for forward compatibility.
 
     Returns
     -------
     float
-        Estimated ``mean(p_capture)`` over cells under the configured
-        prior.  Returns ``1.0`` for non-VCP models.
+        Initial estimate of ``mean(p_capture)`` over cells.  Returns
+        ``1.0`` for non-VCP models; ``0.5`` for ``twostatevcp``
+        without an explicit Beta tuple; ``alpha / (alpha + beta)``
+        when ``priors.p_capture = (alpha, beta)``.
     """
+    del counts  # not used by the current heuristic
     base_model = getattr(model_config, "base_model", None)
     if base_model != "twostatevcp":
         return 1.0
@@ -99,25 +122,10 @@ def estimate_initial_mean_capture(model_config: Any, counts) -> float:
         getattr(model_config.priors, "__pydantic_extra__", None) or {}
     )
 
-    # 1) Biology-informed capture prior: ``priors.eta_capture =
-    #    (log_M_0, sigma_M)``.  Under
-    #    ``eta_c ~ Normal(log_M_0 - log(L_c), sigma_M^2)``,
-    #    ``E[p_c] = exp(-eta_c) ≈ L_c / M_0`` ignoring the small
-    #    Jensen correction.  Average over cells to get
-    #    ``mean(p_c) ≈ mean(L_c) / M_0``.
-    eta_prior = extras.get("eta_capture")
-    if eta_prior is not None and len(eta_prior) >= 1:
-        log_M0 = float(eta_prior[0])
-        lib_sizes = jnp.asarray(counts, dtype=jnp.float32).sum(axis=-1)
-        lib_sizes = jnp.maximum(lib_sizes, 1.0)
-        mean_capture = float(jnp.mean(lib_sizes) / jnp.exp(log_M0))
-        # Defensive clamp: any estimate outside (0, 1) is meaningless
-        # for a probability; fall back to the Beta(1, 1) prior mean.
-        if mean_capture <= 0.0 or mean_capture >= 1.0:
-            return 0.5
-        return mean_capture
-
-    # 2) Flat Beta prior tuple: priors.p_capture = (alpha, beta).
+    # Explicit flat Beta prior: priors.p_capture = (alpha, beta).
+    # Honour the user's intended prior mean as the initialization
+    # divisor — this is the one place the user can control the
+    # anchor without overriding the entire ``priors.mu`` block.
     p_cap_prior = extras.get("p_capture")
     if (
         p_cap_prior is not None
@@ -128,7 +136,7 @@ def estimate_initial_mean_capture(model_config: Any, counts) -> float:
         if a > 0 and b > 0:
             return a / (a + b)
 
-    # 3) Default: Beta(1, 1) prior mean.
+    # Default for twostatevcp: Beta(1, 1) prior mean = 0.5.
     return 0.5
 
 

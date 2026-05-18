@@ -140,17 +140,28 @@ class TestEstimateInitialMeanCapture:
 
         assert estimate_initial_mean_capture(_Cfg(), jnp.zeros((4, 2))) == 1.0
 
-    def test_biology_informed_uses_lib_sizes_over_M0(self):
-        """``priors.eta_capture = (log_M_0, sigma_M)`` activates the
-        biology-informed estimate ``mean(L_c) / M_0``."""
+    def test_biology_informed_prior_does_not_drive_anchor(self):
+        """``priors.eta_capture`` is intentionally **not** used as the
+        initialization divisor.
+
+        The bio-informed prior is an order-of-magnitude *belief* about
+        ``M_0``, not a fitted estimate.  When the true posterior median
+        of ``mean(p_capture)`` is far from the prior median, using the
+        prior as a divisor overshoots and pushes the variational
+        ``mu_loc`` too high — the posterior-predictive bands then sit
+        above the data.  The estimator falls back to the robust 0.5
+        default and lets SVI recover the right anchor from there.
+        """
         from scribe.core.twostate_data_init import (
             estimate_initial_mean_capture,
         )
 
-        # Synthesize counts with known library sizes ~ 32000 per cell.
         rng = np.random.default_rng(0)
         n_cells, n_genes = 100, 20
         counts = rng.multinomial(32_000, np.ones(n_genes) / n_genes, n_cells)
+        # A tight bio-informed prior at log_M0 = log(50000) would
+        # imply mean(L_c)/M_0 ~ 0.64 if used as the divisor.  The
+        # heuristic ignores it and falls back to the Beta(1, 1) mean.
         log_M0 = float(np.log(50_000))
 
         class _Priors:
@@ -161,8 +172,7 @@ class TestEstimateInitialMeanCapture:
             priors = _Priors()
 
         estimate = estimate_initial_mean_capture(_Cfg(), jnp.asarray(counts))
-        # Expect mean(lib) / M_0 = 32000 / 50000 = 0.64.
-        assert abs(estimate - 0.64) < 0.02
+        assert estimate == 0.5
 
     def test_flat_beta_prior_uses_alpha_over_alpha_plus_beta(self):
         """``priors.p_capture = (alpha, beta)`` activates the flat-Beta
