@@ -109,9 +109,29 @@ def estimate_initial_mean_capture(model_config: Any, counts) -> float:
     -------
     float
         Initial estimate of ``mean(p_capture)`` over cells.  Returns
-        ``1.0`` for non-VCP models; ``0.5`` for ``twostatevcp``
-        without an explicit Beta tuple; ``alpha / (alpha + beta)``
-        when ``priors.p_capture = (alpha, beta)``.
+        ``1.0`` for non-VCP models and for ``twostatevcp`` without an
+        explicit Beta tuple; ``alpha / (alpha + beta)`` when
+        ``priors.p_capture = (alpha, beta)``.
+
+    Note
+    ----
+    The default for ``twostatevcp`` was previously ``0.5`` — a
+    conservative divisor intended to nudge the anchor up to account
+    for capture loss.  Empirically this still left the anchor away
+    from the true pre-capture mean by a non-trivial factor (the
+    posterior median of ``mean(p_capture)`` is rarely exactly 0.5),
+    and the resulting under/over-shoot in the unconstrained
+    ``mu_loc`` was slow to recover under softplus.
+
+    The proper fix is on the *transform* side: when ``mu`` uses an
+    exp transform (LogNormal on the constrained scale), the
+    optimizer takes multiplicative steps in ``mu`` and recovers the
+    correct pre-capture mean in a few SVI iterations even when the
+    anchor is off by the capture factor.  Returning ``1.0`` here
+    keeps the anchor at the *observed* per-gene mean and defers
+    the capture-loss correction to the optimizer, which is the
+    cleaner separation.  Users who still want a pre-correction can
+    supply ``priors.p_capture = (alpha, beta)`` explicitly.
     """
     del counts  # not used by the current heuristic
     base_model = getattr(model_config, "base_model", None)
@@ -136,8 +156,10 @@ def estimate_initial_mean_capture(model_config: Any, counts) -> float:
         if a > 0 and b > 0:
             return a / (a + b)
 
-    # Default for twostatevcp: Beta(1, 1) prior mean = 0.5.
-    return 0.5
+    # Default for twostatevcp: no pre-correction; anchor at the
+    # observed per-gene mean and let the optimizer (especially under
+    # ``positive_transform={"mu": "exp"}``) recover the capture loss.
+    return 1.0
 
 
 def empirical_mu_anchor_from_counts(
@@ -238,7 +260,14 @@ def inject_twostate_data_init(model_config, counts):
         New ``ModelConfig`` with the priors extras augmented.  The
         original is not mutated.
     """
-    transform = getattr(model_config, "positive_transform", "softplus")
+    # The anchor is for ``mu`` specifically, so resolve the per-parameter
+    # positive transform (handles both string and Dict[str, str] forms
+    # of ``ModelConfig.positive_transform``).  Falls back to a direct
+    # field read for legacy configs missing the resolver.
+    if hasattr(model_config, "resolve_positive_transform"):
+        transform = model_config.resolve_positive_transform("mu")
+    else:
+        transform = getattr(model_config, "positive_transform", "softplus")
     mean_capture = estimate_initial_mean_capture(model_config, counts)
     mu_prior_loc = empirical_mu_anchor_from_counts(
         counts, transform=transform, mean_capture=mean_capture

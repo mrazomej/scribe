@@ -1,7 +1,7 @@
 """Base model configuration classes using Pydantic."""
 
 import math
-from typing import Optional, Set, Dict, Any, List, Tuple
+from typing import Optional, Set, Dict, Any, List, Tuple, Union
 from pydantic import (
     BaseModel,
     Field,
@@ -405,14 +405,27 @@ class ModelConfig(BaseModel):
 
     # Positive-parameter transform for hierarchical specs.
     # Controls how unconstrained Normal samples are mapped to (0, inf).
-    positive_transform: str = Field(
+    positive_transform: Union[str, Dict[str, str]] = Field(
         "softplus",
         description=(
-            "Transform for positive-valued hierarchical parameters "
-            "(phi, mu, r). 'softplus' (default) prevents float32 overflow "
-            "via log(1+exp(z)); 'exp' restores the original log-Normal "
-            "behavior via exp(z). Power users may prefer 'exp' for exact "
-            "log-Normal priors at the cost of numerical stability."
+            "Transform for positive-valued hierarchical parameters. "
+            "Two forms are accepted: "
+            "(1) a single string ('softplus' or 'exp') applied to every "
+            "positive parameter — backward-compatible with the original "
+            "field; "
+            "(2) a per-parameter dict, e.g. ``{'mu': 'exp'}`` — listed "
+            "parameters use the specified transform, every other "
+            "positive parameter defaults to 'softplus'. "
+            "Keys in the dict can be internal names ('mu', 'r', "
+            "'p_capture', 'burst_size', 'k_off', 'excess_fano', "
+            "'inv_concentration', ...) or descriptive aliases registered "
+            "in parameter_mapping.py ('mean_expression', 'dispersion', "
+            "'capture_prob', 'capture_efficiency', ...). "
+            "'softplus' prevents float32 overflow via log(1+exp(z)); "
+            "'exp' gives an exact log-Normal prior — preferable for "
+            "parameters that span multiple orders of magnitude (e.g. "
+            "mu) where softplus's asymptotically-linear regime gives "
+            "the optimizer additive-step geometry."
         ),
     )
 
@@ -722,11 +735,48 @@ class ModelConfig(BaseModel):
                 )
 
         # --- positive_transform validation ------------------------------------
+        # Two valid forms:
+        #   (1) string: applies to all positive parameters
+        #   (2) dict:   per-parameter override; unlisted params default
+        #               to "softplus".  Keys may be internal names or
+        #               descriptive aliases — they are normalized to
+        #               internal names here.
         valid_transforms = {"softplus", "exp"}
-        if self.positive_transform not in valid_transforms:
+        if isinstance(self.positive_transform, str):
+            if self.positive_transform not in valid_transforms:
+                raise ValueError(
+                    f"positive_transform must be one of {valid_transforms}, "
+                    f"got {self.positive_transform!r}."
+                )
+        elif isinstance(self.positive_transform, dict):
+            from .parameter_mapping import (
+                _DESCRIPTIVE_TO_INTERNAL,
+                PRIOR_KEY_ALIASES,
+            )
+
+            # Normalize keys to internal names so the resolver only
+            # ever has to look up internal keys.  Both alias maps are
+            # used (descriptive-result-names and prior-dict aliases).
+            normalized: Dict[str, str] = {}
+            for key, value in self.positive_transform.items():
+                if value not in valid_transforms:
+                    raise ValueError(
+                        f"positive_transform[{key!r}] = {value!r}; "
+                        f"expected one of {valid_transforms}."
+                    )
+                internal = (
+                    _DESCRIPTIVE_TO_INTERNAL.get(key)
+                    or PRIOR_KEY_ALIASES.get(key)
+                    or key
+                )
+                normalized[internal] = value
+            # Pydantic v2 ``frozen=True`` rejects direct attribute
+            # assignment; round-trip via __dict__ for normalization.
+            object.__setattr__(self, "positive_transform", normalized)
+        else:
             raise ValueError(
-                f"positive_transform must be one of {valid_transforms}, "
-                f"got {self.positive_transform!r}."
+                "positive_transform must be a string or a "
+                f"Dict[str, str]; got {type(self.positive_transform).__name__}."
             )
 
         # --- eta_capture_guide validation ------------------------------------
@@ -1207,6 +1257,41 @@ class ModelConfig(BaseModel):
         return (
             self.zero_inflation_dataset_prior == HierarchicalPriorType.HORSESHOE
         )
+
+    def resolve_positive_transform(self, param_name: str) -> str:
+        """Resolve the positive transform for a single parameter.
+
+        Returns the configured transform (``"softplus"`` or ``"exp"``)
+        for ``param_name``.  Handles both the string and dict forms of
+        ``self.positive_transform``:
+
+        * String: the same transform applies to every positive
+          parameter — return it directly.
+        * Dict: look up ``param_name`` in the (already-normalized-to-
+          internal-keys) dict; fall back to ``"softplus"`` for
+          parameters not explicitly listed.
+
+        Callers in the factory / spec builders use this in place of
+        reading ``model_config.positive_transform`` directly so that
+        per-parameter overrides take effect.
+
+        Parameters
+        ----------
+        param_name : str
+            Internal parameter name (e.g. ``"mu"``, ``"burst_size"``,
+            ``"k_off"``).  Descriptive aliases were already
+            normalized to internal names at validation time, so callers
+            in the factory should pass internal names.
+
+        Returns
+        -------
+        str
+            ``"softplus"`` or ``"exp"``.
+        """
+        pt = self.positive_transform
+        if isinstance(pt, str):
+            return pt
+        return pt.get(param_name, "softplus")
 
     @property
     def hierarchical_datasets(self) -> bool:

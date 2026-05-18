@@ -45,14 +45,20 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_positive_transform(model_config) -> dist.transforms.Transform:
-    """Return the positive-constraint transform from ``model_config``.
+def _resolve_positive_transform(
+    model_config, param_name: str = ""
+) -> dist.transforms.Transform:
+    """Return the positive-constraint transform for a named parameter.
 
-    Reads ``model_config.positive_transform`` (``"softplus"`` or ``"exp"``)
-    and returns the matching NumPyro transform.  Defaults to SoftplusTransform
-    when the attribute is missing.
+    Honours ``ModelConfig.positive_transform`` in both its forms:
+    a plain string (global default) or a ``Dict[str, str]`` (per-
+    parameter override; unlisted parameters fall back to softplus).
+    Defaults to SoftplusTransform when the attribute is missing.
     """
-    _pt = getattr(model_config, "positive_transform", "softplus")
+    if hasattr(model_config, "resolve_positive_transform"):
+        _pt = model_config.resolve_positive_transform(param_name)
+    else:
+        _pt = getattr(model_config, "positive_transform", "softplus")
     if _pt == "softplus":
         return dist.transforms.SoftplusTransform()
     return dist.transforms.ExpTransform()
@@ -351,7 +357,7 @@ def setup_guide(
     jnp.ndarray
         Sampled parameter value in constrained (positive) space.
     """
-    pos_transform = _resolve_positive_transform(model_config)
+    pos_transform = _resolve_positive_transform(model_config, spec.name)
 
     resolved_shape = resolve_shape(
         spec.shape_dims,

@@ -297,14 +297,25 @@ def _create_vae_model(
     else:
         decoder_hidden_override = None
 
-    # Resolve positive transform for unconstrained positive-valued parameters.
-    # Fallback to "exp" preserves behavior for legacy configs missing the field.
-    _pt = getattr(model_config, "positive_transform", "exp")
-    _pos_transform = (
-        npdist.transforms.SoftplusTransform()
-        if _pt == "softplus"
-        else npdist.transforms.ExpTransform()
-    )
+    # Resolve positive transform for unconstrained positive-valued parameters
+    # on a per-parameter basis.  ``ModelConfig.positive_transform`` may be
+    # either a string (global default) or a Dict[str, str] (per-parameter
+    # override; unlisted parameters fall back to softplus).  This helper
+    # returns a fresh numpyro Transform for the named parameter, mirroring
+    # the helper defined in ``create_model``.
+    def _pos_transform_for_name(_name: str) -> npdist.transforms.Transform:
+        _kind = (
+            model_config.resolve_positive_transform(_name)
+            if hasattr(model_config, "resolve_positive_transform")
+            # Legacy configs (no ``positive_transform`` field at all) fall
+            # back to "exp" to preserve historical behavior.
+            else getattr(model_config, "positive_transform", "exp")
+        )
+        return (
+            npdist.transforms.SoftplusTransform()
+            if _kind == "softplus"
+            else npdist.transforms.ExpTransform()
+        )
 
     # 1. Build decoder output heads from parameterization (with optional
     #    overrides)
@@ -510,7 +521,7 @@ def _create_vae_model(
                     != HierarchicalPriorType.NONE
                 ),
                 model_config=model_config,
-                positive_transform=_pos_transform,
+                positive_transform=_pos_transform_for_name(param_name),
             )
             extra_specs.extend(specs)
 
@@ -917,12 +928,21 @@ def create_model(
     param_strategy = PARAMETERIZATIONS[param_key]
 
     # Resolve the positive-parameter transform from config.
-    # "softplus" prevents float32 overflow; "exp" is the classic log-Normal.
-    _pos_transform = (
-        npdist.transforms.SoftplusTransform()
-        if model_config.positive_transform == "softplus"
-        else npdist.transforms.ExpTransform()
-    )
+    # The config supports both forms:
+    #   - string: applies the same transform to every positive
+    #     parameter (the legacy behavior).
+    #   - dict:   per-parameter override; unlisted params default to
+    #     "softplus".  Resolved per-spec below via
+    #     ``model_config.resolve_positive_transform(spec_name)``.
+    # ``_pos_transform_for_name`` returns a fresh numpyro Transform
+    # instance for a given parameter name.
+    def _pos_transform_for_name(_name: str) -> npdist.transforms.Transform:
+        _kind = model_config.resolve_positive_transform(_name)
+        return (
+            npdist.transforms.SoftplusTransform()
+            if _kind == "softplus"
+            else npdist.transforms.ExpTransform()
+        )
 
     # Validate model type
     base_model = model_config.base_model
@@ -974,10 +994,12 @@ def create_model(
 
     # Override the default ExpTransform on any flat PositiveNormalSpec created
     # by the parameterization strategy (e.g. phi, mu, r before hierarchy).
+    # Per-spec resolution honors per-parameter overrides in the dict form
+    # of ``positive_transform``.
     for i, spec in enumerate(param_specs):
         if isinstance(spec, PositiveNormalSpec):
             param_specs[i] = spec.model_copy(
-                update={"transform": _pos_transform}
+                update={"transform": _pos_transform_for_name(spec.name)}
             )
 
     # TwoState data-driven init: when the priors carry an empirical
@@ -1023,26 +1045,31 @@ def create_model(
     # ==========================================================================
     _NONE = HierarchicalPriorType.NONE
     if model_config.prob_prior != _NONE:
+        # Target is "phi" for mean_odds, "p" otherwise (matches the
+        # target_name resolution inside _hierarchicalize_p).
+        _p_target = "phi" if param_key == "mean_odds" else "p"
         param_specs = _hierarchicalize_p(
             param_specs=param_specs,
             param_key=param_key,
             guide_families=guide_families,
             n_components=model_config.n_components,
             mixture_params=effective_mixture_params,
-            positive_transform=_pos_transform,
+            positive_transform=_pos_transform_for_name(_p_target),
         )
 
     # ==========================================================================
     # Step 4.55: Apply gene-level mu hierarchy (across-component shrinkage)
     # ==========================================================================
     if model_config.expression_prior != _NONE:
+        # Target is "mu" for mean_prob/mean_odds, "r" otherwise.
+        _mu_target = "mu" if param_key in ("mean_prob", "mean_odds") else "r"
         param_specs = _hierarchicalize_mu(
             param_specs=param_specs,
             param_key=param_key,
             guide_families=guide_families,
             n_components=model_config.n_components,
             mixture_params=effective_mixture_params,
-            positive_transform=_pos_transform,
+            positive_transform=_pos_transform_for_name(_mu_target),
         )
 
     # ==========================================================================
@@ -1076,19 +1103,23 @@ def create_model(
 
         # Hierarchical mu/r across datasets
         if model_config.expression_dataset_prior != _NONE:
+            _mu_target = (
+                "mu" if param_key in ("mean_prob", "mean_odds") else "r"
+            )
             param_specs = _datasetify_mu(
                 param_specs=param_specs,
                 param_key=param_key,
                 guide_families=guide_families,
                 n_datasets=n_ds,
                 shared_component_indices=_sci,
-                positive_transform=_pos_transform,
+                positive_transform=_pos_transform_for_name(_mu_target),
             )
 
         # Dataset-level p/phi — resolve structural mode
         if model_config.prob_dataset_prior != _NONE:
             dataset_p_mode = model_config.hierarchical_dataset_p
             if dataset_p_mode in ("scalar", "gene_specific"):
+                _p_target = "phi" if param_key == "mean_odds" else "p"
                 param_specs = _datasetify_p(
                     param_specs=param_specs,
                     param_key=param_key,
@@ -1096,7 +1127,7 @@ def create_model(
                     n_datasets=n_ds,
                     mode=dataset_p_mode,
                     shared_component_indices=_sci,
-                    positive_transform=_pos_transform,
+                    positive_transform=_pos_transform_for_name(_p_target),
                 )
 
     # ==========================================================================
@@ -1166,7 +1197,7 @@ def create_model(
             mixture_params=effective_mixture_params,
             hierarchical_gate=effective_hierarchical_gate,
             model_config=model_config,
-            positive_transform=_pos_transform,
+            positive_transform=_pos_transform_for_name(param_name),
         )
         param_specs.extend(extra_specs)
 

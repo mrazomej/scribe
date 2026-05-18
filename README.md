@@ -286,6 +286,39 @@ This mirrors the NBDM family's constrained guide support. Set
 `unconstrained=False` in the model config (or omit `.unconstrained()` in
 the builder) to use the constrained path.
 
+##### Per-parameter `positive_transform`
+
+Under ``unconstrained=True`` every positive parameter is sampled as a
+``Normal`` on the unconstrained real line and mapped to the constrained
+support through a positivity transform. Scribe lets you pick the
+transform either globally or per parameter:
+
+```python
+# Global (every positive parameter uses softplus)
+scribe.fit(..., positive_transform="softplus")
+
+# Global exp
+scribe.fit(..., positive_transform="exp")
+
+# Per-parameter override: mu uses exp, everything else stays softplus
+scribe.fit(..., positive_transform={"mu": "exp"})
+
+# Descriptive aliases work too
+scribe.fit(..., positive_transform={"mean_expression": "exp"})
+```
+
+**Default for the TwoState family**: ``{"mu": "exp"}``. Other positive
+parameters (``burst_size``, ``k_off``, ``p_capture``, ...) keep
+softplus. The ``softplus`` Jacobian saturates to 1 in the large-loc
+regime, leaving the optimizer with *additive*-step geometry on a
+quantity that varies multiplicatively across ~3-5 orders of magnitude
+between genes — SVI then needs many thousands of iterations to climb
+to the right gene-mean. ``exp`` (i.e. LogNormal on the constrained
+side) gives the optimizer *multiplicative*-step geometry, recovering
+the correct gene mean in a small number of steps even when the
+data-driven anchor is off by the capture factor. For other models
+the default is ``"softplus"`` (legacy behavior).
+
 **Phase 1 limitations**: mixtures, VAE inference, multi-dataset indexing, BNB
 overdispersion, and the Poisson-Gamma denoiser are not yet wired for the
 TwoState family. Biology-informed capture priors *are* supported (via

@@ -110,6 +110,31 @@ if TYPE_CHECKING:
 # =============================================================================
 
 
+def _resolve_pos_transform_for(
+    pt, name: str
+) -> Optional[dist.transforms.Transform]:
+    """Return a concrete positive-constraint transform for a named parameter.
+
+    Posterior helpers receive ``pos_transform`` as either:
+
+      * a single :class:`numpyro.distributions.transforms.Transform`
+        (legacy / string form of ``ModelConfig.positive_transform``),
+      * a callable mapping parameter names to ``Transform`` instances
+        (new dict form with mixed values; built in
+        :func:`build_posterior_distributions`),
+      * ``None`` (rare; preserved for backward compatibility).
+
+    Use this helper at any leaf site that needs a *concrete* ``Transform``
+    for a known target parameter; it short-circuits on the legacy form
+    and only invokes the callable when needed.
+    """
+    if pt is None:
+        return None
+    if callable(pt) and not isinstance(pt, dist.transforms.Transform):
+        return pt(name)
+    return pt
+
+
 def _find_joint_prefix(
     params: Dict[str, jnp.ndarray],
     name: str,
@@ -1670,14 +1695,63 @@ def get_posterior_distributions(
     unconstrained = model_config.unconstrained
     is_mixture = model_config.is_mixture
 
-    # Resolve the positive-value transform from config (softplus or exp).
-    # Old pickled configs that lack the field default to "exp" via __setstate__.
-    _pt = getattr(model_config, "positive_transform", "exp")
-    pos_transform = (
-        dist.transforms.SoftplusTransform()
-        if _pt == "softplus"
-        else dist.transforms.ExpTransform()
-    )
+    # Resolve the positive-value transform from config.  Honours both
+    # the string form (``"softplus"`` or ``"exp"``) and the dict form
+    # (``{"<param>": "softplus" | "exp", ...}``) for per-parameter
+    # overrides.  When the dict carries mixed values, we build a
+    # callable resolver and let the per-parameter posterior builders
+    # query it.  For NB-family parameterizations that share a single
+    # transform across all positive parameters, the resolver collapses
+    # to that single transform (no behavior change).
+    _pt_raw = getattr(model_config, "positive_transform", "exp")
+
+    def _kind_to_transform(_kind: str) -> dist.transforms.Transform:
+        return (
+            dist.transforms.SoftplusTransform()
+            if _kind == "softplus"
+            else dist.transforms.ExpTransform()
+        )
+
+    if isinstance(_pt_raw, dict):
+        _kinds_in_dict = set(_pt_raw.values()) or {"softplus"}
+        if len(_kinds_in_dict) == 1:
+            # Uniform dict — collapse to the single transform.
+            pos_transform = _kind_to_transform(next(iter(_kinds_in_dict)))
+        else:
+            # Mixed transforms.  Build a per-name resolver.  Honours
+            # ``ModelConfig.resolve_positive_transform`` which handles
+            # descriptive-alias normalization (e.g. ``"mean_expression"``
+            # → ``"mu"``).
+            def _resolver(_name: str) -> dist.transforms.Transform:
+                if hasattr(model_config, "resolve_positive_transform"):
+                    return _kind_to_transform(
+                        model_config.resolve_positive_transform(_name)
+                    )
+                # Fallback: direct dict lookup with softplus default.
+                return _kind_to_transform(
+                    _pt_raw.get(_name, "softplus")
+                )
+
+            # Only TwoState posteriors thread the per-name resolver
+            # through.  Other base parameterizations still expect a
+            # single Transform; fail loud rather than silently emit
+            # wrong posterior shapes.
+            if parameterization not in (
+                Parameterization.TWO_STATE_NATURAL,
+                Parameterization.TWO_STATE_RATIO,
+                Parameterization.TWO_STATE_MEAN_FANO,
+                Parameterization.TWO_STATE_MOMENT_DELTA,
+            ):
+                raise NotImplementedError(
+                    "Per-parameter positive_transform (dict form with "
+                    "mixed values) is only supported for the TwoState "
+                    "family in phase 1.  For other parameterizations, "
+                    "pass a single string (\"softplus\" or \"exp\") or "
+                    "a dict where all entries share the same value."
+                )
+            pos_transform = _resolver
+    else:
+        pos_transform = _kind_to_transform(_pt_raw)
 
     # Detect low-rank guides by checking for the W + raw_diag param pairs
     # that LowRankMVN guides always emit.
@@ -1697,6 +1771,31 @@ def get_posterior_distributions(
     skip |= flow_skip
 
     # --- Execute the pipeline (ordering matters — see docstring) ----------
+
+    # Pre-resolve per-helper positive transforms when ``pos_transform``
+    # is the per-name resolver callable (dict form of
+    # ``ModelConfig.positive_transform`` with mixed values).  Each
+    # hierarchy / dataset helper has a SINGLE positive target so we
+    # collapse to one ``Transform`` at the call site; for legacy
+    # single-Transform inputs ``_resolve_pos_transform_for`` is a
+    # no-op.  ``_apply_base_parameterization`` keeps the callable
+    # because its TwoState branch threads it into the per-name builder.
+    _is_mean_odds_family = parameterization in (
+        Parameterization.MEAN_ODDS,
+        Parameterization.ODDS_RATIO,
+    )
+    _is_mean_family = parameterization in (
+        Parameterization.MEAN_PROB,
+        Parameterization.LINKED,
+        Parameterization.MEAN_ODDS,
+        Parameterization.ODDS_RATIO,
+        Parameterization.TWO_STATE_NATURAL,
+        Parameterization.TWO_STATE_RATIO,
+        Parameterization.TWO_STATE_MEAN_FANO,
+        Parameterization.TWO_STATE_MOMENT_DELTA,
+    )
+    _p_target = "phi" if _is_mean_odds_family else "p"
+    _mu_target = "mu" if _is_mean_family else "r"
 
     _apply_base_parameterization(  # Pass 1
         distributions,
@@ -1718,7 +1817,7 @@ def get_posterior_distributions(
         low_rank,
         split,
         flow_skip,
-        pos_transform=pos_transform,
+        pos_transform=_resolve_pos_transform_for(pos_transform, _p_target),
     )
     _apply_gene_level_mu_hierarchy(  # Pass 2b: mu/r
         distributions,
@@ -1729,7 +1828,7 @@ def get_posterior_distributions(
         low_rank,
         split,
         flow_skip,
-        pos_transform=pos_transform,
+        pos_transform=_resolve_pos_transform_for(pos_transform, _mu_target),
     )
     _apply_dataset_hierarchy_mu(  # Pass 3
         distributions,
@@ -1739,7 +1838,7 @@ def get_posterior_distributions(
         is_mixture,
         low_rank,
         split,
-        pos_transform=pos_transform,
+        pos_transform=_resolve_pos_transform_for(pos_transform, _mu_target),
     )
     _apply_dataset_hierarchy_p(  # Pass 4
         distributions,
@@ -1749,7 +1848,7 @@ def get_posterior_distributions(
         is_mixture,
         low_rank,
         split,
-        pos_transform=pos_transform,
+        pos_transform=_resolve_pos_transform_for(pos_transform, _p_target),
     )
     _apply_dataset_hierarchy_gate(  # Pass 5
         distributions,
@@ -1774,14 +1873,24 @@ def get_posterior_distributions(
         parameterization,
         unconstrained,
         split,
-        pos_transform=pos_transform,
+        # ``_apply_capture`` only uses the positive transform along the
+        # biology-informed branch (for ``eta_capture``).  TwoStateVCP
+        # phase-1 forbids that branch, so this resolution is a no-op
+        # there; for non-TwoState families ``pos_transform`` is
+        # guaranteed to already be a single Transform by the top-level
+        # mixed-dict guard in this function.
+        pos_transform=_resolve_pos_transform_for(
+            pos_transform, "eta_capture"
+        ),
     )
     _apply_bnb_concentration(  # Pass 7b
         distributions,
         params,
         model_config,
         low_rank,
-        pos_transform=pos_transform,
+        pos_transform=_resolve_pos_transform_for(
+            pos_transform, "bnb_concentration"
+        ),
     )
     _apply_mixture_weights(distributions, params, is_mixture)  # Pass 8
     _apply_joint_aggregation(distributions, params, model_config)  # Pass 9
@@ -3183,6 +3292,17 @@ def _build_two_state_posteriors(
                 )
             continue
 
+        # Resolve the positive transform for THIS parameter.  When
+        # ``pos_transform`` is the per-name resolver callable (dict
+        # form of ``ModelConfig.positive_transform``), call it with
+        # the current name; otherwise it is already a single Transform.
+        _pt_name = (
+            pos_transform(name)
+            if callable(pos_transform)
+            and not isinstance(pos_transform, dist.transforms.Transform)
+            else pos_transform
+        )
+
         if unconstrained:
             if jp is not None:
                 distributions[name] = _build_joint_low_rank_posterior(
@@ -3190,7 +3310,7 @@ def _build_two_state_posteriors(
                     name,
                     jp,
                     split,
-                    transform=pos_transform,
+                    transform=_pt_name,
                 )
             elif f"{name}_W" in params:
                 distributions[name] = (
@@ -3199,7 +3319,7 @@ def _build_two_state_posteriors(
                         name,
                         is_mixture=False,
                         split=split,
-                        transform=pos_transform,
+                        transform=_pt_name,
                     )
                 )
             else:
@@ -3208,7 +3328,7 @@ def _build_two_state_posteriors(
                     name,
                     is_mixture=False,
                     split=split,
-                    transform=pos_transform,
+                    transform=_pt_name,
                 )
         else:
             if jp is not None:

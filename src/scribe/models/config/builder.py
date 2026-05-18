@@ -118,6 +118,11 @@ class ModelConfigBuilder:
         self._vae_params: Dict[str, Any] = {}
         self._d_mode: str = "low_rank"
         self._alr_reference_idx: int = -1
+        # Positive-parameter transform: ``"softplus"``, ``"exp"``, or
+        # a ``Dict[str, str]`` for per-parameter overrides (the dict
+        # form is normalized to internal names by ``ModelConfig``'s
+        # validator).  Default ``"softplus"`` matches ``ModelConfig``.
+        self._positive_transform = "softplus"
 
     # --------------------------------------------------------------------------
 
@@ -787,4 +792,5 @@ class ModelConfigBuilder:
             vae=vae_config,
             d_mode=self._d_mode,
             alr_reference_idx=getattr(self, "_alr_reference_idx", -1),
+            positive_transform=self._positive_transform,
         )

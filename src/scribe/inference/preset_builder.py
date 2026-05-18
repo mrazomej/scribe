@@ -54,6 +54,11 @@ def build_config_from_preset(
     parameterization: str = "canonical",
     inference_method: str = "svi",
     unconstrained: bool = False,
+    # ``None`` triggers a model-aware default: ``{"mu": "exp"}`` for
+    # the TwoState family (gene mean on multiplicative SVI geometry,
+    # other positive parameters keep softplus), ``"softplus"``
+    # otherwise.  Any explicit value (string or dict) is honoured.
+    positive_transform: Optional[Union[str, Dict[str, str]]] = None,
     expression_prior: str = "none",
     prob_prior: str = "none",
     zero_inflation_prior: str = "none",
@@ -677,6 +682,32 @@ def build_config_from_preset(
 
     if model_lower == "pln":
         builder._d_mode = d_mode
+
+    # Forward positive_transform (string or per-parameter dict) to the
+    # underlying ``ModelConfig``.  The dict form is normalized to
+    # internal parameter names inside ``ModelConfig`` via its model
+    # validator, so descriptive aliases (``mean_expression`` →
+    # ``mu``, ``capture_prob`` → ``p_capture``, ...) work
+    # transparently when the user routes through ``scribe.fit``.
+    #
+    # Model-aware default: when the caller passes ``positive_transform=None``
+    # (the user did not set it explicitly), default to ``{"mu": "exp"}``
+    # for the TwoState family — exp on the gene mean is essentially
+    # mandatory for datasets spanning 3+ decades of expression because
+    # the softplus Jacobian saturates to 1 in the large-loc regime,
+    # leaving SVI with additive-step geometry on a multiplicative
+    # quantity.  Other positive parameters (``burst_size``, ``k_off``,
+    # ``p_capture``) keep softplus.  Other model families default to
+    # ``"softplus"`` (legacy behavior).  This selection happens AFTER
+    # ``model_lower`` resolution so the ``variable_capture`` upgrade of
+    # ``"twostate"`` → ``"twostatevcp"`` is handled consistently.
+    if positive_transform is None:
+        if model_lower in ("twostate", "twostatevcp"):
+            builder._positive_transform = {"mu": "exp"}
+        else:
+            builder._positive_transform = "softplus"
+    else:
+        builder._positive_transform = positive_transform
 
     return builder.build()
 

@@ -260,36 +260,73 @@ class TestTwoStateModelFlagsRouting:
 
 
 class TestTwoStateSamplingGates:
-    """``denoise_counts_*`` remain gated for TwoState in phase 1.
+    """``denoise_counts_*`` and biological PPC are now wired for the
+    TwoState family in phase 1.
 
-    Biological PPC is now wired for TwoState (closure under binomial
-    thinning makes the pre-capture rate the natural target) and no
-    longer raises — see ``test_get_ppc_samples_biological_wired``
-    below.
+    Closure under binomial thinning (TwoState §2.3 in the paper) makes
+    the pre-capture rate the natural denoising target, so both
+    ``denoise_counts_map`` and ``denoise_counts_posterior`` dispatch
+    into a Poisson–Beta quadrature path rather than raising
+    ``NotImplementedError`` as they did during early development.
     """
 
-    def test_denoise_counts_map_raises(self):
-        cfg = _build_valid_twostate("twostate")
-        # Stub a results-like object that exposes only what the gate reads.
-        from scribe.svi._sampling_denoising import DenoisingSamplingMixin
+    def test_denoise_counts_map_wired(self):
+        """MAP denoising reaches the TwoState quadrature dispatch."""
+        import scribe
+        import jax
 
-        class _Stub(DenoisingSamplingMixin):
-            model_config = cfg
+        rng = np.random.default_rng(0)
+        counts = np.stack(
+            [rng.poisson(m, 32) for m in [2.0, 5.0, 10.0, 50.0, 100.0]],
+            axis=1,
+        )
+        res = scribe.fit(
+            counts,
+            model="twostatevcp",
+            parameterization="natural",
+            inference_method="svi",
+            n_steps=2,
+            unconstrained=True,
+        )
+        # Should NOT raise.  Output shape is (n_cells, n_genes) for
+        # MAP denoising — one denoised count matrix.
+        denoised = res.denoise_counts_map(
+            counts=counts,
+            rng_key=jax.random.PRNGKey(0),
+        )
+        arr = np.asarray(denoised)
+        assert arr.shape == counts.shape, (
+            f"MAP denoised shape should match input counts; got {arr.shape}"
+        )
 
-        with pytest.raises(NotImplementedError, match="TwoState"):
-            _Stub().denoise_counts_map(jnp.zeros((1, 1), dtype=jnp.int32))
+    def test_denoise_counts_posterior_wired(self):
+        """Full-posterior denoising reaches the TwoState quadrature dispatch."""
+        import scribe
+        import jax
 
-    def test_denoise_counts_posterior_raises(self):
-        cfg = _build_valid_twostate("twostate")
-        from scribe.svi._sampling_denoising import DenoisingSamplingMixin
-
-        class _Stub(DenoisingSamplingMixin):
-            model_config = cfg
-
-        with pytest.raises(NotImplementedError, match="TwoState"):
-            _Stub().denoise_counts_posterior(
-                jnp.zeros((1, 1), dtype=jnp.int32)
-            )
+        rng = np.random.default_rng(0)
+        counts = np.stack(
+            [rng.poisson(m, 32) for m in [2.0, 5.0, 10.0, 50.0, 100.0]],
+            axis=1,
+        )
+        res = scribe.fit(
+            counts,
+            model="twostatevcp",
+            parameterization="natural",
+            inference_method="svi",
+            n_steps=2,
+            unconstrained=True,
+        )
+        # Should NOT raise.  Posterior denoising returns
+        # (n_samples, n_cells, n_genes).
+        denoised = res.denoise_counts_posterior(
+            counts=counts,
+            n_samples=2,
+            rng_key=jax.random.PRNGKey(0),
+        )
+        arr = np.asarray(denoised)
+        assert arr.ndim == 3
+        assert arr.shape[-2:] == counts.shape
 
     def test_get_ppc_samples_biological_wired(self):
         """Smoke check that biological PPC now reaches the TwoState

@@ -576,6 +576,47 @@ PLN, NBLN, LNM, and LNMVCP use their own decoder-based parameterizations
 auto-selected by the factory; the `parameterization` argument is not exposed
 for these families.
 
+### Positive-Parameter Transform
+
+When `unconstrained=True`, every positive parameter is sampled as a Normal
+on the unconstrained real line and mapped to the constrained support
+through a positivity transform. The `positive_transform` argument to
+`scribe.fit` (and `build_config_from_preset`) accepts:
+
+| Form                              | Meaning                                                                              |
+| --------------------------------- | ------------------------------------------------------------------------------------ |
+| `"softplus"` *(string)*           | Apply softplus to every positive parameter.                                          |
+| `"exp"` *(string)*                | Apply exp to every positive parameter (LogNormal on the constrained side).           |
+| `{"<param>": "exp", ...}` *(dict)* | Per-parameter override; unlisted parameters fall back to `"softplus"`.               |
+
+Dict keys can be internal names (`"mu"`, `"burst_size"`, `"k_off"`,
+`"p_capture"`, ...) or descriptive aliases registered in
+`parameter_mapping.py` (`"mean_expression"`, `"capture_prob"`,
+`"capture_efficiency"`, `"dispersion"`, ...). Descriptive aliases are
+normalized to internal names by the validator so factory code that
+queries `resolve_positive_transform("mu")` finds entries originally
+keyed as `"mean_expression"`.
+
+**Model-aware default**: `scribe.fit(..., positive_transform=None)`
+(the default) resolves to:
+
+- TwoState family (`"twostate"`, `"twostatevcp"`, or `"twostate" + variable_capture=True`):
+  `{"mu": "exp"}`. The softplus Jacobian saturates to 1 in the
+  large-loc regime, leaving the optimizer with additive-step geometry
+  on a quantity (`mu`) that varies multiplicatively across 3-5 orders
+  of magnitude between genes; SVI then needs many thousands of
+  iterations to climb to the right gene-mean. `exp` (i.e. LogNormal
+  on the constrained side) gives multiplicative-step geometry,
+  recovering the correct gene mean in a small number of steps even
+  when the data-driven anchor is off by the capture factor. Other
+  positive parameters (`burst_size`, `k_off`, `p_capture`) keep
+  softplus because they live in a narrower range where softplus's
+  better near-zero behaviour matters.
+- All other model families: `"softplus"` (legacy default).
+
+Any explicit value the user supplies (string or dict) overrides the
+default.
+
 ## Advanced Usage Examples
 
 ### Mixture Model Analysis

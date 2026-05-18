@@ -78,6 +78,39 @@ def fit(
     # Model options
     parameterization: str = "canonical",
     unconstrained: bool = False,
+    # Positive-parameter transform for unconstrained Normal-on-positive
+    # specs (``mu``, ``r``, ``burst_size``, ``k_off``, ...).  Accepts:
+    #
+    #   - a string ``"softplus"`` or ``"exp"`` — applied to every
+    #     positive parameter (global default);
+    #   - a ``Dict[str, str]`` for per-parameter overrides, e.g.
+    #     ``{"mu": "exp"}`` to use a LogNormal on ``mu`` while every
+    #     other positive parameter keeps the softplus default.  Keys
+    #     may be either internal names (``"mu"``, ``"burst_size"``,
+    #     ``"k_off"``, ``"p_capture"``, ...) or descriptive aliases
+    #     (``"mean_expression"``, ``"capture_prob"``, ``"capture_efficiency"``,
+    #     ``"dispersion"``, ...).
+    #
+    # ``"exp"`` gives a multiplicative-step optimizer geometry on the
+    # parameter — preferable for parameters that span multiple orders
+    # of magnitude across genes (the canonical example is ``mu`` in
+    # the TwoState family).  ``"softplus"`` is asymptotically linear
+    # and safer near zero (no float32 overflow), but its Jacobian
+    # ``sigmoid(loc)`` saturates to 1 in the large-loc regime, leaving
+    # the optimizer with additive-step geometry that can take many SVI
+    # iterations to traverse 3+ orders of magnitude in gene expression.
+    #
+    # Default behavior (``None``):
+    #   - TwoState family (``model in {"twostate", "twostatevcp"}``
+    #     and the ``variable_capture`` upgrade of the former):
+    #     ``{"mu": "exp"}`` — multiplicative SVI geometry on the gene
+    #     mean, which is essentially mandatory for datasets spanning
+    #     several decades of gene expression.  Other positive
+    #     parameters (``burst_size``, ``k_off``, ``p_capture``) keep
+    #     softplus.
+    #   - All other models: ``"softplus"`` (legacy behavior).
+    # Pass any explicit value (string or dict) to override.
+    positive_transform: Optional[Union[str, Dict[str, str]]] = None,
     expression_prior: str = "none",
     prob_prior: str = "none",
     zero_inflation_prior: str = "none",
@@ -1010,6 +1043,7 @@ def fit(
             zero_inflation=zero_inflation,
             parameterization=parameterization,
             unconstrained=unconstrained,
+            positive_transform=positive_transform,
             expression_prior=expression_prior,
             prob_prior=prob_prior,
             zero_inflation_prior=zero_inflation_prior,

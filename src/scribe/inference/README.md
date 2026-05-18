@@ -180,6 +180,20 @@ Build ModelConfig from preset parameters.
 - `parameterization`: Parameterization string
 - `inference_method`: Inference method string
 - `unconstrained`: Use unconstrained parameterization
+- `positive_transform`: Transform for positive-valued unconstrained
+  parameters (`mu`, `r`, `burst_size`, `k_off`, ...). Accepts either:
+  - a string (`"softplus"` or `"exp"`), applied globally;
+  - a `Dict[str, str]` for per-parameter overrides, e.g.
+    `{"mu": "exp"}` to use LogNormal-on-`mu` while keeping other
+    positive parameters on softplus. Dict keys may be internal names
+    (`"mu"`, `"burst_size"`, ...) or descriptive aliases registered
+    in `parameter_mapping.py` (`"mean_expression"`, `"capture_prob"`,
+    `"capture_efficiency"`, ...).
+  Default (when omitted): **`{"mu": "exp"}` for the TwoState family**
+  (`"twostate"`, `"twostatevcp"`, and the `variable_capture=True`
+  upgrade of `"twostate"`) — exp on the gene mean gives
+  multiplicative-step SVI geometry, essential for datasets spanning
+  several decades of gene expression. `"softplus"` for everyone else.
 - `guide_rank`: Rank for low-rank guide. Mutually exclusive with `guide_flow`.
 - `guide_flow`: Normalizing-flow type for the variational guide. Mutually
   exclusive with `guide_rank`. Supported: `"spline_coupling"`,

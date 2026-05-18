@@ -74,6 +74,12 @@ def _build_from_kwargs(ctx, kw, d_mode):
         parameterization=kw.get("parameterization", "canonical").lower(),
         inference_method=kw.get("inference_method", "svi").lower(),
         unconstrained=kw.get("unconstrained", False),
+        # ``None`` lets ``build_config_from_preset`` apply the model-
+        # aware default (``{"mu": "exp"}`` for TwoState, ``"softplus"``
+        # for everyone else).  If the user explicitly passed
+        # ``positive_transform=...`` to ``fit()``, that value is in
+        # ``kw`` and overrides the default.
+        positive_transform=kw.get("positive_transform"),
         expression_prior=kw.get("expression_prior", "none"),
         prob_prior=kw.get("prob_prior", "none"),
         zero_inflation_prior=kw.get("zero_inflation_prior", "none"),
@@ -257,7 +263,13 @@ def _inject_twostate_data_init(ctx, model_config):
     # the magnitudes (especially important for high-expression genes
     # like ribosomal markers).
     _anchor_arr = _jnp.asarray(_anchor)
-    _transform = getattr(model_config, "positive_transform", "softplus")
+    # The anchor is for ``mu`` specifically; under the dict form of
+    # ``positive_transform`` we resolve per-parameter so the log
+    # message reports the transform actually applied to ``mu``.
+    if hasattr(model_config, "resolve_positive_transform"):
+        _transform = model_config.resolve_positive_transform("mu")
+    else:
+        _transform = getattr(model_config, "positive_transform", "softplus")
     # Surface the mean-capture estimate used to undo per-cell thinning
     # before anchoring (see core/twostate_data_init.py for the
     # closure-under-thinning rationale).

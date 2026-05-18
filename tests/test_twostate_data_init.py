@@ -145,12 +145,17 @@ class TestEstimateInitialMeanCapture:
         initialization divisor.
 
         The bio-informed prior is an order-of-magnitude *belief* about
-        ``M_0``, not a fitted estimate.  When the true posterior median
-        of ``mean(p_capture)`` is far from the prior median, using the
-        prior as a divisor overshoots and pushes the variational
-        ``mu_loc`` too high — the posterior-predictive bands then sit
-        above the data.  The estimator falls back to the robust 0.5
-        default and lets SVI recover the right anchor from there.
+        ``M_0``, not a fitted estimate.  Using it as a divisor over- or
+        under-corrects when the true posterior median of
+        ``mean(p_capture)`` lies away from the prior median.
+
+        Updated semantics (post mean-capture-revert): the heuristic
+        returns ``1.0`` for the default VCP case, anchoring the prior
+        at the *observed* per-gene mean.  Recovery of the pre-capture
+        mean is delegated to the optimizer — most naturally under
+        ``positive_transform={"mu": "exp"}``, where SVI takes
+        multiplicative steps in ``mu`` and converges in a handful of
+        iterations even when the anchor is off by the capture factor.
         """
         from scribe.core.twostate_data_init import (
             estimate_initial_mean_capture,
@@ -159,9 +164,9 @@ class TestEstimateInitialMeanCapture:
         rng = np.random.default_rng(0)
         n_cells, n_genes = 100, 20
         counts = rng.multinomial(32_000, np.ones(n_genes) / n_genes, n_cells)
-        # A tight bio-informed prior at log_M0 = log(50000) would
-        # imply mean(L_c)/M_0 ~ 0.64 if used as the divisor.  The
-        # heuristic ignores it and falls back to the Beta(1, 1) mean.
+        # A tight bio-informed prior at log_M0 = log(50000) is now
+        # ignored entirely — the heuristic returns the no-divisor
+        # default 1.0 and lets the optimizer recover.
         log_M0 = float(np.log(50_000))
 
         class _Priors:
@@ -172,7 +177,7 @@ class TestEstimateInitialMeanCapture:
             priors = _Priors()
 
         estimate = estimate_initial_mean_capture(_Cfg(), jnp.asarray(counts))
-        assert estimate == 0.5
+        assert estimate == 1.0
 
     def test_flat_beta_prior_uses_alpha_over_alpha_plus_beta(self):
         """``priors.p_capture = (alpha, beta)`` activates the flat-Beta
@@ -192,8 +197,15 @@ class TestEstimateInitialMeanCapture:
         estimate = estimate_initial_mean_capture(_Cfg(), jnp.zeros((4, 2)))
         assert estimate == 0.75
 
-    def test_default_vcp_returns_half(self):
-        """No explicit capture prior → Beta(1, 1) prior mean = 0.5."""
+    def test_default_vcp_returns_one(self):
+        """No explicit capture prior → no divisor; anchor at observed mean.
+
+        After the mean-capture revert, the default for ``twostatevcp``
+        without an explicit ``priors.p_capture`` tuple is ``1.0``
+        (anchor at the *observed* per-gene mean).  The optimizer
+        recovers the pre-capture mean — most efficiently under
+        ``positive_transform={"mu": "exp"}``.
+        """
         from scribe.core.twostate_data_init import (
             estimate_initial_mean_capture,
         )
@@ -205,7 +217,7 @@ class TestEstimateInitialMeanCapture:
             base_model = "twostatevcp"
             priors = _Priors()
 
-        assert estimate_initial_mean_capture(_Cfg(), jnp.zeros((4, 2))) == 0.5
+        assert estimate_initial_mean_capture(_Cfg(), jnp.zeros((4, 2))) == 1.0
 
 
 # ==============================================================================
