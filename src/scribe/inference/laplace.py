@@ -244,6 +244,40 @@ def _run_laplace_inference(
             cascade_source_counts=cascade_source_counts,
         )
 
+    if base_model == "twostate_ln_rate":
+        # TSLN-Rate: same per-cell shape as NBLN (x_loc is the latent
+        # log-rate MAP, eta_loc the optional capture offset).  Three
+        # gene-level positive globals (mu, burst_size, k_off) plus the
+        # derived (alpha, beta, r_hat) — all surfaced from the engine's
+        # globals dict.  Curvature-clamp diagnostics from pack_result.
+        gu = run_result.global_uncertainty
+        return ScribeLaplaceResults(
+            **common_kwargs,
+            x_loc=run_result.x_loc,
+            eta_loc=run_result.eta_loc,
+            # Constrained positives (computed in pack_result via pos_forward).
+            burst_size=g.get("burst_size"),
+            k_off=g.get("k_off"),
+            # Derived TSLN quantities.
+            alpha=g.get("alpha"),
+            beta=g.get("beta"),
+            r_hat=g.get("r_hat"),
+            # Unconstrained loc/scale fields from the global-uncertainty hook.
+            mu_loc=g.get("mu_loc"),
+            mu_scale=gu.get("mu_scale"),
+            burst_size_loc=g.get("burst_size_loc"),
+            burst_size_scale=gu.get("burst_size_scale"),
+            k_off_loc=g.get("k_off_loc"),
+            k_off_scale=gu.get("k_off_scale"),
+            # Curvature-clamp diagnostics from pack_result.
+            a_raw_min=g.get("a_raw_min"),
+            a_clamp_fraction=g.get("a_clamp_fraction"),
+            # Cascade plumbing (mirrors NBLN).
+            frozen_params=run_result.frozen_params,
+            cascade_source=cascade_source,
+            cascade_source_counts=cascade_source_counts,
+        )
+
     # LNM / LNMVCP: route the per-cell latent (the engine packed it
     # into ``run_result.x_loc`` for transit) into either ``z_loc``
     # or ``y_alr_loc`` based on ``d_mode``. For LNMVCP, also

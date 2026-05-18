@@ -541,6 +541,8 @@ __all__ = [
     "fit_empirical_gaussian",
     "priors_from_results",
     "freeze_values_from_results",
+    "priors_from_twostate_results",
+    "freeze_values_from_twostate_results",
 ]
 
 
@@ -749,6 +751,379 @@ def freeze_values_from_results(
     logger.info(
         "freeze_values_from_results: requested=%s, extracted=%s, "
         "identity=%s",
+        list(freeze_params),
+        sorted(freeze_values.keys()),
+        identity_method,
+    )
+    return freeze_values
+
+
+# =====================================================================
+# TwoState-LogNormal cascade (TSLN-Rate / TSLN-Logit) adapter
+# =====================================================================
+#
+# Mirrors ``priors_from_results`` / ``freeze_values_from_results`` for
+# the TSLN family, with the TwoState SVI source's parameter set:
+#
+#   SVI source emits (per gene): mu, burst_size, k_off
+#                  + deterministics: alpha (= k_on = mu/burst_size),
+#                                    beta (= k_off),
+#                                    r_hat (= mu + burst_size * k_off),
+#                                    eta_act (= log(alpha/beta)) [PR-2 only]
+#
+# Coordinate maps:
+#
+#   TSLN-Rate target (PR-1):
+#     mu_loc          : pos_inverse(mu_pos)
+#     burst_size_loc  : pos_inverse(burst_size_pos)
+#     k_off_loc       : pos_inverse(k_off_pos)
+#     eta             : identity (per-cell capture)
+#
+#   TSLN-Logit target (PR-2, deferred):
+#     rate_loc        : pos_inverse(r_hat) [prefer deterministic]
+#                       or pos_inverse(mu + burst_size * k_off)
+#     kappa_loc       : pos_inverse(alpha + beta)
+#                       or pos_inverse(mu/burst_size + k_off)
+#     eta_anchor_loc  : eta_act (real-valued)
+#                       or log(mu/burst_size) - log(k_off)
+#     eta             : identity
+#
+# In PR-1 only ``target_variant="rate"`` is implemented; ``"logit"``
+# raises NotImplementedError.
+
+
+def priors_from_twostate_results(
+    results: Any,
+    target_positive_transform: str,
+    target_n_genes: int,
+    target_n_cells: int,
+    target_variant: str = "rate",
+    target_gene_names: Optional[np.ndarray] = None,
+    target_gene_mask: Optional[np.ndarray] = None,
+    source_counts: Optional[jnp.ndarray] = None,
+    n_samples: int = 1000,
+    tau: float = 1.0,
+    rng_seed: int = 0,
+    verbose: bool = True,
+) -> Tuple[Dict[str, Dict[str, jnp.ndarray]], str]:
+    """Adapter: TwoState SVI results → TSLN empirical Gaussian prior bundle.
+
+    Builds Gaussian priors on the TSLN-Laplace globals from posterior
+    samples drawn from an upstream TwoState SVI fit. The priors live in
+    the TSLN target's unconstrained coordinate space and are intended
+    to enter the Laplace loss as ``Normal(loc, scale).log_prob(...)``
+    terms.
+
+    Parameters
+    ----------
+    results
+        Scribe SVI results from a ``model="twostate"`` (or
+        ``"twostatevcp"``) fit. Must expose ``get_posterior_samples()``
+        and ideally var-names / gene-mask metadata.
+    target_positive_transform : {"exp", "softplus"}
+        Resolved from the TSLN target ``model_config.positive_transform``.
+        Used for all positive parameters (``mu``, ``burst_size``,
+        ``k_off``, ``rate``, ``kappa``).
+    target_n_genes, target_n_cells : int
+        Target dataset shape.
+    target_variant : {"rate", "logit"}, default ``"rate"``
+        Which TSLN target variant to build priors for. ``"logit"``
+        raises ``NotImplementedError`` in PR-1.
+    n_samples : int, default 1000
+    tau : float, default 1.0
+    rng_seed : int, default 0
+    verbose : bool, default True
+
+    Returns
+    -------
+    prior_bundle : Dict[str, Dict[str, jnp.ndarray]]
+        Per-parameter ``{"loc", "scale"}`` dicts. Keys depend on
+        ``target_variant``:
+        - rate: subset of ``{"mu", "burst_size", "k_off", "eta"}``.
+        - logit: subset of ``{"rate", "kappa", "eta_anchor", "eta"}``.
+    capture_mode : str
+        ``"eta"`` (per-cell biology-informed) / ``"phi_only"``
+        (odds-ratio capture) / ``"none"``.
+    """
+    if target_variant not in ("rate", "logit"):
+        raise ValueError(
+            f"Unknown target_variant={target_variant!r}; expected one of "
+            "{'rate', 'logit'}."
+        )
+    if target_variant == "logit":
+        raise NotImplementedError(
+            "TSLN-Logit cascade adapter is deferred to PR-2. See plan §4.C."
+        )
+    if target_positive_transform not in _JAX_POSITIVE_FNS:
+        raise ValueError(
+            f"Unknown target_positive_transform={target_positive_transform!r}; "
+            f"expected one of {set(_JAX_POSITIVE_FNS)}."
+        )
+
+    def _say(msg: str) -> None:
+        if verbose:
+            print(f"[scribe.laplace.priors] {msg}", flush=True)
+
+    _say(
+        f"Building TSLN-{target_variant} priors from TwoState SVI source "
+        f"(G={int(target_n_genes)}, N={int(target_n_cells)}, "
+        f"tau={float(tau):.2f}, n_samples={int(n_samples)})"
+    )
+
+    # Gene identity (reuse NBLN-side helper — generic across SVI sources)
+    strict_var_name_verified, identity_method = _check_gene_identity(
+        results=results,
+        target_n_genes=int(target_n_genes),
+        target_gene_names=target_gene_names,
+        target_gene_mask=target_gene_mask,
+    )
+    _say(f"  Gene identity verified via {identity_method!r}.")
+
+    # Sample SVI posterior (with amortized-capture safeguards).
+    if _is_amortized_capture(results):
+        _say(
+            "Sampling SVI posterior (amortized capture detected)..."
+        )
+    else:
+        _say("Sampling SVI posterior...")
+    samples = _draw_samples(
+        results=results,
+        n_samples=int(n_samples),
+        source_counts=source_counts,
+        strict_var_name_verified=strict_var_name_verified,
+        rng_seed=int(rng_seed),
+    )
+    _say(
+        f"  Drew {int(n_samples)} samples; available keys: "
+        f"{sorted(samples.keys())}"
+    )
+
+    capture_mode = _detect_capture_mode(samples)
+    _say(f"Detected capture mode: {capture_mode!r}")
+
+    pos_inverse = _resolve_target_pos_inverse(target_positive_transform)
+    prior_bundle: Dict[str, Dict[str, jnp.ndarray]] = {}
+
+    # --- TSLN-Rate coordinate map ----------------------------------------
+    # All three positive globals pass through pos_inverse to land in
+    # the unconstrained location-parameter space.
+    for src_key, tgt_key in (
+        ("mu", "mu"),
+        ("burst_size", "burst_size"),
+        ("k_off", "k_off"),
+    ):
+        if src_key not in samples:
+            raise ValueError(
+                f"SVI source missing required key {src_key!r}. "
+                f"Available keys: {sorted(samples.keys())}. The TSLN-Rate "
+                "cascade requires the natural TwoState parameterization "
+                "(mu, burst_size, k_off) on the source."
+            )
+        s = jnp.asarray(samples[src_key])
+        if s.ndim < 2 or s.shape[1] != int(target_n_genes):
+            raise ValueError(
+                f"SVI {src_key!r} samples have shape {s.shape}; "
+                f"expected (S, {int(target_n_genes)})."
+            )
+        s_pos = jnp.maximum(s, 1e-8)
+        s_uncon = pos_inverse(s_pos)
+        prior_bundle[tgt_key] = fit_empirical_gaussian(s_uncon, tau=float(tau))
+        _say(
+            f"  Fitted {tgt_key!r} prior (G={int(s.shape[1])}, "
+            f"transform={target_positive_transform!r} inverse)."
+        )
+
+    # --- eta (per-cell capture) -----------------------------------------
+    if capture_mode == "eta":
+        eta_samples = jnp.asarray(samples["eta_capture"])
+        if eta_samples.ndim < 2 or eta_samples.shape[1] != int(target_n_cells):
+            raise ValueError(
+                f"SVI eta_capture samples have shape {eta_samples.shape}; "
+                f"expected (S, {int(target_n_cells)})."
+            )
+        prior_bundle["eta"] = fit_empirical_gaussian(
+            eta_samples, tau=float(tau)
+        )
+        _say(
+            f"  Fitted eta prior (N={int(eta_samples.shape[1])}, "
+            "transform='identity')."
+        )
+    elif capture_mode == "phi_only":
+        warnings.warn(
+            "TwoState SVI source uses odds-ratio capture (p_capture / "
+            "phi_capture). TSLN-Rate cascade will apply mu/burst_size/k_off "
+            "priors only; capture configuration on the target is left "
+            "untouched. Pass a separate capture_anchor on the target if "
+            "you want explicit capture handling.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    _say(
+        f"Built TSLN-{target_variant} prior bundle: "
+        f"keys={sorted(prior_bundle.keys())}, capture_mode={capture_mode!r}."
+    )
+    logger.info(
+        "priors_from_twostate_results: variant=%s, keys=%s, "
+        "capture_mode=%s, identity=%s, n_samples=%d, tau=%.2f",
+        target_variant,
+        sorted(prior_bundle.keys()),
+        capture_mode,
+        identity_method,
+        int(n_samples),
+        float(tau),
+    )
+    return prior_bundle, capture_mode
+
+
+def freeze_values_from_twostate_results(
+    results: Any,
+    target_positive_transform: str,
+    target_n_genes: int,
+    target_n_cells: int,
+    target_variant: str = "rate",
+    target_gene_names: Optional[np.ndarray] = None,
+    target_gene_mask: Optional[np.ndarray] = None,
+    source_counts: Optional[jnp.ndarray] = None,
+    freeze_params: Tuple[str, ...] = ("mu", "burst_size", "k_off"),
+    verbose: bool = True,
+) -> Dict[str, Dict[str, jnp.ndarray]]:
+    """Extract point-estimate freeze values from a TwoState SVI fit.
+
+    Hard-cascade analog of :func:`priors_from_twostate_results`. For
+    each parameter in ``freeze_params``, returns the SVI MAP value
+    transformed to the TSLN target's unconstrained coordinate.
+
+    Parameters
+    ----------
+    results
+        TwoState SVI results object with ``get_map()``.
+    target_positive_transform : {"exp", "softplus"}
+    target_n_genes, target_n_cells : int
+    target_variant : {"rate", "logit"}, default ``"rate"``
+        Only ``"rate"`` is implemented in PR-1.
+    freeze_params : Tuple[str, ...], default ``("mu", "burst_size", "k_off")``
+        For TSLN-Rate, valid keys are
+        ``{"mu", "burst_size", "k_off", "eta"}``.
+
+    Returns
+    -------
+    Dict[str, Dict[str, jnp.ndarray]]
+        Per-parameter ``{"loc": ...}`` dicts (no ``scale``).
+    """
+    if target_variant not in ("rate", "logit"):
+        raise ValueError(
+            f"Unknown target_variant={target_variant!r}; expected one of "
+            "{'rate', 'logit'}."
+        )
+    if target_variant == "logit":
+        raise NotImplementedError(
+            "TSLN-Logit freeze-value adapter is deferred to PR-2."
+        )
+    if target_positive_transform not in _JAX_POSITIVE_FNS:
+        raise ValueError(
+            f"Unknown target_positive_transform={target_positive_transform!r}."
+        )
+    valid = {"mu", "burst_size", "k_off", "eta"}
+    invalid = set(freeze_params) - valid
+    if invalid:
+        raise ValueError(
+            f"freeze_params has invalid keys {invalid}; valid = {valid} "
+            f"for target_variant='rate'."
+        )
+
+    def _say(msg: str) -> None:
+        if verbose:
+            print(f"[scribe.laplace.priors] {msg}", flush=True)
+
+    _say(
+        f"Extracting TSLN-{target_variant} freeze values "
+        f"(freeze_params={list(freeze_params)})"
+    )
+
+    strict_var_name_verified, identity_method = _check_gene_identity(
+        results=results,
+        target_n_genes=int(target_n_genes),
+        target_gene_names=target_gene_names,
+        target_gene_mask=target_gene_mask,
+    )
+    _say(f"  Gene identity verified via {identity_method!r}.")
+
+    # Amortized-capture-aware get_map()
+    if _is_amortized_capture(results):
+        _say("  Source uses amortized capture; resolving encoder counts...")
+        svi_source_counts = getattr(results, "_original_counts", None)
+        if svi_source_counts is None:
+            svi_source_counts = getattr(results, "counts", None)
+        if svi_source_counts is not None:
+            counts_for_encoder = svi_source_counts
+        elif strict_var_name_verified and source_counts is not None:
+            counts_for_encoder = source_counts
+        else:
+            raise ValueError(
+                "Source uses amortized capture but counts can't be "
+                "resolved. Same remediation options as the NBLN cascade."
+            )
+        map_dict = results.get_map(counts=counts_for_encoder, verbose=False)
+    else:
+        map_dict = results.get_map(verbose=False)
+
+    _say(f"  SVI MAP keys: {sorted(map_dict.keys())}")
+
+    pos_inverse = _resolve_target_pos_inverse(target_positive_transform)
+    freeze_values: Dict[str, Dict[str, jnp.ndarray]] = {}
+
+    for src_key, tgt_key in (
+        ("mu", "mu"),
+        ("burst_size", "burst_size"),
+        ("k_off", "k_off"),
+    ):
+        if tgt_key not in freeze_params:
+            continue
+        if src_key not in map_dict:
+            raise ValueError(
+                f"freeze_params requests {tgt_key!r} but SVI MAP has no "
+                f"{src_key!r} key. Available: {sorted(map_dict.keys())}."
+            )
+        s = jnp.asarray(map_dict[src_key])
+        if s.ndim != 1 or s.shape[0] != int(target_n_genes):
+            raise ValueError(
+                f"SVI {src_key!r} MAP has shape {s.shape}; expected "
+                f"({int(target_n_genes)},)."
+            )
+        s_uncon = pos_inverse(jnp.maximum(s, 1e-8))
+        freeze_values[tgt_key] = {"loc": s_uncon}
+        _say(
+            f"  Extracted {tgt_key!r} freeze value (G={target_n_genes})."
+        )
+
+    if "eta" in freeze_params:
+        if "eta_capture" not in map_dict:
+            raise ValueError(
+                "freeze_params requests 'eta' but SVI MAP has no "
+                "'eta_capture' key. The source may not be using biology-"
+                "informed capture. Available: "
+                f"{sorted(map_dict.keys())}."
+            )
+        eta = jnp.asarray(map_dict["eta_capture"])
+        if eta.ndim != 1 or eta.shape[0] != int(target_n_cells):
+            raise ValueError(
+                f"SVI 'eta_capture' MAP has shape {eta.shape}; expected "
+                f"({int(target_n_cells)},)."
+            )
+        freeze_values["eta"] = {"loc": eta}
+        _say(
+            f"  Extracted eta freeze value (N={target_n_cells})."
+        )
+
+    _say(
+        f"Built TSLN-{target_variant} freeze-values bundle: "
+        f"keys={sorted(freeze_values.keys())}."
+    )
+    logger.info(
+        "freeze_values_from_twostate_results: variant=%s, requested=%s, "
+        "extracted=%s, identity=%s",
+        target_variant,
         list(freeze_params),
         sorted(freeze_values.keys()),
         identity_method,

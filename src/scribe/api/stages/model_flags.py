@@ -43,7 +43,24 @@ def resolve_model_flags(ctx: FitContext) -> None:
     # an internal flag (no separate "nblnvcp" model string).
     _is_pln_model = model.lower() in ("pln", "nbln")
     _is_twostate_model = model.lower() in ("twostate", "twostatevcp")
+    _is_twostate_ln_model = model.lower() in (
+        "twostate_ln_rate", "twostate_ln_logit"
+    )
     _default_model = "nbvcp"
+
+    # TSLN family: capture is supplied via cascade or biology-anchored
+    # prior (capture_anchor); not via the variable_capture flag.
+    # Reject the flags up-front with a clear message.
+    if _is_twostate_ln_model:
+        if variable_capture is not None or zero_inflation is not None:
+            raise ValueError(
+                f"model='{model}' does not accept variable_capture or "
+                "zero_inflation flags. Capture is supplied through the "
+                "cascade_source's eta_capture (when available) or through "
+                "an explicit capture_anchor / biology-informed prior. "
+                "Drop variable_capture and zero_inflation."
+            )
+        return
 
     if variable_capture is None and zero_inflation is None:
         return

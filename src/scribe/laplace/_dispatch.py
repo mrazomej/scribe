@@ -167,9 +167,9 @@ class DispatchResultsMixin:
             If the stored ``base_model`` is unknown.
         """
         bm = _base_model(self.model_config)
-        if bm in ("pln", "nbln"):
-            # NBLN's per-cell latent has the same shape and semantic
-            # role as PLN's: ``x_loc`` is the log-rate MAP at the cell.
+        if bm in ("pln", "nbln", "twostate_ln_rate"):
+            # NBLN / TSLN-Rate have the same per-cell latent semantic
+            # as PLN: ``x_loc`` is the latent log-rate MAP.
             return self.x_loc
         if bm in ("lnm", "lnmvcp"):
             if self.z_loc is not None:
@@ -245,6 +245,57 @@ class DispatchResultsMixin:
             # Callers can read either the field directly
             # (``self.w_prior_diagnostics``) or via ``get_map()``;
             # both routes return the same dict object.
+            wpd = getattr(self, "w_prior_diagnostics", None)
+            if wpd is not None:
+                out["w_prior_diagnostics"] = wpd
+            return out
+
+        if bm == "twostate_ln_rate":
+            # TSLN-Rate: similar latent layout to NBLN (x_loc is the
+            # log-rate MAP), but gene globals are (mu, burst_size, k_off)
+            # with derived (alpha, beta, r_hat).
+            out = {
+                "mu": self.mu,
+                "W": self.W,
+                "d_tsln": self.d,
+                "y_log_rate": self.x_loc,
+            }
+            if self.eta_loc is not None:
+                out["eta_capture"] = self.eta_loc
+                out["p_capture"] = jnp.exp(-self.eta_loc)
+            # Three positive globals
+            if self.burst_size is not None:
+                out["burst_size"] = self.burst_size
+            if self.k_off is not None:
+                out["k_off"] = self.k_off
+            # Derived TwoState quantities
+            if self.alpha is not None:
+                out["alpha"] = self.alpha
+            if self.beta is not None:
+                out["beta"] = self.beta
+            if self.r_hat is not None:
+                out["r_hat"] = self.r_hat
+            # Unconstrained loc/scale fields (when populated by
+            # compute_global_uncertainty).
+            for key in (
+                "mu_loc", "mu_scale",
+                "burst_size_loc", "burst_size_scale",
+                "k_off_loc", "k_off_scale",
+            ):
+                val = getattr(self, key, None)
+                if val is not None:
+                    out[key] = val
+            # Clamp diagnostics
+            if self.a_raw_min is not None:
+                out["a_raw_min"] = self.a_raw_min
+            if self.a_clamp_fraction is not None:
+                out["a_clamp_fraction"] = self.a_clamp_fraction
+            # Cascade freeze flags
+            frozen = getattr(self, "frozen_params", frozenset())
+            out["mu_frozen"] = "mu" in frozen
+            out["burst_size_frozen"] = "burst_size" in frozen
+            out["k_off_frozen"] = "k_off" in frozen
+            out["eta_frozen"] = "eta" in frozen
             wpd = getattr(self, "w_prior_diagnostics", None)
             if wpd is not None:
                 out["w_prior_diagnostics"] = wpd
@@ -398,6 +449,64 @@ class DispatchResultsMixin:
             if self.eta_loc is not None and "eta" not in (
                 getattr(self, "frozen_params", frozenset())
             ):
+                out["eta_capture"] = dist.Delta(self.eta_loc)
+                out["p_capture"] = dist.Delta(jnp.exp(-self.eta_loc))
+            return out
+
+        if bm == "twostate_ln_rate":
+            # TSLN-Rate: latent log-rate posterior + Delta on the gene
+            # globals. Soft-cascade Normal posteriors when populated by
+            # compute_global_uncertainty.
+            tfm = resolve_numpyro_transform(self.model_config)
+            out: Dict[str, Any] = {
+                "y_log_rate": dist.LowRankMultivariateNormal(
+                    loc=self.mu, cov_factor=self.W, cov_diag=self.d
+                ),
+            }
+            frozen = getattr(self, "frozen_params", frozenset())
+            # mu posterior (when uncertainty was computed; for TSLN-Rate
+            # mu is positive, so a TransformedDistribution applies).
+            if (
+                "mu" not in frozen
+                and self.mu_loc is not None
+                and self.mu_scale is not None
+            ):
+                out["mu"] = dist.TransformedDistribution(
+                    dist.Normal(self.mu_loc, self.mu_scale).to_event(1),
+                    tfm,
+                )
+            elif self.mu is not None:
+                out["mu"] = dist.Delta(self.mu)
+            # burst_size posterior
+            if (
+                "burst_size" not in frozen
+                and self.burst_size_loc is not None
+                and self.burst_size_scale is not None
+            ):
+                out["burst_size"] = dist.TransformedDistribution(
+                    dist.Normal(
+                        self.burst_size_loc, self.burst_size_scale
+                    ).to_event(1),
+                    tfm,
+                )
+            elif self.burst_size is not None:
+                out["burst_size"] = dist.Delta(self.burst_size)
+            # k_off posterior
+            if (
+                "k_off" not in frozen
+                and self.k_off_loc is not None
+                and self.k_off_scale is not None
+            ):
+                out["k_off"] = dist.TransformedDistribution(
+                    dist.Normal(
+                        self.k_off_loc, self.k_off_scale
+                    ).to_event(1),
+                    tfm,
+                )
+            elif self.k_off is not None:
+                out["k_off"] = dist.Delta(self.k_off)
+            # eta_capture
+            if self.eta_loc is not None and "eta" not in frozen:
                 out["eta_capture"] = dist.Delta(self.eta_loc)
                 out["p_capture"] = dist.Delta(jnp.exp(-self.eta_loc))
             return out

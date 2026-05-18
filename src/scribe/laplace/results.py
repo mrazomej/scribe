@@ -167,6 +167,27 @@ class ScribeLaplaceResults(
     # LNM / LNMVCP.  Derived as ``positive_transform(r_loc)``.
     r: Optional[jnp.ndarray] = None
 
+    # TwoState-LogNormal-Rate fields (``base_model == "twostate_ln_rate"``).
+    # All constrained positive quantities; per-gene shape ``(G,)``.
+    # See plan §4.A.3 and ``_obs_twostate_ln_rate.py``.
+    burst_size: Optional[jnp.ndarray] = None
+    k_off: Optional[jnp.ndarray] = None
+    # Derived TSLN quantities (gene-level, all shape ``(G,)``).
+    # ``alpha = mu/burst_size``, ``beta = k_off``, ``r_hat = mu + burst_size*k_off``
+    # after the mean-preserving floor in ``_twostate_reparam``.
+    alpha: Optional[jnp.ndarray] = None
+    beta: Optional[jnp.ndarray] = None
+    r_hat: Optional[jnp.ndarray] = None
+
+    # Curvature-clamp diagnostics (TSLN-rate, plan §4.A.3 Rev 3+).  The
+    # closed-form Hessian-diagonal factor ``a_g`` is defensively floored
+    # at ``_A_MIN`` before the Woodbury solve because the Poisson-Beta
+    # marginal is not log-concave in general (Beta U-shape regime).
+    # These fields surface how often the clamp activated on the final
+    # sweep so users can detect prior-dominated cells/genes.
+    a_raw_min: Optional[jnp.ndarray] = None  # scalar
+    a_clamp_fraction: Optional[jnp.ndarray] = None  # scalar
+
     # --- Global posterior uncertainty (unconstrained space) --------
     #
     # All ``*_loc`` and ``*_scale`` fields live in unconstrained
@@ -180,6 +201,13 @@ class ScribeLaplaceResults(
     # NBLN fields:
     r_loc: Optional[jnp.ndarray] = None
     r_scale: Optional[jnp.ndarray] = None
+    # TSLN-rate fields (unconstrained location/scale of the three
+    # positive globals; constrained values are in the non-_loc
+    # attributes above):
+    burst_size_loc: Optional[jnp.ndarray] = None
+    burst_size_scale: Optional[jnp.ndarray] = None
+    k_off_loc: Optional[jnp.ndarray] = None
+    k_off_scale: Optional[jnp.ndarray] = None
     # NBLN latent prior mean ``mu`` posterior (per gene, log-rate
     # coordinate).  Populated by ``compute_global_uncertainty`` using
     # the diagonal-Σ approximation of the profiled Hessian.  Both

@@ -147,6 +147,20 @@ class LaplaceInferenceEngine:
                     getattr(laplace_config, "newton_max_step", 5.0)
                 ),
             )
+        elif bm == "twostate_ln_rate":
+            from ._obs_twostate_ln_rate import TwoStateLNRateObservationModel
+
+            obs_model = TwoStateLNRateObservationModel(
+                capture_anchor=capture_anchor,
+                model_config=model_config,
+                informative_priors=informative_priors,
+                freeze_values=freeze_values,
+                freeze_params=freeze_params,
+                w_prior_strategy=w_prior_strategy,
+                max_step=float(
+                    getattr(laplace_config, "newton_max_step", 5.0)
+                ),
+            )
         elif bm in ("lnm", "lnmvcp"):
             from ._obs_lnm import LNMObservationModel
 
@@ -175,7 +189,7 @@ class LaplaceInferenceEngine:
         else:
             raise NotImplementedError(
                 f"Laplace inference is supported for PLN, NBLN, LNM, "
-                f"and LNMVCP; got base_model={bm!r}."
+                f"LNMVCP, and twostate_ln_rate; got base_model={bm!r}."
             )
 
         return run_laplace_em(
