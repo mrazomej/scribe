@@ -192,7 +192,7 @@ can be extended with zero inflation and/or variable capture probability:
 | **Zero-Inflated NB**             | `"zinb"`        | NB + zero inflation        | `gate`                             | Data with excess zeros           |
 | **NB + variable capture**        | `"nbvcp"`       | NB + capture probability   | `p_capture`                        | Variable sequencing depth        |
 | **ZINB + variable capture**      | `"zinbvcp"`     | ZINB + capture probability | `gate`, `p_capture`                | Complex technical variation      |
-| **Two-state promoter**           | `"twostate"`    | Poisson-Beta compound      | `burst_size`, `k_off`              | Bursty / bimodal genes (Phase 1) |
+| **Two-state promoter**           | `"twostate"`    | Poisson-Beta compound      | `burst_size`, `k_off`              | Bursty / bimodal genes           |
 | **Two-state + variable capture** | `"twostatevcp"` | Two-state + capture prob   | `burst_size`, `k_off`, `p_capture` | Bursty genes with variable depth |
 
 #### Logistic-Normal Multinomial (LNM) Family
@@ -319,7 +319,31 @@ the correct gene mean in a small number of steps even when the
 data-driven anchor is off by the capture factor. For other models
 the default is ``"softplus"`` (legacy behavior).
 
-**Phase 1 limitations**: mixtures, VAE inference, multi-dataset indexing, BNB
+##### Mixture models
+
+TwoState models support K-component mixture models via the same API as
+the NB family:
+
+```python
+import scribe
+
+results = scribe.fit(
+    adata,
+    model="twostate",              # or "twostatevcp"
+    parameterization="two_state_natural",  # any of the four
+    n_components=3,
+    mixture_params=["mu", "burst_size", "k_off"],  # or None for all
+)
+```
+
+All four parameterizations are supported.  The observation distribution
+becomes a `MixtureGeneral` over K `PoissonBetaCompound` components
+weighted by `mixing_weights`.  Denoising marginalises over components
+(or uses hard assignments via `component_assignment`).  Log-prob
+decomposition supports `split_components`, `weights`, and `weight_type`
+for per-component analysis.
+
+**Current limitations**: VAE inference, multi-dataset indexing, BNB
 overdispersion, and the Poisson-Gamma denoiser are not yet wired for the
 TwoState family. Biology-informed capture priors *are* supported (via
 ``priors={"capture_efficiency": (log_M0, sigma_M)}``); their math is

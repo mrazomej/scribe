@@ -3200,31 +3200,31 @@ def _build_two_state_posteriors(
 ) -> Dict[str, Any]:
     """Build posteriors for the TwoState (Poisson-Beta compound) family.
 
-    All three per-gene parameters (``mu``, ``burst_size``, ``k_off``)
-    are positive-valued in unconstrained-Normal-with-softplus form
-    (configurable to exp via ``positive_transform``). The constrained
-    fallback (``unconstrained=False``) uses LogNormal.
+    All three per-gene parameters (``mu``, ``burst_size``, ``k_off``
+    or their reparameterized equivalents) are positive-valued in
+    unconstrained-Normal-with-softplus/exp form (configurable via
+    ``positive_transform``).  The constrained fallback
+    (``unconstrained=False``) uses LogNormal.
 
     Per-parameter dispatch mirrors the NBDM gene-level builder:
       1. ``_find_joint_prefix(params, name)`` hit → joint low-rank
-         marginal via ``_build_joint_low_rank_posterior`` (used when
-         the user passes ``joint_params=(..., name, ...)`` with
-         ``guide_rank``).
+         marginal via ``_build_joint_low_rank_posterior``.
       2. Standalone ``{name}_W`` (or ``log_{name}_W`` in the
-         constrained path) present → ``_build_low_rank_*`` (used when
-         the gene_param fallback in ``preset_builder.py`` auto-installs
-         a ``LowRankGuide`` on ``mu``).
+         constrained path) present → ``_build_low_rank_*``.
       3. Otherwise → mean-field ``_build_positive_normal_posterior``
          (or ``_build_lognormal_posterior``).
 
-    Phase 1 still does not support mixtures for the TwoState family;
-    ``is_mixture`` is accepted for signature consistency but the
-    builder always passes ``is_mixture=False`` to the per-parameter
-    helpers.
+    Mixture support
+    ---------------
+    When ``is_mixture=True``, parameters that are marked
+    mixture-specific in the model config will have a leading component
+    axis in their variational parameters.  The ``is_mixture`` flag is
+    forwarded to the per-parameter builders so that the split
+    utilities correctly produce per-component × per-gene posteriors.
     """
     distributions = {}
     skip = skip or set()
-    del low_rank, is_mixture  # dispatch handles low-rank per-name; no mixtures
+    del low_rank  # dispatch handles low-rank per-name
 
     # Detect the parameterization by which extras were sampled.
     # The variational guide writes ``{name}_loc`` (mean-field /
@@ -3278,7 +3278,7 @@ def _build_two_state_posteriors(
                     _build_low_rank_positive_normal_posterior(
                         params,
                         name,
-                        is_mixture=False,
+                        is_mixture=is_mixture,
                         split=split,
                         transform=dist.transforms.SigmoidTransform(),
                     )
@@ -3296,12 +3296,7 @@ def _build_two_state_posteriors(
         # ``pos_transform`` is the per-name resolver callable (dict
         # form of ``ModelConfig.positive_transform``), call it with
         # the current name; otherwise it is already a single Transform.
-        _pt_name = (
-            pos_transform(name)
-            if callable(pos_transform)
-            and not isinstance(pos_transform, dist.transforms.Transform)
-            else pos_transform
-        )
+        _pt_name = _resolve_pos_transform_for(pos_transform, name)
 
         if unconstrained:
             if jp is not None:
@@ -3317,7 +3312,7 @@ def _build_two_state_posteriors(
                     _build_low_rank_positive_normal_posterior(
                         params,
                         name,
-                        is_mixture=False,
+                        is_mixture=is_mixture,
                         split=split,
                         transform=_pt_name,
                     )
@@ -3326,7 +3321,7 @@ def _build_two_state_posteriors(
                 distributions[name] = _build_positive_normal_posterior(
                     params,
                     name,
-                    is_mixture=False,
+                    is_mixture=is_mixture,
                     split=split,
                     transform=_pt_name,
                 )
@@ -3337,11 +3332,11 @@ def _build_two_state_posteriors(
                 )
             elif f"log_{name}_W" in params:
                 distributions[name] = _build_low_rank_lognormal_posterior(
-                    params, name, is_mixture=False, split=split
+                    params, name, is_mixture=is_mixture, split=split
                 )
             else:
                 distributions[name] = _build_lognormal_posterior(
-                    params, name, is_mixture=False, split=split
+                    params, name, is_mixture=is_mixture, split=split
                 )
 
     return distributions

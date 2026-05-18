@@ -1536,23 +1536,24 @@ class ModelConfig(BaseModel):
     def validate_twostate_phase1_constraints(self) -> "ModelConfig":
         """Reject unsupported TwoState combinations at config build time.
 
-        The TwoState family is phase 1 of an incremental rollout; many
-        cross-cutting features (mixtures, VAE, multi-dataset, BNB
-        overdispersion, biology-informed capture priors) are deferred
-        to phase 2. Catching the offending config here gives the user a
-        clear error at builder time rather than a deep
-        ``NotImplementedError`` from inside the cell plate.
+        The TwoState family is an incremental rollout; some cross-cutting
+        features (VAE, multi-dataset, BNB overdispersion) are deferred.
+        Catching the offending config here gives the user a clear error
+        at builder time rather than a deep ``NotImplementedError`` from
+        inside the cell plate.
 
-        Phase-1 constraints enforced:
+        Constraints enforced:
 
-        - ``parameterization`` must be one of ``TWO_STATE_NATURAL``
-          (samples k_off directly) or ``TWO_STATE_RATIO`` (samples the
-          relative switching ratio).
+        - ``parameterization`` must be one of the four TwoState variants
+          (``TWO_STATE_NATURAL``, ``TWO_STATE_RATIO``,
+          ``TWO_STATE_MEAN_FANO``, ``TWO_STATE_MOMENT_DELTA``).
         - ``overdispersion`` must be ``NONE`` (no BNB on TwoState).
-        - ``n_components`` must be ``None`` or ``1`` (no mixtures).
         - ``inference_method`` must NOT be ``VAE`` (no VAE on TwoState).
         - ``n_datasets`` must be ``None`` or ``1`` (no multi-dataset).
-        - Biology-informed capture priors on ``twostatevcp`` are rejected.
+        - Biology-informed capture priors on ``twostatevcp`` ARE
+          supported (see note (5) below).
+
+        Mixture models (``n_components >= 2``) are fully supported.
         """
         if self.base_model not in ("twostate", "twostatevcp"):
             return self
@@ -1576,35 +1577,28 @@ class ModelConfig(BaseModel):
                 f"'two_state_mean_fano', or 'two_state_moment_delta'."
             )
 
-        # (2) BNB overdispersion is not supported in phase 1.
+        # (2) BNB overdispersion is not supported.
         if self.overdispersion != OverdispersionType.NONE:
             raise ValueError(
-                "TwoState + BNB overdispersion is not supported in phase 1; "
+                "TwoState + BNB overdispersion is not supported; "
                 "drop overdispersion='bnb' or pick an NB-family model."
             )
 
-        # (3) Mixtures are not supported in phase 1.
-        if self.n_components is not None and self.n_components > 1:
-            raise ValueError(
-                "TwoState mixtures are not supported in phase 1; "
-                "drop n_components or set it to 1."
-            )
-
-        # (4) VAE inference is not supported in phase 1.
+        # (3) VAE inference is not supported.
         if self.inference_method == InferenceMethod.VAE:
             raise ValueError(
-                "TwoState + VAE inference is not supported in phase 1; "
+                "TwoState + VAE inference is not supported; "
                 "use inference_method='svi' or 'mcmc'."
             )
 
-        # (5) Multi-dataset indexing is not supported in phase 1.
+        # (4) Multi-dataset indexing is not supported.
         if self.n_datasets is not None and self.n_datasets > 1:
             raise ValueError(
-                "TwoState + multi-dataset is not supported in phase 1; "
+                "TwoState + multi-dataset is not supported; "
                 "drop n_datasets or set it to 1."
             )
 
-        # (6) Biology-informed capture priors on twostatevcp ARE
+        # (5) Biology-informed capture priors on twostatevcp ARE
         # supported as of this commit.  The closure-under-binomial-
         # thinning property (see paper/_two_state_promoter.qmd
         # @sec-twostate-thinning and paper/_capture_prior.qmd) makes

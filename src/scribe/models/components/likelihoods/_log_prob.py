@@ -1254,23 +1254,29 @@ def zinbvcp_log_prob(
 def twostate_log_prob(
     counts: jnp.ndarray,
     params: Dict,
+    param_layouts: Optional[Mapping[str, AxisLayout]] = None,
     *,
     return_by: str = "cell",
     cells_axis: int = 0,
     dtype: jnp.dtype = jnp.float32,
+    split_components: bool = False,
+    weights: Optional[jnp.ndarray] = None,
+    weight_type: Optional[str] = None,
 ) -> jnp.ndarray:
     """Full-array log-likelihood for the TwoState / TwoStateVCP model.
 
-    Phase 1 supports only the non-mixture, non-BNB path. The caller
-    (``TwoStateLikelihood.log_prob`` / ``TwoStateVCPLikelihood.log_prob``)
-    enforces this.
+    Supports both single-component and **mixture** paths.
 
     Dispatch:
     - If ``"p_capture"`` is in ``params``, build the per-cell rate as
-      ``rate_gene[None, :] * p_capture[:, None]`` (shape ``(C, G)``).
-    - Otherwise, ``rate`` stays gene-rank ``(G,)`` and the
-      ``PoissonBetaCompound`` log_prob naturally broadcasts across
-      the cell axis of ``counts``.
+      ``rate_gene[None, :] * p_capture[:, None]`` (shape ``(C, G)``
+      for non-mixture, or ``(C, G, K)`` for mixture).
+    - Otherwise, ``rate`` stays gene-rank.
+
+    For mixture models (``"mixing_weights"`` in ``params``), per-gene
+    parameters carry a trailing component axis.  Per-component
+    log-probabilities are computed and then reduced via
+    :func:`_mixture_reduce`.
 
     Parameters
     ----------
@@ -1278,21 +1284,32 @@ def twostate_log_prob(
         ``(n_cells, n_genes)`` when ``cells_axis=0`` (default), else
         ``(n_genes, n_cells)`` and we transpose.
     params : dict
-        Must contain ``"mu"``, ``"burst_size"``, and one of
-        ``"k_off"`` (natural parameterization) or
-        ``"switching_ratio"`` (ratio parameterization). May contain
-        ``"p_capture"`` for the VCP variant.
+        Must contain ``"mu"`` and the extras for the configured
+        parameterization.  May contain ``"p_capture"`` for the VCP
+        variant and ``"mixing_weights"`` for mixtures.
+    param_layouts : Mapping[str, AxisLayout], optional
+        Semantic layouts for parameters.  Required for mixture models.
     return_by : {"cell", "gene"}, default="cell"
         Reduction axis of the output.
     cells_axis : int, default=0
         Orientation of ``counts``.
     dtype : jnp.dtype, default=jnp.float32
         Working dtype.
+    split_components : bool, default=False
+        Mixture-only: if ``True``, return per-component log probs.
+    weights : jnp.ndarray or None, default=None
+        Mixture-only: optional weighting array.
+    weight_type : {"multiplicative", "additive"} or None
+        Mixture-only: weighting mode.
 
     Returns
     -------
     jnp.ndarray
-        Log-likelihood values, shape ``(n_cells,)`` or ``(n_genes,)``.
+        Log-likelihood values.  Shape follows the standard contract:
+
+        - Non-mixture:   ``(n_cells,)`` or ``(n_genes,)``.
+        - Mixture split: ``(n_cells, K)`` or ``(n_genes, K)``.
+        - Mixture marginal: ``(n_cells,)`` or ``(n_genes,)``.
     """
     from ....stats.distributions import PoissonBetaCompound
     from .two_state import (
@@ -1303,53 +1320,104 @@ def twostate_log_prob(
     )
 
     _check_return_by(return_by)
+    _check_weight_type(weight_type)
 
     counts = _normalize_counts(counts, cells_axis, dtype)
     n_cells, n_genes = counts.shape
 
+    # Run the parameterization-specific reparam to get (alpha, beta,
+    # rate_gene).  These may be gene-rank (G,) for non-mixture or
+    # (G, K) / (K, G) for mixture.
     mu = jnp.asarray(params["mu"], dtype=dtype)
     if "inv_concentration" in params:
-        # Moment-delta parameterization: (mu, excess_fano, delta).
         excess_fano = jnp.asarray(params["excess_fano"], dtype=dtype)
         delta = jnp.asarray(params["inv_concentration"], dtype=dtype)
-        alpha, beta, rate_gene, _eff_burst_size = (
-            _twostate_moment_delta_reparam(mu, excess_fano, delta)
+        alpha, beta, rate_gene, _ = _twostate_moment_delta_reparam(
+            mu, excess_fano, delta
         )
     elif "excess_fano" in params:
-        # Mean-Fano parameterization: alpha, beta derived from
-        # (mu, excess_fano, concentration).
         excess_fano = jnp.asarray(params["excess_fano"], dtype=dtype)
         concentration = jnp.asarray(params["concentration"], dtype=dtype)
-        alpha, beta, rate_gene, _eff_burst_size = (
-            _twostate_moments_reparam(mu, excess_fano, concentration)
+        alpha, beta, rate_gene, _ = _twostate_moments_reparam(
+            mu, excess_fano, concentration
         )
     elif "switching_ratio" in params:
-        # Ratio parameterization: k_off is derived from switching_ratio.
         burst_size = jnp.asarray(params["burst_size"], dtype=dtype)
         s = jnp.asarray(params["switching_ratio"], dtype=dtype)
-        alpha, beta, rate_gene, _eff_burst_size = _twostate_ratio_reparam(
+        alpha, beta, rate_gene, _ = _twostate_ratio_reparam(
             mu, burst_size, s
         )
     else:
         burst_size = jnp.asarray(params["burst_size"], dtype=dtype)
         k_off = jnp.asarray(params["k_off"], dtype=dtype)
-        alpha, beta, rate_gene, _eff_burst_size = _twostate_reparam(
+        alpha, beta, rate_gene, _ = _twostate_reparam(
             mu, burst_size, k_off
         )
 
+    is_mixture = "mixing_weights" in params
+
+    if not is_mixture:
+        # ----- Non-mixture branch -----
+        if "p_capture" in params:
+            p_capture = jnp.asarray(params["p_capture"], dtype=dtype)
+            rate = rate_gene[None, :] * p_capture[:, None]
+        else:
+            rate = rate_gene
+
+        base = PoissonBetaCompound(alpha=alpha, beta=beta, rate=rate)
+        log_p_cg = base.log_prob(counts)
+
+        if return_by == "cell":
+            return log_p_cg.sum(axis=1)
+        return log_p_cg.sum(axis=0)
+
+    # ----- Mixture branch -----
+    # Resolve layouts for the mixture path.
+    if param_layouts is None:
+        param_layouts = {}
+    mw_layout = param_layouts.get(
+        "mixing_weights", AxisLayout(())
+    )
+    mixing_weights = _prepare_mixing_weights(
+        params["mixing_weights"], mw_layout, dtype
+    )
+    n_components = int(mixing_weights.shape[0])
+
+    weights = _validate_weights(weights, return_by, n_cells, n_genes, dtype)
+
+    # Ensure alpha, beta, rate_gene are in (…, G, K) layout.
+    # The reparam output inherits the shape of the inputs; when the
+    # sampled params carry a component axis (from the mixture guide)
+    # the outputs will already have it.  Use _prepare_mixture_tensor
+    # to canonicalize the layout to (1, G, K) for gene-rank params.
+    mu_layout = param_layouts.get("mu", AxisLayout(()))
+    alpha_b = _prepare_mixture_tensor(jnp.asarray(alpha, dtype), mu_layout, dtype)
+    beta_b = _prepare_mixture_tensor(jnp.asarray(beta, dtype), mu_layout, dtype)
+    rate_gene_b = _prepare_mixture_tensor(
+        jnp.asarray(rate_gene, dtype), mu_layout, dtype
+    )
+
     if "p_capture" in params:
         p_capture = jnp.asarray(params["p_capture"], dtype=dtype)
-        # p_capture is per-cell; rate composes to (C, G).
-        rate = rate_gene[None, :] * p_capture[:, None]
+        # p_capture is (C,); expand to (C, 1, 1) for broadcasting
+        # against (1, G, K).
+        rate_b = rate_gene_b * p_capture[:, None, None]
     else:
-        rate = rate_gene
+        rate_b = rate_gene_b
 
-    base = PoissonBetaCompound(alpha=alpha, beta=beta, rate=rate)
-    # log_prob over counts: PoissonBetaCompound has batch_shape equal
-    # to broadcast(rate, alpha, beta), so log_prob(counts) returns
-    # log-probabilities at each (cell, gene) cell.
-    log_p_cg = base.log_prob(counts)  # shape (n_cells, n_genes)
+    # Expand counts to (C, G, 1) for broadcasting against the K axis.
+    counts_b = jnp.expand_dims(counts, axis=-1)
 
-    if return_by == "cell":
-        return log_p_cg.sum(axis=1)
-    return log_p_cg.sum(axis=0)
+    # Per-component log-probs: shape (C, G, K).
+    gene_log_probs = PoissonBetaCompound(
+        alpha=alpha_b, beta=beta_b, rate=rate_b
+    ).log_prob(counts_b)
+
+    return _mixture_reduce(
+        gene_log_probs,
+        mixing_weights,
+        return_by=return_by,
+        split_components=split_components,
+        weights=weights,
+        weight_type=weight_type,
+    )

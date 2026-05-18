@@ -203,22 +203,46 @@ class TestTwoStateVCPLikelihoodPlateModes:
 class TestPhase1Guards:
     """Each deferred path raises NotImplementedError with a clear message."""
 
-    def test_mixture_raises(self):
+    def test_mixture_supported(self):
+        """Mixtures are now fully supported — no NotImplementedError."""
         like = TwoStateLikelihood()
-        with pytest.raises(NotImplementedError, match="mixture"):
+        n_genes, n_components = 2, 2
+
+        def model():
+            mu = numpyro.sample(
+                "mu",
+                dist.LogNormal(
+                    jnp.zeros((n_components, n_genes)), 1.0
+                ).to_event(2),
+            )
+            b = numpyro.sample(
+                "burst_size",
+                dist.LogNormal(
+                    jnp.zeros((n_components, n_genes)), 1.0
+                ).to_event(2),
+            )
+            k = numpyro.sample(
+                "k_off",
+                dist.LogNormal(
+                    jnp.ones((n_components, n_genes)), 1.0
+                ).to_event(2),
+            )
             like.sample(
                 {
-                    "mu": jnp.array([1.0]),
-                    "burst_size": jnp.array([1.0]),
-                    "k_off": jnp.array([5.0]),
+                    "mu": mu,
+                    "burst_size": b,
+                    "k_off": k,
                     "mixing_weights": jnp.array([0.5, 0.5]),
                 },
                 cell_specs=[],
                 counts=None,
-                dims={"n_cells": 1, "n_genes": 1},
+                dims={"n_cells": 4, "n_genes": n_genes},
                 batch_size=None,
                 model_config=None,
             )
+
+        tr = trace(seed(model, jax.random.PRNGKey(0))).get_trace()
+        assert tr["counts"]["value"].shape == (4, n_genes)
 
     def test_vae_raises(self):
         like = TwoStateLikelihood()

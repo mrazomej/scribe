@@ -276,6 +276,8 @@ class DenoisingSamplingMixin:
         # The Two-State model does not expose NB-style (r, p); instead
         # we recover (α, β, r̂) via _twostate_dispatch_reparam and
         # pass them through the quadrature denoising path.
+        # For mixture models, mixing_weights are forwarded so that the
+        # denoising marginalizes over components.
         if _is_twostate:
             from ..models.components.likelihoods.two_state import (
                 _twostate_dispatch_reparam,
@@ -283,18 +285,27 @@ class DenoisingSamplingMixin:
 
             # _twostate_dispatch_reparam expects mu + the third-coord
             # extras (burst_size/k_off, switching_ratio, etc.) but NOT
-            # p_capture.  Strip p_capture before calling.
+            # p_capture or mixing_weights.  Strip them before calling.
+            _strip_keys = {"p_capture", "mixing_weights"}
             _reparam_inputs = {
-                k: v for k, v in map_estimates.items() if k != "p_capture"
+                k: v for k, v in map_estimates.items()
+                if k not in _strip_keys
             }
             ts_alpha, ts_beta, ts_rate, _eff, _raw = (
                 _twostate_dispatch_reparam(_reparam_inputs)
             )
 
             p_capture = map_estimates.get("p_capture")
+            _mixing_weights = map_estimates.get("mixing_weights")
 
             if verbose:
-                extras = ["VCP"] if p_capture is not None else []
+                extras = []
+                if p_capture is not None:
+                    extras.append("VCP")
+                if _mixing_weights is not None:
+                    extras.append(
+                        f"K={int(_mixing_weights.shape[-1])}"
+                    )
                 extra_str = f" [{', '.join(extras)}]" if extras else ""
                 print(
                     f"Denoising two-state model"
@@ -308,6 +319,7 @@ class DenoisingSamplingMixin:
                 method=method,
                 rng_key=rng_key,
                 return_variance=return_variance,
+                mixing_weights=_mixing_weights,
                 cell_batch_size=cell_batch_size,
                 ts_alpha=ts_alpha,
                 ts_beta=ts_beta,

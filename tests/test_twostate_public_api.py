@@ -139,13 +139,14 @@ class TestTwoStatePhase1Validation:
                 overdispersion=OverdispersionType.BNB,
             )
 
-    def test_mixture_rejected(self):
-        with pytest.raises(ValueError, match="mixture"):
-            ModelConfig(
-                base_model="twostate",
-                parameterization=Parameterization.TWO_STATE_NATURAL,
-                n_components=2,
-            )
+    def test_mixture_accepted(self):
+        """Mixtures are now fully supported for TwoState models."""
+        cfg = ModelConfig(
+            base_model="twostate",
+            parameterization=Parameterization.TWO_STATE_NATURAL,
+            n_components=2,
+        )
+        assert cfg.n_components == 2
 
     def test_vae_inference_rejected(self):
         with pytest.raises(ValueError, match="VAE"):

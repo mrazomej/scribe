@@ -1202,21 +1202,35 @@ class TwoStateParameterization(Parameterization):
         n_components: Optional[int] = None,
         mixture_params: Optional[List[str]] = None,
     ) -> List[ParamSpec]:
-        """Build the mu spec.
+        """Build the ``mu`` spec for the natural parameterization.
 
-        When ``unconstrained=True``, uses :class:`PositiveNormalSpec`
-        (Normal + transform, resolved by the factory from the model
-        config's ``positive_transform`` field).  When
-        ``unconstrained=False``, uses :class:`LogNormalSpec` —
-        a direct constrained distribution on (0, ∞).
-
-        Phase 1 explicitly does not support mixtures, so we ignore
-        ``n_components`` and ``mixture_params``.
+        Parameters
+        ----------
+        unconstrained : bool
+            If ``True``, uses :class:`PositiveNormalSpec` (Normal +
+            transform resolved by the factory).  If ``False``, uses
+            :class:`LogNormalSpec` — a direct constrained distribution
+            on (0, ∞).
+        guide_families : GuideFamilyConfig
+            Per-parameter guide family overrides.
+        n_components : int, optional
+            Number of mixture components.  When > 1, ``mu`` is marked
+            as mixture-specific unless excluded by ``mixture_params``.
+        mixture_params : list of str, optional
+            Whitelist of parameters that should vary across mixture
+            components.  ``None`` defaults to all core parameters.
         """
-        del n_components, mixture_params  # phase 1 ignores
         mu_family = guide_families.get("mu")
-        # Constrained path: LogNormal on (0, ∞); same (loc, scale)
-        # semantics in log-space as the unconstrained Normal.
+        # Resolve mixture flag for mu following the same pattern
+        # used by the NB-family parameterizations.
+        if n_components is not None and n_components > 1:
+            is_mu_mixture = (
+                "mu" in mixture_params if mixture_params is not None
+                else True
+            )
+        else:
+            is_mu_mixture = False
+
         if unconstrained:
             return [
                 PositiveNormalSpec(
@@ -1225,7 +1239,7 @@ class TwoStateParameterization(Parameterization):
                     default_params=(0.0, 1.0),
                     is_gene_specific=True,
                     guide_family=mu_family,
-                    is_mixture=False,
+                    is_mixture=is_mu_mixture,
                 ),
             ]
         else:
@@ -1236,7 +1250,7 @@ class TwoStateParameterization(Parameterization):
                     default_params=(0.0, 1.0),
                     is_gene_specific=True,
                     guide_family=mu_family,
-                    is_mixture=False,
+                    is_mixture=is_mu_mixture,
                 ),
             ]
 
@@ -1322,18 +1336,34 @@ class TwoStateRatioParameterization(Parameterization):
         n_components: Optional[int] = None,
         mixture_params: Optional[List[str]] = None,
     ) -> List[ParamSpec]:
-        """Build the mu spec.
+        """Build the ``mu`` spec for the ratio parameterization.
 
-        When ``unconstrained=True``, uses :class:`PositiveNormalSpec`
-        (Normal + transform).  When ``unconstrained=False``, uses
-        :class:`LogNormalSpec` — a direct constrained distribution on
-        (0, ∞).
+        Parameters
+        ----------
+        unconstrained : bool
+            If ``True``, uses :class:`PositiveNormalSpec`.  If
+            ``False``, uses :class:`LogNormalSpec`.
+        guide_families : GuideFamilyConfig
+            Per-parameter guide family overrides.
+        n_components : int, optional
+            Number of mixture components.
+        mixture_params : list of str, optional
+            Whitelist of mixture-varying parameters.
 
+        Notes
+        -----
         The other two per-gene specs (``burst_size``,
         ``switching_ratio``) come from the model extras dispatch.
         """
-        del n_components, mixture_params
         mu_family = guide_families.get("mu")
+        if n_components is not None and n_components > 1:
+            is_mu_mixture = (
+                "mu" in mixture_params if mixture_params is not None
+                else True
+            )
+        else:
+            is_mu_mixture = False
+
         if unconstrained:
             return [
                 PositiveNormalSpec(
@@ -1342,7 +1372,7 @@ class TwoStateRatioParameterization(Parameterization):
                     default_params=(0.0, 1.0),
                     is_gene_specific=True,
                     guide_family=mu_family,
-                    is_mixture=False,
+                    is_mixture=is_mu_mixture,
                 ),
             ]
         else:
@@ -1353,7 +1383,7 @@ class TwoStateRatioParameterization(Parameterization):
                     default_params=(0.0, 1.0),
                     is_gene_specific=True,
                     guide_family=mu_family,
-                    is_mixture=False,
+                    is_mixture=is_mu_mixture,
                 ),
             ]
 
@@ -1434,18 +1464,34 @@ class TwoStateMeanFanoParameterization(Parameterization):
         n_components: Optional[int] = None,
         mixture_params: Optional[List[str]] = None,
     ) -> List[ParamSpec]:
-        """Build the mu spec.
+        """Build the ``mu`` spec for the mean-Fano parameterization.
 
-        When ``unconstrained=True``, uses :class:`PositiveNormalSpec`
-        (Normal + transform).  When ``unconstrained=False``, uses
-        :class:`LogNormalSpec` — a direct constrained distribution on
-        (0, ∞).
+        Parameters
+        ----------
+        unconstrained : bool
+            If ``True``, uses :class:`PositiveNormalSpec`.  If
+            ``False``, uses :class:`LogNormalSpec`.
+        guide_families : GuideFamilyConfig
+            Per-parameter guide family overrides.
+        n_components : int, optional
+            Number of mixture components.
+        mixture_params : list of str, optional
+            Whitelist of mixture-varying parameters.
 
+        Notes
+        -----
         The other two per-gene specs (``excess_fano``,
         ``concentration``) come from the model extras dispatch.
         """
-        del n_components, mixture_params
         mu_family = guide_families.get("mu")
+        if n_components is not None and n_components > 1:
+            is_mu_mixture = (
+                "mu" in mixture_params if mixture_params is not None
+                else True
+            )
+        else:
+            is_mu_mixture = False
+
         if unconstrained:
             return [
                 PositiveNormalSpec(
@@ -1454,7 +1500,7 @@ class TwoStateMeanFanoParameterization(Parameterization):
                     default_params=(0.0, 1.0),
                     is_gene_specific=True,
                     guide_family=mu_family,
-                    is_mixture=False,
+                    is_mixture=is_mu_mixture,
                 ),
             ]
         else:
@@ -1465,7 +1511,7 @@ class TwoStateMeanFanoParameterization(Parameterization):
                     default_params=(0.0, 1.0),
                     is_gene_specific=True,
                     guide_family=mu_family,
-                    is_mixture=False,
+                    is_mixture=is_mu_mixture,
                 ),
             ]
 
@@ -1549,18 +1595,34 @@ class TwoStateMomentDeltaParameterization(Parameterization):
         n_components: Optional[int] = None,
         mixture_params: Optional[List[str]] = None,
     ) -> List[ParamSpec]:
-        """Build the mu spec.
+        """Build the ``mu`` spec for the moment-delta parameterization.
 
-        When ``unconstrained=True``, uses :class:`PositiveNormalSpec`
-        (Normal + transform).  When ``unconstrained=False``, uses
-        :class:`LogNormalSpec` — a direct constrained distribution on
-        (0, ∞).
+        Parameters
+        ----------
+        unconstrained : bool
+            If ``True``, uses :class:`PositiveNormalSpec`.  If
+            ``False``, uses :class:`LogNormalSpec`.
+        guide_families : GuideFamilyConfig
+            Per-parameter guide family overrides.
+        n_components : int, optional
+            Number of mixture components.
+        mixture_params : list of str, optional
+            Whitelist of mixture-varying parameters.
 
+        Notes
+        -----
         ``excess_fano`` and ``inv_concentration`` come from the model
         extras dispatch.
         """
-        del n_components, mixture_params
         mu_family = guide_families.get("mu")
+        if n_components is not None and n_components > 1:
+            is_mu_mixture = (
+                "mu" in mixture_params if mixture_params is not None
+                else True
+            )
+        else:
+            is_mu_mixture = False
+
         if unconstrained:
             return [
                 PositiveNormalSpec(
@@ -1569,7 +1631,7 @@ class TwoStateMomentDeltaParameterization(Parameterization):
                     default_params=(0.0, 1.0),
                     is_gene_specific=True,
                     guide_family=mu_family,
-                    is_mixture=False,
+                    is_mixture=is_mu_mixture,
                 ),
             ]
         else:
@@ -1580,7 +1642,7 @@ class TwoStateMomentDeltaParameterization(Parameterization):
                     default_params=(0.0, 1.0),
                     is_gene_specific=True,
                     guide_family=mu_family,
-                    is_mixture=False,
+                    is_mixture=is_mu_mixture,
                 ),
             ]
 

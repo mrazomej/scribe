@@ -237,12 +237,29 @@ def denoise_counts(
     if _method_needs_rng(method) and rng_key is None:
         rng_key = random.PRNGKey(42)
 
-    # ── Two-State short-circuit: no mixtures, no layout logic,
-    #    just pass straight through to _denoise_standard. ──────────
+    # ── Two-State short-circuit ──────────────────────────────────
     # This must come BEFORE the param_layouts fallback which
     # accesses r.ndim (r is None for TwoState calls).
     _is_twostate = ts_alpha is not None
     if _is_twostate:
+        # Mixture-aware TwoState denoising: when ts_alpha carries a
+        # component axis (ndim >= 2 and mixing_weights provided), we
+        # denoise each component independently and marginalize.
+        if mixing_weights is not None and ts_alpha.ndim >= 2:
+            return _denoise_twostate_mixture_marginal(
+                counts=counts,
+                ts_alpha=ts_alpha,
+                ts_beta=ts_beta,
+                ts_rate=ts_rate,
+                p_capture=p_capture,
+                mixing_weights=mixing_weights,
+                component_assignment=component_assignment,
+                method=method,
+                rng_key=rng_key,
+                return_variance=return_variance,
+                cell_batch_size=cell_batch_size,
+            )
+        # Non-mixture TwoState: pass straight to _denoise_standard.
         return _denoise_standard(
             counts=counts,
             r=None,
@@ -430,6 +447,129 @@ def denoise_counts(
     if return_variance:
         return {"denoised_counts": d_all, "variance": v_all}
     return d_all
+
+
+def _denoise_twostate_mixture_marginal(
+    counts: jnp.ndarray,
+    ts_alpha: jnp.ndarray,
+    ts_beta: jnp.ndarray,
+    ts_rate: jnp.ndarray,
+    p_capture: Optional[jnp.ndarray],
+    mixing_weights: jnp.ndarray,
+    component_assignment: Optional[jnp.ndarray],
+    method: Union[str, Tuple[str, str]],
+    rng_key: Optional[random.PRNGKey],
+    return_variance: bool,
+    cell_batch_size: Optional[int],
+) -> Union[jnp.ndarray, Dict[str, jnp.ndarray]]:
+    """Mixture-aware denoising for the TwoState (Poisson-Beta) family.
+
+    When ``component_assignment`` is provided, gathers per-cell
+    parameters from the assigned component and delegates to the
+    non-mixture standard path.  Otherwise, computes per-component
+    denoised counts and marginalizes over components using
+    ``mixing_weights``.
+
+    Parameters
+    ----------
+    counts : jnp.ndarray
+        Observed count matrix, shape ``(n_cells, n_genes)``.
+    ts_alpha : jnp.ndarray
+        TwoState α (k_on), shape ``(K, G)``.
+    ts_beta : jnp.ndarray
+        TwoState β (k_off), shape ``(K, G)``.
+    ts_rate : jnp.ndarray
+        TwoState rate r̂, shape ``(K, G)``.
+    p_capture : jnp.ndarray or None
+        Per-cell capture probability, shape ``(C,)`` or ``None``.
+    mixing_weights : jnp.ndarray
+        Component mixing weights, shape ``(K,)``.
+    component_assignment : jnp.ndarray or None
+        Per-cell component indices ``(C,)``.
+    method : str or tuple of (str, str)
+        Denoising method (``"mean"``, ``"mode"``, ``"sample"``).
+    rng_key : random.PRNGKey or None
+        PRNG key for stochastic methods.
+    return_variance : bool
+        Whether to return variance alongside denoised counts.
+    cell_batch_size : int or None
+        Batch cells for memory control.
+
+    Returns
+    -------
+    jnp.ndarray or Dict[str, jnp.ndarray]
+        Denoised counts (and optionally variance).
+    """
+    n_components = ts_alpha.shape[0]
+
+    # Hard assignment: gather per-cell parameters and delegate to the
+    # standard non-mixture TwoState denoising path.
+    if component_assignment is not None:
+        ts_alpha_cell = ts_alpha[component_assignment]  # (C, G)
+        ts_beta_cell = ts_beta[component_assignment]    # (C, G)
+        ts_rate_cell = ts_rate[component_assignment]    # (C, G)
+        return _denoise_standard(
+            counts=counts,
+            r=None,
+            p=None,
+            p_capture=p_capture,
+            gate=None,
+            method=method,
+            rng_key=rng_key,
+            return_variance=return_variance,
+            cell_batch_size=cell_batch_size,
+            ts_alpha=ts_alpha_cell,
+            ts_beta=ts_beta_cell,
+            ts_rate=ts_rate_cell,
+        )
+
+    # Soft marginal: denoise each component independently and
+    # combine using mixing weights.
+    comp_means = []
+    comp_vars = []
+    for k in range(n_components):
+        # Slice to per-component gene-rank arrays: shape (G,).
+        result_k = _denoise_standard(
+            counts=counts,
+            r=None,
+            p=None,
+            p_capture=p_capture,
+            gate=None,
+            method=method,
+            rng_key=rng_key,
+            return_variance=True,
+            cell_batch_size=cell_batch_size,
+            ts_alpha=ts_alpha[k],
+            ts_beta=ts_beta[k],
+            ts_rate=ts_rate[k],
+        )
+        comp_means.append(result_k["denoised_counts"])
+        comp_vars.append(result_k["variance"])
+
+    # Stack to (K, C, G) and marginalize.
+    stacked_means = jnp.stack(comp_means, axis=0)  # (K, C, G)
+    stacked_vars = jnp.stack(comp_vars, axis=0)     # (K, C, G)
+
+    # mixing_weights shape: (K,) → expand to (K, 1, 1) for broadcast.
+    w = mixing_weights[:, None, None]
+
+    # Marginal mean:  E[denoised] = Σ_k w_k · E_k[denoised]
+    marginal_mean = (w * stacked_means).sum(axis=0)  # (C, G)
+
+    if return_variance:
+        # Law of total variance:
+        # Var = Σ_k w_k·Var_k + Σ_k w_k·(E_k - E_marginal)²
+        within_var = (w * stacked_vars).sum(axis=0)
+        between_var = (
+            w * (stacked_means - marginal_mean[None, :, :]) ** 2
+        ).sum(axis=0)
+        marginal_var = within_var + between_var
+        return {
+            "denoised_counts": marginal_mean,
+            "variance": marginal_var,
+        }
+
+    return marginal_mean
 
 
 def _denoise_single(

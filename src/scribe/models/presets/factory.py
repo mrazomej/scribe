@@ -1136,54 +1136,11 @@ def create_model(
     effective_hierarchical_gate = model_config.zero_inflation_prior != _NONE
     extra_param_names = list(MODEL_EXTRA_PARAMS[base_model])
     # TwoState alternative parameterizations rename or replace the
-    # gene-level extras.  The base model's MODEL_EXTRA_PARAMS entry
-    # always lists (burst_size, k_off) plus p_capture for the VCP
-    # variant; we rewrite that list here based on the configured
-    # parameterization so the downstream dispatch
-    # (``build_extra_param_spec``) builds the right specs and the rest
-    # of the factory stays parameterization-agnostic.
-    if base_model in ("twostate", "twostatevcp"):
-        if model_config.parameterization == ParamEnum.TWO_STATE_RATIO:
-            # natural -> ratio: k_off becomes switching_ratio,
-            # burst_size unchanged.
-            extra_param_names = [
-                "switching_ratio" if n == "k_off" else n
-                for n in extra_param_names
-            ]
-        elif model_config.parameterization == ParamEnum.TWO_STATE_MEAN_FANO:
-            # natural -> mean_fano: (burst_size, k_off) → (excess_fano,
-            # concentration); preserve p_capture position for the VCP
-            # variant.
-            rewritten: list = []
-            replaced = False
-            for n in extra_param_names:
-                if n in ("burst_size", "k_off"):
-                    if not replaced:
-                        rewritten.extend(["excess_fano", "concentration"])
-                        replaced = True
-                    # drop both burst_size and k_off; replaced is now True
-                else:
-                    rewritten.append(n)
-            extra_param_names = rewritten
-        elif (
-            model_config.parameterization
-            == ParamEnum.TWO_STATE_MOMENT_DELTA
-        ):
-            # natural -> moment_delta: (burst_size, k_off) →
-            # (excess_fano, inv_concentration). Same structure as
-            # the mean_fano swap above.
-            rewritten = []
-            replaced = False
-            for n in extra_param_names:
-                if n in ("burst_size", "k_off"):
-                    if not replaced:
-                        rewritten.extend(
-                            ["excess_fano", "inv_concentration"]
-                        )
-                        replaced = True
-                else:
-                    rewritten.append(n)
-            extra_param_names = rewritten
+    # gene-level extras.  The shared helper handles all four variants;
+    # non-TwoState models pass through unchanged.
+    extra_param_names = _resolve_twostate_extra_names(
+        base_model, model_config.parameterization, extra_param_names
+    )
     # Append BNB concentration when overdispersion is enabled
     if model_config.is_bnb:
         extra_param_names.append("bnb_concentration")
@@ -3118,6 +3075,78 @@ def _extract_guides_from_param_specs(
 # ------------------------------------------------------------------------------
 
 
+def _resolve_twostate_extra_names(
+    base_model: str,
+    parameterization: "ParamEnum",
+    extra_names: List[str],
+) -> List[str]:
+    """Rewrite MODEL_EXTRA_PARAMS names for TwoState alternate parameterizations.
+
+    The canonical ``MODEL_EXTRA_PARAMS`` entry for TwoState is
+    ``["burst_size", "k_off"]`` (plus ``"p_capture"`` for VCP).
+    Alternate parameterizations rename or replace these gene-level
+    extras:
+
+    - ``two_state_ratio``: ``k_off`` → ``switching_ratio``.
+    - ``two_state_mean_fano``: ``(burst_size, k_off)`` →
+      ``(excess_fano, concentration)``.
+    - ``two_state_moment_delta``: ``(burst_size, k_off)`` →
+      ``(excess_fano, inv_concentration)``.
+
+    Non-TwoState models pass through unchanged.
+
+    Parameters
+    ----------
+    base_model : str
+        Base model type (e.g. ``"twostate"``, ``"twostatevcp"``).
+    parameterization : ParamEnum
+        The configured parameterization enum value.
+    extra_names : List[str]
+        The canonical extra-param names to rewrite.
+
+    Returns
+    -------
+    List[str]
+        Rewritten extra-param names.
+    """
+    if base_model not in ("twostate", "twostatevcp"):
+        return extra_names
+
+    if parameterization == ParamEnum.TWO_STATE_RATIO:
+        return [
+            "switching_ratio" if n == "k_off" else n for n in extra_names
+        ]
+
+    if parameterization == ParamEnum.TWO_STATE_MEAN_FANO:
+        rewritten: list = []
+        replaced = False
+        for n in extra_names:
+            if n in ("burst_size", "k_off"):
+                if not replaced:
+                    rewritten.extend(["excess_fano", "concentration"])
+                    replaced = True
+            else:
+                rewritten.append(n)
+        return rewritten
+
+    if parameterization == ParamEnum.TWO_STATE_MOMENT_DELTA:
+        rewritten = []
+        replaced = False
+        for n in extra_names:
+            if n in ("burst_size", "k_off"):
+                if not replaced:
+                    rewritten.extend(["excess_fano", "inv_concentration"])
+                    replaced = True
+            else:
+                rewritten.append(n)
+        return rewritten
+
+    return extra_names
+
+
+# ------------------------------------------------------------------------------
+
+
 def _validate_mixture_params(
     mixture_params: List[str],
     param_strategy,
@@ -3126,6 +3155,10 @@ def _validate_mixture_params(
 ) -> None:
     """Validate that mixture_params contains only valid parameter names.
 
+    Builds a whitelist from the parameterization's core parameters plus
+    the model-specific extras (after resolving TwoState alternate
+    parameterization name rewrites).
+
     Parameters
     ----------
     mixture_params : List[str]
@@ -3133,11 +3166,12 @@ def _validate_mixture_params(
     param_strategy : Parameterization
         The parameterization strategy being used.
     base_model : str
-        The base model type (nbdm, zinb, nbvcp, zinbvcp).
+        The base model type (e.g. ``"nbdm"``, ``"twostate"``).
     model_config : ModelConfig, optional
         Full model configuration.  Used to check whether BNB
         overdispersion is enabled (adds ``bnb_concentration``
-        to the valid set).
+        to the valid set) and to resolve the parameterization
+        for TwoState extra-name rewrites.
 
     Raises
     ------
@@ -3147,8 +3181,14 @@ def _validate_mixture_params(
     # Get valid parameters from parameterization's core parameters
     valid_params = set(param_strategy.core_parameters)
 
-    # Add model-specific extra parameters (transformed for this parameterization)
-    extra_params = MODEL_EXTRA_PARAMS.get(base_model, [])
+    # Add model-specific extra parameters.  For TwoState alternate
+    # parameterizations the canonical names (burst_size, k_off) are
+    # rewritten to the parameterization-specific names.
+    extra_params = list(MODEL_EXTRA_PARAMS.get(base_model, []))
+    if model_config is not None and hasattr(model_config, "parameterization"):
+        extra_params = _resolve_twostate_extra_names(
+            base_model, model_config.parameterization, extra_params
+        )
     for param in extra_params:
         # Transform param name (e.g., p_capture -> phi_capture for mean_odds)
         transformed = param_strategy.transform_model_param(param)
@@ -3164,7 +3204,6 @@ def _validate_mixture_params(
     invalid_params = set(mixture_params) - valid_params
 
     if invalid_params:
-        # Build helpful error message
         param_name = param_strategy.name
         core_params = param_strategy.core_parameters
         extra_info = ""
