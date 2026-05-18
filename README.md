@@ -228,29 +228,53 @@ separates into composition and library size.
 
 The two-state promoter likelihood is a Poisson-Beta compound — per-gene counts
 emerge from `p_gc ~ Beta(α_g, β_g)` and `u_gc | p_gc ~ Poisson(r̂_g · p_gc ·
-ν_c)`. It captures the bursty / bimodal genes the NB family cannot fit (excess
-zeros simultaneously with a heavy right tail, or literal bimodal histograms from
-slow promoter switching). The closed-form NB is recovered in the `k_off → ∞`
-limit, so the two-state model nests inside the NB family rather than competing
-with it.
+ν_c)`, with `p_gc` independent per `(gene, cell)`. It captures the bursty /
+bimodal genes the NB family cannot fit (excess zeros simultaneously with a
+heavy right tail, or literal bimodal histograms from slow promoter switching).
+The closed-form NB is recovered in the `k_off → ∞` limit, so the two-state
+model nests inside the NB family rather than competing with it.
 
-The marginal log-likelihood is evaluated via Gauss-Jacobi quadrature over `p`
-(the closed-form ₁F₁ is numerically fragile in the bursty regime). The natural
-parameterization samples three positive per-gene parameters via Normal+softplus:
-`mu` (mean expression), `burst_size` (NB-limit burst size), and `k_off` (OFF
-rate; large favours the NB regime).
+The marginal log-likelihood is evaluated via fixed Gauss-Legendre quadrature
+over `p`, with the Beta density evaluated at fixed nodes inside the integrand.
+This sidesteps the Gauss-Jacobi eigendecomposition-adjoint NaN trap in the
+U-shaped Beta regime (`α, β < 1`) where the bursty regime lives. The
+implementation also draws an independent latent `p_gc` per `(g, c)` during
+ancestral sampling — a subtle but critical correctness point for posterior
+predictive distributions.
 
 | Likelihood                 | Code string     | Construction            | When to Use                                 |
 | -------------------------- | --------------- | ----------------------- | ------------------------------------------- |
 | **TwoState**               | `"twostate"`    | Poisson-Beta compound   | Bursty / bimodal genes the NB cannot fit    |
 | **TwoState + var capture** | `"twostatevcp"` | TwoState + capture prob | Bursty genes with variable sequencing depth |
 
+##### Four TwoState parameterizations
+
+All four sample `mu` (gene mean expression) plus two additional per-gene
+parameters; the likelihood is identical, only the sampled coordinates differ.
+Each successive parameterization fixes a distinct geometric pathology of
+mean-field variational inference:
+
+| Parameterization      | Aliases             | Extras sampled                          | Targets                                                 |
+| --------------------- | ------------------- | --------------------------------------- | ------------------------------------------------------- |
+| `two_state_natural`   | `natural`           | `burst_size`, `k_off`                   | Physics-natural; biophysical interpretation             |
+| `two_state_ratio`     | `ratio`             | `burst_size`, `switching_ratio = k_off / k_on` | Regime axis scale-invariant across genes         |
+| `two_state_mean_fano` | `mean_fano`, `fano` | `excess_fano = Var/Mean - 1`, `concentration = α + β` | Mean and predictive variance as sampled axes |
+| `two_state_moment_delta` | `moment_delta`, `delta` | `excess_fano`, `inv_concentration = 1 / (κ + 1) ∈ (0, 1)` | Same as mean_fano but bounded shape coord; the NB-limit ridge becomes a boundary |
+
+The natural parameterization is recommended for biophysical interpretation
+(NUTS or careful SVI). For mean-field SVI on many genes with widely varying
+expression, the ratio variant decouples regime from magnitude. When
+posterior-predictive variance is the visible failure mode, the mean-Fano
+variant samples `excess_fano` directly, which bounds the PPC width by
+construction. The moment-delta variant adds a bounded shape coordinate that
+prevents wasted variational mass on the unbounded NB-limit ridge. See
+[paper/_two_state_promoter.qmd](paper/_two_state_promoter.qmd) §
+*Alternative reparameterizations* for the full math.
+
 **Phase 1 limitations**: mixtures, VAE inference, multi-dataset indexing, BNB
 overdispersion, biology-informed capture priors, and the existing biological-PPC
 / denoising helpers are not yet wired for the TwoState family. Build-time
-validation rejects these combinations with a clear directive. See
-[paper/_two_state_promoter.qmd](paper/_two_state_promoter.qmd) for the
-mathematics.
+validation rejects these combinations with a clear directive.
 
 #### Negative-Binomial LogNormal (NBLN) Family
 
@@ -312,13 +336,19 @@ calibration workflow.
 
 ### Parameterizations
 
-Each likelihood can be parameterized in three ways:
+The NB-family likelihoods (nbdm / zinb / nbvcp / zinbvcp) accept three
+parameterizations of the gene-level dispersion/mean structure:
 
 | Parameterization | Aliases     | Core Parameters | Derived                   | When to Use                   |
 | ---------------- | ----------- | --------------- | ------------------------- | ----------------------------- |
 | **canonical**    | `standard`  | p, r            | --                        | Direct interpretation         |
 | **linked**       | `mean_prob` | p, mu           | r = mu(1-p)/p             | Captures p-r correlation      |
 | **odds_ratio**   | `mean_odds` | phi, mu         | p = 1/(1+phi), r = mu*phi | Numerically stable near p ~ 1 |
+
+The TwoState family (twostate / twostatevcp) has its own four
+parameterizations — see [the TwoState section](#two-state-promoter-poisson-beta-family)
+above. The LNM family uses a separate decoder-based parameterization (see
+[the LNM section](#logistic-normal-multinomial-lnm-family)).
 
 ### Constrained vs Unconstrained
 

@@ -36,6 +36,15 @@ backbone of the inference, denoising, and differential expression pipelines.
   with a biophysical interpretation as extrinsic noise in burst size and
   a sparsity-inducing hierarchical prior that defaults to NB behaviour.
 
+- :material-toggle-switch-variant:{ .middle } [**Two-state promoter (Poisson-Beta)**](two-state-promoter.md) —
+  Extends the NB family with a Poisson-Beta compound likelihood for
+  bursty / bimodal genes that the NB cannot fit. Derives the closed-form
+  steady-state distribution of a binary promoter, shows closure under
+  binomial thinning, recovers the NB in the fast-OFF limit, presents the
+  four parameterizations (natural, ratio, mean-Fano, moment-delta) that
+  fix successive mean-field VI pathologies, and develops the
+  autograd-robust Gauss-Legendre quadrature engine.
+
 - :material-anchor:{ .middle } [**Anchoring Priors**](anchoring-priors.md) — Resolves two layers of
   practical non-identifiability in the variable capture model: the
   capture-expression degeneracy (via biology-informed capture prior) and

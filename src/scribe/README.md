@@ -18,8 +18,9 @@ quantification.
 ### Key Features
 
 - **🎯 Simple API**: `scribe.fit()` with flat kwargs and sensible defaults
-- **🧬 Specialized Models**: Eight probabilistic models designed for scRNA-seq
-  data (NBDM, ZINB, NBVCP, ZINBVCP, LNM, LNMVCP, PLN, NBLN)
+- **🧬 Specialized Models**: Ten probabilistic models designed for scRNA-seq
+  data (NBDM, ZINB, NBVCP, ZINBVCP, LNM, LNMVCP, PLN, NBLN, TwoState,
+  TwoStateVCP)
 - **⚡ Multiple Inference**: SVI for speed, MCMC for accuracy, VAE for
   representation learning, Laplace for sharp per-cell posteriors without
   an encoder
@@ -521,16 +522,18 @@ normalized = normalize_counts_from_posterior(
 
 ### When to Use Each Model
 
-| Model        | Best For                                                       | Characteristics                                                  |
-|--------------|----------------------------------------------------------------|------------------------------------------------------------------|
-| **NBDM**     | Baseline analysis, well-behaved data                           | Simple, interpretable, fast                                      |
-| **ZINB**     | Data with excess zeros                                         | Handles technical/biological dropouts                            |
-| **NBVCP**    | Variable sequencing depth                                      | Models capture efficiency                                        |
-| **ZINBVCP**  | Complex technical variation                                    | Most comprehensive model                                         |
-| **LNM**      | Explicit gene-gene correlations on compositions                | Low-rank covariance via ALR linear-decoder VAE                   |
-| **LNMVCP**   | LNM + variable sequencing depth                                | LNM with per-cell capture on the totals NB submodel              |
-| **PLN**      | Gene-gene correlations on absolute counts                      | Per-gene Poisson on log-normal rates; supports Laplace inference |
-| **NBLN**     | Gene-gene correlations + zero-spike on sparse genes (NB+lognormal) | Per-gene NB on log-normal-modulated means; gene dispersion `r_g` |
+| Model           | Best For                                                       | Characteristics                                                  |
+|-----------------|----------------------------------------------------------------|------------------------------------------------------------------|
+| **NBDM**        | Baseline analysis, well-behaved data                           | Simple, interpretable, fast                                      |
+| **ZINB**        | Data with excess zeros                                         | Handles technical/biological dropouts                            |
+| **NBVCP**       | Variable sequencing depth                                      | Models capture efficiency                                        |
+| **ZINBVCP**     | Complex technical variation                                    | Most comprehensive NB-family model                               |
+| **LNM**         | Explicit gene-gene correlations on compositions                | Low-rank covariance via ALR linear-decoder VAE                   |
+| **LNMVCP**      | LNM + variable sequencing depth                                | LNM with per-cell capture on the totals NB submodel              |
+| **PLN**         | Gene-gene correlations on absolute counts                      | Per-gene Poisson on log-normal rates; Laplace inference          |
+| **NBLN**        | Gene-gene correlations + per-gene overdispersion               | Per-gene NB on log-normal-modulated means; gene dispersion `r_g` |
+| **TwoState**    | Bursty / bimodal genes the NB cannot fit                       | Poisson-Beta compound from a non-bursty two-state promoter       |
+| **TwoStateVCP** | Bursty genes with variable sequencing depth                    | TwoState + per-cell capture; closed under binomial thinning      |
 
 ### When to Use Each Inference Method
 
@@ -543,12 +546,35 @@ normalized = normalize_counts_from_posterior(
 
 ### Parameterization Guide
 
+NB-family models (nbdm, zinb, nbvcp, zinbvcp) accept three parameterizations of
+the gene-level dispersion/mean:
+
 | Parameterization    | Parameters            | Best For                               |
 | ------------------- | --------------------- | -------------------------------------- |
-| **Standard**        | Direct p, r           | Most interpretable                     |
-| **Linked**          | Links p to expression | When p-expression relationship matters |
-| **Odds Ratio**      | Uses odds ratios      | When odds ratios are natural scale     |
-| **Logistic Normal** | r_T, p + VAE      | LNM model (auto-selected)              |
+| **canonical**       | Direct p, r           | Most interpretable                     |
+| **mean_prob**       | (p, mu); derives r    | Captures the p-mu posterior coupling   |
+| **mean_odds**       | (phi, mu); derives p, r | Numerically stable near p ~ 1        |
+
+The TwoState family (twostate, twostatevcp) has its own four parameterizations,
+all mean-preserving by construction:
+
+| Parameterization          | Aliases                       | Sampled extras                                     |
+| ------------------------- | ----------------------------- | -------------------------------------------------- |
+| `two_state_natural`       | `natural`                     | `burst_size`, `k_off`                              |
+| `two_state_ratio`         | `ratio`                       | `burst_size`, `switching_ratio = k_off / k_on`    |
+| `two_state_mean_fano`     | `mean_fano`, `fano`           | `excess_fano = Var/Mean - 1`, `concentration = α + β` |
+| `two_state_moment_delta`  | `moment_delta`, `delta`       | `excess_fano`, `inv_concentration = 1 / (κ + 1) ∈ (0, 1)` |
+
+Each successive variant addresses a distinct mean-field geometric pathology:
+`ratio` orthogonalizes the NB-vs-bursty regime axis from gene magnitude;
+`mean_fano` samples the first two observable moments directly so q(excess_fano)
+bounds the PPC width by construction; `moment_delta` adds a bounded shape
+coordinate that compresses the NB-limit ridge to a boundary instead of an
+unbounded direction. See `paper/_two_state_promoter.qmd` for the full math.
+
+PLN, NBLN, LNM, and LNMVCP use their own decoder-based parameterizations
+auto-selected by the factory; the `parameterization` argument is not exposed
+for these families.
 
 ## Advanced Usage Examples
 

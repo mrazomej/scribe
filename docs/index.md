@@ -177,10 +177,11 @@ mixture components, hierarchical priors, multi-dataset structure, and more.
 
 ## Available Models
 
-### Likelihood Construction
+### NB family
 
-SCRIBE's four likelihoods build on each other -- the base Negative Binomial
-model can be extended with zero inflation and/or variable capture probability:
+SCRIBE's NB-family likelihoods build on each other -- the base Negative
+Binomial can be extended with zero inflation and/or variable capture
+probability:
 
 | Likelihood                  | Code        | Construction               | Extra Parameters    | Best For                                 |
 | --------------------------- | ----------- | -------------------------- | ------------------- | ---------------------------------------- |
@@ -189,18 +190,76 @@ model can be extended with zero inflation and/or variable capture probability:
 | **Zero-Inflated NB**        | `"zinb"`    | NB + zero inflation        | `gate`              | Excess zeros after VCP ruled out         |
 | **ZINB + variable capture** | `"zinbvcp"` | ZINB + capture probability | `gate`, `p_capture` | Both ZI and VCP supported by diagnostics |
 
-Any of the above can be extended to **mixture models** with `n_components=K`
-for subpopulation analysis.
+Any of these can be extended to **mixture models** with `n_components=K` for
+subpopulation analysis.
+
+### Logistic-Normal Multinomial (LNM) family
+
+LNM extends the NB family with a VAE-decoded compositional structure in
+additive log-ratio (ALR) coordinates. Counts factor into total counts (NB) and
+composition (Multinomial), with gene-gene correlations captured by a low-rank
+Gaussian in ALR space.
+
+| Likelihood            | Code        | Construction           | When to Use                                 |
+| --------------------- | ----------- | ---------------------- | ------------------------------------------- |
+| **LNM**               | `"lnm"`     | NB totals + VAE        | Compositional inference + DE                |
+| **LNM + variable capture** | `"lnmvcp"` | LNM + capture prob | LNM with variable sequencing depth          |
+
+See [Logistic-Normal Multinomial](theory/logistic-normal-multinomial.md) for
+the theory.
+
+### Poisson-LogNormal (PLN) and NB-LogNormal (NBLN) families
+
+PLN and NBLN parameterize gene-gene covariance directly through a low-rank
+log-normal latent on the gene rates (`Σ = WW^⊤ + diag(d)`). PLN uses a Poisson
+observation channel; NBLN uses NB with per-gene dispersion `r_g`. Both fit via
+a Laplace-EM workflow with optional SVI-cascade warm-start.
+
+| Likelihood | Code      | Construction              | When to Use                                                 |
+| ---------- | --------- | ------------------------- | ----------------------------------------------------------- |
+| **PLN**    | `"pln"`   | Poisson + low-rank LN     | Absolute counts with explicit gene-gene covariance          |
+| **NBLN**   | `"nbln"`  | NB + low-rank LN          | PLN + per-gene overdispersion (the typical scRNA-seq case)  |
+
+See [Poisson-LogNormal](theory/poisson-lognormal.md),
+[NB-LogNormal](theory/nb-lognormal.md), and
+[Loadings shrinkage](theory/loadings-shrinkage.md).
+
+### Two-state promoter (Poisson-Beta) family
+
+The two-state promoter likelihood is a Poisson-Beta compound:
+`p_gc ~ Beta(α_g, β_g)` and `u_gc | p_gc ~ Poisson(r̂_g · p_gc · ν_c)` with
+`p_gc` independent per `(gene, cell)`. It captures the bursty / bimodal genes
+the NB family cannot fit. The closed-form NB is recovered in the
+`k_off → ∞` limit, so the two-state model nests inside the NB family rather
+than competing with it. The marginal log-likelihood is evaluated via fixed
+Gauss-Legendre quadrature over `p`.
+
+| Likelihood                 | Code            | Construction            | When to Use                                 |
+| -------------------------- | --------------- | ----------------------- | ------------------------------------------- |
+| **TwoState**               | `"twostate"`    | Poisson-Beta compound   | Bursty / bimodal genes the NB cannot fit    |
+| **TwoState + var capture** | `"twostatevcp"` | TwoState + capture prob | Bursty genes with variable sequencing depth |
+
+The TwoState family ships with four parameterizations of its shape coordinate
+— `two_state_natural`, `two_state_ratio`, `two_state_mean_fano`,
+`two_state_moment_delta`. See [Two-state promoter](theory/two-state-promoter.md)
+for the full math and a decision guide.
 
 ### Parameterizations
 
-Each likelihood can be parameterized in three ways:
+NB-family likelihoods (nbdm / zinb / nbvcp / zinbvcp) accept three
+parameterizations of the dispersion/mean structure:
 
 | Name           | `parameterization=` | Aliases      | Core    | Derived                   | When to Use             |
 | -------------- | ------------------- | ------------ | ------- | ------------------------- | ----------------------- |
 | **Canonical**  | `canonical`         | `standard`   | p, r    | --                        | Direct interpretation   |
 | **Mean probs** | `mean_prob`         | `linked`     | p, mu   | r = mu(1-p)/p             | Couples mean and p      |
 | **Mean odds**  | `mean_odds`         | `odds_ratio` | phi, mu | p = 1/(1+phi), r = mu*phi | Stable when p is near 1 |
+
+TwoState-family likelihoods (twostate / twostatevcp) accept four
+parameterizations of their shape coordinate — see the
+[Two-state promoter theory page](theory/two-state-promoter.md). PLN, NBLN,
+LNM, and LNMVCP use decoder-based parameterizations auto-selected by the
+factory; the `parameterization` argument is not exposed for those families.
 
 ### Constrained vs Unconstrained
 
