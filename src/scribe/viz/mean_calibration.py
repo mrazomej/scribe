@@ -724,6 +724,49 @@ def _prepare_calibration_data(
             "annotations": _annotations,
         }
 
+    # ---- TwoState path: predicted mean = mu (mean-preserving) ---------------
+    # All four TwoState parameterizations (natural / ratio / mean_fano /
+    # moment_delta) sample ``mu`` as the per-gene mean expression and are
+    # mean-preserving by construction: E[u_gc] = mu_g (no capture) or
+    # mu_g · ν^(c) (VCP).  We can therefore read mu directly from the
+    # MAP and skip the NB-family (r, p) extraction below.
+    _base_model = getattr(results.model_config, "base_model", None)
+    if _base_model in ("twostate", "twostatevcp"):
+        _ts_targets = ["mu"]
+        if _base_model == "twostatevcp":
+            _ts_targets.append("p_capture")
+        _ts_map = _get_map_estimates_for_plot(
+            results, counts=counts, targets=_ts_targets
+        )
+        mu = _ts_map.get("mu")
+        if mu is None:
+            console.print(
+                "[yellow]Skipping mean calibration: mu unavailable in "
+                "TwoState MAP estimates.[/yellow]"
+            )
+            return None
+
+        mu_arr = np.asarray(mu, dtype=float).reshape(-1)
+        p_capture_ts = _ts_map.get("p_capture")
+        _annotations = []
+        if p_capture_ts is not None:
+            mean_nu = float(np.mean(np.asarray(p_capture_ts, dtype=float)))
+            _annotations.append(f"$\\bar{{\\nu}} = {mean_nu:.4f}$")
+            pred_mean = mu_arr * mean_nu
+        else:
+            pred_mean = mu_arr
+        _annotations.append("TwoState (mean-preserving)")
+
+        obs_mean = np.mean(np.asarray(counts, dtype=float), axis=0)
+        return {
+            "mode": "single",
+            "ds_results": None,
+            "obs_mean": obs_mean,
+            "pred_mean": pred_mean,
+            "is_mixture": False,
+            "annotations": _annotations,
+        }
+
     # ---- NB-family path: predicted mean = r * p / (1 - p) -------------------
     required_targets = ["r", "p"]
     if bool(getattr(results.model_config, "uses_variable_capture", False)):

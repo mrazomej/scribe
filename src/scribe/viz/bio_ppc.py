@@ -170,21 +170,38 @@ def plot_bio_ppc(
     # stochastic variability comparable to the biological PPC bands.
     # ("mean", "sample") would create artificial density spikes because
     # every cell with the same observed count maps to a single value.
-    console.print("[dim]Denoising observed counts (MAP, sample)...[/dim]")
-    key_denoise = random.PRNGKey(99)
-    # Denoising only selected genes significantly reduces peak device memory.
-    _bio_opts = viz_cfg.get("bio_ppc_opts", {}) if viz_cfg is not None else {}
-    denoise_cell_batch_size = int(
-        _bio_opts.get("denoise_cell_batch_size", 256) if hasattr(_bio_opts, "get") else 256
+    # The closed-form Poisson-Gamma denoiser is NB-family-specific and
+    # does not apply to the TwoState (Poisson-Beta compound) likelihood.
+    # For TwoState we skip denoising and use the raw observed counts as
+    # the data line; the biological PPC bands above are still meaningful
+    # because they come from sampling the pre-capture Poisson-Beta rate.
+    _ts_base_model = getattr(
+        getattr(results, "model_config", None), "base_model", None
     )
-    # Keep denoising order aligned with ``results_subset`` and plotting.
-    denoised_subset = _get_denoised_counts_for_plot(
-        results_subset,
-        counts=counts_subset,
-        rng_key=key_denoise,
-        method=("sample", "sample"),
-        cell_batch_size=denoise_cell_batch_size,
-    )
+    _is_twostate = _ts_base_model in ("twostate", "twostatevcp")
+    if _is_twostate:
+        console.print(
+            "[dim]TwoState: skipping MAP denoising of observed counts "
+            "(Poisson-Gamma denoiser is NB-family-specific). Showing "
+            "raw observed counts as the data line.[/dim]"
+        )
+        denoised_subset = np.asarray(counts_subset, dtype=np.float32)
+    else:
+        console.print("[dim]Denoising observed counts (MAP, sample)...[/dim]")
+        key_denoise = random.PRNGKey(99)
+        # Denoising only selected genes significantly reduces peak device memory.
+        _bio_opts = viz_cfg.get("bio_ppc_opts", {}) if viz_cfg is not None else {}
+        denoise_cell_batch_size = int(
+            _bio_opts.get("denoise_cell_batch_size", 256) if hasattr(_bio_opts, "get") else 256
+        )
+        # Keep denoising order aligned with ``results_subset`` and plotting.
+        denoised_subset = _get_denoised_counts_for_plot(
+            results_subset,
+            counts=counts_subset,
+            rng_key=key_denoise,
+            method=("sample", "sample"),
+            cell_batch_size=denoise_cell_batch_size,
+        )
 
     # Build a position map: original gene index → position inside the
     # gene-subset that was passed to the biological PPC sampler.

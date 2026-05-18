@@ -86,21 +86,22 @@ class BiologicalSamplingMixin:
         yields another NB with an effective :math:`\\hat{p}`.  By sampling
         from NB(r, p) directly we recover the pre-capture distribution.
         """
-        # Phase-1 gate: TwoState (Poisson-Beta compound) does not
-        # expose NB-style (r, p). A TwoState-specific biological PPC
-        # would sample from PoissonBetaCompound(α, β, r̂) directly; that
-        # path is deferred to phase 2. For phase 1, the standard
-        # numpyro.infer.Predictive(model, guide) call still works end
-        # to end — use that for a generic PPC.
+        # TwoState (Poisson-Beta compound) does not expose NB-style
+        # (r, p), but the *biological* PPC has a perfectly clean
+        # definition for it: drop the per-cell capture factor and
+        # sample observations from the pre-capture Poisson-Beta
+        # rate.  By closure under binomial thinning, this is the
+        # cell-level distribution of the latent mRNA counts before
+        # the sequencing pipeline samples them.  Dispatch to the
+        # TwoState-specific helper.
         _bm = getattr(self.model_config, "base_model", None)
         if _bm in ("twostate", "twostatevcp"):
-            raise NotImplementedError(
-                f"get_ppc_samples_biological() is not implemented for "
-                f"base_model={_bm!r} in phase 1. The TwoState (Poisson-"
-                f"Beta compound) likelihood has no NB-style (r, p) "
-                f"parameters; a Poisson-Beta-specific biological PPC "
-                f"is deferred to phase 2. Use numpyro.infer.Predictive "
-                f"on the model + guide directly for a standard PPC."
+            return self._twostate_biological_ppc_samples(
+                rng_key=rng_key,
+                n_samples=n_samples,
+                batch_size=batch_size,
+                store_samples=store_samples,
+                counts=counts,
             )
 
         # Create default RNG key if not provided
@@ -210,14 +211,19 @@ class BiologicalSamplingMixin:
         get_map_ppc_samples : MAP PPC including technical noise.
         get_ppc_samples_biological : Full-posterior biological PPC.
         """
-        # Phase-1 gate for TwoState — see ``get_ppc_samples_biological``
-        # above for the same rationale.
+        # TwoState branch — see ``get_ppc_samples_biological`` above for
+        # the same closure-under-thinning rationale.  Dispatches to a
+        # MAP-anchored Poisson-Beta sampler with the capture factor
+        # dropped from the rate.
         _bm = getattr(self.model_config, "base_model", None)
         if _bm in ("twostate", "twostatevcp"):
-            raise NotImplementedError(
-                f"get_map_ppc_samples_biological() is not implemented for "
-                f"base_model={_bm!r} in phase 1. Use numpyro.infer.Predictive "
-                f"on the model directly for a standard PPC."
+            return self._twostate_map_biological_ppc_samples(
+                rng_key=rng_key,
+                n_samples=n_samples,
+                use_mean=use_mean,
+                store_samples=store_samples,
+                verbose=verbose,
+                counts=counts,
             )
 
         if rng_key is None:
@@ -291,4 +297,153 @@ class BiologicalSamplingMixin:
         if store_samples:
             self.predictive_samples_biological = samples
 
+        return samples
+
+    # ------------------------------------------------------------------
+    # TwoState biological PPC helpers (drop p_capture from the rate)
+    # ------------------------------------------------------------------
+
+    def _twostate_biological_ppc_samples(
+        self,
+        *,
+        rng_key,
+        n_samples: int,
+        batch_size: Optional[int],
+        store_samples: bool,
+        counts: Optional[jnp.ndarray],
+    ):
+        """Full-posterior biological PPC for the TwoState family.
+
+        By closure under binomial thinning, the latent pre-capture
+        mRNA count distribution is exactly Poisson-Beta with the same
+        ``(α, β, r̂)`` triple but with the per-cell capture factor
+        ``ν^(c)`` dropped from the rate.  This helper iterates over
+        posterior samples of ``(μ, *extras*)``, dispatches via
+        :func:`_twostate_dispatch_reparam` to recover ``(α, β, r̂)``
+        for the active parameterization, and draws ``n_cells`` count
+        replicates from ``PoissonBetaCompound(α, β, r̂)`` per posterior
+        sample.
+
+        Returns a dict mirroring the NB-family API:
+        ``{"parameter_samples": ..., "predictive_samples": ...}``.
+        """
+        if rng_key is None:
+            rng_key = random.PRNGKey(42)
+
+        # Ensure posterior samples exist.
+        if self.posterior_samples is None:
+            key_post, rng_key = random.split(rng_key)
+            self.get_posterior_samples(
+                rng_key=key_post,
+                n_samples=n_samples,
+                batch_size=batch_size,
+                store_samples=True,
+                counts=counts,
+            )
+
+        from ..models.components.likelihoods.two_state import (
+            _twostate_dispatch_reparam,
+        )
+        from ..stats.distributions import PoissonBetaCompound
+
+        # Strip the capture site from the dispatch input — the
+        # dispatcher reads the sampled keys to detect the
+        # parameterization; ``p_capture`` is not one of them, but
+        # explicit removal makes the intent clear.
+        post = {
+            k: v
+            for k, v in self.posterior_samples.items()
+            if k != "p_capture"
+        }
+
+        # Run a posterior-sample loop with vmap-like batching: build the
+        # compound at the gene-rank rate per sample and draw one
+        # ``(n_cells, n_genes)`` count matrix per sample.
+        n_post = jnp.shape(post["mu"])[0]
+
+        def _draw_one(sample_index, key):
+            params_one = {k: v[sample_index] for k, v in post.items()}
+            alpha, beta, rate_gene, _eff, _raw = _twostate_dispatch_reparam(
+                params_one
+            )
+            compound = PoissonBetaCompound(
+                alpha=alpha, beta=beta, rate=rate_gene
+            )
+            # Replicate across cells: sample_shape (n_cells,) gives
+            # (n_cells, n_genes) independent per (c, g) — the
+            # ancestral-sampling correctness fix from earlier on this
+            # branch.
+            return compound.sample(key, sample_shape=(self.n_cells,))
+
+        keys = random.split(rng_key, n_post)
+        bio_samples = jnp.stack(
+            [_draw_one(i, keys[i]) for i in range(n_post)], axis=0
+        )
+
+        if store_samples:
+            self.predictive_samples_biological = bio_samples
+
+        return {
+            "parameter_samples": self.posterior_samples,
+            "predictive_samples": bio_samples,
+        }
+
+    def _twostate_map_biological_ppc_samples(
+        self,
+        *,
+        rng_key,
+        n_samples: int,
+        use_mean: bool,
+        store_samples: bool,
+        verbose: bool,
+        counts: Optional[jnp.ndarray],
+    ):
+        """MAP-anchored biological PPC for the TwoState family.
+
+        Identical structure to :meth:`_twostate_map_ppc_samples` (in
+        ``_sampling_map_predictive.py``) except the per-cell rate is
+        the gene-rank ``r̂_g`` directly — no multiplication by
+        ``p_capture``.  Returns the count tensor at shape
+        ``(n_samples, n_cells, n_genes)``.
+        """
+        if rng_key is None:
+            rng_key = random.PRNGKey(42)
+
+        if verbose:
+            print("Getting MAP estimates for TwoState biological PPC...")
+
+        map_estimates = self.get_map(
+            use_mean=use_mean, canonical=True, verbose=False, counts=counts
+        )
+
+        from ..models.components.likelihoods.two_state import (
+            _twostate_dispatch_reparam,
+        )
+        from ..stats.distributions import PoissonBetaCompound
+
+        # Drop p_capture from the dispatch input to compute the
+        # biological (pre-capture) rate.
+        map_no_capture = {
+            k: v for k, v in map_estimates.items() if k != "p_capture"
+        }
+        alpha, beta, rate_gene, _eff, _raw = _twostate_dispatch_reparam(
+            map_no_capture
+        )
+
+        compound = PoissonBetaCompound(
+            alpha=alpha, beta=beta, rate=rate_gene
+        )
+        # Replicate across cells: sample_shape (n_samples, n_cells) →
+        # (n_samples, n_cells, n_genes), independent p_gc per draw.
+        samples = compound.sample(
+            rng_key, sample_shape=(n_samples, self.n_cells)
+        )
+
+        if verbose:
+            print(
+                f"Generated TwoState biological PPC with shape "
+                f"{samples.shape}"
+            )
+        if store_samples:
+            self.predictive_samples_biological = samples
         return samples

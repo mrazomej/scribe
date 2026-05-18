@@ -260,7 +260,13 @@ class TestTwoStateModelFlagsRouting:
 
 
 class TestTwoStateSamplingGates:
-    """``denoise_counts_*`` and biological PPC raise on TwoState in phase 1."""
+    """``denoise_counts_*`` remain gated for TwoState in phase 1.
+
+    Biological PPC is now wired for TwoState (closure under binomial
+    thinning makes the pre-capture rate the natural target) and no
+    longer raises — see ``test_get_ppc_samples_biological_wired``
+    below.
+    """
 
     def test_denoise_counts_map_raises(self):
         cfg = _build_valid_twostate("twostate")
@@ -285,15 +291,36 @@ class TestTwoStateSamplingGates:
                 jnp.zeros((1, 1), dtype=jnp.int32)
             )
 
-    def test_get_ppc_samples_biological_raises(self):
-        cfg = _build_valid_twostate("twostate")
-        from scribe.svi._sampling_biological import BiologicalSamplingMixin
+    def test_get_ppc_samples_biological_wired(self):
+        """Smoke check that biological PPC now reaches the TwoState
+        dispatch branch instead of raising NotImplementedError."""
+        import scribe
+        import jax
 
-        class _Stub(BiologicalSamplingMixin):
-            model_config = cfg
-
-        with pytest.raises(NotImplementedError, match="TwoState"):
-            _Stub().get_ppc_samples_biological()
+        rng = np.random.default_rng(0)
+        counts = np.stack(
+            [rng.poisson(m, 32) for m in [2.0, 5.0, 10.0, 50.0, 100.0]],
+            axis=1,
+        )
+        res = scribe.fit(
+            counts,
+            model="twostatevcp",
+            parameterization="natural",
+            inference_method="svi",
+            n_steps=2,
+            unconstrained=True,
+        )
+        out = res.get_ppc_samples_biological(
+            rng_key=jax.random.PRNGKey(0),
+            n_samples=2,
+            counts=counts,
+        )
+        assert "predictive_samples" in out
+        # Biological PPC strips the capture factor; samples shape is
+        # (n_posterior_samples, n_cells, n_genes).
+        arr = np.asarray(out["predictive_samples"])
+        assert arr.ndim == 3
+        assert arr.shape[-2:] == counts.shape
 
 
 # ==============================================================================
