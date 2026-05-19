@@ -1,20 +1,130 @@
+---
+number-sections: false
+---
+
 ::: {.sitext}
 # Supplementary Materials {.unnumbered}
 
-<!-- notes on the Dirichlet Multinomial derivation-->
+::: {.si-tab-container}
+
+::: {.si-tab data-tab-title="I. Core Model"}
+
+## I. Core Model {.unnumbered}
+
 {{< include _dirichlet_multinomial.qmd >}}
 
-<!-- notes on the Singer dataset -->
-{{< include _singer_dataset.qmd >}}
+{{< include _hierarchical_p.qmd >}}
 
-<!-- notes on MCMC inference -->
-{{< include _singer_mcmc_nbdm.qmd >}}
+{{< include _hierarchical_gate.qmd >}}
 
-<!-- notes on variational inference -->
+{{< include _beta_negative_binomial.qmd >}}
+
+{{< include _two_state_promoter.qmd >}}
+
+:::
+
+::: {.si-tab data-tab-title="II. Model Comparison"}
+
+## II. Model Comparison & Diagnostics {.unnumbered}
+
+{{< include _model_comparison.qmd >}}
+
+{{< include _goodness_of_fit.qmd >}}
+
+:::
+
+::: {.si-tab data-tab-title="III. Inference"}
+
+## III. Inference Methodology {.unnumbered}
+
 {{< include _variational_inference_primer.qmd >}}
 
-<!-- Applying SVI to the Singer dataset -->
-{{< include _singer_svi_nbdm.qmd >}}
-{{< include _singer_svi_nbdm_linked.qmd >}}
-{{< include _singer_svi_nbdm_odds-ratio.qmd >}}
+{{< include _guide_reparam.qmd >}}
+
+{{< include _joint_low_rank_guide.qmd >}}
+
+{{< include _mixture_weights_svi.qmd >}}
+
+:::
+
+::: {.si-tab data-tab-title="IV. Denoising & Priors"}
+
+## IV. Denoising & Priors {.unnumbered}
+
+{{< include _denoising.qmd >}}
+
+{{< include _capture_prior.qmd >}}
+
+{{< include _mean_anchoring_prior.qmd >}}
+
+:::
+
+::: {.si-tab data-tab-title="V. Multi-Dataset"}
+
+## V. Multi-Dataset Hierarchical Models {.unnumbered}
+
+{{< include _hierarchical_datasets.qmd >}}
+
+:::
+
+::: {.si-tab data-tab-title="VI. GRN Log-Normal"}
+
+## VI. GRN-Based Log-Normal Models {.unnumbered}
+
+{{< include _grn_biophysics.qmd >}}
+
+{{< include _logistic_normal_multinomial.qmd >}}
+
+{{< include _poisson_lognormal.qmd >}}
+
+{{< include _nb_lognormal.qmd >}}
+
+{{< include _diffexp_lnm_pln_robustness.qmd >}}
+
+{{< include _diffexp_nbln_robustness.qmd >}}
+
+{{< include _loadings_shrinkage_priors.qmd >}}
+
+:::
+
+::: {.si-tab data-tab-title="VII. Normalization & DE"}
+
+## VII. Normalization & Differential Expression {.unnumbered}
+
+{{< include _normalization.qmd >}}
+
+{{< include _diffexp01.qmd >}}
+
+{{< include _diffexp02.qmd >}}
+
+{{< include _diffexp03.qmd >}}
+
+{{< include _diffexp04.qmd >}}
+
+{{< include _diffexp05.qmd >}}
+
+{{< include _diffexp06.qmd >}}
+
+{{< include _diffexp_compositional_robustness.qmd >}}
+
+{{< include _diffexp07.qmd >}}
+
+{{< include _diffexp08.qmd >}}
+
+{{< include _diffexp09.qmd >}}
+
+{{< include _diffexp10.qmd >}}
+
+{{< include _diffexp11.qmd >}}
+
+{{< include _diffexp12.qmd >}}
+
+{{< include _diffexp13.qmd >}}
+
+{{< include _diffexp14.qmd >}}
+
+:::
+
+:::
+
 :::

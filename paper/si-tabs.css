@@ -1,0 +1,32 @@
+/*
+ * si-tabs.css
+ *
+ * Companion stylesheet for si-tabs.js.  Loaded in the <head> so
+ * the rules take effect before the page body is painted.
+ *
+ * Two goals:
+ *
+ * 1. Prevent the "flash of unstyled content" (FOUC) where the
+ *    entire monolithic document is briefly visible while the JS
+ *    converts the .si-tab divs into Bootstrap tab panels.
+ *    → Hide every .si-tab except the first child.
+ *
+ * 2. Defer the browser's layout / paint / MathJax work for tabs
+ *    the user hasn't opened yet.  The HTML is still downloaded,
+ *    but the expensive rendering is postponed until a tab becomes
+ *    active — giving a near-instant first paint for the initial tab.
+ *    → Use content-visibility: hidden on inactive tab panels.
+ */
+
+/* ---------- 1. Hide non-first tabs before JS runs ---------- */
+.si-tab              { display: none; }
+.si-tab:first-child  { display: block; }
+
+/* ---------- 2. Lazy-render inactive panels after JS ---------- */
+.si-tab.tab-pane:not(.active) { content-visibility: hidden; }
+
+/* ---------- 3. Accordion sidebar TOC ────────────────────────  */
+/* Subsection lists start collapsed; clicking the parent heading */
+/* toggles .si-expanded to reveal them (accordion-style).       */
+.si-toc-sub          { display: none; }
+.si-toc-sub.si-expanded { display: block; }

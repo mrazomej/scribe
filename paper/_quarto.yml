@@ -17,21 +17,21 @@ author:
     orcid: 0000-0002-9510-0527
     affiliations: 
       - ref: stanfordbio
-  - name: Madhav Mani
-    orcid: 0000-0002-5812-4167
-    email: madhav.mani@gmail.com
-    affiliations: 
-      - ref: nwqbio
-      - ref: nweng
-    corresponding: true
-  - name: Dmitri A. Petrov
-    orcid: 0000-0002-3664-9130
-    email: dpetrov@stanford.edu
-    affiliations:
-      - ref: stanfordbio
-      - ref: stanfordcancer
-      - ref: czb
-    corresponding: true
+  # - name: Madhav Mani
+  #   orcid: 0000-0002-5812-4167
+  #   email: madhav.mani@gmail.com
+  #   affiliations: 
+  #     - ref: nwqbio
+  #     - ref: nweng
+  #   corresponding: true
+  # - name: Dmitri A. Petrov
+  #   orcid: 0000-0002-3664-9130
+  #   email: dpetrov@stanford.edu
+  #   affiliations:
+  #     - ref: stanfordbio
+  #     - ref: stanfordcancer
+  #     - ref: czb
+  #   corresponding: true
 
 # Author affiliations
 affiliations:
@@ -76,7 +76,7 @@ keywords:
 # Abstract
 
 
-bibliography: references.bib
+# bibliography: references.bib
 
 website:
   page-navigation: true
@@ -85,7 +85,73 @@ website:
       - text: "Main Text"
         file: paper.qmd
       - text: "Supplementary Material"
-        file: supplementary.qmd
+        menu:
+          - text: "Overview"
+            href: supplementary.qmd
+          - text: "---"
+          - text: "Core Model"
+          - text: "Dirichlet-Multinomial Derivation"
+            href: supplementary.qmd#sec-dirichlet-multinomial
+          - text: "Hierarchical Gene-Specific p"
+            href: supplementary.qmd#sec-hierarchical-p
+          - text: "Hierarchical Zero-Inflation Gate"
+            href: supplementary.qmd#sec-hierarchical-gate
+          - text: "Beta Negative Binomial"
+            href: supplementary.qmd#sec-bnb
+          - text: "Two-State Promoter"
+            href: supplementary.qmd#sec-twostate
+          - text: "---"
+          - text: "Model Comparison & Diagnostics"
+          - text: "Bayesian Model Comparison"
+            href: supplementary.qmd#sec-model-comparison
+          - text: "Goodness-of-Fit"
+            href: supplementary.qmd#sec-gof
+          - text: "---"
+          - text: "Inference Methodology"
+          - text: "Variational Inference Primer"
+            href: supplementary.qmd#sec-vi_primer
+          - text: "Guide Reparameterization"
+            href: supplementary.qmd#sec-reparam
+          - text: "Joint Low-Rank Guide"
+            href: supplementary.qmd#sec-joint-low-rank-guide
+          - text: "Mixture Weight Identifiability"
+            href: supplementary.qmd#sec-mixture-weights-svi
+          - text: "---"
+          - text: "Denoising & Priors"
+          - text: "Bayesian Denoising"
+            href: supplementary.qmd#sec-denoising
+          - text: "Capture Probability Prior"
+            href: supplementary.qmd#sec-capture-prior
+          - text: "Mean Anchoring Prior"
+            href: supplementary.qmd#sec-mean-anchoring
+          - text: "---"
+          - text: "Multi-Dataset Models"
+          - text: "Hierarchical Datasets"
+            href: supplementary.qmd#sec-hierarchical-datasets
+          - text: "---"
+          - text: "GRN Log-Normal Models"
+          - text: "GRN Biophysics"
+            href: supplementary.qmd#sec-grn-biophysics
+          - text: "Logistic-Normal Multinomial"
+            href: supplementary.qmd#sec-logistic-normal-multinomial
+          - text: "Poisson Log-Normal"
+            href: supplementary.qmd#sec-poisson-lognormal
+          - text: "NB Log-Normal"
+            href: supplementary.qmd#sec-nb-lognormal
+          - text: "LNM/PLN Robustness"
+            href: supplementary.qmd#sec-diffexp-lnm-pln-robust
+          - text: "NBLN Robustness"
+            href: supplementary.qmd#sec-diffexp-nbln-robustness
+          - text: "Loadings Shrinkage Priors"
+            href: supplementary.qmd#sec-loadings-shrinkage
+          - text: "---"
+          - text: "Normalization & Differential Expression"
+          - text: "Normalization"
+            href: supplementary.qmd#low-rank-logistic-normal-approximation-for-normalized-expression
+          - text: "Differential Expression Framework"
+            href: supplementary.qmd#sec-diffexp
+          - text: "Compositional Robustness"
+            href: supplementary.qmd#sec-diffexp-why-model
     right:
       - icon: github
         href: https://github.com/mrazomej/scribe
@@ -96,8 +162,16 @@ format:
     theme: cosmo
     default-image-extension: png
     toc: true
+    toc-location: left
+    toc-depth: 5
+    toc-expand: true
+    smooth-scroll: true
+    css: si-tabs.css
+    include-after-body:
+      - text: '<script src="si-tabs.js"></script>'
     filters:
       - tikz.lua
+      - shift-si-headings.lua
       - maintext-filter.lua
       - sitext-filter.lua
   pdf: 
