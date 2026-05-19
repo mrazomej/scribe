@@ -6,7 +6,7 @@ distributions, including MAP estimates and canonical parameter conversions.
 """
 
 from typing import Dict, Optional, Any, Union, List, Set
-import warnings
+import logging
 
 import jax.numpy as jnp
 from jax.nn import sigmoid, softmax
@@ -26,6 +26,8 @@ from ..core.axis_layout import (
     CELLS,
 )
 from ..flows import ComponentFlowDistribution, FlowDistribution
+
+_log = logging.getLogger(__name__)
 
 
 # ==============================================================================
@@ -614,10 +616,9 @@ def _flow_optimize_mode(
     try:
         import optax
     except ImportError:
-        warnings.warn(
+        _log.warning(
             "optax is required for flow_map_method='optimize'. "
-            "Falling back to 'mean'.",
-            UserWarning,
+            "Falling back to 'mean'."
         )
         return {
             name: jnp.mean(stacked, axis=0)
@@ -1528,9 +1529,8 @@ class ParameterExtractionMixin:
                     )
             # Print warning if NaNs were replaced
             if replaced_nans and verbose:
-                warnings.warn(
-                    "NaN values were replaced with means of the distributions",
-                    UserWarning,
+                _log.warning(
+                    "NaN values were replaced with means of the distributions"
                 )
 
         # Reconstruct constrained parameters from all NCP specs (horseshoe

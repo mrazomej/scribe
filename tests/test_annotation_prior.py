@@ -351,7 +351,7 @@ class TestBuildAnnotationPriorLogits:
         # Cell 3 (T__stim) should have zero logits
         assert jnp.allclose(logits[3], 0.0)
 
-    def test_min_cells_logs_warning(self, caplog):
+    def test_min_cells_logs_warning(self, scribe_caplog):
         """A warning is logged listing the filtered labels."""
         import anndata
         import logging
@@ -362,13 +362,13 @@ class TestBuildAnnotationPriorLogits:
         X = rng.poisson(5, (12, n_genes)).astype(np.float32)
         adata = anndata.AnnData(X=X, obs=pd.DataFrame({"ct": labels}))
 
-        with caplog.at_level(logging.WARNING, logger="scribe.core.annotation_prior"):
+        with scribe_caplog.at_level(logging.WARNING, logger="scribe.core.annotation_prior"):
             build_annotation_prior_logits(
                 adata, "ct", n_components=2, confidence=3.0, min_cells=5
             )
 
-        assert "fewer than 5 cells" in caplog.text
-        assert "'B'" in caplog.text or "B" in caplog.text
+        assert "fewer than 5 cells" in scribe_caplog.text
+        assert "'B'" in scribe_caplog.text or "B" in scribe_caplog.text
 
 
 # ==============================================================================
@@ -793,14 +793,16 @@ class TestSVISmoke:
         assert result.n_genes == n_genes
         assert result.n_components == 2
 
-    def test_fit_api_coerces_oversized_batch_size_to_full_batch(self):
+    def test_fit_api_coerces_oversized_batch_size_to_full_batch(self, scribe_caplog):
         """
         Oversized batch_size is coerced to full-batch mode.
 
         The fit API should preserve bounded mini-batching when possible, but
         if ``batch_size`` exceeds ``n_cells`` it should transparently pass
-        ``None`` to the SVI configuration and emit a user-facing warning.
+        ``None`` to the SVI configuration and emit a user-facing log message.
         """
+        import logging
+
         import anndata
         import scribe
 
@@ -810,20 +812,22 @@ class TestSVISmoke:
         labels = ["A"] * 5 + ["B"] * 5
         adata = anndata.AnnData(X=X, obs=pd.DataFrame({"cell_type": labels}))
 
-        with pytest.warns(
-            UserWarning,
-            match=r"batch_size=20 exceeds n_cells=10; using full-batch mode",
-        ):
-            result = scribe.fit(
-                adata,
-                model="nbdm",
-                n_components=2,
-                n_steps=3,
-                batch_size=20,
-                annotation_key="cell_type",
-                annotation_confidence=3.0,
-                seed=42,
-            )
+        scribe_caplog.set_level(logging.INFO, logger="scribe")
+        result = scribe.fit(
+            adata,
+            model="nbdm",
+            n_components=2,
+            n_steps=3,
+            batch_size=20,
+            annotation_key="cell_type",
+            annotation_confidence=3.0,
+            seed=42,
+        )
+        assert any(
+            "batch_size=20 exceeds n_cells=10; using full-batch mode"
+            in record.message
+            for record in scribe_caplog.records
+        )
 
         assert result.n_cells == n_cells
         assert result.n_genes == n_genes
@@ -943,8 +947,10 @@ class TestSVISmoke:
         )
         assert result_filtered.n_components == 2
 
-    def test_fit_api_annotation_min_cells_single_survivor_auto_downgrades(self):
+    def test_fit_api_annotation_min_cells_single_survivor_auto_downgrades(self, scribe_caplog):
         """Inferred annotation mixtures auto-downgrade when <=1 label survives."""
+        import logging
+
         import anndata
         import scribe
 
@@ -955,27 +961,29 @@ class TestSVISmoke:
         X = rng.poisson(5, (11, n_genes)).astype(np.float32)
         adata = anndata.AnnData(X=X, obs=pd.DataFrame({"ct": labels}))
 
-        # The API should warn and downgrade to canonical non-mixture mode.
-        with pytest.warns(
-            UserWarning,
-            match=r"Auto-downgrading to non-mixture mode",
-        ):
-            result = scribe.fit(
-                adata,
-                model="nbdm",
-                n_steps=3,
-                batch_size=11,
-                annotation_key="ct",
-                annotation_confidence=3.0,
-                annotation_min_cells=5,
-                mixture_params=["r"],
-                seed=42,
-            )
+        scribe_caplog.set_level(logging.WARNING, logger="scribe")
+        result = scribe.fit(
+            adata,
+            model="nbdm",
+            n_steps=3,
+            batch_size=11,
+            annotation_key="ct",
+            annotation_confidence=3.0,
+            annotation_min_cells=5,
+            mixture_params=["r"],
+            seed=42,
+        )
+        assert any(
+            "Auto-downgrading to non-mixture mode" in record.message
+            for record in scribe_caplog.records
+        )
 
         assert result.n_components is None
 
-    def test_fit_api_single_survivor_clears_component_only_priors(self):
+    def test_fit_api_single_survivor_clears_component_only_priors(self, scribe_caplog):
         """Single-survivor downgrade clears component-only prior settings."""
+        import logging
+
         import anndata
         import scribe
 
@@ -986,24 +994,23 @@ class TestSVISmoke:
         X = rng.poisson(5, (11, n_genes)).astype(np.float32)
         adata = anndata.AnnData(X=X, obs=pd.DataFrame({"ct": labels}))
 
-        # Auto-downgrade should keep the run valid by clearing expression_prior, which
-        # requires n_components >= 2 in enum-based prior mode.
-        with pytest.warns(
-            UserWarning,
-            match=r"expression_prior='gaussian' -> 'none'",
-        ):
-            result = scribe.fit(
-                adata,
-                model="nbdm",
-                n_steps=3,
-                batch_size=11,
-                annotation_key="ct",
-                annotation_confidence=3.0,
-                annotation_min_cells=5,
-                unconstrained=True,
-                expression_prior="gaussian",
-                seed=42,
-            )
+        scribe_caplog.set_level(logging.WARNING, logger="scribe")
+        result = scribe.fit(
+            adata,
+            model="nbdm",
+            n_steps=3,
+            batch_size=11,
+            annotation_key="ct",
+            annotation_confidence=3.0,
+            annotation_min_cells=5,
+            unconstrained=True,
+            expression_prior="gaussian",
+            seed=42,
+        )
+        assert any(
+            "expression_prior='gaussian' -> 'none'" in record.message
+            for record in scribe_caplog.records
+        )
 
         assert result.n_components is None
 

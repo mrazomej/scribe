@@ -47,7 +47,6 @@ Two layers:
 from __future__ import annotations
 
 import logging
-import warnings
 from typing import Any, Dict, Optional, Tuple
 
 import jax.numpy as jnp
@@ -213,12 +212,10 @@ def _check_gene_identity(
             )
         return False, "mask"
 
-    warnings.warn(
+    logger.warning(
         "Could not verify gene identity beyond count — gene names and "
         "masks are unavailable on the source SVI results. Proceeding "
-        "assuming the same gene panel was used in both fits.",
-        UserWarning,
-        stacklevel=3,
+        "assuming the same gene panel was used in both fits."
     )
     return False, "count_only"
 
@@ -383,9 +380,9 @@ def priors_from_results(
         )
 
     def _say(msg: str) -> None:
-        """Print a user-facing progress line when ``verbose`` is on."""
+        """Emit a user-facing progress line when ``verbose`` is on."""
         if verbose:
-            print(f"[scribe.laplace.priors] {msg}", flush=True)
+            logger.info(msg)
 
     _say(
         f"Building informative priors from SVI source "
@@ -427,21 +424,17 @@ def priors_from_results(
     capture_mode = _detect_capture_mode(samples)
     _say(f"Detected capture mode: {capture_mode!r}")
     if capture_mode == "phi_only":
-        warnings.warn(
+        logger.warning(
             "SVI source uses odds-ratio capture (phi_capture / p_capture), "
             "which is not directly compatible with NBLN's biology-informed "
             "eta capture. r and mu priors will still be applied; the "
-            "target's own capture configuration is left intact.",
-            UserWarning,
-            stacklevel=2,
+            "target's own capture configuration is left intact."
         )
     elif capture_mode == "none":
-        warnings.warn(
+        logger.warning(
             "SVI source has no capture latent (no eta_capture, phi_capture, "
             "or p_capture key). r and mu priors will be applied; the "
-            "target's capture configuration is left intact.",
-            UserWarning,
-            stacklevel=2,
+            "target's capture configuration is left intact."
         )
 
     pos_inverse = _resolve_target_pos_inverse(target_positive_transform)
@@ -522,17 +515,8 @@ def priors_from_results(
 
     _say(
         f"Built informative prior bundle: keys={sorted(prior_bundle.keys())}, "
-        f"capture_mode={capture_mode!r}."
-    )
-
-    logger.info(
-        "Built empirical-Gaussian prior bundle from SVI source: "
-        "keys=%s, capture_mode=%s, identity_method=%s, n_samples=%d, tau=%.2f",
-        sorted(prior_bundle.keys()),
-        capture_mode,
-        identity_method,
-        int(n_samples),
-        float(tau),
+        f"capture_mode={capture_mode!r}, identity_method={identity_method!r}, "
+        f"n_samples={int(n_samples)}, tau={float(tau):.2f}."
     )
     return prior_bundle, capture_mode
 
@@ -630,8 +614,9 @@ def freeze_values_from_results(
         )
 
     def _say(msg: str) -> None:
+        """Emit a user-facing progress line when ``verbose`` is on."""
         if verbose:
-            print(f"[scribe.laplace.priors] {msg}", flush=True)
+            logger.info(msg)
 
     _say(
         f"Extracting freeze values from SVI source "
@@ -746,14 +731,8 @@ def freeze_values_from_results(
         )
 
     _say(
-        f"Built freeze-values bundle: keys={sorted(freeze_values.keys())}."
-    )
-    logger.info(
-        "freeze_values_from_results: requested=%s, extracted=%s, "
-        "identity=%s",
-        list(freeze_params),
-        sorted(freeze_values.keys()),
-        identity_method,
+        f"Built freeze-values bundle: keys={sorted(freeze_values.keys())}, "
+        f"requested={list(freeze_params)!r}, identity_method={identity_method!r}."
     )
     return freeze_values
 
@@ -861,8 +840,9 @@ def priors_from_twostate_results(
         )
 
     def _say(msg: str) -> None:
+        """Emit a user-facing progress line when ``verbose`` is on."""
         if verbose:
-            print(f"[scribe.laplace.priors] {msg}", flush=True)
+            logger.info(msg)
 
     _say(
         f"Building TSLN-{target_variant} priors from TwoState SVI source "
@@ -1009,17 +989,9 @@ def priors_from_twostate_results(
 
     _say(
         f"Built TSLN-{target_variant} prior bundle: "
-        f"keys={sorted(prior_bundle.keys())}, capture_mode={capture_mode!r}."
-    )
-    logger.info(
-        "priors_from_twostate_results: variant=%s, keys=%s, "
-        "capture_mode=%s, identity=%s, n_samples=%d, tau=%.2f",
-        target_variant,
-        sorted(prior_bundle.keys()),
-        capture_mode,
-        identity_method,
-        int(n_samples),
-        float(tau),
+        f"keys={sorted(prior_bundle.keys())}, capture_mode={capture_mode!r}, "
+        f"identity_method={identity_method!r}, n_samples={int(n_samples)}, "
+        f"tau={float(tau):.2f}."
     )
     return prior_bundle, capture_mode
 
@@ -1081,8 +1053,9 @@ def freeze_values_from_twostate_results(
         )
 
     def _say(msg: str) -> None:
+        """Emit a user-facing progress line when ``verbose`` is on."""
         if verbose:
-            print(f"[scribe.laplace.priors] {msg}", flush=True)
+            logger.info(msg)
 
     _say(
         f"Extracting TSLN-{target_variant} freeze values "
@@ -1245,14 +1218,7 @@ def freeze_values_from_twostate_results(
 
     _say(
         f"Built TSLN-{target_variant} freeze-values bundle: "
-        f"keys={sorted(freeze_values.keys())}."
-    )
-    logger.info(
-        "freeze_values_from_twostate_results: variant=%s, requested=%s, "
-        "extracted=%s, identity=%s",
-        target_variant,
-        list(freeze_params),
-        sorted(freeze_values.keys()),
-        identity_method,
+        f"keys={sorted(freeze_values.keys())}, requested={list(freeze_params)!r}, "
+        f"identity_method={identity_method!r}."
     )
     return freeze_values

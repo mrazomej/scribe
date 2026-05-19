@@ -13,9 +13,11 @@ FitContext writes: count_data, n_genes, alr_reference_idx,
                    _adata_for_inference
 """
 
-import warnings
+import logging
 
 from ..context import FitContext
+
+_log = logging.getLogger(__name__)
 
 
 def apply_gene_coverage_and_alr(ctx: FitContext) -> None:
@@ -104,20 +106,16 @@ def apply_gene_coverage_and_alr(ctx: FitContext) -> None:
                     f"{_dataset_id}:{int(_ds_keep_mask.sum())}"
                     f"/{_original_n_genes}"
                 )
-            warnings.warn(
+            _log.info(
                 "Applied gene_coverage pre-filtering with union across "
                 f"datasets. Kept {n_kept}/{_original_n_genes} genes; "
-                f"per-dataset keep counts: {', '.join(_per_dataset)}.",
-                UserWarning,
-                stacklevel=2,
+                f"per-dataset keep counts: {', '.join(_per_dataset)}."
             )
         else:
-            warnings.warn(
+            _log.info(
                 "Applied gene_coverage pre-filtering. "
                 f"Kept {n_kept}/{_original_n_genes} genes and pooled "
-                f"{_original_n_genes - n_kept} genes into 'other'.",
-                UserWarning,
-                stacklevel=2,
+                f"{_original_n_genes - n_kept} genes into 'other'."
             )
 
         ctx.count_data = count_data

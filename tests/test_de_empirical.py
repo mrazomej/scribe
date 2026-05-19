@@ -2055,25 +2055,36 @@ class TestMixtureComponentValidation:
 
 
 class TestDEDeprecationWarnings:
-    """Calling DE helpers without layout metadata should emit DeprecationWarning."""
+    """Calling DE helpers without layout metadata should emit warning logs."""
 
-    def test_slice_component_warns_without_layout(self):
+    def test_slice_component_warns_without_layout(self, scribe_caplog):
         """_slice_component falls back to ndim heuristic when layout is None."""
+        import logging
+
         arr = jnp.ones((10, 50))
-        with pytest.warns(DeprecationWarning, match="_slice_component"):
-            _slice_component(arr, component=None, label="A", layout=None)
+        scribe_caplog.set_level(logging.WARNING, logger="scribe.de._empirical")
+        _slice_component(arr, component=None, label="A", layout=None)
+        assert any("_slice_component" in record.message for record in scribe_caplog.records)
 
-    def test_drop_scalar_p_warns_without_layout(self):
+    def test_drop_scalar_p_warns_without_layout(self, scribe_caplog):
         """_drop_scalar_p falls back to ndim heuristic when post_layout is None."""
-        arr = jnp.ones((10,))
-        with pytest.warns(DeprecationWarning, match="_drop_scalar_p"):
-            _drop_scalar_p(arr, post_layout=None)
+        import logging
 
-    def test_needs_gene_broadcast_warns_without_layout(self):
-        """_needs_gene_broadcast falls back to ndim heuristic when layout is None."""
         arr = jnp.ones((10,))
-        with pytest.warns(DeprecationWarning, match="_needs_gene_broadcast"):
-            _needs_gene_broadcast(arr, layout=None)
+        scribe_caplog.set_level(logging.WARNING, logger="scribe.de._empirical")
+        _drop_scalar_p(arr, post_layout=None)
+        assert any("_drop_scalar_p" in record.message for record in scribe_caplog.records)
+
+    def test_needs_gene_broadcast_warns_without_layout(self, scribe_caplog):
+        """_needs_gene_broadcast falls back to ndim heuristic when layout is None."""
+        import logging
+
+        arr = jnp.ones((10,))
+        scribe_caplog.set_level(logging.WARNING, logger="scribe.de._biological")
+        _needs_gene_broadcast(arr, layout=None)
+        assert any(
+            "_needs_gene_broadcast" in record.message for record in scribe_caplog.records
+        )
 
 
 # ==========================================================================

@@ -591,24 +591,21 @@ def test_priors_dict_loadings_combined_with_other_priors():
     assert result.w_prior_diagnostics["strategy_type"] == "gaussian"
 
 
-def test_legacy_w_prior_kwarg_emits_deprecation_warning():
-    """Legacy ``w_prior=`` kwarg works but emits a DeprecationWarning."""
+def test_legacy_w_prior_kwarg_emits_deprecation_warning(scribe_caplog):
+    """Legacy ``w_prior=`` kwarg works but emits a warning log."""
+    import logging
+
     import scribe
+
     adata = _toy_adata()
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        scribe.fit(
-            adata, model="nbln", inference_method="laplace",
-            n_steps=10, latent_dim=3,
-            w_prior={"type": "horseshoe_columnwise"},
-            laplace_config={"n_newton_steps": 2, "newton_max_step": 5.0},
-        )
-    dep = [
-        w for w in caught
-        if issubclass(w.category, DeprecationWarning)
-        and "w_prior" in str(w.message)
-    ]
-    assert len(dep) >= 1, "expected DeprecationWarning for legacy w_prior= kwarg"
+    scribe_caplog.set_level(logging.WARNING, logger="scribe")
+    scribe.fit(
+        adata, model="nbln", inference_method="laplace",
+        n_steps=10, latent_dim=3,
+        w_prior={"type": "horseshoe_columnwise"},
+        laplace_config={"n_newton_steps": 2, "newton_max_step": 5.0},
+    )
+    assert any("w_prior" in record.message for record in scribe_caplog.records)
 
 
 def test_priors_dict_loadings_and_legacy_w_prior_conflict_raises():

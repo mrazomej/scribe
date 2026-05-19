@@ -2,6 +2,8 @@
 Shared test fixtures and configuration for SCRIBE tests.
 """
 
+import logging
+
 import pytest
 import numpy as np
 import os
@@ -102,3 +104,16 @@ def small_dataset():
     total_counts = counts.sum(axis=1)
 
     return jnp.array(counts), jnp.array(total_counts)
+
+
+@pytest.fixture
+def scribe_caplog(caplog):
+    """Capture log records emitted by the ``scribe`` logger hierarchy.
+
+    ``setup_logging()`` sets ``scribe.propagate = False``, so scribe messages
+    do not reach pytest's root ``caplog`` handler unless we attach it here.
+    """
+    scribe_logger = logging.getLogger("scribe")
+    scribe_logger.addHandler(caplog.handler)
+    yield caplog
+    scribe_logger.removeHandler(caplog.handler)

@@ -27,7 +27,7 @@ from scribe.models.config import AmortizationConfig
 import json
 import pickle
 import os
-import warnings
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from collections import Counter
@@ -35,6 +35,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
 from scribe.data_loader import load_and_preprocess_anndata
+
+_log = logging.getLogger(__name__)
 
 # NOTE: Do NOT create a module-level Console() here.  Rich's Console
 # contains an _thread.RLock that cannot be pickled, which breaks Hydra's
@@ -988,11 +990,10 @@ def main(cfg: DictConfig) -> None:
     if cfg.get("mixture_model", False) and n_components is None:
         # If mixture_model=true but n_components not set, default to 2
         n_components = 2
-        warnings.warn(
+        _log.warning(
             "mixture_model=true without n_components specified. "
             "Defaulting to n_components=2. "
-            "Please use n_components=N directly instead of mixture_model flag.",
-            DeprecationWarning,
+            "Please use n_components=N directly instead of mixture_model flag."
         )
 
     # Build capture amortization config once from YAML; pass as single object

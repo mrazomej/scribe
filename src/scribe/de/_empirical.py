@@ -34,7 +34,7 @@ References
 """
 
 import math
-import warnings
+import logging
 from functools import partial
 from typing import Optional, List, Callable, Sequence, TYPE_CHECKING, Union
 
@@ -42,6 +42,8 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import random
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..core.axis_layout import AxisLayout
@@ -496,11 +498,9 @@ def _drop_scalar_p(
 
     # Legacy fallback: ndim < 2 means no gene dimension.
     # Deprecated — callers should provide layout metadata.
-    warnings.warn(
+    _log.warning(
         "Calling _drop_scalar_p without layout metadata is deprecated. "
-        "Pass param_layouts explicitly.",
-        DeprecationWarning,
-        stacklevel=2,
+        "Pass param_layouts explicitly."
     )
     if p.ndim < 2:
         return None
@@ -1265,11 +1265,9 @@ def _slice_component(
 
     # --- Legacy ndim fallback (no layout provided) ---
     # Deprecated — callers should provide layout metadata.
-    warnings.warn(
+    _log.warning(
         "Calling _slice_component without layout metadata is deprecated. "
-        "Pass param_layouts explicitly.",
-        DeprecationWarning,
-        stacklevel=2,
+        "Pass param_layouts explicitly."
     )
     if r_samples.ndim == 3:
         if component is None:

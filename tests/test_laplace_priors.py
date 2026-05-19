@@ -16,6 +16,7 @@ Covers:
 
 from __future__ import annotations
 
+import logging
 import warnings
 from types import SimpleNamespace
 from typing import Any, Dict, Optional
@@ -277,42 +278,40 @@ def test_capture_mode_eta():
     assert bundle["eta"]["scale"].shape == (N,)
 
 
-def test_capture_mode_phi_only_warns_and_omits_eta():
+def test_capture_mode_phi_only_warns_and_omits_eta(scribe_caplog):
     G, N = 5, 4
     var_names = np.array([f"g{i}" for i in range(G)])
     results = _make_basic_results(
         G=G, N=N, with_eta=False, with_phi=True, var_names=var_names
     )
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        bundle, mode = priors_from_results(
-            results, target_positive_transform="exp",
-            target_n_genes=G, target_n_cells=N,
-            target_gene_names=var_names, n_samples=200,
-        )
+    scribe_caplog.set_level(logging.WARNING, logger="scribe.laplace.priors")
+    bundle, mode = priors_from_results(
+        results, target_positive_transform="exp",
+        target_n_genes=G, target_n_cells=N,
+        target_gene_names=var_names, n_samples=200,
+    )
     assert mode == "phi_only"
     assert "eta" not in bundle
     assert "r" in bundle and "mu" in bundle
-    assert any("phi_capture" in str(w.message) for w in caught)
+    assert any("phi_capture" in record.message for record in scribe_caplog.records)
 
 
-def test_capture_mode_none_warns_and_omits_eta():
+def test_capture_mode_none_warns_and_omits_eta(scribe_caplog):
     G, N = 5, 4
     var_names = np.array([f"g{i}" for i in range(G)])
     results = _make_basic_results(
         G=G, N=N, with_eta=False, with_phi=False, var_names=var_names
     )
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        bundle, mode = priors_from_results(
-            results, target_positive_transform="exp",
-            target_n_genes=G, target_n_cells=N,
-            target_gene_names=var_names, n_samples=200,
-        )
+    scribe_caplog.set_level(logging.WARNING, logger="scribe.laplace.priors")
+    bundle, mode = priors_from_results(
+        results, target_positive_transform="exp",
+        target_n_genes=G, target_n_cells=N,
+        target_gene_names=var_names, n_samples=200,
+    )
     assert mode == "none"
     assert "eta" not in bundle
     assert "r" in bundle and "mu" in bundle
-    assert any("no capture" in str(w.message) for w in caught)
+    assert any("no capture" in record.message for record in scribe_caplog.records)
 
 
 # =====================================================================
@@ -344,17 +343,16 @@ def test_gene_identity_count_mismatch_raises():
         )
 
 
-def test_gene_identity_count_only_warns():
+def test_gene_identity_count_only_warns(scribe_caplog):
     """When neither var_names nor mask are available, warn and proceed."""
     G, N = 5, 4
     results = _make_basic_results(G=G, N=N, var_names=None, mask=None)
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        priors_from_results(
-            results, target_positive_transform="exp",
-            target_n_genes=G, target_n_cells=N,
-        )
-    assert any("count" in str(w.message).lower() for w in caught)
+    scribe_caplog.set_level(logging.WARNING, logger="scribe.laplace.priors")
+    priors_from_results(
+        results, target_positive_transform="exp",
+        target_n_genes=G, target_n_cells=N,
+    )
+    assert any("count" in record.message.lower() for record in scribe_caplog.records)
 
 
 # =====================================================================
@@ -470,36 +468,37 @@ def test_laplace_handler_does_accept_informative_priors():
 # =====================================================================
 
 
-def test_verbose_default_prints_progress(capsys):
-    """Default ``verbose=True`` emits user-facing progress lines."""
+def test_verbose_default_prints_progress(scribe_caplog):
+    """Default ``verbose=True`` emits user-facing progress logs."""
     G, N = 5, 4
     var_names = np.array([f"g{i}" for i in range(G)])
     results = _make_basic_results(G=G, N=N, var_names=var_names)
+    scribe_caplog.set_level(logging.INFO, logger="scribe.laplace.priors")
     priors_from_results(
         results, target_positive_transform="exp",
         target_n_genes=G, target_n_cells=N,
         target_gene_names=var_names, n_samples=200,
     )
-    captured = capsys.readouterr().out
-    assert "Building informative priors" in captured
-    assert "Sampling SVI posterior" in captured
-    assert "Fitting empirical Gaussian priors" in captured
-    assert "Built informative prior bundle" in captured
+    messages = " ".join(record.message for record in scribe_caplog.records)
+    assert "Building informative priors" in messages
+    assert "Sampling SVI posterior" in messages
+    assert "Fitting empirical Gaussian priors" in messages
+    assert "Built informative prior bundle" in messages
 
 
-def test_verbose_false_silences_progress(capsys):
-    """``verbose=False`` suppresses all stdout from priors_from_results."""
+def test_verbose_false_silences_progress(scribe_caplog):
+    """``verbose=False`` suppresses progress logs from priors_from_results."""
     G, N = 5, 4
     var_names = np.array([f"g{i}" for i in range(G)])
     results = _make_basic_results(G=G, N=N, var_names=var_names)
+    scribe_caplog.set_level(logging.INFO, logger="scribe.laplace.priors")
     priors_from_results(
         results, target_positive_transform="exp",
         target_n_genes=G, target_n_cells=N,
         target_gene_names=var_names, n_samples=200,
         verbose=False,
     )
-    captured = capsys.readouterr().out
-    assert "[scribe.laplace.priors]" not in captured
+    assert not scribe_caplog.records
 
 
 # =====================================================================

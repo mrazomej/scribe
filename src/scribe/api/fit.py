@@ -39,6 +39,8 @@ Examples
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
+import logging
+
 import jax.numpy as jnp
 
 if TYPE_CHECKING:
@@ -67,6 +69,8 @@ from .stages.model_config_build import build_model_config
 from .stages.inference_config_build import build_inference_config
 from .stages.run_inference import dispatch_inference
 from .stages.result_postprocess import postprocess_results
+
+_log = logging.getLogger(__name__)
 
 
 def fit(
@@ -1020,13 +1024,11 @@ def fit(
             "is deprecated."
         )
     if w_prior is not None:
-        import warnings as _warnings
-        _warnings.warn(
+        _log.warning(
             "`w_prior=` kwarg is deprecated; pass the W-shrinkage "
             "prior inside the priors dict as "
             "`priors={'loadings': {'type': '...', ...}}` instead. "
-            "Both routes resolve to the same internal plumbing.",
-            DeprecationWarning, stacklevel=2,
+            "Both routes resolve to the same internal plumbing."
         )
         _effective_w_prior = w_prior
     else:

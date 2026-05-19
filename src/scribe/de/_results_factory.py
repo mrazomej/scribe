@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import warnings
+import logging
 from typing import List, Optional, TYPE_CHECKING
 
 import numpy as _np
@@ -13,6 +13,8 @@ from ._extract import (
     is_lnm_or_pln_results,
     lnm_or_pln_results_to_parametric_dict,
 )
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .results import (
@@ -419,11 +421,9 @@ def compare(
         # Warn if K=1 (mixture weighting is a no-op)
         w_A_arr = _np.asarray(_mix_weights_A)
         if w_A_arr.ndim == 2 and w_A_arr.shape[1] == 1:
-            warnings.warn(
+            _log.info(
                 "mixture_weighted=True with K=1 is a no-op.  "
-                "Consider using the standard compare() path.",
-                UserWarning,
-                stacklevel=2,
+                "Consider using the standard compare() path."
             )
 
         empirical_result = _compare_empirical_mixture(

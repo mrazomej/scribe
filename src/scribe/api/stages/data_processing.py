@@ -10,7 +10,7 @@ FitContext writes: count_data, adata, n_cells, n_genes, data_config,
                    and mutates kwargs for downgraded priors
 """
 
-import warnings
+import logging
 from typing import List
 
 import jax.numpy as jnp
@@ -18,6 +18,8 @@ import jax.numpy as jnp
 from ...inference.utils import process_counts_data
 from ...models.config import DataConfig
 from ..context import FitContext
+
+_log = logging.getLogger(__name__)
 
 
 def process_data_and_datasets(ctx: FitContext) -> None:
@@ -136,12 +138,10 @@ def process_data_and_datasets(ctx: FitContext) -> None:
             n_datasets = None
             if dataset_mixing is None:
                 dataset_mixing = False
-            warnings.warn(
+            _log.warning(
                 f"Detected a single dataset from dataset_key "
                 f"'{dataset_key}'. Applied automatic hierarchy downgrade: "
-                + "; ".join(msgs),
-                UserWarning,
-                stacklevel=2,
+                + "; ".join(msgs)
             )
 
     # Enforce dataset-level priors require dataset_key mapping.

@@ -9,7 +9,7 @@ FitContext reads : model, kwargs[parameterization, inference_method,
 FitContext writes: model (after alias normalization)
 """
 
-import warnings
+import logging
 
 from ..constants import (
     VALID_MODELS,
@@ -18,6 +18,8 @@ from ..constants import (
     _DEPRECATED_MODEL_ALIASES,
 )
 from ..context import FitContext
+
+_log = logging.getLogger(__name__)
 
 
 def validate_inputs(ctx: FitContext) -> None:
@@ -48,11 +50,9 @@ def validate_inputs(ctx: FitContext) -> None:
         # Normalize deprecated aliases before validation.
         if model_lower in _DEPRECATED_MODEL_ALIASES:
             canonical = _DEPRECATED_MODEL_ALIASES[model_lower]
-            warnings.warn(
+            _log.warning(
                 f"Model name '{model_lower}' is deprecated; "
-                f"use '{canonical}' instead.",
-                FutureWarning,
-                stacklevel=2,
+                f"use '{canonical}' instead."
             )
             model = canonical
             model_lower = canonical

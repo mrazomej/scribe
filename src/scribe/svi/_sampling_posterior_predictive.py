@@ -7,10 +7,12 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 import numpy as np
 import jax.numpy as jnp
 from jax import random
-import warnings
+import logging
 
 from ..sampling import generate_predictive_samples, sample_variational_posterior
 from ..core.posterior_matrix import posterior_samples_to_matrix
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..core.axis_layout import AxisLayout
@@ -481,13 +483,11 @@ class PosteriorPredictiveSamplingMixin:
                 _is_vae
                 and int(counts.shape[1]) == int(n_genes_for_guide) + 1
             ):
-                warnings.warn(
+                _log.info(
                     "Posterior sampling received counts with one extra gene "
                     f"column ({int(counts.shape[1])}) relative to the VAE "
                     f"reconstruction width ({int(n_genes_for_guide)}). "
-                    "Dropping trailing column (pooled 'other' gene).",
-                    UserWarning,
-                    stacklevel=2,
+                    "Dropping trailing column (pooled 'other' gene)."
                 )
                 counts = counts[:, : int(n_genes_for_guide)]
             else:

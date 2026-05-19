@@ -28,7 +28,7 @@ def _make_single_survivor_h5ad(path: Path) -> None:
 
 
 def test_infer_main_single_survivor_downgrades_component_only_prior(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scribe_caplog
 ):
     """infer.py should auto-clear expression_prior after inferred mixture collapse.
 
@@ -125,7 +125,13 @@ def test_infer_main_single_survivor_downgrades_component_only_prior(
 
     # The key assertion: infer.py path now downgrades safely instead of
     # surfacing a ModelConfig validation error for expression_prior in non-mixture mode.
-    with pytest.warns(UserWarning, match=r"expression_prior='gaussian' -> 'none'"):
-        infer.main.__wrapped__(cfg)
+    import logging
+
+    scribe_caplog.set_level(logging.WARNING, logger="scribe")
+    infer.main.__wrapped__(cfg)
+    assert any(
+        "expression_prior='gaussian' -> 'none'" in record.message
+        for record in scribe_caplog.records
+    )
 
     assert (output_dir / "scribe_results.pkl").exists()

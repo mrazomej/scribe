@@ -12,7 +12,7 @@ FitContext writes: inference_config, effective_x64
 """
 
 import gc
-import warnings
+import logging
 from typing import Any, Dict, Optional
 
 import jax.numpy as jnp
@@ -28,6 +28,8 @@ from ...models.config.enums import InferenceMethod
 from ...inference.utils import validate_inference_config_match
 from ..helpers import _coerce_batch_size_for_dataset
 from ..context import FitContext
+
+_log = logging.getLogger(__name__)
 
 
 def build_inference_config(ctx: FitContext) -> None:
@@ -138,16 +140,14 @@ def build_inference_config(ctx: FitContext) -> None:
 
     elif method == InferenceMethod.MCMC:
         if early_stopping is not None:
-            warnings.warn(
+            _log.warning(
                 "early_stopping is only supported for SVI and VAE "
-                "inference methods. Ignoring for MCMC.",
-                UserWarning,
+                "inference methods. Ignoring for MCMC."
             )
         if optimizer_config is not None:
-            warnings.warn(
+            _log.warning(
                 "optimizer_config is only supported for SVI and VAE "
-                "inference methods. Ignoring for MCMC.",
-                UserWarning,
+                "inference methods. Ignoring for MCMC."
             )
 
         # Optionally inject SVI init strategy.
@@ -165,11 +165,10 @@ def build_inference_config(ctx: FitContext) -> None:
                 svi_init.model_config.base_model
                 != model_config.base_model
             ):
-                warnings.warn(
+                _log.warning(
                     f"SVI base model "
                     f"'{svi_init.model_config.base_model}' differs "
-                    f"from MCMC target '{model_config.base_model}'.",
-                    UserWarning,
+                    f"from MCMC target '{model_config.base_model}'."
                 )
             same_param = (
                 svi_init.model_config.parameterization
@@ -225,11 +224,10 @@ def build_inference_config(ctx: FitContext) -> None:
         from ...models.config import LaplaceConfig
 
         if kl_annealing_config is not None:
-            warnings.warn(
+            _log.warning(
                 "kl_annealing has no effect under "
                 "inference_method='laplace' (no encoder, no KL "
-                "term to anneal). Ignoring.",
-                UserWarning,
+                "term to anneal). Ignoring."
             )
 
         _base = dict(

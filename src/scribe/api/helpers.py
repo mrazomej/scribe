@@ -5,11 +5,13 @@ These are pure utility functions with no side-effects on the inference
 pipeline state.
 """
 
-import warnings
+import logging
 from typing import TYPE_CHECKING, Any, List, Optional, Union
 
 if TYPE_CHECKING:
     from anndata import AnnData
+
+_log = logging.getLogger(__name__)
 
 
 def _count_unique_labels(
@@ -96,18 +98,15 @@ def _coerce_batch_size_for_dataset(
 
     Warns
     -----
-    UserWarning
-        Emitted when ``batch_size`` exceeds ``n_cells`` and is coerced to
-        ``None``.
+    Emits an INFO log when ``batch_size`` exceeds ``n_cells`` and is coerced to
+    ``None``.
     """
     if batch_size is None:
         return None
     if batch_size > n_cells:
-        warnings.warn(
+        _log.info(
             f"batch_size={batch_size} exceeds n_cells={n_cells}; "
-            "using full-batch mode (batch_size=None).",
-            UserWarning,
-            stacklevel=2,
+            "using full-batch mode (batch_size=None)."
         )
         return None
     return batch_size

@@ -9,9 +9,11 @@ FitContext reads : model, priors, kwargs[variable_capture, zero_inflation]
 FitContext writes: model (resolved)
 """
 
-import warnings
+import logging
 
 from ..context import FitContext
+
+_log = logging.getLogger(__name__)
 
 
 def resolve_model_flags(ctx: FitContext) -> None:
@@ -91,15 +93,13 @@ def resolve_model_flags(ctx: FitContext) -> None:
                 k in priors for k in _all_capture_keys
             )
             if not _has_capture_prior:
-                warnings.warn(
+                _log.warning(
                     "variable_capture=True with model='pln' has no "
                     "effect unless you also supply a capture prior "
                     "(e.g. priors={'capture_efficiency': (log_M0, "
                     "sigma_M)} or priors={'organism': 'human'}). "
                     "The PLN model will be fitted without capture "
-                    "correction.",
-                    UserWarning,
-                    stacklevel=2,
+                    "correction."
                 )
 
     # -- TwoState (Poisson-Beta) family: zero-inflation not supported in phase 1

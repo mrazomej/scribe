@@ -83,7 +83,7 @@ from typing import Callable, Literal
 
 import jax
 import jax.numpy as jnp
-import warnings
+import logging
 from numpyro.distributions.kl import kl_divergence
 from numpyro.distributions.util import scale_and_mask
 from numpyro.handlers import replay, seed, substitute, trace
@@ -97,6 +97,8 @@ from numpyro.infer import TraceMeanField_ELBO
 from numpyro.infer.elbo import _get_log_prob_sum, _check_mean_field_requirement
 from numpyro.util import _validate_model, check_model_guide_match
 from jax import random
+
+_log = logging.getLogger(__name__)
 
 
 # =====================================================================
@@ -415,7 +417,7 @@ class AnnealedTraceMeanField_ELBO(TraceMeanField_ELBO):
             if mutable_params:
                 if self.num_particles == 1:
                     return elbo_particle, mutable_params
-                warnings.warn(
+                _log.warning(
                     "mutable state is currently ignored when "
                     "num_particles > 1."
                 )
