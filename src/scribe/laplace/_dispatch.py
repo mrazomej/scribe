@@ -490,7 +490,16 @@ class DispatchResultsMixin:
                 ),
             }
             frozen = getattr(self, "frozen_params", frozenset())
-            # ``gene_mean`` (positive TwoState mu) posterior.
+            # ``gene_mean`` (positive TwoState mu) posterior.  The
+            # TwoState positive gene-mean parameter is exposed ONLY
+            # under the ``"gene_mean"`` key — NOT aliased to
+            # ``"mu"`` — so the ``out["mu"]`` semantics stay consistent
+            # with ``get_map()["mu"]`` (which is the latent log-rate
+            # prior center ``log(r_hat)``).  Round-6 audit: the
+            # previous draft aliased ``out["mu"] = out["gene_mean"]``
+            # for back-compat, but TSLN-Rate is brand new and there's
+            # no back-compat to maintain; consistency across the two
+            # accessors is more important.
             if (
                 "mu" not in frozen
                 and self.gene_mean_loc is not None
@@ -504,12 +513,14 @@ class DispatchResultsMixin:
                 )
             elif self.gene_mean is not None:
                 out["gene_mean"] = dist.Delta(self.gene_mean)
-            # Back-compat: also expose under the ``mu`` key so existing
-            # client code expecting ``dists["mu"]`` resolves to the
-            # gene-mean distribution.  This is the **biological** mu;
-            # the **latent** mu is under ``y_log_rate``.
-            if "gene_mean" in out:
-                out["mu"] = out["gene_mean"]
+            # ``mu`` is the latent log-rate prior center (= log(r_hat))
+            # for TSLN-Rate.  No closed-form posterior is currently
+            # populated for the derived ``mu`` (would require the
+            # cross-Hessian between gene_mean, burst_size, and k_off;
+            # phase-2 work).  Expose a Delta at the MAP — same shape
+            # as ``get_map()["mu"]``.
+            if self.mu is not None:
+                out["mu"] = dist.Delta(self.mu)
             # burst_size posterior
             if (
                 "burst_size" not in frozen

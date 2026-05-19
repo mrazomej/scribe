@@ -187,11 +187,52 @@ def test_get_map_and_get_distributions_keys():
     dists = result.get_distributions()
     assert "y_log_rate" in dists
     assert "gene_mean" in dists
+    assert "mu" in dists
     # Latent log-rate distribution loc = log(r_hat).
     np.testing.assert_allclose(
         np.asarray(dists["y_log_rate"].loc),
         np.asarray(jnp.log(result.r_hat)),
         atol=1e-5,
+    )
+
+    # API-consistency invariant (round-6 audit): ``get_map()["mu"]``
+    # and ``get_distributions()["mu"]`` BOTH refer to the latent
+    # log-rate prior center ``log(r_hat)``.  The biological positive
+    # TwoState gene mean lives ONLY under the ``gene_mean`` key in
+    # both accessors — there is no ``mu``-aliased-to-``gene_mean``
+    # back-compat.
+    import numpyro.distributions as dist
+
+    # ``get_distributions()["mu"]`` should be a Delta on log(r_hat)
+    # (a deterministic derived quantity); ``["gene_mean"]`` should be
+    # a TransformedDistribution or Delta on the positive TwoState mean.
+    assert isinstance(dists["mu"], dist.Delta), (
+        f"get_distributions()['mu'] should be a Delta on log(r_hat) "
+        f"for TSLN-Rate, got {type(dists['mu']).__name__}.  "
+        "Round-6 audit: TwoState gene mean must NOT be aliased under "
+        "the 'mu' key; use 'gene_mean' instead."
+    )
+    # Delta value == get_map()["mu"] == log(r_hat).
+    np.testing.assert_allclose(
+        np.asarray(dists["mu"].v),
+        np.asarray(m["mu"]),
+        atol=1e-5,
+        err_msg=(
+            "API consistency violation: get_distributions()['mu'].v "
+            "should equal get_map()['mu'] (= log(r_hat) for TSLN-Rate)."
+        ),
+    )
+    # And the Delta value is NOT equal to gene_mean (positive scale)
+    # — these are semantically different quantities and should differ
+    # numerically except in pathological cases.
+    assert not np.allclose(
+        np.asarray(dists["mu"].v),
+        np.asarray(m["gene_mean"]),
+        atol=1e-3,
+    ), (
+        "get_distributions()['mu'] and get_map()['gene_mean'] should "
+        "be semantically distinct (latent log-rate vs positive gene "
+        "mean) — numerical equality suggests an aliasing bug."
     )
 
 
