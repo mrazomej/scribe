@@ -1199,3 +1199,193 @@ def _batched_sample_concat(
         size = end - start
         pieces.append(np.asarray(sampler_fn(chunk_keys[i], size)))
     return np.concatenate(pieces, axis=0)
+
+
+# =====================================================================
+# TSLN-Rate predictive samplers
+# =====================================================================
+#
+# Mirror the PLN / NBLN scaffolding above; the count layer is the
+# Poisson-Beta compound (Peccoud-Ycart 1995):
+#
+#     p_gc ~ Beta(α_g, β_g)         (gene-level α, β; independent per (c, g))
+#     u_gc ~ Poisson(rate · p_gc)   (rate = exp(log_rate) on the latent axis)
+#
+# Library-anchored PPC is composition-only (softmax of the log-rate
+# latent → Multinomial against observed totals) and is *identical* to
+# PLN's ``_ppc_pln_library_anchored`` — no separate helper is needed;
+# the dispatch reuses it.
+
+
+def _ppc_twostate_ln_rate_marginal(
+    rng_key: jax.Array,
+    n_samples: int,
+    mu: jnp.ndarray,
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    alpha: jnp.ndarray,
+    beta: jnp.ndarray,
+    eta_loc: Optional[jnp.ndarray] = None,
+) -> jnp.ndarray:
+    """Fully marginal TSLN-Rate posterior predictive samples.
+
+    Mirrors :func:`_ppc_pln_marginal` but replaces the Poisson count
+    layer with the Poisson-Beta compound from
+    :class:`scribe.stats.distributions.PoissonBetaCompound`.
+
+    Parameters
+    ----------
+    rng_key : jax.Array
+        PRNG key.
+    n_samples : int
+        Number of synthetic cells ``S``.
+    mu, W, d : jnp.ndarray
+        TSLN-Rate latent globals.  ``mu`` is ``log(r_hat)`` (the
+        gene-level log on-production rate prior centre).
+    alpha, beta : jnp.ndarray
+        Gene-level Beta concentration / depletion parameters from the
+        TwoState reparameterization.  Shape ``(G,)``.
+    eta_loc : jnp.ndarray, optional
+        Empirical per-cell capture offsets ``η_c = −log ν_c`` used as a
+        bootstrap source.  Shape ``(C,)``.
+
+    Returns
+    -------
+    np.ndarray
+        Counts with shape ``(S, G)``.
+    """
+    from ..stats.distributions import PoissonBetaCompound
+
+    g_genes = int(mu.shape[0])
+    k_factors = int(W.shape[1])
+    k1, k2, k3, k4 = jax.random.split(rng_key, 4)
+    z = jax.random.normal(k1, (n_samples, k_factors), dtype=mu.dtype)
+    eps = jax.random.normal(k2, (n_samples, g_genes), dtype=mu.dtype)
+    x = mu[None, :] + z @ W.T + jnp.sqrt(d)[None, :] * eps
+    if eta_loc is not None:
+        eta_loc_arr = jnp.asarray(eta_loc).reshape(-1)
+        idx = jax.random.randint(k3, (n_samples,), 0, eta_loc_arr.shape[0])
+        log_rate = x - eta_loc_arr[idx][:, None]
+    else:
+        log_rate = x
+    log_rate = jnp.clip(log_rate, _LOG_RATE_MIN, _LOG_RATE_MAX)
+
+    return np.asarray(
+        PoissonBetaCompound(
+            alpha=alpha, beta=beta, log_rate=log_rate
+        ).sample(k4)
+    )
+
+
+def _ppc_twostate_ln_rate_per_cell(
+    rng_key: jax.Array,
+    n_samples: int,
+    x_loc: jnp.ndarray,
+    eta_loc: Optional[jnp.ndarray],
+    alpha: jnp.ndarray,
+    beta: jnp.ndarray,
+) -> jnp.ndarray:
+    """Per-cell MAP-only TSLN-Rate predictive samples.
+
+    Keeps per-cell latent log-rates fixed at MAP values
+    (``x_loc - η_loc``) and samples observation noise only.
+
+    Returns shape ``(S, C, G)``.
+    """
+    from ..stats.distributions import PoissonBetaCompound
+
+    if eta_loc is not None:
+        log_rate = x_loc - eta_loc[:, None]
+    else:
+        log_rate = x_loc
+    log_rate = jnp.clip(log_rate, _LOG_RATE_MIN, _LOG_RATE_MAX)
+
+    def _sample_chunk(chunk_key: jax.Array, size: int) -> jnp.ndarray:
+        return PoissonBetaCompound(
+            alpha=alpha, beta=beta, log_rate=log_rate
+        ).sample(chunk_key, sample_shape=(size,))
+
+    return _batched_sample_concat(rng_key, n_samples, _sample_chunk)
+
+
+def _ppc_twostate_ln_rate_per_cell_laplace(
+    rng_key: jax.Array,
+    n_samples: int,
+    x_loc: jnp.ndarray,
+    eta_loc: Optional[jnp.ndarray],
+    W: jnp.ndarray,
+    d: jnp.ndarray,
+    alpha: jnp.ndarray,
+    beta: jnp.ndarray,
+) -> jnp.ndarray:
+    """Per-cell Laplace-perturbed TSLN-Rate predictive samples.
+
+    Adds Gaussian noise from the prior covariance
+    ``Σ = W W^T + diag(d)`` to the per-cell MAP log-rate ``x_loc``
+    before drawing Poisson-Beta counts.
+
+    The latent-perturbation step uses the PLN per-cell posterior
+    sampler — the prior covariance is identical (NBLN/PLN/TSLN-Rate
+    all share ``Σ = WW^T + diag(d)``) and the per-cell data-side
+    Hessian factor ``a_g`` is absorbed into the legacy implementation
+    via the ``W, d`` arguments.  See ``_ppc_pln_per_cell_laplace`` for
+    the underlying mechanics.
+
+    Returns shape ``(S, C, G)``.
+    """
+    from ._newton_pln import sample_x_posterior_batch
+    from ..stats.distributions import PoissonBetaCompound
+
+    n_cells = int(x_loc.shape[0])
+    eta_arr = (
+        jnp.zeros(n_cells, dtype=x_loc.dtype)
+        if eta_loc is None
+        else jnp.asarray(eta_loc)
+    )
+
+    chunk_size = _PPC_DEFAULT_SAMPLE_CHUNK
+    if chunk_size is None or chunk_size >= n_samples:
+        size = int(n_samples)
+        k_x, k_p = jax.random.split(rng_key)
+        cell_keys = jax.random.split(k_x, n_cells)
+        x_samples = sample_x_posterior_batch(
+            cell_keys, x_loc, eta_arr, W, d, size, 0.0
+        )
+        x_samples = jnp.transpose(x_samples, (1, 0, 2))
+        log_rate = jnp.clip(
+            x_samples - eta_arr[None, :, None],
+            _LOG_RATE_MIN,
+            _LOG_RATE_MAX,
+        )
+        return np.asarray(
+            PoissonBetaCompound(
+                alpha=alpha, beta=beta, log_rate=log_rate
+            ).sample(k_p)
+        )
+
+    n_chunks = (n_samples + chunk_size - 1) // chunk_size
+    chunk_keys = jax.random.split(rng_key, n_chunks)
+    pieces: List[np.ndarray] = []
+    for i in range(n_chunks):
+        start = i * chunk_size
+        end = min(start + chunk_size, n_samples)
+        size = end - start
+        k_x, k_p = jax.random.split(chunk_keys[i])
+        cell_keys = jax.random.split(k_x, n_cells)
+        x_samples = sample_x_posterior_batch(
+            cell_keys, x_loc, eta_arr, W, d, size, 0.0
+        )
+        x_samples = jnp.transpose(x_samples, (1, 0, 2))
+        log_rate = jnp.clip(
+            x_samples - eta_arr[None, :, None],
+            _LOG_RATE_MIN,
+            _LOG_RATE_MAX,
+        )
+        pieces.append(
+            np.asarray(
+                PoissonBetaCompound(
+                    alpha=alpha, beta=beta, log_rate=log_rate
+                ).sample(k_p)
+            )
+        )
+    return np.concatenate(pieces, axis=0)

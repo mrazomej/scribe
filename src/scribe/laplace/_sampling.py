@@ -27,6 +27,9 @@ from ._results_sampling_helpers import (
     _ppc_pln_marginal,
     _ppc_pln_per_cell,
     _ppc_pln_per_cell_laplace,
+    _ppc_twostate_ln_rate_marginal,
+    _ppc_twostate_ln_rate_per_cell,
+    _ppc_twostate_ln_rate_per_cell_laplace,
 )
 from ._results_shared import _base_model
 
@@ -338,15 +341,16 @@ class SamplingResultsMixin:
                 raise ValueError(
                     "level='library_anchored' requires `counts` for observed totals."
                 )
-            if bm in ("pln", "nbln"):
+            if bm in ("pln", "nbln", "twostate_ln_rate"):
                 # Library-anchored PPC samples ``softmax(x) ->
-                # Multinomial`` against observed library size; the NB
-                # vs Poisson choice does not enter (no count-noise
-                # layer at this level), so NBLN reuses the PLN helper.
-                # For NBLN cascade fits, resolve a per-draw ``mu``
-                # array (frozen-mu → cascade samples; non-frozen-mu
-                # with Laplace Normal → Normal(mu_loc, mu_scale)).
-                # PLN never supplies ``mu_samples``.
+                # Multinomial`` against observed library size; the
+                # count-noise choice (Poisson / NB / Poisson-Beta
+                # compound) does not enter at this level, so NBLN and
+                # TSLN-Rate reuse the PLN helper.  For NBLN cascade
+                # fits, resolve a per-draw ``mu`` array (frozen-mu →
+                # cascade samples; non-frozen-mu with Laplace Normal →
+                # Normal(mu_loc, mu_scale)).  PLN and TSLN-Rate never
+                # supply ``mu_samples`` here.
                 mu_samples = None
                 if bm == "nbln":
                     arrays = _resolve_nbln_ppc_arrays(
@@ -425,6 +429,22 @@ class SamplingResultsMixin:
                 r_T_loc=self.r_T_loc,
                 pos_forward=pos_fwd,
                 **kwargs,
+            )
+        if bm == "twostate_ln_rate":
+            if self.alpha is None or self.beta is None:
+                raise ValueError(
+                    "TSLN-Rate PPC requires the derived 'alpha' / 'beta' "
+                    "Beta-shape fields on the result."
+                )
+            return _ppc_twostate_ln_rate_marginal(
+                rng_key,
+                n_samples,
+                self.mu,
+                self.W,
+                self.d,
+                self.alpha,
+                self.beta,
+                eta_loc=self.eta_loc,
             )
         raise NotImplementedError(
             f"marginal PPC not implemented for base_model={bm!r}"
@@ -535,6 +555,22 @@ class SamplingResultsMixin:
                 pos_forward=pos_fwd,
                 **kwargs,
             )
+        if bm == "twostate_ln_rate":
+            if self.alpha is None or self.beta is None:
+                raise ValueError(
+                    "TSLN-Rate per-cell PPC requires 'alpha' / 'beta' "
+                    "Beta-shape fields on the result."
+                )
+            return _ppc_twostate_ln_rate_per_cell_laplace(
+                rng_key,
+                n_samples,
+                self.x_loc,
+                self.eta_loc,
+                self.W,
+                self.d,
+                self.alpha,
+                self.beta,
+            )
         raise NotImplementedError(
             f"get_per_cell_predictive_samples not implemented for base_model={bm!r}"
         )
@@ -605,6 +641,20 @@ class SamplingResultsMixin:
                 r_T=self.r_T,
                 p_capture_loc=self.p_capture_loc,
                 **kwargs,
+            )
+        if bm == "twostate_ln_rate":
+            if self.alpha is None or self.beta is None:
+                raise ValueError(
+                    "TSLN-Rate map PPC requires 'alpha' / 'beta' "
+                    "Beta-shape fields on the result."
+                )
+            return _ppc_twostate_ln_rate_per_cell(
+                rng_key,
+                n_samples,
+                self.x_loc,
+                self.eta_loc,
+                self.alpha,
+                self.beta,
             )
         raise NotImplementedError(
             f"get_map_ppc_samples not implemented for base_model={bm!r}"
@@ -684,11 +734,17 @@ class SamplingResultsMixin:
             if ref_idx < 0:
                 ref_idx = n_genes_full + ref_idx
             is_alr = True
-        elif bm in ("pln", "nbln"):
-            # PLN and NBLN both produce log-rates ``y_log_rate = mu + W z``;
-            # softmax of those log-rates gives the compositional sample.
-            # The NB vs Poisson choice never enters here -- compositions
-            # are pre-observation-noise.
+        elif bm in ("pln", "nbln", "twostate_ln_rate"):
+            # PLN-family (PLN / NBLN / TSLN-Rate) all produce log-rates
+            # ``y_log_rate = mu + W z``; softmax of those log-rates gives
+            # the compositional sample.  The count-noise layer (Poisson /
+            # NB / Poisson-Beta compound) never enters here — compositions
+            # are pre-observation-noise.  For TSLN-Rate the gene-level
+            # Beta concentration is an observation-noise layer too: in
+            # expectation ``E[u_g | log_rate, p] = exp(log_rate) · p`` and
+            # under softmax-of-log-rates the gene-level Beta noise
+            # averages out, so the compositional view is identical to
+            # PLN/NBLN.
             #
             # Use the gauge-invariant projection ``W_perp = W − mean(W, axis=0)``
             # via :meth:`get_W_compositional`.  Math note: ``softmax(mu + W z
