@@ -30,6 +30,8 @@ class, and orbax checkpointer. The only cross-submodule dependency is
 | `nbln` | ✅ | NB-LogNormal: per-cell `(x, η)` Newton with the NB-Hessian diagonal `a_g = (u_g + r_g) p_g (1 - p_g)`. Adds gene dispersion `r` as a global; everything else mirrors PLN. |
 | `lnm` | ✅ | Per-cell composition Newton; `d_mode='learned'` → Newton over `y_alr` (G−1 dim) with Woodbury; `d_mode='low_rank'` → Newton over `z` (k dim, no Woodbury). |
 | `lnmvcp` | ✅ | LNM composition Newton + scalar Newton on per-cell `eta_capture`. The `(z, η)` Hessian is **block-diagonal** (multinomial conditions on observed `u_T`, NB conditions on η only) so the two blocks decouple cleanly. |
+| `twostate_ln_rate` | ✅ | TwoState-LogNormal-Rate (PR-1 of the cross-gene TwoState extension): per-cell `(x, η)` Newton on a Poisson-Beta compound likelihood with closed-form factors `a_g = λ E_q[p] − λ² Var_q(p)`, `g_data,g = u − λ E_q[p]` (via fixed Gauss-Legendre quadrature). Cascades from a TwoState SVI fit. **W-shrinkage strategies beyond `NoneWPrior` are not yet wired** (transferrable from NBLN; deferred to a follow-up PR). |
+| `twostate_ln_logit` | 🟨 | TwoState-LogNormal-Logit (PR-2 of the cross-gene TwoState extension): planned. Latent z enters on the activation log-odds rather than on the production rate; saturating mean response, exact gauge. Currently raises `NotImplementedError`. |
 | `nbdm`, `nbvcp`, `zinb`, `zinbvcp` | ❌ | DM-family Laplace would require its own Newton kernel — no current implementation. |
 
 ## Architecture
@@ -505,6 +507,81 @@ diagonals are dropped. Unlike `r`, `mu` is *not* a positive parameter
 latent log-rate). No `positive_transform` is applied; the constrained
 distribution returned by `get_distributions()` is `Normal(mu_loc,
 mu_scale).to_event(1)` directly.
+
+## SVI-to-Laplace informative-prior cascade (TwoState → TSLN-Rate)
+
+Mirrors the NBLN cascade pattern below, but the SVI source is a
+`TwoState` (or `TwoStateVCP`) fit and the target is
+`twostate_ln_rate`. The adapter lives in `scribe.laplace.priors`
+under `priors_from_twostate_results` and
+`freeze_values_from_twostate_results`.
+
+### Coordinate map
+
+| TSLN-Rate target | SVI source (TwoState) | Transform |
+|---|---|---|
+| `mu_loc` | `mu` (positive gene mean) | `pos_inverse` (`inv_softplus` for `softplus`, `log` for `exp`) |
+| `burst_size_loc` | `burst_size` (positive) | `pos_inverse` |
+| `k_off_loc` | `k_off` (positive) | `pos_inverse` |
+| `eta` | `eta_capture` (when present; biology-informed capture) | identity |
+
+All three positive globals map through `pos_inverse` to the
+unconstrained location space — the cascade samples a posterior
+draw, applies `pos_inverse`, and moment-matches a Gaussian. The
+``logit`` variant (PR-2) is gated with `NotImplementedError`.
+
+### Recommended freeze level
+
+The default cascade for TSLN-Rate is
+`freeze_params=("mu", "burst_size", "k_off")` — all three gene-level
+positive globals hard-frozen at the SVI MAP. This is the "Level 4"
+freeze from the cross-gene plan: it structurally pins the rigid-
+translation gauge between `log r_hat_g` and the per-cell latent
+`z_c`, so the Laplace fit's Newton iteration cannot drift along
+the gauge null direction.
+
+```python
+svi_results = scribe.fit(
+    adata, model="twostate", inference_method="svi", n_steps=20_000,
+)
+
+laplace_results = scribe.fit(
+    adata, model="twostate_ln_rate", inference_method="laplace",
+    informative_priors_from=svi_results,
+    informative_priors_freeze=("mu", "burst_size", "k_off"),
+    n_steps=50_000,
+)
+```
+
+### Result-dataclass semantics
+
+`ScribeLaplaceResults.mu` for `twostate_ln_rate` carries the
+**latent log-rate prior center** (`log(r_hat)`) to match the
+PLN/NBLN convention where `LowRankMultivariateNormal(loc=self.mu, …)`
+is the latent distribution. The **positive TwoState gene-mean
+parameter** lives on `result.gene_mean` (and the unconstrained
+version on `gene_mean_loc`). Plotting code that reads `result.mu`
+treats it as the log-rate; biology-side reporting should read
+`result.gene_mean` instead.
+
+### Curvature-clamp diagnostics
+
+The Poisson–Beta marginal is not uniformly log-concave (the Beta
+density is U-shaped when `α` or `β` < 1), so the Hessian-diagonal
+factor `a_g = λ E_q[p] − λ² Var_q(p)` is defensively floored at
+`_A_MIN = 1e-3` before the Woodbury solve. Four diagnostic fields
+on `ScribeLaplaceResults` surface how often the clamp activated:
+
+- `a_raw_min` — scalar minimum of the un-clamped `a_raw` across
+  all `(cell, gene)` entries.
+- `a_raw_negative_fraction` — fraction with `a_raw < 0` (genuine
+  log-concavity violations).
+- `a_clamp_fraction` — fraction where the `_A_MIN` floor activated.
+- `a_clamp_per_gene` — per-gene clamp-activation rate, shape `(G,)`.
+
+A `logging.warning` is emitted at end-of-training if
+`a_clamp_fraction > 0.05`, pointing the user at the per-gene
+breakdown.
 
 ## SVI-to-Laplace informative-prior cascade (NBLN only)
 

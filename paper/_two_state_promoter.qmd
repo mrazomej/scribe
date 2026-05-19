@@ -1040,3 +1040,501 @@ recommendations:
   matches the NB on the easy genes and improves the fit on the
   hard ones, (iii) the full dataset with a per-gene comparison of
   posterior predictive ECDFs.
+
+# Cross-gene correlation structure {#sec-twostate-cross-gene}
+
+The independent-gene two-state model of @sec-twostate succeeds on
+per-gene shape and moment recovery — it captures bursty,
+bimodal, and over-dispersed distributions that the NB family
+structurally cannot match. But "per-gene" is the operative
+caveat: every gene is fit in isolation, with no mechanism for
+the model to learn that genes co-vary across cells. Yet
+single-cell RNA-seq data is overwhelmingly correlated across
+genes — TFs co-regulate co-expression modules, chromatin state
+perturbs blocks of co-located genes, regulons co-vary by
+construction. Independent-gene models throw all of this
+structure away.
+
+This section extends the two-state likelihood with a per-cell
+**Gaussian latent** ``z_c`` that perturbs the per-gene
+production rate multiplicatively — adding cross-gene correlated
+structure on top of the per-gene two-state shape. The
+extension is the **TwoState-LogNormal-Rate** model (TSLN-Rate),
+the structural analogue of NB-LogNormal (@sec-nb-lognormal)
+applied to the Poisson–Beta compound likelihood instead of the
+Negative Binomial.
+
+We will show:
+
+(i)   The TSLN-Rate generative model.  Per-cell ``z_c ~ N(0, Σ)``
+      with low-rank ``Σ = WW^T + diag(d)``; per-(cell, gene)
+      Poisson rate ``λ_cg = r_hat_g · exp(z_cg − η_c)``; counts
+      drawn from the same Poisson–Beta compound as
+      @sec-twostate, only with ``r_hat_g`` replaced by the
+      ``z``-modulated ``λ_cg``.
+
+(ii)  Per-cell Laplace marginalization. The Gaussian latent
+      ``z_c`` is integrated out via a Laplace approximation
+      around its MAP. Closed-form gradients and a defensively
+      clamped Hessian-diagonal make the inner Newton solve fast
+      and stable.
+
+(iii) The NB-LogNormal limit. As ``β → ∞`` with ``α = r`` fixed,
+      the TSLN-Rate factors collapse to NBLN's ``a_g = (u+r)
+      p(1-p)`` form exactly. The new model nests NBLN as a
+      limiting case.
+
+(iv)  Gauge analysis. A rigid-translation gauge between
+      ``log r_hat_g`` and ``z_cg`` is identified softly by the
+      Gaussian prior on ``z``; structurally broken by a
+      hard-cascade freeze on the gene-level positives.
+
+(v)   Practical recommendations. When to use TSLN-Rate vs the
+      independent-gene two-state model, how to read the new
+      result fields, and the cross-gene covariance signal that
+      verifies the latent ``z`` is genuinely picking up
+      cross-gene structure.
+
+## TSLN-Rate generative model {#sec-twostate-tsln-rate-model}
+
+Sample, per gene ``g``, the three positive parameters of the
+two-state model as before
+(@eq-twostate-natural-priors):
+
+$$
+\mu_g \sim \pi_{\mu},\quad
+b_g \sim \pi_{b},\quad
+k^-_g \sim \pi_{k^-},
+$$ {#eq-tsln-rate-gene-priors}
+
+with the natural-parameterization derivations
+
+$$
+\alpha_g = \mu_g / b_g,\quad
+\beta_g = k^-_g,\quad
+\hat r_g = \mu_g + b_g k^-_g.
+$$ {#eq-tsln-rate-derived}
+
+(@_twostate_reparam in the implementation also applies a
+mean-preserving floor to keep ``α`` and ``β`` away from the
+Jacobi-fragile regime.)
+
+Now, **per cell ``c``**, sample a Gaussian latent:
+
+$$
+z_c \sim \mathcal{N}(\mathbf{0}, \Sigma),\quad
+\Sigma = W W^\top + \mathrm{diag}(d),
+$$ {#eq-tsln-rate-latent-prior}
+
+with low-rank loadings $W \in \mathbb{R}^{G \times k}$ and
+diagonal residual variance $d \in \mathbb{R}^G_{>0}$. The
+per-(cell, gene) Poisson rate becomes:
+
+$$
+\lambda_{cg} = \hat r_g \cdot \exp(z_{cg} - \eta_c),
+$$ {#eq-tsln-rate-lambda}
+
+where ``η_c`` is the (optional) per-cell capture offset (matching
+@sec-capture-prior; absent when capture is not modelled). The
+observation is then a Poisson–Beta compound, the same as in
+@sec-twostate but with this $z$-modulated rate:
+
+$$
+p_{cg} \sim \mathrm{Beta}(\alpha_g, \beta_g),\quad
+u_{cg} \mid p_{cg}, z_c \sim \mathrm{Poisson}(\lambda_{cg}\, p_{cg}).
+$$ {#eq-tsln-rate-obs}
+
+### Why ``z`` on the production rate {#sec-twostate-tsln-rate-why-rate}
+
+There is more than one place we could put a Gaussian latent on
+top of the two-state model:
+
+1. **On the production rate** ``r_hat_g``, as above. Equivalent
+   to ``log r_hat_cg = log r_hat_g + z_cg``. Mean responds
+   multiplicatively.
+
+2. On the activation log-odds
+   ``η_act_g = log(k^+_g / k^-_g)``. Mean responds via the
+   sigmoid — saturating, with a hard ceiling at ``r_hat_g``.
+
+Option 1 (TSLN-Rate) is mathematically the cleaner cascade
+analog of NB-LogNormal: the latent enters the Poisson rate
+multiplicatively, so in the NB limit (``β → ∞``) the
+marginal becomes NB-LogNormal exactly. Option 2 (TSLN-Logit)
+has a stronger biophysical interpretation (TF and chromatin
+shifts as Boltzmann free-energy perturbations on the activation
+free energy ``ΔG_act = -k_B T \log(k^+/k^-)``) and a saturating
+mean response. Option 2 is treated separately in a follow-up
+section.
+
+This section develops Option 1 in detail. The cleanest test that
+``z`` is doing real work is the cross-gene covariance signal of
+@sec-twostate-tsln-rate-practical, which is non-zero whenever
+``Σ`` has non-zero off-diagonal entries.
+
+## Per-cell Laplace marginalization {#sec-twostate-tsln-rate-laplace}
+
+Integrating ``z_c`` out of the joint density exactly is
+intractable — there is no closed-form marginal for a Gaussian
+mixed against a Poisson–Beta compound. We use a Laplace
+approximation around the per-cell MAP:
+
+$$
+\log p(u_c \mid \Theta) \approx \log p(u_c, z_c^\ast \mid \Theta)
+- \tfrac{1}{2} \log\det(-H_c) + \tfrac{G}{2}\log 2\pi,
+$$ {#eq-tsln-rate-laplace-elbo}
+
+where $z_c^\ast$ is the MAP of $\log p(u_c, z_c \mid \Theta)$
+under the Gaussian prior and $H_c$ is the Hessian of that
+log-density at $z_c^\ast$. The Laplace approximation is exact
+to the extent that the per-cell log-posterior is well-approximated
+by a Gaussian near its mode — which holds when the data is
+informative enough to constrain $z_c$ tightly.
+
+### Per-cell joint log-density
+
+Let $\Theta = (\mu, b, k^-, W, d, \eta)$ collect the globals.
+Substituting @eq-tsln-rate-lambda and @eq-tsln-rate-latent-prior
+into the joint:
+
+$$
+\log p(u_c, z_c \mid \Theta)
+= \sum_g \log \mathcal{L}_{\mathrm{PB}}(u_{cg} \mid \alpha_g, \beta_g, \hat r_g e^{z_{cg} - \eta_c})
+\;-\;\tfrac{1}{2} z_c^\top \Sigma^{-1} z_c
+\;+\;\text{constants}.
+$$ {#eq-tsln-rate-joint}
+
+The first term is a sum of Poisson–Beta marginal log-likelihoods
+(@eq-twostate-pb-marginal) at the $z$-modulated rate; the second
+is the Gaussian prior on $z_c$. We use the latent-coordinate
+convention ``x_c ≡ z_c + log r_hat`` so the prior on $x_c$
+becomes $\mathcal{N}(\log \hat r, \Sigma)$ — this matches the
+NBLN convention where the latent log-rate is centered at the
+gene-level log-mean.
+
+### Closed-form gradient and Hessian via quadrature
+
+Evaluate the Poisson–Beta marginal $\mathcal{L}_{\mathrm{PB}}$
+at $K$ fixed Gauss-Legendre quadrature nodes
+$\{p_k, w_k\}_{k=1}^K$ on $[0, 1]$ (see @sec-twostate-quadrature
+and `scribe.stats._jacobi_quad`). Define the per-node
+**Beta-weighted Poisson posterior** over $p$, conditional on $u$
+and the current rate $\lambda = \hat r e^{z}$:
+
+$$
+q_k(z) =
+\frac{w_k \cdot \mathrm{Beta}(p_k \mid \alpha, \beta)\cdot \mathrm{Po}(u \mid \lambda p_k)}
+     {\sum_{k'} w_{k'} \cdot \mathrm{Beta}(p_{k'} \mid \alpha, \beta)\cdot \mathrm{Po}(u \mid \lambda p_{k'})}.
+$$ {#eq-tsln-rate-posterior-softmax}
+
+These quadrature softmax weights are the **discrete analogue of
+the Beta posterior given the observed count $u$**. The
+weighted moments are:
+
+$$
+\bar p = \sum_k q_k(z)\, p_k,\qquad
+\overline{p^2} = \sum_k q_k(z)\, p_k^2,\qquad
+\mathrm{Var}_q(p) = \overline{p^2} - \bar p^{\,2}.
+$$ {#eq-tsln-rate-pmoments}
+
+#### Gradient w.r.t. $z_g$
+
+Differentiate the log-marginal under the integral sign. The
+integrand has $\partial \log \mathrm{Po}(u \mid \lambda p) /
+\partial z = u - \lambda p$, so:
+
+$$
+\frac{\partial \log \mathcal{L}_{\mathrm{PB}}}{\partial z_g}
+= \mathbb{E}_q\!\left[\frac{\partial \log \mathrm{Po}}{\partial z_g}\right]
+= u_g - \lambda_g \,\bar p_g.
+$$ {#eq-tsln-rate-grad}
+
+i.e., observed count minus the posterior-expected Poisson rate.
+This is the closed-form analog of NBLN's ``u − (u+r)(1−p)``
+gradient (@sec-nb-lognormal-laplace), with ``(u+r)(1−p)``
+(the NB conditional posterior mean of the latent Gamma rate)
+replaced by $\lambda \cdot \mathbb{E}_q[p]$ (the two-state
+conditional posterior mean of the Poisson rate).
+
+#### Hessian-diagonal w.r.t. $z_g$
+
+The log-marginal variance identity gives
+
+$$
+\frac{\partial^2 \log \mathcal{L}_{\mathrm{PB}}}{\partial z_g^2}
+= \mathbb{E}_q\!\left[\frac{\partial^2 \log \mathrm{Po}}{\partial z_g^2}\right]
++ \mathrm{Var}_q\!\left(\frac{\partial \log \mathrm{Po}}{\partial z_g}\right).
+$$
+
+With $\partial^2 \log \mathrm{Po} / \partial z^2 = -\lambda p$
+(second derivative of the Poisson log-PMF in log-rate space)
+and $\mathrm{Var}_q(u - \lambda p) = \lambda^2 \mathrm{Var}_q(p)$:
+
+$$
+\frac{\partial^2 \log \mathcal{L}_{\mathrm{PB}}}{\partial z_g^2}
+= -\lambda_g \bar p_g + \lambda_g^2 \mathrm{Var}_q(p)_g.
+$$
+
+Newton uses $-H$, so the Hessian-diagonal entry that enters the
+Woodbury solve is:
+
+$$
+a_g \;=\; \lambda_g \bar p_g \;-\; \lambda_g^2 \mathrm{Var}_q(p)_g.
+$$ {#eq-tsln-rate-hessian-diag}
+
+#### Log-concavity caveat
+
+The Poisson–Beta marginal is **not** uniformly log-concave in
+the log-rate. Specifically, when $\alpha < 1$ or $\beta < 1$
+the Beta density is U-shaped (not log-concave), and the standard
+Prékopa argument for the log-concavity of compound
+distributions fails. Empirically, $a_g$ in
+@eq-tsln-rate-hessian-diag can be very small or even negative
+in the bursty / U-shaped regime.
+
+The implementation defensively clamps $a_g$ at a small positive
+floor $\_\text{A\_MIN} = 10^{-3}$ before the Woodbury solve.
+Both the raw and clamped versions are returned by the factor
+function; clamp activation rate is surfaced on the final result
+as `a_clamp_fraction` and `a_clamp_per_gene`. A warning fires
+if the clamp activates on more than 5% of `(cell, gene)`
+entries on the final sweep.
+
+### Newton step via Woodbury
+
+With $a$ in hand, the per-cell Newton step on
+$z_c \in \mathbb{R}^G$ solves
+
+$$
+A \delta z = g,\quad A = \mathrm{diag}(a) + \Sigma^{-1},
+$$
+
+with $\Sigma = W W^\top + \mathrm{diag}(d)$. Two applications of
+the Woodbury identity reduce both the linear solve and the
+log-determinant to $\mathcal{O}(Gk + k^3)$ per cell:
+
+$$
+A^{-1} = M^{-1} - M^{-1} V S^{-1} V^\top M^{-1},
+$$
+with $M = \mathrm{diag}(a + 1/d)$, $V = (1/d) \odot W$,
+$S = I_k + W^\top M^{-1} W$. This is the same Woodbury
+decomposition used by the PLN and NBLN Newton kernels, so
+TSLN-Rate inherits NBLN's per-step cost almost exactly (the
+only extra work is the $K$-axis quadrature reduction that
+computes $\bar p$ and $\mathrm{Var}_q(p)$).
+
+When per-cell capture $\eta_c$ is modelled jointly (biology-
+informed prior), the Schur block decomposition
+$\delta_\eta = (g_\eta + a^\top A^{-1} g_x) /
+(\sum a + 1/\sigma_M^2 - a^\top A^{-1} a)$ adds one extra
+solve per Newton step, exactly as in @sec-nb-lognormal-laplace.
+
+## The NB-LogNormal limit {#sec-twostate-tsln-rate-nblim}
+
+As $\beta \to \infty$ with $\alpha = r$ fixed and $b = \lambda /
+\beta$ finite (the **fast-OFF NB limit** of @sec-twostate), the
+Beta–Poisson posterior in @eq-tsln-rate-posterior-softmax
+collapses to a Gamma-Poisson conjugate update:
+
+- $\beta \cdot p$ has posterior $\mathrm{Gamma}(r + u, 1 + b)$
+  asymptotically.
+- $\mathbb{E}_q[p] \to (r + u) / (\beta + \lambda)$.
+- $\mathrm{Var}_q(p) \to (r + u) / (\beta + \lambda)^2$.
+
+Plug into the closed forms:
+
+- $\lambda \cdot \mathbb{E}_q[p] \to (r + u) q$ with
+  $q = \lambda / (\beta + \lambda)$.
+- $\lambda^2 \cdot \mathrm{Var}_q(p) \to (r + u) q^2$.
+- $a_g \to (r + u)\, q\, (1 - q)$.
+
+The TSLN-Rate Hessian-diagonal collapses to NBLN's
+$a_g = (u + r)\, p_\text{NB}\,(1 - p_\text{NB})$ form with
+$p_\text{NB} = 1 - q = \beta/(\beta + \lambda)$. Similarly,
+$g_\text{data} \to u - (r + u)\, q$, the NB conditional
+gradient. The TSLN-Rate kernel reproduces NBLN's kernel
+exactly in the NB limit — confirming that the new model
+properly nests NBLN.
+
+The same nesting also gives us a sanity-check assertion in
+the test suite: at $\beta = 1000$ and $\alpha = 2$,
+$\lambda = 5$, the TSLN-Rate $a_g$ should match NBLN's
+$a_g$ to within 5% relative error.
+
+## Identifiability and gauge {#sec-twostate-tsln-rate-gauge}
+
+The TSLN-Rate model has a rigid-translation gauge between the
+gene-level log-rate centering and the per-cell latent. The
+data-side log-likelihood depends on the combined log-rate
+$\ell_{cg} = \log \hat r_g + z_{cg} - \eta_c$. The
+transformation
+
+$$
+\log \hat r_g \to \log \hat r_g + c,\quad
+z_{cg} \to z_{cg} - c,\quad
+\forall c \in \mathbb{R},
+$$
+
+leaves $\ell_{cg}$ unchanged for every cell $c$. The
+data-side log-likelihood is invariant; only the Gaussian
+prior on $z$ (which penalises shifted $z$) identifies the
+gauge — softly. The same gauge structure appears in NBLN
+between the latent log-rate prior mean and the per-cell
+log-rate (see @sec-diffexp-nbln-rigid-gauge for the full
+discussion).
+
+The cascade-and-freeze mechanism resolves this. The SVI
+cascade source identifies $\log \hat r_g = \log(\mu_g + b_g
+k^-_g)$ tightly from the data — the gene mean is the
+single most identifiable per-gene quantity — and a
+hard-freeze on $(\mu_g, b_g, k^-_g)$ structurally pins the
+gauge direction. The Laplace per-cell $z$ MAP then lives
+entirely in the gauge-orthogonal complement.
+
+### Freeze levels
+
+The TSLN-Rate cascade supports four progressively stricter
+freeze levels (in plan §7.1 terminology):
+
+- **Level 1 (None)** — all globals M-step optimised; gauge
+  softly identified by the $\mathcal{N}(0, \Sigma)$ prior on
+  $z$. Not recommended for cascade fits.
+- **Level 2 (`mu` soft-cascade)** — $\mu$ has an
+  informative-prior loss term; $b, k^-$ unrestricted. Still
+  softly identified.
+- **Level 3 (`(mu, burst_size, k_off)` soft-cascade)** — all
+  three positives have informative-prior loss terms. Gauge
+  tightly identified but still soft.
+- **Level 4 (`(mu, burst_size, k_off)` hard-frozen)** — all
+  three excluded from the optax optimiser. Gauge structurally
+  broken. **Default and recommended** for production cascades.
+
+### Gauge contamination ratio
+
+The diagnostic
+$\rho_\text{gauge} = \mathrm{std}_c(\bar z_c) /
+\mathrm{std}_c(\|z_{c,\perp}\|)$ (with $\bar z_c =
+\mathrm{mean}_g(z_{cg})$ the gauge component and $z_{c,\perp}
+= z_c - \bar z_c \mathbf{1}$ the gauge-orthogonal residual)
+quantifies how much of the per-cell variance lives in the
+rigid-translation direction. For a well-frozen Level-4
+cascade $\rho_\text{gauge} < 10^{-3}$; for an unfrozen
+Level-1 fit $\rho_\text{gauge}$ is typically $\mathcal{O}(1)$.
+
+## Connection to NB-LogNormal {#sec-twostate-tsln-rate-nbln-connection}
+
+TSLN-Rate is the natural cascade extension of NB-LogNormal to
+the Poisson–Beta compound. The two models share:
+
+- The same per-cell Gaussian latent on log-rates with
+  $\Sigma = WW^\top + \mathrm{diag}(d)$.
+- The same Woodbury machinery for the per-cell Newton solve.
+- The same rigid-translation gauge structure and freeze-level
+  hierarchy.
+- The same per-cell Laplace approximation around the inner
+  MAP.
+
+They differ in the per-gene **shape model**:
+
+- NBLN factors the per-gene over-dispersion as a single
+  positive scalar ``r_g``, sufficient for fast-OFF / non-
+  bursty genes.
+- TSLN-Rate uses the full Poisson–Beta compound from
+  @sec-twostate, with three positive parameters
+  ``(μ, b, k^-)`` per gene. This captures the bursty /
+  bimodal genes the NB structurally cannot represent
+  (@sec-twostate § sec-twostate-introduction).
+
+For a dataset where most genes are NB-easy and only a small
+fraction are bursty, NBLN can be the better-default fit; for
+datasets with a meaningful bursty population (TF-target
+modules in many primary tissues), TSLN-Rate's full Poisson–Beta
+shape model preserves the bursty signature that NBLN
+collapses.
+
+## Practical recommendations {#sec-twostate-tsln-rate-practical}
+
+### Decision tree
+
+- **Independent-gene TwoState** (@sec-twostate) when there is
+  no expected cross-gene correlation structure, or when any
+  cross-gene structure can be absorbed into per-gene priors.
+- **TSLN-Rate** when cross-gene correlation is expected and
+  most genes fit the NB regime (the common scRNA-seq case at
+  single-cell resolution). The saturation ceiling of TSLN-Logit
+  rarely binds at typical molecule counts.
+- **NB-LogNormal** when cross-gene correlation is expected and
+  the data panel has no bursty / bimodal histograms that the
+  NB cannot match.
+
+### Cascade workflow
+
+1. Fit upstream `TwoState`-SVI to convergence on the full
+   gene panel.
+2. Cascade with default Level-4 freeze
+   (`("mu", "burst_size", "k_off")` hard-frozen).
+3. Diagnose the gauge contamination ratio
+   (`std_c(mean_g(z_cg))` / `std_c(||z_c − mean_g(z_c) · 1||)`)
+   on the post-fit `result.x_loc − result.mu[None, :]`. It
+   should be below $10^{-2}$ on real data; smaller is
+   better.
+4. Optionally relax freezes via $\tau > 1$ to let the
+   Laplace fit refine the gene-level positives on top of
+   the SVI source's MAP.
+
+### Reading the result
+
+`ScribeLaplaceResults` for `twostate_ln_rate` populates the
+following fields:
+
+- `mu` — the **latent log-rate prior center** (= $\log
+  \hat r$). Real-valued, shape $(G,)$. This is what the
+  `LowRankMultivariateNormal(loc=mu, …)` distribution for
+  `y_log_rate` uses; same convention as NBLN/PLN. **Not** the
+  TwoState positive gene-mean parameter.
+- `gene_mean` — the positive TwoState gene-mean parameter
+  (= the SVI source's `mu`). User-facing biology.
+- `burst_size`, `k_off` — the other two positive
+  TwoState gene-level parameters.
+- `alpha`, `beta`, `r_hat` — derived from the three
+  positives via the mean-preserving floor of
+  @_twostate_reparam.
+- `x_loc` — per-cell latent log-rate MAP, shape $(C, G)$.
+- `eta_loc` — per-cell capture offset MAP (or None).
+- `gene_mean_loc`, `gene_mean_scale`,
+  `burst_size_loc`, `burst_size_scale`,
+  `k_off_loc`, `k_off_scale` — unconstrained
+  posterior-Normal location/scale for each gene-level
+  positive (set to None for frozen parameters; populated
+  via the diagonal-Hessian Laplace approximation for
+  unfrozen ones).
+- `W`, `d` — low-rank loadings and diagonal residual
+  variance (the prior covariance structure
+  $\Sigma = WW^\top + \mathrm{diag}(d)$).
+- `a_raw_min`, `a_raw_negative_fraction`,
+  `a_clamp_fraction`, `a_clamp_per_gene` — curvature-clamp
+  diagnostics (see @sec-twostate-tsln-rate-laplace).
+
+### Computational cost
+
+The per-cell Newton inner loop has cost
+$\mathcal{O}(G K + Gk + k^3)$ per iterate, with $K$ the
+quadrature node count and $k$ the latent rank. Empirically
+this is roughly 1.5× NB-LogNormal's per-step time on
+matched configurations (the extra factor is the $K$-axis
+quadrature reduction that NBLN's closed-form
+$a_g = (u+r)p(1-p)$ avoids). Both scale linearly in $G$
+and $C$ at fixed $k$ and $K$.
+
+### Validation signal
+
+The most important "is the latent doing real work"
+diagnostic is the **cross-gene mean covariance** of the
+post-fit per-cell latent. Specifically, compute
+$\mathrm{Cov}_c(x_c - \mu)$ across cells and inspect the
+off-diagonal entries. If they are near-zero, the latent is
+silently behaving like the independent-gene TwoState model
+— which would indicate either insufficient training, a
+configuration error, or a bug. On well-conditioned data
+with genuine cross-gene structure, off-diagonal entries
+should be at the same order of magnitude as the diagonal.

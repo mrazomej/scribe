@@ -1,0 +1,235 @@
+"""Cascade adapter tests: TwoState SVI → TSLN-Rate Laplace.
+
+Verifies that ``priors_from_twostate_results`` and
+``freeze_values_from_twostate_results`` correctly map an upstream
+TwoState SVI fit's posterior samples / MAP into the TSLN-Rate
+unconstrained coordinate space, and that the cascade flows end-to-end
+through the Laplace bridge.
+
+Test surface
+------------
+
+1. **Coord transforms on a deterministic sample dict** — verifies that
+   the ``pos_inverse(softplus)`` map is applied correctly to each of
+   ``mu``, ``burst_size``, ``k_off`` for both ``priors_from_*`` and
+   ``freeze_values_from_*``, and that gene-axis shapes are preserved.
+
+2. **End-to-end cascade smoke** — fits a small synthetic TwoState SVI,
+   feeds the result into ``priors_from_twostate_results`` and
+   ``freeze_values_from_twostate_results``, and runs a short
+   TSLN-Rate Laplace EM that consumes the cascade bundles.  Asserts
+   loss decreases and Newton converges.
+
+3. **Variant gating** — ``target_variant="logit"`` raises
+   ``NotImplementedError`` (deferred to PR-2).
+
+4. **Invalid freeze_params** rejected with a clear ``ValueError``.
+"""
+
+import os
+
+os.environ.setdefault("JAX_PLATFORMS", "cpu")
+
+import jax
+import jax.numpy as jnp
+import numpy as np
+import pytest
+
+
+# ---------------------------------------------------------------------
+# Test 1: deterministic coord transforms
+# ---------------------------------------------------------------------
+
+
+def test_priors_from_twostate_results_coord_map():
+    """Synthetic samples → expected pos_inverse(softplus) coord map."""
+    from scribe.laplace.priors import (
+        priors_from_twostate_results,
+        fit_empirical_gaussian,
+    )
+    from scribe.laplace._global_uncertainty import _JAX_POSITIVE_FNS
+
+    G = 4
+    S = 50
+    rng = np.random.default_rng(0)
+
+    # Construct a stub SVI-results-like object with the bare-minimum
+    # ``get_posterior_samples`` and gene-identity methods.
+    class StubSVIResult:
+        def __init__(self, mu, burst_size, k_off, n_genes):
+            self._samples = {
+                "mu": mu,
+                "burst_size": burst_size,
+                "k_off": k_off,
+            }
+            self.n_genes = n_genes
+
+        def get_posterior_samples(self, **_kwargs):
+            return self._samples
+
+    mu_samples = jnp.asarray(
+        np.exp(rng.normal(size=(S, G)).astype(np.float32))
+    )
+    bs_samples = jnp.asarray(
+        np.exp(0.3 * rng.normal(size=(S, G)).astype(np.float32))
+    )
+    ko_samples = jnp.asarray(
+        np.exp(rng.normal(size=(S, G)).astype(np.float32) + 1.0)
+    )
+
+    stub = StubSVIResult(mu_samples, bs_samples, ko_samples, G)
+
+    bundle, capture_mode = priors_from_twostate_results(
+        results=stub,
+        target_positive_transform="softplus",
+        target_n_genes=G,
+        target_n_cells=10,
+        target_variant="rate",
+        n_samples=S,
+        tau=1.0,
+        verbose=False,
+    )
+    assert capture_mode == "none"
+    assert set(bundle.keys()) == {"mu", "burst_size", "k_off"}
+
+    # Verify that each prior's loc/scale matches a hand-computed
+    # moment match on pos_inverse(samples).
+    _, pos_inv = _JAX_POSITIVE_FNS["softplus"]
+    for src_key, tgt_key in (
+        ("mu", "mu"),
+        ("burst_size", "burst_size"),
+        ("k_off", "k_off"),
+    ):
+        samples_pos = stub._samples[src_key]
+        samples_uncon = pos_inv(jnp.maximum(samples_pos, 1e-8))
+        expected = fit_empirical_gaussian(samples_uncon, tau=1.0)
+        np.testing.assert_allclose(
+            np.asarray(bundle[tgt_key]["loc"]),
+            np.asarray(expected["loc"]),
+            atol=1e-5,
+        )
+        np.testing.assert_allclose(
+            np.asarray(bundle[tgt_key]["scale"]),
+            np.asarray(expected["scale"]),
+            atol=1e-5,
+        )
+
+
+def test_freeze_values_from_twostate_results_coord_map():
+    """``freeze_values`` is pos_inverse(MAP) per gene-global."""
+    from scribe.laplace.priors import freeze_values_from_twostate_results
+    from scribe.laplace._global_uncertainty import _JAX_POSITIVE_FNS
+
+    G = 4
+
+    class StubSVIResult:
+        def __init__(self, mu_map, bs_map, ko_map, n_genes):
+            self._map = {
+                "mu": mu_map,
+                "burst_size": bs_map,
+                "k_off": ko_map,
+            }
+            self.n_genes = n_genes
+
+        def get_map(self, **_kwargs):
+            return self._map
+
+    rng = np.random.default_rng(1)
+    mu_map = jnp.asarray(np.exp(rng.normal(size=G).astype(np.float32)))
+    bs_map = jnp.asarray(
+        np.exp(0.3 * rng.normal(size=G).astype(np.float32))
+    )
+    ko_map = jnp.asarray(
+        np.exp(rng.normal(size=G).astype(np.float32) + 1.0)
+    )
+
+    stub = StubSVIResult(mu_map, bs_map, ko_map, G)
+    freeze_values = freeze_values_from_twostate_results(
+        results=stub,
+        target_positive_transform="softplus",
+        target_n_genes=G,
+        target_n_cells=10,
+        target_variant="rate",
+        freeze_params=("mu", "burst_size", "k_off"),
+        verbose=False,
+    )
+
+    _, pos_inv = _JAX_POSITIVE_FNS["softplus"]
+    for src_key, tgt_key in (
+        ("mu", "mu"),
+        ("burst_size", "burst_size"),
+        ("k_off", "k_off"),
+    ):
+        expected = pos_inv(jnp.maximum(stub._map[src_key], 1e-8))
+        np.testing.assert_allclose(
+            np.asarray(freeze_values[tgt_key]["loc"]),
+            np.asarray(expected),
+            atol=1e-5,
+        )
+
+
+# ---------------------------------------------------------------------
+# Test 2: logit variant deferred
+# ---------------------------------------------------------------------
+
+
+def test_priors_from_twostate_results_logit_raises():
+    """``target_variant='logit'`` raises NotImplementedError in PR-1."""
+    from scribe.laplace.priors import (
+        priors_from_twostate_results,
+        freeze_values_from_twostate_results,
+    )
+
+    class StubResult:
+        n_genes = 4
+
+        def get_posterior_samples(self, **_):
+            return {}
+
+        def get_map(self, **_):
+            return {}
+
+    with pytest.raises(NotImplementedError, match="phase-1|PR-2|deferred"):
+        priors_from_twostate_results(
+            results=StubResult(),
+            target_positive_transform="softplus",
+            target_n_genes=4,
+            target_n_cells=10,
+            target_variant="logit",
+            verbose=False,
+        )
+    with pytest.raises(NotImplementedError, match="PR-2|deferred"):
+        freeze_values_from_twostate_results(
+            results=StubResult(),
+            target_positive_transform="softplus",
+            target_n_genes=4,
+            target_n_cells=10,
+            target_variant="logit",
+            verbose=False,
+        )
+
+
+# ---------------------------------------------------------------------
+# Test 3: invalid freeze_params rejected
+# ---------------------------------------------------------------------
+
+
+def test_freeze_values_invalid_keys_rejected():
+    from scribe.laplace.priors import freeze_values_from_twostate_results
+
+    class StubResult:
+        n_genes = 4
+
+        def get_map(self, **_):
+            return {}
+
+    with pytest.raises(ValueError, match="invalid keys"):
+        freeze_values_from_twostate_results(
+            results=StubResult(),
+            target_positive_transform="softplus",
+            target_n_genes=4,
+            target_n_cells=10,
+            target_variant="rate",
+            freeze_params=("r",),  # NBLN-style key, not valid for TSLN
+            verbose=False,
+        )

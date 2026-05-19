@@ -841,6 +841,173 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
             final_grad_norms=final_grad,
         )
 
+    # ---- compute_global_uncertainty -----------------------------------------
+
+    def compute_global_uncertainty(
+        self,
+        params: Dict[str, jnp.ndarray],
+        latent_loc: jnp.ndarray,
+        eta_loc: Optional[jnp.ndarray],
+        eta_anchor: Optional[jnp.ndarray],
+        count_data: jnp.ndarray,
+        aux_data: Dict[str, jnp.ndarray],
+        model_config: ModelConfig,
+    ) -> Dict[str, jnp.ndarray]:
+        """Diagonal-Hessian Laplace approximation on the gene globals.
+
+        Builds a per-cell ELBO closure parametrized by
+        ``(mu_loc, burst_size_loc, k_off_loc)``, with everything else
+        (``W``, ``d``, the per-cell Newton MAP) ``stop_gradient``'d at
+        the post-final-sweep values.  For each unfrozen gene-global
+        parameter, computes the per-gene diagonal of the negative-
+        ELBO Hessian via ``jnp.diag(jax.hessian(...))``, adds the
+        informative-prior precision (if a soft cascade was supplied),
+        and converts the diagonal curvature to a Normal posterior
+        scale via :func:`curvature_to_scale`.
+
+        Simplifications relative to NBLN's compute_global_uncertainty
+        ---------------------------------------------------------------
+        - **Marginal**, not profiled Hessian.  NBLN applies the Schur
+          complement ``H_{θθ} − H_{θx} H_{xx}^{-1} H_{xθ}`` to absorb
+          how the per-cell MAPs shift with θ; here we ignore that
+          correction.  Resulting scales are slightly over-confident.
+          A profiled version is a phase-2 follow-up.
+        - **Diagonal**, no cross-parameter Hessian blocks.  Per-gene
+          ``∂² L / ∂θ_g²`` is computed for each parameter
+          independently; cross terms like ``∂² L / ∂mu_g ∂burst_size_g``
+          are ignored.  Mirrors NBLN's diagonal-Σ approximation for
+          ``r_scale``.
+        - **NaN sentinels for frozen globals**, matching NBLN: the
+          bridge replaces these with moment-matched values from
+          ``cascade_source.get_posterior_samples()`` when a cascade
+          source is present.
+
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Keys: ``mu_scale``, ``burst_size_scale``, ``k_off_scale``
+            (each shape ``(G,)`` or NaN-filled for frozen) plus
+            ``mu_loc``, ``burst_size_loc``, ``k_off_loc`` mirrors of
+            the optimized unconstrained values.  Diagnostic fields
+            ``*_hessian_min``, ``*_floor_count``, ``*_curvature_floor``
+            from ``curvature_to_scale`` are also surfaced for
+            inspection.
+        """
+        from ._global_uncertainty import curvature_to_scale
+
+        params_full = self._splice_frozen(params)
+        x_map_sg = jax.lax.stop_gradient(latent_loc)
+        eta_map_sg = (
+            jax.lax.stop_gradient(eta_loc) if eta_loc is not None else None
+        )
+        counts = jnp.asarray(count_data)
+        n_cells = counts.shape[0]
+        n_quad_nodes = self._n_quad_nodes
+
+        # log_rate at the MAP given the eta path.
+        if eta_map_sg is None:
+            log_rate_at_map = x_map_sg
+        else:
+            # eta_map is (C,); broadcast to (C, G).
+            log_rate_at_map = x_map_sg - eta_map_sg[:, None]
+
+        W_sg = jax.lax.stop_gradient(params_full["W"])
+        d_sg = jax.lax.stop_gradient(self._pos_forward(params_full["d_loc"]))
+
+        # Capture the soft-cascade Normal-prior precision (per gene) for
+        # each parameter — added to the data-side Hessian diagonal so
+        # the post-fit Laplace scale reflects both data and prior.
+        def _prior_precision(prior: Optional[Dict[str, jnp.ndarray]]):
+            if prior is None:
+                return jnp.zeros((mu_x.shape[0],), dtype=jnp.float32)
+            return 1.0 / jnp.square(jnp.asarray(prior["scale"]))
+
+        # Recompute the latent prior centering (log r_hat) inside the
+        # closure so its dependence on (mu_loc, burst_size_loc, k_off_loc)
+        # is autodiffed.
+        def neg_log_post(mu_loc_v, burst_size_loc_v, k_off_loc_v):
+            mu_pos = self._pos_forward(mu_loc_v)
+            bs_pos = self._pos_forward(burst_size_loc_v)
+            ko_pos = self._pos_forward(k_off_loc_v)
+            alpha_v, beta_v, rate_v, _eff = _twostate_reparam(
+                mu_pos, bs_pos, ko_pos
+            )
+            mu_x_v = jnp.log(rate_v)
+
+            # Data log-prob via the K-axis quadrature reduction at the
+            # stop_gradient'd MAP.
+            log_marg_per_gene, _ = _factors_batch(
+                log_rate_at_map, counts, alpha_v, beta_v, n_quad_nodes,
+            )
+            data_lp = jnp.sum(log_marg_per_gene)
+
+            # MVN prior on x at the MAP (prior center = mu_x_v).
+            diff = x_map_sg - mu_x_v[None, :]
+            quad = _woodbury_quadform(W_sg, d_sg, diff)
+            log_det_sigma = _woodbury_logdet_sigma(W_sg, d_sg)
+            n_genes = mu_x_v.shape[0]
+            mvn_lp = (
+                -0.5 * jnp.sum(quad)
+                - 0.5 * n_cells * (
+                    log_det_sigma + n_genes * jnp.log(2.0 * jnp.pi)
+                )
+            )
+
+            return -(data_lp + mvn_lp)
+
+        mu_loc = params_full["mu_loc"]
+        bs_loc = params_full["burst_size_loc"]
+        ko_loc = params_full["k_off_loc"]
+
+        # Resolve mu_x just so the prior-precision helper has a shape
+        # reference; not used downstream of the helper itself.
+        mu_x = jnp.log(
+            _twostate_reparam(
+                self._pos_forward(mu_loc),
+                self._pos_forward(bs_loc),
+                self._pos_forward(ko_loc),
+            )[2]
+        )
+
+        out: Dict[str, jnp.ndarray] = {
+            "mu_loc": mu_loc,
+            "burst_size_loc": bs_loc,
+            "k_off_loc": ko_loc,
+        }
+
+        # For each (un)frozen parameter, compute per-gene curvature.
+        # ``jnp.diag(jax.hessian(...))`` materializes the (G, G)
+        # Hessian; for G ≤ ~2000 this is acceptable as a one-shot
+        # post-fit calculation.  For larger gene panels, replace with
+        # an HVP-based diagonal extraction.
+        for name, argnum, loc_val, prior in (
+            ("mu", 0, mu_loc, self._prior_mu),
+            ("burst_size", 1, bs_loc, self._prior_burst_size),
+            ("k_off", 2, ko_loc, self._prior_k_off),
+        ):
+            if name in self._frozen_params:
+                # Frozen: NaN sentinels (mirrors NBLN convention; the
+                # bridge moment-matches from cascade_source when one
+                # is present).
+                out[f"{name}_scale"] = jnp.full_like(loc_val, jnp.nan)
+                continue
+
+            hess_full = jax.hessian(neg_log_post, argnums=argnum)(
+                mu_loc, bs_loc, ko_loc,
+            )  # shape (G, G)
+            hess_diag = jnp.diag(hess_full)
+            # Add prior precision: ∂² (-log Normal(loc, scale)) / ∂loc²
+            # = 1 / scale² (constant in loc).
+            prior_prec = _prior_precision(prior)
+            curvature = hess_diag + prior_prec
+            scale, diagnostics = curvature_to_scale(curvature)
+            out[f"{name}_scale"] = scale
+            out[f"{name}_hessian_min"] = diagnostics["hessian_min"]
+            out[f"{name}_floor_count"] = diagnostics["floor_count"]
+            out[f"{name}_curvature_floor"] = diagnostics["curvature_floor"]
+
+        return out
+
     # ---- pack_result -----------------------------------------------------
 
     def pack_result(
