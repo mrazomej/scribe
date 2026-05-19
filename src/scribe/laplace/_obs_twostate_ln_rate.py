@@ -467,7 +467,21 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         jnp.ndarray,
         Tuple[jnp.ndarray, Optional[jnp.ndarray], Dict[str, jnp.ndarray]],
     ]:
-        """Negative Laplace ELBO on one mini-batch."""
+        """Negative Laplace ELBO on one mini-batch.
+
+        Mirrors NBLN's loss_fn pattern (see ``_obs_nbln.py``):
+        per-cell ELBO is computed as a ``(C,)`` array; the total loss
+        is ``-data_scale * sum(elbo_per_cell) - global_prior_lp``
+        where ``data_scale = n_cells / batch_size`` scales the
+        mini-batch up to full-data semantics.  Global priors (and the
+        W-shrinkage prior) are NOT scaled — they're parameter priors,
+        not per-cell likelihood contributions.
+
+        All globals passed into the Newton kernel are
+        ``stop_gradient``-wrapped per the variational-EM convention;
+        gradients on globals flow only through the live ELBO terms
+        recomputed at the stop-gradient'd Newton MAP.
+        """
         params_full = self._splice_frozen(params)
         mu_x, alpha, beta, rate = self._reparam_from_params(params_full)
         W = params_full["W"]
@@ -475,246 +489,216 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         n_quad_nodes = self._n_quad_nodes
         max_step = self._max_step
 
-        # Stop-gradient on the Newton inputs so the inner loop is
-        # treated as a fixed function of the live globals.
+        # Stop-gradient on EVERY Newton input — globals included.  This
+        # is the variational-EM convention (NBLN does the same): treat
+        # the inner Newton solve as a fixed function of frozen globals,
+        # then evaluate the live-globals ELBO terms at the stop-grad'd
+        # Newton MAP.  Without this, autograd backprops through the
+        # entire Newton scan, which (a) is the wrong derivative for the
+        # marginal ELBO and (b) is much more expensive than the live-
+        # term evaluations.
         latent_init_sg = jax.lax.stop_gradient(latent_init)
         eta_init_sg = (
             jax.lax.stop_gradient(eta_init) if eta_init is not None else None
         )
+        mu_x_sg = jax.lax.stop_gradient(mu_x)
+        W_sg = jax.lax.stop_gradient(W)
+        d_sg = jax.lax.stop_gradient(d)
+        alpha_sg = jax.lax.stop_gradient(alpha)
+        beta_sg = jax.lax.stop_gradient(beta)
 
         if not self.uses_capture:
-            # x-only path
-            (
-                x_new,
-                final_grad,
-                log_det_neg_H,
-                log_marginal_sum,
-                _a_raw_min,
-            ) = laplace_newton_batch_x_only(
-                latent_init_sg,
-                counts_batch,
-                mu_x,
-                W,
-                d,
-                alpha,
-                beta,
-                n_newton,
-                damping,
-                max_step,
-                n_quad_nodes,
+            x_new, final_grad, _ldet_dead, _lm_dead, _a_dead = (
+                laplace_newton_batch_x_only(
+                    latent_init_sg,
+                    counts_batch,
+                    mu_x_sg,
+                    W_sg,
+                    d_sg,
+                    alpha_sg,
+                    beta_sg,
+                    n_newton,
+                    damping,
+                    max_step,
+                    n_quad_nodes,
+                )
             )
-            # Re-evaluate log_marginal at the live globals (the Newton
-            # iterates above stop-gradient; we need gradients to flow
-            # through the determinant + log-prob from the current
-            # globals).
-            log_det_live = laplace_log_det_neg_H_batch_x_only(
-                x_new,
-                None,  # eta_map
-                counts_batch,
-                alpha,
-                beta,
-                W,
-                d,
-                self._sigma_M,
-                n_quad_nodes,
-            )
-            # Data log-prob: recompute at stop_gradient'd Newton MAP with
-            # LIVE globals (alpha, beta) so that the ELBO gradient on
-            # (mu, burst_size, k_off) flows through this term.  Without
-            # this recomputation the kernel's ``log_marginal_sum`` carries
-            # only the stop_gradient'd alpha/beta from the Newton call,
-            # so soft-cascade and uncascaded fits would have zero data-
-            # side gradient on the gene globals.  Mirrors NBLN's pattern
-            # of computing the data log-prob via LogMeanNegativeBinomial
-            # at the post-Newton MAP with live globals.
-            log_rate_for_lp = jax.lax.stop_gradient(x_new)
-            log_marginal_live, _ = _factors_batch(
-                log_rate_for_lp, counts_batch, alpha, beta, n_quad_nodes,
-            )
-            data_log_prob = jnp.sum(log_marginal_live)
+            x_new = jax.lax.stop_gradient(x_new)
             eta_new = None
+            # Live-globals log det per cell.
+            log_det = laplace_log_det_neg_H_batch_x_only(
+                x_new, None, counts_batch, alpha, beta, W, d,
+                self._sigma_M, n_quad_nodes,
+            )
+            # log_rate at the stop-grad'd MAP (no capture: log_rate = x).
+            log_rate_for_lp = x_new
             gn_x = twostate_ln_rate_grad_x_only_norm_batch(
-                x_new,
-                counts_batch,
-                mu_x,
-                W,
-                d,
-                alpha,
-                beta,
-                n_quad_nodes,
+                x_new, counts_batch, mu_x_sg, W_sg, d_sg,
+                alpha_sg, beta_sg, n_quad_nodes,
             )
             gn_blocks = {"x": gn_x}
 
         elif self.freezes_eta:
-            # x-only-with-offset path (eta is stop_gradient'd per-cell)
             eta_offset = jax.lax.stop_gradient(eta_init_sg)
-            (
-                x_new,
-                final_grad,
-                log_det_neg_H,
-                log_marginal_sum,
-                _a_raw_min,
-            ) = laplace_newton_batch_x_only_offset(
-                latent_init_sg,
-                counts_batch,
-                mu_x,
-                W,
-                d,
-                alpha,
-                beta,
-                eta_offset,
-                n_newton,
-                damping,
-                max_step,
+            x_new, final_grad, _ldet_dead, _lm_dead, _a_dead = (
+                laplace_newton_batch_x_only_offset(
+                    latent_init_sg,
+                    counts_batch,
+                    mu_x_sg,
+                    W_sg,
+                    d_sg,
+                    alpha_sg,
+                    beta_sg,
+                    eta_offset,
+                    n_newton,
+                    damping,
+                    max_step,
+                    n_quad_nodes,
+                )
+            )
+            x_new = jax.lax.stop_gradient(x_new)
+            eta_new = eta_offset
+            log_det = laplace_log_det_neg_H_batch_x_only_offset(
+                x_new, eta_offset, counts_batch, alpha, beta, W, d,
                 n_quad_nodes,
             )
-            # Live-globals log det evaluation
-            log_det_live_per_cell = laplace_log_det_neg_H_batch_x_only_offset(
-                x_new,
-                eta_offset,
-                counts_batch,
-                alpha,
-                beta,
-                W,
-                d,
-                n_quad_nodes,
-            )
-            log_det_live = log_det_live_per_cell
-            # Live-gradient data log-prob at stop_gradient'd MAP.
-            log_rate_for_lp = (
-                jax.lax.stop_gradient(x_new) - eta_offset
-            )
-            log_marginal_live, _ = _factors_batch(
-                log_rate_for_lp, counts_batch, alpha, beta, n_quad_nodes,
-            )
-            data_log_prob = jnp.sum(log_marginal_live)
-            eta_new = eta_offset  # unchanged
+            log_rate_for_lp = x_new - eta_offset
             gn_x = twostate_ln_rate_grad_x_only_offset_norm_batch(
-                x_new,
-                counts_batch,
-                mu_x,
-                W,
-                d,
-                alpha,
-                beta,
-                eta_offset,
-                n_quad_nodes,
+                x_new, counts_batch, mu_x_sg, W_sg, d_sg,
+                alpha_sg, beta_sg, eta_offset, n_quad_nodes,
             )
             gn_blocks = {"x": gn_x}
 
         else:
             # Joint Newton on (x, eta) — biology-anchored or soft-cascade.
             if self._prior_eta is not None:
-                # Per-cell sigma_M from the soft-cascade prior.
                 sigma_M_per_cell = jnp.asarray(self._prior_eta["scale"])[
                     : counts_batch.shape[0]
                 ]
             else:
                 sigma_M_per_cell = jnp.full(
-                    (counts_batch.shape[0],), self._sigma_M, dtype=jnp.float32
+                    (counts_batch.shape[0],),
+                    self._sigma_M,
+                    dtype=jnp.float32,
                 )
+            sigma_M_per_cell_sg = jax.lax.stop_gradient(sigma_M_per_cell)
+            eta_anchor_sg = jax.lax.stop_gradient(eta_anchor_batch)
             (
-                x_new,
-                eta_new,
-                final_grad,
-                log_det_neg_H,
-                log_marginal_sum,
-                _a_raw_min,
+                x_new, eta_new, final_grad, _ldet_dead, _lm_dead, _a_dead,
             ) = laplace_newton_batch(
                 latent_init_sg,
                 eta_init_sg,
                 counts_batch,
-                mu_x,
-                W,
-                d,
-                alpha,
-                beta,
-                eta_anchor_batch,
-                sigma_M_per_cell,
+                mu_x_sg,
+                W_sg,
+                d_sg,
+                alpha_sg,
+                beta_sg,
+                eta_anchor_sg,
+                sigma_M_per_cell_sg,
                 n_newton,
                 damping,
                 max_step,
                 n_quad_nodes,
             )
-            log_det_live = laplace_log_det_neg_H_batch(
-                x_new,
-                eta_new,
-                counts_batch,
-                alpha,
-                beta,
-                W,
-                d,
-                self._sigma_M,
-                sigma_M_per_cell,
-                n_quad_nodes,
+            x_new = jax.lax.stop_gradient(x_new)
+            eta_new = jax.lax.stop_gradient(eta_new)
+            # Joint log_det_neg_H_batch is vmapped over
+            # ``(x_map, eta_map, u, alpha, beta, W, d, sigma_M,
+            # n_quad_nodes)`` with ``sigma_M`` axis 7 = per-cell.
+            # Pass ``sigma_M_per_cell`` directly (NOT both scalar
+            # and per-cell — that was the audit's argument-mismatch
+            # finding).
+            log_det = laplace_log_det_neg_H_batch(
+                x_new, eta_new, counts_batch, alpha, beta, W, d,
+                sigma_M_per_cell, n_quad_nodes,
             )
-            # Live-gradient data log-prob at stop_gradient'd MAP.
-            log_rate_for_lp = (
-                jax.lax.stop_gradient(x_new) - jax.lax.stop_gradient(eta_new)
-            )
-            log_marginal_live, _ = _factors_batch(
-                log_rate_for_lp, counts_batch, alpha, beta, n_quad_nodes,
-            )
-            data_log_prob = jnp.sum(log_marginal_live)
+            log_rate_for_lp = x_new - eta_new[:, None]
             gn_x, gn_eta = twostate_ln_rate_grad_split_batch(
-                x_new,
-                eta_new,
-                counts_batch,
-                mu_x,
-                W,
-                d,
-                alpha,
-                beta,
-                eta_anchor_batch,
-                sigma_M_per_cell,
+                x_new, eta_new, counts_batch, mu_x_sg, W_sg, d_sg,
+                alpha_sg, beta_sg, eta_anchor_sg, sigma_M_per_cell_sg,
                 n_quad_nodes,
             )
             gn_blocks = {"x": gn_x, "η": gn_eta}
 
-        # MVN prior on x via inner Woodbury
+        # Per-cell data log-prob via live-globals quadrature at the
+        # stop-grad'd MAP.  Each entry of log_marginal_live is the
+        # per-gene Poisson-Beta marginal; sum over genes → per-cell.
+        log_marginal_live_per_gene, _ = _factors_batch(
+            log_rate_for_lp, counts_batch, alpha, beta, n_quad_nodes,
+        )
+        data_lp_per_cell = log_marginal_live_per_gene.sum(axis=-1)  # (C,)
+
+        # MVN prior on x via inner Woodbury — per-cell.
         diff = x_new - mu_x[None, :]
-        quad_form = _woodbury_quadform(W, d, diff)
+        quad_form = _woodbury_quadform(W, d, diff)  # (C,)
         log_det_sigma = _woodbury_logdet_sigma(W, d)
         n_genes = mu_x.shape[0]
-        mvn_log_prob = -0.5 * jnp.sum(quad_form) - 0.5 * counts_batch.shape[
-            0
-        ] * (log_det_sigma + n_genes * jnp.log(2.0 * jnp.pi))
+        mvn_lp_per_cell = (
+            -0.5 * quad_form
+            - 0.5 * log_det_sigma
+            - 0.5 * n_genes * jnp.log(2.0 * jnp.pi)
+        )  # (C,)
 
-        # Optional TruncN log-prob on eta (when capture is soft/anchored)
+        # TruncN log-prob on η when capture is soft/anchored (per-cell).
         if eta_new is not None and not self.freezes_eta:
+            # Joint mode: use the live per-cell sigma_M for the prior.
             truncn = dist.TruncatedNormal(
                 loc=eta_anchor_batch,
-                scale=self._sigma_M,
+                scale=sigma_M_per_cell,
                 low=0.0,
             )
-            eta_log_prob = jnp.sum(truncn.log_prob(eta_new))
+            eta_lp_per_cell = truncn.log_prob(eta_new)  # (C,)
         else:
-            eta_log_prob = jnp.asarray(0.0)
+            eta_lp_per_cell = jnp.zeros_like(data_lp_per_cell)
 
-        # Soft-cascade Normal priors on the unconstrained loc params.
-        prior_log_prob = jnp.asarray(0.0)
+        # Laplace correction: -½ log det(-H) per cell.
+        laplace_corr_per_cell = -0.5 * log_det  # (C,)
+
+        elbo_per_cell = (
+            data_lp_per_cell
+            + mvn_lp_per_cell
+            + eta_lp_per_cell
+            + laplace_corr_per_cell
+        )
+        elbo_per_cell = jnp.where(
+            jnp.isfinite(elbo_per_cell),
+            elbo_per_cell,
+            jnp.zeros_like(elbo_per_cell),
+        )
+
+        # Global-parameter priors (NOT scaled by data_scale).
+        global_prior_lp = jnp.zeros(())
         for key, prior in (
             ("mu_loc", self._prior_mu),
             ("burst_size_loc", self._prior_burst_size),
             ("k_off_loc", self._prior_k_off),
         ):
             if prior is not None and key in params:
-                prior_log_prob = prior_log_prob + jnp.sum(
+                global_prior_lp = global_prior_lp + jnp.sum(
                     dist.Normal(
                         loc=jnp.asarray(prior["loc"]),
                         scale=jnp.asarray(prior["scale"]),
                     ).log_prob(params[key])
                 )
 
-        # ELBO = data + MVN + eta + soft-priors - 0.5 * log det(-H)
-        elbo = (
-            data_log_prob
-            + mvn_log_prob
-            + eta_log_prob
-            + prior_log_prob
-            - 0.5 * jnp.sum(log_det_live)
+        # W-shrinkage prior on the gauge-invariant projection (NoneWPrior
+        # contributes 0 in PR-1; other strategies deferred).  Same
+        # convention as NBLN: prior unscaled by data_scale.
+        _W_raw = params_full["W"]
+        _W_for_prior = _W_raw - jnp.mean(_W_raw, axis=0, keepdims=True)
+        w_aux = {
+            name: params_full[name]
+            for name in getattr(self._w_prior, "aux_param_names", ())
+        }
+        global_prior_lp = global_prior_lp + self._w_prior.log_prior(
+            _W_for_prior, w_aux, n_constraints=1,
         )
-        loss = -elbo / float(data_scale)
+
+        # Match NBLN's scaling: scale the per-cell ELBO sum up to full-
+        # data by data_scale = n_cells / batch_size; global priors are
+        # parameter priors (unscaled).
+        loss = -float(data_scale) * jnp.sum(elbo_per_cell) - global_prior_lp
         return loss, (x_new, eta_new, gn_blocks)
 
     # ---- final_sweep -----------------------------------------------------

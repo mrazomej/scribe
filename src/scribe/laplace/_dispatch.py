@@ -457,10 +457,28 @@ class DispatchResultsMixin:
             # TSLN-Rate: latent log-rate posterior + Delta on the gene
             # globals. Soft-cascade Normal posteriors when populated by
             # compute_global_uncertainty.
+            #
+            # The latent log-rate prior center is ``log(r_hat)`` where
+            # ``r_hat = mu + burst_size * k_off`` (see ``_twostate_reparam``).
+            # NOT ``self.mu`` — that is TwoState's positive gene-mean
+            # parameter, which lives in the constrained positive space,
+            # not the latent log-rate space.  Using ``self.mu`` here
+            # would put the LowRankMVN loc in the wrong coordinate
+            # system and break ``y_log_rate``-consuming PPC and
+            # diagnostic code.
             tfm = resolve_numpyro_transform(self.model_config)
+            if self.r_hat is None:
+                raise ValueError(
+                    "TSLN-Rate get_distributions() requires r_hat to be "
+                    "populated on the result; got None.  Did pack_result "
+                    "run on this fit?"
+                )
+            latent_prior_loc = jnp.log(self.r_hat)
             out: Dict[str, Any] = {
                 "y_log_rate": dist.LowRankMultivariateNormal(
-                    loc=self.mu, cov_factor=self.W, cov_diag=self.d
+                    loc=latent_prior_loc,
+                    cov_factor=self.W,
+                    cov_diag=self.d,
                 ),
             }
             frozen = getattr(self, "frozen_params", frozenset())

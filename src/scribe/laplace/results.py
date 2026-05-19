@@ -185,7 +185,18 @@ class ScribeLaplaceResults(
     # marginal is not log-concave in general (Beta U-shape regime).
     # These fields surface how often the clamp activated on the final
     # sweep so users can detect prior-dominated cells/genes.
-    a_raw_min: Optional[jnp.ndarray] = None  # scalar
+    #
+    # ``a_raw_min``: scalar minimum of ``a_raw`` across ALL
+    #   ``(cell, gene)`` entries in the final-sweep tensor — a single
+    #   diagnostic number for "worst case curvature on this fit".
+    # ``a_raw_negative_fraction``: scalar fraction of ``(cell, gene)``
+    #   entries with ``a_raw < 0`` (genuine log-concavity violations).
+    # ``a_clamp_fraction``: scalar fraction where ``_A_MIN`` floor
+    #   activated (≥ ``a_raw_negative_fraction``).
+    # ``a_clamp_per_gene``: per-gene clamp activation rate, shape
+    #   ``(G,)`` — averaged over cells so users can identify which
+    #   genes most often trigger the floor.
+    a_raw_min: Optional[jnp.ndarray] = None  # scalar (over (cell, gene))
     a_raw_negative_fraction: Optional[jnp.ndarray] = None  # scalar
     a_clamp_fraction: Optional[jnp.ndarray] = None  # scalar
     a_clamp_per_gene: Optional[jnp.ndarray] = None  # shape (G,)
