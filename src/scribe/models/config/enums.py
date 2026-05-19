@@ -41,9 +41,12 @@ class ModelType(str, Enum):
     # models that cascade from an upstream TwoState-SVI fit and add a
     # per-cell correlated latent z_c ~ N(0, WW^T + diag(d)) on top.
     # See paper/_two_state_promoter.qmd §sec-twostate-cross-gene and
-    # the plan in .claude/plans/.  ``twostate_ln_logit`` is reserved
-    # for PR-2 (Variant B); not yet implemented.
+    # the plan in .claude/plans/.
     TWOSTATE_LN_RATE = "twostate_ln_rate"
+    # Variant B (PR-2): latent enters through the activation log-odds
+    # ``θ_g + z_g`` rather than the log-rate.  Saturating mean
+    # response ``E[u | z] = rate · σ(θ_g + z_g)``.
+    TWOSTATE_LN_LOGIT = "twostate_ln_logit"
 
     def with_mixture(self) -> str:
         """Get the mixture version of this model."""
