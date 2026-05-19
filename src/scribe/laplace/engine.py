@@ -92,10 +92,14 @@ class LaplaceInferenceEngine:
         log_progress_lines : bool, default=False
         informative_priors : Optional[Dict]
             Empirical Gaussian priors derived from a previous SVI fit.
-            Keys are a subset of ``{"r", "mu", "eta"}``.  Only consumed
-            by the NBLN branch — other base models silently ignore.
-            See :mod:`scribe.laplace.priors` for the adapter that builds
-            these from a ``ScribeSVIResults`` object.
+            Keys depend on the target base model:
+            - NBLN: ``{"r", "mu", "eta"}`` (from an NBVCP-SVI source).
+            - twostate_ln_rate: ``{"mu", "burst_size", "k_off", "eta"}``
+              (from a TwoState-SVI source).
+            Other base models silently ignore the prior bundle.
+            See :mod:`scribe.laplace.priors` for the adapters that build
+            these from a ``ScribeSVIResults`` object
+            (``priors_from_results`` and ``priors_from_twostate_results``).
 
         Returns
         -------
@@ -189,7 +193,9 @@ class LaplaceInferenceEngine:
         else:
             raise NotImplementedError(
                 f"Laplace inference is supported for PLN, NBLN, LNM, "
-                f"LNMVCP, and twostate_ln_rate; got base_model={bm!r}."
+                f"LNMVCP, and twostate_ln_rate; got base_model={bm!r}. "
+                "twostate_ln_logit is planned for PR-2 of the "
+                "cross-gene TwoState extension."
             )
 
         return run_laplace_em(

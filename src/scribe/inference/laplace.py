@@ -72,10 +72,13 @@ def _run_laplace_inference(
         If ``model_config.base_model`` is not in ``{"pln", "lnm"}``.
     """
     base_model = getattr(model_config, "base_model", None)
-    if base_model not in ("pln", "nbln", "lnm", "lnmvcp"):
+    if base_model not in (
+        "pln", "nbln", "lnm", "lnmvcp", "twostate_ln_rate"
+    ):
         raise ValueError(
             f"inference_method='laplace' is currently supported for "
-            f"PLN, NBLN, LNM, and LNMVCP (got base_model={base_model!r}). "
+            f"PLN, NBLN, LNM, LNMVCP, and twostate_ln_rate "
+            f"(got base_model={base_model!r}). "
             "Use 'svi'/'vae'/'mcmc' for other models."
         )
 
@@ -92,7 +95,7 @@ def _run_laplace_inference(
     # via PRIOR_KEY_ALIASES). Plain LNM has no capture submodel so
     # no anchor is set.
     capture_anchor = None
-    if base_model in ("pln", "nbln", "lnmvcp"):
+    if base_model in ("pln", "nbln", "lnmvcp", "twostate_ln_rate"):
         priors_extra = (
             getattr(model_config.priors, "__pydantic_extra__", None) or {}
         )
@@ -271,7 +274,9 @@ def _run_laplace_inference(
             k_off_scale=gu.get("k_off_scale"),
             # Curvature-clamp diagnostics from pack_result.
             a_raw_min=g.get("a_raw_min"),
+            a_raw_negative_fraction=g.get("a_raw_negative_fraction"),
             a_clamp_fraction=g.get("a_clamp_fraction"),
+            a_clamp_per_gene=g.get("a_clamp_per_gene"),
             # Cascade plumbing (mirrors NBLN).
             frozen_params=run_result.frozen_params,
             cascade_source=cascade_source,

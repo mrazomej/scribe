@@ -65,7 +65,9 @@ from ._em import (
 )
 from ._global_uncertainty import resolve_positive_fns
 from ._newton_twostate_ln_rate import (
+    _A_MIN,
     _DEFAULT_K,
+    _twostate_ln_rate_factors,
     laplace_log_det_neg_H_batch,
     laplace_log_det_neg_H_batch_x_only,
     laplace_log_det_neg_H_batch_x_only_offset,
@@ -75,6 +77,20 @@ from ._newton_twostate_ln_rate import (
     twostate_ln_rate_grad_split_batch,
     twostate_ln_rate_grad_x_only_norm_batch,
     twostate_ln_rate_grad_x_only_offset_norm_batch,
+)
+
+
+# Vmapped factor helper used for live-gradient log-prob and final-sweep
+# clamp diagnostics.  We only need ``log_marginal`` and ``a_raw``, but
+# the factor function returns the full dict — extract those two.
+def _factors_log_marginal_and_a_raw(log_rate, u, alpha, beta, K):
+    fac = _twostate_ln_rate_factors(log_rate, u, alpha, beta, K)
+    return fac["log_marginal"], fac["a_raw"]
+
+
+_factors_batch = jax.vmap(
+    _factors_log_marginal_and_a_raw,
+    in_axes=(0, 0, None, None, None),
 )
 
 
@@ -502,21 +518,20 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
                 self._sigma_M,
                 n_quad_nodes,
             )
-            # Data log-prob from the kernel's log_marginal_sum is the
-            # per-cell sum; for a live-gradient evaluation we recompute
-            # it via the factor function at the MAP.  Avoid this for
-            # PR-1 simplicity by reusing the kernel return — gradient
-            # flows through Globals only via log_det_live.
-            #
-            # NOTE: this means the ELBO gradient on (mu, burst_size,
-            # k_off) flows only through log_det(-H), not through the
-            # data log-prob term.  This is suboptimal — NBLN flows
-            # gradient through both via LogMeanNegativeBinomial.log_prob.
-            # For PR-1 we accept this limitation; M-step still
-            # converges because log_det_live captures the bulk of the
-            # globals-dependence.  A follow-up PR can add a live-
-            # gradient log-prob via an explicit factor recomputation.
-            data_log_prob = jnp.sum(log_marginal_sum)
+            # Data log-prob: recompute at stop_gradient'd Newton MAP with
+            # LIVE globals (alpha, beta) so that the ELBO gradient on
+            # (mu, burst_size, k_off) flows through this term.  Without
+            # this recomputation the kernel's ``log_marginal_sum`` carries
+            # only the stop_gradient'd alpha/beta from the Newton call,
+            # so soft-cascade and uncascaded fits would have zero data-
+            # side gradient on the gene globals.  Mirrors NBLN's pattern
+            # of computing the data log-prob via LogMeanNegativeBinomial
+            # at the post-Newton MAP with live globals.
+            log_rate_for_lp = jax.lax.stop_gradient(x_new)
+            log_marginal_live, _ = _factors_batch(
+                log_rate_for_lp, counts_batch, alpha, beta, n_quad_nodes,
+            )
+            data_log_prob = jnp.sum(log_marginal_live)
             eta_new = None
             gn_x = twostate_ln_rate_grad_x_only_norm_batch(
                 x_new,
@@ -565,7 +580,14 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
                 n_quad_nodes,
             )
             log_det_live = log_det_live_per_cell
-            data_log_prob = jnp.sum(log_marginal_sum)
+            # Live-gradient data log-prob at stop_gradient'd MAP.
+            log_rate_for_lp = (
+                jax.lax.stop_gradient(x_new) - eta_offset
+            )
+            log_marginal_live, _ = _factors_batch(
+                log_rate_for_lp, counts_batch, alpha, beta, n_quad_nodes,
+            )
+            data_log_prob = jnp.sum(log_marginal_live)
             eta_new = eta_offset  # unchanged
             gn_x = twostate_ln_rate_grad_x_only_offset_norm_batch(
                 x_new,
@@ -626,7 +648,14 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
                 sigma_M_per_cell,
                 n_quad_nodes,
             )
-            data_log_prob = jnp.sum(log_marginal_sum)
+            # Live-gradient data log-prob at stop_gradient'd MAP.
+            log_rate_for_lp = (
+                jax.lax.stop_gradient(x_new) - jax.lax.stop_gradient(eta_new)
+            )
+            log_marginal_live, _ = _factors_batch(
+                log_rate_for_lp, counts_batch, alpha, beta, n_quad_nodes,
+            )
+            data_log_prob = jnp.sum(log_marginal_live)
             gn_x, gn_eta = twostate_ln_rate_grad_split_batch(
                 x_new,
                 eta_new,
@@ -724,11 +753,8 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
                 ms,
                 n_q,
             )
-            return FinalSweepResult(
-                latent_loc=x_new,
-                eta_loc=None,
-                final_grad_norms=final_grad,
-            )
+            final_eta_loc = None
+            log_rate_for_diag = x_new
         elif self.freezes_eta:
             eta_offset = jnp.asarray(self._freeze_values["eta"]["loc"])
             (
@@ -751,11 +777,8 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
                 ms,
                 n_q,
             )
-            return FinalSweepResult(
-                latent_loc=x_new,
-                eta_loc=eta_offset,
-                final_grad_norms=final_grad,
-            )
+            final_eta_loc = eta_offset
+            log_rate_for_diag = x_new - eta_offset
         else:
             if self._prior_eta is not None:
                 sigma_M_per_cell = jnp.asarray(self._prior_eta["scale"])
@@ -788,11 +811,51 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
                 ms,
                 n_q,
             )
-            return FinalSweepResult(
-                latent_loc=x_new,
-                eta_loc=eta_new,
-                final_grad_norms=final_grad,
+            final_eta_loc = eta_new
+            log_rate_for_diag = x_new - eta_new[:, None]
+
+        # Compute clamp diagnostics at the final MAP (count_data is on
+        # hand here; not the case in pack_result). Stashed on self so
+        # pack_result can pick them up without reaching for count_data.
+        _, a_raw_per_cell = _factors_batch(
+            log_rate_for_diag, count_data, alpha, beta, n_q,
+        )
+        # a_raw_per_cell shape: (C, G)
+        a_raw_flat = a_raw_per_cell.reshape(-1)
+        a_raw_min_val = float(jnp.min(a_raw_per_cell))
+        a_raw_neg_frac = float(jnp.mean((a_raw_flat < 0.0).astype(jnp.float32)))
+        a_clamp_frac = float(
+            jnp.mean((a_raw_flat < _A_MIN).astype(jnp.float32))
+        )
+        # Per-gene clamp activation rate.
+        a_clamp_per_gene = jnp.mean(
+            (a_raw_per_cell < _A_MIN).astype(jnp.float32), axis=0
+        )
+        self._final_clamp_stats = {
+            "a_raw_min": a_raw_min_val,
+            "a_raw_negative_fraction": a_raw_neg_frac,
+            "a_clamp_fraction": a_clamp_frac,
+            "a_clamp_per_gene": np.asarray(a_clamp_per_gene),
+        }
+        # User-facing warning if clamp activated on >5% of (cell, gene)
+        # entries — matches the threshold in the plan §4.A.3.
+        if a_clamp_frac > 0.05:
+            import logging
+            logging.getLogger(__name__).warning(
+                "TSLN-Rate curvature clamp activated on %.1f%% of "
+                "(cell, gene) entries (threshold 5%%). The Laplace "
+                "approximation is locally prior-dominated for those "
+                "entries; posterior credible intervals on the affected "
+                "genes should not be interpreted at face value. See "
+                "result.a_clamp_per_gene for the per-gene breakdown.",
+                100.0 * a_clamp_frac,
             )
+
+        return FinalSweepResult(
+            latent_loc=x_new,
+            eta_loc=final_eta_loc,
+            final_grad_norms=final_grad,
+        )
 
     # ---- pack_result -----------------------------------------------------
 
@@ -817,39 +880,23 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         alpha, beta, rate, _eff = _twostate_reparam(mu, burst_size, k_off)
         d = self._pos_forward(params_full["d_loc"])
 
-        # Compute the final clamp diagnostic (a_raw_min over cells) by
-        # evaluating the factor function at the converged x.  This is
-        # a single call per cell — done eagerly so the result is a
-        # plain float in the result.
-        from ._newton_twostate_ln_rate import _twostate_ln_rate_factors
-
-        def _per_cell_clamp_metrics(x_g, u_g, eta_g):
-            log_rate = x_g - (eta_g if eta_g is not None else 0.0)
-            fac = _twostate_ln_rate_factors(
-                log_rate, u_g, alpha, beta, self._n_quad_nodes
-            )
-            return fac["a_raw"]
-
-        try:
-            if final.eta_loc is not None:
-                a_raw_all = jax.vmap(
-                    _per_cell_clamp_metrics,
-                    in_axes=(0, 0, 0),
-                )(
-                    final.latent_loc,
-                    jnp.asarray(losses[:0]) if False else None,
-                    final.eta_loc,
-                )
-                # The above is fragile (counts not stored). We instead
-                # leave a_raw diagnostics empty if counts aren't on hand.
-                a_raw_min = float("nan")
-                a_clamp_fraction = float("nan")
-            else:
-                a_raw_min = float("nan")
-                a_clamp_fraction = float("nan")
-        except Exception:
+        # Read clamp diagnostics that final_sweep stashed on self.  If
+        # final_sweep was never called (defensive — should not happen in
+        # the run_laplace_em flow), fall back to NaN sentinels so
+        # downstream consumers can still detect "diagnostics absent".
+        stats = getattr(self, "_final_clamp_stats", None)
+        if stats is None:
             a_raw_min = float("nan")
+            a_raw_neg_frac = float("nan")
             a_clamp_fraction = float("nan")
+            a_clamp_per_gene_arr = jnp.full(
+                (mu.shape[0],), jnp.nan, dtype=jnp.float32
+            )
+        else:
+            a_raw_min = stats["a_raw_min"]
+            a_raw_neg_frac = stats["a_raw_negative_fraction"]
+            a_clamp_fraction = stats["a_clamp_fraction"]
+            a_clamp_per_gene_arr = jnp.asarray(stats["a_clamp_per_gene"])
 
         globals_dict: Dict[str, jnp.ndarray] = {
             "W": params_full["W"],
@@ -865,9 +912,13 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
             "beta": beta,
             "r_hat": rate,
             "a_raw_min": jnp.asarray(a_raw_min, dtype=jnp.float32),
+            "a_raw_negative_fraction": jnp.asarray(
+                a_raw_neg_frac, dtype=jnp.float32
+            ),
             "a_clamp_fraction": jnp.asarray(
                 a_clamp_fraction, dtype=jnp.float32
             ),
+            "a_clamp_per_gene": a_clamp_per_gene_arr,
         }
 
         return LaplaceRunResult(
@@ -887,7 +938,9 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
             ),
             frozen_params=self._frozen_params,
             w_prior_diagnostics=(
-                self._w_prior.diagnostics(params_full["W"], n_constraints=1)
+                self._w_prior.diagnostics(
+                    params_full["W"], {}, n_constraints=1
+                )
                 if hasattr(self._w_prior, "diagnostics")
                 else None
             ),

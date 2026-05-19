@@ -186,7 +186,9 @@ class ScribeLaplaceResults(
     # These fields surface how often the clamp activated on the final
     # sweep so users can detect prior-dominated cells/genes.
     a_raw_min: Optional[jnp.ndarray] = None  # scalar
+    a_raw_negative_fraction: Optional[jnp.ndarray] = None  # scalar
     a_clamp_fraction: Optional[jnp.ndarray] = None  # scalar
+    a_clamp_per_gene: Optional[jnp.ndarray] = None  # shape (G,)
 
     # --- Global posterior uncertainty (unconstrained space) --------
     #
