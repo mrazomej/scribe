@@ -174,6 +174,7 @@ class TestMomentDeltaBuilderAndFactory:
             "k_on",
             "k_off",
             "r_hat",
+            "eta_act",
             "burst_size",
             "concentration",
             "effective_burst_size",
