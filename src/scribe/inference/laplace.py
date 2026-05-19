@@ -250,24 +250,43 @@ def _run_laplace_inference(
     if base_model == "twostate_ln_rate":
         # TSLN-Rate: same per-cell shape as NBLN (x_loc is the latent
         # log-rate MAP, eta_loc the optional capture offset).  Three
-        # gene-level positive globals (mu, burst_size, k_off) plus the
-        # derived (alpha, beta, r_hat) — all surfaced from the engine's
-        # globals dict.  Curvature-clamp diagnostics from pack_result.
+        # gene-level positive globals (gene_mean, burst_size, k_off) plus
+        # the derived (alpha, beta, r_hat).
+        #
+        # CONVENTION (round-5 audit fix): override ``common_kwargs["mu"]``
+        # to ``log(r_hat)`` so ``self.mu`` carries the latent log-rate
+        # prior center — matching NBLN/PLN where every Laplace mixin
+        # treats ``self.mu`` as the loc of the latent log-rate
+        # distribution.  The TwoState positive ``mu`` (gene mean) is
+        # routed into the new ``gene_mean`` field instead.  This
+        # prevents mixins like ``get_distributions``, ``get_map``, and
+        # downstream PPC paths from quietly using the wrong coordinate
+        # system for ``y_log_rate``.
         gu = run_result.global_uncertainty
+        r_hat_val = g.get("r_hat")
+        if r_hat_val is not None:
+            common_kwargs["mu"] = jnp.log(jnp.maximum(r_hat_val, 1e-30))
+        # ``mu_loc / mu_scale`` are NBLN-specific (post-fit Laplace
+        # Normal on the latent log-rate prior mean).  For TSLN-Rate we
+        # explicitly DO NOT populate them — the analogous quantities
+        # for the TwoState parameterization live on
+        # ``gene_mean_loc / gene_mean_scale``.
         return ScribeLaplaceResults(
             **common_kwargs,
             x_loc=run_result.x_loc,
             eta_loc=run_result.eta_loc,
             # Constrained positives (computed in pack_result via pos_forward).
+            gene_mean=g.get("mu"),  # TwoState positive mu, now routed here
             burst_size=g.get("burst_size"),
             k_off=g.get("k_off"),
             # Derived TSLN quantities.
             alpha=g.get("alpha"),
             beta=g.get("beta"),
-            r_hat=g.get("r_hat"),
+            r_hat=r_hat_val,
             # Unconstrained loc/scale fields from the global-uncertainty hook.
-            mu_loc=g.get("mu_loc"),
-            mu_scale=gu.get("mu_scale"),
+            # NB: ``self.mu_loc / self.mu_scale`` left as None for TSLN-Rate.
+            gene_mean_loc=g.get("mu_loc"),
+            gene_mean_scale=gu.get("mu_scale"),
             burst_size_loc=g.get("burst_size_loc"),
             burst_size_scale=gu.get("burst_size_scale"),
             k_off_loc=g.get("k_off_loc"),

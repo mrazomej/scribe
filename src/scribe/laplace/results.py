@@ -170,11 +170,27 @@ class ScribeLaplaceResults(
     # TwoState-LogNormal-Rate fields (``base_model == "twostate_ln_rate"``).
     # All constrained positive quantities; per-gene shape ``(G,)``.
     # See plan §4.A.3 and ``_obs_twostate_ln_rate.py``.
+    #
+    # CONVENTION.  For TSLN-Rate, the
+    # interpretation of ``mu`` is the **latent log-rate prior
+    # center** ``log(r_hat)`` — matching NBLN/PLN where ``self.mu``
+    # is the loc of the latent log-rate distribution
+    # ``LowRankMultivariateNormal(loc=self.mu, ...)``.  The
+    # **positive TwoState gene-mean parameter** (the SVI source's
+    # ``mu``) is stored separately in :attr:`gene_mean` so that
+    # ``self.mu`` is semantically consistent across all
+    # Laplace-supported base models.
     burst_size: Optional[jnp.ndarray] = None
     k_off: Optional[jnp.ndarray] = None
+    # The TwoState positive gene-mean parameter (= SVI source's ``mu``).
+    # Distinct from ``self.mu`` which carries the latent log-rate
+    # prior center for TSLN-Rate.  ``gene_mean = pos_forward(
+    # gene_mean_loc)``.
+    gene_mean: Optional[jnp.ndarray] = None
     # Derived TSLN quantities (gene-level, all shape ``(G,)``).
-    # ``alpha = mu/burst_size``, ``beta = k_off``, ``r_hat = mu + burst_size*k_off``
-    # after the mean-preserving floor in ``_twostate_reparam``.
+    # ``alpha = gene_mean/burst_size``, ``beta = k_off``,
+    # ``r_hat = gene_mean + burst_size*k_off`` after the mean-preserving
+    # floor in ``_twostate_reparam``.
     alpha: Optional[jnp.ndarray] = None
     beta: Optional[jnp.ndarray] = None
     r_hat: Optional[jnp.ndarray] = None
@@ -221,6 +237,13 @@ class ScribeLaplaceResults(
     burst_size_scale: Optional[jnp.ndarray] = None
     k_off_loc: Optional[jnp.ndarray] = None
     k_off_scale: Optional[jnp.ndarray] = None
+    # ``gene_mean_loc`` is the unconstrained pre-transform of
+    # ``gene_mean`` (the TwoState positive gene-mean parameter).
+    # ``gene_mean = pos_forward(gene_mean_loc)`` exactly.
+    # For TSLN-Rate, ``self.mu_loc`` / ``self.mu_scale`` are NOT
+    # populated — those are NBLN-specific.
+    gene_mean_loc: Optional[jnp.ndarray] = None
+    gene_mean_scale: Optional[jnp.ndarray] = None
     # NBLN latent prior mean ``mu`` posterior (per gene, log-rate
     # coordinate).  Populated by ``compute_global_uncertainty`` using
     # the diagonal-Σ approximation of the profiled Hessian.  Both
@@ -409,6 +432,19 @@ class ScribeLaplaceResults(
             components.append("r")
         if self.mu_loc is not None or self.mu_scale is not None:
             components.append("mu")
+        # TSLN-Rate uncertainty blocks.
+        if (
+            self.gene_mean_loc is not None
+            or self.gene_mean_scale is not None
+        ):
+            components.append("gene_mean")
+        if (
+            self.burst_size_loc is not None
+            or self.burst_size_scale is not None
+        ):
+            components.append("burst_size")
+        if self.k_off_loc is not None or self.k_off_scale is not None:
+            components.append("k_off")
         # LNM/LNMVCP totals uncertainty block.
         if (
             self.mu_T_loc is not None

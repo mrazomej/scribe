@@ -251,24 +251,36 @@ class DispatchResultsMixin:
             return out
 
         if bm == "twostate_ln_rate":
-            # TSLN-Rate: similar latent layout to NBLN (x_loc is the
-            # log-rate MAP), but gene globals are (mu, burst_size, k_off)
-            # with derived (alpha, beta, r_hat).
+            # TSLN-Rate get_map: surface both the latent log-rate prior
+            # center (``self.mu`` = log(r_hat); matches NBLN convention)
+            # AND the user-facing positive TwoState gene mean
+            # (``self.gene_mean``).  The dual exposure prevents
+            # downstream confusion: math-side consumers (PPC,
+            # distribution accessors) get the latent log-rate; biology-
+            # side consumers (cascade-MAP comparison, plotting) get the
+            # positive gene mean.
             out = {
+                # ``mu`` here is the LATENT log-rate prior center
+                # (= log(r_hat)) to match NBLN/PLN convention.  This
+                # is what ``y_log_rate``'s distribution loc is.
                 "mu": self.mu,
                 "W": self.W,
                 "d_tsln": self.d,
                 "y_log_rate": self.x_loc,
             }
+            # Positive TwoState gene mean (user-facing TwoState
+            # semantics — what the SVI source emits as "mu").
+            if self.gene_mean is not None:
+                out["gene_mean"] = self.gene_mean
             if self.eta_loc is not None:
                 out["eta_capture"] = self.eta_loc
                 out["p_capture"] = jnp.exp(-self.eta_loc)
-            # Three positive globals
+            # Three positive globals (gene_mean already added above).
             if self.burst_size is not None:
                 out["burst_size"] = self.burst_size
             if self.k_off is not None:
                 out["k_off"] = self.k_off
-            # Derived TwoState quantities
+            # Derived TwoState quantities.
             if self.alpha is not None:
                 out["alpha"] = self.alpha
             if self.beta is not None:
@@ -276,21 +288,27 @@ class DispatchResultsMixin:
             if self.r_hat is not None:
                 out["r_hat"] = self.r_hat
             # Unconstrained loc/scale fields (when populated by
-            # compute_global_uncertainty).
+            # compute_global_uncertainty).  NB: for TSLN-Rate, the
+            # gene-mean posterior lives on ``gene_mean_loc / _scale``;
+            # ``mu_loc / mu_scale`` are NBLN-specific and not populated
+            # for TSLN-Rate.
             for key in (
-                "mu_loc", "mu_scale",
+                "gene_mean_loc", "gene_mean_scale",
                 "burst_size_loc", "burst_size_scale",
                 "k_off_loc", "k_off_scale",
             ):
                 val = getattr(self, key, None)
                 if val is not None:
                     out[key] = val
-            # Clamp diagnostics
-            if self.a_raw_min is not None:
-                out["a_raw_min"] = self.a_raw_min
-            if self.a_clamp_fraction is not None:
-                out["a_clamp_fraction"] = self.a_clamp_fraction
-            # Cascade freeze flags
+            # Clamp diagnostics.
+            for key in (
+                "a_raw_min", "a_raw_negative_fraction",
+                "a_clamp_fraction", "a_clamp_per_gene",
+            ):
+                val = getattr(self, key, None)
+                if val is not None:
+                    out[key] = val
+            # Cascade freeze flags.
             frozen = getattr(self, "frozen_params", frozenset())
             out["mu_frozen"] = "mu" in frozen
             out["burst_size_frozen"] = "burst_size" in frozen
@@ -458,43 +476,40 @@ class DispatchResultsMixin:
             # globals. Soft-cascade Normal posteriors when populated by
             # compute_global_uncertainty.
             #
-            # The latent log-rate prior center is ``log(r_hat)`` where
-            # ``r_hat = mu + burst_size * k_off`` (see ``_twostate_reparam``).
-            # NOT ``self.mu`` — that is TwoState's positive gene-mean
-            # parameter, which lives in the constrained positive space,
-            # not the latent log-rate space.  Using ``self.mu`` here
-            # would put the LowRankMVN loc in the wrong coordinate
-            # system and break ``y_log_rate``-consuming PPC and
-            # diagnostic code.
+            # CONVENTION (round-5 audit fix): ``self.mu`` is the
+            # **latent log-rate prior center** ``log(r_hat)`` for
+            # TSLN-Rate (matching NBLN/PLN), set in the bridge via
+            # ``common_kwargs["mu"] = jnp.log(r_hat)``.  The TwoState
+            # positive gene-mean parameter lives on ``self.gene_mean``.
+            # This keeps ``LowRankMultivariateNormal(loc=self.mu, ...)``
+            # semantically correct across every Laplace base model.
             tfm = resolve_numpyro_transform(self.model_config)
-            if self.r_hat is None:
-                raise ValueError(
-                    "TSLN-Rate get_distributions() requires r_hat to be "
-                    "populated on the result; got None.  Did pack_result "
-                    "run on this fit?"
-                )
-            latent_prior_loc = jnp.log(self.r_hat)
             out: Dict[str, Any] = {
                 "y_log_rate": dist.LowRankMultivariateNormal(
-                    loc=latent_prior_loc,
-                    cov_factor=self.W,
-                    cov_diag=self.d,
+                    loc=self.mu, cov_factor=self.W, cov_diag=self.d
                 ),
             }
             frozen = getattr(self, "frozen_params", frozenset())
-            # mu posterior (when uncertainty was computed; for TSLN-Rate
-            # mu is positive, so a TransformedDistribution applies).
+            # ``gene_mean`` (positive TwoState mu) posterior.
             if (
                 "mu" not in frozen
-                and self.mu_loc is not None
-                and self.mu_scale is not None
+                and self.gene_mean_loc is not None
+                and self.gene_mean_scale is not None
             ):
-                out["mu"] = dist.TransformedDistribution(
-                    dist.Normal(self.mu_loc, self.mu_scale).to_event(1),
+                out["gene_mean"] = dist.TransformedDistribution(
+                    dist.Normal(
+                        self.gene_mean_loc, self.gene_mean_scale
+                    ).to_event(1),
                     tfm,
                 )
-            elif self.mu is not None:
-                out["mu"] = dist.Delta(self.mu)
+            elif self.gene_mean is not None:
+                out["gene_mean"] = dist.Delta(self.gene_mean)
+            # Back-compat: also expose under the ``mu`` key so existing
+            # client code expecting ``dists["mu"]`` resolves to the
+            # gene-mean distribution.  This is the **biological** mu;
+            # the **latent** mu is under ``y_log_rate``.
+            if "gene_mean" in out:
+                out["mu"] = out["gene_mean"]
             # burst_size posterior
             if (
                 "burst_size" not in frozen

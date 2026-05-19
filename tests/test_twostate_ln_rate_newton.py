@@ -281,3 +281,40 @@ def test_batch_newton_x_only_runs():
     assert jnp.all(final_grad < 1.0), (
         f"At least one cell's final grad too large: {final_grad}"
     )
+
+
+# ---------------------------------------------------------------------
+# Test 7: PR-1 W-prior scope guard
+# ---------------------------------------------------------------------
+
+
+def test_non_none_w_prior_raises_with_pr1_message():
+    """TSLN-Rate PR-1 ships ``NoneWPrior`` only.
+
+    The obs model should raise a clear ``NotImplementedError`` mentioning
+    the PR-1 limitation when a non-no-op strategy is passed.  This is
+    intentional scope per the audit (plan §6); horseshoe / NEG transfer
+    cleanly from NBLN but are deferred to a follow-up PR.
+    """
+    from scribe.laplace._obs_twostate_ln_rate import (
+        TwoStateLNRateObservationModel,
+    )
+    from scribe.laplace._w_priors import HorseshoeColumnwiseWPrior
+    from scribe.models.config.base import ModelConfig
+    from scribe.models.config.enums import (
+        InferenceMethod,
+        Parameterization,
+    )
+
+    cfg = ModelConfig(
+        base_model="twostate_ln_rate",
+        parameterization=Parameterization.TWO_STATE_NATURAL,
+        inference_method=InferenceMethod.LAPLACE,
+        positive_transform="softplus",
+    )
+
+    with pytest.raises(NotImplementedError, match="deferred to a follow-up PR"):
+        TwoStateLNRateObservationModel(
+            model_config=cfg,
+            w_prior_strategy=HorseshoeColumnwiseWPrior(tau_scale=1.0),
+        )
