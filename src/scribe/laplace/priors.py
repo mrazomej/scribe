@@ -949,14 +949,62 @@ def priors_from_twostate_results(
             "transform='identity')."
         )
     elif capture_mode == "phi_only":
-        warnings.warn(
-            "TwoState SVI source uses odds-ratio capture (p_capture / "
-            "phi_capture). TSLN-Rate cascade will apply mu/burst_size/k_off "
-            "priors only; capture configuration on the target is left "
-            "untouched. Pass a separate capture_anchor on the target if "
-            "you want explicit capture handling.",
-            UserWarning,
-            stacklevel=2,
+        # Convert the SVI source's p_capture (or phi_capture) into the
+        # TSLN-Rate / NBLN-Laplace ``eta_capture`` coordinate system.
+        # The mapping is mathematically clean:
+        #
+        #   NBVCP / twostatevcp:  log λ_cg = log r_g + log p_capture_c
+        #   biology-anchored:     log λ_cg = log r_g − eta_capture_c
+        #   ⇒  eta_capture_c = − log p_capture_c.
+        #
+        # A cell with ``p_capture = 0.1`` maps to ``eta_capture ≈ 2.30``
+        # (positive — larger ``eta`` ↔ smaller capture).  Both quantities
+        # live in the same per-cell semantic space; only the
+        # coordinate / sign differs.
+        #
+        # ``phi_capture`` (mean-odds form) is first mapped back to
+        # ``p_capture`` via ``p = phi / (1 + phi)``, then through the
+        # same log transform.
+        if "p_capture" in samples:
+            p_cap_samples = jnp.maximum(
+                jnp.asarray(samples["p_capture"]), 1e-8
+            )
+        else:
+            phi_samples = jnp.maximum(
+                jnp.asarray(samples["phi_capture"]), 1e-8
+            )
+            p_cap_samples = phi_samples / (1.0 + phi_samples)
+            p_cap_samples = jnp.maximum(
+                jnp.clip(p_cap_samples, 1e-8, 1.0 - 1e-8), 1e-8
+            )
+
+        if p_cap_samples.ndim < 2 or p_cap_samples.shape[1] != int(
+            target_n_cells
+        ):
+            raise ValueError(
+                f"SVI p_capture / phi_capture samples have shape "
+                f"{p_cap_samples.shape}; expected "
+                f"(S, {int(target_n_cells)})."
+            )
+        # Sample-wise log transform.  ``eta`` is real-valued (no
+        # positive transform needed); the Laplace target stores it
+        # directly in this coordinate.
+        eta_samples = -jnp.log(p_cap_samples)
+        prior_bundle["eta"] = fit_empirical_gaussian(
+            eta_samples, tau=float(tau)
+        )
+        # Promote the detected mode to "eta" so downstream code
+        # treats the cascade as having biology-anchored capture (the
+        # bridge then sets up the ``x_only_offset`` Newton path when
+        # ``eta`` is hard-frozen, or the joint Newton with the
+        # per-cell soft cascade scale otherwise).
+        capture_mode = "eta"
+        _say(
+            f"  Mapped p_capture/phi_capture → eta_capture per cell "
+            f"(eta = −log p, N={int(eta_samples.shape[1])}).  "
+            "Promoted capture_mode 'phi_only' → 'eta' so the cascade "
+            "passes per-cell capture information through to the "
+            "Laplace fit."
         )
 
     _say(
@@ -1157,18 +1205,38 @@ def freeze_values_from_twostate_results(
         )
 
     if "eta" in freeze_params:
-        if "eta_capture" not in map_dict:
+        # Same p_capture / phi_capture → eta mapping as
+        # ``priors_from_twostate_results``: ``eta = −log p_capture``.
+        # If the SVI source emits ``eta_capture`` directly (biology-
+        # anchored), use it unchanged.
+        if "eta_capture" in map_dict:
+            eta = jnp.asarray(map_dict["eta_capture"])
+        elif "p_capture" in map_dict:
+            p_cap = jnp.maximum(jnp.asarray(map_dict["p_capture"]), 1e-8)
+            eta = -jnp.log(p_cap)
+            _say(
+                "  Mapped p_capture MAP → eta_capture freeze value "
+                "via eta = −log p."
+            )
+        elif "phi_capture" in map_dict:
+            phi = jnp.maximum(jnp.asarray(map_dict["phi_capture"]), 1e-8)
+            p_cap = phi / (1.0 + phi)
+            eta = -jnp.log(jnp.maximum(p_cap, 1e-8))
+            _say(
+                "  Mapped phi_capture MAP → eta_capture freeze value "
+                "via p = phi/(1+phi), eta = −log p."
+            )
+        else:
             raise ValueError(
                 "freeze_params requests 'eta' but SVI MAP has no "
-                "'eta_capture' key. The source may not be using biology-"
-                "informed capture. Available: "
-                f"{sorted(map_dict.keys())}."
+                "'eta_capture', 'p_capture', or 'phi_capture' key. The "
+                "source does not appear to model per-cell capture. "
+                f"Available: {sorted(map_dict.keys())}."
             )
-        eta = jnp.asarray(map_dict["eta_capture"])
         if eta.ndim != 1 or eta.shape[0] != int(target_n_cells):
             raise ValueError(
-                f"SVI 'eta_capture' MAP has shape {eta.shape}; expected "
-                f"({int(target_n_cells)},)."
+                f"SVI capture MAP has shape {eta.shape} after mapping; "
+                f"expected ({int(target_n_cells)},)."
             )
         freeze_values["eta"] = {"loc": eta}
         _say(

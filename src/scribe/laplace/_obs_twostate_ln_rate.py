@@ -612,7 +612,8 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
                 x_new, eta_offset, counts_batch, alpha, beta, W, d,
                 n_quad_nodes,
             )
-            log_rate_for_lp = x_new - eta_offset
+            # eta_offset is per-cell ``(C,)``; broadcast to ``(C, G)``.
+            log_rate_for_lp = x_new - eta_offset[:, None]
             gn_x = twostate_ln_rate_grad_x_only_offset_norm_batch(
                 x_new, counts_batch, mu_x_sg, W_sg, d_sg,
                 alpha_sg, beta_sg, eta_offset, n_quad_nodes,
@@ -812,7 +813,8 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
                 n_q,
             )
             final_eta_loc = eta_offset
-            log_rate_for_diag = x_new - eta_offset
+            # eta_offset is per-cell ``(C,)``; broadcast to ``(C, G)``.
+            log_rate_for_diag = x_new - eta_offset[:, None]
         else:
             if self._prior_eta is not None:
                 sigma_M_per_cell = jnp.asarray(self._prior_eta["scale"])
