@@ -220,9 +220,49 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
             self._capture_anchor = (float(log_M0), float(sigma_M))
             self._sigma_M = float(sigma_M)
 
-        self._pos_forward, self._pos_inverse = resolve_positive_fns(
-            model_config
-        )
+        # Per-parameter ``positive_transform`` resolution.  When the
+        # user passes the dict form ``positive_transform={"mean_expression":
+        # "exp", ...}``, ``ModelConfig.resolve_positive_transform(name)``
+        # returns the right transform name per parameter (falling back
+        # to ``softplus`` for unlisted ones).  Resolve separate forward/
+        # inverse callables for each of TSLN-Rate's three positive
+        # gene-globals and the diagonal residual ``d``.
+        from ._global_uncertainty import _JAX_POSITIVE_FNS
+
+        def _resolve_for(internal_name: str):
+            """Return the (forward, inverse) pair for one parameter."""
+            if model_config is None:
+                # Default to softplus across the board.
+                return _JAX_POSITIVE_FNS["softplus"]
+            transform_name = model_config.resolve_positive_transform(
+                internal_name
+            )
+            if transform_name not in _JAX_POSITIVE_FNS:
+                raise ValueError(
+                    f"Unknown positive_transform for {internal_name!r}: "
+                    f"{transform_name!r}.  Expected one of "
+                    f"{set(_JAX_POSITIVE_FNS)}."
+                )
+            return _JAX_POSITIVE_FNS[transform_name]
+
+        self._pos_fns = {
+            "mu": _resolve_for("mu"),
+            "burst_size": _resolve_for("burst_size"),
+            "k_off": _resolve_for("k_off"),
+            "d": _resolve_for("d"),
+        }
+        # Back-compat: a single ``(forward, inverse)`` pair is exposed
+        # via ``self._pos_forward / self._pos_inverse`` (resolves the
+        # ``mu`` transform), so call sites that need any positive map
+        # — e.g. ``compute_global_uncertainty`` and ``init_state`` for
+        # paths that pre-date per-parameter resolution — keep working.
+        self._pos_forward, self._pos_inverse = self._pos_fns["mu"]
+        # Convenience per-parameter accessors (forward only — inverse
+        # is rarely needed outside ``init_state``).
+        self._mu_fwd = self._pos_fns["mu"][0]
+        self._bs_fwd = self._pos_fns["burst_size"][0]
+        self._ko_fwd = self._pos_fns["k_off"][0]
+        self._d_fwd = self._pos_fns["d"][0]
 
         # Validate keys
         valid = {"mu", "burst_size", "k_off", "eta"}
@@ -332,11 +372,16 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
 
         Returns ``(mu_x, alpha, beta, rate)`` where ``mu_x = log(rate)``
         is the prior centering on the latent log-rate ``x`` (the analog
-        of NBLN's ``mu``).
+        of NBLN's ``mu``).  Each positive global passes through its own
+        configured ``positive_transform`` — supports the per-parameter
+        dict form ``positive_transform={"mu": "exp", ...}``.
         """
-        mu = self._pos_forward(params["mu_loc"])
-        bs = self._pos_forward(params["burst_size_loc"])
-        ko = self._pos_forward(params["k_off_loc"])
+        mu_fwd, _ = self._pos_fns["mu"]
+        bs_fwd, _ = self._pos_fns["burst_size"]
+        ko_fwd, _ = self._pos_fns["k_off"]
+        mu = mu_fwd(params["mu_loc"])
+        bs = bs_fwd(params["burst_size_loc"])
+        ko = ko_fwd(params["k_off_loc"])
         alpha, beta, rate, _eff_burst = _twostate_reparam(mu, bs, ko)
         mu_x = jnp.log(rate)
         return mu_x, alpha, beta, rate
@@ -353,45 +398,50 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
     ) -> InitState:
         counts_np = np.asarray(count_data)
 
+        # Per-parameter (forward, inverse).  Supports the dict form
+        # ``positive_transform={"mu": "exp", ...}`` so different
+        # gene-globals can use different positive maps.
+        mu_fwd, mu_inv = self._pos_fns["mu"]
+        bs_fwd, bs_inv = self._pos_fns["burst_size"]
+        ko_fwd, ko_inv = self._pos_fns["k_off"]
+        d_fwd, d_inv = self._pos_fns["d"]
+
         # mu: frozen > prior > data
         if "mu" in self._frozen_params:
-            mu_pos = jnp.asarray(self._freeze_values["mu"]["loc"])
             # freeze_values store the UNCONSTRAINED loc; forward to constrained
-            mu_pos = self._pos_forward(mu_pos)
+            mu_pos = mu_fwd(jnp.asarray(self._freeze_values["mu"]["loc"]))
         elif self._prior_mu is not None:
-            mu_pos = self._pos_forward(jnp.asarray(self._prior_mu["loc"]))
+            mu_pos = mu_fwd(jnp.asarray(self._prior_mu["loc"]))
         else:
             mu_pos = empirical_mean_from_counts(counts_np)
-        mu_loc_init = self._pos_inverse(mu_pos)
+        mu_loc_init = mu_inv(mu_pos)
 
         # burst_size: frozen > prior > data (default 1.0)
         if "burst_size" in self._frozen_params:
-            bs_pos = self._pos_forward(
+            bs_pos = bs_fwd(
                 jnp.asarray(self._freeze_values["burst_size"]["loc"])
             )
         elif self._prior_burst_size is not None:
-            bs_pos = self._pos_forward(
-                jnp.asarray(self._prior_burst_size["loc"])
-            )
+            bs_pos = bs_fwd(jnp.asarray(self._prior_burst_size["loc"]))
         else:
             bs_pos = empirical_burst_size_from_counts(counts_np)
-        burst_size_loc_init = self._pos_inverse(bs_pos)
+        burst_size_loc_init = bs_inv(bs_pos)
 
         # k_off: frozen > prior > data (default 3.0)
         if "k_off" in self._frozen_params:
-            ko_pos = self._pos_forward(
+            ko_pos = ko_fwd(
                 jnp.asarray(self._freeze_values["k_off"]["loc"])
             )
         elif self._prior_k_off is not None:
-            ko_pos = self._pos_forward(jnp.asarray(self._prior_k_off["loc"]))
+            ko_pos = ko_fwd(jnp.asarray(self._prior_k_off["loc"]))
         else:
             ko_pos = empirical_k_off_from_counts(counts_np)
-        k_off_loc_init = self._pos_inverse(ko_pos)
+        k_off_loc_init = ko_inv(ko_pos)
 
-        # W via PCA, d uniform
+        # W via PCA, d uniform (with its own potentially-distinct transform).
         W_init = pca_loadings_init(counts_np, latent_dim=int(latent_dim))
         d_pos = default_d_init(int(n_genes))
-        d_loc_init = self._pos_inverse(d_pos)
+        d_loc_init = d_inv(d_pos)
 
         # Per-cell latent warm start
         latent_loc = latent_loc_init_from_counts(counts_np)
@@ -485,7 +535,7 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         params_full = self._splice_frozen(params)
         mu_x, alpha, beta, rate = self._reparam_from_params(params_full)
         W = params_full["W"]
-        d = self._pos_forward(params_full["d_loc"])
+        d = self._d_fwd(params_full["d_loc"])
         n_quad_nodes = self._n_quad_nodes
         max_step = self._max_step
 
@@ -718,7 +768,7 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         params_full = self._splice_frozen(params)
         mu_x, alpha, beta, _rate = self._reparam_from_params(params_full)
         W = params_full["W"]
-        d = self._pos_forward(params_full["d_loc"])
+        d = self._d_fwd(params_full["d_loc"])
         n_iters = int(2 * n_newton)
         n_q = self._n_quad_nodes
         ms = self._max_step
@@ -912,7 +962,7 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
             log_rate_at_map = x_map_sg - eta_map_sg[:, None]
 
         W_sg = jax.lax.stop_gradient(params_full["W"])
-        d_sg = jax.lax.stop_gradient(self._pos_forward(params_full["d_loc"]))
+        d_sg = jax.lax.stop_gradient(self._d_fwd(params_full["d_loc"]))
 
         # Capture the soft-cascade Normal-prior precision (per gene) for
         # each parameter — added to the data-side Hessian diagonal so
@@ -926,9 +976,9 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         # closure so its dependence on (mu_loc, burst_size_loc, k_off_loc)
         # is autodiffed.
         def neg_log_post(mu_loc_v, burst_size_loc_v, k_off_loc_v):
-            mu_pos = self._pos_forward(mu_loc_v)
-            bs_pos = self._pos_forward(burst_size_loc_v)
-            ko_pos = self._pos_forward(k_off_loc_v)
+            mu_pos = self._mu_fwd(mu_loc_v)
+            bs_pos = self._bs_fwd(burst_size_loc_v)
+            ko_pos = self._ko_fwd(k_off_loc_v)
             alpha_v, beta_v, rate_v, _eff = _twostate_reparam(
                 mu_pos, bs_pos, ko_pos
             )
@@ -963,9 +1013,9 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         # reference; not used downstream of the helper itself.
         mu_x = jnp.log(
             _twostate_reparam(
-                self._pos_forward(mu_loc),
-                self._pos_forward(bs_loc),
-                self._pos_forward(ko_loc),
+                self._mu_fwd(mu_loc),
+                self._bs_fwd(bs_loc),
+                self._ko_fwd(ko_loc),
             )[2]
         )
 
@@ -1025,11 +1075,11 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
     ) -> LaplaceRunResult:
         """Assemble :class:`LaplaceRunResult` from final state."""
         params_full = self._splice_frozen(params)
-        mu = self._pos_forward(params_full["mu_loc"])
-        burst_size = self._pos_forward(params_full["burst_size_loc"])
-        k_off = self._pos_forward(params_full["k_off_loc"])
+        mu = self._mu_fwd(params_full["mu_loc"])
+        burst_size = self._bs_fwd(params_full["burst_size_loc"])
+        k_off = self._ko_fwd(params_full["k_off_loc"])
         alpha, beta, rate, _eff = _twostate_reparam(mu, burst_size, k_off)
-        d = self._pos_forward(params_full["d_loc"])
+        d = self._d_fwd(params_full["d_loc"])
 
         # Read clamp diagnostics that final_sweep stashed on self.  If
         # final_sweep was never called (defensive — should not happen in

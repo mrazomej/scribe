@@ -329,15 +329,16 @@ def build_config_from_preset(
         if inference_method.lower() == "svi":
             inference_method = "vae"
         # Validate Laplace is requested only on supported models.
-    elif inference_method.lower() == "laplace" and model_lower not in (
-        "lnm",
-        "lnmvcp",
-    ):
-        raise ValueError(
-            "inference_method='laplace' is supported for PLN, NBLN, "
-            "LNM, and LNMVCP. Use 'svi'/'vae'/'mcmc' for model="
-            f"{model_lower!r}."
-        )
+    elif inference_method.lower() == "laplace":
+        # Single source of truth: ``api.constants.LAPLACE_SUPPORTED_BASE_MODELS``.
+        from ..api.constants import LAPLACE_SUPPORTED_BASE_MODELS
+
+        if model_lower not in LAPLACE_SUPPORTED_BASE_MODELS:
+            raise ValueError(
+                "inference_method='laplace' is supported for "
+                f"{sorted(LAPLACE_SUPPORTED_BASE_MODELS)}. "
+                f"Use 'svi'/'vae'/'mcmc' for model={model_lower!r}."
+            )
     if d_mode not in ("low_rank", "learned"):
         raise ValueError(
             f"d_mode must be 'low_rank' or 'learned', got {d_mode!r}."

@@ -54,16 +54,24 @@ def dispatch_inference(ctx: FitContext) -> None:
     capture_mode_override = None
 
     if informative_priors_from is not None:
-        # --- Scope validation (Round-4 Finding 1) ----------------------
+        # --- Scope validation (Round-4 Finding 1; round-7 extended) -----
         # Run AFTER ctx.model_config and ctx.inference_config are built,
         # so we check the resolved base_model / method even when the
         # user passes prebuilt config objects rather than raw kwargs.
+        # Single source of truth:
+        # ``api.constants.CASCADE_FROM_SVI_SUPPORTED_BASE_MODELS``.
+        from ..constants import CASCADE_FROM_SVI_SUPPORTED_BASE_MODELS
+
         base_model = ctx.model_config.base_model
         method = ctx.inference_config.method.value
-        if base_model != "nbln" or method != "laplace":
+        if (
+            base_model not in CASCADE_FROM_SVI_SUPPORTED_BASE_MODELS
+            or method != "laplace"
+        ):
             raise ValueError(
                 "informative_priors_from is only supported for "
-                "model='nbln' and inference_method='laplace'; got "
+                f"model in {sorted(CASCADE_FROM_SVI_SUPPORTED_BASE_MODELS)} "
+                f"with inference_method='laplace'; got "
                 f"base_model={base_model!r}, inference_method={method!r}."
             )
 
@@ -83,24 +91,79 @@ def dispatch_inference(ctx: FitContext) -> None:
             if filtered is not None:
                 target_gene_names = filtered
 
-        # --- Build prior bundle via Layer 2 ----------------------------
-        from ...laplace.priors import priors_from_results
+        # --- positive_transform string for the cascade adapter ---------
+        # Cascade adapters expect a string transform name (passed to
+        # the ``_JAX_POSITIVE_FNS`` lookup).  Handle the dict-form
+        # ``positive_transform={"mean_expression": "exp"}`` by
+        # resolving the relevant per-parameter transform via the
+        # model config helper.  For NBLN we use the ``r`` transform
+        # (the only positive global on the source side); for
+        # TSLN-Rate we use ``mu`` (also a positive global).
+        if hasattr(ctx.model_config, "resolve_positive_transform"):
+            _pos_xform_param = (
+                "mu" if base_model == "twostate_ln_rate" else "r"
+            )
+            _pos_xform_str = ctx.model_config.resolve_positive_transform(
+                _pos_xform_param
+            )
+        else:
+            _pos_xform_str = ctx.model_config.positive_transform
+            if not isinstance(_pos_xform_str, str):
+                _pos_xform_str = "softplus"
 
-        informative_priors, capture_mode_override = priors_from_results(
-            informative_priors_from,
-            target_positive_transform=ctx.model_config.positive_transform,
-            target_n_genes=ctx.n_genes,
-            target_n_cells=ctx.n_cells,
-            target_gene_names=target_gene_names,
-            target_gene_mask=getattr(ctx, "_gene_coverage_mask", None),
-            # Pass target counts so amortized-capture SVI sources can
-            # draw samples; the adapter decides whether it's safe to
-            # use them based on the identity-verification state.
-            source_counts=ctx.count_data,
-            n_samples=int(ctx.kwargs.get("informative_priors_n_samples", 1000)),
-            tau=float(ctx.kwargs.get("informative_priors_tau", 1.0)),
-            verbose=bool(ctx.kwargs.get("informative_priors_verbose", True)),
-        )
+        # --- Build prior bundle (dispatch on base_model) ---------------
+        if base_model == "twostate_ln_rate":
+            from ...laplace.priors import priors_from_twostate_results
+
+            informative_priors, capture_mode_override = (
+                priors_from_twostate_results(
+                    informative_priors_from,
+                    target_positive_transform=_pos_xform_str,
+                    target_n_genes=ctx.n_genes,
+                    target_n_cells=ctx.n_cells,
+                    target_variant="rate",
+                    target_gene_names=target_gene_names,
+                    target_gene_mask=getattr(
+                        ctx, "_gene_coverage_mask", None
+                    ),
+                    source_counts=ctx.count_data,
+                    n_samples=int(
+                        ctx.kwargs.get(
+                            "informative_priors_n_samples", 1000
+                        )
+                    ),
+                    tau=float(
+                        ctx.kwargs.get("informative_priors_tau", 1.0)
+                    ),
+                    verbose=bool(
+                        ctx.kwargs.get(
+                            "informative_priors_verbose", True
+                        )
+                    ),
+                )
+            )
+        else:
+            from ...laplace.priors import priors_from_results
+
+            informative_priors, capture_mode_override = priors_from_results(
+                informative_priors_from,
+                target_positive_transform=_pos_xform_str,
+                target_n_genes=ctx.n_genes,
+                target_n_cells=ctx.n_cells,
+                target_gene_names=target_gene_names,
+                target_gene_mask=getattr(ctx, "_gene_coverage_mask", None),
+                # Pass target counts so amortized-capture SVI sources can
+                # draw samples; the adapter decides whether it's safe to
+                # use them based on the identity-verification state.
+                source_counts=ctx.count_data,
+                n_samples=int(
+                    ctx.kwargs.get("informative_priors_n_samples", 1000)
+                ),
+                tau=float(ctx.kwargs.get("informative_priors_tau", 1.0)),
+                verbose=bool(
+                    ctx.kwargs.get("informative_priors_verbose", True)
+                ),
+            )
 
     # --- Freeze API: extract point estimates + resolve cascade source ---
     # The freeze API is activated only when a cascade is supplied.  When
@@ -120,27 +183,64 @@ def dispatch_inference(ctx: FitContext) -> None:
         # aliases to internal short names and raises on ambiguity
         # (e.g. ("r", "dispersion")).
         from ...models.config.parameter_mapping import normalize_freeze_keys
-        raw_freeze = ctx.kwargs.get("informative_priors_freeze", ("r", "eta"))
+        # Per-base-model defaults: NBLN uses (r, eta); TSLN-Rate uses
+        # (mu, burst_size, k_off) — the plan §5.4 "Level 4" cascade.
+        if base_model == "twostate_ln_rate":
+            _default_freeze = ("mu", "burst_size", "k_off")
+        else:
+            _default_freeze = ("r", "eta")
+        raw_freeze = ctx.kwargs.get(
+            "informative_priors_freeze", _default_freeze
+        )
         if raw_freeze is None:
             freeze_params = ()
         else:
             freeze_params = normalize_freeze_keys(raw_freeze)
         # Build the freeze-values bundle from SVI's get_map().
         if freeze_params:
-            from ...laplace.priors import freeze_values_from_results
-            freeze_values = freeze_values_from_results(
-                informative_priors_from,
-                target_positive_transform=ctx.model_config.positive_transform,
-                target_n_genes=ctx.n_genes,
-                target_n_cells=ctx.n_cells,
-                target_gene_names=target_gene_names,
-                target_gene_mask=getattr(ctx, "_gene_coverage_mask", None),
-                source_counts=ctx.count_data,
-                freeze_params=freeze_params,
-                verbose=bool(
-                    ctx.kwargs.get("informative_priors_verbose", True)
-                ),
-            )
+            if base_model == "twostate_ln_rate":
+                from ...laplace.priors import (
+                    freeze_values_from_twostate_results,
+                )
+
+                freeze_values = freeze_values_from_twostate_results(
+                    informative_priors_from,
+                    target_positive_transform=_pos_xform_str,
+                    target_n_genes=ctx.n_genes,
+                    target_n_cells=ctx.n_cells,
+                    target_variant="rate",
+                    target_gene_names=target_gene_names,
+                    target_gene_mask=getattr(
+                        ctx, "_gene_coverage_mask", None
+                    ),
+                    source_counts=ctx.count_data,
+                    freeze_params=freeze_params,
+                    verbose=bool(
+                        ctx.kwargs.get(
+                            "informative_priors_verbose", True
+                        )
+                    ),
+                )
+            else:
+                from ...laplace.priors import freeze_values_from_results
+
+                freeze_values = freeze_values_from_results(
+                    informative_priors_from,
+                    target_positive_transform=_pos_xform_str,
+                    target_n_genes=ctx.n_genes,
+                    target_n_cells=ctx.n_cells,
+                    target_gene_names=target_gene_names,
+                    target_gene_mask=getattr(
+                        ctx, "_gene_coverage_mask", None
+                    ),
+                    source_counts=ctx.count_data,
+                    freeze_params=freeze_params,
+                    verbose=bool(
+                        ctx.kwargs.get(
+                            "informative_priors_verbose", True
+                        )
+                    ),
+                )
         # Embed the SVI results object so PPC and get_distributions can
         # consult its guide directly for frozen parameters.  Per Round-5
         # R5-6: store counts on the Laplace result (cascade_source_counts)

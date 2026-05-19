@@ -1070,6 +1070,65 @@ def freeze_values_from_twostate_results(
 
     _say(f"  SVI MAP keys: {sorted(map_dict.keys())}")
 
+    # Resolve (burst_size, k_off) MAP from whichever TwoState
+    # parameterization the SVI source used.  ``get_map()`` only
+    # returns sampled sites (not deterministics), so for non-natural
+    # parameterizations we derive (burst_size, k_off) by running the
+    # appropriate reparam helper on the MAP of the sampled params.
+    if "burst_size" not in map_dict or "k_off" not in map_dict:
+        from ..models.components.likelihoods.two_state import (
+            _twostate_reparam,
+            _twostate_ratio_reparam,
+            _twostate_moments_reparam,
+            _twostate_moment_delta_reparam,
+        )
+
+        mu_map = jnp.asarray(map_dict["mu"])
+        if "switching_ratio" in map_dict:
+            # ratio parameterization
+            _alpha, _beta, _rate, _eff_b = _twostate_ratio_reparam(
+                mu_map,
+                jnp.asarray(map_dict["burst_size"]),
+                jnp.asarray(map_dict["switching_ratio"]),
+            )
+            bs_derived = jnp.asarray(map_dict["burst_size"])
+            ko_derived = _beta
+        elif "inv_concentration" in map_dict:
+            # moment_delta parameterization
+            _alpha, _beta, _rate, _eff_b = _twostate_moment_delta_reparam(
+                mu_map,
+                jnp.asarray(map_dict["excess_fano"]),
+                jnp.asarray(map_dict["inv_concentration"]),
+            )
+            bs_derived = _eff_b
+            ko_derived = _beta
+        elif "excess_fano" in map_dict and "concentration" in map_dict:
+            # mean_fano parameterization
+            _alpha, _beta, _rate, _eff_b = _twostate_moments_reparam(
+                mu_map,
+                jnp.asarray(map_dict["excess_fano"]),
+                jnp.asarray(map_dict["concentration"]),
+            )
+            bs_derived = _eff_b
+            ko_derived = _beta
+        else:
+            raise ValueError(
+                "Cascade source's get_map() does not provide "
+                "'burst_size'/'k_off' directly, and the parameterization "
+                "is unrecognised (expected one of: natural / ratio / "
+                "mean_fano / moment_delta).  Available keys: "
+                f"{sorted(map_dict.keys())}."
+            )
+        # Augment the MAP dict with the derived natural-form values so
+        # the per-key loop below finds them.
+        map_dict = dict(map_dict)
+        map_dict.setdefault("burst_size", bs_derived)
+        map_dict.setdefault("k_off", ko_derived)
+        _say(
+            "  Derived (burst_size, k_off) from non-natural "
+            "parameterization MAP."
+        )
+
     pos_inverse = _resolve_target_pos_inverse(target_positive_transform)
     freeze_values: Dict[str, Dict[str, jnp.ndarray]] = {}
 

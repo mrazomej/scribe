@@ -72,12 +72,14 @@ def _run_laplace_inference(
         If ``model_config.base_model`` is not in ``{"pln", "lnm"}``.
     """
     base_model = getattr(model_config, "base_model", None)
-    if base_model not in (
-        "pln", "nbln", "lnm", "lnmvcp", "twostate_ln_rate"
-    ):
+    # Single source of truth: ``api.constants.LAPLACE_SUPPORTED_BASE_MODELS``.
+    # See that constant's docstring for the design rationale.
+    from ..api.constants import LAPLACE_SUPPORTED_BASE_MODELS
+
+    if base_model not in LAPLACE_SUPPORTED_BASE_MODELS:
         raise ValueError(
-            f"inference_method='laplace' is currently supported for "
-            f"PLN, NBLN, LNM, LNMVCP, and twostate_ln_rate "
+            f"inference_method='laplace' is supported for "
+            f"{sorted(LAPLACE_SUPPORTED_BASE_MODELS)} "
             f"(got base_model={base_model!r}). "
             "Use 'svi'/'vae'/'mcmc' for other models."
         )
@@ -152,8 +154,21 @@ def _run_laplace_inference(
     # distribution accessors don't multiply in an un-fitted variance
     # term. For PLN and LNM learned, ``d`` is fitted as usual.
     # Resolve the same positive transform used during training so
-    # that constrained globals are derived consistently.
-    pos_forward, _ = resolve_positive_fns(model_config)
+    # that constrained globals are derived consistently.  Use the
+    # per-parameter resolver to handle dict-form ``positive_transform``
+    # (audit round-7: when the user passes
+    # ``positive_transform={"mean_expression": "exp"}`` the field is a
+    # dict, and the legacy ``resolve_positive_fns(model_config)`` call
+    # fails because it tries to use the dict as a hashable key).
+    from ..laplace._global_uncertainty import _JAX_POSITIVE_FNS
+
+    if hasattr(model_config, "resolve_positive_transform"):
+        _d_transform = model_config.resolve_positive_transform("d")
+    else:
+        _d_transform = getattr(model_config, "positive_transform", "softplus")
+        if not isinstance(_d_transform, str):
+            _d_transform = "softplus"
+    pos_forward, _ = _JAX_POSITIVE_FNS[_d_transform]
 
     d_mode = getattr(model_config, "d_mode", "learned") or "learned"
     if base_model in ("lnm", "lnmvcp") and d_mode == "low_rank":
