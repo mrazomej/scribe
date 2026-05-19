@@ -443,9 +443,6 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
         d_pos = default_d_init(int(n_genes))
         d_loc_init = d_inv(d_pos)
 
-        # Per-cell latent warm start
-        latent_loc = latent_loc_init_from_counts(counts_np)
-
         # Per-cell η. Convention: eta = -log(nu). Default zero.
         if "eta" in self._frozen_params:
             eta_loc = jnp.asarray(self._freeze_values["eta"]["loc"])
@@ -459,6 +456,22 @@ class TwoStateLNRateObservationModel(LaplaceObservationModel):
             )
         else:
             eta_loc = None  # no capture
+
+        # Per-cell latent warm start.  With ``log_rate_cg = x_cg −
+        # η_c``, we want ``log_rate ≈ log(u + 1)`` at the init so
+        # Newton starts a few units from the MAP.  Solving for x:
+        #
+        #     x_init_c = log(u_c + 1) + η_c.
+        #
+        # When η is absent (no-capture path) η = 0 and this reduces
+        # to the plain ``log(counts + 1)`` init.  Without this
+        # eta-aware init, low-capture cells (large η ≈ −log p with
+        # small p) start far below the MAP — empirically the cause
+        # of large-gradient pathological cells in the tail of the
+        # capture distribution under the frozen-eta cascade path.
+        latent_loc = latent_loc_init_from_counts(counts_np)
+        if eta_loc is not None:
+            latent_loc = latent_loc + eta_loc[:, None]
 
         # eta_anchor: per-cell scalar.  For biology-anchored mode it's
         # the log_M0 (broadcast).  For soft-cascade it can be the prior
