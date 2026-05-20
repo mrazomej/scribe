@@ -30,6 +30,9 @@ from ._results_sampling_helpers import (
     _ppc_twostate_ln_rate_marginal,
     _ppc_twostate_ln_rate_per_cell,
     _ppc_twostate_ln_rate_per_cell_laplace,
+    _ppc_twostate_ln_logit_marginal,
+    _ppc_twostate_ln_logit_per_cell,
+    _ppc_twostate_ln_logit_per_cell_laplace,
 )
 from ._results_shared import _base_model
 
@@ -341,7 +344,7 @@ class SamplingResultsMixin:
                 raise ValueError(
                     "level='library_anchored' requires `counts` for observed totals."
                 )
-            if bm in ("pln", "nbln", "twostate_ln_rate"):
+            if bm in ("pln", "nbln", "twostate_ln_rate", "twostate_ln_logit"):
                 # Library-anchored PPC samples ``softmax(x) ->
                 # Multinomial`` against observed library size; the
                 # count-noise choice (Poisson / NB / Poisson-Beta
@@ -444,6 +447,27 @@ class SamplingResultsMixin:
                 self.d,
                 self.alpha,
                 self.beta,
+                eta_loc=self.eta_loc,
+            )
+        if bm == "twostate_ln_logit":
+            if (
+                self.rate is None
+                or self.kappa is None
+                or self.eta_anchor is None
+            ):
+                raise ValueError(
+                    "TSLN-Logit PPC requires 'rate' / 'kappa' / "
+                    "'eta_anchor' fields on the result."
+                )
+            return _ppc_twostate_ln_logit_marginal(
+                rng_key,
+                n_samples,
+                self.mu,
+                self.W,
+                self.d,
+                self.rate,
+                self.kappa,
+                self.eta_anchor,
                 eta_loc=self.eta_loc,
             )
         raise NotImplementedError(
@@ -571,6 +595,27 @@ class SamplingResultsMixin:
                 self.alpha,
                 self.beta,
             )
+        if bm == "twostate_ln_logit":
+            if (
+                self.rate is None
+                or self.kappa is None
+                or self.eta_anchor is None
+            ):
+                raise ValueError(
+                    "TSLN-Logit per-cell PPC requires 'rate' / 'kappa' / "
+                    "'eta_anchor' fields on the result."
+                )
+            return _ppc_twostate_ln_logit_per_cell_laplace(
+                rng_key,
+                n_samples,
+                self.x_loc,
+                self.eta_loc,
+                self.W,
+                self.d,
+                self.rate,
+                self.kappa,
+                self.eta_anchor,
+            )
         raise NotImplementedError(
             f"get_per_cell_predictive_samples not implemented for base_model={bm!r}"
         )
@@ -656,6 +701,25 @@ class SamplingResultsMixin:
                 self.alpha,
                 self.beta,
             )
+        if bm == "twostate_ln_logit":
+            if (
+                self.rate is None
+                or self.kappa is None
+                or self.eta_anchor is None
+            ):
+                raise ValueError(
+                    "TSLN-Logit map PPC requires 'rate' / 'kappa' / "
+                    "'eta_anchor' fields on the result."
+                )
+            return _ppc_twostate_ln_logit_per_cell(
+                rng_key,
+                n_samples,
+                self.x_loc,
+                self.eta_loc,
+                self.rate,
+                self.kappa,
+                self.eta_anchor,
+            )
         raise NotImplementedError(
             f"get_map_ppc_samples not implemented for base_model={bm!r}"
         )
@@ -734,7 +798,7 @@ class SamplingResultsMixin:
             if ref_idx < 0:
                 ref_idx = n_genes_full + ref_idx
             is_alr = True
-        elif bm in ("pln", "nbln", "twostate_ln_rate"):
+        elif bm in ("pln", "nbln", "twostate_ln_rate", "twostate_ln_logit"):
             # PLN-family (PLN / NBLN / TSLN-Rate) all produce log-rates
             # ``y_log_rate = mu + W z``; softmax of those log-rates gives
             # the compositional sample.  The count-noise layer (Poisson /

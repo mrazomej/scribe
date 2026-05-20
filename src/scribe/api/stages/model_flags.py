@@ -79,35 +79,73 @@ def resolve_model_flags(ctx: FitContext) -> None:
             )
 
         # PR-2 capture restriction (Rev 4): TSLN-Logit cannot accept
-        # the biology-informed ``capture_efficiency`` prior because
-        # activating it would require the joint (z, eta_cap) Newton
-        # path whose cross-Hessian is deferred to phase 3.  Detect
-        # the prior here at config-resolution time so the user gets a
-        # clear message at the API boundary rather than a downstream
+        # ANY biology-informed capture prior because activating it
+        # would require the joint (z, eta_cap) Newton path whose
+        # cross-Hessian is deferred to phase 3.  Detect the prior
+        # here at config-resolution time so the user gets a clear
+        # message at the API boundary rather than a downstream
         # NotImplementedError from the obs-model constructor.
+        #
+        # Reject ALL of the following keys (matching the canonical
+        # set in ``builder._CAPTURE_PRIOR_KEYS`` plus the user-facing
+        # aliases from ``parameter_mapping.PRIOR_KEY_ALIASES``):
+        #
+        #   * ``capture_efficiency``  user-facing alias for eta_capture
+        #   * ``eta_capture``         direct internal key
+        #   * ``organism``            biology-shortcut → resolves to
+        #                              eta_capture via the organism table
+        #   * ``mu_eta``              hierarchical capture scaling
+        #   * ``capture_scaling``     alias for mu_eta
+        #
+        # Also reject ``capture_scaling_prior`` (a top-level kwarg,
+        # not in the priors dict) when it's not the "none" default.
         if model.lower() == "twostate_ln_logit":
+            _capture_keys = {
+                "capture_efficiency",
+                "eta_capture",
+                "organism",
+                "mu_eta",
+                "capture_scaling",
+            }
             _priors_dict = (
                 priors if isinstance(priors, dict) else None
             )
-            _has_capture_prior = _priors_dict is not None and any(
-                k in _priors_dict
-                for k in ("capture_efficiency", "eta_capture")
+            _capture_keys_present = (
+                sorted(set(_priors_dict) & _capture_keys)
+                if _priors_dict is not None
+                else []
             )
-            if _has_capture_prior:
+            _capture_scaling_prior = kw.get(
+                "capture_scaling_prior", "none"
+            )
+            _has_capture_scaling = (
+                isinstance(_capture_scaling_prior, str)
+                and _capture_scaling_prior.lower() != "none"
+            )
+            if _capture_keys_present or _has_capture_scaling:
+                _bits = []
+                if _capture_keys_present:
+                    _bits.append(
+                        f"priors keys {_capture_keys_present!r}"
+                    )
+                if _has_capture_scaling:
+                    _bits.append(
+                        f"capture_scaling_prior={_capture_scaling_prior!r}"
+                    )
                 raise NotImplementedError(
-                    "model='twostate_ln_logit' does not accept a "
-                    "biology-informed capture prior "
-                    "(priors={'capture_efficiency': ...}) in PR-2: the "
-                    "joint (z, eta_cap) Newton path with the proper "
-                    "cross-Hessian is deferred to phase 3.  Supported "
-                    "capture configurations:\n"
-                    "  * No capture: drop the capture_efficiency prior.\n"
+                    f"model='twostate_ln_logit' does not accept "
+                    "biology-informed capture priors (received "
+                    + " and ".join(_bits)
+                    + ") in PR-2: the joint (z, eta_cap) Newton "
+                    "path with the proper cross-Hessian is deferred "
+                    "to phase 3.  Supported capture configurations:\n"
+                    "  * No capture: drop the capture priors.\n"
                     "  * Fixed-offset capture from cascade: drop the "
-                    "capture_efficiency prior and pass "
+                    "capture priors and pass "
                     "informative_priors_from=svi_results where the SVI "
                     "source already has per-cell capture; the cascade "
-                    "adapter will pin eta as a fixed offset (x_only_offset "
-                    "Newton)."
+                    "adapter will pin eta as a fixed offset "
+                    "(x_only_offset Newton)."
                 )
         return
 

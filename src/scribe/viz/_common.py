@@ -91,12 +91,17 @@ def _is_pln_model(results) -> bool:
         and param_name in ("COUNT_LOGNORMAL", "POISSON_LOGNORMAL")
     ):
         return True
-    # TSLN-Rate uses a two_state_* parameterization but shares the
-    # μ+Wz log-rate decoder structure with PLN/NBLN.  Gate on the
-    # base_model so the viz call sites flow through the PLN path.
+    # TSLN-Rate and TSLN-Logit use ``two_state_*`` parameterizations
+    # but share the ``μ + Wz`` decoder structure with PLN/NBLN.
+    # (TSLN-Logit's ``μ`` is zeros — the gene baseline lives in
+    # ``eta_anchor`` — but the latent prior on ``z`` and the W/d
+    # low-rank structure are identical.)  Gate on the base_model so
+    # the viz call sites flow through the PLN path for both.
     bm = getattr(model_config, "base_model", None)
     bm_value = getattr(bm, "value", bm)
-    return isinstance(bm_value, str) and bm_value == "twostate_ln_rate"
+    return isinstance(bm_value, str) and bm_value in (
+        "twostate_ln_rate", "twostate_ln_logit",
+    )
 
 
 # Forward-looking alias.  ``_is_pln_model`` historically named the

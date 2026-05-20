@@ -87,15 +87,23 @@ class GeneSubsettingResultsMixin:
             idx = np.where(idx)[0]
 
         bm = _base_model(self.model_config)
-        if bm in ("pln", "nbln", "twostate_ln_rate"):
-            # PLN, NBLN, and TSLN-Rate share the same gene-axis tensor
-            # shapes (``mu``, ``W``, ``d`` are length-G; ``x_loc`` is
-            # ``(N, G)``).  NBLN additionally has a length-G ``r``;
-            # TSLN-Rate additionally has length-G ``gene_mean``,
-            # ``burst_size``, ``k_off``, ``alpha``, ``beta``, ``r_hat``,
-            # ``a_clamp_per_gene`` and the corresponding ``*_loc /
-            # *_scale`` fields.  ``_subset_pln`` slices all of these
-            # uniformly along the gene axis.
+        if bm in (
+            "pln", "nbln", "twostate_ln_rate", "twostate_ln_logit",
+        ):
+            # PLN, NBLN, TSLN-Rate, and TSLN-Logit share the same
+            # gene-axis tensor shapes (``mu``, ``W``, ``d`` are length-G;
+            # ``x_loc`` is ``(N, G)``).  Each variant adds its own
+            # gene-shaped extras:
+            #   NBLN       → ``r``, ``r_loc``, ``r_scale``,
+            #                ``mu_loc``, ``mu_scale``.
+            #   TSLN-Rate  → ``gene_mean``, ``burst_size``, ``k_off``,
+            #                ``alpha``, ``beta``, ``r_hat`` and the
+            #                corresponding ``*_loc / *_scale``.
+            #   TSLN-Logit → ``rate``, ``kappa``, ``eta_anchor`` and the
+            #                corresponding ``*_loc / *_scale`` plus the
+            #                shared ``alpha``, ``beta``, ``gene_mean``.
+            # ``_subset_pln`` slices all of these uniformly along the
+            # gene axis.
             return self._subset_pln(idx)
         if bm in ("lnm", "lnmvcp"):
             return self._subset_lnm(idx)
@@ -155,6 +163,17 @@ class GeneSubsettingResultsMixin:
             alpha=_slice(self.alpha),
             beta=_slice(self.beta),
             r_hat=_slice(self.r_hat),
+            # TSLN-Logit gene-shaped extras.  All length-G and aligned
+            # with the same gene axis as ``mu``.
+            rate=_slice(self.rate),
+            rate_loc=_slice(self.rate_loc),
+            rate_scale=_slice(self.rate_scale),
+            kappa=_slice(self.kappa),
+            kappa_loc=_slice(self.kappa_loc),
+            kappa_scale=_slice(self.kappa_scale),
+            eta_anchor=_slice(self.eta_anchor),
+            eta_anchor_loc=_slice(self.eta_anchor_loc),
+            eta_anchor_scale=_slice(self.eta_anchor_scale),
             a_clamp_per_gene=_slice(self.a_clamp_per_gene),
             # Phase-3: recompute gene-dependent W-prior diagnostics
             # against the subsetted W.  Factor-level entries (sigma_k,

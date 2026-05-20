@@ -258,10 +258,14 @@ def dispatch_inference(ctx: FitContext) -> None:
         # "eta"``), we MUST route capture through the fixed-offset
         # path because soft-cascade eta would require the joint
         # Newton (deferred to phase 3).  Auto-include ``"eta"`` in
-        # ``freeze_params`` when the user didn't drop it explicitly,
-        # so the cascade adapter populates ``freeze_values["eta"]``
-        # from the SVI MAP and the obs model routes to the
-        # ``x_only_offset`` Newton.
+        # ``freeze_params`` so the cascade adapter populates
+        # ``freeze_values["eta"]`` from the SVI MAP and the obs model
+        # routes to the ``x_only_offset`` Newton.  Note: the user
+        # CANNOT opt out by dropping ``"eta"`` from
+        # ``informative_priors_freeze`` — the auto-add fires
+        # unconditionally on capture-bearing sources.  The only way
+        # to fit TSLN-Logit without capture is to use a non-VCP SVI
+        # source (or strip capture from the source upstream).
         if (
             base_model == "twostate_ln_logit"
             and capture_mode_override == "eta"
@@ -269,12 +273,15 @@ def dispatch_inference(ctx: FitContext) -> None:
         ):
             import logging
             logging.getLogger("scribe").info(
-                "TSLN-Logit: auto-adding 'eta' to informative_priors_freeze "
-                "because the SVI source has per-cell capture and Rev 4 "
-                "permits only fixed-offset capture in PR-2.  To opt out "
-                "of capture entirely, refit the SVI source without "
-                "capture or pass informative_priors_freeze without 'eta' "
-                "explicitly after this point."
+                "TSLN-Logit: auto-adding 'eta' to "
+                "informative_priors_freeze because the SVI source has "
+                "per-cell capture and Rev 4 permits only fixed-offset "
+                "capture in PR-2.  This auto-add fires unconditionally "
+                "on capture-bearing cascade sources; to fit TSLN-Logit "
+                "without any capture term, refit the SVI source without "
+                "the capture submodel (e.g. use 'twostate' instead of "
+                "'twostatevcp', or drop the capture_efficiency / "
+                "organism prior on the source)."
             )
             freeze_params = freeze_params + ("eta",)
         # Build the freeze-values bundle from SVI's get_map().

@@ -952,7 +952,7 @@ def priors_from_twostate_results(
                 eta_anchor_s = jnp.asarray(samples["eta_act"])
             else:
                 eta_anchor_s = jnp.log(alpha_s) - jnp.log(beta_s)
-            source_path = "effective (alpha/beta/r_hat[/eta_act])"
+            source_path = "effective deterministics (alpha, beta, r_hat, eta_act)"
         else:
             # Raw fallback: derive sample-wise from (mu, burst_size, k_off).
             for src in ("mu", "burst_size", "k_off"):
@@ -1379,7 +1379,7 @@ def freeze_values_from_twostate_results(
                 eta_anchor_m = jnp.asarray(map_dict["eta_act"])
             else:
                 eta_anchor_m = jnp.log(alpha_m) - jnp.log(beta_m)
-            source_path = "effective (alpha/beta/r_hat[/eta_act])"
+            source_path = "effective deterministics (alpha, beta, r_hat, eta_act)"
         else:
             mu_m = jnp.maximum(jnp.asarray(map_dict["mu"]), 1e-8)
             bs_m = jnp.maximum(jnp.asarray(map_dict["burst_size"]), 1e-8)

@@ -250,7 +250,7 @@ class CoreResultsMixin:
         """
         bm = _base_model(self.model_config)
         W = self.W
-        if bm in ("pln", "nbln", "twostate_ln_rate"):
+        if bm in ("pln", "nbln", "twostate_ln_rate", "twostate_ln_logit"):
             # PLN-family: W lives in absolute log-rate space.  Project
             # out the all-ones direction so the returned loadings are
             # gauge-invariant.  TSLN-Rate joins PLN/NBLN here: its
@@ -319,7 +319,7 @@ class CoreResultsMixin:
         """
         bm = _base_model(self.model_config)
         W = self.W
-        if bm in ("pln", "nbln", "twostate_ln_rate"):
+        if bm in ("pln", "nbln", "twostate_ln_rate", "twostate_ln_logit"):
             W_perp = W - W.mean(axis=0, keepdims=True)
             W_para = W - W_perp
             perp_norm = float(jnp.linalg.norm(W_perp))
