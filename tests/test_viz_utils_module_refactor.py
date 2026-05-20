@@ -10,12 +10,17 @@ import sys
 import types
 
 import jax.numpy as jnp
+import pytest
 from jax import random
 import matplotlib.pyplot as plt
 import numpy as np
-from omegaconf import OmegaConf
-from numpyro.infer import SVI, Trace_ELBO
-from numpyro.optim import Adam
+
+# Hydra-based config tests depend on omegaconf (optional extra
+# [hydra] in pyproject.toml). Skip cleanly when absent.
+pytest.importorskip("omegaconf")
+from omegaconf import OmegaConf  # noqa: E402
+from numpyro.infer import SVI, Trace_ELBO  # noqa: E402
+from numpyro.optim import Adam  # noqa: E402
 
 from scribe.mcmc.results import ScribeMCMCResults
 from scribe.inference.preset_builder import build_config_from_preset

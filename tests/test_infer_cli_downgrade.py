@@ -7,9 +7,13 @@ import anndata
 import numpy as np
 import pandas as pd
 import pytest
-from omegaconf import OmegaConf
 
-import scribe.cli.infer_runner as infer
+# Hydra CLI tests depend on omegaconf (optional extra [hydra] in
+# pyproject.toml). Skip cleanly when absent.
+pytest.importorskip("omegaconf")
+from omegaconf import OmegaConf  # noqa: E402
+
+import scribe.cli.infer_runner as infer  # noqa: E402
 
 
 def _make_single_survivor_h5ad(path: Path) -> None:
