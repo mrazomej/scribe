@@ -169,7 +169,7 @@ constrained-space MAP.
 | LowRankMVN            | ExpTransform                 | Closed form: ``loc - W(W^T 1) - cov_diag`` |
 | LowRankMVN            | IdentityTransform            | ``loc``         |
 | LowRankMVN            | Sigmoid / Softplus           | **Not in v1** (raises under "jacobian", warns under "auto") |
-| Any of the above      | SlicedTransform              | Per-slice recursion (registered lazily by scribe.flows) |
+| Any of the above      | SlicedTransform              | Per-slice recursion |
 | Normal / Independent  | Other elementwise Transform  | Autodiff Newton |
 
 ## Usage Examples

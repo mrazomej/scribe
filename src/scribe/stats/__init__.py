@@ -48,6 +48,9 @@ from .quadrature import (
 # Mode patches
 from .patches import apply_distribution_mode_patches
 
+# Custom transforms (mirrors `distributions` for NumPyro Transform subclasses).
+from .transforms import SlicedTransform
+
 # Jacobian-corrected MAP for transformed variational guides.
 # See scribe/stats/jacobian_map.py for the mathematical background.
 from .jacobian_map import (
@@ -86,6 +89,8 @@ __all__ = [
     "gauss_legendre_nodes_weights",
     # Patches
     "apply_distribution_mode_patches",
+    # Transforms
+    "SlicedTransform",
     # Jacobian-corrected MAP
     "jacobian_corrected_map",
     "SIGMA_CEILING_WARN",

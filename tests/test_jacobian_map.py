@@ -4,9 +4,9 @@ Validates the math contract for the Jacobian-corrected MAP machinery:
 
 * Closed-form correctness for ``ExpTransform`` (Normal and LowRankMVN).
 * Grid + Newton refinement against brute-force grid search for
-  Sigmoid/Softplus across both convex (small ``\\sigma``) and bimodal
-  (large ``\\sigma``) regimes.
-* Edge cases: identity transform, ``\\sigma \\to 0`` limit, SlicedTransform
+  Sigmoid/Softplus across both convex (small ``σ``) and bimodal
+  (large ``σ``) regimes.
+* Edge cases: identity transform, ``σ → 0`` limit, SlicedTransform
   per-slice recursion, LowRankMVN + Sigmoid/Softplus raises.
 * Method-flag semantics: ``"transform"``, ``"jacobian"``, ``"closed_form"``,
   ``"newton"``, ``"autodiff"`` behave per docstring.
@@ -54,7 +54,7 @@ class TestExpClosedForm:
         np.testing.assert_allclose(y_star, expected, atol=1e-6)
 
     def test_exp_normal_recovers_transform_in_zero_sigma_limit(self):
-        """As ``\\sigma \\to 0``, corrected MAP approaches transform(loc)."""
+        """As ``σ → 0``, corrected MAP approaches transform(loc)."""
         loc = 3.0
         y_corrected = float(
             jacobian_corrected_map(ExpTransform(), dist.Normal(loc, 1e-6))
@@ -79,11 +79,11 @@ class TestExpClosedForm:
         np.testing.assert_allclose(np.asarray(y_star), np.asarray(expected), atol=1e-6)
 
     def test_exp_lowrank_uses_full_covariance_not_diagonal(self):
-        r"""Closed form for LowRankMVN + Exp uses ``\\Sigma \\cdot 1``,
+        r"""Closed form for LowRankMVN + Exp uses ``Σ · 1``,
         which depends on the full covariance — diagonal-only marginals
         would be wrong for correlated cases. This test builds a base
         with explicitly correlated off-diagonals and verifies the
-        einsum result matches a brute-force ``\\Sigma @ 1`` calculation
+        einsum result matches a brute-force ``Σ @ 1`` calculation
         AND differs from a (wrong) diagonal-only result.
         """
         key = jr.PRNGKey(0)
@@ -293,10 +293,10 @@ class TestSoftplusGridNewton:
         np.testing.assert_allclose(y_corrected, y_transform, atol=1e-3)
 
     def test_correction_shifts_mode_below_transform_loc(self):
-        """For Softplus, ``log|f'(x)| = log sigma(x)`` is maximized at
-        ``x \\to +\\infty``, so the J-objective ``(x-mu)^2/(2 sigma^2)
-        + log sigma(x)`` is minimized at some ``x < mu`` — pulling the
-        constrained mode below ``softplus(mu)``."""
+        """For Softplus, ``log|f'(x)| = log σ(x)`` is maximized at
+        ``x → +∞``, so the J-objective ``(x − μ)²/(2σ²) + log σ(x)``
+        is minimized at some ``x < μ`` — pulling the constrained mode
+        below ``softplus(μ)``."""
         mu, sigma = 2.0, 0.5
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -461,14 +461,35 @@ class TestMethodFlags:
                 SigmoidTransform(), dist.Normal(0.0, 0.5), method="newton"
             )
 
-    def test_method_autodiff_actually_routes_through_autodiff(self):
+    def test_method_autodiff_actually_routes_through_autodiff(self, monkeypatch):
         """method='autodiff' on Sigmoid+Normal must NOT short-circuit
-        to the hand-derived handler via the dispatch table. The
-        public wrapper bypasses dispatch and calls the autodiff kernel
-        directly so the user can certify that no hand-derived math was
-        used (e.g., to validate the autodiff fallback against the
-        hand-derived implementation in a regression test, which is
-        the next test below)."""
+        to the hand-derived handler via the dispatch table.
+
+        Hardened via monkeypatch: we replace the autodiff kernel with a
+        sentinel that returns a known marker value. If the wrapper
+        bypasses dispatch under method='autodiff' (as it should), our
+        sentinel runs and we see the marker. If a future refactor
+        re-routes through dispatch (incorrectly), the hand-derived
+        Sigmoid handler would run instead and we'd see a real sigmoid
+        mode value, failing the assertion.
+        """
+        import scribe.stats.jacobian_map as jm
+
+        sentinel_called = {"flag": False}
+
+        def _sentinel_autodiff(t, loc, scale, **kwargs):
+            sentinel_called["flag"] = True
+            # Return a recognizable marker shape so the calling
+            # `transform(x_star)` produces a known constrained value.
+            # We return `loc` unchanged here; the wrapper will apply
+            # `transform(x_star)` which gives `sigmoid(loc)` for
+            # SigmoidTransform — different from the true corrected MAP,
+            # which lets us distinguish the autodiff path from the
+            # dispatch path empirically too.
+            return loc
+
+        monkeypatch.setattr(jm, "_grid_plus_newton_autodiff", _sentinel_autodiff)
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             y_auto = float(
@@ -478,11 +499,15 @@ class TestMethodFlags:
                     method="autodiff",
                 )
             )
-        # Should be a finite, sensible value (the convex regime).
-        assert 0.0 < y_auto < 1.0
-        # Roughly near sigmoid(0.7) = ~0.668 (since mode shifts down
-        # from sigmoid(1.0)=0.731 under correction).
-        assert 0.5 < y_auto < 0.8
+        assert sentinel_called["flag"], (
+            "method='autodiff' must call _grid_plus_newton_autodiff; "
+            "if dispatch is short-circuiting back to the hand-derived "
+            "kernel, this test will fail."
+        )
+        # The sentinel returned loc unchanged, so y = sigmoid(loc):
+        np.testing.assert_allclose(
+            y_auto, float(jax.nn.sigmoid(1.0)), atol=1e-6
+        )
 
     def test_method_autodiff_matches_handcoded_sigmoid_convex_regime(self):
         """The autodiff path SHOULD produce the same answer as the
