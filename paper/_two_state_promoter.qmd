@@ -1538,3 +1538,373 @@ silently behaving like the independent-gene TwoState model
 configuration error, or a bug. On well-conditioned data
 with genuine cross-gene structure, off-diagonal entries
 should be at the same order of magnitude as the diagonal.
+
+# Cross-gene correlation through activation log-odds (TSLN-Logit) {#sec-twostate-tsln-logit}
+
+TSLN-Rate (@sec-twostate-tsln-rate-model) attaches the
+per-cell Gaussian latent to the ON-production rate
+$\hat r_{cg} = \hat r_g \cdot e^{z_{cg}}$. The conditional
+mean responds multiplicatively: $\mathbb{E}[u_{cg}\mid
+z_{cg}] = \hat r_g \, e^{z_{cg}} \,
+\alpha_g/(\alpha_g+\beta_g)$. There is no biophysical
+upper bound on $\mathbb{E}[u \mid z]$ as $z \to \infty$.
+
+The alternative — attach the latent to the **activation
+log-odds** $\theta_g = \log(k^+_g / k^-_g)$ — has a
+different, complementary structure. The conditional mean
+becomes
+$\mathbb{E}[u_{cg} \mid z_{cg}] = \mathrm{rate}_g \cdot
+\sigma(\theta_g + z_{cg})$, which **saturates at $\mathrm{rate}_g$**
+in the limit $z \to \infty$ and decays to zero in the
+$z \to -\infty$ limit. Biophysically, this matches the
+Boltzmann picture: a TF or chromatin perturbation shifts
+the activation free-energy $\Delta G_\mathrm{act} = -k_BT \log(k^+/k^-)$
+linearly, and the steady-state ON-fraction follows the
+Boltzmann sigmoid.
+
+This section develops TSLN-Logit (Variant B in the plan)
+in the same depth as TSLN-Rate.
+
+## TSLN-Logit generative model {#sec-twostate-tsln-logit-model}
+
+Reparameterise the two-state model at the gene level in
+terms of three quantities that are natural for the
+activation-log-odds latent:
+
+- $\mathrm{rate}_g \in \mathbb{R}_+$ : gene-level
+  ON-production rate. **Crucially $z$-independent** — this
+  is the property that makes the cross-gene mean
+  covariance non-zero (see @sec-twostate-tsln-logit-why-fixed-rate).
+- $\kappa_g \in \mathbb{R}_+$ : Beta concentration
+  $\kappa_g = \alpha_g + \beta_g$.
+- $\theta_g \in \mathbb{R}$ : per-gene activation log-odds
+  $\theta_g = \log(\alpha_g/\beta_g) = \log(k^+_g/k^-_g)$.
+
+These map back to the natural parameterisation via
+$\alpha_g = \kappa_g\,\sigma(\theta_g)$ and
+$\beta_g = \kappa_g\,(1-\sigma(\theta_g))$ at $z = 0$.
+
+**Per cell ``c``**, draw a Gaussian latent (zero-centred):
+
+$$
+z_c \sim \mathcal{N}(\mathbf{0}, \Sigma),\quad
+\Sigma = W W^\top + \mathrm{diag}(d),
+$$ {#eq-tsln-logit-latent-prior}
+
+with the same low-rank structure as TSLN-Rate. The
+**activation log-odds** is then shifted per (cell, gene):
+
+$$
+\eta_{\mathrm{act},cg} = \theta_g + z_{cg},\quad
+\varphi_{cg} = \sigma(\eta_{\mathrm{act},cg}),
+$$ {#eq-tsln-logit-eta-act}
+
+so the per-cell Beta shape parameters are
+$\alpha_{cg} = \kappa_g \varphi_{cg}$ and
+$\beta_{cg} = \kappa_g (1 - \varphi_{cg})$. The
+observation is a Poisson–Beta compound:
+
+$$
+p_{cg} \sim \mathrm{Beta}(\alpha_{cg}, \beta_{cg}),\quad
+u_{cg} \mid p_{cg}, z_c \sim
+\mathrm{Poisson}(\nu_c \, \mathrm{rate}_g \, p_{cg}),
+$$ {#eq-tsln-logit-obs}
+
+with $\nu_c = e^{-\eta_{\mathrm{cap},c}}$ for optional
+fixed-offset capture (see @sec-twostate-tsln-logit-capture).
+
+### Why ``rate`` must be gene-level {#sec-twostate-tsln-logit-why-fixed-rate}
+
+The defining property of TSLN-Logit is that the
+conditional mean $\mathbb{E}[u_{cg} \mid z_{cg}]$
+depends on $z$ through the sigmoid. Computing the
+cross-gene mean covariance using the law of total
+covariance,
+
+$$
+\mathrm{Cov}(u_g, u_h) =
+\underbrace{\mathrm{Cov}\!\big(\mathbb{E}[u_g \mid z],\,
+                                \mathbb{E}[u_h \mid z]\big)}_{\text{mean covariance}}
+\;+\;
+\underbrace{\mathbb{E}\!\big[\mathrm{Cov}(u_g, u_h \mid z)\big]}_{\text{conditional covariance}}
+,
+$$
+
+the mean covariance is the off-diagonal signal we want and
+the conditional covariance is zero (independent per-gene
+Poisson–Beta given $z$).  Substituting the conditional
+means,
+
+$$
+\mathrm{Cov}\big(\mathrm{rate}_g\,\sigma(\theta_g + z_g),\,
+                  \mathrm{rate}_h\,\sigma(\theta_h + z_h)\big)
+= \mathrm{rate}_g\,\mathrm{rate}_h \,
+  \mathrm{Cov}\!\big(\sigma(\theta_g + z_g),\,
+                      \sigma(\theta_h + z_h)\big),
+$$
+
+which is non-zero whenever $\Sigma_{gh} \neq 0$.
+
+The first draft of this model (Rev 0 in the plan) made
+$\mathrm{rate}_g$ a function of $z$ as well, with the
+intent of preserving the gene-level mean
+$\mathbb{E}[u_{cg} \mid z_{cg}] = \mu_g$ exactly. The
+audit caught a fatal flaw: with $\mathbb{E}[u_g \mid z] =
+\mu_g$ constant in $z$, the mean covariance collapses to
+$\mathrm{Cov}(\mu_g, \mu_h) = 0$ — the entire cross-gene
+signal Variant B was supposed to add disappears. **Rev 4
+fixes this by holding $\mathrm{rate}_g$ at the gene level
+unconditionally**, which gives up the exact mean
+preservation but restores the cross-gene mean covariance.
+A regression test in
+``tests/test_twostate_ln_logit_recovery.py`` pins this
+invariant.
+
+The user-facing reporting mean at $z = 0$ is
+$\bar\mu_g = \mathrm{rate}_g \cdot \sigma(\theta_g)$, which
+is what the result object's ``gene_mean`` field carries.
+
+## Per-cell Laplace marginalization {#sec-twostate-tsln-logit-laplace}
+
+The per-cell joint density is
+
+$$
+\log p(u_c, z_c \mid \Theta) =
+\sum_g \log L_{\mathrm{PB}}\big(u_{cg} \mid
+                                 \kappa_g \sigma(\theta_g + z_{cg}),\,
+                                 \kappa_g(1 - \sigma(\theta_g + z_{cg})),\,
+                                 \mathrm{rate}_g\big)
+- \tfrac{1}{2}(z_c)^\top \Sigma^{-1} z_c,
+$$ {#eq-tsln-logit-joint-density}
+
+with $L_{\mathrm{PB}}$ the Poisson–Beta marginal from
+@sec-twostate-poisson-beta. The latent prior is centred at
+zero because the gene baseline is captured by $\theta_g$;
+this is the structural difference from TSLN-Rate, where
+the latent prior centre was $\log \hat r_g$.
+
+### Closed-form gradient via $\varphi'$
+
+The integrand at quadrature node $p_k$ is
+$T_k(z) = w_k \cdot \mathrm{Beta}(p_k \mid
+\kappa\sigma(\theta+z), \kappa(1-\sigma(\theta+z)))
+\cdot \mathrm{Poisson}(u \mid \mathrm{rate}\,p_k)$. Only
+the Beta-density piece depends on $z$ (the Poisson rate is
+$z$-independent), so
+
+$$
+\frac{\partial \log T_k}{\partial z}
+= \varphi'(\theta+z) \cdot D_k,
+\qquad
+D_k = \kappa\big[\log p_k - \log(1-p_k) -
+                 \big(\psi(\kappa\varphi) - \psi(\kappa(1-\varphi))\big)\big],
+$$
+
+with $\varphi'(x) = \sigma(x)(1-\sigma(x))$ the sigmoid
+derivative. Taking $\mathbb{E}_q[\cdot]$ over the posterior
+softmax weights $q_k = \mathrm{softmax}_k[\log T_k]$ gives
+the data-side gradient on $z$:
+
+$$
+g_{\mathrm{data},g} = \varphi'_g \cdot \mathbb{E}_q[D]_g.
+$$ {#eq-tsln-logit-g-data}
+
+### Three-term Hessian-diagonal
+
+Using the log-marginal identity
+$\partial^2 \log L / \partial z^2 =
+\mathbb{E}_q[\partial^2 \log T / \partial z^2] +
+\mathrm{Var}_q[\partial \log T / \partial z]$ and the fact
+that $\partial D/\partial\varphi = -\kappa^2[\psi'(\kappa\varphi) +
+\psi'(\kappa(1-\varphi))]$ is constant in $p$, the data-side
+Hessian-diagonal factor (with sign convention $a = -H$) is
+
+$$
+\boxed{
+a_g =
+-\varphi''_g \cdot \mathbb{E}_q[D]_g
++\varphi'^2_g \cdot \kappa^2_g \, \big(\psi'(\kappa_g \varphi_g) +
+                                          \psi'(\kappa_g(1-\varphi_g))\big)
+-\varphi'^2_g \cdot \kappa^2_g \, \mathrm{Var}_q\!\big(\log p - \log(1-p)\big).
+}
+$$ {#eq-tsln-logit-a}
+
+Three terms with distinct sign behaviour:
+
+- $-\varphi'' \mathbb{E}_q[D]$ has sign that depends on
+  both factors. Vanishes at $\varphi = \tfrac{1}{2}$.
+- $+\varphi'^2 \kappa^2 (\psi' + \psi')$ is **always
+  positive** (trigamma is positive).
+- $-\varphi'^2 \kappa^2 \mathrm{Var}_q[\log p - \log(1-p)]$
+  is **always non-positive**.
+
+Like TSLN-Rate, the Poisson–Beta marginal in $z$ is
+**not** uniformly log-concave when the Beta is U-shaped
+($\alpha < 1$ or $\beta < 1$). The implementation
+defensively clamps $a_g$ at $a_{\min} = 10^{-3}$ before the
+Woodbury solve; the post-fit ``a_clamp_fraction`` diagnostic
+surfaces how often the clamp activated.
+
+A subtle implementation point worth recording: in
+pathological iterates the raw sigmoid can underflow to 0
+or saturate to 1 in float32. The factor function clips
+$\varphi$ to $[10^{-6}, 1-10^{-6}]$ before evaluating
+$\varphi'$, $\varphi''$, and the digamma / trigamma terms.
+The derivative formulas then use the **clipped** $\varphi$,
+so they are *pseudo-derivatives* of the true clipped
+likelihood outside the clip region. This is intentional:
+$\varphi' = 0$ at the unclipped boundary would freeze the
+Newton step (no first-order information), whereas the
+clipped formulae act as a Newton stabiliser that keeps
+the iterate moving. In normal regimes the clip is inactive
+and the formulae are exact.
+
+## Identifiability and gauge {#sec-twostate-tsln-logit-gauge}
+
+TSLN-Logit has the same kind of rigid-translation gauge as
+TSLN-Rate, but here the gauge is **exact** in a way TSLN-
+Rate's only approximated.
+
+The data-side log-likelihood depends on $\eta_{\mathrm{act},cg}
+= \theta_g + z_{cg}$ alone (the Beta shape parameters are
+functions of $\eta_{\mathrm{act}}$, and $\mathrm{rate}_g$ is
+$z$-independent). The transformation
+
+$$
+\theta_g \to \theta_g + c, \quad z_{cg} \to z_{cg} - c,
+\quad \forall c \in \mathbb{R}, \forall g \in \{1, \dots, G\},
+$$
+
+leaves $\eta_{\mathrm{act},cg}$ — and hence the data-side
+log-likelihood — invariant exactly. (Contrast with TSLN-
+Rate, where shifting $\log \hat r$ and $z$ in opposite
+directions preserves the rate but the Beta shape parameters
+$(\alpha, \beta)$ remain pinned to their gene-level values,
+so the gauge applied at the *log-rate* level rather than at
+the Beta shape level.) Only the Gaussian prior on $z$
+identifies the gauge — softly.
+
+### Freeze levels
+
+The same four-level cascade hierarchy applies as for TSLN-
+Rate (with the gene-level parameter set adjusted for
+Variant B):
+
+- **Level 1 (None)** — all globals M-step optimised; gauge
+  softly identified by the $\mathcal{N}(0, \Sigma)$ prior on
+  $z$. Not recommended.
+- **Level 2 (`eta_anchor` soft-cascade)** — $\theta$ has an
+  informative-prior loss term; $\mathrm{rate}, \kappa$
+  unrestricted. Gauge tightly identified, soft.
+- **Level 3 (`(rate, eta_anchor)` hard-frozen, `kappa`
+  soft)** — both rigid-axis-relevant globals frozen;
+  $\kappa$ is the only learnable gene-level global. Use
+  when the SVI source may have biased $\kappa$.
+- **Level 4 (`(rate, kappa, eta_anchor)` all hard-frozen)**
+  — all gene-level globals pinned at the SVI MAP; only
+  $(W, d)$ learned. **Default and recommended** for
+  production cascades.
+
+The Rev 3 audit reasoning for promoting $\kappa$ into the
+default freeze: $\kappa$ controls Beta concentration /
+overdispersion; leaving it soft-cascade would let the
+Laplace fit absorb correlation / model mismatch into
+$\kappa$ rather than into $(W, d)$ where the cross-gene
+signal belongs.
+
+### Gauge contamination ratio
+
+The same diagnostic $\rho_{\mathrm{gauge}} =
+\mathrm{std}_c(\bar z_c) /
+\mathrm{std}_c(\|z_{c,\perp}\|)$ applies. For a fully
+converged Level-4 fit $\rho_{\mathrm{gauge}} < 10^{-3}$.
+The cascade-frozen recovery tests in
+``tests/test_twostate_ln_logit_gauge.py`` verify this
+behaviour on short test-fits.
+
+## Capture {#sec-twostate-tsln-logit-capture}
+
+The biology-anchored capture prior used by NBLN and
+TSLN-Rate (a TruncN on $\eta_{\mathrm{cap},c}$ with
+biology-informed $(\log M_0, \sigma_M)$) requires the
+joint Newton on $(z_c, \eta_{\mathrm{cap},c})$ with the
+cross-Hessian
+$H_{z,\eta_{\mathrm{cap}}}$. **For TSLN-Logit the cross-
+Hessian does NOT reduce to the NBLN / TSLN-Rate shortcut.**
+In Variant A the variables enter the same scalar log-rate
+$\ell = \log \hat r + z - \eta_{\mathrm{cap}}$ with
+opposite signs, so $\partial / \partial \eta_{\mathrm{cap}}
+= -\partial / \partial z$ on the data side and the cross-
+block reduces to $-a_g$. In Variant B the same symmetry
+does NOT hold: $z$ enters the Beta density only (via
+$\alpha, \beta$), while $\eta_{\mathrm{cap}}$ enters the
+Poisson log-rate only. They are perturbing different parts
+of the integrand. The correct cross-Hessian is
+
+$$
+H_{z_g, \eta_{\mathrm{cap}},c} =
+\varphi'_g \cdot \lambda_g \cdot \kappa_g \,
+  \mathrm{Cov}_q\!\big(\log p - \log(1-p),\, p\big),
+$$
+
+which is the same posterior-covariance term that appears in
+the diagonal Hessian decomposition.
+
+The audit-recommended fallback for the initial release
+(PR-2 of the plan) is to **disable the joint capture
+Newton path entirely** for TSLN-Logit. Two capture modes
+are supported:
+
+- **No capture** ($\nu_c \equiv 1$): the Newton kernel
+  optimises $z$ only. Routes to the ``x_only`` path.
+- **Fixed-offset capture** ($\eta_{\mathrm{cap},c}$ pinned
+  at the upstream MAP): $\nu_c = e^{-\eta_{\mathrm{cap},c}}$
+  is a stop-gradient constant on the Poisson log-rate.
+  Routes to the ``x_only_offset`` path. The kernel solves
+  for $z$ alone; the prior on $\eta_{\mathrm{cap}}$ is not
+  evaluated (the offset is treated as observed).
+
+The biology-anchored capture path with proper joint
+Newton is deferred to a phase-3 follow-up. In practice the
+fixed-offset mode covers the production use case — most
+cascades route through an SVI source that already fit
+capture per cell, and the cascade adapter pins those
+values automatically (the run-inference stage auto-adds
+``"eta"`` to ``freeze_params`` when the SVI source has
+per-cell capture).
+
+## When to use TSLN-Logit vs TSLN-Rate {#sec-twostate-tsln-logit-when}
+
+Both Variants A and B share the cascade machinery, the
+Woodbury per-cell Newton, the Level-4 freeze convention,
+and the post-fit profiled-Hessian uncertainty. They
+differ in **how the latent enters the data** and therefore
+in the shape of the conditional mean response:
+
+| | TSLN-Rate (A) | TSLN-Logit (B) |
+|---|---|---|
+| Latent enters at | log-rate ($\log\hat r + z$) | activation log-odds ($\theta + z$) |
+| $\mathbb{E}[u \mid z]$ as $z \to \infty$ | unbounded | saturates at $\mathrm{rate}_g$ |
+| Cross-gene mean cov source | $\mathrm{Cov}(e^{z_g}, e^{z_h})$ | $\mathrm{Cov}(\sigma(\theta_g + z_g), \sigma(\theta_h + z_h))$ |
+| NB-limit (β → ∞) | NB-LogNormal exactly | linear in $z$ in the NB tail |
+| Gauge structure | rigid-translation between $\log\hat r$ and $z$ (data-likelihood invariant) | rigid-translation between $\theta$ and $z$ (**exact**) |
+| Capture support (PR-2) | x-only / fixed-offset / soft / joint | x-only / fixed-offset only |
+| Biophysical interpretation | log-rate fluctuation | Boltzmann free-energy fluctuation on activation odds |
+
+**Use TSLN-Rate** when the expected cross-gene signal is
+on the gene expression *level* (TF-driven amplification,
+broadly co-varying programmes) and you want unbounded
+mean response. Easier to interpret as a direct extension
+of NB-LogNormal.
+
+**Use TSLN-Logit** when the expected signal is on
+*activation state* (chromatin-mediated regulons, on/off
+program switches), when saturation at a biophysical
+ceiling is plausible, or when the data is bimodal /
+bursty enough that the sigmoid's saturation captures the
+observed mean response better than an exponential.
+
+The two are not mutually exclusive at the dataset level —
+running both and comparing the ELBO / cross-gene
+covariance signal is a sensible diagnostic when the right
+choice is not obvious from the biology.
