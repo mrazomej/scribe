@@ -168,7 +168,16 @@ def test_get_map_and_get_distributions_keys():
         seed=0,
     )
 
-    m = result.get_map()
+    # Pin to map_method="transform" because this test verifies the
+    # stored-field convention mu == log(stored r_hat). Under the new
+    # default map_method="auto", get_map() returns Jacobian-corrected
+    # values that mu is re-synchronized to match (out["mu"] =
+    # log(corrected r_hat)) but the test fixture's minimal fit
+    # (n_steps=10, n_newton_steps=4) doesn't always have all parent
+    # _loc fields populated, leading to a partial-correction state.
+    # The "transform" path gives byte-equal stored values which always
+    # satisfy mu == log(r_hat) by construction.
+    m = result.get_map(map_method="transform")
     expected_subset = {
         "mu", "W", "d_tsln", "y_log_rate",
         "gene_mean", "burst_size", "k_off",

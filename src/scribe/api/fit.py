@@ -224,7 +224,7 @@ def fit(
     restore_best: bool = False,
     # KL annealing options (for VAE only -- automatically defaulted ON
     # for VAE-mode fits; pass an explicit ``KLAnnealingConfig`` or set
-    # ``kl_annealing_warmup`` to customise; pass
+    # ``kl_annealing_warmup`` to customize; pass
     # ``KLAnnealingConfig(enabled=False)`` to disable).
     kl_annealing: Optional[
         Union["KLAnnealingConfig", Dict[str, Any], bool]
@@ -262,6 +262,22 @@ def fit(
     informative_priors_tau: float = 1.0,
     informative_priors_n_samples: int = 1000,
     informative_priors_verbose: bool = True,
+    # Cascade-reproducibility knob: controls which ``map_method`` is
+    # passed to the SVI source's ``get_map`` inside the cascade
+    # extractors (``freeze_values_from_results`` /
+    # ``freeze_values_from_twostate_results``).
+    #   - None (default): inherit the SVI source's get_map default
+    #     (currently ``"auto"`` = Jacobian-corrected MAP).
+    #   - ``"transform"``: pin to the uncorrected median ``f(loc)``
+    #     for reproducibility with pre-correction cascade fits.
+    #   - ``"auto"`` / ``"jacobian"`` / ...: see
+    #     :func:`scribe.stats.jacobian_corrected_map`.
+    # IMPORTANT: when the SVI get_map default flips from
+    # ``"transform"`` (legacy) to ``"auto"`` (Jacobian-corrected), this
+    # cascade silently shifts MAP values by ~exp(sigma^2) per element
+    # for LogNormal-shaped guides. Pin to ``"transform"`` when
+    # re-running pre-correction scripts.
+    cascade_map_method: Optional[str] = None,
     # Phase-2 freeze: which NBLN globals are fixed at the SVI cascade's
     # MAP rather than refined during the M-step.  Default ("r", "eta")
     # eliminates the rigid-translation gauge degeneracy and yields the
@@ -549,7 +565,7 @@ def fit(
 
         **Explicit list** (power-user): pass a list like
         ``["mu", "phi"]``.  Set to ``None`` to disable mixture
-        behaviour entirely.
+        behavior entirely.
 
     guide_rank : int, optional
         Rank for low-rank variational guide on gene-specific
@@ -811,7 +827,7 @@ def fit(
           - ``"twostate_ln_logit"`` → ``("rate", "kappa", "eta_anchor")``
 
         Pass ``()`` (empty tuple) for plain no-freeze cascade
-        behaviour.  Pass any iterable of valid parameter names to
+        behavior.  Pass any iterable of valid parameter names to
         override the variant default.  Descriptive aliases are
         accepted for NBLN: ``"dispersion" -> "r"``,
         ``"mean_expression"`` (or ``"expression"``) ``-> "mu"``,

@@ -15,6 +15,11 @@ from jax import random
 
 from ..utils import numpyro_to_scipy
 from ..stats.distributions import LowRankLogisticNormal, LowRankPoissonLogNormal
+# Jacobian-corrected MAP for transformed variational guides — see
+# scribe/stats/jacobian_map.py for the math and dispatch table. Used by
+# get_map's TransformedDistribution branches to return the constrained-
+# space mode (not the median, which is what f(loc) would give).
+from ..stats.jacobian_map import jacobian_corrected_map
 from ..models.config.parameter_mapping import rename_dict_keys
 from ..core.axis_layout import (
     AxisLayout,
@@ -138,7 +143,7 @@ def _reconstruct_from_horseshoe_spec(
     loc = map_estimates.get(spec.hyper_loc_name)
 
     # Silently skip if any required component is missing (matches
-    # the old ``continue`` behaviour when keys were absent).
+    # the old ``continue`` behavior when keys were absent).
     if any(v is None for v in (z, tau, lam, c_sq, loc)):
         return
 
@@ -297,7 +302,7 @@ _FLOW_DIST_TYPES = (FlowDistribution, ComponentFlowDistribution)
 def _is_flow_dist(obj) -> bool:
     """Check whether a distribution entry wraps a flow distribution.
 
-    Recognises both ``FlowDistribution`` (scalar / non-mixture) and
+    Recognizes both ``FlowDistribution`` (scalar / non-mixture) and
     ``ComponentFlowDistribution`` (mixture / dataset-aware flows).
     """
     # Dict-style: {"base": FlowDistribution|ComponentFlowDistribution, ...}
@@ -1158,6 +1163,7 @@ class ParameterExtractionMixin:
         flow_optimize_lr: float = 1e-3,
         flow_batch_size: Optional[int] = None,
         descriptive_names: bool = False,
+        map_method: str = "auto",
     ) -> Dict[str, jnp.ndarray]:
         """
         Get the maximum a posteriori (MAP) estimates from the variational
@@ -1228,6 +1234,35 @@ class ParameterExtractionMixin:
             ``p``, ``mu``, ``phi``, ``gate``, ...) to user-friendly
             descriptive names (``dispersion``, ``prob``, ``expression``,
             ``odds``, ``zero_inflation``, ...).
+        map_method : str, default="auto"
+            Controls Jacobian correction for transformed variational
+            guides (``TransformedDistribution(<Normal-like>, f)``).
+            For monotone non-linear ``f`` (Exp, Sigmoid, Softplus), the
+            naive ``f(loc)`` returns the **median** of ``Y`` in
+            constrained space, NOT the mode (MAP). Values:
+
+            - ``"auto"`` (default): use the closed-form / grid+Newton /
+              autodiff Jacobian-corrected MAP from
+              :func:`scribe.stats.jacobian_corrected_map`. Falls back
+              to ``f(loc)`` with a warning if the ``(transform, base)``
+              pair is unsupported (e.g., ``LowRankMVN + Sigmoid``).
+            - ``"transform"``: return ``f(loc)`` without correction.
+              Backward-compat path; produces the same numbers as
+              pre-correction scribe. Use this to reproduce legacy
+              results.
+            - ``"jacobian"``: like ``"auto"`` but raises on unsupported
+              pairs instead of falling back. Use for strict
+              reproducibility.
+            - ``"closed_form"``, ``"newton"``, ``"autodiff"``: see
+              :func:`scribe.stats.jacobian_corrected_map` for details.
+
+            This flag affects ONLY non-flow
+            ``TransformedDistribution`` guides. Flow-guided parameters
+            are controlled by ``flow_map_method`` (orthogonal). Skipped
+            distributions (``LowRankLogisticNormal``,
+            ``LowRankPoissonLogNormal``) remain skipped regardless of
+            ``map_method`` — their multivariate transforms are out of
+            scope.
 
         Returns
         -------
@@ -1378,23 +1413,36 @@ class ParameterExtractionMixin:
                 continue
 
             # Handle transformed distributions (dict with 'base' and
-            # 'transform') This is used for low-rank guides with transformations
+            # 'transform'). Used for low-rank guides with transformations
+            # (e.g., LowRankMultivariateNormal wrapped in a Sigmoid /
+            # Softplus / Exp via the dict-style construction in
+            # scribe.models.builders.posterior).
             if (
                 isinstance(dist_obj, dict)
                 and "base" in dist_obj
                 and "transform" in dist_obj
             ):
-                # For transformed distributions, MAP is transform(base.loc)
                 base_dist = dist_obj["base"]
                 transform = dist_obj["transform"]
-                if hasattr(base_dist, "loc"):
-                    map_estimates[param] = transform(base_dist.loc)
+                if map_method == "transform":
+                    # Backward-compat path: f(loc) without Jacobian
+                    # correction. Equals the median of Y for monotone f.
+                    if hasattr(base_dist, "loc"):
+                        map_estimates[param] = transform(base_dist.loc)
+                    else:
+                        map_estimates[param] = transform(base_dist.mean)
                 else:
-                    # Fallback to mean if loc not available
-                    map_estimates[param] = transform(base_dist.mean)
-            # Handle TransformedDistribution objects (for low-rank guides) Check
+                    # Jacobian-corrected MAP via the dispatch machinery.
+                    # If the (transform, base) pair is unsupported,
+                    # jacobian_corrected_map falls back to f(loc) under
+                    # method="auto" (with a warning) or raises under
+                    # method="jacobian".
+                    map_estimates[param] = jacobian_corrected_map(
+                        transform, base_dist, method=map_method
+                    )
+            # Handle TransformedDistribution objects (for low-rank guides). Check
             # if it's a TransformedDistribution wrapping
-            # LowRankMultivariateNormal
+            # LowRankMultivariateNormal or Normal.
             elif isinstance(dist_obj, dist.TransformedDistribution) and hasattr(
                 dist_obj, "base_dist"
             ):
@@ -1404,13 +1452,22 @@ class ParameterExtractionMixin:
                     dist_obj.transforms[0] if dist_obj.transforms else None
                 )
                 if transform is not None and hasattr(base_dist, "loc"):
-                    # For LowRankMultivariateNormal, MAP is transform(loc)
-                    map_estimates[param] = transform(base_dist.loc)
+                    if map_method == "transform":
+                        # Backward-compat: f(loc) without correction.
+                        map_estimates[param] = transform(base_dist.loc)
+                    else:
+                        # Jacobian-corrected MAP.
+                        map_estimates[param] = jacobian_corrected_map(
+                            transform, base_dist, method=map_method
+                        )
                 elif hasattr(base_dist, "loc"):
-                    # If no transform, just use loc
+                    # If no transform, just use loc (no correction needed).
                     map_estimates[param] = base_dist.loc
                 else:
-                    # Fallback: try to get mean from base distribution
+                    # Fallback: try to get mean from base distribution.
+                    # These fallback paths preserve legacy behavior and
+                    # don't apply Jacobian correction — they only trigger
+                    # for unusual guide constructions that lack ``loc``.
                     try:
                         base_mean = base_dist.mean
                         if transform is not None:
@@ -1518,6 +1575,15 @@ class ParameterExtractionMixin:
                         and "base" in dist_obj
                         and "transform" in dist_obj
                     ):
+                        # TODO(jacobian-map): this is the analogous bug
+                        # to the MAP one — E[f(X)] != f(E[X]) for
+                        # nonlinear f. To get the true posterior mean
+                        # in constrained space we'd need to integrate
+                        # the base density against the transform (e.g.,
+                        # via Monte Carlo). Out of scope for v1; if
+                        # accurate mean propagation is needed, fit the
+                        # NaN-replacement here through a sampling-based
+                        # mean estimator.
                         mean_value = dist_obj["transform"](
                             dist_obj["base"].mean
                         )

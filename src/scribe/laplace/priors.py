@@ -544,6 +544,7 @@ def freeze_values_from_results(
     target_gene_mask: Optional[np.ndarray] = None,
     source_counts: Optional[jnp.ndarray] = None,
     freeze_params: Tuple[str, ...] = ("r", "eta"),
+    map_method: Optional[str] = None,
     verbose: bool = True,
 ) -> Dict[str, Dict[str, jnp.ndarray]]:
     """Extract point-estimate freeze values from an SVI results object.
@@ -657,9 +658,19 @@ def freeze_values_from_results(
                 "capture, store training counts on the SVI result, or "
                 "pass source_counts with strict var-name identity."
             )
-        map_dict = results.get_map(counts=counts_for_encoder, verbose=False)
+        # CASCADE PROPAGATION: see analogous block in
+        # freeze_values_from_twostate_results for the rationale.
+        _map_kwargs = (
+            {} if map_method is None else {"map_method": map_method}
+        )
+        map_dict = results.get_map(
+            counts=counts_for_encoder, verbose=False, **_map_kwargs
+        )
     else:
-        map_dict = results.get_map(verbose=False)
+        _map_kwargs = (
+            {} if map_method is None else {"map_method": map_method}
+        )
+        map_dict = results.get_map(verbose=False, **_map_kwargs)
 
     _say(f"  SVI MAP keys: {sorted(map_dict.keys())}")
 
@@ -806,7 +817,7 @@ def priors_from_twostate_results(
         Either a single transform name (e.g. ``"softplus"`` /
         ``"exp"``) applied uniformly to every positive parameter, OR
         a mapping from internal parameter name to transform name.
-        Recognised keys: ``{"mu", "burst_size", "k_off"}`` for the
+        Recognized keys: ``{"mu", "burst_size", "k_off"}`` for the
         rate variant; ``{"rate", "kappa"}`` for the logit variant
         (``eta_anchor`` is real-valued — identity transform).  Missing
         keys fall back to ``"softplus"``.  Pass a dict whenever the
@@ -998,7 +1009,7 @@ def priors_from_twostate_results(
 
         # Each positive global uses its OWN configured transform so
         # that ``positive_transform={"rate": "exp", "kappa":
-        # "softplus"}`` is honoured.  ``eta_anchor`` is real-valued
+        # "softplus"}`` is honored.  ``eta_anchor`` is real-valued
         # so it skips ``pos_inverse`` regardless.
         rate_pos_inv = _pos_inv_for("rate")
         kappa_pos_inv = _pos_inv_for("kappa")
@@ -1021,7 +1032,7 @@ def priors_from_twostate_results(
         # --- TSLN-Rate coordinate map --------------------------------
         # All three positive globals pass through their own configured
         # pos_inverse — so ``positive_transform={"mu": "exp",
-        # "burst_size": "softplus", ...}`` is honoured per-parameter.
+        # "burst_size": "softplus", ...}`` is honored per-parameter.
         for src_key, tgt_key in (
             ("mu", "mu"),
             ("burst_size", "burst_size"),
@@ -1144,6 +1155,7 @@ def freeze_values_from_twostate_results(
     target_gene_mask: Optional[np.ndarray] = None,
     source_counts: Optional[jnp.ndarray] = None,
     freeze_params: Tuple[str, ...] = ("mu", "burst_size", "k_off"),
+    map_method: Optional[str] = None,
     verbose: bool = True,
 ) -> Dict[str, Dict[str, jnp.ndarray]]:
     """Extract point-estimate freeze values from a TwoState SVI fit.
@@ -1165,6 +1177,18 @@ def freeze_values_from_twostate_results(
         For TSLN-Rate, valid keys are
         ``{"mu", "burst_size", "k_off", "eta"}``.  For TSLN-Logit,
         valid keys are ``{"rate", "kappa", "eta_anchor", "eta"}``.
+    map_method : str, optional
+        Controls which ``map_method`` is passed to the SVI source's
+        :meth:`~scribe.svi.results.ScribeSVIResults.get_map`. ``None``
+        (default) lets the SVI source use its own default (currently
+        ``"auto"``, i.e., Jacobian-corrected MAP). Pass ``"transform"``
+        to pin the cascade to legacy ``transform(loc)`` semantics —
+        useful when reproducing pre-correction cascade fits.
+
+        IMPORTANT: when the SVI default flips to ``"auto"``, this
+        cascade silently picks up the corrected (Jacobian-shifted)
+        MAP values, which propagate into the downstream Laplace fit.
+        For reproducibility of old scripts, pin to ``"transform"``.
 
     Returns
     -------
@@ -1241,9 +1265,21 @@ def freeze_values_from_twostate_results(
                 "Source uses amortized capture but counts can't be "
                 "resolved. Same remediation options as the NBLN cascade."
             )
-        map_dict = results.get_map(counts=counts_for_encoder, verbose=False)
+        # CASCADE PROPAGATION: pass map_method through to the SVI
+        # source's get_map. ``None`` lets the source use its own
+        # default; an explicit value pins the cascade to that method
+        # (e.g., ``"transform"`` reproduces legacy uncorrected behavior).
+        _map_kwargs = (
+            {} if map_method is None else {"map_method": map_method}
+        )
+        map_dict = results.get_map(
+            counts=counts_for_encoder, verbose=False, **_map_kwargs
+        )
     else:
-        map_dict = results.get_map(verbose=False)
+        _map_kwargs = (
+            {} if map_method is None else {"map_method": map_method}
+        )
+        map_dict = results.get_map(verbose=False, **_map_kwargs)
 
     _say(f"  SVI MAP keys: {sorted(map_dict.keys())}")
 
@@ -1411,7 +1447,7 @@ def freeze_values_from_twostate_results(
                 )
             # Per-parameter positive transform so the dict-form
             # ``positive_transform={"rate": "exp", "kappa": "softplus"}``
-            # is honoured.
+            # is honored.
             loc = _pos_inv_for(tgt_key)(val) if is_positive else val
             freeze_values[tgt_key] = {"loc": loc}
             _say(

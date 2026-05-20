@@ -12,9 +12,145 @@ from typing import Any, Dict, Optional
 import jax.numpy as jnp
 import numpy as np
 
+import warnings
+
+import numpyro.distributions as _dist
+
 from ..stats.distributions import LowRankPoissonLogNormal
+from ..stats.jacobian_map import jacobian_corrected_map
+from ._derived import (
+    lnm_p_from_parents,
+    twostate_logit_derived_from_parents,
+    twostate_rate_derived_from_parents,
+)
 from ._global_uncertainty import resolve_numpyro_transform, resolve_positive_fns
 from ._results_shared import _base_model
+
+
+# ==============================================================================
+# Helpers for the ``map_method`` plumbing in :meth:`get_map`.
+# ==============================================================================
+#
+# Per the plan (v3, §3.5), positive globals on ScribeLaplaceResults are
+# stored as ``pos_forward(_loc)`` — the median of Y in constrained
+# space, NOT the mode. To return the constrained-space MAP via
+# ``map_method != "transform"``, we recompute from the persisted
+# ``(_loc, _scale)`` pairs using :func:`jacobian_corrected_map`.
+#
+# ``_correct_positive`` handles three cases:
+# 1. ``loc is None``: parameter not populated (e.g., a frozen field);
+#    return None / pass through stored value.
+# 2. ``scale is None`` (or all-NaN): no curvature available, fall back
+#    to ``transform(loc)``.
+# 3. Partial NaN scale: per-element ``jnp.where`` mask blends the
+#    corrected value (finite entries) with ``transform(loc)`` (NaN
+#    entries — typically frozen genes in a cascade).
+
+
+def _correct_positive(
+    model_config: Any,
+    transform_key: str,
+    loc: Optional[jnp.ndarray],
+    scale: Optional[jnp.ndarray],
+    method: str,
+) -> Optional[jnp.ndarray]:
+    """Compute the constrained-space MAP for a positive global.
+
+    Parameters
+    ----------
+    model_config : Any
+        Model config used by ``resolve_numpyro_transform`` to look up
+        the per-parameter ``Transform``.
+    transform_key : str
+        Key into ``model_config.positive_transform`` mapping (NOT the
+        output dict key — e.g., for TSLN-Rate the ``gene_mean`` output
+        is the positive form of the ``"mu"`` latent, so the
+        transform_key is ``"mu"``).
+    loc, scale : Optional[jnp.ndarray]
+        Unconstrained posterior parameterization. ``loc`` is the
+        Laplace-fitted MAP in unconstrained space; ``scale`` is the
+        post-fit diagonal Hessian standard deviation (may be ``None``
+        or contain NaNs for frozen / unprofiled parameters).
+    method : str
+        Effective ``map_method`` after the dataclass-vs-call default
+        resolution. ``"transform"`` always returns ``transform(loc)``;
+        other values dispatch through :func:`jacobian_corrected_map`.
+
+    Returns
+    -------
+    Optional[jnp.ndarray]
+        The constrained-space MAP, or ``None`` if ``loc is None``.
+    """
+    if loc is None:
+        return None
+    transform = resolve_numpyro_transform(model_config, transform_key)
+    if method == "transform" or scale is None:
+        return transform(loc)
+    # Detect non-finite scales (frozen / unprofiled cascade subsets).
+    finite = jnp.isfinite(scale) & (scale > 0)
+    # Under method='jacobian' (strict mode), refuse to silently blend
+    # corrected entries with transform(loc) fallback. The strict
+    # contract is "raise on any unsupported configuration" — a NaN
+    # scale is unsupported because there's no curvature information
+    # to drive the correction. Promote to NotImplementedError so the
+    # caller can decide whether to:
+    #   1. Re-run with method='auto' to accept the elementwise blend.
+    #   2. Re-run with method='transform' to opt out entirely.
+    #   3. Plumb in a real scale (e.g., add curvature for the frozen
+    #      subset).
+    # The is_concrete guard keeps this jit/vmap-safe: under jit, the
+    # finite-mask is a tracer and we can't branch on it; we trust the
+    # autograd path to produce the right answer with the masked
+    # scale_safe values.
+    if method == "jacobian" and _is_concrete_helper(finite):
+        if not bool(jnp.all(finite)):
+            raise NotImplementedError(
+                f"map_method='jacobian' refuses non-finite scales for "
+                f"{transform_key!r}; some entries are NaN or non-positive. "
+                f"Use map_method='auto' to blend corrected entries with "
+                f"transform(loc) fallback for those elements, or "
+                f"map_method='transform' to opt out of correction entirely."
+            )
+    scale_safe = jnp.where(finite, scale, 1.0)
+    # Suppress potential NotImplementedError fallback warnings for
+    # repeated calls — duplicates are deduped by Python's default
+    # warning filter (action="default") via stacklevel=2 inside
+    # jacobian_corrected_map.
+    corrected = jacobian_corrected_map(
+        transform,
+        _dist.Normal(loc, scale_safe),
+        method=method,
+    )
+    fallback = transform(loc)
+    return jnp.where(finite, corrected, fallback)
+
+
+def _is_concrete_helper(x) -> bool:
+    """Tracer guard for the strict-mode NaN-scale check.
+
+    Wraps the same logic as ``scribe.stats.jacobian_map._is_concrete``
+    but lives here to avoid pulling it across the public-API boundary.
+    Returns ``True`` for concrete values (Python scalars, eager JAX
+    arrays); ``False`` for ``Tracer`` instances (under jit/vmap).
+    """
+    import jax.core
+
+    return not isinstance(x, jax.core.Tracer)
+
+
+def _resolve_effective_method(
+    stored: Optional[str], call_arg: Optional[str]
+) -> str:
+    """Resolve the effective ``map_method`` from the dataclass attribute
+    and the per-call argument.
+
+    Precedence: explicit ``call_arg`` > stored attribute > ``"auto"``.
+    """
+    if call_arg is not None:
+        return call_arg
+    if stored:
+        return stored
+    return "auto"
 
 
 # =====================================================================
@@ -183,18 +319,43 @@ class DispatchResultsMixin:
             f"get_latent_embeddings not implemented for base_model={bm!r}"
         )
 
-    def get_map(self, **_kwargs) -> Dict[str, jnp.ndarray]:
+    def get_map(
+        self,
+        *,
+        map_method: Optional[str] = None,
+        **_kwargs,
+    ) -> Dict[str, jnp.ndarray]:
         """Return point-estimate dictionary for diagnostics and plotting.
 
-        Exposes both unconstrained posterior parameterisation
+        Exposes both unconstrained posterior parameterization
         (``*_loc``, ``*_scale``) and constrained MAPs derived via
         ``model_config.positive_transform``.
 
         Parameters
         ----------
+        map_method : str, optional
+            Controls Jacobian correction for the constrained positive
+            globals (``r``, ``gene_mean``, ``burst_size``, ``k_off``,
+            ``rate``, ``kappa``, ``mu_T``, ``r_T``). Default ``None``
+            inherits the result's stored ``self.map_method`` attribute
+            (which defaults to ``"auto"``).
+
+            - ``"auto"`` (default): closed-form / grid+Newton /
+              autodiff correction, with graceful fallback to
+              ``f(loc)`` (with warning) when unsupported.
+            - ``"transform"``: legacy uncorrected median ``f(loc)``.
+              Use to reproduce pre-correction results byte-for-byte.
+            - ``"jacobian"``: like ``"auto"`` but raises on unsupported
+              ``(transform, base)`` pairs.
+
+            Note: this kwarg is for the **MAP values returned by this
+            call**. To make the correction persist into the stored
+            constrained fields (``self.r``, ``self.gene_mean``, etc.),
+            use :meth:`with_jacobian_map`. See
+            :func:`scribe.stats.jacobian_corrected_map` for the math.
         **_kwargs
             Accepted for interface compatibility with other inference modes.
-            Arguments are ignored because Laplace results are already MAP-based.
+            Unknown kwargs are ignored.
 
         Returns
         -------
@@ -211,8 +372,13 @@ class DispatchResultsMixin:
         Raises
         ------
         NotImplementedError
-            If the stored ``base_model`` is unknown.
+            If the stored ``base_model`` is unknown, or if
+            ``map_method='jacobian'`` is requested for an unsupported
+            ``(transform, base)`` pair.
         """
+        effective = _resolve_effective_method(
+            getattr(self, "map_method", None), map_method
+        )
         bm = _base_model(self.model_config)
         if bm in ("pln", "nbln"):
             d_key = "d_nbln" if bm == "nbln" else "d_pln"
@@ -224,9 +390,46 @@ class DispatchResultsMixin:
             }
             if self.eta_loc is not None:
                 out["eta_capture"] = self.eta_loc
+                # p_capture = exp(-eta_loc). Jacobian correction for
+                # this would be exp(-eta_loc - eta_scale**2), but
+                # eta_scale is not currently persisted on
+                # ScribeLaplaceResults (v1 limitation — tracked under
+                # TODO(jacobian-map-eta-scale)). Fall back to the
+                # uncorrected exp(-eta_loc) under "auto" with a one-
+                # per-call-site warning; raise under "jacobian".
+                if effective == "jacobian":
+                    raise NotImplementedError(
+                        "p_capture Jacobian correction requires "
+                        "ScribeLaplaceResults.eta_scale (not persisted "
+                        "in v1). Use map_method='auto' to fall back "
+                        "with a warning, or map_method='transform' to "
+                        "opt out explicitly."
+                    )
+                elif effective != "transform":
+                    warnings.warn(
+                        "Jacobian correction for p_capture requires "
+                        "ScribeLaplaceResults.eta_scale, which is not "
+                        "currently persisted. Returning exp(-eta_loc); "
+                        "p_capture will be corrected once eta_scale is "
+                        "added (TODO(jacobian-map-eta-scale)).",
+                        stacklevel=2,
+                    )
                 out["p_capture"] = jnp.exp(-self.eta_loc)
-            if bm == "nbln" and self.r is not None:
-                out["r"] = self.r
+            if bm == "nbln":
+                # Correct ``r`` from (r_loc, r_scale) if method != "transform".
+                # When the result was built with map_method="transform"
+                # (or no scale is available), this is byte-equal to the
+                # stored self.r.
+                if self.r_loc is not None and self.r is not None:
+                    out["r"] = _correct_positive(
+                        self.model_config,
+                        transform_key="r",
+                        loc=self.r_loc,
+                        scale=getattr(self, "r_scale", None),
+                        method=effective,
+                    )
+                elif self.r is not None:
+                    out["r"] = self.r
             # NBLN global posterior parameters in unconstrained space.
             if bm == "nbln" and self.r_loc is not None:
                 out["r_loc"] = self.r_loc
@@ -272,25 +475,113 @@ class DispatchResultsMixin:
                 "d_tsln": self.d,
                 "y_log_rate": self.x_loc,
             }
-            # Positive TwoState gene mean (user-facing TwoState
-            # semantics — what the SVI source emits as "mu").
-            if self.gene_mean is not None:
-                out["gene_mean"] = self.gene_mean
+            # Correct each positive parent from its (_loc, _scale) pair.
+            # IMPORTANT: gene_mean is the positive form of the "mu"
+            # latent (model_config.positive_transform[mu]), so the
+            # transform_key for gene_mean is "mu", NOT "gene_mean".
+            # Mixing these up would ignore user-configured per-param
+            # transforms like positive_transform={"mu": "exp"}.
+            gene_mean_corrected = _correct_positive(
+                self.model_config,
+                transform_key="mu",
+                loc=getattr(self, "gene_mean_loc", None),
+                scale=getattr(self, "gene_mean_scale", None),
+                method=effective,
+            )
+            burst_size_corrected = _correct_positive(
+                self.model_config,
+                transform_key="burst_size",
+                loc=getattr(self, "burst_size_loc", None),
+                scale=getattr(self, "burst_size_scale", None),
+                method=effective,
+            )
+            k_off_corrected = _correct_positive(
+                self.model_config,
+                transform_key="k_off",
+                loc=getattr(self, "k_off_loc", None),
+                scale=getattr(self, "k_off_scale", None),
+                method=effective,
+            )
+            # Fall back to stored fields when no _loc is available
+            # (e.g., frozen genes with only `gene_mean` populated).
+            out["gene_mean"] = (
+                gene_mean_corrected if gene_mean_corrected is not None
+                else self.gene_mean
+            )
+            if burst_size_corrected is not None:
+                out["burst_size"] = burst_size_corrected
+            elif self.burst_size is not None:
+                out["burst_size"] = self.burst_size
+            if k_off_corrected is not None:
+                out["k_off"] = k_off_corrected
+            elif self.k_off is not None:
+                out["k_off"] = self.k_off
             if self.eta_loc is not None:
                 out["eta_capture"] = self.eta_loc
+                # See p_capture block in pln/nbln branch above for the
+                # eta_scale-not-persisted limitation.
+                if effective == "jacobian":
+                    raise NotImplementedError(
+                        "p_capture Jacobian correction requires "
+                        "ScribeLaplaceResults.eta_scale (not persisted "
+                        "in v1). Use map_method='auto' or 'transform'."
+                    )
+                elif effective != "transform":
+                    warnings.warn(
+                        "Jacobian correction for p_capture requires "
+                        "ScribeLaplaceResults.eta_scale, which is not "
+                        "currently persisted (TSLN-Rate). Returning "
+                        "exp(-eta_loc).",
+                        stacklevel=2,
+                    )
                 out["p_capture"] = jnp.exp(-self.eta_loc)
-            # Three positive globals (gene_mean already added above).
-            if self.burst_size is not None:
-                out["burst_size"] = self.burst_size
-            if self.k_off is not None:
-                out["k_off"] = self.k_off
-            # Derived TwoState quantities.
-            if self.alpha is not None:
-                out["alpha"] = self.alpha
-            if self.beta is not None:
-                out["beta"] = self.beta
-            if self.r_hat is not None:
-                out["r_hat"] = self.r_hat
+            # Derived TSLN quantities: when method != "transform",
+            # recompute from corrected parents via _derived.py so the
+            # dict is internally consistent
+            # (alpha == _twostate_reparam(gene_mean, burst_size, k_off).alpha).
+            # When method == "transform", use the stored derived
+            # values (byte-equal to pre-change behavior).
+            if effective == "transform":
+                if self.alpha is not None:
+                    out["alpha"] = self.alpha
+                if self.beta is not None:
+                    out["beta"] = self.beta
+                if self.r_hat is not None:
+                    out["r_hat"] = self.r_hat
+            else:
+                # Re-derive from the corrected parents we just computed.
+                # Only safe when all three parents are available.
+                if (
+                    out.get("gene_mean") is not None
+                    and out.get("burst_size") is not None
+                    and out.get("k_off") is not None
+                ):
+                    derived = twostate_rate_derived_from_parents(
+                        gene_mean=out["gene_mean"],
+                        burst_size=out["burst_size"],
+                        k_off=out["k_off"],
+                    )
+                    out["alpha"] = derived["alpha"]
+                    out["beta"] = derived["beta"]
+                    out["r_hat"] = derived["r_hat"]
+                    # CRITICAL: TSLN-Rate convention requires
+                    # ``out["mu"] == log(out["r_hat"])`` (mu carries the
+                    # latent log-rate prior center). When we correct
+                    # r_hat from corrected parents, we MUST also update
+                    # mu to maintain the invariant — otherwise downstream
+                    # consumers that rely on mu = log(r_hat) (e.g., the
+                    # public-API conformance test, or any code that
+                    # reconstructs the latent log-rate distribution
+                    # from mu) would silently desynchronize.
+                    out["mu"] = jnp.log(jnp.maximum(derived["r_hat"], 1e-30))
+                else:
+                    # Partial population; preserve stored values.
+                    if self.alpha is not None:
+                        out["alpha"] = self.alpha
+                    if self.beta is not None:
+                        out["beta"] = self.beta
+                    if self.r_hat is not None:
+                        out["r_hat"] = self.r_hat
             # Unconstrained loc/scale fields (when populated by
             # compute_global_uncertainty).  NB: for TSLN-Rate, the
             # gene-mean posterior lives on ``gene_mean_loc / _scale``;
@@ -328,33 +619,88 @@ class DispatchResultsMixin:
             # gene-level globals (rate, kappa, eta_anchor) and the
             # derived reporting quantities (alpha, beta, gene_mean at
             # z=0).  ``self.mu`` is zeros for TSLN-Logit (the latent
-            # prior centre); ``self.eta_anchor`` is the per-gene
+            # prior center); ``self.eta_anchor`` is the per-gene
             # activation log-odds θ_g.
             out = {
-                # ``mu`` here is the LATENT prior centre (zeros for
+                # ``mu`` here is the LATENT prior center (zeros for
                 # TSLN-Logit — the latent z ~ N(0, Σ) prior).
                 "mu": self.mu,
                 "W": self.W,
                 "d_tsln": self.d,
                 "y_latent": self.x_loc,
             }
-            if self.rate is not None:
+            # Correct the positive parents (rate, kappa). eta_anchor is
+            # a real-valued parameter (not positive) so no Jacobian
+            # correction applies — it's returned as-is (=eta_anchor_loc
+            # under the Laplace identity transform).
+            rate_corrected = _correct_positive(
+                self.model_config,
+                transform_key="rate",
+                loc=getattr(self, "rate_loc", None),
+                scale=getattr(self, "rate_scale", None),
+                method=effective,
+            )
+            kappa_corrected = _correct_positive(
+                self.model_config,
+                transform_key="kappa",
+                loc=getattr(self, "kappa_loc", None),
+                scale=getattr(self, "kappa_scale", None),
+                method=effective,
+            )
+            if rate_corrected is not None:
+                out["rate"] = rate_corrected
+            elif self.rate is not None:
                 out["rate"] = self.rate
-            if self.kappa is not None:
+            if kappa_corrected is not None:
+                out["kappa"] = kappa_corrected
+            elif self.kappa is not None:
                 out["kappa"] = self.kappa
             if self.eta_anchor is not None:
                 out["eta_anchor"] = self.eta_anchor
-            if self.gene_mean is not None:
-                out["gene_mean"] = self.gene_mean
-            if self.alpha is not None:
-                out["alpha"] = self.alpha
-            if self.beta is not None:
-                out["beta"] = self.beta
+            # Derived (alpha, beta) at z=0 from (kappa, eta_anchor).
+            # When method != "transform", recompute from corrected
+            # parents; when method == "transform", use stored.
+            if effective == "transform":
+                if self.gene_mean is not None:
+                    out["gene_mean"] = self.gene_mean
+                if self.alpha is not None:
+                    out["alpha"] = self.alpha
+                if self.beta is not None:
+                    out["beta"] = self.beta
+            else:
+                if (
+                    out.get("kappa") is not None
+                    and self.eta_anchor is not None
+                ):
+                    derived = twostate_logit_derived_from_parents(
+                        kappa=out["kappa"],
+                        eta_anchor=self.eta_anchor,
+                    )
+                    out["alpha"] = derived["alpha"]
+                    out["beta"] = derived["beta"]
+                # gene_mean is a separate reporting quantity for
+                # TSLN-Logit (not derivable from kappa/eta_anchor
+                # alone — depends on the sampled rate too); preserve
+                # the stored value.
+                if self.gene_mean is not None:
+                    out["gene_mean"] = self.gene_mean
             if self.eta_loc is not None:
                 # Fixed-offset capture path: surface the same
                 # eta_capture / p_capture pair as TSLN-Rate / NBLN so
                 # the capture-related viz plots transfer.
                 out["eta_capture"] = self.eta_loc
+                if effective == "jacobian":
+                    raise NotImplementedError(
+                        "p_capture Jacobian correction requires "
+                        "ScribeLaplaceResults.eta_scale (not persisted "
+                        "in v1)."
+                    )
+                elif effective != "transform":
+                    warnings.warn(
+                        "Jacobian correction for p_capture requires "
+                        "eta_scale (TSLN-Logit). Returning exp(-eta_loc).",
+                        stacklevel=2,
+                    )
                 out["p_capture"] = jnp.exp(-self.eta_loc)
             # Unconstrained loc/scale fields (when populated by
             # compute_global_uncertainty).  Default L4 cascade freezes
@@ -399,15 +745,41 @@ class DispatchResultsMixin:
                 out["y_alr"] = self.y_alr_loc
             if self.p_capture_loc is not None:
                 out["p_capture"] = self.p_capture_loc
-            # Constrained totals MAPs.
-            if self.mu_T is not None:
+            # Correct positive totals (mu_T, r_T).
+            mu_T_corrected = _correct_positive(
+                self.model_config,
+                transform_key="mu_T",
+                loc=self.mu_T_loc,
+                scale=self.mu_T_scale,
+                method=effective,
+            )
+            r_T_corrected = _correct_positive(
+                self.model_config,
+                transform_key="r_T",
+                loc=self.r_T_loc,
+                scale=self.r_T_scale,
+                method=effective,
+            )
+            if mu_T_corrected is not None:
+                out["mu_T"] = mu_T_corrected
+            elif self.mu_T is not None:
                 out["mu_T"] = self.mu_T
-            if self.r_T is not None:
+            if r_T_corrected is not None:
+                out["r_T"] = r_T_corrected
+            elif self.r_T is not None:
                 out["r_T"] = self.r_T
-            # Derived success probability.
-            if self.mu_T is not None and self.r_T is not None:
-                out["p"] = self.r_T / (self.r_T + self.mu_T)
-            # Unconstrained posterior parameterisation.
+            # Derived success probability — re-derive from the
+            # corrected parents we just placed in ``out``. Uses the NB
+            # success-prob convention ``p = r_T / (r_T + mu_T)``, NOT
+            # ``mu_T / (mu_T + r_T)``. Verified against
+            # tests/test_lnm_laplace.py:417-421.
+            if out.get("mu_T") is not None and out.get("r_T") is not None:
+                out["p"] = lnm_p_from_parents(
+                    mu_T=out["mu_T"], r_T=out["r_T"]
+                )
+            # Unconstrained posterior parameterization (always exposed
+            # as-is for downstream consumers that need the raw _loc /
+            # _scale pair).
             if self.mu_T_loc is not None:
                 out["mu_T_loc"] = self.mu_T_loc
             if self.mu_T_scale is not None:
@@ -558,7 +930,7 @@ class DispatchResultsMixin:
             # would silently misreport the posterior shape under any
             # config that mixes ``"exp"`` and ``"softplus"`` across
             # positive globals.  ``resolve_numpyro_transform(cfg, name)``
-            # honours the per-parameter dict via the model_config's
+            # honors the per-parameter dict via the model_config's
             # ``resolve_positive_transform`` helper.
             tfm_mu = resolve_numpyro_transform(self.model_config, "mu")
             tfm_bs = resolve_numpyro_transform(
@@ -643,7 +1015,7 @@ class DispatchResultsMixin:
             # activation log-odds θ_g) — distinct from TSLN-Rate where
             # the gene baseline is folded into ``self.mu = log(r_hat)``.
             #
-            # ``self.mu`` for TSLN-Logit is zeros (latent prior centre).
+            # ``self.mu`` for TSLN-Logit is zeros (latent prior center).
             #
             # Per-parameter transforms — see the TSLN-Rate dispatch arm
             # comment above for the auditor's Step 6 motivation.  ``rate``
@@ -699,7 +1071,7 @@ class DispatchResultsMixin:
             elif self.eta_anchor is not None:
                 out["eta_anchor"] = dist.Delta(self.eta_anchor)
 
-            # ``mu`` (latent prior centre, zeros for TSLN-Logit) — Delta.
+            # ``mu`` (latent prior center, zeros for TSLN-Logit) — Delta.
             if self.mu is not None:
                 out["mu"] = dist.Delta(self.mu)
 

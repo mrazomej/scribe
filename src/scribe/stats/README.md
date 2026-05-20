@@ -72,9 +72,9 @@ Custom probability distribution classes:
   odds-of-Beta convention. Used for modeling odds ratios in the SCRIBE model.
 
 - **`LogMeanNegativeBinomial(log_mean, concentration)`**: Negative Binomial
-  parameterised by `(log_mean, concentration)`, matching the failure-logit
+  parameterized by `(log_mean, concentration)`, matching the failure-logit
   derivation in `paper/_nb_lognormal.qmd`. Computes `log_prob` entirely in
-  log-space via softplus identities, so no `exp(log_mean)` ever materialises
+  log-space via softplus identities, so no `exp(log_mean)` ever materializes
   on the gradient path. Used by the NB-LogNormal likelihood
   (`scribe.models.components.likelihoods.NBLogNormalLikelihood`) and the
   matching Newton kernel (`scribe.laplace._newton_nbln`).
@@ -134,6 +134,43 @@ Mode property patches for NumPyro distributions:
 
 - **`apply_distribution_mode_patches()`**: Adds `mode` properties to Beta,
   LogNormal, and Normal distributions.
+
+### jacobian_map.py
+
+Jacobian-corrected MAP estimation for transformed variational guides.
+
+When a variational guide for parameter ``y`` is built as ``y = f(x)`` with
+``x ~ p_X`` (typically Normal) and ``f`` a smooth invertible transform, the
+*median* of ``y`` is ``f(loc_X)`` for monotone ``f``, but the *mode* (MAP)
+of ``y`` is **not** ``f(loc_X)`` — it requires a Jacobian correction. This
+module dispatches a per-(transform, base) handler to compute the correct
+constrained-space MAP.
+
+- **`jacobian_corrected_map(transform, base, *, method="auto", ...)`**:
+  Public entry point. Returns ``f(x*)`` where ``x*`` solves
+  ``∇log p_X(x*) - ∇log|f'(x*)| = 0``. Methods: ``"auto"`` (default,
+  closed-form > Newton > autodiff with graceful fallback),
+  ``"transform"`` (backward-compat, returns ``f(loc)``),
+  ``"jacobian"`` (raises on unsupported pairs), ``"closed_form"``,
+  ``"newton"``, ``"autodiff"``.
+
+- **`SIGMA_CEILING_WARN`**: Per-element ``\\sigma`` threshold above which
+  the grid+Newton heuristic for Softplus/Sigmoid is unreliable. Default
+  10. Warns under ``"auto"``, raises under ``"jacobian"``.
+
+#### Supported (transform, base) pairs in v1
+
+| Base                  | Transform                    | Strategy        |
+|-----------------------|------------------------------|-----------------|
+| Normal / Independent  | ExpTransform                 | Closed form: ``loc - scale**2`` |
+| Normal / Independent  | IdentityTransform            | ``loc``         |
+| Normal / Independent  | SoftplusTransform            | Grid + Newton   |
+| Normal / Independent  | SigmoidTransform             | Grid + Newton   |
+| LowRankMVN            | ExpTransform                 | Closed form: ``loc - W(W^T 1) - cov_diag`` |
+| LowRankMVN            | IdentityTransform            | ``loc``         |
+| LowRankMVN            | Sigmoid / Softplus           | **Not in v1** (raises under "jacobian", warns under "auto") |
+| Any of the above      | SlicedTransform              | Per-slice recursion (registered lazily by scribe.flows) |
+| Normal / Independent  | Other elementwise Transform  | Autodiff Newton |
 
 ## Usage Examples
 
@@ -256,6 +293,26 @@ update:
 ```
 
 This is generally more stable than moment matching or MLE via gradient descent.
+
+### Jacobian-Corrected MAP
+
+```python
+import jax.numpy as jnp
+import numpyro.distributions as dist
+from numpyro.distributions.transforms import ExpTransform, SigmoidTransform
+from scribe.stats import jacobian_corrected_map
+
+# LogNormal: corrected mode is exp(mu - sigma^2), NOT exp(mu).
+base = dist.Normal(2.0, 0.5)
+y_corrected = jacobian_corrected_map(ExpTransform(), base)  # ~5.755
+y_median    = jacobian_corrected_map(ExpTransform(), base, method="transform")
+# ~7.389 = exp(2.0); this is the median, not the mode.
+
+# Logistic-normal: bimodal when sigma**2 > 2; grid+Newton finds the
+# global mode.
+base = dist.Normal(2.0, 3.0)   # sigma^2 = 9 > 2
+y = jacobian_corrected_map(SigmoidTransform(), base)  # picks the asymmetric mode
+```
 
 ## References
 

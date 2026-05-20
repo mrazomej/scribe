@@ -72,3 +72,17 @@ __all__ = [
     "rqs_inverse",
     "unconstrained_to_rqs_params",
 ]
+
+
+# Register the SlicedTransform handler for jacobian_corrected_map.
+# SlicedTransform is defined here in scribe.flows.distributions, so it
+# cannot be imported by scribe.stats.jacobian_map without creating a
+# circular dependency (scribe.flows -> scribe.models -> scribe.flows).
+# Instead, scribe.stats.jacobian_map exposes
+# _register_sliced_transform_handler, which we call here once SlicedTransform
+# is in scope. The call is idempotent and only runs when scribe.flows is
+# actually imported (so scribe.stats remains usable without scribe.flows
+# loaded, e.g., in environments that skip the model builders).
+from scribe.stats.jacobian_map import _register_sliced_transform_handler
+
+_register_sliced_transform_handler()

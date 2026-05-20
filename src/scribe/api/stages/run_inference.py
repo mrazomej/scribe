@@ -8,7 +8,7 @@ The dispatcher is resolved at call time through the ``scribe.api``
 module object rather than bound at import time.  This preserves
 monkeypatch compatibility: tests that ``patch("scribe.api._run_inference")``
 replace the attribute on the ``scribe.api`` module, and this stage
-honours that replacement by looking it up dynamically.
+honors that replacement by looking it up dynamically.
 
 This stage also handles the **SVI-informative-prior cascade** for
 NBLN-Laplace fits: when the user passes ``informative_priors_from``,
@@ -45,7 +45,7 @@ def dispatch_inference(ctx: FitContext) -> None:
         returned inference results object.
     """
     # Look up _run_inference at call time so unittest.mock.patch
-    # on "scribe.api._run_inference" is honoured.
+    # on "scribe.api._run_inference" is honored.
     _api = sys.modules["scribe.api"]
     _run_inference = _api._run_inference
 
@@ -94,7 +94,7 @@ def dispatch_inference(ctx: FitContext) -> None:
         # --- positive_transform string for the cascade adapter ---------
         # Cascade adapters accept either a single transform name OR a
         # per-parameter dict mapping internal parameter name → transform.
-        # Honour the dict-form ``positive_transform`` on the target
+        # Honor the dict-form ``positive_transform`` on the target
         # ``model_config`` so the cascade adapter applies the right
         # ``pos_inverse`` to each positive parameter — getting this
         # wrong would silently corrupt the cascade priors / freeze
@@ -306,6 +306,10 @@ def dispatch_inference(ctx: FitContext) -> None:
                     ),
                     source_counts=ctx.count_data,
                     freeze_params=freeze_params,
+                    # Pass-through for cascade reproducibility.
+                    # None = inherit SVI source's default; "transform"
+                    # = pin legacy uncorrected median.
+                    map_method=ctx.kwargs.get("cascade_map_method"),
                     verbose=bool(
                         ctx.kwargs.get(
                             "informative_priors_verbose", True
@@ -326,6 +330,7 @@ def dispatch_inference(ctx: FitContext) -> None:
                     ),
                     source_counts=ctx.count_data,
                     freeze_params=freeze_params,
+                    map_method=ctx.kwargs.get("cascade_map_method"),
                     verbose=bool(
                         ctx.kwargs.get(
                             "informative_priors_verbose", True

@@ -360,6 +360,13 @@ class ScribeLaplaceResults(
     _subset_gene_index: Optional[np.ndarray] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    # Jacobian-corrected MAP control. ``None`` lets ``get_map`` use its
+    # own ``"auto"`` default; a string here pins the per-result default
+    # (e.g., ``with_jacobian_map()`` sets this to ``"auto"`` to mark
+    # the result's stored fields as already corrected). See
+    # ``scribe.stats.jacobian_map`` for the math and the plan's §3.2.
+    map_method: Optional[str] = None
+
     def __repr__(self) -> str:
         """Return a concise text summary for interactive inspection.
 
@@ -434,6 +441,171 @@ class ScribeLaplaceResults(
         if self.model_config is None:
             return "unknown"
         return str(getattr(self.model_config, "base_model", "unknown"))
+
+    def with_jacobian_map(self) -> "ScribeLaplaceResults":
+        """Return a copy where the stored positive globals are
+        recomputed with the Jacobian-corrected MAP, AND all derived
+        quantities are re-derived from the corrected parents.
+
+        Semantics
+        ---------
+        The ``_loc`` / ``_scale`` pairs on a ``ScribeLaplaceResults``
+        are the canonical posterior parameterization; the stored
+        constrained fields (``self.r``, ``self.gene_mean``, etc.) are
+        a *view* derived from them. By default (``map_method=None``,
+        defaults to ``"auto"`` inside :meth:`get_map`), the view is
+        recomputed lazily on every ``get_map`` call. This method
+        materializes the corrected view into the stored fields so that:
+
+        - ``new_result.gene_mean`` returns the corrected value.
+        - Downstream code reading ``self.r`` / ``self.gene_mean`` /
+          ``self.alpha`` directly (e.g., PPC samplers, cascade
+          adapters) sees the corrected values.
+        - ``new_result.map_method`` is set to ``"auto"`` so subsequent
+          ``get_map()`` calls inherit the same default.
+
+        Important: ``_loc`` and ``_scale`` are NOT modified, so
+        ``new_result.get_map(map_method="transform")`` still derives
+        from the loc/scale pair and returns the uncorrected median
+        ``transform(loc)``. The chosen semantics are: ``"transform"``
+        always means "raw transform-of-loc", regardless of what's in
+        the stored view fields.
+
+        Limitations
+        -----------
+        * ``LowRankMVN + Sigmoid``/``Softplus`` pairs cannot be
+          corrected in v1; the corresponding fields fall back to
+          ``transform(loc)`` with a warning.
+        * ``p_capture`` requires ``eta_scale``, which is not currently
+          persisted; the warning fires once (deduped by the default
+          Python warning filter).
+
+        Returns
+        -------
+        ScribeLaplaceResults
+            A new dataclass instance with corrected constrained fields
+            and ``map_method="auto"``.
+        """
+        from dataclasses import replace as _replace
+
+        from ._derived import (
+            lnm_p_from_parents,
+            twostate_logit_derived_from_parents,
+            twostate_rate_derived_from_parents,
+        )
+        from ._dispatch import _correct_positive
+        from ._results_shared import _base_model
+
+        bm = _base_model(self.model_config)
+        updates: Dict[str, Any] = {"map_method": "auto"}
+
+        if bm == "nbln":
+            r_corrected = _correct_positive(
+                self.model_config, "r",
+                getattr(self, "r_loc", None),
+                getattr(self, "r_scale", None),
+                method="auto",
+            )
+            if r_corrected is not None:
+                updates["r"] = r_corrected
+
+        elif bm == "twostate_ln_rate":
+            gene_mean_corrected = _correct_positive(
+                self.model_config, "mu",
+                getattr(self, "gene_mean_loc", None),
+                getattr(self, "gene_mean_scale", None),
+                method="auto",
+            )
+            burst_size_corrected = _correct_positive(
+                self.model_config, "burst_size",
+                getattr(self, "burst_size_loc", None),
+                getattr(self, "burst_size_scale", None),
+                method="auto",
+            )
+            k_off_corrected = _correct_positive(
+                self.model_config, "k_off",
+                getattr(self, "k_off_loc", None),
+                getattr(self, "k_off_scale", None),
+                method="auto",
+            )
+            if gene_mean_corrected is not None:
+                updates["gene_mean"] = gene_mean_corrected
+            if burst_size_corrected is not None:
+                updates["burst_size"] = burst_size_corrected
+            if k_off_corrected is not None:
+                updates["k_off"] = k_off_corrected
+            # Re-derive (alpha, beta, r_hat) from corrected parents,
+            # iff all three are available. Otherwise leave the stored
+            # derived values untouched.
+            if all(
+                k in updates for k in ("gene_mean", "burst_size", "k_off")
+            ):
+                derived = twostate_rate_derived_from_parents(
+                    gene_mean=updates["gene_mean"],
+                    burst_size=updates["burst_size"],
+                    k_off=updates["k_off"],
+                )
+                updates["alpha"] = derived["alpha"]
+                updates["beta"] = derived["beta"]
+                updates["r_hat"] = derived["r_hat"]
+                # CRITICAL: TSLN-Rate convention requires
+                # ``self.mu == log(self.r_hat)`` (mu is the latent
+                # log-rate prior center). PPC paths in _sampling.py
+                # read self.mu directly via
+                # _ppc_twostate_ln_rate_marginal — without this
+                # re-sync, with_jacobian_map() would leave a stale
+                # latent center and PPC samples would silently mix
+                # uncorrected mu with corrected (alpha, beta).
+                # Mirrors the same re-sync in _dispatch.py:get_map.
+                updates["mu"] = jnp.log(
+                    jnp.maximum(derived["r_hat"], 1e-30)
+                )
+
+        elif bm == "twostate_ln_logit":
+            rate_corrected = _correct_positive(
+                self.model_config, "rate",
+                getattr(self, "rate_loc", None),
+                getattr(self, "rate_scale", None),
+                method="auto",
+            )
+            kappa_corrected = _correct_positive(
+                self.model_config, "kappa",
+                getattr(self, "kappa_loc", None),
+                getattr(self, "kappa_scale", None),
+                method="auto",
+            )
+            if rate_corrected is not None:
+                updates["rate"] = rate_corrected
+            if kappa_corrected is not None:
+                updates["kappa"] = kappa_corrected
+            if "kappa" in updates and self.eta_anchor is not None:
+                derived = twostate_logit_derived_from_parents(
+                    kappa=updates["kappa"],
+                    eta_anchor=self.eta_anchor,
+                )
+                updates["alpha"] = derived["alpha"]
+                updates["beta"] = derived["beta"]
+
+        elif bm in ("lnm", "lnmvcp"):
+            mu_T_corrected = _correct_positive(
+                self.model_config, "mu_T",
+                self.mu_T_loc, self.mu_T_scale, method="auto",
+            )
+            r_T_corrected = _correct_positive(
+                self.model_config, "r_T",
+                self.r_T_loc, self.r_T_scale, method="auto",
+            )
+            if mu_T_corrected is not None:
+                updates["mu_T"] = mu_T_corrected
+            if r_T_corrected is not None:
+                updates["r_T"] = r_T_corrected
+            # ``p`` is not a dataclass field — it's derived inside
+            # get_map() from mu_T / r_T. So we do NOT add it to updates.
+            # On the next get_map() call, the corrected p will be
+            # computed from the updated mu_T and r_T.
+
+        # PLN has no positive globals to correct.
+        return _replace(self, **updates)
 
     def _summarize_latent_state(self) -> str:
         """Summarize which latent MAP slots are populated.

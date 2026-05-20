@@ -48,6 +48,13 @@ from .quadrature import (
 # Mode patches
 from .patches import apply_distribution_mode_patches
 
+# Jacobian-corrected MAP for transformed variational guides.
+# See scribe/stats/jacobian_map.py for the mathematical background.
+from .jacobian_map import (
+    jacobian_corrected_map,
+    SIGMA_CEILING_WARN,
+)
+
 __all__ = [
     # Histogram
     "compute_histogram_percentiles",
@@ -79,4 +86,7 @@ __all__ = [
     "gauss_legendre_nodes_weights",
     # Patches
     "apply_distribution_mode_patches",
+    # Jacobian-corrected MAP
+    "jacobian_corrected_map",
+    "SIGMA_CEILING_WARN",
 ]

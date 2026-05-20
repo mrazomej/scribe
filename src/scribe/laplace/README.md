@@ -3,8 +3,8 @@
 This directory contains scribe's Laplace-approximation inference path. Unlike
 the SVI / VAE path, Laplace inference has no encoder: each cell's per-cell
 posterior is found locally via Newton iteration on the log-density, and the
-Gaussian approximation is centred at the resulting MAP with covariance
-$-H^{-1}$ from the Hessian curvature. The outer loop optimises global
+Gaussian approximation is centered at the resulting MAP with covariance
+$-H^{-1}$ from the Hessian curvature. The outer loop optimizes global
 parameters (decoder $\mu$, $W$, $d$, NB-on-totals globals when present) by
 SVI on the Laplace-approximated ELBO.
 
@@ -258,7 +258,7 @@ In both cases:
 
 The engine runs one final Newton sweep over all cells (longer than the
 inner-loop iterations during training) and reports the worst per-cell
-gradient norm. If it exceeds `newton_tolerance`, behaviour is controlled
+gradient norm. If it exceeds `newton_tolerance`, behavior is controlled
 by `LaplaceConfig.convergence_action`:
 
 | Value | Effect |
@@ -353,7 +353,7 @@ worst comp grad doesn't converge below tolerance
 ├─ loss is decreasing?
 │   ├─ YES → globals are improving. Worst-grad lag is a
 │   │        symptom of the rank-deficient Hessian; it will
-│   │        shrink as globals stabilise.
+│   │        shrink as globals stabilize.
 │   │
 │   └─ NO  → numerical issue. Check init: empirical mu
 │            (from log-counts) should not be NaN, W should
@@ -883,6 +883,120 @@ for cross-dataset transfer.
 - **`w_prior={"type": "none"}`** is normalized to `None` *before*
   scope validation, so the explicit no-op config is universally
   accepted (useful for parameterized testing).
+
+## Jacobian-corrected MAP (`map_method`)
+
+The Laplace approximation stores the posterior as a Gaussian in
+*unconstrained* space (``*_loc``, ``*_scale`` per parameter), then maps
+through ``positive_transform`` (Exp or Softplus) at result-construction
+time to produce the constrained stored fields (``self.r``,
+``self.gene_mean``, ``self.mu_T``, ``self.r_T``, etc.).
+
+By default, those stored fields are ``transform(loc)`` — the **median**
+of the constrained-space posterior for monotone transforms, NOT the
+mode (MAP). To get the true constrained-space mode, you need the
+**Jacobian correction**: for ``X ~ N(\\mu, \\sigma^2)``, ``Y = e^X`` has
+mode ``e^{\\mu - \\sigma^2}``, not ``e^{\\mu}``.
+
+### `get_map(map_method=...)`
+
+```python
+result = scribe.fit(counts, ...)
+
+# Default: Jacobian-corrected MAP. New in v1; produces ~exp(sigma^2)-
+# shifted values compared to legacy.
+m = result.get_map()
+
+# Legacy: f(loc) (=median); reproduces pre-correction byte-for-byte.
+m_legacy = result.get_map(map_method="transform")
+
+# Strict: raise on unsupported (transform, base) pairs.
+m_strict = result.get_map(map_method="jacobian")
+```
+
+The method controls how the **returned dict** computes constrained
+values from the persisted ``(_loc, _scale)`` pairs. It does NOT mutate
+the stored fields — ``result.r`` still has the median value unless you
+call ``with_jacobian_map()`` (see below).
+
+### `with_jacobian_map()` — opt-in persistent correction
+
+If downstream code reads ``self.r`` / ``self.gene_mean`` directly (e.g.,
+PPC samplers, cascade adapters), use ``with_jacobian_map()`` to
+materialize the corrected view into the stored fields:
+
+```python
+new_result = result.with_jacobian_map()
+# new_result.r is now the corrected MAP.
+# For TSLN-Rate, new_result.alpha / .beta / .r_hat are also re-derived
+# from the corrected (gene_mean, burst_size, k_off) via _twostate_reparam.
+# For LNM, the derived p is recomputed from the corrected (mu_T, r_T)
+# inside get_map().
+```
+
+The ``_loc`` / ``_scale`` pairs are NOT modified, so
+``new_result.get_map(map_method="transform")`` still derives from
+``_loc`` and returns the uncorrected median. The chosen semantics:
+``"transform"`` always means "raw transform-of-loc", regardless of
+what's in the stored view fields.
+
+### Cascade reproducibility (`cascade_map_method`)
+
+When ``scribe.fit(..., informative_priors_from=svi_results)`` is used,
+the cascade extractors (``freeze_values_from_results``,
+``freeze_values_from_twostate_results``) call
+``svi_results.get_map()`` internally to extract MAP values from the SVI
+source. The SVI default flipped to ``map_method="auto"`` (Jacobian-
+corrected MAP) in v1, which means:
+
+* Pre-v1 cascade fits used ``transform(loc)`` median values.
+* Post-v1 cascade fits use ``exp(\\mu - \\sigma^2)``-shifted values by
+  default.
+
+For reproducibility of pre-v1 cascade results, pass
+``cascade_map_method="transform"`` to ``scribe.fit``:
+
+```python
+# Reproduce pre-correction cascade behavior.
+result = scribe.fit(
+    counts,
+    informative_priors_from=svi_results,
+    cascade_map_method="transform",   # pins legacy uncorrected median
+    ...
+)
+
+# Default (post-v1): cascade uses Jacobian-corrected MAP.
+result = scribe.fit(
+    counts,
+    informative_priors_from=svi_results,
+    ...
+)
+```
+
+### Limitations (v1)
+
+* **`p_capture` cannot be corrected**: requires persisting
+  ``eta_scale``, which is not yet wired into ``pack_result``. Calling
+  ``get_map(map_method="auto")`` on a result with ``eta_loc`` emits a
+  one-per-call-site warning; ``map_method="jacobian"`` raises.
+* **`LowRankMVN + Sigmoid/Softplus`** requires a coupled multi-start
+  optimizer not in v1. Falls back to ``transform(loc)`` with a warning
+  under ``"auto"``; raises under ``"jacobian"``. In practice this only
+  matters for low-rank guides on probability or positive parameters —
+  most production fits use independent Normal bases for these.
+* **Heuristic sigma ceiling**: the grid+Newton refinement for
+  Sigmoid/Softplus is reliable for ``sigma < SIGMA_CEILING_WARN``
+  (default 10). Beyond that, the adaptive grid may not cover
+  asymptotic modes; the public wrapper warns under ``"auto"`` and
+  raises under ``"jacobian"``.
+
+### See also
+
+* [`scribe/stats/jacobian_map.py`](../stats/jacobian_map.py) for the
+  math and dispatch table.
+* [`scribe/laplace/_derived.py`](_derived.py) — derivation helpers
+  used by ``with_jacobian_map`` to recompute TSLN ``(\\alpha, \\beta,
+  r_{\\hat{}})`` and LNM ``p``.
 
 ## See also
 
