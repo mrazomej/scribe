@@ -191,9 +191,34 @@ class ScribeLaplaceResults(
     # ``alpha = gene_mean/burst_size``, ``beta = k_off``,
     # ``r_hat = gene_mean + burst_size*k_off`` after the mean-preserving
     # floor in ``_twostate_reparam``.
+    #
+    # For ``twostate_ln_logit`` (Variant B) these fields are also
+    # populated but with the logit-variant derivation:
+    # ``alpha = kappa · σ(eta_anchor)``,
+    # ``beta = kappa · (1 − σ(eta_anchor))``.  ``r_hat`` is left
+    # unpopulated for the logit variant — its analog is :attr:`rate`.
     alpha: Optional[jnp.ndarray] = None
     beta: Optional[jnp.ndarray] = None
     r_hat: Optional[jnp.ndarray] = None
+
+    # TwoState-LogNormal-Logit fields (``base_model ==
+    # "twostate_ln_logit"``).  Variant B's sampled gene-level globals.
+    # See plan §4.C.3 and ``_obs_twostate_ln_logit.py``.
+    #
+    # ``rate`` (positive): gene-level ON-production rate.
+    # **z-independent** by Rev 4 (auditor's Round-1 fix).  The Poisson
+    # scale in the data-side likelihood is ``λ = rate · ν_c`` where
+    # ``ν_c = exp(-eta_capture)`` for fixed-offset capture.
+    # ``kappa`` (positive): Beta concentration ``α + β``.
+    # ``eta_anchor`` (real): per-gene activation log-odds ``θ_g``.
+    # The TSLN-Logit per-cell-per-gene shape parameters are derived
+    # at the data side as ``α_cg = κ · σ(θ_g + z_g)`` and
+    # ``β_cg = κ · (1 − σ(θ_g + z_g))``.  The cell-level posterior
+    # over (α, β) is implicit in (x_loc, eta_anchor); the gene-level
+    # ``alpha`` / ``beta`` fields above carry the values at ``z = 0``.
+    rate: Optional[jnp.ndarray] = None
+    kappa: Optional[jnp.ndarray] = None
+    eta_anchor: Optional[jnp.ndarray] = None
 
     # Curvature-clamp diagnostics (TSLN-rate, plan §4.A.3 Rev 3+).  The
     # closed-form Hessian-diagonal factor ``a_g`` is defensively floored
@@ -244,6 +269,20 @@ class ScribeLaplaceResults(
     # populated — those are NBLN-specific.
     gene_mean_loc: Optional[jnp.ndarray] = None
     gene_mean_scale: Optional[jnp.ndarray] = None
+    # TSLN-Logit fields (``base_model == "twostate_ln_logit"``).
+    # ``rate_loc / kappa_loc`` are unconstrained pre-transforms of
+    # the positive gene-level globals (``rate / kappa``).
+    # ``eta_anchor_loc`` is real-valued (identity transform) and equal
+    # to :attr:`eta_anchor`.  All three are populated by
+    # ``compute_global_uncertainty``; the corresponding ``*_scale``
+    # entries are NaN when the parameter is frozen at the cascade MAP
+    # (the default L4 cascade freezes all three).
+    rate_loc: Optional[jnp.ndarray] = None
+    rate_scale: Optional[jnp.ndarray] = None
+    kappa_loc: Optional[jnp.ndarray] = None
+    kappa_scale: Optional[jnp.ndarray] = None
+    eta_anchor_loc: Optional[jnp.ndarray] = None
+    eta_anchor_scale: Optional[jnp.ndarray] = None
     # NBLN latent prior mean ``mu`` posterior (per gene, log-rate
     # coordinate).  Populated by ``compute_global_uncertainty`` using
     # the diagonal-Σ approximation of the profiled Hessian.  Both

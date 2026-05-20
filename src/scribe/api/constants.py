@@ -59,7 +59,5 @@ LAPLACE_SUPPORTED_BASE_MODELS: set[str] = {
 CASCADE_FROM_SVI_SUPPORTED_BASE_MODELS: set[str] = {
     "nbln",
     "twostate_ln_rate",
-    # ``twostate_ln_logit`` will join in PR-2 once its cascade adapter
-    # ships.  The ``priors_from_twostate_results`` function currently
-    # raises NotImplementedError for ``target_variant="logit"``.
+    "twostate_ln_logit",
 }

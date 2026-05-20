@@ -167,9 +167,13 @@ class DispatchResultsMixin:
             If the stored ``base_model`` is unknown.
         """
         bm = _base_model(self.model_config)
-        if bm in ("pln", "nbln", "twostate_ln_rate"):
-            # NBLN / TSLN-Rate have the same per-cell latent semantic
-            # as PLN: ``x_loc`` is the latent log-rate MAP.
+        if bm in ("pln", "nbln", "twostate_ln_rate", "twostate_ln_logit"):
+            # PLN-family base models: ``x_loc`` is the per-cell latent
+            # MAP.  Semantics vary by variant — for PLN/NBLN/TSLN-Rate
+            # it's the log-rate; for TSLN-Logit it's the additive shift
+            # on the activation log-odds ``θ_g + x_g`` — but in every
+            # case ``x_loc`` is the right field for "the latent embedding"
+            # downstream consumers want.
             return self.x_loc
         if bm in ("lnm", "lnmvcp"):
             if self.z_loc is not None:
@@ -313,6 +317,69 @@ class DispatchResultsMixin:
             out["mu_frozen"] = "mu" in frozen
             out["burst_size_frozen"] = "burst_size" in frozen
             out["k_off_frozen"] = "k_off" in frozen
+            out["eta_frozen"] = "eta" in frozen
+            wpd = getattr(self, "w_prior_diagnostics", None)
+            if wpd is not None:
+                out["w_prior_diagnostics"] = wpd
+            return out
+
+        if bm == "twostate_ln_logit":
+            # TSLN-Logit (Variant B) get_map: surface the sampled
+            # gene-level globals (rate, kappa, eta_anchor) and the
+            # derived reporting quantities (alpha, beta, gene_mean at
+            # z=0).  ``self.mu`` is zeros for TSLN-Logit (the latent
+            # prior centre); ``self.eta_anchor`` is the per-gene
+            # activation log-odds θ_g.
+            out = {
+                # ``mu`` here is the LATENT prior centre (zeros for
+                # TSLN-Logit — the latent z ~ N(0, Σ) prior).
+                "mu": self.mu,
+                "W": self.W,
+                "d_tsln": self.d,
+                "y_latent": self.x_loc,
+            }
+            if self.rate is not None:
+                out["rate"] = self.rate
+            if self.kappa is not None:
+                out["kappa"] = self.kappa
+            if self.eta_anchor is not None:
+                out["eta_anchor"] = self.eta_anchor
+            if self.gene_mean is not None:
+                out["gene_mean"] = self.gene_mean
+            if self.alpha is not None:
+                out["alpha"] = self.alpha
+            if self.beta is not None:
+                out["beta"] = self.beta
+            if self.eta_loc is not None:
+                # Fixed-offset capture path: surface the same
+                # eta_capture / p_capture pair as TSLN-Rate / NBLN so
+                # the capture-related viz plots transfer.
+                out["eta_capture"] = self.eta_loc
+                out["p_capture"] = jnp.exp(-self.eta_loc)
+            # Unconstrained loc/scale fields (when populated by
+            # compute_global_uncertainty).  Default L4 cascade freezes
+            # all three gene globals → scales are NaN.
+            for key in (
+                "rate_loc", "rate_scale",
+                "kappa_loc", "kappa_scale",
+                "eta_anchor_loc", "eta_anchor_scale",
+            ):
+                val = getattr(self, key, None)
+                if val is not None:
+                    out[key] = val
+            # Clamp diagnostics.
+            for key in (
+                "a_raw_min", "a_raw_negative_fraction",
+                "a_clamp_fraction", "a_clamp_per_gene",
+            ):
+                val = getattr(self, key, None)
+                if val is not None:
+                    out[key] = val
+            # Cascade freeze flags — TSLN-Logit's gene-global set.
+            frozen = getattr(self, "frozen_params", frozenset())
+            out["rate_frozen"] = "rate" in frozen
+            out["kappa_frozen"] = "kappa" in frozen
+            out["eta_anchor_frozen"] = "eta_anchor" in frozen
             out["eta_frozen"] = "eta" in frozen
             wpd = getattr(self, "w_prior_diagnostics", None)
             if wpd is not None:
@@ -550,6 +617,78 @@ class DispatchResultsMixin:
             elif self.k_off is not None:
                 out["k_off"] = dist.Delta(self.k_off)
             # eta_capture
+            if self.eta_loc is not None and "eta" not in frozen:
+                out["eta_capture"] = dist.Delta(self.eta_loc)
+                out["p_capture"] = dist.Delta(jnp.exp(-self.eta_loc))
+            return out
+
+        if bm == "twostate_ln_logit":
+            # TSLN-Logit (Variant B): latent ``y_latent`` is a
+            # ``LowRankMultivariateNormal(loc=0, cov=WW^T + diag(d))``;
+            # the gene baseline lives in ``eta_anchor`` (per-gene
+            # activation log-odds θ_g) — distinct from TSLN-Rate where
+            # the gene baseline is folded into ``self.mu = log(r_hat)``.
+            #
+            # ``self.mu`` for TSLN-Logit is zeros (latent prior centre).
+            tfm = resolve_numpyro_transform(self.model_config)
+            out: Dict[str, Any] = {
+                "y_latent": dist.LowRankMultivariateNormal(
+                    loc=self.mu, cov_factor=self.W, cov_diag=self.d
+                ),
+            }
+            frozen = getattr(self, "frozen_params", frozenset())
+
+            # ``rate`` (positive) posterior.
+            if (
+                "rate" not in frozen
+                and self.rate_loc is not None
+                and self.rate_scale is not None
+            ):
+                out["rate"] = dist.TransformedDistribution(
+                    dist.Normal(self.rate_loc, self.rate_scale).to_event(1),
+                    tfm,
+                )
+            elif self.rate is not None:
+                out["rate"] = dist.Delta(self.rate)
+
+            # ``kappa`` (positive) posterior.
+            if (
+                "kappa" not in frozen
+                and self.kappa_loc is not None
+                and self.kappa_scale is not None
+            ):
+                out["kappa"] = dist.TransformedDistribution(
+                    dist.Normal(self.kappa_loc, self.kappa_scale).to_event(1),
+                    tfm,
+                )
+            elif self.kappa is not None:
+                out["kappa"] = dist.Delta(self.kappa)
+
+            # ``eta_anchor`` (real-valued) posterior — identity transform.
+            if (
+                "eta_anchor" not in frozen
+                and self.eta_anchor_loc is not None
+                and self.eta_anchor_scale is not None
+            ):
+                out["eta_anchor"] = dist.Normal(
+                    self.eta_anchor_loc, self.eta_anchor_scale
+                ).to_event(1)
+            elif self.eta_anchor is not None:
+                out["eta_anchor"] = dist.Delta(self.eta_anchor)
+
+            # ``mu`` (latent prior centre, zeros for TSLN-Logit) — Delta.
+            if self.mu is not None:
+                out["mu"] = dist.Delta(self.mu)
+
+            # Derived reporting quantities at ``z = 0`` — Delta marginals.
+            if self.gene_mean is not None:
+                out["gene_mean"] = dist.Delta(self.gene_mean)
+            if self.alpha is not None:
+                out["alpha"] = dist.Delta(self.alpha)
+            if self.beta is not None:
+                out["beta"] = dist.Delta(self.beta)
+
+            # Capture — fixed-offset only in PR-2.
             if self.eta_loc is not None and "eta" not in frozen:
                 out["eta_capture"] = dist.Delta(self.eta_loc)
                 out["p_capture"] = dist.Delta(jnp.exp(-self.eta_loc))

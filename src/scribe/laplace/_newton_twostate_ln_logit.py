@@ -132,6 +132,22 @@ _LOG_RATE_MAX = 50.0
 # trigamma evaluations away from the singular boundaries 0 / 1.  The
 # raw sigmoid never exactly hits 0 or 1 but in pathological iterates
 # (large |x|) the float32 rounding can land there.
+#
+# **Pseudo-derivative caveat (auditor R3 follow-up)**: when the raw
+# sigmoid lands in the clipped region, ``φ`` is set to the boundary
+# value (``_PHI_MIN`` or ``_PHI_MAX``) but the *Newton derivatives*
+# ``φ' = φ(1-φ)`` and ``φ'' = φ'(1-2φ)`` continue to be computed from
+# the clipped ``φ``.  This is intentional: ``φ' = 0`` at the boundary
+# would freeze the Newton step (no first-order information), and the
+# correct derivative of the clipped function on the saturated side
+# would be zero anyway.  The clipped formulae act as a *Newton
+# stabilizer* — they keep the iterate moving and never amplify
+# garbage from the singular region.  Outside the clip the formulae
+# are mathematically exact; only at extreme ``|θ + x|`` (where the
+# raw sigmoid would underflow to 0 or saturate to 1) does the
+# pseudo-derivative semantics kick in, and at those points the
+# Newton step is dominated by the prior anyway because the data-side
+# Hessian saturates.
 _PHI_MIN = 1e-6
 _PHI_MAX = 1.0 - 1e-6
 

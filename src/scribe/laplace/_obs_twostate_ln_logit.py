@@ -167,11 +167,14 @@ class TwoStateLNLogitObservationModel(LaplaceObservationModel):
     ----------
     capture_anchor : Optional[Tuple[float, float]]
         Biology-anchored capture prior ``(log M_0, σ_M)``.  **NOT
-        supported in PR-2** — pass ``None``.  Provided here for
-        signature parity with NBLN/TSLN-Rate; raises
-        ``NotImplementedError`` when non-``None`` because activating
-        it would require the joint cross-Hessian Newton path which is
-        deferred to phase 3.
+        supported in PR-2** — pass ``None``.  Normally the user-facing
+        API layer (``scribe.api.stages.model_flags``) rejects
+        ``priors={"capture_efficiency": ...}`` for TSLN-Logit before
+        reaching this constructor; the constructor's own
+        ``NotImplementedError`` is a second line of defense for
+        bypasses (e.g. tests or direct engine instantiation).
+        Activating it would require the joint cross-Hessian Newton
+        path, deferred to phase 3.
     model_config : ModelConfig, optional
         Used to resolve ``positive_transform`` for ``rate`` and
         ``kappa``.  ``eta_anchor`` is real-valued; no positive map.

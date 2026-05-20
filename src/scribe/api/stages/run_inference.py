@@ -96,13 +96,19 @@ def dispatch_inference(ctx: FitContext) -> None:
         # the ``_JAX_POSITIVE_FNS`` lookup).  Handle the dict-form
         # ``positive_transform={"mean_expression": "exp"}`` by
         # resolving the relevant per-parameter transform via the
-        # model config helper.  For NBLN we use the ``r`` transform
-        # (the only positive global on the source side); for
-        # TSLN-Rate we use ``mu`` (also a positive global).
+        # model config helper.  Pick the canonical positive parameter
+        # name per target variant so the right entry in the dict-form
+        # ``positive_transform`` is consulted:
+        #   - NBLN              → ``r``       (gene dispersion)
+        #   - TSLN-Rate         → ``mu``      (positive gene mean)
+        #   - TSLN-Logit        → ``rate``    (positive gene rate)
         if hasattr(ctx.model_config, "resolve_positive_transform"):
-            _pos_xform_param = (
-                "mu" if base_model == "twostate_ln_rate" else "r"
-            )
+            if base_model == "twostate_ln_rate":
+                _pos_xform_param = "mu"
+            elif base_model == "twostate_ln_logit":
+                _pos_xform_param = "rate"
+            else:
+                _pos_xform_param = "r"
             _pos_xform_str = ctx.model_config.resolve_positive_transform(
                 _pos_xform_param
             )
@@ -112,16 +118,19 @@ def dispatch_inference(ctx: FitContext) -> None:
                 _pos_xform_str = "softplus"
 
         # --- Build prior bundle (dispatch on base_model) ---------------
-        if base_model == "twostate_ln_rate":
+        if base_model in ("twostate_ln_rate", "twostate_ln_logit"):
             from ...laplace.priors import priors_from_twostate_results
 
+            _target_variant = (
+                "rate" if base_model == "twostate_ln_rate" else "logit"
+            )
             informative_priors, capture_mode_override = (
                 priors_from_twostate_results(
                     informative_priors_from,
                     target_positive_transform=_pos_xform_str,
                     target_n_genes=ctx.n_genes,
                     target_n_cells=ctx.n_cells,
-                    target_variant="rate",
+                    target_variant=_target_variant,
                     target_gene_names=target_gene_names,
                     target_gene_mask=getattr(
                         ctx, "_gene_coverage_mask", None
@@ -142,6 +151,23 @@ def dispatch_inference(ctx: FitContext) -> None:
                     ),
                 )
             )
+            # PR-2 capture restriction (Rev 4): TSLN-Logit cannot
+            # accept a soft-cascade eta because the joint Newton path
+            # is deferred to phase 3.  When the SVI source supplies
+            # per-cell eta (capture_mode_override == "eta"), the
+            # downstream obs-model constructor would reject it via
+            # ``informative_priors['eta']``.  Strip the eta entry from
+            # the prior bundle here and force the cascade to be a
+            # *frozen-offset* one (the eta freeze value is built below
+            # from the SVI MAP).  ``capture_mode_override`` stays
+            # "eta" so the bridge knows capture is on; the obs model
+            # sees no soft eta prior.
+            if (
+                base_model == "twostate_ln_logit"
+                and informative_priors is not None
+                and "eta" in informative_priors
+            ):
+                del informative_priors["eta"]
         else:
             from ...laplace.priors import priors_from_results
 
@@ -183,10 +209,15 @@ def dispatch_inference(ctx: FitContext) -> None:
         # aliases to internal short names and raises on ambiguity
         # (e.g. ("r", "dispersion")).
         from ...models.config.parameter_mapping import normalize_freeze_keys
-        # Per-base-model defaults: NBLN uses (r, eta); TSLN-Rate uses
-        # (mu, burst_size, k_off) — the plan §5.4 "Level 4" cascade.
+        # Per-base-model defaults — the plan §5.4 "Level 4" cascade
+        # for each variant:
+        #   NBLN          → (r, eta)
+        #   TSLN-Rate     → (mu, burst_size, k_off)
+        #   TSLN-Logit    → (rate, kappa, eta_anchor)   [Rev 3]
         if base_model == "twostate_ln_rate":
             _default_freeze = ("mu", "burst_size", "k_off")
+        elif base_model == "twostate_ln_logit":
+            _default_freeze = ("rate", "kappa", "eta_anchor")
         else:
             _default_freeze = ("r", "eta")
         raw_freeze = ctx.kwargs.get(
@@ -196,19 +227,47 @@ def dispatch_inference(ctx: FitContext) -> None:
             freeze_params = ()
         else:
             freeze_params = normalize_freeze_keys(raw_freeze)
+
+        # PR-2 capture restriction (Rev 4): for TSLN-Logit, when the
+        # SVI source has per-cell capture (``capture_mode_override ==
+        # "eta"``), we MUST route capture through the fixed-offset
+        # path because soft-cascade eta would require the joint
+        # Newton (deferred to phase 3).  Auto-include ``"eta"`` in
+        # ``freeze_params`` when the user didn't drop it explicitly,
+        # so the cascade adapter populates ``freeze_values["eta"]``
+        # from the SVI MAP and the obs model routes to the
+        # ``x_only_offset`` Newton.
+        if (
+            base_model == "twostate_ln_logit"
+            and capture_mode_override == "eta"
+            and "eta" not in freeze_params
+        ):
+            import logging
+            logging.getLogger("scribe").info(
+                "TSLN-Logit: auto-adding 'eta' to informative_priors_freeze "
+                "because the SVI source has per-cell capture and Rev 4 "
+                "permits only fixed-offset capture in PR-2.  To opt out "
+                "of capture entirely, refit the SVI source without "
+                "capture or pass informative_priors_freeze without 'eta' "
+                "explicitly after this point."
+            )
+            freeze_params = freeze_params + ("eta",)
         # Build the freeze-values bundle from SVI's get_map().
         if freeze_params:
-            if base_model == "twostate_ln_rate":
+            if base_model in ("twostate_ln_rate", "twostate_ln_logit"):
                 from ...laplace.priors import (
                     freeze_values_from_twostate_results,
                 )
 
+                _target_variant = (
+                    "rate" if base_model == "twostate_ln_rate" else "logit"
+                )
                 freeze_values = freeze_values_from_twostate_results(
                     informative_priors_from,
                     target_positive_transform=_pos_xform_str,
                     target_n_genes=ctx.n_genes,
                     target_n_cells=ctx.n_cells,
-                    target_variant="rate",
+                    target_variant=_target_variant,
                     target_gene_names=target_gene_names,
                     target_gene_mask=getattr(
                         ctx, "_gene_coverage_mask", None

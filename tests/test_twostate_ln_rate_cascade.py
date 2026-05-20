@@ -169,44 +169,124 @@ def test_freeze_values_from_twostate_results_coord_map():
 
 
 # ---------------------------------------------------------------------
-# Test 2: logit variant deferred
+# Test 2: logit variant now implemented — verify coord map
 # ---------------------------------------------------------------------
 
 
-def test_priors_from_twostate_results_logit_raises():
-    """``target_variant='logit'`` raises NotImplementedError in PR-1."""
-    from scribe.laplace.priors import (
-        priors_from_twostate_results,
-        freeze_values_from_twostate_results,
-    )
+def test_priors_from_twostate_results_logit_effective_path():
+    """``target_variant='logit'`` consumes effective deterministics.
 
-    class StubResult:
-        n_genes = 4
+    The Rev 4 cascade adapter prefers the SVI's ``alpha`` / ``beta`` /
+    ``r_hat`` / ``eta_act`` deterministic sites over re-deriving from
+    raw ``(mu, burst_size, k_off)``.  This test verifies the primary
+    path is taken when the deterministics are present and that the
+    coordinate map matches the documented derivation:
+
+        rate_pos       = r_hat
+        kappa_pos      = alpha + beta
+        eta_anchor     = eta_act         (real-valued, identity transform)
+    """
+    from scribe.laplace.priors import priors_from_twostate_results
+    from scribe.laplace._global_uncertainty import _JAX_POSITIVE_FNS
+
+    G = 4
+    S = 50
+    rng = np.random.default_rng(1)
+
+    alpha = jnp.asarray(np.exp(rng.normal(size=(S, G)).astype(np.float32)))
+    beta = jnp.asarray(np.exp(rng.normal(size=(S, G)).astype(np.float32)))
+    r_hat = jnp.asarray(
+        np.exp(rng.normal(0.5, 0.3, size=(S, G)).astype(np.float32))
+    )
+    eta_act = jnp.asarray(rng.normal(0.0, 1.0, size=(S, G)).astype(np.float32))
+
+    class StubSVIResult:
+        n_genes = G
 
         def get_posterior_samples(self, **_):
-            return {}
+            return {
+                "alpha": alpha,
+                "beta": beta,
+                "r_hat": r_hat,
+                "eta_act": eta_act,
+            }
 
-        def get_map(self, **_):
-            return {}
+    bundle, capture_mode = priors_from_twostate_results(
+        results=StubSVIResult(),
+        target_positive_transform="softplus",
+        target_n_genes=G,
+        target_n_cells=10,
+        target_variant="logit",
+        n_samples=S,
+        tau=1.0,
+        verbose=False,
+    )
+    assert capture_mode == "none"
+    assert set(bundle.keys()) == {"rate", "kappa", "eta_anchor"}
 
-    with pytest.raises(NotImplementedError, match="phase-1|PR-2|deferred"):
-        priors_from_twostate_results(
-            results=StubResult(),
+    _, pos_inv = _JAX_POSITIVE_FNS["softplus"]
+    # rate_pos = r_hat → pos_inverse(r_hat) in target unconstrained coord.
+    expected_rate_uncon = pos_inv(r_hat)
+    np.testing.assert_allclose(
+        np.asarray(bundle["rate"]["loc"]),
+        np.asarray(expected_rate_uncon.mean(axis=0)),
+        atol=1e-4,
+    )
+    # kappa_pos = alpha + beta → pos_inverse(alpha+beta).
+    expected_kappa_uncon = pos_inv(alpha + beta)
+    np.testing.assert_allclose(
+        np.asarray(bundle["kappa"]["loc"]),
+        np.asarray(expected_kappa_uncon.mean(axis=0)),
+        atol=1e-4,
+    )
+    # eta_anchor is identity-mapped (real-valued); loc == mean of eta_act.
+    np.testing.assert_allclose(
+        np.asarray(bundle["eta_anchor"]["loc"]),
+        np.asarray(eta_act.mean(axis=0)),
+        atol=1e-4,
+    )
+
+
+def test_priors_from_twostate_results_logit_fallback_warns():
+    """When the effective deterministics are absent, fall back to raw.
+
+    The fallback uses the algebraic derivation from
+    ``(mu, burst_size, k_off)`` and emits a UserWarning telling the
+    user the cascade may be inconsistent if the upstream
+    ``_twostate_reparam`` floors activated.
+    """
+    import warnings
+    from scribe.laplace.priors import priors_from_twostate_results
+
+    G = 3
+    S = 40
+    rng = np.random.default_rng(2)
+    mu = jnp.asarray(np.exp(rng.normal(size=(S, G)).astype(np.float32)))
+    bs = jnp.asarray(np.exp(rng.normal(size=(S, G)).astype(np.float32)))
+    ko = jnp.asarray(np.exp(rng.normal(size=(S, G)).astype(np.float32)))
+
+    class StubSVIResult:
+        n_genes = G
+
+        def get_posterior_samples(self, **_):
+            return {"mu": mu, "burst_size": bs, "k_off": ko}
+
+    with warnings.catch_warnings(record=True) as w_list:
+        warnings.simplefilter("always")
+        bundle, capture_mode = priors_from_twostate_results(
+            results=StubSVIResult(),
             target_positive_transform="softplus",
-            target_n_genes=4,
+            target_n_genes=G,
             target_n_cells=10,
             target_variant="logit",
+            n_samples=S,
+            tau=1.0,
             verbose=False,
         )
-    with pytest.raises(NotImplementedError, match="PR-2|deferred"):
-        freeze_values_from_twostate_results(
-            results=StubResult(),
-            target_positive_transform="softplus",
-            target_n_genes=4,
-            target_n_cells=10,
-            target_variant="logit",
-            verbose=False,
-        )
+    assert any(
+        "fell back to raw" in str(rec.message) for rec in w_list
+    ), "fallback path must emit a UserWarning"
+    assert set(bundle.keys()) == {"rate", "kappa", "eta_anchor"}
 
 
 # ---------------------------------------------------------------------

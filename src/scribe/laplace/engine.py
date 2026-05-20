@@ -165,6 +165,30 @@ class LaplaceInferenceEngine:
                     getattr(laplace_config, "newton_max_step", 5.0)
                 ),
             )
+        elif bm == "twostate_ln_logit":
+            from ._obs_twostate_ln_logit import (
+                TwoStateLNLogitObservationModel,
+            )
+
+            # PR-2 capture restriction (Rev 4): the constructor
+            # accepts only no-capture and frozen-offset capture.  If
+            # the bridge built a non-None ``capture_anchor`` from a
+            # biology-informed prior, the constructor will raise
+            # NotImplementedError pointing the user at the cascade
+            # frozen-eta path or at dropping the anchor.  Validation
+            # is delegated to the constructor itself so the error
+            # message comes from one place.
+            obs_model = TwoStateLNLogitObservationModel(
+                capture_anchor=capture_anchor,
+                model_config=model_config,
+                informative_priors=informative_priors,
+                freeze_values=freeze_values,
+                freeze_params=freeze_params,
+                w_prior_strategy=w_prior_strategy,
+                max_step=float(
+                    getattr(laplace_config, "newton_max_step", 5.0)
+                ),
+            )
         elif bm in ("lnm", "lnmvcp"):
             from ._obs_lnm import LNMObservationModel
 
@@ -193,9 +217,8 @@ class LaplaceInferenceEngine:
         else:
             raise NotImplementedError(
                 f"Laplace inference is supported for PLN, NBLN, LNM, "
-                f"LNMVCP, and twostate_ln_rate; got base_model={bm!r}. "
-                "twostate_ln_logit is planned for PR-2 of the "
-                "cross-gene TwoState extension."
+                f"LNMVCP, twostate_ln_rate, and twostate_ln_logit; "
+                f"got base_model={bm!r}."
             )
 
         return run_laplace_em(

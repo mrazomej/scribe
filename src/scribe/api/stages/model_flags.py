@@ -55,13 +55,60 @@ def resolve_model_flags(ctx: FitContext) -> None:
     # Reject the flags up-front with a clear message.
     if _is_twostate_ln_model:
         if variable_capture is not None or zero_inflation is not None:
+            # Per-variant guidance: TSLN-Rate accepts capture_anchor
+            # priors; TSLN-Logit does NOT (Rev 4 — joint Newton with
+            # the cross-Hessian is deferred to phase 3).
+            if model.lower() == "twostate_ln_logit":
+                _capture_hint = (
+                    "Capture for 'twostate_ln_logit' is supported only "
+                    "as a fixed offset from the cascade source's per-cell "
+                    "eta_capture / p_capture (PR-2 Rev 4).  Biology-"
+                    "anchored capture_anchor is deferred to phase 3."
+                )
+            else:
+                _capture_hint = (
+                    "Capture is supplied through the cascade_source's "
+                    "eta_capture (when available) or through an explicit "
+                    "capture_anchor / biology-informed prior."
+                )
             raise ValueError(
                 f"model='{model}' does not accept variable_capture or "
-                "zero_inflation flags. Capture is supplied through the "
-                "cascade_source's eta_capture (when available) or through "
-                "an explicit capture_anchor / biology-informed prior. "
-                "Drop variable_capture and zero_inflation."
+                "zero_inflation flags. "
+                + _capture_hint
+                + "  Drop variable_capture and zero_inflation."
             )
+
+        # PR-2 capture restriction (Rev 4): TSLN-Logit cannot accept
+        # the biology-informed ``capture_efficiency`` prior because
+        # activating it would require the joint (z, eta_cap) Newton
+        # path whose cross-Hessian is deferred to phase 3.  Detect
+        # the prior here at config-resolution time so the user gets a
+        # clear message at the API boundary rather than a downstream
+        # NotImplementedError from the obs-model constructor.
+        if model.lower() == "twostate_ln_logit":
+            _priors_dict = (
+                priors if isinstance(priors, dict) else None
+            )
+            _has_capture_prior = _priors_dict is not None and any(
+                k in _priors_dict
+                for k in ("capture_efficiency", "eta_capture")
+            )
+            if _has_capture_prior:
+                raise NotImplementedError(
+                    "model='twostate_ln_logit' does not accept a "
+                    "biology-informed capture prior "
+                    "(priors={'capture_efficiency': ...}) in PR-2: the "
+                    "joint (z, eta_cap) Newton path with the proper "
+                    "cross-Hessian is deferred to phase 3.  Supported "
+                    "capture configurations:\n"
+                    "  * No capture: drop the capture_efficiency prior.\n"
+                    "  * Fixed-offset capture from cascade: drop the "
+                    "capture_efficiency prior and pass "
+                    "informative_priors_from=svi_results where the SVI "
+                    "source already has per-cell capture; the cascade "
+                    "adapter will pin eta as a fixed offset (x_only_offset "
+                    "Newton)."
+                )
         return
 
     if variable_capture is None and zero_inflation is None:

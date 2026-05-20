@@ -262,6 +262,55 @@ def _run_laplace_inference(
             cascade_source_counts=cascade_source_counts,
         )
 
+    if base_model == "twostate_ln_logit":
+        # TSLN-Logit (PR-2): the latent prior is centred at zero
+        # (``z ~ N(0, Σ)``).  The gene baseline lives in ``eta_anchor``
+        # (per-gene activation log-odds θ_g), and the obs model packs
+        # ``common_kwargs["mu"]`` as zeros — see ``_obs_twostate_ln_logit
+        # .pack_result``.  We override here defensively to be explicit:
+        # ``self.mu`` carries the latent-z prior center, which is zero.
+        gu = run_result.global_uncertainty
+        n_g = int(g.get("rate", g.get("W")).shape[0]) if "rate" in g else None
+        if n_g is None and "W" in g:
+            n_g = int(g["W"].shape[0])
+        if n_g is not None:
+            common_kwargs["mu"] = jnp.zeros((n_g,), dtype=jnp.float32)
+        # ``mu_loc / mu_scale`` are NBLN-specific; explicitly NOT
+        # populated for TSLN-Logit (the latent prior centre is fixed
+        # at zero, not a learnable parameter).  TSLN-Logit's
+        # uncertainty for the gene-level globals lives on
+        # ``rate_loc / rate_scale``, ``kappa_loc / kappa_scale``, and
+        # ``eta_anchor_loc / eta_anchor_scale``.
+        return ScribeLaplaceResults(
+            **common_kwargs,
+            x_loc=run_result.x_loc,
+            eta_loc=run_result.eta_loc,
+            # Constrained sampled coordinates (Variant B).
+            rate=g.get("rate"),
+            kappa=g.get("kappa"),
+            eta_anchor=g.get("eta_anchor"),
+            # Derived reporting quantities at ``z = 0``.
+            gene_mean=g.get("gene_mean"),
+            alpha=g.get("alpha"),
+            beta=g.get("beta"),
+            # Unconstrained loc/scale from the global-uncertainty hook.
+            rate_loc=g.get("rate_loc"),
+            rate_scale=gu.get("rate_scale"),
+            kappa_loc=g.get("kappa_loc"),
+            kappa_scale=gu.get("kappa_scale"),
+            eta_anchor_loc=g.get("eta_anchor_loc"),
+            eta_anchor_scale=gu.get("eta_anchor_scale"),
+            # Curvature-clamp diagnostics.
+            a_raw_min=g.get("a_raw_min"),
+            a_raw_negative_fraction=g.get("a_raw_negative_fraction"),
+            a_clamp_fraction=g.get("a_clamp_fraction"),
+            a_clamp_per_gene=g.get("a_clamp_per_gene"),
+            # Cascade plumbing.
+            frozen_params=run_result.frozen_params,
+            cascade_source=cascade_source,
+            cascade_source_counts=cascade_source_counts,
+        )
+
     if base_model == "twostate_ln_rate":
         # TSLN-Rate: same per-cell shape as NBLN (x_loc is the latent
         # log-rate MAP, eta_loc the optional capture offset).  Three

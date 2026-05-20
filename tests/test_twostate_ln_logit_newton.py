@@ -51,6 +51,7 @@ from scribe.laplace._newton_twostate_ln_logit import (
     _woodbury_factors,
     _solve_A,
     _log_det_A,
+    newton_step_x_only,
     laplace_newton_loop_x_only,
     laplace_newton_loop_x_only_offset,
     laplace_newton_batch_x_only,
@@ -459,6 +460,59 @@ def test_woodbury_solve_equivalence():
 # ---------------------------------------------------------------------
 # Test 7: batched Newton works
 # ---------------------------------------------------------------------
+
+
+def test_extreme_eta_act_no_nan(K=60):
+    """At very large ``|θ + x|`` the kernel returns finite values.
+
+    Confirms the ``_PHI_MIN`` / ``_PHI_MAX`` clip prevents NaN
+    propagation from digamma / trigamma at the singular boundary,
+    even though the resulting ``φ' = φ(1-φ)`` is a *pseudo-derivative*
+    in the clipped region (φ_raw underflowed but we use the clipped
+    boundary for derivative bookkeeping).  This is the auditor's
+    "test at extreme θ + x" request — the kernel must not produce
+    NaN at saturating / tail inputs.
+    """
+    # ``θ + x = 30`` → raw sigmoid ≈ 1 - 1e-13 (under float32, exactly 1).
+    # ``θ + x = -30`` → raw sigmoid ≈ 1e-13 (under float32, exactly 0).
+    x = jnp.array([30.0, -30.0, 0.0, 25.0, -25.0])
+    theta = jnp.zeros((5,))
+    u = jnp.array([10.0, 0.0, 1.0, 5.0, 0.0])
+    rate = jnp.array([20.0, 1.0, 2.0, 50.0, 5.0])
+    kappa = jnp.array([1.0, 1.0, 1.0, 5.0, 0.5])
+
+    fac = _twostate_ln_logit_factors(
+        x, u, rate, kappa, theta, jnp.asarray(0.0), n_quad_nodes=K,
+    )
+
+    # Critical invariant: NO NaN, NO inf in the returned arrays.
+    for k in ("a", "a_raw", "g_data", "phi", "phi_prime", "log_marginal"):
+        arr = np.asarray(fac[k])
+        assert np.all(np.isfinite(arr)), (
+            f"{k!r} contains NaN/inf at extreme |θ + x|: {arr.tolist()}"
+        )
+
+    # ``a`` is still ≥ _A_MIN everywhere (defensive clamp invariant).
+    assert np.all(np.asarray(fac["a"]) >= _A_MIN - 1e-12)
+
+    # ``φ`` is clipped strictly inside (0, 1).
+    phi = np.asarray(fac["phi"])
+    assert np.all(phi >= 1e-6 - 1e-12) and np.all(phi <= 1 - 1e-6 + 1e-12), (
+        f"φ should be clipped inside (1e-6, 1-1e-6); got {phi.tolist()}"
+    )
+
+    # Newton step at the extreme iterate must produce a finite update.
+    G, k = 5, 2
+    rng = np.random.default_rng(7)
+    W = jnp.asarray(rng.normal(0.0, 0.3, size=(G, k)).astype(np.float32))
+    d = jnp.asarray(np.full(G, 0.1, dtype=np.float32))
+    mu = jnp.zeros(G, dtype=jnp.float32)
+    x_new, grad_norm = newton_step_x_only(
+        x, u, mu, W, d, rate, kappa, theta,
+        damping=1e-4, max_step=5.0, n_quad_nodes=K,
+    )
+    assert jnp.all(jnp.isfinite(x_new))
+    assert jnp.isfinite(grad_norm)
 
 
 def test_batched_newton_x_only():

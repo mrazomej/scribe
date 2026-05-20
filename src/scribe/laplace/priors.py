@@ -767,8 +767,11 @@ def freeze_values_from_results(
 #                       or log(mu/burst_size) - log(k_off)
 #     eta             : identity
 #
-# In PR-1 only ``target_variant="rate"`` is implemented; ``"logit"``
-# raises NotImplementedError.
+# Both ``target_variant="rate"`` (PR-1) and ``"logit"`` (PR-2) are
+# implemented.  The logit branch prefers the SVI source's effective
+# ``alpha``/``beta``/``r_hat``/``eta_act`` deterministics over raw
+# (mu, burst_size, k_off) derivation — see the inline documentation
+# in the function body for the Rev 4 motivation.
 
 
 def priors_from_twostate_results(
@@ -806,8 +809,11 @@ def priors_from_twostate_results(
     target_n_genes, target_n_cells : int
         Target dataset shape.
     target_variant : {"rate", "logit"}, default ``"rate"``
-        Which TSLN target variant to build priors for. ``"logit"``
-        raises ``NotImplementedError`` in PR-1.
+        Which TSLN target variant to build priors for.  Both are
+        implemented; ``"logit"`` (PR-2) prefers the SVI source's
+        effective deterministics (``alpha`` / ``beta`` / ``r_hat`` /
+        ``eta_act``) over raw ``(mu, burst_size, k_off)`` derivation
+        per Rev 4.
     n_samples : int, default 1000
     tau : float, default 1.0
     rng_seed : int, default 0
@@ -828,10 +834,6 @@ def priors_from_twostate_results(
         raise ValueError(
             f"Unknown target_variant={target_variant!r}; expected one of "
             "{'rate', 'logit'}."
-        )
-    if target_variant == "logit":
-        raise NotImplementedError(
-            "TSLN-Logit cascade adapter is deferred to PR-2. See plan §4.C."
         )
     if target_positive_transform not in _JAX_POSITIVE_FNS:
         raise ValueError(
@@ -884,34 +886,124 @@ def priors_from_twostate_results(
     pos_inverse = _resolve_target_pos_inverse(target_positive_transform)
     prior_bundle: Dict[str, Dict[str, jnp.ndarray]] = {}
 
-    # --- TSLN-Rate coordinate map ----------------------------------------
-    # All three positive globals pass through pos_inverse to land in
-    # the unconstrained location-parameter space.
-    for src_key, tgt_key in (
-        ("mu", "mu"),
-        ("burst_size", "burst_size"),
-        ("k_off", "k_off"),
-    ):
-        if src_key not in samples:
-            raise ValueError(
-                f"SVI source missing required key {src_key!r}. "
-                f"Available keys: {sorted(samples.keys())}. The TSLN-Rate "
-                "cascade requires the natural TwoState parameterization "
-                "(mu, burst_size, k_off) on the source."
-            )
-        s = jnp.asarray(samples[src_key])
-        if s.ndim < 2 or s.shape[1] != int(target_n_genes):
-            raise ValueError(
-                f"SVI {src_key!r} samples have shape {s.shape}; "
-                f"expected (S, {int(target_n_genes)})."
-            )
-        s_pos = jnp.maximum(s, 1e-8)
-        s_uncon = pos_inverse(s_pos)
-        prior_bundle[tgt_key] = fit_empirical_gaussian(s_uncon, tau=float(tau))
-        _say(
-            f"  Fitted {tgt_key!r} prior (G={int(s.shape[1])}, "
-            f"transform={target_positive_transform!r} inverse)."
+    if target_variant == "logit":
+        # --- TSLN-Logit coordinate map (plan §4.C.4 Rev 4) -----------
+        # PRIMARY PATH: use the effective parameters emitted by the
+        # TwoState SVI as ``numpyro.deterministic`` sites
+        # (``alpha``, ``beta``, ``r_hat``, ``eta_act``).  These are
+        # the POST-FLOOR effective values consistent with the
+        # likelihood the upstream fit actually generated — if the
+        # SVI's ``_twostate_reparam`` activated mean-preserving
+        # floors (``_ALPHA_MIN``, ``_K_OFF_MIN``), the raw
+        # ``(mu, burst_size, k_off)`` derivation would produce
+        # cascade priors out of phase with the likelihood.
+        #
+        # FALLBACK PATH: raw (mu, burst_size, k_off) derivation —
+        # only consistent when no floors activated upstream.  Emits
+        # a UserWarning when the fallback fires.
+        has_effective = all(
+            k in samples for k in ("alpha", "beta", "r_hat")
         )
+        if has_effective:
+            alpha_s = jnp.maximum(jnp.asarray(samples["alpha"]), 1e-8)
+            beta_s = jnp.maximum(jnp.asarray(samples["beta"]), 1e-8)
+            rate_s = jnp.maximum(jnp.asarray(samples["r_hat"]), 1e-8)
+            kappa_s = alpha_s + beta_s
+            if "eta_act" in samples:
+                eta_anchor_s = jnp.asarray(samples["eta_act"])
+            else:
+                eta_anchor_s = jnp.log(alpha_s) - jnp.log(beta_s)
+            source_path = "effective (alpha/beta/r_hat[/eta_act])"
+        else:
+            # Raw fallback: derive sample-wise from (mu, burst_size, k_off).
+            for src in ("mu", "burst_size", "k_off"):
+                if src not in samples:
+                    raise ValueError(
+                        f"SVI source missing required key {src!r} (and "
+                        "no effective alpha/beta/r_hat deterministics "
+                        f"either). Available keys: {sorted(samples.keys())}."
+                    )
+            mu_s = jnp.maximum(jnp.asarray(samples["mu"]), 1e-8)
+            bs_s = jnp.maximum(jnp.asarray(samples["burst_size"]), 1e-8)
+            ko_s = jnp.maximum(jnp.asarray(samples["k_off"]), 1e-8)
+            # rate = r_hat = mu + burst_size · k_off  (TwoState reparam).
+            rate_s = mu_s + bs_s * ko_s
+            # kappa = alpha + beta = mu/burst_size + k_off.
+            kappa_s = mu_s / bs_s + ko_s
+            # eta_anchor = log(alpha/beta) = log(mu / (burst_size · k_off)).
+            eta_anchor_s = jnp.log(mu_s) - jnp.log(bs_s) - jnp.log(ko_s)
+            import warnings
+            warnings.warn(
+                "TSLN-Logit cascade fell back to raw "
+                "(mu, burst_size, k_off) derivation because the SVI "
+                "source did not expose effective alpha/beta/r_hat "
+                "deterministics. If the SVI fit activated "
+                "mean-preserving floors in _twostate_reparam, the "
+                "cascade priors may be inconsistent with the upstream "
+                "likelihood. Re-fit the SVI source with the latest "
+                "scribe to get the effective deterministics.",
+                UserWarning,
+                stacklevel=3,
+            )
+            source_path = "raw (mu/burst_size/k_off) — fallback"
+
+        # Validate shapes.
+        for arr_name, arr in (
+            ("rate", rate_s), ("kappa", kappa_s), ("eta_anchor", eta_anchor_s),
+        ):
+            if arr.ndim < 2 or arr.shape[1] != int(target_n_genes):
+                raise ValueError(
+                    f"Derived {arr_name!r} samples have shape "
+                    f"{arr.shape}; expected (S, {int(target_n_genes)})."
+                )
+
+        prior_bundle["rate"] = fit_empirical_gaussian(
+            pos_inverse(rate_s), tau=float(tau)
+        )
+        prior_bundle["kappa"] = fit_empirical_gaussian(
+            pos_inverse(kappa_s), tau=float(tau)
+        )
+        prior_bundle["eta_anchor"] = fit_empirical_gaussian(
+            eta_anchor_s, tau=float(tau)  # real-valued — identity transform
+        )
+        _say(
+            f"  Built TSLN-Logit priors from {source_path}; "
+            f"transform={target_positive_transform!r} for rate, kappa; "
+            "identity for eta_anchor."
+        )
+
+    else:
+        # --- TSLN-Rate coordinate map --------------------------------
+        # All three positive globals pass through pos_inverse to land
+        # in the unconstrained location-parameter space.
+        for src_key, tgt_key in (
+            ("mu", "mu"),
+            ("burst_size", "burst_size"),
+            ("k_off", "k_off"),
+        ):
+            if src_key not in samples:
+                raise ValueError(
+                    f"SVI source missing required key {src_key!r}. "
+                    f"Available keys: {sorted(samples.keys())}. The "
+                    "TSLN-Rate cascade requires the natural TwoState "
+                    "parameterization (mu, burst_size, k_off) on the "
+                    "source."
+                )
+            s = jnp.asarray(samples[src_key])
+            if s.ndim < 2 or s.shape[1] != int(target_n_genes):
+                raise ValueError(
+                    f"SVI {src_key!r} samples have shape {s.shape}; "
+                    f"expected (S, {int(target_n_genes)})."
+                )
+            s_pos = jnp.maximum(s, 1e-8)
+            s_uncon = pos_inverse(s_pos)
+            prior_bundle[tgt_key] = fit_empirical_gaussian(
+                s_uncon, tau=float(tau)
+            )
+            _say(
+                f"  Fitted {tgt_key!r} prior (G={int(s.shape[1])}, "
+                f"transform={target_positive_transform!r} inverse)."
+            )
 
     # --- eta (per-cell capture) -----------------------------------------
     if capture_mode == "eta":
@@ -1021,10 +1113,12 @@ def freeze_values_from_twostate_results(
     target_positive_transform : {"exp", "softplus"}
     target_n_genes, target_n_cells : int
     target_variant : {"rate", "logit"}, default ``"rate"``
-        Only ``"rate"`` is implemented in PR-1.
+        Both variants implemented.  For ``"logit"`` the valid keys
+        are ``{"rate", "kappa", "eta_anchor", "eta"}``.
     freeze_params : Tuple[str, ...], default ``("mu", "burst_size", "k_off")``
         For TSLN-Rate, valid keys are
-        ``{"mu", "burst_size", "k_off", "eta"}``.
+        ``{"mu", "burst_size", "k_off", "eta"}``.  For TSLN-Logit,
+        valid keys are ``{"rate", "kappa", "eta_anchor", "eta"}``.
 
     Returns
     -------
@@ -1036,20 +1130,20 @@ def freeze_values_from_twostate_results(
             f"Unknown target_variant={target_variant!r}; expected one of "
             "{'rate', 'logit'}."
         )
-    if target_variant == "logit":
-        raise NotImplementedError(
-            "TSLN-Logit freeze-value adapter is deferred to PR-2."
-        )
     if target_positive_transform not in _JAX_POSITIVE_FNS:
         raise ValueError(
             f"Unknown target_positive_transform={target_positive_transform!r}."
         )
-    valid = {"mu", "burst_size", "k_off", "eta"}
+    valid_by_variant = {
+        "rate": {"mu", "burst_size", "k_off", "eta"},
+        "logit": {"rate", "kappa", "eta_anchor", "eta"},
+    }
+    valid = valid_by_variant[target_variant]
     invalid = set(freeze_params) - valid
     if invalid:
         raise ValueError(
             f"freeze_params has invalid keys {invalid}; valid = {valid} "
-            f"for target_variant='rate'."
+            f"for target_variant={target_variant!r}."
         )
 
     def _say(msg: str) -> None:
@@ -1153,29 +1247,86 @@ def freeze_values_from_twostate_results(
     pos_inverse = _resolve_target_pos_inverse(target_positive_transform)
     freeze_values: Dict[str, Dict[str, jnp.ndarray]] = {}
 
-    for src_key, tgt_key in (
-        ("mu", "mu"),
-        ("burst_size", "burst_size"),
-        ("k_off", "k_off"),
-    ):
-        if tgt_key not in freeze_params:
-            continue
-        if src_key not in map_dict:
-            raise ValueError(
-                f"freeze_params requests {tgt_key!r} but SVI MAP has no "
-                f"{src_key!r} key. Available: {sorted(map_dict.keys())}."
-            )
-        s = jnp.asarray(map_dict[src_key])
-        if s.ndim != 1 or s.shape[0] != int(target_n_genes):
-            raise ValueError(
-                f"SVI {src_key!r} MAP has shape {s.shape}; expected "
-                f"({int(target_n_genes)},)."
-            )
-        s_uncon = pos_inverse(jnp.maximum(s, 1e-8))
-        freeze_values[tgt_key] = {"loc": s_uncon}
-        _say(
-            f"  Extracted {tgt_key!r} freeze value (G={target_n_genes})."
+    if target_variant == "logit":
+        # ---- TSLN-Logit gene-level extraction ------------------------
+        # Same primary / fallback split as the priors path: prefer the
+        # SVI's effective deterministic MAPs (alpha, beta, r_hat,
+        # eta_act) when available; fall back to raw derivation from
+        # (mu, burst_size, k_off) with a warning.
+        has_effective_map = all(
+            k in map_dict for k in ("alpha", "beta", "r_hat")
         )
+        if has_effective_map:
+            alpha_m = jnp.maximum(jnp.asarray(map_dict["alpha"]), 1e-8)
+            beta_m = jnp.maximum(jnp.asarray(map_dict["beta"]), 1e-8)
+            rate_m = jnp.maximum(jnp.asarray(map_dict["r_hat"]), 1e-8)
+            kappa_m = alpha_m + beta_m
+            if "eta_act" in map_dict:
+                eta_anchor_m = jnp.asarray(map_dict["eta_act"])
+            else:
+                eta_anchor_m = jnp.log(alpha_m) - jnp.log(beta_m)
+            source_path = "effective (alpha/beta/r_hat[/eta_act])"
+        else:
+            mu_m = jnp.maximum(jnp.asarray(map_dict["mu"]), 1e-8)
+            bs_m = jnp.maximum(jnp.asarray(map_dict["burst_size"]), 1e-8)
+            ko_m = jnp.maximum(jnp.asarray(map_dict["k_off"]), 1e-8)
+            rate_m = mu_m + bs_m * ko_m
+            kappa_m = mu_m / bs_m + ko_m
+            eta_anchor_m = jnp.log(mu_m) - jnp.log(bs_m) - jnp.log(ko_m)
+            import warnings
+            warnings.warn(
+                "TSLN-Logit freeze_values fell back to raw "
+                "(mu, burst_size, k_off) derivation. See the "
+                "priors_from_twostate_results docstring for details.",
+                UserWarning,
+                stacklevel=3,
+            )
+            source_path = "raw (mu/burst_size/k_off) — fallback"
+
+        for tgt_key, val, is_positive in (
+            ("rate", rate_m, True),
+            ("kappa", kappa_m, True),
+            ("eta_anchor", eta_anchor_m, False),
+        ):
+            if tgt_key not in freeze_params:
+                continue
+            if val.ndim != 1 or val.shape[0] != int(target_n_genes):
+                raise ValueError(
+                    f"Derived {tgt_key!r} MAP has shape {val.shape}; "
+                    f"expected ({int(target_n_genes)},)."
+                )
+            loc = pos_inverse(val) if is_positive else val
+            freeze_values[tgt_key] = {"loc": loc}
+            _say(
+                f"  Extracted {tgt_key!r} freeze value from "
+                f"{source_path} (G={target_n_genes})."
+            )
+    else:
+        # ---- TSLN-Rate gene-level extraction (existing) --------------
+        for src_key, tgt_key in (
+            ("mu", "mu"),
+            ("burst_size", "burst_size"),
+            ("k_off", "k_off"),
+        ):
+            if tgt_key not in freeze_params:
+                continue
+            if src_key not in map_dict:
+                raise ValueError(
+                    f"freeze_params requests {tgt_key!r} but SVI MAP "
+                    f"has no {src_key!r} key. Available: "
+                    f"{sorted(map_dict.keys())}."
+                )
+            s = jnp.asarray(map_dict[src_key])
+            if s.ndim != 1 or s.shape[0] != int(target_n_genes):
+                raise ValueError(
+                    f"SVI {src_key!r} MAP has shape {s.shape}; expected "
+                    f"({int(target_n_genes)},)."
+                )
+            s_uncon = pos_inverse(jnp.maximum(s, 1e-8))
+            freeze_values[tgt_key] = {"loc": s_uncon}
+            _say(
+                f"  Extracted {tgt_key!r} freeze value (G={target_n_genes})."
+            )
 
     if "eta" in freeze_params:
         # Same p_capture / phi_capture → eta mapping as
