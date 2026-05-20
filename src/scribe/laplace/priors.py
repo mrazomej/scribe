@@ -1257,14 +1257,26 @@ def freeze_values_from_twostate_results(
     # deterministics are present — the logit branch below consumes
     # ``(alpha, beta, r_hat, eta_act)`` directly and does NOT need
     # ``(burst_size, k_off)``.
+    # ``get_map()`` returns only the *sampled* sites, so deterministics
+    # (``alpha`` / ``beta`` / ``r_hat`` / ``eta_act``) are NOT
+    # available from the MAP unless we derive them locally.  Run the
+    # appropriate reparam helper on the MAP of the sampled params and
+    # populate the effective deterministics — this gives the logit
+    # variant the same Rev 4 "effective-parameter primary path" the
+    # samples-based cascade uses.
     _logit_effective_available = (
         target_variant == "logit"
         and all(k in map_dict for k in ("alpha", "beta", "r_hat"))
     )
-    if (
-        not _logit_effective_available
+    _rate_needs_derivation = (
+        target_variant == "rate"
         and ("burst_size" not in map_dict or "k_off" not in map_dict)
-    ):
+    )
+    _logit_needs_derivation = (
+        target_variant == "logit"
+        and not _logit_effective_available
+    )
+    if _rate_needs_derivation or _logit_needs_derivation:
         from ..models.components.likelihoods.two_state import (
             _twostate_reparam,
             _twostate_ratio_reparam,
@@ -1273,7 +1285,18 @@ def freeze_values_from_twostate_results(
         )
 
         mu_map = jnp.asarray(map_dict["mu"])
-        if "switching_ratio" in map_dict:
+        if "burst_size" in map_dict and "k_off" in map_dict:
+            # Natural parameterization — burst_size and k_off already
+            # present.  Run _twostate_reparam to get the effective
+            # alpha / beta / r_hat (with the floors applied).
+            _alpha, _beta, _rate, _eff_b = _twostate_reparam(
+                mu_map,
+                jnp.asarray(map_dict["burst_size"]),
+                jnp.asarray(map_dict["k_off"]),
+            )
+            bs_derived = jnp.asarray(map_dict["burst_size"])
+            ko_derived = _beta
+        elif "switching_ratio" in map_dict:
             # ratio parameterization
             _alpha, _beta, _rate, _eff_b = _twostate_ratio_reparam(
                 mu_map,
@@ -1308,14 +1331,24 @@ def freeze_values_from_twostate_results(
                 "mean_fano / moment_delta).  Available keys: "
                 f"{sorted(map_dict.keys())}."
             )
-        # Augment the MAP dict with the derived natural-form values so
-        # the per-key loop below finds them.
+        # Augment the MAP dict with the derived natural-form values AND
+        # the effective deterministics so the per-key loops below find
+        # them.  ``eta_act = log(alpha) - log(beta)`` matches the SVI
+        # deterministic site emitted by ``_emit_deterministics``.
         map_dict = dict(map_dict)
         map_dict.setdefault("burst_size", bs_derived)
         map_dict.setdefault("k_off", ko_derived)
+        map_dict.setdefault("alpha", _alpha)
+        map_dict.setdefault("beta", _beta)
+        map_dict.setdefault("r_hat", _rate)
+        map_dict.setdefault(
+            "eta_act",
+            jnp.log(jnp.maximum(_alpha, 1e-30))
+            - jnp.log(jnp.maximum(_beta, 1e-30)),
+        )
         _say(
-            "  Derived (burst_size, k_off) from non-natural "
-            "parameterization MAP."
+            "  Derived (burst_size, k_off, alpha, beta, r_hat, eta_act) "
+            "from the SVI MAP via _twostate_*_reparam."
         )
 
     # Per-parameter resolver — same shape as in priors_from_twostate_results.

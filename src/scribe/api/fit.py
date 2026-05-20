@@ -281,7 +281,7 @@ def fit(
     #
     # See paper/_diffexp_nbln_robustness.qmd and the Cascade-parameter
     # freeze subsection in paper/_nb_lognormal.qmd for the rationale.
-    informative_priors_freeze: tuple = ("r", "eta"),
+    informative_priors_freeze: Optional[tuple] = None,
     # DEPRECATED: shrinkage prior on the loadings matrix W.
     # The preferred API is to pass the strategy spec inside the
     # ``priors`` dict under the descriptive ``"loadings"`` key:
@@ -800,18 +800,26 @@ def fit(
         (capture-mode detection, gene-identity check outcome, freeze
         choice).
 
-    informative_priors_freeze : tuple of str, default=("r", "eta")
-        Subset of ``{"r", "mu", "eta"}`` whose values are *pinned* at
-        the cascade-source MAP and excluded from the NBLN optimizer
-        dict.  Default ``("r", "eta")`` eliminates the rigid-translation
-        gauge degeneracy by structurally fixing per-cell ``eta`` while
-        the NBLN M-step refines ``mu``, ``W``, and ``d``.  Descriptive
-        aliases are accepted: ``"dispersion" -> "r"``,
+    informative_priors_freeze : tuple of str, optional
+        Subset of parameters whose values are *pinned* at the
+        cascade-source MAP and excluded from the Laplace optimizer
+        dict.  Pass ``None`` (the default) to use the
+        per-base-model "Level 4" cascade defaults:
+
+          - ``"nbln"``              → ``("r", "eta")``
+          - ``"twostate_ln_rate"``  → ``("mu", "burst_size", "k_off")``
+          - ``"twostate_ln_logit"`` → ``("rate", "kappa", "eta_anchor")``
+
+        Pass ``()`` (empty tuple) for plain no-freeze cascade
+        behaviour.  Pass any iterable of valid parameter names to
+        override the variant default.  Descriptive aliases are
+        accepted for NBLN: ``"dispersion" -> "r"``,
         ``"mean_expression"`` (or ``"expression"``) ``-> "mu"``,
         ``"capture_efficiency" -> "eta"`` — see
         ``FREEZE_KEY_ALIASES`` in
-        ``scribe.models.config.parameter_mapping``.  Pass ``()`` for
-        plain (no-freeze) cascade behaviour.  See
+        ``scribe.models.config.parameter_mapping``.  TSLN variants
+        do not currently expose descriptive aliases; pass the
+        internal short names directly.  See
         ``paper/_diffexp_nbln_robustness.qmd`` and
         ``sec-nbln-cascade-freeze``.
 

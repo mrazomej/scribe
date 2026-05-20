@@ -239,10 +239,16 @@ def dispatch_inference(ctx: FitContext) -> None:
             _default_freeze = ("rate", "kappa", "eta_anchor")
         else:
             _default_freeze = ("r", "eta")
+        # ``informative_priors_freeze=None`` (the API default in
+        # ``fit.py``) signals "use the per-variant default".  An empty
+        # tuple ``()`` (or empty list / iterable) means "no freeze".
+        # A non-empty user-supplied tuple is normalized via alias map.
         raw_freeze = ctx.kwargs.get(
-            "informative_priors_freeze", _default_freeze
+            "informative_priors_freeze", None
         )
         if raw_freeze is None:
+            freeze_params = normalize_freeze_keys(_default_freeze)
+        elif len(tuple(raw_freeze)) == 0:
             freeze_params = ()
         else:
             freeze_params = normalize_freeze_keys(raw_freeze)
