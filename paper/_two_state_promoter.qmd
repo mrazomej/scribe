@@ -10,7 +10,7 @@ format:
 
 # Beyond shape rigidity: the two-state promoter model {#sec-twostate}
 
-In the preceding sections, we developed a family of models centred on the
+In the preceding sections, we developed a family of models centered on the
 Negative Binomial (NB) distribution: the NB with shared $p$
 (@sec-dirichlet-multinomial), gene-specific $p_g$ (@sec-hierarchical-p),
 variable capture probability (@sec-capture-prior), and a zero-inflation gate
@@ -70,22 +70,22 @@ that:
    convenient; the two-state model inherits it.
 
 4. The Negative Binomial is recovered as a special case in the fast-OFF limit
-   ($k^- \gg 1$). The two-state model is therefore a *generalisation* of the NB,
+   ($k^- \gg 1$). The two-state model is therefore a *generalization* of the NB,
    not a competitor---it adds expressive capacity exactly where the NB fails.
 
 5. The natural rate parameters $(\hat{r}, k^+, k^-)$ suffer a well-known
-   identifiability ridge, so we reparameterise in terms of quantities the data
+   identifiability ridge, so we reparameterize in terms of quantities the data
    can identify: the gene mean $\mu$, the NB-limit mean burst size $b$, and the
    OFF rate $k^-$---under which the priors decouple and "default to NB" is
    encoded by a simple shift of the $k^-$ prior.
 
-6. Three further bijective reparameterisations---the regime ratio
+6. Three further bijective reparameterizations---the regime ratio
    $s = k^-/k^+$, the mean--Fano coordinates $(\mu, F, \kappa)$, and the
    moment-delta coordinates $(\mu, F, \delta)$ with
    $\delta = 1/(\kappa + 1) \in (0,1)$---leave the likelihood unchanged but
    rotate the sampled axes into directions the data identify approximately
    independently. These alternative coordinates are motivated by the same
-   principle that guided the mean--odds reparameterisation in the NB family:
+   principle that guided the mean--odds reparameterization in the NB family:
    sample directly the quantities the data anchor through low-order moments, and
    demote the remaining freedom to a shape coordinate whose prior carries the
    regime preference.
@@ -126,7 +126,7 @@ $$ {#eq-twostate-nondim}
 
 All three quantities are now measured in units of the mRNA lifetime
 $1/\gamma$---this is the natural timescale for gene expression, and it is the
-same non-dimensionalisation used throughout @sec-grn-biophysics. The physical
+same non-dimensionalization used throughout @sec-grn-biophysics. The physical
 meaning is clear: $\hat{k}^+ = 2$ means that, on average, the promoter
 switches from OFF to ON twice per mRNA lifetime; $\hat{r} = 50$ means that
 while ON, the gene produces 50 mRNAs per mRNA lifetime.
@@ -169,7 +169,7 @@ $$ {#eq-poisson-beta}
 
 That is: the latent variable $p \in [0, 1]$ is drawn from a Beta distribution
 whose shape parameters are the non-dimensional switching rates, and the mRNA
-count is Poisson with rate $\hat{r}\, p$. Marginalising over $p$ recovers
+count is Poisson with rate $\hat{r}\, p$. Marginalizing over $p$ recovers
 @eq-twostate-closed-form term by term, but numerically the compound is what we
 will use.
 
@@ -250,7 +250,7 @@ with a binomial yields another negative binomial (with an adjusted $\hat{p}$
 parameter). A natural question is whether the Poisson-Beta compound has the same
 convenient closure property. The answer is yes, and the proof is immediate.
 
-Marginalising the latent mRNA count via the Poisson-Beta representation: since
+Marginalizing the latent mRNA count via the Poisson-Beta representation: since
 a Poisson random variable thinned by a binomial with probability $\nu_c$
 produces another Poisson with rate scaled by $\nu_c$ (this is the
 Poisson-thinning property we used in @sec-dirichlet-multinomial), we have
@@ -285,7 +285,7 @@ capture $\nu_c$.
 
 Having introduced the two-state model, we now show that it contains the
 negative binomial as a special case. This is the formal statement that the
-two-state model generalises the NB rather than competing with it.
+two-state model generalizes the NB rather than competing with it.
 
 The two-state distribution reduces to the Negative Binomial when the OFF rate is
 fast compared to mRNA decay, $\hat{k}^- \gg 1$, with $\hat{k}^+$ and $\hat{r}$
@@ -331,7 +331,7 @@ limit, and require the full two-state machinery. A gene with $\hat{k}^- \lesssim
 filter cannot smooth away the discrete switching events, and the resulting
 bimodal distribution demands a model that can represent both modes.
 
-## Identifiability and the $(\mu, b, k^-)$ reparameterisation {#sec-twostate-reparam}
+## Identifiability and the $(\mu, b, k^-)$ reparameterization {#sec-twostate-reparam}
 
 The natural parameters $(\hat{r}, \hat{k}^+, \hat{k}^-)$ are not all
 identifiable from data. To understand why, recall that the two observable
@@ -348,7 +348,7 @@ fixed. Any sampler (NUTS or variational) that visits this ridge will produce a
 banana-shaped posterior, and reported summaries of individual
 $(\hat{r}, \hat{k}^+, \hat{k}^-)$ values in this regime are misleading.
 
-A clean fix is to **reparameterise in terms of the well-identified
+A clean fix is to **reparameterize in terms of the well-identified
 combinations**. We define three positive scalars per gene:
 
 $$
@@ -389,14 +389,14 @@ $$
 \,=\, \mu_g,
 $$ {#eq-mean-preservation}
 
-independently of $b_g$ and $k^-_g$. The reparameterisation thus splits the
+independently of $b_g$ and $k^-_g$. The reparameterization thus splits the
 identification cleanly:
 
 - **$\mu_g$** is anchored directly by the sample mean of the data. This is the
   most identifiable quantity---every observed count contributes to its
   estimation.
 - **$b_g$** is the NB-limit burst size. It is identified through the higher
-  moments and tail behaviour of the distribution: a gene with large $b_g$ has a
+  moments and tail behavior of the distribution: a gene with large $b_g$ has a
   heavy right tail (high Fano factor), while a gene with small $b_g$ approaches
   Poisson.
 - **$k^-_g$** controls how far the gene departs from the NB limit. Large
@@ -431,7 +431,7 @@ prior---strong NB defaults are available by tightening the $k^-$ prior, but at
 the cost of making it harder for the data to overcome the prior when a gene is
 genuinely bursty.
 
-## Alternative reparameterisations {#sec-twostate-altreparam}
+## Alternative reparameterizations {#sec-twostate-altreparam}
 
 The map @eq-twostate-derived eliminates the identifiability ridge by making
 $\mu_g$ the *sampled* mean---a quantity the data anchors directly---and demotes
@@ -451,12 +451,12 @@ $$ {#eq-meanfield-product}
 with each marginal $q(\cdot)$ a transformed Gaussian in unconstrained space.
 The quality of mean-field therefore depends not just on whether the parameters
 are identifiable but on whether they are *approximately uncorrelated in the
-posterior*. Two parameterisations that yield the same likelihood can give very
+posterior*. Two parameterizations that yield the same likelihood can give very
 different mean-field approximations: the one whose coordinates align with the
 directions the data informs independently will produce tighter posteriors and,
 in turn, tighter posterior predictive distributions.
 
-This subsection introduces reparameterisations that target this geometric
+This subsection introduces reparameterizations that target this geometric
 question. All are exact bijections of @eq-twostate-derived---the likelihood,
 the NB limit, and the binomial-thinning closure are unchanged. What changes is
 which *axes of the posterior* the variational guide is asked to represent.
@@ -539,7 +539,7 @@ wider than the true posterior on $\text{Var}[u_{gc}]$---exactly the failure
 mode that surfaces as posterior-predictive bands too wide to match observed
 empirical distributions.
 
-The fix at the parameterisation level is to make the variance itself one of the
+The fix at the parameterization level is to make the variance itself one of the
 sampled coordinates. Define
 
 $$
@@ -586,7 +586,7 @@ $$
 $$ {#eq-mean-fano-preserved}
 
 independently of all other parameters. The variational guide is now asked to
-factorise across coordinates that *each* control a distinct, data-anchored
+factorize across coordinates that *each* control a distinct, data-anchored
 quantity: $\mu_g$ sets location, $F_g$ sets predictive variance, and $\kappa_g$
 sets the latent-Beta shape---equivalently, the gene's departure from the NB
 limit.
@@ -623,12 +623,12 @@ coordinate whose prior carries the regime preference.
 
 ### Compressing the NB-limit ridge: $\delta = 1/(\kappa + 1)$ {#sec-twostate-moment-delta}
 
-The mean-Fano parameterisation removes the geometric coupling between
+The mean-Fano parameterization removes the geometric coupling between
 predictive variance and gene magnitude, but leaves one operational nuisance: the
 NB limit is $\kappa \to \infty$, an unbounded direction. Under a mean-field
 $\log$-Normal guide on $\kappa$, the variational posterior is forced to allocate
 probability mass over the entire positive real line, and for NB-like genes the
-data does not localise $\kappa$---the posterior just inherits the prior's tail.
+data does not localize $\kappa$---the posterior just inherits the prior's tail.
 
 A natural fix is to map the unbounded $\kappa \geq 0$ to a bounded coordinate.
 The substitution
@@ -689,14 +689,14 @@ $\text{logit}\,\delta_g \sim \mathcal{N}(-4, 4)$ gives median
 $\delta_g \approx 0.018$, corresponding to $\kappa_g \approx 55$---moderately
 NB-like---with a substantial tail toward larger $\delta$ admitting bursty genes.
 
-### Choosing among the four parameterisations {#sec-twostate-altreparam-choice}
+### Choosing among the four parameterizations {#sec-twostate-altreparam-choice}
 
-All four parameterisations describe the same family of distributions; they
+All four parameterizations describe the same family of distributions; they
 differ only in which axes of the posterior mean-field VI is asked to represent
 independently. The following summary collects the practical guidance:
 
 - **$(\mu, b, k^-)$** is the physics-natural choice: $b$ is the NB-limit mean
-  burst size, $k^-$ is the OFF rate non-dimensionalised by mRNA decay.
+  burst size, $k^-$ is the OFF rate non-dimensionalized by mRNA decay.
   Recommended when the analyst wants the most direct biophysical interpretation
   and is using posterior sampling (NUTS) that recovers correlations exactly.
 
@@ -711,7 +711,7 @@ independently. The following summary collects the practical guidance:
   coordinates. Posterior uncertainty in $F$ directly controls the width of the
   posterior predictive distribution per gene; uncertainty in $\kappa$ controls
   only the shape of the latent Beta. Recommended when posterior-predictive bands
-  under the natural or ratio parameterisations are systematically wider than the
+  under the natural or ratio parameterizations are systematically wider than the
   observed gene-level variance---a signature of mean-field smearing across the
   implied-variance manifold.
 
@@ -727,7 +727,7 @@ The four are mathematically equivalent; the distinction is operational, governed
 by how mean-field's independence assumption interacts with the data's
 identifiability structure. An analyst running NUTS does not need to choose: any
 of the four will recover the same posterior up to MCMC noise. An analyst running
-SVI should match the parameterisation to the failure mode the
+SVI should match the parameterization to the failure mode the
 posterior-predictive checks expose.
 
 ## Inference: Gauss-Legendre quadrature instead of ${}_1F_1$ {#sec-twostate-quadrature}
@@ -766,7 +766,7 @@ where the nodes $p_k$ and weights $\tilde{w}_k$ depend on $(\alpha, \beta)$.
 Computing them at fit time requires solving the eigenvalue problem of the
 tridiagonal matrix encoding the Jacobi three-term recurrence (the Golub-Welsch
 construction). This is exact through polynomial degree $2K-1$ for the smooth
-factor $g$ and has the appealing property that the difficult boundary behaviour
+factor $g$ and has the appealing property that the difficult boundary behavior
 of the Beta---vanishing at $0, 1$ for $\alpha, \beta > 1$, diverging there for
 $\alpha, \beta < 1$---is absorbed into the weight rather than the integrand.
 
@@ -887,10 +887,10 @@ or algebraic result we have already established.
    limit @eq-nb-limit.
 
 3. **Compositional inference requires care.** The shared-$p$
-   Dirichlet-Multinomial factorisation that makes the NBDM model such a clean
+   Dirichlet-Multinomial factorization that makes the NBDM model such a clean
    compositional framework (@sec-dirichlet-multinomial) relies on a special
    algebraic property of the Gamma distribution: independent Gammas with a
-   shared rate normalise to a Dirichlet. The Beta does not share this property.
+   shared rate normalize to a Dirichlet. The Beta does not share this property.
    The per-cell composition
    $\rho_g = \hat{r}_g\, p_g / \sum_j \hat{r}_j\, p_j$ is still a well-defined
    random vector on the simplex, and a sample-based CLR-DE pipeline still
@@ -942,7 +942,7 @@ $$
   \text{Beta}(p \mid \alpha, \beta),
 $${#eq-ts-denoise-posterior}
 
-where we drop cell/gene subscripts for clarity. Expanding, the unnormalised
+where we drop cell/gene subscripts for clarity. Expanding, the unnormalized
 log-posterior is
 
 $$
@@ -961,7 +961,7 @@ infrastructure developed for the marginal log-likelihood in
 @sec-twostate-quadrature.
 
 Given $K$ Gauss-Legendre nodes $\{p_k\}_{k=1}^K$ and weights
-$\{w_k\}_{k=1}^K$ on $[0,1]$, the unnormalised posterior weight at each node is
+$\{w_k\}_{k=1}^K$ on $[0,1]$, the unnormalized posterior weight at each node is
 
 $$
 \tilde{\pi}_k \;=\; w_k \cdot
@@ -970,7 +970,7 @@ $$
   \text{Poisson}(u \mid \nu\hat{r}\, p_k),
 $${#eq-ts-denoise-weights}
 
-and the normalising constant is $Z = \sum_k \tilde{\pi}_k$.
+and the normalizing constant is $Z = \sum_k \tilde{\pi}_k$.
 
 ### Posterior mean of true counts {#sec-twostate-denoise-mean}
 
@@ -1124,7 +1124,7 @@ We will show:
    $\underline{\underline{\Sigma}} = \underline{\underline{W}}\,
    \underline{\underline{W}}^\top + \text{diag}(\underline{d})$.
 
-2. Per-cell Laplace marginalisation of $\underline{z}_c$, with closed-form
+2. Per-cell Laplace marginalization of $\underline{z}_c$, with closed-form
    gradients and a defensively clamped Hessian-diagonal.
 
 3. The NB-LogNormal limit: as $\beta \to \infty$ with $\alpha = r$ fixed, the
@@ -1145,7 +1145,7 @@ b_g \sim \pi_{b},\quad
 k^-_g \sim \pi_{k^-},
 $$ {#eq-tsln-rate-gene-priors}
 
-with the natural-parameterisation derivations
+with the natural-parameterization derivations
 
 $$
 \alpha_g = \mu_g / b_g,\quad
@@ -1178,7 +1178,7 @@ $$
 $$ {#eq-tsln-rate-lambda}
 
 where $\eta_c$ is the (optional) per-cell capture offset (matching
-@sec-capture-prior; absent when capture is not modelled). The observation is
+@sec-capture-prior; absent when capture is not modeled). The observation is
 then a Poisson-Beta compound, the same as in @sec-twostate but with this
 $\underline{z}$-modulated rate:
 
@@ -1210,7 +1210,7 @@ NB-LogNormal: the latent enters the Poisson rate multiplicatively, so in the NB
 limit ($\beta \to \infty$) the marginal becomes NB-LogNormal exactly. This
 continuity with the existing pipeline makes it the natural first extension.
 
-## Per-cell Laplace marginalisation {#sec-twostate-tsln-rate-laplace}
+## Per-cell Laplace marginalization {#sec-twostate-tsln-rate-laplace}
 
 Integrating $\underline{z}_c$ out of the joint density exactly is
 intractable---there is no closed-form marginal for a Gaussian mixed against a
@@ -1379,7 +1379,7 @@ z_{cg} \to z_{cg} - c,\quad
 $$
 
 leaves $\ell_{cg}$ unchanged for every cell $c$. The data-side log-likelihood is
-invariant; only the Gaussian prior on $\underline{z}$ (which penalises shifted
+invariant; only the Gaussian prior on $\underline{z}$ (which penalizes shifted
 $\underline{z}$) identifies the gauge---softly.
 
 The cascade-and-freeze mechanism resolves this. The SVI cascade source
@@ -1391,7 +1391,7 @@ hard-freeze on $(\mu_g, b_g, k^-_g)$ structurally pins the gauge direction.
 
 The TSLN-Rate cascade supports four progressively stricter freeze levels:
 
-- **Level 1 (None)**: all globals M-step optimised; gauge softly identified by
+- **Level 1 (None)**: all globals M-step optimized; gauge softly identified by
   the $\mathcal{N}(\underline{0}, \underline{\underline{\Sigma}})$ prior on
   $\underline{z}$. Not recommended for cascade fits.
 - **Level 2 ($\mu$ soft-cascade)**: $\mu$ has an informative-prior loss term;
@@ -1512,11 +1512,11 @@ quantities that are natural for the activation-log-odds latent:
 - $\theta_g \in \mathbb{R}$: per-gene activation log-odds
   $\theta_g = \log(\alpha_g/\beta_g) = \log(k^+_g/k^-_g)$.
 
-These map back to the natural parameterisation via
+These map back to the natural parameterization via
 $\alpha_g = \kappa_g\,\sigma(\theta_g)$ and
 $\beta_g = \kappa_g\,(1-\sigma(\theta_g))$ at $z = 0$.
 
-**Per cell $c$**, draw a Gaussian latent (zero-centred):
+**Per cell $c$**, draw a Gaussian latent (zero-centered):
 
 $$
 \underline{z}_c \sim \mathcal{N}(\underline{0},
@@ -1586,7 +1586,7 @@ covariance would collapse to $\text{Cov}(\mu_g, \mu_h) = 0$---the entire
 cross-gene signal disappears. This is why $\text{rate}_g$ must be held at the
 gene level unconditionally.
 
-## Per-cell Laplace marginalisation {#sec-twostate-tsln-logit-laplace}
+## Per-cell Laplace marginalization {#sec-twostate-tsln-logit-laplace}
 
 The per-cell joint density is
 
@@ -1601,7 +1601,7 @@ $$
 $$ {#eq-tsln-logit-joint-density}
 
 with $\mathcal{L}_{\text{PB}}$ the Poisson-Beta marginal from
-@sec-twostate-poisson-beta. The latent prior is centred at zero because the gene
+@sec-twostate-poisson-beta. The latent prior is centered at zero because the gene
 baseline is captured by $\theta_g$; this is the structural difference from
 TSLN-Rate, where the latent prior centre was $\log \hat{r}_g$.
 
@@ -1646,7 +1646,7 @@ a_g =
 }
 $$ {#eq-tsln-logit-a}
 
-Three terms with distinct sign behaviour:
+Three terms with distinct sign behavior:
 
 - $-\varphi'' \langle D \rangle_q$: sign depends on both factors; vanishes at
   $\varphi = 1/2$.
@@ -1681,7 +1681,7 @@ gauge softly.
 
 The same four-level cascade hierarchy applies:
 
-- **Level 1 (None)**: all globals M-step optimised; gauge softly identified.
+- **Level 1 (None)**: all globals M-step optimized; gauge softly identified.
   Not recommended.
 - **Level 2 ($\theta$ soft-cascade)**: $\theta$ has an informative-prior loss
   term; rate and $\kappa$ unrestricted. Gauge tightly identified, soft.
@@ -1751,7 +1751,7 @@ entry).
 For the present implementation, two capture modes are supported that avoid the
 joint Newton entirely:
 
-- **No capture** ($\nu_c \equiv 1$): the Newton kernel optimises $\underline{z}$
+- **No capture** ($\nu_c \equiv 1$): the Newton kernel optimizes $\underline{z}$
   only.
 - **Fixed-offset capture** ($\eta_{\text{cap},c}$ pinned at the upstream MAP):
   $\nu_c = e^{-\eta_{\text{cap},c}}$ is a stop-gradient constant on the Poisson
