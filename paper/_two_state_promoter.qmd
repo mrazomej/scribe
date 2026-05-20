@@ -229,10 +229,16 @@ the marginal distribution of $m$ is
 
 $$
 \pi(m \mid \hat{r}, \hat{k}^+, \hat{k}^-)
-= \int_0^1 \pi(m \mid \hat{r}\, p)\, \pi(p \mid \hat{k}^+, \hat{k}^-)\, dp,
+= \int_0^1
+\underbrace{
+  \pi(m \mid \hat{r}\, p)
+}_{\text{Poisson}}
+\,
+\underbrace{
+  \pi(p \mid \hat{k}^+, \hat{k}^-)
+}_{\text{Beta}}
+\, dp.
 $$ {#eq-poisson-beta-marginal}
-
-with the inner densities Poisson and Beta respectively.
 
 ## Closure under binomial thinning {#sec-twostate-thinning}
 
@@ -363,24 +369,22 @@ with the natural-parameter quantities derived as
 
 $$
 k^+_g \,=\, \mu_g / b_g,
-\quad
-\alpha_g \,=\, k^+_g,
-\quad
-\beta_g \,=\, k^-_g,
-\quad
+\qquad
 \hat{r}_g \,=\, \mu_g + b_g\, k^-_g.
 $$ {#eq-twostate-derived}
 
-This map is **mean-preserving by construction**. To verify this, we compute the
-expected count $\langle u_{gc} \rangle$ using the Poisson-Beta representation.
-The expected value of a Poisson-Beta compound is
+Recall that $k^+_g$ and $k^-_g$ serve directly as the shape parameters of the
+Beta distribution (i.e., the usual $\alpha$ and $\beta$). This map is
+**mean-preserving by construction**. To verify this, we compute the expected
+count $\langle u_{gc} \rangle$ using the Poisson-Beta representation. The
+expected value of a Poisson-Beta compound is
 
 $$
 \langle u_{gc} \rangle
-\,=\, \hat{r}_g \cdot \frac{\alpha_g}{\alpha_g + \beta_g},
+\,=\, \hat{r}_g \cdot \frac{k^+_g}{k^+_g + k^-_g},
 $$ {#eq-twostate-mean-general}
 
-since $\langle p \rangle_{\text{Beta}(\alpha, \beta)} = \alpha/(\alpha+\beta)$.
+since $\langle p \rangle_{\text{Beta}(k^+, k^-)} = k^+/(k^+ + k^-)$.
 Substituting @eq-twostate-derived:
 
 $$
@@ -486,10 +490,10 @@ Sampling $(\mu_g, b_g, s_g)$ in place of $(\mu_g, b_g, k^-_g)$ recovers the
 natural-parameter quantities via
 
 $$
-\alpha_g \,=\, k^+_g \,=\, \mu_g / b_g,
-\quad
-\beta_g \,=\, k^-_g \,=\, s_g\, k^+_g \,=\, s_g\, \mu_g / b_g,
-\quad
+k^+_g \,=\, \mu_g / b_g,
+\qquad
+k^-_g \,=\, s_g\, k^+_g \,=\, s_g\, \mu_g / b_g,
+\qquad
 \hat{r}_g \,=\, \mu_g\, (1 + s_g),
 $$ {#eq-twostate-ratio-derived}
 
@@ -497,7 +501,7 @@ and the mean is preserved identically:
 
 $$
 \langle u_{gc} \rangle
-\,=\, \hat{r}_g \cdot \frac{\alpha_g}{\alpha_g + \beta_g}
+\,=\, \hat{r}_g \cdot \frac{k^+_g}{k^+_g + k^-_g}
 \,=\, \mu_g\,(1+s_g) \cdot \frac{k^+_g}{k^+_g + s_g\,k^+_g}
 \,=\, \mu_g.
 $$ {#eq-mean-preservation-ratio}
@@ -514,17 +518,65 @@ $(\mu, b, s)$ coordinates is a much closer fit to the true posterior.
 
 The regime ratio addresses one geometric coupling but not the only one. The
 posterior-predictive *variance* of a gene under the thinned Poisson-Beta
-(@eq-twostate-thinned-poisson-beta) is
+(@eq-twostate-thinned-poisson-beta) plays a central role in posterior-predictive
+checks, so let us derive it explicitly.
+
+We apply the **law of total variance** to the compound
+$u_{gc} \mid p_{gc} \sim \text{Poisson}(\hat{r}_g\, p_{gc})$ with
+$p_{gc} \sim \text{Beta}(k^+_g, k^-_g)$:
+
+$$
+\text{Var}[u_{gc}] =
+\langle \text{Var}[u_{gc} \mid p_{gc}] \rangle_{p_{gc}}
+\,+\,
+\text{Var}[\langle u_{gc} \mid p_{gc} \rangle].
+$$ {#eq-twostate-ltv}
+
+For a Poisson random variable, the variance equals the mean, so
+$\text{Var}[u_{gc} \mid p_{gc}] = \hat{r}_g\, p_{gc}$. Taking the expectation
+over $p_{gc}$:
+
+$$
+\langle \text{Var}[u_{gc} \mid p_{gc}] \rangle_{p_{gc}}
+\,=\, \hat{r}_g\, \langle p_{gc} \rangle
+\,=\, \hat{r}_g \cdot \frac{k^+_g}{k^+_g + k^-_g}
+\,=\, \mu_g,
+$$ {#eq-twostate-within-var}
+
+where the last equality uses @eq-mean-preservation. For the second term, the
+conditional mean is $\langle u_{gc} \mid p_{gc} \rangle = \hat{r}_g\, p_{gc}$,
+so its variance is
+
+$$
+\text{Var}[\langle u_{gc} \mid p_{gc} \rangle]
+\,=\, \hat{r}_g^{\,2}\, \text{Var}[p_{gc}]
+\,=\, \hat{r}_g^{\,2} \cdot
+\frac{k^+_g\,k^-_g}{(k^+_g + k^-_g)^2\,(k^+_g + k^-_g + 1)},
+$$ {#eq-twostate-between-var}
+
+where we substituted the standard result for the variance of a
+$\text{Beta}(k^+_g, k^-_g)$ distribution. Combining @eq-twostate-within-var and
+@eq-twostate-between-var:
 
 $$
 \text{Var}[u_{gc}]
-\,=\, \langle u_{gc} \rangle
-\,+\, \hat{r}_g^{\,2}\, \text{Var}[p_{gc}]
 \,=\, \mu_g \,+\, \hat{r}_g^{\,2} \cdot
-\frac{\alpha_g\,\beta_g}{(\alpha_g+\beta_g)^2\,(\alpha_g+\beta_g+1)},
+\frac{k^+_g\,k^-_g}{(k^+_g + k^-_g)^2\,(k^+_g + k^-_g + 1)}.
 $$ {#eq-twostate-variance}
 
-a function of all three parameters. In $(\mu, b, k^-)$ coordinates, the excess
+The first term $\mu_g$ is the Poisson noise (shot noise from the discreteness of
+mRNA molecules), and the second term is the excess variance from promoter
+switching---the biological overdispersion. Written in terms of the switching
+rates, the source of the excess variance is transparent: it is proportional to
+$k^+_g k^-_g / (k^+_g + k^-_g)^2$, which is maximized when $k^+_g = k^-_g$
+(symmetric switching, where the promoter spends equal time ON and OFF) and
+vanishes when either rate dominates (the promoter is essentially constitutively
+ON or constitutively OFF). This decomposition makes explicit that the two-state
+model generates overdispersion through a concrete biophysical mechanism
+(stochastic promoter switching), rather than as an ad hoc statistical
+correction.
+
+The variance @eq-twostate-variance is a function of all three parameters. In $(\mu, b, k^-)$ coordinates, the excess
 variance takes the form
 
 $$
@@ -548,26 +600,27 @@ F_g
 \frac{\text{Var}[u_{gc}]}{\langle u_{gc} \rangle} - 1
 \;\geq\; 0,
 \qquad
-\kappa_g \,=\, \alpha_g + \beta_g,
+\kappa_g \,=\, k^+_g + k^-_g,
 $$ {#eq-twostate-mean-fano-defs}
 
-the **excess Fano factor** and the **Beta concentration**. The excess Fano
-factor $F_g$ has a direct biophysical interpretation: it measures how much more
-variable a gene's expression is compared to a Poisson process (which has
-$F = 0$). For the NB, $F_g$ equals the mean burst size; for the general
-two-state model, $F_g$ encodes the combined effect of burst size and promoter
-switching noise. The Beta concentration $\kappa_g = \alpha_g + \beta_g$ measures
-how tightly the ON-fraction $p$ is concentrated around its mean---equivalently,
-how close the gene is to the NB limit.
+the **excess Fano factor** and the **total switching rate** (equivalently, the
+Beta concentration). The excess Fano factor $F_g$ has a direct biophysical
+interpretation: it measures how much more variable a gene's expression is
+compared to a Poisson process (which has $F = 0$). For the NB, $F_g$ equals the
+mean burst size; for the general two-state model, $F_g$ encodes the combined
+effect of burst size and promoter switching noise. The total switching rate
+$\kappa_g = k^+_g + k^-_g$ measures how fast the promoter cycles between states
+relative to mRNA decay---equivalently, how tightly the ON-fraction $p$ is
+concentrated around its mean and how close the gene is to the NB limit.
 
 Sampling $(\mu_g, F_g, \kappa_g)$ in unconstrained-positive space, the
-natural-parameter quantities are derived as
+switching rates are derived as
 
 $$
-\alpha_g \,=\,
+k^+_g \,=\,
 \frac{\kappa_g\, \mu_g}{\mu_g + F_g\,(\kappa_g + 1)},
 \qquad
-\beta_g \,=\,
+k^-_g \,=\,
 \frac{\kappa_g\, F_g\,(\kappa_g + 1)}{\mu_g + F_g\,(\kappa_g + 1)},
 \qquad
 \hat{r}_g \,=\, \mu_g + F_g\,(\kappa_g + 1).
@@ -578,7 +631,7 @@ by construction:
 
 $$
 \langle u_{gc} \rangle
-\,=\, \hat{r}_g \cdot \frac{\alpha_g}{\alpha_g + \beta_g}
+\,=\, \hat{r}_g \cdot \frac{k^+_g}{k^+_g + k^-_g}
 \,=\, \mu_g,
 \qquad
 \frac{\text{Var}[u_{gc}]}{\langle u_{gc} \rangle} - 1
@@ -588,16 +641,16 @@ $$ {#eq-mean-fano-preserved}
 independently of all other parameters. The variational guide is now asked to
 factorize across coordinates that *each* control a distinct, data-anchored
 quantity: $\mu_g$ sets location, $F_g$ sets predictive variance, and $\kappa_g$
-sets the latent-Beta shape---equivalently, the gene's departure from the NB
+sets the total switching rate---equivalently, the gene's departure from the NB
 limit.
 
 The NB limit reads cleanly in these coordinates as $\kappa_g \to \infty$. From
 @eq-twostate-mean-fano-derived,
 
 $$
-\alpha_g \,\to\, \mu_g / F_g,
+k^+_g \,\to\, \mu_g / F_g,
 \qquad
-\beta_g \,\to\, \kappa_g,
+k^-_g \,\to\, \kappa_g,
 \qquad
 \hat{r}_g \,\to\, F_g\, \kappa_g,
 $$ {#eq-mean-fano-nb-limit}
@@ -651,9 +704,9 @@ substituting into @eq-twostate-mean-fano-derived gives the $(\mu, F, \delta)$
 forward map:
 
 $$
-\alpha_g \,=\, \frac{\mu_g\,(1 - \delta_g)}{\mu_g\, \delta_g + F_g},
+k^+_g \,=\, \frac{\mu_g\,(1 - \delta_g)}{\mu_g\, \delta_g + F_g},
 \qquad
-\beta_g \,=\, \frac{F_g\,(1 - \delta_g)}{\delta_g\,(\mu_g\, \delta_g + F_g)},
+k^-_g \,=\, \frac{F_g\,(1 - \delta_g)}{\delta_g\,(\mu_g\, \delta_g + F_g)},
 \qquad
 \hat{r}_g \,=\, \frac{\mu_g\, \delta_g + F_g}{\delta_g}.
 $$ {#eq-moment-delta-derived}
@@ -672,9 +725,9 @@ than scattered across an unbounded ridge. Taking $\delta_g \to 0$ in
 @eq-moment-delta-derived,
 
 $$
-\alpha_g \,\to\, \mu_g / F_g,
+k^+_g \,\to\, \mu_g / F_g,
 \qquad
-\beta_g \,\to\, \infty,
+k^-_g \,\to\, \infty,
 \qquad
 \hat{r}_g \,\to\, F_g / \delta_g \,\to\, \infty,
 $$ {#eq-moment-delta-nb-limit}
@@ -704,8 +757,7 @@ independently. The following summary collects the practical guidance:
   ratio $s = k^-/k^+$. The "NB-ness" of a gene is now a single scalar,
   scale-invariant across genes, and the variational guide does not have to learn
   a curved manifold along which $b$ and $k^-$ co-vary to keep $s$ sensible.
-  Recommended when fitting many genes with widely varying $\mu$ by mean-field
-  VI.
+  Recommended when fitting many genes with widely varying $\mu$ by mean-field VI.
 
 - **$(\mu, F, \kappa)$** makes the first two observable moments the sampled
   coordinates. Posterior uncertainty in $F$ directly controls the width of the
@@ -741,10 +793,10 @@ $$
 \,=\,
 \log \int_0^1 \text{Poisson}\!\big(u_{gc} \,\big|\, \hat{r}_g\, p\, \nu_c\big)
 \cdot
-\text{Beta}\!\big(p \,\big|\, \alpha_g, \beta_g\big)\, dp,
+\text{Beta}\!\big(p \,\big|\, k^+_g, k^-_g\big)\, dp,
 $$ {#eq-twostate-loglik}
 
-with $(\alpha_g, \beta_g, \hat{r}_g)$ as in @eq-twostate-derived. The integrand
+with $(k^+_g, k^-_g, \hat{r}_g)$ as in @eq-twostate-derived. The integrand
 is a smooth, strictly positive function of $p \in [0, 1]$, and the integral is a
 one-dimensional definite integral against a fixed reference measure. Two
 quadrature strategies present themselves.
@@ -753,22 +805,22 @@ quadrature strategies present themselves.
 
 **Option A: absorb the Beta into the quadrature weight (Gauss-Jacobi).** Map
 $[0,1]$ to $[-1,1]$ via $p = (1+x)/2$ and match the Beta weight to the
-standard Jacobi weight $(1-x)^a (1+x)^b$ with $a = \beta - 1$ and
-$b = \alpha - 1$:
+standard Jacobi weight $(1-x)^a (1+x)^b$ with $a = k^- - 1$ and
+$b = k^+ - 1$:
 
 $$
-\int_0^1 g(p) \cdot \text{Beta}(p \mid \alpha, \beta)\, dp
+\int_0^1 g(p) \cdot \text{Beta}(p \mid k^+, k^-)\, dp
 \,\approx\,
 \sum_{k=1}^K \tilde{w}_k\, g(p_k),
 $$ {#eq-gauss-jacobi-beta}
 
-where the nodes $p_k$ and weights $\tilde{w}_k$ depend on $(\alpha, \beta)$.
+where the nodes $p_k$ and weights $\tilde{w}_k$ depend on $(k^+, k^-)$.
 Computing them at fit time requires solving the eigenvalue problem of the
 tridiagonal matrix encoding the Jacobi three-term recurrence (the Golub-Welsch
 construction). This is exact through polynomial degree $2K-1$ for the smooth
 factor $g$ and has the appealing property that the difficult boundary behavior
-of the Beta---vanishing at $0, 1$ for $\alpha, \beta > 1$, diverging there for
-$\alpha, \beta < 1$---is absorbed into the weight rather than the integrand.
+of the Beta---vanishing at $0, 1$ for $k^+, k^- > 1$, diverging there for
+$k^+, k^- < 1$---is absorbed into the weight rather than the integrand.
 
 **Option B: keep a fixed quadrature and evaluate the Beta at nodes
 (Gauss-Legendre).** Use the standard Gauss-Legendre rule on $[0,1]$ (uniform
@@ -781,8 +833,8 @@ $$
 $$ {#eq-gauss-legendre-01}
 
 with $f(p) = \text{Poisson}(u_{gc} \mid \hat{r}_g\, p\, \nu_c) \cdot
-\text{Beta}(p \mid \alpha_g, \beta_g)$. The nodes $p_k$ and weights $w_k$
-depend only on $K$---*not* on $(\alpha, \beta)$---so they are computed once at
+\text{Beta}(p \mid k^+_g, k^-_g)$. The nodes $p_k$ and weights $w_k$
+depend only on $K$---*not* on $(k^+, k^-)$---so they are computed once at
 the start of inference and cached.
 
 ### Why we use Gauss-Legendre {#sec-twostate-quad-choice}
@@ -791,7 +843,7 @@ Mathematically the two options are equivalent at infinite $K$. At finite $K$,
 Gauss-Jacobi is more efficient *per node* because it matches the integrand's
 reference measure. But under automatic-differentiation, where gradients flow
 back from the log-likelihood through nodes and weights into the upstream
-$(\alpha, \beta)$, the two options behave very differently.
+$(k^+, k^-)$, the two options behave very differently.
 
 The Golub-Welsch eigendecomposition is differentiable in exact arithmetic, but
 the implicit-differentiation formula for eigenvectors of a symmetric matrix
@@ -808,10 +860,10 @@ $$
 $$ {#eq-eigh-gradient}
 
 where $(\underline{\underline{M}}, \lambda_i, \underline{v}_i)$ is the
-tridiagonal Jacobi matrix and its eigenpairs and $\theta$ stands for $\alpha$ or
-$\beta$. The Jacobi recurrence coefficients depend smoothly on
-$(\alpha, \beta)$, but for ill-conditioned regimes---specifically the U-shaped
-Beta with $\alpha, \beta < 1$, exactly the bursty regime the two-state model is
+tridiagonal Jacobi matrix and its eigenpairs and $\theta$ stands for $k^+$ or
+$k^-$. The Jacobi recurrence coefficients depend smoothly on
+$(k^+, k^-)$, but for ill-conditioned regimes---specifically the U-shaped
+Beta with $k^+, k^- < 1$, exactly the bursty regime the two-state model is
 meant to capture---neighbouring eigenvalues of the truncated tridiagonal matrix
 can get arbitrarily close. Floating-point evaluation of @eq-eigh-gradient with
 $\lambda_i \approx \lambda_j$ produces NaN gradients even when the forward
@@ -819,18 +871,18 @@ eigendecomposition gives a finite loss.
 
 Gauss-Legendre sidesteps this entirely. Its nodes and weights are *constants*:
 no autodiff path runs through an eigendecomposition. The Beta density at fixed
-nodes is a plain, autodiff-friendly function of $(\alpha, \beta)$:
+nodes is a plain, autodiff-friendly function of $(k^+, k^-)$:
 
 $$
-\log \text{Beta}(p_k \mid \alpha, \beta)
+\log \text{Beta}(p_k \mid k^+, k^-)
 \,=\,
-(\alpha - 1)\log p_k
-\,+\, (\beta - 1)\log(1 - p_k)
-\,-\, \log B(\alpha, \beta),
+(k^+ - 1)\log p_k
+\,+\, (k^- - 1)\log(1 - p_k)
+\,-\, \log B(k^+, k^-),
 $$ {#eq-beta-logpdf-at-node}
 
-with $\log B(\alpha, \beta) = \log\Gamma(\alpha) + \log\Gamma(\beta) -
-\log\Gamma(\alpha + \beta)$. Every term is differentiable with no eigenvalue gap
+with $\log B(k^+, k^-) = \log\Gamma(k^+) + \log\Gamma(k^-) -
+\log\Gamma(k^+ + k^-)$. Every term is differentiable with no eigenvalue gap
 to worry about. The price is more variation of the integrand at the boundaries
 (since the Beta singularity is no longer absorbed by the weight), and
 correspondingly a larger $K$ to maintain accuracy in the U-shaped regime.
@@ -846,7 +898,7 @@ $$
 \operatorname*{logsumexp}_{k=1, \ldots, K}
 \!\left[
 \log w_k
-\,+\, \log \text{Beta}(p_k \mid \alpha_g, \beta_g)
+\,+\, \log \text{Beta}(p_k \mid k^+_g, k^-_g)
 \,+\, \log \text{Poisson}\!\big(u_{gc} \,\big|\, \hat{r}_g\, p_k\, \nu_c\big)
 \right],
 $$ {#eq-twostate-loglik-quad}
@@ -882,7 +934,7 @@ or algebraic result we have already established.
    $k^-_g \gtrsim 5$) indicate NB-like genes for which the NB family would have
    been sufficient; posteriors near or below 1 indicate genuinely bursty genes
    whose bimodality the NB could not have captured. The derived quantities
-   $\alpha_g = \mu_g/b_g$ and $b_g$ are NB-limit-natural quantities---they can
+   $k^+_g = \mu_g/b_g$ and $b_g$ are NB-limit-natural quantities---they can
    be directly compared to the NB shape and burst size from the fast-switching
    limit @eq-nb-limit.
 
@@ -909,7 +961,7 @@ solution. We develop both the posterior mean and a sampling algorithm below.
 Recall the generative model with binomial capture (@sec-twostate-thinning):
 
 $$\begin{aligned}
-p_{gc} &\sim \text{Beta}(\alpha_g, \beta_g),\\
+p_{gc} &\sim \text{Beta}(k^+_g, k^-_g),\\
 m_{gc} \mid p_{gc} &\sim \text{Poisson}(\hat{r}_g\, p_{gc}),\\
 u_{gc} \mid m_{gc},\, \nu_c &\sim \text{Binomial}(m_{gc}, \nu_c).
 \end{aligned}$${#eq-ts-denoise-gen}
@@ -927,7 +979,7 @@ d_{gc} \mid p_{gc},\, \nu_c &\sim
 \end{aligned}$${#eq-ts-denoise-thin}
 
 The denoising problem is: given the observed count $u_{gc}$ and the model
-parameters $(\alpha_g, \beta_g, \hat{r}_g, \nu_c)$, compute
+parameters $(k^+_g, k^-_g, \hat{r}_g, \nu_c)$, compute
 $\langle m_{gc} \mid u_{gc} \rangle$ or draw samples from
 $\pi(m_{gc} \mid u_{gc})$.
 
@@ -939,7 +991,7 @@ $$
 \pi(p \mid u) \propto
   \text{Poisson}(u \mid \nu\hat{r}\, p)
   \;\cdot\;
-  \text{Beta}(p \mid \alpha, \beta),
+  \text{Beta}(p \mid k^+, k^-),
 $${#eq-ts-denoise-posterior}
 
 where we drop cell/gene subscripts for clarity. Expanding, the unnormalized
@@ -947,8 +999,8 @@ log-posterior is
 
 $$
 \log\tilde{\pi}(p \mid u) =
-  (\alpha - 1)\log p + (\beta - 1)\log(1-p)
-  - \log B(\alpha,\beta)
+  (k^+ - 1)\log p + (k^- - 1)\log(1-p)
+  - \log B(k^+, k^-)
   + u\log(\nu\hat{r}\, p) - \nu\hat{r}\, p
   - \log\Gamma(u+1).
 $${#eq-ts-denoise-logpost}
@@ -965,7 +1017,7 @@ $\{w_k\}_{k=1}^K$ on $[0,1]$, the unnormalized posterior weight at each node is
 
 $$
 \tilde{\pi}_k \;=\; w_k \cdot
-  \text{Beta}(p_k \mid \alpha,\beta)
+  \text{Beta}(p_k \mid k^+, k^-)
   \cdot
   \text{Poisson}(u \mid \nu\hat{r}\, p_k),
 $${#eq-ts-denoise-weights}
@@ -1039,23 +1091,23 @@ uncertainty about the unobserved promoter activity history.
 
 ### Recovery of the NB limit {#sec-twostate-denoise-nb-limit}
 
-When both $\alpha_g,\, \beta_g \gg 1$ (the NB limit; see
+When both $k^+_g,\, k^-_g \gg 1$ (the NB limit; see
 @sec-twostate-nb-limit), the Beta prior concentrates around its mean
-$\alpha/(\alpha + \beta)$, the posterior $\pi(p \mid u)$ becomes a sharp peak,
+$k^+/(k^+ + k^-)$, the posterior $\pi(p \mid u)$ becomes a sharp peak,
 and
 
 $$
 \langle p \mid u \rangle
   \;\to\;
-  \frac{\alpha}{\alpha + \beta},
+  \frac{k^+}{k^+ + k^-},
 $$
 
 so that $\langle m \mid u \rangle \to u + (1-\nu)\hat{r} \cdot
-\alpha/(\alpha+\beta) = u + (1-\nu)\mu$, recovering the NB denoising formula.
+k^+/(k^+ + k^-) = u + (1-\nu)\mu$, recovering the NB denoising formula.
 This continuity ensures that the two-state denoiser gracefully reduces to the NB
 denoiser for genes that do not exhibit slow promoter switching.
 
-## Practical recommendations {#sec-twostate-practical}
+<!-- ## Practical recommendations {#sec-twostate-practical}
 
 The two-state likelihood is most useful as a *targeted refinement* of the NB
 family rather than a wholesale replacement. The biophysical picture guides the
@@ -1086,7 +1138,7 @@ recommendation:
   of real genes split between NB-easy and NB-poor-fit cases to confirm the
   two-state model matches the NB on the easy genes and improves the fit on the
   hard ones, (iii) the full dataset with a per-gene comparison of posterior
-  predictive ECDFs.
+  predictive ECDFs. -->
 
 # Cross-gene correlation structure {#sec-twostate-cross-gene}
 
@@ -1106,8 +1158,9 @@ regulatory network dynamics, and that the resulting covariance
 $\underline{\underline{\Sigma}}$ is determined by the Lyapunov equation
 (@eq-grn-bio-lyapunov). The statistical machinery for capturing this correlation
 structure was the per-cell Gaussian latent in log-abundance space---the same
-latent that produced the Logistic-Normal Multinomial and the Poisson-LogNormal
-models. We now apply the same principle to the two-state likelihood.
+latent that produced the Logistic-Normal Multinomial, the Poisson-LogNormal, and
+the Negative Binomial-LogNormal models. We now apply the same principle to the 
+two-state likelihood.
 
 This section extends the two-state model with a per-cell **Gaussian latent**
 $\underline{z}_c$ that perturbs the per-gene production rate
@@ -1127,7 +1180,7 @@ We will show:
 2. Per-cell Laplace marginalization of $\underline{z}_c$, with closed-form
    gradients and a defensively clamped Hessian-diagonal.
 
-3. The NB-LogNormal limit: as $\beta \to \infty$ with $\alpha = r$ fixed, the
+3. The NB-LogNormal limit: as $k^- \to \infty$ with $k^+ = r$ fixed, the
    TSLN-Rate factors collapse to NBLN's $a_g = (u+r)\,p(1-p)$ form exactly.
 
 4. Gauge analysis and the cascade-freeze mechanism that resolves it.
@@ -1148,9 +1201,8 @@ $$ {#eq-tsln-rate-gene-priors}
 with the natural-parameterization derivations
 
 $$
-\alpha_g = \mu_g / b_g,\quad
-\beta_g = k^-_g,\quad
-\hat{r}_g = \mu_g + b_g k^-_g.
+k^+_g = \mu_g / b_g,\quad
+\hat{r}_g = \mu_g + b_g\, k^-_g.
 $$ {#eq-tsln-rate-derived}
 
 Now, **per cell $c$**, sample a Gaussian latent:
@@ -1183,7 +1235,7 @@ then a Poisson-Beta compound, the same as in @sec-twostate but with this
 $\underline{z}$-modulated rate:
 
 $$
-p_{cg} \sim \text{Beta}(\alpha_g, \beta_g),\quad
+p_{cg} \sim \text{Beta}(k^+_g, k^-_g),\quad
 u_{cg} \mid p_{cg}, \underline{z}_c \sim
 \text{Poisson}(\lambda_{cg}\, p_{cg}).
 $$ {#eq-tsln-rate-obs}
@@ -1207,7 +1259,7 @@ consequences:
 
 Option 1 (TSLN-Rate) is mathematically the cleaner cascade analog of
 NB-LogNormal: the latent enters the Poisson rate multiplicatively, so in the NB
-limit ($\beta \to \infty$) the marginal becomes NB-LogNormal exactly. This
+limit ($k^- \to \infty$) the marginal becomes NB-LogNormal exactly. This
 continuity with the existing pipeline makes it the natural first extension.
 
 ## Per-cell Laplace marginalization {#sec-twostate-tsln-rate-laplace}
@@ -1236,7 +1288,7 @@ Substituting @eq-tsln-rate-lambda and @eq-tsln-rate-latent-prior into the joint:
 
 $$
 \log p(\underline{u}_c, \underline{z}_c \mid \Theta)
-= \sum_g \log \mathcal{L}_{\text{PB}}(u_{cg} \mid \alpha_g, \beta_g,
+= \sum_g \log \mathcal{L}_{\text{PB}}(u_{cg} \mid k^+_g, k^-_g,
   \hat{r}_g e^{z_{cg} - \eta_c})
 \;-\;\tfrac{1}{2} \underline{z}_c^\top
   \underline{\underline{\Sigma}}^{-1} \underline{z}_c
@@ -1257,9 +1309,9 @@ $\lambda = \hat{r} e^{z}$:
 
 $$
 q_k(z) =
-\frac{w_k \cdot \text{Beta}(p_k \mid \alpha, \beta)\cdot
+\frac{w_k \cdot \text{Beta}(p_k \mid k^+, k^-)\cdot
       \text{Poisson}(u \mid \lambda p_k)}
-     {\sum_{k'} w_{k'} \cdot \text{Beta}(p_{k'} \mid \alpha, \beta)\cdot
+     {\sum_{k'} w_{k'} \cdot \text{Beta}(p_{k'} \mid k^+, k^-)\cdot
       \text{Poisson}(u \mid \lambda p_{k'})}.
 $$ {#eq-tsln-rate-posterior-softmax}
 
@@ -1300,7 +1352,7 @@ This is the negative of the data-side Hessian diagonal, used in the Newton step.
 #### Log-concavity caveat {#sec-twostate-tsln-rate-concavity}
 
 The Poisson-Beta marginal is **not** uniformly log-concave in the log-rate.
-When $\alpha < 1$ or $\beta < 1$, the Beta density is U-shaped (not
+When $k^+ < 1$ or $k^- < 1$, the Beta density is U-shaped (not
 log-concave), and the standard Prekopa argument for log-concavity of compound
 distributions fails. Empirically, $a_g$ in @eq-tsln-rate-hessian-diag can be
 very small or even negative in the bursty/U-shaped regime. The implementation
@@ -1342,25 +1394,25 @@ $\bar{p}$ and $\text{Var}_q(p)$).
 
 ## The NB-LogNormal limit {#sec-twostate-tsln-rate-nblim}
 
-As $\beta \to \infty$ with $\alpha = r$ fixed and $b = \lambda/\beta$ finite
+As $k^- \to \infty$ with $k^+ = r$ fixed and $b = \lambda/k^-$ finite
 (the **fast-OFF NB limit** of @sec-twostate-nb-limit), the Beta-Poisson
 posterior in @eq-tsln-rate-posterior-softmax collapses to a Gamma-Poisson
 conjugate update:
 
-- $\beta \cdot p$ has posterior $\text{Gamma}(r + u, 1 + b)$ asymptotically.
-- $\langle p \rangle_q \to (r + u) / (\beta + \lambda)$.
-- $\text{Var}_q(p) \to (r + u) / (\beta + \lambda)^2$.
+- $k^- \cdot p$ has posterior $\text{Gamma}(r + u, 1 + b)$ asymptotically.
+- $\langle p \rangle_q \to (r + u) / (k^- + \lambda)$.
+- $\text{Var}_q(p) \to (r + u) / (k^- + \lambda)^2$.
 
 Substituting into the closed forms:
 
 - $\lambda \cdot \langle p \rangle_q \to (r + u) q$ with
-  $q = \lambda / (\beta + \lambda)$.
+  $q = \lambda / (k^- + \lambda)$.
 - $\lambda^2 \cdot \text{Var}_q(p) \to (r + u) q^2$.
 - $a_g \to (r + u)\, q\, (1 - q)$.
 
 The TSLN-Rate Hessian-diagonal collapses to NBLN's
 $a_g = (u + r)\, p_{\text{NB}}\,(1 - p_{\text{NB}})$ form with
-$p_{\text{NB}} = 1 - q = \beta/(\beta + \lambda)$. Similarly,
+$p_{\text{NB}} = 1 - q = k^-/(k^- + \lambda)$. Similarly,
 $g_{\text{data}} \to u - (r + u)\, q$, the NB conditional gradient. **The
 TSLN-Rate kernel reproduces NBLN's kernel exactly in the NB limit**, confirming
 that the new model properly nests NB-LogNormal as a special case.
@@ -1404,14 +1456,56 @@ The TSLN-Rate cascade supports four progressively stricter freeze levels:
 
 ### Gauge contamination ratio {#sec-twostate-tsln-rate-gauge-diagnostic}
 
-The diagnostic $\rho_{\text{gauge}} = \text{std}_c(\bar{z}_c) /
-\text{std}_c(\|\underline{z}_{c,\perp}\|)$ (with
-$\bar{z}_c = \text{mean}_g(z_{cg})$ the gauge component and
-$\underline{z}_{c,\perp} = \underline{z}_c - \bar{z}_c \underline{1}$ the
-gauge-orthogonal residual) quantifies how much of the per-cell variance lives in
-the rigid-translation direction. For a well-frozen Level-4 cascade,
-$\rho_{\text{gauge}} < 10^{-3}$; for an unfrozen Level-1 fit,
-$\rho_{\text{gauge}}$ is typically $\mathcal{O}(1)$.
+How do we know, *after fitting*, whether the gauge has been successfully
+resolved? The idea is to decompose each cell's latent vector
+$\underline{z}_c \in \mathbb{R}^G$ into the direction that the gauge leaves
+unidentifiable (a uniform shift of all genes) and everything orthogonal to it.
+
+Concretely, for each cell $c$, compute the **gene-averaged latent**:
+
+$$
+\bar{z}_c \;=\; \frac{1}{G} \sum_{g=1}^G z_{cg}.
+$$
+
+This is the projection of $\underline{z}_c$ onto the all-ones direction
+$\underline{1}/\sqrt{G}$---precisely the gauge direction from the
+rigid-translation symmetry above. If the gauge is broken, $\bar{z}_c$ should
+be negligible; if it is not broken, the optimizer can drift all of
+$\underline{z}_c$ along this flat direction without changing the likelihood.
+
+The **gauge-orthogonal residual** is what remains after subtracting the
+uniform shift:
+
+$$
+\underline{z}_{c,\perp} \;=\; \underline{z}_c - \bar{z}_c\, \underline{1}.
+$$
+
+This component carries the genuine, gene-specific biological signal (cell-type
+programs, differential regulation, etc.). The **gauge contamination ratio** is
+then:
+
+$$
+\rho_{\text{gauge}}
+\;=\;
+\frac{\text{std}_c(\bar{z}_c)}
+     {\text{std}_c\!\big(\|\underline{z}_{c,\perp}\|\big)},
+$$ {#eq-gauge-contamination-ratio}
+
+where $\text{std}_c(\cdot)$ denotes the standard deviation across cells. The
+numerator measures how much the unidentifiable gauge component varies from cell
+to cell; the denominator measures how much the biologically meaningful component
+varies. Their ratio directly answers the question: *what fraction of the
+cell-to-cell signal is gauge drift versus real biology?*
+
+Interpretation:
+
+- $\rho_{\text{gauge}} < 10^{-3}$ (well-frozen Level-4 cascade): the gauge
+  direction carries negligible variance---essentially all cell-to-cell variation
+  in $\underline{z}$ is biological signal. The freeze mechanism is working.
+- $\rho_{\text{gauge}} \sim \mathcal{O}(1)$ (unfrozen Level-1 fit): the gauge
+  component carries as much variance as the signal component. The latent is
+  contaminated by an unresolved non-identifiability and cannot be interpreted
+  biologically without further correction.
 
 ## Connection to NB-LogNormal {#sec-twostate-tsln-rate-nbln-connection}
 
@@ -1477,7 +1571,7 @@ TSLN-Rate (@sec-twostate-tsln-rate-model) attaches the per-cell Gaussian latent
 to the ON-production rate
 $\hat{r}_{cg} = \hat{r}_g \cdot e^{z_{cg}}$. The conditional mean responds
 multiplicatively: $\langle u_{cg} \mid z_{cg} \rangle = \hat{r}_g\, e^{z_{cg}}
-\, \alpha_g/(\alpha_g+\beta_g)$. There is no biophysical upper bound on
+\, k^+_g/(k^+_g + k^-_g)$. There is no biophysical upper bound on
 $\langle u \mid z \rangle$ as $z \to \infty$.
 
 The alternative---attach the latent to the **activation log-odds**
@@ -1491,7 +1585,8 @@ The biophysical interpretation of this saturation is elegant. In the
 thermodynamic picture of gene regulation, the equilibrium ON-fraction of a
 promoter is determined by the Boltzmann factor
 $\sigma(\Delta G_{\text{act}} / k_B T)$, where $\Delta G_{\text{act}}$ is the
-activation free energy. A transcription factor or chromatin perturbation shifts
+activation free energy, and $\sigma(\cdot)$ is the sigmoid function. A 
+transcription factor or chromatin perturbation shifts
 $\Delta G_{\text{act}}$ *linearly* (it adds or subtracts binding energy), and
 the steady-state ON-fraction follows the Boltzmann sigmoid. The TSLN-Logit model
 implements exactly this picture: the Gaussian latent $z_{cg}$ acts as a
@@ -1507,14 +1602,14 @@ quantities that are natural for the activation-log-odds latent:
 - $\text{rate}_g \in \mathbb{R}_+$: gene-level ON-production rate. **Crucially
   $z$-independent**---this is the property that makes the cross-gene mean
   covariance non-zero.
-- $\kappa_g \in \mathbb{R}_+$: Beta concentration
-  $\kappa_g = \alpha_g + \beta_g$.
+- $\kappa_g \in \mathbb{R}_+$: total switching rate
+  $\kappa_g = k^+_g + k^-_g$.
 - $\theta_g \in \mathbb{R}$: per-gene activation log-odds
-  $\theta_g = \log(\alpha_g/\beta_g) = \log(k^+_g/k^-_g)$.
+  $\theta_g = \log(k^+_g/k^-_g)$.
 
-These map back to the natural parameterization via
-$\alpha_g = \kappa_g\,\sigma(\theta_g)$ and
-$\beta_g = \kappa_g\,(1-\sigma(\theta_g))$ at $z = 0$.
+These map back to the individual switching rates via
+$k^+_g = \kappa_g\,\sigma(\theta_g)$ and
+$k^-_g = \kappa_g\,(1-\sigma(\theta_g))$ at $z = 0$.
 
 **Per cell $c$**, draw a Gaussian latent (zero-centered):
 
@@ -1534,13 +1629,13 @@ $$
 \varphi_{cg} = \sigma(\eta_{\text{act},cg}),
 $$ {#eq-tsln-logit-eta-act}
 
-so the per-cell Beta shape parameters are
-$\alpha_{cg} = \kappa_g \varphi_{cg}$ and
-$\beta_{cg} = \kappa_g (1 - \varphi_{cg})$. The observation is a Poisson-Beta
+so the per-cell effective switching rates are
+$k^+_{cg} = \kappa_g \varphi_{cg}$ and
+$k^-_{cg} = \kappa_g (1 - \varphi_{cg})$. The observation is a Poisson-Beta
 compound:
 
 $$
-p_{cg} \sim \text{Beta}(\alpha_{cg}, \beta_{cg}),\quad
+p_{cg} \sim \text{Beta}(k^+_{cg}, k^-_{cg}),\quad
 u_{cg} \mid p_{cg}, \underline{z}_c \sim
 \text{Poisson}(\nu_c \, \text{rate}_g \, p_{cg}),
 $$ {#eq-tsln-logit-obs}
@@ -1656,7 +1751,7 @@ Three terms with distinct sign behavior:
   non-positive**.
 
 Like TSLN-Rate, the Poisson-Beta marginal in $z$ is **not** uniformly
-log-concave when the Beta is U-shaped ($\alpha < 1$ or $\beta < 1$). The
+log-concave when the Beta is U-shaped ($k^+ < 1$ or $k^- < 1$). The
 implementation defensively clamps $a_g$ at $a_{\min} = 10^{-3}$ before the
 Woodbury solve.
 
@@ -1732,7 +1827,7 @@ kernel's Schur back-substitution.
 
 **TSLN-Logit.** For TSLN-Logit the cross-Hessian does **not** reduce to this
 simple shortcut. The asymmetry arises because $z$ enters the Beta density only
-(via $\alpha, \beta$), while $\eta_{\text{cap}}$ enters the Poisson log-rate
+(via $k^+, k^-$), while $\eta_{\text{cap}}$ enters the Poisson log-rate
 only---they perturb different parts of the integrand. The correct cross-Hessian
 is
 
@@ -1774,7 +1869,7 @@ conditional mean response:
 | Latent enters at | log-rate ($\log\hat{r} + z$) | activation log-odds ($\theta + z$) |
 | $\langle u \mid z \rangle$ as $z \to \infty$ | unbounded | saturates at $\text{rate}_g$ |
 | Cross-gene mean covariance source | $\text{Cov}(e^{z_g}, e^{z_h})$ | $\text{Cov}(\sigma(\theta_g + z_g), \sigma(\theta_h + z_h))$ |
-| NB-limit ($\beta \to \infty$) | NB-LogNormal exactly | linear in $z$ in the NB tail |
+| NB-limit ($k^- \to \infty$) | NB-LogNormal exactly | linear in $z$ in the NB tail |
 | Gauge structure | rigid-translation between $\log\hat{r}$ and $z$ (data-likelihood invariant) | rigid-translation between $\theta$ and $z$ (**exact**) |
 | Biophysical interpretation | log-rate fluctuation | Boltzmann free-energy fluctuation on activation odds |
 
