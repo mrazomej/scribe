@@ -776,7 +776,7 @@ def freeze_values_from_results(
 
 def priors_from_twostate_results(
     results: Any,
-    target_positive_transform: str,
+    target_positive_transform,
     target_n_genes: int,
     target_n_cells: int,
     target_variant: str = "rate",
@@ -802,10 +802,19 @@ def priors_from_twostate_results(
         Scribe SVI results from a ``model="twostate"`` (or
         ``"twostatevcp"``) fit. Must expose ``get_posterior_samples()``
         and ideally var-names / gene-mask metadata.
-    target_positive_transform : {"exp", "softplus"}
-        Resolved from the TSLN target ``model_config.positive_transform``.
-        Used for all positive parameters (``mu``, ``burst_size``,
-        ``k_off``, ``rate``, ``kappa``).
+    target_positive_transform : str or Dict[str, str]
+        Either a single transform name (e.g. ``"softplus"`` /
+        ``"exp"``) applied uniformly to every positive parameter, OR
+        a mapping from internal parameter name to transform name.
+        Recognised keys: ``{"mu", "burst_size", "k_off"}`` for the
+        rate variant; ``{"rate", "kappa"}`` for the logit variant
+        (``eta_anchor`` is real-valued — identity transform).  Missing
+        keys fall back to ``"softplus"``.  Pass a dict whenever the
+        target's ``model_config.positive_transform`` is itself the
+        dict form (e.g.
+        ``positive_transform={"rate": "exp", "kappa": "softplus"}``)
+        — using a single string in that case would silently apply the
+        wrong inverse and corrupt the cascade priors.
     target_n_genes, target_n_cells : int
         Target dataset shape.
     target_variant : {"rate", "logit"}, default ``"rate"``
@@ -835,10 +844,28 @@ def priors_from_twostate_results(
             f"Unknown target_variant={target_variant!r}; expected one of "
             "{'rate', 'logit'}."
         )
-    if target_positive_transform not in _JAX_POSITIVE_FNS:
-        raise ValueError(
-            f"Unknown target_positive_transform={target_positive_transform!r}; "
-            f"expected one of {set(_JAX_POSITIVE_FNS)}."
+    # Validate the transform argument — accept either a string or a
+    # dict mapping parameter name → transform name.
+    if isinstance(target_positive_transform, str):
+        if target_positive_transform not in _JAX_POSITIVE_FNS:
+            raise ValueError(
+                f"Unknown target_positive_transform="
+                f"{target_positive_transform!r}; expected one of "
+                f"{set(_JAX_POSITIVE_FNS)}."
+            )
+    elif isinstance(target_positive_transform, dict):
+        for k, v in target_positive_transform.items():
+            if v not in _JAX_POSITIVE_FNS:
+                raise ValueError(
+                    f"target_positive_transform[{k!r}]={v!r} is not a "
+                    f"recognised transform; expected one of "
+                    f"{set(_JAX_POSITIVE_FNS)}."
+                )
+    else:
+        raise TypeError(
+            "target_positive_transform must be a string or a dict "
+            f"mapping parameter name → transform name; got "
+            f"{type(target_positive_transform).__name__}."
         )
 
     def _say(msg: str) -> None:
@@ -883,7 +910,19 @@ def priors_from_twostate_results(
     capture_mode = _detect_capture_mode(samples)
     _say(f"Detected capture mode: {capture_mode!r}")
 
-    pos_inverse = _resolve_target_pos_inverse(target_positive_transform)
+    # Per-parameter ``pos_inverse`` resolver — handles both the
+    # string-form (``"softplus"``) and the dict-form
+    # (``{"rate": "exp", "kappa": "softplus"}``) of the target's
+    # ``positive_transform`` (Step 5 auditor fix).  Missing keys in the
+    # dict fall back to ``"softplus"``.  Real-valued parameters
+    # (``eta_anchor``) bypass this and use identity.
+    def _pos_inv_for(param_name: str):
+        if isinstance(target_positive_transform, dict):
+            xform = target_positive_transform.get(param_name, "softplus")
+        else:
+            xform = target_positive_transform
+        return _resolve_target_pos_inverse(xform)
+
     prior_bundle: Dict[str, Dict[str, jnp.ndarray]] = {}
 
     if target_variant == "logit":
@@ -957,25 +996,32 @@ def priors_from_twostate_results(
                     f"{arr.shape}; expected (S, {int(target_n_genes)})."
                 )
 
+        # Each positive global uses its OWN configured transform so
+        # that ``positive_transform={"rate": "exp", "kappa":
+        # "softplus"}`` is honoured.  ``eta_anchor`` is real-valued
+        # so it skips ``pos_inverse`` regardless.
+        rate_pos_inv = _pos_inv_for("rate")
+        kappa_pos_inv = _pos_inv_for("kappa")
         prior_bundle["rate"] = fit_empirical_gaussian(
-            pos_inverse(rate_s), tau=float(tau)
+            rate_pos_inv(rate_s), tau=float(tau)
         )
         prior_bundle["kappa"] = fit_empirical_gaussian(
-            pos_inverse(kappa_s), tau=float(tau)
+            kappa_pos_inv(kappa_s), tau=float(tau)
         )
         prior_bundle["eta_anchor"] = fit_empirical_gaussian(
             eta_anchor_s, tau=float(tau)  # real-valued — identity transform
         )
         _say(
             f"  Built TSLN-Logit priors from {source_path}; "
-            f"transform={target_positive_transform!r} for rate, kappa; "
+            f"per-parameter positive_transform={target_positive_transform!r}; "
             "identity for eta_anchor."
         )
 
     else:
         # --- TSLN-Rate coordinate map --------------------------------
-        # All three positive globals pass through pos_inverse to land
-        # in the unconstrained location-parameter space.
+        # All three positive globals pass through their own configured
+        # pos_inverse — so ``positive_transform={"mu": "exp",
+        # "burst_size": "softplus", ...}`` is honoured per-parameter.
         for src_key, tgt_key in (
             ("mu", "mu"),
             ("burst_size", "burst_size"),
@@ -996,13 +1042,13 @@ def priors_from_twostate_results(
                     f"expected (S, {int(target_n_genes)})."
                 )
             s_pos = jnp.maximum(s, 1e-8)
-            s_uncon = pos_inverse(s_pos)
+            tgt_pos_inv = _pos_inv_for(tgt_key)
+            s_uncon = tgt_pos_inv(s_pos)
             prior_bundle[tgt_key] = fit_empirical_gaussian(
                 s_uncon, tau=float(tau)
             )
             _say(
-                f"  Fitted {tgt_key!r} prior (G={int(s.shape[1])}, "
-                f"transform={target_positive_transform!r} inverse)."
+                f"  Fitted {tgt_key!r} prior (G={int(s.shape[1])})."
             )
 
     # --- eta (per-cell capture) -----------------------------------------
@@ -1090,7 +1136,7 @@ def priors_from_twostate_results(
 
 def freeze_values_from_twostate_results(
     results: Any,
-    target_positive_transform: str,
+    target_positive_transform,
     target_n_genes: int,
     target_n_cells: int,
     target_variant: str = "rate",
@@ -1130,9 +1176,25 @@ def freeze_values_from_twostate_results(
             f"Unknown target_variant={target_variant!r}; expected one of "
             "{'rate', 'logit'}."
         )
-    if target_positive_transform not in _JAX_POSITIVE_FNS:
-        raise ValueError(
-            f"Unknown target_positive_transform={target_positive_transform!r}."
+    # Accept str or per-parameter dict, same as priors_from_twostate_results.
+    if isinstance(target_positive_transform, str):
+        if target_positive_transform not in _JAX_POSITIVE_FNS:
+            raise ValueError(
+                f"Unknown target_positive_transform="
+                f"{target_positive_transform!r}."
+            )
+    elif isinstance(target_positive_transform, dict):
+        for k, v in target_positive_transform.items():
+            if v not in _JAX_POSITIVE_FNS:
+                raise ValueError(
+                    f"target_positive_transform[{k!r}]={v!r} is not a "
+                    f"recognised transform; expected one of "
+                    f"{set(_JAX_POSITIVE_FNS)}."
+                )
+    else:
+        raise TypeError(
+            "target_positive_transform must be a string or a dict; got "
+            f"{type(target_positive_transform).__name__}."
         )
     valid_by_variant = {
         "rate": {"mu", "burst_size", "k_off", "eta"},
@@ -1190,7 +1252,19 @@ def freeze_values_from_twostate_results(
     # returns sampled sites (not deterministics), so for non-natural
     # parameterizations we derive (burst_size, k_off) by running the
     # appropriate reparam helper on the MAP of the sampled params.
-    if "burst_size" not in map_dict or "k_off" not in map_dict:
+    #
+    # Skip this whole block for TSLN-Logit when the effective
+    # deterministics are present — the logit branch below consumes
+    # ``(alpha, beta, r_hat, eta_act)`` directly and does NOT need
+    # ``(burst_size, k_off)``.
+    _logit_effective_available = (
+        target_variant == "logit"
+        and all(k in map_dict for k in ("alpha", "beta", "r_hat"))
+    )
+    if (
+        not _logit_effective_available
+        and ("burst_size" not in map_dict or "k_off" not in map_dict)
+    ):
         from ..models.components.likelihoods.two_state import (
             _twostate_reparam,
             _twostate_ratio_reparam,
@@ -1244,7 +1318,14 @@ def freeze_values_from_twostate_results(
             "parameterization MAP."
         )
 
-    pos_inverse = _resolve_target_pos_inverse(target_positive_transform)
+    # Per-parameter resolver — same shape as in priors_from_twostate_results.
+    def _pos_inv_for(param_name: str):
+        if isinstance(target_positive_transform, dict):
+            xform = target_positive_transform.get(param_name, "softplus")
+        else:
+            xform = target_positive_transform
+        return _resolve_target_pos_inverse(xform)
+
     freeze_values: Dict[str, Dict[str, jnp.ndarray]] = {}
 
     if target_variant == "logit":
@@ -1295,7 +1376,10 @@ def freeze_values_from_twostate_results(
                     f"Derived {tgt_key!r} MAP has shape {val.shape}; "
                     f"expected ({int(target_n_genes)},)."
                 )
-            loc = pos_inverse(val) if is_positive else val
+            # Per-parameter positive transform so the dict-form
+            # ``positive_transform={"rate": "exp", "kappa": "softplus"}``
+            # is honoured.
+            loc = _pos_inv_for(tgt_key)(val) if is_positive else val
             freeze_values[tgt_key] = {"loc": loc}
             _say(
                 f"  Extracted {tgt_key!r} freeze value from "
@@ -1322,7 +1406,8 @@ def freeze_values_from_twostate_results(
                     f"SVI {src_key!r} MAP has shape {s.shape}; expected "
                     f"({int(target_n_genes)},)."
                 )
-            s_uncon = pos_inverse(jnp.maximum(s, 1e-8))
+            # Per-parameter positive transform (dict-form support).
+            s_uncon = _pos_inv_for(tgt_key)(jnp.maximum(s, 1e-8))
             freeze_values[tgt_key] = {"loc": s_uncon}
             _say(
                 f"  Extracted {tgt_key!r} freeze value (G={target_n_genes})."

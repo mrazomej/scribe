@@ -92,29 +92,48 @@ def dispatch_inference(ctx: FitContext) -> None:
                 target_gene_names = filtered
 
         # --- positive_transform string for the cascade adapter ---------
-        # Cascade adapters expect a string transform name (passed to
-        # the ``_JAX_POSITIVE_FNS`` lookup).  Handle the dict-form
-        # ``positive_transform={"mean_expression": "exp"}`` by
-        # resolving the relevant per-parameter transform via the
-        # model config helper.  Pick the canonical positive parameter
-        # name per target variant so the right entry in the dict-form
-        # ``positive_transform`` is consulted:
-        #   - NBLN              → ``r``       (gene dispersion)
-        #   - TSLN-Rate         → ``mu``      (positive gene mean)
-        #   - TSLN-Logit        → ``rate``    (positive gene rate)
+        # Cascade adapters accept either a single transform name OR a
+        # per-parameter dict mapping internal parameter name → transform.
+        # Honour the dict-form ``positive_transform`` on the target
+        # ``model_config`` so the cascade adapter applies the right
+        # ``pos_inverse`` to each positive parameter — getting this
+        # wrong would silently corrupt the cascade priors / freeze
+        # values for users who set per-parameter transforms (the
+        # auditor's Step 3-5 catch).
+        #
+        # For NBLN's older single-string API we resolve the canonical
+        # ``r`` transform; for the TwoState variants we build a dict
+        # covering all positive globals that the adapter touches:
+        #   - TSLN-Rate  → keys ``mu`` / ``burst_size`` / ``k_off``
+        #   - TSLN-Logit → keys ``rate`` / ``kappa``
+        #     (``eta_anchor`` is real-valued — no transform).
         if hasattr(ctx.model_config, "resolve_positive_transform"):
             if base_model == "twostate_ln_rate":
-                _pos_xform_param = "mu"
+                _pos_xform_str = {
+                    "mu": ctx.model_config.resolve_positive_transform("mu"),
+                    "burst_size": ctx.model_config.resolve_positive_transform(
+                        "burst_size"
+                    ),
+                    "k_off": ctx.model_config.resolve_positive_transform(
+                        "k_off"
+                    ),
+                }
             elif base_model == "twostate_ln_logit":
-                _pos_xform_param = "rate"
+                _pos_xform_str = {
+                    "rate": ctx.model_config.resolve_positive_transform(
+                        "rate"
+                    ),
+                    "kappa": ctx.model_config.resolve_positive_transform(
+                        "kappa"
+                    ),
+                }
             else:
-                _pos_xform_param = "r"
-            _pos_xform_str = ctx.model_config.resolve_positive_transform(
-                _pos_xform_param
-            )
+                _pos_xform_str = ctx.model_config.resolve_positive_transform(
+                    "r"
+                )
         else:
             _pos_xform_str = ctx.model_config.positive_transform
-            if not isinstance(_pos_xform_str, str):
+            if not isinstance(_pos_xform_str, (str, dict)):
                 _pos_xform_str = "softplus"
 
         # --- Build prior bundle (dispatch on base_model) ---------------

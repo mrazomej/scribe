@@ -46,9 +46,6 @@ LAPLACE_SUPPORTED_BASE_MODELS: set[str] = {
     "lnm",
     "lnmvcp",
     "twostate_ln_rate",
-    # ``twostate_ln_logit`` is reserved for PR-2; engine dispatch
-    # raises ``NotImplementedError`` until then but the API gate
-    # accepts the string so the cascade kwargs flow through.
     "twostate_ln_logit",
 }
 

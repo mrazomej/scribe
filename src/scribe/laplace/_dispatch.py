@@ -688,8 +688,15 @@ class DispatchResultsMixin:
             if self.beta is not None:
                 out["beta"] = dist.Delta(self.beta)
 
-            # Capture — fixed-offset only in PR-2.
-            if self.eta_loc is not None and "eta" not in frozen:
+            # Capture — fixed-offset only in PR-2.  ``eta`` is
+            # *always* a frozen offset for TSLN-Logit when capture is
+            # active (Rev 4 invariant; soft eta would route to the
+            # deferred joint Newton).  Mirror ``get_map`` and expose a
+            # Delta at the fixed offset value regardless of whether
+            # ``"eta"`` is in ``frozen_params``, so downstream
+            # diagnostics see the capture quantity (auditor's Step 3-5
+            # fix — frozen ≠ hidden).
+            if self.eta_loc is not None:
                 out["eta_capture"] = dist.Delta(self.eta_loc)
                 out["p_capture"] = dist.Delta(jnp.exp(-self.eta_loc))
             return out

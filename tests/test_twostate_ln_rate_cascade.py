@@ -290,6 +290,145 @@ def test_priors_from_twostate_results_logit_fallback_warns():
 
 
 # ---------------------------------------------------------------------
+# Test 2c: per-parameter positive_transform honoured for logit cascade
+# ---------------------------------------------------------------------
+
+
+def test_priors_from_twostate_results_logit_per_param_transform():
+    """When ``positive_transform`` is a dict, ``rate`` and ``kappa``
+    use their OWN configured transforms — not the same one applied
+    twice.
+
+    Auditor's Step 3-5 fix: ``positive_transform={"rate": "exp",
+    "kappa": "softplus"}`` must produce ``log(rate_pos)`` for rate
+    and ``softplus_inv(kappa_pos)`` for kappa.  Passing a single
+    string in this configuration would silently corrupt the cascade
+    priors.
+    """
+    from scribe.laplace.priors import priors_from_twostate_results
+    from scribe.laplace._global_uncertainty import _JAX_POSITIVE_FNS
+
+    G = 3
+    S = 30
+    rng = np.random.default_rng(11)
+
+    alpha = jnp.asarray(np.exp(rng.normal(size=(S, G)).astype(np.float32)))
+    beta = jnp.asarray(np.exp(rng.normal(size=(S, G)).astype(np.float32)))
+    r_hat = jnp.asarray(
+        np.exp(rng.normal(0.5, 0.3, size=(S, G)).astype(np.float32))
+    )
+    eta_act = jnp.asarray(rng.normal(0.0, 1.0, size=(S, G)).astype(np.float32))
+
+    class StubSVIResult:
+        n_genes = G
+
+        def get_posterior_samples(self, **_):
+            return {
+                "alpha": alpha,
+                "beta": beta,
+                "r_hat": r_hat,
+                "eta_act": eta_act,
+            }
+
+    # rate → exp inverse (log); kappa → softplus inverse.
+    bundle, _ = priors_from_twostate_results(
+        results=StubSVIResult(),
+        target_positive_transform={"rate": "exp", "kappa": "softplus"},
+        target_n_genes=G,
+        target_n_cells=10,
+        target_variant="logit",
+        n_samples=S,
+        tau=1.0,
+        verbose=False,
+    )
+    # Rate uses log inverse — built from log(r_hat).
+    expected_rate_loc = np.asarray(jnp.log(r_hat).mean(axis=0))
+    np.testing.assert_allclose(
+        np.asarray(bundle["rate"]["loc"]),
+        expected_rate_loc,
+        atol=1e-4,
+        err_msg="rate prior must use exp's inverse (log) when "
+        "positive_transform={'rate': 'exp', ...}",
+    )
+    # Kappa uses softplus inverse — built from softplus_inv(alpha+beta).
+    _, softplus_inv = _JAX_POSITIVE_FNS["softplus"]
+    expected_kappa_loc = np.asarray(softplus_inv(alpha + beta).mean(axis=0))
+    np.testing.assert_allclose(
+        np.asarray(bundle["kappa"]["loc"]),
+        expected_kappa_loc,
+        atol=1e-4,
+        err_msg="kappa prior must use softplus inverse when "
+        "positive_transform={..., 'kappa': 'softplus'}",
+    )
+
+    # Sanity: passing a single string applies the SAME inverse to both.
+    bundle_str, _ = priors_from_twostate_results(
+        results=StubSVIResult(),
+        target_positive_transform="softplus",
+        target_n_genes=G,
+        target_n_cells=10,
+        target_variant="logit",
+        n_samples=S,
+        tau=1.0,
+        verbose=False,
+    )
+    # Under softplus for both, the rate loc differs from the
+    # dict-form (where rate used log).  Use that to verify the
+    # branch separated correctly.
+    assert not np.allclose(
+        np.asarray(bundle_str["rate"]["loc"]),
+        expected_rate_loc,
+        atol=1e-3,
+    ), (
+        "string-form softplus and dict-form {'rate': 'exp'} must "
+        "produce DIFFERENT rate priors — the per-parameter branch "
+        "is not being honoured."
+    )
+
+
+def test_freeze_values_from_twostate_results_logit_per_param_transform():
+    """``freeze_values_from_twostate_results`` honours the dict-form
+    ``positive_transform`` for the logit variant."""
+    from scribe.laplace.priors import freeze_values_from_twostate_results
+
+    G = 3
+
+    class StubSVIResult:
+        n_genes = G
+
+        def get_map(self, **_):
+            # Effective parameters MAP.
+            return {
+                "alpha": jnp.array([1.0, 2.0, 3.0]),
+                "beta": jnp.array([2.0, 1.5, 1.0]),
+                "r_hat": jnp.array([5.0, 8.0, 10.0]),
+                "eta_act": jnp.array([0.0, 0.5, -0.5]),
+            }
+
+    fv = freeze_values_from_twostate_results(
+        results=StubSVIResult(),
+        target_positive_transform={"rate": "exp", "kappa": "softplus"},
+        target_n_genes=G,
+        target_n_cells=10,
+        target_variant="logit",
+        freeze_params=("rate", "kappa", "eta_anchor"),
+        verbose=False,
+    )
+    # rate freeze loc must be log(r_hat) since rate uses exp transform.
+    np.testing.assert_allclose(
+        np.asarray(fv["rate"]["loc"]),
+        np.log(np.array([5.0, 8.0, 10.0], dtype=np.float32)),
+        atol=1e-5,
+    )
+    # eta_anchor uses identity regardless.
+    np.testing.assert_allclose(
+        np.asarray(fv["eta_anchor"]["loc"]),
+        np.array([0.0, 0.5, -0.5], dtype=np.float32),
+        atol=1e-5,
+    )
+
+
+# ---------------------------------------------------------------------
 # Test 3: invalid freeze_params rejected
 # ---------------------------------------------------------------------
 

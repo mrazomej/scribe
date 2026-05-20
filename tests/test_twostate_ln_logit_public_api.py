@@ -223,6 +223,62 @@ def test_capture_efficiency_prior_rejected_at_api():
 # ---------------------------------------------------------------------
 
 
+def test_fixed_offset_eta_exposed_in_distributions():
+    """``get_distributions`` exposes ``eta_capture`` / ``p_capture``
+    as Deltas even when ``"eta"`` is in ``frozen_params``.
+
+    Auditor's Step 3-5 fix: fixed-offset capture is the only PR-2-
+    supported capture mode for TSLN-Logit, so its presence in
+    ``frozen_params`` is the **normal** case.  Suppressing capture
+    from ``get_distributions()`` in this case (the previous behaviour)
+    made it appear that the fit had no capture, contradicting
+    ``get_map()`` which already exposes ``eta_capture`` / ``p_capture``.
+    """
+    from scribe.inference.laplace import _run_laplace_inference
+    from scribe.models.config.groups import LaplaceConfig, DataConfig
+    import numpyro.distributions as dist
+
+    cfg = _build_cfg()
+    rng = np.random.default_rng(4)
+    C, G = 12, 5
+    counts = jnp.asarray(rng.integers(0, 5, size=(C, G)).astype(np.float32))
+    eta_offset = jnp.full((C,), 0.7, dtype=jnp.float32)
+
+    # Build a freeze tuple including eta — routes obs to x_only_offset.
+    result = _run_laplace_inference(
+        model_config=cfg,
+        count_data=counts,
+        adata=None,
+        n_cells=C,
+        n_genes=G,
+        laplace_config=LaplaceConfig(n_steps=4, n_newton_steps=3),
+        data_config=DataConfig(),
+        seed=0,
+        freeze_values={"eta": {"loc": eta_offset}},
+        freeze_params=("eta",),
+    )
+    assert "eta" in result.frozen_params
+
+    d = result.get_distributions()
+    # eta_capture and p_capture must BOTH show up even though eta is frozen.
+    assert "eta_capture" in d, (
+        "Fixed-offset eta_capture must be exposed in get_distributions() "
+        "even when 'eta' is in frozen_params (the only PR-2 capture mode)."
+    )
+    assert "p_capture" in d
+    assert isinstance(d["eta_capture"], dist.Delta)
+    np.testing.assert_allclose(
+        np.asarray(d["eta_capture"].v),
+        np.asarray(eta_offset),
+        atol=1e-7,
+    )
+    np.testing.assert_allclose(
+        np.asarray(d["p_capture"].v),
+        np.asarray(jnp.exp(-eta_offset)),
+        atol=1e-6,
+    )
+
+
 def test_variable_capture_flag_rejected_at_api():
     """``variable_capture=True`` rejected with TSLN-Logit-specific message."""
     import scribe
