@@ -550,7 +550,21 @@ class DispatchResultsMixin:
             # positive gene-mean parameter lives on ``self.gene_mean``.
             # This keeps ``LowRankMultivariateNormal(loc=self.mu, ...)``
             # semantically correct across every Laplace base model.
-            tfm = resolve_numpyro_transform(self.model_config)
+            # Resolve a NumPyro Transform per positive parameter — the
+            # auditor's Step 6 catch: when ``positive_transform`` is a
+            # per-parameter dict (e.g. ``{"mu": "exp",
+            # "burst_size": "softplus", ...}``), each TransformedDistribution
+            # MUST use its own transform.  Sharing a single ``tfm`` here
+            # would silently misreport the posterior shape under any
+            # config that mixes ``"exp"`` and ``"softplus"`` across
+            # positive globals.  ``resolve_numpyro_transform(cfg, name)``
+            # honours the per-parameter dict via the model_config's
+            # ``resolve_positive_transform`` helper.
+            tfm_mu = resolve_numpyro_transform(self.model_config, "mu")
+            tfm_bs = resolve_numpyro_transform(
+                self.model_config, "burst_size"
+            )
+            tfm_ko = resolve_numpyro_transform(self.model_config, "k_off")
             out: Dict[str, Any] = {
                 "y_log_rate": dist.LowRankMultivariateNormal(
                     loc=self.mu, cov_factor=self.W, cov_diag=self.d
@@ -576,7 +590,7 @@ class DispatchResultsMixin:
                     dist.Normal(
                         self.gene_mean_loc, self.gene_mean_scale
                     ).to_event(1),
-                    tfm,
+                    tfm_mu,
                 )
             elif self.gene_mean is not None:
                 out["gene_mean"] = dist.Delta(self.gene_mean)
@@ -598,7 +612,7 @@ class DispatchResultsMixin:
                     dist.Normal(
                         self.burst_size_loc, self.burst_size_scale
                     ).to_event(1),
-                    tfm,
+                    tfm_bs,
                 )
             elif self.burst_size is not None:
                 out["burst_size"] = dist.Delta(self.burst_size)
@@ -612,7 +626,7 @@ class DispatchResultsMixin:
                     dist.Normal(
                         self.k_off_loc, self.k_off_scale
                     ).to_event(1),
-                    tfm,
+                    tfm_ko,
                 )
             elif self.k_off is not None:
                 out["k_off"] = dist.Delta(self.k_off)
@@ -630,7 +644,16 @@ class DispatchResultsMixin:
             # the gene baseline is folded into ``self.mu = log(r_hat)``.
             #
             # ``self.mu`` for TSLN-Logit is zeros (latent prior centre).
-            tfm = resolve_numpyro_transform(self.model_config)
+            #
+            # Per-parameter transforms — see the TSLN-Rate dispatch arm
+            # comment above for the auditor's Step 6 motivation.  ``rate``
+            # and ``kappa`` may use DIFFERENT positive maps when the user
+            # configures ``positive_transform={"rate": "exp", "kappa":
+            # "softplus"}``; sharing one ``tfm`` would silently misreport
+            # one of the two posteriors.  ``eta_anchor`` is real-valued
+            # (identity) and does not need a TransformedDistribution.
+            tfm_rate = resolve_numpyro_transform(self.model_config, "rate")
+            tfm_kappa = resolve_numpyro_transform(self.model_config, "kappa")
             out: Dict[str, Any] = {
                 "y_latent": dist.LowRankMultivariateNormal(
                     loc=self.mu, cov_factor=self.W, cov_diag=self.d
@@ -646,7 +669,7 @@ class DispatchResultsMixin:
             ):
                 out["rate"] = dist.TransformedDistribution(
                     dist.Normal(self.rate_loc, self.rate_scale).to_event(1),
-                    tfm,
+                    tfm_rate,
                 )
             elif self.rate is not None:
                 out["rate"] = dist.Delta(self.rate)
@@ -659,7 +682,7 @@ class DispatchResultsMixin:
             ):
                 out["kappa"] = dist.TransformedDistribution(
                     dist.Normal(self.kappa_loc, self.kappa_scale).to_event(1),
-                    tfm,
+                    tfm_kappa,
                 )
             elif self.kappa is not None:
                 out["kappa"] = dist.Delta(self.kappa)

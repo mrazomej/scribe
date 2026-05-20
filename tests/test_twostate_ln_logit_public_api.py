@@ -223,6 +223,85 @@ def test_capture_efficiency_prior_rejected_at_api():
 # ---------------------------------------------------------------------
 
 
+def test_get_distributions_uses_per_param_transforms():
+    """``get_distributions()`` resolves a separate Transform per
+    positive parameter — so ``positive_transform={"rate": "exp",
+    "kappa": "softplus"}`` produces ``ExpTransform`` for ``rate``
+    and ``SoftplusTransform`` for ``kappa``.
+
+    Auditor's Step 6-7 catch: previously the dispatch code called
+    ``resolve_numpyro_transform(self.model_config)`` once and applied
+    the same Transform to BOTH ``rate`` and ``kappa``
+    ``TransformedDistribution`` instances, silently misreporting the
+    posterior shape under any mixed-transform config.  The fix routes
+    each positive parameter through its own
+    ``resolve_numpyro_transform(model_config, name)`` lookup.
+    """
+    from scribe.inference.laplace import _run_laplace_inference
+    from scribe.models.config.base import ModelConfig
+    from scribe.models.config.groups import (
+        DataConfig,
+        LaplaceConfig,
+        VAEConfig,
+    )
+    from scribe.models.config.enums import InferenceMethod, Parameterization
+    import numpyro.distributions as dist
+
+    cfg = ModelConfig(
+        base_model="twostate_ln_logit",
+        parameterization=Parameterization.TWO_STATE_NATURAL,
+        inference_method=InferenceMethod.LAPLACE,
+        # Per-parameter dict: rate uses exp, kappa uses softplus.
+        positive_transform={"rate": "exp", "kappa": "softplus"},
+        vae=VAEConfig(latent_dim=2),
+    )
+    rng = np.random.default_rng(5)
+    C, G = 14, 6
+    counts = jnp.asarray(rng.integers(0, 5, size=(C, G)).astype(np.float32))
+
+    # No freeze — so rate and kappa get TransformedDistribution
+    # entries (not Delta).
+    result = _run_laplace_inference(
+        model_config=cfg,
+        count_data=counts,
+        adata=None,
+        n_cells=C,
+        n_genes=G,
+        laplace_config=LaplaceConfig(n_steps=5, n_newton_steps=3),
+        data_config=DataConfig(),
+        seed=0,
+    )
+
+    d = result.get_distributions()
+    assert isinstance(d["rate"], dist.TransformedDistribution), (
+        "rate must be a TransformedDistribution when not frozen"
+    )
+    assert isinstance(d["kappa"], dist.TransformedDistribution), (
+        "kappa must be a TransformedDistribution when not frozen"
+    )
+
+    # The Transform on rate should be ExpTransform; on kappa
+    # SoftplusTransform.  TransformedDistribution stores
+    # ``.transforms`` as a list.
+    rate_transforms = d["rate"].transforms
+    kappa_transforms = d["kappa"].transforms
+    assert any(
+        isinstance(t, dist.transforms.ExpTransform) for t in rate_transforms
+    ), (
+        "rate posterior must use ExpTransform under "
+        "positive_transform={'rate': 'exp', ...}; got "
+        f"{[type(t).__name__ for t in rate_transforms]}"
+    )
+    assert any(
+        isinstance(t, dist.transforms.SoftplusTransform)
+        for t in kappa_transforms
+    ), (
+        "kappa posterior must use SoftplusTransform under "
+        "positive_transform={..., 'kappa': 'softplus'}; got "
+        f"{[type(t).__name__ for t in kappa_transforms]}"
+    )
+
+
 def test_fixed_offset_eta_exposed_in_distributions():
     """``get_distributions`` exposes ``eta_capture`` / ``p_capture``
     as Deltas even when ``"eta"`` is in ``frozen_params``.

@@ -20,7 +20,7 @@ configured ``positive_transform`` to the ``*_loc`` arrays.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -110,13 +110,26 @@ def resolve_positive_fns(
     return _JAX_POSITIVE_FNS[_get_positive_transform_name(model_config)]
 
 
-def resolve_numpyro_transform(model_config: Any):
+def resolve_numpyro_transform(model_config: Any, param_name: Optional[str] = None):
     """Return the NumPyro ``Transform`` for the configured positivity map.
 
     Parameters
     ----------
     model_config
-        Object with a ``positive_transform`` attribute.
+        Object with a ``positive_transform`` attribute.  This may be a
+        single string (``"softplus"`` / ``"exp"``) or — for models like
+        TSLN-Rate / TSLN-Logit — a dict mapping internal parameter
+        name to transform name.
+    param_name : str, optional
+        When the config holds a per-parameter dict, pass the internal
+        parameter name (e.g. ``"rate"``, ``"kappa"``, ``"mu"``,
+        ``"burst_size"``, ``"k_off"``) to resolve the transform for
+        that specific parameter.  When ``None`` (the default), the
+        function falls back to ``model_config.positive_transform``
+        directly — which works only when that field is itself a
+        string.  Models with a dict-form ``positive_transform`` MUST
+        pass ``param_name`` to avoid an ambiguity (and to dodge the
+        ``"unhashable dict"`` error that the legacy lookup raises).
 
     Returns
     -------
@@ -126,7 +139,7 @@ def resolve_numpyro_transform(model_config: Any):
     Raises
     ------
     ValueError
-        If ``positive_transform`` is missing or unrecognised.
+        If the resolved transform name is unknown.
     """
     import numpyro.distributions as dist
 
@@ -135,6 +148,22 @@ def resolve_numpyro_transform(model_config: Any):
         "softplus": dist.transforms.SoftplusTransform(),
         "exp": dist.transforms.ExpTransform(),
     }
+    # When a parameter name is supplied AND the model config exposes
+    # ``resolve_positive_transform`` (per-parameter resolver), route
+    # through it — this is the path TSLN-Rate / TSLN-Logit and any
+    # other model with a dict-form ``positive_transform`` must use.
+    if param_name is not None and hasattr(
+        model_config, "resolve_positive_transform"
+    ):
+        name = model_config.resolve_positive_transform(param_name)
+        if name not in _NUMPYRO_TRANSFORMS:
+            raise ValueError(
+                f"Unknown positive_transform={name!r} for "
+                f"param={param_name!r}; expected one of "
+                f"{set(_NUMPYRO_TRANSFORMS)}."
+            )
+        return _NUMPYRO_TRANSFORMS[name]
+    # Legacy path: single-string positive_transform.
     return _NUMPYRO_TRANSFORMS[_get_positive_transform_name(model_config)]
 
 

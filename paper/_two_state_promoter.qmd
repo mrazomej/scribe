@@ -1831,15 +1831,31 @@ joint Newton on $(z_c, \eta_{\mathrm{cap},c})$ with the
 cross-Hessian
 $H_{z,\eta_{\mathrm{cap}}}$. **For TSLN-Logit the cross-
 Hessian does NOT reduce to the NBLN / TSLN-Rate shortcut.**
+
+**Sign convention.** Throughout the remainder of this
+section, $H$ denotes the Hessian of the per-cell
+log-density $\log p(u_c, z_c \mid \Theta)$, while $A = -H$
+is the Newton matrix (used in the Schur back-substitution).
+The data-side Hessian diagonal $a_g$ used by the kernel is
+$a_g = -\partial^2 \log p / \partial z_g^2$, so $a_g$ lives
+in the Newton-matrix convention by construction. The
+cross-blocks below report values of $H$ (not $A$);
+multiply by $-1$ to convert to the corresponding Newton-
+matrix block.
+
 In Variant A the variables enter the same scalar log-rate
 $\ell = \log \hat r + z - \eta_{\mathrm{cap}}$ with
 opposite signs, so $\partial / \partial \eta_{\mathrm{cap}}
-= -\partial / \partial z$ on the data side and the cross-
-block reduces to $-a_g$. In Variant B the same symmetry
-does NOT hold: $z$ enters the Beta density only (via
-$\alpha, \beta$), while $\eta_{\mathrm{cap}}$ enters the
-Poisson log-rate only. They are perturbing different parts
-of the integrand. The correct cross-Hessian is
+= -\partial / \partial z$ on the data side and
+$H_{z, \eta_{\mathrm{cap}}} = +a_g$ on the Hessian.
+(Equivalently, the Newton-matrix cross-block is
+$A_{z, \eta_{\mathrm{cap}}} = -a_g$, which is the value
+that appears in the kernel's Schur back-substitution at
+``_newton_twostate_ln_rate.py``.)  In Variant B the same
+symmetry does NOT hold: $z$ enters the Beta density only
+(via $\alpha, \beta$), while $\eta_{\mathrm{cap}}$ enters
+the Poisson log-rate only. They perturb different parts of
+the integrand. The correct cross-Hessian is
 
 $$
 H_{z_g, \eta_{\mathrm{cap}},c} =
@@ -1847,8 +1863,12 @@ H_{z_g, \eta_{\mathrm{cap}},c} =
   \mathrm{Cov}_q\!\big(\log p - \log(1-p),\, p\big),
 $$
 
-which is the same posterior-covariance term that appears in
-the diagonal Hessian decomposition.
+(the same posterior-covariance term that appears in the
+diagonal Hessian decomposition).  When the joint Newton is
+eventually implemented in phase 3, the Schur
+back-substitution will use $-H_{z, \eta_{\mathrm{cap}}}$ for
+the cross-block — flip the sign of the formula above to
+get the Newton-matrix entry.
 
 The audit-recommended fallback for the initial release
 (PR-2 of the plan) is to **disable the joint capture
