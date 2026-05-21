@@ -49,6 +49,15 @@ plotting from raw `adata` counts against filtered model results.
 - `plot_mean_calibration` also auto-detects PLN models and computes the
   predicted mean as `exp(y_log_rate)` from the MAP decoder log-rate head.
   This keeps the diagnostic in the model's native log-rate space.
+- `plot_mean_calibration` has dedicated paths for the two TSLN variants:
+  - **TSLN-Rate**: the observation model is a Poisson-Beta compound, so the
+    per-cell predicted mean is `exp(x_cg − η_c) · α_g / (α_g + β_g)`. The
+    ON-fraction factor `α / (α + β) = μ_g / r̂_g` accounts for the Beta
+    latent that distinguishes TSLN-Rate from PLN.
+  - **TSLN-Logit**: the latent shifts the activation log-odds rather than
+    the production rate, giving a per-cell predicted mean of
+    `rate_g · σ(θ_g + z_cg) · exp(−η_c)` where σ is the sigmoid and z is
+    the per-cell latent MAP.
 
 ## Corner PPC (`plot_corner_ppc`)
 
