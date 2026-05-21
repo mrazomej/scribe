@@ -50,6 +50,14 @@ path: "data/my_experiment/counts.h5ad"
 # small for stable inference.
 # min_cells_per_dataset: 1000
 
+# ---- Optional: cascade dataset index ---------------------------------------
+# When cascading from a multi-dataset hierarchical fit (e.g. NBVCP) to a
+# single-dataset model (e.g. NBLN Laplace), set the 0-based index of the
+# dataset to extract via get_dataset() before the cascade.
+# This lets per-pair YAML generators burn in the correct index at creation
+# time, avoiding manual mismatches at inference time.
+# prior_index: 0
+
 # ---- Optional: split orchestration -----------------------------------------
 # If set, `scribe-infer` auto-dispatches to split mode and fits one run per
 # unique value (or value combination when split_by is a list).

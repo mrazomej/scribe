@@ -67,6 +67,7 @@ dirname_aliases:
     priors.capture_efficiency: captureprior
     priors.mixing: mixprior
     informative_priors_tau: iptau
+    data.prior_index: ipdataset
     cascade_map_method: cascademap
 
     # -------------------------------------------------------------------------

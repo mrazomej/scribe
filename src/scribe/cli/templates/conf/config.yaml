@@ -251,6 +251,8 @@ resume_from: null
 
 # SVI -> Laplace informative-prior cascade controls.
 # informative_priors_from accepts a path to a prior scribe_results.pkl.
+# When the cascade source is a multi-dataset hierarchical fit, set
+# data.prior_index in the data YAML to select the dataset slice.
 informative_priors_from: null
 informative_priors_tau: 1.0
 informative_priors_freeze: null

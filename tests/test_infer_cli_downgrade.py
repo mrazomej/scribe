@@ -346,3 +346,157 @@ def test_infer_main_forwards_laplace_and_cascade_kwargs(
     assert captured_fit_kwargs["informative_priors_tau"] == 2.5
     assert captured_fit_kwargs["informative_priors_freeze"] == ("r", "eta")
     assert captured_fit_kwargs["cascade_map_method"] == "transform"
+
+
+def test_informative_priors_dataset_index_calls_get_dataset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """informative_priors_dataset_index should call get_dataset on the cascade source."""
+    data_path = tmp_path / "toy.h5ad"
+    _make_single_survivor_h5ad(data_path)
+    output_dir = tmp_path / "ds_index_output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        "hydra.core.hydra_config.HydraConfig.get",
+        lambda: SimpleNamespace(
+            runtime=SimpleNamespace(output_dir=str(output_dir))
+        ),
+    )
+
+    captured_fit_kwargs: dict = {}
+    sentinel_single_dataset = object()
+
+    # Fake multi-dataset results that supports get_dataset().
+    class _FakeMultiDatasetResults:
+        def get_dataset(self, idx):
+            assert idx == 1
+            return sentinel_single_dataset
+
+    fake_multi = _FakeMultiDatasetResults()
+
+    def _fake_fit(*, counts, **kwargs):
+        captured_fit_kwargs.update(kwargs)
+        return SimpleNamespace(n_components=None)
+
+    def _fake_load_svi_init(path, _console=None):
+        if path is None:
+            return None
+        return fake_multi
+
+    def _fake_load_and_preprocess(*_args, **_kwargs):
+        return np.ones((11, 5), dtype=np.float32)
+
+    monkeypatch.setattr("scribe.fit", _fake_fit)
+    monkeypatch.setattr(infer, "_load_svi_init", _fake_load_svi_init)
+    monkeypatch.setattr(
+        infer, "load_and_preprocess_anndata", _fake_load_and_preprocess
+    )
+
+    cfg = OmegaConf.create(
+        {
+            "data": {
+                "name": "toy_ds_index",
+                "output_prefix": "tests",
+                "path": str(data_path),
+                "subset_column": None,
+                "subset_value": None,
+                "gpu_id": None,
+                "layer": None,
+                "filter_obs": {},
+                "preprocessing": None,
+                "dataset_key": None,
+                "prior_index": 1,
+            },
+            "paths": {"outputs_dir": str(tmp_path / "unused")},
+            "inference": {
+                "method": "laplace",
+                "n_steps": 5,
+                "batch_size": None,
+                "optimizer_config": None,
+                "log_progress_lines": False,
+                "restore_best": False,
+                "empirical_mixing": False,
+                "early_stopping": None,
+                "n_newton_steps": 5,
+                "newton_tolerance": 1e-4,
+                "damping": 0.01,
+                "newton_max_step": 5.0,
+                "convergence_action": "warn",
+                "enable_x64": False,
+            },
+            "dirname_aliases": {"aliases": {}},
+            "model": "nbln",
+            "parameterization": "count_lognormal",
+            "unconstrained": False,
+            "positive_transform": None,
+            "expression_prior": "none",
+            "prob_prior": "none",
+            "zero_inflation_prior": "none",
+            "n_datasets": None,
+            "dataset_key": None,
+            "dataset_params": None,
+            "dataset_mixing": None,
+            "expression_dataset_prior": "none",
+            "prob_dataset_prior": "none",
+            "prob_dataset_mode": "gene_specific",
+            "zero_inflation_dataset_prior": "none",
+            "overdispersion_dataset_prior": "none",
+            "horseshoe_tau0": 1.0,
+            "horseshoe_slab_df": 4,
+            "horseshoe_slab_scale": 2.0,
+            "neg_u": 1.0,
+            "neg_a": 1.0,
+            "neg_tau": 1.0,
+            "capture_scaling_prior": "none",
+            "expression_anchor": False,
+            "expression_anchor_sigma": 0.3,
+            "overdispersion": "none",
+            "overdispersion_prior": "horseshoe",
+            "latent_dim": None,
+            "d_mode": None,
+            "alr_reference_idx": None,
+            "n_components": None,
+            "mixture_params": "all",
+            "guide_rank": None,
+            "joint_params": None,
+            "dense_params": None,
+            "guide_flow": None,
+            "guide_flow_num_layers": 4,
+            "guide_flow_hidden_dims": None,
+            "guide_flow_activation": "relu",
+            "guide_flow_n_bins": 8,
+            "guide_flow_mixture_strategy": "independent",
+            "guide_flow_zero_init": True,
+            "guide_flow_layer_norm": True,
+            "guide_flow_residual": True,
+            "guide_flow_soft_clamp": True,
+            "guide_flow_loft": True,
+            "guide_flow_log_det_f64": False,
+            "priors": {},
+            "amortization": {"capture": {"enabled": False}},
+            "annotation_key": None,
+            "annotation_confidence": 3.0,
+            "annotation_component_order": None,
+            "annotation_min_cells": None,
+            "svi_init": None,
+            "informative_priors_from": "hierarchical_results.pkl",
+            "informative_priors_tau": 1.0,
+            "informative_priors_freeze": None,
+            "cascade_map_method": None,
+            "resume_from": None,
+            "cells_axis": 0,
+            "layer": None,
+            "gene_coverage": None,
+            "kl_annealing_warmup": None,
+            "seed": 42,
+            "viz": False,
+            "zero_inflation": False,
+            "variable_capture": False,
+            "output_dir": None,
+        }
+    )
+
+    infer.main.__wrapped__(cfg)
+
+    # The runner should have called get_dataset(1) and passed the result through.
+    assert captured_fit_kwargs["informative_priors_from"] is sentinel_single_dataset

@@ -1049,6 +1049,20 @@ def main(cfg: DictConfig) -> None:
     informative_priors_source = _load_svi_init(
         cfg.get("informative_priors_from"), console
     )
+    # Index into a single dataset when the cascade source is multi-dataset.
+    # Lives under data.prior_index so it can be burned into per-pair YAMLs.
+    informative_priors_dataset_index = cfg.data.get("prior_index")
+    if (
+        informative_priors_source is not None
+        and informative_priors_dataset_index is not None
+    ):
+        ds_idx = int(informative_priors_dataset_index)
+        console.print(
+            f"[dim]Indexing cascade source to dataset {ds_idx}[/dim]"
+        )
+        informative_priors_source = informative_priors_source.get_dataset(
+            ds_idx
+        )
     if (
         svi_init_results is None
         and resume_source is not None
