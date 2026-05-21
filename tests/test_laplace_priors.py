@@ -149,6 +149,7 @@ def _make_basic_results(
     *,
     with_eta: bool = True,
     with_phi: bool = False,
+    with_p_capture: bool = False,
     var_names: Optional[np.ndarray] = None,
     mask: Optional[np.ndarray] = None,
     amortized: bool = False,
@@ -167,6 +168,11 @@ def _make_basic_results(
         )
     if with_phi:
         samples["phi_capture"] = _lognormal_samples(n_samples, (N,), loc=0.0)
+    if with_p_capture:
+        rng = np.random.default_rng(11)
+        samples["p_capture"] = jnp.asarray(
+            rng.uniform(0.05, 0.95, size=(n_samples, N)).astype(np.float32)
+        )
 
     return _FakeSVIResults(
         n_genes=G,
@@ -278,22 +284,38 @@ def test_capture_mode_eta():
     assert bundle["eta"]["scale"].shape == (N,)
 
 
-def test_capture_mode_phi_only_warns_and_omits_eta(scribe_caplog):
+def test_capture_mode_phi_only_converts_to_eta():
     G, N = 5, 4
     var_names = np.array([f"g{i}" for i in range(G)])
     results = _make_basic_results(
         G=G, N=N, with_eta=False, with_phi=True, var_names=var_names
     )
-    scribe_caplog.set_level(logging.WARNING, logger="scribe.laplace.priors")
     bundle, mode = priors_from_results(
         results, target_positive_transform="exp",
         target_n_genes=G, target_n_cells=N,
         target_gene_names=var_names, n_samples=200,
     )
-    assert mode == "phi_only"
-    assert "eta" not in bundle
+    assert mode == "eta"
+    assert "eta" in bundle
     assert "r" in bundle and "mu" in bundle
-    assert any("phi_capture" in record.message for record in scribe_caplog.records)
+    assert bundle["eta"]["loc"].shape == (N,)
+
+
+def test_capture_mode_p_capture_only_converts_to_eta():
+    G, N = 5, 4
+    var_names = np.array([f"g{i}" for i in range(G)])
+    results = _make_basic_results(
+        G=G, N=N, with_eta=False, with_phi=False, with_p_capture=True,
+        var_names=var_names
+    )
+    bundle, mode = priors_from_results(
+        results, target_positive_transform="exp",
+        target_n_genes=G, target_n_cells=N,
+        target_gene_names=var_names, n_samples=200,
+    )
+    assert mode == "eta"
+    assert "eta" in bundle
+    assert bundle["eta"]["loc"].shape == (N,)
 
 
 def test_capture_mode_none_warns_and_omits_eta(scribe_caplog):
@@ -510,7 +532,8 @@ class _FakeSVIWithGetMap(_FakeSVIResults):
     """SVI stub that also implements get_map() for freeze tests."""
 
     def __init__(self, n_genes, n_cells, samples, var_names, mu_map, r_map,
-                 eta_map=None, amortized=False, original_counts=None,
+                 eta_map=None, p_capture_map=None, phi_capture_map=None,
+                 amortized=False, original_counts=None,
                  requires_counts=False):
         super().__init__(
             n_genes=n_genes, n_cells=n_cells, samples=samples,
@@ -521,6 +544,8 @@ class _FakeSVIWithGetMap(_FakeSVIResults):
         self._mu_map = mu_map
         self._r_map = r_map
         self._eta_map = eta_map
+        self._p_capture_map = p_capture_map
+        self._phi_capture_map = phi_capture_map
 
     def get_map(self, counts=None, verbose=True, **_kwargs):
         if self._requires_counts and counts is None:
@@ -530,6 +555,10 @@ class _FakeSVIWithGetMap(_FakeSVIResults):
         out = {"r": self._r_map, "mu": self._mu_map}
         if self._eta_map is not None:
             out["eta_capture"] = self._eta_map
+        if self._p_capture_map is not None:
+            out["p_capture"] = self._p_capture_map
+        if self._phi_capture_map is not None:
+            out["phi_capture"] = self._phi_capture_map
         return out
 
 
@@ -568,6 +597,57 @@ def test_freeze_values_from_results_basic():
         fv["mu"]["loc"], jnp.log(jnp.maximum(mu_map, 1e-8)), atol=1e-5,
     )
     np.testing.assert_allclose(fv["eta"]["loc"], eta_map, atol=1e-5)
+
+
+def test_freeze_values_from_results_maps_p_capture_to_eta():
+    """freeze eta should map p_capture via eta = -log(p)."""
+    from scribe.laplace.priors import freeze_values_from_results
+
+    G, N = 4, 3
+    var_names = np.array([f"g{i}" for i in range(G)])
+    samples = _make_basic_results(G=G, N=N, var_names=var_names)._samples
+    p_capture_map = jnp.asarray([0.2, 0.5, 0.8], dtype=jnp.float32)
+    results = _FakeSVIWithGetMap(
+        n_genes=G, n_cells=N, samples=samples, var_names=var_names,
+        mu_map=jnp.ones(G), r_map=jnp.ones(G), eta_map=None,
+        p_capture_map=p_capture_map,
+    )
+    fv = freeze_values_from_results(
+        results,
+        target_positive_transform="exp",
+        target_n_genes=G, target_n_cells=N,
+        target_gene_names=var_names,
+        freeze_params=("eta",),
+        verbose=False,
+    )
+    expected = -jnp.log(jnp.clip(p_capture_map, 1e-8, 1.0 - 1e-8))
+    np.testing.assert_allclose(fv["eta"]["loc"], expected, atol=1e-6)
+
+
+def test_freeze_values_from_results_maps_phi_capture_to_eta():
+    """freeze eta should map phi_capture via p=phi/(1+phi), eta=-log(p)."""
+    from scribe.laplace.priors import freeze_values_from_results
+
+    G, N = 4, 3
+    var_names = np.array([f"g{i}" for i in range(G)])
+    samples = _make_basic_results(G=G, N=N, var_names=var_names)._samples
+    phi_capture_map = jnp.asarray([0.25, 1.0, 4.0], dtype=jnp.float32)
+    results = _FakeSVIWithGetMap(
+        n_genes=G, n_cells=N, samples=samples, var_names=var_names,
+        mu_map=jnp.ones(G), r_map=jnp.ones(G), eta_map=None,
+        phi_capture_map=phi_capture_map,
+    )
+    fv = freeze_values_from_results(
+        results,
+        target_positive_transform="exp",
+        target_n_genes=G, target_n_cells=N,
+        target_gene_names=var_names,
+        freeze_params=("eta",),
+        verbose=False,
+    )
+    p_expected = phi_capture_map / (1.0 + phi_capture_map)
+    expected = -jnp.log(jnp.clip(p_expected, 1e-8, 1.0 - 1e-8))
+    np.testing.assert_allclose(fv["eta"]["loc"], expected, atol=1e-6)
 
 
 def test_freeze_values_subset_only():

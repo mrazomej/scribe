@@ -423,14 +423,7 @@ def priors_from_results(
     # --- Capture-mode detection ---------------------------------------
     capture_mode = _detect_capture_mode(samples)
     _say(f"Detected capture mode: {capture_mode!r}")
-    if capture_mode == "phi_only":
-        logger.warning(
-            "SVI source uses odds-ratio capture (phi_capture / p_capture), "
-            "which is not directly compatible with NBLN's biology-informed "
-            "eta capture. r and mu priors will still be applied; the "
-            "target's own capture configuration is left intact."
-        )
-    elif capture_mode == "none":
+    if capture_mode == "none":
         logger.warning(
             "SVI source has no capture latent (no eta_capture, phi_capture, "
             "or p_capture key). r and mu priors will be applied; the "
@@ -511,6 +504,43 @@ def priors_from_results(
         _say(
             f"  Fitted eta prior (N={int(eta_samples.shape[1])}, "
             "transform='identity' — constrained [0, ∞) matches target)."
+        )
+    elif capture_mode == "phi_only":
+        # Convert odds-ratio capture (p/phi) to NBLN eta_capture using:
+        #   eta = -log(p_capture), where p_capture = phi / (1 + phi).
+        if "p_capture" in samples:
+            p_cap_samples = jnp.asarray(samples["p_capture"])
+            p_cap_samples = jnp.clip(p_cap_samples, 1e-8, 1.0 - 1e-8)
+        elif "phi_capture" in samples:
+            phi_samples = jnp.maximum(jnp.asarray(samples["phi_capture"]), 1e-8)
+            p_cap_samples = phi_samples / (1.0 + phi_samples)
+            p_cap_samples = jnp.clip(p_cap_samples, 1e-8, 1.0 - 1e-8)
+        else:
+            raise ValueError(
+                "Detected capture_mode='phi_only' but neither 'p_capture' "
+                "nor 'phi_capture' samples are available."
+            )
+        if p_cap_samples.ndim < 2:
+            raise ValueError(
+                f"Expected p_capture/phi_capture samples to have shape "
+                f"(S, N); got {p_cap_samples.shape}."
+            )
+        if p_cap_samples.shape[1] != int(target_n_cells):
+            raise ValueError(
+                f"Source p_capture/phi_capture samples have "
+                f"{p_cap_samples.shape[1]} cells; target expects "
+                f"{int(target_n_cells)}."
+            )
+        eta_samples = -jnp.log(p_cap_samples)
+        prior_bundle["eta"] = fit_empirical_gaussian(
+            eta_samples, tau=float(tau)
+        )
+        # Promote to eta so downstream uses per-cell cascade eta on target.
+        capture_mode = "eta"
+        _say(
+            f"  Mapped p_capture/phi_capture → eta_capture per cell "
+            f"(eta = −log p, N={int(eta_samples.shape[1])}). "
+            "Promoted capture_mode 'phi_only' → 'eta'."
         )
 
     _say(
@@ -721,18 +751,35 @@ def freeze_values_from_results(
 
     # --- eta: constrained [0, ∞) → identity (NBLN's coord is the same) ---
     if "eta" in freeze_params:
-        if "eta_capture" not in map_dict:
+        if "eta_capture" in map_dict:
+            eta = jnp.asarray(map_dict["eta_capture"])
+        elif "p_capture" in map_dict:
+            p_cap = jnp.asarray(map_dict["p_capture"])
+            p_cap = jnp.clip(p_cap, 1e-8, 1.0 - 1e-8)
+            eta = -jnp.log(p_cap)
+            _say(
+                "  Mapped p_capture MAP → eta_capture freeze value "
+                "via eta = −log p."
+            )
+        elif "phi_capture" in map_dict:
+            phi = jnp.maximum(jnp.asarray(map_dict["phi_capture"]), 1e-8)
+            p_cap = phi / (1.0 + phi)
+            p_cap = jnp.clip(p_cap, 1e-8, 1.0 - 1e-8)
+            eta = -jnp.log(p_cap)
+            _say(
+                "  Mapped phi_capture MAP → eta_capture freeze value "
+                "via p = phi/(1+phi), eta = −log p."
+            )
+        else:
             raise ValueError(
                 "freeze_params requests 'eta' but SVI source's get_map() "
-                "does not include an 'eta_capture' key.  The SVI source "
-                "may not be using biology-informed capture (only "
-                "odds-ratio capture).  Available keys: "
-                f"{sorted(map_dict.keys())}."
+                "does not include any capture key among "
+                "('eta_capture', 'p_capture', 'phi_capture'). "
+                f"Available keys: {sorted(map_dict.keys())}."
             )
-        eta = jnp.asarray(map_dict["eta_capture"])
         if eta.ndim != 1 or eta.shape[0] != int(target_n_cells):
             raise ValueError(
-                f"SVI 'eta_capture' MAP has shape {eta.shape}; expected "
+                f"SVI capture MAP has shape {eta.shape}; expected "
                 f"({int(target_n_cells)},)."
             )
         freeze_values["eta"] = {"loc": eta}
