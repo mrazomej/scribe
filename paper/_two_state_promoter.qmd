@@ -1857,6 +1857,163 @@ The biology-anchored capture path with the full joint Newton (using
 fixed-offset mode covers the production use case---most cascades route through
 an SVI source that already fit capture per cell.
 
+## Global-parameter posterior uncertainty {#sec-twostate-tsln-logit-global-uncertainty}
+
+After the outer EM loop converges, we approximate the posterior on each
+gene-level global by a Normal centered at its MAP, with standard deviation
+derived from the inverse Hessian-diagonal of the negative log-posterior at the
+MAP.  We need
+$$
+H_{\theta,g} \;=\; -\,\partial^2 \log p(\Theta \mid u) / \partial\theta_g^2
+$$
+for each gene-level global $\theta_g \in \{r_g, \kappa_g, \theta_g\}$.  This
+section derives closed-form per-gene curvature; the implementation
+(``scribe/laplace/_newton_twostate_ln_logit.py::
+global_curvature_logit_summed``) is a direct transcription.
+
+The per-cell-per-gene log-likelihood is the Poisson--Beta marginal
+$$
+\log L_{PB}\big(u \mid \alpha, \beta, r\big)
+\;=\; \log \int_0^1 \mathrm{Po}(u \mid r\,p)\,\mathrm{Beta}(p \mid \alpha,\beta)\,dp,
+\quad \alpha = \kappa\varphi,\; \beta = \kappa(1-\varphi),\;\varphi = \sigma(\theta + z_{cg}).
+$$
+With the posterior weighting
+$q_k = \mathrm{softmax}_k\!\big[\log w_k + \log\mathrm{Beta}(p_k \mid \alpha,\beta) +
+\log\mathrm{Po}(u \mid r p_k)\big]$
+over Gauss-Legendre nodes, the log-marginal identity gives
+$$
+\frac{\partial^2}{\partial\theta^2}\log L_{PB} \;=\;
+\mathbb{E}_q\!\Big[\tfrac{\partial^2 \log T}{\partial\theta^2}\Big]
+\;+\;
+\mathrm{Var}_q\!\Big(\tfrac{\partial \log T}{\partial\theta}\Big),
+\qquad T_k = w_k\,\mathrm{Beta}(p_k|\alpha,\beta)\,\mathrm{Po}(u|rp_k).
+$$ {#eq-tsln-logit-log-marginal-identity}
+
+### Eta_anchor: piggyback on the Newton kernel
+
+Since $\theta_g$ and $z_g$ enter only through $\theta_g + z_g$, $\partial/\partial\theta = \partial/\partial z$.
+Per-cell-per-gene curvature wrt $\theta$ is therefore identical to the
+Newton-kernel data-side $a_{\mathrm{raw}}$ (@eq-tsln-logit-a):
+$$
+H_{\theta_g}^{(\mathrm{data})} \;=\; \sum_c a_{\mathrm{raw},c,g}
+\;=\; \sum_c \Big[\,-\varphi''\,\mathbb{E}_q[D] + \varphi'^2\kappa^2(\psi'(\alpha)+\psi'(\beta)) - \varphi'^2\kappa^2\,\mathrm{Var}_q[\log p - \log(1-p)]\,\Big].
+$$ {#eq-tsln-logit-H-eta-anchor}
+This is a **free piggyback** on the existing kernel: no new moments to compute.
+
+### Rate: Poisson channel only
+
+$r$ enters only the Poisson log-rate $\log\lambda = \log r - \eta_{\mathrm{cap}}$.
+The Beta-density piece is independent of $r$, so:
+$$
+\frac{\partial \log T}{\partial\log r} \;=\; u - \lambda p,
+\qquad
+\frac{\partial^2 \log T}{\partial(\log r)^2} \;=\; -\lambda p.
+$$
+Applying @eq-tsln-logit-log-marginal-identity gives the per-cell-per-gene
+curvature in **log-rate space**:
+$$
+H_{\log r}^{(c,g)} \;=\; -\,\frac{\partial^2 \log L_{PB,c,g}}{\partial(\log r)^2}
+\;=\; \lambda_{c,g}\,\mathbb{E}_q[p] - \lambda_{c,g}^2\,\mathrm{Var}_q[p].
+$$ {#eq-tsln-logit-H-log-r}
+This is **structurally identical to the TSLN-Rate Newton factor**
+$a = \lambda E_q[p] - \lambda^2\mathrm{Var}_q[p]$ (@eq-tsln-rate-a)---an instance
+of the deeper fact that *any* model where the latent enters the Poisson
+log-rate gets the same Poisson--Beta curvature in that variable.  The
+per-cell-per-gene gradient is $g_{\log r,c,g} = -(u - \lambda_{c,g}\,E_q[p])$.
+
+### Kappa: Beta channel only
+
+$\kappa$ enters only the Beta shape via $\alpha = \kappa\varphi$,
+$\beta = \kappa(1-\varphi)$.  With $\varphi$ independent of $\kappa$,
+$\partial\alpha/\partial\kappa = \varphi$, $\partial\beta/\partial\kappa = 1-\varphi$,
+and using
+$\partial\log\mathrm{Beta}(p|\alpha,\beta)/\partial\alpha = \log p - (\psi(\alpha) - \psi(\kappa))$
+plus the symmetric $\beta$-derivative:
+$$
+\frac{\partial \log T}{\partial\kappa} \;=\;
+\underbrace{\varphi\log p + (1-\varphi)\log(1-p)}_{D_\kappa(p)}
+\;-\;\big[\varphi\psi(\alpha) + (1-\varphi)\psi(\beta) - \psi(\kappa)\big],
+$$
+where the bracketed term is constant in $p$.  The second derivative is
+constant in $p$ (no $D_\kappa$ contribution since $\varphi$ doesn't depend on $\kappa$):
+$$
+\frac{\partial^2 \log T}{\partial\kappa^2} \;=\;
+-\varphi^2\psi'(\alpha) - (1-\varphi)^2\psi'(\beta) + \psi'(\kappa).
+$$
+Applying @eq-tsln-logit-log-marginal-identity and flipping signs for the
+negative log-likelihood:
+$$
+\boxed{
+H_\kappa^{(c,g)}
+\;=\; \varphi^2\psi'(\alpha) + (1-\varphi)^2\psi'(\beta) - \psi'(\kappa)
+\;-\; \big[\varphi^2\mathrm{Var}_q[\log p] + (1-\varphi)^2\mathrm{Var}_q[\log(1-p)]
+\;+\; 2\varphi(1-\varphi)\,\mathrm{Cov}_q[\log p, \log(1-p)]\big].
+}
+$$ {#eq-tsln-logit-H-kappa}
+The trigamma terms are positive; the posterior-variance terms subtract.
+Net curvature is positive when the posterior on $p$ is concentrated
+enough relative to the trigamma scale (typically the case at high counts
+where the data identifies $\kappa$).  The corresponding gradient is
+$$
+g_{\kappa}^{(c,g)} \;=\;
+-\,\big[\varphi(\mathbb{E}_q[\log p] - \psi(\alpha))
++ (1-\varphi)(\mathbb{E}_q[\log(1-p)] - \psi(\beta))
++ \psi(\kappa)\big].
+$$
+
+### Chain rule to unconstrained loc space
+
+Storage is in unconstrained ``*_loc`` coordinates with
+$y = \mathrm{pos\_forward}(x_{\mathrm{loc}})$ for positive parameters.  For
+$f(x_{\mathrm{loc}}) = -\log p(\Theta\mid u)$:
+$$
+\frac{\partial^2 f}{\partial x_{\mathrm{loc}}^2}
+\;=\; \big(\mathrm{pos\_forward}'(x_{\mathrm{loc}})\big)^2 \frac{\partial^2 f}{\partial y^2}
+\;+\; \mathrm{pos\_forward}''(x_{\mathrm{loc}})\,\frac{\partial f}{\partial y}.
+$$ {#eq-tsln-logit-chain-rule}
+The second term vanishes at the MAP ($\partial f/\partial y = 0$ at convergence)
+but is kept for numerical safety since EM doesn't terminate bit-exactly.
+
+For ``rate`` specifically the chain has two stages: $\log r \to r \to r_{\mathrm{loc}}$.
+Step one converts the log-rate curvature to rate-space curvature:
+$$
+H_r \;=\; \frac{1}{r^2}\big(H_{\log r} - g_{\log r}\big),
+\qquad
+g_r \;=\; g_{\log r}/r.
+$$
+Step two applies @eq-tsln-logit-chain-rule with $y = r$.  For ``kappa`` only
+the second stage applies (the natural variable for the derivation is $\kappa$
+itself).  For ``eta_anchor`` the transform is identity so
+$H_{\theta_{\mathrm{loc}}} = H_\theta$ with no chain term.
+
+### Required posterior moments
+
+The closed-form expressions require these moments under $q_k$ for each $(c, g)$,
+all of which reduce to single $K$-axis dot-products with the existing
+``softmax_node`` from the Newton kernel:
+
+- $\mathbb{E}_q[p]$, $\mathrm{Var}_q[p]$ --- already in the Newton factor.
+- $\mathbb{E}_q[\log p]$, $\mathbb{E}_q[\log(1-p)]$, $\mathrm{Var}_q[\log p]$,
+  $\mathrm{Var}_q[\log(1-p)]$, $\mathrm{Cov}_q[\log p, \log(1-p)]$.
+
+The total cost is one $\mathcal{O}(G \cdot K)$ moment-reduction pass plus
+$\mathcal{O}(G)$ digamma/trigamma calls per cell.  Summing over cells gives
+the gene-level curvature in $\mathcal{O}(C \cdot G \cdot K)$ flops, with **no**
+$G \times G$ Hessian materialisation and no autodiff hessian intermediate.  At
+the production scale that motivated this derivation (G ≈ 8K, C ≈ 3K), this
+takes seconds; the autodiff diagonal extractor it replaces would have
+materialised $(C, G, G) \approx$ 800 GB intermediates and overflowed GPU
+memory.
+
+### Verification against autodiff
+
+The hand-derivation is cross-checked against
+``hessian_diag_chunked`` (the chunked-autodiff diagonal extractor) in
+``tests/test_twostate_ln_logit_global_curvature.py``.  On a small synthetic fit
+the two paths agree on all three gene-globals to float32 precision (relative
+tolerance 5e-3, comfortably within autodiff's roundoff for forward-over-reverse
+hessian).
+
 ## When to use TSLN-Logit vs TSLN-Rate {#sec-twostate-tsln-logit-when}
 
 Both variants share the cascade machinery, the Woodbury per-cell Newton, the
